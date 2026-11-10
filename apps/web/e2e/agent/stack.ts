@@ -25,7 +25,7 @@ const CHILD = String.raw`
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { createApiHarness, TEST_ORIGIN, TEST_PASSWORD } from './src/auth/testHarness.ts';
-import { commsWorld, call, inboundSms, randomEmail } from './src/comms/testing.ts';
+import { commsWorld, call, inboundSms, randomEmail, runJobs } from './src/comms/testing.ts';
 import { intake, contactState } from './src/leads/testing.ts';
 (async () => {
 const origin = process.env.E2E_WEB_ORIGIN;
@@ -59,6 +59,28 @@ const routes = {
       if (r.statusCode >= 300) throw new Error('inbound: ' + r.statusCode + ' ' + r.body);
     }
     return { id: c.contact.id, name: c.contact.displayName, phone: p };
+  },
+  // a text the agent scheduled, then the client replied: it is held for the agent's tap (E27)
+  async '/held'(b) {
+    const r = must(await call(agent, 'POST', '/contacts/' + b.contactId + '/messages', { channel: 'sms', body: b.body, idempotencyKey: 'k-' + randomUUID(), scheduleAt: new Date(Date.now() + 3600000).toISOString() }), 'schedule');
+    const i = await inboundSms(h, b.phone, w.mainNumber, b.reply);
+    if (i.statusCode >= 300) throw new Error('inbound: ' + i.statusCode + ' ' + i.body);
+    // clock fixture: the scheduled time has come (no application path moves time)
+    await h.su.query("UPDATE messages SET scheduled_for = clock_timestamp() - interval '1 second' WHERE id = $1", [r.message.id]);
+    await runJobs(h, w.tenantId, ['comms.dispatch']);
+    const m = (await h.su.query('SELECT status, status_reason FROM messages WHERE id = $1', [r.message.id])).rows[0];
+    return { id: r.message.id, status: m.status, statusReason: m.status_reason };
+  },
+  // a text the agent tries through the API (the send-time check decides)
+  async '/attempt'(b) {
+    const r = must(await call(agent, 'POST', '/contacts/' + b.contactId + '/messages', { channel: 'sms', body: b.body, idempotencyKey: 'k-' + randomUUID() }), 'attempt');
+    return { result: r.result, id: r.message && r.message.id };
+  },
+  // the agent records "do not call me" for the contact's phone (staff consent entry, agent_revoke)
+  async '/dnc'(b) {
+    const p = (await h.su.query("SELECT id FROM contact_points WHERE contact_id = $1 AND kind = 'phone' ORDER BY created_at LIMIT 1", [b.contactId])).rows[0];
+    must(await call(agent, 'POST', '/contacts/' + b.contactId + '/consent', { kind: 'revoke', pointId: p.id, channel: 'voice', purpose: 'all', evidence: {} }), 'dnc');
+    return { ok: true, agentName: agent.displayName ?? null };
   },
   async '/offer'(b) {
     const r = await intake(h, w, { inquiryType: 'buy', fullName: b.name ?? 'Pat Lead', phones: [phone()], message: b.message ?? 'Is 12 Oak St still available?', propertyText: '12 Oak St', postalCode: '94610' });
@@ -111,7 +133,7 @@ process.stdin.resume();
 })().catch((e) => { console.error(e); process.exit(1); });
 `;
 
-export type FixturePath = '/world' | '/contact' | '/offer' | '/draft' | '/task' | '/appointment' | '/deal' | '/listing';
+export type FixturePath = '/world' | '/contact' | '/offer' | '/draft' | '/task' | '/appointment' | '/deal' | '/listing' | '/held' | '/attempt' | '/dnc';
 
 export interface AgentStack {
   webUrl: string;
