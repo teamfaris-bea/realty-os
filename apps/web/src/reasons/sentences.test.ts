@@ -68,6 +68,8 @@ describe('messageStatus: what the thread says under a message that did not simpl
     expect(messageStatus({ status: 'undelivered', statusReason: 'PROVIDER_UNDELIVERED', providerErrorCode: '99999', channel: 'sms' }, 'Owen')!.text).toBe('Not delivered: the carrier rejected it');
     expect(messageStatus({ status: 'failed', statusReason: 'PROVIDER_OPTED_OUT', providerErrorCode: '21610', channel: 'sms' }, 'Owen')!.text).toBe('Not delivered: they had opted out with the carrier');
     expect(messageStatus({ status: 'failed', statusReason: 'PROVIDER_REJECTED', channel: 'email' }, 'Owen')!.text).toBe('Not delivered: the email service rejected it');
+    expect(messageStatus({ status: 'failed', statusReason: 'PROVIDER_REJECTED', channel: 'sms' }, 'Liam')!.text).toBe('Not delivered: the carrier rejected it');
+    expect(messageStatus({ status: 'failed', statusReason: 'PROVIDER_UNAVAILABLE', channel: 'sms' }, 'Liam')!.text).toBe("Not delivered: the phone service wasn't answering");
     expect(messageStatus({ status: 'failed', statusReason: null, channel: 'email' }, 'Owen')!.text).toBe('Not delivered: the email provider rejected it');
   });
   it('E27: a message held because the client replied says so, with their first name', () => {

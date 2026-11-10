@@ -123,7 +123,6 @@ const CARRIER: Record<string, string> = {
 
 const FAILED: Record<string, string> = {
   PROVIDER_OPTED_OUT: 'they had opted out with the carrier',
-  PROVIDER_REJECTED: 'the phone service rejected it',
   PROVIDER_UNAVAILABLE: "the phone service wasn't answering",
   PROVIDER_TIMEOUT: "the phone service didn't answer in time",
   PROVIDER_NOT_CONFIGURED: "sending isn't set up yet",
@@ -174,7 +173,8 @@ export function messageStatus(m: MessageStatusFacts, contactFirstName: string, n
       return { text: `Not sent: ${BLOCKED[reason] ?? 'blocked by a sending rule'}`, tone: 'failed' };
     case 'failed':
     case 'undelivered': {
-      const why = CARRIER[m.providerErrorCode ?? ''] ?? FAILED[reason]?.replace('phone service', ch === 'email' ? 'email service' : 'phone service') ?? (ch === 'email' ? 'the email provider rejected it' : 'the carrier rejected it');
+      const rejected = ch === 'email' ? 'the email service rejected it' : 'the carrier rejected it';
+      const why = CARRIER[m.providerErrorCode ?? ''] ?? (reason === 'PROVIDER_REJECTED' ? rejected : FAILED[reason]?.replace('phone service', ch === 'email' ? 'email service' : 'phone service')) ?? (ch === 'email' ? 'the email provider rejected it' : 'the carrier rejected it');
       return { text: `Not delivered: ${why}`, tone: 'failed' };
     }
     case 'bounced':
