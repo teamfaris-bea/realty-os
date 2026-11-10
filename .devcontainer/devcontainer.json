@@ -1,0 +1,19 @@
+{
+  "name": "Realty OS demo",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  "hostRequirements": { "cpus": 2, "memory": "8gb" },
+  "containerEnv": { "COREPACK_ENABLE_DOWNLOAD_PROMPT": "0" },
+  "forwardPorts": [5173],
+  "portsAttributes": {
+    "5173": { "label": "Realty OS (open this)", "onAutoForward": "openBrowser" },
+    "3001": { "label": "API", "onAutoForward": "silent" }
+  },
+  "otherPortsAttributes": { "onAutoForward": "silent" },
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+  "postStartCommand": "bash .devcontainer/start.sh",
+  "customizations": {
+    "codespaces": { "openFiles": [".devcontainer/README.md"] }
+  }
+}

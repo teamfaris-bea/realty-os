@@ -16,6 +16,8 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    // GitHub Codespaces serves the dev server at <name>-5173.app.github.dev.
+    allowedHosts: process.env.CODESPACES ? [`.${process.env.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN ?? 'app.github.dev'}`] : undefined,
     proxy: { '/api': { target: `http://localhost:${apiPort}`, changeOrigin: false } },
   },
   build: { target: 'es2022', sourcemap: true },

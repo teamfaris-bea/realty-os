@@ -1,0 +1,20 @@
+# Codespaces / dev container: the app container shares the database container's network,
+# so Postgres is on localhost:5432 exactly as .env.example expects.
+services:
+  app:
+    image: mcr.microsoft.com/devcontainers/typescript-node:1-22-bookworm
+    volumes:
+      - ../..:/workspaces:cached
+    command: sleep infinity
+    network_mode: service:db
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: app_owner
+      POSTGRES_PASSWORD: dev
+      POSTGRES_DB: postgres
+volumes:
+  postgres-data:
