@@ -198,6 +198,7 @@ describe('route table', () => {
       [
         "POST /api/auth/login → public",
         "POST /api/auth/logout → session",
+        "POST /api/auth/logout-all → session",
         "GET /api/auth/session → session",
         "HEAD /api/auth/session → session",
         "POST /api/auth/tenant-switch → session",
@@ -205,6 +206,7 @@ describe('route table', () => {
         "POST /api/auth/mfa/enroll → session",
         "POST /api/auth/mfa/enroll/confirm → session",
         "POST /api/auth/mfa/verify → session",
+        "POST /api/auth/mfa/recovery-codes → session",
         "POST /api/auth/signup → public",
         "POST /api/auth/password/reset → public",
         "POST /api/auth/password/reset/confirm → public",

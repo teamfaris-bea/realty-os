@@ -3,7 +3,9 @@
 //   telephony  Twilio-shaped: X-Twilio-Signature = base64(HMAC-SHA1(secret, fullUrl + sorted(k+v)))
 //              over the application/x-www-form-urlencoded parameters
 //   email/lead X-Realty-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256(secret, `${t}.${rawBody}`)>,
-//              accepted within ±5 minutes (replay window)
+//              accepted while t is at most 5 minutes old and at most 30 s in the future (clock skew),
+//              so a captured delivery can be replayed for at most ~5.5 minutes; inside that window the
+//              handlers are idempotent (provider event ids; lead intake's 10-minute fingerprint dedup)
 //
 // A route declares `config: { auth: 'webhook', webhookProvider: 'telephony' }`. The webhook guard
 // (installed by server.ts) verifies the signature BEFORE the handler runs. A bad signature records
@@ -30,6 +32,8 @@ declare module 'fastify' {
 }
 
 export const SIGNATURE_TOLERANCE_S = 300;
+/** how far a signature timestamp may lie in the future (sender clock skew) */
+export const SIGNATURE_FUTURE_SKEW_S = 30;
 
 export function telephonySignature(secret: string, fullUrl: string, params: Record<string, string>): string {
   const data = Object.keys(params)
@@ -71,7 +75,7 @@ export function verifyWebhook(provider: WebhookProvider, req: FastifyRequest): b
   if (!m) return false;
   const t = Number(m[1]);
   const nowS = Math.floor(p.clock.now() / 1000);
-  if (Math.abs(nowS - t) > SIGNATURE_TOLERANCE_S) return false;
+  if (nowS - t > SIGNATURE_TOLERANCE_S || t - nowS > SIGNATURE_FUTURE_SKEW_S) return false;
   return constantTimeEqual(signedHeader(secret, t, raw), header);
 }
 

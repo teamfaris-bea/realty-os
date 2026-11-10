@@ -173,12 +173,20 @@ export function buildServer(cfg: Config, deps: ServerDeps): FastifyInstance {
     requestContext.run({ requestId: String(req.id), ip: req.ip ?? null, userAgent: typeof ua === 'string' ? ua : null, ids: deps.ids }, done);
   });
 
-  // Origin allowlist (CSRF layer 1) for every unsafe method except provider webhooks.
+  // Origin allowlist (CSRF layer 1) for every unsafe method except provider webhooks and capability
+  // URLs (public routes whose only authority is a signed token in the URL; see rbac.ts).
   app.addHook('onRequest', async (req) => {
     if (SAFE_METHODS.has(req.method)) return;
     if (req.routeOptions.config?.auth === 'webhook') return;
+    if (req.routeOptions.config?.auth === 'public' && req.routeOptions.config?.capabilityUrl === true) return;
     const origin = originOf(req);
     if (origin === null || !cfg.webOrigins.includes(origin)) throw new AppError('CSRF_INVALID');
+  });
+
+  // API responses carry session state (CSRF token), PII and tenant data: never cached by browsers or
+  // shared proxies. A route that sets its own Cache-Control keeps it.
+  app.addHook('onSend', async (_req, reply) => {
+    if (!reply.hasHeader('cache-control')) reply.header('cache-control', 'no-store');
   });
 
   app.setErrorHandler((err: FastifyError, req, reply) => {
@@ -240,6 +248,15 @@ export function buildServer(cfg: Config, deps: ServerDeps): FastifyInstance {
           route.preValidation = [guard as unknown as preValidationHookHandler, ...own];
         }
         platform.routeTable.push(entry);
+      });
+      // Authentication before the body is read: a route that needs a session refuses an anonymous (or
+      // unknown-cookie) request in preParsing, i.e. after the Origin check and the rate limit
+      // (onRequest) but before any body parser runs, so no upload is buffered for it. The full guard
+      // (CSRF token, MFA state, tenant, RBAC) still runs in preValidation; this only moves the 401.
+      api.addHook('preParsing', async (req, _reply, payload) => {
+        const auth = req.routeOptions.config?.auth;
+        if (auth !== undefined && auth !== 'public' && auth !== 'webhook' && !(await loadAuthState(req))) throw new AppError('UNAUTHENTICATED');
+        return payload;
       });
       for (const m of modules) await api.register(m.register);
     },

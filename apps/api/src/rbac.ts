@@ -14,6 +14,12 @@
 //                'self'     a valid session in a tenant, acting only on the caller's own rows (RLS self-only)
 //                <Action>   a valid session in a tenant AND core.can(actor, action, facts)
 //
+//   config.capabilityUrl: true   ('public' routes only) the route's ONLY authority is an unguessable,
+//                MAC-signed token in its URL; it reads no cookie and no session. Such a route is exempt
+//                from the Origin allowlist, because a cross-site request can do nothing the token holder
+//                could not (e.g. RFC 8058 one-click unsubscribe, POSTed by the mailbox provider with no
+//                Origin). server.ts refuses the flag on any other kind of route.
+//
 // server.ts installs the session guard in front of every non-public route from this declaration,
 // and REFUSES TO START if a route has no declaration, or declares an Action without an
 // authorize(<that action>, …) preHandler. The route-table test lists every route and its declaration.
@@ -34,6 +40,7 @@ declare module 'fastify' {
   interface FastifyContextConfig {
     auth?: RouteAuth;
     allowPartial?: readonly PartialAllowance[];
+    capabilityUrl?: true;
   }
 }
 
@@ -77,6 +84,8 @@ export interface RouteTableEntry {
   authorizes: Action | null;
   /** every key the route's Zod input schemas (body, params, querystring) accept, nested as a.b */
   inputKeys: string[];
+  /** a public route authorized only by a token in its URL (exempt from the Origin allowlist) */
+  capabilityUrl?: true;
 }
 
 /** Collects the object keys a Zod schema accepts (unwrapping optional/nullable/arrays/unions/pipes). */
@@ -136,7 +145,7 @@ export function securedPreHandlers(
   route: Pick<RouteOptions, 'method' | 'url' | 'preHandler' | 'config' | 'schema'>,
   guards: { session: preHandlerHookHandler; actor: preHandlerHookHandler; webhook: preHandlerHookHandler },
 ): { guard: preHandlerHookHandler | null; chain: preHandlerHookHandler[]; entry: RouteTableEntry } {
-  const cfg = (route.config ?? {}) as { auth?: RouteAuth; allowPartial?: readonly PartialAllowance[] };
+  const cfg = (route.config ?? {}) as { auth?: RouteAuth; allowPartial?: readonly PartialAllowance[]; capabilityUrl?: boolean };
   const method = Array.isArray(route.method) ? route.method.join(',') : String(route.method);
   const where = `${method} ${route.url}`;
   const auth = cfg.auth;
@@ -155,8 +164,11 @@ export function securedPreHandlers(
   if ((cfg.allowPartial ?? []).length > 0 && auth !== 'session') {
     throw new RouteAuthorizationError(`${where}: only 'session' routes may serve MFA-pending or enrollment-only sessions (allowPartial)`);
   }
+  if (cfg.capabilityUrl !== undefined && (cfg.capabilityUrl !== true || auth !== 'public' || !/:[A-Za-z]*token/i.test(route.url))) {
+    throw new RouteAuthorizationError(`${where}: only a 'public' route with a :token URL parameter may declare capabilityUrl`);
+  }
   if (tagged.some((a) => a !== auth)) throw new RouteAuthorizationError(`${where}: authorize() for a different action than declared`);
   const sch = (route.schema ?? {}) as { body?: unknown; params?: unknown; querystring?: unknown };
   const inputKeys = [...new Set([sch.body, sch.params, sch.querystring].flatMap((x) => zodInputKeys(x)))].sort();
-  return { guard, chain: own, entry: { method, url: route.url, auth, authorizes: tagged[0] ?? null, inputKeys } };
+  return { guard, chain: own, entry: { method, url: route.url, auth, authorizes: tagged[0] ?? null, inputKeys, ...(cfg.capabilityUrl ? { capabilityUrl: true as const } : {}) } };
 }

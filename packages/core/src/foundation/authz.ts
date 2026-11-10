@@ -218,6 +218,8 @@ export const AUDIT_ACTIONS = [
   'saved_search.approved', // api/assistant: a human approved (or activated) saved-search criteria; alerts follow (R-AST-10)
   'deal.financials_changed', // api/workspace: commission fields of a deal written by a human (A7d, R-PERM-10)
   'exception.reopened', // api/accountability: a handled exception put back in the live queue (R-ACC-3)
+  'session.revoked_all', // api/platform: "log out of all sessions" revoked every live session of the user
+  'mfa.recovery_codes_regenerated', // api/platform: the user replaced their MFA recovery codes
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

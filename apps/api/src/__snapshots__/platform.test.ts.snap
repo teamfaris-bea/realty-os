@@ -67,6 +67,18 @@ exports[`response schemas > platform response schemas have no confidence* fields
               "enrollmentRequired": {
                 "type": "boolean",
               },
+              "recoveryCodesRemaining": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
               "verified": {
                 "type": "boolean",
               },
@@ -75,6 +87,7 @@ exports[`response schemas > platform response schemas have no confidence* fields
               "enabled",
               "verified",
               "enrollmentRequired",
+              "recoveryCodesRemaining",
             ],
             "type": "object",
           },
@@ -202,6 +215,26 @@ exports[`response schemas > platform response schemas have no confidence* fields
     ],
     "type": "object",
   },
+  "LogoutAllResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "ok": {
+        "const": true,
+        "type": "boolean",
+      },
+      "revoked": {
+        "maximum": 9007199254740991,
+        "minimum": -9007199254740991,
+        "type": "integer",
+      },
+    },
+    "required": [
+      "ok",
+      "revoked",
+    ],
+    "type": "object",
+  },
   "MfaConfirmResponse": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
@@ -227,6 +260,18 @@ exports[`response schemas > platform response schemas have no confidence* fields
               "enrollmentRequired": {
                 "type": "boolean",
               },
+              "recoveryCodesRemaining": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
               "verified": {
                 "type": "boolean",
               },
@@ -235,6 +280,7 @@ exports[`response schemas > platform response schemas have no confidence* fields
               "enabled",
               "verified",
               "enrollmentRequired",
+              "recoveryCodesRemaining",
             ],
             "type": "object",
           },
@@ -408,6 +454,22 @@ exports[`response schemas > platform response schemas have no confidence* fields
     ],
     "type": "object",
   },
+  "RecoveryCodesResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "recoveryCodes": {
+        "items": {
+          "type": "string",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "recoveryCodes",
+    ],
+    "type": "object",
+  },
   "SessionInfo": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
@@ -424,6 +486,18 @@ exports[`response schemas > platform response schemas have no confidence* fields
           "enrollmentRequired": {
             "type": "boolean",
           },
+          "recoveryCodesRemaining": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
           "verified": {
             "type": "boolean",
           },
@@ -432,6 +506,7 @@ exports[`response schemas > platform response schemas have no confidence* fields
           "enabled",
           "verified",
           "enrollmentRequired",
+          "recoveryCodesRemaining",
         ],
         "type": "object",
       },

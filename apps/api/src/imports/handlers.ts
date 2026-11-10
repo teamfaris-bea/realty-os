@@ -25,11 +25,16 @@ export const StagePayload = jobPayload({ stageId: zId });
 export type BatchPayload = { batchId: string };
 export type StagePayload = { stageId: string };
 
-/** FUB_PROVIDER=real uses the HTTP adapter (VERIFY against a live account); anything else the fake. */
+/**
+ * FUB_PROVIDER=real uses the HTTP adapter (VERIFY against a live account); anything else the fake.
+ * FUB_BASE_URL is server config, never tenant input; it must name a host in FUB_ALLOWED_HOSTS
+ * (comma-separated, default api.followupboss.com), else the adapter refuses to start (FubConfigError).
+ */
 export function defaultFubConnector(env: NodeJS.ProcessEnv = process.env): FubConnector {
   if (env.FUB_PROVIDER === 'real') {
     return httpFubConnector({
       ...(env.FUB_BASE_URL ? { baseUrl: env.FUB_BASE_URL } : {}),
+      ...(env.FUB_ALLOWED_HOSTS ? { allowedHosts: env.FUB_ALLOWED_HOSTS.split(',') } : {}),
       ...(env.FUB_SYSTEM_NAME && env.FUB_SYSTEM_KEY ? { system: { name: env.FUB_SYSTEM_NAME, key: env.FUB_SYSTEM_KEY } } : {}),
     });
   }

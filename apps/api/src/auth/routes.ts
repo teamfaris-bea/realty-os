@@ -18,7 +18,7 @@ import { audit } from '../audit.js';
 import { AppError } from '../errors.js';
 import type { RouteModule } from '../routes.js';
 import { registerAccountRoutes } from './account.js';
-import { LoginResponse, OkResponse, SessionInfo, authEvent, clearSessionCookie, clientIp, platformOf, sessionInfo } from './common.js';
+import { LoginResponse, LogoutAllResponse, OkResponse, SessionInfo, authEvent, clearSessionCookie, clientIp, platformOf, sessionInfo } from './common.js';
 import { startSession } from './flow.js';
 import { registerMfaRoutes, verifySecondFactor } from './mfa.js';
 import { verifyDummy, verifyPassword } from './password.js';
@@ -122,6 +122,43 @@ async function register(app: FastifyInstance): Promise<void> {
       await authEvent(p, req, { event: 'logout', userId: s.userId, tenantId: s.tenantId });
       clearSessionCookie(reply, p);
       return { ok: true as const };
+    },
+  );
+
+  // "Log out of all sessions": every live session of the user, on every device and in every tenant,
+  // including this one. Needs a fully verified session (a password alone cannot sign the user out
+  // everywhere); enrollment-only sessions may use it (they have no second factor yet).
+  r.post(
+    '/auth/logout-all',
+    { config: { auth: 'session', allowPartial: ['enrollment'] }, schema: { response: { 200: LogoutAllResponse } } },
+    async (req, reply) => {
+      const p = platformOf(req);
+      const s = req.authState!;
+      const revokeAll = async (tx: Parameters<Parameters<typeof withPreTenant>[0]>[0], now: number) =>
+        Number(
+          (
+            await sql`UPDATE sessions SET revoked_at = ${new Date(now)}::timestamptz, revoked_reason = 'logout'
+                       WHERE user_id = app.user_id() AND revoked_at IS NULL`.execute(tx)
+          ).numAffectedRows ?? 0,
+        );
+      let revoked: number;
+      if (s.tenantId !== null && s.role !== null) {
+        const actor = actorFor({ userId: s.userId, tenantId: s.tenantId, role: s.role, sessionId: s.sessionId });
+        revoked = await withTenantTx(
+          actor,
+          async (tx, now) => {
+            const n = await revokeAll(tx, now);
+            await audit(tx, actor, { action: 'session.revoked_all', entity: { type: 'session', id: s.sessionId } });
+            return n;
+          },
+          { db: p.db },
+        );
+      } else {
+        revoked = await withPreTenant((tx, now) => revokeAll(tx, now), { db: p.db, userId: s.userId });
+      }
+      await authEvent(p, req, { event: 'session_revoked', userId: s.userId, tenantId: s.tenantId });
+      clearSessionCookie(reply, p);
+      return { ok: true as const, revoked };
     },
   );
 

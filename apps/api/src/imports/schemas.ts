@@ -1,7 +1,21 @@
 // Zod request/response schemas of api/imports. Inputs never carry a tenant id (R-TEN-3); responses
 // carry no confidence fields (R-AST-13) and no tenant id. Snapshot-tested in imports.schemas.test.ts.
 import { z } from 'zod';
-import { ColumnTargetSchema } from './csv.js';
+import { ColumnTargetSchema, MAX_CSV_BYTES } from './csv.js';
+
+/** Longest fileBase64 accepted: the padded base64 of a MAX_CSV_BYTES file. */
+export const MAX_FILE_BASE64_CHARS = Math.ceil(MAX_CSV_BYTES / 3) * 4;
+
+/**
+ * Strict, padded standard base64 (what `btoa` and Buffer produce). Node's decoder silently skips any
+ * other character, so without this the stored bytes could differ from what the client sent.
+ */
+const FileBase64 = z
+  .string()
+  .min(4)
+  .max(MAX_FILE_BASE64_CHARS)
+  .regex(/^[A-Za-z0-9+/]*={0,2}$/)
+  .refine((s) => s.length % 4 === 0, { message: 'base64 length' });
 
 export const CategoryParam = z.enum(['contacts', 'ownership', 'notes', 'messages', 'call_recordings', 'consent']);
 export const IdParams = z.strictObject({ id: z.uuid() });
@@ -10,8 +24,8 @@ export const RecordParams = z.strictObject({ id: z.uuid(), rid: z.uuid() });
 
 export const CreateImportBody = z.discriminatedUnion('source', [
   z.strictObject({ source: z.literal('fub_api'), apiKey: z.string().trim().min(8).max(200) }),
-  z.strictObject({ source: z.literal('csv'), fileName: z.string().min(1).max(200), fileBase64: z.string().min(4).max(36_000_000), mapping: z.array(ColumnTargetSchema).max(500).optional() }),
-  z.strictObject({ source: z.literal('fub_export'), fileName: z.string().min(1).max(200), fileBase64: z.string().min(4).max(36_000_000) }),
+  z.strictObject({ source: z.literal('csv'), fileName: z.string().min(1).max(200), fileBase64: FileBase64, mapping: z.array(ColumnTargetSchema).max(500).optional() }),
+  z.strictObject({ source: z.literal('fub_export'), fileName: z.string().min(1).max(200), fileBase64: FileBase64 }),
 ]);
 
 export const MappingsBody = z.strictObject({

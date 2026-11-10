@@ -221,7 +221,8 @@ async function register(app: FastifyInstance): Promise<void> {
 <body style="font-family:system-ui;max-width:28rem;margin:3rem auto;padding:0 1rem"><h1 style="font-size:1.25rem">Stop marketing emails?</h1>
 <form method="post" action="${action}"><button style="font-size:1rem;padding:.75rem 1.25rem">Unsubscribe</button></form></body>`;
   });
-  r.post('/email/unsubscribe/:token', { config: { auth: 'public' }, schema: { params: TokenParams } }, async (req) => {
+  // capabilityUrl: the mailbox provider's RFC 8058 one-click POST carries no Origin (opt-outs must always work)
+  r.post('/email/unsubscribe/:token', { config: { auth: 'public', capabilityUrl: true }, schema: { params: TokenParams } }, async (req) => {
     const out = await unsubscribeByLink(req.params.token, deps());
     if (out === 'invalid') throw new AppError('NOT_FOUND');
     return { unsubscribed: true };

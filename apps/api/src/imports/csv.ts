@@ -64,6 +64,43 @@ export function fileLabelOf(name: string): string {
   return clean === '' ? 'file.csv' : clean;
 }
 
+// ---- upload type checks -------------------------------------------------------------------------
+
+const EXTENSIONS: Record<'csv' | 'fub_export', readonly string[]> = { csv: ['csv', 'tsv', 'txt'], fub_export: ['json'] };
+
+/** Leading bytes of compressed / archive formats (gzip, zip incl. xlsx/docx, bzip2, xz, zstd, 7z, rar, OLE2 .xls). */
+const ARCHIVE_MAGIC: readonly (readonly number[])[] = [
+  [0x1f, 0x8b],
+  [0x50, 0x4b, 0x03, 0x04],
+  [0x50, 0x4b, 0x05, 0x06],
+  [0x50, 0x4b, 0x07, 0x08],
+  [0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00],
+  [0x28, 0xb5, 0x2f, 0xfd],
+  [0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c],
+  [0x52, 0x61, 0x72, 0x21, 0x1a, 0x07],
+  [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1],
+];
+
+/** True when the bytes start like a compressed file or an archive (never inflated: refused instead). */
+export function looksCompressed(bytes: Uint8Array): boolean {
+  if (ARCHIVE_MAGIC.some((m) => m.every((b, i) => bytes[i] === b))) return true;
+  // bzip2: "BZh" + block size digit 1-9
+  return bytes[0] === 0x42 && bytes[1] === 0x5a && bytes[2] === 0x68 && (bytes[3] ?? 0) >= 0x31 && (bytes[3] ?? 0) <= 0x39;
+}
+
+/**
+ * Why an uploaded file is not of the type its source takes, or null when it is: the file name's
+ * extension must fit the source (.csv/.tsv/.txt for CSV, .json for a FUB export) and the bytes must
+ * not be a compressed file or an archive. Nothing in the import pipeline decompresses anything.
+ */
+export function uploadTypeProblem(source: 'csv' | 'fub_export', fileName: string, bytes: Uint8Array): 'COMPRESSED' | 'EXTENSION' | null {
+  if (looksCompressed(bytes)) return 'COMPRESSED';
+  const base = (fileName.split(/[\\/]/).pop() ?? '').trim().toLowerCase();
+  const dot = base.lastIndexOf('.');
+  const ext = dot > 0 ? base.slice(dot + 1) : '';
+  return EXTENSIONS[source].includes(ext) ? null : 'EXTENSION';
+}
+
 export interface StageSource {
   outcomes: RecordOutcome<NormalizedRecord>[];
   /** source ref → the raw source object (stored encrypted per record) */

@@ -66,7 +66,7 @@ export const SessionInfo = z.object({
   user: z.object({ id: z.uuid(), email: z.string(), displayName: z.string() }),
   tenant: TenantSummary.nullable(),
   tenants: z.array(TenantSummary),
-  mfa: z.object({ enabled: z.boolean(), verified: z.boolean(), enrollmentRequired: z.boolean() }),
+  mfa: z.object({ enabled: z.boolean(), verified: z.boolean(), enrollmentRequired: z.boolean(), recoveryCodesRemaining: z.number().int().nullable() }),
   reauthenticatedAt: z.string().nullable(),
   csrfToken: z.string(),
 });
@@ -78,6 +78,8 @@ export const OkResponse = z.object({ ok: z.literal(true) });
 
 export const MfaEnrollResponse = z.object({ secret: z.string(), otpauthUri: z.string() });
 export const MfaConfirmResponse = z.object({ recoveryCodes: z.array(z.string()), session: SessionInfo });
+export const RecoveryCodesResponse = z.object({ recoveryCodes: z.array(z.string()) });
+export const LogoutAllResponse = z.object({ ok: z.literal(true), revoked: z.number().int() });
 
 export const PushSubscriptionResponse = z.object({ id: z.uuid() });
 export const AlertPhoneChallengeResponse = z.object({ challenge: z.string(), expiresAt: z.string(), maskedPhone: z.string() });
@@ -90,6 +92,8 @@ export const PLATFORM_RESPONSE_SCHEMAS = {
   OkResponse,
   MfaEnrollResponse,
   MfaConfirmResponse,
+  RecoveryCodesResponse,
+  LogoutAllResponse,
   PushSubscriptionResponse,
   AlertPhoneChallengeResponse,
   AlertPhoneVerifiedResponse,
@@ -102,7 +106,13 @@ export function maskPhone(e164: string): string {
 /** The session payload the web app needs (`GET /auth/session` and every login-like response). */
 export async function sessionInfo(db: Database, p: Platform, s: Pick<AuthState, 'sessionId' | 'userId' | 'tenantId' | 'role' | 'reauthenticatedAt' | 'mfaVerifiedAt'> & { mfaEnabled: boolean; mfaRequiredForRole: boolean }): Promise<SessionInfo> {
   const user = await withPreTenant(
-    async (tx) => (await sql<{ email: string; display_name: string }>`SELECT email, display_name FROM users WHERE id = app.user_id()`.execute(tx)).rows[0],
+    async (tx) =>
+      (
+        await sql<{ email: string; display_name: string; codes: number }>`
+          SELECT email, display_name,
+                 (SELECT count(*)::int FROM mfa_recovery_codes WHERE user_id = app.user_id() AND used_at IS NULL) AS codes
+            FROM users WHERE id = app.user_id()`.execute(tx)
+      ).rows[0],
     { db, userId: s.userId },
   );
   const tenants = await userTenants(db, s.userId);
@@ -111,7 +121,12 @@ export async function sessionInfo(db: Database, p: Platform, s: Pick<AuthState, 
     user: { id: s.userId, email: user?.email ?? '', displayName: user?.display_name ?? '' },
     tenant: list.find((t) => t.id === s.tenantId) ?? null,
     tenants: list,
-    mfa: { enabled: s.mfaEnabled, verified: s.mfaVerifiedAt !== null, enrollmentRequired: s.mfaRequiredForRole && !s.mfaEnabled },
+    mfa: {
+      enabled: s.mfaEnabled,
+      verified: s.mfaVerifiedAt !== null,
+      enrollmentRequired: s.mfaRequiredForRole && !s.mfaEnabled,
+      recoveryCodesRemaining: s.mfaEnabled ? (user?.codes ?? 0) : null,
+    },
     reauthenticatedAt: s.reauthenticatedAt === null ? null : toIso(s.reauthenticatedAt),
     csrfToken: csrfTokenFor(p.config.sessionSecret, s.sessionId),
   };

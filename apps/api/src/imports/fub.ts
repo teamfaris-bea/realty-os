@@ -16,6 +16,7 @@
 // Nothing here writes to the database: the snapshot job stores what it reads (encrypted), and every
 // later step works on that snapshot, never on live FUB (R-IMPORT-1).
 import type { FubCollection } from '@realty/core/import';
+import { isPublicPushEndpoint } from '../auth/devices.js';
 
 export const FUB_COLLECTIONS: readonly FubCollection[] = ['people', 'notes', 'textMessages', 'emails', 'calls', 'users'];
 
@@ -135,14 +136,51 @@ export class FakeFub {
 // ---- real HTTP adapter --------------------------------------------------------------------------------
 
 export interface HttpFubOptions {
-  /** default https://api.followupboss.com/v1 */
+  /** default https://api.followupboss.com/v1; server config only (FUB_BASE_URL), never tenant input */
   baseUrl?: string;
+  /** hosts the base URL may name (FUB_ALLOWED_HOSTS); default FUB's own API host only */
+  allowedHosts?: readonly string[];
   /** FUB registered-system name and key (X-System / X-System-Key headers), when the account requires them */
   system?: { name: string; key: string };
   fetch?: typeof fetch;
   /** per-request timeout, ms (default 30 s) */
   timeoutMs?: number;
 }
+
+/** A FUB base URL or allow-list that must not be used (refused when the connector is built, i.e. at startup). */
+export class FubConfigError extends Error {
+  override readonly name = 'FubConfigError';
+}
+
+export const DEFAULT_FUB_BASE_URL = 'https://api.followupboss.com/v1';
+export const DEFAULT_FUB_ALLOWED_HOSTS: readonly string[] = ['api.followupboss.com'];
+
+const normHost = (h: string) => h.trim().toLowerCase().replace(/\.$/, '');
+
+/**
+ * The FUB API base URL the adapter may call (SSRF guard): https on the default port, no credentials,
+ * no query or fragment, a public dotted DNS name (never an IP literal, localhost or an internal suffix;
+ * the same rule as push endpoints, auth/devices.ts) that is on the allow-list. Returns it without a
+ * trailing slash; throws FubConfigError otherwise. The allow-list entries must be public names too.
+ */
+export function checkFubBaseUrl(raw: string, allowedHosts: readonly string[] = DEFAULT_FUB_ALLOWED_HOSTS): string {
+  const allowed = allowedHosts.map(normHost).filter((h) => h !== '');
+  for (const h of allowed) if (!/^[a-z0-9.-]+$/.test(h) || !isPublicPushEndpoint(`https://${h}/`)) throw new FubConfigError('FUB_ALLOWED_HOSTS must list public DNS names only');
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new FubConfigError('FUB base URL is not a URL');
+  }
+  if (!isPublicPushEndpoint(u.href) || u.search !== '' || u.hash !== '' || raw.includes('?') || raw.includes('#')) {
+    throw new FubConfigError('FUB base URL must be https on the default port, without credentials, query or fragment, naming a public host');
+  }
+  if (!allowed.includes(normHost(u.hostname))) throw new FubConfigError('FUB base URL host is not in FUB_ALLOWED_HOSTS');
+  return u.href.replace(/\/+$/, '');
+}
+
+/** Largest JSON page the adapter reads from the FUB API (a 100-record page is far smaller). */
+export const MAX_API_PAGE_BYTES = 32 * 1024 * 1024;
 
 /** Largest recording the snapshot copies (a one-hour call is ~60 MB as MP3); larger is refused. */
 export const MAX_RECORDING_BYTES = 200 * 1024 * 1024;
@@ -162,6 +200,8 @@ export function recordingTarget(raw: string, relativeTo?: URL): URL | null {
   const host = u.hostname.toLowerCase().replace(/\.$/, '');
   if (host === '' || host.startsWith('[') || host.includes(':') || IPV4.test(host)) return null; // IP literals (WHATWG normalizes 2130706433 to dotted form)
   if (host === 'localhost' || !host.includes('.') || INTERNAL_SUFFIXES.some((s) => host.endsWith(s))) return null;
+  // and the push-endpoint rule (auth/devices.ts): default port only, no hex/octal IP forms, no intranet suffixes
+  if (!isPublicPushEndpoint(u.href)) return null;
   return u;
 }
 
@@ -196,7 +236,7 @@ async function readCapped(res: Response, cap: number): Promise<Uint8Array> {
 
 /** The real FUB v1 adapter (see the header: VERIFY against a live account). */
 export function httpFubConnector(o: HttpFubOptions = {}): FubConnector {
-  const base = (o.baseUrl ?? 'https://api.followupboss.com/v1').replace(/\/+$/, '');
+  const base = checkFubBaseUrl(o.baseUrl ?? DEFAULT_FUB_BASE_URL, o.allowedHosts ?? DEFAULT_FUB_ALLOWED_HOSTS);
   const doFetch = o.fetch ?? fetch;
   return (apiKey) => {
     const headers: Record<string, string> = {
@@ -210,16 +250,26 @@ export function httpFubConnector(o: HttpFubOptions = {}): FubConnector {
     const get = async (url: string): Promise<Response> => {
       let res: Response;
       try {
-        res = await doFetch(url, { headers, signal: AbortSignal.timeout(o.timeoutMs ?? 30_000) });
+        // never follow a redirect: the credential and the response must stay with the configured host
+        res = await doFetch(url, { headers, redirect: 'manual', signal: AbortSignal.timeout(o.timeoutMs ?? 30_000) });
       } catch {
         throw new FubAccessError('FUB_UNAVAILABLE');
       }
       if (res.status === 401 || res.status === 403) throw new FubAccessError('FUB_UNAUTHORIZED', res.status);
-      if (!res.ok) throw new FubAccessError('FUB_UNAVAILABLE', res.status);
+      if (!res.ok) {
+        await res.body?.cancel().catch(() => undefined);
+        throw new FubAccessError('FUB_UNAVAILABLE', res.status); // incl. every 3xx (redirect: 'manual')
+      }
       return res;
     };
     const json = async (url: string): Promise<Record<string, unknown>> => {
-      const body = (await (await get(url)).json().catch(() => null)) as unknown;
+      const bytes = await readCapped(await get(url), MAX_API_PAGE_BYTES);
+      let body: unknown;
+      try {
+        body = JSON.parse(Buffer.from(bytes).toString('utf8'));
+      } catch {
+        body = null;
+      }
       if (body === null || typeof body !== 'object' || Array.isArray(body)) throw new FubAccessError('FUB_BAD_RESPONSE');
       return body as Record<string, unknown>;
     };

@@ -52,7 +52,7 @@ describe('R-PERM-14 Owner/Admin MFA', () => {
     const o = await h.signup({ mfa: false });
     const s = await o.get('/api/auth/session');
     expect(s.statusCode).toBe(200);
-    expect(s.json().mfa).toEqual({ enabled: false, verified: false, enrollmentRequired: true });
+    expect(s.json().mfa).toEqual({ enabled: false, verified: false, enrollmentRequired: true, recoveryCodesRemaining: null });
     const blocked = await o.post('/api/push-subscriptions', sub);
     expect(blocked.statusCode).toBe(403);
     expect(code(blocked)).toBe('MFA_ENROLLMENT_REQUIRED');

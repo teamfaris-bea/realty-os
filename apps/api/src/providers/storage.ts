@@ -5,7 +5,7 @@
 // - MemoryStorage: tests and STORAGE_PROVIDER=fake.
 // - LocalFsStorage: dev ("local encrypted FS"). An S3-compatible adapter for production needs a
 //   bucket and credentials and is not built in Phase 1 (same interface).
-import { mkdir, readFile, rm, stat, writeFile, rename } from 'node:fs/promises';
+import { lstat, mkdir, readFile, realpath, rm, stat, writeFile, rename } from 'node:fs/promises';
 import { dirname, resolve, sep } from 'node:path';
 import type { ObjectStorage } from './types.js';
 
@@ -15,8 +15,11 @@ export class StorageKeyError extends Error {
   override readonly name = 'StorageKeyError';
 }
 
+/** Longest key accepted (the S3 object key limit). */
+export const MAX_STORAGE_KEY_LENGTH = 1024;
+
 export function assertStorageKey(key: string): void {
-  if (!KEY_RE.test(key) || key.split('/').some((p) => p === '.' || p === '..')) {
+  if (key.length > MAX_STORAGE_KEY_LENGTH || !KEY_RE.test(key) || key.split('/').some((p) => p === '.' || p === '..')) {
     throw new StorageKeyError('storage key must be tenants/{tenant_id}/... without traversal');
   }
 }
@@ -53,28 +56,53 @@ export class LocalFsStorage implements ObjectStorage {
     if (!p.startsWith(this.root + sep)) throw new StorageKeyError('storage key escapes the root');
     return p;
   }
+  /**
+   * The key's path, checked after resolving symlinks: the deepest existing directory on it must really
+   * be inside the root (a symlinked directory under the root cannot redirect a write, a mkdir or a
+   * read), and the object itself may not be a symlink.
+   */
+  private async realPath(key: string): Promise<string> {
+    const p = this.path(key);
+    let dir = dirname(p);
+    let real: string | null = null;
+    while (real === null) {
+      try {
+        real = await realpath(dir);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+        if (dir === this.root) return p; // nothing exists yet: nothing to follow
+        dir = dirname(dir);
+      }
+    }
+    const root = await realpath(this.root);
+    if (real !== root && !real.startsWith(root + sep)) throw new StorageKeyError('storage key escapes the root');
+    const st = await lstat(p).catch(() => null);
+    if (st?.isSymbolicLink()) throw new StorageKeyError('storage object is a symlink');
+    return p;
+  }
   async put(key: string, bytes: Uint8Array, opts: { contentType: string }) {
     void opts; // content type lives in stored_objects; the file holds ciphertext only
-    const p = this.path(key);
-    await mkdir(dirname(p), { recursive: true, mode: 0o700 });
+    await mkdir(dirname(await this.realPath(key)), { recursive: true, mode: 0o700 });
+    const p = await this.realPath(key);
     const tmp = `${p}.tmp-${process.pid}`;
     await writeFile(tmp, bytes, { mode: 0o600 });
     await rename(tmp, p);
   }
   async get(key: string) {
     try {
-      return new Uint8Array(await readFile(this.path(key)));
+      return new Uint8Array(await readFile(await this.realPath(key)));
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null;
       throw e;
     }
   }
   async delete(key: string) {
-    await rm(this.path(key), { force: true });
+    await rm(await this.realPath(key), { force: true });
   }
   async exists(key: string) {
+    const p = await this.realPath(key); // a bad key throws StorageKeyError, never reads as "absent"
     try {
-      await stat(this.path(key));
+      await stat(p);
       return true;
     } catch {
       return false;
