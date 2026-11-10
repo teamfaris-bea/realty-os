@@ -93,6 +93,7 @@ export const ERROR_STATUS = {
   RECORDING_UNAVAILABLE: 409, // not stored (pending copy, quarantined, shredded)
   NUMBER_UNAVAILABLE: 409, // NUMBER_QUARANTINED / already live elsewhere (R-TEN-8)
   PROVIDER_UNAVAILABLE: 503, // the provider rejected or could not be reached for an admin action
+  AGENT_PHONE_MISSING: 422, // tap-to-call bridges the agent's verified phone first; none is set
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

@@ -38,7 +38,8 @@ export interface OutboundIntent {
 
 /** A gate decision as the API returns it (gate outcomes are not errors, CONVENTIONS §7). */
 export interface DecisionView {
-  id: string;
+  /** null for a preview that allowed (only blocking previews are stored) */
+  id: string | null;
   outcome: GateDecision['outcome'];
   reasons: string[];
   explanation: string;
