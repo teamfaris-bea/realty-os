@@ -1,0 +1,14 @@
+{
+  "name": "realty-os",
+  "private": true,
+  "packageManager": "pnpm@10.0.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "db:migrate": "pnpm --filter @realty/db migrate",
+    "dev:api": "pnpm --filter @realty/api dev",
+    "dev:web": "pnpm --filter @realty/web dev"
+  }
+}
