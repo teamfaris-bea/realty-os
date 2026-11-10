@@ -22,8 +22,6 @@ import {
 import { type Instant, instantFromDate } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import { hint } from './dispatch.js';
-import { dealOrAppointmentContext } from './repos/contacts.js';
-import * as g from './repos/gate.js';
 import * as rr from './repos/reachability.js';
 
 /** Where an opt-out came from, in the words the web needs to say it. */
@@ -166,32 +164,49 @@ export function defaultPoint<P extends { kind: 'phone' | 'email'; status: string
   return points.find((p) => p.kind === kind && p.status === 'active') ?? points.find((p) => p.kind === kind) ?? null;
 }
 
-/** BUILD: the reachability summary of one contact, read in the caller's transaction (RLS-scoped). */
-export async function reachabilityOf(tx: Tx, contactId: string, now: Instant): Promise<ReachabilityView> {
-  const pts = await g.contactPoints(tx, contactId);
-  const hmacs = [...new Set(pts.map((p) => p.hmac))];
-  const [consent, sups, conv, dealCtx] = [await rr.consentStateFor(tx, hmacs), await rr.suppressionsFor(tx, hmacs), await g.conversationOf(tx, contactId), await dealOrAppointmentContext(tx, contactId)];
+/** The reachability summary of one contact, read in the caller's transaction (RLS-scoped); null when its detail is not visible. */
+export async function reachabilityOf(tx: Tx, contactId: string, now: Instant): Promise<ReachabilityView | null> {
+  return (await reachabilityFor(tx, [contactId], now)).get(contactId) ?? null;
+}
+
+/**
+ * The summaries of many contacts (the feed's cards) in a fixed number of queries, whatever the count.
+ * Contacts whose detail the caller does not see are left out (never a hint that they exist).
+ */
+export async function reachabilityFor(tx: Tx, contactIds: readonly string[], now: Instant): Promise<Map<string, ReachabilityView>> {
+  const facts = await rr.purposeFacts(tx, [...new Set(contactIds)]);
+  const ids = [...facts.keys()];
+  const byContact = await rr.pointsForContacts(tx, ids);
+  const hmacs = [...new Set([...byContact.values()].flat().map((p) => p.hmac))];
+  const consent = await rr.consentStateFor(tx, hmacs);
+  const sups = await rr.suppressionsFor(tx, hmacs);
   const events = await rr.revokeEvents(tx, consent.filter((r) => r.status === 'revoked' && r.basisEventId !== null).map((r) => r.basisEventId!));
   const supById = new Map(sups.map((s) => [s.id, s]));
-  const purposeNow = classifyHumanPurpose({ lastInboundAt: conv?.lastInboundAt ?? null, dealOrAppointmentContext: dealCtx, now });
-  const input = {
-    points: pts.map((p): ReachPoint => ({ id: p.id, kind: p.kind, addressHmac: p.hmac, status: p.status, lineType: p.lineType })),
-    consent,
-    suppressions: sups.map((s): ReachSuppression => ({ id: s.id, addressHmac: s.addressHmac, channel: s.channel, reason: s.reason, liftedAt: s.liftedAt ? instantFromDate(s.liftedAt) : null })),
-  };
-  const channel = (ch: 'sms' | 'voice' | 'email'): ChannelReachView => {
-    const kind = ch === 'email' ? 'email' : 'phone';
-    const points = input.points.filter((p) => p.kind === kind).map((p): PointReachView => {
-      const blocks = { informational: pointBlocks(input, p, ch, 'informational'), marketing: pointBlocks(input, p, ch, 'marketing') };
-      const reasons = reasonsFor(blocks, p, events, supById);
-      const address = pts.find((x) => x.id === p.id)!.address;
-      return { pointId: p.id, addressHint: hint(address), blocked: blocks[purposeNow].length > 0, reasons };
-    });
-    const def = defaultPoint(pts, ch);
-    const dp = def ? points.find((p) => p.pointId === def.id) ?? null : null;
-    return { hasAddress: points.length > 0, defaultPointId: def?.id ?? null, blocked: dp?.blocked ?? false, reasons: dp ? dp.reasons.filter((r) => r.purposes.includes(purposeNow)) : [], points };
-  };
-  return { contactId, purposeNow, channels: { sms: channel('sms'), voice: channel('voice'), email: channel('email') } };
+  const out = new Map<string, ReachabilityView>();
+  for (const contactId of ids) {
+    const pts = byContact.get(contactId) ?? [];
+    const f = facts.get(contactId)!;
+    const purposeNow = classifyHumanPurpose({ lastInboundAt: f.lastInboundAt ? instantFromDate(f.lastInboundAt) : null, dealOrAppointmentContext: f.dealOrAppointmentContext, now });
+    const own = new Set(pts.map((p) => p.hmac));
+    const input = {
+      points: pts.map((p): ReachPoint => ({ id: p.id, kind: p.kind, addressHmac: p.hmac, status: p.status, lineType: p.lineType })),
+      consent: consent.filter((r) => own.has(r.addressHmac)),
+      suppressions: sups.filter((s) => own.has(s.addressHmac)).map((s): ReachSuppression => ({ id: s.id, addressHmac: s.addressHmac, channel: s.channel, reason: s.reason, liftedAt: s.liftedAt ? instantFromDate(s.liftedAt) : null })),
+    };
+    const channel = (ch: 'sms' | 'voice' | 'email'): ChannelReachView => {
+      const kind = ch === 'email' ? 'email' : 'phone';
+      const points = input.points.filter((p) => p.kind === kind).map((p): PointReachView => {
+        const blocks = { informational: pointBlocks(input, p, ch, 'informational'), marketing: pointBlocks(input, p, ch, 'marketing') };
+        const address = pts.find((x) => x.id === p.id)!.address;
+        return { pointId: p.id, addressHint: hint(address), blocked: blocks[purposeNow].length > 0, reasons: reasonsFor(blocks, p, events, supById) };
+      });
+      const def = defaultPoint(pts, ch);
+      const dp = def ? (points.find((p) => p.pointId === def.id) ?? null) : null;
+      return { hasAddress: points.length > 0, defaultPointId: def?.id ?? null, blocked: dp?.blocked ?? false, reasons: dp ? dp.reasons.filter((r) => r.purposes.includes(purposeNow)) : [], points };
+    };
+    out.set(contactId, { contactId, purposeNow, channels: { sms: channel('sms'), voice: channel('voice'), email: channel('email') } });
+  }
+  return out;
 }
 
 // ---- why a message was not sent ----------------------------------------------------------------

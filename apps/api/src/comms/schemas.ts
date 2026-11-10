@@ -76,13 +76,13 @@ const ChannelReachSchema = z.object({
   reasons: z.array(ReachReasonSchema),
   points: z.array(z.object({ pointId: z.uuid(), addressHint: z.string(), blocked: z.boolean(), reasons: z.array(ReachReasonSchema) })),
 });
-export const ReachabilityResponse = z.object({
-  reachability: z.object({
-    contactId: z.uuid(),
-    purposeNow: z.enum(['marketing', 'informational']),
-    channels: z.object({ sms: ChannelReachSchema, voice: ChannelReachSchema, email: ChannelReachSchema }),
-  }),
+const ReachabilitySchema = z.object({
+  contactId: z.uuid(),
+  purposeNow: z.enum(['marketing', 'informational']),
+  channels: z.object({ sms: ChannelReachSchema, voice: ChannelReachSchema, email: ChannelReachSchema }),
 });
+export const ReachabilityResponse = z.object({ reachability: ReachabilitySchema });
+export const ReachabilityManyResponse = z.object({ reachability: z.array(ReachabilitySchema) });
 
 export const CallBody = z.strictObject({ toPointId: z.uuid().optional() });
 export const CallResponse = z.object({
@@ -186,6 +186,7 @@ export const IdentityResponse = z.object({
 /** Every response schema of the module (snapshot-tested: no confidence*, no tenant id). */
 export const COMMS_RESPONSE_SCHEMAS = {
   ReachabilityResponse,
+  ReachabilityManyResponse,
   ComposeResponse,
   PreviewResponse,
   CallResponse,

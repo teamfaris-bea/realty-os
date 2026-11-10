@@ -233,3 +233,24 @@ describe('role visibility (R-PERM-1, R-PERM-5)', () => {
     expect(raw).not.toMatch(/tenant|confidence/i);
   });
 });
+
+describe('GET /reachability (the feed: many contacts in one request)', () => {
+  it('returns the same summary as the single route for each visible contact, and silently leaves out contacts the caller does not see in detail', async () => {
+    const [a, b] = w.agents as [TestClient, TestClient];
+    const mobile = randomPhone();
+    const mine = await contactWith(a, [mobile], [randomEmail()]);
+    await inboundSms(h, mobile, w.mainNumber, 'STOP');
+    const mine2 = await contactWith(a, [randomPhone()], []);
+    const theirs = await contactWith(b, [randomPhone()], []);
+    const r = await call<{ reachability: Reach[] }>(a, 'GET', `/reachability?contactIds=${[mine, mine2, theirs, randomUUID()].join(',')}`);
+    expect(r.status).toBe(200);
+    expect(r.body.reachability.map((x) => x.contactId).sort()).toEqual([mine, mine2].sort());
+    for (const x of r.body.reachability) expect(x).toEqual((await reach(a, x.contactId)).body.reachability);
+    expect(r.body.reachability.find((x) => x.contactId === mine)!.channels.sms.blocked).toBe(true);
+  });
+  it('validates the id list (1 to 50 uuids)', async () => {
+    const a = w.agents[0]!;
+    expect((await call(a, 'GET', '/reachability?contactIds=nope')).status).toBe(422);
+    expect((await call(a, 'GET', `/reachability?contactIds=${Array.from({ length: 51 }, () => randomUUID()).join(',')}`)).status).toBe(422);
+  });
+});

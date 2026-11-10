@@ -6,6 +6,7 @@ import type { ConsentStateRow, SuppressionReason } from '@realty/core/compliance
 import { instantFromDate } from '@realty/core/foundation';
 import { type Tx, hmacBytes } from '@realty/db';
 import { sql } from 'kysely';
+import type { PointRow } from './gate.js';
 
 /** consent_state rows for any of these addresses, every channel and purpose. */
 export async function consentStateFor(tx: Tx, hmacs: readonly string[]): Promise<ConsentStateRow[]> {
@@ -164,4 +165,35 @@ export async function messageStatusFacts(tx: Tx, ids: readonly string[]): Promis
     SELECT id, status, status_reason, channel, initiator, initiated_by_user_id, provider_error_code
       FROM messages WHERE tenant_id = app.tenant_id() AND id = ANY (${[...ids]}::uuid[])`.execute(tx);
   return new Map(r.rows.map((x) => [x.id, { id: x.id, status: x.status, statusReason: x.status_reason, channel: x.channel, initiator: x.initiator, initiatedByUserId: x.initiated_by_user_id, providerErrorCode: x.provider_error_code }]));
+}
+
+/** The points of many contacts (removed ones excluded), in the order g.contactPoints gives for one. */
+export async function pointsForContacts(tx: Tx, contactIds: readonly string[]): Promise<Map<string, PointRow[]>> {
+  const out = new Map<string, PointRow[]>(contactIds.map((id) => [id, []]));
+  if (contactIds.length === 0) return out;
+  const r = await sql<{ id: string; contact_id: string; kind: 'phone' | 'email'; address: string; address_hmac: Buffer; status: PointRow['status']; line_type: PointRow['lineType']; timezone: string | null; is_primary: boolean }>`
+    SELECT id, contact_id, kind, address, address_hmac, status, line_type, timezone, is_primary FROM contact_points
+     WHERE tenant_id = app.tenant_id() AND contact_id = ANY (${[...contactIds]}::uuid[]) AND removed_at IS NULL
+     ORDER BY contact_id, is_primary DESC, created_at, id`.execute(tx);
+  for (const x of r.rows) out.get(x.contact_id)?.push({ id: x.id, contactId: x.contact_id, kind: x.kind, address: x.address, hmac: Buffer.from(x.address_hmac).toString('hex'), status: x.status, lineType: x.line_type, timezone: x.timezone, isPrimary: x.is_primary });
+  return out;
+}
+
+/**
+ * Of these contacts, the ones whose detail the caller sees, with what classifies a human message's purpose
+ * now (repos/contacts.dealOrAppointmentContext and the conversation's last inbound, batched).
+ */
+export async function purposeFacts(tx: Tx, contactIds: readonly string[]): Promise<Map<string, { lastInboundAt: Date | null; dealOrAppointmentContext: boolean }>> {
+  if (contactIds.length === 0) return new Map();
+  const r = await sql<{ id: string; last_inbound_at: Date | null; ctx: boolean }>`
+    SELECT c.id, cv.last_inbound_at,
+           EXISTS (SELECT 1 FROM deals d WHERE d.tenant_id = c.tenant_id AND d.primary_contact_id = c.id AND d.stage NOT IN ('closed','lost'))
+        OR EXISTS (SELECT 1 FROM deal_contacts dc JOIN deals d ON d.tenant_id = dc.tenant_id AND d.id = dc.deal_id
+                    WHERE dc.tenant_id = c.tenant_id AND dc.contact_id = c.id AND d.stage NOT IN ('closed','lost'))
+        OR EXISTS (SELECT 1 FROM appointments a WHERE a.tenant_id = c.tenant_id AND a.contact_id = c.id
+                    AND a.status NOT IN ('canceled') AND a.starts_at > now() - interval '7 days') AS ctx
+      FROM contacts c LEFT JOIN conversations cv ON cv.tenant_id = c.tenant_id AND cv.contact_id = c.id
+     WHERE c.tenant_id = app.tenant_id() AND c.id = ANY (${[...contactIds]}::uuid[]) AND c.deleted_at IS NULL
+       AND app.contact_detail_visible(c.tenant_id, c.id)`.execute(tx);
+  return new Map(r.rows.map((x) => [x.id, { lastInboundAt: x.last_inbound_at, dealOrAppointmentContext: x.ctx }]));
 }
