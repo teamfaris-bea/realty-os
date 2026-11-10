@@ -129,6 +129,6 @@ describe('withTenantTx', () => {
         await sql`INSERT INTO notes (tenant_id, id, contact_id, author_user_id, body)
                   VALUES (${a.tenantId}, ${uuid()}, ${aContact}, ${a.owner.id}, 'x')`.execute(tx);
       }, { db: h.app }),
-    ).rejects.toThrow(/row-level security|violates/);
+    ).rejects.toThrow(/row-level security|violates|SUPPORT_READ_ONLY/); // 0016: the statement trigger refuses first
   });
 });
