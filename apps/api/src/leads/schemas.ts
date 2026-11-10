@@ -2,6 +2,7 @@
 // (no confidence* fields, no tenant id fields: R-AST-13, R-TEN-3). Input schemas are strict, so an
 // extra `tenant_id` (or anything else) is refused with 422 (E51).
 import { z } from 'zod';
+import { ReachReasonSchema } from '../comms/schemas.js';
 
 const Iso = z.string();
 const Id = z.uuid();
@@ -170,6 +171,12 @@ export const TimelineItem = z.object({
   provenance: z.string(),
   /** messages only: the delivery status (sent, delivered, scheduled, blocked, failed, ...); null otherwise */
   status: z.string().nullable(),
+  /** messages only: messages.status_reason (why it was blocked, failed, canceled or is held); null otherwise */
+  statusReason: z.string().nullable(),
+  /** messages only: the provider's error code on a failed or undelivered message */
+  providerErrorCode: z.string().nullable(),
+  /** blocked messages only: the opt-out or suppression the send-time decision rested on, with its evidence */
+  blockedBy: ReachReasonSchema.nullable(),
 });
 export const TimelineResponse = z.object({ items: z.array(TimelineItem), nextCursor: z.string().nullable() });
 

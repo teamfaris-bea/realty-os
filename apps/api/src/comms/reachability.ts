@@ -242,3 +242,18 @@ export async function blockedReasonsFor(tx: Tx, messageIds: readonly string[]): 
   }
   return out;
 }
+
+/** What the thread shows under an outbound message that did not simply go out (lane item 3/4). */
+export interface MessageStatusExtras {
+  statusReason: string | null;
+  providerErrorCode: string | null;
+  blockedBy: ReasonView | null;
+}
+
+/** For a page of timeline items: the message ids' status reasons and, for blocked ones, the opt-out evidence. */
+export async function messageStatusExtras(tx: Tx, messageIds: readonly string[]): Promise<Map<string, MessageStatusExtras>> {
+  const facts = await rr.messageStatusFacts(tx, messageIds);
+  const blocked = [...facts.values()].filter((m) => m.status === 'blocked').map((m) => m.id);
+  const why = await blockedReasonsFor(tx, blocked);
+  return new Map([...facts.values()].map((m) => [m.id, { statusReason: m.statusReason, providerErrorCode: m.providerErrorCode, blockedBy: why.get(m.id) ?? null }]));
+}

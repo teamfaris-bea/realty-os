@@ -11,6 +11,7 @@ import { type Channel, type NumberFacts, chooseSender, classifyHumanPurpose } fr
 import type { ContactId, IdGenerator, Instant, TenantId, UserActor } from '@realty/core/foundation';
 import { at, toIso } from '@realty/core/foundation';
 import { type Tx, lockContact } from '@realty/db';
+import { audit, redactDiff, redactSnapshot } from '../audit.js';
 import { AppError } from '../errors.js';
 import { COMMS_DISPATCH } from '../worker/contracts.js';
 import { enqueueTyped } from '../worker/registry.js';
@@ -226,6 +227,8 @@ export async function sendExisting(actor: UserActor, messageId: string, deps: Co
     if (!m || m.initiator !== 'human' || m.initiatedByUserId !== actor.userId) throw new AppError('NOT_FOUND');
     if (!(await contactFacts(tx, m.contactId))) throw new AppError('NOT_FOUND');
     if (m.status !== 'queued' && m.status !== 'scheduled') throw new AppError('MESSAGE_NOT_SENDABLE', { status: m.status });
+    // the human tap is the audited decision (R-AUDIT-5); what dispatch then does is on the message itself
+    await audit(tx, actor, { action: 'message.held_send', entity: { type: 'message', id: m.id }, changes: redactSnapshot({ status: m.status, statusReason: m.statusReason }, { entity: 'message' }), reason: m.statusReason ?? 'RETAP' });
   });
   const r = await dispatchOutbound(messageId, deps, { tenantId: actor.tenantId, actor, retap: true });
   return { message: await viewOf(actor, messageId, deps), decision: 'decision' in r ? r.decision : null, result: r.kind };
@@ -240,6 +243,7 @@ export async function cancelMessage(actor: UserActor, messageId: string, deps: C
     const cur = await msgs.lockMessage(tx, messageId);
     if (!cur || (cur.status !== 'queued' && cur.status !== 'scheduled')) throw new AppError('MESSAGE_NOT_SENDABLE', { status: cur?.status ?? 'missing' });
     await msgs.markCanceled(tx, messageId, 'CANCELED_BY_SENDER', null);
+    await audit(tx, actor, { action: 'message.held_cancel', entity: { type: 'message', id: messageId }, changes: redactDiff({ status: cur.status }, { status: 'canceled' }, { entity: 'message' }), reason: cur.statusReason ?? 'CANCELED_BY_SENDER' });
     return messageView((await msgs.messageById(tx, messageId))!);
   });
 }
