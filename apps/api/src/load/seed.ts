@@ -1,0 +1,55 @@
+// pnpm load:seed [--contacts 250000] [--db realty_load]
+// Recreates the load database, migrates it, bulk-loads the synthetic data (generate.ts), runs the real
+// exception recompute once per tenant (so the exception queue has its derived rows), and ANALYZEs.
+import { createDatabase } from '@realty/db';
+import { hashPassword } from '../auth/password.js';
+import { localKek } from '../crypto/kek.js';
+import { recomputeAll, loadUrls, recreateDatabase } from './db.js';
+import { LOAD_PASSWORD, defaultSpec, generateLoad, loadUuid } from './generate.js';
+
+export function argValue(args: readonly string[], name: string): string | undefined {
+  const i = args.indexOf(`--${name}`);
+  if (i >= 0) return args[i + 1];
+  const eq = args.find((a) => a.startsWith(`--${name}=`));
+  return eq?.slice(name.length + 3);
+}
+
+export function kekFromEnv(env: NodeJS.ProcessEnv = process.env) {
+  const raw = Buffer.from(env.KEK_BASE64 ?? '', 'base64');
+  if (raw.length !== 32) throw new Error('KEK_BASE64 must be a 32-byte base64 key (run pnpm db:setup)');
+  return localKek(new Uint8Array(raw), env.KEK_REF ?? 'local-kek:v1');
+}
+
+export async function seedLoad(o: { db: string; contacts: number; log: (s: string) => void }) {
+  const urls = loadUrls(o.db);
+  await recreateDatabase(o.db, urls, o.log);
+  const spec = defaultSpec(o.contacts, await hashPassword(LOAD_PASSWORD));
+  const gen = await generateLoad(urls.ownerUrl, kekFromEnv(), spec, o.log);
+  const database = createDatabase({ url: urls.appUserUrl, max: 2, applicationName: 'load-seed', statementTimeoutMs: 600_000 });
+  try {
+    const rec = await recomputeAll(database, spec.tenants.map((t) => loadUuid(t.slug, 'tenant')));
+    for (const r of rec) o.log(`exception recompute ${r.tenantId}: ${r.upserted} items in ${r.ms.toFixed(0)} ms`);
+    return { spec, gen, recompute: rec, urls };
+  } finally {
+    await database.close();
+  }
+}
+
+const isMain = process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/').split('/').pop()!);
+if (isMain) {
+  const args = process.argv.slice(2);
+  const contacts = Number(argValue(args, 'contacts') ?? 250_000);
+  const db = argValue(args, 'db') ?? 'realty_load';
+  if (!Number.isInteger(contacts) || contacts < 100) throw new Error('--contacts must be an integer >= 100');
+  const t0 = Date.now();
+  seedLoad({ db, contacts, log: (s) => console.log(s) })
+    .then((r) => {
+      console.log(JSON.stringify(r.gen.rows, null, 2));
+      console.log(`load:seed done in ${((Date.now() - t0) / 1000).toFixed(0)} s (bulk load ${r.gen.seconds.toFixed(0)} s), anchor ${r.gen.anchor.toISOString()}`);
+      console.log(`log in as agent01@load-big.load.test / ${LOAD_PASSWORD}`);
+    })
+    .catch((e: unknown) => {
+      console.error(e);
+      process.exitCode = 1;
+    });
+}
