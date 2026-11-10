@@ -141,6 +141,9 @@ describe('click-to-call announcement and recordings (Twilio shapes)', () => {
     const ans = await twilio(answerPath, { AccountSid: s.sid, CallSid: child, ParentCallSid: placed.providerRef, From: w.mainNumber, To: c.phone, Direction: 'outbound-dial', CallStatus: 'in-progress' }, s.token);
     expect(ans.statusCode).toBe(200);
     expect(ans.body).toMatch(/<Say>This call may be recorded/);
+    // a retried fetch of the same answer URL still announces (and changes nothing else)
+    const again = await twilio(answerPath, { AccountSid: s.sid, CallSid: child, ParentCallSid: placed.providerRef, From: w.mainNumber, To: c.phone, Direction: 'outbound-dial', CallStatus: 'in-progress' }, s.token);
+    expect(again.body).toMatch(/<Say>This call may be recorded/);
     const row = (await h.su.query('SELECT status, recording_mode, recording_announced_at FROM calls WHERE id = $1', [r.body.callId])).rows[0]!;
     expect(row.status).toBe('in_progress');
     expect(row.recording_mode).toBe('announced_all_parties');

@@ -26,7 +26,8 @@ append-only ledger). Every outbound text, email or call goes through one dispatc
 The authoritative design is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md),
 [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) (tables, RLS and the numbered rules `R-*`),
 [`docs/BUILD_PLAN.md`](docs/BUILD_PLAN.md) and [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md) (where code
-goes and how to test it).
+goes and how to test it). Running it for real teams (vendor adapters, container build, DNS, backups, key
+rotation) is in [`docs/DEPLOY.md`](docs/DEPLOY.md).
 
 ## Setup
 

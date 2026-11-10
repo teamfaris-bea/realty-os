@@ -195,18 +195,19 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
     const ref = verifySignedRef(p.config.sessionSecret, 'call-answer', req.query.c);
     if (!parent || !ref) throw new AppError('VALIDATION_FAILED');
     const tenantId = req.webhookTenantId === undefined || req.webhookTenantId === ref.tenantId ? ref.tenantId : null;
-    const announce = await run(req, 'telephony', `answer:${parent}`, tenantId, { sid: parent }, () =>
-      withTenantTx(systemActor(tenantId!, 'provider'), async (tx) => {
-        const c = await sql<{ announce: boolean }>`
-          SELECT (recording_decision->>'announce')::boolean IS TRUE AND recording_mode <> 'off' AS announce FROM calls
-           WHERE tenant_id = app.tenant_id() AND id = ${ref.id} AND provider_call_ref = ${parent}`.execute(tx);
-        return c.rows[0]?.announce ?? null;
-      }, { db: p.db }),
-    );
-    if (announce === true || announce === false) {
+    // what to play depends only on the call (so a retried fetch still announces); the state change runs once
+    const announce = tenantId
+      ? await withTenantTx(systemActor(tenantId, 'provider'), async (tx) => {
+          const c = await sql<{ announce: boolean }>`
+            SELECT (recording_decision->>'announce')::boolean IS TRUE AND recording_mode <> 'off' AS announce FROM calls
+             WHERE tenant_id = app.tenant_id() AND id = ${ref.id} AND provider_call_ref = ${parent}`.execute(tx);
+          return c.rows[0]?.announce ?? null;
+        }, { db: p.db })
+      : null;
+    await run(req, 'telephony', `answer:${parent}`, announce === null ? null : tenantId, { sid: parent }, async () => {
       // the announcement TwiML is handed to the provider now and plays before the legs are bridged
       await applyCallStatus(systemActor(tenantId!, 'provider'), { providerCallRef: parent, status: 'in_progress', ...(announce ? { announcement: 'played' as const } : {}), occurredAt: p.clock.now() }, depsFromPlatform(p));
-    }
+    });
     reply.header('content-type', 'text/xml');
     return announcementTwiml(announce === true ? RECORDING_ANNOUNCEMENT : null);
   });
