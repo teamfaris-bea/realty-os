@@ -184,6 +184,19 @@ export const PondCardsResponse = z.object({
 const Cents = z.number().int().min(0).max(1_000_000_000_00);
 const DetailValue = z.union([z.string().max(200), z.number(), z.boolean()]);
 
+/**
+ * The exact consent language the person saw (R-CONSENT-4, E38). Stored verbatim in
+ * consent_disclosures (sha256-verified); `namesSeller` is the entity the text names. Scope defaults to
+ * every channel and both purposes when the source does not say (history only since D1; VERIFY WITH
+ * COUNSEL). Never carries a tenant id (strict).
+ */
+export const ConsentDisclosureInput = z.strictObject({
+  text: z.string().min(1).max(10_000).refine((s) => s.trim() !== '', { message: 'blank' }),
+  namesSeller: z.string().min(1).max(300).refine((s) => s.trim() !== '', { message: 'blank' }),
+  channels: z.array(z.enum(['sms', 'voice', 'email'])).min(1).max(3).optional(),
+  purposes: z.array(z.enum(['marketing', 'informational'])).min(1).max(2).optional(),
+});
+
 /** What a lead source posts (portal, website form, ads). Identity comes from the URL token only. */
 export const IntakeBody = z.strictObject({
   externalId: z.string().trim().min(1).max(200).optional(),
@@ -202,6 +215,7 @@ export const IntakeBody = z.strictObject({
   campaignRef: z.string().max(200).optional(),
   adRef: z.string().max(200).optional(),
   sourceDetail: z.record(z.string().regex(/^[A-Za-z0-9_.-]{1,64}$/), DetailValue).optional(),
+  consentDisclosure: ConsentDisclosureInput.optional(),
 });
 
 export const IntakeResponse = z.object({

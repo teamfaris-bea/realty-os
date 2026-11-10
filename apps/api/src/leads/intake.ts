@@ -22,6 +22,10 @@
 //   6 the 60-second first response job (R-AST-16) is enqueued in this transaction for a new contact;
 //     api/assistant's handler decides at send time whether anything may go out (approved playbook,
 //     speed_to_lead_reply enabled, the lead has not opted out) and never counts as a touch (R-AST-15).
+//   7 E38 / R-CONSENT-4: the consent language the person saw (the body's `consentDisclosure`, else the
+//     source's configured disclosure) is stored and cited by the inquiry, and its grants are recorded
+//     in the consent ledger (intakeConsent.ts) for new_contact / attached / reinquiry, never for a
+//     duplicate. History only since D1: it changes nobody's sendability and never lifts an opt-out.
 import { createHash, randomBytes } from 'node:crypto';
 import { sha256Hex } from '@realty/core/compliance';
 import type { ContactId, IdGenerator, Instant, LeadSourceId, SystemActor, TenantId } from '@realty/core/foundation';
@@ -50,7 +54,8 @@ import { systemActor } from '../worker/systemActor.js';
 import { leadsTx, platformOf } from './common.js';
 import * as contacts from './repos/contacts.js';
 import * as repo from './repos/intake.js';
-import { IntakeBody, IntakeResponse, LeadSourceCreatedResponse, LeadSourcesResponse } from './schemas.js';
+import { disclosureSourceKind, recordInquiryConsent, storeDisclosure } from './intakeConsent.js';
+import { ConsentDisclosureInput, IntakeBody, IntakeResponse, LeadSourceCreatedResponse, LeadSourcesResponse } from './schemas.js';
 
 export type InquiryOutcome = 'new_contact' | 'attached' | 'reinquiry' | 'duplicate_ignored';
 
@@ -210,7 +215,7 @@ async function ingestInTx(tx: Tx, actor: SystemActor, i: InquiryInput, now: Inst
   }
   const rawPayloadEnc = async (inquiryId: string) =>
     envelope.inTx(tx, actor.tenantId).encrypt(actor.tenantId, { table: 'lead_inquiries', column: 'raw_payload_enc', rowId: inquiryId }, Buffer.from(JSON.stringify({ ...i, leadSourceId: undefined })));
-  const inquiryRow = async (inquiryId: string, contactId: string, outcome: repo.InquiryInsert['outcome']): Promise<repo.InquiryInsert> => ({
+  const inquiryRow = async (inquiryId: string, contactId: string, outcome: repo.InquiryInsert['outcome'], consentDisclosureId: string | null = source.consent_disclosure_id): Promise<repo.InquiryInsert> => ({
     id: inquiryId,
     contactId,
     leadSourceId: source.id,
@@ -225,7 +230,7 @@ async function ingestInTx(tx: Tx, actor: SystemActor, i: InquiryInput, now: Inst
     campaignRef: i.campaignRef ?? null,
     adRef: i.adRef ?? null,
     sourceDetail: i.sourceDetail ?? {},
-    consentDisclosureId: source.consent_disclosure_id,
+    consentDisclosureId,
     rawPayloadEnc: await rawPayloadEnc(inquiryId),
     fingerprint,
     outcome,
@@ -260,6 +265,18 @@ async function ingestInTx(tx: Tx, actor: SystemActor, i: InquiryInput, now: Inst
   const addCandidates = async (contactId: string) => {
     for (const d of decision.duplicates) await contacts.addDuplicateCandidate(tx, ids.next(), contactId, d.contactId, d.reason);
   };
+  // 7 E38: the disclosure this inquiry carries (stored once per text), and its ledger grants
+  const disclosure = i.consentDisclosure
+    ? await storeDisclosure(tx, ids, i.consentDisclosure, disclosureSourceKind(source.kind))
+    : source.consent_disclosure_id
+      ? await repo.disclosureById(tx, source.consent_disclosure_id)
+      : null;
+  const recordConsent = async (contactId: string, inquiryId: string) => {
+    if (!disclosure) return;
+    // the person acted when they submitted; never a future instant (a future grant would not count yet)
+    const occurredAt = Math.min(receivedAt, at) as Instant;
+    await recordInquiryConsent(tx, { ids, disclosure, occurredAt, contactId, inquiryId, leadSourceId: source.id, phones: idents.phones, emails: idents.emails });
+  };
   const summary = cardSummary({ inquiryType, postalCode: i.postalCode ?? null, priceMinCents: i.priceMinCents ?? null, priceMaxCents: i.priceMaxCents ?? null });
 
   if (decision.kind === 'create') {
@@ -284,7 +301,8 @@ async function ingestInTx(tx: Tx, actor: SystemActor, i: InquiryInput, now: Inst
     });
     if (!res.outcome.ok) throw new AppError('INTERNAL_ERROR');
     await addPoints(contactId);
-    await repo.insertInquiry(tx, await inquiryRow(inquiryId, contactId, 'new_contact'));
+    await repo.insertInquiry(tx, await inquiryRow(inquiryId, contactId, 'new_contact', disclosure?.id ?? null));
+    await recordConsent(contactId, inquiryId);
     await addCandidates(contactId);
     // 6 R-AST-16: the first response job, in the intake transaction (ids only in the payload)
     await enqueueJob(tx, { queue: FIRST_RESPONSE_JOB.queue, kind: FIRST_RESPONSE_JOB.kind, priority: FIRST_RESPONSE_JOB.priority, payload: { contactId }, dedupeKey: FIRST_RESPONSE_JOB.dedupeKey(contactId) });
@@ -298,7 +316,8 @@ async function ingestInTx(tx: Tx, actor: SystemActor, i: InquiryInput, now: Inst
   const reinquiry = st.ownership_state === 'owned' || st.ownership_state === 'in_pond' || st.ownership_state === 'closed';
   const inquiryId = ids.next<'LeadInquiryId'>();
   await addPoints(contactId);
-  await repo.insertInquiry(tx, await inquiryRow(inquiryId, contactId, reinquiry ? 'reinquiry' : 'attached'));
+  await repo.insertInquiry(tx, await inquiryRow(inquiryId, contactId, reinquiry ? 'reinquiry' : 'attached', disclosure?.id ?? null));
+  await recordConsent(contactId, inquiryId);
   await addCandidates(contactId);
   if (st.ownership_state !== 'owned' && st.ownership_state !== 'closed') await repo.setPondSummary(tx, contactId, summary);
   if (reinquiry) {
@@ -374,19 +393,27 @@ export async function registerIntakeRoutes(app: FastifyInstance): Promise<void> 
 
   r.post(
     '/lead-sources',
-    { ...auth, schema: { body: z.strictObject({ name: z.string().trim().min(1).max(80), kind: z.enum(SOURCE_KINDS) }), response: { 201: LeadSourceCreatedResponse } } },
+    {
+      ...auth,
+      schema: {
+        // consentDisclosure: the consent text this source shows people (E38), recorded for its inquiries that carry none
+        body: z.strictObject({ name: z.string().trim().min(1).max(80), kind: z.enum(SOURCE_KINDS), consentDisclosure: ConsentDisclosureInput.optional() }),
+        response: { 201: LeadSourceCreatedResponse },
+      },
+    },
     async (req, reply) => {
       const p = platformOf(req);
       const token = randomBytes(32).toString('base64url');
       const id = p.ids.next<'LeadSourceId'>();
       const created = await leadsTx(req, async (tx, _now, actor) => {
+        const disclosureId = req.body.consentDisclosure ? (await storeDisclosure(tx, p.ids, req.body.consentDisclosure, disclosureSourceKind(req.body.kind))).id : null;
         try {
-          await repo.insertLeadSource(tx, id, req.body.name, req.body.kind, sha256(token));
+          await repo.insertLeadSource(tx, id, req.body.name, req.body.kind, sha256(token), disclosureId);
         } catch (e) {
           if ((e as { code?: string }).code === '23505') throw new AppError('VERSION_CONFLICT', { field: 'name' });
           throw e;
         }
-        await audit(tx, actor, { action: 'routing.changed', entity: { type: 'lead_source', id }, changes: redactSnapshot({ kind: req.body.kind, active: true }, { entity: 'lead_source' }), reason: 'LEAD_SOURCE_CREATED' });
+        await audit(tx, actor, { action: 'routing.changed', entity: { type: 'lead_source', id }, changes: redactSnapshot({ kind: req.body.kind, active: true, consentDisclosureId: disclosureId }, { entity: 'lead_source' }), reason: 'LEAD_SOURCE_CREATED' });
         return (await repo.listLeadSources(tx)).find((s) => s.id === id)!;
       });
       reply.status(201);
