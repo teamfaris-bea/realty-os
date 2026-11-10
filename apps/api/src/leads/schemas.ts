@@ -168,6 +168,8 @@ export const TimelineItem = z.object({
   preview: z.string().nullable(),
   note: z.string().nullable(),
   provenance: z.string(),
+  /** messages only: the delivery status (sent, delivered, scheduled, blocked, failed, ...); null otherwise */
+  status: z.string().nullable(),
 });
 export const TimelineResponse = z.object({ items: z.array(TimelineItem), nextCursor: z.string().nullable() });
 

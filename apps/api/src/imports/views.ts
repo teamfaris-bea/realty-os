@@ -1,0 +1,226 @@
+// API shapes of api/imports and the plain sentences the review list and the report show (BUILD_PLAN
+// module 16; R-IMPORT-1 copy, R-IMPORT-5; product values: honest copy, every number is a count).
+// No confidence scores anywhere (R-AST-13); no tenant id in any shape (R-TEN-3).
+import { type Category, type ConsentSummary, type Counts, type NormalizedRecord, type SourceName, batchReport, connectionTestLines, optOutPreview, reportLines } from '@realty/core/import';
+import type { Channel } from '@realty/core/compliance';
+import type { BatchRow, MappingRow, StageRow } from './repos/batches.js';
+import type { RecordRow } from './repos/records.js';
+
+/** One plain sentence per issue code (the web maps codes too; unknown codes get a generic sentence). */
+export const ISSUE_SENTENCES: Record<string, string> = {
+  PHONE_INVALID: 'A phone number could not be read as a full number with area code; it was left out.',
+  EMAIL_INVALID: 'An email address is not valid; it was left out.',
+  POSTAL_INVALID: 'A postal code is not valid; it was left out.',
+  TIMESTAMP_INVALID: 'A date could not be read.',
+  FORMULA_PREFIX: 'A value started like a spreadsheet formula; it was stored as plain text.',
+  VALUE_TRUNCATED: 'A value was too long and was shortened.',
+  TOO_MANY_VALUES: 'There were more values than we keep; the extra ones were left out.',
+  STAGE_UNMAPPED: 'The stage name is not one we know; the contact starts as New and the original stage is kept for reference.',
+  TYPE_UNMAPPED: 'The contact type is not one we know; it was kept for reference.',
+  INTENT_UNMAPPED: 'Buyer/seller intent could not be read; it was kept for reference.',
+  NAME_MISSING: 'No name; the contact is named after a phone or email.',
+  EXTRA_CELLS: 'The row has more cells than the header; the extra cells were ignored.',
+  TAG_READ_AS_OPT_OUT: 'A tag reads like an opt-out, so it is treated as one.',
+  NO_IDENTITY: 'No name, valid phone or valid email: nothing to import.',
+  RECORD_MALFORMED: 'The record could not be read.',
+  SOURCE_REF_DUPLICATE: 'The same record appears twice in the source; the second copy was left out.',
+  BODY_EMPTY: 'Empty text: nothing to import.',
+  BODY_TOO_LONG: 'The text was too long and was shortened.',
+  PARENT_NOT_FOUND: 'The contact this belongs to is not in the import.',
+  PARENT_REJECTED: 'The contact this belongs to was not imported.',
+  PARENT_NOT_LINKED: 'The contact this belongs to still needs your review.',
+  USER_UNMAPPED: 'Assigned to a Follow Up Boss user who is not mapped to a team member yet.',
+  IN_FILE_DUPLICATE: 'Same person as an earlier row of this import (same id, phone or email).',
+  ALREADY_IMPORTED: 'Already imported earlier; nothing new to add.',
+  NAME_ONLY_MATCH: 'Someone with the same name exists. Not merged: listed as a possible duplicate.',
+  MATCH_OWNED_CONTACT: "Matches a contact another agent owns. Only empty fields are filled; the owner doesn't change.",
+  MATCH_MULTIPLE: 'More than one existing contact shares these details; listed as possible duplicates.',
+  MATCH_DELETED_CONTACT: 'Matches a deleted contact. It is imported as a new contact; any opt-out still applies.',
+  ADDRESS_OPTED_OUT: 'Opted out already. Will stay opted out.',
+  OWNER_KEPT: 'This contact already has an owner here; the import does not change it.',
+  CONSENT_VALUE_AMBIGUOUS: 'A permission value is unclear; nothing was recorded from it.',
+  CONSENT_VALUE_UNRECOGNIZED: 'A permission value was not recognized; nothing was recorded from it.',
+  CONSENT_CONFLICT: 'The source says both yes and no; the opt-out wins.',
+  NO_CONSENT_DATA: 'No permission information to record.',
+  RECORDING_NOTICE_UNKNOWN: 'Recording notice unknown: the recording is kept and labelled, and not transcribed.',
+  RECORDING_NOT_AVAILABLE: 'The recording could not be copied from Follow Up Boss; the call is imported without it.',
+  USER_MAPPING_INCOMPLETE: 'Map every Follow Up Boss user before approving this step.',
+  COMMIT_FAILED: 'This record could not be written; nothing else was affected.',
+};
+
+export const GENERIC_ISSUE = 'Something about this record needs a look.';
+
+export function issueView(i: { code: string; severity: string; field?: string }): { code: string; severity: string; field: string | null; sentence: string } {
+  return { code: i.code, severity: i.severity, field: i.field ?? null, sentence: ISSUE_SENTENCES[i.code] ?? GENERIC_ISSUE };
+}
+
+export function sourceName(b: BatchRow): SourceName {
+  return b.source === 'csv' ? 'your file' : 'Follow Up Boss';
+}
+
+const iso = (d: Date | null) => (d === null ? null : d.toISOString());
+
+export function stageView(s: StageRow) {
+  return {
+    id: s.id,
+    category: s.category,
+    seq: s.seq,
+    status: s.status,
+    counts:
+      s.count_source === null
+        ? null
+        : {
+            source: s.count_source,
+            willImport: s.count_will_import ?? 0,
+            imported: s.count_imported,
+            needsReview: s.count_needs_review ?? 0,
+            rejected: s.count_rejected ?? 0,
+            duplicate: s.count_duplicate ?? 0,
+          },
+    dryRunSha256: s.dry_run_sha256,
+    dryRunCompletedAt: iso(s.dry_run_completed_at),
+    blockers: s.blockers.map(issueView),
+    approvedAt: iso(s.approved_at),
+    approvedByUserId: s.approved_by_user_id,
+    committedAt: iso(s.committed_at),
+    verifiedAt: iso(s.verified_at),
+    verifiedByUserId: s.verified_by_user_id,
+    revert: s.revert_report as Record<string, unknown> | null,
+  };
+}
+
+export function batchView(b: BatchRow, stages: readonly StageRow[]) {
+  return {
+    id: b.id,
+    source: b.source,
+    status: b.status,
+    sourceCounts: b.source_counts,
+    snapshotSha256: b.source_snapshot_sha256,
+    snapshotAt: iso(b.source_snapshot_at),
+    snapshotError: b.options.snapshotError ?? null,
+    fileLabel: b.options.fileLabel ?? null,
+    csv: b.source === 'csv' ? { headers: b.options.headers ?? [], mapping: b.options.mapping ?? [] } : null,
+    createdAt: b.created_at.toISOString(),
+    createdByUserId: b.created_by_user_id,
+    revertedAt: iso(b.reverted_at),
+    stages: stages.map(stageView),
+    connectionTest: connectionTestLines(
+      {
+        contacts: b.source_counts.contacts ?? null,
+        ownership: b.source_counts.ownership ?? null,
+        notes: b.source === 'csv' ? 0 : (b.source_counts.notes ?? null),
+        messages: b.source === 'csv' ? 0 : (b.source_counts.messages ?? null),
+        call_recordings: b.source === 'csv' ? 0 : (b.source_counts.call_recordings ?? null),
+        consent: b.source_counts.consent ?? null,
+      },
+      sourceName(b),
+    ).filter((l) => b.source !== 'csv' || !/^0 (notes|messages|calls) /.test(l)),
+  };
+}
+
+function summary(n: NormalizedRecord | null): Record<string, unknown> | null {
+  if (!n) return null;
+  switch (n.category) {
+    case 'contacts':
+      return { displayName: n.displayName, phones: n.phones.map((p) => p.e164), emails: n.emails.map((e) => e.email), tags: n.tags, stage: n.stage, contactType: n.contactType };
+    case 'ownership':
+      return { personRef: n.personRef, target: n.target };
+    case 'notes':
+      return { personRef: n.personRef, preview: n.body.slice(0, 200), occurredAt: new Date(n.occurredAt).toISOString() };
+    case 'messages':
+      return { personRef: n.personRef, channel: n.channel, direction: n.direction, preview: n.body.slice(0, 200), occurredAt: new Date(n.occurredAt).toISOString() };
+    case 'call_recordings':
+      return { personRef: n.personRef, direction: n.direction, startedAt: new Date(n.startedAt).toISOString(), durationS: n.durationS, recording: n.recording ? n.recording.label : null };
+    case 'consent':
+      return {
+        personRef: n.personRef,
+        addresses: n.fields.addresses.map((a) => ({ kind: a.kind, address: a.address, grants: a.grants, revokes: a.revokes, doNotContact: a.doNotContact })),
+      };
+  }
+}
+
+const PLAN_WORD: Record<string, string> = {
+  create_contact: 'create',
+  attach_contact: 'attach',
+  update_contact: 'update',
+  skip: 'skip',
+  assign: 'assign',
+  insert_history: 'add',
+  record_consent: 'record',
+};
+
+export function recordView(r: RecordRow) {
+  const plan = r.plan as { kind?: string; duplicateCandidates?: { contactId: string; reason: string }[]; staysOptedOut?: Channel[]; mergeIntoContactId?: string } | null;
+  return {
+    id: r.id,
+    sourceRef: r.source_ref,
+    outcome: r.outcome,
+    dryRunOutcome: r.dry_run_outcome,
+    planned: plan?.kind ? (PLAN_WORD[plan.kind] ?? null) : null,
+    issues: r.issues.map(issueView),
+    record: summary(r.normalized as NormalizedRecord | null),
+    matchContactId: r.match_contact_id,
+    duplicateCandidates: (plan?.duplicateCandidates ?? []).map((d) => ({ contactId: d.contactId, reason: d.reason })),
+    optOutNote: optOutPreview(plan?.staysOptedOut ?? []),
+    review: r.review_decision === null ? null : { decision: r.review_decision, byUserId: r.reviewed_by_user_id, mergeIntoContactId: plan?.mergeIntoContactId ?? null },
+    targetId: r.target_id,
+  };
+}
+
+export function mappingView(b: BatchRow, rows: readonly MappingRow[]) {
+  const byRef = new Map(rows.map((r) => [r.source_user_ref, r]));
+  const target = (m: MappingRow | undefined) =>
+    m === undefined ? null : m.target_kind === 'user' ? { kind: 'user' as const, userId: m.target_user_id } : m.target_kind === 'pond' ? { kind: 'pond' as const, pondId: m.target_pond_id } : { kind: 'unassigned' as const };
+  const users = (b.options.sourceUsers ?? []).map((u) => ({ sourceRef: u.ref, label: u.label, people: u.people, target: target(byRef.get(u.ref)) }));
+  const ponds = (b.options.sourcePonds ?? []).map((p) => ({ sourceRef: p.ref, label: p.label, people: p.people, target: target(byRef.get(`pond:${p.ref}`)) }));
+  const unmapped = users.filter((u) => u.target === null && u.people > 0).length + ponds.filter((p) => p.target === null).length;
+  return { users, ponds, unmapped, complete: unmapped === 0 };
+}
+
+function revertLines(s: StageRow): string[] {
+  const r = (s.revert_report ?? {}) as { removed?: number; compensated?: number; needsDecision?: number; keptReasons?: Record<string, number> };
+  const n = (x: number | undefined) => (x ?? 0).toLocaleString('en-US');
+  const lines = [`Reverted. ${n(r.removed)} imported rows removed; ${n(r.needsDecision)} ${r.needsDecision === 1 ? 'record was' : 'records were'} changed since the import and left for your decision.`];
+  if ((r.compensated ?? 0) > 0) lines.push(`${n(r.compensated)} imported permissions were withdrawn.`);
+  const kept = (r.keptReasons?.REVOCATION_KEPT ?? 0) + (r.keptReasons?.DNC_KEPT ?? 0);
+  if (kept > 0) lines.push(`${n(kept)} imported opt-outs and do-not-contact flags stay in place.`);
+  return lines;
+}
+
+/** GET /imports/:id/report: per category source | imported | needs review | rejected | duplicate, plus plain lines. */
+export function reportView(b: BatchRow, stages: readonly StageRow[]) {
+  const name = sourceName(b);
+  const rows = stages
+    .filter((s) => s.count_source !== null)
+    .map((s) => {
+      const committed = s.count_imported !== null && ['committed', 'verified', 'reverting', 'reverted'].includes(s.status);
+      const reverted = s.status === 'reverted';
+      const counts: Counts = {
+        source: s.count_source ?? 0,
+        imported: committed ? (s.count_imported ?? 0) : (s.count_will_import ?? 0),
+        needs_review: s.count_needs_review ?? 0,
+        rejected: s.count_rejected ?? 0,
+        duplicate: s.count_duplicate ?? 0,
+      };
+      return { stage: s, counts, phase: reverted ? ('reverted' as const) : committed ? ('committed' as const) : ('dry_run' as const) };
+    });
+  const table = batchReport(rows.map((r) => ({ category: r.stage.category, counts: r.counts })));
+  return {
+    source: name,
+    categories: table.map((t) => {
+      const r = rows.find((x) => x.stage.category === t.category)!;
+      return {
+        category: t.category as Category,
+        status: r.stage.status,
+        phase: r.phase,
+        source: t.source,
+        imported: t.imported,
+        needsReview: t.needs_review,
+        rejected: t.rejected,
+        duplicate: t.duplicate,
+        reconciles: t.reconciles,
+        lines: r.phase === 'reverted' ? revertLines(r.stage) : reportLines(t.category, r.phase, r.counts, name, (r.stage.consent_summary as ConsentSummary | null) ?? null),
+      };
+    }),
+  };
+}

@@ -192,7 +192,8 @@ describe('route table', () => {
   });
 
   it('the platform routes and their declarations (snapshot)', () => {
-    const rows = h.app.platform.routeTable.filter((r) => !r.url.includes('__probe')).map((r) => `${r.method} ${r.url} → ${r.auth}`);
+    // the platform's own routes only (other modules snapshot theirs in their own matrix tests)
+    const rows = h.app.platform.routeTable.filter((r) => !r.url.includes('__probe') && /^\/api\/(auth|push-subscriptions|me)(\/|$)/.test(r.url)).map((r) => `${r.method} ${r.url} → ${r.auth}`);
     expect(rows).toMatchInlineSnapshot(`
       [
         "POST /api/auth/login → public",

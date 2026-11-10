@@ -123,7 +123,8 @@ describe('R-PERM-13 re-auth on the admin 🔒 actions', () => {
 });
 
 describe('route table and schemas', () => {
-  const adminUrls = /^\/api\/(members|invites|routing-rules|ponds|teams|settings|compliance-policies)/;
+  // admin's own routes only: /ponds/:id/cards and /members/:userId/deactivate belong to api/leads
+  const adminUrls = /^\/api\/(members(?!\/:userId\/deactivate)|invites|routing-rules|ponds(?!\/:id\/cards)|teams|settings|compliance-policies)/;
 
   it('every admin route declares an Action and carries authorize(<that action>) (snapshot)', () => {
     const rows = h.app.platform.routeTable.filter((r) => adminUrls.test(r.url));

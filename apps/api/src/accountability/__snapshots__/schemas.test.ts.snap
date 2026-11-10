@@ -1,0 +1,1409 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response schemas have no confidence* fields, no score, and no tenant id fields (snapshot) 1`] = `
+{
+  "ItemResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "events": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "enum": [
+                "resolved",
+                "reassigned",
+                "verified",
+                "reopened",
+              ],
+              "type": "string",
+            },
+            "actor": {
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "userId": {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+              },
+              "required": [
+                "userId",
+                "name",
+              ],
+              "type": "object",
+            },
+            "at": {
+              "type": "string",
+            },
+            "note": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+          },
+          "required": [
+            "action",
+            "note",
+            "actor",
+            "at",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "item": {
+        "additionalProperties": false,
+        "properties": {
+          "actions": {
+            "additionalProperties": false,
+            "properties": {
+              "reassign": {
+                "type": "boolean",
+              },
+              "reopen": {
+                "type": "boolean",
+              },
+              "resolve": {
+                "type": "boolean",
+              },
+              "verify": {
+                "type": "boolean",
+              },
+            },
+            "required": [
+              "resolve",
+              "reassign",
+              "verify",
+              "reopen",
+            ],
+            "type": "object",
+          },
+          "ageSeconds": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "conditionClearedAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "contact": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                  "name": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "id",
+                  "name",
+                ],
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "dedupeKey": {
+            "type": "string",
+          },
+          "detectedAt": {
+            "type": "string",
+          },
+          "dueAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "evidence": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "at": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "explanation": {
+                  "minLength": 1,
+                  "type": "string",
+                },
+                "link": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "contactId": {
+                          "anyOf": [
+                            {
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                              "type": "string",
+                            },
+                            {
+                              "type": "null",
+                            },
+                          ],
+                        },
+                        "id": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string",
+                        },
+                        "kind": {
+                          "enum": [
+                            "contact",
+                            "message",
+                            "call",
+                            "task",
+                            "appointment",
+                          ],
+                          "type": "string",
+                        },
+                        "offsetMs": {
+                          "anyOf": [
+                            {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer",
+                            },
+                            {
+                              "type": "null",
+                            },
+                          ],
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "id",
+                        "contactId",
+                        "offsetMs",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "locator": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": {},
+                      "propertyNames": {
+                        "type": "string",
+                      },
+                      "type": "object",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "needsReview": {
+                  "type": "boolean",
+                },
+                "snippet": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "sourceId": {
+                  "type": "string",
+                },
+                "sourceType": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "sourceType",
+                "sourceId",
+                "explanation",
+                "at",
+                "locator",
+                "snippet",
+                "needsReview",
+                "link",
+              ],
+              "type": "object",
+            },
+            "minItems": 1,
+            "type": "array",
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "itemType": {
+            "enum": [
+              "untouched_lead",
+              "overdue_promise",
+              "failed_send",
+              "missing_outcome",
+            ],
+            "type": "string",
+          },
+          "latestEvent": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "enum": [
+                      "resolved",
+                      "reassigned",
+                      "verified",
+                      "reopened",
+                    ],
+                    "type": "string",
+                  },
+                  "actor": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "type": [
+                          "string",
+                          "null",
+                        ],
+                      },
+                      "userId": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "userId",
+                      "name",
+                    ],
+                    "type": "object",
+                  },
+                  "at": {
+                    "type": "string",
+                  },
+                  "note": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                },
+                "required": [
+                  "action",
+                  "note",
+                  "actor",
+                  "at",
+                ],
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "live": {
+            "type": "boolean",
+          },
+          "owner": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "userId": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "userId",
+                  "name",
+                ],
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "subjectId": {
+            "type": "string",
+          },
+          "subjectType": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+          "dedupeKey",
+          "itemType",
+          "subjectType",
+          "subjectId",
+          "contact",
+          "owner",
+          "detectedAt",
+          "dueAt",
+          "ageSeconds",
+          "conditionClearedAt",
+          "live",
+          "evidence",
+          "latestEvent",
+          "actions",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "item",
+      "events",
+    ],
+    "type": "object",
+  },
+  "MomentumResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "agents": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "openDeals": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
+            "slowDeals": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
+            "stages": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "deals": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "dealId": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string",
+                        },
+                        "dwellDays": {
+                          "minimum": 0,
+                          "type": "number",
+                        },
+                        "name": {
+                          "type": "string",
+                        },
+                        "slow": {
+                          "type": "boolean",
+                        },
+                        "stageEnteredAt": {
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "dealId",
+                        "name",
+                        "stageEnteredAt",
+                        "dwellDays",
+                        "slow",
+                      ],
+                      "type": "object",
+                    },
+                    "type": "array",
+                  },
+                  "norm": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "enough": {
+                            "type": "boolean",
+                          },
+                          "medianDays": {
+                            "minimum": 0,
+                            "type": "number",
+                          },
+                          "sample": {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer",
+                          },
+                        },
+                        "required": [
+                          "medianDays",
+                          "sample",
+                          "enough",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "slow": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer",
+                  },
+                  "stage": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "stage",
+                  "slow",
+                  "norm",
+                  "deals",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+            "userId": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+          },
+          "required": [
+            "userId",
+            "name",
+            "openDeals",
+            "slowDeals",
+            "stages",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "generatedAt": {
+        "type": "string",
+      },
+      "norms": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "enough": {
+              "type": "boolean",
+            },
+            "medianDays": {
+              "minimum": 0,
+              "type": "number",
+            },
+            "sample": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
+            "stage": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "medianDays",
+            "sample",
+            "enough",
+            "stage",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "rule": {
+        "additionalProperties": false,
+        "properties": {
+          "factor": {
+            "type": "number",
+          },
+          "minSample": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "windowDays": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
+        },
+        "required": [
+          "factor",
+          "minSample",
+          "windowDays",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "rule",
+      "norms",
+      "agents",
+      "generatedAt",
+    ],
+    "type": "object",
+  },
+  "QueueResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "counts": {
+        "additionalProperties": false,
+        "properties": {
+          "byType": {
+            "additionalProperties": false,
+            "properties": {
+              "failed_send": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              "missing_outcome": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              "overdue_promise": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              "untouched_lead": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+            },
+            "required": [
+              "untouched_lead",
+              "overdue_promise",
+              "failed_send",
+              "missing_outcome",
+            ],
+            "type": "object",
+          },
+          "live": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
+        },
+        "required": [
+          "live",
+          "byType",
+        ],
+        "type": "object",
+      },
+      "generatedAt": {
+        "type": "string",
+      },
+      "items": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "actions": {
+              "additionalProperties": false,
+              "properties": {
+                "reassign": {
+                  "type": "boolean",
+                },
+                "reopen": {
+                  "type": "boolean",
+                },
+                "resolve": {
+                  "type": "boolean",
+                },
+                "verify": {
+                  "type": "boolean",
+                },
+              },
+              "required": [
+                "resolve",
+                "reassign",
+                "verify",
+                "reopen",
+              ],
+              "type": "object",
+            },
+            "ageSeconds": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
+            "conditionClearedAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "contact": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                    "name": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "dedupeKey": {
+              "type": "string",
+            },
+            "detectedAt": {
+              "type": "string",
+            },
+            "dueAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "evidence": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "at": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "explanation": {
+                    "minLength": 1,
+                    "type": "string",
+                  },
+                  "link": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "contactId": {
+                            "anyOf": [
+                              {
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                "type": "string",
+                              },
+                              {
+                                "type": "null",
+                              },
+                            ],
+                          },
+                          "id": {
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                            "type": "string",
+                          },
+                          "kind": {
+                            "enum": [
+                              "contact",
+                              "message",
+                              "call",
+                              "task",
+                              "appointment",
+                            ],
+                            "type": "string",
+                          },
+                          "offsetMs": {
+                            "anyOf": [
+                              {
+                                "maximum": 9007199254740991,
+                                "minimum": 0,
+                                "type": "integer",
+                              },
+                              {
+                                "type": "null",
+                              },
+                            ],
+                          },
+                        },
+                        "required": [
+                          "kind",
+                          "id",
+                          "contactId",
+                          "offsetMs",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "locator": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": {},
+                        "propertyNames": {
+                          "type": "string",
+                        },
+                        "type": "object",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "needsReview": {
+                    "type": "boolean",
+                  },
+                  "snippet": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "sourceId": {
+                    "type": "string",
+                  },
+                  "sourceType": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "sourceType",
+                  "sourceId",
+                  "explanation",
+                  "at",
+                  "locator",
+                  "snippet",
+                  "needsReview",
+                  "link",
+                ],
+                "type": "object",
+              },
+              "minItems": 1,
+              "type": "array",
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "itemType": {
+              "enum": [
+                "untouched_lead",
+                "overdue_promise",
+                "failed_send",
+                "missing_outcome",
+              ],
+              "type": "string",
+            },
+            "latestEvent": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "action": {
+                      "enum": [
+                        "resolved",
+                        "reassigned",
+                        "verified",
+                        "reopened",
+                      ],
+                      "type": "string",
+                    },
+                    "actor": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "name": {
+                          "type": [
+                            "string",
+                            "null",
+                          ],
+                        },
+                        "userId": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "userId",
+                        "name",
+                      ],
+                      "type": "object",
+                    },
+                    "at": {
+                      "type": "string",
+                    },
+                    "note": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                  },
+                  "required": [
+                    "action",
+                    "note",
+                    "actor",
+                    "at",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "live": {
+              "type": "boolean",
+            },
+            "owner": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "userId": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "userId",
+                    "name",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "subjectId": {
+              "type": "string",
+            },
+            "subjectType": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "dedupeKey",
+            "itemType",
+            "subjectType",
+            "subjectId",
+            "contact",
+            "owner",
+            "detectedAt",
+            "dueAt",
+            "ageSeconds",
+            "conditionClearedAt",
+            "live",
+            "evidence",
+            "latestEvent",
+            "actions",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "items",
+      "counts",
+      "generatedAt",
+    ],
+    "type": "object",
+  },
+  "ScoreboardResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "range": {
+        "additionalProperties": false,
+        "properties": {
+          "days": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "from": {
+            "type": "string",
+          },
+          "key": {
+            "enum": [
+              "today",
+              "7d",
+              "30d",
+              "90d",
+            ],
+            "type": "string",
+          },
+          "to": {
+            "type": "string",
+          },
+          "zone": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "key",
+          "from",
+          "to",
+          "days",
+          "zone",
+        ],
+        "type": "object",
+      },
+      "scoreboard": {
+        "additionalProperties": false,
+        "properties": {
+          "agreementsSigned": {
+            "additionalProperties": false,
+            "properties": {
+              "count": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+              "days": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+            },
+            "required": [
+              "count",
+              "days",
+            ],
+            "type": "object",
+          },
+          "appointmentsHeld": {
+            "additionalProperties": false,
+            "properties": {
+              "count": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+              "of": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+            },
+            "required": [
+              "count",
+              "of",
+            ],
+            "type": "object",
+          },
+          "appointmentsSet": {
+            "additionalProperties": false,
+            "properties": {
+              "count": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+              "days": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+            },
+            "required": [
+              "count",
+              "days",
+            ],
+            "type": "object",
+          },
+          "name": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "speedToLead": {
+            "additionalProperties": false,
+            "properties": {
+              "medianSeconds": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
+              "pending": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+              "responded": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+              "total": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+              "withinSla": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+            },
+            "required": [
+              "medianSeconds",
+              "withinSla",
+              "total",
+              "responded",
+              "pending",
+            ],
+            "type": "object",
+          },
+          "touches": {
+            "additionalProperties": false,
+            "properties": {
+              "calls": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+              "count": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+              "days": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+              "textsAndEmails": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+            },
+            "required": [
+              "count",
+              "calls",
+              "textsAndEmails",
+              "days",
+            ],
+            "type": "object",
+          },
+          "userId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+        },
+        "required": [
+          "userId",
+          "name",
+          "speedToLead",
+          "touches",
+          "appointmentsSet",
+          "appointmentsHeld",
+          "agreementsSigned",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "range",
+      "scoreboard",
+    ],
+    "type": "object",
+  },
+  "TeamScoreboardResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "members": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "agreementsSigned": {
+              "additionalProperties": false,
+              "properties": {
+                "count": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+                "days": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+              },
+              "required": [
+                "count",
+                "days",
+              ],
+              "type": "object",
+            },
+            "appointmentsHeld": {
+              "additionalProperties": false,
+              "properties": {
+                "count": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+                "of": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+              },
+              "required": [
+                "count",
+                "of",
+              ],
+              "type": "object",
+            },
+            "appointmentsSet": {
+              "additionalProperties": false,
+              "properties": {
+                "count": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+                "days": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+              },
+              "required": [
+                "count",
+                "days",
+              ],
+              "type": "object",
+            },
+            "name": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "speedToLead": {
+              "additionalProperties": false,
+              "properties": {
+                "medianSeconds": {
+                  "anyOf": [
+                    {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "pending": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+                "responded": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+                "total": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+                "withinSla": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+              },
+              "required": [
+                "medianSeconds",
+                "withinSla",
+                "total",
+                "responded",
+                "pending",
+              ],
+              "type": "object",
+            },
+            "touches": {
+              "additionalProperties": false,
+              "properties": {
+                "calls": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+                "count": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+                "days": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+                "textsAndEmails": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+              },
+              "required": [
+                "count",
+                "calls",
+                "textsAndEmails",
+                "days",
+              ],
+              "type": "object",
+            },
+            "userId": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+          },
+          "required": [
+            "userId",
+            "name",
+            "speedToLead",
+            "touches",
+            "appointmentsSet",
+            "appointmentsHeld",
+            "agreementsSigned",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "range": {
+        "additionalProperties": false,
+        "properties": {
+          "days": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "from": {
+            "type": "string",
+          },
+          "key": {
+            "enum": [
+              "today",
+              "7d",
+              "30d",
+              "90d",
+            ],
+            "type": "string",
+          },
+          "to": {
+            "type": "string",
+          },
+          "zone": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "key",
+          "from",
+          "to",
+          "days",
+          "zone",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "range",
+      "members",
+    ],
+    "type": "object",
+  },
+}
+`;
+
+exports[`api/accountability route table and schemas > R-PERM-1: every accountability route declares a core Action and carries authorize(<that action>) (snapshot) 1`] = `
+[
+  "GET /api/scoreboard scoreboard.view authorize(scoreboard.view)",
+  "GET /api/team/exceptions exception.view authorize(exception.view)",
+  "GET /api/team/exceptions/:dedupeKey exception.view authorize(exception.view)",
+  "GET /api/team/momentum scoreboard.view authorize(scoreboard.view)",
+  "GET /api/team/scoreboard scoreboard.view authorize(scoreboard.view)",
+  "POST /api/team/exceptions/:dedupeKey/reassign exception.reassign authorize(exception.reassign)",
+  "POST /api/team/exceptions/:dedupeKey/reopen exception.resolve authorize(exception.resolve)",
+  "POST /api/team/exceptions/:dedupeKey/resolve exception.resolve authorize(exception.resolve)",
+  "POST /api/team/exceptions/:dedupeKey/verify exception.verify authorize(exception.verify)",
+]
+`;

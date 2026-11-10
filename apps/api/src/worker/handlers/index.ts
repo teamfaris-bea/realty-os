@@ -7,9 +7,19 @@
 import type { JobHandler } from '../types.js';
 import { workerHandlers } from './worker.js';
 import { leadsHandlers } from '../../leads/handlers.js';
+import { commsHandlers } from '../../comms/handlers.js';
+import { assistantHandlers } from '../../assistant/handlers.js';
+import { importHandlers } from '../../imports/handlers.js';
+import { workspaceHandlers } from '../../workspace/handlers.js';
+import { accountabilityHandlers } from '../../accountability/handlers.js';
 
 export const handlers: JobHandler<unknown>[] = [
   ...workerHandlers,
   ...leadsHandlers,
+  ...commsHandlers,
+  ...assistantHandlers,
+  ...importHandlers,
+  ...workspaceHandlers,
+  ...accountabilityHandlers,
   // registry: add new entries above this line
 ];

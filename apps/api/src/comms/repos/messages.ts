@@ -148,15 +148,21 @@ export interface OutboundInsert {
   occurredAt: Instant;
 }
 
-export async function insertOutbound(tx: Tx, m: OutboundInsert): Promise<void> {
-  await sql`
+/**
+ * Inserts the outbound row; false when its idempotency key already exists (a concurrent or repeated
+ * command). ON CONFLICT waits for a concurrent inserter, so the caller can then read the winner's row.
+ */
+export async function insertOutbound(tx: Tx, m: OutboundInsert): Promise<boolean> {
+  const r = await sql<{ id: string }>`
     INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, email_identity_id, from_address,
       to_address, subject, body, status, initiator, initiated_by_user_id, purpose, action_category, assistant_action_id, playbook_step_run_id,
       pinned_inbound_seq, idempotency_key, scheduled_for, occurred_at)
     VALUES (app.tenant_id(), ${m.id}, ${m.conversationId}, ${m.contactId}, ${m.channel}, 'outbound', ${m.phoneNumberId}, ${m.emailIdentityId},
       ${m.fromAddress}, ${m.toAddress}, ${m.subject}, ${m.body}, ${m.status}, ${m.initiator}, ${m.initiatedByUserId}, ${m.purpose},
       ${m.actionCategory}, ${m.assistantActionId}, ${m.playbookStepRunId}, ${m.pinnedInboundSeq}, ${m.idempotencyKey},
-      ${m.scheduledFor === null ? null : toIso(m.scheduledFor)}::timestamptz, ${toIso(m.occurredAt)}::timestamptz)`.execute(tx);
+      ${m.scheduledFor === null ? null : toIso(m.scheduledFor)}::timestamptz, ${toIso(m.occurredAt)}::timestamptz)
+    ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING RETURNING id`.execute(tx);
+  return r.rows.length === 1;
 }
 
 /** TX1 allow: dispatching + dispatched_at (DB CHECK, F2) + the send-time decision (dispatch guard re-checks it). */
@@ -164,6 +170,11 @@ export async function markDispatching(tx: Tx, id: string, decisionId: string, no
   await sql`
     UPDATE messages SET status = 'dispatching', status_reason = NULL, gate_decision_id = ${decisionId}, dispatched_at = ${toIso(now)}::timestamptz
      WHERE tenant_id = app.tenant_id() AND id = ${id} AND status IN ('scheduled','queued')`.execute(tx);
+}
+
+/** The send-time purpose of a human message (only ever tightened to marketing, R-CONSENT-5). */
+export async function setPurpose(tx: Tx, id: string, purpose: 'marketing' | 'informational'): Promise<void> {
+  await sql`UPDATE messages SET purpose = ${purpose} WHERE tenant_id = app.tenant_id() AND id = ${id} AND status IN ('scheduled','queued')`.execute(tx);
 }
 
 export async function markDeferred(tx: Tx, id: string, decisionId: string, until: Instant): Promise<void> {
@@ -196,11 +207,16 @@ export async function repin(tx: Tx, id: string, seq: number): Promise<void> {
   await sql`UPDATE messages SET pinned_inbound_seq = ${seq} WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx);
 }
 
-/** TX2: dispatching → sent (only from dispatching / dispatch_unknown; a later callback status wins). */
+/**
+ * TX2: dispatching → sent. The provider ref is stored even when a status callback already moved the
+ * message on (out-of-order callbacks); the status itself only moves forward.
+ */
 export async function markSent(tx: Tx, id: string, provider: string, ref: string): Promise<boolean> {
   const r = await sql`
-    UPDATE messages SET status = 'sent', status_reason = NULL, provider = ${provider}, provider_message_ref = ${ref}
-     WHERE tenant_id = app.tenant_id() AND id = ${id} AND status IN ('dispatching','dispatch_unknown')`.execute(tx);
+    UPDATE messages SET provider = COALESCE(provider, ${provider}), provider_message_ref = COALESCE(provider_message_ref, ${ref}),
+           status = CASE WHEN status IN ('dispatching','dispatch_unknown') THEN 'sent' ELSE status END,
+           status_reason = CASE WHEN status IN ('dispatching','dispatch_unknown') THEN NULL ELSE status_reason END
+     WHERE tenant_id = app.tenant_id() AND id = ${id} AND direction = 'outbound'`.execute(tx);
   return Number(r.numAffectedRows ?? 0n) === 1;
 }
 

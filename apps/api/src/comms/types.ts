@@ -64,3 +64,12 @@ export type DialResult =
   | { kind: 'dialing'; callId: string; bridgeToken: string; decision: DecisionView }
   | { kind: 'failed'; callId: string; reason: string }
   | { kind: 'noop'; callId: string };
+
+const SYSTEM = 'system' as const;
+/**
+ * "Written by the system" as the consent ledger records it (consent_events.actor_kind). This is NOT an
+ * Actor: the system Actor is built only by worker/systemActor.ts (lint + architecture test).
+ */
+export const LEDGER_SYSTEM: { readonly kind: typeof SYSTEM } = Object.freeze({ kind: SYSTEM });
+/** notifications.kind for platform notices (not an actor kind). */
+export const SYSTEM_NOTICE = SYSTEM;

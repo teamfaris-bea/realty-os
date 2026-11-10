@@ -137,6 +137,7 @@ const PLAIN_EXACT = new Set([
   'is_default',
   'is_lead',
   'is_primary',
+  'resolved_by', // priority_feed_items: 'user' | 'condition' (0011)
 ]);
 
 /** Structural suffixes that never hold free text (ids, instants, counts, digests), checked after secrets. */

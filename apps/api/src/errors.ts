@@ -94,6 +94,48 @@ export const ERROR_STATUS = {
   NUMBER_UNAVAILABLE: 409, // NUMBER_QUARANTINED / already live elsewhere (R-TEN-8)
   PROVIDER_UNAVAILABLE: 503, // the provider rejected or could not be reached for an admin action
   AGENT_PHONE_MISSING: 422, // tap-to-call bridges the agent's verified phone first; none is set
+  // ---- api/imports ----
+  IMPORT_STATE_CONFLICT: 409, // the batch or stage is not in a state that allows this step (details.status)
+  IMPORT_STAGE_ORDER: 409, // R-IMPORT-3: earlier stages must be verified or skipped first (DB trigger)
+  IMPORT_STAGE_BLOCKED: 409, // the dry run has blockers (e.g. USER_MAPPING_INCOMPLETE, R-IMPORT-8)
+  SNAPSHOT_CHANGED: 409, // E42: the dry run shown is not the current one (new snapshot / dry run)
+  IMPORT_DRY_RUN_STALE: 409, // an earlier stage committed after this dry run: run it again first
+  IMPORT_REVIEW_INVALID: 422, // the review decision does not fit the record (details.reason)
+  IMPORT_FILE_INVALID: 422, // the uploaded file could not be read (details.reason: CSV_* / JSON)
+  FUB_KEY_INVALID: 422, // Follow Up Boss rejected the API key
+  IMPORT_MAPPING_INVALID: 422, // a user/pond mapping target is not an eligible member or pond of this team
+  RECOUNT_MISMATCH: 409, // R-IMPORT-5: the recount does not match the reviewed plan (details.diffs)
+  SPOT_CHECKS_INCOMPLETE: 422, // R-IMPORT-5: every sampled record must be checked
+  SPOT_CHECK_FAILED: 409, // R-IMPORT-5: a sampled record did not match
+  IMPORT_REVERT_ORDER: 409, // R-IMPORT-10: later stages are reverted first
+  // ---- api/assistant ----
+  DRAFT_STALE: 409, // R-AST-6: the client wrote since this was drafted (details.inboundSeq: re-review, then approve with reviewedInboundSeq)
+  DRAFT_INVALIDATED: 409, // R-AST-7: the lead changed owner / ownership period since this was drafted
+  ACTION_NOT_PENDING: 409, // the assistant card was already handled (details.status)
+  ASSISTANT_UNAVAILABLE: 409, // the assistant produced nothing (AI switched off for the team, or no usable output)
+  PLAYBOOK_INVALID: 422, // core.validatePlaybook issues (details.issues) block saving or approval
+  PLAYBOOK_HASH_MISMATCH: 409, // the approval names content that is not this version's exact content
+  PLAYBOOK_VERSION_NOT_DRAFT: 409, // only a draft can be approved (frozen after it leaves draft)
+  PLAYBOOK_NOT_APPROVED: 409, // no approved version to run / revoke
+  PLAYBOOK_OWNER_MISMATCH: 409, // an agent playbook only runs for contacts its agent owns
+  ALREADY_ENROLLED: 409, // R-AST-8: the contact is already in this playbook
+  ENROLLMENT_REPLACE_NEEDS_CONFIRMATION: 409, // R-AST-8: another live enrollment would be stopped (details.currentPlaybookId)
+  ENROLLMENT_NOT_LIVE: 409, // the enrollment already ended
+  ENROLLMENT_NOT_RESUMABLE: 409, // opt-out, wrong number or revoked approval pauses are not resumed here (details.pauseReason)
+  SAVED_SEARCH_INVALID: 422, // the reviewed criteria are empty or invalid
+  SAVED_SEARCH_STATE: 409, // wrong state for this saved-search command (details.status)
+  SENDER_UNAVAILABLE: 409, // no sending number / email identity for this channel
+  SELLER_UPDATE_NEEDS_RECOMMENDATION: 422, // R-AST-17: a seller update goes out only with the agent's own recommendation (an edit)
+  DRAFT_OWNER_ONLY: 409, // R-AST-7: reply drafts are made for the lead's owner (only the owner's draft can be sent)
+  // ---- api/workspace ----
+  FEED_ITEM_PINNED: 409, // a pinned card is a live deadline (offer, first touch, inactivity): it closes by acting on it, never by Done/Snooze/Dismiss
+  FEED_ITEM_NOT_OPEN: 409, // the card was already closed (details.state)
+  NOTIFICATION_CRITICAL: 422, // lead offers, first-touch alerts and hot handbacks cannot be muted and keep push or SMS (DB CHECK too)
+  DEAL_STAGE_INVALID: 422, // e.g. `lost` without a reason, or a stage change to the current stage
+  ASSIGNEE_NOT_ELIGIBLE: 422, // tasks/appointments/deals: the assignee or owner is not an active member the caller may assign to
+  // ---- api/accountability ----
+  EXCEPTION_STATE_CONFLICT: 409, // the item's latest human event does not allow this action (details.latestAction): e.g. resolving a resolved item
+  EXCEPTION_NOT_REASSIGNABLE: 409, // the item is not about a lead (an appointment or task without a contact): nothing to reassign
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

@@ -13,10 +13,38 @@
 // `roles`, which only decides what a role is shown.
 import { shellSurface } from './shellSurface.js';
 import type { SurfaceModule } from './types.js';
+import { surface as feedSurface } from '../surfaces/feed/index.js';
+import { surface as approvalsSurface } from '../surfaces/approvals/index.js';
+import { surface as searchSurface } from '../surfaces/search/index.js';
+import { surface as tasksSurface } from '../surfaces/tasks/index.js';
+import { surface as pondSurface } from '../surfaces/pond/index.js';
+import { surface as dealsSurface } from '../surfaces/deals/index.js';
+import { surface as listingsSurface } from '../surfaces/listings/index.js';
+import { surface as contactSurface } from '../surfaces/contact/index.js';
+import { surface as threadSurface } from '../surfaces/thread/index.js';
+import { surface as composeSurface } from '../surfaces/compose/index.js';
+import { surface as teamSurface } from '../surfaces/team/index.js';
+import { surface as adminSurface } from '../surfaces/admin/index.js';
+import { surface as settingsSurface } from '../surfaces/settings/index.js';
+import { surface as importsSurface } from '../surfaces/imports/index.js';
 
 export type { NavSection, PageDef, PageNav, SurfaceModule } from './types.js';
 
 export const surfaces: SurfaceModule[] = [
   shellSurface,
+  feedSurface,
+  approvalsSurface,
+  searchSurface,
+  tasksSurface,
+  pondSurface,
+  dealsSurface,
+  listingsSurface,
+  contactSurface,
+  threadSurface,
+  composeSurface,
+  teamSurface,
+  adminSurface,
+  settingsSurface,
+  importsSurface,
   // registry: add new entries above this line
 ];

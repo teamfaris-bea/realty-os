@@ -13,6 +13,11 @@ import { authRoutes } from './auth/routes.js';
 import { devicesRoutes } from './auth/devices.js';
 import { adminRoutes } from './admin/routes.js';
 import { leadsRoutes } from './leads/routes.js';
+import { commsRoutes } from './comms/routes.js';
+import { assistantRoutes } from './assistant/routes.js';
+import { importsRoutes } from './imports/routes.js';
+import { workspaceRoutes } from './workspace/routes.js';
+import { accountabilityRoutes } from './accountability/routes.js';
 
 export interface RouteModule {
   name: string;
@@ -24,5 +29,10 @@ export const routeModules: RouteModule[] = [
   devicesRoutes,
   adminRoutes,
   leadsRoutes,
+  commsRoutes,
+  assistantRoutes,
+  importsRoutes,
+  workspaceRoutes,
+  accountabilityRoutes,
   // registry: add new entries above this line
 ];

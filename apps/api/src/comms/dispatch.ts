@@ -19,7 +19,7 @@
 // re-decides visibility at send time); the system actor for assistant and system messages. When the
 // human can no longer see the message (lost the lead), a system TX1 blocks it with
 // SENDER_NOT_AUTHORIZED and offers the text to the new owner as a draft (E15).
-import { ALWAYS_HUMAN_CATEGORIES, type Channel, type Initiator } from '@realty/core/compliance';
+import { ALWAYS_HUMAN_CATEGORIES, type Channel, type Initiator, type Purpose, classifyHumanPurpose } from '@realty/core/compliance';
 import { INTENT_RULES, PlaybookStepSchema, approvalCurrent, authorizeAutonomousAction, stepForChannel, stepRunAfterGate } from '@realty/core/assistant';
 import type { Actor, ContactId, Instant, TenantId, UserActor } from '@realty/core/foundation';
 import { MINUTE_MS, can, plusMs } from '@realty/core/foundation';
@@ -32,15 +32,15 @@ import { COMMS_RECONCILE } from '../worker/contracts.js';
 import { enqueueTyped } from '../worker/registry.js';
 import { systemActor } from '../worker/systemActor.js';
 import { type DispatchDenyReason, type StoredDecision, confirmableDecision, confirmationCovers, decisionView, evaluateGate, insertDecision, resolvedPolicy } from './gateInput.js';
-import { listUnsubscribeHeaders, replyAddress, replyToken, replyTokenHash, unsubscribeUrl } from './render.js';
+import { EMAIL_REF_HEADER, listUnsubscribeHeaders, replyAddress, replyToken, replyTokenHash, signedRef, unsubscribeUrl } from './render.js';
 import * as auto from './repos/automation.js';
-import { contactFacts } from './repos/contacts.js';
+import { contactFacts, dealOrAppointmentContext } from './repos/contacts.js';
 import { telephonyAccount } from './repos/credentials.js';
 import * as g from './repos/gate.js';
 import * as msgs from './repos/messages.js';
 import { notifyUser } from './repos/notify.js';
 import { asSystem, senderActor } from './runtime.js';
-import type { CommsDeps, DispatchResult, OutboundIntent } from './types.js';
+import { LEDGER_SYSTEM, SYSTEM_NOTICE, type CommsDeps, type DispatchResult, type OutboundIntent } from './types.js';
 
 export interface DispatchOptions {
   /** the message's tenant (from the session, a job row or a webhook resolver; R-TEN-3) */
@@ -127,13 +127,24 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
   if (human && c.forceDeny.length === 0 && !c.opts.retap && !c.opts.confirm && m.pinnedInboundSeq !== null && conv && conv.inboundSeq > m.pinnedInboundSeq) {
     await msgs.markAwaitingTap(tx, m.id, 'CLIENT_REPLIED_SINCE_SCHEDULED', null);
     if (!userTx && m.initiatedByUserId) {
-      await notifyUser(tx, c.deps.ids, { userId: m.initiatedByUserId, kind: 'system', priority: 'high', title: 'They replied since you scheduled a message', body: 'Check the reply, then tap Send if it still fits.', subjectType: 'message', subjectId: m.id, dedupeKey: `retap:${m.id}:${conv.inboundSeq}` }, now);
+      await notifyUser(tx, c.deps.ids, { userId: m.initiatedByUserId, kind: SYSTEM_NOTICE, priority: 'high', title: 'They replied since you scheduled a message', body: 'Check the reply, then tap Send if it still fits.', subjectType: 'message', subjectId: m.id, dedupeKey: `retap:${m.id}:${conv.inboundSeq}` }, now);
     }
     return { kind: 'done', result: { kind: 'needs_retap', messageId, reason: 'CLIENT_REPLIED_SINCE_SCHEDULED' } };
   }
   if (human && c.opts.retap && conv) await msgs.repin(tx, m.id, conv.inboundSeq);
 
   const channel: Channel = m.channel === 'email' ? 'email' : 'sms';
+  // R-CONSENT-5 purpose of a human free-form message, decided NOW (R-GATE-3: send-time inputs): it was
+  // informational when written because the contact had written in within 30 days (or a deal/appointment
+  // was open); days later that may no longer hold. Only ever tightened: informational → marketing.
+  let purpose: Purpose = m.purpose ?? 'marketing';
+  if (human && m.actionCategory === 'none' && purpose === 'informational') {
+    const nowPurpose = classifyHumanPurpose({ lastInboundAt: conv?.lastInboundAt ?? null, dealOrAppointmentContext: await dealOrAppointmentContext(tx, m.contactId), now });
+    if (nowPurpose === 'marketing') {
+      purpose = 'marketing';
+      await msgs.setPurpose(tx, m.id, 'marketing');
+    }
+  }
   const env = c.deps.envelope.inTx(tx, c.tenantId as TenantId);
   const addressHmac = Buffer.from(await env.hmacAddress(c.tenantId as TenantId, m.toAddress)).toString('hex');
   const point = (await g.contactPoints(tx, m.contactId)).find((p) => p.kind === (channel === 'email' ? 'email' : 'phone') && p.address === m.toAddress) ?? null;
@@ -150,7 +161,7 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
     actorUserId = m.initiatedByUserId;
     if (userTx) {
       const facts = await contactFacts(tx, m.contactId);
-      const ok = facts !== null && can(c.actor, 'comms.send', { ...facts, purpose: m.purpose ?? 'marketing' }).ok;
+      const ok = facts !== null && can(c.actor, 'comms.send', { ...facts, purpose }).ok;
       if (!ok && !extra.includes('SENDER_NOT_AUTHORIZED')) extra.push('SENDER_NOT_AUTHORIZED');
       touch = ok && facts !== null && (facts.own === true || facts.collaborator === true);
     }
@@ -172,7 +183,7 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
   const intent: OutboundIntent = {
     contactId: m.contactId,
     recipient: { kind: 'contact', addressHmac, channel, pointId: point?.id ?? null },
-    purpose: m.purpose ?? 'marketing',
+    purpose,
     initiator: gateInitiator,
     category: m.actionCategory as OutboundIntent['category'],
     sender: { phoneNumberId: m.phoneNumberId, emailIdentityId: m.emailIdentityId },
@@ -186,7 +197,7 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
   // ---- confirmation (a human confirming exactly what they were shown) ----
   let confirmOf: StoredDecision | null = null;
   if (c.opts.confirm && extra.length === 0 && evaluated.decision.outcome === 'needs_confirmation') {
-    const prior = await confirmableDecision(tx, c.opts.confirm.decisionId, { messageId: m.id, contactId: m.contactId }, c.opts.confirm.byUserId, now);
+    const prior = await confirmableDecision(tx, c.opts.confirm.decisionId, { messageId: m.id, contactId: m.contactId, channel }, c.opts.confirm.byUserId, now);
     if (!prior || prior.id === undefined || actorUserId !== c.opts.confirm.byUserId) throw new AppError('CONFIRMATION_INVALID');
     if (confirmationCovers(evaluated.decision, prior)) confirmOf = prior;
   }
@@ -213,7 +224,7 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
   if (outcome === 'needs_confirmation') {
     await msgs.markAwaitingTap(tx, m.id, 'NEEDS_CONFIRMATION', sendDecision.id);
     if (!userTx && actorUserId) {
-      await notifyUser(tx, c.deps.ids, { userId: actorUserId, kind: 'system', priority: 'high', title: 'A message needs your OK before it goes out', body: null, subjectType: 'message', subjectId: m.id, dedupeKey: `confirm:${sendDecision.id}` }, now);
+      await notifyUser(tx, c.deps.ids, { userId: actorUserId, kind: SYSTEM_NOTICE, priority: 'high', title: 'A message needs your OK before it goes out', body: null, subjectType: 'message', subjectId: m.id, dedupeKey: `confirm:${sendDecision.id}` }, now);
     }
     return { kind: 'done', result: { kind: 'needs_confirmation', messageId, decision: view } };
   }
@@ -231,13 +242,17 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
   }
 
   // allow
-  await msgs.markDispatching(tx, m.id, dispatchDecision.id, now);
-  await msgs.touchConversationOutbound(tx, m.conversationId, m.phoneNumberId, now);
+  let dispatchedAt = now;
   if (touch && userTx) {
-    // R-OWN-14 / E66: the touch commits with TX1, under the same contact lock as auto_release / breach.
+    // R-OWN-14 / E66: the touch commits with TX1, under the same contact lock as auto_release / breach;
+    // the message's dispatched_at is the touch instant the engine recorded (one instant for both).
     await applyOwnershipCommandInTx(tx, c.actor, m.contactId as ContactId, { kind: 'touch', via: channel === 'email' ? 'email' : 'sms', refId: m.id, at: now }, { commandId: derivedCommandId('comms.touch', m.id), ids: c.deps.ids });
     await setOwnershipCommand(tx, null);
+    const t = await sql<{ at: Date | null }>`SELECT last_human_touch_at AS at FROM contacts WHERE tenant_id = app.tenant_id() AND id = ${m.contactId}`.execute(tx);
+    if (t.rows[0]?.at && t.rows[0].at.getTime() >= now) dispatchedAt = t.rows[0].at.getTime() as Instant;
   }
+  await msgs.markDispatching(tx, m.id, dispatchDecision.id, dispatchedAt);
+  await msgs.touchConversationOutbound(tx, m.conversationId, m.phoneNumberId, dispatchedAt);
   let emailFrom: SendPlan['emailFrom'] = null;
   let replyTo: string | null = null;
   let headers: Record<string, string> | null = null;
@@ -247,9 +262,10 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
     const token = replyToken(c.deps.linkSecret, c.tenantId, m.conversationId);
     await msgs.setReplyTokenIfMissing(tx, m.conversationId, replyTokenHash(token));
     replyTo = replyAddress(c.deps.publicBaseUrl, token);
-    if (m.purpose === 'marketing') headers = listUnsubscribeHeaders(unsubscribeUrl(c.deps.publicBaseUrl, c.deps.linkSecret, c.tenantId, m.id));
+    headers = { [EMAIL_REF_HEADER]: signedRef(c.deps.linkSecret, 'email-ref', c.tenantId, m.id) };
+    if (purpose === 'marketing') headers = { ...headers, ...listUnsubscribeHeaders(unsubscribeUrl(c.deps.publicBaseUrl, c.deps.linkSecret, c.tenantId, m.id)) };
   }
-  return { kind: 'send', plan: { m: { ...m, status: 'dispatching', dispatchedAt: now }, channel, decisionId: dispatchDecision.id, emailFrom, replyTo, headers }, decision: dispatchDecision, phase };
+  return { kind: 'send', plan: { m: { ...m, status: 'dispatching', dispatchedAt }, channel, decisionId: dispatchDecision.id, emailFrom, replyTo, headers }, decision: dispatchDecision, phase };
 }
 
 async function contactOwnership(tx: Tx, contactId: string): Promise<{ ownerUserId: string | null; periodSeq: number | null }> {
@@ -309,7 +325,7 @@ async function playbookReasons(
 async function afterSystemBlock(tx: Tx, c: Tx1Context, m: msgs.MessageRow, owner: { ownerUserId: string | null; periodSeq: number | null }, d: StoredDecision, now: Instant): Promise<void> {
   const notifyId = m.initiatedByUserId;
   if (notifyId) {
-    await notifyUser(tx, c.deps.ids, { userId: notifyId, kind: 'system', priority: 'normal', title: 'A scheduled message was not sent', body: d.explanation.slice(0, 240), subjectType: 'message', subjectId: m.id, dedupeKey: `blocked:${m.id}` }, now);
+    await notifyUser(tx, c.deps.ids, { userId: notifyId, kind: SYSTEM_NOTICE, priority: 'normal', title: 'A scheduled message was not sent', body: d.explanation.slice(0, 240), subjectType: 'message', subjectId: m.id, dedupeKey: `blocked:${m.id}` }, now);
   }
   if (m.initiator === 'human' && d.reasons.includes('SENDER_NOT_AUTHORIZED') && owner.ownerUserId && owner.ownerUserId !== m.initiatedByUserId) {
     await auto.insertSuggestedDraft(tx, { id: c.deps.ids.next<'AssistantActionId'>(), contactId: m.contactId, ownerUserId: owner.ownerUserId, body: m.body, channel: m.channel, boundOwnershipSeq: owner.periodSeq, dedupeKey: `blocked_draft:${m.id}`, fromMessageId: m.id });
@@ -330,7 +346,7 @@ async function providerSend(plan: SendPlan, deps: CommsDeps, tenantId: string): 
         to: m.toAddress,
         body: m.body,
         idempotencyKey: m.id,
-        statusCallbackUrl: new URL('/api/webhooks/telephony/status', deps.publicBaseUrl).toString(),
+        statusCallbackUrl: new URL(`/api/webhooks/telephony/status?m=${m.id}`, deps.publicBaseUrl).toString(),
       });
       return { ok: true, provider: 'telephony', ref: r.providerRef };
     }
@@ -397,7 +413,7 @@ async function recordProviderOptOut(tx: Tx, deps: CommsDeps, tenantId: string, m
     source: 'provider_report',
     occurredAt: now,
     contactId: m.contactId,
-    actor: { kind: 'system' },
+    actor: LEDGER_SYSTEM,
     disclosureId: null,
     evidenceObjectId: null,
     evidenceMessageId: m.id,
@@ -412,6 +428,8 @@ async function recordProviderOptOut(tx: Tx, deps: CommsDeps, tenantId: string, m
     needsReview: false,
   });
   if (channel === 'sms') await msgs.cancelQueuedSmsTo(tx, [m.toAddress], 'PROVIDER_OPTED_OUT');
+  // R-AUDIT-5 "opt-out received", in the revoking transaction (R-AUDIT-3)
+  await audit(tx, systemActor(tenantId, 'provider'), { action: 'consent.opt_out_received', entity: { type: 'message', id: m.id }, reason: 'PROVIDER_REPORT' });
 }
 
 /** A masked hint for consent/suppression rows ('•••-•••-4821', 'j•••@example.com'); never the full address. */

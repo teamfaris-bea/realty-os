@@ -108,7 +108,7 @@ export function evidenceText(ref: EvidenceRefView): string {
  * Spec correction (reported): BUILD_PLAN sketches `EvidenceLink(props: { ref })`, but `ref` is a
  * reserved prop in React 18 (it is never passed to a function component), so the prop is `evidence`.
  */
-export function EvidenceLink({ evidence }: { evidence: EvidenceRefView }): ReactElement {
+export function EvidenceLink({ evidence, flagged = false }: { evidence: EvidenceRefView; /** the claim above already shows "Check this" */ flagged?: boolean }): ReactElement {
   const routes = useContext(EvidenceRoutesContext);
   const href = routes[evidence.sourceType]?.(evidence) ?? null;
   const text = evidenceText(evidence);
@@ -117,7 +117,7 @@ export function EvidenceLink({ evidence }: { evidence: EvidenceRefView }): React
   const body = (
     <>
       <span className="text-ink">{text}</span>
-      {unverified ? <CheckThis reason="The quote wasn't found in the source." /> : null}
+      {unverified ? flagged ? <span className="text-[13px] text-ink-muted">(not found in the source)</span> : <CheckThis reason="The quote wasn't found in the source." /> : null}
     </>
   );
   return (
@@ -172,7 +172,7 @@ export function ClaimLine({ claim }: { claim: ClaimView }): ReactElement {
           {claim.evidence.map((e, i) => (
             <li key={`${e.sourceType}:${e.sourceId}:${i}`} className="flex gap-1.5 text-ink-muted">
               <span aria-hidden="true">—</span>
-              <EvidenceLink evidence={e} />
+              <EvidenceLink evidence={e} flagged={claim.needsReview} />
             </li>
           ))}
         </ul>

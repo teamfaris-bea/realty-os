@@ -10,7 +10,7 @@
 import { createHmac } from 'node:crypto';
 import type { Instant, Role, SystemVia, UserActor } from '@realty/core/foundation';
 import { isRole } from '@realty/core/foundation';
-import { type Database, type Tx, defaultIds, getDatabase, withTenantTx } from '@realty/db';
+import { type Tx, defaultIds, getDatabase, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { loadConfig } from '../config.js';
 import { EnvelopeService } from '../crypto/envelope.js';

@@ -19,6 +19,7 @@ import { decisionView, evaluateGate, insertDecision, resolvedPolicy } from './ga
 import { renderHumanBody, unsubscribeUrl } from './render.js';
 import { contactFacts, dealOrAppointmentContext, detailVisibleContact } from './repos/contacts.js';
 import * as g from './repos/gate.js';
+import { actionFacts } from './repos/automation.js';
 import * as msgs from './repos/messages.js';
 import { asUser } from './runtime.js';
 import type { CommsDeps, DecisionView, DispatchResult, OutboundIntent } from './types.js';
@@ -161,7 +162,6 @@ export async function composeHumanMessage(actor: UserActor, contactId: string, i
       scheduledFor = at(input.scheduleAt);
       if (scheduledFor <= now) throw new AppError('SCHEDULE_IN_PAST');
     }
-    await lockContact(tx, contactId as ContactId);
     const d = await draftFor(tx, deps, contactId, actor.userId, input.channel, input.toPointId, now);
     const messageId = deps.ids.next<'MessageId'>();
     const { tenant } = await resolvedPolicy(tx);
@@ -174,7 +174,7 @@ export async function composeHumanMessage(actor: UserActor, contactId: string, i
       const stored = await insertDecision(tx, { ids: deps.ids, intent, evaluated, phase: 'preview', actorUserId: actor.userId, now });
       return { kind: 'blocked', decision: decisionView(stored, 'preview') };
     }
-    await msgs.insertOutbound(tx, {
+    const inserted = await msgs.insertOutbound(tx, {
       id: messageId,
       conversationId: d.conversationId,
       contactId,
@@ -197,6 +197,12 @@ export async function composeHumanMessage(actor: UserActor, contactId: string, i
       idempotencyKey: key,
       occurredAt: scheduledFor ?? now,
     });
+    if (!inserted) {
+      // the same command raced in (double tap, network retry): it is that command's message
+      const winner = await msgs.messageByIdempotencyKey(tx, key);
+      if (!winner || winner.contactId !== contactId) throw new AppError('NOT_FOUND');
+      return { kind: 'existing', m: winner };
+    }
     if (scheduledFor !== null) {
       await enqueueTyped(tx, COMMS_DISPATCH, { messageId }, { dedupeKey: COMMS_DISPATCH.dedupeKey({ messageId }), runAt: scheduledFor });
     }
@@ -208,8 +214,10 @@ export async function composeHumanMessage(actor: UserActor, contactId: string, i
   let messageId: string;
   if (created.kind === 'existing') {
     messageId = created.m.id;
-    // an idempotent re-post: only a confirmation (or re-tap of a waiting message) does anything new
-    if (!(created.m.status === 'queued' && (input.confirmDecisionId || created.m.statusReason === 'CLIENT_REPLIED_SINCE_SCHEDULED'))) {
+    // An idempotent re-post is the same command and has no new effect (a retry of the original request
+    // must never stand in for the human having seen a reply, E27: that re-tap is POST /messages/:id/send).
+    // Only an explicit confirmation of a decision the human was shown does something new.
+    if (!(created.m.status === 'queued' && input.confirmDecisionId)) {
       return { message: messageView(created.m), decision: null, result: 'noop' };
     }
   } else {
@@ -225,14 +233,31 @@ export async function composeHumanMessage(actor: UserActor, contactId: string, i
   return { message: await viewOf(actor, messageId, deps), decision: 'decision' in r ? r.decision : null, result: r.kind };
 }
 
-/** POST /messages/:id/send: the human re-taps a waiting message (E27) or confirms a decision. */
+/**
+ * POST /messages/:id/send: the human re-taps a waiting message (E27) or confirms a decision. An approved
+ * assistant draft is sent with its approver as the sender (ARCHITECTURE §9 path 4), so when its send-time
+ * decision needs confirmation, that approver (and only they) confirms it here; its TX1 stays a system
+ * transaction and the confirm decision records the approver.
+ */
 export async function sendExisting(actor: UserActor, messageId: string, confirmDecisionId: string | undefined, deps: CommsDeps): Promise<ComposeResult> {
-  await asUser(deps, actor, async (tx) => {
+  const kind = await asUser(deps, actor, async (tx) => {
     const m = await msgs.messageById(tx, messageId);
-    if (!m || m.initiator !== 'human' || m.initiatedByUserId !== actor.userId) throw new AppError('NOT_FOUND');
+    if (!m) throw new AppError('NOT_FOUND');
+    let k: 'human' | 'approved_draft';
+    if (m.initiator === 'human' && m.initiatedByUserId === actor.userId) k = 'human';
+    else if (m.initiator === 'assistant' && m.assistantActionId && confirmDecisionId) {
+      const a = await actionFacts(tx, m.assistantActionId);
+      if (!a || a.autonomy !== 'requires_approval' || a.status !== 'approved' || a.decidedByUserId !== actor.userId) throw new AppError('NOT_FOUND');
+      k = 'approved_draft';
+    } else throw new AppError('NOT_FOUND');
     if (!(await contactFacts(tx, m.contactId))) throw new AppError('NOT_FOUND');
     if (m.status !== 'queued' && m.status !== 'scheduled') throw new AppError('MESSAGE_NOT_SENDABLE', { status: m.status });
+    return k;
   });
+  if (kind === 'approved_draft') {
+    const r = await dispatchOutbound(messageId, deps, { tenantId: actor.tenantId, confirm: { decisionId: confirmDecisionId!, byUserId: actor.userId } });
+    return { message: await viewOf(actor, messageId, deps), decision: 'decision' in r ? r.decision : null, result: r.kind };
+  }
   const r = await dispatchOutbound(messageId, deps, {
     tenantId: actor.tenantId,
     actor,
@@ -301,7 +326,7 @@ export async function queueOutboundInTx(tx: Tx, deps: Pick<CommsDeps, 'ids'>, sp
   }
   if (!d.fromAddress) return { ok: false, code: 'SENDER_UNAVAILABLE' };
   const messageId = deps.ids.next<'MessageId'>();
-  await msgs.insertOutbound(tx, {
+  const inserted = await msgs.insertOutbound(tx, {
     id: messageId,
     conversationId: d.conversationId,
     contactId: spec.contactId,
@@ -324,6 +349,11 @@ export async function queueOutboundInTx(tx: Tx, deps: Pick<CommsDeps, 'ids'>, sp
     idempotencyKey: spec.idempotencyKey,
     occurredAt: now,
   });
+  if (!inserted) {
+    const winner = await msgs.messageByIdempotencyKey(tx, spec.idempotencyKey);
+    if (!winner) throw new Error('idempotency key taken by an invisible message');
+    return { ok: true, messageId: winner.id, created: false };
+  }
   await enqueueTyped(tx, COMMS_DISPATCH, { messageId }, { dedupeKey: COMMS_DISPATCH.dedupeKey({ messageId }), ...(spec.scheduleAt && spec.scheduleAt > now ? { runAt: spec.scheduleAt } : {}) });
   return { ok: true, messageId, created: true };
 }

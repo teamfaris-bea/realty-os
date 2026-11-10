@@ -14,8 +14,8 @@
 // Imported history never raises an exception (R-IMPORT-6), and only a human touch satisfies the
 // first-touch SLA (R-AST-15): `SlaFacts.firstTouchAt` is the ledger's first_touch_recorded, which
 // only a gate-allowed human outbound writes (R-OWN-14).
-import { canonicalJson } from '../compliance/index.js';
-import { HOUR_MS, type Instant, MINUTE_MS, instant } from '../foundation/index.js';
+import { REASON_EFFECTS, type ReasonCode, canonicalJson, reasonSentence } from '../compliance/index.js';
+import { HOUR_MS, type Instant, MINUTE_MS, instant, localTime } from '../foundation/index.js';
 import { awaitsOutcome, taskDeadline } from './feed.js';
 import { clip } from './format.js';
 import { apptKey, promiseKey, sendKey, untouchedKey } from './keys.js';
@@ -129,9 +129,46 @@ export function overduePromise(t: TaskFacts, now: Instant): DerivedException | n
 
 const TERMINAL_FAILURES = new Set<OutboundStatusFacts['status']>(['blocked', 'failed', 'undelivered', 'bounced']);
 
+/** Provider failure codes api/comms stores in messages.status_reason. */
+const PROVIDER_WORDS: Readonly<Record<string, string>> = {
+  PROVIDER_REJECTED: 'the carrier or provider rejected it',
+  PROVIDER_OPTED_OUT: 'the number opted out with the carrier',
+  PROVIDER_TIMEOUT: 'the provider did not answer',
+  PROVIDER_UNAVAILABLE: 'the provider was unavailable',
+  PROVIDER_NOT_CONFIGURED: 'no provider account is set up',
+  PROVIDER_ERROR: 'a provider error',
+};
+/** Gate reasons whose own sentence needs the policy's window or caps, which are not known here. */
+const CONTEXT_WORDS: Readonly<Partial<Record<ReasonCode, string>>> = {
+  OUTSIDE_CONTACT_WINDOW: 'Outside the hours they can be contacted',
+  OUTSIDE_WINDOW_REPLY: 'Outside the hours they can be contacted',
+  QUIET_HOURS_DEFERRED: 'Outside the hours they can be contacted',
+  NO_CONTACTABLE_WINDOW: 'Outside the hours they can be contacted',
+  FREQUENCY_CAP: 'Over the message limit',
+  MANUAL_SMS_VOLUME: 'Over the message limit',
+  CALL_ATTEMPT_LIMIT: 'Over the call attempt limit',
+};
+
+/**
+ * A stored status reason in words (the queue never shows a raw code, CONVENTIONS §7): gate reason
+ * codes get core/compliance's own sentence, provider codes fixed words, any other code nothing at
+ * all; free text from a provider ("mailbox full", carrier error "30007") is kept, clipped.
+ */
+export function statusReasonWords(reason: string, channel: OutboundStatusFacts['channel']): string | null {
+  const provider = PROVIDER_WORDS[reason];
+  if (provider !== undefined) return provider;
+  if (Object.hasOwn(REASON_EFFECTS, reason)) {
+    const code = reason as ReasonCode;
+    // the window and caps below are never printed: every code whose sentence uses them is in CONTEXT_WORDS
+    return CONTEXT_WORDS[code] ?? reasonSentence(code, { channel: channel === 'email' ? 'email' : 'sms', window: { start: localTime('09:00'), end: localTime('20:00') }, caps: { manualSmsConfirmAfter24h: 0, callAttemptsPer24h: 0 } });
+  }
+  if (/^[A-Z][A-Z0-9_]*$/.test(reason)) return null;
+  return clip(reason, 160);
+}
+
 function failureExplanation(m: OutboundStatusFacts, s: Required<ExceptionSettings>): string {
   const noun = m.channel === 'email' ? 'Email' : 'Text';
-  const why = m.statusReason ? clip(m.statusReason, 160) : null;
+  const why = m.statusReason ? statusReasonWords(m.statusReason, m.channel) : null;
   switch (m.status) {
     case 'blocked':
       return why ? `${noun} blocked by the send-time check: ${why}` : `${noun} blocked by the send-time check`;

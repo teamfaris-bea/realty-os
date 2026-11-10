@@ -15,7 +15,9 @@
     "db:migrate": "pnpm --filter @realty/db run migrate",
     "dev:api": "pnpm --filter @realty/api dev",
     "dev:worker": "pnpm --filter @realty/api dev:worker",
-    "dev:web": "pnpm --filter @realty/web dev"
+    "dev:web": "pnpm --filter @realty/web dev",
+    "seed": "pnpm --filter @realty/api seed",
+    "demo:totp": "pnpm --filter @realty/api demo:totp"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

@@ -463,11 +463,20 @@ function decideCreate(state: OwnershipProjection | null, cmd: Cmd<'create'>, ctx
   return accepted(b, null);
 }
 
+/** Only `import_assign` → 'unassigned' produces this projection: one ledger event, unassigned, no route due. */
+function inImportCreationState(state: OwnershipProjection): boolean {
+  return state.state === 'unassigned' && state.seq === 1 && state.routeDueAt === null;
+}
+
 function decideImport(state: OwnershipProjection | null, cmd: Cmd<'import_assign'>, ctx: DecisionContext): Decision {
   if (!isSystem(ctx.actor, 'import')) return rejection(state, cmd, ctx, 'NOT_FOUND');
-  // R-OWN-21 / E41: an import re-run never changes ownership of an already-linked record.
-  if (state) return noop(state);
-  const b = new Builder(null, ctx.contactId, ctx);
+  // R-OWN-21 / E41: an import re-run never changes ownership of an already-linked record. The one
+  // exception is the staged import's ownership stage (R-IMPORT-3/8): a contact that its contacts
+  // stage created and that is still in that imported creation state (seq 1, unassigned, never
+  // routed) takes its mapped assignment, again as an `imported` event with no SLA.
+  if (state && !inImportCreationState(state)) return noop(state);
+  if (state && cmd.target === 'unassigned') return noop(state);
+  const b = new Builder(state, ctx.contactId, ctx);
   const t = cmd.target;
   if (t === 'unassigned') {
     b.emit('imported', 'unassigned', { reasonCode: 'IMPORTED', routingRuleId: null, payload: { routeDueAt: null } });

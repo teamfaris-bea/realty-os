@@ -1,0 +1,4648 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response schemas have no confidence* fields, no score, and no tenant id fields (snapshot) 1`] = `
+{
+  "AppointmentResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "appointment": {
+        "additionalProperties": false,
+        "properties": {
+          "awaitingOutcome": {
+            "type": "boolean",
+          },
+          "contact": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                  "name": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "id",
+                  "name",
+                ],
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "createdByKind": {
+            "enum": [
+              "user",
+              "assistant",
+              "system",
+              "import",
+            ],
+            "type": "string",
+          },
+          "dealId": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "endsAt": {
+            "type": "string",
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "kind": {
+            "enum": [
+              "buyer_consult",
+              "listing_appointment",
+              "consult",
+              "other",
+            ],
+            "type": "string",
+          },
+          "location": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "enum": [
+                  "agreement_signed",
+                  "follow_up",
+                  "not_a_fit",
+                  "no_decision",
+                ],
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "outcomeLoggedAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "outcomeNote": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "startsAt": {
+            "type": "string",
+          },
+          "status": {
+            "enum": [
+              "scheduled",
+              "held",
+              "no_show",
+              "canceled",
+              "rescheduled",
+            ],
+            "type": "string",
+          },
+          "userId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+          "kind",
+          "startsAt",
+          "endsAt",
+          "location",
+          "status",
+          "outcome",
+          "outcomeNote",
+          "outcomeLoggedAt",
+          "userId",
+          "contact",
+          "dealId",
+          "awaitingOutcome",
+          "createdByKind",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "appointment",
+    ],
+    "type": "object",
+  },
+  "AppointmentsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "appointments": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "awaitingOutcome": {
+              "type": "boolean",
+            },
+            "contact": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                    "name": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "createdByKind": {
+              "enum": [
+                "user",
+                "assistant",
+                "system",
+                "import",
+              ],
+              "type": "string",
+            },
+            "dealId": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "endsAt": {
+              "type": "string",
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "kind": {
+              "enum": [
+                "buyer_consult",
+                "listing_appointment",
+                "consult",
+                "other",
+              ],
+              "type": "string",
+            },
+            "location": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "outcome": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "agreement_signed",
+                    "follow_up",
+                    "not_a_fit",
+                    "no_decision",
+                  ],
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "outcomeLoggedAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "outcomeNote": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "startsAt": {
+              "type": "string",
+            },
+            "status": {
+              "enum": [
+                "scheduled",
+                "held",
+                "no_show",
+                "canceled",
+                "rescheduled",
+              ],
+              "type": "string",
+            },
+            "userId": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "kind",
+            "startsAt",
+            "endsAt",
+            "location",
+            "status",
+            "outcome",
+            "outcomeNote",
+            "outcomeLoggedAt",
+            "userId",
+            "contact",
+            "dealId",
+            "awaitingOutcome",
+            "createdByKind",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "appointments",
+    ],
+    "type": "object",
+  },
+  "DealDateResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "date": {
+        "additionalProperties": false,
+        "properties": {
+          "completedAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "dueOn": {
+            "type": "string",
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "kind": {
+            "enum": [
+              "acceptance",
+              "inspection",
+              "appraisal",
+              "financing",
+              "closing",
+              "possession",
+              "custom",
+            ],
+            "type": "string",
+          },
+          "label": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+        },
+        "required": [
+          "id",
+          "kind",
+          "label",
+          "dueOn",
+          "completedAt",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "date",
+    ],
+    "type": "object",
+  },
+  "DealResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "deal": {
+        "additionalProperties": false,
+        "properties": {
+          "agreementSignedAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "attribution": {
+            "additionalProperties": false,
+            "properties": {
+              "adRef": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "campaignRef": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "leadSourceId": {
+                "anyOf": [
+                  {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
+              "leadSourceName": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "sourceInquiryId": {
+                "anyOf": [
+                  {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
+            },
+            "required": [
+              "leadSourceId",
+              "leadSourceName",
+              "campaignRef",
+              "adRef",
+              "sourceInquiryId",
+            ],
+            "type": "object",
+          },
+          "closedAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "contacts": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "contactId": {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                "role": {
+                  "enum": [
+                    "buyer",
+                    "seller",
+                    "co_buyer",
+                    "co_seller",
+                    "other",
+                  ],
+                  "type": "string",
+                },
+              },
+              "required": [
+                "contactId",
+                "role",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "createdAt": {
+            "type": "string",
+          },
+          "dates": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "completedAt": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "dueOn": {
+                  "type": "string",
+                },
+                "id": {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                "kind": {
+                  "enum": [
+                    "acceptance",
+                    "inspection",
+                    "appraisal",
+                    "financing",
+                    "closing",
+                    "possession",
+                    "custom",
+                  ],
+                  "type": "string",
+                },
+                "label": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+              },
+              "required": [
+                "id",
+                "kind",
+                "label",
+                "dueOn",
+                "completedAt",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "expectedCloseDate": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "history": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "byUserId": {
+                  "anyOf": [
+                    {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "changedAt": {
+                  "type": "string",
+                },
+                "fromStage": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "toStage": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "fromStage",
+                "toStage",
+                "changedAt",
+                "byUserId",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "listingId": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "lostReason": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "members": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "role": {
+                  "enum": [
+                    "co_agent",
+                    "tc",
+                    "isa",
+                  ],
+                  "type": "string",
+                },
+                "userId": {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+              },
+              "required": [
+                "userId",
+                "role",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "name": {
+            "type": "string",
+          },
+          "ownerUserId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "priceCents": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "primaryContact": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                  "name": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "id",
+                  "name",
+                ],
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "rowVersion": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "side": {
+            "enum": [
+              "buy",
+              "sell",
+              "dual",
+              "lease",
+            ],
+            "type": "string",
+          },
+          "stage": {
+            "enum": [
+              "prospect",
+              "agreement_signed",
+              "active",
+              "under_contract",
+              "closed",
+              "lost",
+            ],
+            "type": "string",
+          },
+          "stageEnteredAt": {
+            "type": "string",
+          },
+          "underContractAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+        },
+        "required": [
+          "id",
+          "name",
+          "side",
+          "stage",
+          "stageEnteredAt",
+          "primaryContact",
+          "ownerUserId",
+          "listingId",
+          "priceCents",
+          "expectedCloseDate",
+          "agreementSignedAt",
+          "underContractAt",
+          "closedAt",
+          "lostReason",
+          "attribution",
+          "rowVersion",
+          "createdAt",
+          "dates",
+          "members",
+          "contacts",
+          "history",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "deal",
+    ],
+    "type": "object",
+  },
+  "DealsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "deals": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "agreementSignedAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "attribution": {
+              "additionalProperties": false,
+              "properties": {
+                "adRef": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "campaignRef": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "leadSourceId": {
+                  "anyOf": [
+                    {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "leadSourceName": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "sourceInquiryId": {
+                  "anyOf": [
+                    {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+              },
+              "required": [
+                "leadSourceId",
+                "leadSourceName",
+                "campaignRef",
+                "adRef",
+                "sourceInquiryId",
+              ],
+              "type": "object",
+            },
+            "closedAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "createdAt": {
+              "type": "string",
+            },
+            "expectedCloseDate": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "listingId": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "lostReason": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "name": {
+              "type": "string",
+            },
+            "ownerUserId": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "priceCents": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "primaryContact": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                    "name": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "rowVersion": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer",
+            },
+            "side": {
+              "enum": [
+                "buy",
+                "sell",
+                "dual",
+                "lease",
+              ],
+              "type": "string",
+            },
+            "stage": {
+              "enum": [
+                "prospect",
+                "agreement_signed",
+                "active",
+                "under_contract",
+                "closed",
+                "lost",
+              ],
+              "type": "string",
+            },
+            "stageEnteredAt": {
+              "type": "string",
+            },
+            "underContractAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+          },
+          "required": [
+            "id",
+            "name",
+            "side",
+            "stage",
+            "stageEnteredAt",
+            "primaryContact",
+            "ownerUserId",
+            "listingId",
+            "priceCents",
+            "expectedCloseDate",
+            "agreementSignedAt",
+            "underContractAt",
+            "closedAt",
+            "lostReason",
+            "attribution",
+            "rowVersion",
+            "createdAt",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "deals",
+    ],
+    "type": "object",
+  },
+  "FeedActionResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "item": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "snoozedUntil": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "state": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+          "state",
+          "snoozedUntil",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "item",
+    ],
+    "type": "object",
+  },
+  "FeedResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "generatedAt": {
+        "type": "string",
+      },
+      "pinned": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "alternatives": {
+              "items": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "contactId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "accept_offer",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                      "offerId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "contactId",
+                      "offerId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "contactId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "decline_offer",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                      "offerId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "contactId",
+                      "offerId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "contactId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "claim",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                      "pondId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "contactId",
+                      "pondId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "contactId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "call",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                      "note": {
+                        "maxLength": 300,
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "contactId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "contactId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "draftActionId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "text",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                      "note": {
+                        "maxLength": 300,
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "contactId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "contactId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "draftActionId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "email",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                      "note": {
+                        "maxLength": 300,
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "contactId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "actionId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "send_draft",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                      "note": {
+                        "maxLength": 300,
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "actionId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "actionId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "edit_draft",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "actionId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "actionId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "review_handback",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "actionId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "complete_task",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                      "taskId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "taskId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "open_task",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                      "taskId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "taskId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "appointmentId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "log_outcome",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "appointmentId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "dealId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "open_deal",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "dealId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "dealDateId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "complete_deal_date",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "dealDateId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "review_search",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                      "savedSearchId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "savedSearchId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "contactId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "open_contact",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "contactId",
+                    ],
+                    "type": "object",
+                  },
+                ],
+              },
+              "type": "array",
+            },
+            "assistantActionId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "band": {
+              "enum": [
+                "pinned",
+                "scored",
+              ],
+              "type": "string",
+            },
+            "contact": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                    "name": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "createdAt": {
+              "type": "string",
+            },
+            "dueAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "itemType": {
+              "type": "string",
+            },
+            "primaryAction": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contactId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "accept_offer",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "offerId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "contactId",
+                    "offerId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contactId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "decline_offer",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "offerId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "contactId",
+                    "offerId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contactId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "claim",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "pondId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "contactId",
+                    "pondId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contactId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "call",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "note": {
+                      "maxLength": 300,
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "contactId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contactId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "draftActionId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "text",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "note": {
+                      "maxLength": 300,
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "contactId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contactId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "draftActionId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "email",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "note": {
+                      "maxLength": 300,
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "contactId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "actionId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "send_draft",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "note": {
+                      "maxLength": 300,
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "actionId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "actionId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "edit_draft",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "actionId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "actionId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "review_handback",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "actionId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "complete_task",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "taskId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "taskId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "open_task",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "taskId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "taskId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "appointmentId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "log_outcome",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "appointmentId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "dealId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "open_deal",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "dealId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "dealDateId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "complete_deal_date",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "dealDateId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "review_search",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "savedSearchId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "savedSearchId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contactId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "open_contact",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "contactId",
+                  ],
+                  "type": "object",
+                },
+              ],
+            },
+            "reasons": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "type": "string",
+                  },
+                  "label": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "code",
+                  "label",
+                ],
+                "type": "object",
+              },
+              "minItems": 1,
+              "type": "array",
+            },
+            "subjectId": {
+              "type": "string",
+            },
+            "subjectType": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "itemType",
+            "band",
+            "dueAt",
+            "contact",
+            "reasons",
+            "primaryAction",
+            "alternatives",
+            "subjectType",
+            "subjectId",
+            "assistantActionId",
+            "createdAt",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "scored": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "alternatives": {
+              "items": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "contactId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "accept_offer",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                      "offerId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "contactId",
+                      "offerId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "contactId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "decline_offer",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                      "offerId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "contactId",
+                      "offerId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "contactId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "claim",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                      "pondId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "contactId",
+                      "pondId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "contactId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "call",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                      "note": {
+                        "maxLength": 300,
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "contactId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "contactId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "draftActionId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "text",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                      "note": {
+                        "maxLength": 300,
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "contactId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "contactId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "draftActionId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "email",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                      "note": {
+                        "maxLength": 300,
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "contactId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "actionId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "send_draft",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                      "note": {
+                        "maxLength": 300,
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "actionId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "actionId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "edit_draft",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "actionId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "actionId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "review_handback",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "actionId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "complete_task",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                      "taskId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "taskId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "open_task",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                      "taskId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "taskId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "appointmentId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "log_outcome",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "appointmentId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "dealId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "open_deal",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "dealId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "dealDateId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "complete_deal_date",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "dealDateId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "review_search",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                      "savedSearchId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "savedSearchId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "contactId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "open_contact",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "contactId",
+                    ],
+                    "type": "object",
+                  },
+                ],
+              },
+              "type": "array",
+            },
+            "assistantActionId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "band": {
+              "enum": [
+                "pinned",
+                "scored",
+              ],
+              "type": "string",
+            },
+            "contact": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                    "name": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "createdAt": {
+              "type": "string",
+            },
+            "dueAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "itemType": {
+              "type": "string",
+            },
+            "primaryAction": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contactId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "accept_offer",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "offerId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "contactId",
+                    "offerId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contactId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "decline_offer",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "offerId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "contactId",
+                    "offerId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contactId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "claim",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "pondId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "contactId",
+                    "pondId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contactId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "call",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "note": {
+                      "maxLength": 300,
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "contactId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contactId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "draftActionId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "text",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "note": {
+                      "maxLength": 300,
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "contactId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contactId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "draftActionId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "email",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "note": {
+                      "maxLength": 300,
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "contactId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "actionId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "send_draft",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "note": {
+                      "maxLength": 300,
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "actionId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "actionId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "edit_draft",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "actionId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "actionId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "review_handback",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "actionId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "complete_task",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "taskId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "taskId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "open_task",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "taskId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "taskId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "appointmentId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "log_outcome",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "appointmentId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "dealId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "open_deal",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "dealId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "dealDateId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "complete_deal_date",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "dealDateId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "review_search",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "savedSearchId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "savedSearchId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contactId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "open_contact",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "contactId",
+                  ],
+                  "type": "object",
+                },
+              ],
+            },
+            "reasons": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "type": "string",
+                  },
+                  "label": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "code",
+                  "label",
+                ],
+                "type": "object",
+              },
+              "minItems": 1,
+              "type": "array",
+            },
+            "subjectId": {
+              "type": "string",
+            },
+            "subjectType": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "itemType",
+            "band",
+            "dueAt",
+            "contact",
+            "reasons",
+            "primaryAction",
+            "alternatives",
+            "subjectType",
+            "subjectId",
+            "assistantActionId",
+            "createdAt",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "total": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer",
+      },
+    },
+    "required": [
+      "pinned",
+      "scored",
+      "total",
+      "generatedAt",
+    ],
+    "type": "object",
+  },
+  "FinancialsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "financials": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "agentSplitBps": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
+              "commissionRateBps": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
+              "commissionStatus": {
+                "enum": [
+                  "estimated",
+                  "confirmed",
+                  "paid",
+                ],
+                "type": "string",
+              },
+              "grossCommissionCents": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
+              "referralFeeCents": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
+              "teamSplitBps": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
+              "updatedAt": {
+                "type": "string",
+              },
+              "updatedByUserId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+            },
+            "required": [
+              "grossCommissionCents",
+              "commissionRateBps",
+              "teamSplitBps",
+              "agentSplitBps",
+              "referralFeeCents",
+              "commissionStatus",
+              "updatedByUserId",
+              "updatedAt",
+            ],
+            "type": "object",
+          },
+          {
+            "type": "null",
+          },
+        ],
+      },
+    },
+    "required": [
+      "financials",
+    ],
+    "type": "object",
+  },
+  "ListingResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "listing": {
+        "additionalProperties": false,
+        "properties": {
+          "addressLine1": {
+            "type": "string",
+          },
+          "addressLine2": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "bathsX10": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "beds": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "city": {
+            "type": "string",
+          },
+          "contacts": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "contactId": {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                "role": {
+                  "enum": [
+                    "seller",
+                    "co_seller",
+                    "interested",
+                  ],
+                  "type": "string",
+                },
+              },
+              "required": [
+                "contactId",
+                "role",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "createdAt": {
+            "type": "string",
+          },
+          "description": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "editable": {
+            "type": "boolean",
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "listDate": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "listPriceCents": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "listingAgentUserId": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "mlsNumber": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "postalCode": {
+            "type": "string",
+          },
+          "priceHistory": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "changedAt": {
+                  "type": "string",
+                },
+                "priceCents": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer",
+                },
+              },
+              "required": [
+                "priceCents",
+                "changedAt",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "propertyType": {
+            "anyOf": [
+              {
+                "enum": [
+                  "single_family",
+                  "condo",
+                  "townhouse",
+                  "multi_family",
+                  "land",
+                  "manufactured",
+                  "other",
+                ],
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "region": {
+            "type": "string",
+          },
+          "showings": {
+            "additionalProperties": false,
+            "properties": {
+              "completed": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              "total": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              "withFeedback": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+            },
+            "required": [
+              "total",
+              "completed",
+              "withFeedback",
+            ],
+            "type": "object",
+          },
+          "source": {
+            "enum": [
+              "team",
+              "mls",
+            ],
+            "type": "string",
+          },
+          "sqft": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "status": {
+            "enum": [
+              "coming_soon",
+              "active",
+              "pending",
+              "sold",
+              "withdrawn",
+              "expired",
+            ],
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+          "source",
+          "mlsNumber",
+          "status",
+          "addressLine1",
+          "addressLine2",
+          "city",
+          "region",
+          "postalCode",
+          "listPriceCents",
+          "beds",
+          "bathsX10",
+          "sqft",
+          "propertyType",
+          "listingAgentUserId",
+          "description",
+          "listDate",
+          "editable",
+          "createdAt",
+          "priceHistory",
+          "contacts",
+          "showings",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "listing",
+    ],
+    "type": "object",
+  },
+  "ListingsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "listings": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "addressLine1": {
+              "type": "string",
+            },
+            "addressLine2": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "bathsX10": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "beds": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "city": {
+              "type": "string",
+            },
+            "createdAt": {
+              "type": "string",
+            },
+            "description": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "editable": {
+              "type": "boolean",
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "listDate": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "listPriceCents": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "listingAgentUserId": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "mlsNumber": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "postalCode": {
+              "type": "string",
+            },
+            "propertyType": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "single_family",
+                    "condo",
+                    "townhouse",
+                    "multi_family",
+                    "land",
+                    "manufactured",
+                    "other",
+                  ],
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "region": {
+              "type": "string",
+            },
+            "source": {
+              "enum": [
+                "team",
+                "mls",
+              ],
+              "type": "string",
+            },
+            "sqft": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "status": {
+              "enum": [
+                "coming_soon",
+                "active",
+                "pending",
+                "sold",
+                "withdrawn",
+                "expired",
+              ],
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "source",
+            "mlsNumber",
+            "status",
+            "addressLine1",
+            "addressLine2",
+            "city",
+            "region",
+            "postalCode",
+            "listPriceCents",
+            "beds",
+            "bathsX10",
+            "sqft",
+            "propertyType",
+            "listingAgentUserId",
+            "description",
+            "listDate",
+            "editable",
+            "createdAt",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "listings",
+    ],
+    "type": "object",
+  },
+  "NotificationsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "notifications": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "body": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "createdAt": {
+              "type": "string",
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "kind": {
+              "type": "string",
+            },
+            "priority": {
+              "enum": [
+                "critical",
+                "high",
+                "normal",
+                "low",
+              ],
+              "type": "string",
+            },
+            "readAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "subjectId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "subjectType": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "title": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "kind",
+            "priority",
+            "title",
+            "body",
+            "subjectType",
+            "subjectId",
+            "createdAt",
+            "readAt",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "unread": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer",
+      },
+    },
+    "required": [
+      "notifications",
+      "unread",
+    ],
+    "type": "object",
+  },
+  "PreferenceResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "preference": {
+        "additionalProperties": false,
+        "properties": {
+          "channels": {
+            "items": {
+              "enum": [
+                "in_app",
+                "web_push",
+                "sms",
+                "email",
+              ],
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "critical": {
+            "type": "boolean",
+          },
+          "kind": {
+            "enum": [
+              "lead_offer",
+              "first_touch_due",
+              "first_touch_escalation",
+              "handback",
+              "handback_hot",
+              "inbound_message",
+              "missed_call",
+              "pond_new",
+              "task_due",
+              "promise_due",
+              "exception",
+              "reassigned_to_you",
+              "reassigned_away",
+              "inactivity_warning",
+              "opt_out",
+              "import_ready",
+              "system",
+            ],
+            "type": "string",
+          },
+          "mutedUntil": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "quietEnd": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "quietStart": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "saved": {
+            "type": "boolean",
+          },
+        },
+        "required": [
+          "kind",
+          "channels",
+          "mutedUntil",
+          "quietStart",
+          "quietEnd",
+          "critical",
+          "saved",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "preference",
+    ],
+    "type": "object",
+  },
+  "PreferencesResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "preferences": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "channels": {
+              "items": {
+                "enum": [
+                  "in_app",
+                  "web_push",
+                  "sms",
+                  "email",
+                ],
+                "type": "string",
+              },
+              "type": "array",
+            },
+            "critical": {
+              "type": "boolean",
+            },
+            "kind": {
+              "enum": [
+                "lead_offer",
+                "first_touch_due",
+                "first_touch_escalation",
+                "handback",
+                "handback_hot",
+                "inbound_message",
+                "missed_call",
+                "pond_new",
+                "task_due",
+                "promise_due",
+                "exception",
+                "reassigned_to_you",
+                "reassigned_away",
+                "inactivity_warning",
+                "opt_out",
+                "import_ready",
+                "system",
+              ],
+              "type": "string",
+            },
+            "mutedUntil": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "quietEnd": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "quietStart": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "saved": {
+              "type": "boolean",
+            },
+          },
+          "required": [
+            "kind",
+            "channels",
+            "mutedUntil",
+            "quietStart",
+            "quietEnd",
+            "critical",
+            "saved",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "preferences",
+    ],
+    "type": "object",
+  },
+  "ReadResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "marked": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer",
+      },
+      "unread": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer",
+      },
+    },
+    "required": [
+      "marked",
+      "unread",
+    ],
+    "type": "object",
+  },
+  "SearchResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "contacts": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "matchedOn": {
+              "enum": [
+                "name",
+                "phone",
+                "email",
+                "address",
+              ],
+              "type": "string",
+            },
+            "name": {
+              "type": "string",
+            },
+            "ownershipState": {
+              "type": "string",
+            },
+            "view": {
+              "enum": [
+                "full",
+                "card",
+              ],
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "name",
+            "view",
+            "ownershipState",
+            "matchedOn",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "deals": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "name": {
+              "type": "string",
+            },
+            "stage": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "name",
+            "stage",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "incomplete": {
+        "items": {
+          "enum": [
+            "contacts",
+            "listings",
+            "deals",
+            "notes",
+            "messages",
+          ],
+          "type": "string",
+        },
+        "type": "array",
+      },
+      "listings": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "address": {
+              "type": "string",
+            },
+            "city": {
+              "type": "string",
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "listPriceCents": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "status": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "address",
+            "city",
+            "status",
+            "listPriceCents",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "messages": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "channel": {
+              "type": "string",
+            },
+            "contactId": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "direction": {
+              "type": "string",
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "occurredAt": {
+              "type": "string",
+            },
+            "snippet": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "contactId",
+            "channel",
+            "direction",
+            "snippet",
+            "occurredAt",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "notes": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "contactId": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "createdAt": {
+              "type": "string",
+            },
+            "dealId": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "snippet": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "contactId",
+            "dealId",
+            "snippet",
+            "createdAt",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "contacts",
+      "listings",
+      "deals",
+      "notes",
+      "messages",
+      "incomplete",
+    ],
+    "type": "object",
+  },
+  "ShowingResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "showing": {
+        "additionalProperties": false,
+        "properties": {
+          "buyerAgentBrokerage": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "buyerAgentName": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "buyerContactId": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "endsAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "feedback": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "comments": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "id": {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                "rating": {
+                  "anyOf": [
+                    {
+                      "maximum": 9007199254740991,
+                      "minimum": -9007199254740991,
+                      "type": "integer",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "receivedAt": {
+                  "type": "string",
+                },
+                "source": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "id",
+                "rating",
+                "comments",
+                "source",
+                "receivedAt",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "listingId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "source": {
+            "enum": [
+              "manual",
+              "showing_service",
+              "import",
+            ],
+            "type": "string",
+          },
+          "startsAt": {
+            "type": "string",
+          },
+          "status": {
+            "enum": [
+              "scheduled",
+              "completed",
+              "canceled",
+              "no_show",
+            ],
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+          "listingId",
+          "startsAt",
+          "endsAt",
+          "buyerAgentName",
+          "buyerAgentBrokerage",
+          "buyerContactId",
+          "status",
+          "source",
+          "feedback",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "showing",
+    ],
+    "type": "object",
+  },
+  "ShowingsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "showings": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "buyerAgentBrokerage": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "buyerAgentName": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "buyerContactId": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "endsAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "feedback": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "comments": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "id": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                  "rating": {
+                    "anyOf": [
+                      {
+                        "maximum": 9007199254740991,
+                        "minimum": -9007199254740991,
+                        "type": "integer",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "receivedAt": {
+                    "type": "string",
+                  },
+                  "source": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "id",
+                  "rating",
+                  "comments",
+                  "source",
+                  "receivedAt",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "listingId": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "source": {
+              "enum": [
+                "manual",
+                "showing_service",
+                "import",
+              ],
+              "type": "string",
+            },
+            "startsAt": {
+              "type": "string",
+            },
+            "status": {
+              "enum": [
+                "scheduled",
+                "completed",
+                "canceled",
+                "no_show",
+              ],
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "listingId",
+            "startsAt",
+            "endsAt",
+            "buyerAgentName",
+            "buyerAgentBrokerage",
+            "buyerContactId",
+            "status",
+            "source",
+            "feedback",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "showings",
+    ],
+    "type": "object",
+  },
+  "TaskResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "task": {
+        "additionalProperties": false,
+        "properties": {
+          "assigneeUserId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "completedAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "contact": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                  "name": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "id",
+                  "name",
+                ],
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "createdAt": {
+            "type": "string",
+          },
+          "createdByKind": {
+            "enum": [
+              "user",
+              "assistant",
+              "system",
+              "import",
+            ],
+            "type": "string",
+          },
+          "dealId": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "dueAllDay": {
+            "type": "boolean",
+          },
+          "dueAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "dueTz": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "kind": {
+            "enum": [
+              "todo",
+              "callback",
+              "promise",
+              "follow_up",
+              "document",
+            ],
+            "type": "string",
+          },
+          "listingId": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "needsReview": {
+            "type": "boolean",
+          },
+          "notes": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "source": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "actionId": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "claimText": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "evidence": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "label": {
+                          "type": "string",
+                        },
+                        "locator": {
+                          "additionalProperties": {},
+                          "propertyNames": {
+                            "type": "string",
+                          },
+                          "type": "object",
+                        },
+                        "snippet": {
+                          "type": [
+                            "string",
+                            "null",
+                          ],
+                        },
+                        "sourceAvailable": {
+                          "type": "boolean",
+                        },
+                        "sourceId": {
+                          "type": "string",
+                        },
+                        "sourceType": {
+                          "type": "string",
+                        },
+                        "verified": {
+                          "type": "boolean",
+                        },
+                      },
+                      "required": [
+                        "sourceType",
+                        "sourceId",
+                        "locator",
+                        "snippet",
+                        "verified",
+                        "sourceAvailable",
+                        "label",
+                      ],
+                      "type": "object",
+                    },
+                    "type": "array",
+                  },
+                },
+                "required": [
+                  "actionId",
+                  "claimText",
+                  "evidence",
+                ],
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "status": {
+            "enum": [
+              "open",
+              "done",
+              "canceled",
+            ],
+            "type": "string",
+          },
+          "title": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "notes",
+          "dueAt",
+          "dueAllDay",
+          "dueTz",
+          "status",
+          "completedAt",
+          "assigneeUserId",
+          "contact",
+          "dealId",
+          "listingId",
+          "createdByKind",
+          "needsReview",
+          "source",
+          "createdAt",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "task",
+    ],
+    "type": "object",
+  },
+  "TasksResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "tasks": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "assigneeUserId": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "completedAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "contact": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                    "name": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "createdAt": {
+              "type": "string",
+            },
+            "createdByKind": {
+              "enum": [
+                "user",
+                "assistant",
+                "system",
+                "import",
+              ],
+              "type": "string",
+            },
+            "dealId": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "dueAllDay": {
+              "type": "boolean",
+            },
+            "dueAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "dueTz": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "kind": {
+              "enum": [
+                "todo",
+                "callback",
+                "promise",
+                "follow_up",
+                "document",
+              ],
+              "type": "string",
+            },
+            "listingId": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "needsReview": {
+              "type": "boolean",
+            },
+            "notes": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "source": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "actionId": {
+                      "anyOf": [
+                        {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                    "claimText": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "evidence": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "label": {
+                            "type": "string",
+                          },
+                          "locator": {
+                            "additionalProperties": {},
+                            "propertyNames": {
+                              "type": "string",
+                            },
+                            "type": "object",
+                          },
+                          "snippet": {
+                            "type": [
+                              "string",
+                              "null",
+                            ],
+                          },
+                          "sourceAvailable": {
+                            "type": "boolean",
+                          },
+                          "sourceId": {
+                            "type": "string",
+                          },
+                          "sourceType": {
+                            "type": "string",
+                          },
+                          "verified": {
+                            "type": "boolean",
+                          },
+                        },
+                        "required": [
+                          "sourceType",
+                          "sourceId",
+                          "locator",
+                          "snippet",
+                          "verified",
+                          "sourceAvailable",
+                          "label",
+                        ],
+                        "type": "object",
+                      },
+                      "type": "array",
+                    },
+                  },
+                  "required": [
+                    "actionId",
+                    "claimText",
+                    "evidence",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "status": {
+              "enum": [
+                "open",
+                "done",
+                "canceled",
+              ],
+              "type": "string",
+            },
+            "title": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "kind",
+            "title",
+            "notes",
+            "dueAt",
+            "dueAllDay",
+            "dueTz",
+            "status",
+            "completedAt",
+            "assigneeUserId",
+            "contact",
+            "dealId",
+            "listingId",
+            "createdByKind",
+            "needsReview",
+            "source",
+            "createdAt",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "tasks",
+    ],
+    "type": "object",
+  },
+}
+`;
+
+exports[`api/workspace route table and schemas > every workspace route declares its authorization; Action routes carry authorize(<that action>) (snapshot) 1`] = `
+[
+  "DELETE /api/deals/:id/members/:userId deal.edit authorize(deal.edit)",
+  "GET /api/appointments self",
+  "GET /api/deals self",
+  "GET /api/deals/:id deal.view authorize(deal.view)",
+  "GET /api/deals/:id/financials deal.financials authorize(deal.financials)",
+  "GET /api/feed self",
+  "GET /api/listings self",
+  "GET /api/listings/:id listing.view authorize(listing.view)",
+  "GET /api/listings/:id/showings listing.view authorize(listing.view)",
+  "GET /api/notification-preferences self",
+  "GET /api/notifications self",
+  "GET /api/search self",
+  "GET /api/tasks self",
+  "GET /api/tasks/:id self",
+  "PATCH /api/appointments/:id self",
+  "PATCH /api/deal-dates/:id deal.edit authorize(deal.edit)",
+  "PATCH /api/deals/:id deal.edit authorize(deal.edit)",
+  "PATCH /api/listings/:id listing.edit authorize(listing.edit)",
+  "PATCH /api/showings/:id listing.edit authorize(listing.edit)",
+  "PATCH /api/tasks/:id self",
+  "POST /api/appointments self",
+  "POST /api/appointments/:id/outcome self",
+  "POST /api/deals deal.edit authorize(deal.edit)",
+  "POST /api/deals/:id/contacts deal.edit authorize(deal.edit)",
+  "POST /api/deals/:id/dates deal.edit authorize(deal.edit)",
+  "POST /api/deals/:id/members deal.edit authorize(deal.edit)",
+  "POST /api/deals/:id/stage deal.edit authorize(deal.edit)",
+  "POST /api/feed/:id/dismiss self",
+  "POST /api/feed/:id/done self",
+  "POST /api/feed/:id/snooze self",
+  "POST /api/listings listing.edit authorize(listing.edit)",
+  "POST /api/listings/:id/contacts listing.edit authorize(listing.edit)",
+  "POST /api/listings/:id/showings listing.edit authorize(listing.edit)",
+  "POST /api/notifications/read self",
+  "POST /api/showings/:id/feedback listing.edit authorize(listing.edit)",
+  "POST /api/tasks self",
+  "PUT /api/deals/:id/financials deal.financials authorize(deal.financials)",
+  "PUT /api/notification-preferences self",
+]
+`;

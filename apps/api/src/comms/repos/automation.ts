@@ -17,8 +17,12 @@ export async function pauseConversation(tx: Tx, conversationId: string, reason: 
   return Number(r.numAffectedRows ?? 0n) === 1;
 }
 
-/** Pauses (or, for a wrong number, stops) every active enrollment of these contacts. Returns the enrollment ids. */
-export async function pauseEnrollments(tx: Tx, contactIds: readonly string[], reason: PauseReason, messageId: string | null, now: Instant): Promise<{ id: string; contactId: string }[]> {
+/**
+ * Pauses (or, for a wrong number, stops) every active enrollment of these contacts and cancels their
+ * scheduled step runs. Step runs are system-written (RLS): a user-context caller passes
+ * `stepRuns: false`; the playbook step job re-checks the enrollment state anyway.
+ */
+export async function pauseEnrollments(tx: Tx, contactIds: readonly string[], reason: PauseReason, messageId: string | null, now: Instant, o: { stepRuns?: boolean } = {}): Promise<{ id: string; contactId: string }[]> {
   if (contactIds.length === 0) return [];
   const r =
     reason === 'wrong_number'
@@ -33,7 +37,7 @@ export async function pauseEnrollments(tx: Tx, contactIds: readonly string[], re
            WHERE tenant_id = app.tenant_id() AND contact_id = ANY (${contactIds}::uuid[]) AND state = 'active'
           RETURNING id, contact_id`.execute(tx);
   const ids = r.rows.map((x) => x.id);
-  if (ids.length > 0) {
+  if (ids.length > 0 && o.stepRuns !== false) {
     await sql`
       UPDATE playbook_step_runs SET status = 'canceled_paused', updated_at = now()
        WHERE tenant_id = app.tenant_id() AND enrollment_id = ANY (${ids}::uuid[]) AND status IN ('scheduled','deferred')`.execute(tx);

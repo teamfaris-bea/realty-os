@@ -32,6 +32,7 @@ export {
   overduePromise,
   failedSend,
   missingOutcome,
+  statusReasonWords,
   EXCEPTION_RULE_VERSION,
   DEFAULT_EXCEPTION_SETTINGS,
   exceptionFingerprint,

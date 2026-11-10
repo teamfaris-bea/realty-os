@@ -18,7 +18,7 @@ import {
   renderedFacts,
   resolvePolicy,
 } from '@realty/core/compliance';
-import type { IdGenerator, Instant } from '@realty/core/foundation';
+import type { IanaZone, IdGenerator, Instant } from '@realty/core/foundation';
 import { resolveRecipientZones, toIso, zone } from '@realty/core/foundation';
 import { type Tx, hmacBytes } from '@realty/db';
 import { sql } from 'kysely';
@@ -30,7 +30,7 @@ export class PolicyUnavailableError extends Error {
   override readonly name = 'PolicyUnavailableError';
 }
 
-export async function resolvedPolicy(tx: Tx): Promise<{ policy: ResolvedPolicy; tenant: g.TenantFacts }> {
+export async function resolvedPolicy(tx: Tx): Promise<{ policy: ResolvedPolicy; tenant: g.TenantFacts; packs: JurisdictionPack[] }> {
   const tenant = await g.tenantFacts(tx);
   const row = await g.policyRow(tx, tenant.activePolicyId);
   const packs: JurisdictionPack[] = [];
@@ -39,7 +39,7 @@ export async function resolvedPolicy(tx: Tx): Promise<{ policy: ResolvedPolicy; 
     if (!parsed.ok) throw new PolicyUnavailableError(`pack ${p.key}@${p.version} invalid`);
     packs.push(parsed.pack);
   }
-  return { policy: resolvePolicy(PLATFORM_FLOOR, packs, row), tenant };
+  return { policy: resolvePolicy(PLATFORM_FLOOR, packs, row), tenant, packs };
 }
 
 /** BUILD_PLAN interface: every GateInput fact for one outbound intent, read in `tx` at `now`. */
@@ -59,7 +59,7 @@ async function gateContext(tx: Tx, m: OutboundIntent, now: Instant): Promise<{ i
   if (ch === 'sms' && m.contactId && !toUser) for (const p of await g.contactPoints(tx, m.contactId)) if (p.kind === 'phone') hmacs.add(p.hmac);
   const consent = await g.consentRows(tx, ch, [...hmacs]);
 
-  let sender: GateInput['sender'] = null;
+  let sender: GateInput['sender'];
   if (ch === 'email') {
     const e = m.sender.emailIdentityId ? await g.emailIdentityFacts(tx, m.sender.emailIdentityId) : null;
     sender = emailSenderFacts(e ? { status: e.status, domain: e.domain } : null);
@@ -70,11 +70,14 @@ async function gateContext(tx: Tx, m: OutboundIntent, now: Instant): Promise<{ i
 
   const conv = m.contactId && !toUser ? await g.conversationOf(tx, m.contactId) : null;
   const cz = m.contactId && !toUser ? await g.contactZone(tx, m.contactId) : null;
+  // R-CONSENT-13 candidate zones: explicit → contact point → address → area code (+ the tenant zone,
+  // intersected) → tenant zone. A contact zone inferred from the area code is weak evidence, but it is
+  // a candidate: ignoring it would let a text land at 6 AM for a recipient three zones away.
   const zones = resolveRecipientZones({
     contactTz: cz?.source === 'explicit' ? cz.timezone : null,
     addressTz: cz?.source === 'address' ? cz.timezone : null,
     pointTz: point?.timezone ?? null,
-    areaCodeZones: [],
+    areaCodeZones: cz?.source === 'area_code' && cz.timezone ? [cz.timezone as IanaZone] : [], // validated (and dropped if invalid) by core
     tenantZone: zone(tenant.defaultTimezone),
   });
   const automated = m.initiator !== 'human';
@@ -194,15 +197,19 @@ export function decisionView(d: StoredDecision, phase: DecisionView['phase']): D
   };
 }
 
-/** A fresh decision of this message/call by this user that a confirmation may cite. */
-export async function confirmableDecision(tx: Tx, decisionId: string, ref: { messageId?: string; callId?: string; contactId: string }, userId: string, now: Instant): Promise<StoredDecision | null> {
-  const r = await sql<{ id: string; outcome: StoredDecision['outcome']; reason_codes: string[]; explanation: string; message_id: string | null; call_id: string | null; contact_id: string | null; actor_user_id: string | null; evaluated_at: Date }>`
-    SELECT id, outcome, reason_codes, explanation, message_id, call_id, contact_id, actor_user_id, evaluated_at FROM gate_decisions
+/**
+ * A fresh decision of this message/call by this user that a confirmation may cite: the same contact,
+ * the same channel, and (for a message) that message, or (for a call) a dial-time decision — never a
+ * text preview standing in for a call or the other way round.
+ */
+export async function confirmableDecision(tx: Tx, decisionId: string, ref: { messageId?: string; callId?: string; contactId: string; channel: 'sms' | 'email' | 'voice' }, userId: string, now: Instant): Promise<StoredDecision | null> {
+  const r = await sql<{ id: string; outcome: StoredDecision['outcome']; reason_codes: string[]; explanation: string; message_id: string | null; call_id: string | null; contact_id: string | null; actor_user_id: string | null; evaluated_at: Date; channel: string; phase: string }>`
+    SELECT id, outcome, reason_codes, explanation, message_id, call_id, contact_id, actor_user_id, evaluated_at, channel, phase FROM gate_decisions
      WHERE tenant_id = app.tenant_id() AND id = ${decisionId}`.execute(tx);
   const d = r.rows[0];
-  if (!d || d.outcome !== 'needs_confirmation' || d.actor_user_id !== userId || d.contact_id !== ref.contactId) return null;
+  if (!d || d.outcome !== 'needs_confirmation' || d.actor_user_id !== userId || d.contact_id !== ref.contactId || d.channel !== ref.channel) return null;
   if (ref.messageId !== undefined && d.message_id !== ref.messageId) return null;
-  if (ref.callId !== undefined && d.message_id !== null) return null;
+  if (ref.callId !== undefined && (d.message_id !== null || d.call_id === null || d.phase !== 'send')) return null;
   if (now - d.evaluated_at.getTime() > 10 * 60_000) return null;
   return { id: d.id, outcome: d.outcome, reasons: d.reason_codes, explanation: d.explanation, deferUntil: null };
 }

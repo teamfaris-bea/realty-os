@@ -16,21 +16,40 @@ export interface RenderIdentity {
   postalAddress: string | null;
 }
 
-export function unsubscribeUrl(publicBaseUrl: string, secret: Uint8Array, tenantId: string, messageId: string): string {
-  const v = `${tenantId}.${messageId}`;
-  return new URL(`/api/email/unsubscribe/${v}.${linkMac(secret, 'unsubscribe', v)}`, publicBaseUrl).toString();
+const uuidBytes = (u: string) => Buffer.from(u.replace(/-/g, ''), 'hex');
+const uuidOf = (b: Buffer) => {
+  const x = b.toString('hex');
+  return `${x.slice(0, 8)}-${x.slice(8, 12)}-${x.slice(12, 16)}-${x.slice(16, 20)}-${x.slice(20)}`;
+};
+
+/**
+ * A stateless, purpose-bound reference our own links and provider metadata carry:
+ * base64url(tenant uuid ‖ id uuid) "." MAC — 76 characters, so it fits a URL path segment.
+ */
+export function signedRef(secret: Uint8Array, purpose: string, tenantId: string, id: string): string {
+  const body = Buffer.concat([uuidBytes(tenantId), uuidBytes(id)]).toString('base64url');
+  return `${body}.${linkMac(secret, purpose, `${tenantId.toLowerCase()}.${id.toLowerCase()}`)}`;
 }
 
-export function verifyUnsubscribeToken(secret: Uint8Array, token: string): { tenantId: string; messageId: string } | null {
-  const m = /^([0-9a-f-]{36})\.([0-9a-f-]{36})\.([A-Za-z0-9_-]{32})$/.exec(token);
+export function verifySignedRef(secret: Uint8Array, purpose: string, token: string): { tenantId: string; id: string } | null {
+  const m = /^([A-Za-z0-9_-]{43})\.([A-Za-z0-9_-]{32})$/.exec(token);
   if (!m) return null;
-  const v = `${m[1]}.${m[2]}`;
-  const expected = linkMac(secret, 'unsubscribe', v);
-  if (expected.length !== m[3]!.length) return null;
+  const raw = Buffer.from(m[1]!, 'base64url');
+  if (raw.length !== 32) return null;
+  const tenantId = uuidOf(raw.subarray(0, 16));
+  const id = uuidOf(raw.subarray(16));
+  const expected = linkMac(secret, purpose, `${tenantId}.${id}`);
   let diff = 0;
-  for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ m[3]!.charCodeAt(i);
-  return diff === 0 ? { tenantId: m[1]!, messageId: m[2]! } : null;
+  for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ m[2]!.charCodeAt(i);
+  return diff === 0 ? { tenantId, id } : null;
 }
+
+export function unsubscribeUrl(publicBaseUrl: string, secret: Uint8Array, tenantId: string, messageId: string): string {
+  return new URL(`/api/email/unsubscribe/${signedRef(secret, 'unsubscribe', tenantId, messageId)}`, publicBaseUrl).toString();
+}
+
+/** Header our outbound email carries; the email provider echoes it on delivery/bounce/open events. */
+export const EMAIL_REF_HEADER = 'X-Realty-Ref';
 
 export function renderHumanBody(body: string, o: { channel: 'sms' | 'email'; purpose: 'marketing' | 'informational'; identity: RenderIdentity; unsubscribe: string | null }): string {
   const text = body.trim();

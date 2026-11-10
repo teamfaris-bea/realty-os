@@ -308,6 +308,8 @@ export interface ContactAddressesTable {
   jurisdiction: string | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+  import_batch_id: string | null;
+  search_line1: GeneratedAlways<string | null>;
 }
 
 /** public.contact_attributes (table) */
@@ -366,6 +368,7 @@ export interface ContactPointsTable {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
   removed_at: Timestamp | null;
+  phone_suffix7: GeneratedAlways<string | null>;
 }
 
 /** public.contact_timeline (view) */
@@ -433,6 +436,8 @@ export interface ContactsTable {
   deleted_by_user_id: string | null;
   purge_after: Timestamp | null;
   search_tsv: GeneratedAlways<string | null>;
+  search_name: GeneratedAlways<string | null>;
+  search_last: GeneratedAlways<string | null>;
 }
 
 /** public.conversations (table) */
@@ -676,6 +681,7 @@ export interface ImportBatchesTable {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
   reverted_at: Timestamp | null;
+  options: Generated<Json>;
 }
 
 /** public.import_records (table) */
@@ -696,6 +702,9 @@ export interface ImportRecordsTable {
   review_decision: string | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+  dry_run_outcome: string | null;
+  plan: Json | null;
+  created_rows: Generated<Json>;
 }
 
 /** public.import_stages (table) */
@@ -720,6 +729,11 @@ export interface ImportStagesTable {
   verified_at: Timestamp | null;
   verification: Json | null;
   updated_at: Generated<Timestamp>;
+  dry_run_sha256: string | null;
+  expected_counts: Json | null;
+  blockers: Generated<Json>;
+  consent_summary: Json | null;
+  revert_report: Json | null;
 }
 
 /** public.import_user_mappings (table) */
@@ -1119,6 +1133,8 @@ export interface PlaybookEnrollmentsTable {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
   ended_at: Timestamp | null;
+  anchor_kind: string | null;
+  anchor_id: string | null;
 }
 
 /** public.playbook_step_runs (table) */
@@ -1210,6 +1226,7 @@ export interface PriorityFeedItemsTable {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
   resolved_at: Timestamp | null;
+  resolved_by: string | null;
 }
 
 /** public.provider_credentials (table) */

@@ -196,7 +196,9 @@ export async function createApiHarness(o: { routeModules?: readonly RouteModule[
         email: c.email,
         password: TEST_PASSWORD,
         displayName: 'Olivia Owner',
-        teamName: `Team ${tag}`,
+        // letters only: an all-digit tag (about 1 in 40) reads as an account number to the assistant's
+        // content guard (the team name is in every sign-off), which would block the file's autonomous sends
+        teamName: `Team ${tag.replace(/[0-9]/g, (d) => 'ghijklmnop'[Number(d)]!)}`,
         slug: s.slug ?? `t-${tag}`,
         timezone: s.timezone ?? 'America/New_York',
         brokerageLegalName: 'Harbor Realty LLC',

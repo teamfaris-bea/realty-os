@@ -1,0 +1,229 @@
+// Approvals inbox (BUILD_PLAN module 17): assistant drafts, handbacks and saved-search proposals that
+// need the agent (GET /assistant/inbox). Approving a draft or handback reply is ONE tap (Send).
+//
+// Every card shows the assistant's one-line explanation and each claim with its evidence (source +
+// locator + the verbatim snippet), and flags what it could not verify with "Check this" in words.
+// There is no confidence anywhere (R-AST-13): the view types have no such field and nothing here
+// renders a score or a percentage. Needs-review claims can be confirmed or rejected in place.
+import { useQuery } from '@tanstack/react-query';
+import { useEffect, useId, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Button, Card, ClaimLine, EmptyState, Notice } from '../../design/index.js';
+import { type ApiError, messageFor, useApi, useCommand } from '../../shell/index.js';
+import { AgentSheetsProvider, SendOutcome, useAgentSheets } from '../feed/lib/AgentSheets.js';
+import { claimView, firstName, relativeTime } from '../feed/lib/format.js';
+import { useMutate, useNow } from '../feed/lib/hooks.js';
+import { AGENT_ERROR_MESSAGES } from '../feed/lib/messages.js';
+import type { ActionView, ApproveResponse, ClaimApiView } from '../feed/lib/types.js';
+import { ContactSearches } from './SavedSearchReview.js';
+
+export const INBOX_KEY = ['inbox'] as const;
+
+export function useInbox() {
+  const api = useApi();
+  return useQuery<{ items: ActionView[] }, ApiError>({
+    queryKey: INBOX_KEY,
+    queryFn: ({ signal }) => api.get<{ items: ActionView[] }>('/assistant/inbox', { signal }),
+    refetchInterval: 30_000,
+  });
+}
+
+const KIND_LABEL: Record<string, string> = {
+  message_draft: 'Draft reply',
+  handback: 'Replied to the assistant',
+  call_summary: 'Call summary',
+  promise_extraction: 'Promise found in a call',
+  saved_search_proposal: 'Saved search proposal',
+  next_step: 'Suggested next step',
+  lead_summary: 'Lead summary',
+  seller_update_draft: 'Seller update draft',
+};
+
+export function kindLabel(kind: string): string {
+  return KIND_LABEL[kind] ?? 'From the assistant';
+}
+
+export default function ApprovalsPage() {
+  return (
+    <AgentSheetsProvider>
+      <Approvals />
+    </AgentSheetsProvider>
+  );
+}
+
+function Approvals() {
+  const q = useInbox();
+  const { hash } = useLocation();
+  useEffect(() => {
+    if (!hash || !q.data) return;
+    document.getElementById(hash.slice(1))?.scrollIntoView?.({ block: 'start' });
+  }, [hash, q.data]);
+  if (q.isPending) return <p className="py-10 text-center text-[15px] text-ink-muted">Loading</p>;
+  if (q.isError) return <Notice tone="error">{messageFor(q.error, AGENT_ERROR_MESSAGES)}</Notice>;
+  const items = q.data.items;
+  if (items.length === 0) {
+    return (
+      <EmptyState icon="inbox" title="Nothing to approve">
+        Drafts and replies from the assistant that need you will show up here.
+      </EmptyState>
+    );
+  }
+  return (
+    <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+      {items.map((a) => (
+        <li key={a.id} id={`action-${a.id}`} className="scroll-mt-20">
+          <ActionCard action={a} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export function ActionCard({ action, showContact = true, headingLevel = 2 }: { action: ActionView; showContact?: boolean; headingLevel?: 2 | 3 }) {
+  const H = headingLevel === 2 ? 'h2' : 'h3';
+  const now = useNow(60_000);
+  const sheets = useAgentSheets();
+  const navigate = useNavigate();
+  const titleId = useId();
+  const [seenSeq, setSeenSeq] = useState<number | null>(null);
+  const [stale, setStale] = useState(false);
+  const [result, setResult] = useState<ApproveResponse | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const approve = useCommand<Record<string, unknown>, ApproveResponse>(`/assistant/actions/${action.id}/approve`, { invalidate: [['inbox'], ['feed'], ['timeline']] });
+  const reject = useMutate<Record<string, unknown>>('POST', { invalidate: [['inbox'], ['feed']] });
+  const name = action.contactName ?? 'this contact';
+  const sendable = action.primaryAction === 'send' && action.draft !== null;
+  const threadHref = action.contactId ? `/contacts/${action.contactId}/thread?compose=draft&draft=${action.id}` : null;
+
+  const doApprove = async () => {
+    const r = await approve.run(seenSeq !== null ? { reviewedInboundSeq: seenSeq } : {});
+    if (!r.ok) {
+      if (r.code === 'DRAFT_STALE') {
+        const seq = r.details?.inboundSeq;
+        if (typeof seq === 'number') setSeenSeq(seq);
+        setStale(true);
+      }
+      return;
+    }
+    setStale(false);
+    if (r.data.result === 'needs_confirmation' && r.data.messageId && r.data.decision) {
+      sheets.confirmSend({ messageId: r.data.messageId, decision: r.data.decision, contactName: name });
+      return;
+    }
+    if (r.data.result === 'sent' || r.data.result === 'queued' || r.data.result === 'noop') sheets.announce(`Sent to ${name}.`);
+    else if (r.data.result === 'acknowledged') sheets.announce('Marked as handled.');
+    setResult(r.data);
+  };
+  const doReject = async () => {
+    const r = await reject.run(`/assistant/actions/${action.id}/reject`);
+    if (r.ok) sheets.announce('Dismissed.');
+  };
+
+  return (
+    <Card as="article" aria-labelledby={titleId} className="flex flex-col gap-3">
+      <div>
+        <p className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted">
+          {kindLabel(action.kind)} · {relativeTime(Date.parse(action.createdAt), now)}
+        </p>
+        <H id={titleId} className="text-[19px] font-semibold text-ink">
+          {showContact && action.contactId ? (
+            <Link to={`/contacts/${action.contactId}`} className="inline-flex min-h-tap items-center hover:underline">
+              {name}
+            </Link>
+          ) : (
+            name
+          )}
+        </H>
+        <p className="text-[15px] text-ink">{action.explanation}</p>
+      </div>
+      {action.draft ? (
+        <figure className="flex flex-col gap-1">
+          <figcaption className="text-[13px] font-medium text-ink-muted">{action.draft.channel === 'sms' ? 'Text' : 'Email'} the assistant drafted</figcaption>
+          {action.draft.subject ? <p className="text-[15px] font-semibold text-ink">{action.draft.subject}</p> : null}
+          <blockquote className="whitespace-pre-wrap rounded-xl bg-surface-2 px-3.5 py-2.5 text-[16px] text-ink">{action.draft.body}</blockquote>
+        </figure>
+      ) : null}
+      {action.claims.length > 0 ? (
+        <ul className="flex flex-col gap-3" aria-label="What the assistant found">
+          {action.claims.map((c) => (
+            <li key={c.id}>
+              <ClaimLine claim={claimView(c, action.contactId)} />
+              {c.needsReview ? <ClaimReview claim={c} /> : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {stale ? (
+        <Notice tone="warn" title={`${firstName(name)} replied since this was drafted`} action={threadHref ? <Link to={threadHref} className="font-medium text-accent underline">Read it</Link> : undefined}>
+          Read the new message, then send if this still fits.
+        </Notice>
+      ) : null}
+      {approve.error && approve.error.code !== 'DRAFT_STALE' ? <Notice tone="error">{approve.error.message}</Notice> : null}
+      {reject.error ? <Notice tone="error">{reject.error.message}</Notice> : null}
+      {result && result.result !== 'acknowledged' && result.result !== 'sent' && result.result !== 'queued' && result.result !== 'noop' ? (
+        <SendOutcome result={{ result: result.result, decision: result.decision, message: null }} contactName={name} />
+      ) : null}
+      <div className="flex flex-wrap gap-2">
+        {action.kind === 'saved_search_proposal' && action.contactId ? (
+          <Button aria-expanded={searchOpen} onClick={() => setSearchOpen((o) => !o)}>
+            {searchOpen ? 'Hide search' : 'Review search'}
+          </Button>
+        ) : sendable ? (
+          <>
+            <Button icon="message" pending={approve.pending} pendingLabel="Sending" onClick={() => void doApprove()}>
+              {stale ? 'Send anyway' : 'Send'}
+            </Button>
+            {threadHref ? (
+              <Button variant="secondary" onClick={() => navigate(threadHref)}>
+                Edit
+              </Button>
+            ) : null}
+          </>
+        ) : action.kind === 'handback' && action.contactId ? (
+          <>
+            <Button icon="message" onClick={() => navigate(`/contacts/${action.contactId}/thread?compose=sms`)}>
+              Reply
+            </Button>
+            <Button variant="secondary" pending={approve.pending} onClick={() => void doApprove()}>
+              Mark handled
+            </Button>
+          </>
+        ) : (
+          <Button pending={approve.pending} onClick={() => void doApprove()}>
+            Got it
+          </Button>
+        )}
+        <Button variant="quiet" pending={reject.pending} onClick={() => void doReject()}>
+          Dismiss
+        </Button>
+      </div>
+      {searchOpen && action.contactId ? (
+        <div className="border-t border-line pt-3">
+          <ContactSearches contactId={action.contactId} claims={action.claims} />
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
+/** Confirm or reject one needs-review claim (R-AST-5: until then it is used nowhere). */
+function ClaimReview({ claim }: { claim: ClaimApiView }) {
+  const m = useMutate<Record<string, unknown>>('POST', { invalidate: [['inbox'], ['tasks']] });
+  const [done, setDone] = useState<string | null>(null);
+  const review = async (status: 'confirmed' | 'rejected') => {
+    const r = await m.run(`/assistant/claims/${claim.id}/review`, { status });
+    if (r.ok) setDone(status === 'confirmed' ? 'Confirmed.' : 'Marked wrong. It will not be used.');
+  };
+  if (done) return <p className="pl-3 pt-1 text-[14px] text-ink-muted">{done}</p>;
+  return (
+    <div className="flex flex-wrap items-center gap-2 pl-3 pt-1">
+      <Button variant="secondary" className="min-h-tap text-[15px]" disabled={m.pending} onClick={() => void review('confirmed')}>
+        Looks right
+      </Button>
+      <Button variant="quiet" className="min-h-tap text-[15px]" disabled={m.pending} onClick={() => void review('rejected')}>
+        That's wrong
+      </Button>
+      {m.error ? <span className="text-[14px] text-danger">{m.error.message}</span> : null}
+    </div>
+  );
+}

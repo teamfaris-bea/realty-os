@@ -14,6 +14,8 @@ export interface TimelineRow {
   preview: string | null;
   provenance: string;
   note: string | null;
+  /** messages only: messages.status (null for other item types) */
+  status: string | null;
   /** occurred_at as Postgres text (keyset cursors keep microseconds) */
   at_text: string;
 }
@@ -23,7 +25,9 @@ export async function timeline(tx: Tx, contactId: string, limit: number, before:
     SELECT t.occurred_at, t.occurred_at::text AS at_text, t.item_type, t.item_id, t.actor_user_id, u.display_name AS actor_name, t.detail, t.preview,
            t.provenance,
            CASE WHEN t.item_type = 'ownership' THEN (SELECT e.note FROM lead_ownership_events e
-                                                    WHERE e.tenant_id = t.tenant_id AND e.event_id = t.item_id) END AS note
+                                                    WHERE e.tenant_id = t.tenant_id AND e.event_id = t.item_id) END AS note,
+           CASE WHEN t.item_type = 'message' THEN (SELECT m.status FROM messages m
+                                                   WHERE m.tenant_id = t.tenant_id AND m.id = t.item_id) END AS status
       FROM contact_timeline t
       LEFT JOIN users u ON u.id = t.actor_user_id
      WHERE t.tenant_id = app.tenant_id() AND t.contact_id = ${contactId}::uuid

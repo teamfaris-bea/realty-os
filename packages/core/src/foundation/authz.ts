@@ -215,6 +215,10 @@ export const AUDIT_ACTIONS = [
   'member.deactivation_started', // api/leads: staged deactivation stage 1 (R-OWN-22); completion is member.removed
   'automation.resumed', // api/comms: a human resumed paused automation for a contact (R-AST-9)
   'sender_registration.changed', // api/comms: 10DLC / toll-free registration created or its status refreshed
+  'enrollment.changed', // api/assistant: a human enrolled / paused / stopped a contact in a playbook (the assistant then sends on their behalf)
+  'saved_search.approved', // api/assistant: a human approved (or activated) saved-search criteria; alerts follow (R-AST-10)
+  'deal.financials_changed', // api/workspace: commission fields of a deal written by a human (A7d, R-PERM-10)
+  'exception.reopened', // api/accountability: a handled exception put back in the live queue (R-ACC-3)
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

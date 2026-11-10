@@ -83,6 +83,7 @@ const OVERRIDES: Record<string, Record<string, string>> = {
   compliance_policy_versions: { version_no: '1000' },
   recordings: { status: "'pending_copy'", source: "'provider'", consent_basis: "'announced_all_parties'" },
   transcripts: { status: "'pending'" },
+  recording_stream_tokens: { created_at: 'now()', expires_at: "now() + interval '30 seconds'", purpose: "'play'" },
   saved_searches: { status: "'proposed'" },
   showings: { starts_at: 'now()', ends_at: "now() + interval '1 hour'" },
   showing_feedback: { rating: '3' },

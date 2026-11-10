@@ -8,6 +8,7 @@ import {
   type ExceptionInputs,
   type ExceptionItemSpec,
   deriveExceptions,
+  statusReasonWords,
 } from './index.js';
 import { ME, NOW, NY, OTHER, apptF, call, contact, exceptionInputs, hours, min, msg, outbound, shuffled, sla, t, task, taskF } from './testing/fixtures.js';
 
@@ -169,6 +170,33 @@ describe('R-ACC-2 overdue_promise', () => {
 });
 
 describe('R-ACC-2 failed_send', () => {
+  it('stored reason codes are shown in words, never raw: gate codes as the gate words them, provider codes in plain words, unknown codes dropped', () => {
+    const r = deriveExceptions(
+      exceptionInputs({
+        outbound: [
+          outbound({ messageId: msg(1), status: 'blocked', statusReason: 'CONSENT_REVOKED' }),
+          outbound({ messageId: msg(2), status: 'failed', statusReason: 'PROVIDER_REJECTED' }),
+          outbound({ messageId: msg(3), status: 'blocked', channel: 'email', statusReason: 'DNC_LISTED' }),
+          outbound({ messageId: msg(4), status: 'blocked', statusReason: 'QUIET_HOURS_DEFERRED' }),
+          outbound({ messageId: msg(5), status: 'blocked', statusReason: 'SENDER_NOT_AUTHORIZED' }),
+          outbound({ messageId: msg(6), status: 'blocked', channel: 'mms', statusReason: 'CONSENT_REVOKED' }),
+        ],
+      }),
+    );
+    expect(r.upserts.map((x) => x.evidence[0]?.explanation)).toEqual([
+      'Text blocked by the send-time check: Opted out of texts',
+      'Text failed to send (the carrier or provider rejected it)',
+      'Email blocked by the send-time check: On a Do Not Call list',
+      'Text blocked by the send-time check: Outside the hours they can be contacted',
+      'Text blocked by the send-time check',
+      'Text blocked by the send-time check: Opted out of texts',
+    ]);
+    expect(statusReasonWords('FREQUENCY_CAP', 'sms')).toBe('Over the message limit');
+    expect(statusReasonWords('CALL_ATTEMPT_LIMIT', 'sms')).toBe('Over the call attempt limit');
+    expect(statusReasonWords('CONSENT_REVOKED', 'email')).toBe('Opted out of email');
+    expect(statusReasonWords('mailbox full', 'email')).toBe('mailbox full');
+  });
+
   it('R-ACC-2: blocked, failed, undelivered and bounced are items at their status instant, with the reason as evidence', () => {
     const r = deriveExceptions(
       exceptionInputs({

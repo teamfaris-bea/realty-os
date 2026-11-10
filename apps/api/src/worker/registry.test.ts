@@ -28,8 +28,13 @@ const noop = (over: Partial<TxJobHandler<{ id: string }>> = {}): TxJobHandler<{ 
 describe('handler registry', () => {
   it('registers the build handler list once per kind, each on a known queue', () => {
     const r = new HandlerRegistry().registerAll(handlers);
-    expect(r.kinds()).toEqual(['comms.dispatch_stale', 'consent.drift_check', 'ownership.drift_check', 'ownership.followup', 'storage.blob_delete']);
-    expect(r.periodic().map((h) => h.kind).sort()).toEqual(['consent.drift_check', 'ownership.drift_check', 'storage.blob_delete']);
+    // every handler of the build list is registered exactly once (registerAll throws on a duplicate)
+    expect(r.kinds()).toEqual([...new Set(handlers.map((x) => x.kind))].sort());
+    expect(r.kinds()).toHaveLength(handlers.length);
+    // the worker's own kinds are always in the build list
+    expect(r.kinds()).toEqual(expect.arrayContaining(['comms.dispatch_stale', 'consent.drift_check', 'ownership.drift_check', 'ownership.followup', 'storage.blob_delete']));
+    expect(r.periodic().map((h) => h.kind)).toEqual(expect.arrayContaining(['consent.drift_check', 'ownership.drift_check', 'storage.blob_delete']));
+    for (const x of handlers) expect(['realtime', 'default', 'bulk', 'maintenance']).toContain(x.queue);
   });
 
   it('rejects a malformed kind, an unknown queue, a duplicate kind and a contract queue mismatch', () => {

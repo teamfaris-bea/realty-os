@@ -51,6 +51,7 @@ export async function registerTimelineRoutes(app: FastifyInstance): Promise<void
           preview: t.preview,
           note: t.note,
           provenance: t.provenance,
+          status: t.status,
         })),
         nextCursor: rows.length > limit && last ? encodeCursor(last.at_text, last.item_id) : null,
       };

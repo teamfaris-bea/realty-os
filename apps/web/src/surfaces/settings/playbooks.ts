@@ -1,0 +1,130 @@
+// Playbook editor helpers (pure; unit-tested). A playbook is "approve rules, not every message"
+// (ARCHITECTURE §11, R-AST-4): a person approves an exact version (bound to its content hash), and the
+// assistant may then send those messages on its own, with consent and contact hours re-checked at
+// the moment each one goes out and a pause the moment the client replies.
+import type { Playbook, PlaybookStepView, PlaybookVersion } from '../admin/lib/types.js';
+
+export const KIND_LABEL: Record<string, string> = {
+  new_lead_response: 'Instant reply to new leads',
+  nurture: 'Stay in touch',
+  post_closing: 'After closing',
+  booking_confirmation: 'Appointment confirmation',
+  reminder: 'Appointment reminder',
+  document_chase: 'Document reminders',
+};
+
+/** The built-in starting points (api/assistant templates.ts) and who may create each. */
+export const TEMPLATES: readonly { key: string; name: string; scope: 'team' | 'agent' }[] = [
+  { key: 'new_lead_response', name: 'Instant reply to new leads', scope: 'team' },
+  { key: 'booking_confirmation', name: 'Appointment confirmation', scope: 'team' },
+  { key: 'reminder', name: 'Appointment reminder', scope: 'team' },
+  { key: 'nurture', name: 'Stay in touch', scope: 'agent' },
+  { key: 'post_closing', name: 'After closing', scope: 'agent' },
+];
+
+export const STATUS_LABEL: Record<string, string> = {
+  draft: 'Draft',
+  approved: 'Running',
+  superseded: 'Replaced',
+  revoked: 'Stopped',
+};
+
+/** One plain sentence per core.validatePlaybook code (what blocks approval). */
+export const ISSUE_SENTENCE: Record<string, string> = {
+  NO_STEPS: 'A playbook needs at least one message.',
+  SCHEMA: 'This message is missing something it needs.',
+  DUPLICATE_STEP_KEY: 'Two messages have the same name.',
+  MARKETING_INTENT_DECLARED_INFORMATIONAL: 'This message is marketing, so it cannot be sent as an informational message.',
+  INTENT_CATEGORY_MISMATCH: "This message's purpose doesn't match what it is for.",
+  KIND_CATEGORY_MISMATCH: "This message doesn't belong in this kind of playbook.",
+  KIND_STEP_COUNT: 'This kind of playbook has a fixed number of messages.',
+  UNDECLARED_SLOT: 'This message uses a placeholder that is not available here.',
+  TEMPLATE_SYNTAX: 'A placeholder is not written correctly. Use {{first_name}} style.',
+  TEMPLATE_PAYMENT_INSTRUCTIONS: 'Messages the assistant sends on its own may never contain payment or wiring instructions.',
+  TEMPLATE_ALWAYS_HUMAN_TOPIC: 'This mentions money, offers, commission or contracts. Those always need a person to send them.',
+  TEMPLATE_HUMAN_CLAIM: 'This reads as if a person wrote it. The assistant must not claim to be a person.',
+  TEMPLATE_TOO_LONG: 'This message is longer than allowed.',
+  EMAIL_SUBJECT_REQUIRED: 'An email needs a subject.',
+  SMS_SUBJECT_NOT_ALLOWED: 'A text message has no subject.',
+  FALLBACK_INVALID: 'The email version of this text is incomplete.',
+  NEGATIVE_DELAY_WITHOUT_EVENT: 'Only messages tied to an event (like an appointment) can go before it.',
+};
+
+export function issueSentence(code: string): string {
+  return ISSUE_SENTENCE[code] ?? 'Something in this message needs fixing before approval.';
+}
+
+const SLOT_RE = /\{\{\s*[#/^]?\s*([a-z_]+)\s*\}\}/g;
+
+/** Placeholders a template uses ({{first_name}}, {{#va_question}}…{{/va_question}}). */
+export function placeholdersIn(text: string): string[] {
+  const out = new Set<string>();
+  for (const m of text.matchAll(SLOT_RE)) if (m[1]) out.add(m[1]);
+  return [...out];
+}
+
+export type DelayUnit = 'minutes' | 'hours' | 'days';
+
+export function splitDelay(seconds: number): { amount: number; unit: DelayUnit } {
+  const abs = Math.abs(seconds);
+  if (abs !== 0 && abs % 86_400 === 0) return { amount: seconds / 86_400, unit: 'days' };
+  if (abs !== 0 && abs % 3600 === 0) return { amount: seconds / 3600, unit: 'hours' };
+  return { amount: Math.round(seconds / 60), unit: 'minutes' };
+}
+
+export function joinDelay(amount: number, unit: DelayUnit): number {
+  return Math.round(amount) * (unit === 'days' ? 86_400 : unit === 'hours' ? 3600 : 60);
+}
+
+const ANCHOR: Record<PlaybookStepView['delay']['anchor'], string> = {
+  enrollment: 'after the contact starts this playbook',
+  previous_step: 'after the previous message',
+  event: 'from the event (closing, appointment)',
+};
+
+/** "Right away", "30 days after the previous message", "1 day before the event". */
+export function delayText(d: PlaybookStepView['delay']): string {
+  if (d.offsetSeconds === 0) return d.anchor === 'event' ? 'At the event' : d.anchor === 'previous_step' ? 'Right after the previous message' : 'Right away';
+  const { amount, unit } = splitDelay(d.offsetSeconds);
+  const n = Math.abs(amount);
+  const u = n === 1 ? unit.slice(0, -1) : unit;
+  if (d.offsetSeconds < 0) return `${n} ${u} before the event`;
+  return `${n} ${u} ${ANCHOR[d.anchor]}`;
+}
+
+/** Steps as editable views (unknown shapes are kept as-is by the editor and never rewritten). */
+export function stepsOf(v: PlaybookVersion): PlaybookStepView[] {
+  return v.steps.filter((s): s is PlaybookStepView => typeof s === 'object' && s !== null && 'stepKey' in s && 'template' in s);
+}
+
+/** The version a person edits: the newest draft, or else the running/newest one as a base. */
+export function workingVersion(p: Playbook): PlaybookVersion | null {
+  const sorted = [...p.versions].sort((a, b) => b.versionNo - a.versionNo);
+  return sorted.find((v) => v.status === 'draft') ?? sorted.find((v) => v.id === p.approvedVersionId) ?? sorted[0] ?? null;
+}
+
+/** The exact sentence the approver confirms; it is stored verbatim with the approval. */
+export function approvalAttestation(p: Pick<Playbook, 'name'>, v: Pick<PlaybookVersion, 'versionNo' | 'steps'>): string {
+  const n = v.steps.length;
+  return `I reviewed the ${n === 1 ? 'message' : `${n} messages`} in “${p.name}” version ${v.versionNo}. The assistant may send ${n === 1 ? 'it' : 'them'} on its own to contacts who allow it, signed as the assistant, and must stop when a client replies.`;
+}
+
+export function revokeAttestation(p: Pick<Playbook, 'name'>, v: Pick<PlaybookVersion, 'versionNo'>): string {
+  return `I am stopping “${p.name}” version ${v.versionNo}. Its messages that have not gone out yet will not be sent.`;
+}
+
+/** Who may approve: team playbooks by Owner/Admin; personal ones by their own agent (R-AST-4). */
+export function mayApprove(p: Pick<Playbook, 'scope' | 'ownerUserId'>, viewer: { userId: string | undefined; role: string | undefined }): boolean {
+  if (p.scope === 'team') return viewer.role === 'owner' || viewer.role === 'admin';
+  return p.ownerUserId !== null && p.ownerUserId === viewer.userId;
+}
+
+/** "Running version 3" / "Draft waiting for approval" / "Not running". */
+export function playbookState(p: Playbook): { text: string; tone: 'ok' | 'warn' | 'neutral' } {
+  const running = p.versions.find((v) => v.id === p.approvedVersionId);
+  const newest = [...p.versions].sort((a, b) => b.versionNo - a.versionNo)[0];
+  const draftPending = newest && newest.status === 'draft';
+  if (running) return { text: draftPending ? `Running version ${running.versionNo} · a newer draft waits for approval` : `Running version ${running.versionNo}`, tone: 'ok' };
+  if (draftPending) return { text: 'Not running · draft waits for approval', tone: 'warn' };
+  return { text: 'Not running', tone: 'neutral' };
+}

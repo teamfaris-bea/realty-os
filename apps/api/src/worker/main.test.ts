@@ -5,6 +5,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createTestDb, type TestDb } from '@realty/db/testing';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { handlers } from './handlers/index.js';
+import { HandlerRegistry } from './registry.js';
 
 let db: TestDb;
 beforeAll(async () => {
@@ -28,7 +30,9 @@ describe('worker entrypoint', () => {
     while (!/retention sweep/.test(out) && child.exitCode === null && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
     const started = out.split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>);
     const boot = started.find((l) => l.msg === 'starting worker');
-    expect(boot?.kind).toBe('comms.dispatch_stale,consent.drift_check,ownership.drift_check,ownership.followup,storage.blob_delete');
+    // the entrypoint registers exactly the build handler list (handlers/index.ts)
+    expect(boot?.kind).toBe(new HandlerRegistry().registerAll(handlers).kinds().join(','));
+    expect(String(boot?.kind).split(',')).toEqual(expect.arrayContaining(['comms.dispatch_stale', 'consent.drift_check', 'ownership.drift_check', 'ownership.followup', 'storage.blob_delete']));
     expect(started.some((l) => l.msg === 'retention sweep')).toBe(true); // the first maintenance pass ran
     expect(started.filter((l) => l.level === 'error')).toEqual([]);
     const code = await new Promise<number | null>((resolve) => {

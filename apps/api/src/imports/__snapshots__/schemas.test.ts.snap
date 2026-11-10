@@ -1,0 +1,2323 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response schemas have no confidence* fields and no tenant id fields (snapshot) 1`] = `
+{
+  "AcceptedResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "batch": {
+        "additionalProperties": false,
+        "properties": {
+          "connectionTest": {
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "createdAt": {
+            "type": "string",
+          },
+          "createdByUserId": {
+            "type": "string",
+          },
+          "csv": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "headers": {
+                    "items": {
+                      "type": "string",
+                    },
+                    "type": "array",
+                  },
+                  "mapping": {
+                    "items": {},
+                    "type": "array",
+                  },
+                },
+                "required": [
+                  "headers",
+                  "mapping",
+                ],
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "fileLabel": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "id": {
+            "type": "string",
+          },
+          "revertedAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "snapshotAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "snapshotError": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "snapshotSha256": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "source": {
+            "enum": [
+              "csv",
+              "fub_api",
+              "fub_export",
+            ],
+            "type": "string",
+          },
+          "sourceCounts": {
+            "additionalProperties": {
+              "type": [
+                "number",
+                "null",
+              ],
+            },
+            "propertyNames": {
+              "type": "string",
+            },
+            "type": "object",
+          },
+          "stages": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "approvedAt": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "approvedByUserId": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "blockers": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                      },
+                      "field": {
+                        "type": [
+                          "string",
+                          "null",
+                        ],
+                      },
+                      "sentence": {
+                        "type": "string",
+                      },
+                      "severity": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "code",
+                      "severity",
+                      "field",
+                      "sentence",
+                    ],
+                    "type": "object",
+                  },
+                  "type": "array",
+                },
+                "category": {
+                  "enum": [
+                    "contacts",
+                    "ownership",
+                    "notes",
+                    "messages",
+                    "call_recordings",
+                    "consent",
+                  ],
+                  "type": "string",
+                },
+                "committedAt": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "counts": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "duplicate": {
+                          "type": "number",
+                        },
+                        "imported": {
+                          "type": [
+                            "number",
+                            "null",
+                          ],
+                        },
+                        "needsReview": {
+                          "type": "number",
+                        },
+                        "rejected": {
+                          "type": "number",
+                        },
+                        "source": {
+                          "type": "number",
+                        },
+                        "willImport": {
+                          "type": "number",
+                        },
+                      },
+                      "required": [
+                        "source",
+                        "willImport",
+                        "imported",
+                        "needsReview",
+                        "rejected",
+                        "duplicate",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "dryRunCompletedAt": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "dryRunSha256": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "id": {
+                  "type": "string",
+                },
+                "revert": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": {},
+                      "propertyNames": {
+                        "type": "string",
+                      },
+                      "type": "object",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "seq": {
+                  "type": "number",
+                },
+                "status": {
+                  "type": "string",
+                },
+                "verifiedAt": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "verifiedByUserId": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+              },
+              "required": [
+                "id",
+                "category",
+                "seq",
+                "status",
+                "counts",
+                "dryRunSha256",
+                "dryRunCompletedAt",
+                "blockers",
+                "approvedAt",
+                "approvedByUserId",
+                "committedAt",
+                "verifiedAt",
+                "verifiedByUserId",
+                "revert",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "status": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+          "source",
+          "status",
+          "sourceCounts",
+          "snapshotSha256",
+          "snapshotAt",
+          "snapshotError",
+          "fileLabel",
+          "csv",
+          "createdAt",
+          "createdByUserId",
+          "revertedAt",
+          "stages",
+          "connectionTest",
+        ],
+        "type": "object",
+      },
+      "queued": {
+        "type": "string",
+      },
+    },
+    "required": [
+      "batch",
+      "queued",
+    ],
+    "type": "object",
+  },
+  "ApproveResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "batch": {
+        "additionalProperties": false,
+        "properties": {
+          "connectionTest": {
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "createdAt": {
+            "type": "string",
+          },
+          "createdByUserId": {
+            "type": "string",
+          },
+          "csv": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "headers": {
+                    "items": {
+                      "type": "string",
+                    },
+                    "type": "array",
+                  },
+                  "mapping": {
+                    "items": {},
+                    "type": "array",
+                  },
+                },
+                "required": [
+                  "headers",
+                  "mapping",
+                ],
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "fileLabel": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "id": {
+            "type": "string",
+          },
+          "revertedAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "snapshotAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "snapshotError": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "snapshotSha256": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "source": {
+            "enum": [
+              "csv",
+              "fub_api",
+              "fub_export",
+            ],
+            "type": "string",
+          },
+          "sourceCounts": {
+            "additionalProperties": {
+              "type": [
+                "number",
+                "null",
+              ],
+            },
+            "propertyNames": {
+              "type": "string",
+            },
+            "type": "object",
+          },
+          "stages": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "approvedAt": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "approvedByUserId": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "blockers": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                      },
+                      "field": {
+                        "type": [
+                          "string",
+                          "null",
+                        ],
+                      },
+                      "sentence": {
+                        "type": "string",
+                      },
+                      "severity": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "code",
+                      "severity",
+                      "field",
+                      "sentence",
+                    ],
+                    "type": "object",
+                  },
+                  "type": "array",
+                },
+                "category": {
+                  "enum": [
+                    "contacts",
+                    "ownership",
+                    "notes",
+                    "messages",
+                    "call_recordings",
+                    "consent",
+                  ],
+                  "type": "string",
+                },
+                "committedAt": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "counts": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "duplicate": {
+                          "type": "number",
+                        },
+                        "imported": {
+                          "type": [
+                            "number",
+                            "null",
+                          ],
+                        },
+                        "needsReview": {
+                          "type": "number",
+                        },
+                        "rejected": {
+                          "type": "number",
+                        },
+                        "source": {
+                          "type": "number",
+                        },
+                        "willImport": {
+                          "type": "number",
+                        },
+                      },
+                      "required": [
+                        "source",
+                        "willImport",
+                        "imported",
+                        "needsReview",
+                        "rejected",
+                        "duplicate",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "dryRunCompletedAt": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "dryRunSha256": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "id": {
+                  "type": "string",
+                },
+                "revert": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": {},
+                      "propertyNames": {
+                        "type": "string",
+                      },
+                      "type": "object",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "seq": {
+                  "type": "number",
+                },
+                "status": {
+                  "type": "string",
+                },
+                "verifiedAt": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "verifiedByUserId": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+              },
+              "required": [
+                "id",
+                "category",
+                "seq",
+                "status",
+                "counts",
+                "dryRunSha256",
+                "dryRunCompletedAt",
+                "blockers",
+                "approvedAt",
+                "approvedByUserId",
+                "committedAt",
+                "verifiedAt",
+                "verifiedByUserId",
+                "revert",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "status": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+          "source",
+          "status",
+          "sourceCounts",
+          "snapshotSha256",
+          "snapshotAt",
+          "snapshotError",
+          "fileLabel",
+          "csv",
+          "createdAt",
+          "createdByUserId",
+          "revertedAt",
+          "stages",
+          "connectionTest",
+        ],
+        "type": "object",
+      },
+      "expected": {
+        "additionalProperties": false,
+        "properties": {
+          "duplicate": {
+            "type": "number",
+          },
+          "imported": {
+            "type": "number",
+          },
+          "needs_review": {
+            "type": "number",
+          },
+          "rejected": {
+            "type": "number",
+          },
+          "source": {
+            "type": "number",
+          },
+        },
+        "required": [
+          "source",
+          "imported",
+          "needs_review",
+          "rejected",
+          "duplicate",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "batch",
+      "expected",
+    ],
+    "type": "object",
+  },
+  "BatchListResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "batches": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "connectionTest": {
+              "items": {
+                "type": "string",
+              },
+              "type": "array",
+            },
+            "createdAt": {
+              "type": "string",
+            },
+            "createdByUserId": {
+              "type": "string",
+            },
+            "csv": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "headers": {
+                      "items": {
+                        "type": "string",
+                      },
+                      "type": "array",
+                    },
+                    "mapping": {
+                      "items": {},
+                      "type": "array",
+                    },
+                  },
+                  "required": [
+                    "headers",
+                    "mapping",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "fileLabel": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "id": {
+              "type": "string",
+            },
+            "revertedAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "snapshotAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "snapshotError": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "snapshotSha256": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "source": {
+              "enum": [
+                "csv",
+                "fub_api",
+                "fub_export",
+              ],
+              "type": "string",
+            },
+            "sourceCounts": {
+              "additionalProperties": {
+                "type": [
+                  "number",
+                  "null",
+                ],
+              },
+              "propertyNames": {
+                "type": "string",
+              },
+              "type": "object",
+            },
+            "stages": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "approvedAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "approvedByUserId": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "blockers": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                        },
+                        "field": {
+                          "type": [
+                            "string",
+                            "null",
+                          ],
+                        },
+                        "sentence": {
+                          "type": "string",
+                        },
+                        "severity": {
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "code",
+                        "severity",
+                        "field",
+                        "sentence",
+                      ],
+                      "type": "object",
+                    },
+                    "type": "array",
+                  },
+                  "category": {
+                    "enum": [
+                      "contacts",
+                      "ownership",
+                      "notes",
+                      "messages",
+                      "call_recordings",
+                      "consent",
+                    ],
+                    "type": "string",
+                  },
+                  "committedAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "counts": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "duplicate": {
+                            "type": "number",
+                          },
+                          "imported": {
+                            "type": [
+                              "number",
+                              "null",
+                            ],
+                          },
+                          "needsReview": {
+                            "type": "number",
+                          },
+                          "rejected": {
+                            "type": "number",
+                          },
+                          "source": {
+                            "type": "number",
+                          },
+                          "willImport": {
+                            "type": "number",
+                          },
+                        },
+                        "required": [
+                          "source",
+                          "willImport",
+                          "imported",
+                          "needsReview",
+                          "rejected",
+                          "duplicate",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "dryRunCompletedAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "dryRunSha256": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "id": {
+                    "type": "string",
+                  },
+                  "revert": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": {},
+                        "propertyNames": {
+                          "type": "string",
+                        },
+                        "type": "object",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "seq": {
+                    "type": "number",
+                  },
+                  "status": {
+                    "type": "string",
+                  },
+                  "verifiedAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "verifiedByUserId": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                },
+                "required": [
+                  "id",
+                  "category",
+                  "seq",
+                  "status",
+                  "counts",
+                  "dryRunSha256",
+                  "dryRunCompletedAt",
+                  "blockers",
+                  "approvedAt",
+                  "approvedByUserId",
+                  "committedAt",
+                  "verifiedAt",
+                  "verifiedByUserId",
+                  "revert",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+            "status": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "source",
+            "status",
+            "sourceCounts",
+            "snapshotSha256",
+            "snapshotAt",
+            "snapshotError",
+            "fileLabel",
+            "csv",
+            "createdAt",
+            "createdByUserId",
+            "revertedAt",
+            "stages",
+            "connectionTest",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "batches",
+    ],
+    "type": "object",
+  },
+  "BatchResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "batch": {
+        "additionalProperties": false,
+        "properties": {
+          "connectionTest": {
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "createdAt": {
+            "type": "string",
+          },
+          "createdByUserId": {
+            "type": "string",
+          },
+          "csv": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "headers": {
+                    "items": {
+                      "type": "string",
+                    },
+                    "type": "array",
+                  },
+                  "mapping": {
+                    "items": {},
+                    "type": "array",
+                  },
+                },
+                "required": [
+                  "headers",
+                  "mapping",
+                ],
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "fileLabel": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "id": {
+            "type": "string",
+          },
+          "revertedAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "snapshotAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "snapshotError": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "snapshotSha256": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "source": {
+            "enum": [
+              "csv",
+              "fub_api",
+              "fub_export",
+            ],
+            "type": "string",
+          },
+          "sourceCounts": {
+            "additionalProperties": {
+              "type": [
+                "number",
+                "null",
+              ],
+            },
+            "propertyNames": {
+              "type": "string",
+            },
+            "type": "object",
+          },
+          "stages": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "approvedAt": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "approvedByUserId": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "blockers": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                      },
+                      "field": {
+                        "type": [
+                          "string",
+                          "null",
+                        ],
+                      },
+                      "sentence": {
+                        "type": "string",
+                      },
+                      "severity": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "code",
+                      "severity",
+                      "field",
+                      "sentence",
+                    ],
+                    "type": "object",
+                  },
+                  "type": "array",
+                },
+                "category": {
+                  "enum": [
+                    "contacts",
+                    "ownership",
+                    "notes",
+                    "messages",
+                    "call_recordings",
+                    "consent",
+                  ],
+                  "type": "string",
+                },
+                "committedAt": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "counts": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "duplicate": {
+                          "type": "number",
+                        },
+                        "imported": {
+                          "type": [
+                            "number",
+                            "null",
+                          ],
+                        },
+                        "needsReview": {
+                          "type": "number",
+                        },
+                        "rejected": {
+                          "type": "number",
+                        },
+                        "source": {
+                          "type": "number",
+                        },
+                        "willImport": {
+                          "type": "number",
+                        },
+                      },
+                      "required": [
+                        "source",
+                        "willImport",
+                        "imported",
+                        "needsReview",
+                        "rejected",
+                        "duplicate",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "dryRunCompletedAt": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "dryRunSha256": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "id": {
+                  "type": "string",
+                },
+                "revert": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": {},
+                      "propertyNames": {
+                        "type": "string",
+                      },
+                      "type": "object",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "seq": {
+                  "type": "number",
+                },
+                "status": {
+                  "type": "string",
+                },
+                "verifiedAt": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "verifiedByUserId": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+              },
+              "required": [
+                "id",
+                "category",
+                "seq",
+                "status",
+                "counts",
+                "dryRunSha256",
+                "dryRunCompletedAt",
+                "blockers",
+                "approvedAt",
+                "approvedByUserId",
+                "committedAt",
+                "verifiedAt",
+                "verifiedByUserId",
+                "revert",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "status": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+          "source",
+          "status",
+          "sourceCounts",
+          "snapshotSha256",
+          "snapshotAt",
+          "snapshotError",
+          "fileLabel",
+          "csv",
+          "createdAt",
+          "createdByUserId",
+          "revertedAt",
+          "stages",
+          "connectionTest",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "batch",
+    ],
+    "type": "object",
+  },
+  "CreatedResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "batch": {
+        "additionalProperties": false,
+        "properties": {
+          "connectionTest": {
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "createdAt": {
+            "type": "string",
+          },
+          "createdByUserId": {
+            "type": "string",
+          },
+          "csv": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "headers": {
+                    "items": {
+                      "type": "string",
+                    },
+                    "type": "array",
+                  },
+                  "mapping": {
+                    "items": {},
+                    "type": "array",
+                  },
+                },
+                "required": [
+                  "headers",
+                  "mapping",
+                ],
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "fileLabel": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "id": {
+            "type": "string",
+          },
+          "revertedAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "snapshotAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "snapshotError": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "snapshotSha256": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "source": {
+            "enum": [
+              "csv",
+              "fub_api",
+              "fub_export",
+            ],
+            "type": "string",
+          },
+          "sourceCounts": {
+            "additionalProperties": {
+              "type": [
+                "number",
+                "null",
+              ],
+            },
+            "propertyNames": {
+              "type": "string",
+            },
+            "type": "object",
+          },
+          "stages": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "approvedAt": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "approvedByUserId": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "blockers": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                      },
+                      "field": {
+                        "type": [
+                          "string",
+                          "null",
+                        ],
+                      },
+                      "sentence": {
+                        "type": "string",
+                      },
+                      "severity": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "code",
+                      "severity",
+                      "field",
+                      "sentence",
+                    ],
+                    "type": "object",
+                  },
+                  "type": "array",
+                },
+                "category": {
+                  "enum": [
+                    "contacts",
+                    "ownership",
+                    "notes",
+                    "messages",
+                    "call_recordings",
+                    "consent",
+                  ],
+                  "type": "string",
+                },
+                "committedAt": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "counts": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "duplicate": {
+                          "type": "number",
+                        },
+                        "imported": {
+                          "type": [
+                            "number",
+                            "null",
+                          ],
+                        },
+                        "needsReview": {
+                          "type": "number",
+                        },
+                        "rejected": {
+                          "type": "number",
+                        },
+                        "source": {
+                          "type": "number",
+                        },
+                        "willImport": {
+                          "type": "number",
+                        },
+                      },
+                      "required": [
+                        "source",
+                        "willImport",
+                        "imported",
+                        "needsReview",
+                        "rejected",
+                        "duplicate",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "dryRunCompletedAt": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "dryRunSha256": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "id": {
+                  "type": "string",
+                },
+                "revert": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": {},
+                      "propertyNames": {
+                        "type": "string",
+                      },
+                      "type": "object",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "seq": {
+                  "type": "number",
+                },
+                "status": {
+                  "type": "string",
+                },
+                "verifiedAt": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "verifiedByUserId": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+              },
+              "required": [
+                "id",
+                "category",
+                "seq",
+                "status",
+                "counts",
+                "dryRunSha256",
+                "dryRunCompletedAt",
+                "blockers",
+                "approvedAt",
+                "approvedByUserId",
+                "committedAt",
+                "verifiedAt",
+                "verifiedByUserId",
+                "revert",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "status": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+          "source",
+          "status",
+          "sourceCounts",
+          "snapshotSha256",
+          "snapshotAt",
+          "snapshotError",
+          "fileLabel",
+          "csv",
+          "createdAt",
+          "createdByUserId",
+          "revertedAt",
+          "stages",
+          "connectionTest",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "batch",
+    ],
+    "type": "object",
+  },
+  "MappingsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "complete": {
+        "type": "boolean",
+      },
+      "ponds": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "label": {
+              "type": "string",
+            },
+            "people": {
+              "type": "number",
+            },
+            "sourceRef": {
+              "type": "string",
+            },
+            "target": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "user",
+                          "type": "string",
+                        },
+                        "userId": {
+                          "type": [
+                            "string",
+                            "null",
+                          ],
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "userId",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "pond",
+                          "type": "string",
+                        },
+                        "pondId": {
+                          "type": [
+                            "string",
+                            "null",
+                          ],
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "pondId",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "unassigned",
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                      ],
+                      "type": "object",
+                    },
+                  ],
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+          },
+          "required": [
+            "sourceRef",
+            "label",
+            "people",
+            "target",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "unmapped": {
+        "type": "number",
+      },
+      "users": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "label": {
+              "type": "string",
+            },
+            "people": {
+              "type": "number",
+            },
+            "sourceRef": {
+              "type": "string",
+            },
+            "target": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "user",
+                          "type": "string",
+                        },
+                        "userId": {
+                          "type": [
+                            "string",
+                            "null",
+                          ],
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "userId",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "pond",
+                          "type": "string",
+                        },
+                        "pondId": {
+                          "type": [
+                            "string",
+                            "null",
+                          ],
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "pondId",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "unassigned",
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                      ],
+                      "type": "object",
+                    },
+                  ],
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+          },
+          "required": [
+            "sourceRef",
+            "label",
+            "people",
+            "target",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "users",
+      "ponds",
+      "unmapped",
+      "complete",
+    ],
+    "type": "object",
+  },
+  "RecordResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "record": {
+        "additionalProperties": false,
+        "properties": {
+          "dryRunOutcome": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "duplicateCandidates": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "contactId": {
+                  "type": "string",
+                },
+                "reason": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "contactId",
+                "reason",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "id": {
+            "type": "string",
+          },
+          "issues": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "code": {
+                  "type": "string",
+                },
+                "field": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "sentence": {
+                  "type": "string",
+                },
+                "severity": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "code",
+                "severity",
+                "field",
+                "sentence",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "matchContactId": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "optOutNote": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "outcome": {
+            "type": "string",
+          },
+          "planned": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "record": {
+            "anyOf": [
+              {
+                "additionalProperties": {},
+                "propertyNames": {
+                  "type": "string",
+                },
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "review": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "byUserId": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "decision": {
+                    "type": "string",
+                  },
+                  "mergeIntoContactId": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                },
+                "required": [
+                  "decision",
+                  "byUserId",
+                  "mergeIntoContactId",
+                ],
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "sourceRef": {
+            "type": "string",
+          },
+          "targetId": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+        },
+        "required": [
+          "id",
+          "sourceRef",
+          "outcome",
+          "dryRunOutcome",
+          "planned",
+          "issues",
+          "record",
+          "matchContactId",
+          "duplicateCandidates",
+          "optOutNote",
+          "review",
+          "targetId",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "record",
+    ],
+    "type": "object",
+  },
+  "RecordsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "next": {
+        "type": [
+          "string",
+          "null",
+        ],
+      },
+      "records": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "dryRunOutcome": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "duplicateCandidates": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "contactId": {
+                    "type": "string",
+                  },
+                  "reason": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "contactId",
+                  "reason",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+            "id": {
+              "type": "string",
+            },
+            "issues": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "type": "string",
+                  },
+                  "field": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "sentence": {
+                    "type": "string",
+                  },
+                  "severity": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "code",
+                  "severity",
+                  "field",
+                  "sentence",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+            "matchContactId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "optOutNote": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "outcome": {
+              "type": "string",
+            },
+            "planned": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "record": {
+              "anyOf": [
+                {
+                  "additionalProperties": {},
+                  "propertyNames": {
+                    "type": "string",
+                  },
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "review": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "byUserId": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "decision": {
+                      "type": "string",
+                    },
+                    "mergeIntoContactId": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                  },
+                  "required": [
+                    "decision",
+                    "byUserId",
+                    "mergeIntoContactId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "sourceRef": {
+              "type": "string",
+            },
+            "targetId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+          },
+          "required": [
+            "id",
+            "sourceRef",
+            "outcome",
+            "dryRunOutcome",
+            "planned",
+            "issues",
+            "record",
+            "matchContactId",
+            "duplicateCandidates",
+            "optOutNote",
+            "review",
+            "targetId",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "records",
+      "next",
+    ],
+    "type": "object",
+  },
+  "ReportResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "categories": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "category": {
+              "enum": [
+                "contacts",
+                "ownership",
+                "notes",
+                "messages",
+                "call_recordings",
+                "consent",
+              ],
+              "type": "string",
+            },
+            "duplicate": {
+              "type": "number",
+            },
+            "imported": {
+              "type": "number",
+            },
+            "lines": {
+              "items": {
+                "type": "string",
+              },
+              "type": "array",
+            },
+            "needsReview": {
+              "type": "number",
+            },
+            "phase": {
+              "enum": [
+                "dry_run",
+                "committed",
+                "reverted",
+              ],
+              "type": "string",
+            },
+            "reconciles": {
+              "type": "boolean",
+            },
+            "rejected": {
+              "type": "number",
+            },
+            "source": {
+              "type": "number",
+            },
+            "status": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "category",
+            "status",
+            "phase",
+            "source",
+            "imported",
+            "needsReview",
+            "rejected",
+            "duplicate",
+            "reconciles",
+            "lines",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "source": {
+        "type": "string",
+      },
+    },
+    "required": [
+      "source",
+      "categories",
+    ],
+    "type": "object",
+  },
+  "VerificationResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "db": {
+        "additionalProperties": false,
+        "properties": {
+          "duplicate": {
+            "type": "number",
+          },
+          "imported": {
+            "type": "number",
+          },
+          "needs_review": {
+            "type": "number",
+          },
+          "rejected": {
+            "type": "number",
+          },
+          "source": {
+            "type": "number",
+          },
+        },
+        "required": [
+          "source",
+          "imported",
+          "needs_review",
+          "rejected",
+          "duplicate",
+        ],
+        "type": "object",
+      },
+      "diffs": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "db": {
+              "type": "number",
+            },
+            "key": {
+              "type": "string",
+            },
+            "source": {
+              "type": "number",
+            },
+          },
+          "required": [
+            "key",
+            "source",
+            "db",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "expected": {
+        "additionalProperties": false,
+        "properties": {
+          "duplicate": {
+            "type": "number",
+          },
+          "imported": {
+            "type": "number",
+          },
+          "needs_review": {
+            "type": "number",
+          },
+          "rejected": {
+            "type": "number",
+          },
+          "source": {
+            "type": "number",
+          },
+        },
+        "required": [
+          "source",
+          "imported",
+          "needs_review",
+          "rejected",
+          "duplicate",
+        ],
+        "type": "object",
+      },
+      "matches": {
+        "type": "boolean",
+      },
+      "sample": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "imported": {
+              "anyOf": [
+                {
+                  "additionalProperties": {},
+                  "propertyNames": {
+                    "type": "string",
+                  },
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "recordId": {
+              "type": "string",
+            },
+            "same": {
+              "type": "boolean",
+            },
+            "source": {
+              "additionalProperties": {},
+              "propertyNames": {
+                "type": "string",
+              },
+              "type": "object",
+            },
+            "sourceRef": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "sourceRef",
+            "recordId",
+            "source",
+            "imported",
+            "same",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "expected",
+      "db",
+      "matches",
+      "diffs",
+      "sample",
+    ],
+    "type": "object",
+  },
+}
+`;
+
+exports[`api/imports route table and schemas > R-PERM-13: every import route is \`import.run\` (Owner/Admin 🔒) and carries authorize(import.run) (snapshot) 1`] = `
+[
+  "GET /api/imports",
+  "GET /api/imports/:id",
+  "GET /api/imports/:id/report",
+  "GET /api/imports/:id/stages/:category/records",
+  "GET /api/imports/:id/stages/:category/verification",
+  "GET /api/imports/:id/user-mappings",
+  "POST /api/imports",
+  "POST /api/imports/:id/abandon",
+  "POST /api/imports/:id/records/:rid/review",
+  "POST /api/imports/:id/revert",
+  "POST /api/imports/:id/snapshot",
+  "POST /api/imports/:id/stages/:category/approve",
+  "POST /api/imports/:id/stages/:category/commit",
+  "POST /api/imports/:id/stages/:category/dry-run",
+  "POST /api/imports/:id/stages/:category/skip",
+  "POST /api/imports/:id/stages/:category/verify",
+  "PUT /api/imports/:id/csv-mapping",
+  "PUT /api/imports/:id/user-mappings",
+]
+`;
