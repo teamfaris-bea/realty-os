@@ -5,6 +5,8 @@
 //   POST /auth/mfa/enroll/confirm   { code } → { recoveryCodes, session }   (activates; new session;
 //                                   needs a password re-auth within 15 min, else REAUTH_REQUIRED)
 //   POST /auth/mfa/verify           { code } | { recoveryCode } → new session with MFA verified
+//   POST /auth/mfa/recovery-codes   → { recoveryCodes }  replaces every recovery code (MFA verified in
+//                                   this session + password re-auth within 15 min, else REAUTH_REQUIRED)
 //
 // Neither refreshes reauthenticated_at: a second factor alone is not re-authentication (R-PERM-13);
 // the new session carries the presented session's instant (set by the password login/re-auth).
@@ -13,7 +15,8 @@
 // row (R-DATA-1), and readable only through auth.mfa_secret() for the user themselves. A code is
 // accepted once (users.mfa_last_used_step); recovery codes are single-use sha256 hashes.
 import { REAUTH_WINDOW_MS, type UserId } from '@realty/core/foundation';
-import { withPreTenant } from '@realty/db';
+import { withPreTenant, withTenantTx } from '@realty/db';
+import { audit } from '../audit.js';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { sql } from 'kysely';
@@ -21,9 +24,10 @@ import { z } from 'zod';
 import { sha256 } from '../crypto/primitives.js';
 import { AppError } from '../errors.js';
 import type { Platform } from '../server.js';
-import { LoginResponse, MfaConfirmResponse, MfaEnrollResponse, authEvent, platformOf } from './common.js';
+import { LoginResponse, MfaConfirmResponse, MfaEnrollResponse, RecoveryCodesResponse, authEvent, platformOf } from './common.js';
 import { startSession } from './flow.js';
 import { enforceLimits } from './rateLimit.js';
+import { actorFor } from './sessions.js';
 import { newRecoveryCodes, newTotpSecret, normalizeRecoveryCode, otpauthUri, verifyTotp } from './totp.js';
 
 function reauthFresh(s: { reauthenticatedAt: number | null; now: number }): boolean {
@@ -180,6 +184,40 @@ export async function registerMfaRoutes(app: FastifyInstance): Promise<void> {
         auditAction: null,
         requirePresented: true,
       });
+    },
+  );
+  r.post(
+    '/auth/mfa/recovery-codes',
+    // a fully verified session only (no partial states): MFA_REQUIRED while the factor is pending
+    { config: { auth: 'session' }, schema: { response: { 200: RecoveryCodesResponse } } },
+    async (req) => {
+      const p = platformOf(req);
+      const s = req.authState!;
+      if (!s.mfaEnabled) throw new AppError('MFA_NOT_ENROLLED');
+      // replacing an authenticator is a sensitive account change (ASVS 3.7.1), like enrollment
+      if (!reauthFresh(s)) throw new AppError('REAUTH_REQUIRED');
+      await enforceLimits(p.db, p.config.sessionSecret, [{ kind: 'mfa_codes_user', parts: [s.userId], max: 5, windowSeconds: 3600 }]);
+      const codes = newRecoveryCodes();
+      const replace = async (tx: Parameters<Parameters<typeof withPreTenant>[0]>[0], now: number) => {
+        await sql`UPDATE mfa_recovery_codes SET used_at = ${new Date(now)}::timestamptz WHERE user_id = app.user_id() AND used_at IS NULL`.execute(tx);
+        for (const c of codes) {
+          await sql`INSERT INTO mfa_recovery_codes (user_id, code_hash, created_at) VALUES (app.user_id(), ${Buffer.from(sha256(normalizeRecoveryCode(c)))}, ${new Date(now)}::timestamptz)`.execute(tx);
+        }
+      };
+      if (s.tenantId !== null && s.role !== null) {
+        const actor = actorFor({ userId: s.userId, tenantId: s.tenantId, role: s.role, sessionId: s.sessionId });
+        await withTenantTx(
+          actor,
+          async (tx, now) => {
+            await replace(tx, now);
+            await audit(tx, actor, { action: 'mfa.recovery_codes_regenerated', entity: { type: 'user', id: s.userId } });
+          },
+          { db: p.db },
+        );
+      } else {
+        await withPreTenant((tx, now) => replace(tx, now), { db: p.db, userId: s.userId });
+      }
+      return { recoveryCodes: codes };
     },
   );
 }
