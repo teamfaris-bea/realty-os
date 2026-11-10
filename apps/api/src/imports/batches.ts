@@ -30,7 +30,7 @@ import { type Tx, enqueueJob, withTenantTx } from '@realty/db';
 import { getObject, putObject } from '../crypto/objects.js';
 import { AppError } from '../errors.js';
 import { systemActor } from '../worker/systemActor.js';
-import { CSV_CATEGORIES, type StageSource, fileLabelOf, inspectCsv } from './csv.js';
+import { CSV_CATEGORIES, type StageSource, fileLabelOf, inspectCsv, uploadTypeProblem } from './csv.js';
 import { FUB_COLLECTIONS, FubAccessError, readCollection } from './fub.js';
 import * as repo from './repos/batches.js';
 import type { ImportDeps } from './types.js';
@@ -123,6 +123,8 @@ export async function createImport(deps: ImportDeps, actor: UserActor, input: Cr
     return { batchId, counts };
   }
   const bytes = decodeFile(input.fileBase64);
+  const typeProblem = uploadTypeProblem(input.source, input.fileName, bytes);
+  if (typeProblem) throw new AppError('UNSUPPORTED_MEDIA_TYPE', { reason: typeProblem });
   const fileLabel = fileLabelOf(input.fileName);
   if (input.source === 'csv') {
     const ins = inspectCsv(bytes);

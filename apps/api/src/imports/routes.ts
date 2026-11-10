@@ -35,9 +35,32 @@ import * as brepo from './repos/batches.js';
 import * as rrepo from './repos/records.js';
 import { requestRevert } from './revert.js';
 import * as S from './schemas.js';
+import { MAX_FILE_BASE64_CHARS } from './schemas.js';
 import { approveStage, requestDryRun, reviewRecord, skipStage, verificationView, verifyStage } from './stages.js';
 import type { ImportDeps } from './types.js';
 import { batchView, mappingView, recordView, reportView } from './views.js';
+
+/**
+ * Request body cap of POST /imports: the strict base64 of the largest file plus room for the JSON
+ * envelope (file name, an up-to-500-column mapping). A declared Content-Length over it is refused
+ * before the body is read (413).
+ */
+export const MAX_UPLOAD_BODY_BYTES = MAX_FILE_BASE64_CHARS + 128 * 1024;
+
+/**
+ * Uploads are never decompressed (no decompression bomb can reach the parser): any Content-Encoding
+ * but identity is refused before the body is read, rather than handed to the JSON parser as bytes.
+ */
+async function refuseContentEncoding<P>(req: FastifyRequest, _reply: unknown, payload: P): Promise<P> {
+  const ce = req.headers['content-encoding'];
+  if (ce === undefined) return payload;
+  const codings = String(ce)
+    .split(',')
+    .map((c) => c.trim().toLowerCase())
+    .filter((c) => c !== '');
+  if (codings.some((c) => c !== 'identity')) throw new AppError('UNSUPPORTED_MEDIA_TYPE', { reason: 'CONTENT_ENCODING' });
+  return payload;
+}
 
 export type ImportDepsFromPlatform = (p: Platform) => ImportDeps;
 
@@ -73,7 +96,7 @@ export function makeImportsRoutes(depsFor?: ImportDepsFromPlatform): RouteModule
           { db: deps(req).db },
         );
 
-      r.post('/imports', { ...auth, bodyLimit: MAX_CSV_BYTES * 2, schema: { body: S.CreateImportBody, response: { 201: S.CreatedResponse } } }, async (req, reply) => {
+      r.post('/imports', { ...auth, bodyLimit: MAX_UPLOAD_BODY_BYTES, preParsing: refuseContentEncoding, schema: { body: S.CreateImportBody, response: { 201: S.CreatedResponse } } }, async (req, reply) => {
         const body = req.body;
         if (body.source !== 'fub_api' && Buffer.byteLength(body.fileBase64, 'base64') > MAX_CSV_BYTES) throw new AppError('PAYLOAD_TOO_LARGE');
         const input = body.source === 'csv' && body.mapping === undefined ? { source: body.source, fileName: body.fileName, fileBase64: body.fileBase64 } : body;
