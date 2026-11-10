@@ -4,7 +4,7 @@
 //   GET  /contacts/:id/erasure                          what erasing would need: the deals the person is on      contact.erase (Owner/Admin 🔒)
 //   POST /contacts/:id/erase          { reason }       app.erase_contact; refused CONTACT_ON_DEAL (409) while    contact.erase (Owner/Admin 🔒)
 //                                                      the person is on any deal, details = the deal ids/stages
-//   POST /deals/:dealId/contacts/:contactId/remove { reason }
+//   POST /contacts/:id/deals/:dealId/remove { reason }
 //                                                      the Owner removes the person from a deal so erasure can   contact.erase + Owner only
 //                                                      proceed: the party link is deleted; as the primary contact
 //                                                      the link is cleared only on a closed or lost deal (an open
@@ -76,13 +76,13 @@ async function register(app: FastifyInstance): Promise<void> {
   );
 
   r.post(
-    '/deals/:dealId/contacts/:contactId/remove',
-    { ...auth, schema: { params: z.object({ dealId: z.uuid(), contactId: z.uuid() }), body: z.object({ reason: ReasonCode }).strict(), response: { 200: z.object({ removed: z.literal(true) }) } } },
+    '/contacts/:id/deals/:dealId/remove',
+    { ...auth, schema: { params: z.object({ id: z.uuid(), dealId: z.uuid() }), body: z.object({ reason: ReasonCode }).strict(), response: { 200: z.object({ removed: z.literal(true) }) } } },
     async (req) =>
       adminTx(req, async (tx, _now, actor) => {
         // E59: the Owner removes the deal link (an Admin may erase, but not edit transaction records)
         if (actor.role !== 'owner') throw new AppError('OWNER_REQUIRED');
-        const { dealId, contactId } = req.params;
+        const { dealId, id: contactId } = req.params;
         const deal = await repo.lockDeal(tx, dealId);
         if (!deal) throw new AppError('NOT_FOUND');
         const isPrimary = deal.primary_contact_id === contactId;

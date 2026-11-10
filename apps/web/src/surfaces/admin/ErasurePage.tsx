@@ -278,7 +278,7 @@ function DealRow({ contactId, name, deal, viewer, reason, announce }: { contactI
               pending={remove.pending}
               pendingLabel="Removing"
               onClick={async () => {
-                const r = await remove.run(`/deals/${deal.id}/contacts/${contactId}/remove`, { reason });
+                const r = await remove.run(`/contacts/${contactId}/deals/${deal.id}/remove`, { reason });
                 if (r.ok) announce(`${name} was removed from ${deal.name}. The deal record stays.`);
                 else setConfirming(false);
               }}

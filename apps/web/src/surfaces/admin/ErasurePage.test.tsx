@@ -25,7 +25,7 @@ function erasureFake(state: { preview: unknown }) {
 describe('Erase a contact', () => {
   it('E59 R-DATA-4: a contact on a closed deal is explained, not erasable; the Owner removes the deal link, then erasure is offered', async () => {
     const state = { preview: onDeal as unknown };
-    const fake = erasureFake(state).on(`POST /deals/${DEAL}/contacts/${C}/remove`, () => {
+    const fake = erasureFake(state).on(`POST /contacts/${C}/deals/${DEAL}/remove`, () => {
       state.preview = free;
       return { status: 200, body: { removed: true } };
     });
@@ -39,7 +39,7 @@ describe('Erase a contact', () => {
     await u.click(within(deal).getByRole('button', { name: 'Remove Rosa Diaz from Maple St purchase' }));
     expect(await screen.findByRole('button', { name: 'Erase Rosa Diaz' })).toBeInTheDocument();
     expect(screen.getByText('Rosa Diaz was removed from Maple St purchase. The deal record stays.')).toBeInTheDocument();
-    expect(fake.callsTo(`POST /deals/${DEAL}/contacts/${C}/remove`).map((c) => c.body)).toEqual([{ reason: 'PRIVACY_REQUEST' }]);
+    expect(fake.callsTo(`POST /contacts/${C}/deals/${DEAL}/remove`).map((c) => c.body)).toEqual([{ reason: 'PRIVACY_REQUEST' }]);
     expect(fake.callsTo(`POST /contacts/${C}/erase`)).toHaveLength(0);
   });
 
@@ -93,7 +93,7 @@ describe('Erase a contact', () => {
   });
 
   it('E59 R-DATA-4: DEAL_STILL_OPEN tells the Owner to change the primary contact on the deal first', async () => {
-    const fake = erasureFake({ preview: onDeal }).on(`POST /deals/${DEAL}/contacts/${C}/remove`, err(409, 'DEAL_STILL_OPEN'));
+    const fake = erasureFake({ preview: onDeal }).on(`POST /contacts/${C}/deals/${DEAL}/remove`, err(409, 'DEAL_STILL_OPEN'));
     leadAdminApp(fake, PATH, 'owner');
     const u = userEvent.setup();
     const deal = (await screen.findByText('Maple St purchase')).closest('li')!;

@@ -61,7 +61,7 @@ describe('E59 R-DATA-4 erasure of a contact on a closed deal', () => {
     const c = await lead('Erase Me');
     const d = await deal(c, 'closed');
     await freshReauth(h, owner);
-    const rm = await call(owner, 'POST', `/deals/${d}/contacts/${c}/remove`, { reason: 'PRIVACY_REQUEST' });
+    const rm = await call(owner, 'POST', `/contacts/${c}/deals/${d}/remove`, { reason: 'PRIVACY_REQUEST' });
     expect(rm.status).toBe(200);
     expect((await call<{ erasable: boolean }>(owner, 'GET', `/contacts/${c}/erasure`)).body.erasable).toBe(true);
     const er = await call(owner, 'POST', `/contacts/${c}/erase`, { reason: 'PRIVACY_REQUEST' });
@@ -77,8 +77,8 @@ describe('E59 R-DATA-4 erasure of a contact on a closed deal', () => {
     const c = await lead('Linked');
     const d = await deal(c, 'closed');
     await freshReauth(h, admin);
-    expect((await call(admin, 'POST', `/deals/${d}/contacts/${c}/remove`, { reason: 'PRIVACY_REQUEST' })).code).toBe('OWNER_REQUIRED');
-    expect((await call(agent, 'POST', `/deals/${d}/contacts/${c}/remove`, { reason: 'PRIVACY_REQUEST' })).code).toBe('NOT_FOUND');
+    expect((await call(admin, 'POST', `/contacts/${c}/deals/${d}/remove`, { reason: 'PRIVACY_REQUEST' })).code).toBe('OWNER_REQUIRED');
+    expect((await call(agent, 'POST', `/contacts/${c}/deals/${d}/remove`, { reason: 'PRIVACY_REQUEST' })).code).toBe('NOT_FOUND');
     expect((await call(agent, 'POST', `/contacts/${c}/erase`, { reason: 'PRIVACY_REQUEST' })).code).toBe('NOT_FOUND');
     expect((await h.su.query('SELECT primary_contact_id FROM deals WHERE id = $1', [d])).rows).toEqual([{ primary_contact_id: c }]);
   });
@@ -87,7 +87,7 @@ describe('E59 R-DATA-4 erasure of a contact on a closed deal', () => {
     const c = await lead('Open Deal');
     const d = await deal(c, 'under_contract');
     await freshReauth(h, owner);
-    expect((await call(owner, 'POST', `/deals/${d}/contacts/${c}/remove`, { reason: 'PRIVACY_REQUEST' })).code).toBe('DEAL_STILL_OPEN');
+    expect((await call(owner, 'POST', `/contacts/${c}/deals/${d}/remove`, { reason: 'PRIVACY_REQUEST' })).code).toBe('DEAL_STILL_OPEN');
     await staleReauth(h, owner);
     expect((await call(owner, 'POST', `/contacts/${c}/erase`, { reason: 'PRIVACY_REQUEST' })).code).toBe('REAUTH_REQUIRED');
     expect(await exists(c)).toBe(true);
