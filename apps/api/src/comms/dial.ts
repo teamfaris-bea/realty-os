@@ -24,6 +24,7 @@ import { contactFacts, dealOrAppointmentContext, detailVisibleContact } from './
 import { telephonyAccount } from './repos/credentials.js';
 import * as g from './repos/gate.js';
 import * as msgs from './repos/messages.js';
+import { signedRef } from './render.js';
 import { asSystem, asUser, linkMac } from './runtime.js';
 import type { CommsDeps, DecisionView, DialResult, OutboundIntent } from './types.js';
 
@@ -141,6 +142,9 @@ export async function dialOutbound(callId: string, deps: CommsDeps, tenantId: st
       record: plan.record,
       ...(plan.announce ? { recordingAnnouncement: RECORDING_ANNOUNCEMENT } : {}),
       statusCallbackUrl: new URL('/api/webhooks/telephony/voice', deps.publicBaseUrl).toString(),
+      // fetched when the client answers: plays the announcement and records that it played (R-CONSENT-16)
+      answerUrl: new URL(`/api/webhooks/telephony/answer?c=${signedRef(deps.linkSecret, 'call-answer', tenantId, callId)}`, deps.publicBaseUrl).toString(),
+      recordingStatusCallbackUrl: new URL('/api/webhooks/telephony/recording', deps.publicBaseUrl).toString(),
     });
     ref = res.providerRef;
   } catch (e) {

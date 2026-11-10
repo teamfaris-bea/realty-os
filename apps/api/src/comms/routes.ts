@@ -221,9 +221,17 @@ async function register(app: FastifyInstance): Promise<void> {
 <body style="font-family:system-ui;max-width:28rem;margin:3rem auto;padding:0 1rem"><h1 style="font-size:1.25rem">Stop marketing emails?</h1>
 <form method="post" action="${action}"><button style="font-size:1rem;padding:.75rem 1.25rem">Unsubscribe</button></form></body>`;
   });
-  r.post('/email/unsubscribe/:token', { config: { auth: 'public' }, schema: { params: TokenParams } }, async (req) => {
+  // RFC 8058 one-click: the mailbox provider POSTs `List-Unsubscribe=One-Click` with no Origin and no cookie,
+  // so this route is exempt from the Origin allowlist; the MAC-signed token is the only authority, and the
+  // action can only ever stop email. The page's own button posts here too (it may live on another origin).
+  r.post('/email/unsubscribe/:token', { config: { auth: 'public', originExempt: true }, schema: { params: TokenParams } }, async (req, reply) => {
     const out = await unsubscribeByLink(req.params.token, deps());
     if (out === 'invalid') throw new AppError('NOT_FOUND');
+    if (String(req.headers.accept ?? '').includes('text/html')) {
+      reply.header('content-type', 'text/html; charset=utf-8').header('cache-control', 'no-store');
+      return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Unsubscribed</title>
+<body><h1>You are unsubscribed</h1><p>You will not get marketing emails from this team again.</p></body>`;
+    }
     return { unsubscribed: true };
   });
 

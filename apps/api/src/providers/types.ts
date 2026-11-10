@@ -44,6 +44,23 @@ export interface CallRequest {
   /** announcement played to the client before recording starts (R-CONSENT-16) */
   recordingAnnouncement?: string;
   statusCallbackUrl?: string;
+  /**
+   * URL the provider fetches when the CLIENT answers, before the legs are bridged (Twilio <Number url>).
+   * It plays the recording announcement to the client and reports that it played. Without it an
+   * announced recording cannot be made, so a real adapter does not record that call.
+   */
+  answerUrl?: string;
+  /** where the provider reports a finished recording */
+  recordingStatusCallbackUrl?: string;
+}
+
+/** What reconciliation knows about a submit whose outcome is unknown (vendors without idempotency keys). */
+export interface SubmitHint {
+  from: string;
+  to: string;
+  body: string;
+  /** epoch ms when the submit started */
+  dispatchedAt: number;
 }
 
 export interface TelephonyProvider {
@@ -51,12 +68,14 @@ export interface TelephonyProvider {
   sendSms(r: SmsRequest): Promise<{ providerRef: string; status: ProviderMessageStatus }>;
   dialCall(r: CallRequest): Promise<{ providerRef: string }>;
   /** reconciliation of dispatch_unknown (R-GATE-8): look a submit up by its idempotency key */
-  lookupMessage(account: TelephonyAccount, idempotencyKey: string): Promise<{ providerRef: string; status: ProviderMessageStatus } | null>;
+  lookupMessage(account: TelephonyAccount, idempotencyKey: string, hint?: SubmitHint): Promise<{ providerRef: string; status: ProviderMessageStatus } | null>;
   purchaseNumber(account: TelephonyAccount, opts: { areaCode?: string }): Promise<{ e164: string; providerRef: string }>;
   releaseNumber(account: TelephonyAccount, providerRef: string): Promise<void>;
   /** 10DLC / toll-free registration status (R-CONSENT-17) */
   senderRegistrationStatus(account: TelephonyAccount, registrationRef: string): Promise<'pending' | 'approved' | 'rejected' | 'suspended'>;
   fetchRecording(account: TelephonyAccount, recordingRef: string): Promise<{ bytes: Uint8Array; contentType: string; durationMs: number }>;
+  /** Deletes the provider's copy of a recording once ours is stored encrypted, or when it may not be kept. */
+  deleteRecording?(account: TelephonyAccount, recordingRef: string): Promise<void>;
   /** Account-security SMS to a USER's own phone (alert-phone verification, E54). Not a contact message. */
   deliverVerificationCode(r: { to: string; code: string }): Promise<{ providerRef: string }>;
 }

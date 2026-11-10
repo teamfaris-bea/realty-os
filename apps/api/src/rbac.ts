@@ -34,6 +34,11 @@ declare module 'fastify' {
   interface FastifyContextConfig {
     auth?: RouteAuth;
     allowPartial?: readonly PartialAllowance[];
+    /**
+     * Public routes only: skip the Origin allowlist. For capability links that mail clients POST without an
+     * Origin (RFC 8058 one-click unsubscribe); the MAC-signed token in the path is the authorization.
+     */
+    originExempt?: boolean;
   }
 }
 

@@ -36,6 +36,7 @@ export interface FakeCall {
   to: string;
   record: boolean;
   recordingAnnouncement: string | null;
+  answerUrl: string | null;
   idempotencyKey: string;
 }
 
@@ -90,6 +91,7 @@ export class FakeTelephony implements TelephonyProvider {
       to: r.to,
       record: r.record,
       recordingAnnouncement: r.recordingAnnouncement ?? null,
+      answerUrl: r.answerUrl ?? null,
       idempotencyKey: r.idempotencyKey,
     });
     if (f === 'timeout_after_submit') throw new ProviderError('timeout');
@@ -134,6 +136,13 @@ export class FakeTelephony implements TelephonyProvider {
     const bytes = new Uint8Array(1024);
     for (let i = 0; i < bytes.length; i++) bytes[i] = seed[i % seed.length]!;
     return { bytes, contentType: 'audio/wav', durationMs: 60_000 };
+  }
+
+  /** recording refs whose provider copy was deleted (after our encrypted copy, or because it may not be kept) */
+  readonly deletedRecordings: string[] = [];
+  async deleteRecording(account: TelephonyAccount, recordingRef: string) {
+    void account;
+    if (!this.deletedRecordings.includes(recordingRef)) this.deletedRecordings.push(recordingRef);
   }
 
   async deliverVerificationCode(r: { to: string; code: string }) {

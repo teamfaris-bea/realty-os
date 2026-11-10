@@ -177,6 +177,7 @@ export function buildServer(cfg: Config, deps: ServerDeps): FastifyInstance {
   app.addHook('onRequest', async (req) => {
     if (SAFE_METHODS.has(req.method)) return;
     if (req.routeOptions.config?.auth === 'webhook') return;
+    if (req.routeOptions.config?.auth === 'public' && req.routeOptions.config.originExempt === true) return;
     const origin = originOf(req);
     if (origin === null || !cfg.webOrigins.includes(origin)) throw new AppError('CSRF_INVALID');
   });
