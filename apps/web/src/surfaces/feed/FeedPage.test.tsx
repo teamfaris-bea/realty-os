@@ -264,11 +264,11 @@ describe('Priority Feed', () => {
     expect(screen.getByRole('button', { name: 'Open deal' })).toBeInTheDocument();
   });
 
-  it('a gate note on an action is shown before the tap (needs-confirmation sentence)', async () => {
-    const c = card({ primaryAction: { kind: 'text', label: 'Text', contactId: IDS.jane, note: 'More than 3 texts today' } });
+  it('an optional hint on an action is shown under its button before the tap', async () => {
+    const c = card({ primaryAction: { kind: 'text', label: 'Text', contactId: IDS.jane, note: 'Read their last reply first' } });
     const fake = new FakeFetch().on('GET /feed', { status: 200, body: feed([], [c]) });
     agentApp(fake);
-    expect(await screen.findByText('More than 3 texts today')).toBeInTheDocument();
+    expect(await screen.findByText('Read their last reply first')).toBeInTheDocument();
   });
 
   it('scored cards can be snoozed or dismissed; deadline cards cannot', async () => {

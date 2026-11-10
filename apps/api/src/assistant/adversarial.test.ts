@@ -138,7 +138,7 @@ describe('drafts are only made for someone who can send them', () => {
 });
 
 describe('pausing a saved search stops alerts already queued', () => {
-  it('R-AST-10 R-GATE-3: an alert queued (or deferred to the morning) before the agent tapped pause never reaches the gate; the match is alerted again only after resuming', async () => {
+  it('R-AST-10 R-GATE-3: an alert queued before the agent tapped pause is canceled and never reaches the gate; the match is alerted again only after resuming', async () => {
     const agent = w.agents[0]!;
     const c = await ownedContact(agent);
     const hit = await listing(h, w, agent.userId!, { postalCode: '94110', priceCents: 70_000_000 });
