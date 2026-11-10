@@ -249,6 +249,15 @@ export function buildServer(cfg: Config, deps: ServerDeps): FastifyInstance {
         }
         platform.routeTable.push(entry);
       });
+      // Authentication before the body is read: a route that needs a session refuses an anonymous (or
+      // unknown-cookie) request in preParsing, i.e. after the Origin check and the rate limit
+      // (onRequest) but before any body parser runs, so no upload is buffered for it. The full guard
+      // (CSRF token, MFA state, tenant, RBAC) still runs in preValidation; this only moves the 401.
+      api.addHook('preParsing', async (req, _reply, payload) => {
+        const auth = req.routeOptions.config?.auth;
+        if (auth !== undefined && auth !== 'public' && auth !== 'webhook' && !(await loadAuthState(req))) throw new AppError('UNAUTHENTICATED');
+        return payload;
+      });
       for (const m of modules) await api.register(m.register);
     },
     { prefix: '/api' },

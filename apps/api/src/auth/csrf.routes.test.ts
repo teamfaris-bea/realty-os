@@ -128,4 +128,38 @@ describe('CSRF on every state-changing route', () => {
     expect(await boot(route('/c', 'public'))).toBeInstanceOf(RouteAuthorizationError);
     expect(await boot(route('/d/:token', 'public'))).toBeNull();
   });
+
+});
+
+describe('authentication before the body is read', () => {
+  it('an anonymous request to a session route is 401 before any body parser runs (no pre-auth buffering of large uploads)', async () => {
+    let parsed = 0;
+    const big: RouteModule = {
+      name: 'big',
+      register: async (app) => {
+        app.addContentTypeParser('application/x-probe', { parseAs: 'buffer', bodyLimit: 20 * 1024 * 1024 }, (_req, _body, done) => {
+          parsed += 1;
+          done(null, {});
+        });
+        app.post('/probe', { config: { auth: 'self' }, bodyLimit: 20 * 1024 * 1024 }, async () => ({ ok: true }));
+        app.post('/open', { config: { auth: 'public' }, bodyLimit: 20 * 1024 * 1024 }, async () => ({ ok: true }));
+      },
+    };
+    const app = buildServer(testConfig(), { providers: createFakeProviders(), clock: { now: () => Date.now() as never }, ids: { next: () => '01a1c4ba-0000-7000-8000-000000000000' as never }, db: h.database, routeModules: [big] });
+    await app.ready();
+    try {
+      const payload = Buffer.alloc(5 * 1024 * 1024, 0x41);
+      const headers = { 'content-type': 'application/x-probe', origin: 'http://localhost:5173' };
+      const anon = await app.inject({ method: 'POST', url: '/api/probe', headers, payload });
+      expect(anon.statusCode).toBe(401);
+      const junkCookie = await app.inject({ method: 'POST', url: '/api/probe', headers: { ...headers, cookie: '__Host-sid=' + 'A'.repeat(43) }, payload });
+      expect(junkCookie.statusCode).toBe(401);
+      expect(parsed).toBe(0);
+      // public routes still parse (login, signup carry bodies)
+      expect((await app.inject({ method: 'POST', url: '/api/open', headers, payload })).statusCode).toBe(200);
+      expect(parsed).toBe(1);
+    } finally {
+      await app.close();
+    }
+  });
 });

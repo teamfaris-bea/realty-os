@@ -90,7 +90,7 @@ A bad signature is checked before input validation. It gets a 403, a tenant-less
 
 ### 2.6 Input and files
 
-See §2.8 (import pipeline and storage); that part of the pass is in `apps/api/src/imports` and `apps/api/src/providers/storage.ts`.
+See §2.9 (import pipeline and storage); that part of the pass is in `apps/api/src/imports` and `apps/api/src/providers/storage.ts`.
 
 - Global body limit is 1 MiB (413 `PAYLOAD_TOO_LARGE`).
 - The JSON parser drops `__proto__`, `constructor` and `prototype` keys.
@@ -114,9 +114,23 @@ See §2.8 (import pipeline and storage); that part of the pass is in `apps/api/s
   Tests: `security.headers.test.ts`, `platform.test.ts`.
 - **KEK.** The local KEK is 32 bytes from `KEK_BASE64`. It wraps the tenant keys with an AAD that binds tenant, purpose and version, and derives the platform keys (MFA, webhook payloads) through HKDF with a separate label for each purpose. It is never logged or returned. Production must replace it with a KMS-backed `Kek` (the interface is in `crypto/kek.ts`; see §3).
 
-### 2.8 Import pipeline and storage
+### 2.8 Dependencies
 
-The import-pipeline part of this pass (upload limits, decompression, CSV formula injection, FUB base-URL SSRF, storage-key traversal) is recorded here when it lands; see the lane report.
+`pnpm audit` (2026-11-10) finds 5 moderate advisories, all in dev-only tooling: `qs` through `@stryker-mutator/core` (mutation testing) and `minimatch` through `eslint`. `pnpm audit --prod` finds none. Nothing reachable at runtime is vulnerable, so nothing was upgraded. Re-run it before each release.
+
+### 2.9 Import pipeline and storage
+
+| Control | Where | Test |
+|---|---|---|
+| Unauthenticated requests to session routes get 401 in `preParsing`, after the Origin check and rate limit but **before any body is read**, so no upload is buffered for an anonymous client | `server.ts` | `auth/csrf.routes.test.ts` |
+| `POST /imports` body cap matches the 25 MiB file cap (strict base64 + 128 KiB envelope; was 50 MiB). An oversized declared `Content-Length` is 413 before the body is read; a lying one is refused | `imports/routes.ts` | `imports/upload.security.test.ts` |
+| `fileBase64` must be strict, padded base64 (Node's lenient decoder would silently store different bytes) | `imports/schemas.ts` | same |
+| Rows (50k), columns (500), cell length (32,768) | core `parseCsv` | same (R-IMPORT-13) |
+| File extension must fit the source (.csv/.tsv/.txt or .json) | `imports/csv.ts`, `batches.ts` | same |
+| No decompression anywhere. Compressed files (gzip, zip/xlsx, bzip2, xz, zstd, 7z, rar, OLE2) are refused 415 by magic bytes, and any `Content-Encoding` other than identity is 415 | `imports/csv.ts`, `routes.ts` | same |
+| CSV formula injection: no export exists today. `imports/csvExport.ts` (OWASP: prefix `= + - @ tab CR` with `'`, always quote) is the writer for any future one. Core's `csvSafeCell` is not strict and must not be used for exports | `imports/csvExport.ts` | `imports/csvExport.test.ts` |
+| FUB SSRF: `FUB_BASE_URL` comes from server env only (never tenant input). It must be https, a public host on the default port with no credentials, and listed in `FUB_ALLOWED_HOSTS` (default `api.followupboss.com`); this is checked at startup. Redirects are not followed; API pages are capped at 32 MiB; recording URLs must be public hosts on default ports | `imports/fub.ts` | `imports/fub.test.ts` |
+| Storage keys: `tenants/{uuid}/…` only, at most 1024 characters, with no traversal, absolute paths, backslashes, NUL or encoded traversal. A bad key throws everywhere (it never reads as "absent"). The local FS adapter refuses paths that escape its root through symlinks | `providers/storage.ts` | `providers/storage.test.ts` |
 
 ---
 
@@ -125,7 +139,7 @@ The import-pipeline part of this pass (upload limits, decompression, CSV formula
 | Item | Why it is open | Suggested action |
 |---|---|---|
 | Signup reveals whether an email is registered (`SIGNUP_UNAVAILABLE`) | Fixing it needs an email-verification signup ("check your inbox"), which changes the product flow. Signup is limited to 10/h per IP | Owner decision: add verified signup before public launch |
-| Telephony webhooks have no timestamp (a Twilio property) | A captured, Twilio-signed request can be replayed after `webhook_events` rows are purged. TLS makes capture unlikely | Keep `webhook_events` for at least the provider retry horizon; consider deduplicating inbound messages by `MessageSid` on `messages` as well |
+| Telephony webhooks have no timestamp (a Twilio property) | A captured, Twilio-signed request can be replayed at any time. It is deduplicated by `webhook_events (provider, provider_event_id)`, which no job purges today, and inbound messages are also unique on `messages (tenant_id, provider, provider_message_ref)`. TLS makes capture unlikely | Keep both: any future retention job must not purge `webhook_events` ids sooner than the messages they dedupe |
 | The KMS-backed KEK is not built | It needs a cloud account | Production-readiness: a KMS adapter for `Kek`; refuse `KEK_REF=local-kek:*` in production once it exists |
 | https is not enforced by config | Local "production" runs (Codespaces demo) use http | Deployment must terminate TLS and set `WEB_ORIGIN` and `PUBLIC_BASE_URL` to https; the edge must send HSTS |
 | The deployable web server must send the CSP headers | No server serves the built web app yet. The `<meta>` CSP cannot carry `frame-ancestors` | The production-readiness server sends `webSecurityHeaders` from `apps/web/security-headers.ts` on every response |
@@ -134,4 +148,7 @@ The import-pipeline part of this pass (upload limits, decompression, CSV formula
 | Recovery codes are unsalted sha256 of 50 random bits | Fine against online guessing (rate limited, single-use); a stolen DB would allow offline cracking of codes | Optionally HMAC them with a server key |
 | The lead intake source token is in the URL path | Edge or proxy access logs could record it | Strip paths under `/api/intake/` from edge logs, or move the token to a header in a future intake API version |
 | Prompt injection from contact content into the assistant | Mitigated by design: approvals, a fixed autonomy scope, evidence verification and the content guard (ARCHITECTURE §11), not by this pass | Phase 2 review |
+| DNS rebinding on FUB recording URLs and the FUB base URL | A public name that resolves to a private IP is not re-checked at connect time | Worker egress policy (deny private ranges) at deployment |
+| `FUB_ALLOWED_HOSTS` is read from `process.env` in `imports/handlers.ts` and is not yet in `.env.example` or `config.ts` | Kept out of shared config files during the parallel lanes | Production-readiness: move it into `config.ts` and `.env.example` |
+| Imported FUB fields (`imported_fields`: source URL, `custom*`) are attacker-controlled | Today they render as text only | Any future link from them, or from contact emails and phones (`mailto:`/`tel:`), goes through `safeUrl` |
 | CSP coverage of signed-in pages was exercised in error and empty states | E2E data seeding with the API was not in scope | Extend `csp.spec.ts` with a seeded API run |
