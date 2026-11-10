@@ -5,7 +5,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import axe from 'axe-core';
 import { describe, expect, it } from 'vitest';
-import { FakeFetch, IDS, agentApp, decision, draftAction, err, fullContact, iso, pondCard } from '../feed/lib/testing.js';
+import { FakeFetch, IDS, agentApp, decision, draftAction, err, fullContact, iso, pondCard, reachability, stopReason } from '../feed/lib/testing.js';
 
 const user = () => userEvent.setup();
 
@@ -51,20 +51,32 @@ describe('Contact: card view', () => {
 });
 
 describe('Contact: full view', () => {
-  it('an opt-out is said under the buttons before any tap, per channel, in the server words', async () => {
-    const preview = (c: { body?: unknown }) => {
-      const ch = (c.body as { channel: string }).channel;
-      const d = ch === 'sms' ? decision({ id: null, phase: 'preview', outcome: 'deny', explanation: 'Opted out of texts' }) : decision({ id: null, phase: 'preview' });
-      return { status: 200, body: { decision: d, body: '' } };
-    };
-    const fake = fullFake().on(`POST /contacts/${IDS.jane}/messages/preview`, preview);
+  it('Owen: STOP disables Text with "Texted STOP on Nov 10"; Email and Call stay enabled; no stand-in preview is sent', async () => {
+    const fake = fullFake().on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: reachability(IDS.jane, { sms: [stopReason()] }) } });
     agentApp(fake, `/contacts/${IDS.jane}`);
-    expect(await screen.findByText('Opted out of texts')).toBeInTheDocument();
-    expect(screen.getByText(/Won't text:/)).toBeInTheDocument();
-    expect(screen.queryByText(/Won't email:/)).toBeNull();
-    const bodies = fake.callsTo(`POST /contacts/${IDS.jane}/messages/preview`).map((c) => c.body);
-    expect(bodies).toEqual(expect.arrayContaining([{ channel: 'sms', body: 'Hi' }, { channel: 'email', body: 'Hi' }]));
+    expect(await screen.findByText('Texted STOP on Nov 10')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Text' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Text' })).toHaveAccessibleDescription('Texted STOP on Nov 10');
+    expect(screen.getByRole('button', { name: 'Email' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Call' })).toBeEnabled();
+    expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages/preview`)).toEqual([]);
     expect(document.body.textContent).not.toMatch(/consent|quiet hours|anyway/i);
+  });
+
+  it('an agent-recorded do-not-call disables Call and says who recorded it and when', async () => {
+    const dnc = stopReason({ source: 'agent_recorded', keyword: null, at: new Date(new Date().getFullYear(), 9, 3, 12).toISOString(), recordedBy: { userId: IDS.me, displayName: 'Avery Brooks' } });
+    const fake = fullFake().on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: reachability(IDS.jane, { voice: [dnc] }) } });
+    agentApp(fake, `/contacts/${IDS.jane}`);
+    expect(await screen.findByText('Asked not to be called (recorded by Avery Brooks on Oct 3)')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Call' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Text' })).toBeEnabled();
+  });
+
+  it('while the summary is unknown (failed), nothing is disabled: the send-time check still decides', async () => {
+    const fake = fullFake().on(`GET /contacts/${IDS.jane}/reachability`, { status: 500, body: { error: { code: 'INTERNAL', requestId: 'r' } } });
+    agentApp(fake, `/contacts/${IDS.jane}`);
+    expect(await screen.findByRole('button', { name: 'Text' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Call' })).toBeEnabled();
   });
 
   it('calling from the contact is 1 tap', async () => {

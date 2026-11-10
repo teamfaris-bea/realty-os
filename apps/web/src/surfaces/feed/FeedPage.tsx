@@ -15,6 +15,7 @@ import { useEffect, useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Card, EmptyState, Notice, Ratio } from '../../design/index.js';
 import { type ApiError, messageFor, useApi } from '../../shell/index.js';
+import { ReachabilityBatch } from '../../reasons/index.js';
 import { ActionButton } from './ActionButton.js';
 import { AgentSheetsProvider, useAgentSheets } from './lib/AgentSheets.js';
 import { countdownWords, formatCountdown, formatTime, itemLabel, relativeTime } from './lib/format.js';
@@ -64,7 +65,10 @@ function Feed() {
     );
   }
   const shown = data.pinned.length + data.scored.length;
+  // one reachability request for every card whose one-tap action contacts someone (lane optout-visibility)
+  const contactIds = [...data.pinned, ...data.scored].flatMap((c) => (c.contact && [c.primaryAction, ...c.alternatives].some((a) => CONTACTING.has(a.kind)) ? [c.contact.id] : []));
   return (
+    <ReachabilityBatch contactIds={contactIds}>
     <div className="flex flex-col gap-6">
       {q.isError ? <Notice tone="warn">Couldn't refresh just now. This is your feed as of {formatTime(data.generatedAt)}.</Notice> : null}
       {shown === 0 ? (
@@ -79,8 +83,11 @@ function Feed() {
         <span>Updated {formatTime(data.generatedAt)}</span>
       </p>
     </div>
+    </ReachabilityBatch>
   );
 }
+
+const CONTACTING: ReadonlySet<string> = new Set(['text', 'email', 'call', 'send_draft']);
 
 function Band({ title, cards, pinned }: { title: string; cards: FeedCard[]; pinned: boolean }) {
   const id = useId();

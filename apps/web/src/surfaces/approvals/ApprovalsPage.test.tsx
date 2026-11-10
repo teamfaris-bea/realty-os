@@ -7,7 +7,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import axe from 'axe-core';
 import { describe, expect, it } from 'vitest';
-import { FakeFetch, IDS, agentApp, decision, draftAction, err } from '../feed/lib/testing.js';
+import { FakeFetch, IDS, agentApp, decision, draftAction, err, reachability, stopReason } from '../feed/lib/testing.js';
 import type { ActionView, SavedSearchView } from '../feed/lib/types.js';
 
 const user = () => userEvent.setup();
@@ -158,3 +158,16 @@ describe('Approvals inbox', () => {
     expect(r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`)).toEqual([]);
   });
 });
+
+describe('Approvals inbox: opt-outs said before the tap (lane optout-visibility)', () => {
+  it('R-CONSENT-10: a drafted text to someone who texted STOP cannot be sent: Send is disabled with the exact reason, nothing is approved', async () => {
+    const fake = inbox([draftAction()]).on(`GET /reachability?contactIds=${IDS.jane}`, { status: 200, body: { reachability: [reachability(IDS.jane, { sms: [stopReason()] })] } });
+    agentApp(fake, '/approvals');
+    expect(await screen.findByText('Texted STOP on Nov 10')).toBeInTheDocument();
+    const send = screen.getByRole('button', { name: 'Send' });
+    expect(send).toBeDisabled();
+    expect(send).toHaveAccessibleDescription('Texted STOP on Nov 10');
+    expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toEqual([]);
+  });
+});
+

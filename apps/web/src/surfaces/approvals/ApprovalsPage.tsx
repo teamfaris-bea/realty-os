@@ -13,6 +13,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useId, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Button, Card, ClaimLine, EmptyState, GateBadge, Notice } from '../../design/index.js';
+import { ReachabilityBatch, ReasonCaption, useChannelState } from '../../reasons/index.js';
 import { type ApiError, messageFor, useApi, useCommand } from '../../shell/index.js';
 import { AgentSheetsProvider, SendOutcome, useAgentSheets } from '../feed/lib/AgentSheets.js';
 import { claimView, firstName, relativeTime } from '../feed/lib/format.js';
@@ -73,14 +74,18 @@ function Approvals() {
       </EmptyState>
     );
   }
+  // one reachability request for every card's contact (not one per card)
+  const contactIds = items.flatMap((a) => (a.contactId && a.primaryAction === 'send' && a.draft ? [a.contactId] : []));
   return (
-    <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-      {items.map((a) => (
-        <li key={a.id} id={`action-${a.id}`} className="scroll-mt-20">
-          <ActionCard action={a} />
-        </li>
-      ))}
-    </ul>
+    <ReachabilityBatch contactIds={contactIds}>
+      <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        {items.map((a) => (
+          <li key={a.id} id={`action-${a.id}`} className="scroll-mt-20">
+            <ActionCard action={a} />
+          </li>
+        ))}
+      </ul>
+    </ReachabilityBatch>
   );
 }
 
@@ -99,7 +104,11 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
   const name = action.contactName ?? 'this contact';
   const sendable = action.primaryAction === 'send' && action.draft !== null;
   const threadHref = action.contactId ? `/contacts/${action.contactId}/thread?compose=draft&draft=${action.id}` : null;
-  const check = useSendCheck({ contactId: action.contactId ?? '', channel: action.draft?.channel ?? 'sms', body: action.draft?.body ?? '', subject: action.draft?.subject ?? '', enabled: sendable && action.contactId !== null });
+  // whether the draft's channel is blocked at all (an opt-out, a suppression) comes from the summary;
+  // the draft's own words are still previewed for the rules that depend on them
+  const reach = useChannelState(sendable ? action.contactId : null, action.draft?.channel ?? null);
+  const reasonId = useId();
+  const check = useSendCheck({ contactId: action.contactId ?? '', channel: action.draft?.channel ?? 'sms', body: action.draft?.body ?? '', subject: action.draft?.subject ?? '', enabled: sendable && action.contactId !== null && !reach.blocked });
 
   const doApprove = async () => {
     const r = await approve.run(seenSeq !== null ? { reviewedInboundSeq: seenSeq } : {});
@@ -164,6 +173,8 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
       {reject.error ? <Notice tone="error">{reject.error.message}</Notice> : null}
       {result && result.result !== 'acknowledged' && result.result !== 'sent' && result.result !== 'queued' && result.result !== 'noop' ? (
         <SendOutcome result={{ result: result.result, decision: result.decision, message: null }} contactName={name} />
+      ) : sendable && reach.blocked ? (
+        <ReasonCaption id={reasonId} state={reach} />
       ) : sendable && check.decision?.outcome === 'deny' ? (
         <GateBadge decision={check.decision} />
       ) : null}
@@ -174,7 +185,7 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
           </Button>
         ) : sendable ? (
           <>
-            <Button icon="message" pending={approve.pending} pendingLabel="Sending" onClick={() => void doApprove()}>
+            <Button icon="message" pending={approve.pending} pendingLabel="Sending" disabled={reach.blocked} aria-describedby={reach.blocked ? reasonId : undefined} onClick={() => void doApprove()}>
               {stale ? 'Send anyway' : 'Send'}
             </Button>
             {threadHref ? (

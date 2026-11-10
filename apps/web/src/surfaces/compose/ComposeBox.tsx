@@ -6,12 +6,13 @@
 //   as is; edited → approve with the edited text. The server checks again at send time.
 // - Without a draft, Send is a human one-to-one message (path 1) with an idempotency key generated
 //   once per tap (useCommand), so a retry after a dropped connection never sends twice.
-// - The send-time check is previewed inline (useSendCheck: POST …/messages/preview) as soon as the box
-//   opens and again while typing, and a block is shown as the server's sentence ("Won't send: Opted
-//   out of texts"). The check only blocks for opt-outs, suppressions and operational/identity rules;
-//   there is no consent prompt, no quiet-hours wait and no "send anyway" (owner decision,
-//   core-compliance/2.0.0). The preview never decides: the send-time decision does, and its outcome
-//   is shown as it came back (sent, scheduled for the time the agent picked, or not sent and why).
+// - Whether the chosen channel is blocked at all comes from the reachability summary: an opt-out or
+//   suppression disables Send for that channel and says exactly why ("Texted STOP on Nov 10"); the
+//   other channel stays available. Rules that depend on the words (payment instructions, the brokerage
+//   name on marketing) are previewed against the real text while typing (useSendCheck). There is no
+//   consent prompt, no quiet-hours wait and no way past an opt-out (owner decision,
+//   core-compliance/2.0.0). Neither decides: the send-time decision does, and its outcome is shown as
+//   it came back (sent, scheduled for the time the agent picked, or not sent and why).
 // - DRAFT_STALE (R-AST-6): the client wrote since the draft was made. The box keeps the text, says
 //   so, refreshes the thread, and the next Send carries the inbound seq the agent has now seen.
 // - DRAFT_INVALIDATED (R-AST-7): the draft no longer applies; nothing was sent. The text stays, and
@@ -19,6 +20,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { Button, CheckThis, GateBadge, Notice } from '../../design/index.js';
+import { REACHABILITY_KEY, ReasonCaption, channelState, useReachability } from '../../reasons/index.js';
 import { type ApiError, useApi, useCommand } from '../../shell/index.js';
 import { SendOutcome, sendOutcomeText, useAgentSheets } from '../feed/lib/AgentSheets.js';
 import { firstName } from '../feed/lib/format.js';
@@ -118,10 +120,19 @@ export function ComposeBox({ contact, initialChannel, draftActionId: initialDraf
   // inline send check: from the moment the box opens (a probe body), then with the text as typed
   const previewBody = useDebounced(body.trim(), 500);
   const previewSubject = useDebounced(subject.trim(), 500);
-  const preview = useSendCheck({ contactId: contact.id, channel, body: previewBody, subject: previewSubject, enabled: channel === 'sms' ? contact.canText : contact.canEmail });
+  const reach = useReachability(contact.id);
+  const blockedNow = channelState(reach, channel);
+  // opened without a channel (Reply, a suggested draft) while texts are blocked and email is not: start on email
+  const pickedFor = useRef(false);
+  useEffect(() => {
+    if (pickedFor.current || !reach || initialChannel !== undefined || initialDraft !== null) return;
+    pickedFor.current = true;
+    if (channel === 'sms' && channelState(reach, 'sms').blocked && contact.canEmail && !channelState(reach, 'email').blocked) setChannel('email');
+  }, [reach, initialChannel, initialDraft, channel, contact.canEmail]);
+  const preview = useSendCheck({ contactId: contact.id, channel, body: previewBody, subject: previewSubject, enabled: (channel === 'sms' ? contact.canText : contact.canEmail) && !blockedNow.blocked });
 
-  const human = useCommand<Record<string, unknown>, ComposeResponse>(`/contacts/${contact.id}/messages`, { idKey: 'idempotencyKey', invalidate: [['feed'], ['timeline', contact.id]] });
-  const approve = useCommand<Record<string, unknown>, ApproveResponse>(`/assistant/actions/${draftId ?? 'none'}/approve`, { invalidate: [['feed'], ['inbox'], ['timeline', contact.id]] });
+  const human = useCommand<Record<string, unknown>, ComposeResponse>(`/contacts/${contact.id}/messages`, { idKey: 'idempotencyKey', invalidate: [['feed'], ['timeline', contact.id], [...REACHABILITY_KEY]] });
+  const approve = useCommand<Record<string, unknown>, ApproveResponse>(`/assistant/actions/${draftId ?? 'none'}/approve`, { invalidate: [['feed'], ['inbox'], ['timeline', contact.id], [...REACHABILITY_KEY]] });
   const pending = human.pending || approve.pending;
 
   const afterSend = (r: ComposeResponse) => {
@@ -140,7 +151,7 @@ export function ComposeBox({ contact, initialChannel, draftActionId: initialDraf
     setNotice(null);
     setOutcome(null);
     const text = body.trim();
-    if (!text) return;
+    if (!text || blockedNow.blocked) return;
     if (draft) {
       const payload: Record<string, unknown> = {};
       if (edited) payload.editedPayload = { channel, body: text, ...(channel === 'email' && subject.trim() ? { subject: subject.trim() } : {}) };
@@ -180,7 +191,7 @@ export function ComposeBox({ contact, initialChannel, draftActionId: initialDraf
   const decision = preview.decision;
   // once a send was tried, its outcome replaces the preview (both would repeat the same reason); a
   // preview of older text is not shown while the agent is still typing
-  const showPreview = decision !== null && decision.outcome === 'deny' && previewBody === body.trim() && outcome === null;
+  const showPreview = !blockedNow.blocked && decision !== null && decision.outcome === 'deny' && previewBody === body.trim() && outcome === null;
   const needsReview = draft?.claims.some((c) => c.needsReview) ?? false;
   const noChannel = !contact.canText && !contact.canEmail;
 
@@ -244,10 +255,11 @@ export function ComposeBox({ contact, initialChannel, draftActionId: initialDraf
           placeholder={channel === 'sms' ? `Text ${firstName(contact.name)}` : `Email ${firstName(contact.name)}`}
           className="min-h-tap flex-1 resize-y rounded-xl border border-line bg-surface px-3.5 py-2.5 text-[17px] text-ink placeholder:text-ink-muted"
         />
-        <Button type="submit" pending={pending} pendingLabel="Sending" disabled={body.trim().length === 0}>
+        <Button type="submit" pending={pending} pendingLabel="Sending" disabled={body.trim().length === 0 || blockedNow.blocked} aria-describedby={blockedNow.blocked || blockedNow.note ? `${id}-reason` : undefined}>
           Send
         </Button>
       </div>
+      {outcome === null ? <ReasonCaption id={`${id}-reason`} state={blockedNow} /> : null}
       {showPreview ? <GateBadge decision={decision} /> : null}
       {notice ? <Notice tone={notice.tone}>{notice.text}</Notice> : null}
       {outcome ? <SendOutcome result={outcome} contactName={contact.name} /> : null}

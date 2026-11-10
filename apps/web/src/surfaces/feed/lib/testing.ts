@@ -12,6 +12,7 @@ import { surface as searchSurface } from '../../search/index.js';
 import { surface as tasksSurface } from '../../tasks/index.js';
 import { surface as threadSurface } from '../../thread/index.js';
 import { surface as feedSurface } from '../index.js';
+import type { ChannelReach, ReachReason, Reachability } from '../../../reasons/index.js';
 import type { ActionView, ContactCardView, ContactFullView, DecisionView, FeedCard, FeedResponse, TimelineItem } from './types.js';
 
 export const AGENT_SURFACES = [feedSurface, approvalsSurface, searchSurface, tasksSurface, pondSurface, dealsSurface, listingsSurface, contactSurface, threadSurface, composeSurface];
@@ -182,3 +183,33 @@ export function agentApp(fake: FakeFetch, path = '/', role: 'agent' | 'owner' | 
 
 export { FakeFetch };
 export { err } from '../../../shell/testing/fakeApi.js';
+
+// ---- reachability (GET /contacts/:id/reachability, GET /reachability) ------------------------------
+
+export const NOV10 = new Date(new Date().getFullYear(), 10, 10, 20, 46).toISOString();
+
+export function stopReason(over: Partial<ReachReason> = {}): ReachReason {
+  return {
+    code: 'CONSENT_REVOKED',
+    source: 'keyword',
+    purposes: ['informational', 'marketing'],
+    at: NOV10,
+    keyword: 'STOP',
+    recordedBy: null,
+    importBatchId: null,
+    suppressionReason: null,
+    addressHint: '•••-•••-0101',
+    otherAddress: false,
+    evidence: { consentEventId: '01900000-0000-7000-8000-0000000ce001', inboundMessageId: '01900000-0000-7000-8000-0000000e5599', callId: null, suppressionId: null },
+    ...over,
+  };
+}
+
+function channelReach(reasons: ReachReason[] = []): ChannelReach {
+  return { hasAddress: true, defaultPointId: '01900000-0000-7000-8000-0000000p0001', blocked: reasons.length > 0, reasons, points: [{ pointId: '01900000-0000-7000-8000-0000000p0001', addressHint: '•••-•••-0101', blocked: reasons.length > 0, reasons }] };
+}
+
+/** A summary: pass the reasons that block each channel (none = reachable). */
+export function reachability(contactId: string = IDS.jane, blocks: Partial<Record<'sms' | 'voice' | 'email', ReachReason[]>> = {}): Reachability {
+  return { contactId, purposeNow: 'informational', channels: { sms: channelReach(blocks.sms), voice: channelReach(blocks.voice), email: channelReach(blocks.email) } };
+}

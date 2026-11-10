@@ -8,13 +8,15 @@
 //   assistant has for this contact, saved searches, open tasks, deals (+ Start a deal, which copies
 //   the lead's attribution server-side, A7d), and the recent timeline. If texts or email to this
 //   contact would be blocked (they texted STOP, unsubscribed, asked not to be contacted, or the address
-//   is suppressed), the reason shows under the buttons before any tap ("Won't text: Opted out of
-//   texts"), from the server's preview (useSendCheck). A call is checked when Call is tapped, and a
-//   blocked call says why in the call sheet. Nobody can override an opt-out.
+//   is suppressed), that button is disabled and the exact reason shows under it before any tap
+//   ("Texted STOP on Nov 10", "Asked not to be called (recorded by Avery Brooks on Oct 3)"), from the
+//   reachability summary (GET /contacts/:id/reachability). A text STOP does not block email or calls.
+//   The send or call is still checked at the moment it goes out. Nobody can override an opt-out.
 import { useQuery } from '@tanstack/react-query';
 import { type ReactNode, useEffect, useId, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { Button, ButtonLink, Card, GateBadge, Notice } from '../../design/index.js';
+import { Button, ButtonLink, Card, Notice } from '../../design/index.js';
+import { type ChannelState, ReasonCaption, channelState, useReachability } from '../../reasons/index.js';
 import { type ApiError, messageFor, useApi, usePageTitle } from '../../shell/index.js';
 import { ActionCard, useInbox } from '../approvals/ApprovalsPage.js';
 import { ContactSearches } from '../approvals/SavedSearchReview.js';
@@ -24,7 +26,6 @@ import { AgentSheetsProvider, useAgentSheets } from '../feed/lib/AgentSheets.js'
 import { STAGE_LABEL, formatDateTime, formatMoney, formatPhone, intentLabel, relativeTime } from '../feed/lib/format.js';
 import { useMutate, useNow } from '../feed/lib/hooks.js';
 import { AGENT_ERROR_MESSAGES } from '../feed/lib/messages.js';
-import { useSendCheck } from '../feed/lib/sendCheck.js';
 import type { ContactCardView, ContactFullView, DealSide, DealView, TaskView, TimelineItem } from '../feed/lib/types.js';
 import { MessageRow, useTimeline } from '../thread/ThreadPage.js';
 import { useContact } from './useContact.js';
@@ -103,6 +104,20 @@ function Section({ title, children, id, action }: { title: string; children: Rea
 
 const POINT_STATUS: Record<string, string> = { invalid: 'not a working number', wrong_number: 'wrong number', bounced: 'emails bounce', unverified: 'not verified' };
 
+/** One of Call / Text / Email: disabled with the exact reason under it when the channel is blocked. */
+function ChannelAction({ label, icon, variant = 'secondary', missing, state, onClick }: { label: string; icon: 'phone' | 'message'; variant?: 'primary' | 'secondary'; missing: boolean; state: ChannelState; onClick: () => void }) {
+  const id = useId();
+  const say = !missing && (state.blocked || state.note);
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      <Button variant={variant} icon={icon} disabled={missing || state.blocked} aria-describedby={say ? id : undefined} onClick={onClick}>
+        {label}
+      </Button>
+      {say ? <ReasonCaption id={id} state={state} /> : null}
+    </div>
+  );
+}
+
 function FullView({ contact }: { contact: ContactFullView }) {
   const { call } = useAgentSheets();
   const navigate = useNavigate();
@@ -113,8 +128,10 @@ function FullView({ contact }: { contact: ContactFullView }) {
   const forContact = (inbox.data?.items ?? []).filter((a) => a.contactId === contact.id);
   const proposalClaims = forContact.filter((a) => a.kind === 'saved_search_proposal').flatMap((a) => a.claims);
   const firstTouchDue = o.state === 'owned' && o.ownedByMe && o.firstTouchDueAt && !o.firstTouchAt ? o.firstTouchDueAt : null;
-  const textCheck = useSendCheck({ contactId: contact.id, channel: 'sms', enabled: contact.phones.length > 0 }).decision;
-  const emailCheck = useSendCheck({ contactId: contact.id, channel: 'email', enabled: contact.emails.length > 0 }).decision;
+  const reach = useReachability(contact.id);
+  const text = channelState(reach, 'sms');
+  const email = channelState(reach, 'email');
+  const voice = channelState(reach, 'voice');
 
   useEffect(() => {
     if (hash) document.getElementById(hash.slice(1))?.scrollIntoView?.({ block: 'start' });
@@ -145,22 +162,10 @@ function FullView({ contact }: { contact: ContactFullView }) {
           </div>
         ) : null}
         <div className="grid grid-cols-3 gap-2">
-          <Button icon="phone" disabled={contact.phones.length === 0} onClick={() => call({ id: contact.id, name: contact.displayName })}>
-            Call
-          </Button>
-          <Button variant="secondary" icon="message" disabled={contact.phones.length === 0} onClick={() => navigate(`/contacts/${contact.id}/thread?compose=sms`)}>
-            Text
-          </Button>
-          <Button variant="secondary" icon="message" disabled={contact.emails.length === 0} onClick={() => navigate(`/contacts/${contact.id}/thread?compose=email`)}>
-            Email
-          </Button>
+          <ChannelAction label="Call" icon="phone" variant="primary" missing={contact.phones.length === 0} state={voice} onClick={() => call({ id: contact.id, name: contact.displayName })} />
+          <ChannelAction label="Text" icon="message" missing={contact.phones.length === 0} state={text} onClick={() => navigate(`/contacts/${contact.id}/thread?compose=sms`)} />
+          <ChannelAction label="Email" icon="message" missing={contact.emails.length === 0} state={email} onClick={() => navigate(`/contacts/${contact.id}/thread?compose=email`)} />
         </div>
-        {textCheck?.outcome === 'deny' || emailCheck?.outcome === 'deny' ? (
-          <div className="flex flex-col items-start gap-1.5">
-            {textCheck?.outcome === 'deny' ? <GateBadge lead="Won't text" decision={textCheck} /> : null}
-            {emailCheck?.outcome === 'deny' ? <GateBadge lead="Won't email" decision={emailCheck} /> : null}
-          </div>
-        ) : null}
         <ul className="flex flex-col gap-1 text-[15px] text-ink">
           {contact.phones.map((p) => (
             <li key={p.id}>
@@ -195,7 +200,7 @@ function FullView({ contact }: { contact: ContactFullView }) {
       ) : null}
 
       <Section title="Conversation" action={<ButtonLink to={`/contacts/${contact.id}/thread`} variant="quiet">Open</ButtonLink>}>
-        <RecentTimeline contactId={contact.id} />
+        <RecentTimeline contactId={contact.id} contact={{ id: contact.id, name: contact.displayName }} />
       </Section>
 
       <Section title="Tasks">
@@ -246,7 +251,7 @@ const OWNERSHIP_LABEL: Record<string, string> = {
   imported: 'Imported',
 };
 
-function RecentTimeline({ contactId }: { contactId: string }) {
+function RecentTimeline({ contactId, contact }: { contactId: string; contact: { id: string; name: string } }) {
   const t = useTimeline(contactId);
   if (t.isPending) return <p className="text-[15px] text-ink-muted">Loading</p>;
   if (t.isError) return <Notice tone="error">{messageFor(t.error, AGENT_ERROR_MESSAGES)}</Notice>;
@@ -254,7 +259,7 @@ function RecentTimeline({ contactId }: { contactId: string }) {
   if (items.length === 0) return <p className="text-[15px] text-ink-muted">Nothing yet.</p>;
   return (
     <ol className="flex flex-col gap-2">
-      {items.map((i) => (i.type === 'message' || i.type === 'call' ? <MessageRow key={i.id} item={i} /> : <OtherItem key={i.id} item={i} />))}
+      {items.map((i) => (i.type === 'message' || i.type === 'call' ? <MessageRow key={i.id} item={i} contact={contact} /> : <OtherItem key={i.id} item={i} />))}
     </ol>
   );
 }

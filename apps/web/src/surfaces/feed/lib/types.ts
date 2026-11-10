@@ -5,6 +5,7 @@
 // confidence fields and no scores on any of them (R-AST-13): the feed shows reasons, the assistant
 // shows evidence.
 import type { OneTapAction as CoreOneTapAction } from '@realty/core/priority';
+import type { ReachReason } from '../../../reasons/index.js';
 
 /** core's branded ids arrive as plain strings over JSON: same union, ids typed as string. */
 type Plain<T> = T extends unknown ? { [K in keyof T]: NonNullable<T[K]> extends { readonly __brand: unknown } ? string | Exclude<T[K], NonNullable<T[K]>> : T[K] } : never;
@@ -145,6 +146,12 @@ export interface TimelineItem {
   provenance: string;
   /** messages only: the delivery status (sent, delivered, scheduled, blocked, failed, ...) */
   status?: string | null;
+  /** messages only: why it was blocked, failed, canceled or is held (messages.status_reason) */
+  statusReason?: string | null;
+  /** messages only: the provider's error code on a failed or undelivered message */
+  providerErrorCode?: string | null;
+  /** blocked messages only: the opt-out the send-time decision rested on */
+  blockedBy?: ReachReason | null;
 }
 
 export interface TimelineResponse {

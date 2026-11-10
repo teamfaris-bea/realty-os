@@ -10,12 +10,16 @@
 //   open_* / review_search                 the page that holds it
 //
 // A `note` on an action is an optional hint shown under the button (core/priority no longer sets one:
-// the send-time check never asks for a confirmation). Every send is checked again when it goes out,
-// and a blocked one says why ("Not sent: Opted out of texts").
-import type { ReactNode } from 'react';
+// the send-time check never asks for a confirmation). Text, Email, Call and Send are disabled before
+// the tap when the contact cannot be reached on that channel, with the exact reason under the button
+// ("Texted STOP on Nov 10"; reasons/useReachability, loaded once per feed). Every send is still checked
+// again when it goes out, and a blocked one says why.
+import { type ReactNode, useId } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, type ButtonVariant, type IconName } from '../../design/index.js';
+import { type ChannelState, ReasonCaption, useChannelState } from '../../reasons/index.js';
 import { useCommand } from '../../shell/index.js';
+import { useInbox } from '../approvals/ApprovalsPage.js';
 import { useAgentSheets } from './lib/AgentSheets.js';
 import { useMutate } from './lib/hooks.js';
 import type { ApproveResponse, FeedCard, OneTapAction, OwnershipResultResponse } from './lib/types.js';
@@ -69,10 +73,11 @@ function Note({ text }: { text?: string | undefined }) {
   return text ? <span className="block pt-1 text-[13px] leading-snug text-warn">{text}</span> : null;
 }
 
-function Wrap({ note, error, children, block }: { note?: string | undefined; error?: string | null | undefined; children: ReactNode; block?: boolean | undefined }) {
+function Wrap({ note, error, children, block, reach, reasonId }: { note?: string | undefined; error?: string | null | undefined; children: ReactNode; block?: boolean | undefined; reach?: ChannelState; reasonId?: string }) {
   return (
     <span className={`inline-flex flex-col ${block ? 'w-full' : ''}`}>
       {children}
+      {reach?.blocked ? <ReasonCaption id={reasonId} state={reach} className="pt-1" /> : null}
       <Note text={note} />
       {error ? (
         <span role="alert" className="block pt-1 text-[14px] font-medium text-danger">
@@ -106,6 +111,9 @@ function OwnershipButton({ action, card, variant = 'primary', expired, block, cl
 
 function SendDraftButton({ action, card, variant = 'primary', block, className }: ActionButtonProps & { action: Extract<OneTapAction, { kind: 'send_draft' }> }) {
   const sheets = useAgentSheets();
+  const draftChannel = useInbox().data?.items.find((a) => a.id === action.actionId)?.draft?.channel ?? null;
+  const reach = useChannelState(card?.contact?.id, draftChannel);
+  const reasonId = useId();
   const navigate = useNavigate();
   const cmd = useCommand<Record<string, unknown>, ApproveResponse>(`/assistant/actions/${action.actionId}/approve`, { invalidate: [...FEED_KEYS, ['timeline']] });
   const name = card?.contact?.name ?? 'them';
@@ -121,8 +129,8 @@ function SendDraftButton({ action, card, variant = 'primary', block, className }
     else sheets.announce(r.data.decision?.explanation ? `Not sent: ${r.data.decision.explanation}` : 'Not sent.');
   };
   return (
-    <Wrap note={action.note} error={cmd.error && cmd.error.code !== 'DRAFT_STALE' ? cmd.error.message : null} block={block}>
-      <Button variant={variant} icon="message" pending={cmd.pending} pendingLabel="Sending" block={block} className={className} onClick={() => void run()}>
+    <Wrap note={action.note} error={cmd.error && cmd.error.code !== 'DRAFT_STALE' ? cmd.error.message : null} block={block} reach={reach} reasonId={reasonId}>
+      <Button variant={variant} icon="message" pending={cmd.pending} pendingLabel="Sending" block={block} className={className} disabled={reach.blocked} aria-describedby={reach.blocked ? reasonId : undefined} onClick={() => void run()}>
         {action.label}
       </Button>
     </Wrap>
@@ -147,9 +155,11 @@ function CompleteButton({ action, variant = 'primary', block, className }: Actio
 
 function CallButton({ action, card, variant = 'primary', block, className }: ActionButtonProps & { action: Extract<OneTapAction, { kind: 'call' }> }) {
   const { call } = useAgentSheets();
+  const reach = useChannelState(action.contactId, 'voice');
+  const reasonId = useId();
   return (
-    <Wrap note={action.note} block={block}>
-      <Button variant={variant} icon="phone" block={block} className={className} onClick={() => call({ id: action.contactId, name: card?.contact?.name ?? 'this contact' })}>
+    <Wrap note={action.note} block={block} reach={reach} reasonId={reasonId}>
+      <Button variant={variant} icon="phone" block={block} className={className} disabled={reach.blocked} aria-describedby={reach.blocked ? reasonId : undefined} onClick={() => call({ id: action.contactId, name: card?.contact?.name ?? 'this contact' })}>
         {action.label}
       </Button>
     </Wrap>
@@ -193,9 +203,13 @@ function NavButton({ action, card, variant = 'primary', block, className }: Acti
   const navigate = useNavigate();
   const href = actionHref(action, card);
   const note = 'note' in action ? action.note : undefined;
+  // Text / Email open the composer: say before the tap when that channel is blocked
+  const channel = action.kind === 'text' ? 'sms' : action.kind === 'email' ? 'email' : null;
+  const reach = useChannelState(channel && 'contactId' in action ? action.contactId : null, channel);
+  const reasonId = useId();
   return (
-    <Wrap note={note} block={block}>
-      <Button variant={variant} icon={ACTION_ICON[action.kind]} block={block} className={className} disabled={href === null} onClick={() => href && navigate(href)}>
+    <Wrap note={note} block={block} reach={reach} reasonId={reasonId}>
+      <Button variant={variant} icon={ACTION_ICON[action.kind]} block={block} className={className} disabled={href === null || reach.blocked} aria-describedby={reach.blocked ? reasonId : undefined} onClick={() => href && navigate(href)}>
         {action.label}
       </Button>
     </Wrap>

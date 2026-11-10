@@ -10,6 +10,7 @@
 // an opt-out is never overridden).
 import { type ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, GateBadge, Notice } from '../../../design/index.js';
+import { REACHABILITY_KEY, useChannelState } from '../../../reasons/index.js';
 import { useApi } from '../../../shell/index.js';
 import { APPOINTMENT_RESULTS, CALL_OUTCOMES, firstName, formatDateTime } from './format.js';
 import { useMutate } from './hooks.js';
@@ -83,8 +84,10 @@ function CallSheet({ contact, onClose, announce }: { contact: { id: string; name
   const api = useApi();
   const [state, setState] = useState<CallState>({ step: 'dialing' });
   const started = useRef(false);
-  const outcome = useMutate<{ outcome: CallOutcome }, CallOutcomeResponse>('POST', { invalidate: [['feed'], ['timeline', contact.id], ['tasks']] });
+  const outcome = useMutate<{ outcome: CallOutcome }, CallOutcomeResponse>('POST', { invalidate: [['feed'], ['timeline', contact.id], ['tasks'], [...REACHABILITY_KEY]] });
   const who = firstName(contact.name);
+  // the exact reason a refused call rests on ("Asked not to be called (recorded by Avery Brooks on Oct 3)")
+  const voice = useChannelState(contact.id, 'voice');
 
   const dial = useCallback(
     async () => {
@@ -122,7 +125,7 @@ function CallSheet({ contact, onClose, announce }: { contact: { id: string; name
       {state.step === 'dialing' ? <p className="text-[16px] text-ink-muted">Checking you can call {who} now…</p> : null}
       {state.step === 'gate' ? (
         <div className="flex flex-col gap-3">
-          <GateBadge lead="Won't call" decision={state.decision} />
+          <GateBadge lead="Won't call" decision={voice.blocked && voice.sentence ? { outcome: 'deny', explanation: voice.sentence } : state.decision} />
           <p className="text-[15px] text-ink-muted">Nothing was dialed.</p>
         </div>
       ) : null}

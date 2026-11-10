@@ -6,7 +6,7 @@ import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import axe from 'axe-core';
 import { describe, expect, it } from 'vitest';
-import { FakeFetch, IDS, agentApp, card, decision, draftAction, err, feed, fullContact, iso, offerCard, timelineItem } from './lib/testing.js';
+import { FakeFetch, IDS, agentApp, card, decision, draftAction, err, feed, fullContact, iso, offerCard, reachability, stopReason, timelineItem } from './lib/testing.js';
 
 const user = () => userEvent.setup();
 
@@ -297,3 +297,24 @@ describe('Priority Feed', () => {
 function allowPreview() {
   return { id: null, outcome: 'allow', reasons: [], explanation: '', phase: 'preview' };
 }
+
+describe('Priority Feed: opt-outs said before the tap (lane optout-visibility)', () => {
+  it('R-CONSENT-7: one reachability request for the whole feed; Text is disabled with "Texted STOP on Nov 10" while Call and Email stay enabled', async () => {
+    const text = card({ primaryAction: { kind: 'text', label: 'Text', contactId: IDS.jane }, alternatives: [{ kind: 'call', label: 'Call', contactId: IDS.jane }, { kind: 'email', label: 'Email', contactId: IDS.jane }] });
+    const other = card({ contact: { id: IDS.pat, name: 'Pat Lee' }, primaryAction: { kind: 'call', label: 'Call', contactId: IDS.pat } });
+    const ids = [IDS.jane, IDS.pat].sort().join(',');
+    const fake = new FakeFetch()
+      .on('GET /feed', { status: 200, body: feed([], [text, other]) })
+      .on(`GET /reachability?contactIds=${ids}`, { status: 200, body: { reachability: [reachability(IDS.jane, { sms: [stopReason()] }), reachability(IDS.pat)] } });
+    agentApp(fake);
+    expect(await screen.findByText('Texted STOP on Nov 10')).toBeInTheDocument();
+    const textButton = screen.getByRole('button', { name: 'Text' });
+    expect(textButton).toBeDisabled();
+    expect(textButton).toHaveAccessibleDescription('Texted STOP on Nov 10');
+    for (const b of screen.getAllByRole('button', { name: 'Call' })) expect(b).toBeEnabled();
+    // the whole feed in one batch (React StrictMode may abort and repeat it); never one request per card, never a stand-in preview
+    expect(fake.callsTo(`GET /reachability?contactIds=${ids}`).length).toBeGreaterThanOrEqual(1);
+    expect(fake.calls.filter((c) => /reachability|messages\/preview/.test(c.path) && c.path !== `/reachability?contactIds=${ids}`)).toEqual([]);
+  });
+});
+
