@@ -8,7 +8,11 @@
 //   - webhook routes: exempt from Origin/CSRF, but an unsigned delivery is 403 WEBHOOK_SIGNATURE_INVALID
 // A new route is covered automatically; a route with no unsafe-method protection fails this file.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type ApiHarness, type TestClient, createApiHarness, safeJson } from './testHarness.js';
+import { createFakeProviders } from '../providers/index.js';
+import { RouteAuthorizationError } from '../rbac.js';
+import type { RouteModule } from '../routes.js';
+import { buildServer } from '../server.js';
+import { type ApiHarness, type TestClient, createApiHarness, safeJson, testConfig } from './testHarness.js';
 
 let h: ApiHarness;
 let owner: TestClient;
@@ -32,8 +36,9 @@ function concrete(url: string): string {
 function unsafeRoutes() {
   const out: { method: string; url: string; auth: string }[] = [];
   for (const r of h.app.platform.routeTable) {
+    // capability URLs (signed token in the URL, no cookie) are exempt; comms/unsubscribe.oneclick.test.ts
     for (const m of r.method.split(',')) {
-      if (!SAFE.has(m)) out.push({ method: m, url: r.url, auth: String(r.auth) });
+      if (!SAFE.has(m) && !r.capabilityUrl) out.push({ method: m, url: r.url, auth: String(r.auth) });
     }
   }
   return out;
@@ -94,5 +99,33 @@ describe('CSRF on every state-changing route', () => {
     });
     expect(res.statusCode).toBe(403);
     expect((await owner.get('/api/auth/session')).statusCode).toBe(200);
+  });
+
+  it('only a public route with a :token parameter may declare capabilityUrl (the Origin exemption); the server refuses to start otherwise', async () => {
+    const boot = async (m: RouteModule) => {
+      const app = buildServer(testConfig(), {
+        providers: createFakeProviders(),
+        clock: { now: () => Date.now() as never },
+        ids: { next: () => '01a1c4ba-0000-7000-8000-000000000000' as never },
+        db: h.database,
+        routeModules: [m],
+      });
+      try {
+        await app.ready();
+        return null;
+      } catch (e) {
+        return e;
+      } finally {
+        await app.close().catch(() => {});
+      }
+    };
+    const route = (url: string, auth: 'public' | 'session' | 'webhook'): RouteModule => ({
+      name: 'x',
+      register: async (app) => void app.post(url, { config: { auth, capabilityUrl: true } }, async () => ({})),
+    });
+    expect(await boot(route('/a/:token', 'session'))).toBeInstanceOf(RouteAuthorizationError);
+    expect(await boot(route('/b/:token', 'webhook'))).toBeInstanceOf(RouteAuthorizationError);
+    expect(await boot(route('/c', 'public'))).toBeInstanceOf(RouteAuthorizationError);
+    expect(await boot(route('/d/:token', 'public'))).toBeNull();
   });
 });

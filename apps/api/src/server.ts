@@ -173,10 +173,12 @@ export function buildServer(cfg: Config, deps: ServerDeps): FastifyInstance {
     requestContext.run({ requestId: String(req.id), ip: req.ip ?? null, userAgent: typeof ua === 'string' ? ua : null, ids: deps.ids }, done);
   });
 
-  // Origin allowlist (CSRF layer 1) for every unsafe method except provider webhooks.
+  // Origin allowlist (CSRF layer 1) for every unsafe method except provider webhooks and capability
+  // URLs (public routes whose only authority is a signed token in the URL; see rbac.ts).
   app.addHook('onRequest', async (req) => {
     if (SAFE_METHODS.has(req.method)) return;
     if (req.routeOptions.config?.auth === 'webhook') return;
+    if (req.routeOptions.config?.auth === 'public' && req.routeOptions.config?.capabilityUrl === true) return;
     const origin = originOf(req);
     if (origin === null || !cfg.webOrigins.includes(origin)) throw new AppError('CSRF_INVALID');
   });
