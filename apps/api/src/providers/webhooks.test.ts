@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { routeModules } from '../routes.js';
 import type { RouteModule } from '../routes.js';
-import { SIGNATURE_TOLERANCE_S, signedHeader, telephonySignature } from './webhooks.js';
+import { SIGNATURE_FUTURE_SKEW_S, SIGNATURE_TOLERANCE_S, signedHeader, telephonySignature } from './webhooks.js';
 
 const handled: string[] = [];
 const hooks: RouteModule = {
@@ -91,6 +91,10 @@ describe('webhook signatures', () => {
     expect((await send(signedHeader(secret, now, raw))).statusCode).toBe(200);
     expect((await send(signedHeader(secret, now, raw), raw.replace('Pat', 'Pam'))).statusCode).toBe(403);
     expect((await send(signedHeader(secret, now - SIGNATURE_TOLERANCE_S - 5, raw))).statusCode).toBe(403);
+    // a timestamp from the future is accepted only within a small clock skew (a pre-signed delivery
+    // cannot stretch the replay window past the past-side tolerance)
+    expect((await send(signedHeader(secret, now + SIGNATURE_FUTURE_SKEW_S + 5, raw))).statusCode).toBe(403);
+    expect((await send(signedHeader(secret, now + 120, raw))).statusCode).toBe(403);
     expect((await send(signedHeader(h.config.webhookSecrets.email, now, raw))).statusCode).toBe(403); // another provider's secret
     expect(handled.filter((p) => p === 'lead')).toHaveLength(1);
   });
