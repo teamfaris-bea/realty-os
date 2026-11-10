@@ -9,7 +9,7 @@
 //      draft, a task, a consult awaiting its outcome, an overdue promise (api/accountability's fixture)
 //      and the exception recompute, a deal, a listing, a lead offer through the signed
 //      intake webhook, a nurture playbook, and a CSV import. The superuser is used only for the
-//      appointment clock fixture (no application path moves time), readable display names, and
+//      appointment and password-proof clock fixtures (no application path moves time), readable display names, and
 //      clearing the TOTP replay guard so one secret can sign in twice in a 30 s window;
 //   3. a Vite dev server for apps/web on a free port whose /api proxy points at that API.
 // stop() closes everything and drops the test database.
@@ -89,6 +89,11 @@ const routes = {
     const users = Object.fromEntries(Object.entries(people).map(([role, c]) => [role, { email: c.email, password: TEST_PASSWORD, mfa: Boolean(c.totpSecret) }]));
     return { users, ids: { contactId: jane, optedOutContactId: owen, dealId: deal.deal.id, listingId: listing.listing.id, playbookId: pb.playbook.id, importId: imp.batch.id } };
   },
+  /** clock fixture: the user's password proof is an hour old, so the next sensitive action asks again */
+  async '/stale-reauth'(b) {
+    await h.su.query("UPDATE sessions SET reauthenticated_at = now() - interval '1 hour' WHERE user_id = (SELECT id FROM users WHERE email = $1) AND revoked_at IS NULL", [b.email]);
+    return {};
+  },
   /** a fresh TOTP code; clears the replay guard so a second sign-in in the same 30 s works */
   async '/totp'(b) {
     await h.su.query('UPDATE users SET mfa_last_used_step = NULL WHERE email = $1', [b.email]);
@@ -141,6 +146,7 @@ export interface A11yStack {
   webUrl: string;
   world(): Promise<World>;
   totp(email: string): Promise<string>;
+  staleReauth(email: string): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -198,6 +204,7 @@ export async function startA11yStack(): Promise<A11yStack> {
     webUrl: webOrigin,
     world: () => fixture<World>('/world', {}),
     totp: async (email) => (await fixture<{ code: string }>('/totp', { email })).code,
+    staleReauth: async (email) => void (await fixture('/stale-reauth', { email })),
     async stop() {
       await vite.close();
       await new Promise<void>((ok) => {

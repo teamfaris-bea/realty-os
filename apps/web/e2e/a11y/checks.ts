@@ -65,3 +65,20 @@ export async function phoneProblems(page: Page): Promise<string[]> {
     { CONTROLS, MIN_TAP },
   );
 }
+
+/** Text cut off by its box (ellipsis or overflow hidden) — content lost at large text sizes. */
+export async function clippedText(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const out: string[] = [];
+    for (const e of document.querySelectorAll<HTMLElement>('body *')) {
+      if (e.closest('[aria-hidden="true"], .sr-only, svg')) continue;
+      const s = getComputedStyle(e);
+      if (s.display === 'none' || s.visibility === 'hidden') continue;
+      const hides = s.textOverflow === 'ellipsis' || s.overflowX === 'hidden' || s.overflowX === 'clip';
+      if (!hides) continue;
+      const text = [...e.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && (n.textContent ?? '').trim() !== '');
+      if (text && e.scrollWidth > e.clientWidth + 1) out.push(`text cut off: "${(e.innerText || '').trim().slice(0, 40)}"`);
+    }
+    return [...new Set(out)];
+  });
+}

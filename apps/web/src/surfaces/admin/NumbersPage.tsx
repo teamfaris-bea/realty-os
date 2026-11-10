@@ -249,7 +249,7 @@ function Domains({ onDone }: { onDone(t: string): void }) {
           }
         }}
       >
-        <TextField label="Domain" placeholder="mail.yourteam.com" value={domain} onChange={(e) => setDomain(e.target.value)} className="sm:flex-1" />
+        <TextField label="Domain" placeholder="mail.yourteam.com" inputMode="url" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={domain} onChange={(e) => setDomain(e.target.value)} className="sm:flex-1" />
         <Button type="submit" variant="secondary" pending={add.pending} disabled={!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(domain.trim())}>
           Add domain
         </Button>

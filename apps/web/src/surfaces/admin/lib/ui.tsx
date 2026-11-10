@@ -12,7 +12,8 @@ export function Section({ title, description, actions, children, id }: { title: 
   return (
     <section aria-labelledby={hid} className="flex flex-col gap-3" id={id}>
       <div className="flex flex-wrap items-end gap-3">
-        <div className="min-w-0 flex-1">
+        {/* basis-64: on a phone the actions wrap under the text instead of squeezing it into a sliver */}
+        <div className="min-w-0 flex-1 basis-64">
           <h2 id={hid} className="text-[20px] font-semibold text-ink">
             {title}
           </h2>

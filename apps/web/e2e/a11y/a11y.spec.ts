@@ -13,9 +13,10 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import AxeBuilder from '@axe-core/playwright';
 import { type Page, expect, test } from 'playwright/test';
-import { ROLES, type Role, SIGNED_OUT_PAGES, SWEEP_PAGES } from './pages.js';
+import { ROLES, SIGNED_OUT_PAGES, SWEEP_PAGES } from './pages.js';
 import { type A11yStack, type World, startA11yStack } from './stack.js';
 import { phoneProblems } from './checks.js';
+import { settle, signIn as signInAs } from './session.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REPORT_DIR = resolve(here, '../../test-results/a11y');
@@ -44,25 +45,6 @@ async function axe(page: Page): Promise<string[]> {
   return r.violations.map((v) => `${v.id} (${v.impact}): ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`);
 }
 
-async function settle(page: Page) {
-  await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible({ timeout: 15_000 });
-  await page.waitForLoadState('networkidle');
-  await expect(page.getByRole('status').filter({ hasText: /^Loading/ })).toHaveCount(0, { timeout: 15_000 });
-}
-
-async function signIn(page: Page, role: Role) {
-  const u = world.users[role];
-  await page.goto(`${stack.webUrl}/login`);
-  await page.getByLabel('Email').fill(u.email);
-  await page.getByLabel('Password').fill(u.password);
-  await page.getByRole('button', { name: 'Sign in' }).click();
-  if (u.mfa) {
-    await page.getByLabel('Code').fill(await stack.totp(u.email));
-    await page.getByRole('button', { name: 'Continue' }).click();
-  }
-  await expect(page.getByRole('heading', { level: 1, name: 'Home' })).toBeVisible({ timeout: 15_000 });
-}
-
 function report(name: string, data: unknown) {
   mkdirSync(REPORT_DIR, { recursive: true });
   writeFileSync(resolve(REPORT_DIR, `${name}.json`), JSON.stringify(data, null, 2));
@@ -71,7 +53,7 @@ function report(name: string, data: unknown) {
 for (const role of ROLES) {
   test(`${role}: every page they can open passes axe in light and dark, and holds up on a phone`, async ({ page }, info) => {
     test.setTimeout(300_000);
-    await signIn(page, role);
+    await signInAs(page, stack, world, role);
     const own: string[] = [];
     const foreign: string[] = [];
     for (const p of SWEEP_PAGES.filter((x) => x.roles.includes(role))) {

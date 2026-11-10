@@ -135,8 +135,8 @@ function Row({ to, title, detail }: { to: string; title: string; detail: string 
     <li className="border-t border-line first:border-t-0">
       <Link to={to} className="flex min-h-[52px] items-center gap-3 px-4 py-2 hover:bg-surface-2">
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[16px] font-medium text-ink">{title}</span>
-          <span className="block truncate text-[14px] text-ink-muted">{detail}</span>
+          <span className="block text-[16px] [overflow-wrap:anywhere] font-medium text-ink">{title}</span>
+          <span className="block text-[14px] [overflow-wrap:anywhere] text-ink-muted">{detail}</span>
         </span>
         <span className="text-ink-muted">
           <Icon name="chevron" size={18} />
