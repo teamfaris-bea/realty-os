@@ -32,6 +32,13 @@ export const surface: SurfaceModule = {
       nav: { phone: 'more', desktop: 'sidebar', icon: 'phone', order: 220, section: 'admin' },
       component: lazy(() => import('./NumbersPage.js')),
     },
+    {
+      path: '/admin/erasure',
+      title: 'Erase a contact',
+      roles: ADMINS,
+      nav: { phone: 'more', desktop: 'sidebar', icon: 'block', label: 'Erase a contact', order: 230, section: 'admin' },
+      component: lazy(() => import('./ErasurePage.js')),
+    },
   ],
   errorMessages: LEAD_ADMIN_ERROR_MESSAGES,
 };
