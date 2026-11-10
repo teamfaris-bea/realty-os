@@ -3,6 +3,13 @@
 // edge case E1..E70 in DATA_MODEL §5 must be linked to at least one passing test. A test is linked
 // by putting the id in its name, e.g.  it('R-OWN-5 E1: the losing claimer gets LEAD_ALREADY_CLAIMED', ...)
 //
+// Retired ids (an owner decision removed the behaviour; DATA_MODEL keeps the id and its old text) need
+// no test. An id is retired only when its own entry STARTS with the marker, so a rule or edge case that
+// merely mentions retirement elsewhere stays active and still needs its test:
+//   rule       - **R-CONSENT-13** **Retired: <why>** ...
+//   edge case  | E29 | <case> | **Retired: <why>** ... |
+// Retired ids are listed separately (with any tests that still name them), never counted as covered.
+//
 // Usage
 //   node scripts/rule-coverage.mjs             static scan of test titles (it/test/describe, no skip/todo)
 //   node scripts/rule-coverage.mjs --results   use Vitest JSON results (**/.vitest-results.json, written by
@@ -27,9 +34,16 @@ if (rulesStart < 0 || edgeStart < 0) {
   console.error('rule-coverage: could not find DATA_MODEL §4/§5 headings');
   process.exit(2);
 }
-const ruleIds = [...dataModel.slice(rulesStart, edgeStart).matchAll(/^- \*\*(R-[A-Z]+-\d+)\*\*/gm)].map((m) => m[1]);
-const edgeIds = [...dataModel.slice(edgeStart).matchAll(/^\| (E\d+) \|/gm)].map((m) => m[1]);
-const known = new Set([...ruleIds, ...edgeIds]);
+const RETIRED_MARK = '**Retired:';
+const ruleEntries = [...dataModel.slice(rulesStart, edgeStart).matchAll(/^- \*\*(R-[A-Z]+-\d+)\*\*(.*)$/gm)].map((m) => ({ id: m[1], retired: m[2].trimStart().startsWith(RETIRED_MARK) }));
+const edgeEntries = [...dataModel.slice(edgeStart).matchAll(/^\| (E\d+) \|[^|]*\|(.*)$/gm)].map((m) => ({ id: m[1], retired: m[2].trimStart().startsWith(RETIRED_MARK) }));
+const allRuleIds = ruleEntries.map((e) => e.id);
+const allEdgeIds = edgeEntries.map((e) => e.id);
+const retiredIds = [...ruleEntries, ...edgeEntries].filter((e) => e.retired).map((e) => e.id);
+const retired = new Set(retiredIds);
+const ruleIds = allRuleIds.filter((id) => !retired.has(id));
+const edgeIds = allEdgeIds.filter((id) => !retired.has(id));
+const known = new Set([...allRuleIds, ...allEdgeIds]);
 
 const ID_RE = /\b(R-[A-Z]+-\d+|E\d{1,3})\b/g;
 
@@ -91,6 +105,9 @@ for (const { title, file } of titles) {
 }
 
 const ruleGaps = ruleIds.filter((id) => !linked.has(id));
+// A retired id still named by a test is not an error (the test may prove the behaviour is gone), but it
+// is listed so stale titles can be found.
+const retiredLinked = Object.fromEntries(retiredIds.filter((id) => linked.has(id)).map((id) => [id, [...linked.get(id)].sort()]));
 const edgeGaps = edgeIds.filter((id) => !linked.has(id));
 const byFamily = {};
 for (const id of ruleIds) {
@@ -104,8 +121,9 @@ const summary = {
   mode: useResults ? 'passed-test-results' : 'static-test-titles',
   rules: { total: ruleIds.length, covered: ruleIds.length - ruleGaps.length, gaps: ruleGaps },
   edgeCases: { total: edgeIds.length, covered: edgeIds.length - edgeGaps.length, gaps: edgeGaps },
+  retired: { ids: retiredIds, stillNamedByTests: retiredLinked },
   byFamily,
-  linked: Object.fromEntries([...linked].map(([k, v]) => [k, [...v].sort()])),
+  linked: Object.fromEntries([...linked].filter(([k]) => !retired.has(k)).map(([k, v]) => [k, [...v].sort()])),
   unknownIdsInTests: Object.fromEntries([...unknown].map(([k, v]) => [k, [...v].sort()])),
 };
 
@@ -116,6 +134,9 @@ if (asJson) {
   console.log(`  R-* rules:  ${summary.rules.covered}/${summary.rules.total} linked to a test`);
   for (const [fam, c] of Object.entries(byFamily)) console.log(`    R-${fam.padEnd(8)} ${c.covered}/${c.total}`);
   console.log(`  edge cases: ${summary.edgeCases.covered}/${summary.edgeCases.total} linked to a test`);
+  if (retiredIds.length) console.log(`  retired (no test needed, not counted): ${retiredIds.join(' ')}`);
+  const stale = Object.keys(retiredLinked);
+  if (stale.length) console.log(`  retired ids still named by tests (check the titles): ${stale.map((id) => `${id} (${retiredLinked[id].join(', ')})`).join('; ')}`);
   if (ruleGaps.length) console.log(`\n  rule gaps (${ruleGaps.length}):\n    ${ruleGaps.join(' ')}`);
   if (edgeGaps.length) console.log(`\n  edge-case gaps (${edgeGaps.length}):\n    ${edgeGaps.join(' ')}`);
   if (unknown.size) console.log(`\n  ids in test names that DATA_MODEL does not list (typo?): ${[...unknown.keys()].join(' ')}`);

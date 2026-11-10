@@ -109,3 +109,11 @@ export async function consentEventsByIds(tx: Tx, ids: readonly string[]): Promis
         FROM consent_events e WHERE e.tenant_id = app.tenant_id() AND e.id = ANY (${[...ids]}::uuid[])`.execute(tx)
   ).rows;
 }
+
+/** The ledger seq of each of these ownership events (the import's own assignment: the import_unassign fence). */
+export async function ownershipEventSeqs(tx: Tx, eventIds: readonly string[]): Promise<Map<string, number>> {
+  if (eventIds.length === 0) return new Map();
+  const r = await sql<{ event_id: string; seq: string }>`
+    SELECT event_id::text AS event_id, seq FROM lead_ownership_events WHERE tenant_id = app.tenant_id() AND event_id = ANY (${[...eventIds]}::uuid[])`.execute(tx);
+  return new Map(r.rows.map((x) => [x.event_id, Number(x.seq)]));
+}

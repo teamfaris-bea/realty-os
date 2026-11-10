@@ -6,18 +6,6 @@ import { sql } from 'kysely';
 export interface PolicyRow {
   id: string;
   version_no: number;
-  contact_window_start: string;
-  contact_window_end: string;
-  human_reply_window_minutes: number;
-  email_quiet_hours: boolean;
-  auto_sms_per_24h: number;
-  auto_sms_per_7d: number;
-  auto_email_per_24h: number;
-  auto_email_per_7d: number;
-  auto_cross_channel_per_24h: number;
-  manual_sms_confirm_after_24h: number;
-  call_attempts_per_24h: number;
-  max_deferrals: number;
   autonomous_categories: string[];
   opt_out_confirmation_sender: 'provider' | 'platform';
   recording_enabled: boolean;
@@ -27,10 +15,7 @@ export interface PolicyRow {
   created_at: Date;
 }
 
-const COLS = sql`id, version_no, contact_window_start::text AS contact_window_start, contact_window_end::text AS contact_window_end,
-  human_reply_window_minutes, email_quiet_hours, auto_sms_per_24h, auto_sms_per_7d, auto_email_per_24h, auto_email_per_7d,
-  auto_cross_channel_per_24h, manual_sms_confirm_after_24h, call_attempts_per_24h, max_deferrals, autonomous_categories,
-  opt_out_confirmation_sender, recording_enabled, recording_mode, loosening_attestation, created_by_user_id, created_at`;
+const COLS = sql`id, version_no, autonomous_categories, opt_out_confirmation_sender, recording_enabled, recording_mode, loosening_attestation, created_by_user_id, created_at`;
 
 export async function listVersions(tx: Tx): Promise<PolicyRow[]> {
   return (await sql<PolicyRow>`SELECT ${COLS} FROM compliance_policy_versions WHERE tenant_id = app.tenant_id() ORDER BY version_no DESC`.execute(tx)).rows;
@@ -58,15 +43,10 @@ export async function nextVersionNo(tx: Tx): Promise<number> {
 export type PolicyColumns = Omit<PolicyRow, 'id' | 'version_no' | 'created_by_user_id' | 'created_at'>;
 
 export async function insertVersion(tx: Tx, id: string, versionNo: number, v: PolicyColumns): Promise<void> {
-  await sql`INSERT INTO compliance_policy_versions (tenant_id, id, version_no, contact_window_start, contact_window_end,
-              human_reply_window_minutes, email_quiet_hours, auto_sms_per_24h, auto_sms_per_7d, auto_email_per_24h, auto_email_per_7d,
-              auto_cross_channel_per_24h, manual_sms_confirm_after_24h, call_attempts_per_24h, max_deferrals, autonomous_categories,
-              opt_out_confirmation_sender, recording_enabled, recording_mode, loosening_attestation, created_by_user_id)
-            VALUES (app.tenant_id(), ${id}::uuid, ${versionNo}, ${v.contact_window_start}::time, ${v.contact_window_end}::time,
-              ${v.human_reply_window_minutes}, ${v.email_quiet_hours}, ${v.auto_sms_per_24h}, ${v.auto_sms_per_7d}, ${v.auto_email_per_24h},
-              ${v.auto_email_per_7d}, ${v.auto_cross_channel_per_24h}, ${v.manual_sms_confirm_after_24h}, ${v.call_attempts_per_24h},
-              ${v.max_deferrals}, ${v.autonomous_categories}::text[], ${v.opt_out_confirmation_sender}, ${v.recording_enabled},
-              ${v.recording_mode}, ${v.loosening_attestation}, app.user_id())`.execute(tx);
+  await sql`INSERT INTO compliance_policy_versions (tenant_id, id, version_no, autonomous_categories, opt_out_confirmation_sender,
+              recording_enabled, recording_mode, loosening_attestation, created_by_user_id)
+            VALUES (app.tenant_id(), ${id}::uuid, ${versionNo}, ${v.autonomous_categories}::text[], ${v.opt_out_confirmation_sender},
+              ${v.recording_enabled}, ${v.recording_mode}, ${v.loosening_attestation}, app.user_id())`.execute(tx);
 }
 
 export interface PackRow {

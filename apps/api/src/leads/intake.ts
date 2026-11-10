@@ -21,7 +21,7 @@
 //     a pond lead follows its pond setting; offered/unassigned only attach; closed stays closed)
 //   6 the 60-second first response job (R-AST-16) is enqueued in this transaction for a new contact;
 //     api/assistant's handler decides at send time whether anything may go out (approved playbook,
-//     speed_to_lead_reply enabled, consent basis, quiet hours) and never counts as a touch (R-AST-15).
+//     speed_to_lead_reply enabled, the lead has not opted out) and never counts as a touch (R-AST-15).
 import { createHash, randomBytes } from 'node:crypto';
 import { sha256Hex } from '@realty/core/compliance';
 import type { ContactId, IdGenerator, Instant, LeadSourceId, SystemActor, TenantId } from '@realty/core/foundation';

@@ -50,6 +50,8 @@ export interface ExceptionItem {
   conditionClearedAt: string | null;
   live: boolean;
   evidence: ExceptionEvidence[];
+  /** the contact's ownership ledger head when the queue was read: sent back with a reassign (stale-UI fence) */
+  contactOwnershipSeq: number | null;
   latestEvent: ExceptionEvent | null;
   actions: { resolve: boolean; reassign: boolean; verify: boolean; reopen: boolean };
 }
@@ -237,19 +239,11 @@ export interface Settings {
 export const AUTONOMOUS_CATEGORIES = ['speed_to_lead_reply', 'reminder', 'booking_confirmation', 'document_chase', 'nurture_step', 'search_alert'] as const;
 export type AutonomousCategory = (typeof AUTONOMOUS_CATEGORIES)[number];
 
+/**
+ * The tenant compliance policy fields (api/admin PolicyValues). core-compliance/2.0.0 (owner decision)
+ * removed the contact window / quiet hours, the human-reply window and the frequency caps.
+ */
 export interface PolicyValues {
-  contactWindowStart: string;
-  contactWindowEnd: string;
-  humanReplyWindowMinutes: number;
-  emailQuietHours: boolean;
-  autoSmsPer24h: number;
-  autoSmsPer7d: number;
-  autoEmailPer24h: number;
-  autoEmailPer7d: number;
-  autoCrossChannelPer24h: number;
-  manualSmsConfirmAfter24h: number;
-  callAttemptsPer24h: number;
-  maxDeferrals: number;
   autonomousCategories: AutonomousCategory[];
   optOutConfirmationSender: 'provider' | 'platform';
   recordingEnabled: boolean;
@@ -269,7 +263,6 @@ export interface PoliciesResponse {
   activePolicyId: string;
   versions: PolicyVersion[];
   defaults: PolicyValues;
-  widestWindow: { start: string; end: string };
   attestationText: string;
   counsel: { allReviewed: boolean; packs: { key: string; version: string; reviewedByCounselAt: string | null }[] };
 }

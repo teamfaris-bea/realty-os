@@ -65,11 +65,11 @@ describe('R-PERM-1 route × role matrix (admin routes)', () => {
     for (const role of ROLES) {
       const c = users[role];
       await freshReauth(h, c);
-      got[`${role} stricter`] = outcome(await call(c, 'POST', '/compliance-policies', { maxDeferrals: 3 }));
+      got[`${role} stricter`] = outcome(await call(c, 'POST', '/compliance-policies', { recordingEnabled: false }));
       want[`${role} stricter`] = expected(role, 'settings.compliance', { loosening: false });
-      got[`${role} looser`] = outcome(await call(c, 'POST', '/compliance-policies', { contactWindowEnd: '20:30' }));
+      got[`${role} looser`] = outcome(await call(c, 'POST', '/compliance-policies', { recordingMode: 'one_party_where_permitted' }));
       want[`${role} looser`] = expected(role, 'settings.compliance', { loosening: true, attested: false });
-      got[`${role} looser attested`] = outcome(await call(c, 'POST', '/compliance-policies', { contactWindowEnd: '20:30', attestation: ATTESTATION_TEXT }));
+      got[`${role} looser attested`] = outcome(await call(c, 'POST', '/compliance-policies', { recordingMode: 'one_party_where_permitted', attestation: ATTESTATION_TEXT }));
       want[`${role} looser attested`] = expected(role, 'settings.compliance', { loosening: true, attested: true });
     }
     expect(got).toEqual(want);
@@ -113,12 +113,12 @@ describe('R-PERM-13 re-auth on the admin 🔒 actions', () => {
     const sensitive = [
       await call(o, 'POST', '/invites', { email: 'reauth@example.test', role: 'agent' }),
       await call(o, 'PATCH', `/members/${target.userId}`, { role: 'isa', version: 999 }),
-      await call(o, 'POST', '/compliance-policies', { contactWindowEnd: '20:30', attestation: ATTESTATION_TEXT }),
+      await call(o, 'POST', '/compliance-policies', { recordingMode: 'one_party_where_permitted', attestation: ATTESTATION_TEXT }),
       await call(o, 'PATCH', '/settings/identity', { version: s.version, teamName: 'Stale' }),
     ];
     expect(sensitive.map((r) => [r.status, r.code])).toEqual(Array(4).fill([401, 'REAUTH_REQUIRED']));
     expect((await call(o, 'PATCH', '/settings', { version: s.version, maxOffers: 3 })).status).toBe(200);
-    expect((await call(o, 'POST', '/compliance-policies', { maxDeferrals: 3 })).status).toBe(201);
+    expect((await call(o, 'POST', '/compliance-policies', { recordingEnabled: false })).status).toBe(201);
   });
 });
 

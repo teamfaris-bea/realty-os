@@ -163,6 +163,31 @@ describe('reassign', () => {
     expect((await contactState(h, lead.contactId)).owner_user_id).toBe(w.outsider.userId);
   });
 
+  it('R-ACC-3 ownership-2: once the lead moved to someone who is working it, the stale item offers no reassign and refuses one (LEAD_STATE_CHANGED); nothing moves', async () => {
+    const lead = await missedLead();
+    expect((await act(w.teamLead!, lead.key, 'reassign', { toUserId: lead.other.userId, commandId: randomUUID() })).status).toBe(200);
+    await humanTouch(h, lead.other, lead.contactId);
+    const before = await contactState(h, lead.contactId);
+    expect(before.owner_user_id).toBe(lead.other.userId);
+    const view = (await queue(w.owner)).items.find((i) => i.dedupeKey === lead.key)!;
+    expect(view.live).toBe(true);
+    expect(view.actions.reassign).toBe(false);
+    const again = await act(w.owner, lead.key, 'reassign', { toUserId: w.outsider.userId, commandId: randomUUID() });
+    expect([again.status, again.code]).toEqual([409, 'LEAD_STATE_CHANGED']);
+    const after = await contactState(h, lead.contactId);
+    expect([after.owner_user_id, after.ownership_seq]).toEqual([lead.other.userId, before.ownership_seq]);
+    expect((await ledger(h, lead.contactId)).filter((e: { reason_code: string }) => e.reason_code === 'EXCEPTION_REASSIGN')).toHaveLength(1);
+  });
+
+  it('R-ACC-3 ownership-2: the queue carries the ledger head and a reassign sent with an older one is refused (stale-UI fence)', async () => {
+    const lead = await missedLead();
+    const view = (await queue(w.teamLead!)).items.find((i) => i.dedupeKey === lead.key)!;
+    expect(view.contactOwnershipSeq).toBe(Number((await contactState(h, lead.contactId)).ownership_seq));
+    const stale = await act(w.teamLead!, lead.key, 'reassign', { toUserId: lead.other.userId, commandId: randomUUID(), expectedSeq: view.contactOwnershipSeq! - 1 });
+    expect([stale.status, stale.code]).toEqual([409, 'LEAD_STATE_CHANGED']);
+    expect((await act(w.teamLead!, lead.key, 'reassign', { toUserId: lead.other.userId, commandId: randomUUID(), expectedSeq: view.contactOwnershipSeq! })).status).toBe(200);
+  });
+
   it('R-ACC-3: a reassigned event without a matching ledger command is rejected by the DB (F7 trigger), even from a Team Lead acting as themselves', async () => {
     const lead = await missedLead();
     const forged = await asUser(h, w.teamLead!, `INSERT INTO exception_events (tenant_id, id, exception_dedupe_key, action, actor_user_id, actor_role, ownership_command_id, occurred_at)

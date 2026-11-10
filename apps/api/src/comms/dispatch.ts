@@ -1,16 +1,17 @@
-// dispatchOutbound: THE outbound message path (ARCHITECTURE §9; R-GATE-1…8, R-GATE-10, R-OWN-14, E7,
-// E15, E22, E27, E29, E30, E46, E60, E66). With dial.ts it is the only module allowed to call a provider
-// send (lint realty/no-provider-outbound + architecture.test.ts).
+// dispatchOutbound: THE outbound message path (ARCHITECTURE §9; R-GATE-2, -4, -7, -8, R-OWN-14, E7, E15,
+// E22, E27, E46, E60, E66; core-compliance/2.0.0). With dial.ts it is the only module allowed to call a
+// provider send (lint realty/no-provider-outbound + architecture.test.ts).
 //
 //   TX1  app.lock_contact → message FOR UPDATE (scheduled|queued, else no-op) → DB clock
 //        re-read: pause, the client's replies since a human scheduled it (E27), the sender's authority
 //        for this contact NOW (E15), the assistant approval / playbook approval + live enrollment +
 //        the agent playbook still belonging to the contact owner, core.authorizeAutonomousAction,
-//        consent, suppressions, DNC, caps, registration → core.canContact → INSERT gate_decisions
-//        allow ⇒ 'dispatching' + dispatched_at (DB CHECK; the dispatch guard re-checks the decision);
+//        opt-outs (STOP / unsubscribe / do-not-contact, no override), suppressions, registration →
+//        core.canContact (allow | deny)
+//        allow ⇒ 'dispatching' + dispatched_at (DB CHECK; the dispatch guard re-checks the opt-out and
+//                the assistant autonomy); nothing is written to gate_decisions;
 //                human owner/collaborator ⇒ the touch in THIS transaction (R-OWN-14, E66)
-//        defer ⇒ scheduled_for = deferUntil (+ jitter at a window opening) | deny ⇒ 'blocked'
-//        needs_confirmation (human) ⇒ stays queued until the human confirms (a 'confirm' decision)
+//        deny  ⇒ INSERT gate_decisions (the blocked-send evidence) + 'blocked' with the reason
 //   provider.send(idempotencyKey = message.id)        (never inside a transaction)
 //   TX2  'sent' + provider ref | 'failed' | timeout ⇒ 'dispatch_unknown' + comms.reconcile (never resent)
 //
@@ -31,7 +32,7 @@ import { ProviderError } from '../providers/types.js';
 import { COMMS_RECONCILE } from '../worker/contracts.js';
 import { enqueueTyped } from '../worker/registry.js';
 import { systemActor } from '../worker/systemActor.js';
-import { type DispatchDenyReason, type StoredDecision, confirmableDecision, confirmationCovers, decisionView, evaluateGate, insertDecision, resolvedPolicy } from './gateInput.js';
+import { type DispatchDenyReason, type StoredDecision, decisionView, evaluateGate, insertBlockedDecision, resolvedPolicy, verdictOf } from './gateInput.js';
 import { EMAIL_REF_HEADER, listUnsubscribeHeaders, replyAddress, replyToken, replyTokenHash, signedRef, unsubscribeUrl } from './render.js';
 import * as auto from './repos/automation.js';
 import { contactFacts, dealOrAppointmentContext } from './repos/contacts.js';
@@ -47,8 +48,6 @@ export interface DispatchOptions {
   tenantId: string;
   /** the session user of an in-request human send */
   actor?: UserActor;
-  /** a human confirming a needs_confirmation decision they saw (ARCHITECTURE §9: a second, 'confirm' decision) */
-  confirm?: { decisionId: string; byUserId: string };
   /** the human re-tapped a scheduled message after the client replied (E27) */
   retap?: boolean;
 }
@@ -56,13 +55,12 @@ export interface DispatchOptions {
 interface SendPlan {
   m: msgs.MessageRow;
   channel: 'sms' | 'email';
-  decisionId: string;
   emailFrom: { address: string; name: string } | null;
   replyTo: string | null;
   headers: Record<string, string> | null;
 }
 
-type Tx1 = { kind: 'done'; result: DispatchResult } | { kind: 'invisible' } | { kind: 'send'; plan: SendPlan; decision: StoredDecision; phase: 'send' | 'confirm' };
+type Tx1 = { kind: 'done'; result: DispatchResult } | { kind: 'invisible' } | { kind: 'send'; plan: SendPlan; decision: StoredDecision };
 
 interface Tx1Context {
   deps: CommsDeps;
@@ -105,7 +103,7 @@ export async function dispatchOutbound(messageId: string, deps: CommsDeps, opts:
     if (r.kind === 'invisible') return { kind: 'noop', messageId, status: 'missing' };
   }
   if (r.kind === 'done') return r.result;
-  return sendAndRecord(r.plan, r.decision, r.phase, deps, tenantId);
+  return sendAndRecord(r.plan, r.decision, deps, tenantId);
 }
 
 async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Promise<Tx1> {
@@ -124,7 +122,7 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
 
   const conv = await g.conversationOf(tx, m.contactId);
   // E27: the client replied after a human scheduled this: it needs a re-tap (never auto-cancelled)
-  if (human && c.forceDeny.length === 0 && !c.opts.retap && !c.opts.confirm && m.pinnedInboundSeq !== null && conv && conv.inboundSeq > m.pinnedInboundSeq) {
+  if (human && c.forceDeny.length === 0 && !c.opts.retap && m.pinnedInboundSeq !== null && conv && conv.inboundSeq > m.pinnedInboundSeq) {
     await msgs.markAwaitingTap(tx, m.id, 'CLIENT_REPLIED_SINCE_SCHEDULED', null);
     if (!userTx && m.initiatedByUserId) {
       await notifyUser(tx, c.deps.ids, { userId: m.initiatedByUserId, kind: SYSTEM_NOTICE, priority: 'high', title: 'They replied since you scheduled a message', body: 'Check the reply, then tap Send if it still fits.', subjectType: 'message', subjectId: m.id, dedupeKey: `retap:${m.id}:${conv.inboundSeq}` }, now);
@@ -134,9 +132,10 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
   if (human && c.opts.retap && conv) await msgs.repin(tx, m.id, conv.inboundSeq);
 
   const channel: Channel = m.channel === 'email' ? 'email' : 'sms';
-  // R-CONSENT-5 purpose of a human free-form message, decided NOW (R-GATE-3: send-time inputs): it was
-  // informational when written because the contact had written in within 30 days (or a deal/appointment
-  // was open); days later that may no longer hold. Only ever tightened: informational → marketing.
+  // Purpose of a human free-form message, decided NOW (send-time inputs): it was informational when
+  // written because the contact had written in within 30 days (or a deal/appointment was open); days
+  // later that may no longer hold. Only ever tightened: informational → marketing (marketing adds the
+  // brokerage-name / CAN-SPAM requirements and is what a marketing-only opt-out blocks).
   let purpose: Purpose = m.purpose ?? 'marketing';
   if (human && m.actionCategory === 'none' && purpose === 'informational') {
     const nowPurpose = classifyHumanPurpose({ lastInboundAt: conv?.lastInboundAt ?? null, dealOrAppointmentContext: await dealOrAppointmentContext(tx, m.contactId), now });
@@ -188,57 +187,19 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
     category: m.actionCategory as OutboundIntent['category'],
     sender: { phoneNumberId: m.phoneNumberId, emailIdentityId: m.emailIdentityId },
     body: m.body,
-    jitterKey: m.id,
-    excludeMessageId: m.id,
   };
   const evaluated = await evaluateGate(tx, intent, now);
-  const priorCapDeferrals = await capDeferrals(tx, m.id);
+  const verdict = verdictOf(evaluated.decision, extra);
 
-  // ---- confirmation (a human confirming exactly what they were shown) ----
-  let confirmOf: StoredDecision | null = null;
-  if (c.opts.confirm && extra.length === 0 && evaluated.decision.outcome === 'needs_confirmation') {
-    const prior = await confirmableDecision(tx, c.opts.confirm.decisionId, { messageId: m.id, contactId: m.contactId, channel }, c.opts.confirm.byUserId, now);
-    if (!prior || prior.id === undefined || actorUserId !== c.opts.confirm.byUserId) throw new AppError('CONFIRMATION_INVALID');
-    if (confirmationCovers(evaluated.decision, prior)) confirmOf = prior;
-  }
-  const sendDecision = await insertDecision(tx, { ids: c.deps.ids, intent, evaluated, phase: 'send', actorUserId, messageId: m.id, now, extraDeny: extra });
-  let dispatchDecision = sendDecision;
-  let phase: 'send' | 'confirm' = 'send';
-  if (confirmOf) {
-    dispatchDecision = await insertDecision(tx, { ids: c.deps.ids, intent, evaluated, phase: 'confirm', actorUserId, messageId: m.id, now, confirm: { confirmedByUserId: c.opts.confirm!.byUserId, confirmsDecisionId: confirmOf.id } });
-    phase = 'confirm';
-    await audit(tx, c.actor, { action: 'gate.confirmed', entity: { type: 'message', id: m.id }, reason: sendDecision.reasons.join(',').slice(0, 200) });
-  }
-  const view = decisionView(dispatchDecision, phase);
-  const outcome = dispatchDecision.outcome;
-
-  if (outcome === 'deny') {
-    await msgs.markBlocked(tx, m.id, sendDecision.id, sendDecision.reasons[0] ?? 'DENIED');
+  if (verdict.outcome === 'deny') {
+    const blocked = await insertBlockedDecision(tx, { ids: c.deps.ids, intent, evaluated, verdict, actorUserId, messageId: m.id, now, extraDeny: extra });
+    await msgs.markBlocked(tx, m.id, blocked.id, blocked.reasons[0] ?? 'DENIED');
     if (m.playbookStepRunId) {
-      const u = stepRunAfterGate({ outcome: 'deny', reasons: sendDecision.reasons as never, deferUntil: undefined }, priorCapDeferrals, policy);
-      await auto.updateStepRun(tx, m.playbookStepRunId, { status: u.status, decisionId: sendDecision.id, messageId: m.id });
+      const u = stepRunAfterGate({ outcome: 'deny', reasons: blocked.reasons as never });
+      await auto.updateStepRun(tx, m.playbookStepRunId, { status: u.status, decisionId: blocked.id, messageId: m.id });
     }
-    if (!userTx) await afterSystemBlock(tx, c, m, owner, sendDecision, now);
-    return { kind: 'done', result: { kind: 'blocked', messageId, decision: view } };
-  }
-  if (outcome === 'needs_confirmation') {
-    await msgs.markAwaitingTap(tx, m.id, 'NEEDS_CONFIRMATION', sendDecision.id);
-    if (!userTx && actorUserId) {
-      await notifyUser(tx, c.deps.ids, { userId: actorUserId, kind: SYSTEM_NOTICE, priority: 'high', title: 'A message needs your OK before it goes out', body: null, subjectType: 'message', subjectId: m.id, dedupeKey: `confirm:${sendDecision.id}` }, now);
-    }
-    return { kind: 'done', result: { kind: 'needs_confirmation', messageId, decision: view } };
-  }
-  if (outcome === 'defer') {
-    const u = stepRunAfterGate({ outcome: 'defer', reasons: sendDecision.reasons as never, deferUntil: sendDecision.deferUntil ?? undefined }, priorCapDeferrals, policy);
-    if (u.status === 'skipped_ineligible') {
-      await msgs.markCanceled(tx, m.id, 'SKIPPED_INELIGIBLE', sendDecision.id);
-      if (m.playbookStepRunId) await auto.updateStepRun(tx, m.playbookStepRunId, { status: 'skipped_ineligible', decisionId: sendDecision.id, messageId: m.id });
-      return { kind: 'done', result: { kind: 'skipped', messageId, decision: view } };
-    }
-    const until = sendDecision.deferUntil as Instant;
-    await msgs.markDeferred(tx, m.id, sendDecision.id, until);
-    if (m.playbookStepRunId && u.status === 'deferred') await auto.updateStepRun(tx, m.playbookStepRunId, { status: 'deferred', scheduledFor: until, deferrals: u.deferrals, decisionId: sendDecision.id, messageId: m.id });
-    return { kind: 'done', result: { kind: 'deferred', messageId, decision: view, until } };
+    if (!userTx) await afterSystemBlock(tx, c, m, owner, blocked, now);
+    return { kind: 'done', result: { kind: 'blocked', messageId, decision: decisionView(blocked, 'send') } };
   }
 
   // allow
@@ -251,7 +212,7 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
     const t = await sql<{ at: Date | null }>`SELECT last_human_touch_at AS at FROM contacts WHERE tenant_id = app.tenant_id() AND id = ${m.contactId}`.execute(tx);
     if (t.rows[0]?.at && t.rows[0].at.getTime() >= now) dispatchedAt = t.rows[0].at.getTime() as Instant;
   }
-  await msgs.markDispatching(tx, m.id, dispatchDecision.id, dispatchedAt);
+  await msgs.markDispatching(tx, m.id, dispatchedAt);
   await msgs.touchConversationOutbound(tx, m.conversationId, m.phoneNumberId, dispatchedAt);
   let emailFrom: SendPlan['emailFrom'] = null;
   let replyTo: string | null = null;
@@ -265,7 +226,7 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
     headers = { [EMAIL_REF_HEADER]: signedRef(c.deps.linkSecret, 'email-ref', c.tenantId, m.id) };
     if (purpose === 'marketing') headers = { ...headers, ...listUnsubscribeHeaders(unsubscribeUrl(c.deps.publicBaseUrl, c.deps.linkSecret, c.tenantId, m.id)) };
   }
-  return { kind: 'send', plan: { m: { ...m, status: 'dispatching', dispatchedAt }, channel, decisionId: dispatchDecision.id, emailFrom, replyTo, headers }, decision: dispatchDecision, phase };
+  return { kind: 'send', plan: { m: { ...m, status: 'dispatching', dispatchedAt }, channel, emailFrom, replyTo, headers }, decision: { id: null, ...verdict } };
 }
 
 async function contactOwnership(tx: Tx, contactId: string): Promise<{ ownerUserId: string | null; periodSeq: number | null }> {
@@ -273,13 +234,6 @@ async function contactOwnership(tx: Tx, contactId: string): Promise<{ ownerUserI
     SELECT owner_user_id, ownership_period_seq FROM contacts WHERE tenant_id = app.tenant_id() AND id = ${contactId}`.execute(tx);
   const x = r.rows[0];
   return { ownerUserId: x?.owner_user_id ?? null, periodSeq: x?.ownership_period_seq == null ? null : Number(x.ownership_period_seq) };
-}
-
-async function capDeferrals(tx: Tx, messageId: string): Promise<number> {
-  const r = await sql<{ n: number }>`
-    SELECT count(*)::int AS n FROM gate_decisions WHERE tenant_id = app.tenant_id() AND message_id = ${messageId} AND phase = 'send'
-       AND outcome = 'defer' AND 'FREQUENCY_CAP' = ANY (reason_codes)`.execute(tx);
-  return r.rows[0]?.n ?? 0;
 }
 
 /** Within-playbook assistant messages (R-GATE-4, R-AST-4): approval, live enrollment, owner, autonomy. */
@@ -370,15 +324,15 @@ async function providerSend(plan: SendPlan, deps: CommsDeps, tenantId: string): 
 /** Provider codes that mean "the recipient opted out at the carrier/provider" (R-CONSENT-12). */
 export const PROVIDER_OPT_OUT_CODES: ReadonlySet<string> = new Set(['RECIPIENT_OPTED_OUT', '21610']);
 
-async function sendAndRecord(plan: SendPlan, decision: StoredDecision, phase: 'send' | 'confirm', deps: CommsDeps, tenantId: string): Promise<DispatchResult> {
+async function sendAndRecord(plan: SendPlan, decision: StoredDecision, deps: CommsDeps, tenantId: string): Promise<DispatchResult> {
   const m = plan.m;
-  const view = decisionView(decision, phase);
+  const view = decisionView(decision, 'send');
   const out = await providerSend(plan, deps, tenantId);
   return asSystem(deps, tenantId, 'provider', async (tx, now) => {
     await lockContact(tx, m.contactId as ContactId);
     if (out.ok) {
       await msgs.markSent(tx, m.id, out.provider, out.ref);
-      if (m.playbookStepRunId) await auto.updateStepRun(tx, m.playbookStepRunId, { status: 'sent', decisionId: plan.decisionId, messageId: m.id });
+      if (m.playbookStepRunId) await auto.updateStepRun(tx, m.playbookStepRunId, { status: 'sent', decisionId: null, messageId: m.id });
       if (m.assistantActionId) await auto.markActionExecuted(tx, m.assistantActionId);
       return { kind: 'sent', messageId: m.id, decision: view, providerRef: out.ref } satisfies DispatchResult;
     }
@@ -390,7 +344,7 @@ async function sendAndRecord(plan: SendPlan, decision: StoredDecision, phase: 's
     const optedOut = out.code !== null && PROVIDER_OPT_OUT_CODES.has(out.code);
     const reason = optedOut ? 'PROVIDER_OPTED_OUT' : out.kind === 'not_configured' ? (out.code ?? 'PROVIDER_NOT_CONFIGURED') : `PROVIDER_${out.kind.toUpperCase()}`;
     await msgs.markFailed(tx, m.id, reason, out.code);
-    if (m.playbookStepRunId) await auto.updateStepRun(tx, m.playbookStepRunId, { status: 'failed', decisionId: plan.decisionId, messageId: m.id });
+    if (m.playbookStepRunId) await auto.updateStepRun(tx, m.playbookStepRunId, { status: 'failed', decisionId: null, messageId: m.id });
     if (optedOut) await recordProviderOptOut(tx, deps, tenantId, m, now);
     return { kind: 'failed', messageId: m.id, decision: view, reason } satisfies DispatchResult;
   });
@@ -480,15 +434,16 @@ export async function reconcileOutbound(messageId: string, deps: CommsDeps, tena
 
 // ---- agent alert SMS (ARCHITECTURE §9 path 9; E60) ------------------------------------------------------
 
-export type AlertResult = { kind: 'sent'; providerRef: string; decisionId: string } | { kind: 'suppressed'; decisionId: string | null; reasons: string[] } | { kind: 'noop' } | { kind: 'failed'; reason: string };
+export type AlertResult = { kind: 'sent'; providerRef: string } | { kind: 'suppressed'; decisionId: string | null; reasons: string[] } | { kind: 'noop' } | { kind: 'failed'; reason: string };
 
 /**
  * One SMS delivery of a notification to the agent's own verified alert phone. The agent is a recipient
- * like any other: canContact(recipient = user) at send time, so an agent's STOP is honoured (E60).
+ * like any other: canContact(recipient = user) at send time, so an agent's STOP is honoured (E60). A
+ * blocked delivery writes its gate_decisions row; an allowed one writes none.
  * Called by the notification delivery job (api/workspace) for `sms` deliveries.
  */
 export async function dispatchAgentAlertSms(deliveryId: string, deps: CommsDeps, tenantId: string): Promise<AlertResult> {
-  type Plan = { kind: 'send'; to: string; from: string; body: string; decisionId: string } | { kind: 'done'; result: AlertResult };
+  type Plan = { kind: 'send'; to: string; from: string; body: string } | { kind: 'done'; result: AlertResult };
   const plan: Plan = await asSystem(deps, tenantId, 'worker', async (tx, now) => {
     const r = await sql<{ id: string; status: string; channel: string; user_id: string; title: string; alert_phone_e164: string | null; verified: boolean }>`
       SELECT d.id, d.status, d.channel, n.user_id, n.title, m.alert_phone_e164, m.alert_phone_verified_at IS NOT NULL AS verified
@@ -513,17 +468,17 @@ export async function dispatchAgentAlertSms(deliveryId: string, deps: CommsDeps,
       category: 'agent_alert',
       sender: { phoneNumberId: nums.teamMain, emailIdentityId: null },
       body,
-      jitterKey: deliveryId,
     };
     const evaluated = await evaluateGate(tx, intent, now);
-    const dec = await insertDecision(tx, { ids: deps.ids, intent, evaluated, phase: 'send', actorUserId: null, now });
-    if (dec.outcome !== 'allow') {
+    const verdict = verdictOf(evaluated.decision);
+    if (verdict.outcome === 'deny') {
+      const dec = await insertBlockedDecision(tx, { ids: deps.ids, intent, evaluated, verdict, actorUserId: null, now });
       await setDelivery(tx, deliveryId, 'suppressed', dec.id, dec.reasons[0] ?? 'DENIED');
       return { kind: 'done', result: { kind: 'suppressed', decisionId: dec.id, reasons: dec.reasons } };
     }
     const from = nums.teamMain ? (await g.numberFacts(tx, nums.teamMain))?.e164 ?? null : null;
-    await setDelivery(tx, deliveryId, 'sending', dec.id, null);
-    return { kind: 'send', to: d.alert_phone_e164, from: from ?? '', body, decisionId: dec.id };
+    await setDelivery(tx, deliveryId, 'sending', null, null);
+    return { kind: 'send', to: d.alert_phone_e164, from: from ?? '', body };
   });
   if (plan.kind === 'done') return plan.result;
   let result: AlertResult;
@@ -531,12 +486,12 @@ export async function dispatchAgentAlertSms(deliveryId: string, deps: CommsDeps,
     const account = await asSystem(deps, tenantId, 'worker', (tx) => telephonyAccount(tx, deps.envelope, tenantId));
     if (!account) throw new ProviderError('not_configured', 'TELEPHONY_ACCOUNT_MISSING');
     const r = await deps.providers.telephony.sendSms({ account, from: plan.from, to: plan.to, body: plan.body, idempotencyKey: deliveryId });
-    result = { kind: 'sent', providerRef: r.providerRef, decisionId: plan.decisionId };
+    result = { kind: 'sent', providerRef: r.providerRef };
   } catch (e) {
     result = { kind: 'failed', reason: e instanceof ProviderError ? `PROVIDER_${e.kind.toUpperCase()}` : 'PROVIDER_ERROR' };
   }
   await asSystem(deps, tenantId, 'provider', (tx) =>
-    result.kind === 'sent' ? setDelivery(tx, deliveryId, 'sent', plan.decisionId, null, result.providerRef) : setDelivery(tx, deliveryId, 'failed', plan.decisionId, result.kind === 'failed' ? result.reason : null),
+    result.kind === 'sent' ? setDelivery(tx, deliveryId, 'sent', null, null, result.providerRef) : setDelivery(tx, deliveryId, 'failed', null, result.kind === 'failed' ? result.reason : null),
   );
   return result;
 }

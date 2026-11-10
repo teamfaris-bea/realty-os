@@ -110,7 +110,10 @@ export type OwnershipCommand =
   | { kind: 'soft_delete' }
   | { kind: 'merge'; survivorId: ContactId; loserId: ContactId; ownerChoice: UserId | null }
   | { kind: 'deactivate_owner'; destination: 'team_lead' | 'default_pond' | 'reroute'; deactivationId: string }
-  | { kind: 'import_assign'; target: ImportTarget };
+  | { kind: 'import_assign'; target: ImportTarget }
+  /** R-IMPORT-10: reverting an import's ownership stage on its own puts the lead back where the
+   *  contacts stage left it (unassigned, never routed), fenced on the ledger head the import wrote. */
+  | { kind: 'import_unassign'; importSeq: number };
 
 export type OwnershipCommandKind = OwnershipCommand['kind'];
 

@@ -21,7 +21,7 @@ Legal statements are marked **VERIFY WITH COUNSEL**. Every legal parameter lives
 |---|---|---|
 | See what's due | open app → Priority Feed (pinned band first) | 0 taps |
 | Accept a lead offer | push → feed card → **Accept** | 1 tap from feed |
-| Call a lead | feed card or contact → **Call** (gate checked inline) | 1 tap |
+| Call a lead | feed card or contact → **Call** (opt-outs checked at the tap) | 1 tap |
 | Text a lead | **Text** → pre-filled assistant draft → **Send** | 2 taps |
 | Log a call outcome | post-call sheet auto-opens → outcome chip | 1 tap (+ optional note) |
 | Approve an assistant draft or handback | feed card → **Send** / **Edit** | 1 tap |
@@ -236,72 +236,74 @@ Adapters never receive tenant context implicitly. Every call takes explicit ids 
 
 ---
 
-## 9. The compliance gate: `canContact()` and the one outbound path
+## 9. The send-time check: `canContact()` and the one outbound path
 
-`core.compliance.canContact(input): GateDecision` is pure and deterministic. The same input gives the same decision and the same `inputsDigest`, and deny reasons are monotonic (property-tested).
+**Owner decision (2026-11, core-compliance/2.0.0; Design Review Log entry D1 in §20).** Every lead is treated as having consented through the third-party source it came from, and the owner chose "Remove the check entirely" for the send-time consent/compliance decision. What remains is a narrow **opt-out block**: nobody who texted STOP (or another opt-out keyword), clicked unsubscribe, or whom an agent recorded as "do not contact me" is ever messaged or called, and nobody can override that. The consent-basis requirement, the national Do Not Call registry check, the contact window / quiet hours, jitter, the timezone-evidence notice, frequency caps, the `defer` outcome and the `needs_confirmation` / "send anyway" flow are gone. Reinstating any of them is a policy and rules change, not a rebuild (see §19 VERIFY WITH COUNSEL).
+
+`core.compliance.canContact(input): GateDecision` is pure and deterministic. The same input gives the same decision and the same `inputsDigest`, and adding a revoke or a suppression never turns a deny into an allow (property-tested).
 
 **Inputs** (assembled by `apps/api` inside the dispatch transaction under the per-contact advisory lock):
 - `now`, recipient (contact or user), address HMAC, channel, purpose (`marketing` | `informational`), initiator (`human` | `assistant` | `system`), action category
-- consent rows (`consent_state` for this address, plus the contact's other phones on SMS revokes)
-- suppressions, latest DNC checks, contact point status and line type, automation pause, sender registration
-- recent automated sends for caps, last inbound, recipient zone candidates and source
-- tenant identity flags (brokerage name, postal address), rendered-content facts (brokerage name present, STOP hint, payment-instruction pattern, flagged terms)
-- the resolved policy: platform floor ∧ jurisdiction packs ∧ tenant policy version
+- consent rows (`consent_state` for this address, plus the contact's other phones for SMS). Only `revoked` rows matter: the consent level is kept as history and no send reads it
+- suppressions, contact point status and line type, automation pause, sender and its registration
+- tenant identity flags (brokerage name, postal address), rendered-content facts (brokerage name present, unsubscribe/STOP hint, payment-instruction pattern)
+- the resolved policy: platform floor ∧ jurisdiction packs ∧ tenant policy version (autonomous categories, opt-out keywords, recording)
 
-**Outcome.** `allow | deny | defer(until) | needs_confirmation`, with **all** reasons collected, a human sentence explaining them, the policy version, the core rules version and the inputs digest.
+**Outcome.** `allow | deny`, with **all** reasons collected, a human sentence explaining them ("Opted out of texts"), the core rules version and the inputs digest. Any reason ⇒ deny. No reason can be confirmed past, and nothing is deferred.
 
-**Checks** (any deny ⇒ deny; then needs_confirmation; then defer):
+**Checks** (every one is a deny, for every initiator, with no override):
 
 | # | Check | Assistant/system | Human |
 |---|---|---|---|
+| 0 | Autonomy: always-human categories (money, contracts, a new kind of client message, seller updates); only the policy-approved autonomous categories; no automated voice; agent alerts only to users | deny | n/a |
 | 1 | Tenant suspended | deny | deny |
 | 2 | Contact point invalid / wrong number / SMS to landline | deny | deny |
-| 3 | Sender not registered (10DLC / toll-free), or email domain unverified for marketing | deny | deny |
-| 4 | Marketing without brokerage name rendered, or marketing email without postal address / unsubscribe | deny | deny |
-| 5 | Consent revoked (opt-out) for channel+purpose | deny | **deny (no override)** |
-| 6 | Active suppression | deny | deny |
+| 3 | Sender missing or not registered (10DLC / toll-free), or email domain unverified for marketing | deny | deny |
+| 4 | Marketing without the brokerage name rendered (A7f), or marketing email without postal address / unsubscribe link (CAN-SPAM applies regardless of consent) | deny | deny |
+| 5 | **Opt-out**: consent revoked for the channel (+ purpose for SMS/email; either purpose for calls). An SMS revoke on any of the contact's phones blocks texting all of them | deny | **deny (no override)** |
+| 6 | Active suppression (bounce, complaint, landline, internal / imported do-not-contact, admin block, wrong number, provider opt-out) | deny | deny |
 | 7 | Payment / wire instructions in the body | deny | deny |
-| 8 | Consent basis below the minimum for channel × purpose × initiator (DATA_MODEL R-CONSENT-5) | deny | needs_confirmation, or deny for marketing SMS with only an imported basis |
-| 9 | DNC (marketing voice/SMS): listed without express_written, or unknown with no unexpired basis | deny | deny |
-| 10 | Automation paused for this contact (client replied) | deny | n/a (humans can always reply) |
-| 11 | Outside the contact window (09:00–20:00 recipient local, intersected over candidate zones) | defer to the next opening + deterministic 0–20 min jitter | deny, except an informational reply within 30 min of an inbound ⇒ needs_confirmation |
-| 12 | Frequency caps (automated: SMS 1/24 h, 3/7 d; email 1/24 h, 3/7 d; cross-channel 2/24 h) | defer, never drop; after 3 deferrals the step is `skipped_ineligible` (visible) | manual SMS > 3/24 h ⇒ needs_confirmation; > 3 call attempts/24 h ⇒ deny |
-| 13 | Weak timezone evidence | adds `RECIPIENT_TZ_UNCERTAIN` (informational) | same |
+| 8 | Automation paused for this contact (the client replied) | deny | n/a (humans can always reply) |
 
-Checks 1–7 and 9 can never be confirmed past. A confirmation creates a second gate decision (`phase='confirm'`, `confirmed_by_user_id`), and that decision is audited.
+The one exemption: the system's own informational SMS reply to a STOP/HELP keyword (`opt_out_confirmation`, `help_reply`) may reach the number that just opted out. It is still checked for everything else, suppressions included.
+
+**Removed (retired rules, kept in DATA_MODEL with their ids).** Consent basis per channel × purpose × initiator (old check 8, R-CONSENT-5 table), DNC registry (old check 9, R-CONSENT-15), contact window and its deferral, jitter and human reply window (old check 11, R-CONSENT-13), frequency caps for automated sends, manual SMS and call attempts (old check 12, R-CONSENT-14), weak-timezone notice (old check 13), the 10-minute decision staleness rule (old R-GATE-3 half), and confirmations (old R-GATE-6 meaning). Call-recording consent (two-party rules, R-CONSENT-16) is a different law and is unchanged.
 
 **Every outbound path that must call it.** Each path goes through `dispatchOutbound` / `dialOutbound`. These are the only modules allowed to import a provider send or dial function, enforced by a lint rule and an architecture test.
 
-1. Human one-to-one SMS/email from contact, feed or thread (compose-time preview, plus send-time decision).
-2. Human scheduled messages ("send at 9 am"): re-gated at send time, and they require a re-tap if the client replied since.
+1. Human one-to-one SMS/email from contact, feed or thread (a compose-time preview that is never stored, plus the send-time decision).
+2. Human scheduled messages ("send at 9 am"): checked again at send time, and they require a re-tap if the client replied since.
 3. Tap-to-call: a dial-time decision before the provider bridges the client leg.
 4. Approved assistant drafts and handback replies: the human is the sender; the assistant action must be `approved`.
-5. Playbook steps (nurture, post-closing, reminders, booking confirmations, document chase when enabled): `authorizeAutonomousAction` then the gate at **send time**.
-6. The 60-second new-lead first response (team playbook `new_lead_response`).
+5. Playbook steps (nurture, post-closing, reminders, booking confirmations, document chase when enabled): `authorizeAutonomousAction` then the check at **send time**.
+6. The 60-second new-lead first response (team playbook `new_lead_response`): a text to a reachable mobile number unless it opted out or is suppressed, otherwise email.
 7. Saved-search alerts (`search_alert`, purpose marketing).
-8. Opt-out confirmation and HELP replies (consent-exempt categories, still sender-registration checked).
+8. Opt-out confirmation and HELP replies (the exemption above; still sender-registration checked).
 9. Agent alert SMS (`recipient_kind='user'`; agents can text STOP too).
 10. Import-originated rows are history only. They never call a provider and are exempt by `imported = true`.
 
-Account emails to users (password reset, invite) are not contact communications and are out of scope for the contact consent rules. They are still rate-limited and audited.
+Account emails to users (password reset, invite) are not contact communications and are out of scope for the contact opt-out rules. They are still rate-limited and audited.
 
-**Database enforcement.**
-- `messages`: a CHECK requires `gate_decision_id` on any non-imported outbound row past `queued`.
-- `messages_dispatch_guard`: requires the referenced decision to be `allow`, phase `send` or `confirm`, the same channel, and **evaluated ≤ 10 minutes before dispatch**. For assistant messages it also requires an approved action, or an approved playbook version **and** an un-paused conversation.
-- `calls_dispatch_guard`: the same rules for outbound calls.
+**What is stored.** An allowed send stores no decision. A blocked send writes one append-only `gate_decisions` row (`outcome = 'deny'`, `phase = 'send'`, CHECK from 0013, `NOT VALID` so older rows keep their old values) with the reasons, the explanation, the policy version, the core rules version, plaintext-free inputs and their digest, and the message or call links to it (`messages.gate_decision_id`, `calls.gate_decision_id`, `notification_deliveries.gate_decision_id`, `playbook_step_runs.last_gate_decision_id`; all nullable). That row is the evidence for the Team Lead "failed send" exception and for "why wasn't this sent" in the UI. Previews ("Won't send: Opted out of texts" in compose, on the contact page and on approval cards) are never stored.
 
-All of these are smoke-tested.
+**Database enforcement** (migration 0013; smoke-tested and covered by `packages/db/test/dispatch_guard.test.ts`).
+- The per-send `gate_decision_id` CHECKs on `messages`, `calls` and `notification_deliveries` are gone.
+- `messages_dispatch_guard` (SECURITY DEFINER, owned by `app_definer`, pinned `search_path`) keeps the assistant-autonomy checks verbatim: an assistant message needs an approved action, or an approved playbook version **and** an un-paused conversation (`ASSISTANT_ACTION_MISSING`, `PLAYBOOK_NOT_APPROVED`, `AUTOMATION_PAUSED`, `ASSISTANT_ACTION_NOT_APPROVED`, `ASSISTANT_ACTION_NOT_SENDABLE`). It adds a database-level **opt-out block** for every initiator: a message cannot reach `dispatching` (or later) when its recipient address has a revoked `consent_state` row for the channel and purpose (SMS: also any of the contact's other phones) or an active suppression for the channel or `all`. The recipient is linked through `messages.to_address` = `contact_points.address`; the guard takes the HMAC of every contact point in the tenant with that address, so a stray or forged point cannot hide the real one, and a send to an address that is not one of the contact's points is refused (`RECIPIENT_NOT_A_CONTACT_POINT`). It blocks at least what core blocks for opt-outs, never less. The STOP/HELP reply exemption applies only when the conversation received a keyword message in the last 24 hours.
+- `calls_dispatch_guard` does the same for voice: a voice revoke of either purpose (an agent-recorded "do not call me") or an active voice/`all` suppression on `calls.client_address`.
+- Not covered by a database guard: agent-alert SMS (`notification_deliveries`). Its recipient is `memberships.alert_phone_e164`, which has no stored HMAC, so the opt-out relies on the single sending path (`dispatchAgentAlertSms` runs `canContact` with `recipient = user`).
 
 **Dispatch protocol** (no network call inside a transaction; a missed message is preferred over a duplicate):
 
 ```
 TX1  app.lock_contact(contact); SELECT message FOR UPDATE (status scheduled|queued, else return)
-     re-read pause, enrollment + playbook approval (agent playbook ⇒ its owner is still the contact owner),
-     sender still authorized for this contact, consent, suppressions, DNC, caps, registration
-     core.authorizeAutonomousAction (assistant only) → core.canContact → INSERT gate_decisions(phase='send')
-     allow ⇒ status 'dispatching', dispatched_at = now (DB CHECK) (guard re-checks);
+     re-read pause, the client's replies since a human scheduled it, enrollment + playbook approval
+     (agent playbook ⇒ its owner is still the contact owner), sender still authorized for this contact,
+     opt-outs, suppressions, registration
+     core.authorizeAutonomousAction (assistant only) → core.canContact (allow | deny)
+     allow ⇒ status 'dispatching', dispatched_at = now (DB CHECK) (the guard re-checks opt-out + autonomy);
+             nothing is written to gate_decisions;
              human sender ⇒ touch in the same tx (first_touch_recorded if first, last_human_touch_at, inactivity deadlines)
-     defer ⇒ scheduled_for = deferUntil | deny ⇒ 'blocked' (+ failed_send)
+     deny  ⇒ INSERT gate_decisions (outcome deny, phase send) + 'blocked' with the reason (+ failed_send)
 COMMIT
 provider.send(idempotencyKey = message.id)
 TX2  'sent' + provider ref | 'failed' + error | timeout ⇒ 'dispatch_unknown' (never auto-retried; reconcile ≤ 10 min,
@@ -311,7 +313,9 @@ CRASH between TX1 and TX2: the message stays 'dispatching'. The sweeper's dispat
      proceeds as for a timeout. It is never re-sent blindly. failed_send also counts 'dispatching' older than 20 min.
 ```
 
-**Policy layering.** The platform floor (core constants) comes first, then jurisdiction packs (global, versioned, `reviewed_by_counsel_at`; the UI says plainly when a pack is unreviewed), then the tenant `compliance_policy_versions` (append-only). A tenant can only tighten caps and categories. An Owner may widen the contact window up to the 08:00–21:00 floor, but only with an attestation (DB CHECK plus an owner-only trigger).
+There is no deferral branch and no job or `due_work` branch that exists only to resume deferred sends; a scheduled message (a human "send at", a playbook step) is sent by the sweeper's message-dispatch branch at `scheduled_for` and checked at that moment.
+
+**Policy layering.** The platform floor (core constants) comes first, then jurisdiction packs (global, versioned, `reviewed_by_counsel_at`; the UI says plainly when a pack is unreviewed), then the tenant `compliance_policy_versions` (append-only). The tenant policy now holds only the autonomous categories, who confirms an opt-out, and call recording. A tenant can only narrow the autonomous categories, packs can add opt-out keywords, and one-party recording needs an Owner attestation (DB CHECK plus an owner-only trigger). Pack keys `contact_window`, `restricted_days` and `dnc_scrub_validity_days` are ignored (reported as ignored keys), not failed.
 
 ---
 
@@ -367,7 +371,7 @@ trigger (lead created, inbound, call ready, playbook step, agent asks)
   - Ad-budget changes (Phase 3) fall in the `money` category.
 - **Playbooks.** A version is frozen once it leaves draft. Approvals are append-only and hash-bound, with the attestation the approver tapped. Editing means a new draft, and the old approved version keeps running until the new one is approved; enrollments then migrate at step boundaries. Agent playbooks are approved by their agent; team playbooks by Owner/Admin (DB trigger). There is one live enrollment per contact (DB unique). Revoking an approval pauses every enrollment on that version.
 - **Built-in templates.** They ship inactive and are approved once during setup: `new_lead_response` (team), `nurture` (agent), `post_closing` (agent, enrolled at deal close; the home-value step is defined but skipped until the AVM exists), `booking_confirmation`, `reminder`.
-- **60-second first response.** At T0, lead intake creates the contact, the offer and timer, attribution, and a `new_lead_response` enrollment. Within seconds a realtime job sends **one** message (SMS if the basis is at least `express`, else email only). It asks one or two qualifying questions: timeline, financing, and the VA-loan question only when the source or form indicates it. It is signed "— the {Team} assistant", and the first message in a thread also carries the brokerage name and "Reply STOP to opt out". Quiet hours defer the SMS ("goes out 9:00 AM her time"); email goes immediately. Any reply hands off to the agent. Multi-turn autonomous qualification is Phase 2. The p95 target is under 60 s, monitored as an internal alert.
+- **60-second first response.** At T0, lead intake creates the contact, the offer and timer, attribution, and a `new_lead_response` enrollment. Within seconds a realtime job sends **one** message (SMS to a reachable mobile number unless it opted out or is suppressed, else email; since D1 no consent basis is required). It asks one or two qualifying questions: timeline, financing, and the VA-loan question only when the source or form indicates it. It is signed "— the {Team} assistant", and the first message in a thread also carries the brokerage name and "Reply STOP to opt out". There are no quiet hours since D1: the reply goes out at once, at any hour (VERIFY WITH COUNSEL, §19). Any reply hands off to the agent. Multi-turn autonomous qualification is Phase 2. The p95 target is under 60 s, monitored as an internal alert.
 - **Saved buyer searches (A4).** After a call, the assistant proposes `saved_searches(status='proposed')`. Each criterion maps to a claim with call evidence, and criteria from needs-review claims are prefilled but unchecked. The agent edits and approves from the contact record, which the DB requires to be a human approval. Matches preview real listings from the team's own `listings`. Alerts go out as `search_alert` through the gate, with SMS only on `express_written`.
 - **Seller updates (A4).** Showings, feedback and marketing activity are captured in Phase 1 tables. Assembly is Phase 2, as `seller_update_draft`, and is never autonomous.
 - **Genuineness.** Every autonomous message carries the identity sign-off. A content guard rejects first-person human claims ("this is Sarah") unless followed by the assistant identity. AI voice does not exist in Phase 1 (DB CHECK on `calls.initiator`/`handled_by`). The FCC treats AI voices as artificial under the TCPA (**VERIFY WITH COUNSEL**).
@@ -406,9 +410,9 @@ connection/export test (counts only — no promises before this) → snapshot (e
   touched rows listed for a human decision)
 ```
 
-- **Consent.** Positive FUB indicators become `grant` at `imported_unverified` (DB CHECK), with the verbatim provenance. Opt-out, DNC and unsubscribe flags become revocations or suppressions at full strength immediately. A revert voids imported grants and **never** imported revocations. The report says plainly: "312 contacts had texting permission in Follow Up Boss. We kept that as history; the assistant won't text them automatically until they confirm."
+- **Opt-outs and consent history.** Opt-out, do-not-contact and unsubscribe flags become revocations or suppressions at full strength at commit, so a STOP in Follow Up Boss carries over and blocks sending here exactly like a STOP received here (critical). Positive FUB indicators become `grant` at `imported_unverified` (DB CHECK), with the verbatim provenance, as history only: since D1 no send reads a consent level. A revert voids imported grants and **never** imported revocations. Skipping this stage means the old system's opt-outs do not carry over, and the import page says so.
 - **Ownership.** The user mapping must be complete. Imported assignment uses `imported` ledger events: no offers, no SLAs, no scoreboard effect.
-- **History.** Notes, messages and calls are `imported = true` with original timestamps. They never pause, hand back, count toward caps or SLAs, or create exceptions.
+- **History.** Notes, messages and calls are `imported = true` with original timestamps. They never pause, hand back, count toward SLAs, or create exceptions.
 - **Recordings.** Recordings are copied into encrypted storage and labelled "recording notice unknown". They are not transcribed by default.
 - **FUB key.** The FUB API key is encrypted and purged at most 30 days after the last stage is verified.
 - **CSV.** CSV uses the same machinery with a contacts stage and an optional consent stage, up to 50k rows.
@@ -452,7 +456,7 @@ connection/export test (counts only — no promises before this) → snapshot (e
   - dead jobs
   - `dispatch_unknown` and stuck `dispatching` counts
   - drift-check mismatches
-  - gate deny/defer rates by reason
+  - blocked-send rates by reason (gate_decisions)
   - 60-second first-response p95
   - webhook signature failures
 - Alerts (all P1): drift mismatch, dead realtime jobs, sweeper lateness over 60 s, unrouted inbound, a SECURITY DEFINER function added without review (CI).
@@ -464,9 +468,9 @@ connection/export test (counts only — no promises before this) → snapshot (e
 | Risk | Mitigation |
 |---|---|
 | A compromised API process can set any GUC (including `actor_kind='system'`, which is tenant-wide inside one tenant) | Actor is a type-level construction; `system` is only constructible in the worker entrypoint (lint + test). Open question Q3: a separate worker login role. |
-| TCPA exposure from assistant SMS to weak or third-party consent | `express` minimum for automated informational SMS and `express_written` for marketing; imports capped; lead-provider disclosures stored verbatim and leveled by who they name. **VERIFY WITH COUNSEL.** |
-| No DNC registry vendor in Phase 1 | Marketing calls and texts to numbers with no unexpired basis and no valid scrub are denied; Admin can upload scrub results; vendor decision before launch if teams cold-call. **VERIFY WITH COUNSEL.** |
-| Agent self-certified consent (`agent_entry`, max `express`) | Audited and attributable; tenant switch `agent_consent_entry_allowed`; never satisfies marketing SMS. **VERIFY WITH COUNSEL.** |
+| TCPA / state mini-TCPA exposure from relying on third-party consent (owner decision D1) | **Accepted by the owner.** No send checks a consent level, the DNC registry, quiet hours or frequency caps. Mitigations: opt-outs block every send with no override (DB guard as well as core); brokerage identity, unsubscribe and STOP hints on marketing; consent events (opt-ins as history) are still recorded with their evidence, so a basis can be shown later; reinstating the removed checks is a rules + policy change, not a rebuild. **VERIFY WITH COUNSEL** (§19). |
+| No DNC registry check | Since D1 the registry is not consulted for any send. `dnc_checks` and the DNC provider interface are kept but unused. Agent-recorded "do not call me" and imported do-not-contact flags still block. **VERIFY WITH COUNSEL.** |
+| Agent self-certified consent (`agent_entry`, max `express`) | Recorded as history only since D1; it no longer changes who can be messaged. |
 | Plaintext PII in backups for 35 days after erasure | Only encrypted fields are crypto-shredded. **VERIFY WITH COUNSEL.** |
 | Message bodies and summaries in plaintext | Needed for search; protected by RLS + disk encryption. |
 | RLS performance with large visibility arrays (a TC on 1,000 deals) | InitPlan-wrapped helpers, indexed predicates; benchmark at 250k–500k contacts per tenant before launch. |
@@ -492,9 +496,9 @@ connection/export test (counts only — no promises before this) → snapshot (e
 | C10 | Consent key | HMAC(address), basis levels | per contact_point consent_records | plaintext address + purpose + levels | **Comms model keyed like tenancy:** `(channel, purpose, address_hmac)`, levels `none < imported_unverified < inquiry < express < express_written`, no plaintext address in any consent/suppression/DNC/gate table. |
 | C11 | Opt-out override | Owner/Admin override with re-auth + evidence | Admin re-consent with evidence | no staff can lift an opt-out | **Comms (strictest):** reinstated only by the person's own action (START restores only keyword revokes; new disclosed form; signed document recorded with evidence). |
 | C12 | Opt-out scope | tenant-wide | tenant-wide | tenant-wide + all of the contact's phones | **Comms (strictest).** |
-| C13 | Quiet hours | 09–20 contact-local; manual blocked except a 12 h reply window | 08–20; manual warn within 30 min | floor 08–21; automated 09–20; human inside floor allowed | **Strictest combination:** 09:00–20:00 for **all** SMS/voice; human outside ⇒ deny except an informational reply within 30 min ⇒ needs_confirmation; Owner may widen to the 08–21 floor only with attestation. |
-| C14 | Frequency caps | email 1/day 4/week | manual SMS warn > 3; calls 3/24 h | SMS + email 1/24 h 3/7 d; cross-channel 2/24 h | **Strictest:** comms caps + manual SMS confirmation > 3/24 h + 3 call attempts/24 h. Tenants may only lower (DB CHECKs). |
-| C15 | DNC | no scrub; per-call confirmation | block cold numbers (no inquiry/relationship) | `dnc_checks` + human confirmation | **Ownership's block + comms' `dnc_checks` table:** deny when listed without express_written, or unknown with no unexpired basis. |
+| C13 | Quiet hours | 09–20 contact-local; manual blocked except a 12 h reply window | 08–20; manual warn within 30 min | floor 08–21; automated 09–20; human inside floor allowed | **Strictest combination:** 09:00–20:00 for **all** SMS/voice; human outside ⇒ deny except an informational reply within 30 min ⇒ needs_confirmation; Owner may widen to the 08–21 floor only with attestation. **Superseded by D1 (§20): removed from the send-time check.** |
+| C14 | Frequency caps | email 1/day 4/week | manual SMS warn > 3; calls 3/24 h | SMS + email 1/24 h 3/7 d; cross-channel 2/24 h | **Strictest:** comms caps + manual SMS confirmation > 3/24 h + 3 call attempts/24 h. Tenants may only lower (DB CHECKs). **Superseded by D1 (§20): removed from the send-time check.** |
+| C15 | DNC | no scrub; per-call confirmation | block cold numbers (no inquiry/relationship) | `dnc_checks` + human confirmation | **Ownership's block + comms' `dnc_checks` table:** deny when listed without express_written, or unknown with no unexpired basis. **Superseded by D1 (§20): removed from the send-time check.** |
 | C16 | Imported consent | `attested` basis possible | conversational only if attested | capped at `imported_unverified` | **Comms (strictest, A6).** |
 | C17 | Session idle | 7 d | 12 h | 30 d sliding / 12 h shared | **7 d idle / 30 d absolute,** rotation on login/privilege change, re-auth 15 min for sensitive actions, TOTP for Owner/Admin. Mobile-first agents (A1) would re-login daily at 12 h; the other controls carry the risk. |
 | C18 | MFA | required Owner/Admin in Phase 1 | Phase 2 | Phase 2 | **Tenancy (safer):** required; settings CHECK keeps owner+admin in the list. |
@@ -537,7 +541,7 @@ connection/export test (counts only — no promises before this) → snapshot (e
 | Unmerge | Phase 2 | merge payload keeps the data needed |
 | Hash-chained audit seals | Phase 2 | `audit_log.seq` keeps gaps detectable |
 | SSO/SAML, WebAuthn | Phase 2 | TOTP for Owner/Admin covers Phase 1 |
-| National DNC vendor integration | Open (fake + upload now) | decision before launch if teams cold-call |
+| National DNC vendor integration | Not needed for sending since D1 (the registry is not checked); fake + upload kept | revisit only if the owner reinstates the registry check |
 | Brokerage hierarchy above tenants, cross-tenant reporting | Phase 3 | — |
 | STIR/SHAKEN display, branded caller ID | Phase 2 | — |
 
@@ -545,20 +549,21 @@ connection/export test (counts only — no promises before this) → snapshot (e
 
 ## 19. Open questions and the VERIFY WITH COUNSEL register
 
-**Counsel (every item ships with the strict default shown in DATA_MODEL):**
-- SMS consent basis for (a) manual one-to-one texts to web leads, (b) the 60-second assistant response, (c) nurture; one-to-one and lead-generator consent rules.
-- Quiet hours per state; restricted days and holidays.
+**Counsel (every item ships with the default shown in DATA_MODEL; since D1 several are owner decisions, not strict defaults):**
+- **Relying on third-party consent, and running without quiet hours and frequency caps (owner decision D1).** Every lead is treated as consented through its source, and no send checks a consent level, the DNC registry, the time of day or how often a person was contacted. Even with valid consent, some state "mini-TCPA" laws may still limit this: for example, Florida's Telephone Solicitation Act (FTSA, amended in 2021 and 2023) limits telephonic sales calls, which may include texts, to certain hours of the day and to a few per person per 24 hours, and Oklahoma and Maryland have passed similar laws. We have not verified how these apply to this product. Whether these apply to a given team's messages (which texts are "telephone solicitations", what counts as consent, interstate reach) needs counsel. Reinstating time-of-day or per-24 h limits is a policy and rules change (a new core rules version plus policy fields), not a rebuild.
+- SMS consent basis for (a) manual one-to-one texts to web leads, (b) the 60-second assistant response, (c) nurture; one-to-one and lead-generator consent rules. (Since D1: not checked at send time; the ledger keeps the history.)
+- Quiet hours per state; restricted days and holidays. (Since D1: not applied; see the first item.)
 - Opt-out keyword list, natural-language revocation, confirmation content and timing; HELP response.
 - Recording disclosure wording, all-party states, interstate calls; Team Lead access to team recordings (employee-monitoring rules).
 - Retention: recordings (730 d), consent evidence and gate decisions (≥ 5 years after last activity), audit (7 years), backups after erasure.
-- DNC: which texts are "telephone solicitations"; scrub validity (31 d); inquiry basis window (90 d); established-business-relationship use.
+- DNC: which texts are "telephone solicitations"; scrub validity (31 d); inquiry basis window (90 d); established-business-relationship use. (Since D1: the registry is not checked for any send.)
 - AI identity disclosure (assistant sign-off wording) by state.
 - Fair housing: protected classes and proxies per jurisdiction (military status, source of income).
 - Jurisdiction advertising packs (e.g. South Carolina team-name rules) and brokerage name placement.
 - Privacy erasure applicability and exemptions (transaction records).
 
 **Product and engineering:**
-- **Q1.** Is `imported_unverified` ever enough for assistant nurture to migrated FUB contacts, perhaps with a one-time re-permission message?
+- **Q1.** ~~Is `imported_unverified` ever enough for assistant nurture to migrated FUB contacts?~~ Answered by D1: consent level no longer gates sending; only imported opt-outs block.
 - **Q2.** Can Team Leads approve team playbooks? (Owner/Admin by default.)
 - **Q3.** Should workers use a separate DB login role so that only it can act as `system`?
 - **Q4.** Is a 30-minute auto-release too aggressive for small teams?
@@ -592,3 +597,9 @@ Each finding was re-checked against the design text and the schema before any ch
 | F13 | low | **Real, fixed** | New guarded `contacts.ownership_period_seq` (owned ⇔ not null, ≤ `ownership_seq`). Breach, auto-release and inactivity are fenced on (period seq, stored deadline), so in-period events no longer stale the auto-release job. The same column binds drafts (R-AST-7), so a first touch no longer invalidates pending drafts. E70. |
 
 Net schema change: +1 table (`ownership_command_rejections`), +4 `contacts` columns (`ownership_period_seq`, `route_due_at`, `inactivity_warn_at`, `inactivity_release_at`), +1 trigger (`exception_events_guard`), +2 `due_work` branches (`route`, `dispatch_stale`), and 4 CHECKs. The `command_rejected` ledger type was removed. Totals: 94 tables, 4 views, 541 policies.
+
+### Owner decisions after round 1
+
+| Id | Date | Decision | What changed | What was deliberately kept |
+|---|---|---|---|---|
+| D1 | 2026-11 | Every lead consented through third-party sources; for the send-time consent/compliance decision the owner chose **"Remove the check entirely"**, keeping only a narrow opt-out block. | core-compliance/2.0.0 (`RULES_VERSION` bumped): `canContact` returns only allow or deny. Removed: consent basis (old check 8), DNC registry (9), contact window / quiet hours, jitter and the human reply window (11), frequency caps for automated, manual SMS and calls (12), weak-timezone notice (13), the `defer` outcome and everything that only resumed deferred sends (`playbook_step_runs.deferrals` and its `deferred` status, `messages_caps_idx`), `needs_confirmation` and the "send anyway" / "call anyway" flow, the per-send `gate_decision_id` CHECKs and the 10-minute staleness rule. Migration 0013 (never editing earlier ones) drops those CHECKs and the 12 policy columns, makes `gate_decisions` a log of blocked sends only, and replaces `messages_dispatch_guard` / `calls_dispatch_guard` with versions that add a DB-level opt-out block. Web: no consent prompts or pickers, no quiet-hours/cap settings, no defer or confirm badges; the opt-out state is said wherever a send or call button appears ("Won't text: Opted out of texts"), and the import consent stage is "Opt-outs and consent history". DATA_MODEL marks R-CONSENT-13/14/15, the R-CONSENT-5 table and E29/E30/E36 **Retired**; R-GATE-1/3/5/6/10/11 are rewritten. | Opt-outs (STOP and other keywords, revoking the contact's other phones for SMS; email unsubscribe; agent-recorded do-not-contact; active suppressions), with no override for any role, in core **and** in the DB guards. Assistant autonomy (A3/A7): only approved autonomous categories inside an approved playbook; money, contracts and a new kind of client message always need a human tap; no automated voice; an inbound reply atomically pauses and hands back; the autonomy half of `messages_dispatch_guard` is verbatim. Operational sanity (tenant suspended, invalid/wrong number, landline SMS, missing/unregistered sender), brokerage name on marketing (A7f) and postal address + unsubscribe on marketing email, the payment/wire block, call-recording consent (R-CONSENT-16, a different law), and the FUB consent import (opt-outs still carry over; opt-ins become history). `dispatch_stale` recovery of stuck dispatches is unchanged. **VERIFY WITH COUNSEL** (§19, first item). Known limits: agent-alert SMS has no DB guard (no stored HMAC for `alert_phone_e164`; the single send path checks it); the DB exempts a STOP/HELP reply only within 24 h of the keyword. |

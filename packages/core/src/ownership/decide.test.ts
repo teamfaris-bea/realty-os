@@ -783,6 +783,25 @@ describe('R-OWN-21: ownership never changes as a side effect', () => {
     expectRejected(decide(p, { kind: 'import_assign', target: { userId: U.tc } }, ctx({ actor: imp, targetMember: member(U.tc) })), 'TARGET_NOT_ELIGIBLE');
   });
 
+  it('R-IMPORT-10 ownership-1: import_unassign undoes the import\'s own assignment, fenced on its seq; anything later is refused', () => {
+    const imp = systemActor('import');
+    const p = decide(null, { kind: 'import_assign', target: 'unassigned' }, ctx({ actor: imp })).next!;
+    const owned = decide(p, { kind: 'import_assign', target: { userId: U.a } }, ctx({ actor: imp, targetMember: member(U.a) })).next!;
+    const back = decide(owned, { kind: 'import_unassign', importSeq: 2 }, ctx({ actor: imp }));
+    expect(eventsOf(back)).toEqual([expect.objectContaining({ type: 'imported', seq: 3, fromState: 'owned', toState: 'unassigned', ownerUserId: null, actorKind: 'import', reasonCode: 'IMPORT_REVERTED' })]);
+    expect(back.next).toMatchObject({ state: 'unassigned', routeDueAt: null, ownerUserId: null, periodSeq: null });
+    expect(kinds(back)).not.toContain('route');
+    expect(effectsOf(back, 'notify')).toEqual([]);
+    const pond = decide(p, { kind: 'import_assign', target: { pondId: OTHER_POND } }, ctx({ actor: imp })).next!;
+    expect(decide(pond, { kind: 'import_unassign', importSeq: 2 }, ctx({ actor: imp })).next).toMatchObject({ state: 'unassigned', pondId: null, routeDueAt: null });
+    // the ledger moved past the import's event: a human's decision, refused
+    expectRejected(decide(owned, { kind: 'import_unassign', importSeq: 1 }, ctx({ actor: imp })), 'LEAD_STATE_CHANGED');
+    // only the import actor; already back in the imported creation state: nothing to do
+    expectRejected(decide(owned, { kind: 'import_unassign', importSeq: 2 }, ctx({ actor: systemActor('worker') })), 'NOT_FOUND');
+    expectRejected(decide(owned, { kind: 'import_unassign', importSeq: 2 }, ctx({ actor: userActor(U.admin) })), 'NOT_FOUND');
+    expect(decide(p, { kind: 'import_unassign', importSeq: 1 }, ctx({ actor: imp }))).toEqual({ ok: true, events: [], next: p, effects: [] });
+  });
+
   it('support actors are read-only', () => {
     const l = ownedLead(U.a);
     expectRejected(decide(l.p, { kind: 'release', reason: 'not_a_fit' }, ctx({ actor: { kind: 'support', userId: U.owner, tenantId: l.p.commandId as never, grantId: 'g' } })), 'NOT_FOUND');

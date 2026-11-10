@@ -120,16 +120,13 @@ describe('kill the worker', () => {
     it(`E7: killed ${point === 'after_tx1' ? 'between TX1 and provider.send' : 'between provider.send and TX2'}: the re-run never re-sends; after 20 min the sweeper moves it to dispatch_unknown and queues reconciliation`, async () => {
       const { contactId } = await intakeLead(h.app, w);
       const messageId = uuid();
-      const gateId = uuid();
-      // fixtures for rows api/comms will create (no application path yet): a queued outbound SMS and
-      // the send-time allow decision its TX1 attaches
+      // fixtures for rows api/comms would create: the recipient's contact point (the dispatch guard checks
+      // its opt-out status) and a queued outbound SMS (0013: no gate decision is needed to dispatch)
       await suFixture(
         h.su,
-        `INSERT INTO gate_decisions (tenant_id, id, contact_id, address_hmac, channel, purpose, initiator, action_category, phase, outcome,
-                                     explanation, policy_version_id, core_rules_version, inputs, inputs_sha256, message_id, evaluated_at)
-         VALUES ($1, $2, $3, decode(repeat('ab', 32), 'hex'), 'sms', 'informational', 'system', 'none', 'send', 'allow',
-                 'Allowed', (SELECT active_policy_id FROM tenant_settings WHERE tenant_id = $1), 'test', '{}', repeat('0', 64), $4, now())`,
-        [w.tenantId, gateId, contactId, messageId],
+        `INSERT INTO contact_points (tenant_id, id, contact_id, kind, address, address_hmac)
+         VALUES ($1, $2, $3, 'phone', '+15550000002', decode(repeat('ab', 32), 'hex'))`,
+        [w.tenantId, uuid(), contactId],
       );
       await suFixture(
         h.su,
@@ -139,7 +136,7 @@ describe('kill the worker', () => {
         [w.tenantId, messageId, uuid(), contactId, uuid()],
       );
       const log = join(mkdtempSync(join(tmpdir(), 'realty-crash-')), `provider-${randomBytes(3).toString('hex')}.log`);
-      await withTenantTx(w.system(), (tx) => enqueueJob(tx, { queue: 'realtime', kind: 'test.dispatch', payload: { messageId, gateDecisionId: gateId } }), { db: h.app });
+      await withTenantTx(w.system(), (tx) => enqueueJob(tx, { queue: 'realtime', kind: 'test.dispatch', payload: { messageId } }), { db: h.app });
 
       const { child, crashed } = runChild({ CRASH_DB_URL: h.db.appUserUrl, CRASH_MODE: 'dispatch', CRASH_AT: point, CRASH_LOG: log });
       expect(await crashed).toContain('CRASH_POINT');

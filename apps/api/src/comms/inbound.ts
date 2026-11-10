@@ -184,7 +184,13 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
     const targetPoints = await g.contactPoints(tx, target);
     const inbound: InboundAddress = { kind: isEmail ? 'email' : 'phone', hmac, hint: hint(from) };
     const others = (kind: 'phone' | 'email') => targetPoints.filter((p) => p.kind === kind && p.hmac !== hmac).map((p) => ({ kind, hmac: p.hmac, hint: hint(p.address) }) as InboundAddress);
-    const fx = planInboundEffects({ classification, channel, address: inbound, otherPhones: others('phone'), otherEmails: others('email'), occurredAt: now, contactId: target, messageId, policy, ids });
+    let otherPhones = others('phone');
+    if (classification.kind === 'start' && e.kind === 'sms') {
+      // outbound-4: START lifts another phone only when its keyword revoke came from this number's own STOP
+      const bySender = await g.keywordRevokedBy(tx, otherPhones.map((p) => p.hmac), from);
+      otherPhones = otherPhones.map((p) => ({ ...p, keywordRevokedBySender: bySender.has(p.hmac) }));
+    }
+    const fx = planInboundEffects({ classification, channel, address: inbound, otherPhones, otherEmails: others('email'), occurredAt: now, contactId: target, messageId, policy, ids });
     for (const ev of fx.consentEvents) await recordConsentEvent(tx, ev);
     if (classification.kind !== 'none' && messageId) {
       await sql`UPDATE messages SET opt_out_keyword = ${(classification.matched ?? classification.kind).slice(0, 40)} WHERE tenant_id = app.tenant_id() AND id = ${messageId}`.execute(tx);
@@ -208,10 +214,13 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
     if (fx.markWrongNumber) {
       await sql`UPDATE contact_points SET status = 'wrong_number' WHERE tenant_id = app.tenant_id() AND address_hmac = ${Buffer.from(hmac, 'hex')} AND removed_at IS NULL`.execute(tx);
     }
-    if (fx.reply !== 'none' && toNumber) {
+    // the keyword reply goes to the number that texted the keyword, never the contact's primary phone
+    // (R-CONSENT-7, outbound-1): no point for it, no reply
+    const keywordPoint = targetPoints.find((p) => p.kind === 'phone' && p.hmac === hmac);
+    if (fx.reply !== 'none' && toNumber && keywordPoint) {
       await queueOutboundInTx(tx, deps, {
         contactId: target, channel: 'sms', body: systemReplyText(fx.reply, tenant.brokerageLegalName), initiator: 'system', purpose: 'informational',
-        category: fx.reply, phoneNumberId: toNumber.id, idempotencyKey: `${fx.reply}:${messageId}`,
+        category: fx.reply, phoneNumberId: toNumber.id, toPointId: keywordPoint.id, idempotencyKey: `${fx.reply}:${messageId}`,
       }, now);
     }
     if (classification.kind === 'stop' || classification.kind === 'opt_out_language' || classification.kind === 'wrong_number') {

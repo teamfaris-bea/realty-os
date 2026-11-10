@@ -1,7 +1,7 @@
 // Playbook editor helpers (pure; unit-tested). A playbook is "approve rules, not every message"
 // (ARCHITECTURE §11, R-AST-4): a person approves an exact version (bound to its content hash), and the
-// assistant may then send those messages on its own, with consent and contact hours re-checked at
-// the moment each one goes out and a pause the moment the client replies.
+// assistant may then send those messages on its own, with opt-outs checked at the moment each one
+// goes out and a pause the moment the client replies.
 import type { Playbook, PlaybookStepView, PlaybookVersion } from '../admin/lib/types.js';
 
 export const KIND_LABEL: Record<string, string> = {
@@ -106,7 +106,7 @@ export function workingVersion(p: Playbook): PlaybookVersion | null {
 /** The exact sentence the approver confirms; it is stored verbatim with the approval. */
 export function approvalAttestation(p: Pick<Playbook, 'name'>, v: Pick<PlaybookVersion, 'versionNo' | 'steps'>): string {
   const n = v.steps.length;
-  return `I reviewed the ${n === 1 ? 'message' : `${n} messages`} in “${p.name}” version ${v.versionNo}. The assistant may send ${n === 1 ? 'it' : 'them'} on its own to contacts who allow it, signed as the assistant, and must stop when a client replies.`;
+  return `I reviewed the ${n === 1 ? 'message' : `${n} messages`} in “${p.name}” version ${v.versionNo}. The assistant may send ${n === 1 ? 'it' : 'them'} on its own to contacts who have not opted out, signed as the assistant, and must stop when a client replies.`;
 }
 
 export function revokeAttestation(p: Pick<Playbook, 'name'>, v: Pick<PlaybookVersion, 'versionNo'>): string {

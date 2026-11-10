@@ -169,6 +169,12 @@ export interface InboundAddress {
   kind: AddressKind;
   hmac: string;
   hint: string;
+  /**
+   * START only, the contact's OTHER phones: every SMS keyword revoke in force on this phone came from
+   * the sender's own STOP (so the sender's START may lift it). Absent/false: the phone's own STOP (or
+   * another number's) keeps it revoked until that number texts START (outbound-4).
+   */
+  keywordRevokedBySender?: boolean;
 }
 
 export interface InboundEffects {
@@ -191,8 +197,8 @@ export interface InboundEffects {
  *   cancel their queued SMS; notify the owner; exactly one confirmation if the platform (not the
  *   provider, the default) sends it.
  * - STOP on email: revoke email for that address.
- * - START (SMS): resubscribe the address and the contact's other phones, the same set STOP revoked
- *   (the fold restores only keyword revokes).
+ * - START (SMS): resubscribe the address, and the contact's other phones whose keyword revoke came from
+ *   this address's own STOP (the fold restores only keyword revokes).
  * - HELP (SMS): one HELP reply if the platform sends it.
  * - Wrong number: revoke every channel of the address, mark the point, stop enrollments.
  * - Opt-out language: revoke the inbound channel plus any channel the phrase names ("do not call"
@@ -266,12 +272,18 @@ export function planInboundEffects(i: {
       }
       break;
     case 'start':
-      // START restores the pre-STOP state (R-CONSENT-10). A STOP revoked this address AND the
-      // contact's other phones (R-CONSENT-7), and the gate treats an SMS revoke on any of the
-      // contact's phones as blocking, so START resubscribes the same set; otherwise it could never
-      // re-enable texting for a contact with a second phone. The fold undoes keyword revokes only,
-      // so an opt-out-language, wrong-number or provider revoke on another phone stays in force.
-      if (i.channel === 'sms') for (const a of allOfKind('phone')) fx.consentEvents.push(event(a, 'sms', 'resubscribe', 'inbound_keyword', false));
+      // START restores the pre-STOP state (R-CONSENT-10) of the number that sent it. A STOP revoked
+      // this address AND the contact's other phones (R-CONSENT-7), so START also lifts the other
+      // phones whose keyword revoke came from this number's own STOP; otherwise a two-phone contact
+      // could never be texted again. A phone that texted STOP itself (or was revoked by a third
+      // number's STOP) stays revoked until that number texts START (outbound-4: carriers, too, take
+      // START only from the number that sent STOP). The fold undoes keyword revokes only, so an
+      // opt-out-language, wrong-number or provider revoke stays in force either way.
+      if (i.channel === 'sms') {
+        for (const a of allOfKind('phone')) {
+          if (a.hmac === i.address.hmac || a.keywordRevokedBySender === true) fx.consentEvents.push(event(a, 'sms', 'resubscribe', 'inbound_keyword', false));
+        }
+      }
       break;
     case 'help':
       if (i.channel === 'sms' && platform) fx.reply = 'help_reply';

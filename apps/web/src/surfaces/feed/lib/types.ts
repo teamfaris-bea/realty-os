@@ -164,14 +164,16 @@ export interface OwnershipResultResponse {
 
 // ---- comms (messages, calls) -------------------------------------------------------------------
 
+/**
+ * A send-time (or preview) gate decision (core-compliance/2.0.0): allow or deny, nothing in between.
+ * `id` names the stored blocked-send row (gate_decisions); allowed sends and previews are not stored.
+ */
 export interface DecisionView {
   id: string | null;
-  outcome: 'allow' | 'deny' | 'defer' | 'needs_confirmation';
+  outcome: 'allow' | 'deny';
   reasons: string[];
   explanation: string;
-  deferUntil: string | null;
-  canConfirm: boolean;
-  phase: string;
+  phase: 'preview' | 'send';
 }
 
 export interface MessageView {

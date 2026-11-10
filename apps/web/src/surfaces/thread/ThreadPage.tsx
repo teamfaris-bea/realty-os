@@ -137,7 +137,7 @@ const CALL_OUTCOME_LABEL: Record<string, string> = {
 export function outboundStatusLabel(status: string | null | undefined): { text: string; failed: boolean } | null {
   switch (status) {
     case 'blocked':
-      return { text: 'Not sent: stopped by the send-time check', failed: true };
+      return { text: 'Not sent: blocked by an opt-out or a sending rule', failed: true };
     case 'failed':
     case 'undelivered':
       return { text: 'Not delivered', failed: true };

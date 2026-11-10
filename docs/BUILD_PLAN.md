@@ -2,6 +2,8 @@
 
 Phase 1 is built as 17 modules in dependency order. Each module lists its path, its public interface (TypeScript signatures), the rules it implements (ids from `docs/DATA_MODEL.md` §4), the tests it needs, and its acceptance criteria. The schema already exists: `packages/db/migrations/0001_init.sql` applies cleanly, and `packages/db/test/rls_smoke.sql` passes. Modules build on it and never weaken it. A module that needs a schema change ships a new numbered migration; `0001_init.sql` is never edited after it ships.
 
+**Owner decision D1 (2026-11; ARCHITECTURE §9 and §20).** Every lead is treated as consented through its third-party source, and the send-time consent/compliance check was removed except for a narrow opt-out block (STOP and other keywords, unsubscribe, agent-recorded do-not-contact, active suppressions; no override). It shipped as migration `0013_simplify_send_gate.sql` and `RULES_VERSION = 'core-compliance/2.0.0'`. The module sections below are updated where the interface or the tests changed; rules R-CONSENT-13/14/15 and edge cases E29/E30/E36 are **Retired** in DATA_MODEL and need no test.
+
 Ground rules for every module:
 - **`packages/core` is pure.** No I/O, no `Date.now()`, no `Math.random()`. Clock and id generator are injected. It has 100 % branch coverage on decision functions.
 - **Tests that touch Postgres run against a real PG16** (`realty_test`, migrated fresh per CI run) as `app_user`. Mocks are never used for RLS.
@@ -55,7 +57,7 @@ export type Action = 'contact.view'|'contact.view_detail'|'lead.accept'|'lead.cl
   |'exception.verify'|'deal.edit'|'deal.financials'|'settings.compliance'|'settings.identity'|'member.role' /* … */;
 export function can(actor: Actor, action: Action, resource: ResourceFacts): { ok: true } | { ok: false; code: DenyCode; reauth?: true };
 ```
-- **Rules:** R-PERM-1, R-PERM-13, R-PERM-15, R-CONSENT-13 (time basis), R-OWN-15 (business time), R-TEN-3 (Actor shape).
+- **Rules:** R-PERM-1, R-PERM-13, R-PERM-15, R-OWN-15 (business time), R-TEN-3 (Actor shape). (The recipient-zone helpers built for R-CONSENT-13 remain in foundation; that rule is retired by D1.)
 - **Tests:**
   - DST vectors for America/New_York, Chicago, Denver, Phoenix, Los_Angeles and Pacific/Honolulu, on the 2026 and 2027 transitions. Cover spring-forward boundaries inside the skipped hour, and fall-back ambiguity resolved to the later instant for windows and the earlier offset for elapsed time.
   - Property tests: `addBusinessDuration` is monotonic and additive.
@@ -74,22 +76,21 @@ export type Channel = 'sms'|'voice'|'email'; export type Purpose = 'marketing'|'
 export type Initiator = 'human'|'assistant'|'system';
 export type ActionCategory = 'none'|'speed_to_lead_reply'|'reminder'|'booking_confirmation'|'document_chase'|'nurture_step'
   |'search_alert'|'opt_out_confirmation'|'help_reply'|'agent_alert'|'money'|'contract'|'novel_message'|'seller_update';
-export interface ResolvedPolicy { version: { policyId: string; packs: Record<string,string> }; window: {start: LocalTime; end: LocalTime};
-  humanReplyWindowMin: number; caps: Caps; autonomous: ReadonlySet<ActionCategory>; recordingMode: 'announce_all'|'one_party_where_permitted';
-  keywords: Keywords; inquiryBasisDays: number; dncValidityDays: number; emailQuietHours: boolean }
+export interface ResolvedPolicy { version: { policyId: string; packs: Record<string,string> };
+  autonomous: ReadonlySet<ActionCategory>; recordingMode: 'announce_all'|'one_party_where_permitted';
+  keywords: Keywords; inquiryBasisDays: number }   // D1: no window, caps, human reply window, DNC validity or email quiet hours
 export function resolvePolicy(floor: PlatformFloor, packs: JurisdictionPack[], tenant: TenantPolicyVersion): ResolvedPolicy; // only tightens
 export interface GateInput { now: Instant; recipient: { kind:'contact'|'user'; addressHmac: string; channel: Channel };
   purpose: Purpose; initiator: Initiator; category: ActionCategory; consent: ConsentStateRow[]; suppressions: SuppressionRow[];
-  dnc: DncCheckRow[]; contactPoint: { status: PointStatus; lineType: LineType } | null; automationPausedAt: Instant | null;
+  contactPoint: { status: PointStatus; lineType: LineType } | null; automationPausedAt: Instant | null;
   sender: { kind:'phone'|'email'; registration:'ready'|'pending'|'blocked'; domainVerified?: boolean } | null;
-  recentAutomated: { channel: Channel; at: Instant; exempt: boolean }[]; recentManualSms24h: number; callAttempts24h: number;
-  lastInboundAt: Instant | null; zones: { zones: IanaZone[]; source: TzSource };
   tenant: { suspended: boolean; brokerageNamePresent: boolean; postalAddressPresent: boolean };
   rendered?: { containsBrokerageName: boolean; containsOptOutHint: boolean; paymentInstructions: boolean };
   policy: ResolvedPolicy }
-export interface GateDecision { outcome: 'allow'|'deny'|'defer'|'needs_confirmation'; reasons: ReasonCode[]; deferUntil?: Instant;
+export interface GateDecision { outcome: 'allow'|'deny'; reasons: ReasonCode[];   // D1: no defer, no needs_confirmation
   explanation: string; rulesVersion: string; inputsDigest: string }
 export function canContact(input: GateInput): GateDecision;
+export function optedOut(rows: readonly ConsentStateRow[], channel: Channel, purpose: Purpose, addressHmac: string): boolean;
 export function projectConsent(events: readonly ConsentEvent[], now: Instant): Map<ConsentKey, ConsentStateRow>;
 export function classifyInbound(body: string, k: Keywords): { kind: 'stop'|'start'|'help'|'wrong_number'|'opt_out_language'|'none';
   matched?: string; needsReview: boolean };
@@ -99,16 +100,15 @@ export function chooseSender(i: { stickyNumber?: NumberFacts; ownerDirect?: Numb
 export function classifyHumanPurpose(i: { lastInboundAt: Instant | null; dealOrAppointmentContext: boolean; now: Instant }): Purpose;
 export function detectPaymentInstructions(text: string): boolean;
 ```
-- **Rules:** R-CONSENT-1…20, R-GATE-5, R-GATE-6, R-GATE-7, R-GATE-11 (decision content), R-GATE-12.
+- **Rules:** R-CONSENT-1…12 and 16…20 (13, 14, 15 retired by D1), R-GATE-5, R-GATE-6, R-GATE-7, R-GATE-11 (decision content), R-GATE-12.
 - **Tests:**
-  - A table-driven test for every row of ARCHITECTURE §9 and every cell of R-CONSENT-5.
+  - A table-driven test for every row of ARCHITECTURE §9 (checks 0–8).
+  - No override: an opt-out or suppression denies every initiator, consent level and channel; an SMS STOP on another of the contact's phones blocks texting; email unsubscribe; agent do-not-call of either purpose; the STOP/HELP exemption cannot be abused by other initiators or channels.
   - Property tests:
     - Determinism: the same input gives the same `inputsDigest`.
-    - Monotonic denial: adding a revoke, suppression or DNC listing never relaxes the outcome.
-    - Caps defer and never deny.
+    - Monotonic denial: adding a revoke or a suppression never relaxes the outcome.
     - `resolvePolicy` never widens beyond the floor or packs.
   - `classifyInbound` fixtures for E24/E25 (`"Stop by at 5?"`, `"STOP STOP"`, `"stop 🙏"`, negations).
-  - DST quiet-hour boundaries.
   - `projectConsent`: START restores only keyword revokes, expired inquiry ⇒ none, `import_revert` voids grants and never revocations.
 - **Accept when:**
   - Every reason code has at least one test.
@@ -380,6 +380,7 @@ export function runMaintenance(): Promise<void>;                           // re
 //            PATCH /settings/identity (brokerage legal name, team name, license no., postal address; Owner, 🔒)
 // Policy:    GET /compliance-policies, POST /compliance-policies (new append-only version; looser ⇒ Owner + 🔒 + attestation),
 //            POST /compliance-policies/:id/activate
+//            (D1: a version holds only autonomousCategories, optOutConfirmationSender, recordingEnabled, recordingMode)
 export function proposePolicyVersion(actor: UserActor, draft: PolicyDraft): Promise<{ id: PolicyVersionId; loosening: boolean }>;
 ```
 - **Rules:** R-PERM-1, R-PERM-2, R-PERM-3, R-PERM-13, R-PERM-14, R-AUDIT-5 (membership, settings, policy, routing/pond changes), R-GATE-12 (brokerage identity), R-OWN-10 (rule shape), R-OWN-15 (timer settings apply only to new deadlines).
@@ -421,8 +422,10 @@ export const timerHandlers: JobHandler<TimerPayload>[];    // offer_expiry, firs
 **Path:** `apps/api/src/comms/{dispatch.ts, dial.ts, inbound.ts, consent.ts, numbers.ts, email.ts, recordings.ts, routes.ts}`
 
 ```ts
-// POST /contacts/:id/messages  { channel, body, scheduleAt?, idempotencyKey, confirmDecisionId? }  → GateDecision | Message
-// POST /contacts/:id/calls     → { callId, bridgeToken } (dial-time gate)      POST /calls/:id/outcome
+// POST /contacts/:id/messages  { channel, body, subject?, scheduleAt?, idempotencyKey, toPointId? }  → { message, decision, result }
+// POST /contacts/:id/messages/preview  { channel, body, subject?, toPointId? } → { decision } (never stored)
+// POST /messages/:id/send  {}  (re-tap of the caller's own human message; D1 removed confirmDecisionId)
+// POST /contacts/:id/calls  { toPointId? } → { result: dialing|gate|failed, callId, bridgeToken, decision } (dial-time check)   POST /calls/:id/outcome
 // POST /contacts/:id/consent   { kind:'record'|'revoke', channel, purpose, level?, evidence }   (agent entry ≤ express)
 // POST /suppressions/:id/lift  (Owner/Admin, reauth)    GET /recordings/:id/stream (scope + audit)   admin: numbers, registrations, domains
 export function dispatchOutbound(messageId: MessageId): Promise<DispatchResult>;    // TX1 gate → provider.send → TX2 (only provider-send importer)
@@ -431,14 +434,14 @@ export function ingestInbound(actor: SystemActor, e: InboundEvent): Promise<Inge
 export function onRecordingReady(e: RecordingReady): Promise<void>;                 // copy → encrypt → provider delete → transcription job
 export function buildGateInput(tx: Kysely<DB>, m: OutboundIntent, now: Instant): Promise<GateInput>;
 ```
-- **Rules:** R-GATE-1…12, R-CONSENT-1…20 (persistence side), R-AST-9 (pause/handback), R-PERM-8, R-PERM-9, R-TEN-8, R-DATA-1.
+- **Rules:** R-GATE-1…12, R-CONSENT-1…12 and 16…20 (persistence side), R-AST-9 (pause/handback), R-PERM-8, R-PERM-9, R-TEN-8, R-DATA-1.
 - **Tests:**
-  - **Every outbound path in ARCHITECTURE §9 has a test asserting that the decision row exists and that a denial blocks the provider fake.**
+  - **Every outbound path in ARCHITECTURE §9 has a test asserting that the gate runs at send time: a denial writes the blocked-send `gate_decisions` row and never reaches the provider fake; an allowed send writes no decision row.**
+  - The DB dispatch guards (0013) refuse a forged insert or `queued → dispatching` update to an opted-out, other-phone, shared or suppressed address for every role (`packages/db/test/dispatch_guard.test.ts`).
   - STOP in the inbound transaction cancels queued SMS and pauses enrollments (E21–E23).
   - Shared-address pause.
   - The `dispatch_unknown` path (E7).
   - Out-of-order status callbacks.
-  - Quiet-hours deferral with jitter (E29, E30).
   - Recording announcement failure means no recording (E47).
   - Playback is audited.
   - The 10DLC suspended path (E46).
@@ -447,7 +450,7 @@ export function buildGateInput(tx: Kysely<DB>, m: OutboundIntent, now: Instant):
 - **Accept when:**
   - A lint/architecture test proves that `dispatch.ts`/`dial.ts` are the only provider-send importers.
   - A human send's TX1 records the touch in the same transaction (E66).
-  - Every block shows a human sentence ("Opted out of texts · Outside 9–8 her time").
+  - Every block shows a human sentence ("Opted out of texts").
 
 ## 13. `api/assistant`
 **Path:** `apps/api/src/assistant/{runs.ts, drafts.ts, callPipeline.ts, playbooks.ts, enrollments.ts, firstResponse.ts, searches.ts, handbacks.ts, routes.ts}`
@@ -464,13 +467,13 @@ export function sendFirstResponse(actor: SystemActor, contactId: ContactId): Pro
 export function enrichHandback(actor: SystemActor, actionId: AssistantActionId): Promise<void>;
 export function matchSavedSearches(actor: SystemActor, listingId: ListingId): Promise<void>;                  // on listing insert / price change
 ```
-- **Rules:** R-AST-1…18, R-GATE-3, R-GATE-4, R-CONSENT-5, R-ACC-2 (promise tasks with evidence), A4 (saved searches, seller-update data only, post-closing template enrolled at deal close).
+- **Rules:** R-AST-1…18, R-GATE-3, R-GATE-4, R-CONSENT-5 (purpose classification), R-ACC-2 (promise tasks with evidence), A4 (saved searches, seller-update data only, post-closing template enrolled at deal close).
 - **Tests:**
   - Evidence and needs-review flow end to end with the fake AI (E33, E34).
   - Autonomous send blocked when the approval was revoked between schedule and send time (DB guard).
   - Client reply mid-flight (E22, E26).
   - Playbook edit/approve/migrate (E31, E32).
-  - The 60-second first response: SMS vs email by basis, quiet-hours deferral, p95 < 60 s with the fake provider, never counted as a touch.
+  - The 60-second first response: SMS unless the number opted out or is suppressed, else email; sent at once at any hour (D1); p95 < 60 s with the fake provider, never counted as a touch.
   - Saved search: approval needed; needs-review criteria unchecked; alerts gated.
   - The money category always routes to a draft (E35).
   - `ai_enabled=false` makes no provider calls.
@@ -542,7 +545,7 @@ export const importHandlers: JobHandler<StagePayload>[];      // snapshot, dry_r
   - A resume after a crash mid-commit.
   - Revert with touched rows.
   - FUB key purge.
-  - Imported history never triggers pauses, exceptions, SLAs or caps.
+  - Imported history never triggers pauses, exceptions or SLAs.
 - **Accept when:** a 50k-contact FUB fixture runs dry-run → commit → verify for all six stages, with exact count reconciliation and a per-record review list; the report copy never claims more than the counts show.
 
 ## 17. `web`
@@ -553,7 +556,8 @@ export const importHandlers: JobHandler<StagePayload>[];      // snapshot, dry_r
 //        TanStack Query client (optimistic updates keyed by commandId; retries reuse commandId), Web Push registration,
 //        offline-tolerant read cache, error-code → human sentence map (never shows raw codes), a11y (WCAG 2.2 AA).
 export function useCommand<C>(path: string): { run(body: C): Promise<Result>; pending: boolean };   // commandId generated once per tap
-export function GateBadge(props: { decision: GateDecisionView }): JSX.Element;       // "Opted out of texts · Outside 9–8 her time"
+export function GateBadge(props: { decision: GateDecisionView; lead?: string }): JSX.Element;  // blocked or nothing: "Won't send: Opted out of texts"
+export function useSendCheck(i: { contactId: string; channel: 'sms'|'email'; body?: string }): { decision: DecisionView | null };  // preview, never stored
 export function EvidenceLink(props: { ref: EvidenceRefView }): JSX.Element;          // "at 2:14 in the call" → opens player at offset
 ```
 **Surfaces:**
@@ -567,8 +571,9 @@ export function EvidenceLink(props: { ref: EvidenceRefView }): JSX.Element;     
   - Search
 - **Desktop first, still usable on a phone:**
   - Team Lead exception queue + scoreboard + momentum
-  - Admin (module 10 + module 12 endpoints): members and invites, routing, ponds, teams, lead timers, numbers, domains, compliance policy with honest "not reviewed by counsel" banners, brokerage identity
-  - Imports with staged review lists
+  - Admin (module 10 + module 12 endpoints): members and invites, routing, ponds, teams, lead timers, numbers, domains, compliance policy with honest "not reviewed by counsel" banners (since D1: what every send is checked for, what is not checked, autonomy categories, opt-out confirmation sender, recording; no contact-hours, quiet-hours or cap settings), brokerage identity
+  - Opt-out state wherever a send or call button appears (contact page, compose, approval cards: "Won't text: Opted out of texts"); a blocked send says "Not sent" and why; no consent prompts or pickers, no "send anyway"/"call anyway", no defer or quiet-hours badges (D1)
+  - Imports with staged review lists (the consent stage is "Opt-outs and consent history": opt-outs carry over and block; opt-ins are history)
   - Playbook editor with approval attestation
 - **Rules:** A1 (benchmarks in ARCHITECTURE §1), R-PERM-6 (masked cards), R-AST-13 (no confidence anywhere), R-ACC-4 (denominators), genuineness (no fake activity indicators, no dark patterns).
 - **Tests:**
@@ -586,8 +591,8 @@ export function EvidenceLink(props: { ref: EvidenceRefView }): JSX.Element;     
 
 ## Phase 1 exit criteria
 1. `0001_init.sql` (plus any later migrations) applies on a clean PG16; the generated isolation test and the ported smoke suite are green.
-2. Every `R-*` rule in DATA_MODEL §4 is linked to at least one passing test (a CI script maps rule ids in test names to the DATA_MODEL list and fails on gaps).
-3. All 70 edge cases in DATA_MODEL §5 have an automated test.
+2. Every `R-*` rule in DATA_MODEL §4 that is not **Retired** is linked to at least one passing test (a CI script maps rule ids in test names to the DATA_MODEL list, lists retired ids separately, and fails on gaps).
+3. Every edge case in DATA_MODEL §5 that is not **Retired** (70 listed; E29, E30 and E36 retired by D1) has an automated test.
 4. Load: 250k contacts and 50 agents per tenant across 3 tenants. Feed p95 < 150 ms, search p95 < 300 ms, realtime job pickup p95 < 2 s, 60-second first response p95 < 60 s.
 5. Security review: definer catalog, RLS policies, auth (ASVS L2), envelope crypto, log redaction, provider subaccount isolation.
-6. Counsel review recorded for every VERIFY WITH COUNSEL default in ARCHITECTURE §19. Packs show `reviewed_by_counsel_at`, or the UI says plainly that they have not been reviewed.
+6. Counsel review recorded for every VERIFY WITH COUNSEL default in ARCHITECTURE §19, including D1 (relying on third-party consent with no quiet hours or frequency caps). Packs show `reviewed_by_counsel_at`, or the UI says plainly that they have not been reviewed.

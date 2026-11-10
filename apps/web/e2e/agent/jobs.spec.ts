@@ -19,6 +19,7 @@ let agent: { email: string; password: string };
 let jane: { id: string; name: string };
 let marco: { id: string; name: string };
 let lena: { id: string; name: string };
+let omar: { id: string; name: string };
 
 test.beforeAll(async () => {
   test.setTimeout(300_000);
@@ -32,6 +33,8 @@ test.beforeAll(async () => {
   await stack.fixture('/appointment', { contactId: marco.id });
   await stack.fixture('/deal', { contactId: jane.id });
   await stack.fixture('/listing');
+  // a contact who texted STOP through the real inbound webhook: the one block nobody can override
+  omar = await stack.fixture('/contact', { firstName: 'Omar', lastName: 'Reyes', inbound: 'Thanks for the info', optOut: true });
 });
 test.afterAll(async () => {
   await stack?.stop();
@@ -87,15 +90,17 @@ test('an agent’s day: every benchmark job within its tap target', async ({ pag
   await expect(page.getByText('Priya Shah is yours now.')).toBeVisible();
   expect(accept.taps).toBe(1);
 
-  // a call the gate refuses shows the server's sentence and no way past it (the intake lead has no
-  // basis for a call while its DNC status is unknown: R-CONSENT-15, enforced server-side)
+  // a new portal lead can be called straight away: no consent entry, no registry scrub, no contact
+  // window (owner decision: leads consent through their source; only opt-outs block). There is no
+  // "call anyway" anywhere.
   const priyaNow = feedCard(page, 'Priya Shah');
   await expect(priyaNow.getByRole('button', { name: 'Call' })).toBeVisible({ timeout: 15_000 });
   await priyaNow.getByRole('button', { name: 'Call' }).click();
-  const refused = page.getByRole('dialog', { name: 'Call Priya Shah' });
-  await expect(refused.locator('[data-gate-outcome]')).toBeVisible();
-  if ((await refused.locator('[data-gate-outcome]').getAttribute('data-gate-outcome')) === 'deny') await expect(refused.getByRole('button', { name: 'Call anyway' })).toHaveCount(0);
-  await refused.getByRole('button', { name: 'Close' }).click();
+  const priyaCall = page.getByRole('dialog', { name: 'Call Priya Shah' });
+  await expect(priyaCall.getByText("Your phone will ring first. Answer it and you're connected to Priya.")).toBeVisible({ timeout: 15_000 });
+  await expect(priyaCall.getByRole('button', { name: 'Call anyway' })).toHaveCount(0);
+  await priyaCall.getByRole('button', { name: 'No answer' }).click();
+  await expect(page.getByText(/Call outcome saved\.|saved as a task for the new owner/)).toBeVisible();
 
   // text a lead: Text → the assistant's draft is prefilled → Send = 2 taps
   const text = { taps: 0 };
@@ -140,6 +145,17 @@ test('an agent’s day: every benchmark job within its tap target', async ({ pag
   await tap(page, sheet.getByRole('button', { name: 'No answer' }), outcome);
   await expect(page.getByText(/Call outcome saved\.|saved as a task for the new owner/)).toBeVisible();
   expect(outcome.taps).toBe(1);
+
+  // an opt-out is said plainly where the buttons are, before any tap, and the send is still refused
+  await page.goto(`${stack.webUrl}/contacts/${omar.id}`);
+  await expect(page.getByText("Won't text:")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText('Opted out of texts').first()).toBeVisible();
+  await page.goto(`${stack.webUrl}/contacts/${omar.id}/thread?compose=sms`);
+  await expect(page.getByText("Won't send:")).toBeVisible({ timeout: 15_000 });
+  await page.getByRole('textbox', { name: 'Text message' }).fill('Still interested?');
+  await page.getByRole('button', { name: 'Send' }).click();
+  await expect(page.getByText('Not sent:').first()).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: /anyway/ })).toHaveCount(0);
 
   // find a contact: Search (1 tap) then type-ahead
   if (isPhone(page)) await page.getByRole('navigation', { name: 'Main tabs' }).getByRole('link', { name: 'Search' }).tap();

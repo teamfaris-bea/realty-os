@@ -64,12 +64,11 @@ export interface TouchFacts {
 /** Why a channel cannot be used right now for a contact (from the gate's last decision / points). */
 export interface ChannelBlock {
   /**
-   * deny / defer: the gate would not let a person send now. `unavailable`: the contact has no
-   * usable number or address for the channel. `needs_confirmation`: allowed after a confirm tap
-   * (the action carries the explanation as a note; the item is not demoted).
+   * deny: the gate would not let anyone send now (opted out, suppressed, …). `unavailable`: the
+   * contact has no usable number or address for the channel.
    */
-  outcome: 'deny' | 'defer' | 'needs_confirmation' | 'unavailable';
-  /** The gate's human explanation ("Opted out of texts · Outside 9 AM–8 PM their time"). */
+  outcome: 'deny' | 'unavailable';
+  /** The gate's human explanation ("Opted out of texts"). */
   explanation: string;
 }
 
@@ -336,7 +335,7 @@ export interface FeedReason {
 
 /**
  * The one-tap actions a card offers (A1 tap targets). Every send is gate-checked again at send time;
- * `note` carries a gate explanation the agent should see before tapping (e.g. confirm required).
+ * `note` is an optional hint shown next to the action (the gate no longer asks for confirmations).
  */
 export type OneTapAction =
   | { kind: 'accept_offer'; label: string; contactId: ContactId; offerId: string }

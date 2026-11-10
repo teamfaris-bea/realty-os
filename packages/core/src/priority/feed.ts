@@ -93,20 +93,17 @@ export function answersClient(t: TouchFacts, since: Instant): boolean {
 const BLOCK_CODE: Record<Channel, FeedReasonCode> = { sms: 'TEXT_BLOCKED', voice: 'CALL_BLOCKED', email: 'EMAIL_BLOCKED' };
 
 function isBlocked(g: GateSummary | undefined, ch: Channel): boolean {
-  const b = g?.[ch];
-  return b !== undefined && b.outcome !== 'needs_confirmation';
+  return g?.[ch] !== undefined;
 }
 
-function channelAction(ch: Channel, contactId: ContactId, g: GateSummary | undefined, draft?: { channel: 'sms' | 'email'; actionId: AssistantActionId }): OneTapAction {
-  const note = g?.[ch]?.outcome === 'needs_confirmation' ? g[ch]?.explanation : undefined;
-  const withNote = <T extends OneTapAction>(a: T): T => (note === undefined ? a : { ...a, note });
+function channelAction(ch: Channel, contactId: ContactId, draft?: { channel: 'sms' | 'email'; actionId: AssistantActionId }): OneTapAction {
   switch (ch) {
     case 'voice':
-      return withNote({ kind: 'call', label: 'Call', contactId });
+      return { kind: 'call', label: 'Call', contactId };
     case 'sms':
-      return withNote(draft?.channel === 'sms' ? { kind: 'text', label: 'Text', contactId, draftActionId: draft.actionId } : { kind: 'text', label: 'Text', contactId });
+      return draft?.channel === 'sms' ? { kind: 'text', label: 'Text', contactId, draftActionId: draft.actionId } : { kind: 'text', label: 'Text', contactId };
     case 'email':
-      return withNote(draft?.channel === 'email' ? { kind: 'email', label: 'Email', contactId, draftActionId: draft.actionId } : { kind: 'email', label: 'Email', contactId });
+      return draft?.channel === 'email' ? { kind: 'email', label: 'Email', contactId, draftActionId: draft.actionId } : { kind: 'email', label: 'Email', contactId };
   }
 }
 
@@ -124,7 +121,7 @@ interface ContactPlan {
  * contact as its action and the gate's explanations as the reason.
  */
 function planContact(contactId: ContactId, prefs: readonly Channel[], g: GateSummary | undefined, draft?: { channel: 'sms' | 'email'; actionId: AssistantActionId }): ContactPlan {
-  const usable = prefs.filter((ch) => !isBlocked(g, ch)).map((ch) => channelAction(ch, contactId, g, draft));
+  const usable = prefs.filter((ch) => !isBlocked(g, ch)).map((ch) => channelAction(ch, contactId, draft));
   const open: OneTapAction = { kind: 'open_contact', label: 'Open', contactId };
   const first = prefs[0] as Channel;
   const demotion: FeedReason[] = [];
@@ -376,8 +373,7 @@ export function scoreFeed(i: FeedInputs): FeedItem[] {
     const draftId = h.replyDraftActionId ?? null;
     if (draftId !== null) handbackDrafts.add(draftId);
     if (draftId !== null && replyCh !== null && !isBlocked(g, replyCh)) {
-      const note = g?.[replyCh]?.outcome === 'needs_confirmation' ? g[replyCh]?.explanation : undefined;
-      primaryAction = note === undefined ? { kind: 'send_draft', label: 'Send', actionId: draftId } : { kind: 'send_draft', label: 'Send', actionId: draftId, note };
+      primaryAction = { kind: 'send_draft', label: 'Send', actionId: draftId };
       const plan = planContact(h.contactId, prefs, g);
       alternatives = [{ kind: 'edit_draft', label: 'Edit', actionId: draftId }, ...plan.usable.filter((a) => a.kind === 'call'), review, plan.open];
     } else {
@@ -468,8 +464,7 @@ export function scoreFeed(i: FeedInputs): FeedItem[] {
     let primaryAction: OneTapAction;
     let alternatives: OneTapAction[];
     if (!isBlocked(g, d.channel)) {
-      const note = g?.[d.channel]?.outcome === 'needs_confirmation' ? g[d.channel]?.explanation : undefined;
-      const send: OneTapAction = note === undefined ? { kind: 'send_draft', label: 'Send', actionId: d.actionId } : { kind: 'send_draft', label: 'Send', actionId: d.actionId, note };
+      const send: OneTapAction = { kind: 'send_draft', label: 'Send', actionId: d.actionId };
       // A draft with a detail to check opens for review first: needs-review claims are never sent unchecked (R-AST-5).
       primaryAction = d.needsReview ? edit : send;
       alternatives = d.needsReview ? [{ kind: 'open_contact', label: 'Open', contactId: d.contactId }] : [edit, { kind: 'open_contact', label: 'Open', contactId: d.contactId }];

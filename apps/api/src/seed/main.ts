@@ -15,8 +15,6 @@
 //   - a recorded, transcribed call (provider webhooks + transcription write these in production);
 //   - one contact's California address (no address-edit route in Phase 1; CSV/FUB import writes them);
 //   - resetting the TOTP replay guard between the Owner's codes in one 30-second window.
-// The national-DNC listing is written through the Owner's RLS context as a `manual_upload` scrub row
-// (the data model's admin-upload path; Phase 1 has no upload route or UI for it).
 //
 // --reset drops and recreates realty_dev and re-applies the migrations first (stop dev servers first).
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -247,7 +245,7 @@ async function seed(su: pg.Pool): Promise<void> {
   const lena = await contact(agent1, 'Lena', 'Park', { intent: 'buyer' });
   const marco = await contact(agent1, 'Marco', 'Silva', { intent: 'seller' });
   const owen = await contact(agent1, 'Owen', 'Price', { intent: 'buyer' }); // will opt out (STOP)
-  const dana = await contact(agent1, 'Dana', 'Whitfield', { intent: 'seller' }); // national DNC listed
+  await contact(agent1, 'Dana', 'Whitfield', { intent: 'seller' });
   const grace = await contact(agent1, 'Grace', 'Kim', { intent: 'buyer' }); // California address (all-party recording state)
   const sophia = await contact(agent1, 'Sophia', 'Nguyen', { intent: 'buyer' }); // call → promise + saved search
   const liam = await contact(agent1, 'Liam', 'Foster', { intent: 'buyer' }); // a text the carrier rejects
@@ -293,21 +291,13 @@ async function seed(su: pg.Pool): Promise<void> {
   await agent2.must('POST', `/contacts/${b1.id}/drafts`, { commandId: randomUUID() });
   log('assistant drafts for Jane, Lena (Avery) and Ryan (Blake) waiting for approval');
 
-  // ---- 8. DNC listing (Dana) and a California address (Grace) ---------------------------------------
-  await withTenantTx(
-    { kind: 'user', userId: owner.userId as never, tenantId: tenantId as never, role: 'owner', sessionId: 'seed' },
-    async (tx) => {
-      const h = await deps.envelope.inTx(tx, tenantId as TenantId).hmacAddress(tenantId as TenantId, dana.phone);
-      await sql`INSERT INTO dnc_checks (tenant_id, id, phone_hmac, registry, listed, checked_at, valid_until, provider, uploaded_by_user_id)
-                VALUES (app.tenant_id(), ${ids.next()}::uuid, ${Buffer.from(h)}, 'us_national', true, now(), now() + interval '31 days', 'manual_upload', app.user_id())`.execute(tx);
-    },
-    { db },
-  );
+  // ---- 8. a California address (Grace) ---------------------------------------------------------------
+  // (core-compliance/2.0.0 removed the national DNC registry check, so no DNC scrub is seeded any more.)
   // fixture (no address-edit route in Phase 1): Grace lives in Los Angeles, CA (an all-party
   // recording-consent state, VERIFY WITH COUNSEL; with no counsel-reviewed CA pack the call gate announces)
   await su.query(`INSERT INTO contact_addresses (tenant_id, id, contact_id, kind, line1, city, region, postal_code, country, jurisdiction) VALUES ($1,$2,$3,'home','2140 Rose Ave','Los Angeles','CA','90039','US','US-CA')`, [tenantId, randomUUID(), grace.id]);
   await su.query(`UPDATE contacts SET timezone = 'America/Los_Angeles', timezone_source = 'address' WHERE id = $1`, [grace.id]);
-  log('Dana is on the national DNC list; Grace has a California address');
+  log('Grace has a California address');
 
   // ---- 9. leads arrive through the signed intake webhook and are offered round robin ----------------
   const leads = [
@@ -506,7 +496,7 @@ async function seed(su: pg.Pool): Promise<void> {
         password: DEMO_PASSWORD,
         ownerTotpSecret: totpSecret,
         users: Object.fromEntries(Object.entries(PEOPLE).map(([k, p]) => [k, { email: p.email, name: p.name, role: k === 'owner' ? 'owner' : roles[k as Exclude<PersonKey, 'owner'>] }])),
-        contacts: { optedOut: owen.name, dnc: dana.name, californiaAddress: grace.name, drafts: [jane.name, lena.name], failedSend: liam.name, savedSearch: sophia.name },
+        contacts: { optedOut: owen.name, californiaAddress: grace.name, drafts: [jane.name, lena.name], failedSend: liam.name, savedSearch: sophia.name },
         untouchedLeads: untouched.map((u) => ({ name: u.name, owner: nameOf.get(u.owner.userId) })),
         averyOffers: averyOffers.map((o) => o.name),
       },

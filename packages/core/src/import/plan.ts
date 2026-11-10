@@ -634,11 +634,12 @@ export type RevertReason =
   | 'PRE_EXISTING_CONTACT' // the import only filled an existing contact: never removed
   | 'REVOCATION_KEPT' // imported opt-outs stay (R-CONSENT-3)
   | 'DNC_KEPT' // imported do-not-contact flags stay
-  | 'LEDGER_APPEND_ONLY' // ownership ledger rows are history; the contact's removal ends the assignment
+  | 'LEDGER_APPEND_ONLY' // ownership ledger rows are history (an untouched assignment is compensated: RevertPlan.unassign)
   | 'NOT_IN_STAGE'; // the row does not belong to the stage being reverted
 
 const STAGE_TABLES: Record<Category, readonly ImportedRow['table'][]> = {
-  contacts: ['contacts', 'contact_points', 'contact_addresses'],
+  // the contacts stage also applies the person's imported opt-outs (importedOptOuts): they stay on revert
+  contacts: ['contacts', 'contact_points', 'contact_addresses', 'consent_events', 'suppressions'],
   ownership: ['lead_ownership_events'],
   notes: ['notes'],
   messages: ['messages'],
@@ -651,6 +652,11 @@ export interface RevertPlan {
   delete: string[];
   /** Compensating append-only rows: `import_revert` events voiding imported grants. */
   compensate: ConsentEventSpec[];
+  /**
+   * Ownership-stage rows whose contact nobody touched: the ledger row stays (append-only history) and the
+   * assignment is compensated by an `import_unassign` command fenced on that row's seq (R-IMPORT-10).
+   */
+  unassign: { eventId: string; contactId: string }[];
   /** Rows listed for a human decision, never auto-deleted. */
   manual: string[];
   /** Rows that stay by rule (revocations, DNC, ledger history). */
@@ -675,7 +681,7 @@ export function planRevert(
   touched: ReadonlySet<string>,
   ctx: { ids: IdGenerator; now: Instant },
 ): RevertPlan {
-  const plan: RevertPlan = { delete: [], compensate: [], manual: [], kept: [], reasons: {} };
+  const plan: RevertPlan = { delete: [], compensate: [], unassign: [], manual: [], kept: [], reasons: {} };
   const manual = (id: string, reason: RevertReason) => {
     plan.manual.push(id);
     plan.reasons[id] = reason;
@@ -705,8 +711,9 @@ export function planRevert(
         else plan.delete.push(row.id);
         break;
       case 'lead_ownership_events':
+        // the ledger is append-only: an untouched assignment is undone by a compensating event, not a delete
         if (touched.has(row.contactId)) manual(row.id, 'TOUCHED');
-        else keep(row.id, 'LEDGER_APPEND_ONLY');
+        else plan.unassign.push({ eventId: row.id, contactId: row.contactId });
         break;
       case 'consent_events': {
         const v = revertImportedGrant(row.event, ctx);

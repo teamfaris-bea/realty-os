@@ -6,7 +6,7 @@
 // - Approved by the agent from the contact record, a human acting as themselves (DB trigger); criteria
 //   changed after approval need re-approval in the same update (DB trigger). Activation starts alerts.
 // - Phase 1 matches the team's own `listings` only (active / coming soon). Alerts are `search_alert`,
-//   purpose marketing, sent as the system through the send-time gate (SMS only on express_written,
+//   purpose marketing, sent as the system through the send-time gate (never to an opted-out number,
 //   brokerage name on every alert). A digest carries at most 3 homes; instant / daily / weekly.
 import { type Claim, CRITERION_KEYS, type CriterionKey, type ListingFacts, type SearchCriteria, SEARCH_ALERT, SearchCriteriaSchema, applySearchReview, formatPriceCents, hasCriteria, matchListing, proposeSearch, signOffFor } from '@realty/core/assistant';
 import type { ContactId, Instant, SystemActor, UserActor } from '@realty/core/foundation';
@@ -215,8 +215,8 @@ export async function activateSearch(actor: UserActor, searchId: string, deps: A
 }
 
 /**
- * POST /saved-searches/:id/pause. Alerts already queued for this search, or deferred by the send-time gate
- * (quiet hours: "tomorrow 9:00"), are canceled before they reach the gate, and their matches are released
+ * POST /saved-searches/:id/pause. Alerts already queued or scheduled for this search are canceled before
+ * they reach the gate, and their matches are released
  * so they are alerted after a resume. Messages are system-written, so the cancel runs as the system right
  * after the agent's transaction, under the contact lock that dispatch also takes.
  */
@@ -321,7 +321,7 @@ function alertLines(s: SearchRow, listings: readonly RawListing[]): string {
 /**
  * Sends the due alerts: an active search with matches not yet alerted, whose frequency window has passed
  * (instant: at once; daily / weekly). Queued as `search_alert` marketing from the system; the send-time
- * gate decides (consent: express_written for SMS; brokerage name; quiet hours; caps; pause).
+ * gate decides (opt-out / unsubscribe, suppression, brokerage name, autonomy switch, pause).
  */
 export async function sendDueAlertsInTx(tx: Tx, deps: AssistantDeps, tenantId: string, now: Instant, o: { searchId?: string; limit?: number }): Promise<number> {
   // the frequency window is applied in the query, so searches that are not due yet never fill the batch

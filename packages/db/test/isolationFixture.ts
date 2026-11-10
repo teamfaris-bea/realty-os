@@ -51,7 +51,7 @@ const OVERRIDES: Record<string, Record<string, string>> = {
   consent_state: { status: "'none'", consent_level: "'none'", ledger_event_count: '1' },
   suppressions: { channel: "'sms'", address_kind: "'phone'", reason: "'admin_block'" },
   dnc_checks: { valid_until: "now() + interval '31 days'", registry: "'us_national'" },
-  gate_decisions: { outcome: "'allow'", reason_codes: "'{}'", phase: "'send'", initiator: "'human'", inputs_sha256: "repeat('ab', 32)", recipient_kind: "'contact'", recipient_user_id: 'NULL' },
+  gate_decisions: { outcome: "'deny'", reason_codes: "'{CONSENT_REVOKED}'", phase: "'send'", initiator: "'human'", inputs_sha256: "repeat('ab', 32)", recipient_kind: "'contact'", recipient_user_id: 'NULL' },
   messages: { direction: "'inbound'", initiator: "'client'", status: "'received'", channel: "'sms'" },
   calls: { direction: "'inbound'", initiator: "'client'", status: "'completed'", handled_by: "'human'" },
   assistant_actions: { kind: "'next_step'", action_category: "'internal'", autonomy: "'internal'", status: "'proposed'", explanation: "'fixture'" },

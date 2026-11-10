@@ -27,7 +27,7 @@ function fake() {
     .on('GET /lead-sources', { status: 200, body: { sources: [] } })
     .on('GET /settings', { status: 200, body: { settings } })
     .on('GET /numbers', { status: 200, body: { numbers: [] } })
-    .on('GET /compliance-policies', { status: 200, body: { activePolicyId: v1.id, versions: [v1], defaults: POLICY_DEFAULTS, widestWindow: { start: '08:00', end: '21:00' }, attestationText: 'I am the Owner.', counsel: { allReviewed: false, packs: [] } } })
+    .on('GET /compliance-policies', { status: 200, body: { activePolicyId: v1.id, versions: [v1], defaults: POLICY_DEFAULTS, attestationText: 'I am the Owner.', counsel: { allReviewed: false, packs: [] } } })
     .on('GET /playbooks', { status: 200, body: { playbooks: [] } })
     .on('GET /imports', { status: 200, body: { batches: [batch] } })
     .on(`GET /imports/${batch.id}`, { status: 200, body: { batch } })

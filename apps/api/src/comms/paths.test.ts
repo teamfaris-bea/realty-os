@@ -1,12 +1,13 @@
 // Every automated outbound path of ARCHITECTURE §9 goes through dispatchOutbound and its send-time gate:
-// each test asserts the decision row exists and that a denial never reaches the provider fake (R-GATE-10).
+// each test asserts the outcome, that a blocked send writes its gate_decisions row (0013: only blocked
+// sends are logged) and that a denial never reaches the provider fake (R-GATE-10).
 import { randomUUID } from 'node:crypto';
 import { renderStep, signOffFor } from '@realty/core/assistant';
 import { withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
-import { suFixture, zoneWithLocalHour } from '../leads/testing.js';
+import { suFixture } from '../leads/testing.js';
 import { systemActor } from '../worker/systemActor.js';
 import { queueOutboundInTx } from './compose.js';
 import { dispatchAgentAlertSms, dispatchOutbound } from './dispatch.js';
@@ -48,8 +49,8 @@ async function queue(contactId: string, spec: Partial<Parameters<typeof queueOut
 }
 
 describe('playbook steps and the 60-second first response (paths 5, 6)', () => {
-  it('R-GATE-10 R-GATE-4 R-AST-16: a within-playbook first response on an approved team playbook is gated at send time and sent', async () => {
-    const c = await ownedContact(w.agents[0]!);
+  it('R-GATE-10 R-GATE-4 R-AST-16: a within-playbook first response on an approved team playbook is gated at send time and sent (no consent level needed)', async () => {
+    const c = await ownedContact(w.agents[0]!, { consent: false });
     const s = step({ key: 'first', category: 'speed_to_lead_reply', intent: 'first_response_qualify', purpose: 'informational', template: 'Thanks for reaching out! When are you hoping to move?' });
     const body = rendered(s, 'team', null);
     const pb = await playbookFixture(h, w.tenantId, w.owner, c.id, { scope: 'team', step: s, body, category: 'speed_to_lead_reply', purpose: 'informational' });
@@ -57,22 +58,25 @@ describe('playbook steps and the 60-second first response (paths 5, 6)', () => {
     await runJobs(h, w.tenantId, ['comms.dispatch']);
     const m = await messageRow(h, mid);
     expect(m.status).toBe('sent');
-    const ds = await decisionsFor(h, { messageId: mid });
-    expect(ds.map((d) => `${d.initiator}:${d.outcome}`)).toEqual(['assistant:allow']);
+    expect(await decisionsFor(h, { messageId: mid })).toHaveLength(0);
     expect(smsTo(c.phone)).toHaveLength(1);
     expect((await h.su.query('SELECT status, message_id FROM playbook_step_runs WHERE id = $1', [pb.stepRunId])).rows[0]).toEqual({ status: 'sent', message_id: mid });
   });
 
-  it('R-GATE-10 R-CONSENT-5: the assistant may not text without an express basis: denied at send time, nothing reaches the provider', async () => {
+  it('R-GATE-10 R-CONSENT-7: the assistant never texts a number that texted STOP (approved playbook or not): denied at send time, logged, nothing reaches the provider', async () => {
     const c = await ownedContact(w.agents[0]!, { consent: false });
+    expect((await (await import('./testing.js')).inboundSms(h, c.phone, w.mainNumber, 'STOP')).statusCode).toBe(200);
     const s = step({ key: 'first', category: 'speed_to_lead_reply', intent: 'first_response_qualify', purpose: 'informational', template: 'Thanks for reaching out! When are you hoping to move?' });
     const body = rendered(s, 'team', null);
     const pb = await playbookFixture(h, w.tenantId, w.owner, c.id, { scope: 'team', step: s, body, category: 'speed_to_lead_reply', purpose: 'informational' });
     const mid = await queue(c.id, { body, category: 'speed_to_lead_reply', purpose: 'informational', initiator: 'assistant', assistantActionId: pb.actionId, playbookStepRunId: pb.stepRunId });
     const r = await dispatchOutbound(mid, w.deps, { tenantId: w.tenantId });
     expect(r.kind).toBe('blocked');
-    expect((await decisionsFor(h, { messageId: mid }))[0]!.reason_codes).toContain('CONSENT_BASIS_INSUFFICIENT');
-    expect(smsTo(c.phone)).toHaveLength(0);
+    const d = (await decisionsFor(h, { messageId: mid }))[0]!;
+    expect([d.outcome, d.phase, d.initiator]).toEqual(['deny', 'send', 'assistant']);
+    expect(d.reason_codes).toContain('CONSENT_REVOKED');
+    expect(smsTo(c.phone).filter((x) => !/stop|unsubscribed|opted out/i.test(x.body))).toHaveLength(0);
+    expect((await h.su.query('SELECT status FROM playbook_step_runs WHERE id = $1', [pb.stepRunId])).rows[0]!.status).not.toBe('sent');
   });
 
   it('R-GATE-4 R-AST-4: a revoked playbook approval or a paused conversation blocks the assistant message in the dispatch transaction', async () => {
@@ -120,27 +124,32 @@ describe('playbook steps and the 60-second first response (paths 5, 6)', () => {
     expect(smsTo(c.phone)).toHaveLength(0);
   });
 
-  it('R-GATE-8: TX1 stamps dispatched_at when it commits dispatching (DB CHECK) and the send-time decision is fresh', async () => {
+  it('R-GATE-8: TX1 stamps dispatched_at when it commits dispatching (DB CHECK)', async () => {
     const c = await ownedContact(w.agents[0]!);
+    const before = Date.now();
     const r = await sendText(w.agents[0]!, c.id, 'Stamp check');
     const m = await messageRow(h, r.body.message!.id);
-    const d = (await decisionsFor(h, { messageId: r.body.message!.id }))[0]!;
-    const evaluated = (await h.su.query<{ t: Date }>('SELECT evaluated_at AS t FROM gate_decisions WHERE id = $1', [d.id])).rows[0]!.t;
-    expect(m.dispatched_at!.getTime()).toBeGreaterThanOrEqual(evaluated.getTime());
+    expect(m.dispatched_at!.getTime()).toBeGreaterThanOrEqual(before - 5000);
     // the CHECK: no dispatched_at ⇒ cannot be dispatching
     await expect(h.su.query("UPDATE messages SET status = 'dispatching', dispatched_at = NULL WHERE id = $1", [r.body.message!.id])).rejects.toThrow(/check/i);
   });
 
-  it('R-GATE-3: a send-time decision older than 10 minutes can never authorize a dispatch (DB guard GATE_DECISION_STALE)', async () => {
+  it('0013: the DB dispatch guard refuses a direct dispatch to an opted-out number even bypassing dispatchOutbound (no gate decision is needed otherwise)', async () => {
     const c = await ownedContact(w.agents[0]!);
-    const r = await sendText(w.agents[0]!, c.id, 'Later', { scheduleAt: new Date(Date.now() + 3600_000).toISOString() });
-    const d = await sendText(w.agents[0]!, c.id, 'Now');
-    const allow = (await decisionsFor(h, { messageId: d.body.message!.id }))[0]!;
-    const stale = randomUUID();
-    await h.su.query(`INSERT INTO gate_decisions SELECT tenant_id, $2, contact_id, recipient_kind, recipient_user_id, address_hmac, channel, purpose, initiator, action_category, phase, outcome, reason_codes, defer_until, explanation, actor_user_id, confirmed_by_user_id, confirms_decision_id, policy_version_id, core_rules_version, inputs, inputs_sha256, $3, call_id, now() - interval '11 minutes' FROM gate_decisions WHERE id = $1`, [allow.id, stale, r.body.message!.id]);
+    const later = await sendText(w.agents[0]!, c.id, 'Later', { scheduleAt: new Date(Date.now() + 3600_000).toISOString() });
+    const ok = await sendText(w.agents[0]!, c.id, 'Later too', { scheduleAt: new Date(Date.now() + 3600_000).toISOString() });
     await expect(
-      withTenantTx(systemActor(w.tenantId, 'worker'), (tx) => sql`UPDATE messages SET status = 'dispatching', dispatched_at = now(), gate_decision_id = ${stale} WHERE id = ${r.body.message!.id}`.execute(tx), { db: h.database }),
-    ).rejects.toThrow(/GATE_DECISION_STALE/);
+      withTenantTx(systemActor(w.tenantId, 'worker'), (tx) => sql`UPDATE messages SET status = 'dispatching', dispatched_at = now() WHERE id = ${ok.body.message!.id}`.execute(tx), { db: h.database }),
+    ).resolves.toBeTruthy();
+    // the opt-out lands as a consent_state revoke without touching the queued message (a fixture: the
+    // application path would also cancel it)
+    await suFixture(h, [{ text: "UPDATE messages SET status = 'scheduled' WHERE id = $1", values: [later.body.message!.id] }]);
+    const pid = (await h.su.query<{ id: string }>("SELECT id FROM contact_points WHERE contact_id = $1 AND kind = 'phone'", [c.id])).rows[0]!.id;
+    expect((await call(w.agents[0]!, 'POST', `/contacts/${c.id}/consent`, { kind: 'revoke', pointId: pid, channel: 'sms', purpose: 'all', evidence: {} })).status).toBe(200);
+    await suFixture(h, [{ text: "UPDATE messages SET status = 'scheduled', status_reason = NULL WHERE id = $1", values: [later.body.message!.id] }]);
+    await expect(
+      withTenantTx(systemActor(w.tenantId, 'worker'), (tx) => sql`UPDATE messages SET status = 'dispatching', dispatched_at = now() WHERE id = ${later.body.message!.id}`.execute(tx), { db: h.database }),
+    ).rejects.toThrow(/RECIPIENT_OPTED_OUT/);
   });
 });
 
@@ -151,9 +160,7 @@ describe('approved drafts (path 4)', () => {
     const ok = await approvedDraft(h, w.tenantId, c.id, agent);
     const mid = await queue(c.id, { body: 'About the offer: the sellers countered at list. Want to talk tonight?', category: 'novel_message', purpose: 'informational', initiator: 'assistant', assistantActionId: ok });
     expect((await dispatchOutbound(mid, w.deps, { tenantId: w.tenantId })).kind).toBe('sent');
-    const d = (await decisionsFor(h, { messageId: mid }))[0]!;
-    expect(d.initiator).toBe('human');
-    expect((await h.su.query('SELECT actor_user_id FROM gate_decisions WHERE id = $1', [d.id])).rows[0]!.actor_user_id).toBe(agent.userId);
+    expect(await decisionsFor(h, { messageId: mid })).toHaveLength(0);
     expect((await h.su.query('SELECT status FROM assistant_actions WHERE id = $1', [ok])).rows[0]!.status).toBe('executed');
 
     const pending = randomUUID();
@@ -163,77 +170,61 @@ describe('approved drafts (path 4)', () => {
     expect((await decisionsFor(h, { messageId: mid2 }))[0]!.reason_codes).toContain('ASSISTANT_ACTION_NOT_APPROVED');
     expect(smsTo(c.phone)).toHaveLength(1);
   });
-});
 
-describe('saved-search alerts (path 7)', () => {
-  it('R-GATE-10 R-CONSENT-5: a search alert is automated marketing: SMS needs express_written, so an express basis is denied and nothing is sent', async () => {
-    const c = await ownedContact(w.agents[0]!);
-    const mid = await queue(c.id, { body: `New match for your search. ${brokerage}. Reply STOP to opt out — the ${team} assistant`, category: 'search_alert', purpose: 'marketing', initiator: 'system' });
+  it('R-GATE-4: an approved draft to a number that opted out is blocked; the approving human\'s tap is not an override', async () => {
+    const agent = w.agents[0]!;
+    const c = await ownedContact(agent);
+    const pid = (await h.su.query<{ id: string }>("SELECT id FROM contact_points WHERE contact_id = $1 AND kind = 'phone'", [c.id])).rows[0]!.id;
+    expect((await call(agent, 'POST', `/contacts/${c.id}/consent`, { kind: 'revoke', pointId: pid, channel: 'sms', purpose: 'all', evidence: {} })).status).toBe(200);
+    const ok = await approvedDraft(h, w.tenantId, c.id, agent);
+    const mid = await queue(c.id, { body: 'Quick question about Saturday', category: 'novel_message', purpose: 'informational', initiator: 'assistant', assistantActionId: ok });
     expect((await dispatchOutbound(mid, w.deps, { tenantId: w.tenantId })).kind).toBe('blocked');
-    expect((await decisionsFor(h, { messageId: mid }))[0]!.reason_codes).toContain('CONSENT_BASIS_INSUFFICIENT');
+    const d = (await decisionsFor(h, { messageId: mid }))[0]!;
+    expect([d.initiator, d.outcome]).toEqual(['human', 'deny']);
+    expect(d.reason_codes).toContain('CONSENT_REVOKED');
+    expect((await h.su.query('SELECT actor_user_id FROM gate_decisions WHERE id = $1', [d.id])).rows[0]!.actor_user_id).toBe(agent.userId);
     expect(smsTo(c.phone)).toHaveLength(0);
   });
 });
 
-describe('frequency caps and quiet hours (R-CONSENT-13, R-CONSENT-14, E29, E30)', () => {
-  it('R-CONSENT-14: automated sends past the cap defer (never drop); after the maximum deferrals the step is skipped_ineligible, visibly', async () => {
-    const c = await ownedContact(w.agents[0]!);
+describe('saved-search alerts (path 7)', () => {
+  it('R-GATE-10: a search alert is automated marketing: sent with no consent level, blocked for an unsubscribed (STOP) number', async () => {
+    const c = await ownedContact(w.agents[0]!, { consent: false });
+    const body = `New match for your search. ${brokerage}. Reply STOP to opt out — the ${team} assistant`;
+    const mid = await queue(c.id, { body, category: 'search_alert', purpose: 'marketing', initiator: 'system' });
+    expect((await dispatchOutbound(mid, w.deps, { tenantId: w.tenantId })).kind).toBe('sent');
+    const pid = (await h.su.query<{ id: string }>("SELECT id FROM contact_points WHERE contact_id = $1 AND kind = 'phone'", [c.id])).rows[0]!.id;
+    expect((await call(w.agents[0]!, 'POST', `/contacts/${c.id}/consent`, { kind: 'revoke', pointId: pid, channel: 'sms', purpose: 'marketing', evidence: {} })).status).toBe(200);
+    const mid2 = await queue(c.id, { body, category: 'search_alert', purpose: 'marketing', initiator: 'system' });
+    expect((await dispatchOutbound(mid2, w.deps, { tenantId: w.tenantId })).kind).toBe('blocked');
+    expect((await decisionsFor(h, { messageId: mid2 }))[0]!.reason_codes).toContain('CONSENT_REVOKED');
+    expect(smsTo(c.phone)).toHaveLength(1);
+  });
+
+  it('R-GATE-12: a marketing alert without the brokerage name is blocked even with no opt-out', async () => {
+    const c = await ownedContact(w.agents[0]!, { consent: false });
+    const mid = await queue(c.id, { body: `New match for your search. Reply STOP to opt out — the assistant`, category: 'search_alert', purpose: 'marketing', initiator: 'system' });
+    expect((await dispatchOutbound(mid, w.deps, { tenantId: w.tenantId })).kind).toBe('blocked');
+    expect((await decisionsFor(h, { messageId: mid }))[0]!.reason_codes).toContain('BROKERAGE_IDENTITY_MISSING');
+  });
+});
+
+describe('owner decision: no caps, no quiet hours, nothing deferred', () => {
+  it('two automated texts to the same contact within minutes both go (no frequency cap); a night-time automated text goes now (no quiet hours)', async () => {
+    const c = await ownedContact(w.agents[0]!, { consent: false });
+    await h.su.query("UPDATE contacts SET timezone = 'Pacific/Kiritimati', timezone_source = 'explicit' WHERE id = $1", [c.id]);
     const s = step({ key: 'first', category: 'speed_to_lead_reply', intent: 'first_response_qualify', purpose: 'informational', template: 'Thanks for reaching out! When are you hoping to move?' });
     const body = rendered(s, 'team', null);
     const pb1 = await playbookFixture(h, w.tenantId, w.owner, c.id, { scope: 'team', step: s, extraSteps: [{ ...s, stepKey: 'second' }], body, category: 'speed_to_lead_reply', purpose: 'informational' });
     const m1 = await queue(c.id, { body, category: 'speed_to_lead_reply', purpose: 'informational', initiator: 'assistant', assistantActionId: pb1.actionId, playbookStepRunId: pb1.stepRunId });
     expect((await dispatchOutbound(m1, w.deps, { tenantId: w.tenantId })).kind).toBe('sent');
-    // a second automated text within 24 h (the next step run of the same enrollment)
     const run2 = randomUUID();
     await h.su.query("INSERT INTO playbook_step_runs (tenant_id, id, enrollment_id, playbook_version_id, step_key, status, scheduled_for) VALUES ($1,$2,$3,$4,'second','scheduled',now())", [w.tenantId, run2, pb1.enrollmentId, pb1.versionId]);
     const m2 = await queue(c.id, { body: body.replace(`${brokerage}`, '').replace(/Reply STOP to opt out\.?/, '').trim() || body, category: 'speed_to_lead_reply', purpose: 'informational', initiator: 'assistant', assistantActionId: pb1.actionId, playbookStepRunId: run2 });
-    expect((await dispatchOutbound(m2, w.deps, { tenantId: w.tenantId })).kind).toBe('deferred');
-    expect((await decisionsFor(h, { messageId: m2 }))[0]!.reason_codes).toContain('FREQUENCY_CAP');
-    for (let i = 0; i < 4; i++) {
-      await h.su.query("UPDATE messages SET scheduled_for = now() - interval '1 second' WHERE id = $1 AND status = 'scheduled'", [m2]);
-      await dispatchOutbound(m2, w.deps, { tenantId: w.tenantId });
-    }
-    const m = await messageRow(h, m2);
-    expect(m.status).toBe('canceled');
-    expect(m.status_reason).toBe('SKIPPED_INELIGIBLE');
-    expect((await h.su.query('SELECT status FROM playbook_step_runs WHERE id = $1', [run2])).rows[0]!.status).toBe('skipped_ineligible');
-    expect(smsTo(c.phone)).toHaveLength(1);
-  });
-
-  it('R-CONSENT-13 E29 E30: an automated text outside 9–8 recipient-local defers to the next opening plus a deterministic 0–20 min jitter per message; a human one is denied', async () => {
-    const night = zoneWithLocalHour(21, 24) ?? zoneWithLocalHour(0, 7);
-    const c1 = await ownedContact(w.agents[0]!);
-    const c2 = await ownedContact(w.agents[0]!);
-    await h.su.query("UPDATE contacts SET timezone = $2, timezone_source = 'explicit' WHERE id = ANY ($1)", [[c1.id, c2.id], night]);
-    const s = step({ key: 'first', category: 'speed_to_lead_reply', intent: 'first_response_qualify', purpose: 'informational', template: 'Thanks for reaching out! When are you hoping to move?' });
-    const body = rendered(s, 'team', null);
-    const out: number[] = [];
-    for (const c of [c1, c2]) {
-      const pb = await playbookFixture(h, w.tenantId, w.owner, c.id, { scope: 'team', step: s, body, category: 'speed_to_lead_reply', purpose: 'informational' });
-      const mid = await queue(c.id, { body, category: 'speed_to_lead_reply', purpose: 'informational', initiator: 'assistant', assistantActionId: pb.actionId, playbookStepRunId: pb.stepRunId });
-      const r = await dispatchOutbound(mid, w.deps, { tenantId: w.tenantId });
-      expect(r.kind).toBe('deferred');
-      const d = (await decisionsFor(h, { messageId: mid }))[0]!;
-      expect(d.reason_codes).toContain('QUIET_HOURS_DEFERRED');
-      const until = d.defer_until!;
-      const local = new Intl.DateTimeFormat('en-US', { timeZone: night, hour: 'numeric', minute: 'numeric', hourCycle: 'h23' }).formatToParts(until);
-      const hour = Number(local.find((p) => p.type === 'hour')!.value);
-      const minute = Number(local.find((p) => p.type === 'minute')!.value);
-      expect(hour).toBe(9);
-      expect(minute).toBeLessThanOrEqual(20);
-      expect((await messageRow(h, mid)).scheduled_for!.getTime()).toBe(until.getTime());
-      // deterministic: re-evaluating the same message lands on the same instant
-      await h.su.query("UPDATE messages SET scheduled_for = now() - interval '1 second' WHERE id = $1", [mid]);
-      await dispatchOutbound(mid, w.deps, { tenantId: w.tenantId });
-      expect((await messageRow(h, mid)).scheduled_for!.getTime()).toBe(until.getTime());
-      out.push(until.getTime());
-      expect(smsTo(c.phone)).toHaveLength(0);
-    }
-    expect(out[0]).not.toBe(out[1]); // jitter spreads the 9:00 burst (E30)
-    const human = await sendText(w.agents[0]!, c1.id, 'Late question');
-    expect(human.body.decision!.reasons).toContain('OUTSIDE_CONTACT_WINDOW');
-    expect(human.body.decision!.explanation).toMatch(/9 AM–8 PM/);
-    expect(smsTo(c1.phone)).toHaveLength(0);
+    expect((await dispatchOutbound(m2, w.deps, { tenantId: w.tenantId })).kind).toBe('sent');
+    expect(smsTo(c.phone)).toHaveLength(2);
+    expect((await h.su.query('SELECT status FROM playbook_step_runs WHERE id = $1', [run2])).rows[0]!.status).toBe('sent');
+    expect((await sendText(w.agents[0]!, c.id, 'Late question')).body.result).toBe('sent');
   });
 });
 
@@ -255,7 +246,7 @@ describe('sender registration (R-CONSENT-17, E46)', () => {
 });
 
 describe('agent alert SMS (path 9)', () => {
-  it('R-GATE-10: an agent alert text is gated with recipient = user; allowed ⇒ sent with a decision row, an opted-out agent ⇒ suppressed and never sent', async () => {
+  it('R-GATE-10: an agent alert text is gated with recipient = user; allowed ⇒ sent (no decision row), an opted-out agent ⇒ suppressed, logged and never sent', async () => {
     const agent = w.agents[1]!;
     const phone = randomPhone();
     const ch = await agent.post('/api/me/alert-phone', { phone });
@@ -272,11 +263,20 @@ describe('agent alert SMS (path 9)', () => {
     const r1 = await dispatchAgentAlertSms(d1, w.deps, w.tenantId);
     expect(r1.kind).toBe('sent');
     const row = (await h.su.query('SELECT status, gate_decision_id FROM notification_deliveries WHERE id = $1', [d1])).rows[0]!;
-    expect(row.status).toBe('sent');
-    const dec = (await h.su.query('SELECT recipient_kind, recipient_user_id, action_category, outcome FROM gate_decisions WHERE id = $1', [row.gate_decision_id])).rows[0]!;
-    expect(dec).toEqual({ recipient_kind: 'user', recipient_user_id: agent.userId, action_category: 'agent_alert', outcome: 'allow' });
+    expect(row).toEqual({ status: 'sent', gate_decision_id: null });
     expect(smsTo(phone)).toHaveLength(1);
     expect(smsTo(phone)[0]!.body).not.toMatch(/\+1\d{10}/); // lock screens never show numbers
+    // the agent texts STOP to the alert number: later alert texts are suppressed and logged
+    expect((await (await import('./testing.js')).inboundSms(h, phone, w.mainNumber, 'STOP')).statusCode).toBe(200);
+    const d2 = await mk();
+    const r2 = await dispatchAgentAlertSms(d2, w.deps, w.tenantId);
+    expect(r2.kind).toBe('suppressed');
+    const row2 = (await h.su.query('SELECT status, gate_decision_id FROM notification_deliveries WHERE id = $1', [d2])).rows[0]!;
+    expect(row2.status).toBe('suppressed');
+    const dec = (await h.su.query('SELECT recipient_kind, recipient_user_id, action_category, outcome, reason_codes FROM gate_decisions WHERE id = $1', [row2.gate_decision_id])).rows[0]!;
+    expect(dec).toMatchObject({ recipient_kind: 'user', recipient_user_id: agent.userId, action_category: 'agent_alert', outcome: 'deny' });
+    expect(dec.reason_codes).toContain('CONSENT_REVOKED');
+    expect(smsTo(phone)).toHaveLength(1);
   });
 });
 

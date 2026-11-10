@@ -1,10 +1,11 @@
 // api/comms dispatch: the one outbound path and its send-time gate (BUILD_PLAN module 12; ARCHITECTURE §9).
 import { randomUUID } from 'node:crypto';
+import { canonicalJson, sha256Hex } from '@realty/core/compliance';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { command, contactState, intake, ledger, suFixture } from '../leads/testing.js';
 import { dispatchOutbound } from './dispatch.js';
-import { type CommsWorld, call, commsWorld, decisionsFor, grantConsent, inboundSms, messageRow, ownedContact, pointId, runJobs, sendText, telephonyWebhook } from './testing.js';
+import { type CommsWorld, call, commsWorld, decisionsFor, grantConsent, inboundSms, messageRow, ownedContact, pointId, randomPhone, runJobs, sendText, telephonyWebhook } from './testing.js';
 
 let h: ApiHarness;
 let w: CommsWorld;
@@ -20,26 +21,45 @@ afterAll(async () => {
 const smsTo = (phone: string) => h.providers.telephony.sms.filter((m) => m.to === phone);
 
 describe('human texts (ARCHITECTURE §9 path 1)', () => {
-  it('R-GATE-10 R-GATE-1 R-GATE-11: a human text is gated at send time; the decision row (policy, rules version, plaintext-free inputs, digest) authorizes the provider send', async () => {
+  it('R-GATE-10: a human text is gated at send time; an allowed send writes no gate_decisions row (0013: blocked sends only)', async () => {
     const agent = w.agents[0]!;
-    const c = await ownedContact(agent);
+    const c = await ownedContact(agent, { consent: false });
     const r = await sendText(agent, c.id, 'Hi Jane, are you free for a quick call tomorrow?');
     expect(r.status).toBe(200);
     expect(r.body.result).toBe('sent');
-    expect(r.body.decision!.outcome).toBe('allow');
+    expect(r.body.decision).toEqual({ id: null, outcome: 'allow', reasons: [], explanation: 'OK to send', phase: 'send' });
     expect(smsTo(c.phone)).toHaveLength(1);
     const m = await messageRow(h, r.body.message!.id);
     expect(m.status).toBe('sent');
     expect(m.dispatched_at).not.toBeNull();
+    expect(m.gate_decision_id).toBeNull();
+    expect(await decisionsFor(h, { messageId: r.body.message!.id })).toHaveLength(0);
+  });
+
+  it('owner decision: no consent level is needed: a contact with no consent on file, an imported-only basis or an expired inquiry is texted by a human (marketing too)', async () => {
+    const agent = w.agents[0]!;
+    const c = await ownedContact(agent, { consent: false });
+    expect((await sendText(agent, c.id, 'New listings just hit your area this week.')).body.result).toBe('sent');
+    expect((await sendText(agent, c.id, 'Are you free Thursday?')).body.result).toBe('sent');
+    expect(smsTo(c.phone)).toHaveLength(2);
+  });
+
+  it('R-GATE-11: a blocked send writes its gate_decisions row (policy, rules version, plaintext-free inputs, digest) and the message links it', async () => {
+    const agent = w.agents[0]!;
+    const c = await ownedContact(agent);
+    const pid = await pointId(h, c.id, 'phone');
+    expect((await call(agent, 'POST', `/contacts/${c.id}/consent`, { kind: 'revoke', pointId: pid, channel: 'sms', purpose: 'all', evidence: {} })).status).toBe(200);
+    const r = await sendText(agent, c.id, 'Hi Jane');
     const ds = await decisionsFor(h, { messageId: r.body.message!.id });
     expect(ds).toHaveLength(1);
     const d = ds[0]!;
-    expect(m.gate_decision_id).toBe(d.id);
-    expect(d.phase).toBe('send');
-    expect(d.outcome).toBe('allow');
-    expect(d.core_rules_version).toMatch(/^core-compliance\//);
+    expect((await messageRow(h, r.body.message!.id)).gate_decision_id).toBe(d.id);
+    expect(r.body.decision!.id).toBe(d.id);
+    expect([d.phase, d.outcome]).toEqual(['send', 'deny']);
+    expect(d.core_rules_version).toMatch(/^core-compliance\/2\./);
     expect(d.policy_version_id).toMatch(/^[0-9a-f-]{36}$/);
     expect(d.inputs_sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(d.inputs_sha256).toBe(sha256Hex(canonicalJson(d.inputs)));
     // R-CONSENT-1 / R-GATE-11: no plaintext address in the decision inputs
     const inputs = JSON.stringify(d.inputs);
     expect(inputs).not.toContain(c.phone);
@@ -55,7 +75,6 @@ describe('human texts (ARCHITECTURE §9 path 1)', () => {
     expect(r.body.result).toBe('blocked');
     expect(r.body.decision!.outcome).toBe('deny');
     expect(r.body.decision!.reasons).toContain('CONSENT_REVOKED');
-    expect(r.body.decision!.canConfirm).toBe(false);
     expect(r.body.decision!.explanation).toMatch(/opted out/i);
     expect(smsTo(c.phone)).toHaveLength(0);
     const m = await messageRow(h, r.body.message!.id);
@@ -84,29 +103,31 @@ describe('human texts (ARCHITECTURE §9 path 1)', () => {
     expect(r.body.message!.body).toMatch(/\n— .+$/);
     const brokerage = (await h.su.query<{ n: string }>('SELECT brokerage_legal_name AS n FROM tenant_settings WHERE tenant_id = $1', [w.tenantId])).rows[0]!.n;
     expect(smsTo(c.phone)[0]!.body).toContain(brokerage);
-    expect((await decisionsFor(h, { messageId: r.body.message!.id }))[0]!.reason_codes).not.toContain('BROKERAGE_IDENTITY_MISSING');
+    expect(await decisionsFor(h, { messageId: r.body.message!.id })).toHaveLength(0);
   });
 
-  it('R-CONSENT-14: a fourth manual text in 24 h needs confirmation; the confirmation is a second, audited decision (phase confirm) and only then the provider sends', async () => {
+  it('owner decision: there are no manual-text caps and nothing waits for a confirmation; a stale confirmDecisionId is rejected as an unknown field', async () => {
     const agent = w.agents[1]!;
     const c = await ownedContact(agent);
-    for (let i = 0; i < 3; i++) expect((await sendText(agent, c.id, `Message ${i}`)).body.result).toBe('sent');
-    const key = `k-${randomUUID()}`;
-    const first = await sendText(agent, c.id, 'One more thing', { idempotencyKey: key });
-    expect(first.body.result).toBe('needs_confirmation');
-    expect(first.body.decision!.reasons).toContain('MANUAL_SMS_VOLUME');
-    expect(first.body.decision!.canConfirm).toBe(true);
-    expect(smsTo(c.phone)).toHaveLength(3);
-    // a made-up decision id is refused
-    expect((await sendText(agent, c.id, 'One more thing', { idempotencyKey: key, confirmDecisionId: randomUUID() })).code).toBe('CONFIRMATION_INVALID');
-    const ok = await sendText(agent, c.id, 'One more thing', { idempotencyKey: key, confirmDecisionId: first.body.decision!.id });
-    expect(ok.body.result).toBe('sent');
-    expect(ok.body.decision!.phase).toBe('confirm');
-    expect(smsTo(c.phone)).toHaveLength(4);
-    const ds = await decisionsFor(h, { messageId: first.body.message!.id });
-    expect(ds.map((d) => `${d.phase}:${d.outcome}`)).toEqual(['send:needs_confirmation', 'send:needs_confirmation', 'confirm:allow']);
-    const audits = await h.su.query("SELECT action FROM audit_log WHERE tenant_id = $1 AND action = 'gate.confirmed' AND entity_id = $2", [w.tenantId, first.body.message!.id]);
-    expect(audits.rows).toHaveLength(1);
+    for (let i = 0; i < 6; i++) expect((await sendText(agent, c.id, `Message ${i}`)).body.result).toBe('sent');
+    expect(smsTo(c.phone)).toHaveLength(6);
+    expect((await sendText(agent, c.id, 'One more thing', { confirmDecisionId: randomUUID() })).status).toBe(422);
+  });
+
+  it('R-CONSENT-7: a STOP texted from another of the contact\'s phones blocks texting this one too, with no override', async () => {
+    const agent = w.agents[0]!;
+    const first = randomPhone();
+    const second = randomPhone();
+    const cr = await call<{ contact: { id: string } }>(agent, 'POST', '/contacts', { commandId: randomUUID(), firstName: 'Two', lastName: 'Phones', phones: [first, second], emails: [] });
+    expect([200, 201]).toContain(cr.status);
+    const id = cr.body.contact.id;
+    expect((await sendText(agent, id, 'Hi there')).body.result).toBe('sent');
+    expect((await inboundSms(h, second, w.mainNumber, 'STOP')).statusCode).toBe(200);
+    const r = await sendText(agent, id, 'Still interested?');
+    expect(r.body.result).toBe('blocked');
+    expect(r.body.decision!.reasons).toContain('CONSENT_REVOKED');
+    expect(smsTo(first)).toHaveLength(1);
+    expect(smsTo(first)[0]!.body).toMatch(/^Hi there/);
   });
 
   it('R-PERM-5: texting a contact the agent cannot see is 404', async () => {
@@ -133,7 +154,7 @@ describe('touch (R-OWN-14)', () => {
 });
 
 describe('scheduled human texts (path 2)', () => {
-  it('R-GATE-3: a scheduled text has no decision until send time; the send-time decision authorizes it', async () => {
+  it('a scheduled text is checked at send time and needs no gate decision row to go', async () => {
     const agent = w.agents[0]!;
     const c = await ownedContact(agent);
     const at = new Date(Date.now() + 3600_000).toISOString();
@@ -144,9 +165,21 @@ describe('scheduled human texts (path 2)', () => {
     await runJobs(h, w.tenantId, ['comms.dispatch']);
     const m = await messageRow(h, r.body.message!.id);
     expect(m.status).toBe('sent');
-    const ds = await decisionsFor(h, { messageId: r.body.message!.id });
-    expect(ds.map((d) => d.phase)).toEqual(['send']);
+    expect(await decisionsFor(h, { messageId: r.body.message!.id })).toHaveLength(0);
     expect(smsTo(c.phone)).toHaveLength(1);
+  });
+
+  it('a scheduled text to a number that opts out before send time never goes (the opt-out cancels it; the send-time check would block it too)', async () => {
+    const agent = w.agents[0]!;
+    const c = await ownedContact(agent);
+    const r = await sendText(agent, c.id, 'Open house Sunday', { scheduleAt: new Date(Date.now() + 3600_000).toISOString() });
+    const pid = await pointId(h, c.id, 'phone');
+    expect((await call(agent, 'POST', `/contacts/${c.id}/consent`, { kind: 'revoke', pointId: pid, channel: 'sms', purpose: 'all', evidence: {} })).status).toBe(200);
+    await h.su.query("UPDATE messages SET scheduled_for = now() - interval '1 second' WHERE id = $1", [r.body.message!.id]);
+    await runJobs(h, w.tenantId, ['comms.dispatch']);
+    const m = await messageRow(h, r.body.message!.id);
+    expect(['canceled:OPTED_OUT', 'blocked:CONSENT_REVOKED']).toContain(`${m.status}:${m.status_reason}`);
+    expect(smsTo(c.phone)).toHaveLength(0);
   });
 
   it('E27: the client replied after the agent scheduled a text: it is not sent and needs a re-tap; the re-tap sends it', async () => {
@@ -180,6 +213,9 @@ describe('scheduled human texts (path 2)', () => {
     const d = (await decisionsFor(h, { messageId: r.body.message!.id }))[0]!;
     expect(d.outcome).toBe('deny');
     expect(d.reason_codes[0]).toBe('SENDER_NOT_AUTHORIZED');
+    // integrity-2 / R-GATE-11: the stored digest is the digest of the stored inputs, API-level reasons included
+    expect(d.inputs.dispatchReasons).toEqual(['SENDER_NOT_AUTHORIZED']);
+    expect(d.inputs_sha256).toBe(sha256Hex(canonicalJson(d.inputs)));
     const drafts = await h.su.query("SELECT owner_user_id, kind FROM assistant_actions WHERE contact_id = $1 AND kind = 'message_draft'", [c.id]);
     expect(drafts.rows).toEqual([{ owner_user_id: b.userId, kind: 'message_draft' }]);
   });

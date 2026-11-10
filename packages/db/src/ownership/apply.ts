@@ -195,7 +195,7 @@ async function buildContext(
 ): Promise<Loaded> {
   const facts = await loadTenantFacts(tx);
   const u = actor.kind === 'user' ? actor : null;
-  const nextContactableAt = await nextContactableFn(tx, facts, row ? contactId : null, row?.timezone ?? opts.newContact?.timezone ?? null);
+  const nextContactableAt = nextContactableFn();
   const ctx: DecisionContext = {
     now,
     ids,

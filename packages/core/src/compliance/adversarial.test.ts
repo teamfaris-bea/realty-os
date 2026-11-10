@@ -45,7 +45,8 @@ describe('consent-exempt categories cannot be used to bypass an opt-out', () => 
   });
 
   it('the genuine case still works: a system informational SMS opt-out confirmation to a just-revoked number is allowed', () => {
-    const d = canContact(gateInput({ initiator: 'system', category: 'opt_out_confirmation', consent: [revokedRow()], automationPausedAt: NOW }));
+    const input = gateInput({ initiator: 'system', category: 'opt_out_confirmation', consent: [revokedRow()], automationPausedAt: NOW });
+    const d = canContact({ ...input, keywordSenders: [input.recipient.addressHmac] });
     expect(d.outcome).toBe('allow');
   });
 });
@@ -221,7 +222,8 @@ describe('START and "not an opt-out" actually re-enable texting for a contact wi
       classification: classifyInbound(body, K),
       channel: 'sms',
       address: phone1,
-      otherPhones: [phone2],
+      // the API's fact for START: phone2's keyword revoke came from phone1's own STOP (outbound-4)
+      otherPhones: [{ ...phone2, keywordRevokedBySender: body === 'START' }],
       occurredAt: instant(occurredAt),
       contactId: 'c-1',
       messageId,

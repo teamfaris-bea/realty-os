@@ -5,9 +5,7 @@ exports[`schemas (R-AST-13, R-TEN-3) > R-AST-13: no comms response schema carrie
   "CallResponse": [
     "bridgeToken",
     "callId",
-    "canConfirm",
     "decision",
-    "deferUntil",
     "explanation",
     "id",
     "outcome",
@@ -18,10 +16,8 @@ exports[`schemas (R-AST-13, R-TEN-3) > R-AST-13: no comms response schema carrie
   ],
   "ComposeResponse": [
     "body",
-    "canConfirm",
     "channel",
     "decision",
-    "deferUntil",
     "dispatchedAt",
     "explanation",
     "id",
@@ -111,9 +107,7 @@ exports[`schemas (R-AST-13, R-TEN-3) > R-AST-13: no comms response schema carrie
   ],
   "PreviewResponse": [
     "body",
-    "canConfirm",
     "decision",
-    "deferUntil",
     "explanation",
     "id",
     "outcome",

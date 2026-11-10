@@ -89,10 +89,10 @@ exceptions are marked in `apps/api/src/seed/main.ts`:
 - One team, a buyer pond plus the default pond, a round-robin routing rule, a signed lead source,
   30-minute offers with round-the-clock routing, and the brokerage identity with its postal address.
 - A team number with an approved 10DLC registration, and a team email identity.
-- **40 contacts**, each with a different consent situation:
+- **40 contacts**, each with a different consent situation (since owner decision D1 only opt-outs block a send; consent entries are history):
   - most carry staff-entered express consent for texts, calls and email;
-  - **Owen Price** texted `STOP` through the signed telephony webhook and has opted out of texts;
-  - **Dana Whitfield**'s number is listed on the national Do Not Call registry;
+  - **Owen Price** texted `STOP` through the signed telephony webhook and has opted out of texts (the one block nobody can override);
+  - **Dana Whitfield** is an ordinary seller lead (the national Do Not Call registry is no longer checked, so no scrub row is seeded);
   - **Grace Kim** has a Los Angeles, CA address. California is an all-party recording-consent state, and with no counsel-reviewed CA pack the call gate announces recording;
   - **Aria Jensen** has consent for email only.
 - **9 inquiries** through the signed intake webhook, offered round robin. They end up in several states:
@@ -151,13 +151,13 @@ qualification, native apps and anything else VISION.md lists for later phases.
 These are open. Each module's report has the full list.
 
 - **Not automatable here, pending:**
-  - counsel review of every VERIFY WITH COUNSEL default (jurisdiction packs, consent minimums, quiet hours, recording announcements, attestation wording, opt-out and footer text). The UI says plainly that the US pack has not been reviewed;
+  - counsel review of every VERIFY WITH COUNSEL default (jurisdiction packs, recording announcements, attestation wording, opt-out and footer text), and of owner decision D1: relying on third-party consent with no consent minimums, DNC registry check, quiet hours or frequency caps may conflict with state mini-TCPA laws such as Florida's FTSA (ARCHITECTURE §19). The UI says plainly that the US pack has not been reviewed;
   - the Phase 1 load test (3 tenants × 250k contacts × 50 agents). Only smaller smoke proxies run;
   - Lighthouse runs on real devices, and usability sessions with agents against their FUB baseline;
   - the security review of the SECURITY DEFINER functions added in migrations 0002–0012, and the ASVS L2 checklist.
 - **Missing application paths:**
-  - no route uploads DNC scrub results or edits a contact's address. The seed writes those rows directly (marked in the seed);
-  - intake does not record consent events, so the 60-second first response has no consent basis to send on until a web-form or lead-provider consent path exists;
+  - no route edits a contact's address. The seed writes that row directly (marked in the seed);
+  - intake does not record consent events. Since D1 that no longer stops the 60-second first response (it texts unless the number opted out), but no consent history is kept for web leads;
   - there is no thread endpoint with full message bodies (the timeline preview is 280 characters);
   - recordings cannot be played at a quoted offset in the web app;
   - there is no call-status endpoint, so the post-call sheet opens when the call starts rather than at hang-up.

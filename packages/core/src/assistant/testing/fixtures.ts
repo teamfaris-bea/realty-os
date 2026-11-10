@@ -323,29 +323,17 @@ export function firstResponseStep(o: Partial<PlaybookStep> = {}): PlaybookStep {
 
 export const NOW: Instant = at('2026-11-10T15:00:00-05:00');
 
-/** A gate input for an assistant SMS to a contact in New York, built from compliance's public API only. */
+/** A gate input for an assistant SMS to a contact, built from compliance's public API only. */
 export function assistantGateInput(o: Partial<GateInput> = {}): GateInput {
   const pack = parseJurisdictionPack({
     key: 'US',
     version: 'test',
     reviewedByCounselAt: null,
-    rules: { contact_window: { start: '08:00', end: '21:00' }, inquiry_basis_days: 90, dnc_scrub_validity_days: 31, opt_out_keywords: ['STOP'], resubscribe_keywords: ['START'], help_keywords: ['HELP'] },
+    rules: { inquiry_basis_days: 90, opt_out_keywords: ['STOP'], resubscribe_keywords: ['START'], help_keywords: ['HELP'] },
   });
   if (!pack.ok) throw new Error(pack.issues.join('; '));
   const policy = resolvePolicy(PLATFORM_FLOOR, [pack.pack], {
     id: '00000000-0000-7000-8000-0000000000aa',
-    contactWindowStart: '09:00:00',
-    contactWindowEnd: '20:00:00',
-    humanReplyWindowMinutes: 30,
-    emailQuietHours: false,
-    autoSmsPer24h: 1,
-    autoSmsPer7d: 3,
-    autoEmailPer24h: 1,
-    autoEmailPer7d: 3,
-    autoCrossChannelPer24h: 2,
-    manualSmsConfirmAfter24h: 3,
-    callAttemptsPer24h: 3,
-    maxDeferrals: 3,
     autonomousCategories: ['speed_to_lead_reply', 'reminder', 'booking_confirmation', 'nurture_step', 'search_alert'],
     optOutConfirmationSender: 'provider',
     recordingEnabled: true,
@@ -370,18 +358,11 @@ export function assistantGateInput(o: Partial<GateInput> = {}): GateInput {
       ledgerEventCount: 1,
     })),
     suppressions: [],
-    dnc: [{ registry: 'us_national', listed: false, checkedAt: at('2026-11-01T00:00:00Z'), validUntil: at('2026-12-01T00:00:00Z') }],
     contactPoint: { status: 'active', lineType: 'mobile' },
     automationPausedAt: null,
     sender: { kind: 'phone', registration: 'ready' },
-    recentAutomated: [],
-    recentManualSms24h: 0,
-    callAttempts24h: 0,
-    lastInboundAt: null,
-    zones: { zones: [NY], source: 'explicit' },
     tenant: { suspended: false, brokerageNamePresent: true, postalAddressPresent: true },
     policy,
-    jitterKey: 'msg-1',
     ...o,
   };
 }

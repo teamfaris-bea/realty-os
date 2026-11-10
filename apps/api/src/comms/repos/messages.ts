@@ -165,22 +165,19 @@ export async function insertOutbound(tx: Tx, m: OutboundInsert): Promise<boolean
   return r.rows.length === 1;
 }
 
-/** TX1 allow: dispatching + dispatched_at (DB CHECK, F2) + the send-time decision (dispatch guard re-checks it). */
-export async function markDispatching(tx: Tx, id: string, decisionId: string, now: Instant): Promise<void> {
+/**
+ * TX1 allow: dispatching + dispatched_at (DB CHECK, F2). No gate decision is linked (0013: only a blocked
+ * send writes one); the dispatch guard re-checks the opt-out and the assistant autonomy itself.
+ */
+export async function markDispatching(tx: Tx, id: string, now: Instant): Promise<void> {
   await sql`
-    UPDATE messages SET status = 'dispatching', status_reason = NULL, gate_decision_id = ${decisionId}, dispatched_at = ${toIso(now)}::timestamptz
+    UPDATE messages SET status = 'dispatching', status_reason = NULL, gate_decision_id = NULL, dispatched_at = ${toIso(now)}::timestamptz
      WHERE tenant_id = app.tenant_id() AND id = ${id} AND status IN ('scheduled','queued')`.execute(tx);
 }
 
-/** The send-time purpose of a human message (only ever tightened to marketing, R-CONSENT-5). */
+/** The send-time purpose of a human message (only ever tightened to marketing). */
 export async function setPurpose(tx: Tx, id: string, purpose: 'marketing' | 'informational'): Promise<void> {
   await sql`UPDATE messages SET purpose = ${purpose} WHERE tenant_id = app.tenant_id() AND id = ${id} AND status IN ('scheduled','queued')`.execute(tx);
-}
-
-export async function markDeferred(tx: Tx, id: string, decisionId: string, until: Instant): Promise<void> {
-  await sql`
-    UPDATE messages SET status = 'scheduled', status_reason = 'DEFERRED', gate_decision_id = ${decisionId}, scheduled_for = ${toIso(until)}::timestamptz
-     WHERE tenant_id = app.tenant_id() AND id = ${id} AND status IN ('scheduled','queued')`.execute(tx);
 }
 
 export async function markBlocked(tx: Tx, id: string, decisionId: string, reason: string): Promise<void> {
@@ -195,7 +192,7 @@ export async function markCanceled(tx: Tx, id: string, reason: string, decisionI
      WHERE tenant_id = app.tenant_id() AND id = ${id} AND status IN ('scheduled','queued')`.execute(tx);
 }
 
-/** A human send waits for a tap (needs_confirmation, or the client replied since it was scheduled, E27). */
+/** A human send waits for a re-tap: the client replied since it was scheduled (E27). */
 export async function markAwaitingTap(tx: Tx, id: string, reason: string, decisionId: string | null): Promise<void> {
   await sql`
     UPDATE messages SET status = 'queued', scheduled_for = NULL, status_reason = ${reason}, gate_decision_id = COALESCE(${decisionId}, gate_decision_id)
@@ -239,12 +236,6 @@ export async function touchConversationOutbound(tx: Tx, conversationId: string, 
     UPDATE conversations SET last_outbound_at = ${toIso(now)}::timestamptz,
            sticky_phone_number_id = COALESCE(sticky_phone_number_id, ${phoneNumberId})
      WHERE tenant_id = app.tenant_id() AND id = ${conversationId}`.execute(tx);
-}
-
-export async function deferralCount(tx: Tx, messageId: string): Promise<number> {
-  const r = await sql<{ n: number }>`
-    SELECT count(*)::int AS n FROM gate_decisions WHERE tenant_id = app.tenant_id() AND message_id = ${messageId} AND phase = 'send' AND outcome = 'defer'`.execute(tx);
-  return r.rows[0]?.n ?? 0;
 }
 
 /** The first non-imported outbound of the conversation (the first assistant message adds STOP + brokerage, R-AST-11). */

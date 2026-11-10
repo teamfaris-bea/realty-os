@@ -4,9 +4,10 @@
 //      run as a child process INSIDE apps/api (`tsx -e`, cwd apps/api), so apps/web never imports
 //      @realty/api or @realty/db code;
 //   2. a fixture control endpoint on the same child that seeds an agent's day THROUGH THE API (team,
-//      number, sender registration, an agent with a verified alert phone, owned contacts with staff-
-//      entered consent, an inbound text through the signed telephony webhook, a lead offer through the
-//      signed intake webhook, an assistant draft through POST /contacts/:id/drafts with the fake AI,
+//      number, sender registration, an agent with a verified alert phone, owned contacts (no consent
+//      entry: since the owner decision, leads are treated as consented through their source and only
+//      opt-outs block), an inbound text through the signed telephony webhook (optionally a STOP, the
+//      real opt-out path), a lead offer through the signed intake webhook, an assistant draft through POST /contacts/:id/drafts with the fake AI,
 //      tasks, deals, listings). The superuser is used only to move an appointment into the past (a
 //      clock fixture with no application path);
 //   3. a Vite dev server for apps/web on a free port whose /api proxy points at that API.
@@ -24,7 +25,7 @@ const CHILD = String.raw`
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { createApiHarness, TEST_ORIGIN, TEST_PASSWORD } from './src/auth/testHarness.ts';
-import { commsWorld, call, grantConsent, inboundSms, randomEmail } from './src/comms/testing.ts';
+import { commsWorld, call, inboundSms, randomEmail } from './src/comms/testing.ts';
 import { intake, contactState } from './src/leads/testing.ts';
 (async () => {
 const origin = process.env.E2E_WEB_ORIGIN;
@@ -34,12 +35,8 @@ const apiPort = h.app.server.address().port;
 let w = null;
 let agent = null;
 let seq = 0;
-// a US area code whose local time is inside the 9 AM–8 PM contact window right now (10:00–18:00),
-// so calls and texts are allowed by the gate when the spec runs (the gate itself is not bypassed)
-const ZONES = [['212', 'America/New_York'], ['312', 'America/Chicago'], ['303', 'America/Denver'], ['415', 'America/Los_Angeles'], ['907', 'America/Anchorage'], ['808', 'Pacific/Honolulu']];
-const localHour = (zone) => Number(new Intl.DateTimeFormat('en-US', { hour: 'numeric', hourCycle: 'h23', timeZone: zone }).format(new Date()));
-const areaCode = () => (ZONES.find(([, z]) => localHour(z) >= 10 && localHour(z) < 18) ?? ZONES[0])[0];
-const phone = () => { seq += 1; return '+1' + areaCode() + String(2000000 + ((Date.now() % 1000000) * 7 + seq * 7919) % 7999999).padStart(7, '0'); };
+// any US number works at any hour: the send-time check has no contact window any more (owner decision)
+const phone = () => { seq += 1; return '+1415' + String(2000000 + ((Date.now() % 1000000) * 7 + seq * 7919) % 7999999).padStart(7, '0'); };
 const must = (r, what) => { if (r.status >= 300) throw new Error(what + ': ' + r.status + ' ' + JSON.stringify(r.body)); return r.body; };
 const body = (req) => new Promise((ok) => { let s = ''; req.on('data', (c) => (s += c)); req.on('end', () => ok(s ? JSON.parse(s) : {})); });
 const routes = {
@@ -56,9 +53,9 @@ const routes = {
   async '/contact'(b) {
     const p = phone();
     const c = must(await call(agent, 'POST', '/contacts', { commandId: randomUUID(), firstName: b.firstName ?? 'Jane', lastName: b.lastName ?? 'Doe', phones: [p], emails: [randomEmail()], intent: b.intent ?? 'buyer' }), 'contact');
-    for (const ch of ['sms', 'voice', 'email']) await grantConsent(agent, c.contact.id, ch);
-    if (b.inbound) {
-      const r = await inboundSms(h, p, w.mainNumber, b.inbound);
+    for (const text of [b.inbound, b.optOut ? 'STOP' : null]) {
+      if (!text) continue;
+      const r = await inboundSms(h, p, w.mainNumber, text);
       if (r.statusCode >= 300) throw new Error('inbound: ' + r.statusCode + ' ' + r.body);
     }
     return { id: c.contact.id, name: c.contact.displayName, phone: p };

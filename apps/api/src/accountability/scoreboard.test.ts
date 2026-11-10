@@ -70,7 +70,7 @@ describe('scoreboard', () => {
         text: `INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, from_address, to_address, body, status,
                                      initiator, initiated_by_user_id, purpose, assistant_action_id, gate_decision_id, dispatched_at, occurred_at)
                VALUES ($1, gen_random_uuid(), gen_random_uuid(), $2, 'sms', 'outbound', $3, '+14155550100', '+14155550101', 'Checking in', 'delivered',
-                       'assistant', $4, 'informational', gen_random_uuid(), gen_random_uuid(), now(), now())`,
+                       'assistant', $4, 'informational', gen_random_uuid(), NULL, now(), now())`,
         values: [w.tenantId, inTime.contactId, w.mainNumberId, a0.userId],
       },
     ]);

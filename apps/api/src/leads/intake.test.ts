@@ -196,7 +196,7 @@ describe('closed contacts', () => {
 });
 
 describe('E8 / E11 / sources', () => {
-  it('R-OWN-9 R-OWN-13 E8: a lead arriving at 02:00 is offered now; the window counts from 08:00 and the first-touch SLA from the next contactable instant (09:00)', async () => {
+  it('R-OWN-9 R-OWN-13 E8: a lead arriving at 02:00 is offered now; the offer window and the first-touch SLA count in business minutes from 08:00 (no contact window any more: core-compliance/2.0.0)', async () => {
     const tz = zoneWithLocalHour(1, 4);
     const night = await leadsWorld(h, { agents: 1, timezone: tz });
     const r = await intake(h, night, { fullName: 'Nora Night' });
@@ -206,11 +206,12 @@ describe('E8 / E11 / sources', () => {
     expect((await h.su.query("SELECT count(*)::int AS n FROM notifications WHERE subject_id = $1 AND kind = 'lead_offer'", [r.contactId])).rows[0].n).toBe(1);
     const local = (d: Date) => new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false }).format(d);
     expect(local(st.offer_expires_at!)).toBe('08:05');
-    // the agent accepts at night: the SLA is 15 business-minutes after 09:00 local (contact window start)
+    // the agent accepts at night: the SLA is 15 business-minutes after the business day opens (08:00 local);
+    // it no longer waits for a 09:00 contact window, which was removed with quiet hours
     const acc = await command(night.agents[0]!, r.contactId, 'accept', { offerId: st.offer_id });
     expect(acc.status).toBe(200);
     const owned = await contactState(h, r.contactId);
-    expect(local(owned.first_touch_due_at!)).toBe('09:15');
+    expect(local(owned.first_touch_due_at!)).toBe('08:15');
   });
 
   it('R-OWN-9 R-OWN-11 E11: with nobody eligible (no working notification channel) the lead goes to the pond with NO_ELIGIBLE_AGENT and the TL and Admins get a critical notification', async () => {

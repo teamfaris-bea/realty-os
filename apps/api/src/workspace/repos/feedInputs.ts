@@ -147,7 +147,7 @@ export async function loadFeedInputs(tx: Tx, actor: UserActor, envelope: Envelop
       UNION ALL
       SELECT k.contact_id, 'call', CASE WHEN k.direction = 'outbound' THEN 'outbound' ELSE 'inbound_answered' END,
              CASE WHEN k.initiator = 'client' THEN 'human' ELSE k.initiator END,
-             k.imported, (k.direction = 'inbound' OR k.gate_decision_id IS NOT NULL), COALESCE(k.answered_at, k.started_at), k.agent_user_id
+             k.imported, (k.direction = 'inbound' OR NOT k.imported), COALESCE(k.answered_at, k.started_at), k.agent_user_id
         FROM calls k
        WHERE k.tenant_id = app.tenant_id() AND k.contact_id = ANY (${waitingContacts}::uuid[])
          AND (k.direction = 'outbound' OR (k.answered_at IS NOT NULL AND k.handled_by = 'human'))
@@ -348,6 +348,14 @@ export async function gateSummaries(tx: Tx, contactIds: readonly string[]): Prom
       judge('sms', p.sup_sms, p.rev_sms, p.line_type === 'landline' ? 'Landline: cannot get texts' : undefined);
       judge('voice', p.sup_voice, p.rev_voice);
     } else judge('email', p.sup_email, p.rev_email);
+  }
+  // A STOP on any of the contact's phones blocks texting all of them (the gate's SMS opt-out rule).
+  for (const p of r.rows) {
+    const acc = per.get(p.contact_id);
+    if (p.kind === 'phone' && p.rev_sms && acc) {
+      acc.sms.usable = false;
+      acc.sms.why.add('Opted out of texts');
+    }
   }
   for (const id of contactIds) {
     const acc = per.get(id) ?? fresh();

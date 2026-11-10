@@ -194,7 +194,7 @@ So api/platform must name the outbound provider methods exactly `TelephonyProvid
   - CSRF / Origin failure: 403 `CSRF_INVALID`; rate limit: 429 `RATE_LIMITED`
   - input validation (Zod): 422 `VALIDATION_FAILED`
   - state conflicts (`LEAD_STATE_CHANGED`, `LEAD_ALREADY_CLAIMED`, `DRAFT_STALE`, …): 409, with the fresh projection in `details` where BUILD_PLAN says so
-  - gate outcomes are not errors: the send endpoint returns the `GateDecision` (deny / defer / needs_confirmation) with its human explanation
+  - gate outcomes are not errors: the send endpoint returns the `GateDecision` (allow / deny; core-compliance/2.0.0 has no defer or needs_confirmation) with its human explanation
 - **Web** never shows a raw code. Each code maps to a sentence (`errorMessages` on the surface, or `apps/web/src/shell/errorMessages.ts`), and unknown codes get a generic, honest sentence.
 
 ## 8. Audit

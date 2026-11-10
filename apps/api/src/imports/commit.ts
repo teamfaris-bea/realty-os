@@ -13,7 +13,9 @@
 //                 chunk stopped; two workers on the same stage serialize on the stage row.
 //
 // What each stage writes (all through the import actor, never a provider, never a touch):
-//   contacts   new contacts ONLY through the ownership engine (import_assign 'unassigned': an
+//   contacts   (also the person's imported opt-outs: revocations + DNC suppressions, in the same
+//              transaction as the contact, so they are in force before the later stages; outbound-2)
+//              new contacts ONLY through the ownership engine (import_assign 'unassigned': an
 //              `imported` ledger event, no offer, no SLA, no routing); exact phone/email matches are
 //              filled only where empty (E41) and never change owner (R-IMPORT-7, R-OWN-21); name-only
 //              matches become duplicate candidates, never merges.
@@ -27,6 +29,7 @@
 //              suppressions (R-CONSENT-3).
 import {
   type ContactRef,
+  type FubConsentFields,
   type NormalizedCall,
   type NormalizedContact,
   type NormalizedConsent,
@@ -36,6 +39,8 @@ import {
   type NormalizedRecord,
   type PlanAction,
   computeFill,
+  importedConsentKey,
+  importedOptOuts,
   mapImportedConsent,
   mapImportedSuppressions,
   personRefOf,
@@ -53,7 +58,7 @@ import * as brepo from './repos/batches.js';
 import * as existing from './repos/existing.js';
 import * as rrepo from './repos/records.js';
 import * as w from './repos/writes.js';
-import { hmacIndex, loadBatchAndStage } from './stages.js';
+import { type ContactOptOuts, hmacIndex, loadBatchAndStage } from './stages.js';
 import { type ImportDeps, SOURCE_SYSTEM, type SourceSystem } from './types.js';
 
 export const COMMIT_JOB = { kind: 'imports.commit' as const, queue: 'bulk' as const };
@@ -190,6 +195,53 @@ async function addDuplicates(c: Ctx, contactId: string, n: NormalizedContact, pl
   }
 }
 
+/** The record's carried-over opt-outs (stored at the dry run; CSV rows dry-run before it read their own columns). */
+function optOutsOf(c: Ctx, rec: rrepo.RecordRow, n: NormalizedContact): ContactOptOuts | null {
+  const stored = (rec.plan as { optOuts?: ContactOptOuts } | null)?.optOuts;
+  if (stored) return stored;
+  if (c.batch.source !== 'csv' || !n.consent) return null;
+  const fields = importedOptOuts(n.consent.fields, n.consent.issues);
+  return fields.addresses.length > 0 ? { fields, provenance: { source: 'csv', sourceRef: rec.source_ref } } : null;
+}
+
+/**
+ * outbound-2 / R-CONSENT-3 / E40: the person's imported revocations and do-not-contact flags take
+ * effect in the same transaction that creates or fills the contact, so an imported opt-out is never
+ * sendable while the later stages are still pending. Revocations already in the ledger are not written
+ * twice (the consent stage's dry run then sees them as already imported). Both stay on revert.
+ */
+async function applyOptOuts(c: Ctx, rec: rrepo.RecordRow, n: NormalizedContact, contactId: string): Promise<rrepo.CreatedRow[]> {
+  const o = optOutsOf(c, rec, n);
+  if (!o) return [];
+  const have = await w.importedOptOutKeys(c.tx, o.fields.addresses.map((a) => c.keyOf(a.kind, a.address)));
+  const fresh: FubConsentFields = {
+    occurredAt: o.fields.occurredAt,
+    addresses: o.fields.addresses
+      .map((a) => {
+        const k = c.keyOf(a.kind, a.address);
+        return {
+          ...a,
+          grants: [],
+          revokes: a.revokes.filter((ch) => !have.has(importedConsentKey(k, ch, 'revoke'))),
+          doNotContact: a.doNotContact && !have.has(importedConsentKey(k, a.kind === 'email' ? 'email' : 'sms', 'dnc')),
+        };
+      })
+      .filter((a) => a.revokes.length > 0 || a.doNotContact),
+  };
+  if (fresh.addresses.length === 0) return [];
+  const source = c.system === 'fub' ? 'import_fub' : 'import_csv';
+  const created: rrepo.CreatedRow[] = [];
+  for (const s of mapImportedConsent(fresh, o.provenance, { ids: c.deps.ids, now: c.now, hmac: c.keyOf, source, contactId, importRecordId: rec.id })) {
+    await recordConsentEvent(c.tx, s);
+    created.push({ table: 'consent_events', id: s.id, contactId });
+  }
+  for (const s of mapImportedSuppressions(fresh, { ids: c.deps.ids, hmac: c.keyOf, source, importRecordId: rec.id })) {
+    const id = await w.insertImportedSuppression(c.tx, { id: s.id, addressKind: s.addressKind, addressHmac: s.addressHmac, addressHint: s.addressHint, sourceRef: s.sourceRef, importRecordId: rec.id });
+    if (id) created.push({ table: 'suppressions', id, contactId });
+  }
+  return created;
+}
+
 async function applyContact(c: Ctx, rec: rrepo.RecordRow, n: NormalizedContact, plan: PlanAction & { mergeIntoContactId?: string }): Promise<Applied> {
   const personRef = personRefOf(n);
   if (plan.kind === 'create_contact' && rec.review_decision !== 'merge') {
@@ -217,6 +269,7 @@ async function applyContact(c: Ctx, rec: rrepo.RecordRow, n: NormalizedContact, 
     created.push(...(await addPoints(c, id, n.phones, n.emails)));
     created.push(...(await addAddresses(c, id, n.addresses)));
     await addDuplicates(c, id, n, plan.duplicateCandidates);
+    created.push(...(await applyOptOuts(c, rec, n, id)));
     await w.insertExternalRef(c.tx, { system: c.system, entityType: 'contact', externalId: personRef, entityId: id, batchId: c.batch.id });
     return { target: { table: 'contacts', id }, created };
   }
@@ -235,6 +288,7 @@ async function applyContact(c: Ctx, rec: rrepo.RecordRow, n: NormalizedContact, 
   created.push(...(await addPoints(c, live.id, fill.addPhones, fill.addEmails)));
   created.push(...(await addAddresses(c, live.id, fill.addAddresses)));
   await addDuplicates(c, live.id, n, plan.kind === 'attach_contact' ? plan.duplicateCandidates : []);
+  created.push(...(await applyOptOuts(c, rec, n, live.id)));
   await w.insertExternalRef(c.tx, { system: c.system, entityType: 'contact', externalId: personRef, entityId: live.id, batchId: c.batch.id });
   return { target: { table: 'contacts', id: live.id }, created };
 }
@@ -393,6 +447,8 @@ function addressesOfRecords(recs: readonly rrepo.RecordRow[]): { kind: AddressKi
     const n = r.normalized as NormalizedRecord | null;
     if (n?.category === 'contacts') {
       out.push(...n.phones.map((p) => ({ kind: 'phone' as const, address: p.e164 })), ...n.emails.map((e) => ({ kind: 'email' as const, address: e.email })));
+      const opt = (r.plan as { optOuts?: ContactOptOuts } | null)?.optOuts;
+      out.push(...(opt?.fields.addresses ?? []).map((a) => ({ kind: a.kind, address: a.address })), ...(n.consent?.fields.addresses ?? []).map((a) => ({ kind: a.kind, address: a.address })));
     } else if (n?.category === 'consent') {
       out.push(...n.fields.addresses.map((a) => ({ kind: a.kind, address: a.address })));
     }

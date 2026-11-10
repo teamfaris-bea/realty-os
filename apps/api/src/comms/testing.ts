@@ -84,7 +84,7 @@ export async function grantConsent(agent: TestClient, contactId: string, channel
 }
 
 export async function sendText(agent: TestClient, contactId: string, body: string, extra: Record<string, unknown> = {}) {
-  return call<{ message: { id: string; status: string; statusReason: string | null; body: string } | null; decision: { id: string | null; outcome: string; reasons: string[]; explanation: string; canConfirm: boolean; phase: string } | null; result: string }>(
+  return call<{ message: { id: string; status: string; statusReason: string | null; body: string } | null; decision: { id: string | null; outcome: string; reasons: string[]; explanation: string; phase: string } | null; result: string }>(
     agent,
     'POST',
     `/contacts/${contactId}/messages`,
@@ -118,7 +118,7 @@ export async function messageRow(h: ApiHarness, id: string): Promise<{ status: s
   return (await h.su.query('SELECT * FROM messages WHERE id = $1', [id])).rows[0];
 }
 
-export async function decisionsFor(h: ApiHarness, where: { messageId?: string; contactId?: string; callId?: string }): Promise<{ id: string; phase: string; outcome: string; reason_codes: string[]; explanation: string; policy_version_id: string; core_rules_version: string; inputs: Record<string, unknown>; inputs_sha256: string; initiator: string; action_category: string; recipient_kind: string; defer_until: Date | null }[]> {
+export async function decisionsFor(h: ApiHarness, where: { messageId?: string; contactId?: string; callId?: string }): Promise<{ id: string; phase: string; outcome: string; reason_codes: string[]; explanation: string; policy_version_id: string; core_rules_version: string; inputs: Record<string, unknown>; inputs_sha256: string; initiator: string; action_category: string; recipient_kind: string }[]> {
   if (where.messageId) return (await h.su.query('SELECT * FROM gate_decisions WHERE message_id = $1 ORDER BY evaluated_at, id', [where.messageId])).rows;
   if (where.callId) return (await h.su.query('SELECT * FROM gate_decisions WHERE call_id = $1 ORDER BY evaluated_at, id', [where.callId])).rows;
   return (await h.su.query('SELECT * FROM gate_decisions WHERE contact_id = $1 ORDER BY evaluated_at, id', [where.contactId])).rows;

@@ -171,6 +171,7 @@ export interface ExceptionView {
   /** in the live queue: the latest human event is neither resolved nor verified */
   live: boolean;
   evidence: EvidenceItemView[];
+  contactOwnershipSeq: number | null;
   latestEvent: ExceptionEventView | null;
   /** what the viewer may do now (one tap each) */
   actions: { resolve: boolean; reassign: boolean; verify: boolean; reopen: boolean };
@@ -205,6 +206,20 @@ function contactName(row: repo.QueueRow): string | null {
   return maskLastName({ first_name: row.contact_first_name, last_name: row.contact_last_name, display_name: row.contact_display_name });
 }
 
+/**
+ * ownership-2: the item is about its owner's period of the lead. Once someone else holds the lead (owns it
+ * or has the offer), or the item's owner holds it in a later ownership period, a reassign from the item
+ * would take the lead from whoever is working it now: the item no longer offers it and the endpoint refuses
+ * it (LEAD_STATE_CHANGED). A lead nobody holds (pond, unassigned) can still be assigned from the item.
+ */
+function reassignStale(row: repo.QueueRow): boolean {
+  if (row.contact_ownership_state === null || row.owner_user_id === null) return false;
+  const holder = row.contact_ownership_state === 'owned' ? row.contact_owner_user_id : row.contact_ownership_state === 'offered' ? row.contact_offered_to_user_id : null;
+  if (holder !== null && holder !== row.owner_user_id) return true;
+  const period = KEY_RE.exec(row.dedupe_key)?.[2];
+  return period !== undefined && holder !== null && row.contact_period_seq !== null && Number(period) !== Number(row.contact_period_seq);
+}
+
 function viewOf(row: repo.QueueRow, actor: UserActor, now: Instant, claimEvidence: EvidenceItemView[]): ExceptionView {
   const live = isLive(row);
   const evidence: EvidenceItemView[] = (row.evidence as ExceptionEvidence[]).map((e) => ({
@@ -232,6 +247,7 @@ function viewOf(row: repo.QueueRow, actor: UserActor, now: Instant, claimEvidenc
     conditionClearedAt: isoOrNull(row.condition_cleared_at),
     live,
     evidence,
+    contactOwnershipSeq: row.contact_visible && row.contact_ownership_seq !== null ? Number(row.contact_ownership_seq) : null,
     latestEvent:
       row.last_action === null
         ? null
@@ -239,7 +255,7 @@ function viewOf(row: repo.QueueRow, actor: UserActor, now: Instant, claimEvidenc
     actions: {
       resolve: live && allowed(actor, 'exception.resolve', row),
       verify: row.last_action !== 'verified' && allowed(actor, 'exception.verify', row),
-      reassign: live && row.contact_id !== null && row.contact_visible && allowed(actor, 'exception.reassign', row),
+      reassign: live && row.contact_id !== null && row.contact_visible && !reassignStale(row) && allowed(actor, 'exception.reassign', row),
       reopen: !live && allowed(actor, 'exception.resolve', row),
     },
   };
@@ -402,7 +418,7 @@ const NOT_FOUND_CODES = new Set(['NOT_FOUND', 'LEAD_OFFER_NOT_YOURS']);
  * rejection is returned (not thrown) so the caller commits the rejection log before answering (R-OWN-5).
  * The transaction must carry `ownershipCommand: commandId` (withTenantTx option).
  */
-export async function reassignException(tx: Tx, actor: UserActor, ids: IdGenerator, dedupeKey: string, body: ActBody & { toUserId: string; commandId: string }): Promise<ReassignOutcome> {
+export async function reassignException(tx: Tx, actor: UserActor, ids: IdGenerator, dedupeKey: string, body: ActBody & { toUserId: string; commandId: string; expectedSeq?: number | undefined }): Promise<ReassignOutcome> {
   const row = await lockedRow(tx, actor, dedupeKey, 'reassign');
   const eventId = eventIdFor('reassign', body.commandId);
   if (await replayed(tx, 'reassign', dedupeKey, eventId)) return { ok: true };
@@ -410,6 +426,8 @@ export async function reassignException(tx: Tx, actor: UserActor, ids: IdGenerat
   if (row.contact_id === null) throw new AppError('EXCEPTION_NOT_REASSIGNABLE');
   const contact = await getContact(tx, row.contact_id);
   if (!contact) throw new AppError('NOT_FOUND');
+  // ownership-2: never take the lead from whoever holds it now on the strength of an older item
+  if (reassignStale(row)) throw new AppError('LEAD_STATE_CHANGED', { observedSeq: Number(row.contact_ownership_seq) });
   // the same authorization as POST /leads/:id/reassign (DATA_MODEL §3: Owner/Admin anywhere, TL within team)
   const target = await memberTarget(tx, body.toUserId);
   const facts: ResourceFacts = { ...factsOf(contact), ...(target ? { target: { role: target.role as Role, inMyTeam: target.in_my_team } } : {}) };
@@ -418,7 +436,8 @@ export async function reassignException(tx: Tx, actor: UserActor, ids: IdGenerat
 
   const kind = contact.ownership_state === 'owned' ? 'reassign' : 'assign';
   const cmd: OwnershipCommand = { kind, toUserId: body.toUserId as UserId, reason: 'EXCEPTION_REASSIGN' };
-  const r = await applyOwnershipCommandInTx(tx, actor, row.contact_id as ContactId, cmd, { commandId: body.commandId, ids });
+  // the stale-UI fence: the ledger head the queue showed (LEAD_STATE_CHANGED when the lead moved since)
+  const r = await applyOwnershipCommandInTx(tx, actor, row.contact_id as ContactId, cmd, { commandId: body.commandId, ids, ...(body.expectedSeq !== undefined ? { expectedSeq: body.expectedSeq } : {}) });
   await setOwnershipCommand(tx, null);
   if (!r.outcome.ok) {
     const code = r.outcome.code;

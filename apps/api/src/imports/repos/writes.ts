@@ -190,6 +190,18 @@ export async function insertRecording(
                     ${r.objectId === null ? 'pending_copy' : 'stored'}, now() + make_interval(days => ${r.retainDays}))`.execute(tx);
 }
 
+/** Imported revocations (`revoke:<channel>:<hmac>`) and active import_dnc flags (`dnc:<sms|email>:<hmac>`) already on file for these addresses. */
+export async function importedOptOutKeys(tx: Tx, hmacs: readonly string[]): Promise<Set<string>> {
+  if (hmacs.length === 0) return new Set();
+  const r = await sql<{ k: string }>`
+    SELECT 'revoke:' || channel || ':' || encode(address_hmac, 'hex') AS k FROM consent_events
+     WHERE tenant_id = app.tenant_id() AND imported AND event_type = 'revoke' AND address_hmac IN (SELECT decode(h, 'hex') FROM unnest(${[...hmacs]}::text[]) AS h)
+    UNION
+    SELECT 'dnc:' || CASE address_kind WHEN 'email' THEN 'email' ELSE 'sms' END || ':' || encode(address_hmac, 'hex') FROM suppressions
+     WHERE tenant_id = app.tenant_id() AND reason = 'import_dnc' AND lifted_at IS NULL AND address_hmac IN (SELECT decode(h, 'hex') FROM unnest(${[...hmacs]}::text[]) AS h)`.execute(tx);
+  return new Set(r.rows.map((x) => x.k));
+}
+
 export async function insertImportedSuppression(
   tx: Tx,
   s: { id: string; addressKind: string; addressHmac: string; addressHint: string; sourceRef: Record<string, unknown>; importRecordId: string },

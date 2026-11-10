@@ -11,7 +11,8 @@
 //                   - touched rows (edited, messaged, reassigned since import) and rows something now
 //                     references are listed for a human decision, never deleted;
 //                   - imported revocations and DNC flags stay (R-CONSENT-3); ownership ledger rows are
-//                     history (the contact's removal ends the assignment).
+//                     history, and an untouched import assignment is compensated: an `import_unassign`
+//                     (import actor, fenced on the import's own seq) puts the lead back to unassigned.
 //                 The stage's revert_report says what happened, in ids and codes.
 import type { Category, ImportedRow } from '@realty/core/import';
 import { planRevert, revertOrder } from '@realty/core/import';
@@ -204,6 +205,23 @@ async function revertChunk(deps: ImportDeps, tenantId: string, stageId: string):
         if (spec.revertsEventId) removed.add(spec.revertsEventId);
       }
       report.compensated += plan.compensate.length;
+      // ownership (append-only ledger): an untouched import assignment goes back to where the contacts stage
+      // left the lead (unassigned, not routed), fenced on the import's own event; a lead whose ledger moved
+      // on since is a human's decision (ownership-1, R-IMPORT-10)
+      const seqs = await rv.ownershipEventSeqs(tx, plan.unassign.map((u) => u.eventId));
+      const importer = systemActor(tenantId, 'import');
+      for (const u of plan.unassign) {
+        const importSeq = seqs.get(u.eventId);
+        if (importSeq === undefined) continue;
+        const r = await applyOwnershipCommandInTx(tx, importer, u.contactId as ContactId, { kind: 'import_unassign', importSeq }, { commandId: derivedCommandId('import.revert.unassign', stage.id, u.eventId), ids: deps.ids });
+        await setOwnershipCommand(tx, null);
+        if (r.outcome.ok) {
+          removed.add(u.eventId);
+          report.compensated += 1;
+        } else {
+          plan.reasons[u.eventId] = 'TOUCHED';
+        }
+      }
       report.kept += plan.kept.length;
       const keptSet = new Set(plan.kept);
       const revertedRecords: string[] = [];
@@ -212,7 +230,8 @@ async function revertChunk(deps: ImportDeps, tenantId: string, stageId: string):
         // a recording goes with its call (FK cascade)
         if (mine.some((x) => x.table === 'calls' && removed.has(x.id))) for (const x of mine) if (x.table === 'recordings') removed.add(x.id);
         const left = mine.filter((x) => !removed.has(x.id) && !keptSet.has(x.id));
-        report.removed += mine.filter((x) => removed.has(x.id)).length;
+        // a compensated assignment is undone, not removed: the ledger row stays as history
+        report.removed += mine.filter((x) => removed.has(x.id) && x.table !== 'lead_ownership_events').length;
         if (left.length === 0) {
           revertedRecords.push(r.id);
           continue;

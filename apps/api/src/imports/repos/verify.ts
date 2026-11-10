@@ -38,9 +38,15 @@ export async function dbSide(tx: Tx, rec: RecordRow): Promise<Record<string, unk
     case 'consent_events':
     case 'suppressions': {
       const ids = rec.created_rows.map((r) => r.id);
+      // the person's opt-outs were applied by the same batch's contacts-stage record (outbound-2)
+      const contactsRecord = sql`(SELECT r.id FROM import_records r JOIN import_stages s ON s.tenant_id = r.tenant_id AND s.id = r.stage_id
+                                   WHERE r.tenant_id = app.tenant_id() AND r.source_ref = ${rec.source_ref} AND s.category = 'contacts'
+                                     AND s.batch_id = (SELECT x.batch_id FROM import_stages x WHERE x.tenant_id = app.tenant_id() AND x.id = ${rec.stage_id}))`;
       const ev = (await sql<{ channel: string; event_type: string; consent_level: string }>`
-        SELECT channel, event_type, consent_level FROM consent_events WHERE tenant_id = app.tenant_id() AND id = ANY (${ids}::uuid[]) ORDER BY channel, event_type`.execute(tx)).rows;
-      const sp = (await sql<{ reason: string }>`SELECT reason FROM suppressions WHERE tenant_id = app.tenant_id() AND id = ANY (${ids}::uuid[])`.execute(tx)).rows;
+        SELECT channel, event_type, consent_level FROM consent_events
+         WHERE tenant_id = app.tenant_id() AND (id = ANY (${ids}::uuid[]) OR (event_type = 'revoke' AND import_record_id IN ${contactsRecord}))
+         ORDER BY channel, event_type`.execute(tx)).rows;
+      const sp = (await sql<{ reason: string }>`SELECT reason FROM suppressions WHERE tenant_id = app.tenant_id() AND (id = ANY (${ids}::uuid[]) OR import_record_id IN ${contactsRecord})`.execute(tx)).rows;
       return { events: ev.map((e) => `${e.event_type}:${e.channel}:${e.consent_level}`), doNotContact: sp.length > 0 };
     }
     default:

@@ -134,18 +134,6 @@ export const SettingsResponse = z.object({ settings: Settings });
 export const AUTONOMOUS_CATEGORY_VALUES = ['speed_to_lead_reply', 'reminder', 'booking_confirmation', 'document_chase', 'nurture_step', 'search_alert'] as const;
 
 export const PolicyValues = z.object({
-  contactWindowStart: z.string(),
-  contactWindowEnd: z.string(),
-  humanReplyWindowMinutes: z.number().int(),
-  emailQuietHours: z.boolean(),
-  autoSmsPer24h: z.number().int(),
-  autoSmsPer7d: z.number().int(),
-  autoEmailPer24h: z.number().int(),
-  autoEmailPer7d: z.number().int(),
-  autoCrossChannelPer24h: z.number().int(),
-  manualSmsConfirmAfter24h: z.number().int(),
-  callAttemptsPer24h: z.number().int(),
-  maxDeferrals: z.number().int(),
   autonomousCategories: z.array(z.enum(AUTONOMOUS_CATEGORY_VALUES)),
   optOutConfirmationSender: z.enum(['provider', 'platform']),
   recordingEnabled: z.boolean(),
@@ -164,9 +152,8 @@ export const PolicyVersion = PolicyValues.extend({
 export const PoliciesResponse = z.object({
   activePolicyId: Uuid,
   versions: z.array(PolicyVersion),
-  /** shipped defaults (strict) and the platform floor an attested Owner may widen the window to */
+  /** shipped defaults (strict) */
   defaults: PolicyValues,
-  widestWindow: z.object({ start: z.string(), end: z.string() }),
   /** the exact sentence an Owner confirms for a looser policy (VERIFY WITH COUNSEL) */
   attestationText: z.string(),
   /** jurisdiction packs in force and whether counsel reviewed them; the UI says so plainly */

@@ -21,7 +21,6 @@ export const AGENT_ERROR_MESSAGES: Record<string, string> = {
   SUBJECT_REQUIRED: 'An email needs a subject.',
   SCHEDULE_IN_PAST: 'Pick a time in the future.',
   MESSAGE_NOT_SENDABLE: "This message can't be sent any more. Write a new one.",
-  CONFIRMATION_INVALID: 'That confirmation is out of date. Check the message again and send.',
   CALL_NOT_ACTIVE: 'This call has already ended, so its outcome was saved on the call.',
   AGENT_PHONE_MISSING: 'Add your phone number in Account so calls can ring you first.',
   SENDER_UNAVAILABLE: "There's no number or address set up to send from yet. Ask your admin.",

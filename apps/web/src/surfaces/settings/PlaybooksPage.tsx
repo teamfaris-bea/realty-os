@@ -38,7 +38,7 @@ export function PlaybooksPage() {
   return (
     <div className="flex w-full max-w-3xl flex-col gap-8">
       <Notice tone="info">
-        A playbook is a set of messages you approve once. The assistant then sends them on its own, signed as the assistant, only to contacts who allow it and only during their contact hours, and it stops the moment a client replies. Anything about money, offers or contracts always waits for a person.
+        A playbook is a set of messages you approve once. The assistant then sends them on its own, signed as the assistant, never to anyone who has opted out, and it stops the moment a client replies. Anything about money, offers or contracts always waits for a person.
       </Notice>
       {q.isPending ? <p className="text-[15px] text-ink-muted">Loading</p> : null}
       {q.isError ? <Notice tone="error">{messageFor(q.error, ADMIN_MESSAGES)}</Notice> : null}

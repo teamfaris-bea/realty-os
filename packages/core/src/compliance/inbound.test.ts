@@ -169,8 +169,8 @@ describe('planInboundEffects', () => {
     expect(fx.reply).toBe('none');
   });
 
-  it('R-CONSENT-10 START resubscribes the same phones STOP revoked (the address and the contact\'s other phones)', () => {
-    const fx = run(classifyInbound('START', K));
+  it('R-CONSENT-10 START resubscribes the same phones STOP revoked (the address and the contact\'s other phones its STOP revoked)', () => {
+    const fx = run(classifyInbound('START', K), { otherPhones: [{ ...other, keywordRevokedBySender: true }, email, addr] });
     expect(fx.consentEvents.map((e) => [e.addressHmac, e.eventType, e.channel])).toEqual([
       [H1, 'resubscribe', 'sms'],
       [H2, 'resubscribe', 'sms'],
@@ -178,6 +178,14 @@ describe('planInboundEffects', () => {
     for (const e of fx.consentEvents) expect(validateConsentEventSpec(e)).toEqual([]);
     expect(fx.notifyOwner).toBe(false);
     expect(run(classifyInbound('START', K), { channel: 'email', address: email }).consentEvents).toEqual([]);
+  });
+
+  it('R-CONSENT-10 outbound-4: START never lifts another number\'s own STOP (only that number\'s START does)', () => {
+    // H2 texted STOP itself (or another number's STOP revoked it): H1's START resubscribes H1 only
+    const fx = run(classifyInbound('START', K));
+    expect(fx.consentEvents.map((e) => [e.addressHmac, e.eventType])).toEqual([[H1, 'resubscribe']]);
+    const rows = projectConsent([...run(classifyInbound('STOP', K), { address: other, otherPhones: [addr] }).consentEvents, ...fx.consentEvents].map(toConsentEvent), NOW);
+    expect(rows.get(consentKey('sms', 'informational', H2))?.status).toBe('revoked');
   });
 
   it('HELP gets one reply only when the platform sends it; never on email', () => {

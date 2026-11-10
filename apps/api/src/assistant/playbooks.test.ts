@@ -157,7 +157,7 @@ describe('edit, migrate, revoke (R-AST-4; E31, E32; R-GATE-3, R-GATE-4)', () => 
     expect(rebuilt.body).not.toContain('(v1)');
   });
 
-  it('R-AST-4 E32 R-GATE-4 R-GATE-3: revoking pauses every enrollment on the version, cancels queued steps, and the DB guard refuses a send even with a fresh allow decision', async () => {
+  it('R-AST-4 E32 R-GATE-4: revoking pauses every enrollment on the version, cancels queued steps, and the DB guard refuses a send that bypasses dispatchOutbound', async () => {
     const pb = await approvedPlaybook(w.owner, { kind: 'booking_confirmation', scope: 'team', name: 'Revocable', steps: [confirmStep('Hi {{first_name}}, you are confirmed with us.')] });
     const a = await ownedContact(w.agents[0]!);
     const b = await ownedContact(w.agents[0]!);
@@ -167,24 +167,13 @@ describe('edit, migrate, revoke (R-AST-4; E31, E32; R-GATE-3, R-GATE-4)', () => 
     const ma = (await messagesOf(h, a.id))[0]!;
     const mb = (await messagesOf(h, b.id))[0]!;
     expect([ma.status, mb.status]).toEqual(['queued', 'queued']);
-    // a fresh send-time allow decision exists for `a` (as if TX1 had evaluated just before the revocation)
-    const sent = (await h.su.query("SELECT * FROM gate_decisions WHERE outcome = 'allow' AND phase = 'send' AND channel = 'sms' AND tenant_id = $1 LIMIT 1", [w.tenantId])).rows[0];
-    const fresh = randomUUID();
-    await h.su.query(
-      `INSERT INTO gate_decisions (tenant_id, id, phase, outcome, recipient_kind, address_hmac, channel, purpose, initiator, action_category, contact_id, message_id,
-         reason_codes, explanation, policy_version_id, core_rules_version, inputs, inputs_sha256, evaluated_at)
-       SELECT tenant_id, $2, phase, outcome, recipient_kind, address_hmac, channel, purpose, 'assistant', 'booking_confirmation', $3, $4,
-              reason_codes, explanation, policy_version_id, core_rules_version, inputs, inputs_sha256, now() FROM gate_decisions WHERE id = $1`,
-      [sent.id, fresh, a.id, ma.id],
-    );
-
     const v = (await h.su.query<{ content_sha256: string }>('SELECT content_sha256 FROM playbook_versions WHERE id = $1', [pb.versionId])).rows[0]!;
     const r = await call(w.owner, 'POST', `/playbook-versions/${pb.versionId}/revoke`, { attestation: 'Stop these messages now.', contentSha256: v.content_sha256 });
     expect(r.status).toBe(200);
     expect((await auditRows(h, w.tenantId, 'playbook.revoked')).some((x) => x.entity_id === pb.versionId)).toBe(true);
-    // from the revoke commit on, the dispatch guard refuses it, even with that allow decision (R-GATE-4)
+    // from the revoke commit on, the dispatch guard refuses it, even written straight at the table (R-GATE-4)
     await expect(
-      withTenantTx(systemActor(w.tenantId, 'assistant'), (tx) => sql`UPDATE messages SET status = 'dispatching', gate_decision_id = ${fresh}, dispatched_at = now() WHERE id = ${ma.id}`.execute(tx), { db: h.database }),
+      withTenantTx(systemActor(w.tenantId, 'assistant'), (tx) => sql`UPDATE messages SET status = 'dispatching', dispatched_at = now() WHERE id = ${ma.id}`.execute(tx), { db: h.database }),
     ).rejects.toThrow(/PLAYBOOK_NOT_APPROVED/);
     // and dispatchOutbound's own send-time check blocks it (the provider is never called)
     const before = h.providers.telephony.sms.length;

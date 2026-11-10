@@ -20,7 +20,7 @@ import {
   validateConsentEventSpec,
 } from '../compliance/index.js';
 import { addressHint } from './text.js';
-import type { FubConsentFields } from './types.js';
+import type { FubConsentFields, Issue } from './types.js';
 
 /** An imported opt-out applies to every purpose on its channel. VERIFY WITH COUNSEL. */
 export const IMPORTED_REVOKE_PURPOSE: EventPurpose = 'all';
@@ -122,6 +122,29 @@ export function mapImportedSuppressions(raw: FubConsentFields, ctx: Omit<Consent
       imported: true,
       importRecordId: ctx.importRecordId,
     }));
+}
+
+const AMBIGUOUS_CHANNEL: Record<string, Channel> = { consent_sms: 'sms', consent_email: 'email', consent_voice: 'voice' };
+
+/**
+ * The opt-out half of one source person's consent indicators: revocations and do-not-contact flags,
+ * never a grant. The contacts stage applies it in the same transaction that creates or fills the
+ * contact, so an imported STOP / unsubscribe / DNC is in force the moment the contact exists and not
+ * only when the (last) consent stage commits (R-CONSENT-3, E40: "a STOP in FUB stays a STOP here").
+ * A revocation read from an ambiguous value (a CSV bare "no", CONSENT_VALUE_AMBIGUOUS) is a revocation
+ * only after a human confirms it, so it waits for the consent-stage review. Grants are history only and
+ * stay with the consent stage.
+ */
+export function importedOptOuts(fields: FubConsentFields, issues: readonly Issue[]): FubConsentFields {
+  const ambiguous = new Set<Channel>();
+  for (const i of issues) {
+    const c = i.code === 'CONSENT_VALUE_AMBIGUOUS' && i.field !== undefined ? AMBIGUOUS_CHANNEL[i.field] : undefined;
+    if (c !== undefined) ambiguous.add(c);
+  }
+  const addresses = fields.addresses
+    .map((a) => ({ ...a, grants: [], revokes: [...new Set(a.revokes)].filter((c) => channelFits(a.kind, c) && !ambiguous.has(c)) }))
+    .filter((a) => a.revokes.length > 0 || a.doNotContact);
+  return { addresses, occurredAt: fields.occurredAt };
 }
 
 /** What a stored imported consent event must provide to be reverted. */

@@ -399,32 +399,18 @@ describe('scoreFeed: gate summary (blocked channels)', () => {
   it('when every channel is blocked the card stays, opens the contact, and says why', () => {
     const all = {
       sms: optedOut,
-      voice: { outcome: 'deny' as const, explanation: 'On a Do Not Call list' },
+      voice: { outcome: 'deny' as const, explanation: 'Opted out of calls' },
       email: { outcome: 'unavailable' as const, explanation: 'No email address' },
     };
     const s = one(feedInputs({ slas: [sla()], blockedChannels: new Map([[contact(2), all]]) }));
     expect(s.band).toBe('pinned');
     expect(s.primaryAction).toEqual({ kind: 'open_contact', label: 'Open', contactId: contact(2) });
     expect(s.alternatives).toEqual([]);
-    expect(s.reasons.at(-1)).toEqual({ code: 'CANT_CONTACT', label: "Can't reach them right now: On a Do Not Call list · Opted out of texts · No email address", points: -30 });
-    const noWhy = one(feedInputs({ slas: [sla()], blockedChannels: new Map([[contact(2), { sms: { outcome: 'defer' as const, explanation: '' }, voice: { outcome: 'defer' as const, explanation: '' }, email: { outcome: 'defer' as const, explanation: '' } }]]) }));
+    expect(s.reasons.at(-1)).toEqual({ code: 'CANT_CONTACT', label: "Can't reach them right now: Opted out of calls · Opted out of texts · No email address", points: -30 });
+    const noWhy = one(feedInputs({ slas: [sla()], blockedChannels: new Map([[contact(2), { sms: { outcome: 'deny' as const, explanation: '' }, voice: { outcome: 'deny' as const, explanation: '' }, email: { outcome: 'unavailable' as const, explanation: '' } }]]) }));
     expect(noWhy.reasons.at(-1)?.label).toBe("Can't reach them right now");
     const noWhyOne = one(feedInputs({ slas: [sla()], blockedChannels: new Map([[contact(2), { voice: { outcome: 'deny' as const, explanation: '' } }]]) }));
     expect(noWhyOne.reasons.at(-1)?.label).toBe("Can't call right now");
-  });
-
-  it('needs-confirmation is not a block: the action stays and carries the explanation as a note', () => {
-    const confirm = { outcome: 'needs_confirmation' as const, explanation: 'No consent or recent reply on file; confirm before sending' };
-    const it = one(feedInputs({ unansweredInbound: [inbound()], blockedChannels: new Map([[contact(3), { sms: confirm }]]) }));
-    expect(it.primaryAction).toEqual({ kind: 'text', label: 'Text', contactId: contact(3), note: confirm.explanation });
-    expect(it.reasons.map((r) => r.code)).toEqual(['CLIENT_WAITING']);
-    const d = one(feedInputs({ drafts: [draft()], blockedChannels: new Map([[contact(5), { sms: confirm }]]) }));
-    expect(d.primaryAction).toEqual({ kind: 'send_draft', label: 'Send', actionId: action(2), note: confirm.explanation });
-    const h = one(feedInputs({ handbacks: [handback({ replyDraftActionId: action(9) })], blockedChannels: new Map([[contact(4), { sms: confirm }]]) }));
-    expect(h.primaryAction).toEqual({ kind: 'send_draft', label: 'Send', actionId: action(9), note: confirm.explanation });
-    const e = one(feedInputs({ unansweredInbound: [inbound({ channel: 'email' })], blockedChannels: new Map([[contact(3), { email: confirm, voice: confirm }]]) }));
-    expect(e.primaryAction).toMatchObject({ kind: 'email', note: confirm.explanation });
-    expect(e.alternatives[0]).toMatchObject({ kind: 'call', note: confirm.explanation });
   });
 
   it('an email draft whose channel is blocked emails nothing and offers a call', () => {

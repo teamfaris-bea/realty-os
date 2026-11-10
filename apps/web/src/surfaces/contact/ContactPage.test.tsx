@@ -51,6 +51,22 @@ describe('Contact: card view', () => {
 });
 
 describe('Contact: full view', () => {
+  it('an opt-out is said under the buttons before any tap, per channel, in the server words', async () => {
+    const preview = (c: { body?: unknown }) => {
+      const ch = (c.body as { channel: string }).channel;
+      const d = ch === 'sms' ? decision({ id: null, phase: 'preview', outcome: 'deny', explanation: 'Opted out of texts' }) : decision({ id: null, phase: 'preview' });
+      return { status: 200, body: { decision: d, body: '' } };
+    };
+    const fake = fullFake().on(`POST /contacts/${IDS.jane}/messages/preview`, preview);
+    agentApp(fake, `/contacts/${IDS.jane}`);
+    expect(await screen.findByText('Opted out of texts')).toBeInTheDocument();
+    expect(screen.getByText(/Won't text:/)).toBeInTheDocument();
+    expect(screen.queryByText(/Won't email:/)).toBeNull();
+    const bodies = fake.callsTo(`POST /contacts/${IDS.jane}/messages/preview`).map((c) => c.body);
+    expect(bodies).toEqual(expect.arrayContaining([{ channel: 'sms', body: 'Hi' }, { channel: 'email', body: 'Hi' }]));
+    expect(document.body.textContent).not.toMatch(/consent|quiet hours|anyway/i);
+  });
+
   it('calling from the contact is 1 tap', async () => {
     const fake = fullFake().on(`POST /contacts/${IDS.jane}/calls`, { status: 200, body: { result: 'dialing', callId: IDS.call, bridgeToken: 'b', reason: null, decision: decision({}) } });
     agentApp(fake, `/contacts/${IDS.jane}`);

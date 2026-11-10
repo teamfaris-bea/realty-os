@@ -1,6 +1,6 @@
 // Reads that assemble a GateInput (ARCHITECTURE §9 "Inputs"), under the caller's RLS inside the dispatch
 // transaction. Addresses are joined by HMAC; no plaintext address leaves these queries into the gate.
-import type { ConsentStateRow, DncCheckRow, JurisdictionPackRow, LineType, NumberFacts, PointStatus, RegistrationStatus, SuppressionRow, TenantPolicyVersion } from '@realty/core/compliance';
+import type { ConsentStateRow, JurisdictionPackRow, LineType, NumberFacts, PointStatus, RegistrationStatus, SuppressionRow, TenantPolicyVersion } from '@realty/core/compliance';
 import type { Instant, PhoneNumberId } from '@realty/core/foundation';
 import { instantFromDate, toIso } from '@realty/core/foundation';
 import { type Tx, hmacBytes } from '@realty/db';
@@ -59,40 +59,17 @@ export async function tenantFacts(tx: Tx): Promise<TenantFacts> {
 export async function policyRow(tx: Tx, id: string): Promise<TenantPolicyVersion> {
   const r = await sql<{
     id: string;
-    contact_window_start: string;
-    contact_window_end: string;
-    human_reply_window_minutes: number;
-    email_quiet_hours: boolean;
-    auto_sms_per_24h: number;
-    auto_sms_per_7d: number;
-    auto_email_per_24h: number;
-    auto_email_per_7d: number;
-    auto_cross_channel_per_24h: number;
-    manual_sms_confirm_after_24h: number;
-    call_attempts_per_24h: number;
-    max_deferrals: number;
     autonomous_categories: string[];
     opt_out_confirmation_sender: 'provider' | 'platform';
     recording_enabled: boolean;
     recording_mode: 'announce_all' | 'one_party_where_permitted';
     loosening_attestation: string | null;
-  }>`SELECT * FROM compliance_policy_versions WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx);
+  }>`SELECT id, autonomous_categories, opt_out_confirmation_sender, recording_enabled, recording_mode, loosening_attestation
+       FROM compliance_policy_versions WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx);
   const p = r.rows[0];
   if (!p) throw new Error('active compliance policy not visible');
   return {
     id: p.id,
-    contactWindowStart: p.contact_window_start,
-    contactWindowEnd: p.contact_window_end,
-    humanReplyWindowMinutes: p.human_reply_window_minutes,
-    emailQuietHours: p.email_quiet_hours,
-    autoSmsPer24h: p.auto_sms_per_24h,
-    autoSmsPer7d: p.auto_sms_per_7d,
-    autoEmailPer24h: p.auto_email_per_24h,
-    autoEmailPer7d: p.auto_email_per_7d,
-    autoCrossChannelPer24h: p.auto_cross_channel_per_24h,
-    manualSmsConfirmAfter24h: p.manual_sms_confirm_after_24h,
-    callAttemptsPer24h: p.call_attempts_per_24h,
-    maxDeferrals: p.max_deferrals,
     autonomousCategories: p.autonomous_categories,
     optOutConfirmationSender: p.opt_out_confirmation_sender,
     recordingEnabled: p.recording_enabled,
@@ -134,13 +111,6 @@ export async function suppressionRows(tx: Tx, hmac: string): Promise<Suppression
   return r.rows.map((s) => ({ channel: s.channel, reason: s.reason, liftedAt: s.lifted_at ? instantFromDate(s.lifted_at) : null }));
 }
 
-export async function dncRows(tx: Tx, hmac: string): Promise<DncCheckRow[]> {
-  const r = await sql<{ registry: string; listed: boolean; checked_at: Date; valid_until: Date }>`
-    SELECT registry, listed, checked_at, valid_until FROM dnc_checks WHERE tenant_id = app.tenant_id() AND phone_hmac = ${hmacBytes(hmac)}
-     ORDER BY checked_at DESC LIMIT 20`.execute(tx);
-  return r.rows.map((d) => ({ registry: d.registry, listed: d.listed, checkedAt: instantFromDate(d.checked_at), validUntil: instantFromDate(d.valid_until) }));
-}
-
 export interface PointRow {
   id: string;
   contactId: string;
@@ -173,12 +143,6 @@ export async function contactPoints(tx: Tx, contactId: string): Promise<PointRow
   return r.rows.map(point);
 }
 
-export async function contactZone(tx: Tx, contactId: string): Promise<{ timezone: string | null; source: string | null } | null> {
-  const r = await sql<{ timezone: string | null; timezone_source: string | null }>`
-    SELECT timezone, timezone_source FROM contacts WHERE tenant_id = app.tenant_id() AND id = ${contactId}`.execute(tx);
-  return r.rows[0] ? { timezone: r.rows[0].timezone, source: r.rows[0].timezone_source } : null;
-}
-
 export interface ConversationRow {
   id: string;
   contactId: string;
@@ -187,6 +151,40 @@ export interface ConversationRow {
   lastInboundAt: Instant | null;
   inboundSeq: number;
   stickyPhoneNumberId: string | null;
+}
+
+/**
+ * R-CONSENT-7 (outbound-1): HMACs of the phones that texted a STOP/HELP keyword into this conversation in
+ * the last 24 hours (the only numbers the system's keyword reply may reach after an opt-out). Mirrors the
+ * exemption in app.messages_dispatch_guard (migration 0014).
+ */
+/**
+ * R-CONSENT-10 (outbound-4): of these phones, the ones whose every SMS keyword revoke since their last
+ * resubscribe came from a STOP texted by `fromAddress` (the revoke's evidence message). Only those may be
+ * lifted by that number's START; a phone's own STOP (or another number's) stays.
+ */
+export async function keywordRevokedBy(tx: Tx, hmacs: readonly string[], fromAddress: string): Promise<Set<string>> {
+  if (hmacs.length === 0) return new Set();
+  const r = await sql<{ h: Buffer }>`
+    SELECT e.address_hmac AS h
+      FROM consent_events e LEFT JOIN messages im ON im.tenant_id = e.tenant_id AND im.id = e.evidence_message_id
+     WHERE e.tenant_id = app.tenant_id() AND e.channel = 'sms' AND e.event_type = 'revoke' AND e.source = 'inbound_keyword'
+       AND e.address_hmac IN (SELECT decode(x, 'hex') FROM unnest(${[...hmacs]}::text[]) AS x)
+       AND e.occurred_at >= COALESCE((SELECT max(rs.occurred_at) FROM consent_events rs
+                                       WHERE rs.tenant_id = e.tenant_id AND rs.address_hmac = e.address_hmac AND rs.channel = 'sms'
+                                         AND rs.event_type = 'resubscribe'), '-infinity'::timestamptz)
+     GROUP BY e.address_hmac
+    HAVING bool_and(im.from_address IS NOT DISTINCT FROM ${fromAddress})`.execute(tx);
+  return new Set(r.rows.map((x) => Buffer.from(x.h).toString('hex')));
+}
+
+export async function keywordSenderHmacs(tx: Tx, conversationId: string, now: Instant): Promise<string[]> {
+  const r = await sql<{ h: Buffer }>`
+    SELECT DISTINCT p.address_hmac AS h
+      FROM messages im JOIN contact_points p ON p.tenant_id = im.tenant_id AND p.kind = 'phone' AND p.address = im.from_address
+     WHERE im.tenant_id = app.tenant_id() AND im.conversation_id = ${conversationId} AND im.direction = 'inbound' AND im.channel = 'sms'
+       AND im.opt_out_keyword IS NOT NULL AND im.created_at >= ${toIso(now)}::timestamptz - interval '24 hours'`.execute(tx);
+  return r.rows.map((x) => Buffer.from(x.h).toString('hex'));
 }
 
 export async function conversationOf(tx: Tx, contactId: string): Promise<ConversationRow | null> {
@@ -204,38 +202,6 @@ export async function conversationOf(tx: Tx, contactId: string): Promise<Convers
     inboundSeq: Number(c.inbound_seq),
     stickyPhoneNumberId: c.sticky_phone_number_id,
   };
-}
-
-/** Automated (assistant/system) sends to the contact in the last 7 days that count toward caps (R-CONSENT-14). */
-export async function recentAutomated(tx: Tx, contactId: string, pointId: string | null, now: Instant, excludeId: string | null): Promise<{ channel: 'sms' | 'email'; at: Instant; category: string; sameAddress: boolean }[]> {
-  const r = await sql<{ channel: string; dispatched_at: Date; action_category: string; same: boolean }>`
-    SELECT m.channel, m.dispatched_at, m.action_category,
-           (m.to_address = (SELECT p.address FROM contact_points p WHERE p.tenant_id = m.tenant_id AND p.id = ${pointId})) IS TRUE AS same
-      FROM messages m
-     WHERE m.tenant_id = app.tenant_id() AND m.contact_id = ${contactId} AND m.direction = 'outbound'
-       AND m.initiator IN ('assistant','system') AND NOT m.imported
-       AND m.status IN ('dispatching','sent','delivered','dispatch_unknown')
-       AND m.dispatched_at > ${toIso(now)}::timestamptz - interval '7 days'
-       AND (${excludeId}::uuid IS NULL OR m.id <> ${excludeId}::uuid)`.execute(tx);
-  return r.rows.map((x) => ({ channel: x.channel === 'email' ? 'email' : 'sms', at: instantFromDate(x.dispatched_at), category: x.action_category, sameAddress: x.same }));
-}
-
-export async function manualSms24h(tx: Tx, contactId: string, now: Instant, excludeId: string | null): Promise<number> {
-  const r = await sql<{ n: number }>`
-    SELECT count(*)::int AS n FROM messages m
-     WHERE m.tenant_id = app.tenant_id() AND m.contact_id = ${contactId} AND m.direction = 'outbound' AND m.initiator = 'human'
-       AND m.channel IN ('sms','mms') AND m.status IN ('dispatching','sent','delivered','dispatch_unknown')
-       AND m.dispatched_at > ${toIso(now)}::timestamptz - interval '24 hours'
-       AND (${excludeId}::uuid IS NULL OR m.id <> ${excludeId}::uuid)`.execute(tx);
-  return r.rows[0]?.n ?? 0;
-}
-
-export async function callAttempts24h(tx: Tx, contactId: string, now: Instant): Promise<number> {
-  const r = await sql<{ n: number }>`
-    SELECT count(*)::int AS n FROM calls c
-     WHERE c.tenant_id = app.tenant_id() AND c.contact_id = ${contactId} AND c.direction = 'outbound' AND NOT c.imported
-       AND c.started_at > ${toIso(now)}::timestamptz - interval '24 hours'`.execute(tx);
-  return r.rows[0]?.n ?? 0;
 }
 
 export async function numberFacts(tx: Tx, id: string): Promise<(NumberFacts & { e164: string; purpose: string; assignedUserId: string | null }) | null> {

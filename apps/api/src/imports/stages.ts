@@ -20,6 +20,7 @@ import {
   type ContactsStagePlan,
   type Counts,
   type ExistingIndex,
+  type FubConsentFields,
   type Issue,
   type NormalizedRecord,
   type PlanAction,
@@ -30,6 +31,8 @@ import {
   buildVerification,
   commitPlan,
   dryRun,
+  importedOptOuts,
+  mapFub,
   personRefOf,
   spotCheckSample,
 } from '@realty/core/import';
@@ -158,8 +161,41 @@ export async function requestDryRun(deps: ImportDeps, actor: UserActor, batchId:
   );
 }
 
-function planOf(p: PlannedRecord): unknown {
-  return p.action === null ? null : { ...p.action, staysOptedOut: p.staysOptedOut };
+/** The opt-outs a contacts-stage record carries over at commit (stored with its plan as `optOuts`). */
+export interface ContactOptOuts {
+  fields: FubConsentFields;
+  provenance: Record<string, unknown>;
+}
+
+const NO_USERS = { users: new Map(), ponds: new Map() };
+
+/**
+ * outbound-2 / R-CONSENT-3 / E40: the person's imported revocations and do-not-contact flags, read at
+ * the contacts dry run (CSV: the row's consent columns; FUB: the person's consent indicators), so the
+ * contacts commit applies them with the contact itself instead of leaving the contact sendable until
+ * the last (consent) stage commits.
+ */
+export function contactOptOuts(source: brepo.BatchRow['source'], p: PlannedRecord, raw: unknown): ContactOptOuts | null {
+  const n = p.normalized;
+  if (n?.category !== 'contacts') return null;
+  let fields: FubConsentFields;
+  let provenance: Record<string, unknown>;
+  if (source === 'csv') {
+    if (!n.consent) return null;
+    fields = importedOptOuts(n.consent.fields, n.consent.issues);
+    provenance = { source: 'csv', sourceRef: p.sourceRef, indicators: fields.addresses.map((a) => ({ kind: a.kind, revokes: a.revokes, doNotContact: a.doNotContact })) };
+  } else {
+    if (raw === null || raw === undefined) return null;
+    const o = mapFub('consent', raw, NO_USERS);
+    if (o.record?.category !== 'consent') return null;
+    fields = importedOptOuts(o.record.fields, o.issues);
+    provenance = o.record.provenance;
+  }
+  return fields.addresses.length > 0 ? { fields, provenance } : null;
+}
+
+function planOf(p: PlannedRecord, optOuts: ContactOptOuts | null = null): unknown {
+  return p.action === null ? null : { ...p.action, staysOptedOut: p.staysOptedOut, ...(optOuts ? { optOuts } : {}) };
 }
 
 /** The dry-run job (imports.dry_run). One transaction: the stage's records are all written or none. */
@@ -184,7 +220,8 @@ export async function runDryRun(deps: ImportDeps, tenantId: string, stageId: str
           const id = prev?.id ?? deps.ids.next<'ImportRecordId'>();
           const raw = src.raws.get(p.sourceRef) ?? null;
           const enc = await env.encrypt(actor.tenantId, rawAad(id), new TextEncoder().encode(JSON.stringify(raw)));
-          rows.push({ id, sourceRef: p.sourceRef, rawEncHex: Buffer.from(enc).toString('hex'), normalized: p.normalized, outcome: p.outcome, issues: p.issues, matchContactId: p.matchContactId, plan: planOf(p) });
+          const optOuts = stage.category === 'contacts' ? contactOptOuts(batch.source, p, raw) : null;
+          rows.push({ id, sourceRef: p.sourceRef, rawEncHex: Buffer.from(enc).toString('hex'), normalized: p.normalized, outcome: p.outcome, issues: p.issues, matchContactId: p.matchContactId, plan: planOf(p, optOuts) });
         }
         await rrepo.upsertRecords(tx, stage.id, rows);
         await rrepo.markStale(tx, stage.id, new Set(dry.records.map((r) => r.sourceRef)));
@@ -249,6 +286,7 @@ export function storedDryRun(stage: brepo.StageRow, records: readonly rrepo.Reco
     if (plan) {
       delete plan.staysOptedOut;
       delete plan.mergeIntoContactId;
+      delete plan.optOuts;
     }
     return {
       sourceRef: r.source_ref,

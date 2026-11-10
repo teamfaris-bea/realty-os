@@ -2,9 +2,8 @@
 // Everything is read under the caller's RLS. Inputs that span other users (routing candidates, their
 // push subscriptions, claim stats, the rotation cursor) are only read for the system actor
 // (ARCHITECTURE §5 "Routing never runs under a user actor", Design Review F1).
-import { type ResolvedPolicy, PLATFORM_FLOOR, nextContactableAt as gateNextContactable, parseJurisdictionPack, resolvePolicy, type JurisdictionPack } from '@realty/core/compliance';
 import type { BusinessCalendar, ContactId, Instant, PondId, Role, RuleId, UserId } from '@realty/core/foundation';
-import { HOUR_MS, businessCalendar, instant, instantFromDate, plusMs, resolveRecipientZones, startOfLocalDay, toIso, zone } from '@realty/core/foundation';
+import { HOUR_MS, businessCalendar, instant, plusMs, startOfLocalDay, toIso, zone } from '@realty/core/foundation';
 import {
   type Candidate,
   type EffectiveLeadSettings,
@@ -29,7 +28,6 @@ import type { Tx } from '../tenantTx.js';
 export interface TenantFacts {
   settings: EffectiveLeadSettings;
   calendar: BusinessCalendar;
-  policy: Pick<ResolvedPolicy, 'window' | 'emailQuietHours'>;
   defaultPondCooldownHours: number;
 }
 
@@ -52,23 +50,6 @@ interface SettingsRow {
   default_pond_id: string | null;
   default_pond_cooldown: number | null;
   p_id: string | null;
-  contact_window_start: string;
-  contact_window_end: string;
-  human_reply_window_minutes: number;
-  email_quiet_hours: boolean;
-  auto_sms_per_24h: number;
-  auto_sms_per_7d: number;
-  auto_email_per_24h: number;
-  auto_email_per_7d: number;
-  auto_cross_channel_per_24h: number;
-  manual_sms_confirm_after_24h: number;
-  call_attempts_per_24h: number;
-  max_deferrals: number;
-  autonomous_categories: string[];
-  opt_out_confirmation_sender: 'provider' | 'platform';
-  recording_enabled: boolean;
-  recording_mode: 'announce_all' | 'one_party_where_permitted';
-  loosening_attestation: string | null;
 }
 
 export class TenantNotReadyError extends Error {
@@ -83,11 +64,7 @@ export async function loadTenantFacts(tx: Tx): Promise<TenantFacts> {
            s.soft_delete_purge_days, s.operating_jurisdictions,
            (SELECT p.id FROM ponds p WHERE p.tenant_id = s.tenant_id AND p.is_default) AS default_pond_id,
            (SELECT p.claim_cooldown_hours FROM ponds p WHERE p.tenant_id = s.tenant_id AND p.is_default) AS default_pond_cooldown,
-           v.id AS p_id, v.contact_window_start::text, v.contact_window_end::text, v.human_reply_window_minutes,
-           v.email_quiet_hours, v.auto_sms_per_24h, v.auto_sms_per_7d, v.auto_email_per_24h, v.auto_email_per_7d,
-           v.auto_cross_channel_per_24h, v.manual_sms_confirm_after_24h, v.call_attempts_per_24h, v.max_deferrals,
-           v.autonomous_categories, v.opt_out_confirmation_sender, v.recording_enabled, v.recording_mode,
-           v.loosening_attestation
+           v.id AS p_id
       FROM tenant_settings s
       LEFT JOIN compliance_policy_versions v ON v.tenant_id = s.tenant_id AND v.id = s.active_policy_id
      WHERE s.tenant_id = app.tenant_id()`.execute(tx);
@@ -111,56 +88,16 @@ export async function loadTenantFacts(tx: Tx): Promise<TenantFacts> {
     tenantZone: tz,
   };
   const calendar = businessCalendar({ zone: tz, open: s.routing_hours_start, close: s.routing_hours_end });
-  // Contact window for the first-touch SLA base (E8): platform floor ∧ published packs of the tenant's
-  // jurisdictions ∧ the active tenant policy. A pack that fails to parse is skipped here (the gate
-  // itself fails closed on it); the tenant window alone is never wider than the floor.
-  const packRows = await sql<{ key: string; version: string; rules: unknown; reviewed_by_counsel_at: Date | null }>`
-    SELECT key, version, rules, reviewed_by_counsel_at FROM jurisdiction_packs
-     WHERE status = 'published' AND key = ANY (${s.operating_jurisdictions}::text[])`.execute(tx);
-  const packs: JurisdictionPack[] = [];
-  for (const p of packRows.rows) {
-    const parsed = parseJurisdictionPack({ key: p.key, version: p.version, rules: p.rules, reviewedByCounselAt: p.reviewed_by_counsel_at ? instantFromDate(p.reviewed_by_counsel_at) : null });
-    if (parsed.ok) packs.push(parsed.pack);
-  }
-  const policy = resolvePolicy(PLATFORM_FLOOR, packs, {
-    id: s.p_id,
-    contactWindowStart: s.contact_window_start,
-    contactWindowEnd: s.contact_window_end,
-    humanReplyWindowMinutes: s.human_reply_window_minutes,
-    emailQuietHours: s.email_quiet_hours,
-    autoSmsPer24h: s.auto_sms_per_24h,
-    autoSmsPer7d: s.auto_sms_per_7d,
-    autoEmailPer24h: s.auto_email_per_24h,
-    autoEmailPer7d: s.auto_email_per_7d,
-    autoCrossChannelPer24h: s.auto_cross_channel_per_24h,
-    manualSmsConfirmAfter24h: s.manual_sms_confirm_after_24h,
-    callAttemptsPer24h: s.call_attempts_per_24h,
-    maxDeferrals: s.max_deferrals,
-    autonomousCategories: s.autonomous_categories,
-    optOutConfirmationSender: s.opt_out_confirmation_sender,
-    recordingEnabled: s.recording_enabled,
-    recordingMode: s.recording_mode,
-    looseningAttestation: s.loosening_attestation,
-  });
-  return { settings, calendar, policy, defaultPondCooldownHours: s.default_pond_cooldown ?? 72 };
+  return { settings, calendar, defaultPondCooldownHours: s.default_pond_cooldown ?? 72 };
 }
 
 /**
- * First contactable instant ≥ from for the contact (SLA base, R-OWN-13 / E8), from the contact's zone
- * evidence (explicit contact tz → primary phone tz → tenant zone) and the voice/SMS contact window.
- * Never contactable (empty window) ⇒ `from`.
+ * First contactable instant ≥ from for the contact (SLA base, R-OWN-13). Since core-compliance/2.0.0
+ * there is no contact window (owner decision), so every instant is contactable and the first-touch SLA
+ * counts from the moment ownership starts. Kept as a function so core/ownership's interface is unchanged.
  */
-export async function nextContactableFn(tx: Tx, facts: TenantFacts, contactId: ContactId | null, contactTz: string | null): Promise<(from: Instant) => Instant> {
-  let pointTz: string | null = null;
-  if (contactId) {
-    const r = await sql<{ timezone: string | null }>`
-      SELECT timezone FROM contact_points
-       WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND kind = 'phone' AND removed_at IS NULL
-       ORDER BY is_primary DESC, created_at LIMIT 1`.execute(tx);
-    pointTz = r.rows[0]?.timezone ?? null;
-  }
-  const { zones } = resolveRecipientZones({ contactTz, pointTz, areaCodeZones: [], tenantZone: facts.settings.tenantZone });
-  return (from: Instant) => gateNextContactable(from, zones, facts.policy, 'sms') ?? from;
+export function nextContactableFn(): (from: Instant) => Instant {
+  return (from: Instant) => from;
 }
 
 // ---- members, ponds, people -----------------------------------------------------------------------

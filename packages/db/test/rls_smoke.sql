@@ -345,41 +345,42 @@ SELECT pg_temp.ok((SELECT string_agg(type, ',' ORDER BY seq) FROM lead_ownership
                   = 'created,offered,offer_declined,offered', 'ledger holds the gapless, ordered history');
 
 -- =============================================================================
--- 5. Comms gate, assistant autonomy, evidence, consent caps
+-- 5. Comms dispatch guard (opt-out block), assistant autonomy, evidence, consent ledger
 -- =============================================================================
 SELECT pg_temp.ctx(:tA, :agA2, 'user');
 INSERT INTO conversations (tenant_id, id, contact_id) VALUES (:tA, 'a0000000-0000-7000-8000-00000000cc01', :c1);
-SELECT pg_temp.expect_error(format(
-  $q$INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, from_address, to_address,
-     body, status, initiator, initiated_by_user_id, purpose, occurred_at) VALUES (%L, gen_random_uuid(), 'a0000000-0000-7000-8000-00000000cc01',
-     %L, 'sms', 'outbound', 'a0000000-0000-7000-8000-00000000a0a1', '+15555559000', '+15555550101', 'Hi Alice', 'sent', 'human', %L,
-     'informational', now())$q$, :tA, :c1, :agA2),
-  'an outbound message cannot be sent without a gate decision', '%GATE_NOT_ALLOWED%');
+-- 0013 (core-compliance/2.0.0): no per-send gate decision is required; gate_decisions logs blocked sends only.
 INSERT INTO gate_decisions (tenant_id, id, contact_id, address_hmac, channel, purpose, initiator, action_category, phase, outcome,
        reason_codes, explanation, actor_user_id, policy_version_id, core_rules_version, inputs, inputs_sha256, evaluated_at)
 VALUES (:tA, 'a0000000-0000-7000-8000-00000000ab01', :c1, :HMAC1, 'sms', 'informational', 'human', 'none', 'send', 'deny',
-        '{OPTED_OUT}', 'Opted out of texts', :agA2, :polA, '1.0.0', '{}', :SHA, now()),
-       (:tA, 'a0000000-0000-7000-8000-00000000ab02', :c1, :HMAC1, 'sms', 'informational', 'human', 'none', 'send', 'allow',
-        '{}', 'OK to text', :agA2, :polA, '1.0.0', '{}', :SHA, now());
+        '{CONSENT_REVOKED}', 'Opted out of texts', :agA2, :polA, '2.0.0', '{}', :SHA, now());
+SELECT pg_temp.ok(true, 'a blocked send is logged in gate_decisions');
+SELECT pg_temp.expect_error(format(
+  $q$INSERT INTO gate_decisions (tenant_id, id, contact_id, address_hmac, channel, purpose, initiator, action_category, phase, outcome,
+     reason_codes, explanation, actor_user_id, policy_version_id, core_rules_version, inputs, inputs_sha256, evaluated_at)
+     VALUES (%L, gen_random_uuid(), %L, digest('+15555550101', 'sha256'), 'sms', 'informational', 'human', 'none', 'send', 'allow', '{}',
+     'OK to text', %L, %L, '2.0.0', '{}', repeat('ab', 32), now())$q$, :tA, :c1, :agA2, :polA),
+  'gate_decisions holds blocked sends only (no allow rows)', '%gate_decisions_blocked_send_only%');
 SELECT pg_temp.expect_error(format(
   $q$INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, from_address, to_address,
-     body, status, initiator, initiated_by_user_id, purpose, gate_decision_id, occurred_at) VALUES (%L, gen_random_uuid(),
+     body, status, initiator, initiated_by_user_id, purpose, occurred_at) VALUES (%L, gen_random_uuid(),
      'a0000000-0000-7000-8000-00000000cc01', %L, 'sms', 'outbound', 'a0000000-0000-7000-8000-00000000a0a1', '+15555559000',
-     '+15555550101', 'Hi Alice', 'dispatching', 'human', %L, 'informational', 'a0000000-0000-7000-8000-00000000ab01', now())$q$, :tA, :c1, :agA2),
-  'a deny decision cannot authorize dispatch', '%GATE_NOT_ALLOWED%');
-SELECT pg_temp.expect_error(format(
-  $q$INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, from_address, to_address,
-     body, status, initiator, initiated_by_user_id, purpose, gate_decision_id, occurred_at) VALUES (%L, gen_random_uuid(),
-     'a0000000-0000-7000-8000-00000000cc01', %L, 'sms', 'outbound', 'a0000000-0000-7000-8000-00000000a0a1', '+15555559000',
-     '+15555550101', 'Hi Alice', 'dispatching', 'human', %L, 'informational', 'a0000000-0000-7000-8000-00000000ab02', now())$q$, :tA, :c1, :agA2),
+     '+15555550101', 'Hi Alice', 'dispatching', 'human', %L, 'informational', now())$q$, :tA, :c1, :agA2),
   'dispatching requires dispatched_at (the stuck-dispatch sweeper keys on it)', '%check constraint%');
+SELECT pg_temp.expect_error(format(
+  $q$INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, from_address, to_address,
+     body, status, initiator, initiated_by_user_id, purpose, dispatched_at, occurred_at) VALUES (%L, gen_random_uuid(),
+     'a0000000-0000-7000-8000-00000000cc01', %L, 'sms', 'outbound', 'a0000000-0000-7000-8000-00000000a0a1', '+15555559000',
+     '+15555550199', 'Hi stranger', 'dispatching', 'human', %L, 'informational', now(), now())$q$, :tA, :c1, :agA2),
+  'a send to an address that is not one of the contact''s points cannot dispatch (its opt-out could not be checked)',
+  '%RECIPIENT_NOT_A_CONTACT_POINT%');
 -- dispatched 30 minutes ago and never finished (worker died between TX1 and TX2)
 INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, from_address, to_address,
-       body, status, initiator, initiated_by_user_id, purpose, gate_decision_id, dispatched_at, occurred_at)
+       body, status, initiator, initiated_by_user_id, purpose, dispatched_at, occurred_at)
 VALUES (:tA, 'a0000000-0000-7000-8000-00000000ee01', 'a0000000-0000-7000-8000-00000000cc01', :c1, 'sms', 'outbound',
         'a0000000-0000-7000-8000-00000000a0a1', '+15555559000', '+15555550101', 'Hi Alice, it''s Ben.', 'dispatching', 'human',
-        :agA2, 'informational', 'a0000000-0000-7000-8000-00000000ab02', now() - interval '30 minutes', now());
-SELECT pg_temp.ok(true, 'a fresh send-time allow decision authorizes dispatch');
+        :agA2, 'informational', now() - interval '30 minutes', now());
+SELECT pg_temp.ok(true, 'a human send to a contact who has not opted out dispatches with no gate decision row');
 SELECT pg_temp.ok(EXISTS (SELECT 1 FROM app.due_work(now(), 100) WHERE work_kind = 'dispatch_stale'
                            AND ref_id = 'a0000000-0000-7000-8000-00000000ee01'),
                   'a message stuck in dispatching past the max lease is surfaced for reconciliation');
@@ -432,6 +433,14 @@ SELECT pg_temp.expect_error(format(
 INSERT INTO consent_state (tenant_id, channel, purpose, address_hmac, status, consent_level, basis_event_id, ledger_event_count)
 VALUES (:tA, 'sms', 'informational', :HMAC1, 'revoked', 'none', 'a0000000-0000-7000-8000-00000000ce01', 1);
 SELECT pg_temp.ok(true, 'consent projection consistent with the ledger is accepted');
+SELECT pg_temp.ctx(:tA, :agA2, 'user');
+SELECT pg_temp.expect_error(format(
+  $q$INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, from_address, to_address,
+     body, status, initiator, initiated_by_user_id, purpose, dispatched_at, occurred_at) VALUES (%L, gen_random_uuid(),
+     'a0000000-0000-7000-8000-00000000cc01', %L, 'sms', 'outbound', 'a0000000-0000-7000-8000-00000000a0a1', '+15555559000',
+     '+15555550101', 'Still there?', 'sent', 'human', %L, 'informational', now(), now())$q$, :tA, :c1, :agA2),
+  'a send to an opted-out address cannot be dispatched, whoever writes it (no override)', '%RECIPIENT_OPTED_OUT%');
+SELECT pg_temp.ctx(:tA, NULL, 'system');
 SELECT pg_temp.expect_error(format($q$UPDATE consent_events SET consent_level = 'express' WHERE id = %L$q$, 'a0000000-0000-7000-8000-00000000ce01'),
   'consent ledger is append-only', '%permission denied%');
 

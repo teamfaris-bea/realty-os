@@ -4,13 +4,17 @@
 //   card (first name + last initial for pond cards, intent, source, area/summary, age) and the one
 //   action that makes it theirs: Accept (with the live offer countdown) / Decline, or Claim. No
 //   phone, email, timeline, task, deal or search is requested or shown until it is theirs.
-// - Full view: Call / Text / Email in one tap each (the gate is checked at the tap), what the
+// - Full view: Call / Text / Email in one tap each (the send-time check runs at the tap), what the
 //   assistant has for this contact, saved searches, open tasks, deals (+ Start a deal, which copies
-//   the lead's attribution server-side, A7d), and the recent timeline.
+//   the lead's attribution server-side, A7d), and the recent timeline. If texts or email to this
+//   contact would be blocked (they texted STOP, unsubscribed, asked not to be contacted, or the address
+//   is suppressed), the reason shows under the buttons before any tap ("Won't text: Opted out of
+//   texts"), from the server's preview (useSendCheck). A call is checked when Call is tapped, and a
+//   blocked call says why in the call sheet. Nobody can override an opt-out.
 import { useQuery } from '@tanstack/react-query';
 import { type ReactNode, useEffect, useId, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { Button, ButtonLink, Card, Notice } from '../../design/index.js';
+import { Button, ButtonLink, Card, GateBadge, Notice } from '../../design/index.js';
 import { type ApiError, messageFor, useApi, usePageTitle } from '../../shell/index.js';
 import { ActionCard, useInbox } from '../approvals/ApprovalsPage.js';
 import { ContactSearches } from '../approvals/SavedSearchReview.js';
@@ -20,6 +24,7 @@ import { AgentSheetsProvider, useAgentSheets } from '../feed/lib/AgentSheets.js'
 import { STAGE_LABEL, formatDateTime, formatMoney, formatPhone, intentLabel, relativeTime } from '../feed/lib/format.js';
 import { useMutate, useNow } from '../feed/lib/hooks.js';
 import { AGENT_ERROR_MESSAGES } from '../feed/lib/messages.js';
+import { useSendCheck } from '../feed/lib/sendCheck.js';
 import type { ContactCardView, ContactFullView, DealSide, DealView, TaskView, TimelineItem } from '../feed/lib/types.js';
 import { MessageRow, useTimeline } from '../thread/ThreadPage.js';
 import { useContact } from './useContact.js';
@@ -108,6 +113,8 @@ function FullView({ contact }: { contact: ContactFullView }) {
   const forContact = (inbox.data?.items ?? []).filter((a) => a.contactId === contact.id);
   const proposalClaims = forContact.filter((a) => a.kind === 'saved_search_proposal').flatMap((a) => a.claims);
   const firstTouchDue = o.state === 'owned' && o.ownedByMe && o.firstTouchDueAt && !o.firstTouchAt ? o.firstTouchDueAt : null;
+  const textCheck = useSendCheck({ contactId: contact.id, channel: 'sms', enabled: contact.phones.length > 0 }).decision;
+  const emailCheck = useSendCheck({ contactId: contact.id, channel: 'email', enabled: contact.emails.length > 0 }).decision;
 
   useEffect(() => {
     if (hash) document.getElementById(hash.slice(1))?.scrollIntoView?.({ block: 'start' });
@@ -148,6 +155,12 @@ function FullView({ contact }: { contact: ContactFullView }) {
             Email
           </Button>
         </div>
+        {textCheck?.outcome === 'deny' || emailCheck?.outcome === 'deny' ? (
+          <div className="flex flex-col items-start gap-1.5">
+            {textCheck?.outcome === 'deny' ? <GateBadge lead="Won't text" decision={textCheck} /> : null}
+            {emailCheck?.outcome === 'deny' ? <GateBadge lead="Won't email" decision={emailCheck} /> : null}
+          </div>
+        ) : null}
         <ul className="flex flex-col gap-1 text-[15px] text-ink">
           {contact.phones.map((p) => (
             <li key={p.id}>

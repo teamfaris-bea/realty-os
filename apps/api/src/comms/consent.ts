@@ -323,9 +323,12 @@ async function callConsentEffects(tx: Tx, actor: UserActor, deps: CommsDeps, con
     return;
   }
   const channels: Channel[] = outcome === 'wrong_number' ? ['sms', 'voice'] : ['voice'];
-  for (const ch of channels) {
+  // outbound-3: "do not call me" is the person's request, so it revokes voice on every phone of the
+  // contact (as inbound opt-out language does); a wrong number is about this number only
+  const targets = outcome === 'do_not_call_request' ? [p, ...(await g.contactPoints(tx, contactId)).filter((x) => x.kind === 'phone' && x.hmac !== p.hmac)] : [p];
+  for (const ch of channels) for (const t of targets) {
     await recordConsentEvent(tx, {
-      ...baseSpec(deps.ids.next<'ConsentEventId'>(), p, ch, now, contactId, actor),
+      ...baseSpec(deps.ids.next<'ConsentEventId'>(), t, ch, now, contactId, actor),
       purpose: 'all',
       eventType: 'revoke',
       level: 'none',

@@ -77,7 +77,7 @@ export function feed(pinned: FeedCard[] = [], scored: FeedCard[] = [], total?: n
   return { pinned, scored, total: total ?? pinned.length + scored.length, generatedAt: new Date().toISOString() };
 }
 
-export const allow: DecisionView = { id: null, outcome: 'allow', reasons: [], explanation: '', deferUntil: null, canConfirm: false, phase: 'preview' };
+export const allow: DecisionView = { id: null, outcome: 'allow', reasons: [], explanation: '', phase: 'preview' };
 
 export function decision(over: Partial<DecisionView>): DecisionView {
   return { ...allow, id: IDS.decision, phase: 'send', ...over };

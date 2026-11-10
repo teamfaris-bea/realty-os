@@ -70,23 +70,23 @@ export const AUTONOMOUS_ELIGIBLE: ReadonlySet<ActionCategory> = new Set<ActionCa
   'search_alert',
 ]);
 
-/** Consent-exempt system replies (ARCHITECTURE §9 path 8); still sender-registration checked. */
+/**
+ * Opt-out-exempt system replies (ARCHITECTURE §9 path 8): the system's own informational SMS answer to
+ * a STOP/HELP keyword may reach the address that just opted out. Still sender-registration,
+ * suppression and content checked.
+ */
 export const CONSENT_EXEMPT_CATEGORIES: ReadonlySet<ActionCategory> = new Set<ActionCategory>([
   'opt_out_confirmation',
   'help_reply',
 ]);
 
-/** Cap-exempt categories (R-CONSENT-14); consent and quiet hours still apply. */
-export const CAP_EXEMPT_CATEGORIES: ReadonlySet<ActionCategory> = new Set<ActionCategory>([
-  'opt_out_confirmation',
-  'help_reply',
-  'booking_confirmation',
-  'reminder',
-]);
-
 // ---- consent ------------------------------------------------------------------------------------
+//
+// The ledger keeps recording every consent event (opt-ins as history, opt-outs as blocks). Since
+// core-compliance/2.0.0 (owner decision: every lead consented through third-party sources) no send
+// depends on the consent LEVEL; the gate reads only whether a row is `revoked`.
 
-/** Ordered weakest → strongest (DATA_MODEL §1.4). */
+/** Ordered weakest → strongest (DATA_MODEL §1.4). History only: no send reads the level. */
 export type ConsentLevel = 'none' | 'imported_unverified' | 'inquiry' | 'express' | 'express_written';
 export const CONSENT_LEVELS: readonly ConsentLevel[] = ['none', 'imported_unverified', 'inquiry', 'express', 'express_written'];
 
@@ -141,7 +141,7 @@ export interface ConsentStateRow {
   ledgerEventCount: number;
 }
 
-// ---- suppressions, DNC, contact points ----------------------------------------------------------
+// ---- suppressions, contact points ---------------------------------------------------------------
 
 export type SuppressionReason =
   | 'hard_bounce'
@@ -161,33 +161,10 @@ export interface SuppressionRow {
   liftedAt: Instant | null;
 }
 
-/** A `dnc_checks` row for the recipient's phone. */
-export interface DncCheckRow {
-  registry: string; // 'us_national' | 'us_state:XX'
-  listed: boolean;
-  checkedAt: Instant;
-  validUntil: Instant;
-}
-
 export type PointStatus = 'active' | 'invalid' | 'wrong_number' | 'bouncing' | 'removed';
 export type LineType = 'mobile' | 'landline' | 'voip' | 'toll_free' | 'unknown';
 
 // ---- policy -------------------------------------------------------------------------------------
-
-/** Frequency caps (R-CONSENT-14). Tenants may only lower them (DB CHECK, `resolvePolicy`). */
-export interface Caps {
-  autoSmsPer24h: number;
-  autoSmsPer7d: number;
-  autoEmailPer24h: number;
-  autoEmailPer7d: number;
-  autoCrossChannelPer24h: number;
-  /** Manual SMS: the send after this many in 24 h needs confirmation. */
-  manualSmsConfirmAfter24h: number;
-  /** Outbound call attempts per 24 h; the next one is denied. */
-  callAttemptsPer24h: number;
-  /** Deferrals before an automated step becomes `skipped_ineligible`. */
-  maxDeferrals: number;
-}
 
 /** Inbound keyword lists, upper-case (R-CONSENT-7, pack `opt_out_keywords` etc.). */
 export interface Keywords {

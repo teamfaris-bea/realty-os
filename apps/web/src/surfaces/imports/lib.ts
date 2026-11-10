@@ -11,7 +11,21 @@ export const CATEGORY_LABEL: Record<ImportCategory, string> = {
   notes: 'Notes',
   messages: 'Texts and emails',
   call_recordings: 'Calls and recordings',
-  consent: 'Texting and email permission',
+  consent: 'Opt-outs and consent history',
+};
+
+/**
+ * What a category means, where it needs saying. Consent (owner decision, core-compliance/2.0.0): opt-
+ * outs carry over and block sending exactly like an opt-out made here; opt-ins are kept as history and
+ * no longer change who can be messaged.
+ */
+export const CATEGORY_NOTE: Partial<Record<ImportCategory, string>> = {
+  consent: "Opt-outs carry over and block texts, email or calls here exactly as if the person had opted out in this app: anyone who texted STOP, unsubscribed or asked not to be contacted in the old system stays opted out. Opt-ins are kept as history only; they don't change who can be messaged.",
+};
+
+/** What skipping a category gives up, where it matters. */
+export const SKIP_WARNING: Partial<Record<ImportCategory, string>> = {
+  consent: "If you skip this, opt-outs from the old system won't carry over, and people who asked not to be contacted could be messaged from here.",
 };
 
 export const STAGE_STATUS: Record<string, string> = {

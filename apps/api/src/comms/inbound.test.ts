@@ -116,7 +116,25 @@ describe('STOP keywords (R-CONSENT-7)', () => {
     expect((await sendText(agent, c.id, 'Welcome back')).body.result).toBe('sent');
   });
 
-  it('R-GATE-10 path 8: with the platform as the confirmation sender, STOP gets exactly one consent-exempt confirmation and HELP one help reply, each with a decision row', async () => {
+  it('R-CONSENT-10 outbound-4: START from phone B never undoes phone A\'s own STOP; START from A lifts what A\'s STOP revoked', async () => {
+    const agent = w.agents[0]!;
+    const a = randomPhone();
+    const b = randomPhone();
+    const r = await call<{ contact: { id: string } }>(agent, 'POST', '/contacts', { commandId: randomUUID(), firstName: 'Sam', lastName: 'Two', phones: [a, b], emails: [] });
+    expect([200, 201]).toContain(r.status);
+    const cid = r.body.contact.id;
+    await inboundSms(h, a, w.mainNumber, 'STOP');
+    expect((await sendText(agent, cid, 'hello A')).body.result).toBe('blocked');
+    await inboundSms(h, b, w.mainNumber, 'START');
+    expect((await sendText(agent, cid, 'hello A again')).body.result).toBe('blocked');
+    expect(smsTo(a)).toHaveLength(0);
+    // A opts back in itself: both phones were revoked by A's STOP, both are lifted
+    await inboundSms(h, a, w.mainNumber, 'START');
+    expect((await sendText(agent, cid, 'Welcome back')).body.result).toBe('sent');
+    expect(smsTo(a)).toHaveLength(1);
+  });
+
+  it('R-GATE-10 path 8: with the platform as the confirmation sender, STOP gets exactly one opt-out-exempt confirmation and HELP one help reply (sent: no blocked-send row); nothing else reaches the number afterwards', async () => {
     const w3 = await commsWorld(h, { agents: 1 });
     const pol = await call(w3.owner, 'POST', '/compliance-policies', { optOutConfirmationSender: 'platform', activate: true });
     expect(pol.status).toBe(201);
@@ -129,9 +147,40 @@ describe('STOP keywords (R-CONSENT-7)', () => {
     await runJobs(h, w3.tenantId, ['comms.dispatch']);
     const replies = (await h.su.query<{ id: string; action_category: string; status: string }>("SELECT id, action_category, status FROM messages WHERE contact_id = $1 AND direction = 'outbound' ORDER BY created_at", [c.id])).rows;
     expect(replies.map((m) => `${m.action_category}:${m.status}`)).toEqual(['help_reply:sent', 'opt_out_confirmation:sent']);
-    for (const m of replies) expect((await decisionsFor(h, { messageId: m.id }))[0]!.outcome).toBe('allow');
+    for (const m of replies) expect(await decisionsFor(h, { messageId: m.id })).toHaveLength(0);
     expect(smsTo(c.phone)).toHaveLength(2);
     expect(smsTo(c.phone)[1]!.body).toContain('unsubscribed');
+    // the exemption covers only that reply: the agent's next text is blocked
+    const after = await sendText(w3.agents[0]!, c.id, 'Sorry to see you go');
+    expect(after.body.result).toBe('blocked');
+    expect(smsTo(c.phone)).toHaveLength(2);
+  });
+});
+
+describe('the keyword reply answers the number that texted (R-CONSENT-7, outbound-1)', () => {
+  it('a HELP from phone B a week after phone A texted STOP is answered on B, never on opted-out A; a STOP from B is confirmed on B', async () => {
+    const w3 = await commsWorld(h, { agents: 1 });
+    expect((await call(w3.owner, 'POST', '/compliance-policies', { optOutConfirmationSender: 'platform', activate: true })).status).toBe(201);
+    const a = randomPhone();
+    const b = randomPhone();
+    const r = await call<{ contact: { id: string } }>(w3.agents[0]!, 'POST', '/contacts', { commandId: randomUUID(), firstName: 'Jane', lastName: 'Two', phones: [a, b], emails: [] });
+    expect([200, 201]).toContain(r.status);
+    const cid = r.body.contact.id;
+    await inboundSms(h, a, w3.mainNumber, 'STOP');
+    await runJobs(h, w3.tenantId, ['comms.dispatch']);
+    expect(smsTo(a).map((m) => m.body.includes('unsubscribed'))).toEqual([true]);
+    // a week passes: A's keyword is no longer recent
+    await h.su.query("UPDATE messages SET created_at = now() - interval '8 days' WHERE contact_id = $1", [cid]);
+    await inboundSms(h, b, w3.mainNumber, 'HELP');
+    await runJobs(h, w3.tenantId, ['comms.dispatch']);
+    expect(smsTo(a)).toHaveLength(1);
+    expect(smsTo(b)).toHaveLength(1);
+    const help = (await h.su.query<{ to_address: string; status: string }>("SELECT to_address, status FROM messages WHERE contact_id = $1 AND action_category = 'help_reply'", [cid])).rows;
+    expect(help).toEqual([{ to_address: b, status: 'sent' }]);
+    await inboundSms(h, b, w3.mainNumber, 'STOP');
+    await runJobs(h, w3.tenantId, ['comms.dispatch']);
+    expect(smsTo(a)).toHaveLength(1);
+    expect(smsTo(b).at(-1)!.body).toContain('unsubscribed');
   });
 });
 
@@ -213,11 +262,7 @@ describe('pause and handback (R-AST-9)', () => {
     const c = await ownedContact(w.agents[0]!);
     const n = await nurture(c.id);
     // TX1 of the nurture message committed first (dispatching) — the millisecond window
-    const dec = randomUUID();
-    await h.su.query(`INSERT INTO gate_decisions (tenant_id, id, contact_id, address_hmac, channel, purpose, initiator, action_category, phase, outcome, explanation, policy_version_id, core_rules_version, inputs, inputs_sha256, message_id, evaluated_at)
-      SELECT $1, $2, $3, address_hmac, 'sms', 'informational', 'assistant', 'reminder', 'send', 'allow', 'ok', (SELECT active_policy_id FROM tenant_settings WHERE tenant_id = $1), 'core-compliance/1.1.0', '{}', repeat('0', 64), $4, now()
-        FROM contact_points WHERE contact_id = $3 AND kind = 'phone'`, [w.tenantId, dec, c.id, n.messageId]);
-    await h.su.query("UPDATE messages SET status = 'dispatching', dispatched_at = now(), gate_decision_id = $2 WHERE id = $1", [n.messageId, dec]);
+    await h.su.query("UPDATE messages SET status = 'dispatching', dispatched_at = now() WHERE id = $1", [n.messageId]);
     await inboundSms(h, c.phone, w.mainNumber, 'STOP');
     const hb = (await h.su.query("SELECT id, payload FROM assistant_actions WHERE contact_id = $1 AND kind = 'handback'", [c.id])).rows[0]!;
     expect(hb.payload.sentAtSameMoment).toBe(true);

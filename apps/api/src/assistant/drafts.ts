@@ -46,9 +46,9 @@ export interface ApproveInput {
 export interface ApproveResult {
   actionId: string;
   status: string;
-  result: 'sent' | 'acknowledged' | 'queued' | 'blocked' | 'deferred' | 'needs_confirmation' | 'failed' | 'dispatch_unknown' | 'skipped' | 'noop';
+  result: 'sent' | 'acknowledged' | 'queued' | 'blocked' | 'failed' | 'dispatch_unknown' | 'noop';
   messageId: string | null;
-  decision: { id: string | null; outcome: string; reasons: string[]; explanation: string; deferUntil: string | null; canConfirm: boolean; phase: string } | null;
+  decision: { id: string | null; outcome: string; reasons: string[]; explanation: string; phase: string } | null;
 }
 
 const SENDABLE = new Set(['message_draft', 'handback', 'seller_update_draft']);
