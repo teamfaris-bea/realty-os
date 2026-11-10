@@ -1,0 +1,846 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`golden FUB export: every category normalizes to the pinned output > call_recordings golden 1`] = `
+[
+  {
+    "issues": [
+      {
+        "code": "RECORDING_NOTICE_UNKNOWN",
+        "severity": "info",
+      },
+    ],
+    "record": {
+      "agentUserId": "00000000-0000-7000-8000-0000000000a1",
+      "category": "call_recordings",
+      "direction": "outbound",
+      "durationS": 312,
+      "externalId": "901",
+      "note": "Talked about schools",
+      "outcome": "connected",
+      "personRef": "1001",
+      "recording": {
+        "consentBasis": "unknown_imported",
+        "label": "recording notice unknown",
+        "transcribe": false,
+      },
+      "sourceRef": "fub:calls/901",
+      "startedAt": 1772636400000,
+      "status": "completed",
+    },
+    "sourceRef": "fub:calls/901",
+    "status": "valid",
+  },
+  {
+    "issues": [],
+    "record": {
+      "agentUserId": "00000000-0000-7000-8000-0000000000b2",
+      "category": "call_recordings",
+      "direction": "outbound",
+      "durationS": 0,
+      "externalId": "902",
+      "note": null,
+      "outcome": "no_answer",
+      "personRef": "1002",
+      "recording": null,
+      "sourceRef": "fub:calls/902",
+      "startedAt": 1772722800000,
+      "status": "no_answer",
+    },
+    "sourceRef": "fub:calls/902",
+    "status": "valid",
+  },
+  {
+    "issues": [],
+    "record": {
+      "agentUserId": "00000000-0000-7000-8000-0000000000b2",
+      "category": "call_recordings",
+      "direction": "inbound",
+      "durationS": 45,
+      "externalId": "903",
+      "note": null,
+      "outcome": "left_voicemail",
+      "personRef": "1003",
+      "recording": null,
+      "sourceRef": "fub:calls/903",
+      "startedAt": 1772809200000,
+      "status": "voicemail",
+    },
+    "sourceRef": "fub:calls/903",
+    "status": "valid",
+  },
+  {
+    "issues": [
+      {
+        "code": "TIMESTAMP_INVALID",
+        "field": "created",
+        "severity": "error",
+      },
+      {
+        "code": "RECORD_MALFORMED",
+        "severity": "error",
+      },
+    ],
+    "record": null,
+    "sourceRef": "fub:calls/904",
+    "status": "rejected",
+  },
+]
+`;
+
+exports[`golden FUB export: every category normalizes to the pinned output > consent golden 1`] = `
+[
+  {
+    "issues": [],
+    "record": {
+      "category": "consent",
+      "fields": {
+        "addresses": [
+          {
+            "address": "+14155550132",
+            "doNotContact": false,
+            "grants": [
+              "sms",
+            ],
+            "kind": "phone",
+            "revokes": [],
+          },
+          {
+            "address": "jane.doe@example.com",
+            "doNotContact": false,
+            "grants": [
+              "email",
+            ],
+            "kind": "email",
+            "revokes": [],
+          },
+        ],
+        "occurredAt": 1790847000000,
+      },
+      "personRef": "1001",
+      "provenance": {
+        "flags": {
+          "emailOptIn": true,
+          "smsOptIn": true,
+        },
+        "personId": "1001",
+        "points": [
+          {
+            "kind": "phone",
+            "status": "Valid",
+            "type": "mobile",
+          },
+          {
+            "kind": "email",
+            "status": "Valid",
+            "type": "home",
+          },
+        ],
+        "source": "fub",
+        "tags": [],
+        "updated": "2026-10-01T09:30:00Z",
+      },
+      "sourceRef": "fub:people/1001",
+    },
+    "sourceRef": "fub:people/1001",
+    "status": "valid",
+  },
+  {
+    "issues": [
+      {
+        "code": "CONSENT_CONFLICT",
+        "severity": "info",
+      },
+      {
+        "code": "CONSENT_CONFLICT",
+        "severity": "info",
+      },
+    ],
+    "record": {
+      "category": "consent",
+      "fields": {
+        "addresses": [
+          {
+            "address": "+13125550145",
+            "doNotContact": false,
+            "grants": [],
+            "kind": "phone",
+            "revokes": [
+              "sms",
+            ],
+          },
+          {
+            "address": "bob@example.org",
+            "doNotContact": false,
+            "grants": [],
+            "kind": "email",
+            "revokes": [
+              "email",
+            ],
+          },
+        ],
+        "occurredAt": 1789214400000,
+      },
+      "personRef": "1002",
+      "provenance": {
+        "flags": {
+          "emailOptIn": true,
+          "smsOptIn": true,
+        },
+        "personId": "1002",
+        "points": [
+          {
+            "kind": "phone",
+            "status": "Opted Out",
+            "type": "cell",
+          },
+          {
+            "kind": "email",
+            "status": "Unsubscribed",
+            "type": "work",
+          },
+        ],
+        "source": "fub",
+        "tags": [],
+        "updated": "2026-09-12T12:00:00Z",
+      },
+      "sourceRef": "fub:people/1002",
+    },
+    "sourceRef": "fub:people/1002",
+    "status": "valid",
+  },
+  {
+    "issues": [
+      {
+        "code": "TAG_READ_AS_OPT_OUT",
+        "field": "tags",
+        "severity": "info",
+      },
+    ],
+    "record": {
+      "category": "consent",
+      "fields": {
+        "addresses": [
+          {
+            "address": "+16465550177",
+            "doNotContact": true,
+            "grants": [],
+            "kind": "phone",
+            "revokes": [],
+          },
+          {
+            "address": "carla@example.net",
+            "doNotContact": true,
+            "grants": [],
+            "kind": "email",
+            "revokes": [],
+          },
+        ],
+        "occurredAt": 1625641627000,
+      },
+      "personRef": "1003",
+      "provenance": {
+        "flags": {},
+        "personId": "1003",
+        "points": [
+          {
+            "kind": "phone",
+            "status": "Valid",
+            "type": "mobile",
+          },
+          {
+            "kind": "email",
+            "status": "Bounced",
+            "type": "home",
+          },
+        ],
+        "source": "fub",
+        "tags": [
+          "DNC",
+        ],
+        "updated": null,
+      },
+      "sourceRef": "fub:people/1003",
+    },
+    "sourceRef": "fub:people/1003",
+    "status": "valid",
+  },
+  {
+    "issues": [
+      {
+        "code": "NO_CONSENT_DATA",
+        "severity": "info",
+      },
+    ],
+    "record": {
+      "category": "consent",
+      "fields": {
+        "addresses": [],
+        "occurredAt": 1706839322000,
+      },
+      "personRef": "1004",
+      "provenance": {
+        "flags": {},
+        "personId": "1004",
+        "points": [
+          {
+            "kind": "email",
+            "status": "Valid",
+            "type": "home",
+          },
+        ],
+        "source": "fub",
+        "tags": [],
+        "updated": null,
+      },
+      "sourceRef": "fub:people/1004",
+    },
+    "sourceRef": "fub:people/1004",
+    "status": "valid",
+  },
+  {
+    "issues": [
+      {
+        "code": "NO_CONSENT_DATA",
+        "severity": "info",
+      },
+    ],
+    "record": {
+      "category": "consent",
+      "fields": {
+        "addresses": [],
+        "occurredAt": 1709434983000,
+      },
+      "personRef": "1005",
+      "provenance": {
+        "flags": {},
+        "personId": "1005",
+        "points": [
+          {
+            "kind": "phone",
+            "status": "Valid",
+            "type": "mobile",
+          },
+        ],
+        "source": "fub",
+        "tags": [],
+        "updated": null,
+      },
+      "sourceRef": "fub:people/1005",
+    },
+    "sourceRef": "fub:people/1005",
+    "status": "valid",
+  },
+  {
+    "issues": [
+      {
+        "code": "NO_CONSENT_DATA",
+        "severity": "info",
+      },
+    ],
+    "record": {
+      "category": "consent",
+      "fields": {
+        "addresses": [],
+        "occurredAt": 1712203444000,
+      },
+      "personRef": "1006",
+      "provenance": {
+        "flags": {},
+        "personId": "1006",
+        "points": [],
+        "source": "fub",
+        "tags": [],
+        "updated": null,
+      },
+      "sourceRef": "fub:people/1006",
+    },
+    "sourceRef": "fub:people/1006",
+    "status": "valid",
+  },
+  {
+    "issues": [
+      {
+        "code": "RECORD_MALFORMED",
+        "severity": "error",
+      },
+    ],
+    "record": null,
+    "sourceRef": "fub:people/unknown",
+    "status": "rejected",
+  },
+]
+`;
+
+exports[`golden FUB export: every category normalizes to the pinned output > contacts golden 1`] = `
+[
+  {
+    "issues": [
+      {
+        "code": "PHONE_INVALID",
+        "field": "phones",
+        "severity": "error",
+      },
+    ],
+    "record": {
+      "addresses": [
+        {
+          "city": "Springfield",
+          "country": "US",
+          "kind": "home",
+          "line1": "1 Main St",
+          "line2": null,
+          "postalCode": "62701",
+          "region": "IL",
+        },
+      ],
+      "category": "contacts",
+      "contactType": "lead",
+      "createdAt": 1677679200000,
+      "displayName": "Jane Doe",
+      "emails": [
+        {
+          "email": "jane.doe@example.com",
+          "isPrimary": true,
+          "label": "home",
+          "status": "active",
+        },
+      ],
+      "externalId": "1001",
+      "firstName": "Jane",
+      "importedFields": {
+        "FUB assigned to": "Alex Agent",
+        "FUB source": "Zillow",
+        "FUB source URL": "https://example.com/listing/1",
+        "FUB stage": "Hot Prospect",
+        "customBirthday": "1980-05-01",
+        "customFavoriteNeighborhoods": "Downtown, Riverside",
+        "customPreApproved": "true",
+      },
+      "intent": null,
+      "lastName": "Doe",
+      "leadSourceLabel": "Zillow",
+      "phones": [
+        {
+          "e164": "+14155550132",
+          "isPrimary": true,
+          "label": "mobile",
+          "status": "active",
+        },
+      ],
+      "sourceRef": "fub:people/1001",
+      "stage": "active",
+      "tags": [
+        "Buyer",
+        "Pre-approved",
+      ],
+    },
+    "sourceRef": "fub:people/1001",
+    "status": "needs_review",
+  },
+  {
+    "issues": [],
+    "record": {
+      "addresses": [],
+      "category": "contacts",
+      "contactType": "lead",
+      "createdAt": 1641376800000,
+      "displayName": "Bob Unsub",
+      "emails": [
+        {
+          "email": "bob@example.org",
+          "isPrimary": true,
+          "label": "work",
+          "status": "active",
+        },
+      ],
+      "externalId": "1002",
+      "firstName": "Bob",
+      "importedFields": {
+        "FUB stage": "Nurture",
+      },
+      "intent": null,
+      "lastName": "Unsub",
+      "leadSourceLabel": null,
+      "phones": [
+        {
+          "e164": "+13125550145",
+          "isPrimary": true,
+          "label": "mobile",
+          "status": "active",
+        },
+      ],
+      "sourceRef": "fub:people/1002",
+      "stage": "nurture",
+      "tags": [],
+    },
+    "sourceRef": "fub:people/1002",
+    "status": "valid",
+  },
+  {
+    "issues": [],
+    "record": {
+      "addresses": [],
+      "category": "contacts",
+      "contactType": "sphere",
+      "createdAt": 1625641627000,
+      "displayName": "Carla Dnc",
+      "emails": [
+        {
+          "email": "carla@example.net",
+          "isPrimary": true,
+          "label": "home",
+          "status": "bouncing",
+        },
+      ],
+      "externalId": "1003",
+      "firstName": "Carla",
+      "importedFields": {
+        "FUB stage": "Sphere",
+      },
+      "intent": null,
+      "lastName": "Dnc",
+      "leadSourceLabel": null,
+      "phones": [
+        {
+          "e164": "+16465550177",
+          "isPrimary": true,
+          "label": "mobile",
+          "status": "active",
+        },
+      ],
+      "sourceRef": "fub:people/1003",
+      "stage": "nurture",
+      "tags": [
+        "DNC",
+        "Past Open House",
+      ],
+    },
+    "sourceRef": "fub:people/1003",
+    "status": "valid",
+  },
+  {
+    "issues": [
+      {
+        "code": "STAGE_UNMAPPED",
+        "field": "stage",
+        "severity": "info",
+      },
+    ],
+    "record": {
+      "addresses": [],
+      "category": "contacts",
+      "contactType": "lead",
+      "createdAt": 1706839322000,
+      "displayName": "Dan Nostage",
+      "emails": [
+        {
+          "email": "dan@example.com",
+          "isPrimary": true,
+          "label": "home",
+          "status": "active",
+        },
+      ],
+      "externalId": "1004",
+      "firstName": "Dan",
+      "importedFields": {
+        "FUB stage": "Waiting On Lender",
+      },
+      "intent": null,
+      "lastName": "Nostage",
+      "leadSourceLabel": null,
+      "phones": [],
+      "sourceRef": "fub:people/1004",
+      "stage": "new",
+      "tags": [],
+    },
+    "sourceRef": "fub:people/1004",
+    "status": "valid",
+  },
+  {
+    "issues": [],
+    "record": {
+      "addresses": [],
+      "category": "contacts",
+      "contactType": "lead",
+      "createdAt": 1709434983000,
+      "displayName": "Erin Unmapped",
+      "emails": [],
+      "externalId": "1005",
+      "firstName": "Erin",
+      "importedFields": {
+        "FUB stage": "Lead",
+      },
+      "intent": null,
+      "lastName": "Unmapped",
+      "leadSourceLabel": null,
+      "phones": [
+        {
+          "e164": "+12065550199",
+          "isPrimary": true,
+          "label": "mobile",
+          "status": "active",
+        },
+      ],
+      "sourceRef": "fub:people/1005",
+      "stage": "new",
+      "tags": [],
+    },
+    "sourceRef": "fub:people/1005",
+    "status": "valid",
+  },
+  {
+    "issues": [
+      {
+        "code": "PHONE_INVALID",
+        "field": "phones",
+        "severity": "error",
+      },
+      {
+        "code": "NO_IDENTITY",
+        "severity": "error",
+      },
+    ],
+    "record": null,
+    "sourceRef": "fub:people/1006",
+    "status": "rejected",
+  },
+  {
+    "issues": [
+      {
+        "code": "RECORD_MALFORMED",
+        "severity": "error",
+      },
+    ],
+    "record": null,
+    "sourceRef": "fub:people/unknown",
+    "status": "rejected",
+  },
+]
+`;
+
+exports[`golden FUB export: every category normalizes to the pinned output > messages golden 1`] = `
+[
+  {
+    "issues": [],
+    "record": {
+      "body": "Is the Elm St house still available?",
+      "category": "messages",
+      "channel": "sms",
+      "direction": "inbound",
+      "externalId": "textMessages/701",
+      "occurredAt": 1772388000000,
+      "personRef": "1001",
+      "sourceRef": "fub:textMessages/701",
+      "status": "received",
+      "subject": null,
+      "userId": null,
+    },
+    "sourceRef": "fub:textMessages/701",
+    "status": "valid",
+  },
+  {
+    "issues": [],
+    "record": {
+      "body": "Yes! Want to see it Saturday?",
+      "category": "messages",
+      "channel": "sms",
+      "direction": "outbound",
+      "externalId": "textMessages/702",
+      "occurredAt": 1772388300000,
+      "personRef": "1001",
+      "sourceRef": "fub:textMessages/702",
+      "status": "delivered",
+      "subject": null,
+      "userId": "00000000-0000-7000-8000-0000000000a1",
+    },
+    "sourceRef": "fub:textMessages/702",
+    "status": "valid",
+  },
+  {
+    "issues": [],
+    "record": {
+      "body": "Following up",
+      "category": "messages",
+      "channel": "sms",
+      "direction": "outbound",
+      "externalId": "textMessages/703",
+      "occurredAt": 1772442000000,
+      "personRef": "1002",
+      "sourceRef": "fub:textMessages/703",
+      "status": "failed",
+      "subject": null,
+      "userId": "00000000-0000-7000-8000-0000000000b2",
+    },
+    "sourceRef": "fub:textMessages/703",
+    "status": "valid",
+  },
+  {
+    "issues": [],
+    "record": {
+      "body": "Here are three homes.",
+      "category": "messages",
+      "channel": "email",
+      "direction": "outbound",
+      "externalId": "emails/801",
+      "occurredAt": 1772539200000,
+      "personRef": "1001",
+      "sourceRef": "fub:emails/801",
+      "status": "sent",
+      "subject": "Listings for you",
+      "userId": "00000000-0000-7000-8000-0000000000a1",
+    },
+    "sourceRef": "fub:emails/801",
+    "status": "valid",
+  },
+]
+`;
+
+exports[`golden FUB export: every category normalizes to the pinned output > notes golden 1`] = `
+[
+  {
+    "issues": [],
+    "record": {
+      "authorUserId": "00000000-0000-7000-8000-0000000000a1",
+      "body": "Call recap
+
+Wants 3 beds & a yard.
+
+Budget 500k",
+      "category": "notes",
+      "externalId": "501",
+      "occurredAt": 1768492800000,
+      "personRef": "1001",
+      "sourceRef": "fub:notes/501",
+    },
+    "sourceRef": "fub:notes/501",
+    "status": "valid",
+  },
+  {
+    "issues": [],
+    "record": {
+      "authorUserId": null,
+      "body": "Asked to stop texting.",
+      "category": "notes",
+      "externalId": "502",
+      "occurredAt": 1769940000000,
+      "personRef": "1002",
+      "sourceRef": "fub:notes/502",
+    },
+    "sourceRef": "fub:notes/502",
+    "status": "valid",
+  },
+  {
+    "issues": [],
+    "record": {
+      "authorUserId": null,
+      "body": "Orphan note",
+      "category": "notes",
+      "externalId": "503",
+      "occurredAt": 1769940000000,
+      "personRef": "4242",
+      "sourceRef": "fub:notes/503",
+    },
+    "sourceRef": "fub:notes/503",
+    "status": "valid",
+  },
+  {
+    "issues": [
+      {
+        "code": "BODY_EMPTY",
+        "severity": "error",
+      },
+    ],
+    "record": null,
+    "sourceRef": "fub:notes/504",
+    "status": "rejected",
+  },
+]
+`;
+
+exports[`golden FUB export: every category normalizes to the pinned output > ownership golden 1`] = `
+[
+  {
+    "issues": [],
+    "record": {
+      "category": "ownership",
+      "personRef": "1001",
+      "sourceRef": "fub:people/1001",
+      "target": {
+        "userId": "00000000-0000-7000-8000-0000000000a1",
+      },
+    },
+    "sourceRef": "fub:people/1001",
+    "status": "valid",
+  },
+  {
+    "issues": [],
+    "record": {
+      "category": "ownership",
+      "personRef": "1002",
+      "sourceRef": "fub:people/1002",
+      "target": {
+        "userId": "00000000-0000-7000-8000-0000000000b2",
+      },
+    },
+    "sourceRef": "fub:people/1002",
+    "status": "valid",
+  },
+  {
+    "issues": [],
+    "record": {
+      "category": "ownership",
+      "personRef": "1003",
+      "sourceRef": "fub:people/1003",
+      "target": {
+        "pondId": "00000000-0000-7000-8000-0000000000d1",
+      },
+    },
+    "sourceRef": "fub:people/1003",
+    "status": "valid",
+  },
+  {
+    "issues": [],
+    "record": {
+      "category": "ownership",
+      "personRef": "1004",
+      "sourceRef": "fub:people/1004",
+      "target": "unassigned",
+    },
+    "sourceRef": "fub:people/1004",
+    "status": "valid",
+  },
+  {
+    "issues": [
+      {
+        "code": "USER_UNMAPPED",
+        "severity": "error",
+      },
+    ],
+    "record": null,
+    "sourceRef": "fub:people/1005",
+    "status": "rejected",
+  },
+  {
+    "issues": [],
+    "record": {
+      "category": "ownership",
+      "personRef": "1006",
+      "sourceRef": "fub:people/1006",
+      "target": "unassigned",
+    },
+    "sourceRef": "fub:people/1006",
+    "status": "valid",
+  },
+  {
+    "issues": [
+      {
+        "code": "RECORD_MALFORMED",
+        "severity": "error",
+      },
+    ],
+    "record": null,
+    "sourceRef": "fub:people/unknown",
+    "status": "rejected",
+  },
+]
+`;

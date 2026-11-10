@@ -1,0 +1,556 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`response schemas > platform response schemas have no confidence* fields and no tenant_id fields (snapshot) 1`] = `
+{
+  "AlertPhoneChallengeResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "challenge": {
+        "type": "string",
+      },
+      "expiresAt": {
+        "type": "string",
+      },
+      "maskedPhone": {
+        "type": "string",
+      },
+    },
+    "required": [
+      "challenge",
+      "expiresAt",
+      "maskedPhone",
+    ],
+    "type": "object",
+  },
+  "AlertPhoneVerifiedResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "maskedPhone": {
+        "type": "string",
+      },
+      "verifiedAt": {
+        "type": "string",
+      },
+    },
+    "required": [
+      "maskedPhone",
+      "verifiedAt",
+    ],
+    "type": "object",
+  },
+  "LoginResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "next": {
+        "enum": [
+          "ready",
+          "mfa_verify",
+          "mfa_enroll",
+        ],
+        "type": "string",
+      },
+      "session": {
+        "additionalProperties": false,
+        "properties": {
+          "csrfToken": {
+            "type": "string",
+          },
+          "mfa": {
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+              },
+              "enrollmentRequired": {
+                "type": "boolean",
+              },
+              "verified": {
+                "type": "boolean",
+              },
+            },
+            "required": [
+              "enabled",
+              "verified",
+              "enrollmentRequired",
+            ],
+            "type": "object",
+          },
+          "reauthenticatedAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "tenant": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                  "name": {
+                    "type": "string",
+                  },
+                  "role": {
+                    "enum": [
+                      "owner",
+                      "admin",
+                      "team_lead",
+                      "agent",
+                      "isa",
+                      "tc",
+                    ],
+                    "type": "string",
+                  },
+                  "slug": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "slug",
+                  "role",
+                ],
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "tenants": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                "name": {
+                  "type": "string",
+                },
+                "role": {
+                  "enum": [
+                    "owner",
+                    "admin",
+                    "team_lead",
+                    "agent",
+                    "isa",
+                    "tc",
+                  ],
+                  "type": "string",
+                },
+                "slug": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "id",
+                "name",
+                "slug",
+                "role",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "user": {
+            "additionalProperties": false,
+            "properties": {
+              "displayName": {
+                "type": "string",
+              },
+              "email": {
+                "type": "string",
+              },
+              "id": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+            },
+            "required": [
+              "id",
+              "email",
+              "displayName",
+            ],
+            "type": "object",
+          },
+        },
+        "required": [
+          "user",
+          "tenant",
+          "tenants",
+          "mfa",
+          "reauthenticatedAt",
+          "csrfToken",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "next",
+      "session",
+    ],
+    "type": "object",
+  },
+  "MfaConfirmResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "recoveryCodes": {
+        "items": {
+          "type": "string",
+        },
+        "type": "array",
+      },
+      "session": {
+        "additionalProperties": false,
+        "properties": {
+          "csrfToken": {
+            "type": "string",
+          },
+          "mfa": {
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+              },
+              "enrollmentRequired": {
+                "type": "boolean",
+              },
+              "verified": {
+                "type": "boolean",
+              },
+            },
+            "required": [
+              "enabled",
+              "verified",
+              "enrollmentRequired",
+            ],
+            "type": "object",
+          },
+          "reauthenticatedAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "tenant": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                  "name": {
+                    "type": "string",
+                  },
+                  "role": {
+                    "enum": [
+                      "owner",
+                      "admin",
+                      "team_lead",
+                      "agent",
+                      "isa",
+                      "tc",
+                    ],
+                    "type": "string",
+                  },
+                  "slug": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "slug",
+                  "role",
+                ],
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "tenants": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                "name": {
+                  "type": "string",
+                },
+                "role": {
+                  "enum": [
+                    "owner",
+                    "admin",
+                    "team_lead",
+                    "agent",
+                    "isa",
+                    "tc",
+                  ],
+                  "type": "string",
+                },
+                "slug": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "id",
+                "name",
+                "slug",
+                "role",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "user": {
+            "additionalProperties": false,
+            "properties": {
+              "displayName": {
+                "type": "string",
+              },
+              "email": {
+                "type": "string",
+              },
+              "id": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+            },
+            "required": [
+              "id",
+              "email",
+              "displayName",
+            ],
+            "type": "object",
+          },
+        },
+        "required": [
+          "user",
+          "tenant",
+          "tenants",
+          "mfa",
+          "reauthenticatedAt",
+          "csrfToken",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "recoveryCodes",
+      "session",
+    ],
+    "type": "object",
+  },
+  "MfaEnrollResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "otpauthUri": {
+        "type": "string",
+      },
+      "secret": {
+        "type": "string",
+      },
+    },
+    "required": [
+      "secret",
+      "otpauthUri",
+    ],
+    "type": "object",
+  },
+  "OkResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "ok": {
+        "const": true,
+        "type": "boolean",
+      },
+    },
+    "required": [
+      "ok",
+    ],
+    "type": "object",
+  },
+  "PushSubscriptionResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "format": "uuid",
+        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "type": "string",
+      },
+    },
+    "required": [
+      "id",
+    ],
+    "type": "object",
+  },
+  "SessionInfo": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "csrfToken": {
+        "type": "string",
+      },
+      "mfa": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+          },
+          "enrollmentRequired": {
+            "type": "boolean",
+          },
+          "verified": {
+            "type": "boolean",
+          },
+        },
+        "required": [
+          "enabled",
+          "verified",
+          "enrollmentRequired",
+        ],
+        "type": "object",
+      },
+      "reauthenticatedAt": {
+        "type": [
+          "string",
+          "null",
+        ],
+      },
+      "tenant": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+              "name": {
+                "type": "string",
+              },
+              "role": {
+                "enum": [
+                  "owner",
+                  "admin",
+                  "team_lead",
+                  "agent",
+                  "isa",
+                  "tc",
+                ],
+                "type": "string",
+              },
+              "slug": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "id",
+              "name",
+              "slug",
+              "role",
+            ],
+            "type": "object",
+          },
+          {
+            "type": "null",
+          },
+        ],
+      },
+      "tenants": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "name": {
+              "type": "string",
+            },
+            "role": {
+              "enum": [
+                "owner",
+                "admin",
+                "team_lead",
+                "agent",
+                "isa",
+                "tc",
+              ],
+              "type": "string",
+            },
+            "slug": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "name",
+            "slug",
+            "role",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "user": {
+        "additionalProperties": false,
+        "properties": {
+          "displayName": {
+            "type": "string",
+          },
+          "email": {
+            "type": "string",
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+          "email",
+          "displayName",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "user",
+      "tenant",
+      "tenants",
+      "mfa",
+      "reauthenticatedAt",
+      "csrfToken",
+    ],
+    "type": "object",
+  },
+}
+`;

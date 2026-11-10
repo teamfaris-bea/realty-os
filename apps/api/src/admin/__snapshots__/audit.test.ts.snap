@@ -1,0 +1,502 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`R-AUDIT-5 admin audit trail > R-AUDIT-5 R-AUDIT-4: one call per admin endpoint; every change is audited with a redacted diff (snapshot), and no email ever reaches audit_log 1`] = `
+[
+  {
+    "action": "member.invited",
+    "changes": {
+      "email": {
+        "changed": true,
+      },
+      "expires_at": {
+        "from": null,
+        "to": "<instant>",
+      },
+      "role": {
+        "from": null,
+        "to": "agent",
+      },
+    },
+    "entity": "invite",
+    "reason": null,
+  },
+  {
+    "action": "member.invited",
+    "changes": {
+      "email": {
+        "changed": true,
+      },
+      "expires_at": {
+        "from": null,
+        "to": "<instant>",
+      },
+      "role": {
+        "from": null,
+        "to": "isa",
+      },
+    },
+    "entity": "invite",
+    "reason": null,
+  },
+  {
+    "action": "member.invite_revoked",
+    "changes": {
+      "status": {
+        "from": "pending",
+        "to": "revoked",
+      },
+    },
+    "entity": "invite",
+    "reason": null,
+  },
+  {
+    "action": "member.role_changed",
+    "changes": {
+      "role": {
+        "from": "agent",
+        "to": "team_lead",
+      },
+    },
+    "entity": "membership",
+    "reason": null,
+  },
+  {
+    "action": "member.suspended",
+    "changes": {
+      "status": {
+        "from": "active",
+        "to": "suspended",
+      },
+    },
+    "entity": "membership",
+    "reason": null,
+  },
+  {
+    "action": "member.reactivated",
+    "changes": {
+      "status": {
+        "from": "suspended",
+        "to": "active",
+      },
+    },
+    "entity": "membership",
+    "reason": null,
+  },
+  {
+    "action": "team.changed",
+    "changes": {
+      "name": {
+        "from": null,
+        "to": "North",
+      },
+    },
+    "entity": "team",
+    "reason": "CREATED",
+  },
+  {
+    "action": "team.changed",
+    "changes": {
+      "name": {
+        "from": "North",
+        "to": "North Shore",
+      },
+    },
+    "entity": "team",
+    "reason": "UPDATED",
+  },
+  {
+    "action": "team.changed",
+    "changes": {
+      "lead_user_ids": {
+        "from": [],
+        "to": [
+          "<id1>",
+        ],
+      },
+      "member_user_ids": {
+        "from": [],
+        "to": [
+          "<id1>",
+        ],
+      },
+    },
+    "entity": "team",
+    "reason": "MEMBERS_SET",
+  },
+  {
+    "action": "team.changed",
+    "changes": {
+      "member_user_ids": {
+        "from": [
+          "<id1>",
+        ],
+        "to": [],
+      },
+      "name": {
+        "from": "North Shore",
+        "to": null,
+      },
+    },
+    "entity": "team",
+    "reason": "DELETED",
+  },
+  {
+    "action": "pond.changed",
+    "changes": {
+      "claim_cooldown_hours": {
+        "from": null,
+        "to": 72,
+      },
+      "claims_per_day": {
+        "from": null,
+        "to": 5,
+      },
+      "eligible_roles": {
+        "from": null,
+        "to": [
+          "agent",
+          "isa",
+          "team_lead",
+        ],
+      },
+      "name": {
+        "from": null,
+        "to": "Nurture pond",
+      },
+      "open_to_all": {
+        "from": null,
+        "to": true,
+      },
+      "reinquiry": {
+        "from": null,
+        "to": "reroute",
+      },
+    },
+    "entity": "pond",
+    "reason": "CREATED",
+  },
+  {
+    "action": "pond.changed",
+    "changes": {
+      "claims_per_day": {
+        "from": 5,
+        "to": 3,
+      },
+    },
+    "entity": "pond",
+    "reason": "UPDATED",
+  },
+  {
+    "action": "pond.changed",
+    "changes": {
+      "member_user_ids": {
+        "from": [],
+        "to": [
+          "<id1>",
+        ],
+      },
+    },
+    "entity": "pond",
+    "reason": "MEMBERS_SET",
+  },
+  {
+    "action": "routing.changed",
+    "changes": {
+      "enabled": {
+        "from": null,
+        "to": true,
+      },
+      "fallback_pond_id": {
+        "from": null,
+        "to": "<id2>",
+      },
+      "match": {
+        "from": null,
+        "to": {
+          "lead_types": "[redacted]",
+        },
+      },
+      "member_user_ids": {
+        "from": null,
+        "to": [
+          "<id1>",
+        ],
+      },
+      "member_weight_codes": {
+        "from": null,
+        "to": [
+          "<id1>=1",
+        ],
+      },
+      "name": {
+        "from": null,
+        "to": "Buyers",
+      },
+      "position": {
+        "from": null,
+        "to": 1,
+      },
+      "strategy": {
+        "from": null,
+        "to": "round_robin",
+      },
+    },
+    "entity": "routing_rule",
+    "reason": "CREATED",
+  },
+  {
+    "action": "routing.changed",
+    "changes": {
+      "member_weight_codes": {
+        "from": [
+          "<id1>=1",
+        ],
+        "to": [
+          "<id1>=4",
+        ],
+      },
+    },
+    "entity": "routing_rule",
+    "reason": "MEMBERS_SET",
+  },
+  {
+    "action": "routing.changed",
+    "changes": {
+      "offer_window_seconds": {
+        "from": null,
+        "to": 120,
+      },
+    },
+    "entity": "routing_rule",
+    "reason": "UPDATED",
+  },
+  {
+    "action": "routing.changed",
+    "changes": {
+      "enabled": {
+        "from": null,
+        "to": true,
+      },
+      "match": {
+        "from": null,
+        "to": {},
+      },
+      "member_user_ids": {
+        "from": null,
+        "to": [],
+      },
+      "member_weight_codes": {
+        "from": null,
+        "to": [],
+      },
+      "name": {
+        "from": null,
+        "to": "Everyone else",
+      },
+      "position": {
+        "from": null,
+        "to": 2,
+      },
+      "strategy": {
+        "from": null,
+        "to": "pond",
+      },
+      "target_pond_id": {
+        "from": null,
+        "to": "<id2>",
+      },
+    },
+    "entity": "routing_rule",
+    "reason": "CREATED",
+  },
+  {
+    "action": "routing.changed",
+    "changes": {
+      "rule_ids": {
+        "from": [
+          "<id4>",
+          "<id3>",
+        ],
+        "to": [
+          "<id3>",
+          "<id4>",
+        ],
+      },
+    },
+    "entity": "routing_rule",
+    "reason": "REORDERED",
+  },
+  {
+    "action": "routing.changed",
+    "changes": {
+      "archived_at": {
+        "from": null,
+        "to": "<instant>",
+      },
+      "enabled": {
+        "from": true,
+        "to": false,
+      },
+    },
+    "entity": "routing_rule",
+    "reason": "ARCHIVED",
+  },
+  {
+    "action": "routing.changed",
+    "changes": {
+      "archived_at": {
+        "from": null,
+        "to": "<instant>",
+      },
+      "enabled": {
+        "from": true,
+        "to": false,
+      },
+    },
+    "entity": "routing_rule",
+    "reason": "ARCHIVED",
+  },
+  {
+    "action": "pond.changed",
+    "changes": {
+      "archived_at": {
+        "from": null,
+        "to": "<instant>",
+      },
+    },
+    "entity": "pond",
+    "reason": "ARCHIVED",
+  },
+  {
+    "action": "settings.changed",
+    "changes": {
+      "first_touch_sla_seconds": {
+        "from": 900,
+        "to": 600,
+      },
+      "team_lead_recording_access": {
+        "from": true,
+        "to": false,
+      },
+    },
+    "entity": "tenant_settings",
+    "reason": null,
+  },
+  {
+    "action": "settings.changed",
+    "changes": {
+      "brokerage_postal_address": {
+        "from": null,
+        "to": "12 Broad St, Charleston, SC 29401",
+      },
+    },
+    "entity": "tenant_settings",
+    "reason": "BROKERAGE_IDENTITY",
+  },
+  {
+    "action": "policy.version_created",
+    "changes": {
+      "auto_cross_channel_per_24h": {
+        "from": null,
+        "to": 2,
+      },
+      "auto_email_per_24h": {
+        "changed": true,
+      },
+      "auto_email_per_7d": {
+        "changed": true,
+      },
+      "auto_sms_per_24h": {
+        "from": null,
+        "to": 1,
+      },
+      "auto_sms_per_7d": {
+        "from": null,
+        "to": 3,
+      },
+      "autonomous_categories": {
+        "from": null,
+        "to": [
+          "booking_confirmation",
+          "nurture_step",
+          "reminder",
+          "search_alert",
+          "speed_to_lead_reply",
+        ],
+      },
+      "call_attempts_per_24h": {
+        "from": null,
+        "to": 3,
+      },
+      "contact_window_end": {
+        "from": null,
+        "to": "20:00:00",
+      },
+      "contact_window_start": {
+        "from": null,
+        "to": "08:30:00",
+      },
+      "email_quiet_hours": {
+        "from": null,
+        "to": false,
+      },
+      "human_reply_window_minutes": {
+        "from": null,
+        "to": 30,
+      },
+      "loosened_field_codes": {
+        "from": null,
+        "to": [
+          "contactWindowStart",
+        ],
+      },
+      "manual_sms_confirm_after_24h": {
+        "changed": true,
+      },
+      "max_deferrals": {
+        "from": null,
+        "to": 3,
+      },
+      "opt_out_confirmation_sender": {
+        "from": null,
+        "to": "provider",
+      },
+      "policy_version": {
+        "from": null,
+        "to": 2,
+      },
+      "recording_enabled": {
+        "from": null,
+        "to": true,
+      },
+      "recording_mode": {
+        "from": null,
+        "to": "announce_all",
+      },
+    },
+    "entity": "compliance_policy_version",
+    "reason": "LOOSENING_ATTESTED",
+  },
+  {
+    "action": "policy.activated",
+    "changes": {
+      "active_policy_id": {
+        "from": "<id6>",
+        "to": "<id5>",
+      },
+      "loosened_field_codes": {
+        "from": [],
+        "to": [
+          "contactWindowStart",
+        ],
+      },
+      "policy_version": {
+        "from": 1,
+        "to": 2,
+      },
+    },
+    "entity": "compliance_policy_version",
+    "reason": "LOOSENING_ATTESTED",
+  },
+]
+`;

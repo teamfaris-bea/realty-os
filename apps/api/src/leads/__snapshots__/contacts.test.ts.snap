@@ -1,0 +1,33 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`cards and full records (R-PERM-4, R-PERM-6) > R-PERM-6: pond cards never serialize contact points, inquiry text or the full last name (response snapshot); a TL who sees pond detail still gets masked cards here 1`] = `
+{
+  "card": {
+    "createdAt": "<instant>",
+    "displayName": "Marisol R.",
+    "id": "<id2>",
+    "intent": "buyer",
+    "ownership": {
+      "offerExpiresAt": null,
+      "offerId": null,
+      "offeredToMe": false,
+      "pondId": "<id1>",
+      "pondName": "Team Pond",
+      "seq": 2,
+      "state": "in_pond",
+    },
+    "pondSummary": "Buying · 02139 · $500k–$600k",
+    "source": {
+      "id": "<id3>",
+      "kind": "portal",
+      "name": "Portal",
+    },
+    "view": "card",
+  },
+  "pond": {
+    "claimable": true,
+    "id": "<id1>",
+    "name": "Team Pond",
+  },
+}
+`;

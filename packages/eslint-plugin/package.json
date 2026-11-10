@@ -1,0 +1,21 @@
+{
+  "name": "@realty/eslint-plugin",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Architecture lint rules from docs/BUILD_PLAN.md (ground rules).",
+  "exports": { ".": "./src/index.js" },
+  "scripts": {
+    "build": "echo '@realty/eslint-plugin ships plain ESM JavaScript; nothing to build'",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": { "eslint": ">=9" },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "eslint": "10.14.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.2",
+    "vitest": "5.1.0"
+  }
+}

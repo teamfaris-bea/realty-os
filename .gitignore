@@ -6,3 +6,9 @@ coverage/
 !.env.example
 *.log
 .storage/
+*.tsbuildinfo
+.vitest-results.json
+.stryker-tmp/
+reports/
+playwright-report/
+test-results/

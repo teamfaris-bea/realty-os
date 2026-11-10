@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // No ambient Node types: core is pure and must not touch process, Buffer, fs, crypto ... (BUILD_PLAN module 1).
+    "types": []
+  },
+  "include": ["src", "test"]
+}

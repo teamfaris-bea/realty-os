@@ -1,0 +1,1810 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`core/priority schemas > ExceptionEvidenceSchema has no confidence fields and no tenant_id (snapshot) > ExceptionEvidenceSchema 1`] = `
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "at": {
+      "maximum": 9007199254740991,
+      "minimum": -9007199254740991,
+      "type": "integer",
+    },
+    "explanation": {
+      "maxLength": 300,
+      "minLength": 1,
+      "type": "string",
+    },
+    "locator": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "endMs": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
+            "kind": {
+              "const": "transcript_offset",
+              "type": "string",
+            },
+            "startMs": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
+          },
+          "required": [
+            "kind",
+            "startMs",
+            "endMs",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "message",
+              "type": "string",
+            },
+          },
+          "required": [
+            "kind",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "end": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
+            "kind": {
+              "const": "char_range",
+              "type": "string",
+            },
+            "start": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
+          },
+          "required": [
+            "kind",
+            "start",
+            "end",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "field",
+              "type": "string",
+            },
+            "name": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "kind",
+            "name",
+          ],
+          "type": "object",
+        },
+      ],
+    },
+    "snippet": {
+      "maxLength": 500,
+      "minLength": 1,
+      "type": "string",
+    },
+    "sourceId": {
+      "minLength": 1,
+      "type": "string",
+    },
+    "sourceType": {
+      "enum": [
+        "ownership_period",
+        "message_status",
+        "call",
+        "message",
+        "email",
+        "note",
+        "listing",
+        "import",
+        "behavior_event",
+        "deal",
+        "task",
+        "appointment",
+      ],
+      "type": "string",
+    },
+  },
+  "required": [
+    "sourceType",
+    "sourceId",
+    "explanation",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`core/priority schemas > ExceptionItemSpecSchema has no confidence fields and no tenant_id (snapshot) > ExceptionItemSpecSchema 1`] = `
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "conditionClearedAt": {
+      "anyOf": [
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer",
+        },
+        {
+          "type": "null",
+        },
+      ],
+    },
+    "contactId": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string",
+        },
+        {
+          "type": "null",
+        },
+      ],
+    },
+    "dedupeKey": {
+      "pattern": "^(untouched|promise|send|appt):",
+      "type": "string",
+    },
+    "detectedAt": {
+      "maximum": 9007199254740991,
+      "minimum": -9007199254740991,
+      "type": "integer",
+    },
+    "dueAt": {
+      "anyOf": [
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer",
+        },
+        {
+          "type": "null",
+        },
+      ],
+    },
+    "evidence": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "explanation": {
+            "maxLength": 300,
+            "minLength": 1,
+            "type": "string",
+          },
+          "locator": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "endMs": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer",
+                  },
+                  "kind": {
+                    "const": "transcript_offset",
+                    "type": "string",
+                  },
+                  "startMs": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer",
+                  },
+                },
+                "required": [
+                  "kind",
+                  "startMs",
+                  "endMs",
+                ],
+                "type": "object",
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "message",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "kind",
+                ],
+                "type": "object",
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "end": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer",
+                  },
+                  "kind": {
+                    "const": "char_range",
+                    "type": "string",
+                  },
+                  "start": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer",
+                  },
+                },
+                "required": [
+                  "kind",
+                  "start",
+                  "end",
+                ],
+                "type": "object",
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "field",
+                    "type": "string",
+                  },
+                  "name": {
+                    "minLength": 1,
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "kind",
+                  "name",
+                ],
+                "type": "object",
+              },
+            ],
+          },
+          "snippet": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string",
+          },
+          "sourceId": {
+            "minLength": 1,
+            "type": "string",
+          },
+          "sourceType": {
+            "enum": [
+              "ownership_period",
+              "message_status",
+              "call",
+              "message",
+              "email",
+              "note",
+              "listing",
+              "import",
+              "behavior_event",
+              "deal",
+              "task",
+              "appointment",
+            ],
+            "type": "string",
+          },
+        },
+        "required": [
+          "sourceType",
+          "sourceId",
+          "explanation",
+        ],
+        "type": "object",
+      },
+      "minItems": 1,
+      "type": "array",
+    },
+    "itemType": {
+      "enum": [
+        "untouched_lead",
+        "overdue_promise",
+        "failed_send",
+        "missing_outcome",
+      ],
+      "type": "string",
+    },
+    "ownerUserId": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string",
+        },
+        {
+          "type": "null",
+        },
+      ],
+    },
+    "ruleVersion": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer",
+    },
+    "subjectId": {
+      "minLength": 1,
+      "type": "string",
+    },
+    "subjectType": {
+      "enum": [
+        "contact",
+        "task",
+        "message",
+        "appointment",
+      ],
+      "type": "string",
+    },
+  },
+  "required": [
+    "itemType",
+    "subjectType",
+    "subjectId",
+    "contactId",
+    "ownerUserId",
+    "detectedAt",
+    "dueAt",
+    "evidence",
+    "conditionClearedAt",
+    "ruleVersion",
+    "dedupeKey",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`core/priority schemas > FeedItemSchema has no confidence fields and no tenant_id (snapshot) > FeedItemSchema 1`] = `
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "alternatives": {
+      "items": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "contactId": {
+                "minLength": 1,
+                "type": "string",
+              },
+              "kind": {
+                "const": "accept_offer",
+                "type": "string",
+              },
+              "label": {
+                "type": "string",
+              },
+              "offerId": {
+                "minLength": 1,
+                "type": "string",
+              },
+            },
+            "required": [
+              "kind",
+              "label",
+              "contactId",
+              "offerId",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "contactId": {
+                "minLength": 1,
+                "type": "string",
+              },
+              "kind": {
+                "const": "decline_offer",
+                "type": "string",
+              },
+              "label": {
+                "type": "string",
+              },
+              "offerId": {
+                "minLength": 1,
+                "type": "string",
+              },
+            },
+            "required": [
+              "kind",
+              "label",
+              "contactId",
+              "offerId",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "contactId": {
+                "minLength": 1,
+                "type": "string",
+              },
+              "kind": {
+                "const": "claim",
+                "type": "string",
+              },
+              "label": {
+                "type": "string",
+              },
+              "pondId": {
+                "minLength": 1,
+                "type": "string",
+              },
+            },
+            "required": [
+              "kind",
+              "label",
+              "contactId",
+              "pondId",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "contactId": {
+                "minLength": 1,
+                "type": "string",
+              },
+              "kind": {
+                "const": "call",
+                "type": "string",
+              },
+              "label": {
+                "type": "string",
+              },
+              "note": {
+                "maxLength": 300,
+                "minLength": 1,
+                "type": "string",
+              },
+            },
+            "required": [
+              "kind",
+              "label",
+              "contactId",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "contactId": {
+                "minLength": 1,
+                "type": "string",
+              },
+              "draftActionId": {
+                "minLength": 1,
+                "type": "string",
+              },
+              "kind": {
+                "const": "text",
+                "type": "string",
+              },
+              "label": {
+                "type": "string",
+              },
+              "note": {
+                "maxLength": 300,
+                "minLength": 1,
+                "type": "string",
+              },
+            },
+            "required": [
+              "kind",
+              "label",
+              "contactId",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "contactId": {
+                "minLength": 1,
+                "type": "string",
+              },
+              "draftActionId": {
+                "minLength": 1,
+                "type": "string",
+              },
+              "kind": {
+                "const": "email",
+                "type": "string",
+              },
+              "label": {
+                "type": "string",
+              },
+              "note": {
+                "maxLength": 300,
+                "minLength": 1,
+                "type": "string",
+              },
+            },
+            "required": [
+              "kind",
+              "label",
+              "contactId",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "actionId": {
+                "minLength": 1,
+                "type": "string",
+              },
+              "kind": {
+                "const": "send_draft",
+                "type": "string",
+              },
+              "label": {
+                "type": "string",
+              },
+              "note": {
+                "maxLength": 300,
+                "minLength": 1,
+                "type": "string",
+              },
+            },
+            "required": [
+              "kind",
+              "label",
+              "actionId",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "actionId": {
+                "minLength": 1,
+                "type": "string",
+              },
+              "kind": {
+                "const": "edit_draft",
+                "type": "string",
+              },
+              "label": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "kind",
+              "label",
+              "actionId",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "actionId": {
+                "minLength": 1,
+                "type": "string",
+              },
+              "kind": {
+                "const": "review_handback",
+                "type": "string",
+              },
+              "label": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "kind",
+              "label",
+              "actionId",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "complete_task",
+                "type": "string",
+              },
+              "label": {
+                "type": "string",
+              },
+              "taskId": {
+                "minLength": 1,
+                "type": "string",
+              },
+            },
+            "required": [
+              "kind",
+              "label",
+              "taskId",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "open_task",
+                "type": "string",
+              },
+              "label": {
+                "type": "string",
+              },
+              "taskId": {
+                "minLength": 1,
+                "type": "string",
+              },
+            },
+            "required": [
+              "kind",
+              "label",
+              "taskId",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "appointmentId": {
+                "minLength": 1,
+                "type": "string",
+              },
+              "kind": {
+                "const": "log_outcome",
+                "type": "string",
+              },
+              "label": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "kind",
+              "label",
+              "appointmentId",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "dealId": {
+                "minLength": 1,
+                "type": "string",
+              },
+              "kind": {
+                "const": "open_deal",
+                "type": "string",
+              },
+              "label": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "kind",
+              "label",
+              "dealId",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "dealDateId": {
+                "minLength": 1,
+                "type": "string",
+              },
+              "kind": {
+                "const": "complete_deal_date",
+                "type": "string",
+              },
+              "label": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "kind",
+              "label",
+              "dealDateId",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "review_search",
+                "type": "string",
+              },
+              "label": {
+                "type": "string",
+              },
+              "savedSearchId": {
+                "minLength": 1,
+                "type": "string",
+              },
+            },
+            "required": [
+              "kind",
+              "label",
+              "savedSearchId",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "contactId": {
+                "minLength": 1,
+                "type": "string",
+              },
+              "kind": {
+                "const": "open_contact",
+                "type": "string",
+              },
+              "label": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "kind",
+              "label",
+              "contactId",
+            ],
+            "type": "object",
+          },
+        ],
+      },
+      "type": "array",
+    },
+    "assistantActionId": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string",
+        },
+        {
+          "type": "null",
+        },
+      ],
+    },
+    "band": {
+      "enum": [
+        "pinned",
+        "scored",
+      ],
+      "type": "string",
+    },
+    "contactId": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string",
+        },
+        {
+          "type": "null",
+        },
+      ],
+    },
+    "createdAt": {
+      "maximum": 9007199254740991,
+      "minimum": -9007199254740991,
+      "type": "integer",
+    },
+    "dedupeKey": {
+      "maxLength": 200,
+      "minLength": 1,
+      "type": "string",
+    },
+    "dueAt": {
+      "anyOf": [
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer",
+        },
+        {
+          "type": "null",
+        },
+      ],
+    },
+    "itemType": {
+      "enum": [
+        "lead_offer",
+        "first_touch_due",
+        "unanswered_inbound",
+        "handback",
+        "assistant_draft",
+        "task_due",
+        "promise_due",
+        "deal_date",
+        "appointment_outcome",
+        "reinquiry",
+        "inactivity_warning",
+        "pond_new",
+        "saved_search_review",
+        "missed_call",
+      ],
+      "type": "string",
+    },
+    "primaryAction": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "contactId": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "kind": {
+              "const": "accept_offer",
+              "type": "string",
+            },
+            "label": {
+              "type": "string",
+            },
+            "offerId": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "kind",
+            "label",
+            "contactId",
+            "offerId",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "contactId": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "kind": {
+              "const": "decline_offer",
+              "type": "string",
+            },
+            "label": {
+              "type": "string",
+            },
+            "offerId": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "kind",
+            "label",
+            "contactId",
+            "offerId",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "contactId": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "kind": {
+              "const": "claim",
+              "type": "string",
+            },
+            "label": {
+              "type": "string",
+            },
+            "pondId": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "kind",
+            "label",
+            "contactId",
+            "pondId",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "contactId": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "kind": {
+              "const": "call",
+              "type": "string",
+            },
+            "label": {
+              "type": "string",
+            },
+            "note": {
+              "maxLength": 300,
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "kind",
+            "label",
+            "contactId",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "contactId": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "draftActionId": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "kind": {
+              "const": "text",
+              "type": "string",
+            },
+            "label": {
+              "type": "string",
+            },
+            "note": {
+              "maxLength": 300,
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "kind",
+            "label",
+            "contactId",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "contactId": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "draftActionId": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "kind": {
+              "const": "email",
+              "type": "string",
+            },
+            "label": {
+              "type": "string",
+            },
+            "note": {
+              "maxLength": 300,
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "kind",
+            "label",
+            "contactId",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "actionId": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "kind": {
+              "const": "send_draft",
+              "type": "string",
+            },
+            "label": {
+              "type": "string",
+            },
+            "note": {
+              "maxLength": 300,
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "kind",
+            "label",
+            "actionId",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "actionId": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "kind": {
+              "const": "edit_draft",
+              "type": "string",
+            },
+            "label": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "kind",
+            "label",
+            "actionId",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "actionId": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "kind": {
+              "const": "review_handback",
+              "type": "string",
+            },
+            "label": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "kind",
+            "label",
+            "actionId",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "complete_task",
+              "type": "string",
+            },
+            "label": {
+              "type": "string",
+            },
+            "taskId": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "kind",
+            "label",
+            "taskId",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "open_task",
+              "type": "string",
+            },
+            "label": {
+              "type": "string",
+            },
+            "taskId": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "kind",
+            "label",
+            "taskId",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "appointmentId": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "kind": {
+              "const": "log_outcome",
+              "type": "string",
+            },
+            "label": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "kind",
+            "label",
+            "appointmentId",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "dealId": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "kind": {
+              "const": "open_deal",
+              "type": "string",
+            },
+            "label": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "kind",
+            "label",
+            "dealId",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "dealDateId": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "kind": {
+              "const": "complete_deal_date",
+              "type": "string",
+            },
+            "label": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "kind",
+            "label",
+            "dealDateId",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "review_search",
+              "type": "string",
+            },
+            "label": {
+              "type": "string",
+            },
+            "savedSearchId": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "kind",
+            "label",
+            "savedSearchId",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "contactId": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "kind": {
+              "const": "open_contact",
+              "type": "string",
+            },
+            "label": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "kind",
+            "label",
+            "contactId",
+          ],
+          "type": "object",
+        },
+      ],
+    },
+    "reasons": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "pattern": "^[A-Z][A-Z0-9_]*$",
+            "type": "string",
+          },
+          "label": {
+            "maxLength": 300,
+            "minLength": 1,
+            "type": "string",
+          },
+          "points": {
+            "maximum": 100,
+            "minimum": -100,
+            "type": "integer",
+          },
+        },
+        "required": [
+          "code",
+          "label",
+        ],
+        "type": "object",
+      },
+      "minItems": 1,
+      "type": "array",
+    },
+    "score": {
+      "maximum": 100,
+      "minimum": 0,
+      "type": "integer",
+    },
+    "scoreVersion": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer",
+    },
+    "subjectId": {
+      "minLength": 1,
+      "type": "string",
+    },
+    "subjectType": {
+      "enum": [
+        "contact",
+        "assistant_action",
+        "task",
+        "deal_date",
+        "appointment",
+        "saved_search",
+        "message",
+        "call",
+      ],
+      "type": "string",
+    },
+  },
+  "required": [
+    "itemType",
+    "band",
+    "score",
+    "scoreVersion",
+    "reasons",
+    "dueAt",
+    "dedupeKey",
+    "primaryAction",
+    "alternatives",
+    "contactId",
+    "subjectType",
+    "subjectId",
+    "assistantActionId",
+    "createdAt",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`core/priority schemas > FeedReasonSchema has no confidence fields and no tenant_id (snapshot) > FeedReasonSchema 1`] = `
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "code": {
+      "pattern": "^[A-Z][A-Z0-9_]*$",
+      "type": "string",
+    },
+    "label": {
+      "maxLength": 300,
+      "minLength": 1,
+      "type": "string",
+    },
+    "points": {
+      "maximum": 100,
+      "minimum": -100,
+      "type": "integer",
+    },
+  },
+  "required": [
+    "code",
+    "label",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`core/priority schemas > OneTapActionSchema has no confidence fields and no tenant_id (snapshot) > OneTapActionSchema 1`] = `
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "contactId": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "kind": {
+          "const": "accept_offer",
+          "type": "string",
+        },
+        "label": {
+          "type": "string",
+        },
+        "offerId": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "kind",
+        "label",
+        "contactId",
+        "offerId",
+      ],
+      "type": "object",
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "contactId": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "kind": {
+          "const": "decline_offer",
+          "type": "string",
+        },
+        "label": {
+          "type": "string",
+        },
+        "offerId": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "kind",
+        "label",
+        "contactId",
+        "offerId",
+      ],
+      "type": "object",
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "contactId": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "kind": {
+          "const": "claim",
+          "type": "string",
+        },
+        "label": {
+          "type": "string",
+        },
+        "pondId": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "kind",
+        "label",
+        "contactId",
+        "pondId",
+      ],
+      "type": "object",
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "contactId": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "kind": {
+          "const": "call",
+          "type": "string",
+        },
+        "label": {
+          "type": "string",
+        },
+        "note": {
+          "maxLength": 300,
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "kind",
+        "label",
+        "contactId",
+      ],
+      "type": "object",
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "contactId": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "draftActionId": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "kind": {
+          "const": "text",
+          "type": "string",
+        },
+        "label": {
+          "type": "string",
+        },
+        "note": {
+          "maxLength": 300,
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "kind",
+        "label",
+        "contactId",
+      ],
+      "type": "object",
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "contactId": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "draftActionId": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "kind": {
+          "const": "email",
+          "type": "string",
+        },
+        "label": {
+          "type": "string",
+        },
+        "note": {
+          "maxLength": 300,
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "kind",
+        "label",
+        "contactId",
+      ],
+      "type": "object",
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "actionId": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "kind": {
+          "const": "send_draft",
+          "type": "string",
+        },
+        "label": {
+          "type": "string",
+        },
+        "note": {
+          "maxLength": 300,
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "kind",
+        "label",
+        "actionId",
+      ],
+      "type": "object",
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "actionId": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "kind": {
+          "const": "edit_draft",
+          "type": "string",
+        },
+        "label": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "kind",
+        "label",
+        "actionId",
+      ],
+      "type": "object",
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "actionId": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "kind": {
+          "const": "review_handback",
+          "type": "string",
+        },
+        "label": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "kind",
+        "label",
+        "actionId",
+      ],
+      "type": "object",
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "complete_task",
+          "type": "string",
+        },
+        "label": {
+          "type": "string",
+        },
+        "taskId": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "kind",
+        "label",
+        "taskId",
+      ],
+      "type": "object",
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "open_task",
+          "type": "string",
+        },
+        "label": {
+          "type": "string",
+        },
+        "taskId": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "kind",
+        "label",
+        "taskId",
+      ],
+      "type": "object",
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "appointmentId": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "kind": {
+          "const": "log_outcome",
+          "type": "string",
+        },
+        "label": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "kind",
+        "label",
+        "appointmentId",
+      ],
+      "type": "object",
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "dealId": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "kind": {
+          "const": "open_deal",
+          "type": "string",
+        },
+        "label": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "kind",
+        "label",
+        "dealId",
+      ],
+      "type": "object",
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "dealDateId": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "kind": {
+          "const": "complete_deal_date",
+          "type": "string",
+        },
+        "label": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "kind",
+        "label",
+        "dealDateId",
+      ],
+      "type": "object",
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "review_search",
+          "type": "string",
+        },
+        "label": {
+          "type": "string",
+        },
+        "savedSearchId": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "kind",
+        "label",
+        "savedSearchId",
+      ],
+      "type": "object",
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "contactId": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "kind": {
+          "const": "open_contact",
+          "type": "string",
+        },
+        "label": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "kind",
+        "label",
+        "contactId",
+      ],
+      "type": "object",
+    },
+  ],
+}
+`;
+
+exports[`core/priority schemas > SpeedToLeadSummarySchema has no confidence fields and no tenant_id (snapshot) > SpeedToLeadSummarySchema 1`] = `
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "medianSeconds": {
+      "anyOf": [
+        {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer",
+        },
+        {
+          "type": "null",
+        },
+      ],
+    },
+    "pending": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer",
+    },
+    "responded": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer",
+    },
+    "total": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer",
+    },
+    "withinSla": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer",
+    },
+  },
+  "required": [
+    "medianSeconds",
+    "withinSla",
+    "total",
+    "responded",
+    "pending",
+  ],
+  "type": "object",
+}
+`;

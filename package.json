@@ -1,14 +1,35 @@
 {
   "name": "realty-os",
   "private": true,
+  "type": "module",
   "packageManager": "pnpm@10.0.0",
   "engines": { "node": ">=22" },
   "scripts": {
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
-    "db:migrate": "pnpm --filter @realty/db migrate",
+    "lint": "eslint . --max-warnings=0",
+    "rule-coverage": "node scripts/rule-coverage.mjs",
+    "test:report": "pnpm -r --no-bail exec vitest run --passWithNoTests --reporter=default --reporter=json --outputFile=.vitest-results.json; node scripts/rule-coverage.mjs --results",
+    "db:setup": "pnpm --filter @realty/db run setup-dev",
+    "db:migrate": "pnpm --filter @realty/db run migrate",
     "dev:api": "pnpm --filter @realty/api dev",
+    "dev:worker": "pnpm --filter @realty/api dev:worker",
     "dev:web": "pnpm --filter @realty/web dev"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@realty/eslint-plugin": "workspace:*",
+    "@types/node": "22.20.5",
+    "eslint": "10.14.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.14.0",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.2",
+    "vitest": "5.1.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["argon2", "esbuild"]
   }
 }

@@ -1,0 +1,2093 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`route table and schemas > R-AST-13 R-TEN-3: leads response schemas have no confidence* fields and no tenant id fields (snapshot) 1`] = `
+{
+  "ContactCreatedResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "contact": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "createdAt": {
+                "type": "string",
+              },
+              "displayName": {
+                "type": "string",
+              },
+              "id": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+              "intent": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "ownership": {
+                "additionalProperties": false,
+                "properties": {
+                  "offerExpiresAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "offerId": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "offeredToMe": {
+                    "type": "boolean",
+                  },
+                  "pondId": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "pondName": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "seq": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer",
+                  },
+                  "state": {
+                    "enum": [
+                      "unassigned",
+                      "offered",
+                      "owned",
+                      "in_pond",
+                      "closed",
+                    ],
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "state",
+                  "pondId",
+                  "pondName",
+                  "offerId",
+                  "offerExpiresAt",
+                  "offeredToMe",
+                  "seq",
+                ],
+                "type": "object",
+              },
+              "pondSummary": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "source": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "id": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      "kind": {
+                        "type": "string",
+                      },
+                      "name": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "kind",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
+              "view": {
+                "const": "card",
+                "type": "string",
+              },
+            },
+            "required": [
+              "id",
+              "view",
+              "displayName",
+              "intent",
+              "source",
+              "createdAt",
+              "pondSummary",
+              "ownership",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "attribution": {
+                "additionalProperties": false,
+                "properties": {
+                  "adRef": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "campaignRef": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "leadSourceId": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "sourceDetail": {
+                    "additionalProperties": {},
+                    "propertyNames": {
+                      "type": "string",
+                    },
+                    "type": "object",
+                  },
+                },
+                "required": [
+                  "leadSourceId",
+                  "campaignRef",
+                  "adRef",
+                  "sourceDetail",
+                ],
+                "type": "object",
+              },
+              "contactType": {
+                "type": "string",
+              },
+              "createdAt": {
+                "type": "string",
+              },
+              "displayName": {
+                "type": "string",
+              },
+              "emails": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "address": {
+                      "type": "string",
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                    "isPrimary": {
+                      "type": "boolean",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "lineType": {
+                      "type": "string",
+                    },
+                    "status": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "id",
+                    "address",
+                    "label",
+                    "lineType",
+                    "status",
+                    "isPrimary",
+                  ],
+                  "type": "object",
+                },
+                "type": "array",
+              },
+              "firstName": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "id": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+              "inquiries": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "adRef": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "campaignRef": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                    "inquiryType": {
+                      "type": "string",
+                    },
+                    "message": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "outcome": {
+                      "type": "string",
+                    },
+                    "postalCode": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "priceMaxCents": {
+                      "type": [
+                        "number",
+                        "null",
+                      ],
+                    },
+                    "priceMinCents": {
+                      "type": [
+                        "number",
+                        "null",
+                      ],
+                    },
+                    "propertyText": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "receivedAt": {
+                      "type": "string",
+                    },
+                    "source": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                  },
+                  "required": [
+                    "id",
+                    "receivedAt",
+                    "inquiryType",
+                    "source",
+                    "postalCode",
+                    "priceMinCents",
+                    "priceMaxCents",
+                    "campaignRef",
+                    "adRef",
+                    "propertyText",
+                    "message",
+                    "outcome",
+                  ],
+                  "type": "object",
+                },
+                "type": "array",
+              },
+              "intent": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "lastHumanTouchAt": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "lastName": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "mergedIntoContactId": {
+                "anyOf": [
+                  {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
+              "owner": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "displayName": {
+                        "type": [
+                          "string",
+                          "null",
+                        ],
+                      },
+                      "userId": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "userId",
+                      "displayName",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
+              "ownership": {
+                "additionalProperties": false,
+                "properties": {
+                  "closedReason": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "firstTouchAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "firstTouchBreachedAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "firstTouchDueAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "offerExpiresAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "offerId": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "offerRound": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer",
+                  },
+                  "offeredToMe": {
+                    "type": "boolean",
+                  },
+                  "offeredToUserId": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "ownedAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "ownedByMe": {
+                    "type": "boolean",
+                  },
+                  "ownerUserId": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "pondId": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "pondName": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "releaseDueAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "seq": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer",
+                  },
+                  "state": {
+                    "enum": [
+                      "unassigned",
+                      "offered",
+                      "owned",
+                      "in_pond",
+                      "closed",
+                    ],
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "state",
+                  "ownerUserId",
+                  "pondId",
+                  "offerId",
+                  "offeredToUserId",
+                  "offerExpiresAt",
+                  "offerRound",
+                  "ownedAt",
+                  "firstTouchDueAt",
+                  "firstTouchAt",
+                  "firstTouchBreachedAt",
+                  "releaseDueAt",
+                  "closedReason",
+                  "seq",
+                  "pondName",
+                  "offeredToMe",
+                  "ownedByMe",
+                ],
+                "type": "object",
+              },
+              "phones": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "address": {
+                      "type": "string",
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                    "isPrimary": {
+                      "type": "boolean",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "lineType": {
+                      "type": "string",
+                    },
+                    "status": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "id",
+                    "address",
+                    "label",
+                    "lineType",
+                    "status",
+                    "isPrimary",
+                  ],
+                  "type": "object",
+                },
+                "type": "array",
+              },
+              "pondSummary": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "source": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "id": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      "kind": {
+                        "type": "string",
+                      },
+                      "name": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "kind",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
+              "stage": {
+                "type": "string",
+              },
+              "tags": {
+                "items": {
+                  "type": "string",
+                },
+                "type": "array",
+              },
+              "timezone": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "view": {
+                "const": "full",
+                "type": "string",
+              },
+            },
+            "required": [
+              "id",
+              "view",
+              "displayName",
+              "firstName",
+              "lastName",
+              "intent",
+              "stage",
+              "contactType",
+              "timezone",
+              "tags",
+              "createdAt",
+              "lastHumanTouchAt",
+              "pondSummary",
+              "source",
+              "attribution",
+              "owner",
+              "ownership",
+              "phones",
+              "emails",
+              "inquiries",
+              "mergedIntoContactId",
+            ],
+            "type": "object",
+          },
+        ],
+      },
+      "replayed": {
+        "type": "boolean",
+      },
+    },
+    "required": [
+      "contact",
+      "replayed",
+    ],
+    "type": "object",
+  },
+  "ContactResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "contact": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "createdAt": {
+                "type": "string",
+              },
+              "displayName": {
+                "type": "string",
+              },
+              "id": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+              "intent": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "ownership": {
+                "additionalProperties": false,
+                "properties": {
+                  "offerExpiresAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "offerId": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "offeredToMe": {
+                    "type": "boolean",
+                  },
+                  "pondId": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "pondName": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "seq": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer",
+                  },
+                  "state": {
+                    "enum": [
+                      "unassigned",
+                      "offered",
+                      "owned",
+                      "in_pond",
+                      "closed",
+                    ],
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "state",
+                  "pondId",
+                  "pondName",
+                  "offerId",
+                  "offerExpiresAt",
+                  "offeredToMe",
+                  "seq",
+                ],
+                "type": "object",
+              },
+              "pondSummary": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "source": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "id": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      "kind": {
+                        "type": "string",
+                      },
+                      "name": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "kind",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
+              "view": {
+                "const": "card",
+                "type": "string",
+              },
+            },
+            "required": [
+              "id",
+              "view",
+              "displayName",
+              "intent",
+              "source",
+              "createdAt",
+              "pondSummary",
+              "ownership",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "attribution": {
+                "additionalProperties": false,
+                "properties": {
+                  "adRef": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "campaignRef": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "leadSourceId": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "sourceDetail": {
+                    "additionalProperties": {},
+                    "propertyNames": {
+                      "type": "string",
+                    },
+                    "type": "object",
+                  },
+                },
+                "required": [
+                  "leadSourceId",
+                  "campaignRef",
+                  "adRef",
+                  "sourceDetail",
+                ],
+                "type": "object",
+              },
+              "contactType": {
+                "type": "string",
+              },
+              "createdAt": {
+                "type": "string",
+              },
+              "displayName": {
+                "type": "string",
+              },
+              "emails": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "address": {
+                      "type": "string",
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                    "isPrimary": {
+                      "type": "boolean",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "lineType": {
+                      "type": "string",
+                    },
+                    "status": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "id",
+                    "address",
+                    "label",
+                    "lineType",
+                    "status",
+                    "isPrimary",
+                  ],
+                  "type": "object",
+                },
+                "type": "array",
+              },
+              "firstName": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "id": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+              "inquiries": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "adRef": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "campaignRef": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                    "inquiryType": {
+                      "type": "string",
+                    },
+                    "message": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "outcome": {
+                      "type": "string",
+                    },
+                    "postalCode": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "priceMaxCents": {
+                      "type": [
+                        "number",
+                        "null",
+                      ],
+                    },
+                    "priceMinCents": {
+                      "type": [
+                        "number",
+                        "null",
+                      ],
+                    },
+                    "propertyText": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "receivedAt": {
+                      "type": "string",
+                    },
+                    "source": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                  },
+                  "required": [
+                    "id",
+                    "receivedAt",
+                    "inquiryType",
+                    "source",
+                    "postalCode",
+                    "priceMinCents",
+                    "priceMaxCents",
+                    "campaignRef",
+                    "adRef",
+                    "propertyText",
+                    "message",
+                    "outcome",
+                  ],
+                  "type": "object",
+                },
+                "type": "array",
+              },
+              "intent": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "lastHumanTouchAt": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "lastName": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "mergedIntoContactId": {
+                "anyOf": [
+                  {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
+              "owner": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "displayName": {
+                        "type": [
+                          "string",
+                          "null",
+                        ],
+                      },
+                      "userId": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "userId",
+                      "displayName",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
+              "ownership": {
+                "additionalProperties": false,
+                "properties": {
+                  "closedReason": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "firstTouchAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "firstTouchBreachedAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "firstTouchDueAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "offerExpiresAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "offerId": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "offerRound": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer",
+                  },
+                  "offeredToMe": {
+                    "type": "boolean",
+                  },
+                  "offeredToUserId": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "ownedAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "ownedByMe": {
+                    "type": "boolean",
+                  },
+                  "ownerUserId": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "pondId": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "pondName": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "releaseDueAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "seq": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer",
+                  },
+                  "state": {
+                    "enum": [
+                      "unassigned",
+                      "offered",
+                      "owned",
+                      "in_pond",
+                      "closed",
+                    ],
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "state",
+                  "ownerUserId",
+                  "pondId",
+                  "offerId",
+                  "offeredToUserId",
+                  "offerExpiresAt",
+                  "offerRound",
+                  "ownedAt",
+                  "firstTouchDueAt",
+                  "firstTouchAt",
+                  "firstTouchBreachedAt",
+                  "releaseDueAt",
+                  "closedReason",
+                  "seq",
+                  "pondName",
+                  "offeredToMe",
+                  "ownedByMe",
+                ],
+                "type": "object",
+              },
+              "phones": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "address": {
+                      "type": "string",
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                    "isPrimary": {
+                      "type": "boolean",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "lineType": {
+                      "type": "string",
+                    },
+                    "status": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "id",
+                    "address",
+                    "label",
+                    "lineType",
+                    "status",
+                    "isPrimary",
+                  ],
+                  "type": "object",
+                },
+                "type": "array",
+              },
+              "pondSummary": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "source": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "id": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      "kind": {
+                        "type": "string",
+                      },
+                      "name": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "kind",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
+              "stage": {
+                "type": "string",
+              },
+              "tags": {
+                "items": {
+                  "type": "string",
+                },
+                "type": "array",
+              },
+              "timezone": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "view": {
+                "const": "full",
+                "type": "string",
+              },
+            },
+            "required": [
+              "id",
+              "view",
+              "displayName",
+              "firstName",
+              "lastName",
+              "intent",
+              "stage",
+              "contactType",
+              "timezone",
+              "tags",
+              "createdAt",
+              "lastHumanTouchAt",
+              "pondSummary",
+              "source",
+              "attribution",
+              "owner",
+              "ownership",
+              "phones",
+              "emails",
+              "inquiries",
+              "mergedIntoContactId",
+            ],
+            "type": "object",
+          },
+        ],
+      },
+    },
+    "required": [
+      "contact",
+    ],
+    "type": "object",
+  },
+  "DeactivationResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "deactivation": {
+        "additionalProperties": false,
+        "properties": {
+          "deactivationId": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "destination": {
+            "enum": [
+              "team_lead",
+              "default_pond",
+              "reroute",
+            ],
+            "type": "string",
+          },
+          "fallbackUserId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "mode": {
+            "enum": [
+              "preview",
+              "run",
+            ],
+            "type": "string",
+          },
+          "offered": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "owned": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "ownedWithOpenDeal": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "status": {
+            "type": "string",
+          },
+          "teamLead": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "displayName": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "userId": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "userId",
+                  "displayName",
+                ],
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "userId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+        },
+        "required": [
+          "userId",
+          "mode",
+          "status",
+          "destination",
+          "owned",
+          "offered",
+          "ownedWithOpenDeal",
+          "teamLead",
+          "fallbackUserId",
+          "deactivationId",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "deactivation",
+    ],
+    "type": "object",
+  },
+  "IntakeResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "contactId": {
+        "format": "uuid",
+        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "type": "string",
+      },
+      "inquiryId": {
+        "anyOf": [
+          {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          {
+            "type": "null",
+          },
+        ],
+      },
+      "outcome": {
+        "enum": [
+          "new_contact",
+          "attached",
+          "reinquiry",
+          "duplicate_ignored",
+        ],
+        "type": "string",
+      },
+    },
+    "required": [
+      "contactId",
+      "inquiryId",
+      "outcome",
+    ],
+    "type": "object",
+  },
+  "LeadSourceCreatedResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "ingestToken": {
+        "type": "string",
+      },
+      "intakePath": {
+        "type": "string",
+      },
+      "source": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "type": "boolean",
+          },
+          "createdAt": {
+            "type": "string",
+          },
+          "hasToken": {
+            "type": "boolean",
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "kind": {
+            "type": "string",
+          },
+          "name": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "active",
+          "hasToken",
+          "createdAt",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "source",
+      "ingestToken",
+      "intakePath",
+    ],
+    "type": "object",
+  },
+  "LeadSourcesResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "sources": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "active": {
+              "type": "boolean",
+            },
+            "createdAt": {
+              "type": "string",
+            },
+            "hasToken": {
+              "type": "boolean",
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "kind": {
+              "type": "string",
+            },
+            "name": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "name",
+            "kind",
+            "active",
+            "hasToken",
+            "createdAt",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "sources",
+    ],
+    "type": "object",
+  },
+  "OwnershipResultResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "result": {
+        "additionalProperties": false,
+        "properties": {
+          "contactId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "events": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "occurredAt": {
+                  "type": "string",
+                },
+                "reasonCode": {
+                  "type": "string",
+                },
+                "seq": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer",
+                },
+                "type": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "seq",
+                "type",
+                "reasonCode",
+                "occurredAt",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "projection": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "closedReason": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "firstTouchAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "firstTouchBreachedAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "firstTouchDueAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "offerExpiresAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "offerId": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "offerRound": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer",
+                  },
+                  "offeredToUserId": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "ownedAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "ownerUserId": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "pondId": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "releaseDueAt": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "seq": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer",
+                  },
+                  "state": {
+                    "enum": [
+                      "unassigned",
+                      "offered",
+                      "owned",
+                      "in_pond",
+                      "closed",
+                    ],
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "state",
+                  "ownerUserId",
+                  "pondId",
+                  "offerId",
+                  "offeredToUserId",
+                  "offerExpiresAt",
+                  "offerRound",
+                  "ownedAt",
+                  "firstTouchDueAt",
+                  "firstTouchAt",
+                  "firstTouchBreachedAt",
+                  "releaseDueAt",
+                  "closedReason",
+                  "seq",
+                ],
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "replayed": {
+            "type": "boolean",
+          },
+        },
+        "required": [
+          "contactId",
+          "replayed",
+          "events",
+          "projection",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "result",
+    ],
+    "type": "object",
+  },
+  "PondCardsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "cards": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "createdAt": {
+              "type": "string",
+            },
+            "displayName": {
+              "type": "string",
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "intent": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "ownership": {
+              "additionalProperties": false,
+              "properties": {
+                "offerExpiresAt": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "offerId": {
+                  "anyOf": [
+                    {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "offeredToMe": {
+                  "type": "boolean",
+                },
+                "pondId": {
+                  "anyOf": [
+                    {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "pondName": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "seq": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer",
+                },
+                "state": {
+                  "enum": [
+                    "unassigned",
+                    "offered",
+                    "owned",
+                    "in_pond",
+                    "closed",
+                  ],
+                  "type": "string",
+                },
+              },
+              "required": [
+                "state",
+                "pondId",
+                "pondName",
+                "offerId",
+                "offerExpiresAt",
+                "offeredToMe",
+                "seq",
+              ],
+              "type": "object",
+            },
+            "pondSummary": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "source": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                    "kind": {
+                      "type": "string",
+                    },
+                    "name": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "kind",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "view": {
+              "const": "card",
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "view",
+            "displayName",
+            "intent",
+            "source",
+            "createdAt",
+            "pondSummary",
+            "ownership",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "nextCursor": {
+        "type": [
+          "string",
+          "null",
+        ],
+      },
+      "pond": {
+        "additionalProperties": false,
+        "properties": {
+          "claimable": {
+            "type": "boolean",
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "name": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+          "name",
+          "claimable",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "pond",
+      "cards",
+      "nextCursor",
+    ],
+    "type": "object",
+  },
+  "TimelineResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "items": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "actor": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "displayName": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "userId": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "userId",
+                    "displayName",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "note": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "occurredAt": {
+              "type": "string",
+            },
+            "preview": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "provenance": {
+              "type": "string",
+            },
+            "type": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "type",
+            "occurredAt",
+            "actor",
+            "detail",
+            "preview",
+            "note",
+            "provenance",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "nextCursor": {
+        "type": [
+          "string",
+          "null",
+        ],
+      },
+    },
+    "required": [
+      "items",
+      "nextCursor",
+    ],
+    "type": "object",
+  },
+}
+`;
+
+exports[`route table and schemas > every leads route declares its authorization and carries authorize(<that action>) (snapshot); intake is a signed webhook 1`] = `
+[
+  "POST /api/intake/:sourceToken → webhook",
+  "GET /api/lead-sources → settings.routing",
+  "HEAD /api/lead-sources → settings.routing",
+  "POST /api/lead-sources → settings.routing",
+  "GET /api/contacts/:id → contact.view",
+  "HEAD /api/contacts/:id → contact.view",
+  "POST /api/contacts → contact.create",
+  "GET /api/contacts/:id/timeline → contact.view_detail",
+  "HEAD /api/contacts/:id/timeline → contact.view_detail",
+  "POST /api/leads/:contactId/accept → lead.accept",
+  "POST /api/leads/:contactId/decline → lead.decline",
+  "POST /api/leads/:contactId/claim → lead.claim",
+  "POST /api/leads/:contactId/release → lead.release",
+  "POST /api/leads/:contactId/reassign → lead.reassign",
+  "POST /api/leads/:contactId/handoff → lead.reassign",
+  "POST /api/leads/:contactId/close → contact.view_detail",
+  "POST /api/leads/:contactId/reopen → contact.view_detail",
+  "POST /api/leads/:contactId/merge → contact.view_detail",
+  "POST /api/leads/:contactId/delete → contact.view_detail",
+  "GET /api/ponds/:id/cards → contact.view",
+  "HEAD /api/ponds/:id/cards → contact.view",
+  "POST /api/members/:userId/deactivate → member.remove",
+]
+`;

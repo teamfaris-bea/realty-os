@@ -1,0 +1,136 @@
+/*
+ * Design tokens (web/shell). One design system for phone and desktop.
+ *
+ * Semantic colors are CSS variables so light and dark themes swap in one place; Tailwind 4 reads
+ * them through `@theme inline`, so components use `bg-surface`, `text-ink`, `border-line`, ...
+ * Contrast: every ink/background pair below is ≥ 4.5:1 (WCAG 2.2 AA body text); `ink-muted` on
+ * `surface` and `canvas` is ≥ 4.5:1 as well, so muted text is still readable on a phone in sunlight.
+ * The Playwright axe run checks color contrast on the rendered pages in both themes.
+ */
+@import 'tailwindcss';
+
+:root {
+  color-scheme: light;
+  --canvas: #f2f2f7; /* iOS grouped background */
+  --surface: #ffffff;
+  --surface-2: #f7f7fa;
+  --line: #d4d4dc;
+  --ink: #111114;
+  --ink-muted: #55555f;
+  --accent: #0a5fd6; /* primary actions; 5.6:1 on white */
+  --accent-ink: #ffffff;
+  --accent-soft: #e5efff;
+  --danger: #b3261e;
+  --danger-soft: #fdecea;
+  --warn: #8a5300;
+  --warn-soft: #fff4dc;
+  --ok: #1d6b35;
+  --ok-soft: #e4f4e8;
+  --focus: #0a5fd6;
+  --tap: 44px; /* minimum touch target (Apple HIG; WCAG 2.2 2.5.8 needs 24px, we use 44) */
+  --tabbar-h: 56px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --canvas: #000000;
+    --surface: #1c1c1e;
+    --surface-2: #26262a;
+    --line: #3a3a40;
+    --ink: #f4f4f6;
+    --ink-muted: #b0b0ba;
+    --accent: #5aa2ff;
+    --accent-ink: #00152e;
+    --accent-soft: #10284a;
+    --danger: #ff8a80;
+    --danger-soft: #3a1513;
+    --warn: #ffc56b;
+    --warn-soft: #332405;
+    --ok: #7fd99a;
+    --ok-soft: #10301b;
+    --focus: #8ec0ff;
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --canvas: #000000;
+  --surface: #1c1c1e;
+  --surface-2: #26262a;
+  --line: #3a3a40;
+  --ink: #f4f4f6;
+  --ink-muted: #b0b0ba;
+  --accent: #5aa2ff;
+  --accent-ink: #00152e;
+  --accent-soft: #10284a;
+  --danger: #ff8a80;
+  --danger-soft: #3a1513;
+  --warn: #ffc56b;
+  --warn-soft: #332405;
+  --ok: #7fd99a;
+  --ok-soft: #10301b;
+  --focus: #8ec0ff;
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --spacing-tap: var(--tap);
+  --spacing-tabbar: var(--tabbar-h);
+}
+
+html,
+body {
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+}
+
+/* One visible focus style everywhere (WCAG 2.4.7 / 2.4.13). Pointer clicks do not show it. In the
+   base layer, so a utility (e.g. the page h1 that receives programmatic focus) can opt out. */
+@layer base {
+  :focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+}
+
+/* Respect reduced motion: no transitions or animations beyond an instant change. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.pt-safe {
+  padding-top: env(safe-area-inset-top);
+}

@@ -1,0 +1,1500 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`route table and schemas > R-AST-13 R-TEN-3: admin response schemas have no confidence* fields and no tenant id fields (snapshot) 1`] = `
+{
+  "InviteCreatedResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "emailSent": {
+        "type": "boolean",
+      },
+      "invite": {
+        "additionalProperties": false,
+        "properties": {
+          "createdAt": {
+            "type": "string",
+          },
+          "email": {
+            "type": "string",
+          },
+          "expiresAt": {
+            "type": "string",
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "invitedByUserId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "role": {
+            "enum": [
+              "owner",
+              "admin",
+              "team_lead",
+              "agent",
+              "isa",
+              "tc",
+            ],
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+          "email",
+          "role",
+          "invitedByUserId",
+          "createdAt",
+          "expiresAt",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "invite",
+      "emailSent",
+    ],
+    "type": "object",
+  },
+  "MemberResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "member": {
+        "additionalProperties": false,
+        "properties": {
+          "acceptingLeads": {
+            "type": "boolean",
+          },
+          "displayName": {
+            "type": "string",
+          },
+          "email": {
+            "type": "string",
+          },
+          "joinedAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "mfaEnabled": {
+            "type": "boolean",
+          },
+          "role": {
+            "enum": [
+              "owner",
+              "admin",
+              "team_lead",
+              "agent",
+              "isa",
+              "tc",
+            ],
+            "type": "string",
+          },
+          "status": {
+            "enum": [
+              "invited",
+              "active",
+              "suspended",
+              "deactivating",
+              "removed",
+            ],
+            "type": "string",
+          },
+          "userId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "version": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+        },
+        "required": [
+          "userId",
+          "displayName",
+          "email",
+          "role",
+          "status",
+          "acceptingLeads",
+          "mfaEnabled",
+          "joinedAt",
+          "version",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "member",
+    ],
+    "type": "object",
+  },
+  "MembersResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "invites": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "createdAt": {
+              "type": "string",
+            },
+            "email": {
+              "type": "string",
+            },
+            "expiresAt": {
+              "type": "string",
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "invitedByUserId": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "role": {
+              "enum": [
+                "owner",
+                "admin",
+                "team_lead",
+                "agent",
+                "isa",
+                "tc",
+              ],
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "email",
+            "role",
+            "invitedByUserId",
+            "createdAt",
+            "expiresAt",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "members": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "acceptingLeads": {
+              "type": "boolean",
+            },
+            "displayName": {
+              "type": "string",
+            },
+            "email": {
+              "type": "string",
+            },
+            "joinedAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "mfaEnabled": {
+              "type": "boolean",
+            },
+            "role": {
+              "enum": [
+                "owner",
+                "admin",
+                "team_lead",
+                "agent",
+                "isa",
+                "tc",
+              ],
+              "type": "string",
+            },
+            "status": {
+              "enum": [
+                "invited",
+                "active",
+                "suspended",
+                "deactivating",
+                "removed",
+              ],
+              "type": "string",
+            },
+            "userId": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "version": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer",
+            },
+          },
+          "required": [
+            "userId",
+            "displayName",
+            "email",
+            "role",
+            "status",
+            "acceptingLeads",
+            "mfaEnabled",
+            "joinedAt",
+            "version",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "members",
+      "invites",
+    ],
+    "type": "object",
+  },
+  "OkResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "ok": {
+        "const": true,
+        "type": "boolean",
+      },
+    },
+    "required": [
+      "ok",
+    ],
+    "type": "object",
+  },
+  "PoliciesResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "activePolicyId": {
+        "format": "uuid",
+        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "type": "string",
+      },
+      "attestationText": {
+        "type": "string",
+      },
+      "counsel": {
+        "additionalProperties": false,
+        "properties": {
+          "allReviewed": {
+            "type": "boolean",
+          },
+          "packs": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "key": {
+                  "type": "string",
+                },
+                "reviewedByCounselAt": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "version": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "key",
+                "version",
+                "reviewedByCounselAt",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+        },
+        "required": [
+          "allReviewed",
+          "packs",
+        ],
+        "type": "object",
+      },
+      "defaults": {
+        "additionalProperties": false,
+        "properties": {
+          "autoCrossChannelPer24h": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "autoEmailPer24h": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "autoEmailPer7d": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "autoSmsPer24h": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "autoSmsPer7d": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "autonomousCategories": {
+            "items": {
+              "enum": [
+                "speed_to_lead_reply",
+                "reminder",
+                "booking_confirmation",
+                "document_chase",
+                "nurture_step",
+                "search_alert",
+              ],
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "callAttemptsPer24h": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "contactWindowEnd": {
+            "type": "string",
+          },
+          "contactWindowStart": {
+            "type": "string",
+          },
+          "emailQuietHours": {
+            "type": "boolean",
+          },
+          "humanReplyWindowMinutes": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "manualSmsConfirmAfter24h": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "maxDeferrals": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "optOutConfirmationSender": {
+            "enum": [
+              "provider",
+              "platform",
+            ],
+            "type": "string",
+          },
+          "recordingEnabled": {
+            "type": "boolean",
+          },
+          "recordingMode": {
+            "enum": [
+              "announce_all",
+              "one_party_where_permitted",
+            ],
+            "type": "string",
+          },
+        },
+        "required": [
+          "contactWindowStart",
+          "contactWindowEnd",
+          "humanReplyWindowMinutes",
+          "emailQuietHours",
+          "autoSmsPer24h",
+          "autoSmsPer7d",
+          "autoEmailPer24h",
+          "autoEmailPer7d",
+          "autoCrossChannelPer24h",
+          "manualSmsConfirmAfter24h",
+          "callAttemptsPer24h",
+          "maxDeferrals",
+          "autonomousCategories",
+          "optOutConfirmationSender",
+          "recordingEnabled",
+          "recordingMode",
+        ],
+        "type": "object",
+      },
+      "versions": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "active": {
+              "type": "boolean",
+            },
+            "attested": {
+              "type": "boolean",
+            },
+            "autoCrossChannelPer24h": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer",
+            },
+            "autoEmailPer24h": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer",
+            },
+            "autoEmailPer7d": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer",
+            },
+            "autoSmsPer24h": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer",
+            },
+            "autoSmsPer7d": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer",
+            },
+            "autonomousCategories": {
+              "items": {
+                "enum": [
+                  "speed_to_lead_reply",
+                  "reminder",
+                  "booking_confirmation",
+                  "document_chase",
+                  "nurture_step",
+                  "search_alert",
+                ],
+                "type": "string",
+              },
+              "type": "array",
+            },
+            "callAttemptsPer24h": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer",
+            },
+            "contactWindowEnd": {
+              "type": "string",
+            },
+            "contactWindowStart": {
+              "type": "string",
+            },
+            "createdAt": {
+              "type": "string",
+            },
+            "createdByUserId": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "emailQuietHours": {
+              "type": "boolean",
+            },
+            "humanReplyWindowMinutes": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer",
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "manualSmsConfirmAfter24h": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer",
+            },
+            "maxDeferrals": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer",
+            },
+            "optOutConfirmationSender": {
+              "enum": [
+                "provider",
+                "platform",
+              ],
+              "type": "string",
+            },
+            "recordingEnabled": {
+              "type": "boolean",
+            },
+            "recordingMode": {
+              "enum": [
+                "announce_all",
+                "one_party_where_permitted",
+              ],
+              "type": "string",
+            },
+            "versionNo": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer",
+            },
+          },
+          "required": [
+            "contactWindowStart",
+            "contactWindowEnd",
+            "humanReplyWindowMinutes",
+            "emailQuietHours",
+            "autoSmsPer24h",
+            "autoSmsPer7d",
+            "autoEmailPer24h",
+            "autoEmailPer7d",
+            "autoCrossChannelPer24h",
+            "manualSmsConfirmAfter24h",
+            "callAttemptsPer24h",
+            "maxDeferrals",
+            "autonomousCategories",
+            "optOutConfirmationSender",
+            "recordingEnabled",
+            "recordingMode",
+            "id",
+            "versionNo",
+            "attested",
+            "createdByUserId",
+            "createdAt",
+            "active",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "widestWindow": {
+        "additionalProperties": false,
+        "properties": {
+          "end": {
+            "type": "string",
+          },
+          "start": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "start",
+          "end",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "activePolicyId",
+      "versions",
+      "defaults",
+      "widestWindow",
+      "attestationText",
+      "counsel",
+    ],
+    "type": "object",
+  },
+  "PolicyActivatedResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "activePolicyId": {
+        "format": "uuid",
+        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "type": "string",
+      },
+      "changed": {
+        "type": "boolean",
+      },
+      "loosening": {
+        "type": "boolean",
+      },
+    },
+    "required": [
+      "activePolicyId",
+      "loosening",
+      "changed",
+    ],
+    "type": "object",
+  },
+  "PolicyCreatedResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "active": {
+        "type": "boolean",
+      },
+      "id": {
+        "format": "uuid",
+        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "type": "string",
+      },
+      "loosenedFields": {
+        "items": {
+          "type": "string",
+        },
+        "type": "array",
+      },
+      "loosening": {
+        "type": "boolean",
+      },
+      "versionNo": {
+        "maximum": 9007199254740991,
+        "minimum": -9007199254740991,
+        "type": "integer",
+      },
+    },
+    "required": [
+      "id",
+      "versionNo",
+      "loosening",
+      "loosenedFields",
+      "active",
+    ],
+    "type": "object",
+  },
+  "PondResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "pond": {
+        "additionalProperties": false,
+        "properties": {
+          "archived": {
+            "type": "boolean",
+          },
+          "claimCooldownHours": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "claimsPerDay": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "eligibleRoles": {
+            "items": {
+              "enum": [
+                "agent",
+                "team_lead",
+                "isa",
+              ],
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "isDefault": {
+            "type": "boolean",
+          },
+          "memberUserIds": {
+            "items": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "name": {
+            "type": "string",
+          },
+          "openToAll": {
+            "type": "boolean",
+          },
+          "reinquiry": {
+            "enum": [
+              "reroute",
+              "stay",
+            ],
+            "type": "string",
+          },
+          "waitingLeads": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+        },
+        "required": [
+          "id",
+          "name",
+          "isDefault",
+          "openToAll",
+          "eligibleRoles",
+          "claimsPerDay",
+          "claimCooldownHours",
+          "reinquiry",
+          "archived",
+          "memberUserIds",
+          "waitingLeads",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "pond",
+    ],
+    "type": "object",
+  },
+  "PondsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "ponds": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "archived": {
+              "type": "boolean",
+            },
+            "claimCooldownHours": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer",
+            },
+            "claimsPerDay": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer",
+            },
+            "eligibleRoles": {
+              "items": {
+                "enum": [
+                  "agent",
+                  "team_lead",
+                  "isa",
+                ],
+                "type": "string",
+              },
+              "type": "array",
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "isDefault": {
+              "type": "boolean",
+            },
+            "memberUserIds": {
+              "items": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+              "type": "array",
+            },
+            "name": {
+              "type": "string",
+            },
+            "openToAll": {
+              "type": "boolean",
+            },
+            "reinquiry": {
+              "enum": [
+                "reroute",
+                "stay",
+              ],
+              "type": "string",
+            },
+            "waitingLeads": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer",
+            },
+          },
+          "required": [
+            "id",
+            "name",
+            "isDefault",
+            "openToAll",
+            "eligibleRoles",
+            "claimsPerDay",
+            "claimCooldownHours",
+            "reinquiry",
+            "archived",
+            "memberUserIds",
+            "waitingLeads",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "ponds",
+    ],
+    "type": "object",
+  },
+  "RoutingRuleResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "rule": {
+        "additionalProperties": false,
+        "properties": {
+          "archived": {
+            "type": "boolean",
+          },
+          "directUserId": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "enabled": {
+            "type": "boolean",
+          },
+          "fallbackPondId": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "match": {
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string",
+            },
+            "type": "object",
+          },
+          "maxOffers": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "members": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "userId": {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                "weight": {
+                  "maximum": 100,
+                  "minimum": 1,
+                  "type": "integer",
+                },
+              },
+              "required": [
+                "userId",
+                "weight",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "name": {
+            "type": "string",
+          },
+          "offerWindowSeconds": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "position": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "strategy": {
+            "enum": [
+              "round_robin",
+              "weighted",
+              "direct",
+              "pond",
+            ],
+            "type": "string",
+          },
+          "targetPondId": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "version": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+        },
+        "required": [
+          "id",
+          "position",
+          "name",
+          "match",
+          "strategy",
+          "directUserId",
+          "targetPondId",
+          "fallbackPondId",
+          "offerWindowSeconds",
+          "maxOffers",
+          "enabled",
+          "archived",
+          "version",
+          "members",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "rule",
+    ],
+    "type": "object",
+  },
+  "RoutingRulesResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "rules": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "archived": {
+              "type": "boolean",
+            },
+            "directUserId": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "enabled": {
+              "type": "boolean",
+            },
+            "fallbackPondId": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "match": {
+              "additionalProperties": {},
+              "propertyNames": {
+                "type": "string",
+              },
+              "type": "object",
+            },
+            "maxOffers": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "members": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "userId": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                  "weight": {
+                    "maximum": 100,
+                    "minimum": 1,
+                    "type": "integer",
+                  },
+                },
+                "required": [
+                  "userId",
+                  "weight",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+            "name": {
+              "type": "string",
+            },
+            "offerWindowSeconds": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "position": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer",
+            },
+            "strategy": {
+              "enum": [
+                "round_robin",
+                "weighted",
+                "direct",
+                "pond",
+              ],
+              "type": "string",
+            },
+            "targetPondId": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "version": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer",
+            },
+          },
+          "required": [
+            "id",
+            "position",
+            "name",
+            "match",
+            "strategy",
+            "directUserId",
+            "targetPondId",
+            "fallbackPondId",
+            "offerWindowSeconds",
+            "maxOffers",
+            "enabled",
+            "archived",
+            "version",
+            "members",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "rules",
+    ],
+    "type": "object",
+  },
+  "SettingsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "settings": {
+        "additionalProperties": false,
+        "properties": {
+          "activePolicyId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "aiEnabled": {
+            "type": "boolean",
+          },
+          "autoPauseAfterMisses": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "defaultTimezone": {
+            "type": "string",
+          },
+          "firstTouchReleaseSeconds": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "firstTouchSlaSeconds": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "identity": {
+            "additionalProperties": false,
+            "properties": {
+              "brokerageLegalName": {
+                "type": "string",
+              },
+              "brokerageLicenseNumber": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "brokeragePostalAddress": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "missing": {
+                "items": {
+                  "enum": [
+                    "brokerage_postal_address",
+                  ],
+                  "type": "string",
+                },
+                "type": "array",
+              },
+              "teamName": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+            },
+            "required": [
+              "brokerageLegalName",
+              "teamName",
+              "brokerageLicenseNumber",
+              "brokeragePostalAddress",
+              "missing",
+            ],
+            "type": "object",
+          },
+          "inactivityReleaseDays": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "inactivityWarningHours": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "isaAccessAfterHandoffDays": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "maxOffers": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "notificationDetail": {
+            "enum": [
+              "none",
+              "first_name_initial",
+            ],
+            "type": "string",
+          },
+          "offerWindowSeconds": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "recordingRetentionDays": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "reinquirySlaAfterDays": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "routingHoursEnd": {
+            "type": "string",
+          },
+          "routingHoursStart": {
+            "type": "string",
+          },
+          "tcRecordingAccess": {
+            "type": "boolean",
+          },
+          "teamLeadRecordingAccess": {
+            "type": "boolean",
+          },
+          "uncontactedCapacityCap": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "version": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+        },
+        "required": [
+          "version",
+          "defaultTimezone",
+          "routingHoursStart",
+          "routingHoursEnd",
+          "offerWindowSeconds",
+          "maxOffers",
+          "firstTouchSlaSeconds",
+          "firstTouchReleaseSeconds",
+          "reinquirySlaAfterDays",
+          "inactivityReleaseDays",
+          "inactivityWarningHours",
+          "autoPauseAfterMisses",
+          "uncontactedCapacityCap",
+          "isaAccessAfterHandoffDays",
+          "recordingRetentionDays",
+          "teamLeadRecordingAccess",
+          "tcRecordingAccess",
+          "notificationDetail",
+          "aiEnabled",
+          "activePolicyId",
+          "identity",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "settings",
+    ],
+    "type": "object",
+  },
+  "TeamResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "team": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "isDefault": {
+            "type": "boolean",
+          },
+          "members": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "isLead": {
+                  "type": "boolean",
+                },
+                "userId": {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+              },
+              "required": [
+                "userId",
+                "isLead",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "name": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+          "name",
+          "isDefault",
+          "members",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "team",
+    ],
+    "type": "object",
+  },
+  "TeamsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "teams": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "isDefault": {
+              "type": "boolean",
+            },
+            "members": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "isLead": {
+                    "type": "boolean",
+                  },
+                  "userId": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "userId",
+                  "isLead",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+            "name": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "name",
+            "isDefault",
+            "members",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "teams",
+    ],
+    "type": "object",
+  },
+}
+`;
+
+exports[`route table and schemas > every admin route declares an Action and carries authorize(<that action>) (snapshot) 1`] = `
+[
+  "GET /api/members → settings.routing",
+  "HEAD /api/members → settings.routing",
+  "POST /api/invites → member.invite",
+  "DELETE /api/invites/:id → member.invite",
+  "PATCH /api/members/:userId → member.role",
+  "GET /api/routing-rules → settings.routing",
+  "HEAD /api/routing-rules → settings.routing",
+  "POST /api/routing-rules → settings.routing",
+  "PUT /api/routing-rules/order → settings.routing",
+  "PATCH /api/routing-rules/:id → settings.routing",
+  "PUT /api/routing-rules/:id/members → settings.routing",
+  "DELETE /api/routing-rules/:id → settings.routing",
+  "GET /api/ponds → settings.routing",
+  "HEAD /api/ponds → settings.routing",
+  "POST /api/ponds → settings.routing",
+  "PATCH /api/ponds/:id → settings.routing",
+  "PUT /api/ponds/:id/members → settings.routing",
+  "DELETE /api/ponds/:id → settings.routing",
+  "GET /api/teams → settings.routing",
+  "HEAD /api/teams → settings.routing",
+  "POST /api/teams → settings.routing",
+  "PATCH /api/teams/:id → settings.routing",
+  "PUT /api/teams/:id/members → settings.routing",
+  "DELETE /api/teams/:id → settings.routing",
+  "GET /api/settings → settings.routing",
+  "HEAD /api/settings → settings.routing",
+  "PATCH /api/settings → settings.routing",
+  "PATCH /api/settings/identity → settings.identity",
+  "GET /api/compliance-policies → settings.compliance",
+  "HEAD /api/compliance-policies → settings.compliance",
+  "POST /api/compliance-policies → settings.compliance",
+  "POST /api/compliance-policies/:id/activate → settings.compliance",
+]
+`;

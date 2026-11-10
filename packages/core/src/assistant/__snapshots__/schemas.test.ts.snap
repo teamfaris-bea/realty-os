@@ -1,0 +1,349 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`core/assistant schemas > ModelOutputSchema has no confidence fields and no tenant_id (snapshot) > ModelOutputSchema 1`] = `
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": {},
+  "properties": {
+    "claims": {
+      "items": {},
+      "type": "array",
+    },
+    "draft": {
+      "additionalProperties": {},
+      "properties": {
+        "body": {
+          "type": "string",
+        },
+        "channel": {
+          "type": "string",
+        },
+        "subject": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "body",
+      ],
+      "type": "object",
+    },
+    "explanation": {
+      "type": "string",
+    },
+  },
+  "type": "object",
+}
+`;
+
+exports[`core/assistant schemas > PlaybookStepSchema has no confidence fields and no tenant_id (snapshot) > PlaybookStepSchema 1`] = `
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "category": {
+      "enum": [
+        "speed_to_lead_reply",
+        "reminder",
+        "booking_confirmation",
+        "document_chase",
+        "nurture_step",
+        "search_alert",
+      ],
+      "type": "string",
+    },
+    "channel": {
+      "enum": [
+        "sms",
+        "email",
+      ],
+      "type": "string",
+    },
+    "delay": {
+      "additionalProperties": false,
+      "properties": {
+        "anchor": {
+          "enum": [
+            "enrollment",
+            "previous_step",
+            "event",
+          ],
+          "type": "string",
+        },
+        "offsetSeconds": {
+          "maximum": 94867200,
+          "minimum": -94867200,
+          "type": "integer",
+        },
+      },
+      "required": [
+        "anchor",
+        "offsetSeconds",
+      ],
+      "type": "object",
+    },
+    "fallback": {
+      "additionalProperties": false,
+      "properties": {
+        "maxLength": {
+          "maximum": 10000,
+          "minimum": 20,
+          "type": "integer",
+        },
+        "subject": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string",
+        },
+        "template": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "subject",
+        "template",
+        "maxLength",
+      ],
+      "type": "object",
+    },
+    "intent": {
+      "enum": [
+        "first_response_qualify",
+        "check_in",
+        "market_update",
+        "listing_suggestion",
+        "search_alert",
+        "home_anniversary",
+        "home_value_update",
+        "referral_ask",
+        "holiday_greeting",
+        "appointment_confirmation",
+        "appointment_reminder",
+        "deadline_reminder",
+        "document_request",
+      ],
+      "type": "string",
+    },
+    "maxLength": {
+      "maximum": 10000,
+      "minimum": 20,
+      "type": "integer",
+    },
+    "personalization": {
+      "enum": [
+        "none",
+        "light",
+      ],
+      "type": "string",
+    },
+    "purpose": {
+      "enum": [
+        "marketing",
+        "informational",
+      ],
+      "type": "string",
+    },
+    "requires": {
+      "items": {
+        "enum": [
+          "avm",
+        ],
+        "type": "string",
+      },
+      "type": "array",
+    },
+    "slots": {
+      "items": {
+        "enum": [
+          "first_name",
+          "agent_first_name",
+          "team_name",
+          "brokerage_name",
+          "inquiry_property",
+          "listing_address",
+          "listing_price",
+          "listing_url",
+          "search_name",
+          "match_count",
+          "appointment_time",
+          "appointment_place",
+          "document_name",
+          "due_date",
+          "home_years",
+          "va_question",
+        ],
+        "type": "string",
+      },
+      "maxItems": 16,
+      "type": "array",
+    },
+    "stepKey": {
+      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+      "type": "string",
+    },
+    "stopIf": {
+      "items": {
+        "enum": [
+          "appointment_booked",
+          "deal_opened",
+          "deal_closed",
+          "listing_inactive",
+          "event_canceled",
+        ],
+        "type": "string",
+      },
+      "maxItems": 5,
+      "type": "array",
+    },
+    "subject": {
+      "maxLength": 200,
+      "minLength": 1,
+      "type": "string",
+    },
+    "template": {
+      "maxLength": 4000,
+      "minLength": 1,
+      "type": "string",
+    },
+  },
+  "required": [
+    "stepKey",
+    "channel",
+    "delay",
+    "purpose",
+    "category",
+    "intent",
+    "template",
+    "personalization",
+    "slots",
+    "maxLength",
+    "stopIf",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`core/assistant schemas > SearchCriteriaSchema has no confidence fields and no tenant_id (snapshot) > SearchCriteriaSchema 1`] = `
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "bathsMinX10": {
+      "maximum": 200,
+      "minimum": 0,
+      "type": "integer",
+    },
+    "bedsMin": {
+      "maximum": 20,
+      "minimum": 0,
+      "type": "integer",
+    },
+    "cities": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "city": {
+            "maxLength": 80,
+            "minLength": 1,
+            "type": "string",
+          },
+          "region": {
+            "pattern": "^[A-Z]{2}$",
+            "type": "string",
+          },
+        },
+        "required": [
+          "city",
+        ],
+        "type": "object",
+      },
+      "maxItems": 20,
+      "minItems": 1,
+      "type": "array",
+    },
+    "keywords": {
+      "items": {
+        "maxLength": 40,
+        "minLength": 2,
+        "type": "string",
+      },
+      "maxItems": 10,
+      "minItems": 1,
+      "type": "array",
+    },
+    "postalCodes": {
+      "items": {
+        "pattern": "^\\d{5}$",
+        "type": "string",
+      },
+      "maxItems": 50,
+      "minItems": 1,
+      "type": "array",
+    },
+    "priceMaxCents": {
+      "maximum": 100000000000,
+      "minimum": 0,
+      "type": "integer",
+    },
+    "priceMinCents": {
+      "maximum": 100000000000,
+      "minimum": 0,
+      "type": "integer",
+    },
+    "propertyTypes": {
+      "items": {
+        "enum": [
+          "single_family",
+          "condo",
+          "townhouse",
+          "multi_family",
+          "land",
+          "manufactured",
+          "other",
+        ],
+        "type": "string",
+      },
+      "maxItems": 7,
+      "minItems": 1,
+      "type": "array",
+    },
+    "sqftMax": {
+      "maximum": 100000,
+      "minimum": 0,
+      "type": "integer",
+    },
+    "sqftMin": {
+      "maximum": 100000,
+      "minimum": 0,
+      "type": "integer",
+    },
+  },
+  "type": "object",
+}
+`;
+
+exports[`core/assistant schemas > ToneSchema has no confidence fields and no tenant_id (snapshot) > ToneSchema 1`] = `
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "emoji": {
+      "type": "boolean",
+    },
+    "formality": {
+      "enum": [
+        "casual",
+        "neutral",
+        "formal",
+      ],
+      "type": "string",
+    },
+    "notes": {
+      "maxLength": 300,
+      "type": "string",
+    },
+  },
+  "type": "object",
+}
+`;

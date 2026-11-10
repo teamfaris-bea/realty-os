@@ -1,0 +1,10 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`RLS plan shape and overhead at 250k contacts per tenant > EXPLAIN: the visibility helpers run once as InitPlans and contacts are read by an index on the tenant prefix 1`] = `
+{
+  "contactsScan": [
+    "Index Scan",
+  ],
+  "initPlans": true,
+}
+`;
