@@ -183,6 +183,12 @@ export function buildServer(cfg: Config, deps: ServerDeps): FastifyInstance {
     if (origin === null || !cfg.webOrigins.includes(origin)) throw new AppError('CSRF_INVALID');
   });
 
+  // API responses carry session state (CSRF token), PII and tenant data: never cached by browsers or
+  // shared proxies. A route that sets its own Cache-Control keeps it.
+  app.addHook('onSend', async (_req, reply) => {
+    if (!reply.hasHeader('cache-control')) reply.header('cache-control', 'no-store');
+  });
+
   app.setErrorHandler((err: FastifyError, req, reply) => {
     if (err instanceof AppError) {
       if (err.status >= 500) req.log.error({ code: err.code }, 'request failed');

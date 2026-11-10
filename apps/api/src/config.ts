@@ -130,7 +130,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new ConfigError(`invalid configuration: ${i?.path.join('.') ?? ''} ${i?.message ?? ''}`.trim());
   }
   if (parsed.data.env === 'production' && !parsed.data.cookieSecure) throw new ConfigError('SESSION_COOKIE_SECURE must be true in production');
+  if (parsed.data.env === 'production') assertProductionSecrets(parsed.data);
   return parsed.data;
+}
+
+/** Production secret hygiene (security-hardening lane). Messages name keys, never values. */
+function assertProductionSecrets(c: Config): void {
+  if (Buffer.from(c.kek).equals(Buffer.from(c.sessionSecret))) throw new ConfigError('KEK_BASE64 and SESSION_SECRET_BASE64 must be different keys');
+  const wh = Object.values(c.webhookSecrets);
+  if (new Set(wh).size !== wh.length) throw new ConfigError('each *_WEBHOOK_SECRET must be different');
 }
 
 /** A log-safe view of the config (no keys, secrets or credentials). */
