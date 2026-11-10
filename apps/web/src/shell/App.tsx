@@ -2,7 +2,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { type ReactNode, useMemo } from 'react';
 import { Navigate, type RouteObject, RouterProvider, createBrowserRouter, useLocation } from 'react-router-dom';
-import { Button, EvidenceRoutesProvider, Notice } from '../design/index.js';
+import { Announcer, Button, EvidenceRoutesProvider, Notice } from '../design/index.js';
 import { ApiClient, isRetryable } from './api.js';
 import { pathAfterAuth, sessionGate } from './authApi.js';
 import { SessionSync, ShellProvider, useSession, useShell } from './context.js';
@@ -118,6 +118,8 @@ function Providers({ api, table, queryClient, children }: { api: ApiClient; tabl
         <SessionSync />
         <ReauthProvider>
           <EvidenceFromTable>{children}</EvidenceFromTable>
+          {/* the one polite live region behind announce() (toasts, countdown milestones) */}
+          <Announcer />
         </ReauthProvider>
       </ShellProvider>
     </QueryClientProvider>

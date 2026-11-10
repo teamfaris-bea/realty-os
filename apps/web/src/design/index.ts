@@ -4,6 +4,7 @@ export { Button, ButtonLink, Spinner, buttonClass, type ButtonProps, type Button
 export { TextField, type TextFieldProps } from './Field.js';
 export { Card, EmptyState, Notice, Ratio, type NoticeTone } from './Surface.js';
 export { Dialog, type DialogProps } from './Dialog.js';
+export { Announcer, announce, countdownMilestone, milestoneWords, useCountdownAnnouncement } from './Announce.js';
 export { GateBadge, type GateDecisionView, type GateOutcome } from './GateBadge.js';
 export {
   CheckThis,
