@@ -1,7 +1,7 @@
 // Sign in, two-step verification (verify + enroll), and choosing a team.
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
-import { Button, Card, Notice, TextField } from '../../design/index.js';
+import { Button, Card, Notice, TextField, safeUrl } from '../../design/index.js';
 import { pathAfterAuth, sessionGate } from '../authApi.js';
 import { useSession, useShell } from '../context.js';
 import { ROLE_LABEL } from '../Layout.js';
@@ -206,6 +206,9 @@ export function MfaEnrollPage() {
     setSession(res.session);
   };
 
+  // the deep link comes from the API response: only an otpauth: URI may become an href
+  const authenticatorLink = secret ? safeUrl(secret.otpauthUri, { allow: ['otpauth:'] }) : null;
+
   return (
     <AuthFrame
       title="Set up two-step verification"
@@ -225,9 +228,11 @@ export function MfaEnrollPage() {
               <code className="block select-all rounded-xl bg-surface-2 px-3 py-2 font-mono text-[17px] tracking-wider text-ink" aria-label="Setup key">
                 {groupSecret(secret.secret)}
               </code>
-              <a className="inline-flex min-h-tap items-center text-accent md:hidden" href={secret.otpauthUri}>
-                Open in authenticator app
-              </a>
+              {authenticatorLink ? (
+                <a className="inline-flex min-h-tap items-center text-accent md:hidden" href={authenticatorLink}>
+                  Open in authenticator app
+                </a>
+              ) : null}
             </div>
           ) : start.pending ? (
             <p className="mt-2 text-ink-muted">Getting your setup key…</p>

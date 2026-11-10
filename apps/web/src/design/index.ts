@@ -17,3 +17,4 @@ export {
   type EvidenceRoutes,
   type EvidenceSourceType,
 } from './Evidence.js';
+export { safeUrl, SAFE_URL_SCHEMES, type SafeUrlOptions } from './safeUrl.js';
