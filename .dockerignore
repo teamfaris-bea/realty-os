@@ -1,0 +1,18 @@
+# Keep the build context small and free of secrets and local state.
+**/node_modules
+**/dist
+**/coverage
+.git
+.env
+.env.*
+!.env.example
+.storage
+.demo
+**/*.log
+**/*.tsbuildinfo
+.vitest-results.json
+.stryker-tmp
+reports
+playwright-report
+test-results
+.devcontainer/logs

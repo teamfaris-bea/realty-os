@@ -18,6 +18,7 @@ import { assistantRoutes } from './assistant/routes.js';
 import { importsRoutes } from './imports/routes.js';
 import { workspaceRoutes } from './workspace/routes.js';
 import { accountabilityRoutes } from './accountability/routes.js';
+import { healthRoutes } from './health.js';
 
 export interface RouteModule {
   name: string;
@@ -34,5 +35,6 @@ export const routeModules: RouteModule[] = [
   importsRoutes,
   workspaceRoutes,
   accountabilityRoutes,
+  healthRoutes,
   // registry: add new entries above this line
 ];
