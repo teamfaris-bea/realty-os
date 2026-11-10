@@ -163,6 +163,16 @@ describe('Imports', () => {
     expect(within(card).getByText('Waiting for Contacts to be verified or skipped.')).toBeInTheDocument();
   });
 
+  it('the consent category is "Opt-outs and consent history": opt-outs carry over and block sending; skipping it says what is lost', async () => {
+    const b = batch([stage('contacts', 'verified'), stage('consent', 'pending')]);
+    leadAdminApp(importFake(b), `/imports/${BID}`, 'owner');
+    const card = (await screen.findByRole('heading', { name: '6. Opt-outs and consent history' })).closest('article')!;
+    expect(within(card).getByText(/Opt-outs carry over and block texts, email or calls here/)).toBeInTheDocument();
+    expect(within(card).getByText(/Opt-ins are kept as history only/)).toBeInTheDocument();
+    expect(within(card).getByText(/If you skip this, opt-outs from the old system won't carry over/)).toBeInTheDocument();
+    expect(card.textContent).not.toMatch(/Texting and email permission/);
+  });
+
   it('verify needs a matching recount and every side-by-side check marked; a mismatch blocks it', async () => {
     const b = batch([stage('contacts', 'committed', { counts: { ...counts, imported: 1150 } })]);
     const c = { source: 1200, imported: 1150, needs_review: 30, rejected: 5, duplicate: 15 };

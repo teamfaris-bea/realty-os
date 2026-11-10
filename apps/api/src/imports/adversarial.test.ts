@@ -114,17 +114,34 @@ describe('revert definer (SECURITY DEFINER app.import_revert_delete)', () => {
 });
 
 describe('R-CONSENT-3 E40: imported opt-outs cannot be skipped away', () => {
-  it('R-CONSENT-3: the consent stage cannot be skipped while its source carries opt-outs or DNC flags; committing it applies them', async () => {
+  it('R-CONSENT-3: imported opt-outs and DNC flags are applied by the contacts commit, so skipping the consent stage cannot drop them', async () => {
     const { w, b } = await fubWorld('key-adv-cskip1', 5300);
+    // outbound-2: already in force before any later stage runs
+    const revokes = await q("SELECT 1 FROM consent_events WHERE tenant_id = $1 AND event_type = 'revoke' AND imported", [w.tenantId]);
+    expect(revokes).not.toHaveLength(0);
+    expect(await q("SELECT 1 FROM suppressions WHERE tenant_id = $1 AND reason = 'import_dnc' AND lifted_at IS NULL", [w.tenantId])).toHaveLength(1);
     for (const c of ['ownership', 'notes', 'messages', 'call_recordings']) expect((await skip(w, b.id, c)).status).toBe(200);
     const early = await skip(w, b.id, 'consent');
-    expect([early.status, early.code]).toEqual([409, 'IMPORT_STATE_CONFLICT']);
+    expect([early.status, early.code, (early.body as { error: { details?: { status?: string } } }).error.details?.status]).toEqual([409, 'IMPORT_STATE_CONFLICT', 'consent_dry_run_required']);
     await dryRunStage(ih, w.admin, b.id, 'consent');
-    const after = await skip(w, b.id, 'consent');
+    // nothing left to apply but history (grants): the skip is allowed, and every revocation stays
+    expect((await skip(w, b.id, 'consent')).status).toBe(200);
+    expect(await q("SELECT 1 FROM consent_events WHERE tenant_id = $1 AND event_type = 'revoke' AND imported", [w.tenantId])).toHaveLength(revokes.length);
+  });
+
+  it('R-CONSENT-3: a revocation that needs a human (a CSV bare "no") waits for the consent stage, which cannot be skipped while it is pending', async () => {
+    const w = await importWorld(ih);
+    const csv = 'First Name,Last Name,Mobile Phone,Text Consent\nNora,Maybe,(415) 301-8811,no\n';
+    const cr = await call<{ batch: BatchView }>(w.admin, 'POST', '/imports', { source: 'csv', fileName: 'amb.csv', fileBase64: csvBase64(csv) });
+    const bid = cr.body.batch.id;
+    await call(w.admin, 'POST', `/imports/${bid}/snapshot`);
+    await ih.drain();
+    await fullStage(ih, w.admin, bid, 'contacts');
+    expect(await q('SELECT 1 FROM consent_events WHERE tenant_id = $1', [w.tenantId])).toHaveLength(0);
+    await dryRunStage(ih, w.admin, bid, 'consent');
+    const after = await skip(w, bid, 'consent');
     expect([after.status, after.code, (after.body as { error: { details?: { status?: string } } }).error.details?.status]).toEqual([409, 'IMPORT_STATE_CONFLICT', 'consent_opt_outs_pending']);
-    expect(stageOf(await batchOf(w.admin, b.id), 'consent').status).toBe('dry_run_ready');
-    await fullStage(ih, w.admin, b.id, 'consent');
-    expect(await q("SELECT 1 FROM consent_events WHERE tenant_id = $1 AND event_type = 'revoke' AND imported", [w.tenantId])).not.toHaveLength(0);
+    expect(stageOf(await batchOf(w.admin, bid), 'consent').status).toBe('dry_run_ready');
   });
 
   it('R-CONSENT-3: a CSV without consent columns, or a batch whose contacts stage was skipped, may skip consent', async () => {

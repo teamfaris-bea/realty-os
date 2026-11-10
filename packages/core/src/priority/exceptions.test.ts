@@ -170,7 +170,7 @@ describe('R-ACC-2 overdue_promise', () => {
 });
 
 describe('R-ACC-2 failed_send', () => {
-  it('stored reason codes are shown in words, never raw: gate codes as the gate words them, provider codes in plain words, unknown codes dropped', () => {
+  it('stored reason codes are shown in words, never raw: gate codes as the gate words them, retired gate codes on older rows still in words, provider codes in plain words, unknown codes dropped', () => {
     const r = deriveExceptions(
       exceptionInputs({
         outbound: [
@@ -187,13 +187,15 @@ describe('R-ACC-2 failed_send', () => {
       'Text blocked by the send-time check: Opted out of texts',
       'Text failed to send (the carrier or provider rejected it)',
       'Email blocked by the send-time check: On a Do Not Call list',
-      'Text blocked by the send-time check: Outside the hours they can be contacted',
+      'Text blocked by the send-time check: Outside the hours they could be contacted',
       'Text blocked by the send-time check',
       'Text blocked by the send-time check: Opted out of texts',
     ]);
     expect(statusReasonWords('FREQUENCY_CAP', 'sms')).toBe('Over the message limit');
     expect(statusReasonWords('CALL_ATTEMPT_LIMIT', 'sms')).toBe('Over the call attempt limit');
     expect(statusReasonWords('CONSENT_REVOKED', 'email')).toBe('Opted out of email');
+    expect(statusReasonWords('SUPPRESSED', 'sms')).toBe('Blocked for texts (bounce, complaint or do-not-contact)');
+    expect(statusReasonWords('CONSENT_CONFIRMATION_REQUIRED', 'sms')).toBe('Waited for a confirmation that never came');
     expect(statusReasonWords('mailbox full', 'email')).toBe('mailbox full');
   });
 

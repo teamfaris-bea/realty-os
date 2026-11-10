@@ -381,7 +381,8 @@ describe('revert (R-IMPORT-10, E43)', () => {
     const calls = planRevert('call_recordings', [{ table: 'calls', id: 'k1', contactId: 'c1' }, { table: 'recordings', id: 'r1', contactId: 'c1' }], new Set(['r1']), ids());
     expect([calls.delete, calls.manual]).toEqual([['k1'], ['r1']]);
     const own = planRevert('ownership', [{ table: 'lead_ownership_events', id: 'e1', contactId: 'c1' }, { table: 'lead_ownership_events', id: 'e2', contactId: 'c2' }], new Set(['c2']), ids());
-    expect([own.delete, own.kept, own.manual]).toEqual([[], ['e1'], ['e2']]);
+    // ownership-1: the untouched assignment is compensated (import_unassign), never left in force
+    expect([own.delete, own.kept, own.manual, own.unassign]).toEqual([[], [], ['e2'], [{ eventId: 'e1', contactId: 'c1' }]]);
   });
 
   it('R-IMPORT-10 stages revert in reverse commit order', () => {

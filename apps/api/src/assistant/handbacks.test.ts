@@ -56,7 +56,8 @@ describe('handbacks (R-AST-9)', () => {
     expect(r.body.result).toBe('sent');
     expect(r.body.status).toBe('approved');
     expect((await messageRow(h, r.body.messageId)).status).toBe('sent');
-    expect((await decisionsFor(h, { messageId: r.body.messageId })).map((d) => `${d.initiator}:${d.outcome}`)).toEqual(['human:allow']);
+    expect(await decisionsFor(h, { messageId: r.body.messageId })).toHaveLength(0);
+    expect((await h.su.query<{ u: string | null; c: string }>('SELECT a.decided_by_user_id AS u, a.action_category AS c FROM messages m JOIN assistant_actions a ON a.tenant_id = m.tenant_id AND a.id = m.assistant_action_id WHERE m.id = $1', [r.body.messageId])).rows[0]).toMatchObject({ u: w.agents[0]!.userId });
     const reply = (await actionsOf(h, contactId)).find((a) => a.kind === 'message_draft')!;
     expect(reply).toMatchObject({ autonomy: 'requires_approval', status: 'executed', owner_user_id: w.agents[0]!.userId });
     // the playbook stays paused until the agent resumes it (human-only)
@@ -75,7 +76,7 @@ describe('handbacks (R-AST-9)', () => {
     expect(r.status).toBe(200);
     const reply = (await actionsOf(h, contactId)).find((a) => a.kind === 'message_draft')!;
     expect(reply).toMatchObject({ action_category: 'money', autonomy: 'requires_approval' });
-    expect((await decisionsFor(h, { messageId: r.body.messageId }))[0]!.initiator).toBe('human');
+    expect((await h.su.query<{ u: string | null; c: string }>('SELECT a.decided_by_user_id AS u, a.action_category AS c FROM messages m JOIN assistant_actions a ON a.tenant_id = m.tenant_id AND a.id = m.assistant_action_id WHERE m.id = $1', [r.body.messageId])).rows[0]).toEqual({ u: w.agents[0]!.userId, c: 'money' });
   });
 
   it('R-AST-18: with AI off the handback is still useful (no enrichment, no provider call) and can be marked handled with one tap', async () => {

@@ -236,7 +236,7 @@ export interface StepRunRow {
   enrollmentId: string;
   versionId: string;
   stepKey: string;
-  status: 'scheduled' | 'sent' | 'deferred' | 'converted_to_draft' | 'skipped_ineligible' | 'canceled_paused' | 'failed';
+  status: 'scheduled' | 'sent' | 'converted_to_draft' | 'skipped_ineligible' | 'canceled_paused' | 'failed';
   scheduledFor: Instant;
   messageId: string | null;
   messageStatus: string | null;
@@ -280,8 +280,7 @@ export async function updateStepRun(tx: Tx, id: string, u: { status: StepRunRow[
            message_id = CASE WHEN ${u.messageId === undefined} THEN message_id ELSE ${u.messageId ?? null}::uuid END,
            assistant_action_id = CASE WHEN ${u.actionId === undefined} THEN assistant_action_id ELSE ${u.actionId ?? null}::uuid END,
            playbook_version_id = COALESCE(${u.versionId ?? null}::uuid, playbook_version_id),
-           scheduled_for = COALESCE(${u.scheduledFor === undefined ? null : toIso(u.scheduledFor)}::timestamptz, scheduled_for),
-           deferrals = CASE WHEN ${u.messageId === null} THEN 0 ELSE deferrals END, updated_at = now()
+           scheduled_for = COALESCE(${u.scheduledFor === undefined ? null : toIso(u.scheduledFor)}::timestamptz, scheduled_for), updated_at = now()
      WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx);
 }
 

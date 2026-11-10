@@ -4,7 +4,7 @@
 // - composeHumanMessage: an agent's text/email from the contact, feed or thread. Immediate ⇒ queued and
 //   dispatched in the request (TX1 runs as the agent); scheduled ⇒ 'scheduled' + a comms.dispatch job at
 //   that instant, re-gated then (and it needs a re-tap if the client replied since, E27).
-// - previewHumanMessage: the compose-time preview (phase 'preview'; only a blocking preview is stored).
+// - previewHumanMessage: the compose-time preview ("Won't send: opted out of texts"); never stored.
 // - queueOutboundInTx: for assistant/system senders (api/assistant playbook steps, first response, search
 //   alerts; comms' own opt-out confirmation / HELP reply), in the caller's system transaction.
 import { type Channel, type NumberFacts, chooseSender, classifyHumanPurpose } from '@realty/core/compliance';
@@ -15,11 +15,10 @@ import { AppError } from '../errors.js';
 import { COMMS_DISPATCH } from '../worker/contracts.js';
 import { enqueueTyped } from '../worker/registry.js';
 import { dispatchOutbound } from './dispatch.js';
-import { decisionView, evaluateGate, insertDecision, resolvedPolicy } from './gateInput.js';
+import { decisionView, evaluateGate, insertBlockedDecision, resolvedPolicy, verdictOf } from './gateInput.js';
 import { renderHumanBody, unsubscribeUrl } from './render.js';
 import { contactFacts, dealOrAppointmentContext, detailVisibleContact } from './repos/contacts.js';
 import * as g from './repos/gate.js';
-import { actionFacts } from './repos/automation.js';
 import * as msgs from './repos/messages.js';
 import { asUser } from './runtime.js';
 import type { CommsDeps, DecisionView, DispatchResult, OutboundIntent } from './types.js';
@@ -31,7 +30,6 @@ export interface ComposeInput {
   scheduleAt?: string | undefined;
   idempotencyKey: string;
   toPointId?: string | undefined;
-  confirmDecisionId?: string | undefined;
 }
 
 export interface MessageView {
@@ -128,8 +126,8 @@ function humanIntent(contactId: string, d: Draft, channel: Channel, body: string
   };
 }
 
-/** POST /contacts/:id/messages/preview: what the gate would say now (nothing is sent or created). */
-export async function previewHumanMessage(actor: UserActor, contactId: string, input: Omit<ComposeInput, 'idempotencyKey' | 'scheduleAt' | 'confirmDecisionId'>, deps: CommsDeps): Promise<{ decision: DecisionView; body: string }> {
+/** POST /contacts/:id/messages/preview: what the gate would say now (nothing is sent, created or stored). */
+export async function previewHumanMessage(actor: UserActor, contactId: string, input: Omit<ComposeInput, 'idempotencyKey' | 'scheduleAt'>, deps: CommsDeps): Promise<{ decision: DecisionView; body: string }> {
   return asUser(deps, actor, async (tx, now) => {
     if (!(await detailVisibleContact(tx, contactId))) throw new AppError('NOT_FOUND');
     const d = await draftFor(tx, deps, contactId, actor.userId, input.channel, input.toPointId, now);
@@ -137,11 +135,7 @@ export async function previewHumanMessage(actor: UserActor, contactId: string, i
     const body = renderHumanBody(input.body, { channel: input.channel, purpose: d.purpose, identity: { brokerageLegalName: tenant.brokerageLegalName, postalAddress: tenant.postalAddress }, unsubscribe: d.purpose === 'marketing' ? '(unsubscribe link)' : null });
     const intent = humanIntent(contactId, d, input.channel, body);
     const evaluated = await evaluateGate(tx, intent, now);
-    if (evaluated.decision.outcome === 'allow') {
-      return { decision: { id: null, outcome: 'allow', reasons: [...evaluated.decision.reasons], explanation: evaluated.decision.explanation, deferUntil: null, canConfirm: false, phase: 'preview' }, body };
-    }
-    const stored = await insertDecision(tx, { ids: deps.ids, intent, evaluated, phase: 'preview', actorUserId: actor.userId, now });
-    return { decision: decisionView(stored, 'preview'), body };
+    return { decision: decisionView({ id: null, ...verdictOf(evaluated.decision) }, 'preview'), body };
   });
 }
 
@@ -168,11 +162,13 @@ export async function composeHumanMessage(actor: UserActor, contactId: string, i
     const unsub = input.channel === 'email' && d.purpose === 'marketing' ? unsubscribeUrl(deps.publicBaseUrl, deps.linkSecret, actor.tenantId, messageId) : null;
     const body = renderHumanBody(input.body, { channel: input.channel, purpose: d.purpose, identity: { brokerageLegalName: tenant.brokerageLegalName, postalAddress: tenant.postalAddress }, unsubscribe: unsub });
     if (!d.fromAddress) {
-      // No sending number / identity: the gate says why (SENDER_UNAVAILABLE); nothing to create.
+      // No sending number / identity: the send is blocked (SENDER_UNAVAILABLE) and logged; nothing to create.
       const intent = humanIntent(contactId, d, input.channel, body);
       const evaluated = await evaluateGate(tx, intent, now);
-      const stored = await insertDecision(tx, { ids: deps.ids, intent, evaluated, phase: 'preview', actorUserId: actor.userId, now });
-      return { kind: 'blocked', decision: decisionView(stored, 'preview') };
+      const verdict = verdictOf(evaluated.decision);
+      if (verdict.outcome !== 'deny') throw new Error('a send without a sender passed the gate');
+      const stored = await insertBlockedDecision(tx, { ids: deps.ids, intent, evaluated, verdict, actorUserId: actor.userId, now });
+      return { kind: 'blocked', decision: decisionView(stored, 'send') };
     }
     const inserted = await msgs.insertOutbound(tx, {
       id: messageId,
@@ -210,60 +206,28 @@ export async function composeHumanMessage(actor: UserActor, contactId: string, i
   });
 
   if (created.kind === 'blocked') return { message: null, decision: created.decision, result: 'not_created' };
-  const tenantId = actor.tenantId as TenantId;
-  let messageId: string;
-  if (created.kind === 'existing') {
-    messageId = created.m.id;
-    // An idempotent re-post is the same command and has no new effect (a retry of the original request
-    // must never stand in for the human having seen a reply, E27: that re-tap is POST /messages/:id/send).
-    // Only an explicit confirmation of a decision the human was shown does something new.
-    if (!(created.m.status === 'queued' && input.confirmDecisionId)) {
-      return { message: messageView(created.m), decision: null, result: 'noop' };
-    }
-  } else {
-    messageId = created.messageId;
-    if (created.scheduled) return { message: await viewOf(actor, messageId, deps), decision: null, result: 'scheduled' };
-  }
-  const r = await dispatchOutbound(messageId, deps, {
-    tenantId,
-    actor,
-    ...(input.confirmDecisionId ? { confirm: { decisionId: input.confirmDecisionId, byUserId: actor.userId } } : {}),
-    ...(created.kind === 'existing' ? { retap: true } : {}),
-  });
+  // An idempotent re-post is the same command and has no new effect (a retry of the original request
+  // must never stand in for the human having seen a reply, E27: that re-tap is POST /messages/:id/send).
+  if (created.kind === 'existing') return { message: messageView(created.m), decision: null, result: 'noop' };
+  const messageId = created.messageId;
+  if (created.scheduled) return { message: await viewOf(actor, messageId, deps), decision: null, result: 'scheduled' };
+  const r = await dispatchOutbound(messageId, deps, { tenantId: actor.tenantId as TenantId, actor });
   return { message: await viewOf(actor, messageId, deps), decision: 'decision' in r ? r.decision : null, result: r.kind };
 }
 
 /**
- * POST /messages/:id/send: the human re-taps a waiting message (E27) or confirms a decision. An approved
- * assistant draft is sent with its approver as the sender (ARCHITECTURE §9 path 4), so when its send-time
- * decision needs confirmation, that approver (and only they) confirms it here; its TX1 stays a system
- * transaction and the confirm decision records the approver.
+ * POST /messages/:id/send: the human re-taps a waiting message of their own (E27: the client replied
+ * since it was scheduled). Nothing is ever "confirmed past" the gate: the send-time check runs again and
+ * an opt-out blocks it.
  */
-export async function sendExisting(actor: UserActor, messageId: string, confirmDecisionId: string | undefined, deps: CommsDeps): Promise<ComposeResult> {
-  const kind = await asUser(deps, actor, async (tx) => {
+export async function sendExisting(actor: UserActor, messageId: string, deps: CommsDeps): Promise<ComposeResult> {
+  await asUser(deps, actor, async (tx) => {
     const m = await msgs.messageById(tx, messageId);
-    if (!m) throw new AppError('NOT_FOUND');
-    let k: 'human' | 'approved_draft';
-    if (m.initiator === 'human' && m.initiatedByUserId === actor.userId) k = 'human';
-    else if (m.initiator === 'assistant' && m.assistantActionId && confirmDecisionId) {
-      const a = await actionFacts(tx, m.assistantActionId);
-      if (!a || a.autonomy !== 'requires_approval' || a.status !== 'approved' || a.decidedByUserId !== actor.userId) throw new AppError('NOT_FOUND');
-      k = 'approved_draft';
-    } else throw new AppError('NOT_FOUND');
+    if (!m || m.initiator !== 'human' || m.initiatedByUserId !== actor.userId) throw new AppError('NOT_FOUND');
     if (!(await contactFacts(tx, m.contactId))) throw new AppError('NOT_FOUND');
     if (m.status !== 'queued' && m.status !== 'scheduled') throw new AppError('MESSAGE_NOT_SENDABLE', { status: m.status });
-    return k;
   });
-  if (kind === 'approved_draft') {
-    const r = await dispatchOutbound(messageId, deps, { tenantId: actor.tenantId, confirm: { decisionId: confirmDecisionId!, byUserId: actor.userId } });
-    return { message: await viewOf(actor, messageId, deps), decision: 'decision' in r ? r.decision : null, result: r.kind };
-  }
-  const r = await dispatchOutbound(messageId, deps, {
-    tenantId: actor.tenantId,
-    actor,
-    retap: true,
-    ...(confirmDecisionId ? { confirm: { decisionId: confirmDecisionId, byUserId: actor.userId } } : {}),
-  });
+  const r = await dispatchOutbound(messageId, deps, { tenantId: actor.tenantId, actor, retap: true });
   return { message: await viewOf(actor, messageId, deps), decision: 'decision' in r ? r.decision : null, result: r.kind };
 }
 

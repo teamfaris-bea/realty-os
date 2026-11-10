@@ -1,7 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import type { ActionCategory, ConsentStateRow, GateDecision } from '../compliance/index.js';
-import { DAY_MS, HOUR_MS, type Instant, at, instant } from '../foundation/index.js';
+import type { ActionCategory, GateDecision } from '../compliance/index.js';
+import { DAY_MS, HOUR_MS, at, instant } from '../foundation/index.js';
 import {
   INTENT_RULES,
   PlaybookStepSchema,
@@ -135,23 +135,14 @@ describe('step scheduling and planNextStep', () => {
   });
 });
 
-// R-CONSENT-14 deferral bookkeeping (the caps themselves are core/compliance)
+// Step-run bookkeeping after the send-time gate (nothing is deferred since core-compliance/2.0.0)
 describe('stepRunAfterGate', () => {
-  const policy = { caps: { maxDeferrals: 3 } as never };
-  const d = (outcome: GateDecision['outcome'], reasons: GateDecision['reasons'], deferUntil?: Instant) => ({ outcome, reasons, deferUntil });
+  const d = (outcome: GateDecision['outcome'], reasons: GateDecision['reasons']) => ({ outcome, reasons });
   it('allow ⇒ sent; pause ⇒ canceled_paused; other deny ⇒ skipped_ineligible (visible)', () => {
-    expect(stepRunAfterGate(d('allow', []), 0, policy)).toEqual({ status: 'sent' });
-    expect(stepRunAfterGate(d('deny', ['AUTOMATION_PAUSED', 'CONSENT_REVOKED']), 0, policy)).toEqual({ status: 'canceled_paused' });
-    expect(stepRunAfterGate(d('deny', ['CONSENT_REVOKED']), 1, policy)).toEqual({ status: 'skipped_ineligible', reason: 'GATE_DENIED', deferrals: 1 });
-    expect(stepRunAfterGate(d('needs_confirmation', ['CONSENT_CONFIRMATION_REQUIRED']), 0, policy)).toMatchObject({ status: 'skipped_ineligible' });
-  });
-
-  it('caps defer and never drop until maxDeferrals; quiet-hours deferrals do not count', () => {
-    const until = instant(NOW + HOUR_MS);
-    expect(stepRunAfterGate(d('defer', ['FREQUENCY_CAP'], until), 0, policy)).toEqual({ status: 'deferred', scheduledFor: until, deferrals: 1 });
-    expect(stepRunAfterGate(d('defer', ['FREQUENCY_CAP'], until), 2, policy)).toEqual({ status: 'deferred', scheduledFor: until, deferrals: 3 });
-    expect(stepRunAfterGate(d('defer', ['FREQUENCY_CAP'], until), 3, policy)).toEqual({ status: 'skipped_ineligible', reason: 'TOO_MANY_DEFERRALS', deferrals: 3 });
-    expect(stepRunAfterGate(d('defer', ['QUIET_HOURS_DEFERRED'], until), 3, policy)).toEqual({ status: 'deferred', scheduledFor: until, deferrals: 3 });
+    expect(stepRunAfterGate(d('allow', []))).toEqual({ status: 'sent' });
+    expect(stepRunAfterGate(d('deny', ['AUTOMATION_PAUSED', 'CONSENT_REVOKED']))).toEqual({ status: 'canceled_paused' });
+    expect(stepRunAfterGate(d('deny', ['CONSENT_REVOKED']))).toEqual({ status: 'skipped_ineligible', reason: 'GATE_DENIED' });
+    expect(stepRunAfterGate(d('deny', ['CATEGORY_NOT_AUTONOMOUS']))).toEqual({ status: 'skipped_ineligible', reason: 'GATE_DENIED' });
   });
 });
 
@@ -207,50 +198,32 @@ describe('planEnroll / onOwnerChange (R-AST-8)', () => {
 describe('planFirstResponse (R-AST-16, E37)', () => {
   const fr = firstResponseStep();
   const hash = contentSha256([fr], {});
-  const sms = (level: ConsentStateRow['level'], o: Partial<ConsentStateRow> = {}): ConsentStateRow => ({
-    channel: 'sms',
-    purpose: 'informational',
-    addressHmac: 'a'.repeat(64),
-    status: 'granted',
-    level,
-    basisEventId: 'e1',
-    expiresAt: null,
-    ledgerEventCount: 1,
-    ...o,
-  });
   const base = {
     now: NOW,
     version: { status: 'approved', contentSha256: hash },
     latestApproval: { decision: 'approve' as const, contentSha256: hash },
     step: fr,
     tenantAutonomous: new Set<ActionCategory>(['speed_to_lead_reply']),
-    sms: { reachable: true, consent: sms('express') },
+    sms: { reachable: true, revokedOrSuppressed: false },
     email: { reachable: true, revokedOrSuppressed: false },
     lastFirstResponseAt: null,
   };
 
-  it('R-AST-16 SMS when the basis is express or better', () => {
+  it('R-AST-16 SMS to any reachable mobile number that has not opted out; no consent level is read', () => {
     expect(planFirstResponse(base)).toMatchObject({ send: true, channel: 'sms' });
-    expect(planFirstResponse({ ...base, sms: { reachable: true, consent: sms('express_written') } })).toMatchObject({ send: true, channel: 'sms' });
   });
 
-  it.each([
-    ['inquiry', sms('inquiry', { expiresAt: instant(NOW + DAY_MS) })],
-    ['imported only', sms('imported_unverified')],
-    ['revoked', sms('express', { status: 'revoked' })],
-    ['expired', sms('express', { expiresAt: instant(NOW - 1) })],
-    ['no row', undefined],
-  ] as const)('R-AST-16 E37 basis %s ⇒ email only', (_n, consent) => {
-    expect(planFirstResponse({ ...base, sms: { reachable: true, consent } })).toMatchObject({ send: true, channel: 'email' });
+  it('R-AST-16 a phone that opted out (STOP / do-not-contact) or is suppressed never gets the text: email instead', () => {
+    expect(planFirstResponse({ ...base, sms: { reachable: true, revokedOrSuppressed: true } })).toMatchObject({ send: true, channel: 'email' });
   });
 
   it('R-AST-16 no SMS-capable number ⇒ email; nothing usable ⇒ nothing sent and the card says why', () => {
-    expect(planFirstResponse({ ...base, sms: { reachable: false, consent: sms('express') } })).toMatchObject({ send: true, channel: 'email' });
-    const none = planFirstResponse({ ...base, sms: { reachable: true, consent: undefined }, email: { reachable: false, revokedOrSuppressed: false } });
+    expect(planFirstResponse({ ...base, sms: { reachable: false, revokedOrSuppressed: false } })).toMatchObject({ send: true, channel: 'email' });
+    const none = planFirstResponse({ ...base, sms: { reachable: true, revokedOrSuppressed: true }, email: { reachable: false, revokedOrSuppressed: false } });
     expect(none).toMatchObject({ send: false, reason: 'NO_ALLOWED_CHANNEL' });
     expect(none.explanation).toMatch(/Reach out yourself/);
-    expect(planFirstResponse({ ...base, sms: { reachable: true, consent: undefined }, email: { reachable: true, revokedOrSuppressed: true } })).toMatchObject({ send: false, reason: 'NO_ALLOWED_CHANNEL' });
-    expect(planFirstResponse({ ...base, step: { ...fr, fallback: undefined }, sms: { reachable: true, consent: undefined } })).toMatchObject({ send: false, reason: 'NO_ALLOWED_CHANNEL' });
+    expect(planFirstResponse({ ...base, sms: { reachable: true, revokedOrSuppressed: true }, email: { reachable: true, revokedOrSuppressed: true } })).toMatchObject({ send: false, reason: 'NO_ALLOWED_CHANNEL' });
+    expect(planFirstResponse({ ...base, step: { ...fr, fallback: undefined }, sms: { reachable: false, revokedOrSuppressed: false } })).toMatchObject({ send: false, reason: 'NO_ALLOWED_CHANNEL' });
     expect(planFirstResponse({ ...base, step: step({ channel: 'email', subject: 'Hi', category: 'speed_to_lead_reply', intent: 'first_response_qualify', purpose: 'informational' }) })).toMatchObject({ send: true, channel: 'email' });
   });
 

@@ -282,6 +282,12 @@ export interface QueueRow extends StoredItemRow {
   last_actor_user_id: string | null;
   last_actor_name: string | null;
   last_at: Date | null;
+  /** the item contact's live ownership facts (null when the contact is not visible): the reassign fence */
+  contact_ownership_state: string | null;
+  contact_owner_user_id: string | null;
+  contact_offered_to_user_id: string | null;
+  contact_ownership_seq: string | null;
+  contact_period_seq: string | null;
 }
 
 export interface QueueFilter {
@@ -299,6 +305,9 @@ export async function queueRows(tx: Tx, f: QueueFilter): Promise<QueueRow[]> {
            (c.id IS NOT NULL) AS contact_visible,
            COALESCE(c.id IS NOT NULL AND app.contact_detail_visible(c.tenant_id, c.id), false) AS contact_detail_visible,
            c.first_name AS contact_first_name, c.last_name AS contact_last_name, c.display_name AS contact_display_name,
+           c.ownership_state AS contact_ownership_state, c.owner_user_id AS contact_owner_user_id,
+           c.offered_to_user_id AS contact_offered_to_user_id, c.ownership_seq AS contact_ownership_seq,
+           c.ownership_period_seq AS contact_period_seq,
            ou.display_name AS owner_name,
            COALESCE(e.owner_user_id = ANY (app.my_team_member_ids()), false) AS owner_in_my_team,
            le.action AS last_action, le.note AS last_note, le.actor_user_id AS last_actor_user_id,

@@ -77,7 +77,7 @@ describe('module 10 acceptance', () => {
     expect(identity.body.settings.identity.missing).toEqual([]);
 
     // publish a (stricter) policy version and make it active
-    const pol = await call<{ id: string; active: boolean; loosening: boolean }>(owner, 'POST', '/compliance-policies', { autoSmsPer7d: 2, activate: true });
+    const pol = await call<{ id: string; active: boolean; loosening: boolean }>(owner, 'POST', '/compliance-policies', { autonomousCategories: ['speed_to_lead_reply', 'reminder'], activate: true });
     expect(pol.status).toBe(201);
     expect(pol.body).toMatchObject({ active: true, loosening: false });
     expect((await call<{ activePolicyId: string }>(owner, 'GET', '/compliance-policies')).body.activePolicyId).toBe(pol.body.id);

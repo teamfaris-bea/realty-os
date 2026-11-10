@@ -214,18 +214,6 @@ export interface CompliancePolicyVersionsTable {
   tenant_id: string;
   id: string;
   version_no: number;
-  contact_window_start: Generated<string>;
-  contact_window_end: Generated<string>;
-  human_reply_window_minutes: Generated<number>;
-  email_quiet_hours: Generated<boolean>;
-  auto_sms_per_24h: Generated<number>;
-  auto_sms_per_7d: Generated<number>;
-  auto_email_per_24h: Generated<number>;
-  auto_email_per_7d: Generated<number>;
-  auto_cross_channel_per_24h: Generated<number>;
-  manual_sms_confirm_after_24h: Generated<number>;
-  call_attempts_per_24h: Generated<number>;
-  max_deferrals: Generated<number>;
   autonomous_categories: Generated<string[]>;
   opt_out_confirmation_sender: Generated<string>;
   recording_enabled: Generated<boolean>;
@@ -1146,7 +1134,6 @@ export interface PlaybookStepRunsTable {
   step_key: string;
   status: string;
   scheduled_for: Timestamp;
-  deferrals: Generated<number>;
   last_gate_decision_id: string | null;
   message_id: string | null;
   assistant_action_id: string | null;

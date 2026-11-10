@@ -102,7 +102,8 @@ describe('Team exception queue', () => {
     expect(taps).toBe(2);
     const calls = fake.callsTo(keyPath(it0.dedupeKey, 'reassign'));
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.body).toEqual({ toUserId: ID.ben, commandId: expect.stringMatching(UUID) });
+    // ownership-2: the ledger head the queue showed goes with the tap (the server refuses it once the lead moved)
+    expect(calls[0]!.body).toEqual({ toUserId: ID.ben, commandId: expect.stringMatching(UUID), expectedSeq: it0.contactOwnershipSeq });
   });
 
   it('an Owner picks the new owner from active members who take leads', async () => {

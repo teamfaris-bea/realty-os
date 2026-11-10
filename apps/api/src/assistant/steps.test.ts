@@ -67,8 +67,7 @@ describe('autonomous playbook sends (R-GATE-4, R-GATE-3, R-AST-11)', () => {
     expect(m!.body).toContain('assistant'); // "— the … assistant": never a human claim (R-AST-11)
     expect(m!.body).toContain(brokerage); // first message in the thread carries the brokerage name
     expect(m!.body).toContain('Reply STOP to opt out');
-    const ds = await decisionsFor(h, { messageId: m!.id });
-    expect(ds.map((d) => `${d.phase}:${d.initiator}:${d.outcome}`)).toEqual(['send:assistant:allow']);
+    expect(await decisionsFor(h, { messageId: m!.id })).toHaveLength(0); // allowed: nothing logged
     const a = (await actionsOf(h, c.id)).find((x) => x.kind === 'autonomous_message')!;
     expect(a).toMatchObject({ autonomy: 'within_playbook', status: 'executed' });
     await stepNow(h, w.tenantId, e.body.enrollment.id);
@@ -76,15 +75,17 @@ describe('autonomous playbook sends (R-GATE-4, R-GATE-3, R-AST-11)', () => {
     expect((await enrollmentRow(h, e.body.enrollment.id)).state).toBe('completed');
   });
 
-  it('R-GATE-10 R-CONSENT-5: without an express basis the assistant may not text: blocked at send time, nothing reaches the provider, the step is skipped visibly', async () => {
+  it('R-GATE-10 R-CONSENT-10: the assistant never texts a number the person asked not to be texted (agent-recorded do-not-contact): blocked at send time, logged, nothing reaches the provider, the step is skipped visibly', async () => {
     const c = await ownedContact(w.agents[0]!, { consent: false });
+    const pid = (await h.su.query<{ id: string }>("SELECT id FROM contact_points WHERE contact_id = $1 AND kind = 'phone'", [c.id])).rows[0]!.id;
+    expect((await call(w.agents[0]!, 'POST', `/contacts/${c.id}/consent`, { kind: 'revoke', pointId: pid, channel: 'sms', purpose: 'all', evidence: { note: 'asked us not to text' } })).status).toBe(200);
     const appt = await appointment(h, w, c.id, w.agents[0]!.userId!);
     const e = await enroll(0, c.id, { playbookId: confirm.playbookId, anchor: { kind: 'appointment', id: appt } });
     const before = h.providers.telephony.sms.length;
     await runJobs(h, w.tenantId, ['playbook.step', 'comms.dispatch']);
     const [m] = await messagesOf(h, c.id);
     expect(m!.status).toBe('blocked');
-    expect((await decisionsFor(h, { messageId: m!.id }))[0]!.reason_codes).toContain('CONSENT_BASIS_INSUFFICIENT');
+    expect((await decisionsFor(h, { messageId: m!.id }))[0]!.reason_codes).toContain('CONSENT_REVOKED');
     expect(h.providers.telephony.sms.length).toBe(before);
     expect((await h.su.query('SELECT status FROM playbook_step_runs WHERE enrollment_id = $1', [e.body.enrollment.id])).rows).toEqual([{ status: 'skipped_ineligible' }]);
   });
@@ -104,8 +105,8 @@ describe('autonomous playbook sends (R-GATE-4, R-GATE-3, R-AST-11)', () => {
     const ap = await call<{ result: string; messageId: string }>(w.agents[0]!, 'POST', `/assistant/actions/${d.id}/approve`, { commandId: randomUUID() });
     expect(ap.status).toBe(200);
     expect(ap.body.result).toBe('sent');
-    const ds = await decisionsFor(h, { messageId: ap.body.messageId });
-    expect(ds.map((x) => `${x.initiator}:${x.action_category}:${x.outcome}`)).toEqual(['human:money:allow']);
+    expect(await decisionsFor(h, { messageId: ap.body.messageId })).toHaveLength(0);
+    expect((await h.su.query<{ u: string | null; c: string }>('SELECT a.decided_by_user_id AS u, a.action_category AS c FROM messages m JOIN assistant_actions a ON a.tenant_id = m.tenant_id AND a.id = m.assistant_action_id WHERE m.id = $1', [ap.body.messageId])).rows[0]).toEqual({ u: w.agents[0]!.userId, c: 'money' });
   });
 });
 
@@ -167,11 +168,13 @@ describe('client replies and races (R-AST-9; E22, E26)', () => {
     expect(await enrollmentRow(h, e)).toMatchObject({ state: 'paused', pause_reason: 'client_reply' });
     const handbacks = (await actionsOf(h, c.id)).filter((a) => a.kind === 'handback');
     expect(handbacks).toHaveLength(1);
-    const before = h.providers.telephony.sms.length;
+    // counted for this contact only: other tests' queued messages may go out in the same dispatch run
+    const toC = () => h.providers.telephony.sms.filter((x) => x.to === c.phone).length;
+    const before = toC();
     const out = await executePlaybookStep(systemActor(w.tenantId, 'assistant'), e, depsOf(h));
     expect(out).toEqual({ kind: 'noop', reason: 'NOT_ACTIVE' });
     await runJobs(h, w.tenantId, ['comms.dispatch']);
-    expect(h.providers.telephony.sms.length).toBe(before);
+    expect(toC()).toBe(before);
   });
 
   it('E22 R-AST-9: STOP arriving while the step message is being dispatched: either the message is stopped, or it went first and the handback says so', async () => {

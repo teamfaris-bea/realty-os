@@ -331,31 +331,6 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: admin response schemas have
       "defaults": {
         "additionalProperties": false,
         "properties": {
-          "autoCrossChannelPer24h": {
-            "maximum": 9007199254740991,
-            "minimum": -9007199254740991,
-            "type": "integer",
-          },
-          "autoEmailPer24h": {
-            "maximum": 9007199254740991,
-            "minimum": -9007199254740991,
-            "type": "integer",
-          },
-          "autoEmailPer7d": {
-            "maximum": 9007199254740991,
-            "minimum": -9007199254740991,
-            "type": "integer",
-          },
-          "autoSmsPer24h": {
-            "maximum": 9007199254740991,
-            "minimum": -9007199254740991,
-            "type": "integer",
-          },
-          "autoSmsPer7d": {
-            "maximum": 9007199254740991,
-            "minimum": -9007199254740991,
-            "type": "integer",
-          },
           "autonomousCategories": {
             "items": {
               "enum": [
@@ -369,35 +344,6 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: admin response schemas have
               "type": "string",
             },
             "type": "array",
-          },
-          "callAttemptsPer24h": {
-            "maximum": 9007199254740991,
-            "minimum": -9007199254740991,
-            "type": "integer",
-          },
-          "contactWindowEnd": {
-            "type": "string",
-          },
-          "contactWindowStart": {
-            "type": "string",
-          },
-          "emailQuietHours": {
-            "type": "boolean",
-          },
-          "humanReplyWindowMinutes": {
-            "maximum": 9007199254740991,
-            "minimum": -9007199254740991,
-            "type": "integer",
-          },
-          "manualSmsConfirmAfter24h": {
-            "maximum": 9007199254740991,
-            "minimum": -9007199254740991,
-            "type": "integer",
-          },
-          "maxDeferrals": {
-            "maximum": 9007199254740991,
-            "minimum": -9007199254740991,
-            "type": "integer",
           },
           "optOutConfirmationSender": {
             "enum": [
@@ -418,18 +364,6 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: admin response schemas have
           },
         },
         "required": [
-          "contactWindowStart",
-          "contactWindowEnd",
-          "humanReplyWindowMinutes",
-          "emailQuietHours",
-          "autoSmsPer24h",
-          "autoSmsPer7d",
-          "autoEmailPer24h",
-          "autoEmailPer7d",
-          "autoCrossChannelPer24h",
-          "manualSmsConfirmAfter24h",
-          "callAttemptsPer24h",
-          "maxDeferrals",
           "autonomousCategories",
           "optOutConfirmationSender",
           "recordingEnabled",
@@ -447,31 +381,6 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: admin response schemas have
             "attested": {
               "type": "boolean",
             },
-            "autoCrossChannelPer24h": {
-              "maximum": 9007199254740991,
-              "minimum": -9007199254740991,
-              "type": "integer",
-            },
-            "autoEmailPer24h": {
-              "maximum": 9007199254740991,
-              "minimum": -9007199254740991,
-              "type": "integer",
-            },
-            "autoEmailPer7d": {
-              "maximum": 9007199254740991,
-              "minimum": -9007199254740991,
-              "type": "integer",
-            },
-            "autoSmsPer24h": {
-              "maximum": 9007199254740991,
-              "minimum": -9007199254740991,
-              "type": "integer",
-            },
-            "autoSmsPer7d": {
-              "maximum": 9007199254740991,
-              "minimum": -9007199254740991,
-              "type": "integer",
-            },
             "autonomousCategories": {
               "items": {
                 "enum": [
@@ -485,17 +394,6 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: admin response schemas have
                 "type": "string",
               },
               "type": "array",
-            },
-            "callAttemptsPer24h": {
-              "maximum": 9007199254740991,
-              "minimum": -9007199254740991,
-              "type": "integer",
-            },
-            "contactWindowEnd": {
-              "type": "string",
-            },
-            "contactWindowStart": {
-              "type": "string",
             },
             "createdAt": {
               "type": "string",
@@ -512,28 +410,10 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: admin response schemas have
                 },
               ],
             },
-            "emailQuietHours": {
-              "type": "boolean",
-            },
-            "humanReplyWindowMinutes": {
-              "maximum": 9007199254740991,
-              "minimum": -9007199254740991,
-              "type": "integer",
-            },
             "id": {
               "format": "uuid",
               "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
               "type": "string",
-            },
-            "manualSmsConfirmAfter24h": {
-              "maximum": 9007199254740991,
-              "minimum": -9007199254740991,
-              "type": "integer",
-            },
-            "maxDeferrals": {
-              "maximum": 9007199254740991,
-              "minimum": -9007199254740991,
-              "type": "integer",
             },
             "optOutConfirmationSender": {
               "enum": [
@@ -559,18 +439,6 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: admin response schemas have
             },
           },
           "required": [
-            "contactWindowStart",
-            "contactWindowEnd",
-            "humanReplyWindowMinutes",
-            "emailQuietHours",
-            "autoSmsPer24h",
-            "autoSmsPer7d",
-            "autoEmailPer24h",
-            "autoEmailPer7d",
-            "autoCrossChannelPer24h",
-            "manualSmsConfirmAfter24h",
-            "callAttemptsPer24h",
-            "maxDeferrals",
             "autonomousCategories",
             "optOutConfirmationSender",
             "recordingEnabled",
@@ -586,28 +454,11 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: admin response schemas have
         },
         "type": "array",
       },
-      "widestWindow": {
-        "additionalProperties": false,
-        "properties": {
-          "end": {
-            "type": "string",
-          },
-          "start": {
-            "type": "string",
-          },
-        },
-        "required": [
-          "start",
-          "end",
-        ],
-        "type": "object",
-      },
     },
     "required": [
       "activePolicyId",
       "versions",
       "defaults",
-      "widestWindow",
       "attestationText",
       "counsel",
     ],

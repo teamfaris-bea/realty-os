@@ -27,7 +27,7 @@ export const KeyParams = z.object({ dedupeKey: z.string().regex(new RegExp(DEDUP
 export const ResolveBody = z.strictObject({ note, commandId: uuid.optional() });
 export const VerifyBody = z.strictObject({ note: note.optional(), commandId: uuid.optional() });
 export const ReopenBody = z.strictObject({ note: note.optional(), commandId: uuid.optional() });
-export const ReassignBody = z.strictObject({ toUserId: uuid, note: note.optional(), commandId: uuid });
+export const ReassignBody = z.strictObject({ toUserId: uuid, note: note.optional(), commandId: uuid, expectedSeq: z.number().int().min(1).optional() });
 
 const EvidenceLinkSchema = z.object({
   kind: z.enum(['contact', 'message', 'call', 'task', 'appointment']),
@@ -66,6 +66,8 @@ export const ExceptionItemSchema = z.object({
   conditionClearedAt: z.string().nullable(),
   live: z.boolean(),
   evidence: z.array(EvidenceItemSchema).min(1),
+  /** the contact's ownership ledger head (the reassign fence: send it back as expectedSeq) */
+  contactOwnershipSeq: z.number().int().nullable(),
   latestEvent: ExceptionEventSchema.nullable(),
   actions: z.object({ resolve: z.boolean(), reassign: z.boolean(), verify: z.boolean(), reopen: z.boolean() }),
 });

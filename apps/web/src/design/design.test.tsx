@@ -29,26 +29,27 @@ function Where() {
 }
 
 describe('GateBadge', () => {
-  const cases: [GateDecisionView, string][] = [
-    [{ outcome: 'deny', explanation: 'Opted out of texts · Outside 9 AM–8 PM their time' }, "Can't send."],
-    [{ outcome: 'defer', explanation: 'Sends Mon 9:07 AM their time' }, 'Will wait.'],
-    [{ outcome: 'needs_confirmation', explanation: 'No consent or recent reply on file; confirm before sending' }, 'Needs your confirmation.'],
-    [{ outcome: 'allow', explanation: 'OK to send · Their time zone is a best guess' }, 'OK to send.'],
-  ];
-
-  it.each(cases)('shows the server explanation verbatim with a non-color cue (%#)', (decision, sr) => {
-    const { container } = render(<GateBadge decision={decision} />);
-    expect(screen.getByText(decision.explanation)).toBeInTheDocument();
-    expect(screen.getByText(sr)).toHaveClass('sr-only');
+  it('a block shows the server explanation verbatim after plain words, with a non-color cue', () => {
+    const { container } = render(<GateBadge decision={{ outcome: 'deny', explanation: 'Opted out of texts' }} />);
+    expect(screen.getByText('Opted out of texts')).toBeInTheDocument();
+    expect(container.textContent).toBe("Won't send: Opted out of texts");
     expect(container.querySelector('svg')).not.toBeNull();
-    expect(container.firstElementChild).toHaveAttribute('data-gate-outcome', decision.outcome);
+    expect(container.firstElementChild).toHaveAttribute('data-gate-outcome', 'deny');
   });
 
-  it('a plain allow can be quiet, an allow with information is still shown', () => {
+  it('the words before the reason follow the action (a call, or a send that was just blocked)', () => {
+    const { container, rerender } = render(<GateBadge lead="Won't call" decision={{ outcome: 'deny', explanation: 'Asked not to be called' }} />);
+    expect(container.textContent).toBe("Won't call: Asked not to be called");
+    rerender(<GateBadge lead="Not sent" decision={{ outcome: 'deny', explanation: 'Unsubscribed from email' }} />);
+    expect(container.textContent).toBe('Not sent: Unsubscribed from email');
+  });
+
+  it('an allow is quiet when asked, and otherwise only says it is OK (there is nothing to wait for or confirm)', () => {
     const { container, rerender } = render(<GateBadge quietWhenAllowed decision={{ outcome: 'allow', explanation: 'OK to send' }} />);
     expect(container).toBeEmptyDOMElement();
-    rerender(<GateBadge quietWhenAllowed decision={{ outcome: 'allow', explanation: 'OK to send · Their time zone is a best guess' }} />);
-    expect(screen.getByText(/best guess/)).toBeInTheDocument();
+    rerender(<GateBadge decision={{ outcome: 'allow', explanation: 'OK to send' }} />);
+    expect(container.textContent).toBe('OK to send');
+    expect(container.firstElementChild).toHaveAttribute('data-gate-outcome', 'allow');
   });
 
   it('never renders reason codes or extra fields the server might add (no scores)', () => {

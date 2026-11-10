@@ -142,21 +142,18 @@ describe('Priority Feed', () => {
     expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(1);
   });
 
-  it('a draft approval the gate needs confirmed opens "Send anyway" with the server sentence; confirming re-sends that message', async () => {
+  it('a draft approval the send-time check blocks says why, and there is no way past it', async () => {
     const c = card({ itemType: 'assistant_draft', primaryAction: { kind: 'send_draft', label: 'Send', actionId: IDS.draft } });
-    const needs = decision({ outcome: 'needs_confirmation', explanation: 'Outside 9 AM–8 PM her time; she wrote 10 minutes ago', canConfirm: true });
+    const blocked = decision({ outcome: 'deny', explanation: 'Opted out of texts' });
     const fake = new FakeFetch()
       .on('GET /feed', { status: 200, body: feed([], [c]) })
-      .on(`POST /assistant/actions/${IDS.draft}/approve`, { status: 200, body: { actionId: IDS.draft, status: 'approved', result: 'needs_confirmation', messageId: IDS.message, decision: needs } })
-      .on(`POST /messages/${IDS.message}/send`, { status: 200, body: { message: null, decision: decision({}), result: 'sent' } });
+      .on(`POST /assistant/actions/${IDS.draft}/approve`, { status: 200, body: { actionId: IDS.draft, status: 'approved', result: 'blocked', messageId: IDS.message, decision: blocked } });
     agentApp(fake);
-    const u = user();
-    await u.click(await screen.findByRole('button', { name: 'Send' }));
-    const sheet = await screen.findByRole('dialog', { name: 'Send this message?' });
-    expect(within(sheet).getByText('Outside 9 AM–8 PM her time; she wrote 10 minutes ago')).toBeInTheDocument();
-    await u.click(within(sheet).getByRole('button', { name: 'Send anyway' }));
-    await waitFor(() => expect(fake.callsTo(`POST /messages/${IDS.message}/send`)).toHaveLength(1));
-    expect(fake.callsTo(`POST /messages/${IDS.message}/send`)[0]!.body).toEqual({ confirmDecisionId: IDS.decision });
+    await user().click(await screen.findByRole('button', { name: 'Send' }));
+    expect(await screen.findByText('Not sent: Opted out of texts')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByRole('button', { name: /anyway/ })).toBeNull();
+    expect(fake.calls.some((x) => x.path.endsWith('/send'))).toBe(false);
   });
 
   it('texting a lead is 2 taps: Text → the thread opens with the assistant draft prefilled → Send', async () => {
@@ -216,9 +213,9 @@ describe('Priority Feed', () => {
     expect(await screen.findByText('Jane was reassigned during the call, so your outcome was saved as a task for the new owner.')).toBeInTheDocument();
   });
 
-  it('a call the gate denies shows the sentence and no way past it; one that needs confirmation offers "Call anyway"', async () => {
+  it('a call the dial-time check blocks (asked not to be called) shows the sentence, dials nothing and offers no way past it', async () => {
     const c = card({ primaryAction: { kind: 'call', label: 'Call', contactId: IDS.jane } });
-    const deny = decision({ outcome: 'deny', explanation: 'Asked not to be called', canConfirm: false, id: null });
+    const deny = decision({ outcome: 'deny', explanation: 'Asked not to be called', id: null });
     const fake = new FakeFetch()
       .on('GET /feed', { status: 200, body: feed([], [c]) })
       .on(`POST /contacts/${IDS.jane}/calls`, { status: 200, body: { result: 'gate', callId: null, bridgeToken: null, reason: null, decision: deny } });
@@ -227,20 +224,11 @@ describe('Priority Feed', () => {
     await u.click(await screen.findByRole('button', { name: 'Call' }));
     const sheet = await screen.findByRole('dialog');
     expect(await within(sheet).findByText('Asked not to be called')).toBeInTheDocument();
-    expect(within(sheet).queryByRole('button', { name: 'Call anyway' })).toBeNull();
-
-    const confirmable = decision({ outcome: 'needs_confirmation', explanation: 'Outside 9 AM–8 PM her time', canConfirm: true });
-    fake.on(`POST /contacts/${IDS.jane}/calls`, (call) =>
-      (call.body as { confirmDecisionId?: string }).confirmDecisionId
-        ? { status: 200, body: { result: 'dialing', callId: IDS.call, bridgeToken: 'b', reason: null, decision: decision({ phase: 'confirm' }) } }
-        : { status: 200, body: { result: 'gate', callId: null, bridgeToken: null, reason: null, decision: confirmable } },
-    );
-    await u.click(within(sheet).getByRole('button', { name: 'Close' }));
-    await u.click(screen.getByRole('button', { name: 'Call' }));
-    const again = await screen.findByRole('dialog');
-    await u.click(await within(again).findByRole('button', { name: 'Call anyway' }));
-    expect(await within(again).findByText("Your phone will ring first. Answer it and you're connected to Jane.")).toBeInTheDocument();
-    expect(fake.callsTo(`POST /contacts/${IDS.jane}/calls`).at(-1)!.body).toEqual({ confirmDecisionId: IDS.decision });
+    expect(within(sheet).getByText(/Won't call:/)).toBeInTheDocument();
+    expect(within(sheet).getByText('Nothing was dialed.')).toBeInTheDocument();
+    expect(within(sheet).queryByRole('button', { name: /anyway/ })).toBeNull();
+    expect(fake.callsTo(`POST /contacts/${IDS.jane}/calls`)).toHaveLength(1);
+    expect(fake.callsTo(`POST /contacts/${IDS.jane}/calls`)[0]!.body).toEqual({});
   });
 
   it('logging an appointment outcome from its card is 1 tap on an outcome chip', async () => {
@@ -307,5 +295,5 @@ describe('Priority Feed', () => {
 });
 
 function allowPreview() {
-  return { id: null, outcome: 'allow', reasons: [], explanation: '', deferUntil: null, canConfirm: false, phase: 'preview' };
+  return { id: null, outcome: 'allow', reasons: [], explanation: '', phase: 'preview' };
 }

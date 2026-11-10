@@ -8,16 +8,16 @@
 //                                             looser than the active one: Owner + 🔒 + attestation
 //
 // "Looser" (loosening) is decided field by field against the ACTIVE version, and also counts
-// anything beyond the shipped defaults that the DB only accepts with an Owner attestation (contact
-// window outside 09:00–20:00, one-party recording mode). Direction per field: an earlier window start
-// or later end, a longer human-reply window, email quiet hours off, any higher cap or more deferrals,
-// an added autonomous category, and recording turned on or one-party mode are looser. The opt-out
-// confirmation sender (provider vs platform) is operational, not a legal loosening (open question
-// Q7), so it counts neither way.
+// anything beyond the shipped defaults that the DB only accepts with an Owner attestation (one-party
+// recording mode). Direction per field: an added autonomous category, and recording turned on or
+// one-party mode are looser. The opt-out confirmation sender (provider vs platform) is operational, not
+// a legal loosening (open question Q7), so it counts neither way.
+// core-compliance/2.0.0 (owner decision): the contact window / quiet hours, the human-reply window,
+// email quiet hours, the frequency caps and the deferral limit are gone (0013 dropped their columns);
+// versioning, append-only history and the Owner attestation stay.
 // The attestation is the exact sentence ATTESTATION_TEXT, sent back by the client and stored verbatim
 // in loosening_attestation (activation records it in the audit row). Its wording is product copy
-// awaiting counsel: VERIFY WITH COUNSEL. Every legal value here keeps the DB's strict defaults; the
-// platform floor (08:00–21:00) and the caps' maxima are DB CHECKs.
+// awaiting counsel: VERIFY WITH COUNSEL.
 import type { Instant, PolicyVersionId, UserActor } from '@realty/core/foundation';
 import { can } from '@realty/core/foundation';
 import { type Database, type Tx, withTenantTx } from '@realty/db';
@@ -28,10 +28,10 @@ import { z } from 'zod';
 import { audit, redactDiff, redactSnapshot } from '../audit.js';
 import { AppError, isErrorCode } from '../errors.js';
 import { authorize } from '../rbac.js';
-import { actorOf, adminTx, hhmm, iso, mapAdminDbError, platformOf, timeSeconds } from './common.js';
+import { actorOf, adminTx, iso, mapAdminDbError, platformOf } from './common.js';
 import * as repo from './repos/policy.js';
 import { getSettings, setActivePolicy } from './repos/settings.js';
-import { AUTONOMOUS_CATEGORY_VALUES, PoliciesResponse, PolicyActivatedResponse, PolicyCreatedResponse, TimeOfDay } from './schemas.js';
+import { AUTONOMOUS_CATEGORY_VALUES, PoliciesResponse, PolicyActivatedResponse, PolicyCreatedResponse } from './schemas.js';
 
 /** The sentence an Owner confirms to adopt a looser policy. VERIFY WITH COUNSEL (wording). */
 export const ATTESTATION_TEXT =
@@ -39,18 +39,6 @@ export const ATTESTATION_TEXT =
 
 /** The policy fields a version carries (camelCase), with their columns. */
 export const POLICY_FIELDS = {
-  contactWindowStart: 'contact_window_start',
-  contactWindowEnd: 'contact_window_end',
-  humanReplyWindowMinutes: 'human_reply_window_minutes',
-  emailQuietHours: 'email_quiet_hours',
-  autoSmsPer24h: 'auto_sms_per_24h',
-  autoSmsPer7d: 'auto_sms_per_7d',
-  autoEmailPer24h: 'auto_email_per_24h',
-  autoEmailPer7d: 'auto_email_per_7d',
-  autoCrossChannelPer24h: 'auto_cross_channel_per_24h',
-  manualSmsConfirmAfter24h: 'manual_sms_confirm_after_24h',
-  callAttemptsPer24h: 'call_attempts_per_24h',
-  maxDeferrals: 'max_deferrals',
   autonomousCategories: 'autonomous_categories',
   optOutConfirmationSender: 'opt_out_confirmation_sender',
   recordingEnabled: 'recording_enabled',
@@ -59,18 +47,6 @@ export const POLICY_FIELDS = {
 export type PolicyField = keyof typeof POLICY_FIELDS;
 
 export interface PolicyValues {
-  contactWindowStart: string;
-  contactWindowEnd: string;
-  humanReplyWindowMinutes: number;
-  emailQuietHours: boolean;
-  autoSmsPer24h: number;
-  autoSmsPer7d: number;
-  autoEmailPer24h: number;
-  autoEmailPer7d: number;
-  autoCrossChannelPer24h: number;
-  manualSmsConfirmAfter24h: number;
-  callAttemptsPer24h: number;
-  maxDeferrals: number;
   autonomousCategories: string[];
   optOutConfirmationSender: 'provider' | 'platform';
   recordingEnabled: boolean;
@@ -81,46 +57,15 @@ export type PolicyDraft = Partial<PolicyValues>;
 
 /** The shipped defaults (compliance_policy_versions column defaults; the strict baseline). */
 export const DEFAULT_POLICY: PolicyValues = Object.freeze({
-  contactWindowStart: '09:00',
-  contactWindowEnd: '20:00',
-  humanReplyWindowMinutes: 30,
-  emailQuietHours: false,
-  autoSmsPer24h: 1,
-  autoSmsPer7d: 3,
-  autoEmailPer24h: 1,
-  autoEmailPer7d: 3,
-  autoCrossChannelPer24h: 2,
-  manualSmsConfirmAfter24h: 3,
-  callAttemptsPer24h: 3,
-  maxDeferrals: 3,
   autonomousCategories: ['speed_to_lead_reply', 'reminder', 'booking_confirmation', 'nurture_step', 'search_alert'],
   optOutConfirmationSender: 'provider',
   recordingEnabled: true,
   recordingMode: 'announce_all',
 }) as PolicyValues;
 
-export const WIDEST_WINDOW = { start: '08:00', end: '21:00' } as const;
-
-/** Numeric fields where a higher value permits more contact. */
-const HIGHER_IS_LOOSER: readonly PolicyField[] = [
-  'humanReplyWindowMinutes',
-  'autoSmsPer24h',
-  'autoSmsPer7d',
-  'autoEmailPer24h',
-  'autoEmailPer7d',
-  'autoCrossChannelPer24h',
-  'manualSmsConfirmAfter24h',
-  'callAttemptsPer24h',
-  'maxDeferrals',
-];
-
 /** Fields of `next` that permit more contact than `base` (pure). */
 export function looserFields(base: PolicyValues, next: PolicyValues): PolicyField[] {
   const out: PolicyField[] = [];
-  if (timeSeconds(next.contactWindowStart) < timeSeconds(base.contactWindowStart)) out.push('contactWindowStart');
-  if (timeSeconds(next.contactWindowEnd) > timeSeconds(base.contactWindowEnd)) out.push('contactWindowEnd');
-  for (const f of HIGHER_IS_LOOSER) if ((next[f] as number) > (base[f] as number)) out.push(f);
-  if (base.emailQuietHours && !next.emailQuietHours) out.push('emailQuietHours');
   const had = new Set(base.autonomousCategories);
   if (next.autonomousCategories.some((c) => !had.has(c))) out.push('autonomousCategories');
   if (!base.recordingEnabled && next.recordingEnabled) out.push('recordingEnabled');
@@ -131,8 +76,6 @@ export function looserFields(base: PolicyValues, next: PolicyValues): PolicyFiel
 /** Fields beyond the shipped defaults that the DB accepts only with an Owner attestation (pure). */
 export function attestationRequiredFields(v: PolicyValues): PolicyField[] {
   const out: PolicyField[] = [];
-  if (timeSeconds(v.contactWindowStart) < timeSeconds(DEFAULT_POLICY.contactWindowStart)) out.push('contactWindowStart');
-  if (timeSeconds(v.contactWindowEnd) > timeSeconds(DEFAULT_POLICY.contactWindowEnd)) out.push('contactWindowEnd');
   if (v.recordingMode !== 'announce_all') out.push('recordingMode');
   return out;
 }
@@ -145,18 +88,6 @@ export function policyLoosening(base: PolicyValues, next: PolicyValues): { loose
 
 export function valuesOf(r: repo.PolicyRow): PolicyValues {
   return {
-    contactWindowStart: hhmm(r.contact_window_start),
-    contactWindowEnd: hhmm(r.contact_window_end),
-    humanReplyWindowMinutes: r.human_reply_window_minutes,
-    emailQuietHours: r.email_quiet_hours,
-    autoSmsPer24h: r.auto_sms_per_24h,
-    autoSmsPer7d: r.auto_sms_per_7d,
-    autoEmailPer24h: r.auto_email_per_24h,
-    autoEmailPer7d: r.auto_email_per_7d,
-    autoCrossChannelPer24h: r.auto_cross_channel_per_24h,
-    manualSmsConfirmAfter24h: r.manual_sms_confirm_after_24h,
-    callAttemptsPer24h: r.call_attempts_per_24h,
-    maxDeferrals: r.max_deferrals,
     autonomousCategories: [...r.autonomous_categories].sort(),
     optOutConfirmationSender: r.opt_out_confirmation_sender,
     recordingEnabled: r.recording_enabled,
@@ -165,20 +96,7 @@ export function valuesOf(r: repo.PolicyRow): PolicyValues {
 }
 
 function columnsOf(v: PolicyValues, attestation: string | null): repo.PolicyColumns {
-  const t = (s: string) => (s.length === 5 ? `${s}:00` : s);
   return {
-    contact_window_start: t(v.contactWindowStart),
-    contact_window_end: t(v.contactWindowEnd),
-    human_reply_window_minutes: v.humanReplyWindowMinutes,
-    email_quiet_hours: v.emailQuietHours,
-    auto_sms_per_24h: v.autoSmsPer24h,
-    auto_sms_per_7d: v.autoSmsPer7d,
-    auto_email_per_24h: v.autoEmailPer24h,
-    auto_email_per_7d: v.autoEmailPer7d,
-    auto_cross_channel_per_24h: v.autoCrossChannelPer24h,
-    manual_sms_confirm_after_24h: v.manualSmsConfirmAfter24h,
-    call_attempts_per_24h: v.callAttemptsPer24h,
-    max_deferrals: v.maxDeferrals,
     autonomous_categories: [...new Set(v.autonomousCategories)].sort(),
     opt_out_confirmation_sender: v.optOutConfirmationSender,
     recording_enabled: v.recordingEnabled,
@@ -194,36 +112,15 @@ function auditShape(v: PolicyValues): Record<string, unknown> {
   return c;
 }
 
-/** The draft schema: ranges mirror the CHECKs (caps only ever at or below the defaults' maxima). */
+/** The draft schema: values mirror the CHECKs. */
 export const PolicyDraftSchema = z
   .object({
-    contactWindowStart: TimeOfDay.optional(),
-    contactWindowEnd: TimeOfDay.optional(),
-    humanReplyWindowMinutes: z.number().int().min(0).max(30).optional(),
-    emailQuietHours: z.boolean().optional(),
-    autoSmsPer24h: z.number().int().min(0).max(1).optional(),
-    autoSmsPer7d: z.number().int().min(0).max(3).optional(),
-    autoEmailPer24h: z.number().int().min(0).max(1).optional(),
-    autoEmailPer7d: z.number().int().min(0).max(3).optional(),
-    autoCrossChannelPer24h: z.number().int().min(0).max(2).optional(),
-    manualSmsConfirmAfter24h: z.number().int().min(1).max(3).optional(),
-    callAttemptsPer24h: z.number().int().min(1).max(3).optional(),
-    maxDeferrals: z.number().int().min(1).max(5).optional(),
     autonomousCategories: z.array(z.enum(AUTONOMOUS_CATEGORY_VALUES)).max(6).optional(),
     optOutConfirmationSender: z.enum(['provider', 'platform']).optional(),
     recordingEnabled: z.boolean().optional(),
     recordingMode: z.enum(['announce_all', 'one_party_where_permitted']).optional(),
   })
   .strict();
-
-function validateWindow(v: PolicyValues): void {
-  const s = timeSeconds(v.contactWindowStart);
-  const e = timeSeconds(v.contactWindowEnd);
-  if (s >= e) throw new AppError('VALIDATION_FAILED', { issues: [{ path: '/contactWindowEnd', code: 'must_be_after_start' }] });
-  if (s < timeSeconds(WIDEST_WINDOW.start) || e > timeSeconds(WIDEST_WINDOW.end)) {
-    throw new AppError('VALIDATION_FAILED', { issues: [{ path: '/contactWindowStart', code: 'outside_platform_floor' }] });
-  }
-}
 
 export interface PolicyCallOptions {
   /** the session's last re-authentication and the clock it is judged by (R-PERM-13) */
@@ -275,7 +172,6 @@ export async function proposePolicyVersion(
         const base = valuesOf(cur.policy);
         const next: PolicyValues = { ...base, ...Object.fromEntries(Object.entries(draft).filter(([, v]) => v !== undefined)) } as PolicyValues;
         next.autonomousCategories = [...new Set(next.autonomousCategories)].sort();
-        validateWindow(next);
         const { loosening, fields } = policyLoosening(base, next);
         const attested = opts.attestation === ATTESTATION_TEXT;
         authorizePolicy(actor, loosening, attested, opts.reauth, fields);
@@ -382,7 +278,6 @@ async function register(app: FastifyInstance): Promise<void> {
             active: v.id === settings.active_policy_id,
           })),
           defaults: { ...DEFAULT_POLICY, autonomousCategories: DEFAULT_POLICY.autonomousCategories as (typeof AUTONOMOUS_CATEGORY_VALUES)[number][] },
-          widestWindow: { ...WIDEST_WINDOW },
           attestationText: ATTESTATION_TEXT,
           counsel: {
             allReviewed: packs.length > 0 && packs.every((p) => p.reviewed_by_counsel_at !== null),

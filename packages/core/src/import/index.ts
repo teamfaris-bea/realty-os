@@ -48,6 +48,7 @@ export {
   revertImportedGrant,
   importedConsentKey,
   plannedConsentKeys,
+  importedOptOuts,
 } from './consent.js';
 export {
   refKey,

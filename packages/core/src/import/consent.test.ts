@@ -7,6 +7,7 @@ import {
   type ImportedConsentEventRow,
   IMPORTED_REVOKE_PURPOSE,
   importedConsentKey,
+  importedOptOuts,
   mapFub,
   mapImportedConsent,
   mapImportedSuppressions,
@@ -181,5 +182,37 @@ describe('revert of the consent stage (R-IMPORT-10, R-CONSENT-3)', () => {
     expect(revertImportedGrant({ ...row, imported: false }, c)).toBeNull();
     expect(revertImportedGrant({ ...row, importRecordId: null }, c)).toBeNull();
     expect(revertImportedGrant(row, c)?.revertsEventId).toBe(row.id);
+  });
+});
+
+describe('importedOptOuts (outbound-2: opt-outs carried by the contacts stage)', () => {
+  const fields: FubConsentFields = {
+    occurredAt: null,
+    addresses: [
+      { kind: 'phone', address: '+14155550101', grants: ['voice'], revokes: ['sms', 'sms'], doNotContact: false },
+      { kind: 'email', address: 'a@example.com', grants: ['email'], revokes: [], doNotContact: false },
+      { kind: 'phone', address: '+14155550102', grants: [], revokes: [], doNotContact: true },
+      { kind: 'email', address: 'b@example.com', grants: [], revokes: ['email', 'sms'], doNotContact: false },
+    ],
+  };
+
+  it('R-CONSENT-3: keeps only revocations and DNC flags, never a grant', () => {
+    const o = importedOptOuts(fields, []);
+    expect(o.addresses).toEqual([
+      { kind: 'phone', address: '+14155550101', grants: [], revokes: ['sms'], doNotContact: false },
+      { kind: 'phone', address: '+14155550102', grants: [], revokes: [], doNotContact: true },
+      { kind: 'email', address: 'b@example.com', grants: [], revokes: ['email'], doNotContact: false },
+    ]);
+    const specs = mapImportedConsent(o, {}, ctx());
+    expect(specs.every((x) => x.eventType === 'revoke' && x.level === 'none')).toBe(true);
+    expect(mapImportedSuppressions(o, ctx())).toHaveLength(1);
+  });
+
+  it('R-IMPORT-13: an ambiguous value (a bare "no") waits for the consent-stage review', () => {
+    const o = importedOptOuts(fields, [{ code: 'CONSENT_VALUE_AMBIGUOUS', severity: 'review', field: 'consent_sms' }]);
+    expect(o.addresses.map((a) => [a.address, a.revokes, a.doNotContact])).toEqual([
+      ['+14155550102', [], true],
+      ['b@example.com', ['email'], false],
+    ]);
   });
 });

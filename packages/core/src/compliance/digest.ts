@@ -52,7 +52,7 @@ export function sha256Hex(s: string): string {
   return bytesToHex(sha256(utf8ToBytes(s)));
 }
 
-/** First 32 bits of SHA-256 of `s` as an unsigned integer (deterministic jitter, R-CONSENT-13). */
+/** First 32 bits of SHA-256 of `s` as an unsigned integer (deterministic bucketing). */
 export function hash32(s: string): number {
   const h = sha256(utf8ToBytes(s));
   return ((h[0]! << 24) | (h[1]! << 16) | (h[2]! << 8) | h[3]!) >>> 0;

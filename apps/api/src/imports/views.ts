@@ -181,7 +181,14 @@ function revertLines(s: StageRow): string[] {
   const r = (s.revert_report ?? {}) as { removed?: number; compensated?: number; needsDecision?: number; keptReasons?: Record<string, number> };
   const n = (x: number | undefined) => (x ?? 0).toLocaleString('en-US');
   const lines = [`Reverted. ${n(r.removed)} imported rows removed; ${n(r.needsDecision)} ${r.needsDecision === 1 ? 'record was' : 'records were'} changed since the import and left for your decision.`];
-  if ((r.compensated ?? 0) > 0) lines.push(`${n(r.compensated)} imported permissions were withdrawn.`);
+  if ((r.compensated ?? 0) > 0) {
+    lines.push(
+      s.category === 'ownership'
+        ? `${n(r.compensated)} imported ${r.compensated === 1 ? 'assignment was' : 'assignments were'} undone; ${r.compensated === 1 ? 'that lead is' : 'those leads are'} unassigned again.`
+        : `${n(r.compensated)} imported permissions were withdrawn.`,
+    );
+  }
+  if (s.category === 'ownership' && (r.needsDecision ?? 0) > 0) lines.push('Leads someone worked on since the import keep their current owner.');
   const kept = (r.keptReasons?.REVOCATION_KEPT ?? 0) + (r.keptReasons?.DNC_KEPT ?? 0);
   if (kept > 0) lines.push(`${n(kept)} imported opt-outs and do-not-contact flags stay in place.`);
   return lines;

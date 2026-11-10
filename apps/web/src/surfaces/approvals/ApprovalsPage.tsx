@@ -5,15 +5,20 @@
 // locator + the verbatim snippet), and flags what it could not verify with "Check this" in words.
 // There is no confidence anywhere (R-AST-13): the view types have no such field and nothing here
 // renders a score or a percentage. Needs-review claims can be confirmed or rejected in place.
+//
+// A draft the send-time check would block (the contact opted out, the address is suppressed, ...) says
+// so next to its Send button, in the server's words ("Won't send: Opted out of texts"). There is no
+// consent prompt and no "send anyway" for an opt-out (owner decision, core-compliance/2.0.0).
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useId, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Button, Card, ClaimLine, EmptyState, Notice } from '../../design/index.js';
+import { Button, Card, ClaimLine, EmptyState, GateBadge, Notice } from '../../design/index.js';
 import { type ApiError, messageFor, useApi, useCommand } from '../../shell/index.js';
 import { AgentSheetsProvider, SendOutcome, useAgentSheets } from '../feed/lib/AgentSheets.js';
 import { claimView, firstName, relativeTime } from '../feed/lib/format.js';
 import { useMutate, useNow } from '../feed/lib/hooks.js';
 import { AGENT_ERROR_MESSAGES } from '../feed/lib/messages.js';
+import { useSendCheck } from '../feed/lib/sendCheck.js';
 import type { ActionView, ApproveResponse, ClaimApiView } from '../feed/lib/types.js';
 import { ContactSearches } from './SavedSearchReview.js';
 
@@ -94,6 +99,7 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
   const name = action.contactName ?? 'this contact';
   const sendable = action.primaryAction === 'send' && action.draft !== null;
   const threadHref = action.contactId ? `/contacts/${action.contactId}/thread?compose=draft&draft=${action.id}` : null;
+  const check = useSendCheck({ contactId: action.contactId ?? '', channel: action.draft?.channel ?? 'sms', body: action.draft?.body ?? '', subject: action.draft?.subject ?? '', enabled: sendable && action.contactId !== null });
 
   const doApprove = async () => {
     const r = await approve.run(seenSeq !== null ? { reviewedInboundSeq: seenSeq } : {});
@@ -106,10 +112,6 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
       return;
     }
     setStale(false);
-    if (r.data.result === 'needs_confirmation' && r.data.messageId && r.data.decision) {
-      sheets.confirmSend({ messageId: r.data.messageId, decision: r.data.decision, contactName: name });
-      return;
-    }
     if (r.data.result === 'sent' || r.data.result === 'queued' || r.data.result === 'noop') sheets.announce(`Sent to ${name}.`);
     else if (r.data.result === 'acknowledged') sheets.announce('Marked as handled.');
     setResult(r.data);
@@ -162,6 +164,8 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
       {reject.error ? <Notice tone="error">{reject.error.message}</Notice> : null}
       {result && result.result !== 'acknowledged' && result.result !== 'sent' && result.result !== 'queued' && result.result !== 'noop' ? (
         <SendOutcome result={{ result: result.result, decision: result.decision, message: null }} contactName={name} />
+      ) : sendable && check.decision?.outcome === 'deny' ? (
+        <GateBadge decision={check.decision} />
       ) : null}
       <div className="flex flex-wrap gap-2">
         {action.kind === 'saved_search_proposal' && action.contactId ? (

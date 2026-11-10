@@ -169,11 +169,14 @@ describe('golden FUB migration', () => {
   });
 
   it('R-CONSENT-3 E40: grants stay imported_unverified; unsubscribes and opt-outs are revocations at commit; DNC is a suppression', async () => {
-    const before = await q('SELECT 1 FROM consent_events WHERE tenant_id = $1', [w.tenantId]);
-    expect(before).toHaveLength(0);
+    // outbound-2: the contacts commit already applied the opt-outs (revocations + DNC), never a grant
+    const before = await q<{ event_type: string }>('SELECT DISTINCT event_type FROM consent_events WHERE tenant_id = $1', [w.tenantId]);
+    expect(before).toEqual([{ event_type: 'revoke' }]);
     const d = await dryRunStage(ih, w.admin, b.id, 'consent');
     const recs = await records(w.admin, b.id, 'consent');
-    expect(recs.find((r) => r.sourceRef === 'fub:people/1002')!.planned).toBe('record');
+    // Bob's only consent data is opt-outs (his grants are overridden): nothing left for this stage
+    expect(recs.find((r) => r.sourceRef === 'fub:people/1002')!.dryRunOutcome).toBe('duplicate');
+    expect(recs.find((r) => r.sourceRef === 'fub:people/1001')!.planned).toBe('record');
     expect(d.counts!.source).toBe(7);
     expect((await approve(w.admin, b.id, 'consent', d.dryRunSha256 as string)).status).toBe(200);
     await commitStage(ih, w.admin, b.id, 'consent');

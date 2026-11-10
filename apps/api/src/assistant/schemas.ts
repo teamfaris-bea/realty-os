@@ -47,8 +47,6 @@ const DecisionSchema = z.object({
   outcome: z.string(),
   reasons: z.array(z.string()),
   explanation: z.string(),
-  deferUntil: z.string().nullable(),
-  canConfirm: z.boolean(),
   phase: z.string(),
 });
 

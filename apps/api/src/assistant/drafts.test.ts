@@ -122,7 +122,9 @@ describe('approving a draft (R-AST-6, R-AST-7, R-AUDIT-5)', () => {
     const m = await messageRow(h, r.body.messageId);
     expect(m.status).toBe('sent');
     expect(m.body).toContain(card.draft!.body.slice(0, 20));
-    expect((await decisionsFor(h, { messageId: r.body.messageId })).map((d) => `${d.initiator}:${d.outcome}`)).toEqual(['human:allow']);
+    // allowed: no blocked-send row; the agent's tap is the approval the message carries
+    expect(await decisionsFor(h, { messageId: r.body.messageId })).toHaveLength(0);
+    expect((await h.su.query<{ u: string | null; c: string }>('SELECT a.decided_by_user_id AS u, a.action_category AS c FROM messages m JOIN assistant_actions a ON a.tenant_id = m.tenant_id AND a.id = m.assistant_action_id WHERE m.id = $1', [r.body.messageId])).rows[0]).toMatchObject({ u: w.agents[0]!.userId });
     expect((await h.su.query('SELECT state FROM priority_feed_items WHERE assistant_action_id = $1', [card.id])).rows).toEqual([{ state: 'done' }]);
     const again = await call<{ result: string; messageId: string }>(w.agents[0]!, 'POST', `/assistant/actions/${card.id}/approve`, { commandId });
     expect(again.body).toMatchObject({ result: 'noop', messageId: r.body.messageId });
@@ -208,7 +210,8 @@ describe('seller updates (R-AST-17)', () => {
     expect(h.providers.telephony.sms.length).toBe(sms);
     const ok = await call<{ result: string; messageId: string }>(w.agents[0]!, 'POST', `/assistant/actions/${id}/approve`, { commandId: randomUUID(), editedPayload: { body: 'This week: 4 showings and 2 pieces of feedback. My take: we hold the price two more weeks.' } });
     expect(ok.body.result).toBe('sent');
-    expect((await decisionsFor(h, { messageId: ok.body.messageId }))[0]).toMatchObject({ initiator: 'human', action_category: 'seller_update' });
+    expect(await decisionsFor(h, { messageId: ok.body.messageId })).toHaveLength(0);
+    expect((await h.su.query<{ u: string | null; c: string }>('SELECT a.decided_by_user_id AS u, a.action_category AS c FROM messages m JOIN assistant_actions a ON a.tenant_id = m.tenant_id AND a.id = m.assistant_action_id WHERE m.id = $1', [ok.body.messageId])).rows[0]).toEqual({ u: w.agents[0]!.userId, c: 'seller_update' });
   });
 });
 

@@ -123,7 +123,7 @@ async function register(app: FastifyInstance): Promise<void> {
     previewHumanMessage(actorOf(req), req.params.id, req.body, deps()),
   );
   r.post('/messages/:id/send', { config: { auth: 'comms.send' }, preHandler: authorize('comms.send', messageSend), schema: { params: IdParams, body: S.SendExistingBody, response: { 200: S.ComposeResponse } } }, async (req) =>
-    sendExisting(actorOf(req), req.params.id, req.body.confirmDecisionId, deps()),
+    sendExisting(actorOf(req), req.params.id, deps()),
   );
   r.post('/messages/:id/cancel', { config: { auth: 'comms.send' }, preHandler: authorize('comms.send', messageSend), schema: { params: IdParams, response: { 200: z.object({ message: S.MessageSchema }) } } }, async (req) => ({
     message: await cancelMessage(actorOf(req), req.params.id, deps()),

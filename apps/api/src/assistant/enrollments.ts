@@ -214,7 +214,7 @@ async function cancelPendingSteps(deps: AssistantDeps, tenantId: string, enrollm
     const e = await P.enrollmentById(tx, enrollmentId);
     if (!e) return;
     await lockContact(tx, e.contactId as ContactId);
-    const runs = (await P.stepRunsOf(tx, enrollmentId)).filter((r) => r.status === 'scheduled' || r.status === 'deferred');
+    const runs = (await P.stepRunsOf(tx, enrollmentId)).filter((r) => r.status === 'scheduled');
     const canceled = await P.cancelStepMessages(tx, runs.map((r) => r.id), reason);
     for (const r of runs) if (r.messageId === null || canceled.includes(r.messageId)) await P.updateStepRun(tx, r.id, { status: 'canceled_paused' });
   });

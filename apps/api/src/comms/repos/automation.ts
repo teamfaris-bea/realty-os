@@ -40,7 +40,7 @@ export async function pauseEnrollments(tx: Tx, contactIds: readonly string[], re
   if (ids.length > 0 && o.stepRuns !== false) {
     await sql`
       UPDATE playbook_step_runs SET status = 'canceled_paused', updated_at = now()
-       WHERE tenant_id = app.tenant_id() AND enrollment_id = ANY (${ids}::uuid[]) AND status IN ('scheduled','deferred')`.execute(tx);
+       WHERE tenant_id = app.tenant_id() AND enrollment_id = ANY (${ids}::uuid[]) AND status = 'scheduled'`.execute(tx);
   }
   return r.rows.map((x) => ({ id: x.id, contactId: x.contact_id }));
 }
@@ -126,19 +126,19 @@ export async function playbookFacts(tx: Tx, versionId: string): Promise<Playbook
   };
 }
 
-export async function stepRunFacts(tx: Tx, id: string): Promise<{ id: string; stepKey: string; enrollmentId: string; enrollmentState: string; deferrals: number } | null> {
-  const r = await sql<{ id: string; step_key: string; enrollment_id: string; state: string; deferrals: number }>`
-    SELECT s.id, s.step_key, s.enrollment_id, e.state, s.deferrals FROM playbook_step_runs s
+export async function stepRunFacts(tx: Tx, id: string): Promise<{ id: string; stepKey: string; enrollmentId: string; enrollmentState: string } | null> {
+  const r = await sql<{ id: string; step_key: string; enrollment_id: string; state: string }>`
+    SELECT s.id, s.step_key, s.enrollment_id, e.state FROM playbook_step_runs s
       JOIN playbook_enrollments e ON e.tenant_id = s.tenant_id AND e.id = s.enrollment_id
      WHERE s.tenant_id = app.tenant_id() AND s.id = ${id}`.execute(tx);
   const x = r.rows[0];
-  return x ? { id: x.id, stepKey: x.step_key, enrollmentId: x.enrollment_id, enrollmentState: x.state, deferrals: x.deferrals } : null;
+  return x ? { id: x.id, stepKey: x.step_key, enrollmentId: x.enrollment_id, enrollmentState: x.state } : null;
 }
 
-export async function updateStepRun(tx: Tx, id: string, u: { status: string; scheduledFor?: Instant; deferrals?: number; decisionId: string | null; messageId?: string }): Promise<void> {
+/** decisionId: the blocked-send gate_decisions row, when the step's message was blocked. */
+export async function updateStepRun(tx: Tx, id: string, u: { status: string; decisionId: string | null; messageId?: string }): Promise<void> {
   await sql`
-    UPDATE playbook_step_runs SET status = ${u.status}, scheduled_for = COALESCE(${u.scheduledFor === undefined ? null : toIso(u.scheduledFor)}::timestamptz, scheduled_for),
-           deferrals = COALESCE(${u.deferrals ?? null}::int, deferrals), last_gate_decision_id = COALESCE(${u.decisionId}::uuid, last_gate_decision_id),
+    UPDATE playbook_step_runs SET status = ${u.status}, last_gate_decision_id = COALESCE(${u.decisionId}::uuid, last_gate_decision_id),
            message_id = COALESCE(${u.messageId ?? null}::uuid, message_id), updated_at = now()
      WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx);
 }

@@ -171,7 +171,6 @@ export const AUDIT_ACTIONS = [
   'consent.opt_out_received',
   'consent.not_opt_out_marked', // R-CONSENT-8
   'suppression.lifted',
-  'gate.confirmed', // a needs_confirmation decision confirmed by a human (ARCHITECTURE §9)
   // recordings
   'recording.play',
   'recording.download',

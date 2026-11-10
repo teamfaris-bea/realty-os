@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
 import { suFixture } from '../leads/testing.js';
-import { type CommsWorld, call, commsWorld, decisionsFor, grantConsent, ownedContact as ownedTextContact, pointId, randomPhone, runJobs, telephonyWebhook } from './testing.js';
+import { type CommsWorld, call, commsWorld, decisionsFor, ownedContact as ownedTextContact, pointId, randomPhone, runJobs, telephonyWebhook } from './testing.js';
 
 let h: ApiHarness;
 let w: CommsWorld;
@@ -28,11 +28,9 @@ async function alertPhone(c: TestClient): Promise<string> {
 }
 
 type CallRes = { result: string; callId: string | null; bridgeToken: string | null; reason: string | null; decision: { outcome: string; reasons: string[]; explanation: string } };
-/** A contact the agent owns with an express basis for texts and calls (a marketing call needs a basis when DNC status is unknown, R-CONSENT-15). */
+/** A contact the agent owns. No consent level is needed to call (owner decision, core-compliance/2.0.0). */
 async function ownedContact(agent: TestClient) {
-  const c = await ownedTextContact(agent);
-  await grantConsent(agent, c.id, 'voice');
-  return c;
+  return ownedTextContact(agent, { consent: false });
 }
 
 const dial = (c: TestClient, contactId: string) => call<CallRes>(c, 'POST', `/contacts/${contactId}/calls`, {});
@@ -45,7 +43,7 @@ async function providerRef(callId: string): Promise<string> {
 const voice = (ref: string, status: string, extra: Record<string, string> = {}) => telephonyWebhook(h, '/webhooks/telephony/voice', { CallSid: ref, From: w.mainNumber, To: '+14155550000', CallStatus: status, Direction: 'outbound-api', ...extra });
 
 describe('tap-to-call (path 3)', () => {
-  it('R-GATE-10: a call is gated at dial time; allowed ⇒ the call row cites a fresh voice allow, the provider bridges the agent first and announces the recording', async () => {
+  it('R-GATE-10: a call is gated at dial time; allowed ⇒ the call row (no gate decision row: blocked calls only), the provider bridges the agent first and announces the recording', async () => {
     const agent = w.agents[0]!;
     const c = await ownedContact(agent);
     const r = await dial(agent, c.id);
@@ -53,9 +51,8 @@ describe('tap-to-call (path 3)', () => {
     expect(r.body.result).toBe('dialing');
     expect(r.body.bridgeToken).toMatch(new RegExp(`^${r.body.callId}\\.`));
     const row = (await h.su.query('SELECT status, gate_decision_id, recording_mode, initiator FROM calls WHERE id = $1', [r.body.callId])).rows[0]!;
-    expect(row).toMatchObject({ status: 'ringing', recording_mode: 'announced_all_parties', initiator: 'human' });
-    const d = (await h.su.query('SELECT channel, outcome, phase FROM gate_decisions WHERE id = $1', [row.gate_decision_id])).rows[0]!;
-    expect(d).toEqual({ channel: 'voice', outcome: 'allow', phase: 'send' });
+    expect(row).toMatchObject({ status: 'ringing', recording_mode: 'announced_all_parties', initiator: 'human', gate_decision_id: null });
+    expect(await decisionsFor(h, { callId: r.body.callId! })).toHaveLength(0);
     const placed = callsTo(c.phone);
     expect(placed).toHaveLength(1);
     expect(placed[0]!.record).toBe(true);
@@ -73,15 +70,52 @@ describe('tap-to-call (path 3)', () => {
     expect(r.body.decision.reasons).toContain('CONSENT_REVOKED');
     expect((await h.su.query('SELECT 1 FROM calls WHERE contact_id = $1', [c.id])).rows).toHaveLength(0);
     expect(callsTo(c.phone)).toHaveLength(0);
+    // the blocked call is logged (the "why wasn't this sent" evidence)
+    const logged = await decisionsFor(h, { contactId: c.id });
+    expect(logged.map((d) => [d.outcome, d.phase, d.reason_codes.includes('CONSENT_REVOKED')])).toEqual([['deny', 'send', true]]);
   });
 
-  it('R-CONSENT-14: more than 3 outbound call attempts in 24 h are denied (CALL_ATTEMPT_LIMIT)', async () => {
+  it('an agent-recorded "do not call me" (call outcome) blocks every later call to that number, for every agent, with no override', async () => {
+    const [a, b] = w.agents as [TestClient, TestClient];
+    const c = await ownedContact(a);
+    const r = await dial(a, c.id);
+    expect((await call(a, 'POST', `/calls/${r.body.callId}/outcome`, { outcome: 'do_not_call_request' })).status).toBe(200);
+    const again = await dial(a, c.id);
+    expect(again.body.result).toBe('gate');
+    expect(again.body.decision.reasons).toContain('CONSENT_REVOKED');
+    await (await import('../admin/testing.js')).freshReauth(h, w.owner);
+    expect((await call(w.owner, 'POST', `/leads/${c.id}/reassign`, { commandId: randomUUID(), toUserId: b.userId, reason: 'MANUAL_REASSIGN' })).status).toBe(200);
+    expect((await dial(b, c.id)).body.decision.reasons).toContain('CONSENT_REVOKED');
+    expect(callsTo(c.phone)).toHaveLength(1);
+  });
+
+  it('outbound-3: an agent-recorded "do not call me" on one phone blocks calling the same person on their other phone', async () => {
+    const a = w.agents[0]!;
+    const phoneA = randomPhone();
+    const phoneB = randomPhone();
+    const r = await call<{ contact: { id: string } }>(a, 'POST', '/contacts', { commandId: randomUUID(), firstName: 'Dan', lastName: 'Nocall', phones: [phoneA, phoneB], emails: [] });
+    expect([200, 201]).toContain(r.status);
+    const cid = r.body.contact.id;
+    const pts = (await h.su.query<{ id: string; address: string }>('SELECT id, address FROM contact_points WHERE contact_id = $1', [cid])).rows;
+    const pB = pts.find((p) => p.address === phoneB)!.id;
+    const first = await dial(a, cid);
+    expect(first.body.result).toBe('dialing');
+    expect((await call(a, 'POST', `/calls/${first.body.callId}/outcome`, { outcome: 'do_not_call_request' })).status).toBe(200);
+    // the request covers every phone of the contact: a voice revoke on both numbers
+    const revoked = (await h.su.query<{ n: number }>("SELECT count(DISTINCT cs.address_hmac)::int AS n FROM consent_state cs JOIN contact_points p ON p.tenant_id = cs.tenant_id AND p.address_hmac = cs.address_hmac WHERE p.contact_id = $1 AND cs.channel = 'voice' AND cs.status = 'revoked'", [cid])).rows[0]!.n;
+    expect(revoked).toBe(2);
+    const toB = await call<CallRes>(a, 'POST', `/contacts/${cid}/calls`, { toPointId: pB });
+    expect(toB.body.result).toBe('gate');
+    expect(toB.body.decision.reasons).toContain('CONSENT_REVOKED');
+    expect(callsTo(phoneB)).toHaveLength(0);
+    expect(callsTo(phoneA)).toHaveLength(1);
+  });
+
+  it('owner decision: there is no call-attempt cap', async () => {
     const agent = w.agents[0]!;
     const c = await ownedContact(agent);
-    for (let i = 0; i < 3; i++) expect((await dial(agent, c.id)).body.result).toBe('dialing');
-    const r = await dial(agent, c.id);
-    expect(r.body.decision.reasons).toContain('CALL_ATTEMPT_LIMIT');
-    expect(callsTo(c.phone)).toHaveLength(3);
+    for (let i = 0; i < 5; i++) expect((await dial(agent, c.id)).body.result).toBe('dialing');
+    expect(callsTo(c.phone)).toHaveLength(5);
   });
 
   it('R-GATE-9: Phase 1 has no AI-originated or AI-handled calls (DB CHECKs)', async () => {

@@ -70,7 +70,7 @@ describe('Playbook editor', () => {
     const approve = await screen.findByRole('button', { name: 'Approve and run' });
     expect(approve).toBeDisabled();
     const text = approvalAttestation(p, version());
-    expect(text).toBe('I reviewed the message in “Stay in touch” version 1. The assistant may send it on its own to contacts who allow it, signed as the assistant, and must stop when a client replies.');
+    expect(text).toBe('I reviewed the message in “Stay in touch” version 1. The assistant may send it on its own to contacts who have not opted out, signed as the assistant, and must stop when a client replies.');
     await u.click(screen.getByLabelText(text));
     await u.click(approve);
     expect(await screen.findByText('Version 1 approved and running')).toBeInTheDocument();

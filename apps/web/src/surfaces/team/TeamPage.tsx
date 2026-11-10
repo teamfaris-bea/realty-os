@@ -116,7 +116,7 @@ export function ExceptionCard({ item, onDone, onFailure }: { item: ExceptionItem
   const resolve = useCommand<{ note: string }, ItemResponse>(keyPath(item, 'resolve'), opts);
   const verify = useCommand<Record<string, never>, ItemResponse>(keyPath(item, 'verify'), opts);
   const reopen = useCommand<Record<string, never>, ItemResponse>(keyPath(item, 'reopen'), opts);
-  const reassign = useCommand<{ toUserId: string }, ItemResponse>(keyPath(item, 'reassign'), opts);
+  const reassign = useCommand<{ toUserId: string; expectedSeq?: number }, ItemResponse>(keyPath(item, 'reassign'), opts);
   const fixedLate = item.live && item.conditionClearedAt !== null;
   const subject = item.contact?.name ?? null;
 
@@ -195,7 +195,8 @@ export function ExceptionCard({ item, onDone, onFailure }: { item: ExceptionItem
           pending={reassign.pending}
           onCancel={() => setMode('idle')}
           onPick={async (m) => {
-            const r = await reassign.run({ toUserId: m.userId });
+            // the stale-UI fence: if the lead moved since this queue was read, the server refuses (LEAD_STATE_CHANGED)
+            const r = await reassign.run({ toUserId: m.userId, ...(item.contactOwnershipSeq !== null ? { expectedSeq: item.contactOwnershipSeq } : {}) });
             if (r.ok) {
               setMode('idle');
               onDone(`Reassigned ${subject ?? 'the lead'} to ${m.name}`);

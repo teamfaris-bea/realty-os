@@ -1,19 +1,20 @@
-// The 60-second first response (ARCHITECTURE §11; R-AST-15, R-AST-16, R-CONSENT-5, R-CONSENT-13; E8, E37).
+// The 60-second first response (ARCHITECTURE §11; R-AST-15, R-AST-16; core-compliance/2.0.0).
 //
 // Lead intake (api/leads) enqueues assistant.first_response (realtime) in the intake transaction. This
 // handler, as the system actor under the contact lock:
 //   - core.planFirstResponse: ONE message from the team `new_lead_response` playbook, only when that
-//     playbook is approved and `speed_to_lead_reply` is enabled; SMS needs an `express` basis or better
-//     (never imported), otherwise email only; deduped per contact per 24 h. VERIFY WITH COUNSEL.
+//     playbook is approved and `speed_to_lead_reply` is enabled; SMS to the lead's mobile unless that
+//     number (or another of the lead's phones) opted out or is suppressed, otherwise email (if not opted
+//     out / suppressed); deduped per contact per 24 h. No consent level is read (owner decision).
 //   - enrolls the contact (enrolled_by new_lead) and builds the step like any playbook step (steps.ts):
 //     sign-off "— the {Team} assistant", brokerage name and "Reply STOP to opt out" on the first text.
-//   - the message's comms.dispatch job (realtime) gates it at SEND time: quiet hours DEFER the SMS
-//     (e.g. 9:00 AM her time); email goes at once.
+//   - the message's comms.dispatch job (realtime) gates it at SEND time (opt-out, pause, sender) and it
+//     goes at once.
 // When nothing may be sent, nothing is sent, and the lead's open feed card says why. The first response
 // never counts as a touch (R-AST-15): it is an assistant message, and only gate-allowed HUMAN sends are
 // touches (dispatch records them).
 import { type PlaybookStep, PlaybookStepSchema, planEnroll, planFirstResponse, stepForChannel } from '@realty/core/assistant';
-import type { ConsentStateRow } from '@realty/core/compliance';
+import { optedOut } from '@realty/core/compliance';
 import type { ContactId, Instant, SystemActor } from '@realty/core/foundation';
 import { plusMs } from '@realty/core/foundation';
 import { type Tx, lockContact, withTenantTx } from '@realty/db';
@@ -57,12 +58,18 @@ export async function sendFirstResponseInTx(tx: Tx, deps: AssistantDeps, tenantI
   const phone = points.find((p) => p.kind === 'phone' && p.status === 'active') ?? null;
   const email = points.find((p) => p.kind === 'email' && p.status === 'active') ?? null;
   const purpose = step?.purpose ?? 'informational';
-  const smsConsent: ConsentStateRow | undefined = phone ? (await consentRows(tx, 'sms', [phone.hmac])).find((r) => r.purpose === purpose) : undefined;
+  let smsBlocked = false;
+  if (phone) {
+    // the gate's SMS opt-out rule: a STOP on any of the lead's phones blocks texting all of them
+    const rows = await consentRows(tx, 'sms', points.filter((p) => p.kind === 'phone').map((p) => p.hmac));
+    const sup = await suppressionRows(tx, phone.hmac);
+    smsBlocked = optedOut(rows, 'sms', purpose, phone.hmac) || sup.some((s) => s.liftedAt === null && (s.channel === 'sms' || s.channel === 'all'));
+  }
   let emailBlocked = false;
   if (email) {
     const rows = await consentRows(tx, 'email', [email.hmac]);
     const sup = await suppressionRows(tx, email.hmac);
-    emailBlocked = rows.some((r) => r.status === 'revoked' && r.purpose === purpose) || sup.some((s) => s.liftedAt === null && (s.channel === 'email' || s.channel === 'all'));
+    emailBlocked = optedOut(rows, 'email', purpose, email.hmac) || sup.some((s) => s.liftedAt === null && (s.channel === 'email' || s.channel === 'all'));
   }
   const plan = planFirstResponse({
     now,
@@ -70,7 +77,7 @@ export async function sendFirstResponseInTx(tx: Tx, deps: AssistantDeps, tenantI
     latestApproval: version ? await P.latestApproval(tx, version.id) : null,
     step,
     tenantAutonomous: policy.autonomous,
-    sms: { reachable: phone !== null && phone.lineType !== 'landline', consent: smsConsent },
+    sms: { reachable: phone !== null && phone.lineType !== 'landline', revokedOrSuppressed: smsBlocked },
     email: { reachable: email !== null, revokedOrSuppressed: emailBlocked },
     lastFirstResponseAt: await lastFirstResponseAt(tx, contactId),
   });
@@ -102,7 +109,7 @@ export async function sendFirstResponseInTx(tx: Tx, deps: AssistantDeps, tenantI
     firstResponse: true,
     explanation: plan.explanation,
   });
-  // look again after the send so the one-step enrollment completes (and a deferred SMS is followed up)
+  // look again after the send so the one-step enrollment completes
   const back = plusMs(now, CHECK_BACK_MS);
   await P.scheduleEnrollment(tx, enrollmentId, back, out.kind === 'queued' ? 0 : 1);
   await enqueueStep(tx, enrollmentId, back);

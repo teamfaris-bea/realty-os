@@ -56,7 +56,7 @@ describe('R-AUDIT-5 admin audit trail', () => {
     // settings, identity, policy
     await call(owner, 'PATCH', '/settings', { version: (await settings()).version, firstTouchSlaSeconds: 600, teamLeadRecordingAccess: false });
     await call(owner, 'PATCH', '/settings/identity', { version: (await settings()).version, brokeragePostalAddress: '12 Broad St, Charleston, SC 29401' });
-    const pol = await call<{ id: string }>(owner, 'POST', '/compliance-policies', { contactWindowStart: '08:30', attestation: ATTESTATION_TEXT });
+    const pol = await call<{ id: string }>(owner, 'POST', '/compliance-policies', { recordingMode: 'one_party_where_permitted', attestation: ATTESTATION_TEXT });
     expect(pol.status).toBe(201);
     expect((await call(owner, 'POST', `/compliance-policies/${pol.body.id}/activate`, { attestation: ATTESTATION_TEXT })).status).toBe(200);
 

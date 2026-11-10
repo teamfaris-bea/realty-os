@@ -396,24 +396,6 @@ exports[`R-AUDIT-5 admin audit trail > R-AUDIT-5 R-AUDIT-4: one call per admin e
   {
     "action": "policy.version_created",
     "changes": {
-      "auto_cross_channel_per_24h": {
-        "from": null,
-        "to": 2,
-      },
-      "auto_email_per_24h": {
-        "changed": true,
-      },
-      "auto_email_per_7d": {
-        "changed": true,
-      },
-      "auto_sms_per_24h": {
-        "from": null,
-        "to": 1,
-      },
-      "auto_sms_per_7d": {
-        "from": null,
-        "to": 3,
-      },
       "autonomous_categories": {
         "from": null,
         "to": [
@@ -424,38 +406,11 @@ exports[`R-AUDIT-5 admin audit trail > R-AUDIT-5 R-AUDIT-4: one call per admin e
           "speed_to_lead_reply",
         ],
       },
-      "call_attempts_per_24h": {
-        "from": null,
-        "to": 3,
-      },
-      "contact_window_end": {
-        "from": null,
-        "to": "20:00:00",
-      },
-      "contact_window_start": {
-        "from": null,
-        "to": "08:30:00",
-      },
-      "email_quiet_hours": {
-        "from": null,
-        "to": false,
-      },
-      "human_reply_window_minutes": {
-        "from": null,
-        "to": 30,
-      },
       "loosened_field_codes": {
         "from": null,
         "to": [
-          "contactWindowStart",
+          "recordingMode",
         ],
-      },
-      "manual_sms_confirm_after_24h": {
-        "changed": true,
-      },
-      "max_deferrals": {
-        "from": null,
-        "to": 3,
       },
       "opt_out_confirmation_sender": {
         "from": null,
@@ -471,7 +426,7 @@ exports[`R-AUDIT-5 admin audit trail > R-AUDIT-5 R-AUDIT-4: one call per admin e
       },
       "recording_mode": {
         "from": null,
-        "to": "announce_all",
+        "to": "one_party_where_permitted",
       },
     },
     "entity": "compliance_policy_version",
@@ -487,7 +442,7 @@ exports[`R-AUDIT-5 admin audit trail > R-AUDIT-5 R-AUDIT-4: one call per admin e
       "loosened_field_codes": {
         "from": [],
         "to": [
-          "contactWindowStart",
+          "recordingMode",
         ],
       },
       "policy_version": {

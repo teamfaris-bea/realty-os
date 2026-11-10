@@ -52,6 +52,7 @@ export function exceptionItem(over: Partial<ExceptionItem> = {}): ExceptionItem 
       { sourceType: 'ownership_period', sourceId: ID.pat, explanation: 'First human contact was due', at: new Date(Date.now() - 3 * 3_600_000).toISOString(), locator: null, snippet: null, needsReview: false, link: { kind: 'contact', id: ID.pat, contactId: ID.pat, offsetMs: null } },
       { sourceType: 'ownership_period', sourceId: ID.pat, explanation: 'Lead became theirs', at: new Date(Date.now() - 4 * 3_600_000).toISOString(), locator: null, snippet: null, needsReview: false, link: { kind: 'contact', id: ID.pat, contactId: ID.pat, offsetMs: null } },
     ],
+    contactOwnershipSeq: 3,
     latestEvent: null,
     actions: { resolve: true, reassign: true, verify: true, reopen: false },
     ...over,
@@ -106,18 +107,6 @@ export const settings: Settings = {
 };
 
 export const POLICY_DEFAULTS: PolicyValues = {
-  contactWindowStart: '09:00',
-  contactWindowEnd: '20:00',
-  humanReplyWindowMinutes: 30,
-  emailQuietHours: false,
-  autoSmsPer24h: 1,
-  autoSmsPer7d: 3,
-  autoEmailPer24h: 1,
-  autoEmailPer7d: 3,
-  autoCrossChannelPer24h: 2,
-  manualSmsConfirmAfter24h: 3,
-  callAttemptsPer24h: 3,
-  maxDeferrals: 3,
   autonomousCategories: ['speed_to_lead_reply', 'reminder', 'booking_confirmation', 'nurture_step', 'search_alert'],
   optOutConfirmationSender: 'provider',
   recordingEnabled: true,

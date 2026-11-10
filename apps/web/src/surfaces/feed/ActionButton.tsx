@@ -9,8 +9,9 @@
 //   log_outcome                            the appointment outcome sheet
 //   open_* / review_search                 the page that holds it
 //
-// A `note` on an action is the gate's needs-confirmation sentence: it is shown under the button so
-// the agent knows before tapping (the gate still decides at send time).
+// A `note` on an action is an optional hint shown under the button (core/priority no longer sets one:
+// the send-time check never asks for a confirmation). Every send is checked again when it goes out,
+// and a blocked one says why ("Not sent: Opted out of texts").
 import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, type ButtonVariant, type IconName } from '../../design/index.js';
@@ -115,9 +116,7 @@ function SendDraftButton({ action, card, variant = 'primary', block, className }
       if (r.code === 'DRAFT_STALE' && card?.contact) navigate(`/contacts/${card.contact.id}/thread?compose=draft&draft=${action.actionId}`);
       return;
     }
-    if (r.data.result === 'needs_confirmation' && r.data.messageId && r.data.decision) sheets.confirmSend({ messageId: r.data.messageId, decision: r.data.decision, contactName: name });
-    else if (r.data.result === 'sent' || r.data.result === 'queued' || r.data.result === 'noop') sheets.announce(`Sent to ${name}.`);
-    else if (r.data.result === 'deferred') sheets.announce(r.data.decision?.explanation ? `Scheduled: ${r.data.decision.explanation}` : 'Scheduled for the next allowed time.');
+    if (r.data.result === 'sent' || r.data.result === 'queued' || r.data.result === 'noop') sheets.announce(`Sent to ${name}.`);
     else if (r.data.result === 'acknowledged') sheets.announce('Marked as reviewed.');
     else sheets.announce(r.data.decision?.explanation ? `Not sent: ${r.data.decision.explanation}` : 'Not sent.');
   };

@@ -1,7 +1,8 @@
 // Thread + compose in jsdom: human sends with one idempotency key per tap (retries reuse it), the
-// inline gate preview in the server's words, the send-time outcome as it came back (deferred to the
-// next allowed time, needs confirmation, blocked), assistant drafts approved as is or edited, the
-// stale-draft re-review (R-AST-6) and an invalidated draft (nothing sent; the text stays).
+// inline send check in the server's words (shown as soon as the box opens), the send-time outcome as
+// it came back (sent, scheduled for the agent's time, blocked with the reason; never "send anyway"),
+// assistant drafts approved as is or edited, the stale-draft re-review (R-AST-6) and an invalidated
+// draft (nothing sent; the text stays).
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
@@ -59,9 +60,28 @@ describe('Thread', () => {
     expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages/preview`).at(-1)!.body).toEqual({ channel: 'sms', body: 'Hello' });
   });
 
-  it('a send the gate defers says when it will go out, in words (quiet hours)', async () => {
+  it('an opt-out is said as soon as the box opens, before anything is typed, and again for the real text', async () => {
+    const deny = { status: 200, body: { decision: decision({ id: null, phase: 'preview', outcome: 'deny', explanation: 'Opted out of texts' }), body: '' } };
+    const fake = threadFake().on(`POST /contacts/${IDS.jane}/messages/preview`, deny);
+    agentApp(fake, `/contacts/${IDS.jane}/thread?compose=sms`);
+    expect(await screen.findByText('Opted out of texts')).toBeInTheDocument();
+    expect(screen.getByText(/Won't send:/)).toBeInTheDocument();
+    expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages/preview`)[0]!.body).toEqual({ channel: 'sms', body: 'Hi' });
+    await user().type(screen.getByRole('textbox', { name: 'Text message' }), 'Saturday?');
+    await waitFor(() => expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages/preview`).at(-1)!.body).toEqual({ channel: 'sms', body: 'Saturday?' }));
+    expect(await screen.findByText('Opted out of texts')).toBeInTheDocument();
+  });
+
+  it('an allowed send shows no badge, no consent question and no quiet-hours wait', async () => {
+    agentApp(threadFake(), `/contacts/${IDS.jane}/thread?compose=sms`);
+    await screen.findByRole('textbox', { name: 'Text message' });
+    await waitFor(() => expect(document.querySelector('[data-gate-outcome]')).toBeNull());
+    expect(document.body.textContent).not.toMatch(/consent|quiet hours|contact hours|send anyway/i);
+  });
+
+  it('a send scheduled for a time the agent picked says when it goes out, in words', async () => {
     const until = '2026-11-11T17:00:00.000Z';
-    const fake = threadFake().on(`POST /contacts/${IDS.jane}/messages`, sent({ result: 'deferred', decision: decision({ outcome: 'defer', deferUntil: until, explanation: 'Outside 9 AM–8 PM her time' }) }));
+    const fake = threadFake().on(`POST /contacts/${IDS.jane}/messages`, sent({ result: 'scheduled', decision: null, message: { id: IDS.message, channel: 'sms', status: 'scheduled', statusReason: null, purpose: 'informational', body: 'x', subject: null, scheduledFor: until, dispatchedAt: null } }));
     agentApp(fake, `/contacts/${IDS.jane}/thread?compose=sms`);
     const u = user();
     await u.type(await screen.findByRole('textbox', { name: 'Text message' }), 'Tomorrow?');
@@ -77,7 +97,9 @@ describe('Thread', () => {
     await u.type(box, 'Hi');
     await u.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByText('Opted out of texts')).toBeInTheDocument();
+    expect(screen.getByText(/Not sent:/)).toBeInTheDocument();
     expect(box).toHaveValue('Hi');
+    expect(screen.queryByRole('button', { name: /anyway/ })).toBeNull();
   });
 
   it('when the preview already said why and the send is blocked, the reason is shown once, not twice', async () => {
@@ -105,24 +127,8 @@ describe('Thread', () => {
     const rows = within(convo).getAllByRole('listitem').map((li) => li.textContent ?? '');
     const blocked = rows.find((r) => r.includes('still looking'))!;
     const ok = rows.find((r) => r.includes('See you Saturday'))!;
-    expect(blocked).toContain('Not sent: stopped by the send-time check');
+    expect(blocked).toContain('Not sent: blocked by an opt-out or a sending rule');
     expect(ok).not.toMatch(/Not sent|Not delivered/);
-  });
-
-  it('a send that needs confirmation opens the confirm sheet; "Send anyway" confirms that decision', async () => {
-    const needs = decision({ outcome: 'needs_confirmation', explanation: 'More than 3 texts to her today', canConfirm: true });
-    const fake = threadFake()
-      .on(`POST /contacts/${IDS.jane}/messages`, sent({ result: 'needs_confirmation', decision: needs }))
-      .on(`POST /messages/${IDS.message}/send`, sent());
-    agentApp(fake, `/contacts/${IDS.jane}/thread?compose=sms`);
-    const u = user();
-    await u.type(await screen.findByRole('textbox', { name: 'Text message' }), 'One more thing');
-    await u.click(screen.getByRole('button', { name: 'Send' }));
-    const sheet = await screen.findByRole('dialog', { name: 'Send this message?' });
-    expect(within(sheet).getByText('More than 3 texts to her today')).toBeInTheDocument();
-    await u.click(within(sheet).getByRole('button', { name: 'Send anyway' }));
-    await waitFor(() => expect(fake.callsTo(`POST /messages/${IDS.message}/send`)).toHaveLength(1));
-    expect(fake.callsTo(`POST /messages/${IDS.message}/send`)[0]!.body).toEqual({ confirmDecisionId: IDS.decision });
   });
 
   it('an edited assistant draft is approved with the edited text', async () => {

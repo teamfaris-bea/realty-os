@@ -2,7 +2,7 @@
 // tricked into violating its rules. These cases broke before the fixes that came with this file.
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import type { ActionCategory, ConsentStateRow } from '../compliance/index.js';
+import type { ActionCategory } from '../compliance/index.js';
 import { DAY_MS, at, instant, sequentialIds } from '../foundation/index.js';
 import { authorizeAutonomousAction } from './autonomy.js';
 import { normalizeClaims } from './claims.js';
@@ -239,17 +239,7 @@ describe('a criterion value must appear in its own verified evidence', () => {
 
 // ---- the 60-second first response (R-AST-16, R-CONSENT-5) ---------------------------------------------------
 
-describe('planFirstResponse respects the step purpose and a clock-skewed dedupe', () => {
-  const sms = (level: ConsentStateRow['level'], purpose: ConsentStateRow['purpose']): ConsentStateRow => ({
-    channel: 'sms',
-    purpose,
-    addressHmac: 'a'.repeat(64),
-    status: 'granted',
-    level,
-    basisEventId: 'e1',
-    expiresAt: null,
-    ledgerEventCount: 1,
-  });
+describe('planFirstResponse: opt-outs and a clock-skewed dedupe', () => {
   const plan = (o: Partial<Parameters<typeof planFirstResponse>[0]> & { purpose?: 'marketing' | 'informational' }) => {
     const fr = firstResponseStep({ purpose: o.purpose ?? 'informational' });
     const hash = contentSha256([fr], {});
@@ -259,20 +249,20 @@ describe('planFirstResponse respects the step purpose and a clock-skewed dedupe'
       latestApproval: { decision: 'approve', contentSha256: hash },
       step: fr,
       tenantAutonomous: new Set<ActionCategory>(['speed_to_lead_reply']),
-      sms: { reachable: true, consent: sms('express', 'informational') },
+      sms: { reachable: true, revokedOrSuppressed: false },
       email: { reachable: true, revokedOrSuppressed: false },
       lastFirstResponseAt: null,
       ...o,
     });
   };
 
-  it('R-AST-16 R-CONSENT-5 a first response declared marketing needs express_written for SMS, else it goes by email', () => {
-    expect(plan({ purpose: 'marketing', sms: { reachable: true, consent: sms('express', 'marketing') } })).toMatchObject({ send: true, channel: 'email' });
-    expect(plan({ purpose: 'marketing', sms: { reachable: true, consent: sms('express_written', 'marketing') } })).toMatchObject({ send: true, channel: 'sms' });
+  it('R-AST-16 a marketing or informational first response texts a reachable, not-opted-out phone alike', () => {
+    expect(plan({ purpose: 'marketing' })).toMatchObject({ send: true, channel: 'sms' });
+    expect(plan({ purpose: 'informational' })).toMatchObject({ send: true, channel: 'sms' });
   });
 
-  it('R-AST-16 a consent row for the other purpose is not a basis for this one', () => {
-    expect(plan({ purpose: 'marketing', sms: { reachable: true, consent: sms('express_written', 'informational') } })).toMatchObject({ send: true, channel: 'email' });
+  it('R-AST-16 an opted-out phone and an opted-out email: nothing is sent', () => {
+    expect(plan({ sms: { reachable: true, revokedOrSuppressed: true }, email: { reachable: true, revokedOrSuppressed: true } })).toMatchObject({ send: false, reason: 'NO_ALLOWED_CHANNEL' });
   });
 
   it('R-AST-16 a first response recorded in the future (clock skew) still dedupes', () => {

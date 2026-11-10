@@ -237,9 +237,7 @@ describe('delivery', () => {
     expect(sms[0]!.body).not.toMatch(/\+?1?\d{10}|@/);
     const row = await delivery(deliveryId!);
     expect(row.status).toBe('sent');
-    expect(row.gate_decision_id).not.toBeNull();
-    const dec = (await h.su.query<{ recipient_kind: string; phase: string; outcome: string }>('SELECT recipient_kind, phase, outcome FROM gate_decisions WHERE id = $1', [row.gate_decision_id])).rows[0];
-    expect(dec).toEqual({ recipient_kind: 'user', phase: 'send', outcome: 'allow' });
+    expect(row.gate_decision_id).toBeNull(); // allowed: only a blocked delivery writes a gate decision (0013)
   });
 });
 

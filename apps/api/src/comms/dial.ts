@@ -1,12 +1,13 @@
-// Tap-to-call (ARCHITECTURE §9 path 3; R-GATE-9, R-CONSENT-13, -14, -15, -16; R-OWN-14; E47). With
-// dispatch.ts the only module allowed to call a provider dial (lint + architecture test).
+// Tap-to-call (ARCHITECTURE §9 path 3; R-GATE-9, R-CONSENT-16; R-OWN-14; E47; core-compliance/2.0.0).
+// With dispatch.ts the only module allowed to call a provider dial (lint + architecture test).
 //
 //   startCall (one transaction as the calling agent): contact detail visible, core.can('comms.call'),
 //     the agent's verified phone (the bridge rings the agent first), the sender number, then the
-//     DIAL-TIME gate (voice, initiator human). allow ⇒ the calls row (the calls dispatch guard requires
-//     a fresh voice allow) + the recording decision (core.decideRecording; announce unless every party
-//     is one-party and the Owner attested) + the touch in the same transaction (R-OWN-14). Any other
-//     outcome returns the GateDecision and no call exists.
+//     DIAL-TIME gate (voice, initiator human: opt-out / do-not-call, suppression, sender, tenant).
+//     allow ⇒ the calls row (the calls dispatch guard re-checks the do-not-call block) + the recording
+//     decision (core.decideRecording; announce unless every party is one-party and the Owner attested)
+//     + the touch in the same transaction (R-OWN-14). deny ⇒ a gate_decisions row (the blocked-call
+//     evidence), the decision is returned and no call exists.
 //   dialOutbound (after commit): provider.dialCall(idempotencyKey = call id) with the announcement;
 //     'ringing' + provider ref, or 'failed'. Never re-dials a call that already has a provider ref.
 //   applyCallStatus (provider callbacks): forward-only status; an announcement that failed to play
@@ -18,7 +19,7 @@ import { applyOwnershipCommandInTx, derivedCommandId, lockContact, setOwnershipC
 import { sql } from 'kysely';
 import { AppError } from '../errors.js';
 import { ProviderError } from '../providers/types.js';
-import { confirmableDecision, confirmationCovers, decisionView, evaluateGate, insertDecision, resolvedPolicy } from './gateInput.js';
+import { decisionView, evaluateGate, insertBlockedDecision, resolvedPolicy, verdictOf } from './gateInput.js';
 import { contactFacts, dealOrAppointmentContext, detailVisibleContact } from './repos/contacts.js';
 import { telephonyAccount } from './repos/credentials.js';
 import * as g from './repos/gate.js';
@@ -31,7 +32,7 @@ export const RECORDING_ANNOUNCEMENT = 'This call may be recorded for quality and
 
 export type StartCallResult = { kind: 'dialing'; callId: string; bridgeToken: string; decision: DecisionView } | { kind: 'gate'; decision: DecisionView } | { kind: 'failed'; callId: string; reason: string; decision: DecisionView };
 
-export async function startCall(actor: UserActor, contactId: string, input: { toPointId?: string | undefined; confirmDecisionId?: string | undefined }, deps: CommsDeps): Promise<StartCallResult> {
+export async function startCall(actor: UserActor, contactId: string, input: { toPointId?: string | undefined }, deps: CommsDeps): Promise<StartCallResult> {
   type Out = { kind: 'gate'; decision: DecisionView } | { kind: 'created'; callId: string; decision: DecisionView };
   const out: Out = await asUser(deps, actor, async (tx, txNow) => {
     void txNow;
@@ -65,20 +66,12 @@ export async function startCall(actor: UserActor, contactId: string, input: { to
       body: null,
     };
     const evaluated = await evaluateGate(tx, intent, now);
-    let confirm: { confirmedByUserId: string; confirmsDecisionId: string } | undefined;
-    if (input.confirmDecisionId && evaluated.decision.outcome === 'needs_confirmation') {
-      const prior = await confirmableDecision(tx, input.confirmDecisionId, { callId, contactId, channel: 'voice' }, actor.userId, now);
-      if (!prior) throw new AppError('CONFIRMATION_INVALID');
-      if (confirmationCovers(evaluated.decision, prior)) confirm = { confirmedByUserId: actor.userId, confirmsDecisionId: prior.id };
+    const verdict = verdictOf(evaluated.decision);
+    if (verdict.outcome === 'deny') {
+      const blocked = await insertBlockedDecision(tx, { ids: deps.ids, intent, evaluated, verdict, actorUserId: actor.userId, callId, now });
+      return { kind: 'gate', decision: decisionView(blocked, 'send') };
     }
-    const send = await insertDecision(tx, { ids: deps.ids, intent, evaluated, phase: 'send', actorUserId: actor.userId, callId, now });
-    let decision = send;
-    let phase: DecisionView['phase'] = 'send';
-    if (confirm) {
-      decision = await insertDecision(tx, { ids: deps.ids, intent, evaluated, phase: 'confirm', actorUserId: actor.userId, callId, now, confirm });
-      phase = 'confirm';
-    }
-    if (decision.outcome !== 'allow' || !n) return { kind: 'gate', decision: decisionView(send, 'send') };
+    if (!n) return { kind: 'gate', decision: decisionView({ id: null, ...verdict }, 'send') };
 
     const { policy, packs } = await resolvedPolicy(tx);
     const juris = await sql<{ jurisdiction: string | null }>`
@@ -93,15 +86,15 @@ export async function startCall(actor: UserActor, contactId: string, input: { to
     });
     await sql`
       INSERT INTO calls (tenant_id, id, conversation_id, contact_id, direction, phone_number_id, agent_user_id, client_address, initiator, status,
-        started_at, recording_mode, recording_decision, gate_decision_id)
+        started_at, recording_mode, recording_decision)
       VALUES (app.tenant_id(), ${callId}, ${conversationId}, ${contactId}, 'outbound', ${n.id}, ${actor.userId}, ${point.address}, 'human', 'initiated',
-        ${toIso(now)}::timestamptz, ${rec.mode}, ${JSON.stringify(rec)}::jsonb, ${decision.id})`.execute(tx);
+        ${toIso(now)}::timestamptz, ${rec.mode}, ${JSON.stringify(rec)}::jsonb)`.execute(tx);
     if (facts.own === true || facts.collaborator === true) {
       await applyOwnershipCommandInTx(tx, actor, contactId as ContactId, { kind: 'touch', via: 'call', refId: callId, at: now }, { commandId: derivedCommandId('comms.touch', callId), ids: deps.ids });
       await setOwnershipCommand(tx, null);
     }
     await msgs.touchConversationOutbound(tx, conversationId, n.id, now);
-    return { kind: 'created', callId, decision: decisionView(decision, phase) };
+    return { kind: 'created', callId, decision: decisionView({ id: null, ...verdict }, 'send') };
   });
   if (out.kind === 'gate') return out;
   const r = await dialOutbound(out.callId, deps, actor.tenantId);
@@ -118,17 +111,18 @@ export function bridgeToken(deps: Pick<CommsDeps, 'linkSecret'>, callId: string)
 export async function dialOutbound(callId: string, deps: CommsDeps, tenantId: string): Promise<DialResult> {
   type Plan = { kind: 'dial'; from: string; agentPhone: string; to: string; record: boolean; announce: boolean } | { kind: 'done'; r: DialResult };
   const plan: Plan = await asSystem(deps, tenantId, 'worker', async (tx, now) => {
-    const r = await sql<{ status: string; provider_call_ref: string | null; client_address: string; e164: string; alert_phone_e164: string | null; recording_decision: { mode: string; announce: boolean }; evaluated_at: Date; outcome: string }>`
-      SELECT c.status, c.provider_call_ref, c.client_address, n.e164, m.alert_phone_e164, c.recording_decision, gd.evaluated_at, gd.outcome
+    const r = await sql<{ status: string; provider_call_ref: string | null; client_address: string; e164: string; alert_phone_e164: string | null; recording_decision: { mode: string; announce: boolean }; started_at: Date }>`
+      SELECT c.status, c.provider_call_ref, c.client_address, n.e164, m.alert_phone_e164, c.recording_decision, c.started_at
         FROM calls c JOIN phone_numbers n ON n.tenant_id = c.tenant_id AND n.id = c.phone_number_id
         JOIN memberships m ON m.tenant_id = c.tenant_id AND m.user_id = c.agent_user_id
-        JOIN gate_decisions gd ON gd.tenant_id = c.tenant_id AND gd.id = c.gate_decision_id
        WHERE c.tenant_id = app.tenant_id() AND c.id = ${callId} AND c.direction = 'outbound' FOR UPDATE OF c`.execute(tx);
     const c = r.rows[0];
     if (!c || c.status !== 'initiated' || c.provider_call_ref !== null) return { kind: 'done', r: { kind: 'noop', callId } };
-    if (c.outcome !== 'allow' || now - c.evaluated_at.getTime() > 10 * MINUTE_MS || !c.alert_phone_e164) {
+    // A call row is written only after the dial-time gate allowed it, in the same transaction, and is dialed
+    // right after: one left 'initiated' for more than 10 minutes (a crash in between) is never dialed late.
+    if (now - c.started_at.getTime() > 10 * MINUTE_MS || !c.alert_phone_e164) {
       await sql`UPDATE calls SET status = 'failed', ended_at = clock_timestamp() WHERE tenant_id = app.tenant_id() AND id = ${callId}`.execute(tx);
-      return { kind: 'done', r: { kind: 'failed', callId, reason: 'GATE_DECISION_STALE' } };
+      return { kind: 'done', r: { kind: 'failed', callId, reason: c.alert_phone_e164 ? 'CALL_REQUEST_EXPIRED' : 'AGENT_PHONE_MISSING' } };
     }
     return { kind: 'dial', from: c.e164, agentPhone: c.alert_phone_e164, to: c.client_address, record: c.recording_decision.mode !== 'off', announce: c.recording_decision.announce === true };
   });
@@ -155,7 +149,7 @@ export async function dialOutbound(callId: string, deps: CommsDeps, tenantId: st
   return asSystem(deps, tenantId, 'provider', async (tx) => {
     if (ref) {
       await sql`UPDATE calls SET provider_call_ref = ${ref}, status = 'ringing' WHERE tenant_id = app.tenant_id() AND id = ${callId} AND status = 'initiated'`.execute(tx);
-      return { kind: 'dialing', callId, bridgeToken: bridgeToken(deps, callId), decision: { id: null, outcome: 'allow', reasons: [], explanation: '', deferUntil: null, canConfirm: false, phase: 'send' } } satisfies DialResult;
+      return { kind: 'dialing', callId, bridgeToken: bridgeToken(deps, callId), decision: { id: null, outcome: 'allow', reasons: [], explanation: 'OK to send', phase: 'send' } } satisfies DialResult;
     }
     await sql`UPDATE calls SET status = 'failed', ended_at = clock_timestamp() WHERE tenant_id = app.tenant_id() AND id = ${callId} AND status = 'initiated'`.execute(tx);
     return { kind: 'failed', callId, reason } satisfies DialResult;

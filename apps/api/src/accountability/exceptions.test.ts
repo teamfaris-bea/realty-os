@@ -298,7 +298,7 @@ describe('imports, the assistant and concurrency', () => {
         text: `INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, from_address, to_address, body, status,
                                      initiator, initiated_by_user_id, purpose, assistant_action_id, gate_decision_id, dispatched_at, occurred_at)
                VALUES ($1, gen_random_uuid(), $2, $3, 'sms', 'outbound', $4, '+14155550100', '+14155550101', 'Thanks for reaching out', 'delivered',
-                       'assistant', $5, 'informational', gen_random_uuid(), gen_random_uuid(), now(), now())`,
+                       'assistant', $5, 'informational', gen_random_uuid(), NULL, now(), now())`,
         values: [w.tenantId, conv, lead.contactId, w.mainNumberId, lead.owner.userId],
       },
     ]);

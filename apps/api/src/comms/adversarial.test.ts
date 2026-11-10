@@ -76,27 +76,16 @@ describe('idempotency of a human send (CONVENTIONS §9: one tap = one command)',
   });
 });
 
-describe('quiet hours use every candidate zone (R-CONSENT-13)', () => {
-  it('R-CONSENT-13: an area-code zone is a candidate: the window is the intersection with the tenant zone, so a text that is night for the recipient is denied', async () => {
-    const day = zoneWithLocalHour(11, 17);
-    const night = zoneWithLocalHour(1, 6);
-    expect(day && night).toBeTruthy();
-    const before = (await h.su.query<{ tz: string }>('SELECT default_timezone AS tz FROM tenant_settings WHERE tenant_id = $1', [w.tenantId])).rows[0]!.tz;
-    await h.su.query('UPDATE tenant_settings SET default_timezone = $2 WHERE tenant_id = $1', [w.tenantId, day]);
-    try {
-      const agent = w.agents[1]!;
-      const c = await ownedTextContact(agent);
-      await h.su.query("UPDATE contacts SET timezone = $2, timezone_source = 'area_code' WHERE id = $1", [c.id, night]);
-      const r = await sendText(agent, c.id, 'Quick question about Saturday');
-      expect(r.body.decision!.reasons).toContain('OUTSIDE_CONTACT_WINDOW');
-      expect(r.body.decision!.reasons).toContain('RECIPIENT_TZ_UNCERTAIN');
-      expect(r.body.result).not.toBe('sent');
-      expect(smsTo(c.phone)).toHaveLength(0);
-      const d = (await decisionsFor(h, { messageId: r.body.message!.id }))[0]!;
-      expect(JSON.stringify(d.inputs)).toContain(night!);
-    } finally {
-      await h.su.query('UPDATE tenant_settings SET default_timezone = $2 WHERE tenant_id = $1', [w.tenantId, before]);
-    }
+describe('owner decision: a weak or night-time timezone never blocks a human text', () => {
+  it('a text that is night for the recipient (area-code zone) is sent; the only thing that blocks it is an opt-out', async () => {
+    const night = zoneWithLocalHour(1, 6) ?? 'Pacific/Kiritimati';
+    const agent = w.agents[1]!;
+    const c = await ownedTextContact(agent, { consent: false });
+    await h.su.query("UPDATE contacts SET timezone = $2, timezone_source = 'area_code' WHERE id = $1", [c.id, night]);
+    const r = await sendText(agent, c.id, 'Quick question about Saturday');
+    expect(r.body.result).toBe('sent');
+    expect(r.body.decision!.reasons).toEqual([]);
+    expect(smsTo(c.phone)).toHaveLength(1);
   });
 });
 
@@ -194,32 +183,20 @@ describe('a provider-reported opt-out is an audited opt-out received (R-AUDIT-5,
   });
 });
 
-describe('a confirmation covers only what the human was shown (ARCHITECTURE §9)', () => {
-  it('R-CONSENT-13: a needs_confirmation decision for a TEXT cannot confirm a CALL; the call\'s own decision can', async () => {
-    const night = zoneWithLocalHour(1, 6);
-    expect(night).toBeTruthy();
-    const before = (await h.su.query<{ tz: string }>('SELECT default_timezone AS tz FROM tenant_settings WHERE tenant_id = $1', [w.tenantId])).rows[0]!.tz;
-    await h.su.query('UPDATE tenant_settings SET default_timezone = $2 WHERE tenant_id = $1', [w.tenantId, night]);
-    try {
-      const agent = w.agents[0]!;
-      const c = await ownedTextContact(agent);
-      await grantConsent(agent, c.id, 'voice');
-      expect((await inboundSms(h, c.phone, w.mainNumber, 'Can you call me when you get a sec?')).statusCode).toBe(200);
-      const preview = await call<{ decision: { id: string; outcome: string; reasons: string[] } }>(agent, 'POST', `/contacts/${c.id}/messages/preview`, { channel: 'sms', body: 'Sure, calling now' });
-      expect(preview.body.decision.outcome).toBe('needs_confirmation');
-      expect(preview.body.decision.reasons).toContain('OUTSIDE_WINDOW_REPLY');
-      const callsBefore = h.providers.telephony.calls.length;
-      const crossed = await call(agent, 'POST', `/contacts/${c.id}/calls`, { confirmDecisionId: preview.body.decision.id });
-      expect(crossed.code).toBe('CONFIRMATION_INVALID');
-      expect(h.providers.telephony.calls.length).toBe(callsBefore);
-      const gate = await call<{ result: string; decision: { id: string; outcome: string } }>(agent, 'POST', `/contacts/${c.id}/calls`, {});
-      expect(gate.body.result).toBe('gate');
-      expect(gate.body.decision.outcome).toBe('needs_confirmation');
-      const ok = await call<{ result: string }>(agent, 'POST', `/contacts/${c.id}/calls`, { confirmDecisionId: gate.body.decision.id });
-      expect(ok.body.result, JSON.stringify(ok.body)).toBe('dialing');
-    } finally {
-      await h.su.query('UPDATE tenant_settings SET default_timezone = $2 WHERE tenant_id = $1', [w.tenantId, before]);
-    }
+describe('nothing can be confirmed past the gate (owner decision: needs_confirmation is gone)', () => {
+  it('a preview says plainly why a text will not go, is not stored, and the call route takes no confirmDecisionId', async () => {
+    const agent = w.agents[0]!;
+    const c = await ownedTextContact(agent);
+    expect((await inboundSms(h, c.phone, w.mainNumber, 'STOP')).statusCode).toBe(200);
+    const before = (await decisionsFor(h, { contactId: c.id })).length;
+    const preview = await call<{ decision: { id: string | null; outcome: string; reasons: string[]; explanation: string; phase: string } }>(agent, 'POST', `/contacts/${c.id}/messages/preview`, { channel: 'sms', body: 'Sure, calling now' });
+    expect(preview.body.decision).toMatchObject({ id: null, outcome: 'deny', phase: 'preview' });
+    expect(preview.body.decision.reasons).toContain('CONSENT_REVOKED');
+    expect(preview.body.decision.explanation).toMatch(/Opted out of texts/);
+    expect((await decisionsFor(h, { contactId: c.id })).length).toBe(before); // previews are never stored
+    const crossed = await call(agent, 'POST', `/contacts/${c.id}/calls`, { confirmDecisionId: randomUUID() });
+    expect(crossed.status).toBe(422);
+    expect((await call(agent, 'POST', `/contacts/${c.id}/messages/preview`, { channel: 'email', body: 'Following up' })).body).toMatchObject({ decision: { outcome: 'allow', id: null } });
   });
 });
 
@@ -247,18 +224,23 @@ describe('resuming automation is a sender\'s decision (R-AST-9, R-PERM-1)', () =
   });
 });
 
-describe('a human message is classified at SEND time (R-CONSENT-5, R-GATE-3)', () => {
-  it('R-CONSENT-5 R-CONSENT-15: a scheduled text that was informational when written (reply within 30 days) but is marketing by send time is gated as marketing: a DNC-listed number is denied', async () => {
+describe('a human message is classified at SEND time', () => {
+  it('a scheduled text that was informational when written but is marketing by send time is gated as marketing: a marketing-only opt-out blocks it (and no DNC scrub is read any more)', async () => {
     const agent = w.agents[1]!;
     const c = await ownedTextContact(agent);
     expect((await inboundSms(h, c.phone, w.mainNumber, 'Thanks for the info')).statusCode).toBe(200);
     await h.su.query("UPDATE conversations SET last_inbound_at = now() - interval '29 days' WHERE contact_id = $1", [c.id]);
     await h.su.query("UPDATE contacts SET last_inbound_at = now() - interval '29 days' WHERE id = $1", [c.id]);
     const hmac = (await h.su.query<{ x: Buffer }>("SELECT address_hmac AS x FROM contact_points WHERE contact_id = $1 AND kind = 'phone'", [c.id])).rows[0]!.x;
+    // a DNC registry listing no longer matters (owner decision); the marketing-only opt-out does
     await h.su.query("INSERT INTO dnc_checks (tenant_id, id, phone_hmac, registry, listed, checked_at, valid_until, provider) VALUES ($1,$2,$3,'us_national',true,now(),now() + interval '31 days','fake')", [w.tenantId, randomUUID(), hmac]);
     const r = await sendText(agent, c.id, 'Want to see the new listing on Elm?', { scheduleAt: new Date(Date.now() + 3600_000).toISOString() });
     expect(r.body.result).toBe('scheduled');
     expect((await h.su.query('SELECT purpose FROM messages WHERE id = $1', [r.body.message!.id])).rows[0]!.purpose).toBe('informational');
+    // the person asked for no marketing texts (fixture: the projection row only, so the scheduled text is
+    // not canceled by the revoke path and the SEND-time check is what is exercised)
+    await (await import('../leads/testing.js')).suFixture(h, [{ text: "UPDATE consent_state SET status = 'revoked', consent_level = 'none', basis_event_id = NULL WHERE tenant_id = $1 AND address_hmac = $2 AND channel = 'sms' AND purpose = 'marketing'", values: [w.tenantId, hmac] }]);
+    expect((await messageRow(h, r.body.message!.id)).status).toBe('scheduled');
     // two days later the last reply is 31 days old: a free-form text is marketing now
     await h.su.query("UPDATE conversations SET last_inbound_at = now() - interval '31 days' WHERE contact_id = $1", [c.id]);
     await h.su.query("UPDATE contacts SET last_inbound_at = now() - interval '31 days' WHERE id = $1", [c.id]);
@@ -266,32 +248,26 @@ describe('a human message is classified at SEND time (R-CONSENT-5, R-GATE-3)', (
     await runJobs(h, w.tenantId, ['comms.dispatch']);
     const ds = await decisionsFor(h, { messageId: r.body.message!.id });
     expect(ds.at(-1)!.outcome).toBe('deny');
-    expect(ds.at(-1)!.reason_codes).toContain('DNC_LISTED');
+    expect(ds.at(-1)!.reason_codes).toContain('CONSENT_REVOKED');
+    expect(ds.at(-1)!.reason_codes).not.toContain('DNC_LISTED');
     expect((await h.su.query('SELECT purpose FROM gate_decisions WHERE id = $1', [ds.at(-1)!.id])).rows[0]!.purpose).toBe('marketing');
     expect((await messageRow(h, r.body.message!.id)).status).toBe('blocked');
     expect(smsTo(c.phone)).toHaveLength(0);
   });
 });
 
-describe('an approved draft that needs confirmation can be confirmed by its approver (ARCHITECTURE §9 path 4)', () => {
-  it('R-CONSENT-5: an approved draft to an address with no basis needs confirmation; the approver confirms it through Send (a second, confirm decision) and only then it goes out; nobody else can', async () => {
+describe('an approved draft goes out with the approver as the sender, with no confirmation step (ARCHITECTURE §9 path 4)', () => {
+  it('an approved draft to an address with no consent on file is sent at once; nobody can "confirm" it through Send', async () => {
     const agent = w.agents[0]!;
     const c = await ownedTextContact(agent, { consent: false });
     const draft = await approvedDraft(h, w.tenantId, c.id, agent, 'novel_message');
     const q = await withTenantTx(systemActor(w.tenantId, 'assistant'), (tx, now) => queueOutboundInTx(tx, w.deps, { contactId: c.id, channel: 'sms', body: 'Your inspection is booked for Tuesday at 10.', initiator: 'assistant', purpose: 'informational', category: 'novel_message', assistantActionId: draft, idempotencyKey: `d:${randomUUID()}` }, now), { db: h.database });
     if (!q.ok) throw new Error(q.code);
+    expect((await call(agent, 'POST', `/messages/${q.messageId}/send`, { confirmDecisionId: randomUUID() })).status).toBe(422);
+    expect((await call(agent, 'POST', `/messages/${q.messageId}/send`, {})).status).toBe(404); // not the agent's own human message
     const first = await dispatchOutbound(q.messageId, w.deps, { tenantId: w.tenantId });
-    expect(first.kind).toBe('needs_confirmation');
-    const decisionId = (first as { decision: { id: string } }).decision.id;
-    expect(smsTo(c.phone)).toHaveLength(0);
-    // the notice links to the message; another agent cannot confirm it
-    expect((await call(w.agents[1]!, 'POST', `/messages/${q.messageId}/send`, { confirmDecisionId: decisionId })).status).toBe(404);
-    const ok = await call<{ result: string; decision: { phase: string } }>(agent, 'POST', `/messages/${q.messageId}/send`, { confirmDecisionId: decisionId });
-    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
-    expect(ok.body.result).toBe('sent');
-    expect(ok.body.decision.phase).toBe('confirm');
+    expect(first.kind).toBe('sent');
     expect(smsTo(c.phone)).toHaveLength(1);
-    const ds = await decisionsFor(h, { messageId: q.messageId });
-    expect(ds.map((d) => `${d.phase}:${d.outcome}`)).toEqual(['send:needs_confirmation', 'send:needs_confirmation', 'confirm:allow']);
+    expect(await decisionsFor(h, { messageId: q.messageId })).toHaveLength(0);
   });
 });

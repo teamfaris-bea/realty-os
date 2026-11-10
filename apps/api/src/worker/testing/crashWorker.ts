@@ -24,7 +24,7 @@ import type { JobHandler, StandaloneJobHandler, TxJobHandler } from '../types.js
 
 export type CrashAt = 'none' | 'mid_tx' | 'after_tx1' | 'after_send';
 
-export const TestDispatchPayload = jobPayload({ messageId: zId, gateDecisionId: zId });
+export const TestDispatchPayload = jobPayload({ messageId: zId });
 export type TestDispatchPayload = z.infer<typeof TestDispatchPayload>;
 
 export function testDispatchHandler(o: { providerLog: string; crash?: (at: CrashAt) => Promise<void> }): StandaloneJobHandler<TestDispatchPayload> {
@@ -38,7 +38,7 @@ export function testDispatchHandler(o: { providerLog: string; crash?: (at: Crash
       // TX1: only a scheduled/queued message can be claimed, so a re-run never re-sends
       const claimed = await ctx.withTx(async (tx) => {
         const r = await sql`
-          UPDATE messages SET status = 'dispatching', dispatched_at = clock_timestamp(), gate_decision_id = ${p.gateDecisionId}
+          UPDATE messages SET status = 'dispatching', dispatched_at = clock_timestamp()
            WHERE tenant_id = app.tenant_id() AND id = ${p.messageId} AND status IN ('scheduled', 'queued')`.execute(tx);
         return Number(r.numAffectedRows ?? 0n) === 1;
       });

@@ -1,5 +1,5 @@
 // Playbooks: step schema, validation, content hash, and the pure step logic the worker runs
-// (R-AST-4, R-AST-8, R-AST-16, R-CONSENT-5 purpose validation, R-CONSENT-14 deferrals).
+// (R-AST-4, R-AST-8, R-AST-16, R-CONSENT-5 purpose validation).
 //
 // "Approve rules, not every message": an Owner/Admin (team) or the agent (agent playbooks) approves
 // a hash-frozen version once; its steps then run on their own, each one re-authorized and gated at
@@ -10,14 +10,9 @@ import { z } from 'zod';
 import {
   type ActionCategory,
   AUTONOMOUS_ELIGIBLE,
-  type ConsentStateRow,
   type GateDecision,
-  type ResolvedPolicy,
-  afterDeferral,
-  atLeast,
   canonicalJson,
   detectPaymentInstructions,
-  effectiveLevel,
   sha256Hex,
 } from '../compliance/index.js';
 import { DAY_MS, type Instant, instant } from '../foundation/index.js';
@@ -295,30 +290,18 @@ export function planNextStep(i: {
 
 export type StepRunUpdate =
   | { status: 'sent' }
-  | { status: 'deferred'; scheduledFor: Instant; deferrals: number }
-  | { status: 'skipped_ineligible'; reason: 'TOO_MANY_DEFERRALS' | 'GATE_DENIED'; deferrals: number }
+  | { status: 'skipped_ineligible'; reason: 'GATE_DENIED' }
   | { status: 'canceled_paused' };
 
 /**
- * playbook_step_runs status after the send-time gate decision (R-CONSENT-14: caps defer and never
- * drop; after `maxDeferrals` cap deferrals the step is `skipped_ineligible`, visibly). Only
- * frequency-cap deferrals count; a quiet-hours deferral is a normal wait for the window.
+ * playbook_step_runs status after the send-time gate decision. Nothing is deferred any more
+ * (core-compliance/2.0.0): an allowed step is sent; a step blocked because the client replied is
+ * `canceled_paused` (the handback takes over); any other block is `skipped_ineligible`, visibly.
  */
-export function stepRunAfterGate(d: Pick<GateDecision, 'outcome' | 'reasons' | 'deferUntil'>, priorDeferrals: number, policy: Pick<ResolvedPolicy, 'caps'>): StepRunUpdate {
-  switch (d.outcome) {
-    case 'allow':
-      return { status: 'sent' };
-    case 'defer': {
-      const capDeferral = d.reasons.includes('FREQUENCY_CAP');
-      if (capDeferral && afterDeferral(priorDeferrals, policy) === 'skipped_ineligible') {
-        return { status: 'skipped_ineligible', reason: 'TOO_MANY_DEFERRALS', deferrals: priorDeferrals };
-      }
-      return { status: 'deferred', scheduledFor: d.deferUntil as Instant, deferrals: priorDeferrals + (capDeferral ? 1 : 0) };
-    }
-    default:
-      if (d.reasons.includes('AUTOMATION_PAUSED')) return { status: 'canceled_paused' };
-      return { status: 'skipped_ineligible', reason: 'GATE_DENIED', deferrals: priorDeferrals };
-  }
+export function stepRunAfterGate(d: Pick<GateDecision, 'outcome' | 'reasons'>): StepRunUpdate {
+  if (d.outcome === 'allow') return { status: 'sent' };
+  if (d.reasons.includes('AUTOMATION_PAUSED')) return { status: 'canceled_paused' };
+  return { status: 'skipped_ineligible', reason: 'GATE_DENIED' };
 }
 
 // ---- versions and enrollments -------------------------------------------------------------------
@@ -385,12 +368,12 @@ export type FirstResponsePlan =
   | { send: false; reason: 'PLAYBOOK_NOT_APPROVED' | 'CATEGORY_DISABLED' | 'ALREADY_SENT' | 'NO_ALLOWED_CHANNEL'; explanation: string };
 
 /**
- * R-AST-16: ONE message from the approved team `new_lead_response` playbook. SMS needs an
- * `express` basis or better (never an imported one; `express_written` when the step is declared
- * marketing, R-CONSENT-5); otherwise email only, if there is a usable
- * address and the step has an email form. Deduped per contact per 24 h. When nothing can be sent,
- * the feed card says why. Quiet hours are the send-time gate's job (the SMS defers).
- * VERIFY WITH COUNSEL: the SMS consent basis for the first response.
+ * R-AST-16: ONE message from the approved team `new_lead_response` playbook. SMS when the step is an
+ * SMS step and the lead's phone can take texts and has not opted out (STOP / do-not-contact) and is
+ * not suppressed; otherwise email, if there is a usable, not opted-out address and the step has an
+ * email form. No consent level is read (owner decision, core-compliance/2.0.0). Deduped per contact
+ * per 24 h. When nothing can be sent, the feed card says why. The send-time gate re-checks
+ * everything (opt-out included) when the message goes.
  */
 export function planFirstResponse(i: {
   now: Instant;
@@ -398,7 +381,7 @@ export function planFirstResponse(i: {
   latestApproval: { decision: 'approve' | 'revoke'; contentSha256: string } | null;
   step: PlaybookStep | null;
   tenantAutonomous: ReadonlySet<ActionCategory>;
-  sms: { reachable: boolean; consent: ConsentStateRow | undefined };
+  sms: { reachable: boolean; revokedOrSuppressed: boolean };
   email: { reachable: boolean; revokedOrSuppressed: boolean };
   lastFirstResponseAt: Instant | null;
 }): FirstResponsePlan {
@@ -412,16 +395,11 @@ export function planFirstResponse(i: {
   if (i.lastFirstResponseAt !== null && i.now - i.lastFirstResponseAt < FIRST_RESPONSE_DEDUPE_MS) {
     return { send: false, reason: 'ALREADY_SENT', explanation: 'The assistant already sent this lead an instant reply in the last 24 hours.' };
   }
-  // R-CONSENT-5 assistant floor for the step's declared purpose: informational SMS needs `express`,
-  // marketing SMS `express_written` (the gate applies the same floor at send time). Only a consent
-  // row for that purpose counts.
-  const smsFloor = i.step.purpose === 'marketing' ? 'express_written' : 'express';
-  const smsConsent = i.sms.consent !== undefined && i.sms.consent.channel === 'sms' && i.sms.consent.purpose === i.step.purpose ? i.sms.consent : undefined;
-  const smsOk = i.step.channel === 'sms' && i.sms.reachable && atLeast(effectiveLevel(smsConsent, i.now), smsFloor);
-  if (smsOk) return { send: true, channel: 'sms', explanation: 'The assistant sent the instant reply by text (the lead agreed to texts).' };
+  const smsOk = i.step.channel === 'sms' && i.sms.reachable && !i.sms.revokedOrSuppressed;
+  if (smsOk) return { send: true, channel: 'sms', explanation: 'The assistant sent the instant reply by text.' };
   const emailForm = i.step.channel === 'email' || i.step.fallback !== undefined;
   if (emailForm && i.email.reachable && !i.email.revokedOrSuppressed) {
-    return { send: true, channel: 'email', explanation: 'The assistant sent the instant reply by email (no texting consent on file).' };
+    return { send: true, channel: 'email', explanation: i.step.channel === 'sms' ? 'The assistant sent the instant reply by email (this number cannot get texts or opted out).' : 'The assistant sent the instant reply by email.' };
   }
-  return { send: false, reason: 'NO_ALLOWED_CHANNEL', explanation: 'No instant reply was sent: there is no texting consent and no usable email address. Reach out yourself.' };
+  return { send: false, reason: 'NO_ALLOWED_CHANNEL', explanation: 'No instant reply was sent: there is no number or email address that can get it (opted out, a landline or missing). Reach out yourself.' };
 }

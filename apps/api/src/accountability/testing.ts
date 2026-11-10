@@ -73,7 +73,10 @@ export async function humanTouch(h: ApiHarness, agent: TestClient, contactId: st
   if (!r.outcome.ok) throw new Error(`touch rejected: ${r.outcome.code}`);
 }
 
-/** Pins a contact's zone to one where it is daytime now, so a human text is not deferred by quiet hours. */
+/**
+ * Pins a contact's zone to one where it is daytime now. Quiet hours are gone (core-compliance/2.0.0), so a
+ * send no longer depends on it; kept so these fixtures keep a deterministic, realistic zone.
+ */
 export async function daytimeContact(h: ApiHarness, contactId: string): Promise<void> {
   const zone = zoneWithLocalHour(11, 15);
   await h.su.query(`UPDATE contacts SET timezone = $2, timezone_source = 'explicit' WHERE id = $1`, [contactId, zone]);
@@ -144,6 +147,7 @@ export interface ItemT {
   conditionClearedAt: string | null;
   live: boolean;
   evidence: { sourceType: string; sourceId: string; explanation: string; snippet: string | null; needsReview: boolean; locator: Record<string, unknown> | null; link: { kind: string; id: string; contactId: string | null; offsetMs: number | null } | null }[];
+  contactOwnershipSeq: number | null;
   latestEvent: { action: string; note: string | null; actor: { userId: string } } | null;
   actions: { resolve: boolean; reassign: boolean; verify: boolean; reopen: boolean };
 }

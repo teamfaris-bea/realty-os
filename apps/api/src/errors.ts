@@ -83,7 +83,6 @@ export const ERROR_STATUS = {
   SUBJECT_REQUIRED: 422, // an email needs a subject
   SCHEDULE_IN_PAST: 422, // scheduleAt must be in the future
   MESSAGE_NOT_SENDABLE: 409, // the message is no longer scheduled/queued (sent, blocked, canceled …)
-  CONFIRMATION_INVALID: 409, // confirmDecisionId does not name this message's own fresh needs_confirmation decision
   CALL_NOT_ACTIVE: 409, // outcome / status for a call that is not this agent's
   CONSENT_ENTRY_INVALID: 422, // the staff consent entry violates R-CONSENT-4 (details.issues)
   NOT_AN_OPT_OUT_LANGUAGE_REVOKE: 409, // R-CONSENT-8: only opt-out-language revokes can be reviewed away

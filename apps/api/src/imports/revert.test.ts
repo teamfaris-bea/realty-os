@@ -104,15 +104,18 @@ describe('R-IMPORT-10: revert', () => {
     expect(await q("SELECT 1 FROM suppressions WHERE tenant_id = $1 AND reason = 'import_dnc' AND lifted_at IS NULL", [w.tenantId])).toHaveLength(1);
     const consentReport = stageOf(nb, 'consent').revert as { keptReasons: Record<string, number>; compensated: number };
     expect(consentReport.compensated).toBe(grants.length);
-    expect(consentReport.keptReasons.REVOCATION_KEPT).toBeGreaterThan(0);
-    expect(consentReport.keptReasons.DNC_KEPT).toBe(1);
+    // outbound-2: the opt-outs were applied (and are kept) by the contacts stage
+    const contactsKept = (stageOf(nb, 'contacts').revert as { keptReasons: Record<string, number> }).keptReasons;
+    expect(contactsKept.REVOCATION_KEPT).toBeGreaterThan(0);
+    expect(contactsKept.DNC_KEPT).toBe(1);
 
     // the report says what happened, plainly
     const rep = await call<{ categories: { category: string; phase: string; lines: string[] }[] }>(w.admin, 'GET', `/imports/${b.id}/report`);
     const c = rep.body.categories.find((x) => x.category === 'contacts')!;
     expect(c.phase).toBe('reverted');
     expect(c.lines[0]).toMatch(/^Reverted\. .* 1 record was changed since the import and left for your decision\.$/);
-    expect(rep.body.categories.find((x) => x.category === 'consent')!.lines.join(' ')).toMatch(/opt-outs and do-not-contact flags stay in place/);
+    expect(c.lines.join(' ')).toMatch(/opt-outs and do-not-contact flags stay in place/);
+    expect(rep.body.categories.find((x) => x.category === 'consent')!.lines.join(' ')).toMatch(/imported permissions were withdrawn/);
   });
 
   it('R-IMPORT-10: stages are reverted in reverse order; ownership history stays in the ledger', async () => {
@@ -127,12 +130,52 @@ describe('R-IMPORT-10: revert', () => {
     expect(stageOf(nb, 'contacts').status).toBe('verified');
     expect(nb.status).toBe('partially_committed');
     const jane = await contactByName(w.tenantId, 'Jane Doe');
-    expect(await q("SELECT 1 FROM lead_ownership_events WHERE contact_id = $1 AND type = 'imported'", [jane.id])).toHaveLength(2);
-    expect((stageOf(nb, 'ownership').revert as { keptReasons: Record<string, number> }).keptReasons.LEDGER_APPEND_ONLY).toBeGreaterThan(0);
+    // the ledger keeps the import's assignment as history and adds the compensating event
+    expect(await q<{ seq: string; to_state: string; reason_code: string }>("SELECT seq, to_state, reason_code FROM lead_ownership_events WHERE contact_id = $1 AND type = 'imported' ORDER BY seq", [jane.id])).toEqual([
+      { seq: '1', to_state: 'unassigned', reason_code: 'IMPORTED' },
+      { seq: '2', to_state: 'owned', reason_code: 'IMPORTED' },
+      { seq: '3', to_state: 'unassigned', reason_code: 'IMPORT_REVERTED' },
+    ]);
     expect((await call(w.admin, 'POST', `/imports/${b.id}/revert`, { category: 'contacts' })).status).toBe(202);
     await ih.drain();
     nb = await batchOf(w.admin, b.id);
     expect(nb.status).toBe('reverted');
+    expect((await contactByName(w.tenantId, 'Jane Doe')).deleted_at).not.toBeNull();
+  });
+
+  it('R-IMPORT-10 ownership-1: reverting only the ownership stage undoes untouched assignments; a lead worked on since keeps its owner', async () => {
+    const { w, b } = await fubWorld('key-rev-own01', 4600);
+    await fullStage(ih, w.admin, b.id, 'ownership');
+    const jane = await contactByName(w.tenantId, 'Jane Doe');
+    const bob = await contactByName(w.tenantId, 'Bob Unsub');
+    const carla = await contactByName(w.tenantId, 'Carla Dnc');
+    expect([jane.ownership_state, jane.owner_user_id, bob.ownership_state, carla.ownership_state]).toEqual(['owned', w.agents[0]!.userId, 'owned', 'in_pond']);
+    // Bob's owner works the lead after the import: that assignment is a human's to undo
+    const seq = (await q<{ ownership_seq: string }>('SELECT ownership_seq FROM contacts WHERE id = $1', [bob.id]))[0]!.ownership_seq;
+    expect((await call(w.owner, 'POST', `/leads/${bob.id}/reassign`, { commandId: randomUUID(), toUserId: w.agents[0]!.userId, expectedSeq: Number(seq) })).status).toBe(200);
+
+    expect((await call(w.admin, 'POST', `/imports/${b.id}/revert`, { category: 'ownership' })).status).toBe(202);
+    await ih.drain();
+    const nb = await batchOf(w.admin, b.id);
+    expect(stageOf(nb, 'ownership').status).toBe('reverted');
+    const after = async (id: string) => (await q<{ ownership_state: string; owner_user_id: string | null; pond_id: string | null; route_due_at: Date | null }>('SELECT ownership_state, owner_user_id, pond_id, route_due_at FROM contacts WHERE id = $1', [id]))[0]!;
+    expect(await after(jane.id)).toEqual({ ownership_state: 'unassigned', owner_user_id: null, pond_id: null, route_due_at: null });
+    expect(await after(carla.id)).toEqual({ ownership_state: 'unassigned', owner_user_id: null, pond_id: null, route_due_at: null });
+    expect(await after(bob.id)).toMatchObject({ ownership_state: 'owned', owner_user_id: w.agents[0]!.userId });
+    // the compensation is an import event: no offer, no SLA, no notice, and it is not a "touch"
+    const last = (await q<{ type: string; actor_kind: string; reason_code: string; deadline_at: Date | null }>('SELECT type, actor_kind, reason_code, deadline_at FROM lead_ownership_events WHERE contact_id = $1 ORDER BY seq DESC LIMIT 1', [jane.id]))[0];
+    expect(last).toEqual({ type: 'imported', actor_kind: 'import', reason_code: 'IMPORT_REVERTED', deadline_at: null });
+    expect(await q("SELECT 1 FROM lead_ownership_events WHERE contact_id = $1 AND type = 'offered'", [jane.id])).toHaveLength(0);
+    const rep = stageOf(nb, 'ownership').revert as { compensated: number; needsDecision: number; manual: { sourceRef: string; reason: string }[] };
+    expect(rep.needsDecision).toBe(1);
+    expect(rep.manual).toEqual([expect.objectContaining({ sourceRef: 'fub:people/4602', reason: 'TOUCHED' })]);
+    expect(rep.compensated).toBeGreaterThanOrEqual(2);
+    const lines = (await call<{ categories: { category: string; lines: string[] }[] }>(w.admin, 'GET', `/imports/${b.id}/report`)).body.categories.find((x) => x.category === 'ownership')!.lines.join(' ');
+    expect(lines).toMatch(/assignments were undone; those leads are unassigned again\./);
+    expect(lines).toMatch(/keep their current owner/);
+    // the contacts stage can still be reverted afterwards: the compensated contacts are untouched
+    expect((await call(w.admin, 'POST', `/imports/${b.id}/revert`, { category: 'contacts' })).status).toBe(202);
+    await ih.drain();
     expect((await contactByName(w.tenantId, 'Jane Doe')).deleted_at).not.toBeNull();
   });
 

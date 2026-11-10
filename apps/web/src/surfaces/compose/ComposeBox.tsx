@@ -3,13 +3,15 @@
 // - With an assistant draft (`draftActionId`) the box opens prefilled with it, says plainly that the
 //   assistant wrote it and why, and flags any claim the assistant could not verify ("Check this").
 //   Send approves that draft (the human is the sender, ARCHITECTURE §9 path 4): unchanged → approve
-//   as is; edited → approve with the edited text. The server re-checks the gate at send time.
+//   as is; edited → approve with the edited text. The server checks again at send time.
 // - Without a draft, Send is a human one-to-one message (path 1) with an idempotency key generated
 //   once per tap (useCommand), so a retry after a dropped connection never sends twice.
-// - The gate is previewed inline while typing (POST …/messages/preview) and shown as the server's
-//   sentence ("Opted out of texts · Outside 9 AM–8 PM their time"). The preview never decides: the
-//   send-time decision does, and its outcome is shown as it came back (sent, scheduled for the next
-//   allowed time, needs your confirmation, or not sent and why).
+// - The send-time check is previewed inline (useSendCheck: POST …/messages/preview) as soon as the box
+//   opens and again while typing, and a block is shown as the server's sentence ("Won't send: Opted
+//   out of texts"). The check only blocks for opt-outs, suppressions and operational/identity rules;
+//   there is no consent prompt, no quiet-hours wait and no "send anyway" (owner decision,
+//   core-compliance/2.0.0). The preview never decides: the send-time decision does, and its outcome
+//   is shown as it came back (sent, scheduled for the time the agent picked, or not sent and why).
 // - DRAFT_STALE (R-AST-6): the client wrote since the draft was made. The box keeps the text, says
 //   so, refreshes the thread, and the next Send carries the inbound seq the agent has now seen.
 // - DRAFT_INVALIDATED (R-AST-7): the draft no longer applies; nothing was sent. The text stays, and
@@ -20,7 +22,8 @@ import { Button, CheckThis, GateBadge, Notice } from '../../design/index.js';
 import { type ApiError, useApi, useCommand } from '../../shell/index.js';
 import { SendOutcome, sendOutcomeText, useAgentSheets } from '../feed/lib/AgentSheets.js';
 import { firstName } from '../feed/lib/format.js';
-import type { ActionView, ApproveResponse, ComposeResponse, PreviewResponse } from '../feed/lib/types.js';
+import { useSendCheck } from '../feed/lib/sendCheck.js';
+import type { ActionView, ApproveResponse, ComposeResponse } from '../feed/lib/types.js';
 
 export type Channel = 'sms' | 'email';
 
@@ -112,16 +115,10 @@ export function ComposeBox({ contact, initialChannel, draftActionId: initialDraf
   const original = draft?.draft ?? null;
   const edited = original !== null && (body !== original.body || (channel === 'email' && (subject || null) !== (original.subject ?? null)) || channel !== original.channel);
 
-  // inline gate preview
+  // inline send check: from the moment the box opens (a probe body), then with the text as typed
   const previewBody = useDebounced(body.trim(), 500);
-  const previewQ = useQuery<PreviewResponse, ApiError>({
-    queryKey: ['preview', contact.id, channel, previewBody, channel === 'email' ? subject.trim() : ''],
-    queryFn: ({ signal }) =>
-      api.request<PreviewResponse>('POST', `/contacts/${contact.id}/messages/preview`, { channel, body: previewBody, ...(channel === 'email' && subject.trim() ? { subject: subject.trim() } : {}) }, { signal }),
-    enabled: previewBody.length > 0,
-    staleTime: 30_000,
-    retry: false,
-  });
+  const previewSubject = useDebounced(subject.trim(), 500);
+  const preview = useSendCheck({ contactId: contact.id, channel, body: previewBody, subject: previewSubject, enabled: channel === 'sms' ? contact.canText : contact.canEmail });
 
   const human = useCommand<Record<string, unknown>, ComposeResponse>(`/contacts/${contact.id}/messages`, { idKey: 'idempotencyKey', invalidate: [['feed'], ['timeline', contact.id]] });
   const approve = useCommand<Record<string, unknown>, ApproveResponse>(`/assistant/actions/${draftId ?? 'none'}/approve`, { invalidate: [['feed'], ['inbox'], ['timeline', contact.id]] });
@@ -129,11 +126,7 @@ export function ComposeBox({ contact, initialChannel, draftActionId: initialDraf
 
   const afterSend = (r: ComposeResponse) => {
     setOutcome(r);
-    if (r.result === 'needs_confirmation' && r.message && r.decision) {
-      sheets.confirmSend({ messageId: r.message.id, decision: r.decision, contactName: contact.name });
-      return;
-    }
-    if (r.result === 'sent' || r.result === 'queued' || r.result === 'noop' || r.result === 'deferred' || r.result === 'scheduled') {
+    if (r.result === 'sent' || r.result === 'queued' || r.result === 'noop' || r.result === 'scheduled') {
       setBody('');
       setSubject('');
       setDraftId(null);
@@ -184,9 +177,10 @@ export function ComposeBox({ contact, initialChannel, draftActionId: initialDraf
     else setNotice({ tone: 'error', text: r.message });
   };
 
-  const decision = previewQ.data?.decision;
-  // once a send was tried, its outcome replaces the preview (both would repeat the same reason)
-  const showPreview = decision && previewBody === body.trim() && decision.outcome !== 'allow' && outcome === null;
+  const decision = preview.decision;
+  // once a send was tried, its outcome replaces the preview (both would repeat the same reason); a
+  // preview of older text is not shown while the agent is still typing
+  const showPreview = decision !== null && decision.outcome === 'deny' && previewBody === body.trim() && outcome === null;
   const needsReview = draft?.claims.some((c) => c.needsReview) ?? false;
   const noChannel = !contact.canText && !contact.canEmail;
 
@@ -256,7 +250,7 @@ export function ComposeBox({ contact, initialChannel, draftActionId: initialDraf
       </div>
       {showPreview ? <GateBadge decision={decision} /> : null}
       {notice ? <Notice tone={notice.tone}>{notice.text}</Notice> : null}
-      {outcome && outcome.result !== 'needs_confirmation' ? <SendOutcome result={outcome} contactName={contact.name} /> : null}
+      {outcome ? <SendOutcome result={outcome} contactName={contact.name} /> : null}
       {!draft && draftId === null && body.trim() === '' && contact.ownedByMe ? (
         <Button variant="quiet" className="self-start" pending={askDraft.pending} pendingLabel="Asking the assistant" onClick={() => void requestDraft()}>
           Ask the assistant for a draft

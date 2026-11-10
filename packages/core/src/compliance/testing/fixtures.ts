@@ -49,18 +49,6 @@ export function usPack(): JurisdictionPack {
 export function tenantPolicy(o: Partial<TenantPolicyVersion> = {}): TenantPolicyVersion {
   return {
     id: '00000000-0000-7000-8000-0000000000aa',
-    contactWindowStart: '09:00:00',
-    contactWindowEnd: '20:00:00',
-    humanReplyWindowMinutes: 30,
-    emailQuietHours: false,
-    autoSmsPer24h: 1,
-    autoSmsPer7d: 3,
-    autoEmailPer24h: 1,
-    autoEmailPer7d: 3,
-    autoCrossChannelPer24h: 2,
-    manualSmsConfirmAfter24h: 3,
-    callAttemptsPer24h: 3,
-    maxDeferrals: 3,
     autonomousCategories: ['speed_to_lead_reply', 'reminder', 'booking_confirmation', 'nurture_step', 'search_alert'],
     optOutConfirmationSender: 'provider',
     recordingEnabled: true,
@@ -74,7 +62,7 @@ export function policy(o: Partial<TenantPolicyVersion> = {}, packs: Jurisdiction
   return resolvePolicy(PLATFORM_FLOOR, packs, tenantPolicy(o));
 }
 
-/** Tuesday 2026-11-10 10:00 EST (15:00Z): inside 09–20 in New York. */
+/** Tuesday 2026-11-10 10:00 EST (15:00Z). */
 export const NOW: Instant = at('2026-11-10T15:00:00Z');
 
 export function grantRow(o: Partial<ConsentStateRow> = {}): ConsentStateRow {
@@ -101,19 +89,12 @@ export function gateInput(o: Partial<GateInput> = {}): GateInput {
     category: 'none',
     consent: [grantRow()],
     suppressions: [],
-    dnc: [],
     contactPoint: { status: 'active', lineType: 'mobile' },
     automationPausedAt: null,
     sender: { kind: 'phone', registration: 'ready' },
-    recentAutomated: [],
-    recentManualSms24h: 0,
-    callAttempts24h: 0,
-    lastInboundAt: null,
-    zones: { zones: [NY], source: 'explicit' },
     tenant: { suspended: false, brokerageNamePresent: true, postalAddressPresent: true },
     rendered: { containsBrokerageName: true, containsOptOutHint: true, paymentInstructions: false },
     policy: policy(),
-    jitterKey: 'msg-1',
     ...o,
   };
 }
@@ -173,6 +154,11 @@ export function spec(o: Partial<ConsentEventSpec> = {}): ConsentEventSpec {
     needsReview: false,
     ...o,
   };
+}
+
+/** A revoked consent_state row (an opt-out). */
+export function revokedRow(o: Partial<ConsentStateRow> = {}): ConsentStateRow {
+  return { ...grantRow(), status: 'revoked', level: 'none', basisEventId: null, ...o };
 }
 
 export const minutes = (n: number): number => n * 60_000;

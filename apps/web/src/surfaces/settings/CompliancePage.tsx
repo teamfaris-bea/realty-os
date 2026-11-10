@@ -2,22 +2,27 @@
 //
 // - Honest banner: the jurisdiction packs in force and whether counsel reviewed them, said plainly
 //   (Phase 1 exit criterion 6). VERIFY WITH COUNSEL: every value on this page is a legal parameter.
+// - "What every send is checked for", in plain words (owner decision, core-compliance/2.0.0): opt-outs
+//   (the keywords, unsubscribe, "do not contact me") are never overridden; the brokerage name (and,
+//   for marketing email, postal address and unsubscribe link) goes on marketing; recording consent is
+//   below. It also says what is NOT checked: consent level, the national Do Not Call registry, quiet
+//   hours and frequency limits. Leads are treated as consented through their source. That is the
+//   owner's decision, and the page says it may still conflict with some state laws (VERIFY WITH COUNSEL).
 // - Every change is a NEW append-only version (a delta on the active one). A stricter change can be
 //   made by an Owner or Admin; a looser one only by the Owner, after re-entering their password
 //   (R-PERM-13) and confirming the exact attestation sentence the server supplies. The page shows that
 //   attestation before saving, from the same field-by-field rules the server uses.
-// - The platform ceilings (contact hours 08:00–21:00 at the widest, the caps' maxima) are DB checks;
-//   the inputs stop there too.
 import { useQuery } from '@tanstack/react-query';
 import { type FormEvent, useMemo, useState } from 'react';
-import { Button, Card, Notice, TextField } from '../../design/index.js';
+import { Link } from 'react-router-dom';
+import { Button, Card, Notice } from '../../design/index.js';
 import { type ApiError, messageFor, useApi, useSession } from '../../shell/index.js';
 import { formatDate, formatStamp } from '../admin/lib/format.js';
 import { useAction, useAnnounce } from '../admin/lib/hooks.js';
 import { ADMIN_MESSAGES } from '../admin/lib/messages.js';
-import { AUTONOMOUS_CATEGORIES, type PoliciesResponse, type PolicyCreated, type PolicyValues, type PolicyVersion } from '../admin/lib/types.js';
+import { AUTONOMOUS_CATEGORIES, type PoliciesResponse, type PolicyCreated, type PolicyValues, type PolicyVersion, type Settings } from '../admin/lib/types.js';
 import { Check, CounselBanner, ErrorLine, Fact, Pill, Section, SelectField, StatusLine } from '../admin/lib/ui.js';
-import { CATEGORY_LABEL, FIELD_LABEL, NUMERIC_FIELDS, type PolicyField, draftDelta, looserFields, valueText } from './policy.js';
+import { CATEGORY_LABEL, FIELD_LABEL, OPT_OUT_KEYWORDS, type PolicyField, draftDelta, looserFields, valueText } from './policy.js';
 
 const POLICY_KEY = ['admin', 'compliance-policies'] as const;
 
@@ -53,6 +58,7 @@ export default function CompliancePage() {
       ) : null}
       {q.data && active ? (
         <>
+          <SendRules />
           <Section title="In force now" description={`Version ${active.versionNo}, since ${formatStamp(active.createdAt)}. Every send is checked against it at the moment it goes out.`}>
             <Card>
               <dl className="flex flex-col gap-2">
@@ -72,6 +78,42 @@ export default function CompliancePage() {
   );
 }
 
+/** What the send-time check enforces and what it does not, in plain words. */
+function SendRules() {
+  const api = useApi();
+  const q = useQuery<{ settings: Settings }, ApiError>({ queryKey: ['admin', 'settings'], queryFn: ({ signal }) => api.get('/settings', { signal }) });
+  const id = q.data?.settings.identity;
+  return (
+    <Section title="What every send is checked for" description="These are checked for every text, email and call, whoever sends it: an agent, the assistant or the system.">
+      <Card>
+        <dl className="flex flex-col gap-3">
+          <Fact label="Opt-outs">
+            Nobody is texted, emailed or called after they opt out, and no one can override it. That covers a reply of {OPT_OUT_KEYWORDS.join(', ')} (and any word a state rule adds), the unsubscribe link, and an agent recording that the person asked not to be contacted. A STOP on one of a contact's numbers stops texts to all of their numbers. Bounces, spam complaints and the team do-not-contact list block the same way.
+          </Fact>
+          <Fact label="Brokerage identity">
+            {id ? (
+              <>
+                Marketing shows <span className="font-medium">{id.brokerageLegalName}</span>. Marketing email also carries the postal address and an unsubscribe link
+                {id.missing.includes('brokerage_postal_address') ? ': the postal address is missing, so marketing email is on hold until it is added. ' : '. '}
+              </>
+            ) : (
+              'Marketing shows the brokerage name; marketing email also carries the postal address and an unsubscribe link. '
+            )}
+            <Link to="/settings/team" className="font-medium text-accent underline">
+              Brokerage details
+            </Link>
+          </Fact>
+          <Fact label="Recording consent">Recording-consent laws still apply (they are separate from consent to be contacted): by default every recorded call is announced to everyone on it before recording starts. See the recording notice below.</Fact>
+          <Fact label="Also blocked">Payment or wire instructions in a message, numbers marked wrong or not working, texts to landlines, and sending without a registered number or verified email.</Fact>
+        </dl>
+      </Card>
+      <Notice tone="warn" title="Not checked: consent level, Do Not Call registry, quiet hours, frequency limits">
+        Your team decided that every lead has consented through the source it came from, so sends are not held back for missing consent, a national Do Not Call registry listing, the time of day, or how many messages a contact got. Some state laws (for example in Florida, Oklahoma and Maryland) may still limit the hours for sales calls and texts and how often a person can be contacted, even when they consented. Have your counsel check this before you rely on it. Turning those limits back on is a policy change, not a rebuild.
+      </Notice>
+    </Section>
+  );
+}
+
 function PolicyEditor({ data, active, onDone }: { data: PoliciesResponse; active: PolicyVersion; onDone(t: string): void }) {
   const { session } = useSession();
   const isOwner = session?.tenant?.role === 'owner';
@@ -83,7 +125,7 @@ function PolicyEditor({ data, active, onDone }: { data: PoliciesResponse; active
   const a = useAction<Record<string, unknown>, PolicyCreated>('POST', { invalidate: [[...POLICY_KEY], ['admin', 'settings']] });
   const delta = draftDelta(base, v);
   const changed = Object.keys(delta).length > 0;
-  const looser = looserFields(base, v, data.defaults);
+  const looser = looserFields(base, v);
   const needsAttest = looser.length > 0 || serverWantsAttest;
   const set = <K extends PolicyField>(k: K, val: PolicyValues[K]) => setV((x) => ({ ...x, [k]: val }));
   const submit = async (e: FormEvent) => {
@@ -99,29 +141,6 @@ function PolicyEditor({ data, active, onDone }: { data: PoliciesResponse; active
     <Section title="Change the policy" description="Saving creates a new version. Earlier versions are kept, so every past decision can still cite the rules it used.">
       <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-4">
         <Card className="flex flex-col gap-4">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <TextField label="Contact hours start" type="time" min={data.widestWindow.start} max={data.widestWindow.end} value={v.contactWindowStart} onChange={(e) => set('contactWindowStart', e.target.value)} hint={`No earlier than ${data.widestWindow.start}. Default ${data.defaults.contactWindowStart}.`} />
-            <TextField label="Contact hours end" type="time" min={data.widestWindow.start} max={data.widestWindow.end} value={v.contactWindowEnd} onChange={(e) => set('contactWindowEnd', e.target.value)} hint={`No later than ${data.widestWindow.end}. Default ${data.defaults.contactWindowEnd}.`} />
-          </div>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            {NUMERIC_FIELDS.map((f) => (
-              <TextField
-                key={f.key}
-                label={f.unit ? `${f.label} (${f.unit})` : f.label}
-                type="number"
-                inputMode="numeric"
-                min={f.min}
-                max={f.max}
-                value={String(v[f.key])}
-                onChange={(e) => {
-                  const n = Math.min(f.max, Math.max(f.min, Math.trunc(Number(e.target.value) || 0)));
-                  set(f.key, n as never);
-                }}
-                hint={`Up to ${f.max}.`}
-              />
-            ))}
-          </div>
-          <Check label="Email waits for contact hours too" checked={v.emailQuietHours} onChange={(x) => set('emailQuietHours', x)} />
           <fieldset className="flex flex-col gap-1">
             <legend className="text-[15px] font-semibold text-ink">The assistant may send these on its own, inside approved playbooks</legend>
             {AUTONOMOUS_CATEGORIES.map((c) => (
@@ -197,7 +216,7 @@ function VersionRow({ version, active, data, onDone }: { version: PolicyVersion;
   const [attest, setAttest] = useState(false);
   const [askAttest, setAskAttest] = useState(false);
   const a = useAction<{ attestation?: string }, { activePolicyId: string; loosening: boolean; changed: boolean }>('POST', { invalidate: [[...POLICY_KEY], ['admin', 'settings']] });
-  const looser = version.id === active.id ? [] : looserFields(valuesOf(active), valuesOf(version), data.defaults);
+  const looser = version.id === active.id ? [] : looserFields(valuesOf(active), valuesOf(version));
   const needsAttest = looser.length > 0 || version.attested || askAttest;
   const diff = Object.keys(draftDelta(valuesOf(active), valuesOf(version))) as PolicyField[];
   const run = async () => {

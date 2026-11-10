@@ -345,5 +345,5 @@ export function matchListing(c: SearchCriteria, l: ListingFacts): boolean {
   return true;
 }
 
-/** Saved-search alerts are marketing in the search_alert category (R-AST-10); SMS needs express_written at the gate. */
+/** Saved-search alerts are marketing in the search_alert category (R-AST-10); the gate blocks them for an opted-out address (no consent level is read). */
 export const SEARCH_ALERT = Object.freeze({ category: 'search_alert', purpose: 'marketing' } as const);

@@ -2,14 +2,16 @@
 // carries a confidence field (R-AST-13) — both asserted by schemas.test.ts.
 import { z } from 'zod';
 
+/**
+ * A send-time (or preview) gate decision (core-compliance/2.0.0): allow | deny with the reasons and a
+ * human explanation. `id` names the stored blocked-send row; allowed sends and previews are not stored.
+ */
 export const DecisionSchema = z.object({
   id: z.uuid().nullable(),
-  outcome: z.enum(['allow', 'deny', 'defer', 'needs_confirmation']),
+  outcome: z.enum(['allow', 'deny']),
   reasons: z.array(z.string()),
   explanation: z.string(),
-  deferUntil: z.string().nullable(),
-  canConfirm: z.boolean(),
-  phase: z.enum(['preview', 'send', 'confirm']),
+  phase: z.enum(['preview', 'send']),
 });
 
 export const MessageSchema = z.object({
@@ -31,7 +33,6 @@ export const ComposeBody = z.strictObject({
   scheduleAt: z.iso.datetime({ offset: true }).optional(),
   idempotencyKey: z.string().regex(/^[A-Za-z0-9_:.-]{8,100}$/),
   toPointId: z.uuid().optional(),
-  confirmDecisionId: z.uuid().optional(),
 });
 
 export const PreviewBody = z.strictObject({
@@ -49,9 +50,9 @@ export const ComposeResponse = z.object({
 
 export const PreviewResponse = z.object({ decision: DecisionSchema, body: z.string() });
 
-export const SendExistingBody = z.strictObject({ confirmDecisionId: z.uuid().optional() });
+export const SendExistingBody = z.strictObject({});
 
-export const CallBody = z.strictObject({ toPointId: z.uuid().optional(), confirmDecisionId: z.uuid().optional() });
+export const CallBody = z.strictObject({ toPointId: z.uuid().optional() });
 export const CallResponse = z.object({
   result: z.enum(['dialing', 'gate', 'failed']),
   callId: z.uuid().nullable(),

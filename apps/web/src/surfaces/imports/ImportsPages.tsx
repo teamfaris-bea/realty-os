@@ -20,7 +20,7 @@ import { useAction, useAnnounce } from '../admin/lib/hooks.js';
 import { ADMIN_MESSAGES } from '../admin/lib/messages.js';
 import type { ImportBatch, ImportRecord, ImportStage, MappingsResponse, MembersResponse, Pond, ReportResponse, VerificationResponse } from '../admin/lib/types.js';
 import { ErrorLine, Pill, Section, Segmented, SelectField, StatusLine } from '../admin/lib/ui.js';
-import { CATEGORY_LABEL, OUTCOME_LABEL, SOURCE_LABEL, STAGE_STATUS, blockingEarlier, isRunning, nextStep, ordered, reconciles, recordSummary, spotChecksReady, toBase64 } from './lib.js';
+import { CATEGORY_LABEL, CATEGORY_NOTE, OUTCOME_LABEL, SKIP_WARNING, SOURCE_LABEL, STAGE_STATUS, blockingEarlier, isRunning, nextStep, ordered, reconciles, recordSummary, spotChecksReady, toBase64 } from './lib.js';
 
 const IMPORTS_KEY = ['imports'] as const;
 const POLL_MS = 2000;
@@ -365,7 +365,9 @@ function StageCard({ batch, stage, stages, onDone }: { batch: ImportBatch; stage
         </h3>
         <Pill tone={stage.status === 'verified' ? 'ok' : stage.status === 'failed' ? 'danger' : stage.status === 'committed' || stage.status === 'dry_run_ready' ? 'warn' : 'neutral'}>{STAGE_STATUS[stage.status] ?? stage.status}</Pill>
       </div>
+      {CATEGORY_NOTE[stage.category] ? <p className="text-[15px] text-ink">{CATEGORY_NOTE[stage.category]}</p> : null}
       {stage.counts ? <Counts counts={stage.counts} /> : null}
+      {canSkip && SKIP_WARNING[stage.category] ? <p className="text-[14px] text-ink-muted">{SKIP_WARNING[stage.category]}</p> : null}
       {stage.blockers.map((x, i) => (
         <Notice key={`${x.code}:${i}`} tone="warn">
           {x.sentence}

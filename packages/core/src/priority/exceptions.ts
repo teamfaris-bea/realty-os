@@ -14,8 +14,8 @@
 // Imported history never raises an exception (R-IMPORT-6), and only a human touch satisfies the
 // first-touch SLA (R-AST-15): `SlaFacts.firstTouchAt` is the ledger's first_touch_recorded, which
 // only a gate-allowed human outbound writes (R-OWN-14).
-import { REASON_EFFECTS, type ReasonCode, canonicalJson, reasonSentence } from '../compliance/index.js';
-import { HOUR_MS, type Instant, MINUTE_MS, instant, localTime } from '../foundation/index.js';
+import { REASON_CODES, type ReasonCode, canonicalJson, reasonSentence } from '../compliance/index.js';
+import { HOUR_MS, type Instant, MINUTE_MS, instant } from '../foundation/index.js';
 import { awaitsOutcome, taskDeadline } from './feed.js';
 import { clip } from './format.js';
 import { apptKey, promiseKey, sendKey, untouchedKey } from './keys.js';
@@ -138,16 +138,26 @@ const PROVIDER_WORDS: Readonly<Record<string, string>> = {
   PROVIDER_NOT_CONFIGURED: 'no provider account is set up',
   PROVIDER_ERROR: 'a provider error',
 };
-/** Gate reasons whose own sentence needs the policy's window or caps, which are not known here. */
-const CONTEXT_WORDS: Readonly<Partial<Record<ReasonCode, string>>> = {
-  OUTSIDE_CONTACT_WINDOW: 'Outside the hours they can be contacted',
-  OUTSIDE_WINDOW_REPLY: 'Outside the hours they can be contacted',
-  QUIET_HOURS_DEFERRED: 'Outside the hours they can be contacted',
-  NO_CONTACTABLE_WINDOW: 'Outside the hours they can be contacted',
+/**
+ * Gate reasons retired in core-compliance/2.0.0 (quiet hours, caps, consent basis, DNC registry). New
+ * sends never carry them, but messages blocked before the change still do.
+ */
+const RETIRED_GATE_WORDS: Readonly<Record<string, string>> = {
+  OUTSIDE_CONTACT_WINDOW: 'Outside the hours they could be contacted',
+  OUTSIDE_WINDOW_REPLY: 'Outside the hours they could be contacted',
+  QUIET_HOURS_DEFERRED: 'Outside the hours they could be contacted',
+  NO_CONTACTABLE_WINDOW: 'Outside the hours they could be contacted',
   FREQUENCY_CAP: 'Over the message limit',
   MANUAL_SMS_VOLUME: 'Over the message limit',
   CALL_ATTEMPT_LIMIT: 'Over the call attempt limit',
+  POLICY_CAP_ZERO: 'Automated messages were turned off in the team policy',
+  CONSENT_BASIS_INSUFFICIENT: 'No consent on file for automated messages',
+  CONSENT_IMPORTED_BASIS_ONLY: 'Only imported consent on file',
+  CONSENT_CONFIRMATION_REQUIRED: 'Waited for a confirmation that never came',
+  DNC_LISTED: 'On a Do Not Call list',
+  DNC_STATUS_UNKNOWN_NO_RELATIONSHIP: 'Do Not Call status unknown',
 };
+const CURRENT_GATE_CODES: ReadonlySet<string> = new Set<string>(REASON_CODES);
 
 /**
  * A stored status reason in words (the queue never shows a raw code, CONVENTIONS §7): gate reason
@@ -157,11 +167,9 @@ const CONTEXT_WORDS: Readonly<Partial<Record<ReasonCode, string>>> = {
 export function statusReasonWords(reason: string, channel: OutboundStatusFacts['channel']): string | null {
   const provider = PROVIDER_WORDS[reason];
   if (provider !== undefined) return provider;
-  if (Object.hasOwn(REASON_EFFECTS, reason)) {
-    const code = reason as ReasonCode;
-    // the window and caps below are never printed: every code whose sentence uses them is in CONTEXT_WORDS
-    return CONTEXT_WORDS[code] ?? reasonSentence(code, { channel: channel === 'email' ? 'email' : 'sms', window: { start: localTime('09:00'), end: localTime('20:00') }, caps: { manualSmsConfirmAfter24h: 0, callAttemptsPer24h: 0 } });
-  }
+  if (CURRENT_GATE_CODES.has(reason)) return reasonSentence(reason as ReasonCode, channel === 'email' ? 'email' : 'sms');
+  const retired = RETIRED_GATE_WORDS[reason];
+  if (retired !== undefined) return retired;
   if (/^[A-Z][A-Z0-9_]*$/.test(reason)) return null;
   return clip(reason, 160);
 }

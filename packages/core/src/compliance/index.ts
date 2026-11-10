@@ -10,18 +10,7 @@ export * from './sender.js';
 export * from './content.js';
 export * from './reasons.js';
 export { canonicalize, canonicalJson, sha256Hex } from './digest.js';
-export {
-  RULES_VERSION,
-  MAX_JITTER_SECONDS,
-  type GateInput,
-  type GateDecision,
-  type GateOutcome,
-  canContact,
-  canConfirm,
-  afterDeferral,
-  gateInputsRecord,
-  nextContactableAt,
-} from './gate.js';
+export { RULES_VERSION, type GateInput, type GateDecision, type GateOutcome, canContact, gateInputsRecord, optedOut } from './gate.js';
 
 /** Codes core/compliance can return as `{ ok: false, code }` (CONVENTIONS §7). */
 export type ComplianceErrorCode =

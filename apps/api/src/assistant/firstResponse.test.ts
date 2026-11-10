@@ -1,11 +1,11 @@
-// The 60-second first response (R-AST-15, R-AST-16, R-CONSENT-5, R-CONSENT-13; E8, E37), end to end:
+// The 60-second first response (R-AST-15, R-AST-16; E8, E37; core-compliance/2.0.0), end to end:
 // lead intake (api/leads) → assistant.first_response → comms.dispatch → fake provider.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { intake, zoneWithLocalHour } from '../leads/testing.js';
 import { systemActor } from '../worker/systemActor.js';
 import { sendFirstResponse } from './firstResponse.js';
-import { type AssistantWorld, actionsOf, approvedPlaybook, assistantWorld, assistantWorker, decisionsFor, depsOf, grantConsent, messagesOf, randomEmail, randomPhone, runJobs } from './testing.js';
+import { type AssistantWorld, actionsOf, approvedPlaybook, assistantWorld, assistantWorker, call, decisionsFor, depsOf, inboundSms, messagesOf, randomEmail, randomPhone, runJobs } from './testing.js';
 
 let h: ApiHarness;
 let w: AssistantWorld;
@@ -31,33 +31,17 @@ describe('the 60-second first response (R-AST-16)', () => {
     expect(h.providers.email.sent.length).toBe(mail);
   });
 
-  it('R-AST-16 E37 R-CONSENT-5: approved; a lead with no texting consent gets ONE email (never a text), signed by the team assistant with the brokerage name', async () => {
+  it('R-AST-16: approved; a new lead with a mobile number gets ONE text with the STOP line and no consent level on file (owner decision); deduped per contact per 24 h; never a touch (R-AST-15)', async () => {
     await approvedPlaybook(w.owner, { templateKey: 'new_lead_response' });
-    const email = randomEmail();
     const phone = randomPhone();
-    const r = await intake(h, w, { fullName: 'Ella East', phones: [phone], emails: [email], message: 'Do you take VA loans?' });
+    const r = await intake(h, w, { fullName: 'Sam South', phones: [phone], emails: [randomEmail()] });
     await runJobs(h, w.tenantId, FR);
     const ms = await messagesOf(h, r.contactId);
-    expect(ms.map((m) => `${m.channel}:${m.status}:${m.initiator}:${m.action_category}`)).toEqual(['email:sent:assistant:speed_to_lead_reply']);
-    expect(ms[0]!.body).toContain('Hi Ella');
-    expect(ms[0]!.body).toContain('VA loan'); // the form indicated it (R-AST-12: never inferred)
-    expect(ms[0]!.body).toMatch(/assistant/);
-    expect(h.providers.telephony.sms.filter((s) => s.to === phone)).toHaveLength(0);
-    expect(h.providers.email.sent.filter((s) => s.to === email)).toHaveLength(1);
-    const a = (await actionsOf(h, r.contactId)).find((x) => x.kind === 'autonomous_message')!;
-    expect(a.explanation).toMatch(/by email/);
-  });
-
-  it('R-AST-16: with an express texting basis the reply is ONE text with the STOP line; deduped per contact per 24 h; and it never counts as a touch (R-AST-15)', async () => {
-    const phone = randomPhone();
-    const r = await intake(h, w, { fullName: 'Sam South', phones: [phone] });
-    await grantConsent(w.owner, r.contactId, 'sms');
-    await runJobs(h, w.tenantId, FR);
-    const ms = await messagesOf(h, r.contactId);
-    expect(ms.map((m) => `${m.channel}:${m.status}`)).toEqual(['sms:sent']);
+    expect(ms.map((m) => `${m.channel}:${m.status}:${m.initiator}:${m.action_category}`)).toEqual(['sms:sent:assistant:speed_to_lead_reply']);
     expect(ms[0]!.body).toContain('Reply STOP to opt out');
-    expect(ms[0]!.body).not.toContain('VA loan');
-    expect((await decisionsFor(h, { messageId: ms[0]!.id })).map((d) => `${d.initiator}:${d.outcome}`)).toEqual(['assistant:allow']);
+    expect(ms[0]!.body).toMatch(/assistant/);
+    expect(h.providers.telephony.sms.filter((x) => x.to === phone)).toHaveLength(1);
+    expect(await decisionsFor(h, { messageId: ms[0]!.id })).toHaveLength(0);
     // a second run (job redelivery, a re-inquiry) inside 24 h sends nothing more
     const again = await sendFirstResponse(systemActor(w.tenantId, 'assistant'), r.contactId, depsOf(h));
     expect(again).toMatchObject({ kind: 'not_sent', reason: 'ALREADY_SENT' });
@@ -69,13 +53,34 @@ describe('the 60-second first response (R-AST-16)', () => {
     expect((await h.su.query("SELECT count(*)::int AS n FROM lead_ownership_events WHERE contact_id = $1 AND type = 'first_touch_recorded'", [r.contactId])).rows[0].n).toBe(0);
   });
 
-  it('R-AST-16: with no allowed channel nothing is sent and the lead card says why', async () => {
-    const r = await intake(h, w, { fullName: 'Ned None', phones: [randomPhone()] });
+  it('R-AST-16 E37: a lead whose number is recorded as "do not text" gets ONE email instead (never a text), signed by the team assistant with the brokerage name', async () => {
+    const email = randomEmail();
+    const phone = randomPhone();
+    const r = await intake(h, w, { fullName: 'Ella East', phones: [phone], emails: [email], message: 'Do you take VA loans?' });
+    const pid = (await h.su.query<{ id: string }>("SELECT id FROM contact_points WHERE contact_id = $1 AND kind = 'phone'", [r.contactId])).rows[0]!.id;
+    expect((await call(w.owner, 'POST', `/contacts/${r.contactId}/consent`, { kind: 'revoke', pointId: pid, channel: 'sms', purpose: 'all', evidence: { note: 'asked for email only' } })).status).toBe(200);
     await runJobs(h, w.tenantId, FR);
-    expect(await messagesOf(h, r.contactId)).toEqual([]);
+    const ms = (await messagesOf(h, r.contactId)).filter((m) => m.initiator === 'assistant');
+    expect(ms.map((m) => `${m.channel}:${m.status}:${m.initiator}:${m.action_category}`)).toEqual(['email:sent:assistant:speed_to_lead_reply']);
+    expect(ms[0]!.body).toContain('Hi Ella');
+    expect(ms[0]!.body).toContain('VA loan'); // the form indicated it (R-AST-12: never inferred)
+    expect(ms[0]!.body).toMatch(/assistant/);
+    expect(h.providers.telephony.sms.filter((x) => x.to === phone && !/unsubscribed|opted out/i.test(x.body))).toHaveLength(0);
+    expect(h.providers.email.sent.filter((x) => x.to === email)).toHaveLength(1);
+    const a = (await actionsOf(h, r.contactId)).find((x) => x.kind === 'autonomous_message')!;
+    expect(a.explanation).toMatch(/by email/);
+  });
+
+  it('R-AST-16: with no allowed channel (the only number opted out) nothing is sent and the lead card says why', async () => {
+    const phone = randomPhone();
+    const r = await intake(h, w, { fullName: 'Ned None', phones: [phone] });
+    const num = (await h.su.query<{ e164: string }>("SELECT e164 FROM phone_numbers WHERE tenant_id = $1 AND purpose = 'team_main' AND released_at IS NULL LIMIT 1", [w.tenantId])).rows[0]!.e164;
+    expect((await inboundSms(h, phone, num, 'STOP')).statusCode).toBe(200);
+    await runJobs(h, w.tenantId, FR);
+    expect((await messagesOf(h, r.contactId)).filter((m) => m.initiator === 'assistant')).toEqual([]);
     const cards = (await h.su.query<{ reasons: { code: string; text: string }[] }>("SELECT reasons FROM priority_feed_items WHERE contact_id = $1 AND item_type IN ('lead_offer','first_touch_due','pond_new')", [r.contactId])).rows;
     expect(cards.length).toBeGreaterThan(0);
-    expect(cards.some((c) => c.reasons.some((x) => x.code === 'NO_INSTANT_REPLY' && /no texting consent/.test(x.text)))).toBe(true);
+    expect(cards.some((c) => c.reasons.some((x) => x.code === 'NO_INSTANT_REPLY' && /opted out/.test(x.text)))).toBe(true);
   });
 
   it('R-AST-16 p95 smoke (reduced scale, in-process): intake → sent stays far below 60 s', async () => {
@@ -103,20 +108,16 @@ describe('the 60-second first response (R-AST-16)', () => {
   });
 });
 
-describe('quiet hours (E8, R-CONSENT-13)', () => {
-  it('E8 R-CONSENT-13: a lead at night gets the text DEFERRED to the next opening (09:00 her time), while an email-only lead is answered at once', async () => {
+describe('owner decision: no quiet hours (E8)', () => {
+  it('E8: a lead arriving in the middle of the recipient\'s night gets the text at once (nothing is deferred)', async () => {
     const night = await assistantWorld(h, { agents: 1, timezone: zoneWithLocalHour(1, 5) });
     await approvedPlaybook(night.owner, { templateKey: 'new_lead_response' });
     const a = await intake(h, night, { fullName: 'Owl One', phones: [randomPhone()] });
-    await grantConsent(night.owner, a.contactId, 'sms');
     const b = await intake(h, night, { fullName: 'Owl Two', emails: [randomEmail()] });
     await runJobs(h, night.tenantId, FR);
     const [sms] = await messagesOf(h, a.contactId);
-    expect(sms!.status).toBe('scheduled');
-    const d = (await decisionsFor(h, { messageId: sms!.id }))[0]!;
-    expect(d.outcome).toBe('defer');
-    expect(d.reason_codes).toContain('QUIET_HOURS_DEFERRED');
-    expect(d.defer_until!.getTime()).toBeGreaterThan(Date.now() + 3_600_000);
+    expect(sms!.status).toBe('sent');
+    expect(await decisionsFor(h, { messageId: sms!.id })).toHaveLength(0);
     const [mail] = await messagesOf(h, b.contactId);
     expect(mail!.status).toBe('sent');
   });

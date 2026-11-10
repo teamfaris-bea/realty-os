@@ -405,6 +405,8 @@ export function decide(state: OwnershipProjection | null, cmd: OwnershipCommand,
       return decideCreate(state, cmd, ctx);
     case 'import_assign':
       return decideImport(state, cmd, ctx);
+    case 'import_unassign':
+      return decideImportUnassign(state, cmd, ctx);
     case 'merge':
       return decideMergeSide(state, cmd, ctx);
     default:
@@ -487,6 +489,23 @@ function decideImport(state: OwnershipProjection | null, cmd: Cmd<'import_assign
     // R-OWN-13: import starts no SLA.
     b.emit('imported', 'owned', { reasonCode: 'IMPORTED', routingRuleId: null, ownerUserId: t.userId, deadlineAt: null, payload: { releaseDueAt: null } });
   }
+  return accepted(b, null);
+}
+
+/**
+ * R-IMPORT-10 (ownership-1): the compensation for an ownership-stage revert. Only the import actor, and
+ * only while the ledger head is still the import's own assignment (`importSeq`): anything after it
+ * (a claim, a reassign, a touch, a release) is a human's decision and the stale command is refused.
+ * The lead goes back to the state the contacts stage left it in: unassigned, not routed, no SLA, no
+ * notification (R-OWN-13), written as an `imported` ledger event so it never counts as a touch.
+ */
+function decideImportUnassign(state: OwnershipProjection | null, cmd: Cmd<'import_unassign'>, ctx: DecisionContext): Decision {
+  if (!isSystem(ctx.actor, 'import')) return rejection(state, cmd, ctx, 'NOT_FOUND');
+  if (!state) return rejection(state, cmd, ctx, 'NOT_FOUND');
+  if (state.seq !== cmd.importSeq || state.state === 'closed' || state.state === 'offered') return rejection(state, cmd, ctx, 'LEAD_STATE_CHANGED');
+  if (inImportCreationState(state) || (state.state === 'unassigned' && state.routeDueAt === null)) return noop(state);
+  const b = new Builder(state, ctx.contactId, ctx);
+  b.emit('imported', 'unassigned', { reasonCode: 'IMPORT_REVERTED', routingRuleId: null, payload: { routeDueAt: null } });
   return accepted(b, null);
 }
 

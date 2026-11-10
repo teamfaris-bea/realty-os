@@ -237,7 +237,7 @@ export async function pauseRevokedEnrollments(tx: Tx, versionId: string, now: In
     const cur = await P.enrollmentById(tx, e.id, { lock: true });
     if (!cur || cur.versionId !== versionId) continue;
     const runs = await P.stepRunsOf(tx, cur.id);
-    const pending = runs.filter((r) => r.status === 'scheduled' || r.status === 'deferred');
+    const pending = runs.filter((r) => r.status === 'scheduled');
     await P.cancelStepMessages(tx, pending.map((r) => r.id), 'PLAYBOOK_APPROVAL_REVOKED');
     for (const r of pending) await P.updateStepRun(tx, r.id, { status: 'canceled_paused' });
     if (cur.state === 'active') await P.pauseEnrollment(tx, cur.id, 'approval_revoked', now);
