@@ -7,8 +7,10 @@
 //                      (GET /members, /settings, /routing-rules, /ponds, /teams)              Owner/Admin
 //   settings.identity  brokerage identity; recording retention/access inside PATCH /settings   Owner 🔒
 //   settings.compliance policy versions (looser: Owner 🔒 + attestation)                      Owner/Admin
+//   contact.erase      privacy erasure and removing the person from a deal first (E59)         Owner/Admin 🔒 (deal link: Owner)
 import type { FastifyInstance } from 'fastify';
 import type { RouteModule } from '../routes.js';
+import { registerErasureRoutes } from './erasure.js';
 import { registerMemberRoutes } from './members.js';
 import { registerPolicyRoutes } from './policy.js';
 import { registerPondRoutes } from './ponds.js';
@@ -25,5 +27,6 @@ export const adminRoutes: RouteModule = {
     await registerTeamRoutes(app);
     await registerSettingsRoutes(app);
     await registerPolicyRoutes(app);
+    await registerErasureRoutes(app);
   },
 };
