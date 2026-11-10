@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import pg from 'pg';
 import { afterAll, describe, expect, it } from 'vitest';
-import { createTestDb, dropTemplate, type TestDb } from '../src/testing/index.js';
+import { createTestDb, dropTemplate, hashTemplateName, type TestDb } from '../src/testing/index.js';
+import { MIGRATIONS_DIR } from '../src/dbConfig.js';
+import { listMigrations, migrationsHash } from '../src/migrate.js';
 
 async function query<T extends pg.QueryResultRow>(url: string, sql: string): Promise<T[]> {
   const c = new pg.Client({ connectionString: url });
@@ -108,6 +110,39 @@ describe('createTestDb', () => {
     } finally {
       await dropTemplate(templateName);
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('names the default template after the migrations hash, so different checkouts never share one', async () => {
+    const d = await createTestDb();
+    created.push(d);
+    const hash = migrationsHash(listMigrations(MIGRATIONS_DIR));
+    const { adminUrl } = await import('../src/dbConfig.js').then((m) => m.connectionSettings());
+    const rows = await query<{ marker: string | null }>(
+      adminUrl,
+      `SELECT shobj_description(oid, 'pg_database') AS marker FROM pg_database WHERE datname = '${hashTemplateName(hash)}'`,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.marker).toMatch(new RegExp(`^realty-template migrations-sha256=${hash} built=\\d+$`));
+  });
+
+  it('drops hash templates built more than 3 days ago, and only those', async () => {
+    const { adminUrl } = await import('../src/dbConfig.js').then((m) => m.connectionSettings());
+    const stale = 'realty_template_000000000000';
+    const fresh = 'realty_template_00000000000f';
+    for (const [name, built] of [[stale, 1], [fresh, Date.now()]] as const) {
+      await query(adminUrl, `DROP DATABASE IF EXISTS ${name}`);
+      await query(adminUrl, `CREATE DATABASE ${name} TEMPLATE template0`);
+      await query(adminUrl, `COMMENT ON DATABASE ${name} IS 'realty-template migrations-sha256=x built=${built}'`);
+    }
+    try {
+      const d = await createTestDb();
+      created.push(d);
+      const rows = await query<{ datname: string }>(adminUrl, `SELECT datname FROM pg_database WHERE datname IN ('${stale}', '${fresh}')`);
+      expect(rows.map((r) => r.datname)).toEqual([fresh]);
+    } finally {
+      await query(adminUrl, `DROP DATABASE IF EXISTS ${stale}`);
+      await query(adminUrl, `DROP DATABASE IF EXISTS ${fresh}`);
     }
   });
 

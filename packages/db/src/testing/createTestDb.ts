@@ -5,9 +5,12 @@
 //   await db.drop();                      // afterAll
 //
 // How it works
-// - A template database (default `realty_template`) holds every migration in packages/db/migrations.
-//   Its COMMENT stores the migrations' content hash. When the hash differs (a migration was added or
-//   changed) the template is rebuilt automatically from template0.
+// - A template database holds every migration in packages/db/migrations. By default it is named after
+//   the migrations' content hash (`realty_template_<first 12 hex>`), so checkouts with different
+//   migrations (parallel worktrees, branches) each keep their own template instead of rebuilding a
+//   shared one back and forth. Its COMMENT stores the full hash and the build time; a mismatch (a
+//   migration was added or changed) rebuilds it from template0. Hash templates unused for
+//   TEMPLATE_STALE_AFTER_MS are garbage-collected when nobody holds their lock.
 // - Rebuilds hold an EXCLUSIVE advisory lock (in the maintenance database); clones hold the SHARED
 //   lock while they copy, so concurrent test runs never clone a half-built template and never rebuild
 //   twice.
@@ -40,7 +43,7 @@ export interface TestDb {
 export interface CreateTestDbOptions {
   /** defaults to packages/db/migrations */
   migrationsDir?: string;
-  /** defaults to realty_template */
+  /** defaults to realty_template_<first 12 hex of the migrations hash> */
   templateName?: string;
   /** clone template0 instead (no migrations applied): for testing the migration runner itself */
   empty?: boolean;
@@ -50,7 +53,20 @@ export const DEFAULT_TEMPLATE = 'realty_template';
 export const TEST_DB_PREFIX = 'realty_test_';
 const LOCK_CLASS = 1380270412; // advisory lock namespace "realty template"
 const STALE_AFTER_MS = 12 * 60 * 60 * 1000;
+const TEMPLATE_STALE_AFTER_MS = 3 * 24 * 60 * 60 * 1000;
+const HASH_TEMPLATE_RE = /^realty_template_[0-9a-f]{12}$/;
 const MARKER_PREFIX = 'realty-template migrations-sha256=';
+const BUILT_SEPARATOR = ' built=';
+
+/** The default template for a migrations hash. */
+export function hashTemplateName(hash: string): string {
+  return `${DEFAULT_TEMPLATE}_${hash.slice(0, 12)}`;
+}
+
+/** A template is current when its comment names this hash (with or without a build time). */
+function markerMatches(current: string | null, marker: string): boolean {
+  return current === marker || (current !== null && current.startsWith(marker + BUILT_SEPARATOR));
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -112,12 +128,33 @@ async function rebuildTemplate(
   try {
     await ensureAppUserRole(admin, appUser);
     await migrate(withDatabase(adminUrl, template), migrationsDir);
-    await admin.query(`COMMENT ON DATABASE ${ident} IS ${admin.escapeLiteral(marker)}`);
+    await admin.query(`COMMENT ON DATABASE ${ident} IS ${admin.escapeLiteral(marker + BUILT_SEPARATOR + Date.now())}`);
     // nobody may connect to the template: a stray connection would block every clone
     await admin.query(`ALTER DATABASE ${ident} WITH IS_TEMPLATE true ALLOW_CONNECTIONS false`);
   } catch (err) {
     await dropDatabase(admin, template).catch(() => {});
     throw err;
+  }
+}
+
+/** Drops hash-named templates built more than TEMPLATE_STALE_AFTER_MS ago that nobody is using. */
+async function collectStaleTemplates(admin: pg.Client, keep: string): Promise<void> {
+  const { rows } = await admin.query<{ datname: string; marker: string | null }>(
+    `SELECT datname, shobj_description(oid, 'pg_database') AS marker FROM pg_database WHERE datname LIKE 'realty\\_template\\_%'`,
+  );
+  const now = Date.now();
+  for (const { datname, marker } of rows) {
+    if (datname === keep || !HASH_TEMPLATE_RE.test(datname)) continue;
+    const built = Number(marker?.split(BUILT_SEPARATOR)[1]);
+    if (!Number.isFinite(built) || now - built <= TEMPLATE_STALE_AFTER_MS) continue;
+    // only when no clone or rebuild holds this template's lock right now
+    const { rows: got } = await admin.query<{ ok: boolean }>('SELECT pg_try_advisory_lock($1, hashtext($2)) AS ok', [LOCK_CLASS, datname]);
+    if (!got[0]?.ok) continue;
+    try {
+      await dropDatabase(admin, datname).catch(() => {});
+    } finally {
+      await admin.query('SELECT pg_advisory_unlock($1, hashtext($2))', [LOCK_CLASS, datname]);
+    }
   }
 }
 
@@ -142,8 +179,9 @@ async function collectStale(admin: pg.Client): Promise<void> {
  */
 export async function createTestDb(opts: CreateTestDbOptions = {}): Promise<TestDb> {
   const { adminUrl, appUser } = connectionSettings();
-  const template = opts.templateName ?? DEFAULT_TEMPLATE;
   const migrationsDir = opts.migrationsDir ?? MIGRATIONS_DIR;
+  const hash = opts.empty ? '' : migrationsHash(listMigrations(migrationsDir));
+  const template = opts.templateName ?? hashTemplateName(hash);
   const name = `${TEST_DB_PREFIX}${Date.now().toString(36)}_${process.pid}_${randomBytes(4).toString('hex')}`;
   let templateRebuilt = false;
 
@@ -151,15 +189,16 @@ export async function createTestDb(opts: CreateTestDbOptions = {}): Promise<Test
   await admin.connect();
   try {
     await collectStale(admin);
+    if (!opts.empty && opts.templateName === undefined) await collectStaleTemplates(admin, template);
     if (opts.empty) {
       await retryInUse(() => admin.query(`CREATE DATABASE ${admin.escapeIdentifier(name)} TEMPLATE template0 ENCODING 'UTF8'`));
     } else {
-      const marker = MARKER_PREFIX + migrationsHash(listMigrations(migrationsDir));
+      const marker = MARKER_PREFIX + hash;
       for (let round = 0; ; round++) {
         await admin.query('SELECT pg_advisory_lock_shared($1, hashtext($2))', [LOCK_CLASS, template]);
         let cloned = false;
         try {
-          if ((await templateMarker(admin, template)) === marker && (await appUserCanLogin(admin, appUser.user))) {
+          if (markerMatches(await templateMarker(admin, template), marker) && (await appUserCanLogin(admin, appUser.user))) {
             await retryInUse(() =>
               admin.query(`CREATE DATABASE ${admin.escapeIdentifier(name)} TEMPLATE ${admin.escapeIdentifier(template)}`),
             );
@@ -173,7 +212,7 @@ export async function createTestDb(opts: CreateTestDbOptions = {}): Promise<Test
         await admin.query('SELECT pg_advisory_lock($1, hashtext($2))', [LOCK_CLASS, template]);
         try {
           const current = await templateMarker(admin, template);
-          if (current !== marker || !(await appUserCanLogin(admin, appUser.user))) {
+          if (!markerMatches(current, marker) || !(await appUserCanLogin(admin, appUser.user))) {
             await rebuildTemplate(admin, template, migrationsDir, marker, adminUrl, appUser);
             templateRebuilt = true;
           }
