@@ -11,6 +11,7 @@ import { Icon, Notice, Spinner } from '../design/index.js';
 import type { SessionInfo } from './authApi.js';
 import { useSession, useShell } from './context.js';
 import { type NavItem, type NavModel, activeNavPath, navFor, pagesFor } from './pages.js';
+import { TeamLinkPrompt } from './TeamLinkPrompt.js';
 
 export const ROLE_LABEL: Record<NonNullable<SessionInfo['tenant']>['role'], string> = {
   owner: 'Owner',
@@ -223,6 +224,7 @@ export function AppLayout() {
             <Notice tone="warn">You're offline. What you see may be out of date, and nothing you do will send until you're back online.</Notice>
           </div>
         ) : null}
+        <TeamLinkPrompt />
         <main id="main" tabIndex={-1} className="flex-1 pb-[calc(var(--tabbar-h)+env(safe-area-inset-bottom)+16px)] outline-none md:pb-0">
           <Suspense fallback={<PageLoading />}>
             <Outlet />

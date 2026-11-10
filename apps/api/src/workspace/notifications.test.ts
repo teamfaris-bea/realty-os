@@ -50,7 +50,8 @@ async function notification(user: Agent, kind: string, o: { title?: string; prio
 }
 
 const delivery = async (id: string) => (await h.su.query<{ status: string; attempts: number; last_error: string | null; next_attempt_at: Date | null; gate_decision_id: string | null }>('SELECT status, attempts, last_error, next_attempt_at, gate_decision_id FROM notification_deliveries WHERE id = $1', [id])).rows[0]!;
-const pushesTo = (tag: string) => h.providers.push.delivered.filter((p) => p.payload.tag === tag);
+// lock-screen tags are `<tenant id>:<notification id>` (E56: tagged by tenant)
+const pushesTo = (tag: string) => h.providers.push.delivered.filter((p) => p.payload.tag === `${w.tenantId}:${tag}`);
 
 describe('preferences', () => {
   it('critical notification kinds cannot be muted and keep push or SMS (API 422 NOTIFICATION_CRITICAL, DB CHECK)', async () => {
@@ -191,7 +192,7 @@ describe('delivery', () => {
 
   it('lock-screen payloads hold no phone number, email address or message body (snapshot)', async () => {
     const payloads = NOTIFICATION_KINDS.map((kind) =>
-      lockScreenPayload({ id: '0190f5a0-0000-7000-8000-000000000001', kind, title: 'Jane D. (+1 415 555 0123, jane.doe@example.com) replied', subjectType: 'contact', subjectId: '0190f5a0-0000-7000-8000-000000000002' }),
+      lockScreenPayload({ id: '0190f5a0-0000-7000-8000-000000000001', kind, title: 'Jane D. (+1 415 555 0123, jane.doe@example.com) replied', subjectType: 'contact', subjectId: '0190f5a0-0000-7000-8000-000000000002', tenant: { id: '0190f5a0-0000-7000-8000-0000000000aa', slug: 'harbor' } }),
     );
     const text = JSON.stringify(payloads);
     expect(text).not.toMatch(/@example\.com|415 555 0123|\+14155550123/);
