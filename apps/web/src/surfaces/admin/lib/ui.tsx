@@ -61,22 +61,20 @@ export function TextArea({ label, hint, className = '', ...rest }: { label: stri
   );
 }
 
-/** A checkbox row with a 44 px target and an optional explanation under the label. */
+/** A checkbox row: the whole row (box and label) is one 44 px target; an optional explanation sits under it. */
 export function Check({ label, hint, checked, onChange, disabled }: { label: ReactNode; hint?: ReactNode; checked: boolean; onChange(v: boolean): void; disabled?: boolean }) {
   const id = useId();
   return (
-    <div className="flex items-start gap-3">
-      <input id={id} type="checkbox" className="mt-[11px] h-[22px] w-[22px] shrink-0 accent-[var(--accent)]" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} aria-describedby={hint ? `${id}-hint` : undefined} />
-      <div className="flex min-h-tap flex-col justify-center">
-        <label htmlFor={id} className="text-[16px] text-ink">
-          {label}
-        </label>
-        {hint ? (
-          <p id={`${id}-hint`} className="text-[14px] text-ink-muted">
-            {hint}
-          </p>
-        ) : null}
-      </div>
+    <div className="flex flex-col">
+      <label htmlFor={id} className={`flex min-h-tap items-center gap-3 text-[16px] text-ink ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
+        <input id={id} type="checkbox" className="h-[22px] w-[22px] shrink-0 accent-[var(--accent)]" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} aria-describedby={hint ? `${id}-hint` : undefined} />
+        <span>{label}</span>
+      </label>
+      {hint ? (
+        <p id={`${id}-hint`} className="pl-[34px] text-[14px] text-ink-muted">
+          {hint}
+        </p>
+      ) : null}
     </div>
   );
 }

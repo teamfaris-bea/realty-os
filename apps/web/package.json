@@ -20,6 +20,7 @@
     "react-router-dom": "7.18.5"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
     "@tailwindcss/vite": "4.3.5",
     "@testing-library/dom": "10.4.2",
     "@testing-library/jest-dom": "7.0.1",

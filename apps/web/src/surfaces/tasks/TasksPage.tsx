@@ -145,7 +145,7 @@ function TaskRow({ task, overdue }: { task: TaskView; overdue: boolean }) {
             {task.contact ? (
               <>
                 {' · '}
-                <Link to={`/contacts/${task.contact.id}`} className="text-accent hover:underline">
+                <Link to={`/contacts/${task.contact.id}`} className="text-accent underline">
                   {task.contact.name}
                 </Link>
               </>

@@ -140,7 +140,7 @@ export function ExceptionCard({ item, onDone, onFailure }: { item: ExceptionItem
             {item.contact ? (
               <>
                 {' · '}
-                <Link to={`/contacts/${item.contact.id}`} className="text-accent hover:underline">
+                <Link to={`/contacts/${item.contact.id}`} className="text-accent underline">
                   {item.contact.name}
                 </Link>
               </>
