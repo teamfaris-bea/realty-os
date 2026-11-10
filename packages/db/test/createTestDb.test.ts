@@ -138,8 +138,16 @@ describe('createTestDb', () => {
     try {
       const d = await createTestDb();
       created.push(d);
-      const rows = await query<{ datname: string }>(adminUrl, `SELECT datname FROM pg_database WHERE datname IN ('${stale}', '${fresh}')`);
-      expect(rows.map((r) => r.datname)).toEqual([fresh]);
+      // Other test files run the same collection concurrently; whichever holds the stale template's
+      // lock drops it, so wait for the drop to land rather than assuming this call did it.
+      let names: string[] = [];
+      for (let i = 0; i < 50; i++) {
+        const rows = await query<{ datname: string }>(adminUrl, `SELECT datname FROM pg_database WHERE datname IN ('${stale}', '${fresh}')`);
+        names = rows.map((r) => r.datname);
+        if (!names.includes(stale)) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      expect(names).toEqual([fresh]);
     } finally {
       await query(adminUrl, `DROP DATABASE IF EXISTS ${stale}`);
       await query(adminUrl, `DROP DATABASE IF EXISTS ${fresh}`);
