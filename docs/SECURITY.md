@@ -135,6 +135,48 @@ See §2.9 (import pipeline and storage); that part of the pass is in `apps/api/s
 | FUB SSRF: `FUB_BASE_URL` comes from server config only (never tenant input). `config.ts` (`fub`) reads `FUB_PROVIDER`, `FUB_BASE_URL`, `FUB_ALLOWED_HOSTS` and `FUB_SYSTEM_*`; nothing in `imports/` reads `process.env`, and the API routes and worker handlers get the value from the loaded `Config`. `FUB_ALLOWED_HOSTS` (default `api.followupboss.com`) must list lowercase public host names only (no scheme, port, path, wildcard, IP literal or internal name). The base URL must be https on the default port, with no credentials, query or fragment, and its host must be on the list; `loadConfig` refuses otherwise at startup, naming the key and never the value, and the adapter re-checks when it is built. Redirects are not followed; API pages are capped at 32 MiB; recording URLs must be public hosts on default ports | `config.ts`, `imports/fub.ts`, `imports/handlers.ts` | `config.test.ts`, `imports/fub.test.ts` |
 | Storage keys: `tenants/{uuid}/…` only, at most 1024 characters, with no traversal, absolute paths, backslashes, NUL or encoded traversal. A bad key throws everywhere (it never reads as "absent"). The local FS adapter refuses paths that escape its root through symlinks | `providers/storage.ts` | `providers/storage.test.ts` |
 
+### 2.10 Security review: contact-detail policies read through `app.contact_detail_row` (lane perf-misses, miss #4)
+
+**What changed.** Migration `*_deal_visibility_once.sql` adds `app.contact_detail_row(p_tenant, p_contact)` and
+rewrites the USING clause (not WITH CHECK) of 15 policies from `app.contact_detail_visible(tenant_id, contact_id)` to
+`EXISTS (SELECT 1 FROM app.contact_detail_row(tenant_id, contact_id))`: the `contact_detail` policy of the 10
+contact-children tables (contact_points, contact_addresses, contact_attributes, lead_inquiries, conversations,
+behavior_events, saved_searches, playbook_enrollments, home_valuations, listing_contacts), `messages_select`,
+`calls_select`, `notes_select`, `appointments_all`, and the non-Team-Lead branch of `loe_select`.
+
+**Why.** `contact_detail_visible` is a scalar SQL function with an `EXISTS` body, which Postgres never inlines, so
+the contacts policy's InitPlans ran once per child row. For a TC on about 2,900 deals that meant rebuilding
+`app.my_deal_contact_ids()` (about 5,800 ids, about 10 ms) for every message, call and note read.
+
+**Why it cannot widen visibility.**
+- `app.contact_detail_row` is **not** SECURITY DEFINER, has no `SET` clause, and is not LEAKPROOF. It is a plain
+  invoker SQL function with the same body as `contact_detail_visible`: it returns the contact's id when a contacts
+  row **visible to the caller** (the `contacts_select` policy is applied inside it) passes the detail test.
+- The planner inlines it into the reading statement. That changes only *when* the parameter-free helpers run (once
+  per statement instead of once per row), not what they return. The helpers are `is_tenant_wide`, `my_role`,
+  `sees_all_detail`, `my_collab_contact_ids` and `my_deal_contact_ids`. If it were ever not inlined (for example,
+  someone adds a `SET` clause), it would still return the same rows, only slowly. The migration's self-check fails
+  if it is not inlined.
+- No definer was added. No index, membership or deal data is exposed beyond what `contact_detail_visible`
+  already answered.
+- WITH CHECK clauses, `contacts_select`, `contact_detail_visible` itself, and every other caller are unchanged.
+
+**Proof.** `apps/api/src/load/deal_visibility_equivalence.test.ts`, run through the real RLS stack as `app_user` with
+the API's context:
+- For two members of every role (owner, admin, team lead, agent, ISA, TC), plus the agent on most deals and the
+  system actor, every row of the 15 tables is read through the new policies. Then, in the same rolled-back
+  transaction, the policies are restored to their old text and every row is read again. The two row sets are
+  compared, with 0 differences allowed.
+- Variants: a contact on the TC's deal through `deal_contacts` only; one through `deals.primary_contact_id` only; a
+  deal the TC left; in a pond, offered or closed and on the TC's deal; soft-deleted and on the TC's deal; moved by
+  the caller's current ownership command; and a TC deal membership in another tenant.
+- The TC's expected visibility per variant is asserted for messages, calls, notes and contact points.
+- `EXISTS (SELECT 1 FROM app.contact_detail_row(t, c))` is compared with `contact_detail_visible` and the 0020 body
+  for every contact, for every sampled actor.
+
+**Rule for future edits.** Keep `contact_detail_row` and `contact_detail_visible` identical in meaning. Any change
+to one must be made to both and must extend the equivalence test.
+
 ---
 
 ## 3. What remains (needs the owner, an account, or counsel)
