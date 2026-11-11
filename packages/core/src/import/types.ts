@@ -173,6 +173,10 @@ export interface NormalizedContact {
   importedFields: Record<string, string>;
   leadSourceLabel: string | null;
   createdAt: Instant | null;
+  /** PARITY 65 (R-PAR-46): the source's own stage label (FUB stage / CSV stage column), as written there */
+  stageLabel?: string | null;
+  /** PARITY 65 (R-PAR-46): the source's custom fields (FUB `custom*` keys / CSV custom columns) as raw text */
+  customFields?: Record<string, string>;
   /** CSV only: the consent columns of the same row, for the optional consent stage. */
   consent?: { fields: FubConsentFields; issues: Issue[] };
 }

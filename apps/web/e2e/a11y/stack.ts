@@ -31,6 +31,10 @@ import { totpCode, totpStep } from './src/auth/totp.ts';
 import { commsWorld, call, inboundSms, randomEmail, freshReauth, runJobs } from './src/comms/testing.ts';
 import { intake } from './src/leads/testing.ts';
 import { promiseTask, recompute } from './src/accountability/testing.ts';
+import { makeImportHandlers } from './src/imports/handlers.ts';
+import { HandlerRegistry } from './src/worker/registry.ts';
+import { createWorker } from './src/worker/loop.ts';
+import { silentLogger } from './src/worker/observability.ts';
 (async () => {
 const origin = process.env.E2E_WEB_ORIGIN;
 const h = await createApiHarness({ config: { webOrigins: [origin, TEST_ORIGIN] } });
@@ -114,6 +118,14 @@ const routes = {
     const users = Object.fromEntries(Object.entries(people).map(([role, c]) => [role, { email: c.email, password: TEST_PASSWORD, mfa: Boolean(c.totpSecret) }]));
     return { users, ids: { contactId: jane, optedOutContactId: owen, longThreadContactId: rosa, dealId: deal.deal.id, listingId: listing.listing.id, playbookId: pb.playbook.id, importId: imp.batch.id, duplicateId: dup } };
   },
+  /** module 65: runs the queued import jobs (snapshot, dry run) once, as the worker would; fake FUB only */
+  async '/drain-imports'() {
+    const p = h.app.platform;
+    const deps = { db: p.db, envelope: p.envelope, ids: p.ids, storage: p.providers.storage, fub: () => { throw new Error('no FUB in the e2e stack'); } };
+    const registry = new HandlerRegistry().registerAll(makeImportHandlers(() => deps));
+    await createWorker({ db: h.database, registry, providers: h.providers, queues: ['bulk'], concurrency: 1, worker: 'e2e-imports', idleMs: 5, log: silentLogger }).drain(50);
+    return {};
+  },
   /** clock fixture: the user's password proof is an hour old, so the next sensitive action asks again */
   async '/stale-reauth'(b) {
     await h.su.query("UPDATE sessions SET reauthenticated_at = now() - interval '1 hour' WHERE user_id = (SELECT id FROM users WHERE email = $1) AND revoked_at IS NULL", [b.email]);
@@ -175,6 +187,8 @@ export interface A11yStack {
   world(): Promise<World>;
   totp(email: string): Promise<string>;
   staleReauth(email: string): Promise<void>;
+  /** module 65: run queued import jobs once */
+  drainImports(): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -233,6 +247,7 @@ export async function startA11yStack(): Promise<A11yStack> {
     world: () => fixture<World>('/world', {}),
     totp: async (email) => (await fixture<{ code: string }>('/totp', { email })).code,
     staleReauth: async (email) => void (await fixture('/stale-reauth', { email })),
+    drainImports: async () => void (await fixture('/drain-imports', {})),
     async stop() {
       await vite.close();
       await new Promise<void>((ok) => {

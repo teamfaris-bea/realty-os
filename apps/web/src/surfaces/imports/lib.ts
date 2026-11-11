@@ -135,3 +135,49 @@ export function recordSummary(r: Record<string, unknown> | null): string {
 export function spotChecksReady(sample: readonly { sourceRef: string }[], marks: ReadonlyMap<string, boolean>): boolean {
   return sample.every((s) => marks.has(s.sourceRef));
 }
+
+// ---- PARITY 65: stages, tags and custom fields (R-PAR-46) -------------------------------------------
+
+export const PARITY_STAGES = ['new', 'attempting', 'connected', 'nurture', 'active', 'under_contract', 'closed', 'lost'] as const;
+export const STAGE_KEY_LABEL: Record<(typeof PARITY_STAGES)[number], string> = {
+  new: 'New',
+  attempting: 'Attempting',
+  connected: 'Connected',
+  nurture: 'Nurture',
+  active: 'Active',
+  under_contract: 'Under contract',
+  closed: 'Closed',
+  lost: 'Lost',
+};
+export const FIELD_TYPE_LABEL = { text: 'text', number: 'number', date: 'date', single_select: 'one choice', multi_select: 'several choices' } as const;
+export type FieldTypeKey = keyof typeof FIELD_TYPE_LABEL;
+
+export type FieldActionView = { action: 'skip' } | { action: 'create'; type: FieldTypeKey; label: string } | { action: 'existing'; fieldId: string };
+
+export interface ParityRowView {
+  category: 'stages' | 'tags' | 'custom_fields';
+  source: number;
+  imported: number;
+  needsReview: number;
+  rejected: number;
+  duplicate: number;
+}
+
+export interface ParityResponse {
+  options: { stageMap: Record<string, string>; keepStageAsTag: boolean; fields: Record<string, FieldActionView> };
+  stages: { label: string; people: number; suggested: string | null; mapped: string | null }[];
+  tags: { distinct: number; existing: number; toCreate: number; overLimit: number; sourceLinks: number; links: number; protectedNew: number; optOutTagged: number; overLimitNames: string[] };
+  fields: { sourceKey: string; label: string; people: number; suggestedType: FieldTypeKey; protected: boolean; action: FieldActionView; fit: number; misfit: number; options: { id: string; label: string }[] }[];
+  existingFields: { id: string; key: string; label: string; type: FieldTypeKey }[];
+  blockers: string[];
+  lines: string[];
+  report: ParityRowView[];
+}
+
+export const PARITY_CATEGORY_LABEL: Record<ParityRowView['category'], string> = { stages: 'Stages', tags: 'Tags', custom_fields: 'Custom fields' };
+
+/** The parity map can still change: the contacts stage has not been imported (or is being). */
+export function parityEditable(stages: readonly { category: string; status: string }[]): boolean {
+  const c = stages.find((s) => s.category === 'contacts');
+  return !!c && ['pending', 'dry_run_ready', 'approved', 'failed'].includes(c.status);
+}

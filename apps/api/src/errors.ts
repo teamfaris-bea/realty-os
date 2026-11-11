@@ -148,6 +148,7 @@ export const ERROR_STATUS = {
   CONNECTION_NOT_CONNECTABLE: 409, // the connection's status does not allow a (re)connect or change
   CONNECTION_ACCOUNT_MISMATCH: 409, // a different external account is a new connection (R-INT-3)
   LEAD_SOURCE_REQUIRED: 422, // an inbound channel needs a lead source before it can go live
+  CUSTOM_FIELD_PROTECTED: 422, // api/import-parity (R-PAR-18): a field name reads like a protected fair-housing attribute
   DUPLICATE_ALREADY_DECIDED: 409, // api/duplicates: the pair was already merged, dismissed or restored (status in details)
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;

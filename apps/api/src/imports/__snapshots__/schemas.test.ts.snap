@@ -1733,6 +1733,447 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
     ],
     "type": "object",
   },
+  "ParityResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "blockers": {
+        "items": {
+          "type": "string",
+        },
+        "type": "array",
+      },
+      "existingFields": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+            },
+            "key": {
+              "type": "string",
+            },
+            "label": {
+              "type": "string",
+            },
+            "type": {
+              "enum": [
+                "text",
+                "number",
+                "date",
+                "single_select",
+                "multi_select",
+              ],
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "key",
+            "label",
+            "type",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "fields": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "action": {
+                      "const": "skip",
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "action",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "action": {
+                      "const": "create",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "type": {
+                      "enum": [
+                        "text",
+                        "number",
+                        "date",
+                        "single_select",
+                        "multi_select",
+                      ],
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "action",
+                    "type",
+                    "label",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "action": {
+                      "const": "existing",
+                      "type": "string",
+                    },
+                    "fieldId": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "action",
+                    "fieldId",
+                  ],
+                  "type": "object",
+                },
+              ],
+            },
+            "fit": {
+              "type": "number",
+            },
+            "label": {
+              "type": "string",
+            },
+            "misfit": {
+              "type": "number",
+            },
+            "options": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string",
+                  },
+                  "label": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "id",
+                  "label",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+            "people": {
+              "type": "number",
+            },
+            "protected": {
+              "type": "boolean",
+            },
+            "sourceKey": {
+              "type": "string",
+            },
+            "suggestedType": {
+              "enum": [
+                "text",
+                "number",
+                "date",
+                "single_select",
+                "multi_select",
+              ],
+              "type": "string",
+            },
+          },
+          "required": [
+            "sourceKey",
+            "label",
+            "people",
+            "suggestedType",
+            "protected",
+            "action",
+            "fit",
+            "misfit",
+            "options",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "lines": {
+        "items": {
+          "type": "string",
+        },
+        "type": "array",
+      },
+      "options": {
+        "additionalProperties": false,
+        "properties": {
+          "fields": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "action": {
+                      "const": "skip",
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "action",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "action": {
+                      "const": "create",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "type": {
+                      "enum": [
+                        "text",
+                        "number",
+                        "date",
+                        "single_select",
+                        "multi_select",
+                      ],
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "action",
+                    "type",
+                    "label",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "action": {
+                      "const": "existing",
+                      "type": "string",
+                    },
+                    "fieldId": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "action",
+                    "fieldId",
+                  ],
+                  "type": "object",
+                },
+              ],
+            },
+            "propertyNames": {
+              "type": "string",
+            },
+            "type": "object",
+          },
+          "keepStageAsTag": {
+            "type": "boolean",
+          },
+          "stageMap": {
+            "additionalProperties": {
+              "enum": [
+                "new",
+                "attempting",
+                "connected",
+                "nurture",
+                "active",
+                "under_contract",
+                "closed",
+                "lost",
+              ],
+              "type": "string",
+            },
+            "propertyNames": {
+              "type": "string",
+            },
+            "type": "object",
+          },
+        },
+        "required": [
+          "stageMap",
+          "keepStageAsTag",
+          "fields",
+        ],
+        "type": "object",
+      },
+      "report": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "category": {
+              "enum": [
+                "stages",
+                "tags",
+                "custom_fields",
+              ],
+              "type": "string",
+            },
+            "duplicate": {
+              "type": "number",
+            },
+            "imported": {
+              "type": "number",
+            },
+            "needsReview": {
+              "type": "number",
+            },
+            "rejected": {
+              "type": "number",
+            },
+            "source": {
+              "type": "number",
+            },
+          },
+          "required": [
+            "category",
+            "source",
+            "imported",
+            "needsReview",
+            "rejected",
+            "duplicate",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "stages": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "label": {
+              "type": "string",
+            },
+            "mapped": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "new",
+                    "attempting",
+                    "connected",
+                    "nurture",
+                    "active",
+                    "under_contract",
+                    "closed",
+                    "lost",
+                  ],
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "people": {
+              "type": "number",
+            },
+            "suggested": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "new",
+                    "attempting",
+                    "connected",
+                    "nurture",
+                    "active",
+                    "under_contract",
+                    "closed",
+                    "lost",
+                  ],
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+          },
+          "required": [
+            "label",
+            "people",
+            "suggested",
+            "mapped",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "tags": {
+        "additionalProperties": false,
+        "properties": {
+          "distinct": {
+            "type": "number",
+          },
+          "existing": {
+            "type": "number",
+          },
+          "links": {
+            "type": "number",
+          },
+          "optOutTagged": {
+            "type": "number",
+          },
+          "overLimit": {
+            "type": "number",
+          },
+          "overLimitNames": {
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "protectedNew": {
+            "type": "number",
+          },
+          "sourceLinks": {
+            "type": "number",
+          },
+          "toCreate": {
+            "type": "number",
+          },
+        },
+        "required": [
+          "distinct",
+          "existing",
+          "toCreate",
+          "overLimit",
+          "sourceLinks",
+          "links",
+          "protectedNew",
+          "optOutTagged",
+          "overLimitNames",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "options",
+      "stages",
+      "tags",
+      "fields",
+      "existingFields",
+      "blockers",
+      "lines",
+      "report",
+    ],
+    "type": "object",
+  },
   "RecordResponse": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
@@ -2144,6 +2585,78 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
         },
         "type": "array",
       },
+      "parity": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "lines": {
+                "items": {
+                  "type": "string",
+                },
+                "type": "array",
+              },
+              "phase": {
+                "enum": [
+                  "dry_run",
+                  "committed",
+                  "reverted",
+                ],
+                "type": "string",
+              },
+              "rows": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "category": {
+                      "enum": [
+                        "stages",
+                        "tags",
+                        "custom_fields",
+                      ],
+                      "type": "string",
+                    },
+                    "duplicate": {
+                      "type": "number",
+                    },
+                    "imported": {
+                      "type": "number",
+                    },
+                    "needsReview": {
+                      "type": "number",
+                    },
+                    "rejected": {
+                      "type": "number",
+                    },
+                    "source": {
+                      "type": "number",
+                    },
+                  },
+                  "required": [
+                    "category",
+                    "source",
+                    "imported",
+                    "needsReview",
+                    "rejected",
+                    "duplicate",
+                  ],
+                  "type": "object",
+                },
+                "type": "array",
+              },
+            },
+            "required": [
+              "phase",
+              "rows",
+              "lines",
+            ],
+            "type": "object",
+          },
+          {
+            "type": "null",
+          },
+        ],
+      },
       "source": {
         "type": "string",
       },
@@ -2151,6 +2664,7 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
     "required": [
       "source",
       "categories",
+      "parity",
     ],
     "type": "object",
   },
@@ -2303,6 +2817,7 @@ exports[`api/imports route table and schemas > R-PERM-13: every import route is 
 [
   "GET /api/imports",
   "GET /api/imports/:id",
+  "GET /api/imports/:id/parity",
   "GET /api/imports/:id/report",
   "GET /api/imports/:id/stages/:category/records",
   "GET /api/imports/:id/stages/:category/verification",
@@ -2318,6 +2833,7 @@ exports[`api/imports route table and schemas > R-PERM-13: every import route is 
   "POST /api/imports/:id/stages/:category/skip",
   "POST /api/imports/:id/stages/:category/verify",
   "PUT /api/imports/:id/csv-mapping",
+  "PUT /api/imports/:id/parity",
   "PUT /api/imports/:id/user-mappings",
 ]
 `;

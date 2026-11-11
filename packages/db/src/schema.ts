@@ -595,7 +595,6 @@ export interface ContactsTable {
   original_campaign_ref: string | null;
   original_ad_ref: string | null;
   original_source_detail: Generated<Json>;
-  tags: Generated<string[]>;
   imported_fields: Generated<Json>;
   merged_into_contact_id: string | null;
   import_batch_id: string | null;

@@ -6,6 +6,7 @@
 // left; a history row updated after the stage committed). Touched rows are listed for a human, never deleted.
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
+import { CHILD_FP } from './writes.js';
 
 export interface ContactBaseline {
   /** fingerprint of the editable fields the import left (null: unknown, never counts as an edit) */
@@ -60,8 +61,9 @@ export async function touchedContacts(tx: Tx, batchId: string, baseline: Readonl
                     AND ce.recorded_at > ${since})`.execute(tx);
   for (const r of work.rows) out.add(r.id);
   const fps = await sql<{ id: string; fp: string }>`
-    SELECT id::text AS id, md5(jsonb_build_array(first_name, last_name, display_name, contact_type, intent, stage, tags, imported_fields)::text) AS fp
-      FROM contacts WHERE tenant_id = app.tenant_id() AND id = ANY (${ids}::uuid[])`.execute(tx);
+    SELECT c.id::text AS id, md5(jsonb_build_array(c.first_name, c.last_name, c.display_name, c.contact_type, c.intent, c.stage, c.imported_fields,
+                                                   ${CHILD_FP})::text) AS fp
+      FROM contacts c WHERE c.tenant_id = app.tenant_id() AND c.id = ANY (${ids}::uuid[])`.execute(tx);
   for (const r of fps.rows) {
     const was = baseline.get(r.id)?.fp ?? null;
     if (was !== null && r.fp !== was) out.add(r.id);

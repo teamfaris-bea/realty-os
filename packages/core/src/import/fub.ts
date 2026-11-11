@@ -256,10 +256,14 @@ function mapContact(person: FubPerson): RecordOutcome<NormalizedContact> {
   if (person.background) putImportedField(importedFields, 'FUB background', person.background, issues);
   if (person.price !== null && person.price !== undefined) putImportedField(importedFields, 'FUB price', String(person.price), issues);
   if (person.assignedTo) putImportedField(importedFields, 'FUB assigned to', person.assignedTo, issues);
+  const customFields: Record<string, string> = Object.create(null) as Record<string, string>;
   for (const [k, v] of Object.entries(person)) {
     if (!/^custom[A-Z0-9_]/.test(k) || v === null || v === undefined) continue;
     const text = Array.isArray(v) ? v.filter((x) => typeof x !== 'object').join(', ') : typeof v === 'object' ? '' : String(v);
-    if (text !== '') putImportedField(importedFields, k, text, issues);
+    if (text !== '') {
+      putImportedField(importedFields, k, text, issues);
+      if (Object.keys(customFields).length < 100) customFields[k] = text.trim().slice(0, 2000);
+    }
   }
 
   const addresses: NormalizedAddress[] = [];
@@ -307,6 +311,8 @@ function mapContact(person: FubPerson): RecordOutcome<NormalizedContact> {
     importedFields: { ...importedFields },
     leadSourceLabel: person.source ? lineField(person.source, 'source', 500, []) : null,
     createdAt,
+    ...(stageLabel !== null ? { stageLabel } : {}),
+    ...(Object.keys(customFields).length > 0 ? { customFields: { ...customFields } } : {}),
   }, issues);
 }
 

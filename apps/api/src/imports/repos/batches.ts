@@ -48,6 +48,14 @@ export interface BatchOptions {
   recordings?: Record<string, string>;
   /** the snapshot job's last failure code (no PII) */
   snapshotError?: string | null;
+  /** PARITY 65 (R-PAR-46): the Admin's stage map, keep-stage-as-tag switch and custom field mapping */
+  parity?: import('@realty/core/import').ParityOptions;
+  /** PARITY 65: the contacts dry run's parity summary (stage labels, tag and field plan; no contact PII) */
+  paritySummary?: import('@realty/core/import').ParitySummary;
+  /** PARITY 65: catalog rows this batch created (revert removes the unused ones) */
+  parityCreated?: { tagIds?: string[]; fieldIds?: string[] };
+  /** PARITY 65: what the contacts commit wrote (tag links, values, stages set, kept) */
+  parityCommitted?: Record<string, number>;
 }
 
 export interface StageRow {

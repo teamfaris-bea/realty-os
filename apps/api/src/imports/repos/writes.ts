@@ -28,17 +28,16 @@ export async function setImportedFields(tx: Tx, contactId: string, fields: Recor
 }
 
 /**
- * E41: fills an existing contact ONLY where it is empty (names, intent), adds new tags and new
- * imported_fields keys (existing keys win). row_version is not bumped (an import is not a human edit),
+ * E41: fills an existing contact ONLY where it is empty (names, intent) and adds new imported_fields
+ * keys (existing keys win). Tags go to the catalog and contact_tags (repos/parity.ts; R-PAR-10). row_version is not bumped (an import is not a human edit),
  * so a later human edit is detectable for revert (R-IMPORT-10).
  */
-export async function fillContact(tx: Tx, contactId: string, f: { firstName?: string; lastName?: string; intent?: string; addTags: string[]; addImportedFields: Record<string, string> }): Promise<void> {
+export async function fillContact(tx: Tx, contactId: string, f: { firstName?: string; lastName?: string; intent?: string; addImportedFields: Record<string, string> }): Promise<void> {
   await sql`
     UPDATE contacts SET
       first_name = COALESCE(first_name, ${f.firstName ?? null}),
       last_name = COALESCE(last_name, ${f.lastName ?? null}),
       intent = COALESCE(intent, ${f.intent ?? null}),
-      tags = (SELECT coalesce(array_agg(DISTINCT t), '{}') FROM unnest(tags || ${f.addTags}::text[]) t),
       imported_fields = ${JSON.stringify(f.addImportedFields)}::jsonb || imported_fields
      WHERE tenant_id = app.tenant_id() AND id = ${contactId}`.execute(tx);
 }
@@ -215,13 +214,23 @@ export async function insertImportedSuppression(
 }
 
 /**
+ * PARITY 65 (R-PAR-10): a person's tags and custom values are child rows now; the fingerprint folds them
+ * in (tag ids and field values, sorted), so a human tagging or editing a value after the import is a touch.
+ */
+export const CHILD_FP = sql`(SELECT jsonb_build_array(
+    COALESCE((SELECT jsonb_agg(ct.tag_id ORDER BY ct.tag_id) FROM contact_tags ct WHERE ct.tenant_id = c.tenant_id AND ct.contact_id = c.id), '[]'::jsonb),
+    COALESCE((SELECT jsonb_agg(jsonb_build_array(v.field_id, v.value_text, v.value_number, v.value_date, v.value_options) ORDER BY v.field_id)
+                FROM contact_field_values v WHERE v.tenant_id = c.tenant_id AND v.contact_id = c.id), '[]'::jsonb)))`;
+
+/**
  * A fingerprint of the human-editable contact fields. The import stores the one it left; a different
  * one at revert time means someone edited the contact since (row_version also moves with ownership
  * changes, so it cannot tell an edit from the import's own ownership stage).
  */
 export async function contactFingerprint(tx: Tx, id: string): Promise<string> {
   const r = await sql<{ fp: string }>`
-    SELECT md5(jsonb_build_array(first_name, last_name, display_name, contact_type, intent, stage, tags, imported_fields)::text) AS fp
-      FROM contacts WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx);
+    SELECT md5(jsonb_build_array(c.first_name, c.last_name, c.display_name, c.contact_type, c.intent, c.stage, c.imported_fields,
+                                 ${CHILD_FP})::text) AS fp
+      FROM contacts c WHERE c.tenant_id = app.tenant_id() AND c.id = ${id}`.execute(tx);
   return r.rows[0]?.fp ?? '';
 }

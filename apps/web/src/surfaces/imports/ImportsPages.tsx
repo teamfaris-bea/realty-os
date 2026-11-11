@@ -20,7 +20,8 @@ import { useAction, useAnnounce } from '../admin/lib/hooks.js';
 import { ADMIN_MESSAGES } from '../admin/lib/messages.js';
 import type { ImportBatch, ImportRecord, ImportStage, MappingsResponse, MembersResponse, Pond, ReportResponse, VerificationResponse } from '../admin/lib/types.js';
 import { ErrorLine, Pill, Section, Segmented, SelectField, StatusLine } from '../admin/lib/ui.js';
-import { CATEGORY_LABEL, CATEGORY_NOTE, OUTCOME_LABEL, SKIP_WARNING, SOURCE_LABEL, STAGE_STATUS, blockingEarlier, isRunning, nextStep, ordered, reconciles, recordSummary, spotChecksReady, toBase64 } from './lib.js';
+import { ParityMapping } from './ParityMapping.js';
+import { CATEGORY_LABEL, CATEGORY_NOTE, PARITY_CATEGORY_LABEL, type ParityResponse, type ParityRowView, parityEditable, OUTCOME_LABEL, SKIP_WARNING, SOURCE_LABEL, STAGE_STATUS, blockingEarlier, isRunning, nextStep, ordered, reconciles, recordSummary, spotChecksReady, toBase64 } from './lib.js';
 
 const IMPORTS_KEY = ['imports'] as const;
 const POLL_MS = 2000;
@@ -164,6 +165,7 @@ export function ImportPage() {
           <Overview batch={b} onDone={announce} />
           {b.source === 'csv' && b.csv && !b.stages.some((s) => ['approved', 'committing', 'committed', 'verified'].includes(s.status)) ? <CsvMapping batch={b} onDone={announce} /> : null}
           {b.source !== 'csv' && b.snapshotSha256 && b.stages.some((s) => s.category === 'ownership' && !['verified', 'skipped', 'committed', 'committing'].includes(s.status)) ? <UserMappings batch={b} onDone={announce} /> : null}
+          {b.snapshotSha256 && parityEditable(b.stages) ? <Parity batch={b} onDone={announce} /> : null}
           <Section title="Categories" description="Each category is checked, approved, imported and verified on its own. A category imports only after the ones above it are verified or skipped.">
             <ol className="flex flex-col gap-3">
               {stages.map((s) => (
@@ -179,6 +181,14 @@ export function ImportPage() {
       ) : null}
     </div>
   );
+}
+
+/** PARITY 65: the stage map / tag / custom-field section (loaded once the snapshot exists). */
+function Parity({ batch, onDone }: { batch: ImportBatch; onDone(t: string): void }) {
+  const q = useImportsQuery<ParityResponse>([...batchKey(batch.id), 'parity', batch.snapshotSha256], `/imports/${batch.id}/parity`);
+  if (q.isError) return <QueryError error={q.error} retry={() => void q.refetch()} />;
+  if (!q.data) return null;
+  return <ParityMapping key={JSON.stringify(q.data.options)} batch={batch} data={q.data} onDone={onDone} refetch={() => void q.refetch()} />;
 }
 
 function batchKey(id: string) {
@@ -605,10 +615,11 @@ function Verify({ batch, stage, onDone }: { batch: ImportBatch; stage: ImportSta
 }
 
 function Report({ batch }: { batch: ImportBatch }) {
-  const q = useImportsQuery<ReportResponse>([...batchKey(batch.id), 'report', batch.stages.map((s) => s.status).join()], `/imports/${batch.id}/report`);
+  const q = useImportsQuery<ReportResponse & { parity?: { phase: string; rows: ParityRowView[]; lines: string[] } | null }>([...batchKey(batch.id), 'report', batch.stages.map((s) => s.status).join()], `/imports/${batch.id}/report`);
   if (!q.data) return null;
   const lines = q.data.categories.flatMap((c) => c.lines.map((l) => ({ c: c.category, l })));
-  if (lines.length === 0) return null;
+  const parity = q.data.parity ?? null;
+  if (lines.length === 0 && !parity) return null;
   return (
     <Section title="Report">
       <Card>
@@ -620,6 +631,43 @@ function Report({ batch }: { batch: ImportBatch }) {
           ))}
         </ul>
       </Card>
+      {parity ? (
+        <Card className="flex flex-col gap-2">
+          <h3 className="text-[16px] font-semibold text-ink">Stages, tags and custom fields</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-[15px] text-ink">
+              <caption className="sr-only">Stages, tags and custom fields: in the source, {parity.phase === 'dry_run' ? 'will import' : 'imported'}, needs review, not imported, already here</caption>
+              <thead>
+                <tr className="text-[13px] text-ink-muted">
+                  <th scope="col" className="py-1 pr-3 font-medium">What</th>
+                  <th scope="col" className="py-1 pr-3 font-medium">In the source</th>
+                  <th scope="col" className="py-1 pr-3 font-medium">{parity.phase === 'dry_run' ? 'Will import' : 'Imported'}</th>
+                  <th scope="col" className="py-1 pr-3 font-medium">Needs review</th>
+                  <th scope="col" className="py-1 pr-3 font-medium">Not imported</th>
+                  <th scope="col" className="py-1 font-medium">Already here</th>
+                </tr>
+              </thead>
+              <tbody>
+                {parity.rows.map((r) => (
+                  <tr key={r.category}>
+                    <th scope="row" className="py-1 pr-3 font-semibold">{PARITY_CATEGORY_LABEL[r.category]}</th>
+                    <td className="py-1 pr-3 tabular-nums">{r.source}</td>
+                    <td className="py-1 pr-3 tabular-nums">{r.imported}</td>
+                    <td className="py-1 pr-3 tabular-nums">{r.needsReview}</td>
+                    <td className="py-1 pr-3 tabular-nums">{r.rejected}</td>
+                    <td className="py-1 tabular-nums">{r.duplicate}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <ul className="flex flex-col gap-1 text-[15px] text-ink">
+            {parity.lines.map((l) => (
+              <li key={l}>{l}</li>
+            ))}
+          </ul>
+        </Card>
+      ) : null}
     </Section>
   );
 }

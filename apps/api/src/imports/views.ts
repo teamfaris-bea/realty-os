@@ -1,7 +1,7 @@
 // API shapes of api/imports and the plain sentences the review list and the report show (BUILD_PLAN
 // module 16; R-IMPORT-1 copy, R-IMPORT-5; product values: honest copy, every number is a count).
 // No confidence scores anywhere (R-AST-13); no tenant id in any shape (R-TEN-3).
-import { type Category, type ConsentSummary, type Counts, type NormalizedRecord, type SourceName, batchReport, connectionTestLines, optOutPreview, reportLines } from '@realty/core/import';
+import { type Category, type ConsentSummary, type Counts, type NormalizedRecord, type ParityReportRow, type SourceName, batchReport, connectionTestLines, optOutPreview, parityCommittedReport, parityLines, parityReport, reportLines } from '@realty/core/import';
 import type { Channel } from '@realty/core/compliance';
 import type { BatchRow, MappingRow, StageRow } from './repos/batches.js';
 import type { RecordRow } from './repos/records.js';
@@ -15,7 +15,10 @@ export const ISSUE_SENTENCES: Record<string, string> = {
   FORMULA_PREFIX: 'A value started like a spreadsheet formula; it was stored as plain text.',
   VALUE_TRUNCATED: 'A value was too long and was shortened.',
   TOO_MANY_VALUES: 'There were more values than we keep; the extra ones were left out.',
-  STAGE_UNMAPPED: 'The stage name is not one we know; the contact starts as New and the original stage is kept for reference.',
+  STAGE_MAP_INCOMPLETE: 'Some stages from the source have no stage here yet. Pick one for each under "Stages, tags and custom fields", then run the check again.',
+  TAG_LIMIT: 'These tags would pass the 1,000-tag limit. Merge or delete some tags first; the ones that do not fit stay as text on each person.',
+  CUSTOM_FIELD_LIMIT: 'These new custom fields would pass the 50-field limit. Map some onto existing fields or keep them as text.',
+  STAGE_UNMAPPED: 'The stage name is not one we know: it gets the stage chosen for it in the stage map, and the original is kept for reference.',
   TYPE_UNMAPPED: 'The contact type is not one we know; it was kept for reference.',
   INTENT_UNMAPPED: 'Buyer/seller intent could not be read; it was kept for reference.',
   NAME_MISSING: 'No name; the contact is named after a phone or email.',
@@ -214,6 +217,7 @@ export function reportView(b: BatchRow, stages: readonly StageRow[]) {
   const table = batchReport(rows.map((r) => ({ category: r.stage.category, counts: r.counts })));
   return {
     source: name,
+    parity: parityReportView(b, stages),
     categories: table.map((t) => {
       const r = rows.find((x) => x.stage.category === t.category)!;
       return {
@@ -230,4 +234,33 @@ export function reportView(b: BatchRow, stages: readonly StageRow[]) {
       };
     }),
   };
+}
+
+/** PARITY 65 (R-PAR-46): the stages / tags / custom fields rows of the contacts stage, with plain lines. */
+export function parityReportView(b: BatchRow, stages: readonly StageRow[]) {
+  const c = stages.find((s) => s.category === 'contacts');
+  const summary = b.options.paritySummary;
+  if (!c || !summary || c.count_source === null) return null;
+  const committed = c.count_imported !== null && ['committed', 'verified', 'reverting', 'reverted'].includes(c.status);
+  const phase = c.status === 'reverted' ? ('reverted' as const) : committed ? ('committed' as const) : ('dry_run' as const);
+  const rows = phase === 'dry_run' ? parityReport(summary) : parityCommittedReport(b.options.parityCommitted ?? {});
+  const lines = phase === 'dry_run' ? parityLines(summary, sourceName(b) === 'your file' ? 'your file' : 'Follow Up Boss') : parityCommittedLines(rows);
+  const rev = (c.revert_report as { parity?: { tagLinks: number; values: number; tags: number; fields: number } } | null)?.parity;
+  if (phase === 'reverted' && rev) {
+    lines.push(`Revert removed ${rev.tagLinks} tag ${rev.tagLinks === 1 ? 'link' : 'links'}, ${rev.values} custom ${rev.values === 1 ? 'value' : 'values'} and ${rev.tags} unused ${rev.tags === 1 ? 'tag' : 'tags'}; ${rev.fields} unused ${rev.fields === 1 ? 'field was' : 'fields were'} archived.`);
+  }
+  return {
+    phase,
+    rows: rows.map((r) => ({ category: r.category, source: r.source, imported: r.imported, needsReview: r.needs_review, rejected: r.rejected, duplicate: r.duplicate })),
+    lines,
+  };
+}
+
+function parityCommittedLines(rows: readonly ParityReportRow[]): string[] {
+  const [st, tg, cf] = rows as [ParityReportRow, ParityReportRow, ParityReportRow];
+  return [
+    `Stages: ${st.imported} set from the import${st.duplicate > 0 ? `, ${st.duplicate} people already here kept their stage` : ''}.`,
+    `Tags: ${tg.imported} added${tg.duplicate > 0 ? `, ${tg.duplicate} already there` : ''}${tg.rejected > 0 ? `, ${tg.rejected} not added (limit); their text stays on the person` : ''}.`,
+    `Custom fields: ${cf.imported} values written${cf.duplicate > 0 ? `, ${cf.duplicate} kept the value an agent had set` : ''}${cf.rejected > 0 ? `, ${cf.rejected} did not fit and stay as text on the person` : ''}.`,
+  ];
 }

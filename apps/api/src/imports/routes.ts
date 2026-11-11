@@ -17,6 +17,7 @@
 //   POST /imports/:id/stages/:category/skip           a stage the team does not import
 //   POST /imports/:id/revert                          { category? } (R-IMPORT-10)
 //   POST /imports/:id/abandon                         purge the FUB key now (R-IMPORT-11)
+//   GET|PUT /imports/:id/parity                     stage map, keep-stage-as-tag, typed custom fields (R-PAR-46; resets the contacts dry run)
 //   GET  /imports/:id/report                          per category source | imported | needs review | rejected | duplicate
 import type { UserActor } from '@realty/core/foundation';
 import { type Category } from '@realty/core/import';
@@ -33,6 +34,7 @@ import { MAX_CSV_BYTES } from './csv.js';
 import { defaultFubConnector } from './handlers.js';
 import * as brepo from './repos/batches.js';
 import * as rrepo from './repos/records.js';
+import { type ParityView, getParity, setParity } from './parity.js';
 import { requestRevert } from './revert.js';
 import * as S from './schemas.js';
 import { MAX_FILE_BASE64_CHARS } from './schemas.js';
@@ -149,6 +151,21 @@ export function makeImportsRoutes(depsFor?: ImportDepsFromPlatform): RouteModule
           { db: deps(req).db },
         );
       });
+
+      const parityResponse = (v: ParityView) => ({
+        options: v.options,
+        stages: v.summary.stages,
+        tags: v.summary.tags,
+        fields: v.summary.fields,
+        existingFields: v.existingFields,
+        blockers: v.summary.blockers,
+        lines: v.lines,
+        report: v.report.map((r) => ({ category: r.category, source: r.source, imported: r.imported, needsReview: r.needs_review, rejected: r.rejected, duplicate: r.duplicate })),
+      });
+      r.get('/imports/:id/parity', { ...auth, schema: { params: S.IdParams, response: { 200: S.ParityResponse } } }, async (req) => parityResponse(await getParity(deps(req), actorOf(req), req.params.id)));
+      r.put('/imports/:id/parity', { ...auth, schema: { params: S.IdParams, body: S.ParityBody, response: { 200: S.ParityResponse } } }, async (req) =>
+        parityResponse(await setParity(deps(req), actorOf(req), req.params.id, req.body as never)),
+      );
 
       r.put('/imports/:id/csv-mapping', { ...auth, schema: { params: S.IdParams, body: S.CsvMappingBody, response: { 200: S.BatchResponse } } }, async (req) => {
         await setCsvMapping(deps(req), actorOf(req), req.params.id, req.body.mapping);

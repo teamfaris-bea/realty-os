@@ -279,7 +279,7 @@ async function seedTenant(c: pg.Client, kek: Kek, spec: LoadSpec, t: TenantSpec,
   await step(c, log, 'contacts', `
     INSERT INTO contacts (tenant_id, id, first_name, last_name, display_name, contact_type, intent, stage, timezone, timezone_source, ownership_state,
                           owner_user_id, pond_id, offer_id, offered_to_user_id, offer_expires_at, offer_round, owned_at, first_touch_due_at, first_touch_at,
-                          release_due_at, ownership_period_seq, closed_reason, ownership_seq, ownership_command_id, original_lead_source_id, tags,
+                          release_due_at, ownership_period_seq, closed_reason, ownership_seq, ownership_command_id, original_lead_source_id,
                           created_at, updated_at)
     SELECT $1, c.id, c.first_name, c.last_name, c.first_name || ' ' || c.last_name,
            CASE WHEN c.r_misc < 0.85 THEN 'lead' WHEN c.r_misc < 0.95 THEN 'sphere' ELSE 'past_client' END,
@@ -299,7 +299,6 @@ async function seedTenant(c: pg.Client, kek: Kek, spec: LoadSpec, t: TenantSpec,
            CASE WHEN c.state = 'owned' THEN 2 END,
            CASE WHEN c.state = 'closed' THEN 'spam' END,
            CASE WHEN c.touched THEN 3 WHEN c.state = 'unassigned' THEN 1 ELSE 2 END, $3, c.source_id,
-           CASE WHEN c.r_misc < 0.05 THEN ARRAY['vip'] WHEN c.r_misc > 0.97 THEN ARRAY['investor','cash'] ELSE '{}' END,
            c.created_at, c.created_at
       FROM ld_c c JOIN ld_agents a ON a.k = c.ak`, [T, S, cmd]);
   await c.query(`SELECT set_config('app.ownership_command', '', true)`);
