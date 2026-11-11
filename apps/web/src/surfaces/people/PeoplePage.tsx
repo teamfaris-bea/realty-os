@@ -244,23 +244,23 @@ function Rows(p: {
         <div role="region" aria-label="Bulk actions" className="fixed inset-x-0 bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))] z-40 border-t border-line bg-surface px-4 py-2 md:sticky md:bottom-4 md:rounded-2xl md:border md:shadow-lg">
           <div className="flex items-center gap-2 overflow-x-auto">
             <p className="shrink-0 pr-2 text-[15px] font-semibold text-ink">{p.allSelected && count.data?.capped ? `${count.data.count.toLocaleString('en-US')}+` : selCount.toLocaleString('en-US')} selected</p>
-            <Button variant="primary" onClick={() => setTagFor('tag')}>
+            <Button variant="primary" className="shrink-0 whitespace-nowrap" onClick={() => setTagFor('tag')}>
               {BULK_LABEL.tag}
             </Button>
-            <Button variant="secondary" onClick={() => setTagFor('untag')}>
+            <Button variant="secondary" className="shrink-0 whitespace-nowrap" onClick={() => setTagFor('untag')}>
               {BULK_LABEL.untag}
             </Button>
-            <Button variant="secondary" onClick={() => ask('stage')}>
+            <Button variant="secondary" className="shrink-0 whitespace-nowrap" onClick={() => ask('stage')}>
               {BULK_LABEL.stage}
             </Button>
-            <Button variant="secondary" onClick={() => ask('email')}>
+            <Button variant="secondary" className="shrink-0 whitespace-nowrap" onClick={() => ask('email')}>
               {BULK_LABEL.email}
             </Button>
-            <Button variant="secondary" onClick={() => ask('enroll')}>
+            <Button variant="secondary" className="shrink-0 whitespace-nowrap" onClick={() => ask('enroll')}>
               {BULK_LABEL.enroll}
             </Button>
             {canAssign ? (
-              <Button variant="secondary" onClick={() => ask('assign')}>
+              <Button variant="secondary" className="shrink-0 whitespace-nowrap" onClick={() => ask('assign')}>
                 {BULK_LABEL.assign}
               </Button>
             ) : null}

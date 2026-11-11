@@ -8,9 +8,9 @@ const ADMINS = ['owner', 'admin'] as const;
 
 export const surface: SurfaceModule = {
   pages: [
-    { path: '/admin/tags', title: 'Tags', roles: ADMINS, nav: { phone: 'more', desktop: 'sidebar', icon: 'checklist', order: 75, section: 'admin' }, component: lazy(() => import('./TagsPage.js')) },
-    { path: '/admin/fields', title: 'Custom fields', roles: ADMINS, nav: { phone: 'more', desktop: 'sidebar', icon: 'settings', order: 76, section: 'admin' }, component: lazy(() => import('./FieldsPage.js')) },
-    { path: '/admin/stage-labels', title: 'Stage labels', roles: ADMINS, nav: { phone: 'more', desktop: 'sidebar', icon: 'settings', order: 77, section: 'admin' }, component: lazy(() => import('./StageLabelsPage.js')) },
+    { path: '/admin/tags', title: 'Tags', roles: ADMINS, nav: { phone: 'more', desktop: 'sidebar', icon: 'checklist', order: 300, section: 'admin' }, component: lazy(() => import('./TagsPage.js')) },
+    { path: '/admin/fields', title: 'Custom fields', roles: ADMINS, nav: { phone: 'more', desktop: 'sidebar', icon: 'settings', order: 301, section: 'admin' }, component: lazy(() => import('./FieldsPage.js')) },
+    { path: '/admin/stage-labels', title: 'Stage labels', roles: ADMINS, nav: { phone: 'more', desktop: 'sidebar', icon: 'settings', order: 302, section: 'admin' }, component: lazy(() => import('./StageLabelsPage.js')) },
   ],
   errorMessages: LISTS_ERROR_MESSAGES,
 };

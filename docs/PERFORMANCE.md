@@ -337,6 +337,56 @@ These miss their budget after the fixes. Each needs a decision from the owner, n
    - It is not on a phone path, but it is a quarter of its own period. Re-measure it on the final schema, and consider a
      per-contact recompute driven by events.
 
+## Smart lists (R-PAR-29, lane par-lists)
+
+Measured on the same machine on the 250k seed plus the list workload (`apps/api/src/lists/perf/seedLists.ts`:
+200 tags, 5 of them protected; 10 custom fields; 1,033,178 tag links and 2,119,746 typed values across all
+tenants, 975,407 links in the large tenant), through the real server in process (`listsBench.ts`, n = 20 per
+operation after 2 warm-ups), for the Owner and for the agent whose book is closest to 2,000 (2,634 people).
+Budget: first page p95 ≤ 400 ms, count p95 ≤ 800 ms, 3 s statement timeout.
+
+| list (14 definitions) | Owner page p95 | Owner count p95 | Agent page p95 | Agent count p95 |
+|---|---:|---:|---:|---:|
+| everyone (People tab) | 54 | 16 | 84 | 9 |
+| tag: popular (≈ 4 % of people) | 84 | **3,015 (timeout)** | 96 | 56 |
+| tag: rare (≈ 1 %) | 116 | **1,773** | 48 | 26 |
+| tag: none of | 93 | 206 | 91 | 46 |
+| stage + active in 30 days | 52 | 28 | 49 | 9 |
+| my new leads with a tag | 8 | 7 | 28 | 13 |
+| budget ≥ 1.5M (number field) | 120 | **3,012 (timeout)** | 316 | 308 |
+| birthday in 14 days (annual date) | 386 | **3,008 (timeout)** | 324 | 326 |
+| features pool + timeline now (choices) | 292 | **3,015 (timeout)** | **406** | 363 |
+| overdue task | 54 | 311 | 52 | 20 |
+| name contains | 240 | 101 | 46 | 16 |
+| OR group (tag or stage) | 87 | **925** | 61 | 23 |
+| everyone by name | 313 | 16 | 53 | 12 |
+| everyone by next task | **638** | 18 | 66 | 17 |
+
+50 of 58 within budget (second pages included). Every Agent run but one is within budget. What misses:
+
+- **Owner counts of a broad tag or field filter.** Under the P0 policies every `contact_tags` /
+  `contact_field_values` row read costs one `app.contact_detail_visible()` call (≈ 0.19 ms), and numeric,
+  array, EXTRACT and LIKE comparisons are not leakproof, so they cannot run as index conditions before the
+  policy. An exact count to 10,000 therefore pays up to 10,000 policy calls. A 3 s run ends `LIST_TOO_SLOW`
+  and the page says "Count unavailable" (the rows still load).
+- **Owner "by next task" first page** (638 ms): the sort key is a per-person sub-query over 250k people.
+- **Agent "features pool + timeline now"** (406 ms): two per-person value probes, each paying the policy.
+
+Two plan rules made the rest pass (both in `apps/api/src/lists/repos/people.ts`, proven by the CI-sized
+`lists.perf.test.ts` and the equality tests): every detail predicate is a per-person probe by primary key
+(a scalar sub-query the planner cannot turn into a hash over the whole table), and for an Agent, ISA or TC
+the implied "owned, collaborating or on my deal" predicate lets the planner start from the owner index.
+
+**Evidence for the owner (not applied: lanes do not change policies).** On the scratch load database only,
+the provably equivalent policy form `(SELECT app.is_tenant_wide()) OR app.contact_detail_visible(tenant_id,
+contact_id)` on `contact_tags` and `contact_field_values` (reverted afterwards) gave Owner first pages of
+12-36 ms (from 84-386 ms) and counts of 240-1,982 ms (from 925-3,015 ms). Counts would then also need the
+value-driven count shape (a semi-join from the tag or value index, cheap once the policy is) to meet 800 ms.
+
+Reproduce: `pnpm load:seed --contacts 250000`, then
+`pnpm --filter @realty/api exec tsx --env-file-if-exists=../../.env --conditions=@realty/source src/lists/perf/seedLists.ts`
+and `… src/lists/perf/listsBench.ts --n 20 --explain off`.
+
 ## 8. Reproducing
 
 ```sh

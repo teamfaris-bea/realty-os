@@ -17,6 +17,8 @@ const CHILD = String.raw`
 import http from 'node:http';
 import { createApiHarness, TEST_ORIGIN, TEST_PASSWORD } from './src/auth/testHarness.ts';
 import { listsWorld, makeTag, tagContact, call } from './src/lists/testing.ts';
+import { totpCode, totpStep } from './src/auth/totp.ts';
+const secrets = new Map();
 (async () => {
 const origin = process.env.E2E_WEB_ORIGIN;
 const h = await createApiHarness({ config: { webOrigins: [origin, TEST_ORIGIN] } });
@@ -34,7 +36,14 @@ const routes = {
     must(await tagContact(w.agentA, w.aContacts[31], [va.id]), 'tag va');
     const list = must(await call(w.agentA, 'POST', '/smart-lists', { scope: 'personal', name: 'Hot buyers', definition: { v: 1, all: [{ kind: 'tag', op: 'any', tagIds: [buyer.id] }] } }), 'list');
     const team = must(await call(w.lead, 'POST', '/smart-lists', { scope: 'team', name: 'New leads', definition: { v: 1, all: [{ kind: 'stage', in: ['new'] }] } }), 'team list');
-    return { agent: { email: w.agentA.email, password: TEST_PASSWORD }, lead: { email: w.lead.email, password: TEST_PASSWORD }, buyerTagId: buyer.id, listId: list.list.id, teamListId: team.list.id, firstContactId: w.aContacts[0] };
+    must(await call(w.admin, 'POST', '/custom-fields', { label: 'Budget', fieldType: 'number' }), 'field');
+    must(await call(w.admin, 'POST', '/custom-fields', { label: 'Birthday', fieldType: 'date', annual: true }), 'field');
+    must(await call(w.admin, 'POST', '/custom-fields', { label: 'Timeline', fieldType: 'single_select', options: [{ label: 'Now' }, { label: '3-6 months' }, { label: 'Later' }] }), 'field');
+    secrets.set(w.admin.email, w.admin.totpSecret);
+    return { agent: { email: w.agentA.email, password: TEST_PASSWORD }, lead: { email: w.lead.email, password: TEST_PASSWORD }, admin: { email: w.admin.email, password: TEST_PASSWORD }, buyerTagId: buyer.id, listId: list.list.id, teamListId: team.list.id, firstContactId: w.aContacts[0] };
+  },
+  async '/totp'(b) {
+    return { code: totpCode(secrets.get(b.email), totpStep(Date.now())) };
   },
 };
 const ctl = http.createServer(async (req, res) => {
@@ -59,7 +68,7 @@ process.stdin.resume();
 })().catch((e) => { console.error(e); process.exit(1); });
 `;
 
-export type FixturePath = '/world';
+export type FixturePath = '/world' | '/totp';
 
 export interface ListsStack {
   webUrl: string;
