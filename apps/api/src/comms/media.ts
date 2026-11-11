@@ -96,10 +96,9 @@ export function mediaItemsOf(form: Record<string, string>): MediaItem[] {
   const n = Math.min(Math.max(Number.parseInt(form.NumMedia ?? '0', 10) || 0, 0), 100);
   const out: MediaItem[] = [];
   for (let i = 0; i < n; i++) {
-    let ref: string | null = null;
+    let ref: string | null;
     try {
-      const u = new URL(form[`MediaUrl${i}`] ?? '');
-      ref = ME_SID.exec(u.pathname)?.[1] ?? null;
+      ref = ME_SID.exec(new URL(form[`MediaUrl${i}`] ?? '').pathname)?.[1] ?? null;
     } catch {
       ref = null;
     }
