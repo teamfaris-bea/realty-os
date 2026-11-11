@@ -50,8 +50,12 @@ export interface ExceptionItem {
   conditionClearedAt: string | null;
   live: boolean;
   evidence: ExceptionEvidence[];
-  /** untouched_lead: whether the missed ownership period is still the lead's current one (false once it moved on) */
-  period?: { current: boolean } | null;
+  /**
+   * untouched_lead: whether the missed ownership period is still the lead's current one, and whether the lead left
+   * its owner since. Not current and not moved on: the owner kept the lead and a re-inquiry started their next
+   * period (R-OWN-20 / E68).
+   */
+  period?: { current: boolean; movedOn: boolean } | null;
   /** the contact's ownership ledger head when the queue was read: sent back with a reassign (stale-UI fence) */
   contactOwnershipSeq: number | null;
   latestEvent: ExceptionEvent | null;

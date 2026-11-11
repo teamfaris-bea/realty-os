@@ -208,9 +208,10 @@ export function removedWords(byTable: Record<string, number>): string {
 function revertLines(s: StageRow): string[] {
   const r = (s.revert_report ?? {}) as { removed?: number; compensated?: number; needsDecision?: number; keptReasons?: Record<string, number>; removedByTable?: Record<string, number> };
   const n = (x: number | undefined) => (x ?? 0).toLocaleString('en-US');
-  const what = r.removedByTable ? removedWords(r.removedByTable) : `${n(r.removed)} imported ${r.removed === 1 ? 'row' : 'rows'}`;
+  const what = r.removedByTable ? removedWords(r.removedByTable) : `${n(r.removed)} ${r.removed === 1 ? 'row' : 'rows'}`;
   const left = (r.needsDecision ?? 0) === 0 ? 'nothing was left for your decision' : `${n(r.needsDecision)} ${r.needsDecision === 1 ? 'record was' : 'records were'} changed since the import and left for your decision`;
-  const lines = [`Undone. The undo removed what this import added: ${what}; ${left}.`];
+  // names only what was removed: records left for a decision and the import's opt-outs (kept, below) are not
+  const lines = [`Undone. The undo removed ${what} that this import added; ${left}.`];
   if ((r.compensated ?? 0) > 0) {
     lines.push(
       s.category === 'ownership'

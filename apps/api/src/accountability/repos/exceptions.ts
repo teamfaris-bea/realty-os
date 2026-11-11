@@ -472,11 +472,20 @@ export interface LoggedActivityRow {
   author_name: string | null;
 }
 
+// The read-time period facts below compare a later ledger row `e` of the contact with the row `s` that started the
+// period (core fold.startsPeriod; every ledger row carries the state and owner AFTER it).
+/** `e` takes the lead from the period's owner: out of `owned` (released, to a pond, closed, merged away) or to someone else. */
+const LEAVES_OWNER = sql`(e.to_state <> 'owned' OR e.owner_user_id IS DISTINCT FROM s.owner_user_id)`;
+/** `e` starts a new period of the same owner: a re-inquiry SLA (R-OWN-20 / E68, payload.newPeriod). */
+const NEW_PERIOD_SAME_OWNER = sql`(e.type = 'reinquiry' AND e.payload @> '{"newPeriod": true}'::jsonb)`;
+
 /**
  * R-PAR-32: the activities people logged (notes with source logged_activity, R-PAR-30) inside each untouched
  * lead's ownership period, from its start event to the event that ended it (or now), read under the VIEWER's
- * RLS: the period's ledger rows and the notes are visible only to whoever may see them. Context only: nothing
- * here feeds the derivation, so a logged activity never satisfies, delays or clears the first touch.
+ * RLS: the period's ledger rows and the notes are visible only to whoever may see them. A period ends when the
+ * lead leaves its owner or when a re-inquiry starts the same owner's next period, so a newer period's activity is
+ * never shown on an earlier period's card. Context only: nothing here feeds the derivation, so a logged activity
+ * never satisfies, delays or clears the first touch.
  */
 export async function loggedActivitiesInPeriods(tx: Tx, periods: readonly { key: string; contactId: string; seq: number }[]): Promise<LoggedActivityRow[]> {
   if (periods.length === 0) return [];
@@ -487,7 +496,7 @@ export async function loggedActivitiesInPeriods(tx: Tx, periods: readonly { key:
       JOIN lead_ownership_events s ON s.tenant_id = app.tenant_id() AND s.contact_id = x.contact_id AND s.seq = x.seq
       LEFT JOIN LATERAL (
         SELECT e.occurred_at FROM lead_ownership_events e
-         WHERE e.tenant_id = s.tenant_id AND e.contact_id = s.contact_id AND e.seq > s.seq AND e.type = ANY (${PERIOD_END_TYPES}::text[])
+         WHERE e.tenant_id = s.tenant_id AND e.contact_id = s.contact_id AND e.seq > s.seq AND (${LEAVES_OWNER} OR ${NEW_PERIOD_SAME_OWNER})
          ORDER BY e.seq LIMIT 1) pe ON true
       -- a logged time has minute precision (the log sheet's time field): an activity logged in the minute the period
       -- began belongs to it
@@ -496,4 +505,26 @@ export async function loggedActivitiesInPeriods(tx: Tx, periods: readonly { key:
       LEFT JOIN users u ON u.id = n.author_user_id
      ORDER BY x.k, n.activity_at, n.id`.execute(tx);
   return r.rows;
+}
+
+/**
+ * Of the given untouched-lead periods, the keys whose owner has held the lead ever since the period started, the
+ * period having ended only because a re-inquiry started their next one (R-OWN-20 / E68), read under the VIEWER's
+ * RLS. Only a ledger the viewer sees whole counts (the ledger is gapless, so every row from the period's start to
+ * the contact's head must be visible): a period with a row they cannot see is not reported as kept, so the card
+ * says the lead moved on rather than name a re-inquiry nobody saw.
+ */
+export async function periodsKeptByOwner(tx: Tx, periods: readonly { key: string; contactId: string; seq: number }[]): Promise<Set<string>> {
+  if (periods.length === 0) return new Set();
+  const r = await sql<{ k: string }>`
+    SELECT x.k
+      FROM unnest(${periods.map((p) => p.key)}::text[], ${periods.map((p) => p.contactId)}::uuid[], ${periods.map((p) => p.seq)}::bigint[]) AS x(k, contact_id, seq)
+      JOIN contacts c ON c.tenant_id = app.tenant_id() AND c.id = x.contact_id
+      JOIN lead_ownership_events s ON s.tenant_id = c.tenant_id AND s.contact_id = c.id AND s.seq = x.seq AND s.to_state = 'owned'
+      CROSS JOIN LATERAL (
+        SELECT count(*) AS seen, count(*) FILTER (WHERE ${LEAVES_OWNER}) AS left_owner, count(*) FILTER (WHERE ${NEW_PERIOD_SAME_OWNER}) AS new_periods
+          FROM lead_ownership_events e
+         WHERE e.tenant_id = s.tenant_id AND e.contact_id = s.contact_id AND e.seq > s.seq) l
+     WHERE l.seen = c.ownership_seq - s.seq AND l.left_owner = 0 AND l.new_periods > 0`.execute(tx);
+  return new Set(r.rows.map((x) => x.k));
 }

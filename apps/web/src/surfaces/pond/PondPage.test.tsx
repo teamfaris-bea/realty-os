@@ -20,8 +20,25 @@ describe('Pond', () => {
   it("R-OWN-16: says why the member's own totals block a claim, with the numbers it rests on", () => {
     const me = { claimsToday: 5, uncontactedOwned: 5, capacityCap: 5 };
     expect(blockedSentence(myPonds().ponds[0]!, me)).toBeNull();
-    expect(blockedSentence(myPonds({ blockedBy: 'CLAIM_LIMIT_REACHED' }).ponds[0]!, me)).toBe("You've claimed 5 of the 5 leads this pond allows a day. You can claim from it again tomorrow.");
+    expect(blockedSentence(myPonds({ blockedBy: 'CLAIM_LIMIT_REACHED' }).ponds[0]!, me)).toBe("You've claimed 5 leads today (from any pond), and this pond lets you claim only until you reach 5 a day. You can claim from it again tomorrow.");
     expect(blockedSentence(myPonds({ blockedBy: 'CAPACITY_REACHED' }).ponds[0]!, me)).toBe('5 of your leads are still waiting for a first call, text or email (the most is 5). Reach one of them before claiming more.');
+  });
+
+  it('the daily count is claims from every pond, so a pond with a lower limit never reads as claimed from', () => {
+    // the claim rule's count (R-OWN-16, app.claim_stats): claimed 2 from the default pond (5 a day); a second pond
+    // allows 1 a day and was never claimed from
+    const strict = myPonds({ id: IDS.pond, name: 'Luxury pond', isDefault: false, claimsPerDay: 1, blockedBy: 'CLAIM_LIMIT_REACHED' }).ponds[0]!;
+    expect(blockedSentence(strict, { claimsToday: 2, uncontactedOwned: 0, capacityCap: 5 })).toBe("You've claimed 2 leads today (from any pond), and this pond lets you claim only until you reach 1 a day. You can claim from it again tomorrow.");
+    expect(blockedSentence(strict, { claimsToday: 1, uncontactedOwned: 0, capacityCap: 5 })).toBe("You've claimed 1 lead today (from any pond), and this pond lets you claim only until you reach 1 a day. You can claim from it again tomorrow.");
+  });
+
+  it('above a lowered cap the page asks for as many first contacts as it takes to get under it', () => {
+    const capped = myPonds({ blockedBy: 'CAPACITY_REACHED' }).ponds[0]!;
+    // a claim needs fewer waiting leads than the cap (R-OWN-16): 2 waiting with the cap lowered to 1, reaching one
+    // still leaves 1, which is not under 1
+    expect(blockedSentence(capped, { claimsToday: 0, uncontactedOwned: 2, capacityCap: 1 })).toBe('2 of your leads are still waiting for a first call, text or email (the most is 1). Reach 2 of them before claiming more.');
+    expect(blockedSentence(capped, { claimsToday: 0, uncontactedOwned: 7, capacityCap: 5 })).toBe('7 of your leads are still waiting for a first call, text or email (the most is 5). Reach 3 of them before claiming more.');
+    expect(blockedSentence(capped, { claimsToday: 0, uncontactedOwned: 1, capacityCap: 1 })).toBe('1 of your leads is still waiting for a first call, text or email (the most is 1). Reach it before claiming more.');
   });
 
   it('R-PERM-6: pond cards show only card fields; Claim is one tap; losing the race says so', async () => {
@@ -67,7 +84,7 @@ describe('Pond', () => {
     const fake = new FakeFetch().on('GET /me/ponds', { status: 200, body: myPonds({ blockedBy: 'CLAIM_LIMIT_REACHED' }, { claimsToday: 5 }) });
     agentApp(fake, '/pond');
     const section = (await screen.findByRole('heading', { level: 2, name: 'Team pond' })).closest('section')!;
-    expect(within(section).getByText("You've claimed 5 of the 5 leads this pond allows a day. You can claim from it again tomorrow.")).toBeInTheDocument();
+    expect(within(section).getByText("You've claimed 5 leads today (from any pond), and this pond lets you claim only until you reach 5 a day. You can claim from it again tomorrow.")).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Claim' })).toBeNull();
     expect(fake.callsTo(`GET /ponds/${IDS.pond}/cards?limit=50`)).toHaveLength(0);
   });

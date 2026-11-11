@@ -28,10 +28,16 @@ describe('exceptionEvidenceView', () => {
 describe('periodLabel and the period lines (one ownership period per card)', () => {
   const owner = { userId: 'u1', name: 'Ava Agent' };
   it('labels an untouched lead\'s facts as its owner\'s period, and as the earlier period once the lead moved on; other types have none', () => {
-    expect(periodLabel({ itemType: 'untouched_lead', owner, period: { current: true } })).toBe("Ava Agent's ownership period");
-    expect(periodLabel({ itemType: 'untouched_lead', owner, period: { current: false } })).toBe("Ava Agent's earlier ownership period (the lead has moved on since)");
-    expect(periodLabel({ itemType: 'untouched_lead', owner: { userId: 'u2', name: null }, period: { current: false } })).toBe("A former member's earlier ownership period (the lead has moved on since)");
+    expect(periodLabel({ itemType: 'untouched_lead', owner, period: { current: true, movedOn: false } })).toBe("Ava Agent's ownership period");
+    expect(periodLabel({ itemType: 'untouched_lead', owner, period: { current: false, movedOn: true } })).toBe("Ava Agent's earlier ownership period (the lead has moved on since)");
+    expect(periodLabel({ itemType: 'untouched_lead', owner: { userId: 'u2', name: null }, period: { current: false, movedOn: true } })).toBe("A former member's earlier ownership period (the lead has moved on since)");
     expect(periodLabel({ itemType: 'overdue_promise', owner, period: null })).toBeNull();
+  });
+  it('when the same agent still has the lead and a re-inquiry started their next period, the earlier period never says the lead moved on', () => {
+    // the re-inquiry SLA period of an owned lead (R-OWN-20 / E68; the server's period facts: accountability/exceptions.test.ts)
+    expect(periodLabel({ itemType: 'untouched_lead', owner, period: { current: false, movedOn: false } })).toBe("Ava Agent's earlier ownership period (a new one started when the lead inquired again)");
+    // only the server's explicit "kept" names a re-inquiry: a period without that fact keeps the cautious wording
+    expect(periodLabel({ itemType: 'untouched_lead', owner, period: { current: false } as never })).toBe("Ava Agent's earlier ownership period (the lead has moved on since)");
   });
   it('names the period\'s owner in its lines and leaves the period end to the label; other lines are unchanged', () => {
     const line = (explanation: string, o?: string) => exceptionEvidenceView({ sourceType: 'ownership_period', sourceId: 'p1', explanation, at: null, locator: null, snippet: null, needsReview: false, link: null }, o ? { owner: o } : {}).explanation;

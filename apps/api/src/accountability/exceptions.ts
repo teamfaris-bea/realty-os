@@ -29,8 +29,10 @@
 // R-PAR-32: an untouched-lead card also shows, as context, the activities people logged in that ownership
 // period (R-PAR-30 notes: "Logged by <name>", at the time it happened), read at read time under the viewer's
 // rights. They are never inputs of the derivation: a logged call never satisfies, delays or clears the first
-// touch. The view also says whether the item's period is still the lead's current one (`period.current`), so a
-// card whose lead has moved on labels its facts as the earlier owner's period.
+// touch. A period ends when the lead leaves its owner or a re-inquiry starts the owner's next period (R-OWN-20 /
+// E68), so a newer period's activity never shows on an earlier card. The view also says whether the item's period
+// is still the lead's current one (`period.current`) and whether the lead has left that owner since
+// (`period.movedOn`), so a card labels its facts as the owner's earlier period and says why it ended.
 //
 // Module 18a (Phase 2): milestone_at_risk (R-ACC-6, R-TXN-3) is the fifth definition: a confirmed deal date
 // overdue, or due within 48 h with nobody responsible, keyed milestone:{deal_date}:{due_version} and owned by
@@ -188,11 +190,12 @@ export interface ExceptionView {
   live: boolean;
   evidence: EvidenceItemView[];
   /**
-   * untouched_lead only: whether the item's ownership period is still the lead's current one (the same owner, the
-   * same period); false once the lead moved on (reassigned, released, gone from the viewer's sight). Null for
-   * other types.
+   * untouched_lead only (null for other types). `current`: the item's ownership period is still the lead's current
+   * one (the same owner, the same period). `movedOn`: the lead left that owner since (reassigned, released, closed,
+   * merged) or is gone from the viewer's sight. Not current and not moved on: the same owner has held the lead
+   * throughout, and a re-inquiry started their next period (R-OWN-20 / E68).
    */
-  period: { current: boolean } | null;
+  period: { current: boolean; movedOn: boolean } | null;
   contactOwnershipSeq: number | null;
   latestEvent: ExceptionEventView | null;
   /** what the viewer may do now (one tap each) */
@@ -242,22 +245,47 @@ function reassignStale(row: repo.QueueRow): boolean {
   return period !== undefined && holder !== null && row.contact_period_seq !== null && Number(period) !== Number(row.contact_period_seq);
 }
 
-/** An untouched lead's period is still current while the same owner holds the lead in that same period. */
-function periodOf(row: repo.QueueRow): { current: boolean } | null {
-  if (row.item_type !== 'untouched_lead') return null;
-  const seq = KEY_RE.exec(row.dedupe_key)?.[2];
-  if (seq === undefined) return null;
-  const current =
-    row.contact_visible &&
-    row.contact_ownership_state === 'owned' &&
-    row.contact_owner_user_id !== null &&
-    row.contact_owner_user_id === row.owner_user_id &&
-    row.contact_period_seq !== null &&
-    Number(row.contact_period_seq) === Number(seq);
-  return { current };
+/** The item's owner holds its lead now (as the viewer sees it). */
+function heldByOwner(row: repo.QueueRow): boolean {
+  return row.contact_visible && row.contact_ownership_state === 'owned' && row.contact_owner_user_id !== null && row.contact_owner_user_id === row.owner_user_id;
 }
 
-function viewOf(row: repo.QueueRow, actor: UserActor, now: Instant, claimEvidence: EvidenceItemView[]): ExceptionView {
+/** An untouched lead's period seq, from its key (null for other types). */
+function periodSeqOf(row: repo.QueueRow): number | null {
+  if (row.item_type !== 'untouched_lead') return null;
+  const seq = KEY_RE.exec(row.dedupe_key)?.[2];
+  return seq === undefined ? null : Number(seq);
+}
+
+/** The owner holds the lead in a later period: whether they kept it throughout is a ledger question (periodsKeptFor). */
+function heldInLaterPeriod(row: repo.QueueRow): boolean {
+  const seq = periodSeqOf(row);
+  return seq !== null && heldByOwner(row) && row.contact_period_seq !== null && Number(row.contact_period_seq) !== seq;
+}
+
+/**
+ * An untouched lead's period is still current while the same owner holds the lead in that same period. It has
+ * moved on once the lead left them, unless `kept`: the ledger shows they held it throughout and only a re-inquiry
+ * started their next period (repo.periodsKeptByOwner).
+ */
+function periodOf(row: repo.QueueRow, kept: boolean): { current: boolean; movedOn: boolean } | null {
+  const seq = periodSeqOf(row);
+  if (seq === null) return null;
+  const held = heldByOwner(row);
+  const current = held && row.contact_period_seq !== null && Number(row.contact_period_seq) === seq;
+  return { current, movedOn: !held || (!current && !kept) };
+}
+
+/** The untouched-lead rows whose owner kept the lead while a re-inquiry started their next period (the viewer's ledger). */
+async function periodsKeptFor(tx: Tx, rows: readonly repo.QueueRow[]): Promise<Set<string>> {
+  const periods = rows.filter(heldInLaterPeriod).flatMap((r) => {
+    const m = KEY_RE.exec(r.dedupe_key);
+    return m?.[1] && m[2] ? [{ key: r.dedupe_key, contactId: m[1], seq: Number(m[2]) }] : [];
+  });
+  return repo.periodsKeptByOwner(tx, periods);
+}
+
+function viewOf(row: repo.QueueRow, actor: UserActor, now: Instant, claimEvidence: EvidenceItemView[], kept: boolean): ExceptionView {
   const live = isLive(row);
   const evidence: EvidenceItemView[] = (row.evidence as ExceptionEvidence[]).map((e) => ({
     sourceType: e.sourceType,
@@ -284,7 +312,7 @@ function viewOf(row: repo.QueueRow, actor: UserActor, now: Instant, claimEvidenc
     conditionClearedAt: isoOrNull(row.condition_cleared_at),
     live,
     evidence,
-    period: periodOf(row),
+    period: periodOf(row, kept),
     contactOwnershipSeq: row.contact_visible && row.contact_ownership_seq !== null ? Number(row.contact_ownership_seq) : null,
     latestEvent:
       row.last_action === null
@@ -397,6 +425,7 @@ export async function listExceptions(tx: Tx, actor: UserActor, envelope: Envelop
   const ownerUserId = f.owner === 'me' ? actor.userId : f.owner;
   const rows = await repo.queueRows(tx, { type: f.type, ownerUserId, state: f.state ?? 'live', limit: Math.min(f.limit ?? QUEUE_LIMIT, QUEUE_LIMIT) });
   const claimEv = await readTimeEvidenceFor(tx, actor, envelope, rows);
+  const kept = await periodsKeptFor(tx, rows);
   const byType: Record<ExceptionType, number> = { untouched_lead: 0, overdue_promise: 0, failed_send: 0, missing_outcome: 0, milestone_at_risk: 0 };
   let live: number;
   if (f.type === undefined && (f.state ?? 'live') === 'live' && rows.length < QUEUE_LIMIT) {
@@ -409,7 +438,7 @@ export async function listExceptions(tx: Tx, actor: UserActor, envelope: Envelop
     live = Object.values(byType).reduce((a, b) => a + b, 0);
   }
   return {
-    items: rows.map((r) => viewOf(r, actor, now, claimEv.get(r.dedupe_key) ?? [])),
+    items: rows.map((r) => viewOf(r, actor, now, claimEv.get(r.dedupe_key) ?? [], kept.has(r.dedupe_key))),
     counts: { live, byType },
     generatedAt: iso(now),
   };
@@ -419,8 +448,9 @@ export async function getException(tx: Tx, actor: UserActor, envelope: EnvelopeS
   const row = (await repo.queueRows(tx, { dedupeKey, state: 'all', limit: 1 }))[0];
   if (!row) throw new AppError('NOT_FOUND');
   const claimEv = await readTimeEvidenceFor(tx, actor, envelope, [row]);
+  const kept = await periodsKeptFor(tx, [row]);
   const events = (await repo.eventsOf(tx, dedupeKey)).map((e) => ({ action: e.action, note: e.note, actor: { userId: e.actor_user_id, name: e.actor_name }, at: iso(e.occurred_at) }));
-  return { item: viewOf(row, actor, now, claimEv.get(dedupeKey) ?? []), events };
+  return { item: viewOf(row, actor, now, claimEv.get(dedupeKey) ?? [], kept.has(dedupeKey)), events };
 }
 
 /** The facts authorize() needs for one item (null: invisible ⇒ 404, R-PERM-5). */

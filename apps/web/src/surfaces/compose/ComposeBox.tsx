@@ -11,7 +11,8 @@
 //   other channel stays available. Rules that depend on the words (payment instructions, the brokerage
 //   name on marketing) are previewed against the real text while typing (useSendCheck). When the send
 //   adds to the typed words (the brokerage line on a marketing text, an email's signature and footer),
-//   the box shows the text exactly as it will go out ("What Jane will get"), from the same preview. There is no
+//   the box shows the text exactly as it will go out ("What Jane will get"), from the same preview; an
+//   approved draft is rendered the same way, with the approving agent's signature. There is no
 //   consent prompt, no quiet-hours wait and no way past an opt-out (owner decision,
 //   core-compliance/2.0.0). Neither decides: the send-time decision does, and its outcome is shown as
 //   it came back (sent, scheduled for the time the agent picked, or not sent and why).

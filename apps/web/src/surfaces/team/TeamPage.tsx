@@ -119,7 +119,7 @@ export function ExceptionCard({ item, onDone, onFailure }: { item: ExceptionItem
   const reassign = useCommand<{ toUserId: string; expectedSeq?: number }, ItemResponse>(keyPath(item, 'reassign'), opts);
   const fixedLate = item.live && item.conditionClearedAt !== null;
   const subject = item.contact?.name ?? null;
-  // R-PAR-32 / one period per card: an untouched lead's facts are its owner's period, labelled as earlier once the lead moved on
+  // R-PAR-32 / one period per card: an untouched lead's facts are its owner's period, labelled as earlier once it ended
   const period = periodLabel(item);
 
   const doVerify = async () => {

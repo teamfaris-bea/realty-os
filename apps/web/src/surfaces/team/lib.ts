@@ -22,13 +22,18 @@ export const TYPES: readonly ExceptionType[] = ['untouched_lead', 'overdue_promi
 const SOURCE_TYPES = new Set<EvidenceSourceType>(['call', 'message', 'email', 'note', 'listing', 'import', 'behavior_event', 'deal', 'task', 'appointment', 'ownership_period', 'message_status']);
 
 /**
- * An untouched lead's facts belong to one ownership period: its owner's. Once the lead moved on (reassigned,
- * released), the card labels them as that owner's earlier period, so nothing reads as the new owner's.
+ * An untouched lead's facts belong to one ownership period: its owner's. Once that period is over, the card labels
+ * them as the owner's earlier period, so nothing reads as a newer period's, and says why it ended: the lead moved
+ * on (reassigned, released, closed, merged), or the owner kept it and a re-inquiry started their next period
+ * (R-OWN-20). Only the server's explicit `movedOn: false` names a re-inquiry.
  */
 export function periodLabel(item: Pick<ExceptionItem, 'itemType' | 'owner' | 'period'>): string | null {
   if (item.itemType !== 'untouched_lead' || !item.period) return null;
   const who = item.owner?.name ?? (item.owner ? 'A former member' : 'No owner');
-  return item.period.current ? `${who}'s ownership period` : `${who}'s earlier ownership period (the lead has moved on since)`;
+  if (item.period.current) return `${who}'s ownership period`;
+  return item.period.movedOn === false
+    ? `${who}'s earlier ownership period (a new one started when the lead inquired again)`
+    : `${who}'s earlier ownership period (the lead has moved on since)`;
 }
 
 /** The server's period lines, said about the period's owner (the period label already says when it ended). */

@@ -377,9 +377,13 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
                   "current": {
                     "type": "boolean",
                   },
+                  "movedOn": {
+                    "type": "boolean",
+                  },
                 },
                 "required": [
                   "current",
+                  "movedOn",
                 ],
                 "type": "object",
               },
@@ -995,9 +999,13 @@ exports[`api/accountability route table and schemas > R-AST-13 R-TEN-3: response
                     "current": {
                       "type": "boolean",
                     },
+                    "movedOn": {
+                      "type": "boolean",
+                    },
                   },
                   "required": [
                     "current",
+                    "movedOn",
                   ],
                   "type": "object",
                 },

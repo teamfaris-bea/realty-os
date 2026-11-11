@@ -8,7 +8,9 @@
 //        re-reviews and re-taps with `reviewedInboundSeq` (R-AST-6) → `approved` (decided by the agent;
 //        edits audited as draft.approved_with_edits, PII redacted)
 //   TX-S (system)  lock_contact → re-check the inbound seq (a reply that slipped in between reverts the
-//        approval to proposed: DRAFT_STALE) → queueOutboundInTx(initiator 'assistant', the approved action)
+//        approval to proposed: DRAFT_STALE) → queueOutboundInTx(initiator 'assistant', the approved action);
+//        rendered like a human send: an email gets the approving agent's own signature (read as them) and the
+//        brokerage footer, a marketing text the brokerage line (R-PAR-25), so it matches the composer's preview
 //   dispatchOutbound — the send-time gate with the approving agent as the sender (ARCHITECTURE §9 path 4)
 // A seller update (Phase 2 assembles them) is sendable only with the agent's own edit (R-AST-17).
 // A handback is approved by sending its suggested reply (or the agent's edit); with neither it is
@@ -25,6 +27,7 @@ import { dealOrAppointmentContext } from '../comms/repos/contacts.js';
 import { conversationOf, tenantFacts } from '../comms/repos/gate.js';
 import { asSystem, asUser } from '../comms/runtime.js';
 import { AppError } from '../errors.js';
+import { senderSignature } from '../templates/repos/signature.js';
 import * as A from './repos/actions.js';
 import { contactCore } from './repos/context.js';
 import type { AssistantDeps } from './types.js';
@@ -212,6 +215,10 @@ async function inboundBody(tx: Tx, messageId: string): Promise<string | null> {
 }
 
 async function queueAndSend(actor: UserActor, actionId: string, plan: Planned, deps: AssistantDeps): Promise<ApproveResult> {
+  // The approving human is the sender (ARCHITECTURE §9 path 4), so their email carries their own plain-text
+  // signature above the brokerage footer (R-PAR-25), as a human one-to-one email and the composer's preview do.
+  // It is their own membership row (RLS: self), read as them: the queue transaction below is the system's.
+  const signature = plan.channel === 'email' ? await asUser(deps, actor, (tx) => senderSignature(tx)) : null;
   type Q = { kind: 'stale'; inboundSeq: number } | { kind: 'queued'; messageId: string } | { kind: 'not_queued'; code: string };
   const q: Q = await asSystem(deps, actor.tenantId, 'assistant', async (tx, now) => {
     await lockContact(tx, plan.contactId as ContactId);
@@ -246,7 +253,7 @@ async function queueAndSend(actor: UserActor, actionId: string, plan: Planned, d
     if (plan.channel === 'email') {
       // the email footer (brokerage name, postal address, unsubscribe link for marketing) needs the message id
       const unsub = purpose === 'marketing' ? unsubscribeUrl(deps.publicBaseUrl, deps.linkSecret, actor.tenantId, r.messageId) : null;
-      const full = renderHumanBody(plan.body, { channel: 'email', purpose, identity, unsubscribe: unsub });
+      const full = renderHumanBody(plan.body, { channel: 'email', purpose, identity, unsubscribe: unsub, signature });
       await sql`UPDATE messages SET body = ${full} WHERE tenant_id = app.tenant_id() AND id = ${r.messageId} AND status IN ('queued','scheduled')`.execute(tx);
     }
     return { kind: 'queued', messageId: r.messageId };

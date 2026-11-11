@@ -197,7 +197,7 @@ test('J6: a FUB import dry-runs with counts that add up, commits stages, tags an
   // every place says what is true after the undo: the card, the report line (what it removed), the parity table
   await expect(contacts.getByText(`Undone: the ${after.imported} of ${after.source} that had been imported were removed.`)).toBeVisible();
   await expect(contacts.getByText(`${after.imported} of ${after.source} imported`, { exact: true })).toHaveCount(0);
-  await expect(page.getByText(new RegExp(`The undo removed what this import added: ${after.imported} people and ${after.imported} phone numbers or emails; nothing was left for your decision\\.`))).toBeVisible();
+  await expect(page.getByText(new RegExp(`The undo removed ${after.imported} people and ${after.imported} phone numbers or emails that this import added; nothing was left for your decision\\.`))).toBeVisible();
   await expect(page.getByRole('columnheader', { name: 'Imported, then undone' })).toBeVisible();
   await expect(page.getByText(/^Before the undo, the import had set \d+ stages?, added \d+ tags? and written \d+ custom values?\.$/)).toBeVisible();
   await shot(page, info, 'j6', '5-undone');

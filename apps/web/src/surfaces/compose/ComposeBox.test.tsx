@@ -211,6 +211,25 @@ describe('Thread', () => {
     expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)[0]!.body).toMatchObject({ editedPayload: { channel: 'sms', body: 'Hi Jane, Saturday at noon works.' } });
   });
 
+  it('an assistant email draft shows what Jane will get (the agent\'s signature and the brokerage footer) from the preview, and Send approves the draft as is', async () => {
+    // the approval renders the same signature and footer as this preview (R-PAR-25; api assistant/drafts.test.ts)
+    const final = 'Yes, Saturday 1-3 works.\n\nAva Agent\nLic. #01234567\n\n--\nHarbor Realty LLC';
+    const fake = threadFake()
+      .on(`GET /assistant/actions/${IDS.draft}`, { status: 200, body: { action: draftAction({ draft: { channel: 'email', subject: 'Saturday', body: 'Yes, Saturday 1-3 works.' } }) } })
+      .on(`POST /contacts/${IDS.jane}/messages/preview`, { status: 200, body: { decision: decision({ id: null, phase: 'preview' }), body: final } })
+      .on(`POST /assistant/actions/${IDS.draft}/approve`, { status: 200, body: { actionId: IDS.draft, status: 'approved', result: 'sent', messageId: IDS.message, decision: decision({}) } });
+    agentApp(fake, `/contacts/${IDS.jane}/thread?compose=draft&draft=${IDS.draft}`);
+    const box = await screen.findByRole('textbox', { name: 'Email message' });
+    await waitFor(() => expect(box).toHaveValue('Yes, Saturday 1-3 works.'));
+    const figure = await screen.findByRole('figure', { name: 'What Jane will get' });
+    expect(figure.querySelector('p')!.textContent).toBe(final);
+    expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages/preview`).at(-1)!.body).toEqual({ channel: 'email', body: 'Yes, Saturday 1-3 works.', subject: 'Saturday' });
+    await user().click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(1));
+    expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)[0]!.body).not.toHaveProperty('editedPayload');
+    expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages`)).toHaveLength(0);
+  });
+
   it('R-AST-6: approving a draft the client has replied to since is refused as stale; the box says so and the next Send carries the re-reviewed inbound seq', async () => {
     const fake = threadFake()
       .on(`GET /assistant/actions/${IDS.draft}`, { status: 200, body: { action: draftAction() } })
