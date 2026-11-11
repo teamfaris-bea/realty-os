@@ -99,3 +99,39 @@ describe('realty/no-relative-outside-package', () => {
     ],
   });
 });
+
+describe('realty/portal-tx-separation (R-TEN-14, module 43)', () => {
+  tester.run('portal-tx-separation (staff mode)', rules['portal-tx-separation'], {
+    valid: [
+      { code: "import { withTenantTx } from '@realty/db';\nawait withTenantTx(actor, fn)", options: [{ mode: 'staff' }] },
+      { code: "import type { ClientActor } from '@realty/db';\nexport type A = ClientActor", options: [{ mode: 'staff' }] },
+      { code: "import { type withPortalTx } from '@realty/db';", options: [{ mode: 'staff' }] },
+      { code: "const m = { kind: 'client', body: 'x' }", options: [{ mode: 'staff' }] },
+      { code: "if (actor.kind === 'client') {}", options: [{ mode: 'staff' }] },
+      { code: "const c = await resolvePortalSession(token)", options: [{ mode: 'staff' }] },
+    ],
+    invalid: [
+      { code: "import { withPortalTx } from '@realty/db';", options: [{ mode: 'staff' }], errors: [{ messageId: 'staffUsesClient' }] },
+      { code: 'await withPortalTx(client, fn)', options: [{ mode: 'staff' }], errors: [{ messageId: 'staffUsesClient' }] },
+      { code: 'await db.withPortalTx(client, fn)', options: [{ mode: 'staff' }], errors: [{ messageId: 'staffUsesClient' }] },
+      { code: "await db['withPortalTx'](client, fn)", options: [{ mode: 'staff' }], errors: [{ messageId: 'staffUsesClient' }] },
+      { code: 'run(withPortalTx)', options: [{ mode: 'staff' }], errors: [{ messageId: 'staffUsesClient' }] },
+      { code: "const c = { kind: 'client', tenantId: t, portalAccountId: a }", options: [{ mode: 'staff' }], errors: [{ messageId: 'clientActor' }] },
+      { code: "const c = { ...session, kind: 'client' as const }", options: [{ mode: 'staff' }], errors: [{ messageId: 'clientActor' }] },
+    ],
+  });
+  tester.run('portal-tx-separation (client mode)', rules['portal-tx-separation'], {
+    valid: [
+      { code: "import { withPortalTx } from '@realty/db';\nawait withPortalTx(client, fn)", options: [{ mode: 'client' }] },
+      { code: "import type { Tx } from '@realty/db';\nexport type T = Tx", options: [{ mode: 'client' }] },
+      { code: "await requestPortalLogin(slug, address)", options: [{ mode: 'client' }] },
+    ],
+    invalid: [
+      { code: "import { withTenantTx } from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      { code: 'await withTenantTx(actor, fn)', options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      { code: 'await db.withPreTenant(fn)', options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      { code: 'await withNoContext(db, fn)', options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      { code: "import { actorGucs as g } from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+    ],
+  });
+});

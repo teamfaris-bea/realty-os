@@ -59,6 +59,20 @@ export default tseslint.config(
     rules: { 'realty/no-system-actor': 'error' },
   },
 
+  // ---- R-TEN-14 / R-PORTAL-4 (module 43): the client principal's transaction helper and the staff ones never
+  //      mix. Portal client code (apps/api/src/portal/client/**) uses withPortalTx only; everything else never
+  //      uses withPortalTx or builds a client actor (only packages/db/src/portalTx.ts does).
+  {
+    files: ['**/*.{ts,tsx}'],
+    ignores: ['packages/db/src/portalTx.ts', 'apps/api/src/portal/client/**', ...TEST_FILES],
+    rules: { 'realty/portal-tx-separation': ['error', { mode: 'staff' }] },
+  },
+  {
+    files: ['apps/api/src/portal/client/**/*.{ts,tsx}'],
+    ignores: TEST_FILES,
+    rules: { 'realty/portal-tx-separation': ['error', { mode: 'client' }] },
+  },
+
   // ---- selectFrom only in packages/db and module repositories (and tests)
   {
     files: ['**/*.{ts,tsx}'],

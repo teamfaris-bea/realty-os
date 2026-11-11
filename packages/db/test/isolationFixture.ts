@@ -111,6 +111,9 @@ const OVERRIDES: Record<string, Record<string, string>> = {
   portal_grants: { deal_id: 'gen_random_uuid()' },
   portal_items: { published_by_kind: "'system'", kind: "'milestone'" },
   portal_accounts: { status: "'invited'" },
+  portal_login_tokens: { created_at: 'now()', expires_at: "now() + interval '15 minutes'" },
+  portal_sessions: { created_at: 'now()', last_seen_at: 'now()', idle_expires_at: "now() + interval '1 hour'", absolute_expires_at: "now() + interval '1 day'", revoked_reason: 'NULL' },
+  portal_stream_tokens: { created_at: 'now()', expires_at: "now() + interval '30 seconds'" },
   user_calendar_links: { status: "'pending_review'" },
 };
 

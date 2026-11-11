@@ -73,6 +73,21 @@ describe('eslint.config.js architecture wiring', () => {
     expect(await lint('packages/db/test/ownership.test.ts', code)).toEqual([]);
   });
 
+  it('R-TEN-14: withPortalTx only in portal client code, withTenantTx never there; client actors only from the resolver', async () => {
+    const portalUse = "import { withPortalTx, type ClientActor } from '@realty/db';\nexport const f = (c: ClientActor) => withPortalTx(c, async () => 1);\n";
+    const staffUse = "import { withTenantTx, type Tx } from '@realty/db';\nexport const f = (a: Parameters<typeof withTenantTx>[0]) => withTenantTx(a, async (_tx: Tx) => 1);\n";
+    expect(await lint('apps/api/src/portal/client/routes.ts', portalUse)).toEqual([]);
+    expect(await lint('apps/api/src/portal/client/routes.ts', staffUse)).toContain('realty/portal-tx-separation');
+    expect(await lint('apps/api/src/portal/staff/invite.ts', portalUse)).toContain('realty/portal-tx-separation');
+    expect(await lint('apps/api/src/portal/staff/invite.ts', staffUse)).toEqual([]);
+    expect(await lint('apps/api/src/workspace/deals.ts', portalUse)).toContain('realty/portal-tx-separation');
+    expect(await lint('apps/api/src/worker/handlers/portal.ts', portalUse)).toContain('realty/portal-tx-separation');
+    const forged = "export const c = { kind: 'client' as const, tenantId: 't', portalAccountId: 'a', sessionId: 's' };\n";
+    expect(await lint('apps/api/src/portal/staff/preview.ts', forged)).toContain('realty/portal-tx-separation');
+    expect(await lint('packages/db/src/consent.ts', forged)).toContain('realty/portal-tx-separation');
+    expect(await lint('packages/db/test/portal_auth.test.ts', portalUse + staffUse.replace(/f =/, 'g ='))).toEqual([]);
+  });
+
   it('SET app.* without LOCAL is banned everywhere', async () => {
     const code = "export const q = 'SET app.tenant_id = $1';\n";
     expect(await lint('packages/db/src/tenantTx.ts', code)).toContain('realty/no-session-guc');
