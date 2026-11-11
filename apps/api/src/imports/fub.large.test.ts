@@ -19,7 +19,8 @@
 //
 // Gated: at 50,000 people the whole journey takes far longer than the normal suite allows (the commit
 // writes each contact and each assignment through the per-contact ownership engine; the 1,000-person
-// all-stage run in load.test.ts already takes ~1.5 min). Run it explicitly:
+// all-stage run in load.test.ts already takes ~1.5 min). Measured on the dev machine (2026-11-11): 66.7 min
+// in all — contacts commit 36.9 min, ownership 18.5 min, consent 7.0 min; every dry run ≤ 20 s. Run it explicitly:
 //
 //   cd apps/api && IMPORT_LARGE=1 pnpm exec vitest run src/imports/fub.large.test.ts
 //
