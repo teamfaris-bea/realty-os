@@ -53,8 +53,8 @@ export async function resolveSelection(tx: Tx, sel: Selection, opts: SelectionOp
  * that list: they are still its audience (module 63's `audienceSource`). A list the caller cannot open
  * is NOT_FOUND. Runs no list query.
  */
-export async function selectionAudience(tx: Tx, source: { listId: string } | { definition: unknown }): Promise<{ audienceProtected: boolean; protectedTagIds: string[] }> {
+export async function selectionAudience(tx: Tx, source: { listId: string } | { definition: unknown }): Promise<{ audienceProtected: boolean; protectedTagIds: string[]; tagIds: string[] }> {
   const src = await resolveSource(tx, 'listId' in source ? { listId: source.listId } : { definition: source.definition });
   const plan = await planFor(tx, src.definition, { sort: src.sort });
-  return { audienceProtected: plan.audienceProtected, protectedTagIds: plan.references.protectedTagIds };
+  return { audienceProtected: plan.audienceProtected, protectedTagIds: plan.references.protectedTagIds, tagIds: plan.references.tagIds };
 }

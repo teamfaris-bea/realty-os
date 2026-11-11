@@ -44,6 +44,9 @@ export type TemplateErrorCode =
 
 // eslint-disable-next-line no-control-regex -- detecting control characters is the point
 const CONTROL_RE = /[\u0000-\u001f\u007f]/;
+// a subject is one displayed line: no C1 controls, line/paragraph separators or bidi overrides (security review)
+// eslint-disable-next-line no-control-regex -- detecting control characters is the point
+const SUBJECT_CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
 // eslint-disable-next-line no-control-regex -- a body may hold tabs and line breaks, never other control characters
 const BODY_CONTROL_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 
@@ -62,7 +65,7 @@ export function validateTemplate(
   if (d.channel === 'email') {
     if (d.subject === null || d.subject.trim().length === 0) return fail('TEMPLATE_SUBJECT_REQUIRED');
     subject = d.subject.trim();
-    if (subject.length > TEMPLATE_LIMITS.subjectMax || CONTROL_RE.test(subject)) return fail('TEMPLATE_SUBJECT_INVALID');
+    if (subject.length > TEMPLATE_LIMITS.subjectMax || SUBJECT_CONTROL_RE.test(subject)) return fail('TEMPLATE_SUBJECT_INVALID');
   } else if (d.subject !== null && d.subject.trim().length > 0) return fail('TEMPLATE_SUBJECT_NOT_ALLOWED');
   const body = d.body.replace(/\r\n?/g, '\n').trim();
   if (body.length === 0) return fail('TEMPLATE_BODY_EMPTY');

@@ -50,6 +50,19 @@ function asciiBytes(s: string): Uint8Array {
   return Uint8Array.from(s, (ch) => ch.charCodeAt(0));
 }
 
+const TIME_KEY_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$/;
+
+/** A strict ISO timestamp Postgres casts without error (V8's Date.parse also takes "1", "May 5", 2026-02-31, 24:00). */
+function isTimeKey(key: string): boolean {
+  const m = TIME_KEY_RE.exec(key);
+  if (!m) return false;
+  const [y, mo, d, h, mi, se] = m.slice(1, 7).map(Number) as [number, number, number, number, number, number];
+  if (y < 1 || h > 23 || mi > 59 || se > 59) return false;
+  const t = new Date(Date.UTC(2000, mo - 1, d));
+  t.setUTCFullYear(y);
+  return t.getUTCFullYear() === y && t.getUTCMonth() === mo - 1 && t.getUTCDate() === d;
+}
+
 export function encodeCursor(c: ListCursor): string {
   return toB64url(asciiBytes(encodeURIComponent(JSON.stringify([c.sort, c.key, c.id]))));
 }
@@ -63,7 +76,11 @@ export function decodeCursor(s: string, sort: ListSort): ListCursor | null {
     const [srt, key, id] = v as unknown[];
     if (srt !== sort || typeof id !== 'string' || !UUID_RE.test(id)) return null;
     if (key !== null && (typeof key !== 'string' || key.length > 400)) return null;
-    if (key !== null && sort !== 'name_asc' && Number.isNaN(Date.parse(key))) return null;
+    // exactly what the keyset query prints (isoText) for a time sort; no control characters in a name key.
+    // Anything else used to reach Postgres as an uncastable value (a 500, security review).
+    if (key !== null && sort !== 'name_asc' && !isTimeKey(key)) return null;
+    // eslint-disable-next-line no-control-regex -- refusing control characters is the point
+    if (key !== null && sort === 'name_asc' && /[\u0000-\u001f\u007f]/u.test(key)) return null;
     return { sort, key, id: id.toLowerCase() };
   } catch {
     return null;
