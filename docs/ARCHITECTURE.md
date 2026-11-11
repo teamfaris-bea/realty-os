@@ -678,6 +678,42 @@ Two critics reviewed the merged design against the files: a security critic (S1�
 - A client principal's portal write reached a later guard error before RLS. The three portal guards now refuse a client first (`CLIENT_READ_ONLY`).
 **Net schema change** (against round 1, measured from the two catalogs): +1 tenant table (`marketing_piece_assets`) and −1 global table (`market_rates`), so there are still 114 tables and 4 views. On existing tables, +10 columns (`decided_by_role`, `allowed_sender_domains`, `claimed_kind`/`claimed_address`, `sync_version`/`external_pushed_version` and the four back-test columns) and −4 (`asset_object_ids`, two `connection_id`s, `match_reason`). Policies: +10 and −1, for 677 in all. There are 19 new functions: 15 trigger functions and 4 helpers, of which 2 are SECURITY DEFINER (`app.contacts_dnc_follow_merge`, `app.portal_party_ok`). Two Phase 1 definers were replaced (`app.purge_contact_internal`, `app.retention_sweep`), along with seven new indexes and seven seeded platform packs. The audit field-classification snapshot was regenerated: the new free-text columns are PII by default.
 ---
+### FUB parity design review (2026-11)
+
+The FUB parity design is `docs/PARITY_PLAN.md`, `docs/FUB_PARITY.md`, DATA_MODEL Part 3 and the migration `0021_fub_parity.sql` (renumbered at merge). It merges two independent drafts: `docs/parity/draft-a.md` (simplicity-first) and `docs/parity/draft-b.md` (risk-first).
+
+**Merge.** The lead found one live gap while merging (from draft B): both dispatch guards ignored removed phones in the "any of the contact's phones" opt-out fan-out. The migration fixes it (R-PAR-12).
+
+**Security critic.** It found no cross-tenant path. All eight findings were applied, and each is proven by name in `rls_smoke_parity.sql`:
+
+| # | Finding | Fix |
+|---|---|---|
+| S1 (high) | The wrong-number exemption trusted a status any agent can set, so two UPDATEs made a STOP stop counting for the person's other phones | Removing as `wrong_number` needs a recorded `wrong_number` revoke in the consent ledger, and such a point is never restored |
+| S2 | The stage guard let an agent park an untouched lead in `lost` (also outside the inactivity release), or go new → lost → nurture | Any move outside `new`/`attempting` is refused while the SLA is unmet; giving up is the Close command |
+| S3 | Bulk items' person and status stayed writable after confirm (re-send, or send to someone outside the target), and the bulk guard did not tie the recipient to the item | Items keep person, action and address; processed items are final; a bulk message needs a pending item at exactly its frozen address |
+| S4 | The batch-text cap trusted a self-declared count | Confirm requires `target_count` = the frozen items |
+| S5 | A sender could clear `bulk_action_id` to turn bulk sends into touches | The column never changes |
+| S6 | An Owner/Admin could rewrite an agent's draft before the agent confirmed | Only the creator writes a draft's content |
+| S7 | Protected tags could be applied in bulk | Refused in the DB (custom-field protection was cut, see below) |
+| S8 | Bulk items were readable on cards; limit counts raced | Items are read with detail visibility; advisory lock on the per-person tag limit |
+
+**Not applied, but noted.** Template merge fields are provenance in the DB; tying them to the body is core's job. Module 62 has a property test for it. The custom-field limit relies on READ COMMITTED (the API's default).
+
+**Simplicity critic.** Applied:
+- The `note_mentions` table was cut. Mentions are checked synchronously, as each mentioned user, at save; the text-free notification is the record. The author learns at once who was not told.
+- `messages.template_id`/`template_version` were cut (bulk actions keep the version).
+- Custom-field `protected_proxy`/`self_reported` were cut. Core refuses lexicon names and points to the built-in self-reported attributes.
+- `smart_lists.ref_*` and `bulk_actions.definition_sha256` were cut.
+- `contact_tags.bulk_action_id` was cut. The provenance kind stays: S7 needs it.
+- `removed_reason` is reduced to replaced/old/wrong_number and is set by the action, never asked for.
+- Logged kinds are reduced to call/text/email (meetings use appointments), and the author may correct a logged time.
+- The bulk re-preview loop was dropped: the target is built at draft and confirmed as previewed.
+- Added: "Next person" when working a list, the merge-duplicates UI in scope, a follow-up task from the log sheet, tap a tag to see everyone with it, and locked stages shown up front.
+
+Kept against the critic, with reasons:
+- The DB 200-recipient ceiling on batch text stays. It is a hard backstop under an unreviewed legal exposure; a lower tenant setting may follow.
+- The contact_tags provenance kind stays (S7).
+
 ## 21. Phase 2-3 architecture
 Authoritative for Phases 2 and 3; the build order, decisions and owner needs are in `docs/PHASE2_3_PLAN.md`, tables and rules in `docs/DATA_MODEL.md` Part 2. Everything in §1–§20 still holds.
 ### 21.1 Principals and entry points

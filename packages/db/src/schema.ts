@@ -232,6 +232,46 @@ export interface BehaviorEventsTable {
   payload: Generated<Json>;
 }
 
+/** public.bulk_action_items (table) */
+export interface BulkActionItemsTable {
+  tenant_id: string;
+  bulk_action_id: string;
+  contact_id: string;
+  status: Generated<string>;
+  reason_code: string | null;
+  address_hmac: Buffer | null;
+  message_id: string | null;
+  processed_at: Timestamp | null;
+}
+
+/** public.bulk_actions (table) */
+export interface BulkActionsTable {
+  tenant_id: string;
+  id: string;
+  kind: string;
+  status: Generated<string>;
+  created_by_user_id: string;
+  created_by_role: string;
+  source: string;
+  smart_list_id: string | null;
+  params: Generated<Json>;
+  template_id: string | null;
+  template_version: number | null;
+  subject_snapshot: string | null;
+  body_snapshot: string | null;
+  target_count: number | null;
+  counts: Generated<Json>;
+  idempotency_key: string;
+  confirmed_at: Timestamp | null;
+  started_at: Timestamp | null;
+  finished_at: Timestamp | null;
+  cancel_requested_at: Timestamp | null;
+  cancel_requested_by: string | null;
+  failure_code: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
 /** public.call_scores (table) */
 export interface CallScoresTable {
   tenant_id: string;
@@ -418,6 +458,22 @@ export interface ContactDuplicateCandidatesTable {
   created_at: Generated<Timestamp>;
 }
 
+/** public.contact_field_values (table) */
+export interface ContactFieldValuesTable {
+  tenant_id: string;
+  contact_id: string;
+  field_id: string;
+  value_text: string | null;
+  value_number: Numeric | null;
+  value_date: string | null;
+  value_options: string[] | null;
+  updated_by_kind: string;
+  updated_by_user_id: string | null;
+  import_batch_id: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
 /** public.contact_points (table) */
 export interface ContactPointsTable {
   tenant_id: string;
@@ -437,6 +493,7 @@ export interface ContactPointsTable {
   removed_at: Timestamp | null;
   phone_suffix7: GeneratedAlways<string | null>;
   platform_window_until: Timestamp | null;
+  removed_reason: string | null;
 }
 
 /** public.contact_predictions (table) */
@@ -448,6 +505,41 @@ export interface ContactPredictionsTable {
   reasons: Json;
   inputs_sha256: string;
   computed_on: string;
+}
+
+/** public.contact_relationships (table) */
+export interface ContactRelationshipsTable {
+  tenant_id: string;
+  id: string;
+  contact_id: string;
+  related_contact_id: string;
+  kind: string;
+  label: string | null;
+  created_by_user_id: string;
+  created_at: Generated<Timestamp>;
+}
+
+/** public.contact_stage_events (table) */
+export interface ContactStageEventsTable {
+  tenant_id: string;
+  id: string;
+  contact_id: string;
+  from_stage: string | null;
+  to_stage: string;
+  actor_kind: string;
+  actor_user_id: string | null;
+  occurred_at: Generated<Timestamp>;
+}
+
+/** public.contact_tags (table) */
+export interface ContactTagsTable {
+  tenant_id: string;
+  contact_id: string;
+  tag_id: string;
+  added_by_kind: string;
+  added_by_user_id: string | null;
+  import_batch_id: string | null;
+  created_at: Generated<Timestamp>;
 }
 
 /** public.contact_timeline (view) */
@@ -534,6 +626,23 @@ export interface ConversationsTable {
   automation_paused_at: Timestamp | null;
   automation_pause_reason: string | null;
   automation_paused_by_message_id: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
+/** public.custom_field_defs (table) */
+export interface CustomFieldDefsTable {
+  tenant_id: string;
+  id: string;
+  key: string;
+  label: string;
+  field_type: string;
+  options: Generated<Json>;
+  annual: Generated<boolean>;
+  position: Generated<number>;
+  origin: Generated<string>;
+  created_by_user_id: string | null;
+  archived_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }
@@ -1147,6 +1256,7 @@ export interface MembershipsTable {
   version: Generated<number>;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+  email_signature: string | null;
 }
 
 /** public.message_media (table) */
@@ -1179,6 +1289,24 @@ export interface MessageStatusEventsTable {
   provider_event_ref: string;
   occurred_at: Timestamp;
   received_at: Generated<Timestamp>;
+}
+
+/** public.message_templates (table) */
+export interface MessageTemplatesTable {
+  tenant_id: string;
+  id: string;
+  scope: string;
+  owner_user_id: string | null;
+  channel: string;
+  name: string;
+  subject: string | null;
+  body: string;
+  version: Generated<number>;
+  merge_fields: Generated<string[]>;
+  updated_by_user_id: string;
+  archived_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
 }
 
 /** public.messages (table) */
@@ -1221,6 +1349,7 @@ export interface MessagesTable {
   search_tsv: GeneratedAlways<string | null>;
   integration_connection_id: string | null;
   marketing_piece_id: string | null;
+  bulk_action_id: string | null;
 }
 
 /** public.mfa_recovery_codes (table) */
@@ -1246,6 +1375,11 @@ export interface NotesTable {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
   search_tsv: GeneratedAlways<string | null>;
+  edited_at: Timestamp | null;
+  activity_kind: string | null;
+  activity_direction: string | null;
+  activity_at: Timestamp | null;
+  activity_outcome: string | null;
 }
 
 /** public.notification_deliveries (table) */
@@ -1412,6 +1546,7 @@ export interface PlaybooksTable {
   status: Generated<string>;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+  auto_enroll_stage: string | null;
 }
 
 /** public.pond_members (table) */
@@ -1751,6 +1886,23 @@ export interface ShowingsTable {
   updated_at: Generated<Timestamp>;
 }
 
+/** public.smart_lists (table) */
+export interface SmartListsTable {
+  tenant_id: string;
+  id: string;
+  scope: string;
+  owner_user_id: string | null;
+  name: string;
+  definition: Json;
+  definition_version: number;
+  sort: Generated<string>;
+  position: Generated<number>;
+  updated_by_user_id: string;
+  archived_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
 /** public.stored_objects (table) */
 export interface StoredObjectsTable {
   tenant_id: string;
@@ -1799,6 +1951,20 @@ export interface SuppressionsTable {
   lifted_at: Timestamp | null;
   lifted_by_user_id: string | null;
   lift_reason: string | null;
+}
+
+/** public.tags (table) */
+export interface TagsTable {
+  tenant_id: string;
+  id: string;
+  name: string;
+  name_key: GeneratedAlways<string | null>;
+  color: string | null;
+  protected_proxy: Generated<boolean>;
+  created_by_kind: string;
+  created_by_user_id: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
 }
 
 /** public.tasks (table) */
@@ -1903,6 +2069,8 @@ export interface TenantSettingsTable {
   calendar_title_detail: Generated<string>;
   voice_answer_after_seconds: Generated<number>;
   voice_answer_when: Generated<string>;
+  stage_labels: Generated<Json>;
+  batch_text_enabled: Generated<boolean>;
 }
 
 /** public.tenants (table) */
@@ -2078,6 +2246,8 @@ export interface DB {
   auth_events: AuthEventsTable;
   auth_tokens: AuthTokensTable;
   behavior_events: BehaviorEventsTable;
+  bulk_action_items: BulkActionItemsTable;
+  bulk_actions: BulkActionsTable;
   call_scores: CallScoresTable;
   calls: CallsTable;
   compliance_policy_versions: CompliancePolicyVersionsTable;
@@ -2088,11 +2258,16 @@ export interface DB {
   contact_attributes: ContactAttributesTable;
   contact_collaborators: ContactCollaboratorsTable;
   contact_duplicate_candidates: ContactDuplicateCandidatesTable;
+  contact_field_values: ContactFieldValuesTable;
   contact_points: ContactPointsTable;
   contact_predictions: ContactPredictionsTable;
+  contact_relationships: ContactRelationshipsTable;
+  contact_stage_events: ContactStageEventsTable;
+  contact_tags: ContactTagsTable;
   contact_timeline: ContactTimelineTable;
   contacts: ContactsTable;
   conversations: ConversationsTable;
+  custom_field_defs: CustomFieldDefsTable;
   deal_contacts: DealContactsTable;
   deal_dates: DealDatesTable;
   deal_financials: DealFinancialsTable;
@@ -2131,6 +2306,7 @@ export interface DB {
   message_media: MessageMediaTable;
   message_media_skipped: MessageMediaSkippedTable;
   message_status_events: MessageStatusEventsTable;
+  message_templates: MessageTemplatesTable;
   messages: MessagesTable;
   mfa_recovery_codes: MfaRecoveryCodesTable;
   notes: NotesTable;
@@ -2166,9 +2342,11 @@ export interface DB {
   sessions: SessionsTable;
   showing_feedback: ShowingFeedbackTable;
   showings: ShowingsTable;
+  smart_lists: SmartListsTable;
   stored_objects: StoredObjectsTable;
   support_access_grants: SupportAccessGrantsTable;
   suppressions: SuppressionsTable;
+  tags: TagsTable;
   tasks: TasksTable;
   team_members: TeamMembersTable;
   teams: TeamsTable;
@@ -2202,6 +2380,8 @@ export const TABLE_NAMES = [
   'auth_events',
   'auth_tokens',
   'behavior_events',
+  'bulk_action_items',
+  'bulk_actions',
   'call_scores',
   'calls',
   'compliance_policy_versions',
@@ -2212,10 +2392,15 @@ export const TABLE_NAMES = [
   'contact_attributes',
   'contact_collaborators',
   'contact_duplicate_candidates',
+  'contact_field_values',
   'contact_points',
   'contact_predictions',
+  'contact_relationships',
+  'contact_stage_events',
+  'contact_tags',
   'contacts',
   'conversations',
+  'custom_field_defs',
   'deal_contacts',
   'deal_dates',
   'deal_financials',
@@ -2254,6 +2439,7 @@ export const TABLE_NAMES = [
   'message_media',
   'message_media_skipped',
   'message_status_events',
+  'message_templates',
   'messages',
   'mfa_recovery_codes',
   'notes',
@@ -2289,9 +2475,11 @@ export const TABLE_NAMES = [
   'sessions',
   'showing_feedback',
   'showings',
+  'smart_lists',
   'stored_objects',
   'support_access_grants',
   'suppressions',
+  'tags',
   'tasks',
   'team_members',
   'teams',
