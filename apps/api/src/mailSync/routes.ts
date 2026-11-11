@@ -94,6 +94,9 @@ export const AdminMailResponse = z.object({
   role: z.enum(['owner', 'admin']),
 });
 
+/** the OAuth browser binder cookie (__Host- prefix when cookies are secure, like the session cookie) */
+export const binderCookieName = (secure: boolean): string => (secure ? '__Host-mail-oauth' : 'mail-oauth');
+
 const ThreadId = z.string().regex(/^[0-9A-Za-z_-]{1,64}$/);
 
 export function mailSyncDeps(p: Platform): MailSyncServiceDeps {
@@ -121,7 +124,9 @@ async function register(app: FastifyInstance): Promise<void> {
     { ...self, schema: { body: z.object({ disclosureSha256: z.string().regex(/^[0-9a-f]{64}$/) }).strict(), response: { 201: ConnectResponse } } },
     async (req, reply) => {
       const deps = mailSyncDeps(platformOf(req));
-      const out = await asSelf(req, (tx, _now, actor) => startConnect(deps, tx, actor, req.body.disclosureSha256));
+      const { binder, ...out } = await asSelf(req, (tx, _now, actor) => startConnect(deps, tx, actor, req.body.disclosureSha256));
+      // binds the OAuth state to this browser: HttpOnly, never readable by script, gone after 10 minutes
+      reply.setCookie(binderCookieName(platformOf(req).config.cookieSecure), binder, { httpOnly: true, secure: platformOf(req).config.cookieSecure, sameSite: 'lax', path: '/', maxAge: 600 });
       reply.status(201);
       return out;
     },
@@ -134,7 +139,9 @@ async function register(app: FastifyInstance): Promise<void> {
       schema: { querystring: z.object({ state: z.string().max(4096).optional(), code: z.string().max(4096).optional(), scope: z.string().max(4096).optional(), error: z.string().max(200).optional() }) },
     },
     async (req, reply) => {
-      const res = await oauthCallback(mailSyncDeps(platformOf(req)), req.query);
+      const name = binderCookieName(platformOf(req).config.cookieSecure);
+      const res = await oauthCallback(mailSyncDeps(platformOf(req)), req.query, req.cookies?.[name] ?? null, (code) => req.log.warn({ code }, 'gmail oauth callback error'));
+      reply.clearCookie(name, { path: '/', secure: platformOf(req).config.cookieSecure, httpOnly: true, sameSite: 'lax' });
       req.log.info({ outcome: res.outcome }, 'gmail oauth callback');
       return reply.redirect(res.location, 303);
     },

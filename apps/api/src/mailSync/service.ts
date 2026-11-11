@@ -13,7 +13,7 @@ import type { EnvelopeService } from '../crypto/envelope.js';
 import { AppError } from '../errors.js';
 import { systemActor } from '../worker/systemActor.js';
 import { ACCEPTED_DISCLOSURE_SHA256, CURRENT_DISCLOSURE_SHA256 } from './disclosure.js';
-import { MAIL_STATE_TTL_MS, mailPkceVerifier, newNonce, pkceChallenge, signMailState, stateReplayKey, verifyMailState } from './oauthState.js';
+import { MAIL_STATE_TTL_MS, binderMatches, mailPkceVerifier, newBinder, newNonce, pkceChallenge, signMailState, stateReplayKey, verifyMailState } from './oauthState.js';
 import { GMAIL_READONLY_SCOPE, GMAIL_SCOPES, type GmailProvider } from './provider.js';
 import { gmailRules } from './sync.js';
 import { insertLink, openRefreshToken, revokeLink, sealRefreshToken } from './token.js';
@@ -133,18 +133,20 @@ export async function getOwnLink(tx: Tx, gmail: GmailProvider) {
 
 // ---- connect (OAuth start) and the callback ------------------------------------------------------------------
 
-export async function startConnect(deps: MailSyncServiceDeps, tx: Tx, actor: UserActor, disclosureSha256: string): Promise<{ authorizeUrl: string; expiresAt: string }> {
+export async function startConnect(deps: MailSyncServiceDeps, tx: Tx, actor: UserActor, disclosureSha256: string): Promise<{ authorizeUrl: string; expiresAt: string; binder: string }> {
   if (!ACCEPTED_DISCLOSURE_SHA256.includes(disclosureSha256)) throw new AppError('MAIL_DISCLOSURE_STALE');
   const a = await availability(tx, deps.gmail);
   if (!a.cleared || !a.enabled) throw new AppError('MAIL_SYNC_OFF');
   if (!a.configured) throw new AppError('MAIL_PROVIDER_NOT_CONFIGURED');
   if (await ownLink(tx, true)) throw new AppError('MAIL_ALREADY_CONNECTED');
   const expiresAt = deps.now() + MAIL_STATE_TTL_MS;
-  const st = { tenantId: actor.tenantId, userId: actor.userId, disclosureSha256, expiresAt, nonce: newNonce() };
+  // the browser binder: its hash rides in the signed state, the value in an HttpOnly cookie of THIS browser only
+  const b = newBinder();
+  const st = { tenantId: actor.tenantId, userId: actor.userId, disclosureSha256, binderSha256: b.sha256, expiresAt, nonce: newNonce() };
   const state = signMailState(deps.secret, st);
   // R-GMAIL-3: exactly gmail.readonly; Gmail's own client, never include_granted_scopes (a calendar grant never rides along)
   const authorizeUrl = deps.gmail.authorizeUrl({ state, codeChallenge: pkceChallenge(mailPkceVerifier(deps.secret, st)), redirectUri: redirectUri(deps.publicBaseUrl), scopes: GMAIL_SCOPES });
-  return { authorizeUrl, expiresAt: new Date(expiresAt).toISOString() };
+  return { authorizeUrl, expiresAt: new Date(expiresAt).toISOString(), binder: b.binder };
 }
 
 export type CallbackOutcome =
@@ -167,11 +169,22 @@ function isUnique(e: unknown, constraint: string): boolean {
 }
 
 /** The provider redirect (E225, E210, E211). Stores nothing unless every check passed. */
-export async function oauthCallback(deps: MailSyncServiceDeps, q: { state?: string | undefined; code?: string | undefined; error?: string | undefined }): Promise<{ outcome: CallbackOutcome; location: string }> {
+//
+// A refused connect never revokes at Google: Google's revoke ends the whole grant (user + client), so revoking a
+// token issued for a mailbox that is live in another link (E210, E211, a two-tab race) would silently disconnect that
+// link. The refused token is only dropped (memory); nothing is stored. VERIFY Google's revoke semantics.
+export async function oauthCallback(
+  deps: MailSyncServiceDeps,
+  q: { state?: string | undefined; code?: string | undefined; error?: string | undefined },
+  binderCookie?: string | null,
+  log?: (code: string) => void,
+): Promise<{ outcome: CallbackOutcome; location: string }> {
   const v = verifyMailState(deps.secret, q.state ?? '', deps.now());
   if (!v.ok) return landing(deps, v.code);
   const st = v.state;
   if (!ACCEPTED_DISCLOSURE_SHA256.includes(st.disclosureSha256)) return landing(deps, 'STATE_INVALID');
+  // bound to the browser that started the flow (review finding): checked before anything is consumed or exchanged
+  if (!binderMatches(st, binderCookie)) return landing(deps, 'STATE_INVALID');
   const actor = systemActor(st.tenantId, 'provider');
   // single use, consumed FIRST: a replayed state is refused whatever happened the first time
   const fresh = await withTenantTx(
@@ -197,7 +210,6 @@ export async function oauthCallback(deps: MailSyncServiceDeps, q: { state?: stri
   // E225 / R-GMAIL-3: exactly gmail.readonly, nothing more and nothing less (an incremental grant is refused)
   const granted = [...new Set(token.grantedScopes)];
   if (granted.length !== 1 || granted[0] !== GMAIL_READONLY_SCOPE) {
-    await revokeQuietly(deps.gmail, token.refreshToken);
     return landing(deps, 'SCOPE_NOT_ALLOWED');
   }
   let address: string;
@@ -209,7 +221,6 @@ export async function oauthCallback(deps: MailSyncServiceDeps, q: { state?: stri
     address = n.email;
     historyId = p.historyId;
   } catch {
-    await revokeQuietly(deps.gmail, token.refreshToken);
     return landing(deps, 'PROVIDER_REFUSED');
   }
 
@@ -234,9 +245,12 @@ export async function oauthCallback(deps: MailSyncServiceDeps, q: { state?: stri
     if (isUnique(e, 'user_mail_links_live_mailbox')) outcome = 'MAILBOX_LINKED_ELSEWHERE';
     else if (isUnique(e, 'user_mail_links_one_live')) outcome = 'ALREADY_CONNECTED';
     else if (/MAIL_SYNC_OFF/.test(String((e as Error)?.message))) outcome = 'MAIL_SYNC_OFF';
-    else throw e;
+    else {
+      // never a 500 to the browser and never a half-stored link: the transaction rolled back
+      log?.(String((e as { code?: string })?.code ?? 'MAIL_CALLBACK_ERROR'));
+      outcome = 'PROVIDER_REFUSED';
+    }
   }
-  if (outcome !== 'CONNECTED') await revokeQuietly(deps.gmail, token.refreshToken);
   return landing(deps, outcome);
 }
 
@@ -357,6 +371,9 @@ export async function confirmSyncPoints(tx: Tx, actor: UserActor, pointIds: read
       throw e;
     }
   }
+  // a newly confirmed address gets the window's earlier mail too: confirming asks for the backfill again (the person
+  // path the link guard allows, like "import again"; replays of what is already stored are no-ops)
+  if (n > 0) await sql`UPDATE user_mail_links SET backfill_requested_at = now() WHERE tenant_id = app.tenant_id() AND id = ${own.id}::uuid AND status <> 'revoked'`.execute(tx);
   if (n > 0) await audit(tx, actor, { action: 'mail.sync_points_confirmed', entity: { type: 'user_mail_link', id: own.id }, reason: `COUNT_${n}` });
   return { confirmed: n };
 }

@@ -17,7 +17,7 @@ import { browser } from './MailSettingsPage.js';
 import type { MailLinkResponse, MailLinkView, SyncPointsResponse } from './types.js';
 import { COPY, MAIL_ERROR_MESSAGES, RESULT_WORDS } from './words.js';
 
-const HASH = '0fc89b11aa794b0fe0ac5351130cee35bd6dbbb5d669452996cdce21209bf830';
+const HASH = '1d9347110274a0e0b89f80662c6580d8aa7f231795374431f059312c77f3c268';
 const AUTH_URL = 'https://accounts.fake.invalid/o/oauth2/v2/auth?state=s1&code_challenge=c1';
 type Role = 'owner' | 'admin' | 'team_lead' | 'agent' | 'isa' | 'tc';
 

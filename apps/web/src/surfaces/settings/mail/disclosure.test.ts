@@ -24,7 +24,7 @@ describe('Gmail connect disclosure', () => {
   });
 
   it('the Web Crypto SHA-256 of the shown text is the hash the API accepts', async () => {
-    expect(await disclosureSha256()).toBe('0fc89b11aa794b0fe0ac5351130cee35bd6dbbb5d669452996cdce21209bf830');
+    expect(await disclosureSha256()).toBe('1d9347110274a0e0b89f80662c6580d8aa7f231795374431f059312c77f3c268');
   });
 
   it('one changed character changes the hash', async () => {

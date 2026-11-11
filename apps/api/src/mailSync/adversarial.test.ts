@@ -12,7 +12,7 @@ import { call, freshReauth, inviteViaApi } from '../admin/testing.js';
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
 import { type CommsWorld, commsWorld, ownedContact, pointId } from '../comms/testing.js';
 import { CURRENT_DISCLOSURE_SHA256 } from './disclosure.js';
-import { newNonce, signMailState } from './oauthState.js';
+import { newBinder, newNonce, signMailState } from './oauthState.js';
 import { clearGmailPack, confirmAddresses, connectGmail, copiesOf, enableMailSync, linkOf, mailCallback, runMailSync, startMailConnect } from './testing.js';
 
 let h: ApiHarness;
@@ -42,20 +42,34 @@ describe('the OAuth callback (R-GMAIL-2, R-GMAIL-3)', () => {
     const before = exchanges();
     const [body, mac] = f.state.split('.');
     const forged = `${Buffer.from(JSON.stringify({ ...JSON.parse(Buffer.from(body!, 'base64url').toString()), u: w.agents[1]!.userId })).toString('base64url')}.${mac}`;
-    for (const state of [forged, `${body}.${'A'.repeat(43)}`, 'garbage', '']) expect((await mailCallback(h, { state, code })).result).toBe('STATE_INVALID');
+    for (const state of [forged, `${body}.${'A'.repeat(43)}`, 'garbage', '']) expect((await mailCallback(h, { state, code }, f.binder)).result).toBe('STATE_INVALID');
     expect(exchanges()).toBe(before);
     expect(await linkOf(h, a.userId!)).toBeUndefined();
     expect(await linkOf(h, w.agents[1]!.userId!)).toBeUndefined();
   });
 
+  it('review fix: a state delivered by a browser without the starter’s binder cookie (someone else completing my authorize URL with THEIR Gmail) is refused before any exchange and links nothing; a wrong binder too', async () => {
+    const a = await inviteViaApi(h, w.owner, 'agent');
+    const f = await startMailConnect(a);
+    expect(f.binder).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    const code = h.providers.gmail.issueCode({ codeChallenge: f.challenge, mailbox: mailbox() });
+    const before = exchanges();
+    expect((await mailCallback(h, { state: f.state, code })).result).toBe('STATE_INVALID');
+    expect((await mailCallback(h, { state: f.state, code }, newBinder().binder)).result).toBe('STATE_INVALID');
+    expect(exchanges()).toBe(before);
+    expect(await linkOf(h, a.userId!)).toBeUndefined();
+    // the starter's own browser still completes it (the state was not consumed by the refusals)
+    expect((await mailCallback(h, { state: f.state, code }, f.binder)).result).toBe('CONNECTED');
+  });
+
   it('a replayed state is refused (single use), whatever the first outcome was; an expired state is refused', async () => {
     const a = await inviteViaApi(h, w.owner, 'agent');
     const f = await startMailConnect(a);
-    expect((await mailCallback(h, { state: f.state, error: 'access_denied' })).result).toBe('CANCELLED');
+    expect((await mailCallback(h, { state: f.state, error: 'access_denied' }, f.binder)).result).toBe('CANCELLED');
     const code = h.providers.gmail.issueCode({ codeChallenge: f.challenge, mailbox: mailbox() });
-    expect((await mailCallback(h, { state: f.state, code })).result).toBe('STATE_REPLAYED');
+    expect((await mailCallback(h, { state: f.state, code }, f.binder)).result).toBe('STATE_REPLAYED');
     expect(await linkOf(h, a.userId!)).toBeUndefined();
-    const expired = signMailState(h.config.sessionSecret, { tenantId: w.tenantId, userId: a.userId!, disclosureSha256: CURRENT_DISCLOSURE_SHA256, expiresAt: Date.now() - 1, nonce: newNonce() });
+    const expired = signMailState(h.config.sessionSecret, { tenantId: w.tenantId, userId: a.userId!, disclosureSha256: CURRENT_DISCLOSURE_SHA256, binderSha256: 'b'.repeat(64), expiresAt: Date.now() - 1, nonce: newNonce() });
     expect((await mailCallback(h, { state: expired, code: 'x' })).result).toBe('STATE_EXPIRED');
   });
 
@@ -64,11 +78,12 @@ describe('the OAuth callback (R-GMAIL-2, R-GMAIL-3)', () => {
     const f = await startMailConnect(a);
     const code = h.providers.gmail.issueCode({ codeChallenge: f.challenge, mailbox: mailbox() });
     // whoever's browser delivers it, the link belongs to the user the state names
-    expect((await mailCallback(h, { state: f.state, code })).result).toBe('CONNECTED');
+    expect((await mailCallback(h, { state: f.state, code }, f.binder)).result).toBe('CONNECTED');
     expect((await linkOf(h, a.userId!))!.status).toBe('connected');
     const other = await h.signup();
-    const cross = signMailState(h.config.sessionSecret, { tenantId: other.tenantId!, userId: a.userId!, disclosureSha256: CURRENT_DISCLOSURE_SHA256, expiresAt: Date.now() + 60_000, nonce: newNonce() });
-    expect((await mailCallback(h, { state: cross, code: 'x' })).result).toBe('MAIL_SYNC_OFF');
+    const nb = newBinder();
+    const cross = signMailState(h.config.sessionSecret, { tenantId: other.tenantId!, userId: a.userId!, disclosureSha256: CURRENT_DISCLOSURE_SHA256, binderSha256: nb.sha256, expiresAt: Date.now() + 60_000, nonce: newNonce() });
+    expect((await mailCallback(h, { state: cross, code: 'x' }, nb.binder)).result).toBe('MAIL_SYNC_OFF');
     expect((await h.su.query('SELECT count(*)::int AS n FROM user_mail_links WHERE tenant_id = $1', [other.tenantId])).rows[0]!.n).toBe(0);
   });
 
@@ -76,12 +91,12 @@ describe('the OAuth callback (R-GMAIL-2, R-GMAIL-3)', () => {
     const a = await inviteViaApi(h, w.owner, 'agent');
     const f1 = await startMailConnect(a);
     const wrong = h.providers.gmail.issueCode({ codeChallenge: 'x'.repeat(43), mailbox: mailbox() });
-    expect((await mailCallback(h, { state: f1.state, code: wrong })).result).toBe('PROVIDER_REFUSED');
+    expect((await mailCallback(h, { state: f1.state, code: wrong }, f1.binder)).result).toBe('PROVIDER_REFUSED');
     const f2 = await startMailConnect(a);
     const good = h.providers.gmail.issueCode({ codeChallenge: f2.challenge, mailbox: mailbox() });
     const f3 = await startMailConnect(a);
-    expect((await mailCallback(h, { state: f3.state, code: good })).result).toBe('PROVIDER_REFUSED'); // another flow's code
-    expect((await mailCallback(h, { state: f2.state, code: good })).result).toBe('PROVIDER_REFUSED'); // used once already
+    expect((await mailCallback(h, { state: f3.state, code: good }, f3.binder)).result).toBe('PROVIDER_REFUSED'); // another flow's code
+    expect((await mailCallback(h, { state: f2.state, code: good }, f2.binder)).result).toBe('PROVIDER_REFUSED'); // used once already
     expect(await linkOf(h, a.userId!)).toBeUndefined();
   });
 
@@ -109,7 +124,7 @@ describe('the OAuth callback (R-GMAIL-2, R-GMAIL-3)', () => {
     await freshReauth(h, w.owner);
     expect((await call(w.owner, 'PUT', '/admin/mail-sync', { enabled: false, backfillDays: 30 })).status).toBe(200);
     try {
-      expect((await mailCallback(h, { state: f.state, code })).result).toBe('MAIL_SYNC_OFF');
+      expect((await mailCallback(h, { state: f.state, code }, f.binder)).result).toBe('MAIL_SYNC_OFF');
       expect(await linkOf(h, a.userId!)).toBeUndefined();
     } finally {
       await enableMailSync(h, w.owner);

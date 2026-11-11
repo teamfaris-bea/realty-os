@@ -2,10 +2,10 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { signState } from '../integrations/oauthState.js';
-import { mailPkceVerifier, newNonce, pkceChallenge, signMailState, verifyMailState } from './oauthState.js';
+import { binderMatches, mailPkceVerifier, newBinder, newNonce, pkceChallenge, signMailState, verifyMailState } from './oauthState.js';
 
 const secret = new Uint8Array(32).fill(7);
-const s = { tenantId: '01a1cc2e-917a-7af9-884e-b52d8a717d29', userId: '01a1cc2e-917a-7af9-884e-b52d8a717d30', disclosureSha256: 'a'.repeat(64), expiresAt: 2_000_000_000_000, nonce: newNonce() };
+const s = { tenantId: '01a1cc2e-917a-7af9-884e-b52d8a717d29', userId: '01a1cc2e-917a-7af9-884e-b52d8a717d30', disclosureSha256: 'a'.repeat(64), binderSha256: 'c'.repeat(64), expiresAt: 2_000_000_000_000, nonce: newNonce() };
 
 describe('mail OAuth state', () => {
   it('R-GMAIL-2: round-trips; expired is refused; another secret is refused', () => {
@@ -29,6 +29,14 @@ describe('mail OAuth state', () => {
   it('a module 21 integrations state is never a Gmail state (separate key purpose)', () => {
     const integ = signState(secret, { tenantId: s.tenantId, connectionId: s.userId, userId: s.userId, kind: 'gbp_location', externalAccountId: 'x', fence: '1', expiresAt: s.expiresAt, nonce: 'n' });
     expect(verifyMailState(secret, integ, 1).ok).toBe(false);
+  });
+
+  it('the browser binder matches only its own cookie', () => {
+    const b = newBinder();
+    expect(binderMatches({ binderSha256: b.sha256 }, b.binder)).toBe(true);
+    expect(binderMatches({ binderSha256: b.sha256 }, newBinder().binder)).toBe(false);
+    expect(binderMatches({ binderSha256: b.sha256 }, null)).toBe(false);
+    expect(binderMatches({ binderSha256: b.sha256 }, `${b.binder}x`)).toBe(false);
   });
 
   it('the PKCE verifier is bound to the nonce, the tenant and the user', () => {

@@ -8,7 +8,8 @@
 // Its own key purpose (never module 21's), so an integrations state is never a Gmail state and vice versa.
 // Single use: the callback consumes the nonce (webhook_events, provider 'gmail_oauth_state', the existing
 // replay table) BEFORE anything else happens, so a replayed state is refused whatever the first outcome was. A forged
-// or altered state fails the MAC; an expired one fails `e`; the verifier is derived from the state, so a code issued
+// or altered state fails the MAC; a state delivered by a browser without the starter's binder cookie (an attacker who
+// sends their authorize URL to someone else, so that person's Gmail would land on the attacker's account) is refused; an expired one fails `e`; the verifier is derived from the state, so a code issued
 // for one flow cannot be exchanged with another flow's verifier. The tenant and user come only from a verified state.
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
@@ -18,6 +19,8 @@ export interface MailOAuthState {
   tenantId: string;
   userId: string;
   disclosureSha256: string;
+  /** SHA-256 hex of the browser binder: a random value set as an HttpOnly cookie in the browser that started the flow */
+  binderSha256: string;
   expiresAt: number;
   nonce: string;
 }
@@ -36,7 +39,7 @@ export function newNonce(): string {
 }
 
 export function signMailState(secret: Uint8Array, s: MailOAuthState): string {
-  const body = Buffer.from(JSON.stringify({ v: 1, t: s.tenantId, u: s.userId, d: s.disclosureSha256, e: s.expiresAt, n: s.nonce })).toString('base64url');
+  const body = Buffer.from(JSON.stringify({ v: 1, t: s.tenantId, u: s.userId, d: s.disclosureSha256, b: s.binderSha256, e: s.expiresAt, n: s.nonce })).toString('base64url');
   return `${body}.${mac(secret, 'mail-oauth-state', body)}`;
 }
 
@@ -58,10 +61,11 @@ export function verifyMailState(secret: Uint8Array, token: string, now: number):
   const u = typeof j.u === 'string' ? j.u : '';
   const d = typeof j.d === 'string' ? j.d : '';
   const n = typeof j.n === 'string' ? j.n : '';
+  const b = typeof j.b === 'string' ? j.b : '';
   const e = typeof j.e === 'number' && Number.isSafeInteger(j.e) ? j.e : null;
-  if (j.v !== 1 || !UUID.test(t) || !UUID.test(u) || !/^[0-9a-f]{64}$/.test(d) || !/^[A-Za-z0-9_-]{16,64}$/.test(n) || e === null) return { ok: false, code: 'STATE_INVALID' };
+  if (j.v !== 1 || !UUID.test(t) || !UUID.test(u) || !/^[0-9a-f]{64}$/.test(d) || !/^[0-9a-f]{64}$/.test(b) || !/^[A-Za-z0-9_-]{16,64}$/.test(n) || e === null) return { ok: false, code: 'STATE_INVALID' };
   if (now > e) return { ok: false, code: 'STATE_EXPIRED' };
-  return { ok: true, state: { tenantId: t, userId: u, disclosureSha256: d, expiresAt: e, nonce: n } };
+  return { ok: true, state: { tenantId: t, userId: u, disclosureSha256: d, binderSha256: b, expiresAt: e, nonce: n } };
 }
 
 /** The PKCE verifier of a flow: derived, never stored, never sent anywhere but the token exchange. */
@@ -76,4 +80,20 @@ export function pkceChallenge(verifier: string): string {
 /** The replay-table key of a state (webhook_events.provider_event_id): its nonce's hash, never the nonce itself. */
 export function stateReplayKey(s: Pick<MailOAuthState, 'nonce'>): string {
   return createHash('sha256').update(`mail-oauth-state:${s.nonce}`).digest('hex');
+}
+
+/** A fresh browser binder (the cookie value) and its hash (carried in the state). */
+export function newBinder(): { binder: string; sha256: string } {
+  const binder = randomBytes(32).toString('base64url');
+  return { binder, sha256: binderHash(binder) };
+}
+export function binderHash(binder: string): string {
+  return createHash('sha256').update(`mail-oauth-binder:${binder}`).digest('hex');
+}
+/** Does the cookie the callback received bind this state to the browser that started it? (timing-safe) */
+export function binderMatches(s: Pick<MailOAuthState, 'binderSha256'>, cookie: string | null | undefined): boolean {
+  if (typeof cookie !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(cookie)) return false;
+  const a = Buffer.from(binderHash(cookie), 'hex');
+  const b = Buffer.from(s.binderSha256, 'hex');
+  return a.length === b.length && timingSafeEqual(a, b);
 }

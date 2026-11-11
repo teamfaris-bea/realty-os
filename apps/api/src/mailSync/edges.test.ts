@@ -121,13 +121,13 @@ async function connectedAgentWithBackfill() {
 }
 
 describe('one mailbox, one live link (R-GMAIL-2)', () => {
-  it('E210: a shared mailbox a teammate already linked is refused (nothing stored, the token revoked at Google)', async () => {
+  it('E210: a shared mailbox a teammate already linked is refused (nothing stored; the token is dropped, never revoked: a revoke would end the teammate’s grant)', async () => {
     const { box } = await connected();
     const b = await inviteViaApi(h, w.owner, 'agent');
     const revoked = h.providers.gmail.revoked.length;
     expect((await connectGmail(h, b, box)).result).toBe('MAILBOX_LINKED_ELSEWHERE');
     expect(await linkOf(h, b.userId!)).toBeUndefined();
-    expect(h.providers.gmail.revoked.length).toBe(revoked + 1);
+    expect(h.providers.gmail.revoked.length).toBe(revoked);
   });
 
   it('E211: the same Gmail connected in a second workspace is refused', async () => {
@@ -144,7 +144,7 @@ describe('one mailbox, one live link (R-GMAIL-2)', () => {
       const before = h.providers.gmail.revoked.length;
       expect((await connectGmail(h, a, mailbox(), { scopes })).result).toBe('SCOPE_NOT_ALLOWED');
       expect(await linkOf(h, a.userId!)).toBeUndefined();
-      expect(h.providers.gmail.revoked.length).toBe(before + 1);
+      expect(h.providers.gmail.revoked.length).toBe(before); // dropped, not revoked (the grant may back a live link elsewhere)
     }
     // and the database would refuse it anyway (scopes CHECK)
     const def = (await h.su.query("SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint WHERE conrelid = 'user_mail_links'::regclass AND pg_get_constraintdef(oid) LIKE '%scopes%'")).rows[0]!.d;
@@ -323,7 +323,8 @@ describe('revocation, reassignment, merge, erasure (R-GMAIL-6, -13)', () => {
     await confirmAddresses(a, [pid]);
     h.providers.gmail.deliver(box, { from: c.email, to: [box], text: 'y', internalDate: Date.now() + 5 });
     await runMailSync(h, w.tenantId);
-    expect(await copiesOf(h, { linkId: link.id })).toHaveLength(1);
+    // confirming again re-runs the window, so 'x' comes back with 'y'
+    expect((await copiesOf(h, { linkId: link.id })).map((x) => x.body).sort()).toEqual(['x', 'y']);
     await withTenantTx(systemActor(), async (tx) => {
       await sql`UPDATE user_mail_links SET status = 'revoked', revoke_reason = 'PROVIDER_REVOKED', refresh_enc = NULL, next_sync_at = NULL, purge_after = now() + interval '30 days' WHERE id = ${link.id}::uuid`.execute(tx);
     }, { db: h.database });

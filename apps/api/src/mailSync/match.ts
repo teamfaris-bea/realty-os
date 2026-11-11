@@ -111,7 +111,7 @@ export function parseAddressList(value: string | null | undefined): string[] {
   if (typeof value !== 'string' || value.length === 0) return [];
   const v = value.replace(/\r?\n[ \t]+/g, ' ').slice(0, 20_000);
   const out: string[] = [];
-  for (let part of splitTopLevel(v)) {
+  for (let part of splitTopLevel(v).map(stripComments)) {
     // groups: "Friends: a@x, b@y;" — splitTopLevel already split at commas; strip "name:" and ";"
     const colon = topLevelColon(part);
     if (colon >= 0) part = part.slice(colon + 1);

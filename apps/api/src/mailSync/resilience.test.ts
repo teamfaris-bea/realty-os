@@ -89,8 +89,9 @@ describe('R-GMAIL-11: the history cursor', () => {
       h.providers.gmail.getMessage = real;
     }
     expect((await copiesOf(h, { linkId })).length).toBe(3);
+    // the cursor moved with the committed page 1 only (3 records), never past the failed page
     const after1 = (await linkOf(h, a.userId!))!;
-    expect(after1.history_id).toBe(cursor0);
+    expect(Number(after1.history_id)).toBe(Number(cursor0) + 3);
     expect((await h.su.query('SELECT last_error_code, status FROM user_mail_links WHERE id = $1', [linkId])).rows[0]).toMatchObject({ status: 'degraded' });
     await runMailSync(h, w.tenantId);
     const copies = await copiesOf(h, { linkId });

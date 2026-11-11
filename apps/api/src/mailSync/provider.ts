@@ -51,7 +51,16 @@ export interface GmailMessage {
 }
 
 export type HistoryPage =
-  | { added: GmailRef[]; removed: GmailRef[]; labelChanges: GmailLabelChange[]; historyId: string; nextPageToken?: string }
+  | {
+      added: GmailRef[];
+      removed: GmailRef[];
+      labelChanges: GmailLabelChange[];
+      /** the mailbox's history id (the cursor once the LAST page is done) */
+      historyId: string;
+      /** the largest history record id ON this page (history[].id, VERIFY): a safe cursor after this page commits */
+      pageHistoryId: string | null;
+      nextPageToken?: string;
+    }
   | { expired: true };
 
 export interface GmailProvider {
@@ -229,7 +238,8 @@ export class FakeGmail implements GmailProvider {
       added: page.filter((h) => h.kind === 'added').map((h) => h.ref),
       removed: page.filter((h) => h.kind === 'removed').map((h) => h.ref),
       labelChanges: page.filter((h) => h.kind === 'labels').map((h) => ({ ...h.ref, labelIds: h.labelIds ?? [] })),
-      historyId: String(more ? last : Math.max(last, m.historyId)),
+      historyId: String(Math.max(last, m.historyId)),
+      pageHistoryId: page.length > 0 ? String(last) : null,
       ...(more ? { nextPageToken: String(offset + PAGE) } : {}),
     };
   }
@@ -266,8 +276,9 @@ export class FakeGmail implements GmailProvider {
   async revoke(refreshToken: string): Promise<{ revoked: boolean }> {
     this.calls.push({ method: 'revoke' });
     this.revoked.push(refreshToken);
+    // like Google, a revoke ends the whole grant (this user + this client): every token of the same mailbox dies
     const r = this.#refresh.get(refreshToken);
-    if (r) r.invalid = true;
+    if (r) for (const x of this.#refresh.values()) if (x.mailbox === r.mailbox) x.invalid = true;
     return { revoked: true };
   }
 

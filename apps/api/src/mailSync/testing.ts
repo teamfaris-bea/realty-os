@@ -45,8 +45,10 @@ export interface CallbackResult {
   location: string;
 }
 
-export async function mailCallback(h: ApiHarness, q: Record<string, string>): Promise<CallbackResult> {
-  const r = await h.app.inject({ method: 'GET', url: `/api/me/mail-link/callback?${new URLSearchParams(q).toString()}` });
+/** Google's redirect, delivered by a browser holding `binder` (the starter's OAuth binder cookie), or by one without it. */
+export async function mailCallback(h: ApiHarness, q: Record<string, string>, binder: string | null = null): Promise<CallbackResult> {
+  const name = h.config.cookieSecure ? '__Host-mail-oauth' : 'mail-oauth';
+  const r = await h.app.inject({ method: 'GET', url: `/api/me/mail-link/callback?${new URLSearchParams(q).toString()}`, ...(binder ? { headers: { cookie: `${name}=${binder}` } } : {}) });
   const loc = String(r.headers.location ?? '');
   return { status: r.statusCode, result: loc ? new URL(loc).searchParams.get('result') : null, location: loc };
 }
@@ -57,13 +59,17 @@ export interface StartedMailFlow {
   state: string;
   challenge: string;
   authorizeUrl: string;
+  /** the HttpOnly binder cookie the connect response set in the starter's browser */
+  binder: string | null;
 }
 
 export async function startMailConnect(c: TestClient, disclosureSha256 = CURRENT_DISCLOSURE_SHA256): Promise<StartedMailFlow> {
-  const r = await call<{ authorizeUrl: string }>(c, 'POST', '/me/mail-link/connect', { disclosureSha256 });
-  if (r.status !== 201) return { status: r.status, code: r.code, state: '', challenge: '', authorizeUrl: '' };
-  const u = new URL(r.body.authorizeUrl);
-  return { status: r.status, code: null, state: u.searchParams.get('state')!, challenge: u.searchParams.get('code_challenge')!, authorizeUrl: r.body.authorizeUrl };
+  const raw = await c.request('POST', '/api/me/mail-link/connect', { disclosureSha256 });
+  const body = JSON.parse(raw.body || '{}') as { authorizeUrl?: string; error?: { code?: string } };
+  if (raw.statusCode !== 201) return { status: raw.statusCode, code: body.error?.code ?? null, state: '', challenge: '', authorizeUrl: '', binder: null };
+  const u = new URL(body.authorizeUrl!);
+  const binder = raw.cookies.find((x) => x.name === 'mail-oauth' || x.name === '__Host-mail-oauth')?.value ?? null;
+  return { status: 201, code: null, state: u.searchParams.get('state')!, challenge: u.searchParams.get('code_challenge')!, authorizeUrl: body.authorizeUrl!, binder };
 }
 
 /** The whole connect: start, the person approves at (fake) Google, Google redirects back. */
@@ -71,7 +77,7 @@ export async function connectGmail(h: ApiHarness, c: TestClient, mailbox: string
   const flow = await startMailConnect(c);
   if (flow.status !== 201) throw new Error(`connect start: ${flow.status} ${flow.code}`);
   const code = h.providers.gmail.issueCode({ codeChallenge: flow.challenge, mailbox, ...(o.scopes ? { scopes: o.scopes } : {}) });
-  const cb = await mailCallback(h, { state: flow.state, code });
+  const cb = await mailCallback(h, { state: flow.state, code }, flow.binder);
   return { ...cb, flow };
 }
 

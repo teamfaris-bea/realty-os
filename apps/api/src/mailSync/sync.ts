@@ -83,6 +83,7 @@ interface LinkRow {
   backfill_requested_at: Date | null;
   backfill_page_token: string | null;
   backfill_done_at: Date | null;
+  last_synced_at: Date | null;
   member_active: boolean;
 }
 
@@ -161,6 +162,8 @@ export async function syncTenant(ctx: StandaloneJobContext, deps: MailSyncDeps):
       out.handbacks += r.handbacks;
       if (r.revoked) out.revoked++;
     } catch (e) {
+      // revoked while the pass ran: stop quietly (the access token is dropped with this frame)
+      if (e instanceof LinkNotLive) continue;
       out.errors++;
       const code = errCode(e);
       await ctx.withTx(async (tx) => {
@@ -178,7 +181,7 @@ async function liveLinks(tx: Tx): Promise<LinkRow[]> {
   return (
     await sql<LinkRow>`
       SELECT l.id, l.user_id, l.status, l.mailbox_address_hmac, l.history_id, l.connected_at, l.next_sync_at, l.backfill_requested_at,
-             l.backfill_page_token, l.backfill_done_at,
+             l.backfill_page_token, l.backfill_done_at, l.last_synced_at,
              EXISTS (SELECT 1 FROM memberships m WHERE m.tenant_id = l.tenant_id AND m.user_id = l.user_id AND m.status = 'active') AS member_active
         FROM user_mail_links l WHERE l.tenant_id = app.tenant_id() AND l.status <> 'revoked' ORDER BY l.id`.execute(tx)
   ).rows;
@@ -203,15 +206,23 @@ export async function purgeCopies(tx: Tx, now: Instant): Promise<{ deleted: numb
   const n = (r: { numAffectedRows?: bigint }) => Number(r.numAffectedRows ?? 0n);
   // merge re-point first (R-GMAIL-13, E223): to the survivor's current, confirmed email point with the same HMAC,
   // unless the survivor already holds its own copy of the same Gmail message on this link
+  // at most ONE copy per (link, Gmail message, survivor) moves (two merged duplicates may both hold the same message;
+  // moving both would collide on the unique key and stall every pass); the rest are deleted just below
   const rep = await sql`
-    UPDATE mail_messages mm SET contact_id = c.merged_into_contact_id, contact_point_id = sp.contact_point_id
-      FROM contacts c, contact_points p, mail_sync_points sp
-     WHERE mm.tenant_id = app.tenant_id() AND c.tenant_id = mm.tenant_id AND c.id = mm.contact_id AND c.merged_into_contact_id IS NOT NULL
-       AND p.tenant_id = mm.tenant_id AND p.contact_id = c.merged_into_contact_id AND p.kind = 'email' AND p.removed_at IS NULL
-       AND p.address_hmac = mm.contact_address_hmac
-       AND sp.tenant_id = mm.tenant_id AND sp.link_id = mm.link_id AND sp.contact_point_id = p.id
-       AND NOT EXISTS (SELECT 1 FROM mail_messages o WHERE o.tenant_id = mm.tenant_id AND o.link_id = mm.link_id
-                         AND o.gmail_message_id = mm.gmail_message_id AND o.contact_id = c.merged_into_contact_id)`.execute(tx);
+    WITH cand AS (
+      SELECT DISTINCT ON (mm.link_id, mm.gmail_message_id, c.merged_into_contact_id)
+             mm.id, c.merged_into_contact_id AS survivor, p.id AS point_id
+        FROM mail_messages mm
+        JOIN contacts c ON c.tenant_id = mm.tenant_id AND c.id = mm.contact_id AND c.merged_into_contact_id IS NOT NULL
+        JOIN contact_points p ON p.tenant_id = mm.tenant_id AND p.contact_id = c.merged_into_contact_id AND p.kind = 'email'
+                             AND p.removed_at IS NULL AND p.address_hmac = mm.contact_address_hmac
+        JOIN mail_sync_points sp ON sp.tenant_id = mm.tenant_id AND sp.link_id = mm.link_id AND sp.contact_point_id = p.id
+       WHERE mm.tenant_id = app.tenant_id()
+         AND NOT EXISTS (SELECT 1 FROM mail_messages o WHERE o.tenant_id = mm.tenant_id AND o.link_id = mm.link_id
+                           AND o.gmail_message_id = mm.gmail_message_id AND o.contact_id = c.merged_into_contact_id)
+       ORDER BY mm.link_id, mm.gmail_message_id, c.merged_into_contact_id, mm.id, p.id)
+    UPDATE mail_messages mm SET contact_id = cand.survivor, contact_point_id = cand.point_id
+      FROM cand WHERE mm.tenant_id = app.tenant_id() AND mm.id = cand.id`.execute(tx);
   const repointed = n(rep);
   deleted += n(
     await sql`
@@ -316,16 +327,25 @@ async function syncLink(ctx: StandaloneJobContext, deps: MailSyncDeps, gmail: Gm
     }
     const removed = [...page.removed, ...page.labelChanges.filter((c) => isSkipped(c.labelIds))];
     const msgs = await fetchAll(gmail, access, dedupeRefs(page.added), deps);
-    tally(await ctx.withTx((tx) => processPage(tx, ctx.actor, deps, link, rules, msgs, removed, 'live')));
+    tally(
+      await ctx.withTx(async (tx) => {
+        const p = await processPage(tx, ctx.actor, deps, link, rules, msgs, removed, 'live');
+        // the cursor moves with the page, in the same transaction (a crash replays at most the next page; a backlog
+        // longer than MAX_HISTORY_PAGES makes progress every pass instead of replaying the same pages)
+        if (page.pageHistoryId !== null && page.nextPageToken) await setCursor(tx, link.id, page.pageHistoryId);
+        return p;
+      }),
+    );
     if (!page.nextPageToken) {
       finalHistoryId = page.historyId;
       break;
     }
     pageToken = page.nextPageToken;
   }
-  // 6 the cursor advances only after every page's rows committed (a crash before here replays: unique keys make it a no-op)
+  // 6 the cursor advances only after the page's rows committed (a crash replays: unique keys make it a no-op)
   if (finalHistoryId !== null) {
-    await ctx.withTx((tx) => sql`UPDATE user_mail_links SET history_id = ${finalHistoryId} WHERE tenant_id = app.tenant_id() AND id = ${link.id}::uuid AND status <> 'revoked'`.execute(tx));
+    const fin = finalHistoryId;
+    await ctx.withTx((tx) => setCursor(tx, link.id, fin));
   }
 
   // 5 backfill (at connect and on "import again"): the window and the cap only
@@ -333,7 +353,9 @@ async function syncLink(ctx: StandaloneJobContext, deps: MailSyncDeps, gmail: Gm
   if (wanted) {
     const days = await backfillDays(ctx);
     const requested = link.backfill_requested_at!;
-    let tok = link.backfill_page_token ?? undefined;
+    // a request made since the last pass ("import again") re-runs the window from the start, not from an old page token
+    const fresh = link.last_synced_at === null || requested.getTime() > link.last_synced_at.getTime();
+    let tok = fresh ? undefined : (link.backfill_page_token ?? undefined);
     let done = days === 0;
     for (let i = 0; !done && i < MAX_BACKFILL_PAGES_PER_PASS; i++) {
       const already = await ctx.withTx(async (tx) => Number((await sql<{ n: string }>`
@@ -372,6 +394,15 @@ async function syncLink(ctx: StandaloneJobContext, deps: MailSyncDeps, gmail: Gm
   return res;
 }
 
+class LinkNotLive extends Error {
+  override readonly name = 'LinkNotLive';
+}
+
+async function setCursor(tx: Tx, linkId: string, historyId: string): Promise<void> {
+  await sql`UPDATE user_mail_links SET history_id = ${historyId} WHERE tenant_id = app.tenant_id() AND id = ${linkId}::uuid AND status <> 'revoked'
+              AND (history_id IS NULL OR history_id::numeric < ${historyId}::numeric)`.execute(tx);
+}
+
 async function backfillDays(ctx: StandaloneJobContext): Promise<number> {
   return ctx.withTx(async (tx) => Number((await sql<{ d: number }>`SELECT mail_backfill_days AS d FROM tenant_settings WHERE tenant_id = app.tenant_id()`.execute(tx)).rows[0]?.d ?? 0));
 }
@@ -407,6 +438,12 @@ type Mode = 'live' | 'resync' | 'backfill';
 /** Steps 3-4 for one page, in ONE system transaction (the caller commits it before the cursor moves). */
 export async function processPage(tx: Tx, actor: SystemActor, deps: MailSyncDeps, link: LinkRow, rules: GmailPackRules, msgs: readonly (GmailMessage & { fetchedAt: number })[], removed: readonly GmailRef[], mode: Mode): Promise<PageResult> {
   const out: PageResult = { stored: 0, optOuts: 0, handbacks: 0 };
+  // the link may have been revoked while this page was fetched (a disconnect, the switch off): nothing fetched after
+  // that is processed, opt-outs included (they are recorded again from platform email or the next link)
+  const live = await sql<{ live: boolean }>`
+    SELECT app.mail_link_live(app.tenant_id(), ${link.id}::uuid) AS live FROM user_mail_links
+     WHERE tenant_id = app.tenant_id() AND id = ${link.id}::uuid FOR SHARE`.execute(tx);
+  if (live.rows[0]?.live !== true) throw new LinkNotLive();
   const tenantId = actor.tenantId as TenantId;
   const env = deps.envelope.inTx(tx, tenantId);
   // E219: trashed, spammed or deleted in Gmail ⇒ its copies go
@@ -488,8 +525,10 @@ export async function processPage(tx: Tx, actor: SystemActor, deps: MailSyncDeps
       if (await recordSyncedOptOut(tx, actor, deps, link, m, from[0]!, hmacOf(from[0]!), senderContacts, stored, classification, confirmed)) out.optOuts++;
     }
 
-    // R-GMAIL-10, E226: a fresh LIVE client message pauses and hands back once; backfill and older mail never do
-    if (mode !== 'backfill') {
+    // R-GMAIL-10, E226: a fresh LIVE client message pauses and hands back once; backfill copies and older mail never
+    // do. Decided by the copy's origin (the DB's) and its age, in every mode: a live reply a backfill page happens to
+    // see first still pauses
+    {
       for (const s of stored) {
         if (s.match.sender !== 'contact') continue;
         const origin = (await sql<{ o: string }>`SELECT origin AS o FROM mail_messages WHERE tenant_id = app.tenant_id() AND id = ${s.id}::uuid`.execute(tx)).rows[0]?.o;
@@ -524,7 +563,7 @@ async function recordSyncedOptOut(
   const copyIds = (await sql<{ id: string }>`SELECT id FROM mail_messages WHERE tenant_id = app.tenant_id() AND link_id = ${link.id}::uuid AND gmail_message_id = ${m.id}`.execute(tx)).rows.map((x) => x.id);
   const seen = await sql`
     SELECT 1 FROM consent_events WHERE tenant_id = app.tenant_id() AND evidence->>'kind' = 'synced_gmail'
-       AND (evidence->>'gmail_message_ref' = ${ref} OR evidence->>'mail_message_id' = ANY (${copyIds}::text[])) LIMIT 1`.execute(tx);
+       AND (evidence->>'synced_key' = ${ref} OR evidence->>'gmail_message_ref' = ${ref} OR evidence->>'mail_message_id' = ANY (${copyIds}::text[])) LIMIT 1`.execute(tx);
   if (seen.rows.length > 0) return false;
   const citation = sentCopy && sentCopy.match.contactId === target ? { mail_message_id: sentCopy.id } : { gmail_message_ref: ref };
   const otherEmails = (
@@ -549,7 +588,7 @@ async function recordSyncedOptOut(
   // synced mail is only ever a cited system EMAIL revoke (consent_events_synced_gmail); everything a person-level
   // opt-out reaches beyond email is the do-not-contact below, exactly as platform email records it
   const events = fx.consentEvents.filter((e) => e.eventType === 'revoke' && e.channel === 'email' && e.addressKind === 'email');
-  for (const e of events) await recordConsentEvent(tx, { ...e, evidenceMessageId: null, evidence: { kind: 'synced_gmail', ...citation, ...(classification.matched ? { matched: classification.matched.slice(0, 80) } : {}) } });
+  for (const e of events) await recordConsentEvent(tx, { ...e, evidenceMessageId: null, evidence: { kind: 'synced_gmail', ...citation, synced_key: ref, ...(classification.matched ? { matched: classification.matched.slice(0, 80) } : {}) } });
   const firstRevoke = events.find((e) => e.contactId === target);
   if (fx.personDoNotContact && firstRevoke) await sql`SELECT app.record_person_opt_out(${target}::uuid, ${firstRevoke.id}::uuid)`.execute(tx);
   if (fx.markWrongNumber) {
