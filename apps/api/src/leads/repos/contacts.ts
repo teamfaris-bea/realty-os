@@ -159,6 +159,14 @@ export async function addPoint(tx: Tx, p: NewPoint): Promise<boolean> {
   return r.rows.length > 0;
 }
 
+/** FUB parity module 57: an address given at create (RLS: contact detail visible, as every contact child). */
+export async function addAddress(tx: Tx, id: string, contactId: string, a: { kind: string; line1?: string | undefined; line2?: string | undefined; city?: string | undefined; region?: string | undefined; postalCode?: string | undefined; country: string }): Promise<void> {
+  await sql`
+    INSERT INTO contact_addresses (tenant_id, id, contact_id, kind, line1, line2, city, region, postal_code, country)
+    VALUES (app.tenant_id(), ${id}::uuid, ${contactId}::uuid, ${a.kind}, ${a.line1 ?? null}, ${a.line2 ?? null}, ${a.city ?? null}, ${a.region ?? null},
+            ${a.postalCode ?? null}, ${a.country})`.execute(tx);
+}
+
 let savepointSeq = 0;
 
 /**

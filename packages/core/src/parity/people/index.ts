@@ -65,6 +65,7 @@ export {
   defaultActivityBody,
   followUpTitle,
   suggestsDoNotContact,
+  tagReadsAsOptOut,
   validateLoggedActivity,
 } from './activity.js';
 export { annualComingUp, daysUntilAnnual, nextAnnualOccurrence, occurrenceIn } from './annual.js';

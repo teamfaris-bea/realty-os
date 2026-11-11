@@ -79,6 +79,23 @@ export const CreateContactBody = z.strictObject({
   contactType: z.enum(['lead', 'sphere', 'past_client', 'vendor', 'other']).optional(),
   /** create even though an existing contact shares a phone/email (spouses); a duplicate candidate is recorded */
   confirmDistinct: z.boolean().optional(),
+  // FUB parity module 57 (R-PAR-44): set at birth, in the same transaction
+  stage: z.enum(['new', 'attempting', 'connected', 'nurture', 'active', 'under_contract', 'closed', 'lost']).optional(),
+  /** first-touch attribution, once, at birth (a lead source of this tenant) */
+  leadSourceId: Id.optional(),
+  phoneLabel: z.enum(['mobile', 'home', 'work', 'other']).optional(),
+  emailLabel: z.enum(['mobile', 'home', 'work', 'other']).optional(),
+  address: z
+    .strictObject({
+      kind: z.enum(['home', 'mailing', 'property', 'interest']).default('home'),
+      line1: z.string().trim().min(1).max(200).optional(),
+      line2: z.string().trim().min(1).max(200).optional(),
+      city: z.string().trim().min(1).max(120).optional(),
+      region: z.string().trim().min(1).max(60).optional(),
+      postalCode: z.string().trim().min(3).max(12).optional(),
+      country: z.string().regex(/^[A-Z]{2}$/).default('US'),
+    })
+    .optional(),
 });
 
 export const SourceView = z.object({ id: Id, name: z.string(), kind: z.string() });

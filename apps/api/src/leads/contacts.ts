@@ -117,11 +117,12 @@ export async function registerContactRoutes(app: FastifyInstance): Promise<void>
         const res = await applyOwnershipCommandInTx(tx, actor, contactId, { kind: 'create', via: 'self' }, {
           commandId: b.commandId,
           ids: p.ids,
-          newContact: { displayName, firstName: first, lastName: last, intent: b.intent ?? null, contactType: b.contactType ?? 'lead' },
+          newContact: { displayName, firstName: first, lastName: last, intent: b.intent ?? null, contactType: b.contactType ?? 'lead', ...(b.stage ? { stage: b.stage } : {}), ...(b.leadSourceId ? { originalLeadSourceId: b.leadSourceId } : {}) },
         });
         if (!res.outcome.ok) throw new AppError(res.outcome.code === 'NOT_FOUND' ? 'NOT_FOUND' : 'VALIDATION_FAILED');
-        for (const ph of idents.phones) await repo.addPoint(tx, { id: p.ids.next(), contactId, kind: 'phone', address: ph.e164, hmacHex: ph.hmac, label: 'mobile' });
-        for (const em of idents.emails) await repo.addPoint(tx, { id: p.ids.next(), contactId, kind: 'email', address: em.email, hmacHex: em.hmac });
+        for (const ph of idents.phones) await repo.addPoint(tx, { id: p.ids.next(), contactId, kind: 'phone', address: ph.e164, hmacHex: ph.hmac, label: b.phoneLabel ?? 'mobile' });
+        for (const em of idents.emails) await repo.addPoint(tx, { id: p.ids.next(), contactId, kind: 'email', address: em.email, hmacHex: em.hmac, ...(b.emailLabel ? { label: b.emailLabel } : {}) });
+        if (b.address) await repo.addAddress(tx, p.ids.next(), contactId, b.address);
         for (const id of matchIds) await repo.addDuplicateCandidate(tx, p.ids.next(), contactId, id, matches.find((m) => m.contact_id === id && person.phoneHmacs.includes(m.hmac)) ? 'shared_phone' : 'shared_email');
         const row = await repo.getContact(tx, contactId);
         if (!row) throw new AppError('INTERNAL_ERROR');

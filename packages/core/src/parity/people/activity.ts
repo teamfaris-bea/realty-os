@@ -92,3 +92,14 @@ export function suggestsDoNotContact(text: string | null | undefined): boolean {
   if (!text) return false;
   return STOP_PATTERNS.some((re) => re.test(text));
 }
+
+// R-PAR-7 / E167: a tag that reads like an opt-out ("DNC", "Opted out", "Unsubscribed") never stops a
+// message; the app asks "Tags don't stop messages. Record 'do not contact' for Jane?" and offers the real
+// person-level do-not-contact. Same patterns as the importer's TAG_DNC / TAG_OPT_OUT / TAG_UNSUB
+// (core/import/fub.ts), so a typed tag and an imported one are read alike.
+const TAG_OPT_OUT_PATTERNS = [/^(dnc|do[\s_-]*not[\s_-]*(contact|call))$/i, /^(opted[\s_-]*out|opt[\s_-]*out|stop)$/i, /^unsubscribed$/i];
+
+export function tagReadsAsOptOut(name: string): boolean {
+  const t = name.trim();
+  return TAG_OPT_OUT_PATTERNS.some((re) => re.test(t));
+}

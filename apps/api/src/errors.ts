@@ -148,6 +148,26 @@ export const ERROR_STATUS = {
   CONNECTION_NOT_CONNECTABLE: 409, // the connection's status does not allow a (re)connect or change
   CONNECTION_ACCOUNT_MISMATCH: 409, // a different external account is a new connection (R-INT-3)
   LEAD_SOURCE_REQUIRED: 422, // an inbound channel needs a lead source before it can go live
+  // ---- api/people (FUB parity module 57) ----
+  STALE_CONTACT: 409, // R-PAR-43: the contact changed since it was read (row_version in details)
+  FIELD_NOT_EDITABLE: 422, // R-PAR-43: ownership, attribution, do-not-contact, imported fields are never patched
+  STAGE_NEEDS_CONTACT: 409, // R-PAR-14: reach this routed lead first, or close it
+  STAGE_LABEL_INVALID: 422, // R-PAR-13
+  POINT_EXISTS: 409, // the phone/email is already on this person
+  POINT_UNCHANGED: 422, // a replace with the same address
+  POINT_REMOVED: 409, // the point was already removed
+  WRONG_NUMBER_NOT_RECORDED: 409, // R-PAR-12: removing as a wrong number needs the ledger's wrong-number report
+  WRONG_NUMBER_FINAL: 409, // R-PAR-12: a confirmed wrong number is never restored
+  COLLABORATOR_NOT_ELIGIBLE: 422, // not an active member, or the contact's owner
+  RELATIONSHIP_EXISTS: 409,
+  MENTION_LIMIT: 422, // R-PAR-3: at most 10 people per note
+  NOTE_READ_ONLY: 409, // R-PAR-4: imported notes and call summaries are not edited or deleted
+  NOTE_AUTHOR_ONLY: 403, // R-PAR-4: only the author edits a note (pin: author or Owner/Admin)
+  ACTIVITY_IN_FUTURE: 422, // R-PAR-31 E192
+  ACTIVITY_TOO_OLD: 422, // R-PAR-31
+  ACTIVITY_OUT_OF_WINDOW: 422, // R-PAR-31 (the DB CHECK notes_activity_at_window)
+  OUTCOME_CALLS_ONLY: 422, // R-PAR-30
+  NO_ADDRESS_TO_REVOKE: 409, // do-not-contact on a person with no phone or email
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

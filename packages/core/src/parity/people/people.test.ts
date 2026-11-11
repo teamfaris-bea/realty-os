@@ -23,6 +23,7 @@ import {
   stageChangeAllowed,
   stageLabel,
   suggestsDoNotContact,
+  tagReadsAsOptOut,
   validateContactPatch,
   validateLoggedActivity,
   validateStageLabels,
@@ -172,6 +173,13 @@ describe('core/parity-people: logged activity (R-PAR-5, R-PAR-30, R-PAR-31, R-PA
   it('R-PAR-32 E193 "they said stop" in free text only prompts for the real do-not-contact', () => {
     for (const t of ['She said STOP', "don't call me again", 'asked not to be contacted', 'Unsubscribe me', 'take me off your list', 'DNC']) expect(suggestsDoNotContact(t), t).toBe(true);
     for (const t of ['Call back Tuesday', 'Stopped by the open house? no', null, '']) expect(suggestsDoNotContact(t), String(t)).toBe(false);
+  });
+});
+
+describe('core/parity-people: opt-out-looking tags (R-PAR-7)', () => {
+  it('R-PAR-7 E167 a tag reading like an opt-out prompts for the real do-not-contact (the importer\u2019s patterns); other tags do not', () => {
+    for (const t of ['DNC', ' do not contact ', 'Do-Not-Call', 'Opted out', 'opt_out', 'STOP', 'Unsubscribed']) expect(tagReadsAsOptOut(t), t).toBe(true);
+    for (const t of ['Buyer', 'stop by Friday', 'DNC list maybe', 'unsubscribe later']) expect(tagReadsAsOptOut(t), t).toBe(false);
   });
 });
 
