@@ -44,6 +44,10 @@ export function createDatabase(opts: DatabaseOptions): Database {
     application_name: opts.applicationName ?? 'realty-db',
     types: typeParsers,
     statement_timeout: opts.statementTimeoutMs ?? 30_000,
+    // No JIT for the application's short OLTP statements (lane scale-250k): RLS row estimates and
+    // set-returning definers (default 1,000 rows) push cheap queries past jit_above_cost, and compiling
+    // them cost up to 600 ms for a 36 ms scoreboard query at 250k contacts.
+    options: '-c jit=off',
   });
   // An idle client error (e.g. the server terminated the connection) must not crash the process.
   pool.on('error', () => {});

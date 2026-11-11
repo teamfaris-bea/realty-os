@@ -15,7 +15,15 @@ export interface ExistingSnapshot {
   hmacs: Map<string, string>;
 }
 
+/**
+ * The dry run reads the whole book (every contact and point, each through RLS) in one bulk-job
+ * transaction. At 250k contacts that is longer than the pool's 30 s per-statement safety net, which made
+ * the job fail every time (lane scale-250k); this transaction gets a bulk-sized limit instead.
+ */
+export const BULK_STATEMENT_TIMEOUT = '10min';
+
 export async function loadContacts(tx: Tx, only?: readonly string[]): Promise<ExistingSnapshot> {
+  if (!only) await sql`SELECT set_config('statement_timeout', ${BULK_STATEMENT_TIMEOUT}, true)`.execute(tx);
   const filter = only ? sql`AND c.id = ANY (${[...only]}::uuid[])` : sql``;
   const rows = await sql<{
     id: string;

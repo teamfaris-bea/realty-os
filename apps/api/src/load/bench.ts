@@ -131,10 +131,22 @@ export class LoadBench {
   async measure(name: string, budget: [number | null, string], fn: (i: number) => Promise<number>, o: { n?: number; warmup?: number; note?: string } = {}): Promise<Measurement> {
     const n = o.n ?? this.iterations;
     if (this.only && !this.only.test(name)) return { name, budgetMs: null, budgetSource: 'skipped', n: 0, p50: NaN, p95: NaN, max: NaN, pass: null };
-    for (let i = 0; i < (o.warmup ?? 2); i++) await fn(-1 - i);
+    for (let i = 0; i < (o.warmup ?? Number(process.env.LOAD_WARMUP ?? 2)); i++) await fn(-1 - i).catch(() => 0);
     const times: number[] = [];
-    for (let i = 0; i < n; i++) times.push(await fn(i));
-    return this.record(name, budget, times, o.note);
+    const errors: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const t0 = performance.now();
+      try {
+        times.push(await fn(i));
+      } catch (e) {
+        // a failed call (statement timeout, 5xx) is a result: it counts at the time it took to fail
+        times.push(performance.now() - t0);
+        errors.push(String(e instanceof Error ? e.message : e).slice(0, 120));
+      }
+    }
+    const m = this.record(name, budget, times, errors.length > 0 ? `${errors.length}/${n} calls FAILED (${errors[0]})${o.note ? `; ${o.note}` : ''}` : o.note);
+    if (errors.length > 0) m.pass = false;
+    return m;
   }
 
   record(name: string, [budgetMs, budgetSource]: [number | null, string], times: number[], note?: string): Measurement {
@@ -206,7 +218,17 @@ export async function benchReads(b: LoadBench, a: Actors): Promise<void> {
   const T = b.tenantId;
   // 1. priority feed (the first call per agent persists its cards; later calls are the steady state)
   for (const [label, s] of [['busiest agent', a.busy], ['median agent', a.median]] as const) {
-    await b.measure(`feed: GET /feed (${label})`, BUDGET.feed, async () => expectOk(await b.req(s, 'GET', '/feed'), 'feed'));
+    // a failed feed (e.g. the 30 s statement timeout) is a result, not a harness error: it counts at its time
+    let failures = 0;
+    const m = await b.measure(`feed: GET /feed (${label})`, BUDGET.feed, async () => {
+      const r = await b.req(s, 'GET', '/feed');
+      if (r.status >= 300) failures += 1;
+      return r.ms;
+    }, { n: Number(process.env.LOAD_FEED_N ?? b.iterations) });
+    if (failures > 0) {
+      m.note = `${failures}/${m.n} timed calls failed (HTTP 500, statement timeout); times are until the failure`;
+      m.pass = false;
+    }
   }
 
   // 2. search: names, phone digits, email prefixes, no match — as the busiest agent (RLS-narrowed) and the admin

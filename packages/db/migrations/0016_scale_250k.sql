@@ -52,3 +52,11 @@ CREATE INDEX contact_points_kind_address_all_idx ON contact_points (tenant_id, k
 --    consent_state by (tenant, channel, address_hmac); the primary key has purpose between channel and
 --    address_hmac, so each probe walked the whole channel range.
 CREATE INDEX consent_state_address_idx ON consent_state (tenant_id, address_hmac);
+
+-- 5. The scoreboard's activity counts (app.scoreboard_activity, 0012) per agent and range: partial
+--    indexes whose predicates match the function's filters exactly, so each count is an index-only scan
+--    instead of a heap visit per call or text (the existing messages_human_touch_idx lacks NOT imported).
+CREATE INDEX calls_human_outbound_idx ON calls (tenant_id, agent_user_id, started_at)
+  WHERE direction = 'outbound' AND initiator = 'human' AND NOT imported;
+CREATE INDEX messages_human_sent_idx ON messages (tenant_id, initiated_by_user_id, dispatched_at)
+  WHERE direction = 'outbound' AND initiator = 'human' AND NOT imported AND dispatched_at IS NOT NULL;
