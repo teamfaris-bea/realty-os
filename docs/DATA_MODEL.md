@@ -1009,7 +1009,7 @@ D2: Google Ads only (`ads_google`); Meta ads are out of scope and `ads_meta` is 
 
 ## 10. Phase 2-3 edge cases
 
-E162–E193 belong to FUB parity (Part 3 §14). The D2 cases (Gmail inbox sync and publishing) are E201–E229.
+E162–E200 belong to FUB parity (Part 3 §14; E194–E200: the People filters). The D2 cases (Gmail inbox sync and publishing) are E201–E229.
 
 | # | Case | Handling | Rules |
 |---|---|---|---|
@@ -1330,3 +1330,10 @@ The role policies are in §11.1. Two rules carry the design:
 | E191 | Two FUB stages map to `nurture` and the team wants them distinct | `keepStageAsTag` keeps each as a tag | R-PAR-46 |
 | E192 | A logged call is dated tomorrow | Refused (`notes_activity_at_window`) | R-PAR-31 |
 | E193 | Agent logs "they said stop" in free text only | Nothing is blocked; the sheet asks "Did they ask not to be contacted?" with the button | R-PAR-32 |
+| E194 | A saved list holds `{ kind: 'stage', in: [...] }` and the team then uses "Stage is not Closed, Lost" | Exclusions are new union members (`not_in` on stage, source, owner, intent, contact type); the definition stays `v: 1`, every saved definition parses and compiles to the same plan as before (golden plans), `in` and `not_in` together are refused | R-PAR-29 |
+| E195 | "Source is not Zillow" and some people have no source | Kept: a person with no source is not from Zillow. `"is"` never matches a missing value, so "is" and "is not" split the people the viewer sees exactly in two (VERIFY against FUB) | R-PAR-29 |
+| E196 | "Intent is not Buyer" and some people have no intent | Kept, the same rule as E195 (stage and contact type are never empty) | R-PAR-29 |
+| E197 | "Owner is not Avery" and some people are unassigned (pond) | Kept for the viewers who may see that person in detail (Owner, Admin, Team Lead); an agent still sees only their own people | R-PAR-28, R-PAR-29 |
+| E198 | An exclusion list with an unknown stage, a malformed id, 51 ids, or 21 clauses | Refused `422 LIST_DEFINITION_INVALID` / `LIST_DEFINITION_TOO_LARGE` with the path; never a 500; the values reach SQL only as bound parameters | R-PAR-29 |
+| E199 | An agent filters "Owner is Bob" or "Owner is not me", or a definition names another tenant's source or user | Returns (and counts) only people the agent may see in detail: 0, never Bob's book; a foreign id matches nobody. The builder's catalogs (`GET /people/filter-options`) are the tenant's own sources and members, names only | R-PAR-28, R-TEN-3 |
+| E200 | A Team Lead filters by name ("jane") inside Active and saves it as a team list | Refused before the tap and by the server: "Team lists can't include typed text. Remove the name search or save it as your own list." Saved as their own list it works; a bulk send to any filtered list still skips every opted-out person (D1) | R-PAR-27, R-PAR-36 |
