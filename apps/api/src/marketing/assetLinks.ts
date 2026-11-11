@@ -12,13 +12,22 @@ function key(secret: Uint8Array): Buffer {
   return createHmac('sha256', Buffer.from(secret)).update(PURPOSE).digest();
 }
 
-function mac(secret: Uint8Array, payload: string): string {
-  return createHmac('sha256', key(secret)).update(payload).digest('base64url');
+function mac(secret: Uint8Array, payload: Buffer): Buffer {
+  return createHmac('sha256', key(secret)).update(payload).digest().subarray(0, 16);
 }
 
+const hexToBytes = (u: string): Buffer => Buffer.from(u.replace(/-/g, ''), 'hex');
+const bytesToUuid = (b: Buffer): string => {
+  const h = b.toString('hex');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+};
+
+/** A compact token (Fastify keeps URL parameters short): 16-byte tenant, 16-byte object, 4-byte expiry, 16-byte MAC. */
 export function assetLinkToken(secret: Uint8Array, a: { tenantId: string; objectId: string; expiresAt: number }): string {
-  const payload = `${a.tenantId.toLowerCase()}.${a.objectId.toLowerCase()}.${Math.floor(a.expiresAt / 1000)}`;
-  return `${Buffer.from(payload).toString('base64url')}.${mac(secret, payload)}`;
+  const exp = Buffer.alloc(4);
+  exp.writeUInt32BE(Math.floor(a.expiresAt / 1000) >>> 0);
+  const payload = Buffer.concat([hexToBytes(a.tenantId), hexToBytes(a.objectId), exp]);
+  return Buffer.concat([payload, mac(secret, payload)]).toString('base64url');
 }
 
 export function signedAssetUrl(c: { publicBaseUrl: string; secret: Uint8Array }, a: { tenantId: string; objectId: string; expiresAt: number }): string {
@@ -27,20 +36,16 @@ export function signedAssetUrl(c: { publicBaseUrl: string; secret: Uint8Array },
 
 /** The link's tenant and object, or null for a bad MAC, a malformed token or an expired link. */
 export function verifyAssetLink(secret: Uint8Array, token: string, nowMs: number): { tenantId: string; objectId: string } | null {
-  if (token.length > 400) return null;
-  const dot = token.lastIndexOf('.');
-  if (dot <= 0) return null;
-  let payload: string;
-  try {
-    payload = Buffer.from(token.slice(0, dot), 'base64url').toString('utf8');
-  } catch {
-    return null;
-  }
-  const want = Buffer.from(mac(secret, payload));
-  const got = Buffer.from(token.slice(dot + 1));
-  if (want.length !== got.length || !timingSafeEqual(want, got)) return null;
-  const [tenantId, objectId, exp] = payload.split('.');
-  if (!tenantId || !objectId || !exp || !UUID_RE.test(tenantId) || !UUID_RE.test(objectId) || !/^\d{1,12}$/.test(exp)) return null;
-  if (Number(exp) * 1000 <= nowMs) return null;
+  if (!/^[A-Za-z0-9_-]{60,80}$/.test(token)) return null;
+  const raw = Buffer.from(token, 'base64url');
+  if (raw.length !== 52) return null;
+  const payload = raw.subarray(0, 36);
+  const got = raw.subarray(36);
+  const want = mac(secret, payload);
+  if (!timingSafeEqual(want, got)) return null;
+  if (payload.readUInt32BE(32) * 1000 <= nowMs) return null;
+  const tenantId = bytesToUuid(payload.subarray(0, 16));
+  const objectId = bytesToUuid(payload.subarray(16, 32));
+  if (!UUID_RE.test(tenantId) || !UUID_RE.test(objectId)) return null;
   return { tenantId, objectId };
 }

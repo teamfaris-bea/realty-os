@@ -21,8 +21,8 @@ import * as repo from './repo.js';
 export const MAX_INVITE_RECIPIENTS = 1000;
 const CONCURRENCY = 4;
 
-/** Reasons a send counts as an opt-out (the person said no), as opposed to another block. */
-const OPT_OUT_REASONS = new Set(['RECIPIENT_OPTED_OUT', 'PERSON_DO_NOT_CONTACT', 'RECIPIENT_SUPPRESSED', 'UNSUBSCRIBED', 'OPTED_OUT', 'DO_NOT_CONTACT', 'SUPPRESSED']);
+/** The send-time check's and the DB guard's reasons that mean the person said no (D1 opt-outs; counted as "opted out"). */
+const OPT_OUT_REASONS: ReadonlySet<string> = new Set(['CONSENT_REVOKED', 'PERSON_DO_NOT_CONTACT', 'SUPPRESSED', 'RECIPIENT_OPTED_OUT', 'RECIPIENT_SUPPRESSED']);
 
 export interface InviteSendResult {
   sent: number;
@@ -35,8 +35,7 @@ export interface InviteSendResult {
 }
 
 function isOptOut(reasons: readonly string[] | undefined, statusReason: string | null | undefined): boolean {
-  const all = [...(reasons ?? []), ...(statusReason ? [statusReason] : [])];
-  return all.some((r) => OPT_OUT_REASONS.has(r) || /OPT|UNSUB|DO_NOT_CONTACT|SUPPRESS/.test(r));
+  return [...(reasons ?? []), ...(statusReason ? [statusReason] : [])].some((r) => OPT_OUT_REASONS.has(r));
 }
 
 export async function sendInvites(deps: CommsDeps, actor: UserActor, pieceId: string, recipientContactIds: readonly string[]): Promise<InviteSendResult> {
