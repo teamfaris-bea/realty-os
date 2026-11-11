@@ -16,6 +16,7 @@ import { formatPhone } from '../feed/lib/format.js';
 import { formatDate, roleLabel } from './lib/format.js';
 import { useAction, useAnnounce } from './lib/hooks.js';
 import { ADMIN_MESSAGES } from './lib/messages.js';
+import { IncomingCallsSettings } from './IncomingCallsSettings.js';
 import type { EmailIdentity, MembersResponse, PhoneNumber, Registration, SendingDomain } from './lib/types.js';
 import { ErrorLine, Pill, Section, SelectField, StatusLine, TextArea } from './lib/ui.js';
 
@@ -69,6 +70,7 @@ export default function NumbersPage() {
         </ul>
         <AcquireForm people={people.filter((m) => m.role !== 'tc').map((m) => ({ id: m.userId, label: `${m.displayName} · ${roleLabel(m.role)}` }))} registrations={registrations} onDone={announce} />
       </Section>
+      <IncomingCallsSettings onDone={announce} />
       <RegistrationForm onCreated={(r) => (setRegistrations((x) => [r, ...x]), announce('Registration saved'))} />
       <Domains onDone={announce} />
       <Identities people={people.map((m) => ({ id: m.userId, label: m.displayName }))} onDone={announce} />
