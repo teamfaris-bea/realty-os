@@ -119,7 +119,9 @@ export async function reconcileMember(
   o: { userId: string; today: string; disabledKeys: readonly string[]; scored: { byAgent: Map<string, ScoredCall[]>; refIds: WeakMap<EvidenceRef, string> }; now: Instant },
 ): Promise<MemberOutcome> {
   const key = coachingFixKey(o.userId as UserId, localDate(o.today));
-  if ((await R.fixCards(tx, o.userId, { dates: [o.today] })).length > 0) return { kind: 'exists' }; // one a day, whatever happened to it
+  // one a day, whatever the person did with it; a card the system closed (scoring turned off, then on again
+  // the same day) does not count, so today's tip comes back instead of reading as set aside
+  if ((await R.fixCards(tx, o.userId, { dates: [o.today] })).some((c) => c.resolvedBy !== 'condition')) return { kind: 'exists' };
   const recent = await R.fixCards(tx, o.userId, { sinceResolved: (o.now - DISMISS_WINDOW_MS) as Instant });
   const res = dailyFixResult(o.scored.byAgent.get(o.userId) ?? [], dismissedKeys(recent, o.now), localDate(o.today), { rubric: RUBRIC_V1, disabledKeys: o.disabledKeys });
   const closed = await R.closeFixCards(tx, { userId: o.userId, keepKey: key, now: o.now });
@@ -140,7 +142,8 @@ export async function reconcileDailyFixes(tx: Tx, ids: IdGenerator, now: Instant
   const today = await R.localDateAt(tx, now);
   const members = await R.reviewedMembers(tx);
   const scored = await scoredCallsOf(tx, members);
-  const out: ReconcileResult = { written: 0, closed: 0, noFix: {}, off: false };
+  // a member who left (or whose reviews are gone) keeps no open tip
+  const out: ReconcileResult = { written: 0, closed: await R.closeFixCardsExcept(tx, members, now), noFix: {}, off: false };
   for (const userId of members) {
     const r = await reconcileMember(tx, ids, { userId, today, disabledKeys: s.disabledKeys, scored, now });
     if (r.kind === 'exists') continue;

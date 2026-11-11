@@ -10,7 +10,7 @@
 //     the Owner allows it; otherwise the page says so).
 // No score, grade, percentage, rank or leaderboard anywhere (R-COACH-6): calls are counted, people are not.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Button, Card, EmptyState, Notice } from '../../design/index.js';
 import { type ApiError, messageFor, useApi, useSession } from '../../shell/index.js';
 import { QuotePlayer } from './QuotePlayer.js';
@@ -24,12 +24,12 @@ const OFF_TEXT = {
   scoring_off: { title: 'Call reviews are off', body: 'Your Owner has not turned on call reviews, so there is no tip today.' },
 } as const;
 
-function FixBody({ fix, headingId, level = 2 }: { fix: FixView; headingId: string; level?: 2 | 3 }) {
+function FixBody({ fix, headingId, level = 2, who }: { fix: FixView; headingId: string; level?: 2 | 3; /** a team member's name: their tip, said about them */ who?: string }) {
   const H = level === 2 ? 'h2' : 'h3';
   const Sub = level === 2 ? 'h3' : 'h4';
   return (
     <>
-      <p className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted">Try this on your next call</p>
+      <p className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted">{who ? 'Most missed lately' : 'Try this on your next call'}</p>
       <H id={headingId} className="break-words text-[21px] font-semibold leading-snug text-ink">
         {fix.tip}
       </H>
@@ -37,7 +37,7 @@ function FixBody({ fix, headingId, level = 2 }: { fix: FixView; headingId: strin
       {fix.quotes.length > 0 ? (
         <>
           <Sub className="pt-1 text-[15px] font-semibold text-ink">{fix.quotes.length === 1 ? 'A moment from the calls' : 'Two moments from the calls'}</Sub>
-          <ul className="flex flex-col gap-2" aria-label="Moments from the calls">
+          <ul className="flex flex-col gap-2" aria-label={who ? `Moments from ${who}’s calls` : 'Moments from the calls'}>
             {fix.quotes.map((q, i) => (
               <QuotePlayer key={`${q.callId}:${q.startMs}`} quote={q} index={i} />
             ))}
@@ -54,6 +54,15 @@ function Today() {
   const id = useId();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // after "Not now" the card is replaced: focus moves to what replaced it, not to <body>
+  const after = useRef<HTMLDivElement | null>(null);
+  const [focusAfter, setFocusAfter] = useState(false);
+  useEffect(() => {
+    if (focusAfter && after.current) {
+      after.current.focus();
+      setFocusAfter(false);
+    }
+  }, [focusAfter]);
   const q = useQuery<{ coaching: TodayView }, ApiError>({ queryKey: [...TODAY_KEY], queryFn: ({ signal }) => api.get<{ coaching: TodayView }>('/coaching/today', { signal }) });
   if (q.isPending) return <p className="text-[15px] text-ink-muted">Loading</p>;
   if (q.isError || !q.data) return <Notice tone="error">{q.error ? messageFor(q.error) : null}</Notice>;
@@ -71,11 +80,13 @@ function Today() {
   }
   if (!v.fix) {
     return (
-      <Card>
-        <EmptyState icon="info" title={v.noFix?.text ?? 'No tip today'}>
-          {v.noFix?.reason === 'not_enough_calls' ? <p className="text-[15px] text-ink-muted">A tip comes once at least 3 of your recorded calls have been reviewed.</p> : null}
-        </EmptyState>
-      </Card>
+      <div ref={after} tabIndex={-1} className="outline-none">
+        <Card>
+          <EmptyState icon="info" title={v.noFix?.text ?? 'No tip today'}>
+            {v.noFix?.reason === 'not_enough_calls' ? <p className="text-[15px] text-ink-muted">A tip comes once at least 3 of your recorded calls have been reviewed.</p> : null}
+          </EmptyState>
+        </Card>
+      </div>
     );
   }
   const notNow = async () => {
@@ -84,6 +95,7 @@ function Today() {
     try {
       const r = await api.post<{ coaching: TodayView }>('/coaching/today/dismiss');
       qc.setQueryData([...TODAY_KEY], r);
+      setFocusAfter(true);
       void qc.invalidateQueries({ queryKey: ['feed'] });
     } catch (e) {
       setError(messageFor(e as ApiError));
@@ -125,12 +137,12 @@ function Team() {
             ) : (
               <ul className="flex flex-col gap-3" aria-label="Tips by person">
                 {q.data.team.members.map((m) => (
-                  <li key={m.userId}>
+                  <li key={m.userId} aria-labelledby={`${id}-${m.userId}`}>
                     <Card as="div" className="flex flex-col gap-2">
                       <p id={`${id}-${m.userId}`} className="text-[17px] font-semibold text-ink">
                         {m.name}
                       </p>
-                      {m.fix ? <FixBody fix={m.fix} headingId={`${id}-${m.userId}-tip`} level={3} /> : <p className="text-[15px] text-ink-muted">{m.noFix?.text ?? 'No tip yet'}</p>}
+                      {m.fix ? <FixBody fix={m.fix} headingId={`${id}-${m.userId}-tip`} level={3} who={m.name} /> : <p className="text-[15px] text-ink-muted">{m.noFix?.text ?? 'No tip yet'}</p>}
                     </Card>
                   </li>
                 ))}

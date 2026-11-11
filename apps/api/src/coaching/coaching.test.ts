@@ -272,6 +272,35 @@ describe('the daily fix', () => {
     expect((await cardsOf(h, a.userId)).filter((c) => c.state === 'open')).toHaveLength(0);
     const today = await call<{ coaching: { state: string } }>(a, 'GET', '/coaching/today');
     expect(today.body.coaching.state).toBe('scoring_off');
+    // review fix: the team view returns no tip or quote either, to anyone, while scoring is off
+    const team = await call<{ team: { state: string; members: unknown[] } }>(w.owner, 'GET', '/coaching/team');
+    expect(team.body.team).toMatchObject({ state: 'scoring_off', members: [] });
+    await setPackCleared(h, false);
+    await h.su.query('UPDATE tenant_settings SET call_scoring_enabled = false WHERE tenant_id = $1', [w.tenantId]).catch(() => undefined);
+    expect((await call<{ team: { members: unknown[] } }>(w.owner, 'GET', '/coaching/team')).body.team.members).toEqual([]);
+  });
+
+  it('R-COACH-4: scoring turned off and on again the same day brings today\'s tip back; it never reads as set aside by the agent', async () => {
+    const { w, contactId } = await readyWorld();
+    const a = w.agents[0]!;
+    await threeMisses(w, contactId, a.userId);
+    await reconcile(h, w.tenantId);
+    expect((await call(w.owner, 'PUT', '/admin/coaching', { scoringEnabled: false, tlSeesCallScores: false, disabledKeys: [] })).status).toBe(200);
+    await scoringOn(h, w.owner);
+    const today = await call<{ coaching: { fix: { itemKey: string } | null; noFix: unknown } }>(a, 'GET', '/coaching/today');
+    expect(today.body.coaching.noFix).toBeNull();
+    expect(today.body.coaching.fix?.itemKey).toBe('asked_financing');
+    expect((await cardsOf(h, a.userId)).filter((c) => c.state === 'open')).toHaveLength(1);
+  });
+
+  it('R-COACH-4: a member whose reviews are gone (or who left) keeps no open tip after the next pass', async () => {
+    const { w, contactId } = await readyWorld();
+    const a = w.agents[0]!;
+    await threeMisses(w, contactId, a.userId);
+    await reconcile(h, w.tenantId);
+    await h.su.query('DELETE FROM call_scores WHERE agent_user_id = $1', [a.userId]);
+    await reconcile(h, w.tenantId);
+    expect((await cardsOf(h, a.userId)).filter((c) => c.state === 'open')).toHaveLength(0);
   });
 
   it('R-COACH-4: a rubric item the Owner turned off is never the fix', async () => {

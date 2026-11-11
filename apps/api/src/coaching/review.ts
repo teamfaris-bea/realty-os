@@ -34,10 +34,10 @@ export type CallReviewResult =
 type Gate = { ok: true; facts: R.CallReviewFactsRow & { agentUserId: string }; settings: R.CoachingSettingsRow } | { ok: false; reason: Exclude<CallReviewResult, { kind: 'reviewed' }>['reason'] };
 
 /** Every check the job makes, in one place; run in TX-A and again in TX-B. */
-async function gate(tx: Tx, callId: string): Promise<Gate> {
+async function gate(tx: Tx, callId: string, lock = false): Promise<Gate> {
   const facts = await R.callReviewFacts(tx, callId);
   if (!facts) return { ok: false, reason: 'CALL_MISSING' };
-  const settings = await R.coachingSettings(tx);
+  const settings = await R.coachingSettings(tx, { lock });
   if (!settings) return { ok: false, reason: 'CALL_MISSING' };
   const rec = facts.recording;
   const e = reviewEligible({
@@ -136,7 +136,7 @@ export async function reviewCall(actor: SystemActor, callId: string, deps: Assis
       if (status !== 'succeeded' || !parsed || !parsed.ok) return { kind: 'skipped', reason: parsed && !parsed.ok ? parsed.code : 'MODEL_FAILED' };
 
       // the Owner's switch, the pack and the call may have changed while the model ran
-      const g = await gate(tx, callId);
+      const g = await gate(tx, callId, true);
       if (!g.ok) return { kind: 'skipped', reason: g.reason };
 
       const score = scoreFromClaims(parsed.claims, rubric, pre.transcript, { disabledKeys: g.settings.disabledKeys });

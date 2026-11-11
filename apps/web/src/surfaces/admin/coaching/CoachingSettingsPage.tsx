@@ -28,7 +28,7 @@ export default function CoachingSettingsPage() {
   const id = useId();
   const withReauth = useWithReauth();
   const [pending, setPending] = useState<string | null>(null);
-  const [msg, setMsg] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const [msg, setMsg] = useState<{ at: string; tone: 'ok' | 'error'; text: string } | null>(null);
   const [draft, setDraft] = useState<string[] | null>(null);
   const q = useQuery<{ settings: CoachingSettingsView }, ApiError>({ queryKey: [...COACHING_SETTINGS_KEY], queryFn: ({ signal }) => api.get<{ settings: CoachingSettingsView }>('/admin/coaching', { signal }) });
 
@@ -45,10 +45,11 @@ export default function CoachingSettingsPage() {
       const r = await withReauth(() => api.request<{ settings: CoachingSettingsView }>('PUT', '/admin/coaching', next));
       qc.setQueryData([...COACHING_SETTINGS_KEY], r);
       void qc.invalidateQueries({ queryKey: ['coaching'] });
-      setDraft(null);
-      setMsg({ tone: 'ok', text: done });
+      // a switch keeps unsaved checklist edits; only saving the checklist clears them
+      if (what === 'items') setDraft(null);
+      setMsg({ at: what, tone: 'ok', text: done });
     } catch (e) {
-      setMsg({ tone: 'error', text: messageFor(e as ApiError, MESSAGES) });
+      setMsg({ at: what, tone: 'error', text: messageFor(e as ApiError, MESSAGES) });
     } finally {
       setPending(null);
     }
@@ -65,8 +66,6 @@ export default function CoachingSettingsPage() {
           {v.pack.sentence}
         </Notice>
       )}
-      {msg ? <Notice tone={msg.tone}>{msg.text}</Notice> : null}
-
       <Card aria-labelledby={`${id}-scoring`} className="flex flex-col gap-2">
         <h2 id={`${id}-scoring`} className="text-[19px] font-semibold text-ink">
           Call reviews are {v.scoringEnabled ? (v.pack.cleared ? 'on' : 'paused') : 'off'}
@@ -87,6 +86,7 @@ export default function CoachingSettingsPage() {
             Waiting for counsel review.
           </p>
         )}
+        {msg?.at === 'scoring' ? <Notice tone={msg.tone}>{msg.text}</Notice> : null}
       </Card>
 
       <Card aria-labelledby={`${id}-tl`} className="flex flex-col gap-2">
@@ -107,6 +107,7 @@ export default function CoachingSettingsPage() {
         >
           {v.tlSeesCallScores ? 'Stop sharing with Team Leads' : 'Let Team Leads see them'}
         </Button>
+        {msg?.at === 'tl' ? <Notice tone={msg.tone}>{msg.text}</Notice> : null}
       </Card>
 
       <Card aria-labelledby={`${id}-items`} className="flex flex-col gap-2">
@@ -136,6 +137,7 @@ export default function CoachingSettingsPage() {
         <Button className="self-start" disabled={!itemsChanged || noneLeft} pending={pending === 'items'} pendingLabel="Saving" onClick={() => void save('items', { ...current, disabledKeys: disabled }, 'Checklist saved.')}>
           Save checklist
         </Button>
+        {msg?.at === 'items' ? <Notice tone={msg.tone}>{msg.text}</Notice> : null}
       </Card>
       <p className="text-[14px] text-ink-muted">This page is not legal advice. Confirm recording and employee-monitoring rules for your state with your counsel.</p>
     </div>

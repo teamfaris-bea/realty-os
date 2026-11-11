@@ -2,7 +2,7 @@
 // (POST /recordings/:id/stream-token, audited as recording.play) and plays that moment of the call: the
 // media fragment `#t=start,end` starts the audio at the quoted words and stops after them. The quote's words
 // are the text alternative; when the viewer may not read the transcript, the page says so instead.
-import { useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Button } from '../../design/index.js';
 import { type ApiError, messageFor, useApi } from '../../shell/index.js';
 import type { QuoteView } from './types.js';
@@ -16,6 +16,10 @@ export function QuotePlayer({ quote, index }: { quote: QuoteView; index: number 
   const [src, setSrc] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // the button is replaced by the player: focus moves to the player, not to <body>
+  useEffect(() => {
+    if (src) audio.current?.focus();
+  }, [src]);
   const play = async () => {
     if (!quote.recordingId) return;
     setBusy(true);
@@ -43,7 +47,7 @@ export function QuotePlayer({ quote, index }: { quote: QuoteView; index: number 
       {quote.recordingId === null ? (
         <p className="text-[15px] text-ink-muted">The recording is no longer available.</p>
       ) : src ? (
-        <audio ref={audio} controls autoPlay src={src} className="w-full" aria-label={`Moment ${index + 1} of the call`} />
+        <audio ref={audio} controls autoPlay tabIndex={0} src={src} className="w-full" aria-label={`Moment ${index + 1} of the call`} />
       ) : (
         <Button variant="secondary" icon="play" className="self-start" pending={busy} pendingLabel="Loading" onClick={() => void play()} aria-describedby={`${id}-call ${id}-words`}>
           Play this moment

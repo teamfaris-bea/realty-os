@@ -64,6 +64,7 @@ describe('the daily fix page', () => {
     const audio = (await screen.findByLabelText('Moment 1 of the call')) as HTMLAudioElement;
     expect(audio.getAttribute('src')).toBe(`/api/recordings/${REC}/stream?token=t#t=70,74.5`);
     expect(fake.callsTo(`POST /recordings/${REC}/stream-token`)[0]!.body).toEqual({ purpose: 'play' });
+    await waitFor(() => expect(audio).toHaveFocus());
   });
 
   it('R-COACH-4: "Not now" sets today\'s tip aside in one tap and says when the next one comes', async () => {
@@ -73,6 +74,9 @@ describe('the daily fix page', () => {
     app(fake, '/coaching');
     await userEvent.setup().click(await screen.findByRole('button', { name: 'Not now' }));
     expect(await screen.findByText('You set today’s tip aside. A new one comes tomorrow.')).toBeInTheDocument();
+    // focus moves to what replaced the card, not to <body>
+    await waitFor(() => expect(document.activeElement).not.toBe(document.body));
+    expect(document.activeElement?.textContent).toContain('You set today’s tip aside');
     expect(fake.callsTo('POST /coaching/today/dismiss')).toHaveLength(1);
   });
 
@@ -98,6 +102,19 @@ describe('the daily fix page', () => {
     app(new FakeFetch().on('GET /coaching/today', { status: 200, body: ready() }).on('GET /coaching/team', { status: 200, body: team }), '/coaching', 'team_lead');
     expect(await screen.findByText(/tips are private to each person/)).toBeInTheDocument();
     expect(screen.queryByRole('list', { name: 'Tips by person' })).toBeNull();
+  });
+});
+
+describe('the team view', () => {
+  it('R-COACH-3: each person\'s tip is labelled with their name and said about them, not in the agent\'s own words', async () => {
+    const t = ready().coaching.fix!;
+    const team: { team: TeamView } = { team: { state: 'ready', visible: true, sentence: 'From each person’s recent reviewed calls.', members: [{ userId: '01900000-0000-7000-8000-0000000000b1', name: 'Bea Agent', fix: { itemKey: t.itemKey, label: t.label, tip: t.tip, why: t.why, quotes: t.quotes }, noFix: null }] } };
+    app(new FakeFetch().on('GET /coaching/today', { status: 200, body: ready() }).on('GET /coaching/team', { status: 200, body: team }), '/coaching', 'team_lead');
+    const person = await screen.findByRole('listitem', { name: 'Bea Agent' });
+    expect(within(person).getByText('Most missed lately')).toBeInTheDocument();
+    expect(within(person).queryByText('Try this on your next call')).toBeNull();
+    expect(within(person).getByRole('list', { name: 'Moments from Bea Agent’s calls' })).toBeInTheDocument();
+    expect(await axeClean()).toEqual([]);
   });
 });
 
@@ -134,6 +151,21 @@ describe('the Owner\'s coaching settings', () => {
     await waitFor(() => expect(fake.callsTo('PUT /admin/coaching')).toHaveLength(1));
     expect(fake.callsTo('PUT /admin/coaching')[0]!.body).toEqual({ scoringEnabled: true, tlSeesCallScores: true, disabledKeys: [] });
     expect(await screen.findByRole('heading', { name: 'Team Leads see their team’s reviews' })).toBeInTheDocument();
+  });
+
+  it('a switch keeps unsaved checklist edits, and says its result next to the switch', async () => {
+    const fake = new FakeFetch().on('GET /admin/coaching', { status: 200, body: settings() }).on('PUT /admin/coaching', { status: 200, body: settings({ tlSeesCallScores: true }) });
+    app(fake, '/admin/coaching', 'owner');
+    const u = userEvent.setup();
+    await u.click(await screen.findByRole('checkbox', { name: 'Asked about timeline' }));
+    await u.click(screen.getByRole('button', { name: 'Let Team Leads see them' }));
+    await waitFor(() => expect(fake.callsTo('PUT /admin/coaching')).toHaveLength(1));
+    // the switch sends the SAVED checklist, and the unsaved edit survives
+    expect(fake.callsTo('PUT /admin/coaching')[0]!.body).toEqual({ scoringEnabled: false, tlSeesCallScores: true, disabledKeys: [] });
+    expect(await screen.findByRole('checkbox', { name: 'Asked about timeline' })).not.toBeChecked();
+    expect(screen.getByRole('button', { name: 'Save checklist' })).toBeEnabled();
+    const tlCard = screen.getByRole('heading', { name: 'Team Leads see their team’s reviews' }).closest('section') as HTMLElement;
+    expect(within(tlCard).getByText('Team Leads now see their team’s reviews.')).toBeInTheDocument();
   });
 
   it('a checklist item can be turned off and saved; the last one cannot', async () => {

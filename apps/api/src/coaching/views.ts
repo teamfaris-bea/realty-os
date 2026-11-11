@@ -118,7 +118,8 @@ export async function todayView(tx: Tx, actor: UserActor, deps: { envelope: Enve
   const card = (await R.fixCards(tx, actor.userId, { dates: [date] }))[0];
   const data = card ? cardData(card.reasons) : null;
   if (!card || !data) return { state, date, fix: null, noFix: { reason: 'not_enough_calls', text: NO_FIX_TEXT.not_enough_calls }, cardId: null };
-  if (card.state === 'dismissed' || card.state === 'done') return { state, date, fix: null, noFix: { reason: 'dismissed_today', text: 'You set today’s tip aside. A new one comes tomorrow.' }, cardId: null };
+  if (card.state === 'done') return { state, date, fix: null, noFix: { reason: 'all_dismissed', text: NO_FIX_TEXT.all_dismissed }, cardId: null };
+  if (card.state === 'dismissed') return { state, date, fix: null, noFix: { reason: 'dismissed_today', text: 'You set today’s tip aside. A new one comes tomorrow.' }, cardId: null };
   const item = RUBRIC_V1.items.find((i) => i.key === data.item);
   const { tip, why } = fixFromCard(card.reasons);
   return {
@@ -161,6 +162,8 @@ export async function teamView(tx: Tx, actor: UserActor, envelope: EnvelopeServi
   if (!tenantWide && !s.tlSeesCallScores) {
     return { state, visible: false, sentence: 'The Owner has not turned on Team Lead access to call reviews, so your team’s tips are private to each person.', members: [] };
   }
+  // R-INT-6: off (or uncleared again) ⇒ no review is read and no tip or quote is returned, to anyone
+  if (state !== 'ready') return { state, visible: true, sentence: state === 'not_cleared' ? 'Call reviews are off until counsel reviews them.' : 'Call scoring is off.', members: [] };
   const members = await R.teamMembers(tx, tenantWide ? 'all' : 'team');
   const { byAgent, refIds } = await scoredCallsOf(tx, members.map((m) => m.userId));
   const date = localDate(await R.localDateAt(tx, now));
@@ -182,6 +185,5 @@ export async function teamView(tx: Tx, actor: UserActor, envelope: EnvelopeServi
       noFix: null,
     });
   }
-  const sentence = state === 'ready' ? 'From each person’s recent reviewed calls. Each person also sees their own tip.' : state === 'not_cleared' ? 'Call reviews are off until counsel reviews them.' : 'Call scoring is off.';
-  return { state, visible: true, sentence, members: out };
+  return { state, visible: true, sentence: 'From each person’s recent reviewed calls. Each person also sees their own tip.', members: out };
 }

@@ -22,7 +22,10 @@ export interface CoachingSettingsRow {
   packVersion: string | null;
 }
 
-export async function coachingSettings(tx: Tx): Promise<CoachingSettingsRow | null> {
+export async function coachingSettings(tx: Tx, o: { lock?: boolean } = {}): Promise<CoachingSettingsRow | null> {
+  // FOR SHARE: the review job's final check holds the row, so the Owner turning scoring off either commits
+  // before it (and is seen) or waits until the review is stored (and closes the tips at once)
+  if (o.lock) await sql`SELECT 1 FROM tenant_settings WHERE tenant_id = app.tenant_id() FOR SHARE`.execute(tx);
   const r = await sql<{ call_scoring_enabled: boolean; tl_sees_call_scores: boolean; coaching_rubric_disabled: string[]; ai_enabled: boolean; default_timezone: string; cleared: boolean; reviewed_at: Date | null; version: string | null }>`
     SELECT s.call_scoring_enabled, s.tl_sees_call_scores, s.coaching_rubric_disabled, s.ai_enabled, s.default_timezone,
            app.platform_cleared('platform:coaching') AS cleared,
@@ -265,6 +268,15 @@ export async function closeFixCards(tx: Tx, o: { userId?: string; keepKey?: stri
      WHERE tenant_id = app.tenant_id() AND item_type = 'coaching_fix' AND state IN ('open','snoozed')
        AND (${o.userId ?? null}::uuid IS NULL OR user_id = ${o.userId ?? null}::uuid)
        AND (${o.keepKey ?? null}::text IS NULL OR dedupe_key <> ${o.keepKey ?? null}::text)`.execute(tx);
+  return Number(r.numAffectedRows ?? 0);
+}
+
+/** Closes open/snoozed coaching cards of everyone NOT in `userIds` (members who left or have no review). */
+export async function closeFixCardsExcept(tx: Tx, userIds: readonly string[], now: Instant): Promise<number> {
+  const r = await sql`
+    UPDATE priority_feed_items SET state = 'done', snoozed_until = NULL, resolved_at = ${toIso(now)}::timestamptz, resolved_by = 'condition'
+     WHERE tenant_id = app.tenant_id() AND item_type = 'coaching_fix' AND state IN ('open','snoozed')
+       AND NOT (user_id = ANY (${[...userIds]}::uuid[]))`.execute(tx);
   return Number(r.numAffectedRows ?? 0);
 }
 
