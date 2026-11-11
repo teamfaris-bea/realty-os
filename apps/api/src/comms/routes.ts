@@ -1,6 +1,8 @@
 // api/comms route module (BUILD_PLAN module 12), mounted under /api by routes.ts:
 //   POST /contacts/:id/messages            text/email (send-time gate)            comms.send
 //   POST /contacts/:id/messages/preview    compose-time preview                    comms.send
+//   GET  /contacts/:id/reachability        who can be texted/emailed/called, why not contact.view_detail
+//   GET  /reachability?contactIds=a,b      the same for up to 50 contacts (feed)   self (each row: detail-visible under RLS)
 //   POST /messages/:id/send                re-tap / confirm a waiting message      comms.send
 //   POST /messages/:id/cancel              cancel a scheduled message              comms.send
 //   POST /contacts/:id/calls               tap-to-call (dial-time gate)            comms.call
@@ -31,9 +33,10 @@ import type { RouteModule } from '../routes.js';
 import { cancelMessage, composeHumanMessage, previewHumanMessage, sendExisting } from './compose.js';
 import { liftSuppression, logCallOutcome, markNotOptOut, recordStaffConsent, resumeAutomation, unsubscribeByLink } from './consent.js';
 import { startCall } from './dial.js';
+import { reachabilityFor, reachabilityOf } from './reachability.js';
 import { acquireNumber, addDomain, addEmailIdentity, attachRegistration, createRegistration, listNumbers, refreshRegistration, releaseNumber, verifyDomain } from './numbers.js';
 import { issueStreamToken, recordingFacts, streamRecording, viewTranscript } from './recordings.js';
-import { contactFacts, dealOrAppointmentContext } from './repos/contacts.js';
+import { contactFacts, dealOrAppointmentContext, detailVisibleContact } from './repos/contacts.js';
 import { conversationOf } from './repos/gate.js';
 import { depsFromPlatform } from './runtime.js';
 import { systemActor } from '../worker/systemActor.js';
@@ -130,6 +133,19 @@ async function register(app: FastifyInstance): Promise<void> {
   }));
   r.post('/contacts/:id/automation/resume', { config: { auth: 'comms.send' }, preHandler: authorize('comms.send', contactResume), schema: { params: IdParams, response: { 200: S.ResumeResponse } } }, async (req) =>
     resumeAutomation(actorOf(req), req.params.id, deps()),
+  );
+
+  // ---- reachability (read-only; lane optout-visibility) ----
+  r.get('/contacts/:id/reachability', { config: { auth: 'contact.view_detail' }, preHandler: authorize('contact.view_detail', (req) => factsTx(req, (tx) => contactFacts(tx, idOf(req)))), schema: { params: IdParams, response: { 200: S.ReachabilityResponse } } }, async (req) =>
+    withTenantTx(actorOf(req), async (tx, now) => {
+      const v = (await detailVisibleContact(tx, req.params.id)) ? await reachabilityOf(tx, req.params.id, now) : null;
+      if (!v) throw new AppError('NOT_FOUND');
+      return { reachability: v };
+    }, { db: req.server.platform.db }),
+  );
+  // the feed's cards at once (up to 50): contacts the caller does not see in detail are simply absent
+  r.get('/reachability', { config: { auth: 'self' }, schema: { querystring: z.strictObject({ contactIds: z.string().max(50 * 37).transform((s) => s.split(',').filter(Boolean)).pipe(z.array(z.uuid()).min(1).max(50)) }), response: { 200: S.ReachabilityManyResponse } } }, async (req) =>
+    withTenantTx(actorOf(req), async (tx, now) => ({ reachability: [...(await reachabilityFor(tx, req.query.contactIds, now)).values()] }), { db: req.server.platform.db }),
   );
 
   // ---- calls ----

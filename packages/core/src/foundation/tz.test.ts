@@ -52,7 +52,7 @@ function u(date: string, hm: string, offsetH: number): Instant {
 
 const T = localTime;
 
-describe('E9 R-CONSENT-13 R-OWN-15 DST vectors: six US zones, 2026 and 2027 transitions', () => {
+describe('E9 R-OWN-15 DST vectors: six US zones, 2026 and 2027 transitions', () => {
   for (const zs of ZONES) {
     const z = zone(zs.name);
     for (const y of YEARS) {
@@ -82,7 +82,7 @@ describe('E9 R-CONSENT-13 R-OWN-15 DST vectors: six US zones, 2026 and 2027 tran
         expect(resolveLocal(localDate(y.fall), T('02:00'), z, 'earlier')).toBe(u(y.fall, '02:00', std));
       });
 
-      it(`${label}: the 09:00–20:00 contact window has exact boundaries on both transition days`, () => {
+      it(`${label}: a 09:00–20:00 local window has exact boundaries on both transition days`, () => {
         for (const [date, off] of [
           [y.spring, dst],
           [y.fall, std],
@@ -117,7 +117,7 @@ describe('E9 R-CONSENT-13 R-OWN-15 DST vectors: six US zones, 2026 and 2027 tran
         expect(localWindowContains(secondOpen, z, T('00:00'), T('01:30'))).toBe(false);
       });
 
-      it(`${label}: after the evening close, the next contact window opens at 09:00 local the next day`, () => {
+      it(`${label}: after the evening close, the next local window opens at 09:00 local the next day`, () => {
         expect(nextWindowStart(u(y.springEve, '20:30', std), [z], T('09:00'), T('20:00'))).toBe(u(y.spring, '09:00', dst));
         expect(nextWindowStart(u(y.fallEve, '20:30', dst), [z], T('09:00'), T('20:00'))).toBe(u(y.fall, '09:00', std));
         // Inside the window: now.
@@ -151,12 +151,12 @@ describe('E9 R-CONSENT-13 R-OWN-15 DST vectors: six US zones, 2026 and 2027 tran
   }
 });
 
-describe('R-CONSENT-13 window intersection over candidate zones', () => {
+describe('local-window intersection over candidate zones (a time helper; since core-compliance/2.0.0 no send waits for a window)', () => {
   const ny = zone('America/New_York');
   const la = zone('America/Los_Angeles');
   const hi = zone('Pacific/Honolulu');
 
-  it('R-CONSENT-13 the intersection applies: New York + Los Angeles opens at 09:00 Pacific', () => {
+  it('the intersection applies: New York + Los Angeles opens at 09:00 Pacific', () => {
     // 2026-06-10 07:00 EDT = 04:00 PDT. NY opens at 09:00 EDT, LA at 09:00 PDT (12:00 EDT).
     const from = at('2026-06-10T11:00:00Z');
     expect(nextWindowStart(from, [ny, la], T('09:00'), T('20:00'))).toBe(at('2026-06-10T16:00:00Z'));
@@ -165,7 +165,7 @@ describe('R-CONSENT-13 window intersection over candidate zones', () => {
     expect(nextWindowStart(at('2026-06-11T00:00:00Z'), [ny, la], T('09:00'), T('20:00'))).toBe(at('2026-06-11T16:00:00Z'));
   });
 
-  it('R-CONSENT-13 zone order does not matter, and a single-zone list equals that zone', () => {
+  it('zone order does not matter, and a single-zone list equals that zone', () => {
     const from = at('2026-01-15T05:00:00Z');
     const a = nextWindowStart(from, [ny, la, hi], T('09:00'), T('20:00'));
     const b = nextWindowStart(from, [hi, ny, la], T('09:00'), T('20:00'));
@@ -174,22 +174,22 @@ describe('R-CONSENT-13 window intersection over candidate zones', () => {
     expect(a).toBe(at('2026-01-15T19:00:00Z'));
   });
 
-  it('R-CONSENT-13 windows that never overlap give null, never "now"', () => {
+  it('windows that never overlap give null, never "now"', () => {
     const guam = zone('Pacific/Guam'); // UTC+10
     const samoa = zone('Pacific/Pago_Pago'); // UTC-11
     // 09–12 local: Guam 23:00–02:00Z, Samoa 20:00–23:00Z. No overlap.
     expect(nextWindowStart(at('2026-05-01T00:00:00Z'), [guam, samoa], T('09:00'), T('12:00'))).toBeNull();
   });
 
-  // E29 (time basis only; the deferral itself is the gate's)
-  it('R-CONSENT-13: a send that slips past 20:00 recipient-local is outside; the next opening is 09:00', () => {
+  // time basis only: nothing defers a send since core-compliance/2.0.0 (E29 is retired)
+  it('an instant past 20:00 recipient-local is outside a 09:00–20:00 window; the next opening is 09:00', () => {
     const late = at('2026-03-18T00:05:00Z'); // 20:05 EDT
     expect(localWindowContains(late, ny, T('09:00'), T('20:00'))).toBe(false);
     expect(nextWindowStart(late, [ny], T('09:00'), T('20:00'))).toBe(at('2026-03-18T13:00:00Z'));
   });
 
   // E8 (time basis only)
-  it('R-CONSENT-13: a lead at 02:00 recipient-local first becomes contactable at 09:00', () => {
+  it('02:00 recipient-local is outside a 09:00–20:00 window; the first opening is 09:00', () => {
     expect(nextWindowStart(at('2026-07-04T06:00:00Z'), [ny], T('09:00'), T('20:00'))).toBe(at('2026-07-04T13:00:00Z'));
   });
 
@@ -226,29 +226,29 @@ describe('R-CONSENT-13 window intersection over candidate zones', () => {
   });
 });
 
-describe('R-CONSENT-13 recipient zone resolution: explicit → contact point → address → area code (+ tenant) → tenant', () => {
+describe('recipient zone resolution: explicit → contact point → address → area code (+ tenant) → tenant', () => {
   const tenantZone = zone('America/Chicago');
   const areaCodeZones: IanaZone[] = [zone('America/Denver'), zone('America/Phoenix')];
 
-  it('R-CONSENT-13 an explicit contact zone wins over everything', () => {
+  it('an explicit contact zone wins over everything', () => {
     expect(resolveRecipientZones({ contactTz: 'America/New_York', pointTz: 'America/Denver', addressTz: 'America/Chicago', areaCodeZones, tenantZone })).toEqual({
       zones: ['America/New_York'],
       source: 'explicit',
     });
   });
 
-  it('R-CONSENT-13 the contact point zone is next (also explicit evidence)', () => {
+  it('the contact point zone is next (also explicit evidence)', () => {
     expect(resolveRecipientZones({ pointTz: 'America/Denver', addressTz: 'America/Chicago', areaCodeZones, tenantZone })).toEqual({
       zones: ['America/Denver'],
       source: 'explicit',
     });
   });
 
-  it('R-CONSENT-13 an address zone is used alone (as strong as it gets without explicit evidence)', () => {
+  it('an address zone is used alone (as strong as it gets without explicit evidence)', () => {
     expect(resolveRecipientZones({ addressTz: 'Pacific/Honolulu', areaCodeZones, tenantZone })).toEqual({ zones: ['Pacific/Honolulu'], source: 'address' });
   });
 
-  it('R-CONSENT-13 area-code evidence is weaker than an address, so the tenant zone is added', () => {
+  it('area-code evidence is weaker than an address, so the tenant zone is added', () => {
     expect(resolveRecipientZones({ areaCodeZones, tenantZone })).toEqual({
       zones: ['America/Denver', 'America/Phoenix', 'America/Chicago'],
       source: 'area_code',
@@ -257,7 +257,7 @@ describe('R-CONSENT-13 recipient zone resolution: explicit → contact point →
     expect(resolveRecipientZones({ areaCodeZones: [tenantZone], tenantZone })).toEqual({ zones: ['America/Chicago'], source: 'area_code' });
   });
 
-  it('R-CONSENT-13 with no usable evidence the tenant zone applies', () => {
+  it('with no usable evidence the tenant zone applies', () => {
     expect(resolveRecipientZones({ areaCodeZones: [], tenantZone })).toEqual({ zones: ['America/Chicago'], source: 'tenant_default' });
   });
 

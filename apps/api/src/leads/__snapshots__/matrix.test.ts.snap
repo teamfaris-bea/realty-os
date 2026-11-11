@@ -2002,6 +2002,195 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: leads response schemas have
                 },
               ],
             },
+            "blockedBy": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "addressHint": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "at": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "code": {
+                      "enum": [
+                        "CONSENT_REVOKED",
+                        "SUPPRESSED",
+                        "WRONG_NUMBER",
+                        "CONTACT_POINT_INVALID",
+                        "LANDLINE_NO_SMS",
+                      ],
+                      "type": "string",
+                    },
+                    "evidence": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "callId": {
+                          "anyOf": [
+                            {
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                              "type": "string",
+                            },
+                            {
+                              "type": "null",
+                            },
+                          ],
+                        },
+                        "consentEventId": {
+                          "anyOf": [
+                            {
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                              "type": "string",
+                            },
+                            {
+                              "type": "null",
+                            },
+                          ],
+                        },
+                        "inboundMessageId": {
+                          "anyOf": [
+                            {
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                              "type": "string",
+                            },
+                            {
+                              "type": "null",
+                            },
+                          ],
+                        },
+                        "suppressionId": {
+                          "anyOf": [
+                            {
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                              "type": "string",
+                            },
+                            {
+                              "type": "null",
+                            },
+                          ],
+                        },
+                      },
+                      "required": [
+                        "consentEventId",
+                        "inboundMessageId",
+                        "callId",
+                        "suppressionId",
+                      ],
+                      "type": "object",
+                    },
+                    "importBatchId": {
+                      "anyOf": [
+                        {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                    "keyword": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "otherAddress": {
+                      "type": "boolean",
+                    },
+                    "purposes": {
+                      "items": {
+                        "enum": [
+                          "marketing",
+                          "informational",
+                        ],
+                        "type": "string",
+                      },
+                      "type": "array",
+                    },
+                    "recordedBy": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "displayName": {
+                              "type": [
+                                "string",
+                                "null",
+                              ],
+                            },
+                            "userId": {
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                              "type": "string",
+                            },
+                          },
+                          "required": [
+                            "userId",
+                            "displayName",
+                          ],
+                          "type": "object",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                    "source": {
+                      "enum": [
+                        "keyword",
+                        "opt_out_language",
+                        "unsubscribe",
+                        "agent_recorded",
+                        "call_outcome",
+                        "wrong_number",
+                        "provider_report",
+                        "imported",
+                        "suppression",
+                        "contact_point",
+                        "other",
+                      ],
+                      "type": "string",
+                    },
+                    "suppressionReason": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                  },
+                  "required": [
+                    "code",
+                    "source",
+                    "purposes",
+                    "at",
+                    "keyword",
+                    "recordedBy",
+                    "importBatchId",
+                    "suppressionReason",
+                    "addressHint",
+                    "otherAddress",
+                    "evidence",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
             "detail": {
               "type": [
                 "string",
@@ -2031,7 +2220,19 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: leads response schemas have
             "provenance": {
               "type": "string",
             },
+            "providerErrorCode": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "status": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "statusReason": {
               "type": [
                 "string",
                 "null",
@@ -2051,6 +2252,9 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: leads response schemas have
             "note",
             "provenance",
             "status",
+            "statusReason",
+            "providerErrorCode",
+            "blockedBy",
           ],
           "type": "object",
         },
@@ -2096,5 +2300,7 @@ exports[`route table and schemas > every leads route declares its authorization 
   "GET /api/ponds/:id/cards → contact.view",
   "HEAD /api/ponds/:id/cards → contact.view",
   "POST /api/members/:userId/deactivate → member.remove",
+  "GET /api/contacts/:id/reachability → contact.view_detail",
+  "HEAD /api/contacts/:id/reachability → contact.view_detail",
 ]
 `;

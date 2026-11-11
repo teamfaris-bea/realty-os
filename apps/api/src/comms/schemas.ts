@@ -52,6 +52,38 @@ export const PreviewResponse = z.object({ decision: DecisionSchema, body: z.stri
 
 export const SendExistingBody = z.strictObject({});
 
+/**
+ * Why a person cannot be texted, emailed or called before anyone taps (lane optout-visibility): the
+ * content-independent half of the send-time check, with its evidence. Read-only; never a decision.
+ */
+export const ReachReasonSchema = z.object({
+  code: z.enum(['CONSENT_REVOKED', 'SUPPRESSED', 'WRONG_NUMBER', 'CONTACT_POINT_INVALID', 'LANDLINE_NO_SMS']),
+  source: z.enum(['keyword', 'opt_out_language', 'unsubscribe', 'agent_recorded', 'call_outcome', 'wrong_number', 'provider_report', 'imported', 'suppression', 'contact_point', 'other']),
+  purposes: z.array(z.enum(['marketing', 'informational'])),
+  at: z.string().nullable(),
+  keyword: z.string().nullable(),
+  recordedBy: z.object({ userId: z.uuid(), displayName: z.string().nullable() }).nullable(),
+  importBatchId: z.uuid().nullable(),
+  suppressionReason: z.string().nullable(),
+  addressHint: z.string().nullable(),
+  otherAddress: z.boolean(),
+  evidence: z.object({ consentEventId: z.uuid().nullable(), inboundMessageId: z.uuid().nullable(), callId: z.uuid().nullable(), suppressionId: z.uuid().nullable() }),
+});
+const ChannelReachSchema = z.object({
+  hasAddress: z.boolean(),
+  defaultPointId: z.uuid().nullable(),
+  blocked: z.boolean(),
+  reasons: z.array(ReachReasonSchema),
+  points: z.array(z.object({ pointId: z.uuid(), addressHint: z.string(), blocked: z.boolean(), reasons: z.array(ReachReasonSchema) })),
+});
+const ReachabilitySchema = z.object({
+  contactId: z.uuid(),
+  purposeNow: z.enum(['marketing', 'informational']),
+  channels: z.object({ sms: ChannelReachSchema, voice: ChannelReachSchema, email: ChannelReachSchema }),
+});
+export const ReachabilityResponse = z.object({ reachability: ReachabilitySchema });
+export const ReachabilityManyResponse = z.object({ reachability: z.array(ReachabilitySchema) });
+
 export const CallBody = z.strictObject({ toPointId: z.uuid().optional() });
 export const CallResponse = z.object({
   result: z.enum(['dialing', 'gate', 'failed']),
@@ -153,6 +185,8 @@ export const IdentityResponse = z.object({
 
 /** Every response schema of the module (snapshot-tested: no confidence*, no tenant id). */
 export const COMMS_RESPONSE_SCHEMAS = {
+  ReachabilityResponse,
+  ReachabilityManyResponse,
   ComposeResponse,
   PreviewResponse,
   CallResponse,

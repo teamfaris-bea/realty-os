@@ -146,15 +146,14 @@ test('an agent’s day: every benchmark job within its tap target', async ({ pag
   await expect(page.getByText(/Call outcome saved\.|saved as a task for the new owner/)).toBeVisible();
   expect(outcome.taps).toBe(1);
 
-  // an opt-out is said plainly where the buttons are, before any tap, and the send is still refused
+  // an opt-out is said plainly where the buttons are, before any tap, and the action is disabled
+  // (optout.spec.ts covers the exact sentences, the thread and held messages)
   await page.goto(`${stack.webUrl}/contacts/${omar.id}`);
-  await expect(page.getByText("Won't text:")).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText('Opted out of texts').first()).toBeVisible();
+  await expect(page.getByText(/^Texted STOP on /)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: 'Text', exact: true })).toBeDisabled();
   await page.goto(`${stack.webUrl}/contacts/${omar.id}/thread?compose=sms`);
-  await expect(page.getByText("Won't send:")).toBeVisible({ timeout: 15_000 });
   await page.getByRole('textbox', { name: 'Text message' }).fill('Still interested?');
-  await page.getByRole('button', { name: 'Send' }).click();
-  await expect(page.getByText('Not sent:').first()).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: /anyway/ })).toHaveCount(0);
 
   // find a contact: Search (1 tap) then type-ahead

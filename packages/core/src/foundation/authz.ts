@@ -220,6 +220,8 @@ export const AUDIT_ACTIONS = [
   'exception.reopened', // api/accountability: a handled exception put back in the live queue (R-ACC-3)
   'session.revoked_all', // api/platform: "log out of all sessions" revoked every live session of the user
   'mfa.recovery_codes_regenerated', // api/platform: the user replaced their MFA recovery codes
+  'message.held_send', // api/comms: the sender tapped Send anyway on a message held because the client replied (E27); dispatch still checks it
+  'message.held_cancel', // api/comms: the sender canceled a scheduled or held message
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

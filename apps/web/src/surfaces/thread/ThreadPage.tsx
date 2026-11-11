@@ -7,18 +7,26 @@
 // caller may see; a pond or offer card has no thread until it is claimed or accepted (R-PERM-6).
 // Outbound messages without a human sender are labelled "Sent automatically" (the assistant or the
 // system sent them); nothing here pretends a person typed them.
+//
+// A message that did not simply go out says exactly why, in the words of reasons/sentences.ts ("Not
+// sent: texted STOP on Nov 10", "Not delivered: the carrier rejected it"). A message held because the
+// client replied after it was scheduled (E27) says "Held because Jane replied" and offers its sender
+// Send anyway and Cancel (POST /messages/:id/send | /cancel, both audited); Send anyway is a human tap
+// and is still checked at send time, so an opt-out still blocks it.
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useRef } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Button, Notice } from '../../design/index.js';
-import { type ApiError, messageFor, useApi, usePageTitle } from '../../shell/index.js';
+import { REACHABILITY_KEY, ReasonCaption, isHeld, messageStatus, useChannelState } from '../../reasons/index.js';
+import { type ApiError, messageFor, useApi, usePageTitle, useSession } from '../../shell/index.js';
 import { useInbox } from '../approvals/ApprovalsPage.js';
 import { ComposeBox } from '../compose/ComposeBox.js';
 import { useContact } from '../contact/useContact.js';
-import { AgentSheetsProvider, useAgentSheets } from '../feed/lib/AgentSheets.js';
-import { formatDateTime } from '../feed/lib/format.js';
+import { AgentSheetsProvider, sendOutcomeText, useAgentSheets } from '../feed/lib/AgentSheets.js';
+import { firstName, formatDateTime } from '../feed/lib/format.js';
+import { useMutate } from '../feed/lib/hooks.js';
 import { AGENT_ERROR_MESSAGES } from '../feed/lib/messages.js';
-import type { ContactFullView, TimelineItem, TimelineResponse } from '../feed/lib/types.js';
+import type { ComposeResponse, ContactFullView, MessageView, TimelineItem, TimelineResponse } from '../feed/lib/types.js';
 
 export function useTimeline(contactId: string, enabled = true) {
   const api = useApi();
@@ -67,7 +75,7 @@ function Thread() {
       <ThreadHeader contact={full} />
       {t.isError ? <Notice tone="error">{messageFor(t.error, AGENT_ERROR_MESSAGES)}</Notice> : null}
       {t.data && items.length === 0 ? <p className="py-6 text-center text-[15px] text-ink-muted">No messages or calls yet.</p> : null}
-      <Messages items={items} />
+      <Messages items={items} contact={{ id: full.id, name: full.displayName }} />
       <div className="sticky bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))] -mx-4 border-t border-line bg-canvas/95 px-4 py-3 backdrop-blur md:bottom-0 md:mx-0 md:rounded-2xl md:border md:bg-surface">
         <ComposeBox
           key={draft ?? 'none'}
@@ -84,21 +92,26 @@ function Thread() {
 
 function ThreadHeader({ contact }: { contact: ContactFullView }) {
   const { call } = useAgentSheets();
+  const voice = useChannelState(contact.id, 'voice');
+  const captionId = useId();
   return (
-    <div className="flex items-center gap-2">
-      <Link to={`/contacts/${contact.id}`} className="inline-flex min-h-tap min-w-0 flex-1 items-center truncate text-[15px] font-medium text-accent">
-        View {contact.displayName}'s details
-      </Link>
-      {contact.phones.length > 0 ? (
-        <Button variant="secondary" icon="phone" onClick={() => call({ id: contact.id, name: contact.displayName })}>
-          Call
-        </Button>
-      ) : null}
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2">
+        <Link to={`/contacts/${contact.id}`} className="inline-flex min-h-tap min-w-0 flex-1 items-center truncate text-[15px] font-medium text-accent">
+          View {contact.displayName}'s details
+        </Link>
+        {contact.phones.length > 0 ? (
+          <Button variant="secondary" icon="phone" disabled={voice.blocked} aria-describedby={voice.blocked ? captionId : undefined} onClick={() => call({ id: contact.id, name: contact.displayName })}>
+            Call
+          </Button>
+        ) : null}
+      </div>
+      {voice.blocked ? <ReasonCaption id={captionId} state={voice} className="self-end text-right" /> : null}
     </div>
   );
 }
 
-function Messages({ items }: { items: TimelineItem[] }) {
+function Messages({ items, contact }: { items: TimelineItem[]; contact: { id: string; name: string } }) {
   const end = useRef<HTMLLIElement>(null);
   const last = items[items.length - 1]?.id;
   useEffect(() => {
@@ -107,7 +120,7 @@ function Messages({ items }: { items: TimelineItem[] }) {
   return (
     <ol className="flex flex-col gap-2" aria-label="Conversation">
       {items.map((i) => (
-        <MessageRow key={i.id} item={i} />
+        <MessageRow key={i.id} item={i} contact={contact} />
       ))}
       <li ref={end} aria-hidden="true" />
     </ol>
@@ -131,33 +144,16 @@ const CALL_OUTCOME_LABEL: Record<string, string> = {
 };
 
 /**
- * What happened to an outbound message, in plain words, when it did NOT simply go out. A blocked or
- * failed text is never drawn like a sent one (honest UI): the bubble gets an outline and this line.
+ * What happened to an outbound message, in plain words, when it did NOT simply go out (reasons/
+ * sentences.ts). A blocked or failed text is never drawn like a sent one (honest UI): the bubble gets
+ * an outline and this line.
  */
-export function outboundStatusLabel(status: string | null | undefined): { text: string; failed: boolean } | null {
-  switch (status) {
-    case 'blocked':
-      return { text: 'Not sent: blocked by an opt-out or a sending rule', failed: true };
-    case 'failed':
-    case 'undelivered':
-      return { text: 'Not delivered', failed: true };
-    case 'bounced':
-      return { text: 'Bounced', failed: true };
-    case 'canceled':
-      return { text: 'Canceled, not sent', failed: true };
-    case 'scheduled':
-      return { text: 'Scheduled', failed: false };
-    case 'queued':
-    case 'dispatching':
-      return { text: 'Sending', failed: false };
-    case 'dispatch_unknown':
-      return { text: 'Checking whether it went out', failed: false };
-    default:
-      return null;
-  }
+export function outboundStatusLabel(item: Pick<TimelineItem, 'status' | 'statusReason' | 'providerErrorCode' | 'blockedBy' | 'detail'>, contactName = ''): { text: string; failed: boolean; held: boolean } | null {
+  const line = messageStatus({ status: item.status, statusReason: item.statusReason, providerErrorCode: item.providerErrorCode, blockedBy: item.blockedBy, channel: parseDetail(item.detail).channel }, firstName(contactName));
+  return line ? { text: line.text, failed: line.tone === 'failed', held: line.tone === 'held' } : null;
 }
 
-export function MessageRow({ item }: { item: TimelineItem }) {
+export function MessageRow({ item, contact }: { item: TimelineItem; contact?: { id: string; name: string } }) {
   const { channel, direction } = parseDetail(item.detail);
   const imported = item.provenance === 'imported';
   if (item.type === 'call') {
@@ -171,8 +167,8 @@ export function MessageRow({ item }: { item: TimelineItem }) {
   }
   const outbound = direction === 'outbound';
   const by = outbound ? (item.actor?.displayName ?? 'Sent automatically') : null;
-  const st = outbound ? outboundStatusLabel(item.status) : null;
-  const bubble = !outbound ? 'bg-surface text-ink border border-line' : st?.failed ? 'border border-dashed border-danger bg-surface text-ink-muted' : 'bg-accent-soft text-ink';
+  const st = outbound ? outboundStatusLabel(item, contact?.name ?? '') : null;
+  const bubble = !outbound ? 'bg-surface text-ink border border-line' : st?.failed ? 'border border-dashed border-danger bg-surface text-ink-muted' : st?.held ? 'border border-dashed border-warn bg-surface text-ink' : 'bg-accent-soft text-ink';
   return (
     <li id={item.id} className={`flex max-w-[85%] flex-col gap-0.5 ${outbound ? 'self-end items-end' : 'self-start items-start'}`}>
       <p className={`whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2 text-[16px] ${bubble}`}>{item.preview ?? ''}</p>
@@ -182,7 +178,53 @@ export function MessageRow({ item }: { item: TimelineItem }) {
         {formatDateTime(item.occurredAt)}
         {imported ? ' · Imported' : ''}
       </p>
-      {st ? <p className={`px-1 text-[13px] font-medium ${st.failed ? 'text-danger' : 'text-ink-muted'}`}>{st.text}</p> : null}
+      {st ? <p className={`px-1 text-[13px] font-medium ${st.failed ? 'text-danger' : st.held ? 'text-warn' : 'text-ink-muted'}`}>{st.text}</p> : null}
+      {st?.held && contact ? <HeldActions item={item} contact={contact} /> : null}
     </li>
+  );
+}
+
+/**
+ * E27: a message the agent scheduled waits for their tap because the client replied since. Only its
+ * sender can send or cancel it (the API answers 404 to anyone else). Send anyway is checked again at
+ * send time: an opt-out still blocks it.
+ */
+function HeldActions({ item, contact }: { item: TimelineItem; contact: { id: string; name: string } }) {
+  const { session } = useSession();
+  const { announce } = useAgentSheets();
+  const keys = [['timeline', contact.id], ['feed'], [...REACHABILITY_KEY]];
+  const send = useMutate<Record<string, never>, ComposeResponse>('POST', { invalidate: keys });
+  const cancel = useMutate<Record<string, never>, { message: MessageView }>('POST', { invalidate: keys });
+  const mine = item.actor?.userId !== undefined && item.actor.userId === session?.user.id;
+  if (!isHeld({ status: item.status ?? null, statusReason: item.statusReason ?? null })) return null;
+  if (!mine) return <p className="px-1 text-[13px] text-ink-muted">Only {item.actor?.displayName ?? 'the sender'} can send or cancel it.</p>;
+  const sendAnyway = async () => {
+    const r = await send.run(`/messages/${item.id}/send`, {});
+    if (r.ok) {
+      const t = sendOutcomeText(r.data, contact.name);
+      announce(r.data.decision?.outcome === 'deny' ? `Not sent: ${r.data.decision.explanation}` : t.title);
+    }
+  };
+  const doCancel = async () => {
+    const r = await cancel.run(`/messages/${item.id}/cancel`, {});
+    if (r.ok) announce('Canceled. Nothing was sent.');
+  };
+  const busy = send.pending || cancel.pending;
+  return (
+    <div className="flex flex-col items-end gap-1 px-1">
+      <div className="flex flex-wrap justify-end gap-2" role="group" aria-label="Held message">
+        <Button variant="secondary" pending={send.pending} pendingLabel="Sending" disabled={busy} onClick={() => void sendAnyway()}>
+          Send anyway
+        </Button>
+        <Button variant="quiet" pending={cancel.pending} disabled={busy} onClick={() => void doCancel()}>
+          Cancel
+        </Button>
+      </div>
+      {send.error ?? cancel.error ? (
+        <p role="alert" className="text-[13px] font-medium text-danger">
+          {(send.error ?? cancel.error)!.message}
+        </p>
+      ) : null}
+    </div>
   );
 }

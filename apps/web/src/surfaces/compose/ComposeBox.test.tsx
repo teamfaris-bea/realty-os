@@ -6,7 +6,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import { FakeFetch, IDS, agentApp, decision, draftAction, err, fullContact, iso, timelineItem } from '../feed/lib/testing.js';
+import { FakeFetch, IDS, agentApp, decision, draftAction, err, fullContact, iso, reachability, stopReason, timelineItem } from '../feed/lib/testing.js';
 
 const user = () => userEvent.setup();
 
@@ -60,16 +60,28 @@ describe('Thread', () => {
     expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages/preview`).at(-1)!.body).toEqual({ channel: 'sms', body: 'Hello' });
   });
 
-  it('an opt-out is said as soon as the box opens, before anything is typed, and again for the real text', async () => {
-    const deny = { status: 200, body: { decision: decision({ id: null, phase: 'preview', outcome: 'deny', explanation: 'Opted out of texts' }), body: '' } };
-    const fake = threadFake().on(`POST /contacts/${IDS.jane}/messages/preview`, deny);
+  it('R-CONSENT-7: an opt-out is said as soon as the box opens, in exact words, from the reachability summary (no stand-in preview); Send stays disabled for that channel', async () => {
+    const fake = threadFake().on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: reachability(IDS.jane, { sms: [stopReason()] }) } });
     agentApp(fake, `/contacts/${IDS.jane}/thread?compose=sms`);
-    expect(await screen.findByText('Opted out of texts')).toBeInTheDocument();
-    expect(screen.getByText(/Won't send:/)).toBeInTheDocument();
-    expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages/preview`)[0]!.body).toEqual({ channel: 'sms', body: 'Hi' });
+    expect(await screen.findByText('Texted STOP on Nov 10')).toBeInTheDocument();
     await user().type(screen.getByRole('textbox', { name: 'Text message' }), 'Saturday?');
-    await waitFor(() => expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages/preview`).at(-1)!.body).toEqual({ channel: 'sms', body: 'Saturday?' }));
-    expect(await screen.findByText('Opted out of texts')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send' })).toHaveAccessibleDescription('Texted STOP on Nov 10');
+    // nothing is previewed for a channel that is blocked anyway, and nothing ever previews a stand-in text
+    expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages/preview`)).toEqual([]);
+    expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages`)).toEqual([]);
+  });
+
+  it('a text STOP does not block email: switching to Email enables Send and previews only the real text', async () => {
+    const fake = threadFake().on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: reachability(IDS.jane, { sms: [stopReason()] }) } });
+    agentApp(fake, `/contacts/${IDS.jane}/thread?compose=sms`);
+    await screen.findByText('Texted STOP on Nov 10');
+    await user().click(screen.getByRole('radio', { name: 'Email' }));
+    expect(screen.queryByText('Texted STOP on Nov 10')).toBeNull();
+    await user().type(screen.getByRole('textbox', { name: 'Email message' }), 'Saturday?');
+    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
+    await waitFor(() => expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages/preview`).at(-1)!.body).toEqual({ channel: 'email', body: 'Saturday?' }));
+    expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages/preview`).every((c) => (c.body as { body: string }).body !== 'Hi')).toBe(true);
   });
 
   it('an allowed send shows no badge, no consent question and no quiet-hours wait', async () => {
@@ -127,8 +139,42 @@ describe('Thread', () => {
     const rows = within(convo).getAllByRole('listitem').map((li) => li.textContent ?? '');
     const blocked = rows.find((r) => r.includes('still looking'))!;
     const ok = rows.find((r) => r.includes('See you Saturday'))!;
-    expect(blocked).toContain('Not sent: blocked by an opt-out or a sending rule');
+    expect(blocked).toContain('Not sent: blocked by a sending rule');
     expect(ok).not.toMatch(/Not sent|Not delivered/);
+  });
+
+  it('the thread says exactly why: "Not sent: texted STOP on Nov 10", "Not delivered: the carrier rejected it"', async () => {
+    const items = [
+      timelineItem({ id: '01900000-0000-7000-8000-0000000e5506', detail: 'sms:outbound', preview: 'Still looking?', occurredAt: iso(-60_000), actor: { userId: IDS.me, displayName: 'Ava Agent' }, status: 'blocked', statusReason: 'CONSENT_REVOKED', blockedBy: stopReason() }),
+      timelineItem({ id: '01900000-0000-7000-8000-0000000e5507', detail: 'sms:outbound', preview: 'Open house Sunday', occurredAt: iso(-30_000), actor: { userId: IDS.me, displayName: 'Ava Agent' }, status: 'undelivered', statusReason: 'PROVIDER_UNDELIVERED', providerErrorCode: '30008' }),
+    ];
+    agentApp(threadFake(items), `/contacts/${IDS.jane}/thread`);
+    expect(await screen.findByText('Not sent: texted STOP on Nov 10')).toBeInTheDocument();
+    expect(screen.getByText('Not delivered: the carrier rejected it')).toBeInTheDocument();
+  });
+
+  it('E27: a message held because Jane replied says so, and its sender can Send anyway or Cancel', async () => {
+    const held = timelineItem({ id: '01900000-0000-7000-8000-0000000e5508', detail: 'sms:outbound', preview: 'See you at 10', occurredAt: iso(-60_000), actor: { userId: IDS.me, displayName: 'Ava Agent' }, status: 'queued', statusReason: 'CLIENT_REPLIED_SINCE_SCHEDULED' });
+    const fake = threadFake([held])
+      .on(`POST /messages/${held.id}/send`, sent())
+      .on(`POST /messages/${held.id}/cancel`, { status: 200, body: { message: { id: held.id, channel: 'sms', status: 'canceled', statusReason: 'CANCELED_BY_SENDER', purpose: null, body: 'x', subject: null, scheduledFor: null, dispatchedAt: null } } });
+    agentApp(fake, `/contacts/${IDS.jane}/thread`);
+    expect(await screen.findByText('Held because Jane replied')).toBeInTheDocument();
+    const group = screen.getByRole('group', { name: 'Held message' });
+    await user().click(within(group).getByRole('button', { name: 'Send anyway' }));
+    await waitFor(() => expect(fake.callsTo(`POST /messages/${held.id}/send`)).toHaveLength(1));
+    expect(fake.callsTo(`POST /messages/${held.id}/send`)[0]!.body).toEqual({});
+    expect(await screen.findByText('Sent to Jane.')).toBeInTheDocument();
+    await user().click(within(group).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(fake.callsTo(`POST /messages/${held.id}/cancel`)).toHaveLength(1));
+  });
+
+  it('E27: someone else\'s held message offers no actions, and says who can', async () => {
+    const held = timelineItem({ id: '01900000-0000-7000-8000-0000000e5509', detail: 'sms:outbound', preview: 'See you at 10', occurredAt: iso(-60_000), actor: { userId: IDS.pat, displayName: 'Ben Agent' }, status: 'queued', statusReason: 'CLIENT_REPLIED_SINCE_SCHEDULED' });
+    agentApp(threadFake([held]), `/contacts/${IDS.jane}/thread`);
+    expect(await screen.findByText('Held because Jane replied')).toBeInTheDocument();
+    expect(screen.getByText('Only Ben Agent can send or cancel it.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Send anyway' })).toBeNull();
   });
 
   it('an edited assistant draft is approved with the edited text', async () => {

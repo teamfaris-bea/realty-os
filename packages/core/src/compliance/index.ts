@@ -18,3 +18,4 @@ export type ComplianceErrorCode =
   | 'CONSENT_EVENT_NOT_FOUND'
   | 'NOT_AN_OPT_OUT_LANGUAGE_REVOKE'
   | 'ALREADY_REVIEWED';
+export * from './reachability.js';
