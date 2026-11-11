@@ -328,10 +328,7 @@ async function bulkEnroll(page: Page, ch: Ch, out: Person[], info: Parameters<ty
   for (const p of out) expect(await stack.sql("SELECT 1 FROM playbook_enrollments WHERE contact_id = $1 AND state IN ('active','paused')", [p.id]), `${p.first} is not in a plan`).toEqual([]);
   const [enr] = await stack.sql<{ id: string }>("SELECT id FROM playbook_enrollments WHERE contact_id = $1 AND playbook_id = $2 AND state IN ('active','completed')", [c.id, plans[ch]]);
   expect(enr, 'Carl is enrolled').toBeTruthy();
-  await drainUntil(stack, async () => (await controlCounts())[ch] > before[ch], { kinds: ['playbook.step', 'comms.dispatch'], timeout: 30_000 }).catch(async (err) => {
-    const dbg = { msgs: await stack.sql("SELECT channel, status, status_reason, playbook_step_run_id FROM messages WHERE contact_id = $1 AND direction = 'outbound' ORDER BY created_at", [c.id]), runs: await stack.sql('SELECT * FROM playbook_step_runs WHERE enrollment_id = $1', [enr!.id]), enr: await stack.sql('SELECT state, current_step, next_step_due_at, pause_reason FROM playbook_enrollments WHERE id = $1', [enr!.id]), sends: await stack.sends() };
-    throw new Error(`${String(err)}\n${JSON.stringify(dbg, null, 1)}`);
-  });
+  await drainUntil(stack, async () => (await controlCounts())[ch] > before[ch], { kinds: ['playbook.step', 'comms.dispatch'], timeout: 30_000 });
   expect(await controlCounts(), `Carl gets the ${ch} plan's message exactly once`).toEqual({ ...before, [ch]: before[ch] + 1 });
   // end Carl's plan (if it has not ended on its own) so he can be enrolled again
   const [st] = await stack.sql<{ state: string }>('SELECT state FROM playbook_enrollments WHERE id = $1', [enr!.id]);
@@ -450,19 +447,23 @@ test('M3.2 after the consent stage commits (with its imported grants): every pat
   test.setTimeout(420_000);
   await fullStage('consent');
   expect((await stack.sql<{ status: string }>('SELECT status FROM import_batches WHERE id = $1', [batchId]))[0]!.status).toBe('committed');
-  // the consent stage wrote Carl's imported grants and no grant on an opted-out channel
+  // the consent stage wrote Carl's imported grants, and no grant on any opted-out channel (Olly's smsOptIn and
+  // Uma's emailOptIn lose to their opt-outs); every revocation is still in force, and Dina's DNC suppressions too
   const grants = await stack.sql<{ contact_id: string; channel: string }>("SELECT contact_id, channel FROM consent_events WHERE tenant_id = $1 AND event_type = 'grant'", [w.tenantId]);
-  expect(grants.some((g) => g.contact_id === people.carl.id)).toBe(true);
-  for (const p of optedOut()) {
+  expect(grants.filter((g) => g.contact_id === people.carl.id).map((g) => g.channel).sort()).toEqual(expect.arrayContaining(['email', 'sms']));
+  for (const p of optedOut()) expect(grants.filter((g) => g.contact_id === p.id && p.blocks.includes(g.channel as Ch)), `${p.first}: no grant on an opted-out channel`).toEqual([]);
+  for (const p of optedOut().filter((x) => x.key !== 'dina')) {
     const states = await stack.sql<{ channel: string; status: string }>(
       'SELECT DISTINCT cs.channel, cs.status FROM consent_state cs JOIN contact_points pt ON pt.tenant_id = cs.tenant_id AND pt.address_hmac = cs.address_hmac WHERE pt.contact_id = $1',
       [p.id],
     );
-    for (const ch of p.blocks.filter(() => p.key !== 'dina')) {
-      const s = states.filter((x) => x.channel === ch);
-      expect(s.length, `${p.first} ${ch}: ${JSON.stringify(states)}`).toBeGreaterThan(0);
-      expect(s.every((x) => x.status === 'revoked'), `${p.first} ${ch}: ${JSON.stringify(states)}`).toBe(true);
+    for (const ch of p.blocks) {
+      const st = states.filter((x) => x.channel === ch);
+      expect(st.length, `${p.first} ${ch}: ${JSON.stringify(states)}`).toBeGreaterThan(0);
+      expect(st.every((x) => x.status === 'revoked'), `${p.first} ${ch}: ${JSON.stringify(states)}`).toBe(true);
     }
   }
+  const dnc = await stack.sql<{ n: number }>("SELECT count(*)::int AS n FROM suppressions s JOIN contact_points pt ON pt.tenant_id = s.tenant_id AND pt.address_hmac = s.address_hmac WHERE pt.contact_id = $1 AND s.reason = 'import_dnc' AND s.lifted_at IS NULL", [people.dina.id]);
+  expect(dnc[0]!.n).toBe(2);
   await everyPathBlocked(page, info, 'b');
 });
