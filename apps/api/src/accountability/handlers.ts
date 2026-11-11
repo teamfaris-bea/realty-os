@@ -1,6 +1,7 @@
 // Job handlers of api/accountability (registered through worker/handlers/index.ts, CONVENTIONS §3).
 //
 //   exception.recompute   default   tx   { scope: 'tenant' }            periodic: every 60 s per tenant (R-ACC-1)
+//   scoreboard.rollup     default   standalone  {}                      periodic: every 10 min per tenant (0027 daily rollup)
 //                                       { scope: { contactId } }       on a relevant write (requestExceptionRecompute)
 //
 // The tenant scan is a periodic job: the maintenance pass keeps one live job per tenant (dedupe
@@ -13,8 +14,9 @@ import { defaultIds, type Tx } from '@realty/db';
 import { z } from 'zod';
 import { jobPayload, zId } from '../worker/payload.js';
 import { enqueueTyped } from '../worker/registry.js';
-import type { JobHandler, TxJobHandler } from '../worker/types.js';
+import type { JobHandler, StandaloneJobHandler, TxJobHandler } from '../worker/types.js';
 import { type RecomputeScope, recomputeExceptions } from './exceptions.js';
+import { runScoreboardRollup } from './scoreboardRollup.js';
 
 export const EXCEPTION_RECOMPUTE_KIND = 'exception.recompute' as const;
 /** R-ACC-1: time-only conditions appear within this long. */
@@ -52,5 +54,31 @@ export async function requestExceptionRecompute(tx: Tx, contactId: string): Prom
   return enqueueTyped(tx, exceptionRecompute, { scope: { contactId: contactId as ContactId } }, { dedupeKey: contactRecomputeKey(contactId) });
 }
 
+export const SCOREBOARD_ROLLUP_KIND = 'scoreboard.rollup' as const;
+/** How often the rollup job runs per tenant: a closed day is rolled within about two runs of midnight. */
+export const SCOREBOARD_ROLLUP_EVERY_MS = 10 * MINUTE_MS;
+export const ScoreboardRollupPayload = jobPayload({});
+
+/**
+ * The scoreboard's daily rollup (0027, scoreboardRollup.ts). Standalone: the horizon sample needs a
+ * transaction of its own after the roll's. Periodic like the tenant scan above (dedupe
+ * `periodic:scoreboard.rollup`, rescheduling itself), so it also backfills a database that has none.
+ */
+export const scoreboardRollup: StandaloneJobHandler<Record<string, never>> = {
+  kind: SCOREBOARD_ROLLUP_KIND,
+  queue: 'default',
+  mode: 'standalone',
+  via: 'worker',
+  priority: 120,
+  schema: ScoreboardRollupPayload as unknown as z.ZodType<Record<string, never>>,
+  every: { ms: SCOREBOARD_ROLLUP_EVERY_MS, offsetMs: 3 * MINUTE_MS },
+  periodicPayload: {},
+  async run(ctx) {
+    const r = await runScoreboardRollup((fn) => ctx.withTx((tx) => fn(tx)));
+    ctx.log.debug('scoreboard.rollup', { jobId: ctx.job.id.toString(), calls: r.calls, daysRolled: r.daysRolled, marksCleared: r.marksCleared, sampled: r.sampled });
+    return { retryAt: instant(ctx.now + SCOREBOARD_ROLLUP_EVERY_MS) as Instant };
+  },
+};
+
 /** What api/accountability registers with the worker (CONVENTIONS §3). */
-export const accountabilityHandlers: JobHandler<unknown>[] = [exceptionRecompute as unknown as JobHandler<unknown>];
+export const accountabilityHandlers: JobHandler<unknown>[] = [exceptionRecompute as unknown as JobHandler<unknown>, scoreboardRollup as unknown as JobHandler<unknown>];
