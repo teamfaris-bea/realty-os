@@ -135,7 +135,17 @@ REVOKE ALL ON FUNCTION app.record_person_opt_out(uuid, uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION app.record_person_opt_out(uuid, uuid) TO app_user;
 
 -- -----------------------------------------------------------------------------
--- 5. Self-check: the three definers are owned by app_definer with a pinned search_path; the opt-out function is not
+-- 5. SCHEMA GAP FIX (security review item; PHASE2_3_PLAN §3 migration policy): gate_decisions.channel
+-- -----------------------------------------------------------------------------
+-- 0018 widened the channel CHECK of messages, consent_events, consent_state and suppressions to the web-chat
+-- channel but not gate_decisions', so a BLOCKED chat send could not be recorded (R-GATE-14: every blocked send
+-- writes gate_decisions and reaches no provider). This adds 'web_chat' only; nothing else in the table changes, and
+-- the out-of-scope Meta channels (D2) stay refused.
+ALTER TABLE gate_decisions DROP CONSTRAINT gate_decisions_channel_check;
+ALTER TABLE gate_decisions ADD CONSTRAINT gate_decisions_channel_check CHECK (channel IN ('sms','voice','email','web_chat'));
+
+-- -----------------------------------------------------------------------------
+-- 6. Self-check: the three definers are owned by app_definer with a pinned search_path; the opt-out function is not
 --    a definer; nothing is executable by PUBLIC.
 -- -----------------------------------------------------------------------------
 DO $$
