@@ -21,11 +21,14 @@
 //   OBFUSCATED_TEXT        invisible format characters or look-alike letters mixed into Latin
 //                          words: the text is never sent unseen, and every check above runs on the
 //                          folded text so "of\u200Bfer" or a Cyrillic "о" cannot hide a term
+//   FAIR_HOUSING           a hard or soft match of the fair-housing pack (core/fairhousing): never
+//                          autonomous; the draft is flagged "Check this" (R-FH-2, module 25)
 //   TOO_LONG / EMPTY / UNFILLED_SLOT
 //
 // The lexicon below is product policy, exported as data so it can be reviewed and tested; the
 // fixture set in ./testing proves zero false negatives on it.
 import { type ActionCategory, type Channel, type Purpose, containsName, containsOptOutHint, detectPaymentInstructions } from '../compliance/index.js';
+import { DEFAULT_FAIR_HOUSING_PACK, type FairHousingPack, guardAssistantOutput } from '../fairhousing/index.js';
 import { normalizeForQuote } from './evidence.js';
 import { signOffFor } from './render.js';
 import type { IdentityFacts } from './types.js';
@@ -42,7 +45,8 @@ export type GuardIssueCode =
   | 'UNKNOWN_LINK'
   | 'TOO_LONG'
   | 'UNFILLED_SLOT'
-  | 'OBFUSCATED_TEXT';
+  | 'OBFUSCATED_TEXT'
+  | 'FAIR_HOUSING';
 
 export interface GuardIssue {
   code: GuardIssueCode;
@@ -58,11 +62,13 @@ export interface GuardResult {
   hardBlock: boolean;
   /** The always-human category the text belongs to, when the lexicon says so. */
   category: Extract<ActionCategory, 'money' | 'contract'> | null;
+  /** A fair-housing match: the draft card says "Check this" (R-FH-2). */
+  checkThis: boolean;
 }
 
 /** The parts of a playbook step the guard needs (PlaybookStep satisfies it). */
 export interface GuardStep {
-  channel: Extract<Channel, 'sms' | 'email'>;
+  channel: Extract<Channel, 'sms' | 'email'> | 'inbound_channel' | 'messenger' | 'instagram' | 'web_chat';
   purpose: Purpose;
   maxLength: number;
 }
@@ -72,6 +78,8 @@ export interface GuardContext {
   firstInThread: boolean;
   /** Autonomous messages must carry the sign-off. Default true. */
   requireSignOff?: boolean;
+  /** The fair-housing pack in force (default: the built-in, unreviewed `fh/1`). Never switched off. */
+  fairHousing?: FairHousingPack;
 }
 
 // ---- folding (anti-obfuscation) -------------------------------------------------------------------
@@ -339,6 +347,8 @@ export function contentGuard(text: string, step: GuardStep, tenant: IdentityFact
   if (text.length > step.maxLength) add('TOO_LONG', String(step.maxLength));
   if (/\{\{[^}]*\}\}/.test(text)) add('UNFILLED_SLOT');
   if (isObfuscated(text)) add('OBFUSCATED_TEXT');
+  const fh = guardAssistantOutput(text, ctx.fairHousing ?? DEFAULT_FAIR_HOUSING_PACK);
+  for (const m of [...fh.hard, ...fh.soft]) add('FAIR_HOUSING', m.termId);
   const category = payment || hits.some((h) => h.topic === 'money') ? 'money' : hits.some((h) => h.topic === 'contract') ? 'contract' : null;
-  return { pass: issues.length === 0, issues, hardBlock: payment, category };
+  return { pass: issues.length === 0, issues, hardBlock: payment, category, checkThis: fh.checkThis };
 }

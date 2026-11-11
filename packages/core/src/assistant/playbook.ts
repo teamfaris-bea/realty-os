@@ -16,6 +16,7 @@ import {
   sha256Hex,
 } from '../compliance/index.js';
 import { DAY_MS, type Instant, instant } from '../foundation/index.js';
+import { check as fairHousingCheck, DEFAULT_FAIR_HOUSING_PACK, type FairHousingPack } from '../fairhousing/index.js';
 import { approvalCurrent } from './autonomy.js';
 import { findHumanClaim, lexiconHits } from './guard.js';
 import type { IdentityFacts } from './types.js';
@@ -56,10 +57,20 @@ export const STEP_INTENTS = [
   'appointment_reminder',
   'deadline_reminder',
   'document_request',
+  // Phase 2 (module 25): the review step of the post-closing playbook (R-MKT-11)
+  'review_request',
+  // trigger playbooks (module 25, R-NURT-2): facts only
+  'price_drop_alert',
+  'back_on_market_alert',
 ] as const;
 export type StepIntent = (typeof STEP_INTENTS)[number];
 
-export type Capability = 'avm';
+/**
+ * A capability a step needs at send time. `avm`: a home-value vendor and the cleared `platform:avm`
+ * pack; `review_requests`: the cleared `platform:review_requests` pack (R-INT-6, R-MKT-11).
+ */
+export type Capability = 'avm' | 'review_requests';
+export const CAPABILITIES: readonly Capability[] = ['avm', 'review_requests'];
 
 /**
  * What each intent is (R-CONSENT-5): its natural purpose and the categories it may run under.
@@ -80,12 +91,25 @@ export const INTENT_RULES: Readonly<Record<StepIntent, { purpose: 'marketing' | 
   appointment_reminder: { purpose: 'informational', categories: ['reminder'] },
   deadline_reminder: { purpose: 'informational', categories: ['reminder'] },
   document_request: { purpose: 'informational', categories: ['document_chase'] },
+  // VERIFY WITH COUNSEL (C8): FTC consumer-review rule; treated as marketing (stricter).
+  review_request: { purpose: 'marketing', categories: ['nurture_step'], requires: ['review_requests'] },
+  price_drop_alert: { purpose: 'marketing', categories: ['search_alert', 'nurture_step'] },
+  back_on_market_alert: { purpose: 'marketing', categories: ['search_alert', 'nurture_step'] },
 };
 
 export const STOP_CONDITIONS = ['appointment_booked', 'deal_opened', 'deal_closed', 'listing_inactive', 'event_canceled'] as const;
 export type StopCondition = (typeof STOP_CONDITIONS)[number];
 
-export type PlaybookKind = 'new_lead_response' | 'nurture' | 'post_closing' | 'booking_confirmation' | 'reminder' | 'document_chase';
+export type PlaybookKind =
+  | 'new_lead_response'
+  | 'nurture'
+  | 'post_closing'
+  | 'booking_confirmation'
+  | 'reminder'
+  | 'document_chase'
+  // Phase 2/3 (0018): trigger playbooks hold `PlaybookContent` kind 'triggers'; voice answering kind 'voice'
+  | 'trigger'
+  | 'voice_answering';
 
 const KIND_CATEGORIES: Readonly<Record<PlaybookKind, readonly ActionCategory[]>> = {
   new_lead_response: ['speed_to_lead_reply'],
@@ -94,6 +118,9 @@ const KIND_CATEGORIES: Readonly<Record<PlaybookKind, readonly ActionCategory[]>>
   booking_confirmation: ['booking_confirmation'],
   reminder: ['reminder'],
   document_chase: ['document_chase'],
+  // R-AST-20: no new autonomous category; trigger alerts run as existing ones
+  trigger: ['nurture_step', 'search_alert', 'reminder'],
+  voice_answering: [],
 };
 
 const AUTONOMOUS_CATEGORY_VALUES = [...AUTONOMOUS_ELIGIBLE] as [ActionCategory, ...ActionCategory[]];
@@ -103,7 +130,11 @@ const MAX_OFFSET_SECONDS = 3 * 366 * 24 * 3600;
 
 const StepSchemaInner = z.strictObject({
   stepKey: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
-  channel: z.enum(['sms', 'email']),
+  /**
+   * `inbound_channel` = "reply where the lead wrote" (Messenger, Instagram, web chat): only for the
+   * 60-second first response, as part of the approved content (R-INBOX-4).
+   */
+  channel: z.enum(['sms', 'email', 'inbound_channel']),
   delay: z.strictObject({
     anchor: z.enum(['enrollment', 'previous_step', 'event']),
     offsetSeconds: z.number().int().min(-MAX_OFFSET_SECONDS).max(MAX_OFFSET_SECONDS),
@@ -117,7 +148,7 @@ const StepSchemaInner = z.strictObject({
   slots: z.array(z.enum(SLOT_NAMES)).max(SLOT_NAMES.length),
   maxLength: z.number().int().min(20).max(10_000),
   stopIf: z.array(z.enum(STOP_CONDITIONS)).max(STOP_CONDITIONS.length),
-  requires: z.array(z.enum(['avm'])).optional(),
+  requires: z.array(z.enum(CAPABILITIES as unknown as ['avm', 'review_requests'])).optional(),
   /** Email form of an SMS step, used only when SMS is not allowed (the first response, R-AST-16). */
   fallback: z
     .strictObject({
@@ -140,9 +171,19 @@ const ToneSchemaInner = z.strictObject({
 export type Tone = z.infer<typeof ToneSchemaInner>;
 export const ToneSchema: z.ZodType<Tone> = ToneSchemaInner;
 
-/** sha256(canonical JSON of {steps, tone}): playbook_versions.content_sha256 and the approval binding. */
-export function contentSha256(steps: readonly PlaybookStep[], tone: Tone): string {
+/**
+ * sha256(canonical JSON of {steps, tone}): playbook_versions.content_sha256 and the approval binding.
+ * `steps` is the version's stored content: `PlaybookStep[]` for step playbooks (Phase 1, hashes
+ * unchanged) or one `PlaybookContent` object for trigger and voice playbooks (0018).
+ */
+export function contentSha256(steps: readonly PlaybookStep[] | PlaybookContentLike, tone: Tone): string {
   return sha256Hex(canonicalJson({ steps, tone }));
+}
+
+/** Structural stand-in for `PlaybookContent` (defined in ./content.ts, which imports this file). */
+export interface PlaybookContentLike {
+  kind: 'steps' | 'triggers' | 'voice';
+  [field: string]: unknown;
 }
 
 // ---- validation ---------------------------------------------------------------------------------
@@ -164,7 +205,15 @@ export type ValidationCode =
   | 'EMAIL_SUBJECT_REQUIRED'
   | 'SMS_SUBJECT_NOT_ALLOWED'
   | 'FALLBACK_INVALID'
-  | 'NEGATIVE_DELAY_WITHOUT_EVENT';
+  | 'NEGATIVE_DELAY_WITHOUT_EVENT'
+  // Phase 2 (module 25)
+  | 'INBOUND_CHANNEL_NOT_ALLOWED'
+  | 'TEMPLATE_FAIR_HOUSING'
+  | 'REVIEW_REQUEST_INCENTIVE'
+  | 'CONTENT_KIND_MISMATCH'
+  | 'TRIGGER_INTENT_MISMATCH'
+  | 'DUPLICATE_TRIGGER'
+  | 'VOICE_DISCLOSURE_MISSING';
 
 export interface ValidationIssue {
   index: number;
@@ -191,7 +240,8 @@ const IDENTITY_ALLOWANCE = 80;
  * Issues that block approval of a version. `identity` (optional) also checks templates for human
  * claims ("this is Sarah") against the real names.
  */
-export function validatePlaybook(steps: readonly unknown[], opts: { kind?: PlaybookKind; identity?: IdentityFacts } = {}): ValidationIssue[] {
+export function validatePlaybook(steps: readonly unknown[], opts: { kind?: PlaybookKind; identity?: IdentityFacts; fairHousing?: FairHousingPack } = {}): ValidationIssue[] {
+  const fh = opts.fairHousing ?? DEFAULT_FAIR_HOUSING_PACK;
   const issues: ValidationIssue[] = [];
   if (steps.length === 0) return [{ index: -1, code: 'NO_STEPS' }];
   if (opts.kind === 'new_lead_response' && steps.length !== 1) issues.push({ index: -1, code: 'KIND_STEP_COUNT', detail: 'new_lead_response sends exactly one message' });
@@ -214,8 +264,10 @@ export function validatePlaybook(steps: readonly unknown[], opts: { kind?: Playb
     if (opts.kind !== undefined && !KIND_CATEGORIES[opts.kind].includes(s.category)) at('KIND_CATEGORY_MISMATCH', `${opts.kind}/${s.category}`);
     if (s.delay.offsetSeconds < 0 && s.delay.anchor !== 'event') at('NEGATIVE_DELAY_WITHOUT_EVENT');
     if (s.channel === 'email' && s.subject === undefined) at('EMAIL_SUBJECT_REQUIRED');
-    if (s.channel === 'sms' && s.subject !== undefined) at('SMS_SUBJECT_NOT_ALLOWED');
-    if (s.fallback !== undefined && s.channel !== 'sms') at('FALLBACK_INVALID');
+    if (s.channel !== 'email' && s.subject !== undefined) at('SMS_SUBJECT_NOT_ALLOWED');
+    if (s.fallback !== undefined && s.channel === 'email') at('FALLBACK_INVALID');
+    // R-INBOX-4: DM/chat only for the 60-second first response (no multi-turn autonomous replies)
+    if (s.channel === 'inbound_channel' && opts.kind !== 'new_lead_response') at('INBOUND_CHANNEL_NOT_ALLOWED');
 
     const texts: { text: string; maxLength: number }[] = [{ text: s.template, maxLength: s.maxLength }];
     if (s.subject !== undefined) texts.push({ text: s.subject, maxLength: 200 });
@@ -227,10 +279,22 @@ export function validatePlaybook(steps: readonly unknown[], opts: { kind?: Playb
       if (detectPaymentInstructions(t.staticText)) at('TEMPLATE_PAYMENT_INSTRUCTIONS');
       for (const h of lexiconHits(t.staticText)) at('TEMPLATE_ALWAYS_HUMAN_TOPIC', h.label);
       if (opts.identity !== undefined && findHumanClaim(t.staticText, opts.identity) !== null) at('TEMPLATE_HUMAN_CLAIM');
+      // R-FH-2: a template with fair-housing wording would only ever produce drafts; fix it first
+      const fhr = fairHousingCheck(t.staticText, fh);
+      for (const m of [...fhr.hard, ...fhr.soft]) at('TEMPLATE_FAIR_HOUSING', m.termId);
+      if (s.intent === 'review_request' && reviewIncentive(t.staticText)) at('REVIEW_REQUEST_INCENTIVE');
       if (t.staticText.length + (text === s.template || text === s.fallback?.template ? IDENTITY_ALLOWANCE : 0) > maxLength) at('TEMPLATE_TOO_LONG');
     }
   });
   return issues;
+}
+
+/**
+ * R-MKT-11: a review request never offers anything in return. VERIFY WITH COUNSEL (C8). The step
+ * schema has no condition fields, so a request cannot be gated on sentiment or outcome at all.
+ */
+export function reviewIncentive(text: string): boolean {
+  return /\b(?:gift\s*cards?|discount|coupon|rebate|reward|prize|raffle|giveaway|drawing|chance\s+to\s+win|free\s+\w+|in\s+(?:exchange|return)\s+for|thank[- ]you\s+gift|\$\s?\d|\d+\s*%\s*off|entered\s+to\s+win|(?:5|five)[- ]stars?|if\s+you\s+(?:were|are|felt)\s+(?:happy|satisfied|pleased)|positive\s+reviews?|good\s+reviews?|happy\s+(?:clients?|customers?)\s+only)\b/iu.test(text);
 }
 
 // ---- step scheduling ----------------------------------------------------------------------------
@@ -363,8 +427,13 @@ export function onOwnerChange(i: { state: 'active' | 'paused' | 'completed' | 's
 
 export const FIRST_RESPONSE_DEDUPE_MS = DAY_MS;
 
+const INBOUND_WORDS: Readonly<Record<InboundChannel, string>> = { messenger: 'Messenger', instagram: 'Instagram', web_chat: 'web chat' };
+
+/** Where a lead wrote from, when it was a DM or chat (R-INBOX-4). */
+export type InboundChannel = 'messenger' | 'instagram' | 'web_chat';
+
 export type FirstResponsePlan =
-  | { send: true; channel: 'sms' | 'email'; explanation: string }
+  | { send: true; channel: 'sms' | 'email' | InboundChannel; explanation: string }
   | { send: false; reason: 'PLAYBOOK_NOT_APPROVED' | 'CATEGORY_DISABLED' | 'ALREADY_SENT' | 'NO_ALLOWED_CHANNEL'; explanation: string };
 
 /**
@@ -383,6 +452,8 @@ export function planFirstResponse(i: {
   tenantAutonomous: ReadonlySet<ActionCategory>;
   sms: { reachable: boolean; revokedOrSuppressed: boolean };
   email: { reachable: boolean; revokedOrSuppressed: boolean };
+  /** The DM/chat the lead wrote from; only an `inbound_channel` step replies there (R-INBOX-4). */
+  inbound?: { channel: InboundChannel; reachable: boolean; revokedOrSuppressed: boolean };
   lastFirstResponseAt: Instant | null;
 }): FirstResponsePlan {
   if (i.step === null || !approvalCurrent(i.version, i.latestApproval)) {
@@ -395,11 +466,23 @@ export function planFirstResponse(i: {
   if (i.lastFirstResponseAt !== null && i.now - i.lastFirstResponseAt < FIRST_RESPONSE_DEDUPE_MS) {
     return { send: false, reason: 'ALREADY_SENT', explanation: 'The assistant already sent this lead an instant reply in the last 24 hours.' };
   }
+  if (i.step.channel === 'inbound_channel' && i.inbound !== undefined && i.inbound.reachable && !i.inbound.revokedOrSuppressed) {
+    return { send: true, channel: i.inbound.channel, explanation: `The assistant sent the instant reply where the lead wrote (${INBOUND_WORDS[i.inbound.channel]}).` };
+  }
   const smsOk = i.step.channel === 'sms' && i.sms.reachable && !i.sms.revokedOrSuppressed;
   if (smsOk) return { send: true, channel: 'sms', explanation: 'The assistant sent the instant reply by text.' };
   const emailForm = i.step.channel === 'email' || i.step.fallback !== undefined;
   if (emailForm && i.email.reachable && !i.email.revokedOrSuppressed) {
-    return { send: true, channel: 'email', explanation: i.step.channel === 'sms' ? 'The assistant sent the instant reply by email (this number cannot get texts or opted out).' : 'The assistant sent the instant reply by email.' };
+    return {
+      send: true,
+      channel: 'email',
+      explanation:
+        i.step.channel === 'sms'
+          ? 'The assistant sent the instant reply by email (this number cannot get texts or opted out).'
+          : i.step.channel === 'inbound_channel'
+            ? 'The assistant sent the instant reply by email (it could not reply where the lead wrote).'
+            : 'The assistant sent the instant reply by email.',
+    };
   }
   return { send: false, reason: 'NO_ALLOWED_CHANNEL', explanation: 'No instant reply was sent: there is no number or email address that can get it (opted out, a landline or missing). Reach out yourself.' };
 }

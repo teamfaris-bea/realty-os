@@ -7,6 +7,8 @@ const schemas = {
   ToneSchema: assistant.ToneSchema,
   SearchCriteriaSchema: assistant.SearchCriteriaSchema,
   ModelOutputSchema: assistant.ModelOutputSchema,
+  TriggerStepSchema: assistant.TriggerStepSchema,
+  VoiceContentSchema: assistant.VoiceContentSchema,
 };
 
 function keysDeep(v: unknown, out: Set<string> = new Set()): Set<string> {
@@ -41,6 +43,8 @@ describe('core/assistant schemas', () => {
       'proposeSearch',
       'matchListing',
       'buildPrompt',
+      'validatePlaybookContent',
+      'storedContent',
     ] as const) {
       expect(typeof assistant[fn]).toBe('function');
     }

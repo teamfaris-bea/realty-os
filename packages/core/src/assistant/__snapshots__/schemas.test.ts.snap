@@ -55,6 +55,7 @@ exports[`core/assistant schemas > PlaybookStepSchema has no confidence fields an
       "enum": [
         "sms",
         "email",
+        "inbound_channel",
       ],
       "type": "string",
     },
@@ -122,6 +123,9 @@ exports[`core/assistant schemas > PlaybookStepSchema has no confidence fields an
         "appointment_reminder",
         "deadline_reminder",
         "document_request",
+        "review_request",
+        "price_drop_alert",
+        "back_on_market_alert",
       ],
       "type": "string",
     },
@@ -148,6 +152,7 @@ exports[`core/assistant schemas > PlaybookStepSchema has no confidence fields an
       "items": {
         "enum": [
           "avm",
+          "review_requests",
         ],
         "type": "string",
       },
@@ -344,6 +349,184 @@ exports[`core/assistant schemas > ToneSchema has no confidence fields and no ten
       "type": "string",
     },
   },
+  "type": "object",
+}
+`;
+
+exports[`core/assistant schemas > TriggerStepSchema has no confidence fields and no tenant_id (snapshot) > TriggerStepSchema 1`] = `
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "category": {
+      "enum": [
+        "speed_to_lead_reply",
+        "reminder",
+        "booking_confirmation",
+        "document_chase",
+        "nurture_step",
+        "search_alert",
+      ],
+      "type": "string",
+    },
+    "channel": {
+      "enum": [
+        "sms",
+        "email",
+      ],
+      "type": "string",
+    },
+    "intent": {
+      "enum": [
+        "first_response_qualify",
+        "check_in",
+        "market_update",
+        "listing_suggestion",
+        "search_alert",
+        "home_anniversary",
+        "home_value_update",
+        "referral_ask",
+        "holiday_greeting",
+        "appointment_confirmation",
+        "appointment_reminder",
+        "deadline_reminder",
+        "document_request",
+        "review_request",
+        "price_drop_alert",
+        "back_on_market_alert",
+      ],
+      "type": "string",
+    },
+    "maxLength": {
+      "maximum": 10000,
+      "minimum": 20,
+      "type": "integer",
+    },
+    "offsetSeconds": {
+      "maximum": 5184000,
+      "minimum": -5184000,
+      "type": "integer",
+    },
+    "purpose": {
+      "enum": [
+        "marketing",
+        "informational",
+      ],
+      "type": "string",
+    },
+    "slots": {
+      "items": {
+        "enum": [
+          "first_name",
+          "agent_first_name",
+          "team_name",
+          "brokerage_name",
+          "inquiry_property",
+          "listing_address",
+          "listing_price",
+          "listing_url",
+          "search_name",
+          "match_count",
+          "appointment_time",
+          "appointment_place",
+          "document_name",
+          "due_date",
+          "home_years",
+          "va_question",
+        ],
+        "type": "string",
+      },
+      "maxItems": 16,
+      "type": "array",
+    },
+    "stepKey": {
+      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+      "type": "string",
+    },
+    "subject": {
+      "maxLength": 200,
+      "minLength": 1,
+      "type": "string",
+    },
+    "template": {
+      "maxLength": 4000,
+      "minLength": 1,
+      "type": "string",
+    },
+    "trigger": {
+      "enum": [
+        "price_drop",
+        "back_on_market",
+        "home_value",
+        "home_anniversary",
+        "deal_date_upcoming",
+      ],
+      "type": "string",
+    },
+  },
+  "required": [
+    "trigger",
+    "stepKey",
+    "channel",
+    "offsetSeconds",
+    "purpose",
+    "category",
+    "intent",
+    "template",
+    "slots",
+    "maxLength",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`core/assistant schemas > VoiceContentSchema has no confidence fields and no tenant_id (snapshot) > VoiceContentSchema 1`] = `
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "disclosure": {
+      "maxLength": 400,
+      "minLength": 20,
+      "type": "string",
+    },
+    "maxCallSeconds": {
+      "maximum": 900,
+      "minimum": 60,
+      "type": "integer",
+    },
+    "recordingAnnouncement": {
+      "maxLength": 300,
+      "minLength": 10,
+      "type": "string",
+    },
+    "tools": {
+      "items": {
+        "enum": [
+          "share_listing_facts",
+          "book_appointment",
+          "take_message",
+          "transfer_to_owner",
+        ],
+        "type": "string",
+      },
+      "maxItems": 4,
+      "minItems": 1,
+      "type": "array",
+    },
+    "transferHoldSeconds": {
+      "maximum": 60,
+      "minimum": 5,
+      "type": "integer",
+    },
+  },
+  "required": [
+    "disclosure",
+    "recordingAnnouncement",
+    "tools",
+    "maxCallSeconds",
+    "transferHoldSeconds",
+  ],
   "type": "object",
 }
 `;
