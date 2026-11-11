@@ -425,6 +425,7 @@ describe('R-PERM-1 generated can() matrix: one case per DATA_MODEL §3 cell', ()
     const notInMatrix = ACTIONS.filter((a) => !exercised.has(a));
     // Phase 2-3 actions are DATA_MODEL §8 rows (not §3); each module tests its own row.
     const PHASE_2_3: Action[] = ['integration.view', 'integration.manage'];
+    PHASE_2_3.push('template.personal', 'template.team_manage', 'bulk.run', 'bulk.assign', 'bulk.text', 'settings.batch_text'); // parity L3: DATA_MODEL §12 rows, tested in parity/bulk/authz.test.ts
     expect(notInMatrix.filter((a) => !PHASE_2_3.includes(a)).sort()).toEqual(['data.export', 'number.release', 'support.revoke', 'system.jobs', 'system.view']);
   });
 
