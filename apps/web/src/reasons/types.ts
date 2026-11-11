@@ -20,6 +20,8 @@ export interface ReachReason {
   suppressionReason: string | null;
   addressHint: string | null;
   otherAddress: boolean;
+  /** that other phone has since been removed from the person (R-PAR-12: its opt-out still blocks them) */
+  addressRemoved?: boolean;
   evidence: { consentEventId: string | null; inboundMessageId: string | null; callId: string | null; suppressionId: string | null };
 }
 

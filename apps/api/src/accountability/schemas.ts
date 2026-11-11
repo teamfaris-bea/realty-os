@@ -66,6 +66,8 @@ export const ExceptionItemSchema = z.object({
   conditionClearedAt: z.string().nullable(),
   live: z.boolean(),
   evidence: z.array(EvidenceItemSchema).min(1),
+  /** untouched_lead: whether the missed ownership period is still the lead's current one (false once it moved on) */
+  period: z.object({ current: z.boolean() }).nullable(),
   /** the contact's ownership ledger head (the reassign fence: send it back as expectedSeq) */
   contactOwnershipSeq: z.number().int().nullable(),
   latestEvent: ExceptionEventSchema.nullable(),

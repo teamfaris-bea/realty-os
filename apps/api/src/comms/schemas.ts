@@ -67,6 +67,8 @@ export const ReachReasonSchema = z.object({
   suppressionReason: z.string().nullable(),
   addressHint: z.string().nullable(),
   otherAddress: z.boolean(),
+  /** that other phone has since been removed from the person (R-PAR-12; the live summary only) */
+  addressRemoved: z.boolean(),
   evidence: z.object({ consentEventId: z.uuid().nullable(), inboundMessageId: z.uuid().nullable(), callId: z.uuid().nullable(), suppressionId: z.uuid().nullable() }),
 });
 const ChannelReachSchema = z.object({

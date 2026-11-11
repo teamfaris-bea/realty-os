@@ -203,6 +203,24 @@ export const PondCardsResponse = z.object({
   nextCursor: z.string().nullable(),
 });
 
+/** GET /me/ponds: the ponds the caller may claim from, and what blocks a claim there now (R-OWN-16). */
+export const MyPondsResponse = z.object({
+  ponds: z.array(
+    z.object({
+      id: Id,
+      name: z.string(),
+      isDefault: z.boolean(),
+      claimsPerDay: z.number().int(),
+      blockedBy: z.enum(['CLAIM_LIMIT_REACHED', 'CAPACITY_REACHED']).nullable(),
+    }),
+  ),
+  /** the caller's own claims since the tenant-local day began, out of each pond's claimsPerDay */
+  claimsToday: z.number().int(),
+  /** the caller's leads still waiting for a first touch, out of capacityCap */
+  uncontactedOwned: z.number().int(),
+  capacityCap: z.number().int(),
+});
+
 // ---- intake + lead sources ----------------------------------------------------------------------
 
 const Cents = z.number().int().min(0).max(1_000_000_000_00);
@@ -281,6 +299,7 @@ export const LEADS_RESPONSE_SCHEMAS = {
   ContactCreatedResponse,
   TimelineResponse,
   PondCardsResponse,
+  MyPondsResponse,
   IntakeResponse,
   LeadSourcesResponse,
   LeadSourceCreatedResponse,

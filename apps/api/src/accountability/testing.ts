@@ -146,7 +146,8 @@ export interface ItemT {
   ageSeconds: number;
   conditionClearedAt: string | null;
   live: boolean;
-  evidence: { sourceType: string; sourceId: string; explanation: string; snippet: string | null; needsReview: boolean; locator: Record<string, unknown> | null; link: { kind: string; id: string; contactId: string | null; offsetMs: number | null } | null }[];
+  evidence: { sourceType: string; sourceId: string; explanation: string; at?: string | null; snippet: string | null; needsReview: boolean; locator: Record<string, unknown> | null; link: { kind: string; id: string; contactId: string | null; offsetMs: number | null } | null }[];
+  period?: { current: boolean } | null;
   contactOwnershipSeq: number | null;
   latestEvent: { action: string; note: string | null; actor: { userId: string } } | null;
   actions: { resolve: boolean; reassign: boolean; verify: boolean; reopen: boolean };

@@ -22,6 +22,8 @@ export const FeedCardSchema = z.object({
   band: z.enum(['pinned', 'scored']),
   dueAt: z.string().nullable(),
   contact: z.object({ id: uuid, name: z.string() }).nullable(),
+  /** a task or promise card: the task it is about (its title is what the card asks for) */
+  task: z.object({ id: uuid, title: z.string() }).nullable(),
   reasons: z.array(Reason).min(1),
   primaryAction: OneTapActionSchema,
   alternatives: z.array(OneTapActionSchema),

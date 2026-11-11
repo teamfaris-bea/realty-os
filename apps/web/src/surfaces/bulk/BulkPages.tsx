@@ -10,6 +10,7 @@ import { useState } from 'react';
 import { Button, ButtonLink, Card, EmptyState, Notice } from '../../design/index.js';
 import { type ApiError, messageFor, useApi } from '../../shell/index.js';
 import { BULK_ERROR_MESSAGES, BULK_KEY, type BulkActionView, type BulkKind, KIND_WORDS, reasonWords } from './api.js';
+import { readableMergeFields } from '../templates/api.js';
 import { BulkActionSheet } from './BulkActionSheet.js';
 
 const STATUS_WORDS: Record<BulkActionView['status'], string> = {
@@ -111,8 +112,8 @@ export function BulkDetailPage() {
         {a.body ? (
           <details className="text-[15px] text-ink">
             <summary className="min-h-tap cursor-pointer py-2 font-medium text-accent">The message</summary>
-            {a.subject ? <p className="font-semibold [overflow-wrap:anywhere]">{a.subject}</p> : null}
-            <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{a.body}</p>
+            {a.subject ? <p className="font-semibold [overflow-wrap:anywhere]">{readableMergeFields(a.subject)}</p> : null}
+            <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{readableMergeFields(a.body)}</p>
           </details>
         ) : null}
         {error ? <Notice tone="error">{error}</Notice> : null}

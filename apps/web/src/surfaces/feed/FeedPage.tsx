@@ -18,7 +18,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Card, EmptyState, Notice, Ratio, useCountdownAnnouncement } from '../../design/index.js';
-import { type ApiError, messageFor, useApi } from '../../shell/index.js';
+import { ApiError, messageFor, useApi } from '../../shell/index.js';
 import { ReachabilityBatch } from '../../reasons/index.js';
 import { ActionButton } from './ActionButton.js';
 import { AgentSheetsProvider, useAgentSheets } from './lib/AgentSheets.js';
@@ -33,7 +33,12 @@ export function useFeed() {
   const api = useApi();
   return useQuery<FeedResponse, ApiError>({
     queryKey: FEED_KEY,
-    queryFn: ({ signal }) => api.get<FeedResponse>('/feed', { signal }),
+    // never resolves without a feed (react-query refuses undefined data): an empty or malformed answer is an error
+    queryFn: async ({ signal }) => {
+      const r = await api.get<FeedResponse | undefined>('/feed', { signal });
+      if (!r || !Array.isArray(r.pinned) || !Array.isArray(r.scored)) throw new ApiError('BAD_RESPONSE', 200);
+      return r;
+    },
     refetchInterval: 30_000,
     staleTime: 10_000,
   });
@@ -149,6 +154,9 @@ export function FeedCardView({ card, pinned }: { card: FeedCard; pinned: boolean
   const isOffer = card.itemType === 'lead_offer';
   const expired = isOffer && card.dueAt !== null && Date.parse(card.dueAt) <= now;
   const lead = card.reasons[0];
+  // a task or promise card is about the task: its title is said on the card (journey copy bug: a task card
+  // named only the person and "Due today", never what to do)
+  const taskTitle = card.task?.title.trim() ? card.task.title : null;
   const titleId = `${whyId}-title`;
   // a card whose one tap IS its details shows them in the same panel, under its own name
   const detailsFirst = card.primaryAction.kind === 'show_details';
@@ -165,10 +173,11 @@ export function FeedCardView({ card, pinned }: { card: FeedCard; pinned: boolean
                 {card.contact.name}
               </Link>
             ) : (
-              (lead?.label ?? itemLabel(card.itemType))
+              (taskTitle ?? lead?.label ?? itemLabel(card.itemType))
             )}
           </h3>
-          {lead && card.contact && lead.label !== itemLabel(card.itemType) ? <p className="text-[15px] text-ink">{lead.label}</p> : null}
+          {taskTitle !== null && card.contact ? <p className="break-words text-[16px] font-medium text-ink">{taskTitle}</p> : null}
+          {lead && (card.contact || taskTitle !== null) && lead.label !== itemLabel(card.itemType) ? <p className="text-[15px] text-ink">{lead.label}</p> : null}
         </div>
         {pinned && card.dueAt ? <Countdown dueAt={card.dueAt} kind={isOffer ? 'offer' : 'deadline'} label={countdownLabel(card)} /> : null}
       </div>

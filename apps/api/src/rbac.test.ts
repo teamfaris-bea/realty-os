@@ -215,6 +215,8 @@ describe('route table', () => {
         "DELETE /api/push-subscriptions/:id → self",
         "POST /api/me/alert-phone → self",
         "POST /api/me/alert-phone/verify → self",
+        "GET /api/me/ponds → self",
+        "HEAD /api/me/ponds → self",
       ]
     `);
   });

@@ -85,7 +85,16 @@ export const ContactEditView = z.object({
 });
 export const ContactEditResponse = z.object({ contact: ContactEditView, changed: z.array(z.string()) });
 
-export const PointDetail = z.object({ id: Id, kind: z.enum(['phone', 'email']), address: z.string(), label: z.string(), status: z.string(), isPrimary: z.boolean() });
+export const PointDetail = z.object({
+  id: Id,
+  kind: z.enum(['phone', 'email']),
+  address: z.string(),
+  label: z.string(),
+  status: z.string(),
+  isPrimary: z.boolean(),
+  /** the remove route would accept reason wrong_number: the consent ledger holds a wrong-number report for it (R-PAR-12) */
+  wrongNumberReported: z.boolean(),
+});
 /** A removed point shows only its last digits/characters and why it still blocks (R-PAR-12). */
 export const RemovedPointView = z.object({ id: Id, kind: z.enum(['phone', 'email']), tail: z.string(), reason: z.string().nullable(), stillBlocks: z.boolean(), optedOut: z.boolean(), removedAt: Iso });
 export const DuplicateWarning = z.object({ contactId: Id.nullable(), ownerDisplayName: z.string().nullable() });

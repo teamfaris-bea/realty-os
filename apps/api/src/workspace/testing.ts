@@ -44,6 +44,8 @@ export interface FeedCardT {
   primaryAction: { kind: string; label: string; [k: string]: unknown };
   alternatives: { kind: string; [k: string]: unknown }[];
   subjectId: string;
+  /** a task or promise card: the task's own title */
+  task?: { id: string; title: string } | null;
 }
 
 export async function feedOf(c: TestClient): Promise<{ pinned: FeedCardT[]; scored: FeedCardT[]; total: number; all: FeedCardT[] }> {

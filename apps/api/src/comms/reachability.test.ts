@@ -44,6 +44,7 @@ interface Reason {
   suppressionReason: string | null;
   addressHint: string | null;
   otherAddress: boolean;
+  addressRemoved: boolean;
   evidence: { consentEventId: string | null; inboundMessageId: string | null; callId: string | null; suppressionId: string | null };
 }
 interface ChannelReach {
@@ -125,7 +126,7 @@ describe('reachability summary agrees with the send-time gate', () => {
     expect(r.channels.sms.blocked).toBe(true);
     expect(r.channels.sms.reasons).toHaveLength(1);
     const why = r.channels.sms.reasons[0]!;
-    expect(why).toMatchObject({ code: 'CONSENT_REVOKED', source: 'keyword', keyword: 'STOP', otherAddress: false, recordedBy: null, addressHint: `•••-•••-${mobile.slice(-4)}` });
+    expect(why).toMatchObject({ code: 'CONSENT_REVOKED', source: 'keyword', keyword: 'STOP', otherAddress: false, addressRemoved: false, recordedBy: null, addressHint: `•••-•••-${mobile.slice(-4)}` });
     expect(why.purposes.sort()).toEqual(['informational', 'marketing']);
     expect(why.evidence.inboundMessageId).toBe(inbound);
     expect(why.evidence.consentEventId).toMatch(/^[0-9a-f-]{36}$/);
@@ -147,7 +148,7 @@ describe('reachability summary agrees with the send-time gate', () => {
     expect(rev.status).toBe(200);
     const r = await expectAgrees(agent, id);
     expect(r.channels.voice.blocked).toBe(true);
-    expect(r.channels.voice.reasons[0]).toMatchObject({ code: 'CONSENT_REVOKED', source: 'agent_recorded', recordedBy: { userId: agent.userId }, otherAddress: true });
+    expect(r.channels.voice.reasons[0]).toMatchObject({ code: 'CONSENT_REVOKED', source: 'agent_recorded', recordedBy: { userId: agent.userId }, otherAddress: true, addressRemoved: false });
     expect(r.channels.voice.reasons[0]!.recordedBy!.displayName).toEqual(expect.any(String));
     expect(r.channels.sms.blocked).toBe(false);
     expect(r.channels.email.hasAddress).toBe(false);
@@ -165,7 +166,8 @@ describe('reachability summary agrees with the send-time gate', () => {
     const r = await expectAgrees(agent, id);
     expect(r.channels.sms.blocked).toBe(true);
     expect(r.channels.sms.points.map((p) => p.addressHint)).toEqual([`•••-•••-${work.slice(-4)}`]);
-    expect(r.channels.sms.reasons).toEqual([expect.objectContaining({ code: 'CONSENT_REVOKED', source: 'keyword', keyword: 'STOP', otherAddress: true, addressHint: `•••-•••-${mobile.slice(-4)}` })]);
+    // and says that number was removed (the page lists only the live phone): "(removed number)"
+    expect(r.channels.sms.reasons).toEqual([expect.objectContaining({ code: 'CONSENT_REVOKED', source: 'keyword', keyword: 'STOP', otherAddress: true, addressRemoved: true, addressHint: `•••-•••-${mobile.slice(-4)}` })]);
     expect(r.channels.voice.blocked).toBe(false);
     expect(r.channels.email.blocked).toBe(false);
   });

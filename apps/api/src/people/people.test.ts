@@ -189,9 +189,15 @@ describe('points (R-PAR-11, R-PAR-12, R-PAR-44)', () => {
 
   it('R-PAR-12 E169 removing as a wrong number needs the ledger record; old/replaced removals keep blocking', async () => {
     const id = await own(agent);
-    const p0 = (await call<{ points: { id: string }[] }>(agent, 'GET', `/contacts/${id}/points`)).body.points[0]!;
+    const p0 = (await call<{ points: { id: string; wrongNumberReported: boolean }[] }>(agent, 'GET', `/contacts/${id}/points`)).body.points[0]!;
+    // the point says the route would refuse it (nothing on the ledger), so the page offers no "wrong number"
+    expect(p0.wrongNumberReported).toBe(false);
     const r = await call(agent, 'POST', `/contacts/${id}/points/${p0.id}/remove`, { reason: 'wrong_number' });
     expect(r.code).toBe('WRONG_NUMBER_NOT_RECORDED');
+    // a status alone is not proof: the flag follows the ledger, not the point's status
+    await h.su.query("UPDATE contact_points SET status = 'wrong_number' WHERE id = $1", [p0.id]);
+    expect((await call<{ points: { wrongNumberReported: boolean }[] }>(agent, 'GET', `/contacts/${id}/points`)).body.points[0]!.wrongNumberReported).toBe(false);
+    expect((await call(agent, 'POST', `/contacts/${id}/points/${p0.id}/remove`, { reason: 'wrong_number' })).code).toBe('WRONG_NUMBER_NOT_RECORDED');
     const ok = await call<{ points: unknown[]; removed: { reason: string; stillBlocks: boolean }[] }>(agent, 'POST', `/contacts/${id}/points/${p0.id}/remove`, { reason: 'old' });
     expect(ok.status).toBe(200);
     expect(ok.body.removed).toEqual([expect.objectContaining({ reason: 'old', stillBlocks: true })]);

@@ -54,6 +54,13 @@
 // feed_select), and core keeps only inputs owned by the user, so after a reassignment the previous
 // owner's stale cards disappear at once, and the new owner's appear on their next refresh.
 //
+// Pond leads (R-OWN-16, R-PERM-6; journey bug "agents never saw a pond lead"): a "New in the pond" card for each
+// lead that entered, within 24 h, a pond the member may claim from, unless they are in claim cooldown on it
+// (repos/feedInputs.ts; migration pond_leads_feed marks every such member when a lead enters or leaves a pond).
+// The member's own running totals (claims today, uncontacted leads) hide the cards of the ponds they block when
+// the feed is READ (leads/claimable.ts): they change with the member's other leads and the day, so they are never
+// stored. A pond card names the lead by first name and last initial, like the Pond page.
+//
 // The response carries no score: the reasons explain the order (A2 honesty; no numbers that pretend
 // precision). Pinned cards are live deadlines and close only by acting on them (FEED_ITEM_PINNED).
 import {
@@ -72,6 +79,8 @@ import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 import type { EnvelopeService } from '../crypto/envelope.js';
 import { AppError } from '../errors.js';
+import { blockedPondIds, claimStatus } from '../leads/claimable.js';
+import { maskLastName } from '../leads/views.js';
 import { type FeedScope, loadFeedInputsScoped } from './repos/feedInputs.js';
 
 /** What a refresh needs besides the transaction: transcript evidence is encrypted; row ids are UUIDv7. */
@@ -102,6 +111,7 @@ const MANAGED_KEY = [
   /^deal_date:[0-9a-f-]{36}$/,
   /^appt_outcome:[0-9a-f-]{36}$/,
   /^saved_search:[0-9a-f-]{36}$/,
+  /^pond_new:[^:]+:\d+$/,
   // superseded keys of api/comms and api/assistant
   /^inbound:[0-9a-f-]{36}$/,
   /^missed_call:[0-9a-f-]{36}$/,
@@ -118,6 +128,8 @@ export interface FeedCard {
   band: 'pinned' | 'scored';
   dueAt: string | null;
   contact: { id: string; name: string } | null;
+  /** a task or promise card: the task's own title (the card is about it, not only its person) */
+  task: { id: string; title: string } | null;
   reasons: { code: string; label: string }[];
   primaryAction: OneTapAction;
   alternatives: OneTapAction[];
@@ -479,7 +491,14 @@ export function foreignActions(r: ForeignRow): { primaryAction: OneTapAction; al
 /** The managed key families as one SQL regular expression (the read path skips managed rows not yet materialized). */
 const MANAGED_KEY_SQL = `^(?:${MANAGED_KEY.map((re) => re.source.replace(/^\^/, '').replace(/\$$/, '')).join('|')})$`;
 
-type ReadRow = StoredRow & { contact_name: string | null; piece_listing_id: string | null; card: StoredCard | null };
+type ReadRow = StoredRow & {
+  contact_name: string | null;
+  contact_first_name: string | null;
+  contact_last_name: string | null;
+  piece_listing_id: string | null;
+  task_title: string | null;
+  card: StoredCard | null;
+};
 
 /**
  * GET /feed: bring the materialized feed up to `now` (materializeFeed), then read the top cards in feed order
@@ -530,38 +549,61 @@ function scopeKeys(scope: FeedScope): string[] {
   return [...scope.taskIds.map((id) => `task:${id}`), ...scope.appointmentIds.map((id) => `appt_outcome:${id}`), ...scope.dealDateIds.map((id) => `deal_date:${id}`)];
 }
 
+/**
+ * Pond cards (R-OWN-16) the member may not act on now: the cards of the ponds where their own running totals
+ * (claims today against the pond's limit, uncontacted leads against the capacity cap) block a claim. Read with the
+ * feed, never stored (leads/claimable.ts). Skipped when the member holds no open pond card.
+ */
+async function hiddenPondIds(tx: Tx, actor: UserActor, now: Instant): Promise<string[]> {
+  const open = await sql<{ n: number }>`
+    SELECT count(*)::int AS n FROM priority_feed_items
+     WHERE tenant_id = app.tenant_id() AND user_id = ${actor.userId} AND state = 'open' AND item_type = 'pond_new'`.execute(tx);
+  if ((open.rows[0]?.n ?? 0) === 0) return [];
+  return blockedPondIds(await claimStatus(tx, actor, now));
+}
+
 /** The feed as stored: the top cards in feed order with their wording for `now` (no re-scoring). */
 export async function readFeed(tx: Tx, actor: UserActor, now: Instant): Promise<FeedView> {
   const base = shownCards(actor.userId);
+  const hidden = await hiddenPondIds(tx, actor, now);
+  const pondHidden = sql`(f.item_type = 'pond_new' AND (f.card->'primaryAction'->>'pondId') = ANY (${hidden}::text[]))`;
+  const shown = hidden.length > 0 ? sql`${base} AND NOT ${pondHidden}` : base;
   const cols = sql`f.id, f.item_type, f.band, f.contact_id, f.subject_type, f.subject_id, f.assistant_action_id, f.due_at, f.score, f.reasons,
-           f.dedupe_key, f.created_at, f.card, c.display_name AS contact_name,
+           f.dedupe_key, f.created_at, f.card, c.display_name AS contact_name, c.first_name AS contact_first_name, c.last_name AS contact_last_name,
            (SELECT mp.listing_id FROM marketing_pieces mp WHERE f.item_type = 'marketing_review' AND mp.tenant_id = f.tenant_id
-                AND mp.id::text = split_part(f.dedupe_key, ':', 2)) AS piece_listing_id`;
+                AND mp.id::text = split_part(f.dedupe_key, ':', 2)) AS piece_listing_id,
+           (SELECT t.title FROM tasks t WHERE f.subject_type = 'task' AND t.tenant_id = f.tenant_id AND t.id = f.subject_id) AS task_title`;
   // The feed order is an index order (migration feed_incremental): read it and stop at the limit. Under RLS the
   // planner cannot estimate the policy's filter and may prefer reading every open card and sorting them
   // (measured: 4,787 cards, 0.5 s, against 16 ms); sorting is switched off for these two statements only.
   await sql`SELECT set_config('enable_sort', 'off', true)`.execute(tx);
-  const pinned = await sql<ReadRow>`SELECT ${cols} ${base} AND f.band = 'pinned'
+  const pinned = await sql<ReadRow>`SELECT ${cols} ${shown} AND f.band = 'pinned'
      ORDER BY f.due_at ASC NULLS LAST, f.score DESC, f.sort_at, f.dedupe_key COLLATE "C" LIMIT ${FEED_LIMIT}`.execute(tx);
   const room = FEED_LIMIT - pinned.rows.length;
   const scored = room > 0
-    ? await sql<ReadRow>`SELECT ${cols} ${base} AND f.band = 'scored'
+    ? await sql<ReadRow>`SELECT ${cols} ${shown} AND f.band = 'scored'
        ORDER BY f.score DESC, f.due_at ASC NULLS LAST, f.sort_at, f.dedupe_key COLLATE "C" LIMIT ${room}`.execute(tx)
     : { rows: [] as ReadRow[] };
   await sql`SELECT set_config('enable_sort', 'on', true)`.execute(tx);
   // total: the materialized cards as counted per group when each was last scored (under the member's RLS),
-  // plus the few open cards other modules wrote, counted now
+  // plus the few open cards other modules wrote, counted now, less the pond cards the member's totals hide now
   const total = await sql<{ n: number }>`
     SELECT ((SELECT COALESCE(sum(n_open), 0) FROM feed_groups WHERE tenant_id = app.tenant_id() AND user_id = ${actor.userId})
-          + (SELECT count(*) ${base} AND f.card IS NULL))::int AS n`.execute(tx);
+          + (SELECT count(*) ${base} AND f.card IS NULL)
+          - ${hidden.length > 0 ? sql`(SELECT count(*) ${base} AND f.card IS NOT NULL AND ${pondHidden})` : sql`0`})::int AS n`.execute(tx);
   const card = (row: ReadRow): FeedCard => {
     const actions = row.card ? { primaryAction: row.card.primaryAction, alternatives: row.card.alternatives } : foreignActions(row);
+    // R-PERM-6: a pond card names the lead by first name and last initial, whoever reads it (as GET /ponds/:id/cards)
+    const name = row.item_type === 'pond_new' && row.contact_name !== null
+      ? maskLastName({ first_name: row.contact_first_name, last_name: row.contact_last_name, display_name: row.contact_name })
+      : row.contact_name;
     return {
       id: row.id,
       itemType: row.item_type,
       band: row.band,
       dueAt: row.due_at ? iso(row.due_at) : null,
-      contact: row.contact_id && row.contact_name ? { id: row.contact_id, name: row.contact_name } : null,
+      contact: row.contact_id && name ? { id: row.contact_id, name } : null,
+      task: row.subject_type === 'task' && row.task_title !== null ? { id: row.subject_id, title: row.task_title } : null,
       reasons: row.card ? row.card.reasons.map((r) => ({ code: r.code, label: renderFeedLabel(r.label, now) })) : reasonsOf(row.reasons),
       ...actions,
       subjectType: row.subject_type,

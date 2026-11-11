@@ -60,6 +60,23 @@ describe('Thread', () => {
     expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages/preview`).at(-1)!.body).toEqual({ channel: 'sms', body: 'Hello' });
   });
 
+  it('the box shows the text exactly as it will go out when the send adds to it (the brokerage line on a marketing text); nothing extra when it is the typed text', async () => {
+    let reply = 'Open house Saturday!\n— Harbor Realty LLC';
+    const fake = threadFake().on(`POST /contacts/${IDS.jane}/messages/preview`, () => ({ status: 200, body: { decision: decision({ id: null, phase: 'preview' }), body: reply } }));
+    agentApp(fake, `/contacts/${IDS.jane}/thread?compose=sms`);
+    const box = await screen.findByRole('textbox', { name: 'Text message' });
+    await user().type(box, 'Open house Saturday!');
+    const final = await screen.findByRole('figure', { name: 'What Jane will get' });
+    // exactly the server's rendering, line break and brokerage line included
+    expect(final.querySelector('p')!.textContent).toBe('Open house Saturday!\n— Harbor Realty LLC');
+    // an informational text goes out as typed: nothing extra is shown
+    reply = 'See you at 11';
+    await user().clear(box);
+    await user().type(box, 'See you at 11');
+    await waitFor(() => expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages/preview`).at(-1)!.body).toEqual({ channel: 'sms', body: 'See you at 11' }));
+    await waitFor(() => expect(screen.queryByRole('figure', { name: 'What Jane will get' })).toBeNull());
+  });
+
   it('R-CONSENT-7: an opt-out is said as soon as the box opens, in exact words, from the reachability summary (no stand-in preview); Send stays disabled for that channel', async () => {
     const fake = threadFake().on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: reachability(IDS.jane, { sms: [stopReason()] }) } });
     agentApp(fake, `/contacts/${IDS.jane}/thread?compose=sms`);

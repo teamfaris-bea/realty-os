@@ -403,6 +403,15 @@ cap that bounded the per-request recompute). It now considers every unanswered c
 For a book with more than 300 unanswered messages, the oldest waiting clients now appear in the top 50 and in the
 total. Books under the cap are unchanged.
 
+**Pond leads (migration `pond_leads_feed`, lead-journey fixes).** The feed now holds the "New in the pond" cards of the
+ponds a member may claim from (docs/ARCHITECTURE.md §14). The inputs read only the pond entries of the 24 h card window
+(the ledger's type-and-time index) or the dirty groups' own contacts, through `app.my_pond_leads`; a lead entering or
+leaving a pond marks the members eligible for it (a large pond means one mark per eligible member per entry or exit).
+The per-member claim totals are applied at read time: GET first counts the member's own open pond cards (index
+`feed_items_pond_open_idx`) and, only when there is one, reads the member's claim totals (the same `app.claim_stats`
+a claim reads). Not re-measured at 250k: the change adds one indexed read to the inputs and one or two small reads to
+GET, and the incremental-equals-full proof covers its correctness.
+
 ### 7.2 Merge review fixes (migration `scale_review_fixes`)
 
 The review of this lane against main's FUB parity code (docs/SECURITY.md §6.6) changed five things that bear on speed.

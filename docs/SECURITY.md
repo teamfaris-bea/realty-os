@@ -533,3 +533,46 @@ wrong count, or adds a missing mark, and each is proved by a test that fails wit
 **Left as found.** `mail_messages_select` (D2) has the same per-row shape as the five parity policies; it has no read
 route yet, and the pending D2 review migration both reorders it and pins its text in its smoke test, so it is not
 rewritten here.
+
+### 6.7 Pond leads in the feed (migration `pond_leads_feed`, lead-journey fixes)
+
+**What changed.** A pond lead reaches the members allowed to claim it on Home and on the Pond page (docs/ARCHITECTURE.md
+§14 "Pond leads"). Before, the feed was built with no pond leads at all, so nobody saw one outside the Pond page.
+
+- **One new definer, `app.my_pond_leads(since, ids)`** (owner `app_definer`, `search_path = pg_catalog, public`,
+  STABLE, EXECUTE revoked from PUBLIC and granted to `app_user`; every table schema-qualified, so the
+  `schema_invariants` scan covers it). A pond card's viewer may not read the lead's ownership ledger (R-PERM-6: the
+  history stays hidden), so the function reads exactly the facts the card needs and nothing else. It returns rows only
+  for the CALLER's own claimable ponds (`app.my_pond_ids()`: an active membership whose role is one of the pond's
+  eligible roles, a pond open to all or naming them, not archived, `claims_per_day > 0`); an Owner/Admin, a TC, the
+  system actor or a support actor gets nothing. Per lead it returns: when it entered its pond, that event's ledger seq
+  (the card's per-occurrence key; never serialized), whether an import put it there, and when the caller's OWN claim
+  cooldown on it ends (the caller's own release or loss; the claim route already answers `CLAIM_COOLDOWN` for it).
+  Never a name, an address or another member's id. With both arguments NULL it returns nothing (no whole-pond scan).
+  The migration's self-check asserts the owner, the pinned path, STABLE, the grants, that `app.feed_*` stay
+  invokers and name `public.feed_dirty`, and that the pond marks exist.
+- **Who sees a card is never wider than who may claim.** Per-lead rules (eligibility, claims allowed, cooldown) are
+  applied when the card is stored; per-member totals (claims today, the capacity cap) when the feed is read, so a
+  member over a limit sees no claim card. The claim itself is unchanged: the ownership engine re-checks every rule
+  under the contact lock, so exactly one claimer wins (R-OWN-16), and a stored card can never make a claim succeed.
+  Names are masked on the card as on every pond card (`maskLastName`, R-PERM-6). `feed_select` (own cards, contact
+  visible) still hides a card the moment the contact leaves the member's view.
+- **Marks** (still SECURITY INVOKER, schema-qualified): a lead entering, leaving or moving between ponds marks the
+  members eligible for the old and the new pond; a `ponds` settings change and a `pond_members` insert or delete mark
+  the affected members `'!full'`. A mark only causes a re-score of the marked member's own data under that member's
+  own RLS.
+- **No policy changes.** GET /me/ponds (auth `self`) lists the caller's own claimable ponds with the reason a claim
+  would be refused now (claims today, capacity), from the caller's own counters.
+
+**Proof.** `apps/api/src/workspace/pond.feed.test.ts` (a released lead reaches every member who may claim it, as a
+masked card; never the releaser in cooldown, a TC, the Owner or an Admin; a members-only pond reaches only its
+members; the first claim wins and the other cards go at once; a member over the day's claim limit or the capacity cap
+gets no card until under it, and GET /me/ponds says why; the definer answers only the caller: a TC, the Owner, the
+system and another tenant get nothing);
+`apps/api/src/load/feed_incremental.test.ts` (incremental equals full with pond entries, exits, claims, releases and
+cooldowns in the random sequences, plus a deterministic pond-marks test that fails without the exit marks).
+
+**Wrong-number removal (R-PAR-12).** The person's edit sheet offers "Remove as a wrong number" only on a point whose
+consent ledger holds a `wrong_number` revoke (the remove route's own test, `GET /contacts/:id/points`
+`wrongNumberReported`); everywhere else it says why it is not offered. What such a removal does to the person's other
+phones is unchanged (journey J3.4 stays open: lifting a copied opt-out is an owner/counsel decision).

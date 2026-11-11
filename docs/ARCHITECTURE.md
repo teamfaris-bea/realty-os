@@ -451,10 +451,28 @@ connection/export test (counts only — no promises before this) → snapshot (e
     (`feed_groups.check_at`) has come, as the member under their own RLS, then reads the top 50 in index order.
     Relative-time wording is stored as a template and rendered at read time.
   - **Background.** `feed.materialize` keeps feeds current and runs an hourly full reconcile per member.
+  - **Pond leads (migration `0038_pond_leads_feed.sql`; journey J2).** A lead that enters a pond reaches exactly
+    the members allowed to claim it, on Home (a `pond_new` card, key `pond_new:{contact}:{entry seq}`, for 24 h
+    after the entry) and on the Pond page. The per-lead rules are stored with the card: the member's pond
+    eligibility (`app.my_pond_ids()`: an active membership, the pond's `eligible_roles`, open to all or a pond
+    member; the TL sees every pond but claims only where eligible), the pond's `claims_per_day > 0`, and the
+    member's own cooldown on a lead they lost (`claim_cooldown_hours` after their release/auto-release/reassign
+    away). The cooldown end is stored as the group's next change instant, so the card appears when it ends. The
+    per-member totals (claims made today against `claims_per_day`, uncontacted owned leads against the capacity
+    cap) change with every claim anywhere in the pond, so they are applied when the feed is read, never stored:
+    a member over a limit sees no claim card, and the Pond page (GET /me/ponds) says which limit. Facts come from
+    the definer `app.my_pond_leads(since, ids)`, which returns the CALLER's claimable pond leads only (docs/SECURITY.md
+    §6.1); names on the card are masked as on every pond card (R-PERM-6). Imported pond entries get no card. The
+    claim itself is unchanged: the ownership engine re-checks every rule under the contact lock, and exactly one
+    claimer wins (R-OWN-16).
+  - **Pond marks.** `app.feed_mark_contacts()` also marks, for a contact entering or leaving a pond (or moving
+    between ponds), every member eligible for the old or the new pond; triggers on `ponds` (settings) and
+    `pond_members` (membership) mark the members they can change. The incremental-equals-full test runs with pond
+    entries, exits, claims, releases and cooldowns in its random sequences.
   - **Proof.** Equality with a full recompute: `apps/api/src/load/feed_incremental.test.ts`
     (docs/PERFORMANCE.md §7.1).
 - **Team Lead live exception queue (A5).** `core.accountability.deriveExceptions(snapshot, now)` is pure and deterministic. It upserts `exception_items` by `dedupe_key` and sets `condition_cleared_at` when the condition goes away. Keys are **per occurrence**, so an earlier resolution can never cover a new miss. The types and their keys are:
-  - `untouched_lead` (`untouched:{contact}:{ownership_period_seq}`): an ownership period that started an SLA and had no human touch by its `first_touch_due_at`. It is derived from the **ledger** (`v_speed_to_lead`), not the current projection, so auto-release does not erase the miss. The item's owner is the agent who missed.
+  - `untouched_lead` (`untouched:{contact}:{ownership_period_seq}`): an ownership period that started an SLA and had no human touch by its `first_touch_due_at`. It is derived from the **ledger** (`v_speed_to_lead`), not the current projection, so auto-release does not erase the miss. The item's owner is the agent who missed. Its evidence is that period's own facts only, labelled as that owner's period (an earlier owner's period after a reassign says so). Calls and meetings logged in the period (R-PAR-30) are shown as context ("Logged by …: outgoing call, talked (context only; not a first contact)"), read under the viewer's rights; they never satisfy or delay the first touch (R-PAR-32).
   - `overdue_promise` (`promise:{task}`): a promise task, extracted with evidence, past due and open.
   - `failed_send` (`send:{message}`): blocked, failed, undelivered, bounced, unknown for more than 10 min, or stuck dispatching for more than 20 min.
   - `missing_outcome` (`appt:{appointment}`): a consult or appointment that ended more than 2 h ago with no outcome logged.

@@ -1,0 +1,131 @@
+// J1 — intake to follow-up, against the REAL API (journeys/stack.ts: a fresh Postgres database, RLS-bound
+// app_user, fake providers only), on the phone (iPhone 13, 390×844) and desktop (1440×900) projects, so
+// the agent part runs once on each:
+//   a lead arrives through the signed lead-source webhook (the supported intake path; there is no lead-
+//   email intake to drive, see the lane report) → routing offers it to one agent (round robin) → the agent
+//   accepts from the Home feed card → the first text goes out through the fake telephony provider and is
+//   recorded as the period's first touch BEFORE its first-touch deadline → the client replies through the
+//   signed inbound webhook → the agent answers from the client's feed card → adds a follow-up task on the
+//   person's page → the client's feed card closes.
+// Every step is checked in the database (ownership projection + ledger, messages, tasks, feed rows) and in
+// the fake provider's record of sends, not only on screen.
+import { expect, test } from 'playwright/test';
+import { feedCard, isPhone, pollSends, pollSql, shot, signIn, tap, toast } from './helpers.js';
+import { type JourneyStack, type WorldInfo, startJourneyStack } from './stack.js';
+
+test.describe.configure({ mode: 'serial' });
+
+let stack: JourneyStack;
+let w: WorldInfo;
+
+test.beforeAll(async () => {
+  test.setTimeout(300_000);
+  stack = await startJourneyStack();
+  w = await stack.world({ agents: 2 });
+});
+test.afterAll(async () => {
+  await stack?.stop();
+});
+
+test('J1: a webhook lead is offered, accepted on this device, answered within its first-touch window, replied to, followed up, and its card closes', async ({ page }, info) => {
+  test.setTimeout(180_000);
+  const tag = info.project.name === 'phone' ? 'Phone' : 'Desk';
+  const name = `Priya ${tag}`;
+  const { phone, email } = await stack.fixture<{ phone: string; email: string }>('/phone');
+
+  // 1. intake: the signed webhook creates the person and routing offers it to one agent
+  const intake = await stack.fixture<{ status: number; body: { contactId: string; outcome: string } }>('/intake', { body: { fullName: name, phones: [phone], emails: [email], message: 'Is 12 Oak St still available?', propertyText: '12 Oak St', postalCode: '94610' } });
+  expect(intake.status).toBe(201);
+  const contactId = intake.body.contactId;
+  const [offered] = await stack.sql<{ ownership_state: string; offered_to_user_id: string; offer_expires_at: string }>('SELECT ownership_state, offered_to_user_id, offer_expires_at FROM contacts WHERE id = $1', [contactId]);
+  expect(offered!.ownership_state).toBe('offered');
+  const agent = w.agents.find((a) => a.userId === offered!.offered_to_user_id);
+  expect(agent, 'offered to one of the routing rule agents').toBeTruthy();
+
+  // 2. the agent accepts from the Due now band (1 tap)
+  await signIn(page, stack, agent!);
+  const card = feedCard(page, name);
+  await expect(card).toBeVisible({ timeout: 15_000 });
+  await expect(card.getByRole('timer')).toHaveText(/left$/);
+  await shot(page, info, 'j1', '1-offer');
+  const accept = { taps: 0 };
+  await tap(page, card.getByRole('button', { name: 'Accept' }), accept);
+  await expect(toast(page).getByText(`${name} is yours now.`)).toBeVisible({ timeout: 15_000 });
+  expect(accept.taps).toBe(1);
+  const [owned] = await stack.sql<{ ownership_state: string; owner_user_id: string; first_touch_due_at: string | null }>('SELECT ownership_state, owner_user_id, first_touch_due_at FROM contacts WHERE id = $1', [contactId]);
+  expect(owned).toMatchObject({ ownership_state: 'owned', owner_user_id: agent!.userId });
+  expect(owned!.first_touch_due_at, 'an accepted lead carries a first-touch deadline').not.toBeNull();
+  const ledger = await stack.sql<{ type: string; actor_user_id: string | null }>('SELECT type, actor_user_id FROM lead_ownership_events WHERE contact_id = $1 ORDER BY seq', [contactId]);
+  expect(ledger.map((e) => e.type)).toEqual(expect.arrayContaining(['offered', 'offer_accepted']));
+  expect(ledger.find((e) => e.type === 'offer_accepted')!.actor_user_id).toBe(agent!.userId);
+
+  // 3. the first response: Text from the card, through the fake provider, inside the first-touch window
+  const now = feedCard(page, name);
+  await tap(page, now.getByRole('button', { name: 'Text' }));
+  const box = page.getByRole('textbox', { name: 'Text message' });
+  await expect(box).toBeVisible({ timeout: 15_000 });
+  await box.fill(`Hi ${tag}, yes, 12 Oak St is available. Want to see it Saturday?`);
+  await shot(page, info, 'j1', '2-first-text');
+  await tap(page, page.getByRole('button', { name: 'Send', exact: true }));
+  await expect(toast(page).getByText(/^(Sent to Priya\.|Sending to Priya\.)$/)).toBeVisible({ timeout: 15_000 });
+  const first = await pollSends(stack, (s) => s.sms.filter((m) => m.to === phone), (m) => m.length >= 1);
+  expect(first).toHaveLength(1);
+  expect(first[0]!.from).toBe(w.mainNumber);
+  const touch = await pollSql<{ deadline_at: string | null; occurred_at: string; due: string }>(
+    stack,
+    `SELECT e.occurred_at, c.first_touch_due_at AS due FROM lead_ownership_events e JOIN contacts c ON c.id = e.contact_id WHERE e.contact_id = $1 AND e.type = 'first_touch_recorded'`,
+    [contactId],
+    (r) => r.length === 1,
+  );
+  expect(new Date(touch[0]!.occurred_at).getTime(), 'first touch before the first-touch deadline').toBeLessThan(new Date(owned!.first_touch_due_at!).getTime());
+  const breach = await stack.sql('SELECT 1 FROM lead_ownership_events WHERE contact_id = $1 AND type = $2', [contactId, 'first_touch_breached']);
+  expect(breach).toHaveLength(0);
+
+  // 4. the client replies: a card for the waiting client appears on the agent's feed
+  expect((await stack.fixture<{ status: number }>('/sms-in', { from: phone, body: 'Saturday at 11 works. Can my partner come?' })).status).toBeLessThan(300);
+  await page.goto(`${stack.webUrl}/`);
+  const waiting = feedCard(page, name);
+  await expect(waiting).toBeVisible({ timeout: 15_000 });
+  await expect(waiting.getByText('Waiting for your reply', { exact: true })).toBeVisible();
+  // the reason says the client wrote (not "Texted …", which read as if the agent had texted)
+  await expect(waiting.getByText(/^They texted .+ ago; no reply yet$/)).toBeVisible();
+  await shot(page, info, 'j1', '3-client-replied');
+
+  // 5. the agent answers from the card
+  await tap(page, waiting.getByRole('button', { name: 'Text' }));
+  await expect(box).toBeVisible({ timeout: 15_000 });
+  await box.fill('Of course, see you both at 11.');
+  await tap(page, page.getByRole('button', { name: 'Send', exact: true }));
+  await expect(toast(page).getByText(/^(Sent to Priya\.|Sending to Priya\.)$/)).toBeVisible({ timeout: 15_000 });
+  const both = await pollSends(stack, (s) => s.sms.filter((m) => m.to === phone), (m) => m.length >= 2);
+  expect(both.map((m) => m.body)).toEqual([expect.stringContaining('12 Oak St is available'), 'Of course, see you both at 11.']);
+
+  // 6. a follow-up task from the person's page
+  await page.goto(`${stack.webUrl}/contacts/${contactId}`);
+  await expect(page.getByRole('heading', { level: 1, name })).toBeVisible({ timeout: 15_000 });
+  const add = page.getByRole('button', { name: 'Add task' });
+  await add.scrollIntoViewIfNeeded();
+  await tap(page, add);
+  const dialog = page.getByRole('dialog', { name: `Task for ${name}` });
+  await dialog.getByLabel('What').fill('Confirm Saturday showing at 12 Oak St');
+  await tap(page, dialog.getByRole('button', { name: 'Add task' }));
+  await expect(page.getByTestId('people-toast').getByText('Task added')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('region', { name: 'Tasks' }).getByRole('link', { name: 'Confirm Saturday showing at 12 Oak St' })).toBeVisible({ timeout: 15_000 });
+  await shot(page, info, 'j1', '4-task-added');
+  const tasks = await pollSql<{ assignee_user_id: string; status: string }>(stack, 'SELECT assignee_user_id, status FROM tasks WHERE contact_id = $1 AND title = $2', [contactId, 'Confirm Saturday showing at 12 Oak St'], (r) => r.length === 1);
+  expect(tasks[0]).toMatchObject({ assignee_user_id: agent!.userId, status: 'open' });
+
+  // 7. the client's feed card closed: answered, and nothing about them is waiting on the feed now
+  await page.goto(`${stack.webUrl}/`);
+  await expect(page.getByRole('heading', { level: 1, name: 'Home' })).toBeVisible();
+  await page.waitForLoadState('networkidle');
+  await expect(feedCard(page, name).getByText('Waiting for your reply', { exact: true })).toHaveCount(0);
+  await shot(page, info, 'j1', '5-feed-after');
+  // exactly two texts reached the provider for this client, both from the team number; nothing else
+  const final = (await stack.sends()).sms.filter((m) => m.to === phone);
+  expect(final).toHaveLength(2);
+  if (isPhone(page)) {
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
+  }
+});

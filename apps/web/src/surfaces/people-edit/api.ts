@@ -49,6 +49,8 @@ export interface PointDetail {
   label: string;
   status: string;
   isPrimary: boolean;
+  /** the remove route would accept reason wrong_number: the consent ledger holds a wrong-number report for it (R-PAR-12) */
+  wrongNumberReported?: boolean;
 }
 export interface Details {
   contactId: string;

@@ -28,7 +28,10 @@ describe('reachSentence: the exact words for each opt-out source', () => {
   it.each<[string, Partial<ReachReason>, 'sms' | 'voice' | 'email', string]>([
     ['STOP texted', {}, 'sms', 'Texted STOP on Nov 10'],
     ['another keyword', { keyword: 'UNSUBSCRIBE' }, 'sms', 'Texted UNSUBSCRIBE on Nov 10'],
-    ['STOP from another phone', { otherAddress: true, addressHint: '•••-•••-4821' }, 'sms', 'Texted STOP from •••-•••-4821 on Nov 10'],
+    // the masked number never breaks across lines (non-breaking hyphens)
+    ['STOP from another phone', { otherAddress: true, addressHint: '•••-•••-4821' }, 'sms', 'Texted STOP from •••\u2011•••\u20114821 on Nov 10'],
+    // R-PAR-12: a phone removed from the person whose STOP still blocks them is said to be the removed number
+    ['STOP from a removed phone', { otherAddress: true, addressRemoved: true, addressHint: '•••-•••-7385' }, 'sms', 'Texted STOP from •••\u2011•••\u20117385 (removed number) on Nov 10'],
     ['email unsubscribe (marketing)', { source: 'unsubscribe', keyword: null, purposes: ['marketing'], at: OCT3 }, 'email', 'Unsubscribed from marketing email on Oct 3'],
     ['email unsubscribe (all)', { source: 'unsubscribe', keyword: null, at: OCT3 }, 'email', 'Unsubscribed from email on Oct 3'],
     ['agent-recorded do-not-call', { source: 'agent_recorded', keyword: null, at: OCT3, recordedBy: { userId: 'u', displayName: 'Avery Brooks' } }, 'voice', 'Asked not to be called (recorded by Avery Brooks on Oct 3)'],

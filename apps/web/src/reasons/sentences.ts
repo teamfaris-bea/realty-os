@@ -19,6 +19,17 @@ const NOUN: Record<ReachChannel, string> = { sms: 'texts', voice: 'calls', email
 const VERB: Record<ReachChannel, string> = { sms: 'texted', voice: 'called', email: 'emailed' };
 
 const on = (iso: string | null, now?: Date) => (iso ? ` on ${shortDate(iso, now)}` : '');
+
+/**
+ * A masked number that never breaks across lines ("•••-•••-7385" wrapped after a hyphen on a phone): its
+ * hyphens become non-breaking hyphens (U+2011) and its spaces non-breaking spaces.
+ */
+export function unbreakable(hint: string): string {
+  return hint.replace(/-/g, '\u2011').replace(/ /g, '\u00a0');
+}
+
+/** " from •••‑•••‑7385" (" (removed number)" when that phone is no longer on the person), or nothing. */
+const fromOther = (r: ReachReason) => (r.otherAddress && r.addressHint ? ` from ${unbreakable(r.addressHint)}${r.addressRemoved ? ' (removed number)' : ''}` : '');
 const marketingOnly = (r: ReachReason) => r.purposes.length > 0 && !r.purposes.includes('informational');
 
 function recorded(r: ReachReason, now?: Date): string {
@@ -32,7 +43,7 @@ function optOutSentence(r: ReachReason, ch: ReachChannel, now?: Date): string {
   const noun = marketingOnly(r) ? `marketing ${NOUN[ch]}` : NOUN[ch];
   switch (r.source) {
     case 'keyword':
-      return `Texted ${r.keyword ?? 'STOP'}${r.otherAddress && r.addressHint ? ` from ${r.addressHint}` : ''}${on(r.at, now)}`;
+      return `Texted ${r.keyword ?? 'STOP'}${fromOther(r)}${on(r.at, now)}`;
     case 'opt_out_language':
       return `Asked by text to stop getting ${noun}${on(r.at, now)}`;
     case 'unsubscribe':

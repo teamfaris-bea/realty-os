@@ -93,6 +93,8 @@ export interface PointRow {
   removed_reason: 'replaced' | 'old' | 'wrong_number' | null;
   /** the address's SMS (phones) / email opt-out in consent_state (R-PAR-12 over-block explanation) */
   opted_out: boolean;
+  /** the consent ledger holds a wrong_number report for the address: the remove route accepts reason wrong_number (R-PAR-12) */
+  wrong_number_reported: boolean;
 }
 
 /** Every point of a contact, removed ones included (RLS: contact detail visible). */
@@ -100,7 +102,10 @@ export async function allPoints(tx: Tx, contactId: string): Promise<PointRow[]> 
   const r = await sql<PointRow>`
     SELECT p.id, p.kind, p.address, encode(p.address_hmac, 'hex') AS hmac, p.label, p.status, p.is_primary, p.removed_at, p.removed_reason,
            EXISTS (SELECT 1 FROM consent_state s WHERE s.tenant_id = p.tenant_id AND s.address_hmac = p.address_hmac AND s.status = 'revoked'
-                      AND s.channel = CASE WHEN p.kind = 'phone' THEN 'sms' ELSE 'email' END) AS opted_out
+                      AND s.channel = CASE WHEN p.kind = 'phone' THEN 'sms' ELSE 'email' END) AS opted_out,
+           -- hasWrongNumberRevoke's own test, per point
+           EXISTS (SELECT 1 FROM consent_events e WHERE e.tenant_id = p.tenant_id AND e.address_hmac = p.address_hmac
+                      AND e.source = 'wrong_number' AND e.event_type = 'revoke') AS wrong_number_reported
       FROM contact_points p WHERE p.tenant_id = app.tenant_id() AND p.contact_id = ${contactId}::uuid
      ORDER BY p.kind, p.removed_at NULLS FIRST, p.is_primary DESC, p.created_at, p.id`.execute(tx);
   return r.rows;

@@ -125,7 +125,7 @@ describe('scoreFeed: item types and reasons', () => {
       }),
     );
     expect(it).toMatchObject({ itemType: 'unanswered_inbound', band: 'scored', subjectType: 'message', subjectId: msg(3), dedupeKey: `inbound:${contact(3)}:${msg(3)}` });
-    expect(it.reasons.map((r) => r.label)).toEqual(['Texted 20 min ago; no reply yet', '2 messages or calls waiting', 'Waiting over 4 h']);
+    expect(it.reasons.map((r) => r.label)).toEqual(['They texted 20 min ago; no reply yet', '2 messages or calls waiting', 'Waiting over 4 h']);
     expect(it.score).toBe(70);
     expect(it.primaryAction.kind).toBe('text');
     expect(it.createdAt).toBe(t(-hours(5)));
@@ -134,7 +134,7 @@ describe('scoreFeed: item types and reasons', () => {
   it('client waiting: an email asks for an email reply; over an hour adds urgency', () => {
     const it = one(feedInputs({ unansweredInbound: [inbound({ channel: 'email', at: t(-hours(2)) })] }));
     expect(it.reasons.map((r) => r.code)).toEqual(['CLIENT_WAITING', 'WAITING_OVER_1H']);
-    expect(it.reasons[0]?.label).toBe('Emailed 2 h ago; no reply yet');
+    expect(it.reasons[0]?.label).toBe('They emailed 2 h ago; no reply yet');
     expect(it.primaryAction.kind).toBe('email');
     expect(it.score).toBe(60);
   });
@@ -560,7 +560,7 @@ describe('scoreFeed: one card per conversation and edge inputs', () => {
   it('a folded email draft makes Email the primary with the draft; a draft needing review says so', () => {
     const it = one(feedInputs({ unansweredInbound: [inbound({ contactId: contact(5) })], drafts: [draft({ channel: 'email', needsReview: true })] }));
     expect(it.primaryAction).toEqual({ kind: 'email', label: 'Email', contactId: contact(5), draftActionId: action(2) });
-    expect(it.reasons.map((r) => r.label)).toEqual(['Texted 20 min ago; no reply yet', 'Reply email drafted for you', 'Check this: a detail needs your OK']);
+    expect(it.reasons.map((r) => r.label)).toEqual(['They texted 20 min ago; no reply yet', 'Reply email drafted for you', 'Check this: a detail needs your OK']);
     // a draft for a contact who is not waiting stays its own card
     expect(scoreFeed(feedInputs({ unansweredInbound: [inbound()], drafts: [draft()] })).map((x) => x.itemType).sort()).toEqual(['assistant_draft', 'unanswered_inbound']);
   });

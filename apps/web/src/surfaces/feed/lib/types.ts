@@ -25,6 +25,8 @@ export interface FeedCard {
   band: 'pinned' | 'scored';
   dueAt: string | null;
   contact: { id: string; name: string } | null;
+  /** a task or promise card: the task it is about */
+  task?: { id: string; title: string } | null;
   reasons: FeedReasonView[];
   primaryAction: OneTapAction;
   alternatives: OneTapAction[];
@@ -163,6 +165,14 @@ export interface PondCardsResponse {
   pond: { id: string; name: string; claimable: boolean };
   cards: ContactCardView[];
   nextCursor: string | null;
+}
+
+/** GET /me/ponds (api/leads MyPondsResponse): the ponds I may claim from, and what blocks a claim there now. */
+export interface MyPondsResponse {
+  ponds: { id: string; name: string; isDefault: boolean; claimsPerDay: number; blockedBy: 'CLAIM_LIMIT_REACHED' | 'CAPACITY_REACHED' | null }[];
+  claimsToday: number;
+  uncontactedOwned: number;
+  capacityCap: number;
 }
 
 export interface OwnershipResultResponse {

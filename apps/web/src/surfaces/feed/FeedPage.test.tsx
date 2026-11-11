@@ -80,17 +80,29 @@ describe('Priority Feed', () => {
     const fake = new FakeFetch().on('GET /feed', { status: 200, body: feed([offerCard()]) }).on(`POST /leads/${IDS.pat}/accept`, err(409, 'LEAD_OFFER_EXPIRED', { observedSeq: 3 }));
     agentApp(fake);
     await user().click(await screen.findByRole('button', { name: 'Accept' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('This offer ended before your tap reached us.');
+    // said through the announcer (seen in the toast, heard once), where it outlives the card the refresh removes
+    expect(await findToast(/^This offer ended before your tap reached us\./)).toBeInTheDocument();
     expect(document.body.textContent).not.toContain('LEAD_OFFER_EXPIRED');
   });
 
   it('losing a pond claim race (LEAD_ALREADY_CLAIMED) tells the loser only that someone else got it', async () => {
     const pond = card({ itemType: 'pond_new', contact: { id: IDS.pat, name: 'Pat L.' }, reasons: [{ code: 'POND_NEW', label: 'New in the pond; first to claim gets it' }], primaryAction: { kind: 'claim', label: 'Claim', contactId: IDS.pat, pondId: IDS.pond } });
-    const fake = new FakeFetch().on('GET /feed', { status: 200, body: feed([], [pond]) }).on(`POST /leads/${IDS.pat}/claim`, err(409, 'LEAD_ALREADY_CLAIMED', { observedSeq: 7 }));
+    // once the late claim was answered, the refresh no longer has the card (the lead is someone else's now)
+    let lost = false;
+    const fake = new FakeFetch()
+      .on('GET /feed', () => ({ status: 200, body: lost ? feed([], []) : feed([], [pond]) }))
+      .on(`POST /leads/${IDS.pat}/claim`, () => {
+        lost = true;
+        return err(409, 'LEAD_ALREADY_CLAIMED', { observedSeq: 7 });
+      });
     agentApp(fake);
     await user().click(await screen.findByRole('button', { name: 'Claim' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Someone else claimed this lead just now.');
+    expect(await findToast('Someone else claimed this lead just now.')).toBeInTheDocument();
     expect(fake.callsTo(`POST /leads/${IDS.pat}/claim`)[0]!.body).toMatchObject({ pondId: IDS.pond });
+    // journey J2: the card goes away with the refresh, and the reason is still there to read
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Claim' })).toBeNull());
+    expect(within(screen.getByTestId('toast')).getByText('Someone else claimed this lead just now.')).toBeVisible();
+    expect(document.body.textContent).not.toContain('LEAD_ALREADY_CLAIMED');
   });
 
   it('R-AST-13: the feed shows reasons, never a score or confidence, even if a response carried one', async () => {
@@ -262,6 +274,34 @@ describe('Priority Feed', () => {
     expect(screen.queryByRole('button', { name: 'Open deal' })).toBeNull();
     await user().click(screen.getByRole('button', { name: 'Why this' }));
     expect(screen.getByRole('button', { name: 'Open deal' })).toBeInTheDocument();
+  });
+
+  it('a task card says the task itself (its title), with the person and when it is due; a task without a person is headed by its title', async () => {
+    const withPerson = card({ itemType: 'task_due', subjectType: 'task', subjectId: IDS.task, task: { id: IDS.task, title: 'Send the pre-approval letter' }, reasons: [{ code: 'TASK_DUE', label: 'Due in 2 h' }], primaryAction: { kind: 'complete_task', label: 'Done', taskId: IDS.task } });
+    const alone = card({ itemType: 'task_due', contact: null, subjectType: 'task', subjectId: IDS.deal, task: { id: IDS.deal, title: 'Order the yard sign' }, reasons: [{ code: 'TASK_DUE', label: 'Due today' }], primaryAction: { kind: 'complete_task', label: 'Done', taskId: IDS.deal } });
+    agentApp(new FakeFetch().on('GET /feed', { status: 200, body: feed([], [withPerson, alone]) }));
+    const first = await screen.findByRole('article', { name: 'Jane Doe' });
+    expect(within(first).getByText('Send the pre-approval letter')).toBeInTheDocument();
+    expect(within(first).getByText('Due in 2 h')).toBeInTheDocument();
+    const second = screen.getByRole('article', { name: 'Order the yard sign' });
+    expect(within(second).getByRole('heading', { name: 'Order the yard sign' })).toBeInTheDocument();
+    expect(within(second).getByText('Due today')).toBeInTheDocument();
+  });
+
+  it('the feed query never resolves without a feed: an empty answer is an error the page says, not undefined data', async () => {
+    const qcErrors: unknown[] = [];
+    const orig = console.error;
+    console.error = (...a: unknown[]) => {
+      qcErrors.push(a);
+    };
+    try {
+      // a 200 with no body (what a swallowed body read used to resolve to)
+      agentApp(new FakeFetch().on('GET /feed', { status: 200 }));
+      expect(await screen.findByText("Can't load your feed")).toBeInTheDocument();
+      expect(JSON.stringify(qcErrors)).not.toContain('Query data cannot be undefined');
+    } finally {
+      console.error = orig;
+    }
   });
 
   it('an optional hint on an action is shown under its button before the tap', async () => {

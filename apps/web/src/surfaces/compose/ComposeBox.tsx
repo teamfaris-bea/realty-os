@@ -9,7 +9,9 @@
 // - Whether the chosen channel is blocked at all comes from the reachability summary: an opt-out or
 //   suppression disables Send for that channel and says exactly why ("Texted STOP on Nov 10"); the
 //   other channel stays available. Rules that depend on the words (payment instructions, the brokerage
-//   name on marketing) are previewed against the real text while typing (useSendCheck). There is no
+//   name on marketing) are previewed against the real text while typing (useSendCheck). When the send
+//   adds to the typed words (the brokerage line on a marketing text, an email's signature and footer),
+//   the box shows the text exactly as it will go out ("What Jane will get"), from the same preview. There is no
 //   consent prompt, no quiet-hours wait and no way past an opt-out (owner decision,
 //   core-compliance/2.0.0). Neither decides: the send-time decision does, and its outcome is shown as
 //   it came back (sent, scheduled for the time the agent picked, or not sent and why).
@@ -205,6 +207,8 @@ export function ComposeBox({ contact, initialChannel, draftActionId: initialDraf
   // once a send was tried, its outcome replaces the preview (both would repeat the same reason); a
   // preview of older text is not shown while the agent is still typing
   const showPreview = !blockedNow.blocked && decision !== null && decision.outcome === 'deny' && previewBody === body.trim() && outcome === null;
+  // the text exactly as it will go out, when the send adds to what was typed (never for older text)
+  const finalText = !blockedNow.blocked && outcome === null && previewBody === body.trim() && preview.final !== null && preview.final.trim() !== body.trim() ? preview.final : null;
   const needsReview = draft?.claims.some((c) => c.needsReview) ?? false;
   const noChannel = !contact.canText && !contact.canEmail;
 
@@ -306,6 +310,12 @@ export function ComposeBox({ contact, initialChannel, draftActionId: initialDraf
         </div>
       ) : null}
       {outcome === null ? <ReasonCaption id={`${id}-reason`} state={blockedNow} /> : null}
+      {finalText !== null ? (
+        <figure aria-label={`What ${firstName(contact.name)} will get`} className="flex flex-col gap-1 rounded-xl bg-surface-2 px-3 py-2 text-[14px] text-ink">
+          <figcaption className="font-medium text-ink-muted">What {firstName(contact.name)} will get</figcaption>
+          <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{finalText}</p>
+        </figure>
+      ) : null}
       {showPreview ? <GateBadge decision={decision} /> : null}
       {notice ? <Notice tone={notice.tone}>{notice.text}</Notice> : null}
       {outcome ? <SendOutcome result={outcome} contactName={contact.name} /> : null}

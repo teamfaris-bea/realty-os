@@ -180,10 +180,37 @@ export function mappingView(b: BatchRow, rows: readonly MappingRow[]) {
   return { users, ponds, unmapped, complete: unmapped === 0 };
 }
 
+/** What an undo removed, in words: "3 people, 3 phone numbers or emails and 2 notes". */
+const REMOVED_WORDS: Record<string, [string, string]> = {
+  contacts: ['person', 'people'],
+  contact_points: ['phone number or email', 'phone numbers or emails'],
+  contact_addresses: ['address', 'addresses'],
+  notes: ['note', 'notes'],
+  messages: ['text or email', 'texts and emails'],
+  calls: ['call', 'calls'],
+  recordings: ['recording', 'recordings'],
+  consent_events: ['imported permission', 'imported permissions'],
+};
+const REMOVED_ORDER = Object.keys(REMOVED_WORDS);
+
+export function removedWords(byTable: Record<string, number>): string {
+  const parts = Object.entries(byTable)
+    .filter(([, k]) => k > 0)
+    .sort(([a], [b]) => (REMOVED_ORDER.indexOf(a) < 0 ? 99 : REMOVED_ORDER.indexOf(a)) - (REMOVED_ORDER.indexOf(b) < 0 ? 99 : REMOVED_ORDER.indexOf(b)))
+    .map(([t, k]) => {
+      const w = REMOVED_WORDS[t] ?? ['other imported row', 'other imported rows'];
+      return `${k.toLocaleString('en-US')} ${k === 1 ? w[0] : w[1]}`;
+    });
+  if (parts.length === 0) return 'nothing';
+  return parts.length === 1 ? parts[0]! : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)!}`;
+}
+
 function revertLines(s: StageRow): string[] {
-  const r = (s.revert_report ?? {}) as { removed?: number; compensated?: number; needsDecision?: number; keptReasons?: Record<string, number> };
+  const r = (s.revert_report ?? {}) as { removed?: number; compensated?: number; needsDecision?: number; keptReasons?: Record<string, number>; removedByTable?: Record<string, number> };
   const n = (x: number | undefined) => (x ?? 0).toLocaleString('en-US');
-  const lines = [`Reverted. ${n(r.removed)} imported rows removed; ${n(r.needsDecision)} ${r.needsDecision === 1 ? 'record was' : 'records were'} changed since the import and left for your decision.`];
+  const what = r.removedByTable ? removedWords(r.removedByTable) : `${n(r.removed)} imported ${r.removed === 1 ? 'row' : 'rows'}`;
+  const left = (r.needsDecision ?? 0) === 0 ? 'nothing was left for your decision' : `${n(r.needsDecision)} ${r.needsDecision === 1 ? 'record was' : 'records were'} changed since the import and left for your decision`;
+  const lines = [`Undone. The undo removed what this import added: ${what}; ${left}.`];
   if ((r.compensated ?? 0) > 0) {
     lines.push(
       s.category === 'ownership'
@@ -244,10 +271,10 @@ export function parityReportView(b: BatchRow, stages: readonly StageRow[]) {
   const committed = c.count_imported !== null && ['committed', 'verified', 'reverting', 'reverted'].includes(c.status);
   const phase = c.status === 'reverted' ? ('reverted' as const) : committed ? ('committed' as const) : ('dry_run' as const);
   const rows = phase === 'dry_run' ? parityReport(summary) : parityCommittedReport(b.options.parityCommitted ?? {});
-  const lines = phase === 'dry_run' ? parityLines(summary, sourceName(b) === 'your file' ? 'your file' : 'Follow Up Boss') : parityCommittedLines(rows);
+  const lines = phase === 'dry_run' ? parityLines(summary, sourceName(b) === 'your file' ? 'your file' : 'Follow Up Boss') : parityCommittedLines(rows, phase === 'reverted');
   const rev = (c.revert_report as { parity?: { tagLinks: number; values: number; tags: number; fields: number } } | null)?.parity;
   if (phase === 'reverted' && rev) {
-    lines.push(`Revert removed ${rev.tagLinks} tag ${rev.tagLinks === 1 ? 'link' : 'links'}, ${rev.values} custom ${rev.values === 1 ? 'value' : 'values'} and ${rev.tags} unused ${rev.tags === 1 ? 'tag' : 'tags'}; ${rev.fields} unused ${rev.fields === 1 ? 'field was' : 'fields were'} archived.`);
+    lines.push(`The undo removed ${rev.tagLinks} tag ${rev.tagLinks === 1 ? 'link' : 'links'}, ${rev.values} custom ${rev.values === 1 ? 'value' : 'values'} and ${rev.tags} unused ${rev.tags === 1 ? 'tag' : 'tags'}; ${rev.fields} unused ${rev.fields === 1 ? 'field was' : 'fields were'} archived.`);
   }
   return {
     phase,
@@ -256,8 +283,14 @@ export function parityReportView(b: BatchRow, stages: readonly StageRow[]) {
   };
 }
 
-function parityCommittedLines(rows: readonly ParityReportRow[]): string[] {
+/** What the import wrote; after an undo, in the past (what it had written before the undo removed it). */
+function parityCommittedLines(rows: readonly ParityReportRow[], undone = false): string[] {
   const [st, tg, cf] = rows as [ParityReportRow, ParityReportRow, ParityReportRow];
+  if (undone) {
+    return [
+      `Before the undo, the import had set ${st.imported} ${st.imported === 1 ? 'stage' : 'stages'}, added ${tg.imported} ${tg.imported === 1 ? 'tag' : 'tags'} and written ${cf.imported} custom ${cf.imported === 1 ? 'value' : 'values'}.`,
+    ];
+  }
   return [
     `Stages: ${st.imported} set from the import${st.duplicate > 0 ? `, ${st.duplicate} people already here kept their stage` : ''}.`,
     `Tags: ${tg.imported} added${tg.duplicate > 0 ? `, ${tg.duplicate} already there` : ''}${tg.rejected > 0 ? `, ${tg.rejected} not added (limit); their text stays on the person` : ''}.`,

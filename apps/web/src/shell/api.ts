@@ -104,7 +104,18 @@ export class ApiClient {
       if (e instanceof DOMException && e.name === 'AbortError') throw e;
       throw new ApiError('NETWORK_ERROR', 0);
     }
-    const text = await res.text().catch(() => '');
+    // The body can fail to arrive after the headers did: the request was aborted (a query canceled while its
+    // body streamed in) or the connection dropped. Neither is a successful empty answer (journey bug: the
+    // swallowed abort resolved the feed query with undefined, "Query data cannot be undefined … [feed]"): an
+    // abort stays an abort (react-query drops it), and a lost success body is a NETWORK_ERROR. A lost error
+    // body still says what its status does.
+    let text = '';
+    try {
+      text = await res.text();
+    } catch (e) {
+      if ((e instanceof DOMException && e.name === 'AbortError') || o.signal?.aborted) throw e;
+      if (res.ok) throw new ApiError('NETWORK_ERROR', 0);
+    }
     if (!res.ok) {
       const err = parseErrorBody(res.status, text);
       if (err.code === 'UNAUTHENTICATED') {

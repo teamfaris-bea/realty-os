@@ -4,7 +4,9 @@
 // jumps (also to exactly a stored change instant and 1 ms before it), new client messages and missed calls, a
 // person replying, tasks created / re-dated / done / reassigned / moved off their contact, appointments ending
 // or getting an outcome, drafts and handbacks approved or dismissed, claims reviewed, contract dates moved or
-// completed, opt-outs, and the agent's own done / snooze / dismiss taps. After every event, for each member
+// completed, opt-outs, the agent's own done / snooze / dismiss taps, and pond leads: a lead released into a pond
+// (the real command), claimed or assigned out of it, and a pond's members, cooldown or claims allowance changed
+// (journey bug: the feed had no pond leads). After every event, for each member
 // under test, the materialized feed (materializeFeed: only dirty and due groups re-scored) is compared with a
 // full recompute of the whole book (refreshFeed) run on top of it in a transaction that is rolled back:
 //   - the GET /feed view (cards, ids, order, wording, actions, total) is identical;
@@ -118,13 +120,34 @@ async function asPerson(userId: string, fn: () => Promise<void>): Promise<void> 
 const one = async <R extends Record<string, unknown>>(q: string, p: unknown[]): Promise<R | undefined> => (await su.query<R>(q, p)).rows[0];
 const iso = (t: number) => new Date(t).toISOString();
 
+/** Kinds of random events (apply's switch; pond entries and exits are drawn twice as often as the others). */
+const EVENT_KINDS = 20;
+
+/**
+ * Dates the event that put `contactId` in its pond at the feed's clock. The command ran at the database's clock and
+ * wrote its marks; the append-only ledger row is rewritten with triggers off (it marks nothing new), so the card's
+ * 24 h window and the releaser's cooldown are measured on the clock the comparisons use.
+ */
+async function entryAtFeedClock(contactId: string): Promise<void> {
+  await su.query('BEGIN');
+  try {
+    await su.query(`SET LOCAL session_replication_role = replica`);
+    await su.query(`UPDATE lead_ownership_events SET occurred_at = $3 WHERE tenant_id = $1 AND contact_id = $2
+                     AND seq = (SELECT ownership_seq FROM contacts WHERE tenant_id = $1 AND id = $2)`, [T, contactId, iso(now)]);
+    await su.query('COMMIT');
+  } catch (err) {
+    await su.query('ROLLBACK');
+    throw err;
+  }
+}
+
 /** One random event, applied as the database owner (every trigger and guard runs). Returns false when skipped. */
 async function apply(e: { kind: number; pick: number; size: number; user: number }): Promise<string> {
   // the agents own the books; contract dates go to their deal's owner and members (the TC among them)
   const u = users[e.user % 3]!;
   const off = (e.pick % 997) + 1;
   const rnd = (n: number) => (e.size * 7919 + e.pick) % n;
-  switch (e.kind % 15) {
+  switch (e.kind % EVENT_KINDS) {
     case 0: {
       // time passes: minutes, hours, days; or exactly to a stored change instant (or 1 ms before it)
       const next = await one<{ t: Date }>(`SELECT min(check_at) AS t FROM feed_groups WHERE tenant_id = $1 AND check_at > $2 AND group_key <> '~reconcile'`, [T, iso(now)]);
@@ -248,6 +271,65 @@ async function apply(e: { kind: number; pick: number; size: number; user: number
       if (!handback && rnd(2) === 0) await su.query(`INSERT INTO assistant_claims (tenant_id, id, action_id, ordinal, claim_kind, text, needs_review, review_status) VALUES ($1, gen_random_uuid(), $2, 0, 'fact', 'They want 3 beds', true, 'unreviewed')`, [T, id]);
       return handback ? 'handback' : 'draft';
     }
+    case 15:
+    case 18: {
+      // a lead goes to a pond: its owner releases it (the real command), to the default pond or a team pond they may
+      // use; the entry is then dated at the feed's clock (the ledger is append-only: rewritten with triggers off,
+      // after the command's own marks were written), so the card's 24 h window and cooldown live on that clock
+      const c = await one<{ id: string; owner: string; role: string }>(`SELECT c.id, c.owner_user_id AS owner, m.role FROM contacts c
+         JOIN memberships m ON m.tenant_id = c.tenant_id AND m.user_id = c.owner_user_id
+        WHERE c.tenant_id = $1 AND c.ownership_state = 'owned' AND c.deleted_at IS NULL AND m.role IN ('agent','team_lead') AND m.status = 'active'
+          AND NOT EXISTS (SELECT 1 FROM deals d WHERE d.tenant_id = c.tenant_id AND d.primary_contact_id = c.id)
+        ORDER BY md5(c.id::text || $2) LIMIT 1`, [T, String(off)]);
+      if (!c) return 'skip';
+      // a pond the owner may release into: the default pond, or a team pond that names them
+      const ponds = (await su.query<{ id: string; is_default: boolean }>(`SELECT p.id, p.is_default FROM ponds p WHERE p.tenant_id = $1 AND p.archived_at IS NULL
+          AND (p.is_default OR EXISTS (SELECT 1 FROM pond_members pm WHERE pm.tenant_id = p.tenant_id AND pm.pond_id = p.id AND pm.user_id = $2))
+        ORDER BY p.is_default DESC, p.id`, [T, c.owner])).rows;
+      const pond = ponds[rnd(ponds.length)]!;
+      const r = await runOwnershipCommand(actorOf({ userId: c.owner, role: c.role }), c.id as ContactId, { kind: 'release', reason: 'not_a_fit', ...(pond.is_default ? {} : { toPondId: pond.id as never }) }, randomUUID(), undefined, { db: app, ids: deps.ids });
+      if (!r.ok) return 'skip';
+      await entryAtFeedClock(c.id);
+      return 'pond_release';
+    }
+    case 16:
+    case 19: {
+      // a pond lead leaves its pond: a member under test claims it (the claim rules read the database's clock; a
+      // refusal changes nothing), else the Owner assigns it; recent entries first, so live cards are in play
+      const c = await one<{ id: string; pond: string }>(`SELECT c.id, c.pond_id AS pond FROM contacts c
+          JOIN lead_ownership_events e ON e.tenant_id = c.tenant_id AND e.contact_id = c.id AND e.seq = c.ownership_seq
+         WHERE c.tenant_id = $1 AND c.ownership_state = 'in_pond' AND c.deleted_at IS NULL
+         ORDER BY e.occurred_at > $2::timestamptz DESC, md5(c.id::text || $3) LIMIT 1`, [T, iso(now - DAY), String(off)]);
+      if (!c) return 'skip';
+      const claimer = users[e.user % users.length]!;
+      if (claimer.role !== 'tc' && rnd(3) > 0) {
+        const r = await runOwnershipCommand(actorOf(claimer), c.id as ContactId, { kind: 'claim', pondId: c.pond as never }, randomUUID(), undefined, { db: app, ids: deps.ids });
+        if (r.ok) return 'pond_claim';
+      }
+      const owner = (await su.query<{ userId: string; role: string }>(`SELECT user_id AS "userId", role FROM memberships WHERE tenant_id = $1 AND role = 'owner'`, [T])).rows[0]!;
+      const to = users.filter((u) => u.role === 'agent')[rnd(3)]!;
+      const r = await runOwnershipCommand(actorOf(owner), c.id as ContactId, { kind: 'assign', toUserId: to.userId as UserId, reason: 'MANUAL_ASSIGN' }, randomUUID(), undefined, { db: app, ids: deps.ids });
+      return r.ok ? 'pond_assign' : 'skip';
+    }
+    case 17: {
+      // who may claim from a pond changes (as the Owner would): a member under test joins or leaves a team pond, a
+      // pond's cooldown moves between 0 and 2 h, or a pond stops or starts allowing claims
+      const ponds = (await su.query<{ id: string; is_default: boolean; claims_per_day: number; claim_cooldown_hours: number }>(
+        `SELECT id, is_default, claims_per_day, claim_cooldown_hours FROM ponds WHERE tenant_id = $1 AND archived_at IS NULL ORDER BY is_default DESC, id`, [T])).rows;
+      const pond = ponds[rnd(ponds.length)]!;
+      const v = rnd(3);
+      if (v === 0 && !pond.is_default) {
+        const u = users[e.user % users.length]!;
+        if (u.role === 'tc') return 'skip';
+        const del = await su.query(`DELETE FROM pond_members WHERE tenant_id = $1 AND pond_id = $2 AND user_id = $3`, [T, pond.id, u.userId]);
+        if (del.rowCount === 0) await su.query(`INSERT INTO pond_members (tenant_id, pond_id, user_id) VALUES ($1, $2, $3)`, [T, pond.id, u.userId]);
+      } else if (v === 1) {
+        await su.query(`UPDATE ponds SET claim_cooldown_hours = $3 WHERE tenant_id = $1 AND id = $2`, [T, pond.id, pond.claim_cooldown_hours === 0 ? 2 : 0]);
+      } else {
+        await su.query(`UPDATE ponds SET claims_per_day = $3 WHERE tenant_id = $1 AND id = $2`, [T, pond.id, pond.claims_per_day === 0 ? 50 : 0]);
+      }
+      return 'pond_config';
+    }
     default: {
       // a member edits a contact (any contact write marks: updated_at is an offer card's instant)
       const c = await one<{ id: string }>(`SELECT id FROM contacts WHERE tenant_id = $1 AND (owner_user_id = $2 OR offered_to_user_id = $2) ORDER BY md5(id::text || $3) LIMIT 1`, [T, u.userId, String(off)]);
@@ -323,7 +405,7 @@ describe('incremental feed equals a full recompute (lane perf-misses)', () => {
           }
           if (what === 'skip' || what.startsWith('refused')) stats.skipped++;
           else stats.events++;
-          const k = what.startsWith('refused') ? what : `${e.kind % 15}:${what}`;
+          const k = what.startsWith('refused') ? what : `${e.kind % EVENT_KINDS}:${what}`;
           byKind.set(k, (byKind.get(k) ?? 0) + 1);
           for (const u of users) await compare(u, `event ${i} (${what})`);
         }
@@ -333,7 +415,10 @@ describe('incremental feed equals a full recompute (lane perf-misses)', () => {
     console.log(JSON.stringify({ stats, byKind: Object.fromEntries(byKind), seenTypes: [...seenTypes] }));
     // the comparison is not vacuous: most events applied, cards of every kind were shown, and groups were re-scored incrementally
     expect(stats.events).toBeGreaterThan(0.6 * 25 * Number(process.env.FEED_EQ_RUNS ?? 4));
-    for (const k of ['unanswered_inbound', 'missed_call', 'task_due', 'appointment_outcome', 'first_touch_due', 'deal_date', 'assistant_draft', 'handback']) expect([...seenTypes], k).toContain(k);
+    for (const k of ['unanswered_inbound', 'missed_call', 'task_due', 'appointment_outcome', 'first_touch_due', 'deal_date', 'assistant_draft', 'handback', 'pond_new']) expect([...seenTypes], k).toContain(k);
+    // pond leads were in play: released into ponds, and claimed or assigned out of them
+    expect([...byKind.keys()].filter((k) => /pond_release$/.test(k)).length, JSON.stringify(Object.fromEntries(byKind))).toBeGreaterThan(0);
+    expect([...byKind.keys()].filter((k) => /pond_(claim|assign)$/.test(k)).length, JSON.stringify(Object.fromEntries(byKind))).toBeGreaterThan(0);
     expect(stats.cards).toBeGreaterThan(1_000);
     expect(stats.incremental).toBeGreaterThan(50);
   }, 1_800_000);
@@ -476,6 +561,56 @@ describe('incremental feed after ownership, deal, team, contact point and settin
     expect(await visibleTo(tl, k.id)).toBe(true);
     expect(await marks(tl.userId, '!full')).toBeGreaterThan(0);
     await compare(tl, 'the member joined the team again');
+  }, 300_000);
+
+  it('a lead entering and leaving a pond marks every member who may claim from it, and a pond\'s members or settings mark them for a whole-book recompute (journey bug: no pond leads in the feed)', async () => {
+    const agents = users.filter((u) => u.role === 'agent');
+    const pondCard = async (m: Member, contactId: string) =>
+      (await su.query<{ state: string }>(`SELECT state FROM priority_feed_items WHERE tenant_id = $1 AND user_id = $2 AND contact_id = $3 AND item_type = 'pond_new'
+                                          ORDER BY created_at DESC LIMIT 1`, [T, m.userId, contactId])).rows[0]?.state ?? null;
+    // the random sequences may have stopped a pond's claims, moved its cooldown or a member: back to the generator's
+    // settings (claims allowed, no cooldown), the Team Lead in their team's pond (the marks make it a full recompute)
+    const teamPond = (await su.query<{ id: string }>(`SELECT p.id FROM ponds p JOIN pond_members pm ON pm.tenant_id = p.tenant_id AND pm.pond_id = p.id
+       WHERE p.tenant_id = $1 AND NOT p.is_default AND pm.user_id = $2 ORDER BY p.id LIMIT 1`, [T, inside.find((id) => !users.some((u) => u.userId === id))!])).rows[0]!.id;
+    await asMember(owner, async (tx) => {
+      await sql`UPDATE ponds SET claims_per_day = 50, claim_cooldown_hours = 0 WHERE tenant_id = app.tenant_id()`.execute(tx);
+      await sql`INSERT INTO pond_members (tenant_id, pond_id, user_id) VALUES (app.tenant_id(), ${teamPond}, ${tl.userId}) ON CONFLICT DO NOTHING`.execute(tx);
+    });
+    for (const u of users) await compare(u, 'ponds back to the generator\'s settings');
+    // a lead of an agent who is not under test, released into the default pond (open to every agent and lead)
+    const x = await pickLead(outside.filter((id) => !users.some((u) => u.userId === id)));
+    await command({ userId: x.owner, role: 'agent' }, x.id, { kind: 'release', reason: 'not_a_fit' });
+    for (const u of [...agents, tl]) expect(await marks(u.userId, `c:${x.id}`), `${u.role} ${u.userId} marked on entry`).toBeGreaterThan(0);
+    expect(await marks(tc.userId, `c:${x.id}`), 'a TC never claims').toBe(0);
+    await entryAtFeedClock(x.id);
+    for (const u of users) await compare(u, 'released into the default pond');
+    for (const u of [...agents, tl]) expect(await pondCard(u, x.id), `${u.role} ${u.userId} has the pond card`).toBe('open');
+    // assigned out of the pond by the Owner to an agent of the Team Lead's team: everyone who could claim it is marked,
+    // and the Team Lead (who still sees the lead) has the card closed, not merely hidden
+    await command(owner, x.id, { kind: 'assign', toUserId: inside[0] as UserId, reason: 'MANUAL_ASSIGN' });
+    for (const u of [...agents, tl]) expect(await marks(u.userId, `c:${x.id}`), `${u.role} ${u.userId} marked on exit`).toBeGreaterThan(0);
+    expect(await visibleTo(tl, x.id)).toBe(true);
+    for (const u of users) await compare(u, 'assigned out of the pond');
+    expect(await pondCard(tl, x.id)).toBe('done');
+    // a team pond: the Team Lead leaving its member list, then the pond allowing no claims
+    const y = await pickLead(inside.filter((id) => !users.some((u) => u.userId === id)));
+    await command({ userId: y.owner, role: 'agent' }, y.id, { kind: 'release', reason: 'not_a_fit', toPondId: teamPond as never });
+    await entryAtFeedClock(y.id);
+    for (const u of users) await compare(u, 'released into a team pond');
+    expect(await pondCard(tl, y.id)).toBe('open');
+    await asMember(owner, (tx) => sql`DELETE FROM pond_members WHERE tenant_id = app.tenant_id() AND pond_id = ${teamPond} AND user_id = ${tl.userId}`.execute(tx));
+    expect(await marks(tl.userId, '!full')).toBeGreaterThan(0);
+    for (const u of users) await compare(u, 'the Team Lead left the team pond');
+    await asMember(owner, (tx) => sql`INSERT INTO pond_members (tenant_id, pond_id, user_id) VALUES (app.tenant_id(), ${teamPond}, ${tl.userId})`.execute(tx));
+    expect(await marks(tl.userId, '!full')).toBeGreaterThan(0);
+    for (const u of users) await compare(u, 'the Team Lead joined the team pond again');
+    expect(await pondCard(tl, y.id)).toBe('open');
+    await asMember(owner, (tx) => sql`UPDATE ponds SET claims_per_day = 0 WHERE tenant_id = app.tenant_id() AND id = ${teamPond}`.execute(tx));
+    expect(await marks(tl.userId, '!full')).toBeGreaterThan(0);
+    for (const u of users) await compare(u, 'the team pond allows no claims');
+    expect(await pondCard(tl, y.id)).toBe('done');
+    await asMember(owner, (tx) => sql`UPDATE ponds SET claims_per_day = 50 WHERE tenant_id = app.tenant_id() AND id = ${teamPond}`.execute(tx));
+    for (const u of users) await compare(u, 'the team pond allows claims again');
   }, 300_000);
 
   it('a contact point removed by an import revert marks its contact (the card\'s channels change)', async () => {

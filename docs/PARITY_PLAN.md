@@ -323,6 +323,17 @@ The phone layout:
 - The contact page gains:
   - **Tags** chips under the name;
   - a **Details** section (custom fields, addresses, relationships, collaborators, pencil to edit);
+    - *As built (lead-journey fixes, J6).* Other modules add to Details through module 58's slot registry
+      (`apps/web/src/surfaces/contact/sections.ts`, `slot: 'details'`, rendered by `DetailsSlots` inside
+      `DetailsSection`). The custom fields entry (`people/ContactFields.tsx`) shows each live field's value in the
+      field's own terms (number, date, choice names) from module 60's `GET /contacts/:id/fields`; archived fields
+      are not shown. "Edit fields" appears only when the details say the viewer may edit the person (`contact.edit`)
+      and saves each changed value with `PUT /contacts/:id/fields/:fieldId`; everyone else reads them.
+    - *Removing a number (R-PAR-12, J3.3).* The pencil's sheet keeps the one-tap **Remove** (reason `old`, with
+      Undo). **Remove as a wrong number** is offered only on a point whose consent ledger holds a wrong-number report
+      (a call from the app marked "Wrong number", or a reply saying so: `GET /contacts/:id/points`
+      `wrongNumberReported`, the remove route's own test); every other saved point says why it is not offered. A
+      wrong-number removal has no Undo (a confirmed wrong number is never added back).
   - a sticky **Note** button and **Log** next to Call/Text/Email;
   - **Add task** and **Add appointment** in their sections.
 - A global **+** opens Add person.

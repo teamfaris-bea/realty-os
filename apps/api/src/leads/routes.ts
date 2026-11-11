@@ -5,6 +5,7 @@
 //   GET  /contacts/:id/timeline                     contact.view_detail
 //   POST /leads/:contactId/<verb>                   ownership commands (see commands.ts)
 //   GET  /ponds/:id/cards                           masked pond cards (contact.view, pond relation)
+//   GET  /me/ponds                                  the ponds I may claim from, and what blocks a claim now (self)
 //   POST /members/:userId/deactivate                staged deactivation (member.remove 🔒)
 import type { FastifyInstance } from 'fastify';
 import type { RouteModule } from '../routes.js';

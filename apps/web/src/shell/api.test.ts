@@ -54,6 +54,34 @@ describe('ApiClient', () => {
     await expect(api.get('/x')).rejects.toMatchObject({ name: 'AbortError' });
   });
 
+  // journey bug "Query data cannot be undefined … [feed]": a query canceled while its body streamed in resolved
+  // with undefined, because the failed body read was swallowed as an empty body
+  const brokenBody = (status: number, why: unknown) => {
+    const res = new Response('{}', { status });
+    Object.defineProperty(res, 'text', { value: () => Promise.reject(why) });
+    return res;
+  };
+
+  it('a request aborted while its body arrives rethrows the abort; it never resolves with undefined', async () => {
+    const ctl = new AbortController();
+    const api = new ApiClient({
+      fetch: async () => {
+        ctl.abort();
+        return brokenBody(200, new DOMException('The operation was aborted.', 'AbortError'));
+      },
+    });
+    await expect(api.get('/feed', { signal: ctl.signal })).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('a success whose body is lost is a NETWORK_ERROR (retryable), never an empty success; a lost error body still says its status', async () => {
+    const lost = new ApiClient({ fetch: async () => brokenBody(200, new TypeError('network connection was lost')) });
+    const e = await lost.get('/feed').catch((x: unknown) => x);
+    expect(e).toMatchObject({ code: 'NETWORK_ERROR', status: 0 });
+    expect(isRetryable(e)).toBe(true);
+    const lostError = new ApiClient({ fetch: async () => brokenBody(503, new TypeError('network connection was lost')) });
+    await expect(lostError.get('/feed')).rejects.toMatchObject({ code: 'INTERNAL_ERROR', status: 503 });
+  });
+
   it('UNAUTHENTICATED clears the CSRF token and tells subscribers; other 401s do not', async () => {
     const f = new FakeFetch().on('GET /a', err(401, 'UNAUTHENTICATED')).on('GET /b', err(401, 'MFA_REQUIRED'));
     const api = new ApiClient({ fetch: f.fetch });

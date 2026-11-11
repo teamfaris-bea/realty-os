@@ -26,10 +26,34 @@ describe('Team exception queue', () => {
     expect(within(card).getByText(/Ava Agent · open 3 h/)).toBeInTheDocument();
     const evidence = within(card).getByRole('list', { name: 'Evidence' });
     expect(within(evidence).getByRole('link', { name: /First human contact was due ·/ })).toHaveAttribute('href', `/contacts/${ID.pat}`);
-    expect(within(evidence).getByText(/Lead became theirs ·/)).toBeInTheDocument();
+    expect(within(evidence).getByText(/Lead became Ava Agent's ·/)).toBeInTheDocument();
+    expect(within(card).getByText("Ava Agent's ownership period")).toBeInTheDocument();
     expect(screen.getByText(/^Updated /)).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: 'All 1' })).toBeChecked();
     expect(screen.getByRole('radio', { name: 'Untouched leads 1' })).toBeInTheDocument();
+  });
+
+  it('R-PAR-32: an untouched lead shows the activities its agent logged in the period as context ("Logged by …"); once the lead moved on its facts are labelled as the earlier owner\'s period, never mixed with the new one', async () => {
+    const at = new Date(Date.now() - 3.5 * 3_600_000).toISOString();
+    const moved = exceptionItem({
+      period: { current: false },
+      latestEvent: { action: 'reassigned', note: null, actor: { userId: ID.me, name: 'Sam Lead' }, at: new Date().toISOString() },
+      actions: { resolve: true, reassign: false, verify: true, reopen: false },
+      evidence: [
+        { sourceType: 'ownership_period', sourceId: ID.pat, explanation: 'No human call, text or email by the first-contact deadline; the lead later left this agent', at: new Date(Date.now() - 3 * 3_600_000).toISOString(), locator: null, snippet: null, needsReview: false, link: { kind: 'contact', id: ID.pat, contactId: ID.pat, offsetMs: null } },
+        { sourceType: 'ownership_period', sourceId: ID.pat, explanation: 'Lead became theirs', at: new Date(Date.now() - 4 * 3_600_000).toISOString(), locator: null, snippet: null, needsReview: false, link: { kind: 'contact', id: ID.pat, contactId: ID.pat, offsetMs: null } },
+        { sourceType: 'note', sourceId: ID.message, explanation: 'Logged by Ava Agent: outgoing call, talked (context only; not a first contact)', at, locator: null, snippet: null, needsReview: false, link: { kind: 'contact', id: ID.pat, contactId: ID.pat, offsetMs: null } },
+      ],
+    });
+    leadAdminApp(teamFake([moved]), '/team');
+    const card = (await screen.findByRole('heading', { name: /Untouched lead · Pat Lead/ })).closest('article')!;
+    expect(within(card).getByText("Ava Agent's earlier ownership period (the lead has moved on since)")).toBeInTheDocument();
+    const evidence = within(card).getByRole('list', { name: 'Evidence' });
+    expect(within(evidence).getByRole('link', { name: /^No human call, text or email by the first-contact deadline · / })).toBeInTheDocument();
+    expect(evidence.textContent).not.toContain('later left this agent');
+    expect(within(evidence).getByText(/Lead became Ava Agent's ·/)).toBeInTheDocument();
+    expect(within(evidence).getByRole('link', { name: /^Logged by Ava Agent: outgoing call, talked \(context only; not a first contact\) · / })).toHaveAttribute('href', `/contacts/${ID.pat}`);
+    expect(within(card).getByText(/^Reassigned by Sam Lead ·/)).toBeInTheDocument();
   });
 
   it('a live item whose condition already cleared stays in the queue as "Fixed late" and still offers Resolve and Verify', async () => {

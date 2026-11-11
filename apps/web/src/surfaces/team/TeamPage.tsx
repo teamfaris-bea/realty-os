@@ -21,7 +21,7 @@ import { useAnnounce } from '../admin/lib/hooks.js';
 import { ADMIN_MESSAGES } from '../admin/lib/messages.js';
 import type { ExceptionItem, ExceptionType, ItemResponse, Member, MembersResponse, QueueResponse } from '../admin/lib/types.js';
 import { Pill, Segmented, StatusLine, TextArea } from '../admin/lib/ui.js';
-import { EVENT_LABEL, TYPES, TYPE_LABEL, TYPE_PLURAL, exceptionEvidenceView, ownerName } from './lib.js';
+import { EVENT_LABEL, TYPES, TYPE_LABEL, TYPE_PLURAL, exceptionEvidenceView, ownerName, periodLabel } from './lib.js';
 
 export const QUEUE_KEY = ['team', 'exceptions'] as const;
 const REFRESH_MS = 30_000;
@@ -119,6 +119,8 @@ export function ExceptionCard({ item, onDone, onFailure }: { item: ExceptionItem
   const reassign = useCommand<{ toUserId: string; expectedSeq?: number }, ItemResponse>(keyPath(item, 'reassign'), opts);
   const fixedLate = item.live && item.conditionClearedAt !== null;
   const subject = item.contact?.name ?? null;
+  // R-PAR-32 / one period per card: an untouched lead's facts are its owner's period, labelled as earlier once the lead moved on
+  const period = periodLabel(item);
 
   const doVerify = async () => {
     const r = await verify.run({});
@@ -156,9 +158,10 @@ export function ExceptionCard({ item, onDone, onFailure }: { item: ExceptionItem
       </div>
       {fixedLate ? <p className="text-[14px] text-ink">This was put right after it was due. It stays here until someone resolves or verifies it.</p> : null}
 
+      {period ? <p className="text-[14px] font-medium text-ink">{period}</p> : null}
       <ul aria-label="Evidence" className="flex flex-col gap-1 border-l-2 border-line pl-3">
         {item.evidence.map((e, n) => {
-          const view = exceptionEvidenceView(e);
+          const view = exceptionEvidenceView(e, { owner: item.itemType === 'untouched_lead' ? (item.owner?.name ?? null) : null });
           const link = <EvidenceLink evidence={view} />;
           return (
             <li key={`${e.sourceType}:${e.sourceId}:${n}`} className="flex flex-wrap items-center gap-2 text-ink-muted">

@@ -9,6 +9,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { FakeFetch, err, leadAdminApp } from '../admin/lib/testing.js';
 import type { ImportBatch, ImportCategory, ImportStage } from '../admin/lib/types.js';
+import { importedLine, parityImportedHeader } from './ImportsPages.js';
 import { blockingEarlier, nextStep, ordered, reconciles, recordSummary, spotChecksReady, toBase64 } from './lib.js';
 
 const SNAP = 'b'.repeat(64);
@@ -133,8 +134,12 @@ describe('Imports', () => {
     expect(await screen.findByText(/1 of 1 category verified/)).toBeInTheDocument();
   });
 
-  it('a ready dry run shows the five counts, the review list by outcome, and approval of exactly this snapshot', async () => {
-    const b = batch([stage('contacts', 'dry_run_ready', { counts })]);
+  it('a ready dry run shows the five counts, the review list by outcome, and approval of exactly this dry run', async () => {
+    // the approval presents the digest of the dry run the reviewer saw (stage.dryRunSha256: core snapshotDigest
+    // of the category's records), which is NOT the batch's snapshot file digest; the server refuses any other
+    // value with SNAPSHOT_CHANGED (stages.ts approveStage, E42), so sending the batch digest made Approve fail always
+    const DRY = 'd'.repeat(64);
+    const b = batch([stage('contacts', 'dry_run_ready', { counts, dryRunSha256: DRY })]);
     const rec = { id: '01900000-0000-7000-8000-0000000ec001', sourceRef: 'fub:person:77', outcome: 'needs_review', dryRunOutcome: 'needs_review', planned: 'create contact', issues: [{ code: 'PHONE_INVALID', severity: 'review', field: 'phone', sentence: '555-0100 has no area code, so it was left out.' }], record: { displayName: 'Jane Doe', phones: [], emails: ['jane@x.test'] }, matchContactId: null, duplicateCandidates: [], optOutNote: null, review: null, targetId: null };
     const fake = importFake(b)
       .on(`GET /imports/${BID}/stages/contacts/records?outcome=needs_review&limit=50`, { status: 200, body: { records: [rec], next: null } })
@@ -152,7 +157,8 @@ describe('Imports', () => {
     expect(fake.callsTo(`POST /imports/${BID}/records/${rec.id}/review`)[0]!.body).toEqual({ decision: 'import' });
     await u.click(within(card).getByRole('button', { name: 'Approve these 1150 records' }));
     await waitFor(() => expect(fake.callsTo(`POST /imports/${BID}/stages/contacts/approve`)).toHaveLength(1));
-    expect(fake.callsTo(`POST /imports/${BID}/stages/contacts/approve`)[0]!.body).toEqual({ snapshotSha256: SNAP });
+    expect(fake.callsTo(`POST /imports/${BID}/stages/contacts/approve`)[0]!.body).toEqual({ snapshotSha256: DRY });
+    expect(DRY).not.toBe(SNAP);
   });
 
   it('an approved category waits for earlier ones to be verified or skipped, and says which', async () => {
@@ -231,6 +237,29 @@ describe('Imports', () => {
     await u.click(screen.getByRole('button', { name: 'Undo this category' }));
     await waitFor(() => expect(fake.callsTo(`POST /imports/${BID}/revert`)).toHaveLength(1));
     expect(fake.callsTo(`POST /imports/${BID}/revert`)[0]!.body).toEqual({ category: 'contacts' });
+  });
+
+  it('after an Undo each place says what is true now: the card says what the undo removed (not "3 of 5 imported"), the parity table is "Imported, then undone"', async () => {
+    const reverted = stage('contacts', 'reverted', { counts: { source: 5, willImport: 3, imported: 3, needsReview: 0, rejected: 2, duplicate: 0 }, revert: { removed: 6, needsDecision: 0, removedByTable: { contacts: 3, contact_points: 3 }, done: true } });
+    const b = batch([reverted], { status: 'reverted', revertedAt: '2026-11-10T13:00:00.000Z' });
+    const parity = { phase: 'reverted', rows: [{ category: 'stages', source: 2, imported: 2, needsReview: 0, rejected: 0, duplicate: 0 }, { category: 'tags', source: 5, imported: 5, needsReview: 0, rejected: 0, duplicate: 0 }, { category: 'fields', source: 7, imported: 7, needsReview: 0, rejected: 0, duplicate: 0 }], lines: ['Before the undo, the import had set 2 stages, added 5 tags and written 7 custom values.'] };
+    const fake = importFake(b).on(`GET /imports/${BID}/report`, { status: 200, body: { source: 'Follow Up Boss', parity, categories: [{ category: 'contacts', status: 'reverted', phase: 'reverted', source: 5, imported: 3, needsReview: 0, rejected: 2, duplicate: 0, reconciles: true, lines: ['Undone. The undo removed what this import added: 3 people and 3 phone numbers or emails; nothing was left for your decision.'] }] } });
+    leadAdminApp(fake, `/imports/${BID}`, 'owner');
+    const card = (await screen.findByRole('heading', { level: 3, name: '1. Contacts' })).closest('article')!;
+    expect(within(card).getByText('Undone: the 3 of 5 that had been imported were removed.')).toBeInTheDocument();
+    expect(within(card).queryByText('3 of 5 imported')).toBeNull();
+    expect(await screen.findByText(/The undo removed what this import added: 3 people and 3 phone numbers or emails/)).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Imported, then undone' })).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Imported' })).toBeNull();
+    expect(screen.getByText('This import was undone.')).toBeInTheDocument();
+  });
+
+  it('after an Undo that left changed records, the card says how many were removed and how many wait for a decision', () => {
+    const c = { source: 5, willImport: 3, imported: 3, needsReview: 0, rejected: 2, duplicate: 0 };
+    expect(importedLine(c, { status: 'reverted', revert: { needsDecision: 1 } })).toBe('Undone: 2 of the 3 imported were removed; 1 changed since the import and wait for your decision.');
+    expect(importedLine(c, { status: 'committed', revert: null })).toBe('3 of 5 imported');
+    expect(parityImportedHeader('dry_run')).toBe('Will import');
+    expect(parityImportedHeader('committed')).toBe('Imported');
   });
 
   it('every Follow Up Boss agent is matched before ownership: unmatched people are counted and saved matches are sent', async () => {
