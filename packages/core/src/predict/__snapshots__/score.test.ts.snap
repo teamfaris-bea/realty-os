@@ -1,0 +1,46 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`score (R-PRED-1, R-PRED-3) > R-PRED-3: band with reasons and evidence, no probability (snapshot) 1`] = `
+{
+  "band": "likely_90d",
+  "reasons": [
+    {
+      "evidence": {
+        "field": "statedTimelineDays",
+        "sourceType": "features_input",
+      },
+      "feature": "stated_timeline_days",
+      "points": 40,
+      "text": "Said they plan to move within 60 days",
+    },
+    {
+      "evidence": {
+        "field": "last_sale_date",
+        "sourceId": "pr-1",
+        "sourceType": "property_record",
+      },
+      "feature": "years_in_home",
+      "points": 20,
+      "text": "14 years in the home",
+    },
+    {
+      "evidence": {
+        "field": "equityBand",
+        "sourceType": "features_input",
+      },
+      "feature": "equity_band",
+      "points": 20,
+      "text": "Estimated equity: high",
+    },
+    {
+      "evidence": {
+        "field": "recentSaves",
+        "sourceType": "features_input",
+      },
+      "feature": "recent_saves",
+      "points": 10,
+      "text": "Saved 2 listings recently",
+    },
+  ],
+}
+`;

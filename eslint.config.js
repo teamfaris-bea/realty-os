@@ -123,6 +123,18 @@ export default tseslint.config(
     },
   },
 
+  // ---- R-PRED-4: predictions/coaching never feed ownership, priority, ads, the portal or messaging (module 49)
+  {
+    files: [
+      'packages/core/src/{ownership,priority,ads,portal}/**/*.{ts,tsx}',
+      'apps/api/src/{ownership,comms,ads,portal}/**/*.{ts,tsx}',
+      'apps/api/src/leads/routing*',
+      'apps/api/src/leads/routing*/**/*.{ts,tsx}',
+      'apps/web/src/portal/**/*.{ts,tsx}',
+    ],
+    rules: { 'realty/no-prediction-import': 'error' },
+  },
+
   // ---- packages/db depends on core only (never api/web)
   {
     files: ['packages/db/**/*.ts'],

@@ -99,3 +99,25 @@ describe('realty/no-relative-outside-package', () => {
     ],
   });
 });
+
+describe('realty/no-prediction-import (R-PRED-4: predictions only become feed cards)', () => {
+  const coreFile = new URL('../../core/src/priority/feed.ts', import.meta.url).pathname;
+  tester.run('no-prediction-import', rules['no-prediction-import'], {
+    valid: [
+      { code: "import { x } from '@realty/core/fairhousing'", filename: coreFile },
+      { code: "import { x } from '../foundation/index.js'", filename: coreFile },
+      { code: "import { x } from '@realty/core/predictions-ui'", filename: coreFile },
+      { code: "import { x } from './predict.js'", filename: coreFile },
+    ],
+    invalid: [
+      { code: "import { score } from '@realty/core/predict'", filename: coreFile, errors: [{ messageId: 'forbidden' }] },
+      { code: "import type { Band } from '@realty/core/predict'", filename: coreFile, errors: [{ messageId: 'forbidden' }] },
+      { code: "import { x } from '@realty/core/coaching'", filename: coreFile, errors: [{ messageId: 'forbidden' }] },
+      { code: "export * from '@realty/core/predict'", filename: coreFile, errors: [{ messageId: 'forbidden' }] },
+      { code: "const m = await import('@realty/core/predict')", filename: coreFile, errors: [{ messageId: 'forbidden' }] },
+      { code: "import { score } from '../predict/index.js'", filename: coreFile, errors: [{ messageId: 'forbidden' }] },
+      { code: "import { s } from '../coaching/score.js'", filename: coreFile, errors: [{ messageId: 'forbidden' }] },
+      { code: "type B = import('@realty/core/predict').Band", filename: coreFile, errors: [{ messageId: 'forbidden' }] },
+    ],
+  });
+});
