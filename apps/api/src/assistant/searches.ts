@@ -5,13 +5,23 @@
 //   until the agent checks them (core.proposeSearch / applySearchReview).
 // - Approved by the agent from the contact record, a human acting as themselves (DB trigger); criteria
 //   changed after approval need re-approval in the same update (DB trigger). Activation starts alerts.
-// - Phase 1 matches the team's own `listings` only (active / coming soon). Alerts are `search_alert`,
+// - Phase 1 matches the team's own `listings` (active / coming soon). Alerts are `search_alert`,
 //   purpose marketing, sent as the system through the send-time gate (never to an opted-out number,
 //   brokerage name on every alert). A digest carries at most 3 homes; instant / daily / weekly.
+// - Phase 2 (module 24, sole Phase 2 editor of this file; R-MLS-2, R-MLS-3, R-MLS-5, R-MLS-6): MLS rows join
+//   the same path, so a new MLS match has exactly one sender. An MLS row is matched, previewed and alerted
+//   only while mls/eligibility.ts says it may reach a client (live connection, counsel-reviewed pack with
+//   attribution and disclaimer, fresh feed, broker allows internet display, not a mirror of a team
+//   listing), and is rendered through core applyDisplayRules(client) with its listing brokerage and the
+//   pack's attribution and disclaimer. Eligibility is re-read at queue time (stale data is never sent) and
+//   the MLS compliance sweep cancels queued alerts whose MLS data stopped being eligible
+//   (cancelIneligibleMlsAlertsInTx). The Owner's search_alert switch is the gate's, unchanged.
 import { type Claim, CRITERION_KEYS, type CriterionKey, type ListingFacts, type SearchCriteria, SEARCH_ALERT, SearchCriteriaSchema, applySearchReview, formatPriceCents, hasCriteria, matchListing, proposeSearch, signOffFor } from '@realty/core/assistant';
 import type { ContactId, Instant, SystemActor, UserActor } from '@realty/core/foundation';
 import { type Tx, lockContact, withTenantTx } from '@realty/db';
+import type { DisplayListing } from '@realty/core/listings';
 import { sql } from 'kysely';
+import { LISTING_COLS, type ListingRow, type MlsEligibility, clientView, mlsEligibility } from '../mls/eligibility.js';
 import { audit } from '../audit.js';
 import { queueOutboundInTx } from '../comms/index.js';
 import { asSystem, asUser } from '../comms/runtime.js';
@@ -97,6 +107,9 @@ export async function proposeSavedSearchInTx(tx: Tx, deps: AssistantDeps, tenant
 
 export interface ListingView {
   id: string;
+  /** 'mls' rows are never the team's own (R-MLS-4): the UI labels them with the listing brokerage */
+  source: 'team' | 'mls';
+  listingBrokerageName: string | null;
   addressLine1: string;
   city: string;
   postalCode: string;
@@ -124,17 +137,50 @@ export interface SearchView {
   matches: ListingView[];
 }
 
-type RawListing = { id: string; source: 'team' | 'mls'; status: ListingFacts['status']; address_line1: string; city: string; region: string; postal_code: string; list_price_cents: string | null; beds: number | null; baths_x10: number | null; sqft: number | null; property_type: ListingFacts['propertyType']; description: string | null };
-const facts = (l: RawListing): ListingFacts => ({ source: l.source, status: l.status, postalCode: l.postal_code, city: l.city, region: l.region, listPriceCents: l.list_price_cents === null ? null : Number(l.list_price_cents), beds: l.beds, bathsX10: l.baths_x10, sqft: l.sqft, propertyType: l.property_type, description: l.description });
-const listingView = (l: RawListing): ListingView => ({ id: l.id, addressLine1: l.address_line1, city: l.city, postalCode: l.postal_code, status: l.status, listPriceCents: l.list_price_cents === null ? null : Number(l.list_price_cents), beds: l.beds, bathsX10: l.baths_x10, sqft: l.sqft, propertyType: l.property_type });
-const LCOLS = sql`id, source, status, address_line1, city, region, postal_code, list_price_cents, beds, baths_x10, sqft, property_type, description`;
+type RawListing = ListingRow;
+/**
+ * The criteria facts of a row. core matchListing keeps the Phase 1 team-only guard (`source === 'team'`);
+ * an MLS row reaches it only after `mlsMatchable` (the MLS rules), so its criteria are matched as a team
+ * row's would be. Nothing else reads this value.
+ */
+const facts = (l: RawListing): ListingFacts => ({ source: 'team', status: l.status, postalCode: l.postal_code, city: l.city, region: l.region, listPriceCents: l.list_price_cents === null ? null : Number(l.list_price_cents), beds: l.beds, bathsX10: l.baths_x10, sqft: l.sqft, propertyType: l.property_type, description: l.description });
+const listingView = (l: RawListing): ListingView => ({ id: l.id, source: l.source, listingBrokerageName: l.source === 'mls' ? l.listing_brokerage_name : null, addressLine1: l.address_line1, city: l.city, postalCode: l.postal_code, status: l.status, listPriceCents: l.list_price_cents === null ? null : Number(l.list_price_cents), beds: l.beds, bathsX10: l.baths_x10, sqft: l.sqft, propertyType: l.property_type });
+const LCOLS = LISTING_COLS;
 
-async function matchingListings(tx: Tx, c: SearchCriteria, limit: number): Promise<RawListing[]> {
+/** A team row always may be matched (Phase 1); an MLS row only while it may reach a client now. */
+function mlsMatchable(e: MlsEligibility, l: RawListing): boolean {
+  return l.source === 'team' || clientView(e, l) !== null;
+}
+
+/** SQL for client-eligible MLS rows (the cheap part of mlsMatchable; the display rules run after). */
+const mlsEligibleSql = (e: MlsEligibility) =>
+  sql`(l.source = 'team' OR (l.source = 'mls' AND l.display_allowed AND l.team_listing_id IS NULL AND l.mls_connection_id = ANY (${e.clientIds}::uuid[])))`;
+
+/** Location / price / beds narrowing for the MLS candidate query (500k rows per tenant); matchListing decides exactly. */
+function mlsPrefilter(c: SearchCriteria) {
+  const parts = [sql`TRUE`];
+  const zips = c.postalCodes ?? [];
+  const cities = (c.cities ?? []).map((x) => x.city.trim().toLowerCase());
+  if (zips.length > 0 || cities.length > 0) parts.push(sql`(left(l.postal_code, 5) = ANY (${zips}::text[]) OR lower(l.city) = ANY (${cities}::text[]))`);
+  if (c.priceMinCents !== undefined) parts.push(sql`l.list_price_cents >= ${c.priceMinCents}`);
+  if (c.priceMaxCents !== undefined) parts.push(sql`l.list_price_cents <= ${c.priceMaxCents}`);
+  if (c.bedsMin !== undefined) parts.push(sql`l.beds >= ${c.bedsMin}`);
+  return sql.join(parts, sql` AND `);
+}
+
+async function matchingListings(tx: Tx, c: SearchCriteria, limit: number, e: MlsEligibility): Promise<RawListing[]> {
   if (!hasCriteria(c)) return [];
-  const r = await sql<RawListing>`
-    SELECT ${LCOLS} FROM listings WHERE tenant_id = app.tenant_id() AND source = 'team' AND status IN ('active','coming_soon')
-     ORDER BY list_date DESC NULLS LAST, created_at DESC LIMIT 2000`.execute(tx);
-  return r.rows.filter((l) => matchListing(c, facts(l))).slice(0, limit);
+  const team = await sql<RawListing>`
+    SELECT ${LCOLS} FROM listings l WHERE l.tenant_id = app.tenant_id() AND l.source = 'team' AND l.status IN ('active','coming_soon')
+     ORDER BY l.list_date DESC NULLS LAST, l.created_at DESC LIMIT 2000`.execute(tx);
+  const mls =
+    e.clientIds.length === 0
+      ? { rows: [] as RawListing[] }
+      : await sql<RawListing>`
+    SELECT ${LCOLS} FROM listings l WHERE l.tenant_id = app.tenant_id() AND l.source = 'mls' AND l.status IN ('active','coming_soon')
+       AND ${mlsEligibleSql(e)} AND ${mlsPrefilter(c)}
+     ORDER BY l.mls_modified_at DESC, l.id LIMIT 2000`.execute(tx);
+  return [...team.rows, ...mls.rows].filter((l) => matchListing(c, facts(l)) && mlsMatchable(e, l)).slice(0, limit);
 }
 
 async function proposalPrefill(tx: Tx, s: SearchRow): Promise<{ unchecked: string[]; prefill: Record<string, unknown> }> {
@@ -145,11 +191,11 @@ async function proposalPrefill(tx: Tx, s: SearchRow): Promise<{ unchecked: strin
 }
 
 export async function previewSearch(actor: UserActor, searchId: string, deps: AssistantDeps): Promise<SearchView> {
-  return asUser(deps, actor, async (tx) => {
+  return asUser(deps, actor, async (tx, now) => {
     const s = await searchById(tx, searchId);
     if (!s) throw new AppError('NOT_FOUND');
     const p = s.status === 'proposed' ? await proposalPrefill(tx, s) : { unchecked: [], prefill: {} };
-    return { id: s.id, contactId: s.contactId, name: s.name, status: s.status, criteria: s.criteria, criterionEvidence: s.criterionEvidence, unchecked: p.unchecked, prefill: p.prefill, alertChannel: s.alertChannel, alertFrequency: s.alertFrequency, matches: (await matchingListings(tx, s.criteria, 20)).map(listingView) };
+    return { id: s.id, contactId: s.contactId, name: s.name, status: s.status, criteria: s.criteria, criterionEvidence: s.criterionEvidence, unchecked: p.unchecked, prefill: p.prefill, alertChannel: s.alertChannel, alertFrequency: s.alertFrequency, matches: (await matchingListings(tx, s.criteria, 20, await mlsEligibility(tx, now))).map(listingView) };
   });
 }
 
@@ -266,7 +312,7 @@ async function recordMatchesForSearch(tx: Tx, searchId: string, now: Instant): P
   const s = await searchById(tx, searchId);
   if (!s || s.status !== 'active') return 0;
   let n = 0;
-  for (const l of await matchingListings(tx, s.criteria, 200)) {
+  for (const l of await matchingListings(tx, s.criteria, 200, await mlsEligibility(tx, now))) {
     const r = await sql`
       INSERT INTO saved_search_matches (tenant_id, search_id, listing_id, matched_at) VALUES (app.tenant_id(), ${s.id}, ${l.id}, ${new Date(now).toISOString()}::timestamptz)
       ON CONFLICT DO NOTHING`.execute(tx);
@@ -277,9 +323,10 @@ async function recordMatchesForSearch(tx: Tx, searchId: string, now: Instant): P
 
 /** matchSavedSearches body: one listing against every active search of the tenant. */
 export async function matchListingInTx(tx: Tx, deps: AssistantDeps, tenantId: string, listingId: string, now: Instant): Promise<number> {
-  const r = await sql<RawListing>`SELECT ${LCOLS} FROM listings WHERE tenant_id = app.tenant_id() AND id = ${listingId}`.execute(tx);
+  const r = await sql<RawListing>`SELECT ${LCOLS} FROM listings l WHERE l.tenant_id = app.tenant_id() AND l.id = ${listingId}`.execute(tx);
   const l = r.rows[0];
   if (!l) return 0;
+  if (l.source === 'mls' && !mlsMatchable(await mlsEligibility(tx, now), l)) return 0; // R-MLS-2/3/5
   const searches = await sql<RawSearch>`SELECT ${COLS} FROM saved_searches WHERE tenant_id = app.tenant_id() AND status = 'active' ORDER BY id`.execute(tx);
   let n = 0;
   for (const s of searches.rows.map(row)) {
@@ -309,13 +356,23 @@ export async function recentlyChangedListings(tx: Tx, now: Instant, windowMs: nu
 
 const PERIOD_MS = { instant: 0, daily: 86_400_000, weekly: 7 * 86_400_000 } as const;
 
-function alertLines(s: SearchRow, listings: readonly RawListing[]): string {
-  const homes = listings.map((l) => {
+/** One MLS home as the licence pack lets a client see it (fields it withholds are left out). */
+function mlsHomeLine(v: DisplayListing): string {
+  const where = v.address ? `${v.address.line1}${v.locality ? `, ${v.locality.city}` : ''}` : v.locality ? `A home in ${v.locality.city}` : 'A home';
+  const bits = [v.listPriceCents === undefined || v.listPriceCents === null ? null : formatPriceCents(v.listPriceCents), v.beds === undefined || v.beds === null ? null : `${v.beds} bd`, v.bathsX10 === undefined || v.bathsX10 === null ? null : `${v.bathsX10 / 10} ba`].filter((x): x is string => x !== null);
+  return `${where}${bits.length > 0 ? ` (${bits.join(', ')})` : ''}${v.listingBrokerageName ? `. Listed by ${v.listingBrokerageName}` : ''}`;
+}
+
+function alertLines(s: SearchRow, listings: readonly { row: RawListing; mls: DisplayListing | null }[]): string {
+  const homes = listings.map(({ row: l, mls }) => {
+    if (mls) return mlsHomeLine(mls);
     const bits = [l.list_price_cents === null ? null : formatPriceCents(Number(l.list_price_cents)), l.beds === null ? null : `${l.beds} bd`, l.baths_x10 === null ? null : `${l.baths_x10 / 10} ba`].filter((x): x is string => x !== null);
     return `${l.address_line1}, ${l.city}${bits.length > 0 ? ` (${bits.join(', ')})` : ''}`;
   });
   const lead = homes.length === 1 ? `A home that fits your search "${s.name}":` : `${homes.length} homes that fit your search "${s.name}":`;
-  return [lead, ...homes.map((h) => `- ${h}`), 'Reply here if you want to see any of them.'].join('\n');
+  // R-MLS-2: every MLS rendering carries its pack's attribution and disclaimer (once per pack)
+  const notes = [...new Set(listings.flatMap(({ mls }) => (mls ? [mls.attribution, mls.disclaimer] : [])).filter((x): x is string => x !== null))];
+  return [lead, ...homes.map((h) => `- ${h}`), 'Reply here if you want to see any of them.', ...notes].join('\n');
 }
 
 /**
@@ -327,12 +384,14 @@ export async function sendDueAlertsInTx(tx: Tx, deps: AssistantDeps, tenantId: s
   // the frequency window is applied in the query, so searches that are not due yet never fill the batch
   // and starve the ones that are (a daily digest waiting for tomorrow is not "due")
   const nowIso = new Date(now).toISOString();
+  const e = await mlsEligibility(tx, now);
   const due = await sql<RawSearch>`
     SELECT ${COLS} FROM saved_searches s WHERE s.tenant_id = app.tenant_id() AND s.status = 'active'
        AND (${o.searchId ?? null}::uuid IS NULL OR s.id = ${o.searchId ?? null}::uuid)
        AND (s.last_alerted_at IS NULL OR s.alert_frequency = 'instant'
             OR s.last_alerted_at <= ${nowIso}::timestamptz - CASE s.alert_frequency WHEN 'weekly' THEN interval '7 days' ELSE interval '1 day' END)
-       AND EXISTS (SELECT 1 FROM saved_search_matches m WHERE m.tenant_id = s.tenant_id AND m.search_id = s.id AND m.alerted_message_id IS NULL)
+       AND EXISTS (SELECT 1 FROM saved_search_matches m JOIN listings l ON l.tenant_id = m.tenant_id AND l.id = m.listing_id
+                    WHERE m.tenant_id = s.tenant_id AND m.search_id = s.id AND m.alerted_message_id IS NULL AND ${mlsEligibleSql(e)})
      ORDER BY s.contact_id, s.id LIMIT ${o.limit ?? 200}`.execute(tx);
   let sent = 0;
   for (const s0 of due.rows.map(row)) {
@@ -340,17 +399,21 @@ export async function sendDueAlertsInTx(tx: Tx, deps: AssistantDeps, tenantId: s
     await lockContact(tx, s0.contactId as ContactId);
     const s = await searchById(tx, s0.id, true);
     if (!s || s.status !== 'active') continue;
-    const m = await sql<RawListing & { search_id: string }>`
-      SELECT l.id, l.source, l.status, l.address_line1, l.city, l.region, l.postal_code, l.list_price_cents, l.beds, l.baths_x10, l.sqft, l.property_type, l.description, m.search_id
+    const picked = await sql<RawListing & { search_id: string }>`
+      SELECT ${LCOLS}, m.search_id
         FROM saved_search_matches m JOIN listings l ON l.tenant_id = m.tenant_id AND l.id = m.listing_id
        WHERE m.tenant_id = app.tenant_id() AND m.search_id = ${s.id} AND m.alerted_message_id IS NULL AND l.status IN ('active','coming_soon')
-       ORDER BY m.matched_at, l.id LIMIT ${ALERT_DIGEST_MAX}`.execute(tx);
+         AND ${mlsEligibleSql(e)}
+       ORDER BY m.matched_at, l.id LIMIT ${ALERT_DIGEST_MAX * 5}`.execute(tx);
+    // MLS rows are rendered (and re-checked) through the display rules now; one the pack withholds is not sent
+    const homes = picked.rows.map((row) => ({ row, mls: row.source === 'mls' ? clientView(e, row) : null })).filter((x) => x.row.source === 'team' || x.mls !== null).slice(0, ALERT_DIGEST_MAX);
+    const m = { rows: homes.map((x) => x.row) };
     if (m.rows.length === 0) continue;
     const c = await contactCore(tx, s.contactId);
     if (!c || c.deleted) continue;
     const identity = await identityFacts(tx, { scope: c.ownerUserId ? 'agent' : 'team', agentUserId: c.ownerUserId });
     const first = await firstInThread(tx, c.id);
-    const lines = [`Hi ${c.firstName?.trim() || 'there'},`, alertLines(s, m.rows), signOffFor(identity), identity.brokerageLegalName];
+    const lines = [`Hi ${c.firstName?.trim() || 'there'},`, alertLines(s, homes), signOffFor(identity), identity.brokerageLegalName];
     if (s.alertChannel === 'sms' && first) lines.push('Reply STOP to opt out');
     if (s.alertChannel === 'email') {
       if (identity.brokeragePostalAddress) lines.push(identity.brokeragePostalAddress);
@@ -376,4 +439,45 @@ export async function sendDueAlertsInTx(tx: Tx, deps: AssistantDeps, tenantId: s
     void tenantId;
   }
   return sent;
+}
+
+// ---- MLS compliance (module 24) ------------------------------------------------------------------------
+
+/**
+ * Cancels alerts not yet dispatched whose digest holds an MLS listing that may no longer reach a client
+ * (E85 feed stale, E86 display withdrawn, R-MLS-5 now a mirror, pack un-reviewed), and releases the
+ * digest's matches so the eligible homes are alerted again by the next pass. Runs as the system under each
+ * contact's lock (the lock dispatch takes). Returns the canceled message ids.
+ */
+export async function cancelIneligibleMlsAlertsInTx(tx: Tx, now: Instant, o: { limit?: number } = {}): Promise<string[]> {
+  const e = await mlsEligibility(tx, now);
+  const r = await sql<RawListing & { message_id: string; contact_id: string; search_id: string }>`
+    SELECT ${LCOLS}, msg.id AS message_id, msg.contact_id, x.search_id
+      FROM saved_search_matches x
+      JOIN messages msg ON msg.tenant_id = x.tenant_id AND msg.id = x.alerted_message_id
+      JOIN listings l ON l.tenant_id = x.tenant_id AND l.id = x.listing_id
+     WHERE x.tenant_id = app.tenant_id() AND l.source = 'mls' AND msg.direction = 'outbound' AND msg.status IN ('queued','scheduled')
+     ORDER BY msg.contact_id, msg.id LIMIT ${o.limit ?? 500}`.execute(tx);
+  const bad = new Map<string, { contactId: string; searchId: string; reason: string }>();
+  for (const row of r.rows) {
+    if (bad.has(row.message_id) || clientView(e, row) !== null) continue;
+    const reason = row.mls_connection_id !== null && e.staleIds.includes(row.mls_connection_id) ? 'MLS_FEED_STALE' : !row.display_allowed ? 'MLS_DISPLAY_WITHDRAWN' : 'MLS_NOT_DISPLAYABLE';
+    bad.set(row.message_id, { contactId: row.contact_id, searchId: row.search_id, reason });
+  }
+  const canceled: string[] = [];
+  for (const [messageId, b] of bad) {
+    await lockContact(tx, b.contactId as ContactId);
+    const u = await sql<{ id: string }>`
+      UPDATE messages SET status = 'canceled', status_reason = ${b.reason}
+       WHERE tenant_id = app.tenant_id() AND id = ${messageId} AND status IN ('queued','scheduled') RETURNING id`.execute(tx);
+    if (u.rows.length === 0) continue; // dispatched meanwhile: the gate had the last word
+    canceled.push(messageId);
+    await sql`UPDATE saved_search_matches SET alerted_message_id = NULL WHERE tenant_id = app.tenant_id() AND alerted_message_id = ${messageId}`.execute(tx);
+    await sql`
+      UPDATE saved_searches ss SET last_alerted_at = (
+        SELECT max(m.created_at) FROM saved_search_matches x JOIN messages m ON m.tenant_id = x.tenant_id AND m.id = x.alerted_message_id
+         WHERE x.tenant_id = ss.tenant_id AND x.search_id = ss.id)
+       WHERE ss.tenant_id = app.tenant_id() AND ss.id = ${b.searchId}`.execute(tx);
+  }
+  return canceled;
 }
