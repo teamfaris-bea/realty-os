@@ -61,13 +61,12 @@ function LeadSourceCard({ source }: { source: LeadSource }) {
 
 export function EmailIntake({ source }: { source: LeadSource }) {
   const api = useApi();
-  const hid = useId();
   const q = useQuery<InboxResponse, ApiError>({ queryKey: INBOX_KEY(source.id), queryFn: ({ signal }) => api.get<InboxResponse>(`/lead-sources/${source.id}/lead-email`, { signal }) });
   const inbox = q.data?.inbox;
   return (
-    <section aria-labelledby={hid} className="flex flex-col gap-3 border-t border-line pt-3">
+    <section aria-label={`Email intake for ${source.name}`} className="flex flex-col gap-3 border-t border-line pt-3">
       <div className="flex flex-wrap items-center gap-2">
-        <h4 id={hid} className="text-[16px] font-semibold text-ink">
+        <h4 className="text-[16px] font-semibold text-ink">
           Email intake
         </h4>
         {inbox ? inbox.enabled ? <Pill tone="ok">On</Pill> : <Pill>Off</Pill> : null}
