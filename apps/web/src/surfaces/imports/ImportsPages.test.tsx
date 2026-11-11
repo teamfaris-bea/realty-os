@@ -133,8 +133,12 @@ describe('Imports', () => {
     expect(await screen.findByText(/1 of 1 category verified/)).toBeInTheDocument();
   });
 
-  it('a ready dry run shows the five counts, the review list by outcome, and approval of exactly this snapshot', async () => {
-    const b = batch([stage('contacts', 'dry_run_ready', { counts })]);
+  it('a ready dry run shows the five counts, the review list by outcome, and approval of exactly this dry run', async () => {
+    // the approval presents the digest of the dry run the reviewer saw (stage.dryRunSha256: core snapshotDigest
+    // of the category's records), which is NOT the batch's snapshot file digest; the server refuses any other
+    // value with SNAPSHOT_CHANGED (stages.ts approveStage, E42), so sending the batch digest made Approve fail always
+    const DRY = 'd'.repeat(64);
+    const b = batch([stage('contacts', 'dry_run_ready', { counts, dryRunSha256: DRY })]);
     const rec = { id: '01900000-0000-7000-8000-0000000ec001', sourceRef: 'fub:person:77', outcome: 'needs_review', dryRunOutcome: 'needs_review', planned: 'create contact', issues: [{ code: 'PHONE_INVALID', severity: 'review', field: 'phone', sentence: '555-0100 has no area code, so it was left out.' }], record: { displayName: 'Jane Doe', phones: [], emails: ['jane@x.test'] }, matchContactId: null, duplicateCandidates: [], optOutNote: null, review: null, targetId: null };
     const fake = importFake(b)
       .on(`GET /imports/${BID}/stages/contacts/records?outcome=needs_review&limit=50`, { status: 200, body: { records: [rec], next: null } })
@@ -152,7 +156,8 @@ describe('Imports', () => {
     expect(fake.callsTo(`POST /imports/${BID}/records/${rec.id}/review`)[0]!.body).toEqual({ decision: 'import' });
     await u.click(within(card).getByRole('button', { name: 'Approve these 1150 records' }));
     await waitFor(() => expect(fake.callsTo(`POST /imports/${BID}/stages/contacts/approve`)).toHaveLength(1));
-    expect(fake.callsTo(`POST /imports/${BID}/stages/contacts/approve`)[0]!.body).toEqual({ snapshotSha256: SNAP });
+    expect(fake.callsTo(`POST /imports/${BID}/stages/contacts/approve`)[0]!.body).toEqual({ snapshotSha256: DRY });
+    expect(DRY).not.toBe(SNAP);
   });
 
   it('an approved category waits for earlier ones to be verified or skipped, and says which', async () => {
