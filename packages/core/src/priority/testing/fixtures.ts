@@ -100,6 +100,7 @@ export const sla = (o: Partial<SlaFacts> = {}): SlaFacts => ({
   firstTouchDueAt: t(min(10)),
   firstTouchAt: null,
   periodEndedAt: null,
+  nextPeriodAt: null,
   releaseDueAt: t(min(25)),
   ...o,
 });

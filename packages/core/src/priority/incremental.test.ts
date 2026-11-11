@@ -68,7 +68,7 @@ const inboundA: fc.Arbitrary<InboundFacts> = fc.oneof(
 const inputsA: fc.Arbitrary<FeedInputs> = fc
   .record({
     offers: fc.array(fc.record({ contactId: cid, offerId: fc.constantFrom('o1', 'o2'), offeredToUserId: users, offeredAt: when, expiresAt: when, sourceName: fc.option(text, { nil: null }) }), { maxLength: 2 }),
-    slas: fc.array(fc.record({ contactId: cid, ownerUserId: users, periodSeq: fc.integer({ min: 1, max: 3 }), ownedAt: when, firstTouchDueAt: when, firstTouchAt: fc.constant(null), periodEndedAt: fc.constant(null), releaseDueAt: fc.option(when, { nil: null }) }), { maxLength: 3 }),
+    slas: fc.array(fc.record({ contactId: cid, ownerUserId: users, periodSeq: fc.integer({ min: 1, max: 3 }), ownedAt: when, firstTouchDueAt: when, firstTouchAt: fc.constant(null), periodEndedAt: fc.constant(null), nextPeriodAt: fc.constant(null), releaseDueAt: fc.option(when, { nil: null }) }), { maxLength: 3 }),
     unansweredInbound: fc.array(inboundA, { maxLength: 6 }),
     handbacks: fc.array(
       fc.record({
@@ -194,7 +194,7 @@ describe('incremental feed: pure facts (lane perf-misses)', () => {
 
   it('nextFeedChange is not late: at the named instant the structure may change, and it is null only for time-free inputs', () => {
     // a first-touch SLA turns overdue exactly at its due instant
-    const i = { now: NOW, userId: ME, offers: [], slas: [{ contactId: contact(1), ownerUserId: ME, periodSeq: 1, ownedAt: NOW, firstTouchDueAt: instant(NOW + 600_000), firstTouchAt: null, periodEndedAt: null, releaseDueAt: null }], unansweredInbound: [], handbacks: [], drafts: [], tasks: [], dealDates: [], appointments: [], blockedChannels: new Map() } as unknown as FeedInputs;
+    const i = { now: NOW, userId: ME, offers: [], slas: [{ contactId: contact(1), ownerUserId: ME, periodSeq: 1, ownedAt: NOW, firstTouchDueAt: instant(NOW + 600_000), firstTouchAt: null, periodEndedAt: null, nextPeriodAt: null, releaseDueAt: null }], unansweredInbound: [], handbacks: [], drafts: [], tasks: [], dealDates: [], appointments: [], blockedChannels: new Map() } as unknown as FeedInputs;
     const next = nextFeedChange(i)!;
     expect(next).toBe(NOW + 600_000);
     expect(structure(scoreFeed(at(i, instant(next - 1))))).toEqual(structure(scoreFeed(i)));

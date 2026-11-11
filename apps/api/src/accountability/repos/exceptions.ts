@@ -99,11 +99,17 @@ const PERIOD_END_TYPES = ['reassigned', 'released', 'auto_released', 'inactivity
  * SLA ownership periods from the LEDGER (R-ACC-2: a later auto-release never erases a miss): accept,
  * claim, assign and reassign with a first-touch deadline, plus a re-inquiry that started a new SLA period
  * on an owned lead (R-OWN-20, E68: a new period, so a new item key).
+ *
+ * A period's first touch is the first first_touch_recorded before its window ends: when the lead left the
+ * agent (`ended_at`, PERIOD_END_TYPES) or when a re-inquiry started a new period of theirs (`next_period_at`,
+ * payload.newPeriod, as fold's startsPeriod). A touch after the re-inquiry is the later period's first touch,
+ * never the earlier one's late fix (owner decision 2026-11-11, DATA_MODEL R-ACC-2). `ended_at` keeps meaning
+ * "the lead left this agent": core says so in the item's evidence, which would be false for a re-inquiry.
  */
 export async function slaFacts(tx: Tx, s: InputScope): Promise<SlaFacts[]> {
   const nowIso = iso(s.now);
   const winIso = iso(s.windowStart);
-  const r = await sql<{ contact_id: string; seq: string; owner_user_id: string; owned_at: Date; due: Date; ended_at: Date | null; first_touch_at: Date | null }>`
+  const r = await sql<{ contact_id: string; seq: string; owner_user_id: string; owned_at: Date; due: Date; ended_at: Date | null; next_period_at: Date | null; first_touch_at: Date | null }>`
     WITH p AS (
       SELECT e.tenant_id, e.contact_id, e.seq, e.owner_user_id, e.occurred_at AS owned_at, e.deadline_at AS due
         FROM lead_ownership_events e
@@ -120,16 +126,24 @@ export async function slaFacts(tx: Tx, s: InputScope): Promise<SlaFacts[]> {
           ON x.contact_id = e.contact_id AND x.seq = e.seq
        WHERE e.tenant_id = app.tenant_id() AND e.deadline_at IS NOT NULL AND e.owner_user_id IS NOT NULL)
     SELECT p.contact_id, p.seq::text AS seq, p.owner_user_id, p.owned_at, p.due, pe.occurred_at AS ended_at,
+           np.occurred_at AS next_period_at,
            (SELECT f.occurred_at FROM lead_ownership_events f
              WHERE f.tenant_id = p.tenant_id AND f.contact_id = p.contact_id AND f.seq > p.seq
-               AND f.type = 'first_touch_recorded' AND (pe.seq IS NULL OR f.seq < pe.seq)
+               AND f.type = 'first_touch_recorded' AND (pe.seq IS NULL OR f.seq < pe.seq) AND (np.seq IS NULL OR f.seq < np.seq)
              ORDER BY f.seq LIMIT 1) AS first_touch_at
       FROM p
       LEFT JOIN LATERAL (
         SELECT x.seq, x.occurred_at FROM lead_ownership_events x
          WHERE x.tenant_id = p.tenant_id AND x.contact_id = p.contact_id AND x.seq > p.seq
            AND x.type = ANY (${PERIOD_END_TYPES}::text[])
-         ORDER BY x.seq LIMIT 1) pe ON true`.execute(tx);
+         ORDER BY x.seq LIMIT 1) pe ON true
+      -- the first new period of the same owner while they still hold the lead (before it left them)
+      LEFT JOIN LATERAL (
+        SELECT x.seq, x.occurred_at FROM lead_ownership_events x
+         WHERE x.tenant_id = p.tenant_id AND x.contact_id = p.contact_id AND x.seq > p.seq
+           AND x.type = 'reinquiry' AND x.payload @> '{"newPeriod": true}'::jsonb
+           AND (pe.seq IS NULL OR x.seq < pe.seq)
+         ORDER BY x.seq LIMIT 1) np ON true`.execute(tx);
   return r.rows.map((x) => ({
     contactId: x.contact_id as ContactId,
     ownerUserId: x.owner_user_id as UserId,
@@ -138,6 +152,7 @@ export async function slaFacts(tx: Tx, s: InputScope): Promise<SlaFacts[]> {
     firstTouchDueAt: ms(x.due),
     firstTouchAt: msOrNull(x.first_touch_at),
     periodEndedAt: msOrNull(x.ended_at),
+    nextPeriodAt: msOrNull(x.next_period_at),
   }));
 }
 

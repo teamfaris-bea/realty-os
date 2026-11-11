@@ -40,8 +40,11 @@ import type {
 /**
  * exception_items.rule_version. Bump on any change to a definition below.
  * 2: milestone_at_risk (R-ACC-6) and the open-house invite exclusion of failed_send (R-MKT-8).
+ * 3: an untouched_lead period's first-touch window also ends when a re-inquiry starts a new period of
+ *    the same owner (R-OWN-20, E68): a touch in the later period no longer marks the earlier miss
+ *    "fixed late", and a period superseded before its deadline is no item.
  */
-export const EXCEPTION_RULE_VERSION = 2;
+export const EXCEPTION_RULE_VERSION = 3;
 
 /** R-ACC-6: a confirmed date due within this long with nobody responsible is at risk. */
 export const MILESTONE_UNASSIGNED_WINDOW_MS = 48 * HOUR_MS;
@@ -63,8 +66,11 @@ export type DerivedException = { kind: 'item'; spec: ExceptionItemSpec } | { kin
 export function untouchedLead(s: SlaFacts, now: Instant): DerivedException {
   const key = untouchedKey(s.contactId, s.periodSeq);
   const due = s.firstTouchDueAt;
-  // Not due yet, touched in time, or the period ended before the deadline (no breach is ever written then).
-  if (now < due || (s.firstTouchAt !== null && s.firstTouchAt <= due) || (s.periodEndedAt !== null && s.periodEndedAt <= due)) {
+  // The first-touch window ends when the lead leaves the agent or a re-inquiry starts a new period of theirs.
+  const endedBy = (at: Instant | null): boolean => at !== null && at <= due;
+  // Not due yet, touched in time, or the window ended before the deadline (no breach is ever written then:
+  // the breach timer is fenced on the period, R-OWN-15).
+  if (now < due || (s.firstTouchAt !== null && s.firstTouchAt <= due) || endedBy(s.periodEndedAt) || endedBy(s.nextPeriodAt)) {
     return { kind: 'clear', key };
   }
   const late = s.firstTouchAt !== null;

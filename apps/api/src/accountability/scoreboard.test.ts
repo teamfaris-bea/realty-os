@@ -15,6 +15,7 @@ import {
   daytimeContact,
   endedAppointment,
   humanTouch,
+  intake,
   leadsWorker,
   ledger,
   sendText,
@@ -88,6 +89,23 @@ describe('scoreboard', () => {
     // lead is gone from the ledger view, which would have shown a flattering 1 of 1
     const viaView = await withTenantTx(a0.actor(), (tx) => sql<{ n: number }>`SELECT count(*)::int AS n FROM v_speed_to_lead WHERE user_id = ${a0.userId}::uuid`.execute(tx), { db: h.database });
     expect(viaView.rows[0]!.n).toBeLessThan(3);
+  });
+
+  it('R-ACC-2 R-ACC-4 E68 (owner decision 2026-11-11): a re-inquiry that starts a new period is a speed-to-lead period of its own; the touch after it answers that period, never the earlier miss', async () => {
+    const lead = await acceptedLead(h, w);
+    expect(lead.owner.userId).toBe(a0.userId);
+    await setPeriodDeadlines(h, lead.contactId, -60_000, 86_400_000); // missed, and still a0's
+    const before = (await board(a0)).body.scoreboard.speedToLead;
+    // quiet for more than 7 days (clock fixture), then the lead inquires again: a new SLA period of a0's (R-OWN-20)
+    await suFixture(h, [{ text: `UPDATE contacts SET owned_at = now() - interval '8 days', last_human_touch_at = now() - interval '8 days' WHERE id = $1`, values: [lead.contactId] }]);
+    const phone = (await h.su.query(`SELECT address FROM contact_points WHERE contact_id = $1 AND kind = 'phone' LIMIT 1`, [lead.contactId])).rows[0].address as string;
+    expect((await intake(h, w, { phones: [phone], fullName: 'Pat Lead', inquiryType: 'sell' })).outcome).toBe('reinquiry');
+    await humanTouch(h, a0, lead.contactId); // inside the new period's first-touch window
+    const after = (await board(a0)).body.scoreboard.speedToLead;
+    // one more period, answered in time; the earlier period stays a miss with no response
+    expect(after).toMatchObject({ total: before.total + 1, withinSla: before.withinSla + 1, responded: before.responded + 1, pending: before.pending });
+    const periods = (await h.su.query(`SELECT first_touch_at IS NOT NULL AS touched, within_sla FROM v_speed_to_lead WHERE contact_id = $1 ORDER BY owned_seq`, [lead.contactId])).rows;
+    expect(periods).toEqual([{ touched: false, within_sla: false }, { touched: true, within_sla: true }]);
   });
 
   it('R-ACC-4 R-IMPORT-6: appointments set, held of due, and agreements signed; imported appointments never count', async () => {

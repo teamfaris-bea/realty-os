@@ -468,7 +468,19 @@ A rollup per (tenant, member, local day) is therefore exact for every viewer:
 - `app.scoreboard_rollup_roll` and `app.scoreboard_rollup_sample` refuse any caller but the tenant's system actor,
   and return only a summary of counts.
 - `app.scoreboard_speed` got a new body that returns the same rows (one ledger probe instead of two). It is proved
-  equal to the 0012 body row for row for every role and the system actor.
+  equal to the 0012 body row for row for every role and the system actor. Since the re-inquiry change below, the
+  reference is the 0012 body plus the re-inquiry rule.
+- **Re-inquiry periods (owner decision 2026-11-11, DATA_MODEL R-ACC-2 / E68; migration
+  `0042_api_accountability_reinquiry_periods.sql`).** A re-inquiry that starts a new ownership period
+  (`payload.newPeriod`) is a speed-to-lead period of its own and ends the earlier period's first-touch window.
+  `app.scoreboard_speed`, `app.scoreboard_rollup_roll` (speed rows only) and `app.scoreboard_mark_ledger` were
+  replaced with `CREATE OR REPLACE` (same signatures) and re-asserted: owner `app_definer`,
+  `search_path = pg_catalog, public`, EXECUTE revoked from PUBLIC, granted to `app_user` for the two callable ones.
+  They return the same columns as before (timings and counts only, no contact id), and the member rule is unchanged.
+  `v_speed_to_lead` keeps `security_invoker`. Every rolled day whose speed rows change (a re-inquiry period's day, and
+  the day of the period before it) was marked dirty by the migration. Proof:
+  `apps/api/src/accountability/scoreboard_reinquiry.test.ts`, which migrates a database rolled under the old
+  definitions.
 
 **New tables.**
 - `scoreboard_activity_daily`, `scoreboard_speed_daily`, `scoreboard_rollup_days`, `scoreboard_rollup_dirty` and
