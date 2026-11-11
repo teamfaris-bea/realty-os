@@ -177,6 +177,12 @@ CREATE POLICY lead_email_messages_insert ON lead_email_messages FOR INSERT WITH 
 CREATE POLICY lead_email_messages_update ON lead_email_messages FOR UPDATE
   USING ((SELECT app.actor_kind()) = 'system') WITH CHECK ((SELECT app.actor_kind()) = 'system');
 
+-- the statement-level support write block (0016) every public table carries
+CREATE TRIGGER support_read_only BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE ON lead_email_inbox_keys
+  FOR EACH STATEMENT EXECUTE FUNCTION app.reject_support_write();
+CREATE TRIGGER support_read_only BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE ON lead_email_messages
+  FOR EACH STATEMENT EXECUTE FUNCTION app.reject_support_write();
+
 GRANT SELECT, INSERT, UPDATE ON lead_email_inbox_keys, lead_email_messages TO app_user;
 GRANT SELECT ON lead_email_inbox_keys, lead_email_messages TO app_definer;
 GRANT SELECT, UPDATE, DELETE ON lead_email_messages TO app_retention;

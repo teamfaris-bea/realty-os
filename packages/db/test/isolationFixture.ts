@@ -21,6 +21,8 @@ interface Col {
 
 /** Column overrides (SQL expressions) for CHECKs a generic value cannot satisfy. `$T` = tenant id. */
 const OVERRIDES: Record<string, Record<string, string>> = {
+  // 0040 lead-email intake: a lead_created row names its parser
+  lead_email_messages: { parser_kind: "'generic'" },
   '*': {
     tenant_id: '$T',
     address_hmac: "digest(gen_random_uuid()::text, 'sha256')",
