@@ -8,8 +8,9 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { ID, FakeFetch, leadAdminApp } from '../admin/lib/testing.js';
 import type { Playbook, PlaybookStepView, PlaybookVersion } from '../admin/lib/types.js';
+import { err } from '../../shell/testing/fakeApi.js';
 import { applyDraft } from './PlaybooksPage.js';
-import { approvalAttestation, delayText, mayApprove, placeholdersIn, playbookState, splitDelay, workingVersion } from './playbooks.js';
+import { approvalAttestation, autoEnrollRefusal, delayText, mayApprove, placeholdersIn, playbookState, splitDelay, workingVersion } from './playbooks.js';
 
 const SHA = 'a'.repeat(64);
 const step: PlaybookStepView = {
@@ -132,5 +133,134 @@ describe('Playbook editor', () => {
     expect(screen.getByRole('heading', { name: 'Your playbooks' })).toBeInTheDocument();
     const opts = [...(screen.getByLabelText('Start from') as HTMLSelectElement).options].map((o) => o.value);
     expect(opts).toEqual(['nurture', 'post_closing']);
+  });
+});
+
+describe('R-PAR-16 "Start this plan when a person enters stage …" (PARITY_PLAN §1 action plan on stage change)', () => {
+  const LABEL = 'Start this plan when a person enters stage';
+  const STAGES = ['new', 'attempting', 'connected', 'nurture', 'active', 'under_contract', 'closed', 'lost'];
+  const NAMES: Record<string, string> = { new: 'New', attempting: 'Attempting', connected: 'Connected', nurture: 'Nurture', active: 'Active buyer', under_contract: 'Under contract', closed: 'Closed', lost: 'Lost' };
+  const labels = { status: 200, body: { labels: { active: 'Active buyer' }, stages: STAGES.map((key) => ({ key, label: NAMES[key]! })) } };
+  const team = (over: Partial<Playbook> = {}) => playbook({ scope: 'team', ownerUserId: null, name: 'Buyer plan', approvedVersionId: 'v1', versions: [version({ status: 'approved' })], ...over });
+  /** the page's fake API, with the setting kept like the server keeps it (GET answers what the last PUT saved) */
+  function world(p: Playbook, o: { stage?: string | null; canChange: boolean; put?: (body: { stage: string | null }, n: number) => ReturnType<typeof err> | null }) {
+    let stage = o.stage ?? null;
+    const fake = fakeFor(p)
+      .on('GET /stage-labels', labels)
+      .on(`GET /playbooks/${p.id}/auto-enroll-stage`, () => ({ status: 200, body: { playbook: { id: p.id, name: p.name, scope: p.scope, autoEnrollStage: stage }, canChange: o.canChange } }))
+      .on(`PUT /playbooks/${p.id}/auto-enroll-stage`, (c, n) => {
+        const body = c.body as { stage: string | null };
+        const refused = o.put?.(body, n) ?? null;
+        if (refused) return refused;
+        stage = body.stage;
+        return { status: 200, body: { playbook: { id: p.id, name: p.name, scope: p.scope, autoEnrollStage: stage } } };
+      });
+    return fake;
+  }
+
+  it('an Owner picks the stage of a team playbook from the tenant\'s stage labels; the saved stage is what the page shows', async () => {
+    const p = team();
+    const fake = world(p, { canChange: true });
+    leadAdminApp(fake, '/settings/playbooks/pb1', 'owner');
+    const u = userEvent.setup();
+    const select = (await screen.findByLabelText(LABEL)) as HTMLSelectElement;
+    await waitFor(() => expect([...select.options].map((o) => o.textContent)).toEqual(['No stage', 'New', 'Attempting', 'Connected', 'Nurture', 'Active buyer', 'Under contract', 'Closed', 'Lost']));
+    expect(select.value).toBe('');
+    const section = select.closest('section')!;
+    expect(within(section).getByRole('heading', { name: 'Start on a stage change' })).toBeInTheDocument();
+    expect(within(section).getByText(/only from its approved version, never while they are in another plan or can't be reached, and never for a stage set by an import/)).toBeInTheDocument();
+    const save = within(section).getByRole('button', { name: 'Save' });
+    expect(save).toBeDisabled();
+    await u.selectOptions(select, 'active');
+    await u.click(save);
+    expect(await screen.findByText('Saved. This playbook now starts when a person enters “Active buyer”.')).toBeInTheDocument();
+    expect(fake.callsTo('PUT /playbooks/pb1/auto-enroll-stage').map((c) => c.body)).toEqual([{ stage: 'active' }]);
+    await waitFor(() => expect(fake.callsTo('GET /playbooks/pb1/auto-enroll-stage').length).toBeGreaterThanOrEqual(2));
+    expect((screen.getByLabelText(LABEL) as HTMLSelectElement).value).toBe('active');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+  });
+
+  it('409 AUTO_ENROLL_STAGE_TAKEN is said in plain words with the stage\'s label and a link to the playbook that holds it', async () => {
+    const p = team();
+    const fake = world(p, { canChange: true, put: () => err(409, 'AUTO_ENROLL_STAGE_TAKEN', { playbookId: 'pb9' }) });
+    leadAdminApp(fake, '/settings/playbooks/pb1', 'admin');
+    const u = userEvent.setup();
+    await u.selectOptions(await screen.findByLabelText(LABEL), 'active');
+    await u.click(screen.getByRole('button', { name: 'Save' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Another team playbook already starts when a person enters “Active buyer”. Clear the stage on that playbook first, or pick another one.');
+    expect(within(alert).getByRole('link', { name: 'Open that playbook' })).toHaveAttribute('href', '/settings/playbooks/pb9');
+    expect(alert.textContent).not.toMatch(/[A-Z]{2,}_[A-Z_]+/); // never a raw code
+    expect((screen.getByLabelText(LABEL) as HTMLSelectElement).value).toBe('active'); // the pick stays, to change it
+    expect(screen.queryByText(/^Saved\./)).toBeNull();
+  });
+
+  it('the 422 refusals (an instant reply to new leads, a stage not in the list) and a retired playbook come back in plain words', async () => {
+    const replies = [err(422, 'AUTO_ENROLL_NOT_ALLOWED'), err(422, 'VALIDATION_FAILED'), err(409, 'PLAYBOOK_RETIRED')];
+    const p = team();
+    const fake = world(p, { canChange: true, put: (_b, n) => replies[n - 1] ?? null });
+    leadAdminApp(fake, '/settings/playbooks/pb1', 'owner');
+    const u = userEvent.setup();
+    await u.selectOptions(await screen.findByLabelText(LABEL), 'nurture');
+    for (const sentence of ["An instant reply to new leads starts when a lead arrives, so it can't also start on a stage change.", 'Pick one of the stages in the list, or “No stage”.', "This playbook was retired, so it can't start on a stage change."]) {
+      await u.click(screen.getByRole('button', { name: 'Save' }));
+      expect(await screen.findByText(sentence)).toBeInTheDocument();
+    }
+    expect(fake.callsTo('PUT /playbooks/pb1/auto-enroll-stage')).toHaveLength(3);
+    expect(screen.queryByRole('link', { name: 'Open that playbook' })).toBeNull();
+  });
+
+  it('an agent sets their own personal playbook (it covers only people they own); "No stage" clears it; a plan with no approved version says nothing starts yet', async () => {
+    const p = playbook(); // personal, the agent's own, draft only
+    const fake = world(p, { canChange: true, stage: 'nurture' });
+    leadAdminApp(fake, '/settings/playbooks/pb1', 'agent');
+    const u = userEvent.setup();
+    const select = (await screen.findByLabelText(LABEL)) as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe('nurture'));
+    expect(screen.getByText(/It covers only people you own\./)).toBeInTheDocument();
+    expect(screen.getByText('No version of this playbook is approved yet, so nobody starts it until one is.')).toBeInTheDocument();
+    await u.selectOptions(select, '');
+    expect(screen.queryByText(/nobody starts it until one is/)).toBeNull();
+    await u.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('Saved. This playbook no longer starts on a stage change.')).toBeInTheDocument();
+    expect(fake.callsTo('PUT /playbooks/pb1/auto-enroll-stage').map((c) => c.body)).toEqual([{ stage: null }]);
+  });
+
+  it('whoever may not change it (a Team Lead on a team playbook) reads the stage it starts on, with no control; with no stage there is nothing to read', async () => {
+    const p = team();
+    leadAdminApp(world(p, { canChange: false, stage: 'active' }), '/settings/playbooks/pb1', 'team_lead');
+    expect(await screen.findByText(/Starts on its own when a person enters “Active buyer”\./)).toBeInTheDocument();
+    expect(screen.getByText('An Owner or Admin can change this.')).toBeInTheDocument();
+    expect(screen.queryByLabelText(LABEL)).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Start on a stage change' })).toBeNull();
+  });
+
+  it('nothing is shown when the stage is unset and the viewer may not change it, or the setting is not visible to them', async () => {
+    const p = playbook({ ownerUserId: ID.ava }); // someone else's personal playbook
+    const fake = world(p, { canChange: false });
+    const first = leadAdminApp(fake, '/settings/playbooks/pb1', 'owner');
+    expect(await screen.findByRole('heading', { name: 'Versions' })).toBeInTheDocument();
+    await waitFor(() => expect(fake.callsTo('GET /playbooks/pb1/auto-enroll-stage').length).toBeGreaterThan(0));
+    expect(screen.queryByLabelText(LABEL)).toBeNull();
+    expect(screen.queryByText(/Starts on its own/)).toBeNull();
+    first.view.unmount();
+    const hidden = fakeFor(p).on('GET /playbooks/pb1/auto-enroll-stage', err(404, 'NOT_FOUND'));
+    leadAdminApp(hidden, '/settings/playbooks/pb1', 'isa');
+    expect(await screen.findByRole('heading', { name: 'Versions' })).toBeInTheDocument();
+    await waitFor(() => expect(hidden.callsTo('GET /playbooks/pb1/auto-enroll-stage').length).toBeGreaterThan(0));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('an instant reply to new leads never starts on a stage change: the Owner is told so instead of offered a control', async () => {
+    const p = team({ kind: 'new_lead_response', name: 'Instant reply to new leads' });
+    leadAdminApp(world(p, { canChange: true }), '/settings/playbooks/pb1', 'owner');
+    expect(await screen.findByText("An instant reply to new leads starts when a lead arrives, so it can't also start on a stage change.")).toBeInTheDocument();
+    expect(screen.queryByLabelText(LABEL)).toBeNull();
+  });
+
+  it('autoEnrollRefusal: plain words for every refusal of the PUT, never a code', () => {
+    expect(autoEnrollRefusal('AUTO_ENROLL_STAGE_TAKEN', { stageLabel: 'Active', scope: 'agent' })).toBe('Another of your playbooks already starts when a person enters “Active”. Clear the stage on that playbook first, or pick another one.');
+    expect(autoEnrollRefusal('AUTO_ENROLL_STAGE_TAKEN', { stageLabel: null, scope: 'team' })).toBe('Another playbook already starts on that stage. Clear the stage on that playbook first, or pick another one.');
+    for (const code of ['AUTO_ENROLL_NOT_ALLOWED', 'PLAYBOOK_RETIRED', 'VALIDATION_FAILED', 'NOT_FOUND', 'SOMETHING_NEW']) expect(autoEnrollRefusal(code, { stageLabel: 'Lost', scope: 'team' })).not.toMatch(/[A-Z]{2,}_[A-Z_]+/);
   });
 });

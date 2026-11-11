@@ -1,23 +1,30 @@
 // The bulk action sheet (parity module 64; R-PAR-33..R-PAR-42, PARITY_PLAN §5 honest UI). Exported for the
 // People page bulk bar (module 61), which opens it with the selection (the checked people with the list they
-// came from, or the whole smart list after "Select all") and, for tag/untag/assign/enroll, the chosen tag,
-// person or plan. Email and text pick their template here; stage picks here. The server freezes the
-// selection at draft (module 60's resolveSelection: detail-visible people only, the kind's cap, no
-// protected-tag audience for sends, the checked people's list included).
+// came from, or the whole smart list after "Select all") and, for tag/untag, the chosen tag. Email and text
+// pick their template here; stage picks a stage here; assign picks the person (only members the viewer may
+// assign to, choices.ts) and Start plan picks the plan (only approved plans the viewer may start) here. A
+// caller may pass the choice instead (module 64's /bulk/new link). The server freezes the selection at draft
+// (module 60's resolveSelection: detail-visible people only, the kind's cap, no protected-tag audience for
+// sends and plans, the checked people's list included) and decides every person again (module 63).
 //
-//   1. choose  (email/text: a template; stage: a stage)           1 tap
+//   1. choose  (a template, a stage, a person or a plan)           1 tap
 //   2. the confirm sheet: the draft the server built, with the frozen target. Everyone selected is counted:
 //      who will get it, and who is left out and why (opted out, no address, wrote in the last 24 h, shares
-//      an address, …). There is nothing to pre-tick and no way to include someone who opted out.
+//      an address, already in a plan, can't be reached, not yours, …). There is nothing to pre-tick and no
+//      way to include someone who opted out.
 //   3. Confirm                                                      1 tap
-// From the People bulk bar: Email → template → Confirm (PARITY_PLAN §5: bulk email 6 taps on a phone).
+// From the People bulk bar: Email → template → Confirm (PARITY_PLAN §5: bulk email 6 taps on a phone, where
+// Email also takes a sideways swipe on the one-row bar, ARCHITECTURE "The phone bulk bar"); Assign → person →
+// Confirm (§5 bulk assign: 6 on a phone with no swipe, 5 on desktop); Start plan → plan → Confirm.
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useId, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Dialog, Notice } from '../../design/index.js';
-import { type ApiError, messageFor, useApi, useCommand } from '../../shell/index.js';
+import { type ApiError, messageFor, useApi, useCommand, useSession } from '../../shell/index.js';
+import { KIND_LABEL } from '../settings/playbooks.js';
 import type { TemplateView } from '../templates/api.js';
-import { BULK_ERROR_MESSAGES, BULK_KEY, type BulkActionView, type BulkKind, KIND_WORDS, reasonWords } from './api.js';
+import { BULK_ERROR_MESSAGES, BULK_KEY, type BulkActionView, type BulkKind, KIND_WORDS, reasonWordsFor } from './api.js';
+import { type AssignTarget, type PlanChoice, mayBulkAssign, mayBulkEnroll, useAssignTargets, usePlanChoices } from './choices.js';
 
 export const STAGE_CHOICES: readonly { key: string; label: string }[] = [
   { key: 'new', label: 'New' },
@@ -45,7 +52,7 @@ export interface BulkActionSheetProps {
   audienceSource?: BulkListSelection;
   /** tags the selection was built from (a tag chip): a protected one refuses sends (R-PAR-8) */
   audienceTagIds?: readonly string[];
-  /** tag/untag: the tag; assign: the person; enroll: the plan (chosen by the caller) */
+  /** tag/untag: the tag; assign: the person; enroll: the plan (when the caller chose already; otherwise the sheet asks) */
   params?: { tagId?: string; toUserId?: string; playbookId?: string; stage?: string; templateId?: string };
   /** a label for the thing chosen by the caller ("Tag Buyer", "Assign to Sam") */
   paramLabel?: string;
@@ -53,12 +60,38 @@ export interface BulkActionSheetProps {
   onConfirmed?(a: BulkActionView): void;
 }
 
+/** What the person chose in the sheet: the parameter for the draft and the words that describe it. */
+interface Choice {
+  templateId?: string;
+  stage?: string;
+  toUserId?: string;
+  playbookId?: string;
+  label: string;
+  /** the person or plan's name, for the count sentence */
+  name?: string;
+  /** enroll: a personal plan (it covers only the people its agent owns) */
+  personalPlan?: boolean;
+}
+
+const CHOICE_BUTTON = 'flex min-h-tap w-full flex-col items-start justify-center rounded-xl border border-line bg-surface px-3.5 py-2 text-left active:bg-surface-2 disabled:opacity-60';
+
+/**
+ * Who hears about a bulk assign, as module 63's runner does it (R-PAR-35, apps/api/src/bulk/run.ts finish): one
+ * summary notice to the new owner and one to each current owner whose people move, but never to the person
+ * who runs it, whether they assign to themself or own some of the people (they get the results notice).
+ */
+function assignNoticeText(toYou: boolean, name: string | undefined): string {
+  if (toYou) return 'Each one moves to you under the same rules as assigning one lead. Each current owner gets one notice for the whole group, not one per lead.';
+  return `Each one moves to ${name ?? 'the new owner'} under the same rules as assigning one lead. ${name ?? 'The new owner'} and each current owner other than you get one notice for the whole group, not one per lead.`;
+}
+
 export function BulkActionSheet({ kind, contactIds = [], selection, selectedText, audienceSource, audienceTagIds, params = {}, paramLabel, onClose, onConfirmed }: BulkActionSheetProps) {
   const api = useApi();
+  const { session } = useSession();
   const id = useId();
   const send = kind === 'email' || kind === 'text';
-  const needsChoice = (send && !params.templateId) || (kind === 'stage' && !params.stage);
-  const [choice, setChoice] = useState<{ templateId?: string; stage?: string; label: string } | null>(null);
+  const needsChoice = (send && !params.templateId) || (kind === 'stage' && !params.stage) || (kind === 'assign' && !params.toUserId) || (kind === 'enroll' && !params.playbookId);
+  const [choice, setChoice] = useState<Choice | null>(null);
   const [draft, setDraft] = useState<BulkActionView | null>(null);
   const [confirmed, setConfirmed] = useState<BulkActionView | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -70,7 +103,7 @@ export function BulkActionSheet({ kind, contactIds = [], selection, selectedText
   const create = useCommand<Record<string, unknown>, { action: BulkActionView }>('/bulk-actions', { idKey: 'idempotencyKey', invalidate: [[...BULK_KEY]] });
   const confirm = useCommand<Record<string, unknown>, { action: BulkActionView }>(`/bulk-actions/${draft?.id ?? 'none'}/confirm`, { invalidate: [[...BULK_KEY]] });
 
-  const build = async (c: { templateId?: string; stage?: string; label: string } | null) => {
+  const build = async (c: Choice | null) => {
     setChoice(c);
     setError(null);
     const r = await create.run({
@@ -81,6 +114,8 @@ export function BulkActionSheet({ kind, contactIds = [], selection, selectedText
       ...params,
       ...(c?.templateId ? { templateId: c.templateId } : {}),
       ...(c?.stage ? { stage: c.stage } : {}),
+      ...(c?.toUserId ? { toUserId: c.toUserId } : {}),
+      ...(c?.playbookId ? { playbookId: c.playbookId } : {}),
     });
     if (r.ok) setDraft(r.data.action);
     else setError(messageFor({ code: r.code, details: r.details }, BULK_ERROR_MESSAGES));
@@ -107,6 +142,10 @@ export function BulkActionSheet({ kind, contactIds = [], selection, selectedText
   }, []);
 
   const skipped = draft ? Object.entries(draft.preflight).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]) : [];
+  // assign: is the new owner the viewer (picked as "(you)", or passed in by the caller)? Then the runner sends them no summary
+  const assignee = choice?.toUserId ?? params.toUserId;
+  const toYou = kind === 'assign' && assignee !== undefined && assignee === session?.user.id;
+  const outcome = toYou ? 'will be assigned to you' : kind === 'assign' && choice?.name ? `will be assigned to ${choice.name}` : kind === 'enroll' && choice?.name ? `will start “${choice.name}”` : `will get this ${words.noun}`;
   return (
     <Dialog
       title={title}
@@ -157,11 +196,13 @@ export function BulkActionSheet({ kind, contactIds = [], selection, selectedText
           ))}
         </section>
       ) : null}
+      {!draft && needsChoice && kind === 'assign' ? <AssignChoices disabled={create.pending} onPick={(t) => void build({ toUserId: t.userId, label: t.you ? 'Assign to you' : `Assign to ${t.name}`, name: t.name })} /> : null}
+      {!draft && needsChoice && kind === 'enroll' ? <PlanChoices disabled={create.pending} onPick={(p) => void build({ playbookId: p.id, label: `Start “${p.name}”`, name: p.name, personalPlan: p.scope === 'agent' })} /> : null}
       {create.pending ? <p className="text-[15px] text-ink-muted">Checking each person</p> : null}
       {draft && !confirmed ? (
         <div className="flex flex-col gap-3">
           <p className="text-[17px] text-ink" id={`${id}-count`}>
-            <span className="font-semibold">{draft.targetCount}</span> of {draft.selected} selected will get this {words.noun}.
+            <span className="font-semibold">{draft.targetCount}</span> of {draft.selected} selected {outcome}.
           </p>
           {skipped.length > 0 ? (
             <section aria-labelledby={`${id}-skips`} className="flex flex-col gap-1 rounded-xl bg-surface-2 px-3.5 py-3">
@@ -171,7 +212,7 @@ export function BulkActionSheet({ kind, contactIds = [], selection, selectedText
               <ul className="flex flex-col gap-0.5 text-[15px] text-ink">
                 {skipped.map(([code, n]) => (
                   <li key={code} data-reason={code}>
-                    <span className="font-semibold">{n}</span> {reasonWords(code)}
+                    <span className="font-semibold">{n}</span> {reasonWordsFor(code, { kind, ...(choice?.personalPlan ? { personalPlan: true } : {}) })}
                   </li>
                 ))}
               </ul>
@@ -189,7 +230,13 @@ export function BulkActionSheet({ kind, contactIds = [], selection, selectedText
               </p>
             </section>
           ) : null}
-          <p className="text-[14px] text-ink-muted">Nobody who opted out can be included. Bulk messages don't count as touches on a lead.</p>
+          {kind === 'assign' ? (
+            <p className="text-[14px] text-ink-muted">{assignNoticeText(toYou, choice?.name)}</p>
+          ) : kind === 'enroll' ? (
+            <p className="text-[14px] text-ink-muted">The plan sends its approved messages on its own, signed as the assistant, and stops when someone replies. Anyone who opts out before a message goes out is skipped.</p>
+          ) : (
+            <p className="text-[14px] text-ink-muted">Nobody who opted out can be included. Bulk messages don't count as touches on a lead.</p>
+          )}
           {draft.targetCount === 0 ? <Notice tone="warn">Everyone selected is left out, so there is nothing to {words.verb.toLowerCase()}.</Notice> : null}
         </div>
       ) : null}
@@ -202,5 +249,56 @@ export function BulkActionSheet({ kind, contactIds = [], selection, selectedText
         </div>
       ) : null}
     </Dialog>
+  );
+}
+
+/** Assign: the members this viewer may assign to (Owner/Admin: anyone active who can hold leads; a Team Lead: their team). */
+function AssignChoices({ disabled, onPick }: { disabled: boolean; onPick(t: AssignTarget): void }) {
+  const { session } = useSession();
+  const role = session?.tenant?.role;
+  const q = useAssignTargets(role);
+  if (!mayBulkAssign(role)) return <Notice tone="warn">{BULK_ERROR_MESSAGES['BULK_NOT_PERMITTED']}</Notice>;
+  return (
+    <section aria-label="Assign to" className="flex flex-col gap-1">
+      <p className="text-[15px] text-ink-muted">{role === 'team_lead' ? 'Pick who takes them: you, or someone on a team you lead.' : 'Pick who takes them.'}</p>
+      {q.isPending ? <p className="text-[15px] text-ink-muted">Loading people</p> : null}
+      {q.isError ? <Notice tone="error">{messageFor(q.error, BULK_ERROR_MESSAGES)}</Notice> : null}
+      {q.data?.length === 0 ? <p className="text-[15px] text-ink-muted">There is no one you can assign them to.</p> : null}
+      <ul className="flex flex-col gap-1">
+        {(q.data ?? []).map((t) => (
+          <li key={t.userId}>
+            <button type="button" disabled={disabled} onClick={() => onPick(t)} className={CHOICE_BUTTON}>
+              <span className="text-[17px] font-medium text-ink">{t.you ? `${t.name} (you)` : t.name}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** Start plan: approved plans only, never the instant reply to new leads; team plans and the viewer's own. */
+function PlanChoices({ disabled, onPick }: { disabled: boolean; onPick(p: PlanChoice): void }) {
+  const { session } = useSession();
+  const allowed = mayBulkEnroll(session?.tenant?.role);
+  const q = usePlanChoices(allowed);
+  if (!allowed) return <Notice tone="warn">{BULK_ERROR_MESSAGES['BULK_NOT_PERMITTED']}</Notice>;
+  return (
+    <section aria-label="Plans" className="flex flex-col gap-1">
+      <p className="text-[15px] text-ink-muted">Pick the plan. It starts only for people who are not in a plan already and can be reached by text or email.</p>
+      {q.isPending ? <p className="text-[15px] text-ink-muted">Loading plans</p> : null}
+      {q.isError ? <Notice tone="error">{messageFor(q.error, BULK_ERROR_MESSAGES)}</Notice> : null}
+      {q.data?.length === 0 ? <p className="text-[15px] text-ink-muted">No plan is ready to start. A plan needs an approved version first: approve one under Playbooks.</p> : null}
+      <ul className="flex flex-col gap-1">
+        {(q.data ?? []).map((p) => (
+          <li key={p.id}>
+            <button type="button" disabled={disabled} onClick={() => onPick(p)} className={CHOICE_BUTTON}>
+              <span className="text-[17px] font-medium text-ink [overflow-wrap:anywhere]">{p.name}</span>
+              <span className="text-[14px] text-ink-muted">{`${p.scope === 'team' ? 'Team plan' : 'Your plan, for people you own'} · ${KIND_LABEL[p.kind] ?? p.kind}`}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
