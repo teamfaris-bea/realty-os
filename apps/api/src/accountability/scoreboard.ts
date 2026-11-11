@@ -37,10 +37,18 @@ export interface RangeView {
   zone: string;
 }
 
-async function boards(tx: Tx, userIds: readonly string[], names: Map<string, string | null>, key: RangeKey, now: Instant): Promise<{ range: RangeView; boards: Scoreboard[] }> {
+/**
+ * Where the counts come from: `rollup` (the default; whole rolled days from the 0027 daily rollup, the
+ * rest live) or `live` (the 0012 functions over the whole range). Both return the same numbers for every
+ * viewer (scoreboard_rollup.test.ts); `live` exists as that reference.
+ */
+export type CountSource = 'rollup' | 'live';
+
+async function boards(tx: Tx, userIds: readonly string[], names: Map<string, string | null>, key: RangeKey, now: Instant, source: CountSource): Promise<{ range: RangeView; boards: Scoreboard[] }> {
   const b = await repo.rangeBounds(tx, key, now);
   const days = repo.RANGE_DAYS[key];
-  const [speed, activity] = await Promise.all([repo.speedRows(tx, userIds, b.from, b.to), repo.activityRows(tx, userIds, b.from, b.to)]);
+  const [speedOf, activityOf] = source === 'live' ? [repo.liveSpeedRows, repo.liveActivityRows] : [repo.speedRows, repo.activityRows];
+  const [speed, activity] = await Promise.all([speedOf(tx, userIds, b.from, b.to), activityOf(tx, userIds, b.from, b.to)]);
   const out: Scoreboard[] = [];
   for (const id of userIds) {
     // The functions drop ids the caller may not see: no row means no access, so no board at all.
@@ -61,14 +69,14 @@ async function boards(tx: Tx, userIds: readonly string[], names: Map<string, str
 }
 
 /** One member's scoreboard. The route authorizes scoreboard.view first; the DB function re-checks. */
-export async function scoreboardFor(tx: Tx, userId: string, key: RangeKey, now: Instant): Promise<{ range: RangeView; scoreboard: Scoreboard | null }> {
+export async function scoreboardFor(tx: Tx, userId: string, key: RangeKey, now: Instant, source: CountSource = 'rollup'): Promise<{ range: RangeView; scoreboard: Scoreboard | null }> {
   const m = await repo.members(tx, [userId]);
-  const r = await boards(tx, [userId], new Map(m.map((x) => [x.user_id, x.display_name])), key, now);
+  const r = await boards(tx, [userId], new Map(m.map((x) => [x.user_id, x.display_name])), key, now, source);
   return { range: r.range, scoreboard: r.boards[0] ?? null };
 }
 
 /** Members whose numbers the caller may see: Owner/Admin everyone who can hold leads; TL their team; others themselves. */
-export async function teamScoreboard(tx: Tx, actor: UserActor, key: RangeKey, now: Instant): Promise<{ range: RangeView; members: Scoreboard[] }> {
+export async function teamScoreboard(tx: Tx, actor: UserActor, key: RangeKey, now: Instant, source: CountSource = 'rollup'): Promise<{ range: RangeView; members: Scoreboard[] }> {
   const all = await repo.members(tx, null);
   const tenantWide = actor.role === 'owner' || actor.role === 'admin';
   const visible = all.filter(
@@ -77,7 +85,7 @@ export async function teamScoreboard(tx: Tx, actor: UserActor, key: RangeKey, no
       m.role !== 'tc' &&
       (tenantWide || m.user_id === actor.userId || (actor.role === 'team_lead' && m.in_my_team)),
   );
-  const r = await boards(tx, visible.map((m) => m.user_id), new Map(visible.map((m) => [m.user_id, m.display_name])), key, now);
+  const r = await boards(tx, visible.map((m) => m.user_id), new Map(visible.map((m) => [m.user_id, m.display_name])), key, now, source);
   return { range: r.range, members: r.boards };
 }
 

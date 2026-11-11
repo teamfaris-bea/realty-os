@@ -2,7 +2,7 @@
 import type { Instant } from '@realty/core/foundation';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { assertNoPiiInPayload, cancel, claim, enqueue, finish, JobPayloadError, reap, scrubError } from '../src/jobs.js';
+import { assertNoPiiInPayload, cancel, claim, enqueue, enqueueAll, finish, JobPayloadError, reap, scrubError } from '../src/jobs.js';
 import { withTenantTx } from '../src/tenantTx.js';
 import { createHarness, createWorld, type Harness, suRows, uuid, type World } from './world.js';
 
@@ -100,5 +100,26 @@ describe('jobs', () => {
     expect(() => assertNoPiiInPayload({ phone: '(555) 555-0100' })).toThrow(JobPayloadError);
     await expect(withTenantTx(a.system(), (tx) => enqueue(tx, { queue: 'default', kind: 'test.pii', payload: { email: 'x@y.co' } }), { db: h.app })).rejects.toThrow(JobPayloadError);
     expect(scrubError('x'.repeat(900)).length).toBe(500);
+  });
+
+  it('enqueueAll (lane perf-misses) has the outcome of enqueue called per spec in order: one batch when no key is live; with a live key (or two specs sharing one), every spec whose key is free is still inserted, in order, and the transaction stays usable', async () => {
+    const ref = uuid();
+    const keys = [`all:${ref}:1`, `all:${ref}:2`, `all:${ref}:3`];
+    const spec = (k: string, n: number) => ({ queue: 'realtime' as const, kind: 'test.enqueue_all', payload: { ref, n }, dedupeKey: k, runAt: Date.UTC(2030, 0, 1, 0, 0, n) as Instant });
+    const rows = async () =>
+      suRows<{ dedupe_key: string; n: number; run_at: Date }>(h.su, `SELECT dedupe_key, (payload->>'n')::int AS n, run_at FROM jobs WHERE kind = 'test.enqueue_all' AND payload->>'ref' = $1 ORDER BY id`, [ref]);
+    await withTenantTx(a.system(), (tx) => enqueueAll(tx, [spec(keys[0]!, 1), spec(keys[1]!, 2)]), { db: h.app });
+    expect((await rows()).map((r) => [r.dedupe_key, r.n])).toEqual([[keys[0], 1], [keys[1], 2]]);
+    // keys[1] is live: the batch falls back to one-by-one; keys[2] twice in one batch: only the first lands
+    const after = await withTenantTx(a.system(), async (tx) => {
+      await enqueueAll(tx, [spec(keys[1]!, 20), spec(keys[2]!, 3), spec(keys[2]!, 30)]);
+      return (await sql<{ ok: number }>`SELECT 1 AS ok`.execute(tx)).rows[0]!.ok;
+    }, { db: h.app });
+    expect(after).toBe(1);
+    expect((await rows()).map((r) => [r.dedupe_key, r.n])).toEqual([[keys[0], 1], [keys[1], 2], [keys[2], 3]]);
+    expect((await rows())[2]!.run_at.toISOString()).toBe('2030-01-01T00:00:03.000Z');
+    // the PII guard applies to every spec before anything is written
+    await expect(withTenantTx(a.system(), (tx) => enqueueAll(tx, [spec(`all:${ref}:4`, 4), { ...spec(`all:${ref}:5`, 5), payload: { to: 'jane@example.com' } }]), { db: h.app })).rejects.toThrow(JobPayloadError);
+    expect(await rows()).toHaveLength(3);
   });
 });

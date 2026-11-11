@@ -90,9 +90,7 @@ export function scrubError(s: string): string {
 
 /** Enqueue in the caller's transaction. Returns false when a live job with the dedupe key exists. */
 export async function enqueue(tx: Tx, j: JobSpec): Promise<boolean> {
-  if (!(QUEUES as readonly string[]).includes(j.queue)) throw new TypeError(`unknown queue ${j.queue}`);
-  if (!JOB_KIND_RE.test(j.kind)) throw new TypeError(`job kind must match area.verb: ${j.kind}`);
-  assertNoPiiInPayload(j.payload);
+  checkSpec(j);
   const runAt = j.runAt === undefined ? null : toIso(j.runAt);
   const insert = sql`
     INSERT INTO jobs (tenant_id, queue, kind, payload, priority, run_at, dedupe_key, max_attempts)
@@ -105,6 +103,38 @@ export async function enqueue(tx: Tx, j: JobSpec): Promise<boolean> {
   // app_user has INSERT but no SELECT on jobs, so ON CONFLICT (which needs SELECT on the arbiter
   // columns) is not available: a duplicate live dedupe key is caught inside a savepoint instead.
   return insertUnlessDuplicate(tx, insert, 'jobs_dedupe_uq');
+}
+
+function checkSpec(j: JobSpec): void {
+  if (!(QUEUES as readonly string[]).includes(j.queue)) throw new TypeError(`unknown queue ${j.queue}`);
+  if (!JOB_KIND_RE.test(j.kind)) throw new TypeError(`job kind must match area.verb: ${j.kind}`);
+  assertNoPiiInPayload(j.payload);
+}
+
+/**
+ * Several enqueues in one round trip (lane perf-misses: an accept/claim enqueues four timers). The
+ * outcome is exactly that of `enqueue` called for each spec in order: one multi-row INSERT inside a
+ * savepoint; when a live dedupe key makes it fail, the savepoint is rolled back and the specs are
+ * enqueued one by one (each skipped only if its own key is live). Rows get job ids in spec order.
+ */
+export async function enqueueAll(tx: Tx, js: readonly JobSpec[]): Promise<void> {
+  if (js.length === 0) return;
+  if (js.length === 1) {
+    await enqueue(tx, js[0]!);
+    return;
+  }
+  for (const j of js) checkSpec(j);
+  const rows = js.map(
+    (j) => sql`(app.tenant_id(), ${j.queue}, ${j.kind}, ${JSON.stringify(j.payload)}::jsonb, ${j.priority ?? 100},
+                COALESCE(${j.runAt === undefined ? null : toIso(j.runAt)}::timestamptz, clock_timestamp()), ${j.dedupeKey ?? null}, ${j.maxAttempts ?? 10})`,
+  );
+  const insert = sql`INSERT INTO jobs (tenant_id, queue, kind, payload, priority, run_at, dedupe_key, max_attempts) VALUES ${sql.join(rows)}`;
+  if (js.every((j) => j.dedupeKey === undefined)) {
+    await insert.execute(tx);
+    return;
+  }
+  if (await insertUnlessDuplicate(tx, insert, 'jobs_dedupe_uq')) return;
+  for (const j of js) await enqueue(tx, j);
 }
 
 /** Cancels pending jobs with these dedupe keys in the current tenant. */

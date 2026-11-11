@@ -125,6 +125,35 @@ export function withPreTenant<T>(fn: (tx: Tx, now: Instant) => Promise<T>, opts:
   return runTx(opts.db ?? getDatabase(), g, fn, 0);
 }
 
+/**
+ * Session resolution in ONE transaction (one pooled connection instead of two; lane perf-misses):
+ * `pre` runs exactly as in withPreTenant (no tenant context: every tenant table reads as empty). When
+ * `actorOf` names an actor for its result, ALL request GUCs are then replaced with that actor's
+ * (the same applyGucs call withTenantTx makes: tenant, user, actor kind, principal, and an empty
+ * ownership command), and `fn` runs in the same transaction with a fresh DB clock. Nothing of the
+ * pre-tenant context survives into `fn`. `pre` must only read (it shares fn's transaction).
+ */
+export function withPreTenantThenTenant<P, T>(
+  pre: (tx: Tx, now: Instant) => Promise<P>,
+  actorOf: (p: P) => Actor | null,
+  fn: (tx: Tx, now: Instant, p: P) => Promise<T>,
+  opts: { db?: Database } = {},
+): Promise<{ pre: P; result: T | null }> {
+  const preGucs: Gucs = { tenantId: '', userId: '', actorKind: '', ownershipCommand: '' };
+  return runTx(
+    opts.db ?? getDatabase(),
+    preGucs,
+    async (tx, now) => {
+      const p = await pre(tx, now);
+      const actor = actorOf(p);
+      if (!actor) return { pre: p, result: null };
+      const tenantNow = await applyGucs(tx, actorGucs(actor));
+      return { pre: p, result: await fn(tx, tenantNow, p) };
+    },
+    0,
+  );
+}
+
 /** Cross-tenant definer calls of the worker (claim/finish/reap/due_work): no tenant, no user. */
 export function withNoContext<T>(db: Database, fn: (tx: Tx, now: Instant) => Promise<T>): Promise<T> {
   return runTx(db, { tenantId: '', userId: '', actorKind: '', ownershipCommand: '' }, fn, 0);

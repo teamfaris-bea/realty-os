@@ -4,25 +4,26 @@ This page answers one question with measurements: does the app stay fast for a l
 250,000 contacts and 50 agents, with row-level security (RLS) on, measured the way the API really runs.
 It also lists what was fixed, what still misses its budget, and what it would take to fix that.
 
-**Short answer.** Most of the phone's daily reads now pass with margin:
-- contact page
-- thread
-- timeline
-- exception queue
-- pond
-- an agent's scoreboard
-- send/dispatch
+**Short answer (after lane `perf-misses`, 2026-11).** Four of the five operations that missed their budget now pass,
+measured on a fresh 250k seed (§4.1):
 
-Five things still miss their budget at 250k:
-- **The Priority Feed** (p95 2.5 s for the busiest agent, 1.4 s for the median one, against 150 ms; before: 32 s
-  and 10 s). It recomputes the whole book on every GET.
-- **Search.** It waits out its 300 ms branch timeout because messages and notes cannot use an index under RLS.
-- **The team scoreboards** (lead 0.40 s, admin 0.93 s).
-- **A TC's thread** on a TC who sits on about 2,900 deals (0.71 s).
-- **Accept and claim** when 40+ agents tap at once (0.63–0.69 s).
+| operation | budget | before p95 | after p95 |
+|---|---:|---:|---:|
+| Priority Feed, busiest agent | 150 ms | 2.03 s | 30 ms |
+| Priority Feed, median agent | 150 ms | 957 ms | 42 ms |
+| Search, slowest row (agent, name) | 300 ms | 316 ms, incomplete | 38 ms, complete |
+| Team scoreboard 30d, team lead / admin | 300 ms | 348 ms / 799 ms | 94 ms / 203 ms |
+| Thread as a TC on about 2,900 deals | 300 ms | 753 ms | 134 ms |
 
-The 50k-row import dry run used to fail every time and now finishes (in 2.6 minutes). The remaining misses need
-design decisions. None of them can be fixed by an index, and each is described under [Still missing](#still-missing).
+Two operations still miss on this 4-core machine, where the database and the API share the CPU (§7):
+- **Accept with 47 agents at once:** 760 → 637 ms.
+- **44 agents each claiming at once:** 529 → 382 ms.
+
+The cause is CPU time per tap, not lock waits. The agent-side profile puts a floor of about 420 ms on 48
+simultaneous taps of the remaining ~35 ms of CPU each. Single taps and the same-lead race pass.
+
+The exception recompute job went from 14.4 s to 1.2 s for the large tenant. The import dry run went from
+122 s to 13 s, a side effect of the contact-detail policy change.
 
 ## 1. Machine
 
@@ -176,6 +177,67 @@ Checks (before):
 - ok: D1: opted-out numbers are never sent to: 30/30 not sent (200 blocked:CONSENT_REVOKED); sent rows 500 → 500
 - FAILED: import dry run: counts reconcile: failed null
 
+### 4.1 Lane `perf-misses` (2026-11): before and after
+
+**Runs.**
+- Same machine as §1: 4 cores, 16 GB, Postgres 16.15 with default settings.
+- Each run used a fresh `pnpm load:seed --contacts 250000`. The machine was quiet (load average about 1 at
+  the start of the timed run, no other work running).
+- Before = commit `118a975`, raw results in `docs/perf/before-perf-misses-250k.json`.
+- After = commit `be4c34d`, raw results in `docs/perf/after-perf-misses-250k.json`. Its application code is the
+  final code; only the seed later gained an `ANALYZE` of the tables its jobs write.
+- n = 40 per read; accept and claim time every request of their concurrent batch.
+
+**Steady state.** The seed now ends with the background jobs caught up, as the worker would be:
+- every member's feed materialized (48 s for the large tenant's 83 members);
+- the scoreboard rollup backfilled (92 days in 3.4 s);
+- the exception recompute run (1.2 s; 14.4 s in the "before" seed).
+
+| operation | budget (p95) | before p50 | before p95 | after p50 | after p95 | after |
+|---|---:|---:|---:|---:|---:|---|
+| feed: GET /feed (busiest agent) | 150 ms | 1.85 s | 2.03 s | 23 ms | 30 ms | pass |
+| feed: GET /feed (median agent) | 150 ms | 892 ms | 957 ms | 32 ms | 42 ms | pass |
+| search name: GET /search (agent) | 300 ms | 309 ms | 316 ms | 24 ms | 38 ms | pass |
+| search phone: GET /search (agent) | 300 ms | 310 ms | 313 ms | 10 ms | 14 ms | pass |
+| search email: GET /search (agent) | 300 ms | 308 ms | 311 ms | 10 ms | 12 ms | pass |
+| search name: GET /search (admin) | 300 ms | 309 ms | 316 ms | 15 ms | 19 ms | pass |
+| search phone: GET /search (admin) | 300 ms | 310 ms | 315 ms | 11 ms | 15 ms | pass |
+| search email: GET /search (admin) | 300 ms | 308 ms | 311 ms | 10 ms | 13 ms | pass |
+| contact page: 6 calls in parallel (busiest agent) | 300 ms | 43 ms | 55 ms | 44 ms | 53 ms | pass |
+| contact timeline alone: GET /contacts/:id/timeline?limit=100 | 300 ms | 23 ms | 29 ms | 20 ms | 23 ms | pass |
+| thread: contact + timeline (chattiest contacts, 97–57 messages) | 300 ms | 42 ms | 62 ms | 24 ms | 30 ms | pass |
+| thread as the TC (deal visibility): contact + timeline | 300 ms | 294 ms | 753 ms | 110 ms | 134 ms | pass |
+| exception queue: GET /team/exceptions?state=live&limit=200 (team lead) | 300 ms | 218 ms | 244 ms | 221 ms | 300 ms | **miss** |
+| exception queue: GET /team/exceptions?state=live&limit=200 (admin) | 300 ms | 144 ms | 162 ms | 165 ms | 180 ms | pass |
+| exception queue: GET /team/exceptions?state=live&limit=200 (busiest agent) | 300 ms | 61 ms | 80 ms | 68 ms | 85 ms | pass |
+| scoreboard: GET /scoreboard?range=7d (busiest agent) | 300 ms | 31 ms | 42 ms | 25 ms | 29 ms | pass |
+| scoreboard: GET /scoreboard?range=90d (busiest agent) | 300 ms | 170 ms | 193 ms | 35 ms | 43 ms | pass |
+| team scoreboard: GET /team/scoreboard?range=30d (team lead) | 300 ms | 317 ms | 348 ms | 83 ms | 94 ms | pass |
+| team momentum: GET /team/momentum (team lead) | 300 ms | 20 ms | 27 ms | 20 ms | 23 ms | pass |
+| team scoreboard: GET /team/scoreboard?range=30d (admin) | 300 ms | 759 ms | 799 ms | 167 ms | 203 ms | pass |
+| team momentum: GET /team/momentum (admin) | 300 ms | 23 ms | 28 ms | 25 ms | 28 ms | pass |
+| pond cards: GET /ponds/:id/cards?limit=50 (median agent) | 300 ms | 185 ms | 227 ms | 185 ms | 214 ms | pass |
+| pond cards: GET /ponds/:id/cards?limit=50 (team lead) | 300 ms | 131 ms | 168 ms | 129 ms | 175 ms | pass |
+| pond list: GET /ponds (admin) | 300 ms | 20 ms | 26 ms | 23 ms | 30 ms | pass |
+| accept: 200 live offers, 47 agents accepting at once | 300 ms | 392 ms | 760 ms | 374 ms | 637 ms | **miss** |
+| claim: 20 pond leads, 10 agents racing on each (all requests) | 300 ms | 103 ms | 143 ms | 108 ms | 168 ms | pass |
+| claim: 44 agents each claim a different lead at once | 300 ms | 507 ms | 529 ms | 318 ms | 382 ms | **miss** (wall 390 ms) |
+| dispatch: 500 immediate SMS sends, concurrency 8 | 300 ms | 202 ms | 240 ms | 198 ms | 233 ms | pass (40.2 sends/s end to end) |
+| import: 50000-row CSV dry run (job, one transaction) | — | 122.27 s | 122.27 s | 12.84 s | 12.84 s | no budget (create + snapshot 374 ms before it) |
+
+**Additional rows.**
+- **Feed under activity** (new): before each timed GET, three new client messages arrive in the busiest agent's
+  book, so the GET itself re-scores the dirty groups, as if the background job had not run yet. p50 71 ms,
+  p95 88 ms, max 115 ms (pass). There is no "before" row, because the old feed had no incremental path.
+- **Team lead's exception queue.** It read 300.1 ms p95 in this run, right after the seed. Two repeated runs on
+  the same data read 249.6 ms and 246.8 ms (before: 244 ms). It is not regressed, but it sits close to its budget.
+  Nothing in this lane changed its query; the contact-detail policy change applies to its evidence reads.
+
+**Not measured as part of this run.**
+- The search token tables cost disk: about 2.9 GB at 250k (messages 2.68 GB, notes 221 MB).
+- They also slow the bulk load: the 250k seed took 1,369 s, against 1,011 s before.
+
+
 ## 5. What was slow, and why
 
 ### 5.1 Per-row visibility checks (the root cause)
@@ -293,49 +355,113 @@ cap of the read they came from). They now count every live item the viewer can s
 
 ## 7. Still missing
 
-These miss their budget after the fixes. Each needs a decision from the owner, not an index.
+Lane `perf-misses` closed four of the five misses listed here before (§4.1). What remains:
 
-1. **Priority Feed (p95 2.5 s busiest / 1.4 s median against 150 ms).**
-   - `GET /feed` recomputes every card from source rows for the whole book on each call (and the web app polls it every
-     30 s).
-   - After the fixes, the remaining cost is legitimate per-row RLS on the agent's own unanswered messages (about 3,000
-     in the busiest book × 0.14 ms), plus the channel hints and the card upserts.
-   - It now scales with the size of the book's backlog, not with the tenant.
-   - Meeting 150 ms needs an incremental feed. Cards would be written by the events and jobs that create or clear them
-     (the outbox the feed already uses for offers and drafts), and the GET would read only stored cards.
-   - That is an architecture change to module 14.
-2. **Search (p95 about 310 ms against 300 ms).**
-   - The contact, phone, email and address branches are fast (indexed, leakproof keys from 0011).
-   - The `notes` and `messages` branches cannot use their GIN index. `tsvector @@ tsquery` is not leakproof, so under
-     RLS Postgres must run the visibility check on every message before matching. The branches therefore always reach
-     their 300 ms timeout and come back `incomplete`, and that sets the request's latency.
-   - Options, all for the owner:
-     1. a security review that allows marking `ts_match_vq` LEAKPROOF (superuser, platform-wide)
-     2. a visibility-scoped token index
-     3. a shorter branch timeout for notes/messages (a product change: more `incomplete`)
-3. **Team scoreboard (p95: lead 0.40 s, admin 0.93 s).** The agent's own 7-day and 90-day scoreboards now pass (52 ms and 212 ms).
-   - The remaining time is real counting: SLA periods from the ledger, plus calls, texts and appointments per member and
-     range.
-   - The usual fix is a daily rollup table that the scoreboard reads for full past days, plus a live count for today.
-   - That is a new table and job, out of this lane's scope.
-4. **Thread as a TC on about 2,900 deals (p95 about 0.7 s).**
-   - The contacts policy's deal branch rebuilds `app.my_deal_contact_ids()` (about 5,800 ids, 9.5 ms) for every row the
-     TC reads. This is the "TC on 1,000 deals" risk in ARCHITECTURE §risks.
-   - A fix needs either a per-row definer membership test or a policy redesign. Both are security-review items, and
-     this lane may not add definers.
-5. **Accept and claim with 40+ agents tapping at once (p95 0.63–0.69 s).**
-   - Single taps and the 10-way race on one lead pass (the race test: exactly one winner, every loser gets a 409
-     `LEAD_ALREADY_CLAIMED`).
-   - With 44–47 simultaneous requests on a 20-connection pool, part of the latency is queueing for a connection.
-   - The next step is a profile of the ownership command under that load, and a decision on pool size per API instance.
-6. **Import dry run (157 s for 50k rows against a 250k book).** It completes now, but it reads the whole book
-   through RLS. If imports into large tenants must be interactive, dedupe should read only the candidates matching
-   the file's addresses and names. That changes core/import's interface.
-7. **Exception recompute (16 s for the large tenant).**
-   - The 60-second `exceptions.recompute` job took 16 s for the large tenant, on the final schema and with JIT off
-     (measured during the final seed).
-   - It is not on a phone path, but it is a quarter of its own period. Re-measure it on the final schema, and consider a
-     per-contact recompute driven by events.
+1. **Accept with 47 agents at once (p95 637 ms) and 44 simultaneous claims (382 ms), budget 300 ms.**
+   - **Profile.** Taken during the lane with the bench's `--profile` option:
+     - Sampling found no lock waits besides the per-lead advisory lock in a same-lead race.
+     - Each tap held five pooled connections in sequence and sent 54 statements, costing Postgres 40–48 ms of CPU.
+     - Half of that was the full contact view, read twice: once for authorization and once for the response.
+   - **Change.** A tap now uses three connections and 37 statements, at about 26–31 ms of Postgres CPU:
+     - the session resolves in one transaction;
+     - the response is read back inside the command transaction;
+     - accept, decline, claim and release read a narrow row;
+     - idempotency checks are single `EXISTS` statements;
+     - a command's timers are one INSERT.
+   - **Pool study** (lane, accept / 48 claims p95): pool 10 gives 679 / 501 ms, 20 gives 768 / 558, 30 gives
+     916 / 641 and 45 gives 1,048 / 711. A bigger pool only moves the queue into Postgres: CPU per claim rises from
+     29 to 37 ms.
+   - **Recommendation.** `DB_POOL_MAX=10` per API instance stays the default: about 2–3 connections per database vCPU
+     across instances (docs/DEPLOY.md, docs/OPERATIONS.md §4.12).
+   - **Why it still misses.** On this machine 48 taps × ~35 ms of CPU is a floor of about 420 ms on 4 cores, before
+     any queueing. The rest is RLS work on `UPDATE contacts` and the ledger insert (WITH CHECK visibility, guards,
+     and the feed and scoreboard marking triggers).
+   - **What would close it:** more database cores, or a separate, security-reviewed cheaper write-path policy.
+2. **Exception queue for a team lead is close to its budget** (§4.1: 247–300 ms p95). The next step would be the
+   evidence reads' per-row `contact_detail_visible`, through the same inlined helper as the 20 policies of
+   migrations `deal_visibility_once` and `scale_review_fixes` (§7.2).
+3. **Exception recompute** now takes 1.2 s for the large tenant (was 14.4 s). The remaining ~1.7 s seen under
+   load is the per-row `messages_select` check on the tenant's failing sends.
+4. **Search worst case.** A query whose words are all common but never occur together (e.g. "the lender" over
+   messages) can still exhaust the 300 ms branch budget and return `incomplete`, as before.
+5. **Import dry run** (13 s at 250k, was 122 s) still reads the whole book. It is no longer near its 10-minute
+   statement timeout.
+
+### 7.1 How the misses were closed (lane `perf-misses`)
+
+| miss | change | where | proof |
+|---|---|---|---|
+| Priority Feed | Cards are materialized. Statement-level SECURITY INVOKER triggers mark the groups (contact, task, appointment or deal date) a write can change. GET re-scores only dirty and due groups under the member's own RLS, then reads the top 50 in index order. Relative-time wording is stored as a template and rendered at read time. The `feed.materialize` job keeps feeds current and runs an hourly full reconcile. | `workspace/feed.ts`, `repos/feedInputs.ts`, `feedJob.ts`, `core/priority/incremental.ts`, migration `feed_incremental` | `load/feed_incremental.test.ts` (random event sequences: incremental == full recompute after every event), `core/priority/incremental.test.ts` |
+| Search | Token side tables for messages and notes, visible exactly when their parent row is (EXISTS under the caller's RLS), probed with comparisons that are already leakproof. The `tsquery` is re-checked on the parent. | `workspace/search.ts`, migration `search_visibility` | `load/search_equivalence.test.ts` |
+| Team scoreboard | A daily rollup per (member, local day) for closed days, plus a live count for today. Late or backdated writes mark their day dirty. | `accountability/scoreboardRollup.ts`, `repos/scoreboard.ts`, migration `scoreboard_rollup` | `accountability/scoreboard_rollup.test.ts` |
+| TC thread | Fifteen contact-detail policies read through `app.contact_detail_row`, an inlined invoker helper (twenty since the merge review: the FUB parity tag, custom value, stage history, relationship and bulk item SELECT policies, §7.2). The deal-contact set is built once per statement, not once per row. | migrations `deal_visibility_once`, `scale_review_fixes` | `load/deal_visibility_equivalence.test.ts` |
+| Accept / claim | Fewer connections and statements per tap (item 1 above), plus the `DB_POOL_MAX` setting. | `leads/`, `packages/db/src/ownership/`, `tenantTx.ts` | `leads/ownership.test.ts`, `leads/commands.test.ts`, `packages/db/test/ownership.*` |
+| Exception recompute (no budget) | Exception upserts are batched, one statement per 1,000 items. | `accountability/repos/exceptions.ts` | `accountability/recompute_equivalence.test.ts` |
+
+**One behaviour change, on purpose.** The feed used to look only at the newest 300 unanswered messages of a book (a
+cap that bounded the per-request recompute). It now considers every unanswered conversation of the 14-day window.
+For a book with more than 300 unanswered messages, the oldest waiting clients now appear in the top 50 and in the
+total. Books under the cap are unchanged.
+
+### 7.2 Merge review fixes (migration `scale_review_fixes`)
+
+The review of this lane against main's FUB parity code (docs/SECURITY.md §6.6) changed five things that bear on speed.
+Measured on the shared 4-core machine while other work ran (load average 4-5); the before/after pairs ran back to back
+on the same data, so their ratio is the signal, not the absolute times.
+
+**Parity detail policies: the TC's tag, value and stage-history reads.** Main's People page and contact page read
+`contact_tags` (and the contact page `contact_field_values` and the timeline `contact_stage_events`) under SELECT
+policies that called `app.contact_detail_visible` per row: for a TC that rebuilt the deal-contact set for every row. They
+now read through `app.contact_detail_row` like the fifteen of `deal_visibility_once`. EXPLAIN ANALYZE as `app_user`, on
+the review's TC fixture (6,000 contacts, the TC on 3,000 deals = 6,000 deal-contact ids, the 250k TC shape):
+
+| read (as the TC) | before | after |
+|---|---:|---:|
+| `contact_tags`, 200 rows | 3,285 ms | 18 ms |
+| `contact_field_values`, 250 rows | 4,196 ms | 17 ms |
+| `contact_stage_events`, 150 rows | 2,743 ms | 16 ms |
+| `contact_relationships`, 50 rows (two checks per row) | 2,329 ms | 36 ms |
+| People page shape: 50 people with their 4 tags each | 3,333 ms | 66 ms |
+
+The Owner and an agent gain too: 200 tag rows took 48-89 ms (Owner) and 24-28 ms (agent) before, 1.5-2.0 ms and
+0.4-0.5 ms after. The load generator writes no tag or custom-value rows, so neither the 250k bench's TC thread row
+(§4.1) nor `pnpm load:smoke` exercises these reads, and the smart-list table below predates the change; neither was
+re-run at 250k. A function-call count in `load/deal_visibility_equivalence.test.ts` pins the shape: the TC's read of
+600+ tag rows makes no per-row `contact_detail_visible` call (618 before) and builds the deal-contact set at most 4 times.
+
+**Scoreboard counts without bulk sends.** The live count and the rollup's writer now skip `bulk_action_id IS NOT NULL`.
+0020's partial index `messages_human_sent_idx` matched the old filter exactly; it was rebuilt with the same name and
+columns and the bulk exclusion added to its predicate, so the count stays an index-only scan: on the 20k smoke
+database the busiest agent's 90-day count (15,603 sends) reads in 2.5-2.8 ms by an index-only scan; over the old index
+shape the same count visits the heap, 15-17 ms.
+
+**Feed marks.** A settings write other than the tenant's zone (stage labels, batch text, Gmail sync, routing hours) no
+longer marks every member `'!full'`. Before, each such write made every member's next materialization a whole-book
+recompute (the review measured 12 of 12 members in mode `full` at 800 contacts; at 250k a full recompute is the pre-lane
+GET cost, 2.03 s for the busiest agent). A contact's ownership or visibility change now also looks up the assignees of
+its open tasks, the users of its open appointments and the owners of its proposed assistant actions (three index probes
+under the writer's RLS; a new partial index `appointments_open_contact_idx` serves the second); a deal's people and a
+team's membership mark their deal members and team leads. These run on ownership writes, so they are part of the
+accept and claim taps (§7 item 1). In `pnpm load:smoke` (below) accept p95 read 97 ms before and 74 ms after, the claim
+race 106 / 115 ms and uncontested claims 71 / 71 ms: inside this machine's run-to-run noise, so no measurable cost.
+
+**Feed touches.** The touches read gained `m.bulk_action_id IS NULL`, a filter on rows already read by contact; no
+measurable change.
+
+**`pnpm load:smoke` before and after** (20k contacts, n = 15 per read; before = this tree without the review fixes,
+after = with them; back to back on the same machine, load average under 1 at the start). Both passed every ceiling
+(168 s and 164 s). p95 in ms:
+
+| operation | before | after | ceiling |
+|---|---:|---:|---:|
+| feed: GET /feed (busiest agent) | 63 | 58 | 150 |
+| feed: GET /feed after 3 new client messages (busiest agent) | 118 | 124 | 150 |
+| search name: GET /search (agent) | 35 | 28 | 300 |
+| thread as the TC (deal visibility): contact + timeline | 55 | 60 | 300 |
+| team scoreboard: GET /team/scoreboard?range=30d (team lead) | 46 | 37 | 300 |
+| team scoreboard: GET /team/scoreboard?range=30d (admin) | 43 | 40 | 300 |
+| accept: 104 live offers, 5 agents accepting at once | 97 | 74 | 900 |
+| claim: 10 pond leads, 5 agents racing on each | 106 | 115 | 1,200 |
 
 ## Smart lists (R-PAR-29, lane par-lists)
 
@@ -377,11 +503,17 @@ Two plan rules made the rest pass (both in `apps/api/src/lists/repos/people.ts`,
 (a scalar sub-query the planner cannot turn into a hash over the whole table), and for an Agent, ISA or TC
 the implied "owned, collaborating or on my deal" predicate lets the planner start from the owner index.
 
-**Evidence for the owner (not applied: lanes do not change policies).** On the scratch load database only,
+**Evidence for the owner (measured by lane par-lists, not applied there).** On the scratch load database only,
 the provably equivalent policy form `(SELECT app.is_tenant_wide()) OR app.contact_detail_visible(tenant_id,
 contact_id)` on `contact_tags` and `contact_field_values` (reverted afterwards) gave Owner first pages of
 12-36 ms (from 84-386 ms) and counts of 240-1,982 ms (from 925-3,015 ms). Counts would then also need the
 value-driven count shape (a semi-join from the tag or value index, cheap once the policy is) to meet 800 ms.
+
+**Since the scale-lane merge review** the SELECT policies of `contact_tags` and `contact_field_values` (and of
+stage history, relationships and bulk items) read through `app.contact_detail_row`, the inlined form of migration
+`deal_visibility_once` (§7.2): no row read pays a `contact_detail_visible` call any more, for any role. The table
+above was measured before that change and was **not** re-run at 250k (shared machine); §7.2 has the before/after
+on a 6,000-person fixture. The value-driven count shape is still not built.
 
 Reproduce: `pnpm load:seed --contacts 250000`, then
 `pnpm --filter @realty/api exec tsx --env-file-if-exists=../../.env --conditions=@realty/source src/lists/perf/seedLists.ts`
@@ -390,8 +522,8 @@ and `… src/lists/perf/listsBench.ts --n 20 --explain off`.
 ## 8. Reproducing
 
 ```sh
-pnpm load:seed --contacts 250000            # recreates realty_load (18 min on the final schema, 74 min on 0001–0014)
-pnpm load:bench --out after.json            # about 30 min; consumes offers, pond leads and send targets
+pnpm load:seed --contacts 250000            # recreates realty_load and runs the jobs to steady state (23 min after perf-misses)
+pnpm load:bench --out after.json            # about 2 min after perf-misses; consumes offers, pond leads and send targets
 pnpm load:bench --explain --explain-ms 30 --out plans.log   # auto_explain plans of the app's SQL
 pnpm load:smoke                             # CI-sized: 20k contacts, about 3.5 min, loose ceilings
 node scripts/perf-table.mjs before.json after.json   # the table in §4
@@ -401,8 +533,11 @@ node scripts/perf-table.mjs before.json after.json   # the table in §4
 with fewer iterations, and fails on:
 - any correctness check (claim race, offers, sends, opt-outs never sent to, import counts)
 - any p95 above 4 × its budget
-- for the operations listed in §7, any p95 above an explicit regression ceiling (`KNOWN_MISS_CEILING_MS` in
-  `apps/api/src/load/smoke.ts`)
+- for the paths lane `perf-misses` fixed (feed, search, TC thread, team scoreboard), any p95 above the path's own
+  budget (`FIXED_PATH_CEILING_MS` in `apps/api/src/load/smoke.ts`); at 20k the slowest of them is the feed under
+  activity at about 106 ms
+- for the operations that still miss (accept and claim, §7), any p95 above an explicit regression ceiling
+  (`KNOWN_MISS_CEILING_MS`)
 
 Load users log in with `agent01@load-big.load.test` / `load-test-password-only`. Owner and admin sessions are minted by
 the bench, because their MFA secret is a placeholder.

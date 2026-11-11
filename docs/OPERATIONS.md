@@ -219,7 +219,7 @@ timers and provider health, and can retry or cancel a job (audited).
 ### 4.12 DbPoolSaturated
 - **Means:** requests or jobs wait for a database connection.
 - **Check:** `realty_db_pool_connections` by state and process; database CPU, locks, slow queries (`pg_stat_activity`); `realty_job_duration_seconds` for a kind that holds connections long.
-- **Fix:** scale the database or reduce worker `--concurrency`; kill a runaway query; raise the pool only together with the database's `max_connections`.
+- **Fix:** scale the database or reduce worker `--concurrency`; kill a runaway query; raise the pool (`DB_POOL_MAX`, API) only together with the database's `max_connections`, and only if database CPU is not already saturated: waiting with a busy database CPU is CPU saturation, and a bigger pool makes every request slower (docs/PERFORMANCE.md accept/claim pool study).
 - **Escalate:** if it persists 15 minutes or the API turns 5xx.
 
 ### 4.13 OpsCollectorBlind

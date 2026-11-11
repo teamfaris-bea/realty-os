@@ -14,6 +14,8 @@ export {
 } from './reasons.js';
 export {
   scoreFeed,
+  type ScoreFeedOptions,
+  renderFeedItem,
   compareFeedItems,
   splitBands,
   isHumanTouch,
@@ -41,7 +43,8 @@ export {
   type DerivedException,
 } from './exceptions.js';
 export { speedToLeadSummary, countTouches, momentum, MOMENTUM_FACTOR, MOMENTUM_MIN_SAMPLE } from './scoreboard.js';
-export { formatDuration, FOREIGN_CARD_LABEL } from './format.js';
+export { formatDuration, FOREIGN_CARD_LABEL, renderFeedLabel } from './format.js';
+export { feedGroupOfItem, contactGroup, taskGroup, appointmentGroup, dealDateGroup, splitFeedInputs, nextFeedChange } from './incremental.js';
 export {
   FeedItemSchema,
   FeedReasonSchema,

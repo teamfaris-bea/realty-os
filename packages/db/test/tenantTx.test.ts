@@ -3,7 +3,7 @@ import { at, type TenantId, type UserId } from '@realty/core/foundation';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDatabase, type Database } from '../src/client.js';
-import { ActorContextError, actorGucs, withPreTenant, withTenantTx } from '../src/tenantTx.js';
+import { ActorContextError, actorGucs, withPreTenant, withPreTenantThenTenant, withTenantTx } from '../src/tenantTx.js';
 import { createHarness, createWorld, type Harness, selfCreated, uuid, type World } from './world.js';
 
 let h: Harness;
@@ -137,3 +137,29 @@ describe('withTenantTx', () => {
     ).rejects.toThrow(/row-level security|violates|SUPPORT_READ_ONLY/); // 0016: the statement trigger refuses first
   });
 });
+
+describe('withPreTenantThenTenant (lane perf-misses: session resolution in one transaction)', () => {
+  const ctx = (tx: Parameters<Parameters<typeof withTenantTx>[1]>[0]) =>
+    sql<{ t: string; u: string; k: string; c: string; xid: string }>`
+      SELECT current_setting('app.tenant_id', true) AS t, current_setting('app.user_id', true) AS u,
+             current_setting('app.actor_kind', true) AS k, current_setting('app.ownership_command', true) AS c,
+             txid_current()::text AS xid`.execute(tx).then((r) => r.rows[0]!);
+  it('the pre step has no tenant context (tenant tables read empty); the tenant step has exactly the actor\'s context, in the same transaction; no actor ⇒ no tenant step; the pooled connection is clean afterwards', async () => {
+    const r = await withPreTenantThenTenant(
+      async (tx) => ({ c: await ctx(tx), contacts: await count(tx, 'contacts') }),
+      () => a.agents[0]!.actor,
+      async (tx) => ({ c: await ctx(tx), contacts: await count(tx, 'contacts') }),
+      { db: single },
+    );
+    expect(r.pre.c).toMatchObject({ t: '', u: '', k: '', c: '' });
+    expect(r.pre.contacts).toBe(0);
+    expect(r.result!.c).toMatchObject({ t: a.tenantId, u: a.agents[0]!.id, k: 'user', c: '' });
+    expect(r.result!.c.xid).toBe(r.pre.c.xid);
+    expect(r.result!.contacts).toBe(await withTenantTx(a.agents[0]!.actor, (tx) => count(tx, 'contacts'), { db: single }));
+    let ran = false;
+    const none = await withPreTenantThenTenant(async () => 1, () => null, async () => { ran = true; return 2; }, { db: single });
+    expect([none, ran]).toEqual([{ pre: 1, result: null }, false]);
+    expect(await withPreTenant((tx) => count(tx, 'contacts'), { db: single })).toBe(0);
+  });
+});
+

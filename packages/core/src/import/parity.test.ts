@@ -57,6 +57,13 @@ describe('R-PAR-46 stages', () => {
     );
   });
 
+  it('R-PAR-46: a source stage label named like an Object member is a label, never Object.prototype\'s member (the property above found "toString")', () => {
+    for (const label of ['toString', 'constructor', 'valueOf', 'hasOwnProperty', '__proto__']) {
+      expect(mappedStage(label, DEFAULT_PARITY_OPTIONS), label).toBeNull();
+      expect(mappedStage(label, { ...DEFAULT_PARITY_OPTIONS, stageMap: { [label]: 'nurture' } }), label).toBe('nurture');
+    }
+  });
+
   it('R-PAR-46 E191: summary lists distinct labels with counts, blocks while one is unmapped, and the stage tag keeps two labels that map to one stage distinct', () => {
     const cs = [contact({ stageLabel: 'Warm A' }), contact({ stageLabel: 'Warm B' }), contact({ stageLabel: 'Warm B' }), contact()];
     const s1 = paritySummary(cs, DEFAULT_PARITY_OPTIONS, ctx());

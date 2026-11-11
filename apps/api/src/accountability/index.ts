@@ -15,3 +15,5 @@ export {
 } from './exceptions.js';
 export { type MomentumView, type Scoreboard, scoreboardFor, teamMomentum, teamScoreboard } from './scoreboard.js';
 export { ACCOUNTABILITY_RESPONSE_SCHEMAS } from './schemas.js';
+export { SCOREBOARD_ROLLUP_KIND, scoreboardRollup } from './handlers.js';
+export { type RollupRun, rollScoreboard, runScoreboardRollup, sampleScoreboardHorizon } from './scoreboardRollup.js';

@@ -843,6 +843,24 @@ export interface ExternalRefsTable {
   created_at: Generated<Timestamp>;
 }
 
+/** public.feed_dirty (table) */
+export interface FeedDirtyTable {
+  tenant_id: string;
+  id: GeneratedAlways<Int8>;
+  user_id: string;
+  group_key: string;
+  marked_at: Generated<Timestamp>;
+}
+
+/** public.feed_groups (table) */
+export interface FeedGroupsTable {
+  tenant_id: string;
+  user_id: string;
+  group_key: string;
+  check_at: Timestamp | null;
+  n_open: Generated<number>;
+}
+
 /** public.gate_decisions (table) */
 export interface GateDecisionsTable {
   tenant_id: string;
@@ -1334,6 +1352,14 @@ export interface MessageMediaSkippedTable {
   created_at: Generated<Timestamp>;
 }
 
+/** public.message_search_tokens (table) */
+export interface MessageSearchTokensTable {
+  tenant_id: string;
+  token: string;
+  occurred_at: Timestamp;
+  message_id: string;
+}
+
 /** public.message_status_events (table) */
 export interface MessageStatusEventsTable {
   tenant_id: string;
@@ -1415,6 +1441,14 @@ export interface MfaRecoveryCodesTable {
   code_hash: Buffer;
   created_at: Generated<Timestamp>;
   used_at: Timestamp | null;
+}
+
+/** public.note_search_tokens (table) */
+export interface NoteSearchTokensTable {
+  tenant_id: string;
+  token: string;
+  created_at: Timestamp;
+  note_id: string;
 }
 
 /** public.notes (table) */
@@ -1754,6 +1788,8 @@ export interface PriorityFeedItemsTable {
   updated_at: Generated<Timestamp>;
   resolved_at: Timestamp | null;
   resolved_by: string | null;
+  sort_at: Generated<Timestamp>;
+  card: Json | null;
 }
 
 /** public.property_records (table) */
@@ -1903,6 +1939,56 @@ export interface SavedSearchesTable {
   last_alerted_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+}
+
+/** public.scoreboard_activity_daily (table) */
+export interface ScoreboardActivityDailyTable {
+  tenant_id: string;
+  user_id: string;
+  day: string;
+  calls: Generated<number>;
+  texts_and_emails: Generated<number>;
+  appointments_set: Generated<number>;
+  appointments_held: Generated<number>;
+  appointments_due: Generated<number>;
+  agreements_signed: Generated<number>;
+}
+
+/** public.scoreboard_rollup_days (table) */
+export interface ScoreboardRollupDaysTable {
+  tenant_id: string;
+  day: string;
+  zone: string;
+  rolled_at: Generated<Timestamp>;
+}
+
+/** public.scoreboard_rollup_dirty (table) */
+export interface ScoreboardRollupDirtyTable {
+  tenant_id: string;
+  id: GeneratedAlways<Int8>;
+  day: string;
+  marked_at: Generated<Timestamp>;
+}
+
+/** public.scoreboard_rollup_state (table) */
+export interface ScoreboardRollupStateTable {
+  tenant_id: string;
+  zone: string | null;
+  safe_until: Timestamp | null;
+  pending_at: Timestamp | null;
+  pending_xid: Int8 | null;
+  updated_at: Generated<Timestamp>;
+}
+
+/** public.scoreboard_speed_daily (table) */
+export interface ScoreboardSpeedDailyTable {
+  tenant_id: string;
+  user_id: string;
+  day: string;
+  ord: number;
+  owned_at: Timestamp;
+  first_touch_due_at: Timestamp;
+  first_touch_at: Timestamp | null;
 }
 
 /** public.sender_registrations (table) */
@@ -2422,6 +2508,8 @@ export interface DB {
   exception_events: ExceptionEventsTable;
   exception_items: ExceptionItemsTable;
   external_refs: ExternalRefsTable;
+  feed_dirty: FeedDirtyTable;
+  feed_groups: FeedGroupsTable;
   gate_decisions: GateDecisionsTable;
   gbp_reviews: GbpReviewsTable;
   home_valuations: HomeValuationsTable;
@@ -2450,10 +2538,12 @@ export interface DB {
   memberships: MembershipsTable;
   message_media: MessageMediaTable;
   message_media_skipped: MessageMediaSkippedTable;
+  message_search_tokens: MessageSearchTokensTable;
   message_status_events: MessageStatusEventsTable;
   message_templates: MessageTemplatesTable;
   messages: MessagesTable;
   mfa_recovery_codes: MfaRecoveryCodesTable;
+  note_search_tokens: NoteSearchTokensTable;
   notes: NotesTable;
   notification_deliveries: NotificationDeliveriesTable;
   notification_preferences: NotificationPreferencesTable;
@@ -2485,6 +2575,11 @@ export interface DB {
   routing_rules: RoutingRulesTable;
   saved_search_matches: SavedSearchMatchesTable;
   saved_searches: SavedSearchesTable;
+  scoreboard_activity_daily: ScoreboardActivityDailyTable;
+  scoreboard_rollup_days: ScoreboardRollupDaysTable;
+  scoreboard_rollup_dirty: ScoreboardRollupDirtyTable;
+  scoreboard_rollup_state: ScoreboardRollupStateTable;
+  scoreboard_speed_daily: ScoreboardSpeedDailyTable;
   sender_registrations: SenderRegistrationsTable;
   sending_domains: SendingDomainsTable;
   sessions: SessionsTable;
@@ -2564,6 +2659,8 @@ export const TABLE_NAMES = [
   'exception_events',
   'exception_items',
   'external_refs',
+  'feed_dirty',
+  'feed_groups',
   'gate_decisions',
   'gbp_reviews',
   'home_valuations',
@@ -2592,10 +2689,12 @@ export const TABLE_NAMES = [
   'memberships',
   'message_media',
   'message_media_skipped',
+  'message_search_tokens',
   'message_status_events',
   'message_templates',
   'messages',
   'mfa_recovery_codes',
+  'note_search_tokens',
   'notes',
   'notification_deliveries',
   'notification_preferences',
@@ -2627,6 +2726,11 @@ export const TABLE_NAMES = [
   'routing_rules',
   'saved_search_matches',
   'saved_searches',
+  'scoreboard_activity_daily',
+  'scoreboard_rollup_days',
+  'scoreboard_rollup_dirty',
+  'scoreboard_rollup_state',
+  'scoreboard_speed_daily',
   'sender_registrations',
   'sending_domains',
   'sessions',

@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { auditRows } from '../admin/testing.js';
-import { type CommsWorld, call, commsWorld, inboundSms, ownedContact, pointId, randomEmail, randomPhone } from '../comms/testing.js';
+import { type CommsWorld, call, commsWorld, inboundSms, ownedContact, pointId, randomEmail, randomPhone, sendText } from '../comms/testing.js';
 import { composeHumanMessage } from '../comms/compose.js';
 import { suFixture } from '../leads/testing.js';
 import { bulkSendKey } from '@realty/core/parity/bulk';
@@ -113,6 +113,56 @@ describe('bulk email: preview, confirm, run (R-PAR-33 R-PAR-34 R-PAR-36 R-PAR-37
     const act = await h.su.query('SELECT coalesce(sum(texts_and_emails),0)::int AS n FROM v_agent_activity_daily v WHERE v.user_id = $1', [agent.userId]);
     const direct = await h.su.query("SELECT count(*)::int AS n FROM messages WHERE initiated_by_user_id = $1 AND direction = 'outbound' AND status IN ('sent','delivered','dispatch_unknown') AND bulk_action_id IS NULL", [agent.userId]);
     expect(act.rows[0].n).toBe(direct.rows[0].n);
+  });
+
+  it('R-PAR-37 a bulk email or batch text is no scoreboard touch and answers no waiting client in the Priority Feed (a one-to-one reply still does)', async () => {
+    const agent = w.agents[0]!;
+    type Card = { itemType: string; contact: { id: string } | null };
+    const feed = async () => {
+      const r = await call<{ pinned: Card[]; scored: Card[] }>(agent, 'GET', '/feed');
+      expect(r.status).toBe(200);
+      return [...r.body.pinned, ...r.body.scored];
+    };
+    const waitingCard = (cards: Card[], contactId: string) => cards.some((c) => c.itemType === 'unanswered_inbound' && c.contact?.id === contactId);
+    const touches = async () => (await call<{ scoreboard: { touches: { count: number; textsAndEmails: number } } }>(agent, 'GET', '/scoreboard')).body.scoreboard.touches;
+    // a client who texted 3 days ago (past the bulk email's 24 h recent-inbound skip) and one who texted just now
+    const waiting = await ownedContact(agent, { firstName: 'Wanda' });
+    const recent = await ownedContact(agent, { firstName: 'Rae' });
+    expect((await inboundSms(h, waiting.phone, w.mainNumber, 'Any news on the house?')).statusCode).toBeLessThan(300);
+    expect((await inboundSms(h, recent.phone, w.mainNumber, 'Can we see it Saturday?')).statusCode).toBeLessThan(300);
+    await suFixture(h, [
+      { text: "UPDATE messages SET occurred_at = now() - interval '3 days', created_at = now() - interval '3 days' WHERE contact_id = $1 AND direction = 'inbound'", values: [waiting.id] },
+      { text: "UPDATE contacts SET last_inbound_at = now() - interval '3 days' WHERE id = $1", values: [waiting.id] },
+    ]);
+    const before = await feed();
+    expect(waitingCard(before, waiting.id) && waitingCard(before, recent.id)).toBe(true);
+    const touched = await touches();
+
+    const e = await draft(agent, { kind: 'email', selection: { contactIds: [waiting.id] }, templateId: await emailTemplate(agent) });
+    expect(e.body.action.targetCount).toBe(1);
+    await confirm(agent, e.body.action.id);
+    await run(e.body.action.id);
+    expect(emailsTo(waiting.email)).toHaveLength(1);
+    await batchTextOn(h, w.owner);
+    try {
+      const t = await draft(agent, { kind: 'text', selection: { contactIds: [recent.id] }, templateId: await textTemplate(agent) });
+      expect(t.body.action.targetCount).toBe(1);
+      await confirm(agent, t.body.action.id);
+      await run(t.body.action.id);
+      expect(smsTo(recent.phone)).toHaveLength(1);
+    } finally {
+      await batchTextOff(w.owner);
+    }
+    const sent = await h.su.query<{ n: number }>("SELECT count(*)::int AS n FROM messages WHERE contact_id = ANY ($1::uuid[]) AND bulk_action_id IS NOT NULL AND status = 'sent' AND dispatched_at IS NOT NULL", [[waiting.id, recent.id]]);
+    expect(sent.rows[0]!.n).toBe(2);
+    // both clients are still waiting for an answer, and the agent's touches did not move
+    const after = await feed();
+    expect({ waiting: waitingCard(after, waiting.id), recent: waitingCard(after, recent.id) }).toEqual({ waiting: true, recent: true });
+    expect(await touches()).toEqual(touched);
+    // control: a one-to-one reply answers the client and is a touch
+    expect((await sendText(agent, waiting.id, 'It is still available, want to see it?')).body.result).toBe('sent');
+    expect(waitingCard(await feed(), waiting.id)).toBe(false);
+    expect((await touches()).textsAndEmails).toBe(touched.textsAndEmails + 1);
   });
 
   it('Q-PAR-9 a person who wrote in the last 24 hours is left out of a bulk email (answer them one to one)', async () => {
