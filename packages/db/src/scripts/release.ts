@@ -1,7 +1,7 @@
 // Production release step (docs/DEPLOY.md): run ONCE per deploy, before the new api/worker start.
 //
 //   MIGRATION_DATABASE_URL  owner role (creates roles, owns objects; never used by the app)
-//   DATABASE_URL            the app's login: its role is created/aligned as app_user expects
+//   DATABASE_URL            the app's login, which must be app_user: its role is created/aligned as 0001 expects
 //                           (LOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT, member of no role, password from the URL)
 //
 // Steps: align the app role → apply pending migrations (each in one transaction, checksummed; an edited or
@@ -12,6 +12,8 @@ import pg from 'pg';
 import { MIGRATIONS_DIR, ensureAppUserRole } from '../dbConfig.js';
 import { migrate } from '../migrate.js';
 
+const APP_ROLE = 'app_user';
+
 async function main(): Promise<void> {
   const ownerUrl = process.env.MIGRATION_DATABASE_URL;
   const appUrl = process.env.DATABASE_URL;
@@ -20,6 +22,9 @@ async function main(): Promise<void> {
   const appUser = { user: decodeURIComponent(app.username), password: decodeURIComponent(app.password) };
   if (!appUser.user || !appUser.password) throw new Error('DATABASE_URL must carry the app role name and password');
   if (new URL(ownerUrl).username === appUser.user) throw new Error('the owner and the app must be different roles');
+  // the migrations grant to app_user by name: any other login would be created, migrated for, then refused
+  // by RLS ("permission denied for table tenants") after every migration had been applied (deploy rehearsal)
+  if (appUser.user !== APP_ROLE) throw new Error(`DATABASE_URL must log in as ${APP_ROLE} (the migrations grant to that role); nothing was changed`);
 
   const admin = new pg.Client({ connectionString: ownerUrl });
   await admin.connect();

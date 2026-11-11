@@ -24,7 +24,7 @@ describe('config', () => {
     expect(() => loadConfig(env({ SESSION_SECRET_BASE64: 'abc' }))).toThrow(ConfigError);
     expect(() => loadConfig(env({ NODE_ENV: 'production', SESSION_COOKIE_SECURE: 'true' }))).toThrow(/production configuration is incomplete: missing .*LEAD_WEBHOOK_SECRET/);
     // (the full production requirements are in config.test.ts; fakes allowed explicitly here)
-    const prodEnv = env({ NODE_ENV: 'production', ALLOW_FAKE_PROVIDERS: 'true', PUBLIC_BASE_URL: 'https://api.example.test', WEB_ORIGIN: 'https://app.example.test', STORAGE_DIR: '/var/lib/realty', TELEPHONY_WEBHOOK_SECRET: 'x'.repeat(32), EMAIL_WEBHOOK_SECRET: 'y'.repeat(32), LEAD_WEBHOOK_SECRET: 'z'.repeat(32) });
+    const prodEnv = env({ NODE_ENV: 'production', KEK_REF: 'prod-kek:v1', ALLOW_FAKE_PROVIDERS: 'true', PUBLIC_BASE_URL: 'https://api.example.test', WEB_ORIGIN: 'https://app.example.test', STORAGE_DIR: '/var/lib/realty', TELEPHONY_WEBHOOK_SECRET: 'x'.repeat(32), EMAIL_WEBHOOK_SECRET: 'y'.repeat(32), LEAD_WEBHOOK_SECRET: 'z'.repeat(32) });
     expect(() => loadConfig({ ...prodEnv, SESSION_COOKIE_SECURE: 'false' })).toThrow(/SESSION_COOKIE_SECURE/);
     const prod = loadConfig(prodEnv);
     expect(prod.cookieSecure).toBe(true);

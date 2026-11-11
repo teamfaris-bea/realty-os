@@ -18,6 +18,7 @@ const base = (o: Record<string, string | undefined> = {}) => ({
 const prodEnv = (o: Record<string, string | undefined> = {}) =>
   base({
     NODE_ENV: 'production',
+    KEK_REF: 'prod-kek:v1',
     PUBLIC_BASE_URL: 'https://api.example.test',
     WEB_ORIGIN: 'https://app.example.test',
     LEAD_WEBHOOK_SECRET: 'l'.repeat(32),
@@ -73,6 +74,13 @@ describe('production configuration', () => {
     }
     for (const k of ['TWILIO_AUTH_TOKEN', 'SMTP_PASSWORD', 'S3_SECRET_ACCESS_KEY', 'EMAIL_WEBHOOK_BASIC_PASSWORD', 'LEAD_WEBHOOK_SECRET', 'VAPID_SUBJECT']) expect(msg).toContain(k);
     for (const secret of ['twilio-master-token-secret', 'smtp-password-secret', 's3-secret-access-key', 'sk-ant-secret']) expect(msg).not.toContain(secret);
+  });
+
+  it('production requires KEK_REF (deploy rehearsal: it silently defaulted to local-kek:v1, the name stamped on every wrapped tenant key)', () => {
+    for (const v of [undefined, '', '  ']) expect(() => loadConfig(prodEnv({ KEK_REF: v }))).toThrow(/missing KEK_REF/);
+    expect(loadConfig(prodEnv()).kekRef).toBe('prod-kek:v1');
+    // development keeps its default
+    expect(loadConfig(base()).kekRef).toBe('local-kek:v1');
   });
 
   it('refuses fakes, plain-http URLs, plaintext SMTP and a relative local storage dir in production', () => {

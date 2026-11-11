@@ -57,7 +57,9 @@ COPY --from=build /app/packages/core/dist packages/core/dist
 COPY --from=build /app/packages/db/dist packages/db/dist
 COPY --from=build /app/packages/db/migrations packages/db/migrations
 COPY --from=build /app/apps/api/dist apps/api/dist
-# the app writes nothing to its own tree; STORAGE_PROVIDER=local needs a mounted, writable STORAGE_DIR
+# the app writes nothing to its own tree. STORAGE_PROVIDER=local writes under STORAGE_DIR: this directory is
+# owned by `node` so that a named volume mounted here (docker-compose.prod.yml) starts out writable.
+RUN mkdir -p /var/lib/realty/storage && chown node:node /var/lib/realty/storage
 USER node
 EXPOSE 3001
 HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=3 \
@@ -70,6 +72,9 @@ COPY deploy/nginx.conf /etc/nginx/templates/default.conf.template
 # generated from apps/web/security-headers.ts (node deploy/render-security-headers.mjs); included by nginx.conf
 COPY deploy/security-headers.conf /etc/nginx/snippets/security-headers.conf
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html
-ENV API_UPSTREAM=api:3001
+# source maps are not served publicly (they hold the whole client source); keep them from the build stage if needed
+RUN find /usr/share/nginx/html -name '*.map' -delete
+# NGINX_RESOLVER: the DNS server nginx uses to re-resolve API_UPSTREAM (Docker's embedded DNS by default)
+ENV API_UPSTREAM=api:3001 NGINX_RESOLVER=127.0.0.11
 EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=3s --retries=3 CMD wget -qO- http://127.0.0.1:8080/healthz >/dev/null || exit 1

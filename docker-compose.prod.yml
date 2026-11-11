@@ -42,6 +42,8 @@ services:
     <<: *app
     image: realty-api:latest
     command: ["node", "apps/api/dist/main.js"]
+    volumes:
+      - storage:/var/lib/realty/storage   # STORAGE_PROVIDER=local (STORAGE_DIR=/var/lib/realty/storage); unused with s3
     stop_grace_period: 40s
     depends_on:
       release: { condition: service_completed_successfully }
@@ -50,6 +52,8 @@ services:
     <<: *app
     image: realty-api:latest
     command: ["node", "apps/api/dist/worker/main.js"]
+    volumes:
+      - storage:/var/lib/realty/storage
     environment:
       WORKER_HEALTH_PORT: "3002"
     healthcheck:
@@ -74,3 +78,4 @@ services:
 
 volumes:
   pgdata:
+  storage:

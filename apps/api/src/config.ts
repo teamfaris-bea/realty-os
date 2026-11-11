@@ -358,6 +358,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const mls = mlsSettings(env, invalid);
 
   if (prod) {
+    // the name stamped on every key the KEK wraps (tenant_keys.kek_ref); rotation (DEPLOY §9) needs a real one
+    if (!(env.KEK_REF ?? '').trim()) missing.push('KEK_REF');
     if (!env.PUBLIC_BASE_URL) missing.push('PUBLIC_BASE_URL');
     else if (!/^https:\/\//.test(env.PUBLIC_BASE_URL)) invalid.push('PUBLIC_BASE_URL must be https');
     if (!env.WEB_ORIGIN) missing.push('WEB_ORIGIN');

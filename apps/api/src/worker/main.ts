@@ -15,6 +15,7 @@ import { instant } from '@realty/core/foundation';
 import { QUEUES, type Queue, closeDefaultDatabase, configureDatabase } from '@realty/db';
 import { z } from 'zod';
 import { loadConfig } from '../config.js';
+import { assertRlsBoundLogin } from '../dbRole.js';
 import { observedAlerts } from '../observability/alerts.js';
 import { loadObservabilityConfig } from '../observability/config.js';
 import { createErrorReporter } from '../observability/errors.js';
@@ -58,6 +59,8 @@ async function main(): Promise<void> {
   process.on('unhandledRejection', (e) => errorReporter.capture(e, { process: 'worker', code: 'UNHANDLED_REJECTION' }));
   const log = jsonLogger({ level: config.logLevel === 'silent' ? 'silent' : config.logLevel === 'fatal' || config.logLevel === 'trace' ? 'info' : config.logLevel });
   const db = configureDatabase({ url: config.databaseUrl, applicationName: 'realty-worker', max: args.concurrency + 4 });
+  // same refusal as the API (docs/DEPLOY.md §2): a superuser or BYPASSRLS login would bypass tenant isolation
+  await assertRlsBoundLogin(db);
   const clock = { now: () => instant(Date.now()) };
   const providers = createProviders(config, { clock });
   registry.registerAll(handlers);
@@ -107,8 +110,10 @@ async function main(): Promise<void> {
 const isEntry = process.argv[1] !== undefined && /worker[\\/]main\.(t|j)s$/.test(process.argv[1]);
 if (isEntry) {
   main().catch((e: unknown) => {
-    const err = e as { name?: string; message?: string };
-    process.stderr.write(`worker failed to start: ${err.name ?? 'Error'}: ${err.name === 'ConfigError' || err.name === 'ProviderConfigError' || err.name === 'ZodError' ? err.message : ''}\n`);
+    // one JSON line, like the API's (docs/DEPLOY.md §2): configuration errors carry no secrets; anything else by name/code only
+    const err = e as { name?: string; message?: string; code?: string };
+    const detail = err.name === 'ConfigError' || err.name === 'ProviderConfigError' || err.name === 'ZodError' ? (err.message ?? null) : null;
+    process.stderr.write(`${JSON.stringify({ level: 'fatal', msg: 'worker failed to start', type: err.name ?? 'Error', code: err.code ?? null, detail })}\n`);
     process.exit(1);
   });
 }

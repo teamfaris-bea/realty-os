@@ -32,6 +32,7 @@ import { totpCode, totpStep } from '../auth/totp.js';
 import { depsFromPlatform } from '../comms/runtime.js';
 import { loadConfig } from '../config.js';
 import { createFakeProviders } from '../providers/index.js';
+import { assertCredentialsWritable, assertSeedAllowed } from './guard.js';
 import { signedHeader, telephonySignature } from '../providers/webhooks.js';
 import { buildServer } from '../server.js';
 import { handlers } from '../worker/handlers/index.js';
@@ -92,6 +93,8 @@ async function resetDatabase(ownerUrl: string): Promise<void> {
 // ---- main --------------------------------------------------------------------------------------------
 
 async function main(): Promise<void> {
+  assertSeedAllowed(process.env);
+  assertCredentialsWritable(CREDENTIALS_PATH);
   const reset = process.argv.includes('--reset');
   const ownerUrl = process.env.MIGRATION_DATABASE_URL;
   if (!ownerUrl) throw new SeedError('MIGRATION_DATABASE_URL is not set (run pnpm db:setup first)');
