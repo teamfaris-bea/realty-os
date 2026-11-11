@@ -2,6 +2,9 @@
 // R-NURT-5, R-GATE-14; E77, E137, E138, E154, E155). Fakes only: the in-process chat transport, the fake telephony
 // and email providers; nothing leaves the process.
 import { randomUUID } from 'node:crypto';
+import { withTenantTx } from '@realty/db';
+import { systemActor } from '../worker/systemActor.js';
+import { purgeWebchatSessions } from './handlers.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type AssistantWorld, approvedPlaybook, assistantWorld, call, decisionsFor, messagesOf, ownedContact, runJobs } from '../assistant/testing.js';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
@@ -208,6 +211,13 @@ describe('E138 E137 what the visitor types is never trusted', () => {
     expect((await h.su.query('SELECT count(*)::int AS n FROM contacts WHERE tenant_id = $1', [w.tenantId])).rows[0].n).toBe(before);
     expect((await h.su.query('SELECT count(*)::int AS n FROM notifications WHERE tenant_id = $1', [w.tenantId])).rows[0].n).toBe(notes);
     expect((await h.su.query('SELECT contact_id, purge_after IS NOT NULL AS purge FROM webchat_sessions WHERE tenant_id = $1 AND contact_id IS NULL', [w.tenantId])).rows).toEqual([{ contact_id: null, purge: true }]);
+    // R-INBOX-5: the contact-less session is purged at purge_after (the hourly channels.webchat_purge job)
+    await h.su.query("UPDATE webchat_sessions SET purge_after = now() - interval '1 minute' WHERE tenant_id = $1 AND contact_id IS NULL", [w.tenantId]);
+    expect(await withTenantTx(systemActor(w.tenantId, 'worker'), (tx, now) => purgeWebchatSessions(tx, now), { db: h.database })).toBe(1);
+    expect((await h.su.query('SELECT count(*)::int AS n FROM webchat_sessions WHERE tenant_id = $1 AND contact_id IS NULL', [w.tenantId])).rows[0].n).toBe(0);
+    // a person's transaction cannot purge
+    const refused = await withTenantTx(w.owner.actor(), (tx, now) => purgeWebchatSessions(tx, now), { db: h.database }).then(() => null, (e: Error) => e.message);
+    expect(refused).toMatch(/WEBCHAT_PURGE_SYSTEM_ONLY/);
     // flood from one IP
     const ip = visitorIp();
     const codes: number[] = [];

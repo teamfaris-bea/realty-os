@@ -311,7 +311,7 @@ export function vendorHeaders(o: Pick<SmtpOptions, 'vendor' | 'postmarkMessageSt
 class SmtpTransport {
   constructor(private readonly o: SmtpOptions) {}
 
-  async deliver(r: EmailRequest): Promise<{ providerRef: string; status: ProviderMessageStatus }> {
+  async deliver(r: EmailRequest): Promise<{ providerRef: string; status: ProviderMessageStatus; rfcMessageId?: string }> {
     const o = this.o;
     // Everything that can be rejected locally is rejected before connecting.
     const from = checkAddress(r.from.address);
@@ -417,7 +417,7 @@ export class SmtpEmail implements EmailProvider {
     this.transport = new SmtpTransport(o);
   }
 
-  async sendEmail(r: EmailRequest): Promise<{ providerRef: string; status: ProviderMessageStatus }> {
+  async sendEmail(r: EmailRequest): Promise<{ providerRef: string; status: ProviderMessageStatus; rfcMessageId?: string }> {
     return this.transport.deliver(r);
   }
 

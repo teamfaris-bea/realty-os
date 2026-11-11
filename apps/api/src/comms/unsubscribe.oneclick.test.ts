@@ -85,7 +85,8 @@ describe('one-click unsubscribe', () => {
 
   it('the exemption is only for routes that declare a capability token; other public routes still need the Origin', async () => {
     const exempt = h.app.platform.routeTable.filter((r) => r.capabilityUrl);
-    expect(exempt.map((r) => `${r.method} ${r.url}`)).toEqual(['POST /api/email/unsubscribe/:token']);
+    // module 22: the website-chat start and message routes, whose only authority is the widget key / session token in the URL
+    expect(exempt.map((r) => `${r.method} ${r.url}`).sort()).toEqual(['POST /api/email/unsubscribe/:token', 'POST /api/public/chat/:widgetToken/start', 'POST /api/public/chat/session/:token/messages']);
     for (const r of exempt) expect(r.auth).toBe('public');
   });
 });

@@ -145,7 +145,30 @@ ALTER TABLE gate_decisions DROP CONSTRAINT gate_decisions_channel_check;
 ALTER TABLE gate_decisions ADD CONSTRAINT gate_decisions_channel_check CHECK (channel IN ('sms','voice','email','web_chat'));
 
 -- -----------------------------------------------------------------------------
--- 6. Self-check: the three definers are owned by app_definer with a pinned search_path; the opt-out function is not
+-- 6. The 30-day purge of contact-less chat sessions (SECURITY REVIEW ITEM, R-INBOX-5)
+-- -----------------------------------------------------------------------------
+-- A session that never got a contact (spam, E137) is purged at purge_after. app_user has no DELETE on
+-- webchat_sessions, and app.retention_sweep is left alone (0018 left these rows to module 22), so this definer is
+-- owned by app_retention (which holds DELETE). It deletes only rows of the CALLER's tenant (app.tenant_id(), required),
+-- only when called by the system actor, only contact-less sessions whose purge_after has passed. Returns the count.
+CREATE FUNCTION app.purge_webchat_sessions(p_now timestamptz) RETURNS integer
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+DECLARE t uuid := app.tenant_id(); n integer;
+BEGIN
+  IF t IS NULL OR app.actor_kind() IS DISTINCT FROM 'system' THEN
+    RAISE EXCEPTION 'WEBCHAT_PURGE_SYSTEM_ONLY: only the system actor of a tenant purges its chat sessions' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  DELETE FROM public.webchat_sessions
+   WHERE tenant_id = t AND contact_id IS NULL AND purge_after IS NOT NULL AND purge_after <= p_now;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN n;
+END $$;
+ALTER FUNCTION app.purge_webchat_sessions(timestamptz) OWNER TO app_retention;
+REVOKE ALL ON FUNCTION app.purge_webchat_sessions(timestamptz) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION app.purge_webchat_sessions(timestamptz) TO app_user;
+
+-- -----------------------------------------------------------------------------
+-- 7. Self-check: the three definers are owned by app_definer with a pinned search_path; the opt-out function is not
 --    a definer; nothing is executable by PUBLIC.
 -- -----------------------------------------------------------------------------
 DO $$
@@ -160,7 +183,12 @@ BEGIN
   IF (SELECT prosecdef FROM pg_proc WHERE oid = 'app.record_person_opt_out(uuid,uuid)'::regprocedure) THEN
     bad := bad || ' opt_out_definer';
   END IF;
-  IF has_function_privilege('public', 'app.webchat_poll(bytea,timestamptz,uuid,integer)', 'EXECUTE')
+  IF NOT (SELECT p.prosecdef AND r.rolname = 'app_retention' FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner
+           WHERE p.oid = 'app.purge_webchat_sessions(timestamptz)'::regprocedure) THEN
+    bad := bad || ' purge_shape';
+  END IF;
+  IF has_function_privilege('public', 'app.purge_webchat_sessions(timestamptz)', 'EXECUTE')
+     OR has_function_privilege('public', 'app.webchat_poll(bytea,timestamptz,uuid,integer)', 'EXECUTE')
      OR has_function_privilege('public', 'app.webchat_session(bytea)', 'EXECUTE')
      OR has_function_privilege('public', 'app.resolve_webchat_widget(bytea)', 'EXECUTE')
      OR has_function_privilege('public', 'app.record_person_opt_out(uuid,uuid)', 'EXECUTE') THEN
