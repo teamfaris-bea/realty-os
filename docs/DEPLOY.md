@@ -339,14 +339,32 @@ In production, `SMTP_VENDOR=ses` or `mailgun` without its event format is refuse
 
 Erased contacts can persist in backups for the PITR window (**VERIFY WITH COUNSEL**).
 
+**Without managed PITR** (the compose database, or as an extra logical copy), take a dump as the owner role and copy the object store:
+
+```sh
+pg_dump -Fc -f realty-<date>.dump "$MIGRATION_DATABASE_URL"          # schema, data, grants; NOT the roles
+tar -C /var/lib/realty -czf storage-<date>.tgz storage              # STORAGE_PROVIDER=local (with s3: copy the bucket)
+```
+
+Encrypt both and store them away from the host. Roles are cluster-wide, so a dump does not carry `app_user`, `app_definer` or `app_retention`: restoring one into a new instance needs `deploy/restore-roles.sql` first (step 1 below). Without it, `pg_restore` fails every ownership and grant statement (385 in the rehearsal) and the `SECURITY DEFINER` functions are left owned by the superuser that restored them. A physical or PITR restore carries the roles already.
+
 **Restore drill.** Run it at least quarterly and before launch, and write down the times.
 
-1. Restore the latest Postgres backup to a **new** instance (never over production), at a chosen point in time.
-2. Run the release step against it with the same image version. It must report `0 applied` (or apply only the migrations newer than the backup), then `release ok`.
-3. Start one API and one worker with the production KEK and secrets, pointing at the restored database and a **read-only** copy of the bucket. Use a separate `PUBLIC_BASE_URL`, and **fake** telephony and email (`ALLOW_FAKE_PROVIDERS=true`), so nothing reaches real clients.
-4. Check `/api/ready` is 200. Log in as a known test user with MFA (this proves the KEK decrypts platform data). Open a contact, a conversation, a recording (proves object decryption) and the audit log.
+1. Restore the latest Postgres backup to a **new** instance (never over production), at a chosen point in time. From a dump: create the owner role and an empty database, then
+
+   ```sh
+   psql "$RESTORE_OWNER_URL" -v ON_ERROR_STOP=1 -f deploy/restore-roles.sql
+   pg_restore --exit-on-error -d "$RESTORE_OWNER_URL" realty-<date>.dump
+   ```
+
+   It must finish with no error. Check that the `SECURITY DEFINER` functions are owned by `app_definer` or `app_retention`: `SELECT r.rolname, count(*) FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner WHERE p.prosecdef GROUP BY 1` (no other owner).
+2. Run the release step against it with the same image version. It must report `0 applied` (or apply only the migrations newer than the backup), then `release ok`. It also sets `app_user`'s password from the drill's `DATABASE_URL`.
+3. Start one API and one worker with the production KEK and secrets, pointing at the restored database and a **read-only** copy of the bucket (or of the storage volume). Use a separate `PUBLIC_BASE_URL` and `WEB_ORIGIN`, and **fake** telephony and email (`ALLOW_FAKE_PROVIDERS=true`), so nothing reaches real clients. With a read-only copy, `/api/ready` reports `degraded` (`storage: failed`), because its check writes a probe object; that is expected here.
+4. Check `/api/ready` answers 200. Log in as a known test user with MFA (this proves the KEK decrypts platform data). Open a contact and a conversation. Open a stored object to prove object decryption: a recording, an MMS item, or an import file (the import's **Take snapshot** makes the worker decrypt it; the batch then shows its source counts). For the audit log there is no screen: as the owner role, `SELECT count(*) FROM audit_log`, and check that the worker's first `audit_log seq check` line reports `"missing":0`.
 5. Compare row counts of key tables against production at that point in time.
 6. Record how long it took (RTO) and how old the data was (RPO), then destroy the drill environment.
+
+**Rehearsed (2026-11-11, one VM, seeded demo tenant, 1.7 MB dump, fake providers):** dump 0.4 s, new instance 3.1 s, roles 0.05 s, `pg_restore` 3.0 s with 0 errors, storage copy 0.01 s, release step 0.14 s (`0 applied`), API start to ready 1.3 s, MFA sign-in, contact, import-file decryption (snapshot job `succeeded`), row counts equal, audit sequence 164 rows with 0 missing. These are machine times for a tiny database; a real RTO is dominated by the restore of real data and by people.
 
 ## 9. Key rotation
 
