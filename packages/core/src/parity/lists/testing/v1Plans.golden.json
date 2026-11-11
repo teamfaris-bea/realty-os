@@ -1,0 +1,899 @@
+{
+ "everyone": {
+  "definition": {
+   "v": 1,
+   "all": []
+  },
+  "plan": {
+   "version": 1,
+   "where": {
+    "p": "and",
+    "of": []
+   },
+   "sort": "last_activity_desc",
+   "detailOnly": true,
+   "references": {
+    "tagIds": [],
+    "fieldIds": [],
+    "protectedTagIds": []
+   },
+   "audienceProtected": false,
+   "freeText": false
+  }
+ },
+ "Hot buyers (e2e)": {
+  "definition": {
+   "v": 1,
+   "all": [
+    {
+     "kind": "tag",
+     "op": "any",
+     "tagIds": [
+      "00000000-0000-4000-8000-0000000000c1"
+     ]
+    }
+   ]
+  },
+  "plan": {
+   "version": 1,
+   "where": {
+    "p": "and",
+    "of": [
+     {
+      "p": "tag_any",
+      "tagIds": [
+       "00000000-0000-4000-8000-0000000000c1"
+      ]
+     }
+    ]
+   },
+   "sort": "last_activity_desc",
+   "detailOnly": true,
+   "references": {
+    "tagIds": [
+     "00000000-0000-4000-8000-0000000000c1"
+    ],
+    "fieldIds": [],
+    "protectedTagIds": []
+   },
+   "audienceProtected": false,
+   "freeText": false
+  }
+ },
+ "New leads (e2e team list)": {
+  "definition": {
+   "v": 1,
+   "all": [
+    {
+     "kind": "stage",
+     "in": [
+      "new"
+     ]
+    }
+   ]
+  },
+  "plan": {
+   "version": 1,
+   "where": {
+    "p": "and",
+    "of": [
+     {
+      "p": "stage_in",
+      "stages": [
+       "new"
+      ]
+     }
+    ]
+   },
+   "sort": "last_activity_desc",
+   "detailOnly": true,
+   "references": {
+    "tagIds": [],
+    "fieldIds": [],
+    "protectedTagIds": []
+   },
+   "audienceProtected": false,
+   "freeText": false
+  }
+ },
+ "stage + active in 30 days (bench)": {
+  "definition": {
+   "v": 1,
+   "all": [
+    {
+     "kind": "stage",
+     "in": [
+      "nurture",
+      "active"
+     ]
+    },
+    {
+     "kind": "last_activity",
+     "op": "within_days",
+     "days": 30
+    }
+   ]
+  },
+  "plan": {
+   "version": 1,
+   "where": {
+    "p": "and",
+    "of": [
+     {
+      "p": "stage_in",
+      "stages": [
+       "active",
+       "nurture"
+      ]
+     },
+     {
+      "p": "activity_since",
+      "at": 1791817200000
+     }
+    ]
+   },
+   "sort": "last_activity_desc",
+   "detailOnly": true,
+   "references": {
+    "tagIds": [],
+    "fieldIds": [],
+    "protectedTagIds": []
+   },
+   "audienceProtected": false,
+   "freeText": false
+  }
+ },
+ "my new leads with a tag (bench)": {
+  "definition": {
+   "v": 1,
+   "all": [
+    {
+     "kind": "owner",
+     "is": "me"
+    },
+    {
+     "kind": "stage",
+     "in": [
+      "new",
+      "attempting"
+     ]
+    },
+    {
+     "kind": "tag",
+     "op": "any",
+     "tagIds": [
+      "00000000-0000-4000-8000-0000000000c2",
+      "00000000-0000-4000-8000-0000000000c1"
+     ]
+    }
+   ]
+  },
+  "plan": {
+   "version": 1,
+   "where": {
+    "p": "and",
+    "of": [
+     {
+      "p": "owner_in",
+      "userIds": [
+       "00000000-0000-4000-8000-00000000aaaa"
+      ]
+     },
+     {
+      "p": "stage_in",
+      "stages": [
+       "attempting",
+       "new"
+      ]
+     },
+     {
+      "p": "tag_any",
+      "tagIds": [
+       "00000000-0000-4000-8000-0000000000c1",
+       "00000000-0000-4000-8000-0000000000c2"
+      ]
+     }
+    ]
+   },
+   "sort": "last_activity_desc",
+   "detailOnly": true,
+   "references": {
+    "tagIds": [
+     "00000000-0000-4000-8000-0000000000c1",
+     "00000000-0000-4000-8000-0000000000c2"
+    ],
+    "fieldIds": [],
+    "protectedTagIds": []
+   },
+   "audienceProtected": false,
+   "freeText": false
+  }
+ },
+ "tag none / all": {
+  "definition": {
+   "v": 1,
+   "all": [
+    {
+     "kind": "tag",
+     "op": "none",
+     "tagIds": [
+      "00000000-0000-4000-8000-0000000000c3"
+     ]
+    },
+    {
+     "kind": "tag",
+     "op": "all",
+     "tagIds": [
+      "00000000-0000-4000-8000-0000000000c1",
+      "00000000-0000-4000-8000-0000000000c2"
+     ]
+    }
+   ]
+  },
+  "plan": {
+   "version": 1,
+   "where": {
+    "p": "and",
+    "of": [
+     {
+      "p": "tag_none",
+      "tagIds": [
+       "00000000-0000-4000-8000-0000000000c3"
+      ]
+     },
+     {
+      "p": "tag_all",
+      "tagIds": [
+       "00000000-0000-4000-8000-0000000000c1",
+       "00000000-0000-4000-8000-0000000000c2"
+      ]
+     }
+    ]
+   },
+   "sort": "last_activity_desc",
+   "detailOnly": true,
+   "references": {
+    "tagIds": [
+     "00000000-0000-4000-8000-0000000000c1",
+     "00000000-0000-4000-8000-0000000000c2",
+     "00000000-0000-4000-8000-0000000000c3"
+    ],
+    "fieldIds": [],
+    "protectedTagIds": [
+     "00000000-0000-4000-8000-0000000000c3"
+    ]
+   },
+   "audienceProtected": true,
+   "freeText": false
+  }
+ },
+ "source, owner in, owner none": {
+  "definition": {
+   "v": 1,
+   "all": [
+    {
+     "kind": "source",
+     "in": [
+      "00000000-0000-4000-8000-00000000ddd2",
+      "00000000-0000-4000-8000-00000000ddd1"
+     ]
+    },
+    {
+     "kind": "owner",
+     "in": [
+      "00000000-0000-4000-8000-00000000bbb2",
+      "00000000-0000-4000-8000-00000000bbb1"
+     ]
+    }
+   ],
+   "any": [
+    {
+     "kind": "owner",
+     "is": "none"
+    },
+    {
+     "kind": "owner",
+     "is": "me"
+    }
+   ]
+  },
+  "plan": {
+   "version": 1,
+   "where": {
+    "p": "and",
+    "of": [
+     {
+      "p": "source_in",
+      "sourceIds": [
+       "00000000-0000-4000-8000-00000000ddd1",
+       "00000000-0000-4000-8000-00000000ddd2"
+      ]
+     },
+     {
+      "p": "owner_in",
+      "userIds": [
+       "00000000-0000-4000-8000-00000000bbb1",
+       "00000000-0000-4000-8000-00000000bbb2"
+      ]
+     },
+     {
+      "p": "or",
+      "of": [
+       {
+        "p": "owner_none"
+       },
+       {
+        "p": "owner_in",
+        "userIds": [
+         "00000000-0000-4000-8000-00000000aaaa"
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   "sort": "last_activity_desc",
+   "detailOnly": true,
+   "references": {
+    "tagIds": [],
+    "fieldIds": [],
+    "protectedTagIds": []
+   },
+   "audienceProtected": false,
+   "freeText": false
+  }
+ },
+ "intent and contact type": {
+  "definition": {
+   "v": 1,
+   "all": [
+    {
+     "kind": "intent",
+     "in": [
+      "seller",
+      "buyer"
+     ]
+    },
+    {
+     "kind": "contact_type",
+     "in": [
+      "lead",
+      "sphere"
+     ]
+    }
+   ]
+  },
+  "plan": {
+   "version": 1,
+   "where": {
+    "p": "and",
+    "of": [
+     {
+      "p": "intent_in",
+      "intents": [
+       "buyer",
+       "seller"
+      ]
+     },
+     {
+      "p": "contact_type_in",
+      "types": [
+       "lead",
+       "sphere"
+      ]
+     }
+    ]
+   },
+   "sort": "last_activity_desc",
+   "detailOnly": true,
+   "references": {
+    "tagIds": [],
+    "fieldIds": [],
+    "protectedTagIds": []
+   },
+   "audienceProtected": false,
+   "freeText": false
+  }
+ },
+ "activity never / older": {
+  "definition": {
+   "v": 1,
+   "all": [],
+   "any": [
+    {
+     "kind": "last_activity",
+     "op": "never"
+    },
+    {
+     "kind": "last_activity",
+     "op": "older_than_days",
+     "days": 90
+    }
+   ]
+  },
+  "plan": {
+   "version": 1,
+   "where": {
+    "p": "and",
+    "of": [
+     {
+      "p": "or",
+      "of": [
+       {
+        "p": "activity_never"
+       },
+       {
+        "p": "activity_before_or_never",
+        "at": 1786633200000
+       }
+      ]
+     }
+    ]
+   },
+   "sort": "last_activity_desc",
+   "detailOnly": true,
+   "references": {
+    "tagIds": [],
+    "fieldIds": [],
+    "protectedTagIds": []
+   },
+   "audienceProtected": false,
+   "freeText": false
+  }
+ },
+ "created": {
+  "definition": {
+   "v": 1,
+   "all": [
+    {
+     "kind": "created",
+     "op": "within_days",
+     "days": 7
+    },
+    {
+     "kind": "created",
+     "op": "older_than_days",
+     "days": 1
+    }
+   ]
+  },
+  "plan": {
+   "version": 1,
+   "where": {
+    "p": "and",
+    "of": [
+     {
+      "p": "created_since",
+      "at": 1793804400000
+     },
+     {
+      "p": "created_before",
+      "at": 1794322800000
+     }
+    ]
+   },
+   "sort": "last_activity_desc",
+   "detailOnly": true,
+   "references": {
+    "tagIds": [],
+    "fieldIds": [],
+    "protectedTagIds": []
+   },
+   "audienceProtected": false,
+   "freeText": false
+  }
+ },
+ "next task": {
+  "definition": {
+   "v": 1,
+   "all": [],
+   "any": [
+    {
+     "kind": "next_task",
+     "op": "overdue"
+    },
+    {
+     "kind": "next_task",
+     "op": "none"
+    },
+    {
+     "kind": "next_task",
+     "op": "any"
+    },
+    {
+     "kind": "next_task",
+     "op": "due_within_days",
+     "days": 3
+    }
+   ]
+  },
+  "plan": {
+   "version": 1,
+   "where": {
+    "p": "and",
+    "of": [
+     {
+      "p": "or",
+      "of": [
+       {
+        "p": "task_overdue",
+        "now": 1794409200000
+       },
+       {
+        "p": "task_none"
+       },
+       {
+        "p": "task_any"
+       },
+       {
+        "p": "task_due_between",
+        "from": 1794409200000,
+        "to": 1794668400000
+       }
+      ]
+     }
+    ]
+   },
+   "sort": "last_activity_desc",
+   "detailOnly": true,
+   "references": {
+    "tagIds": [],
+    "fieldIds": [],
+    "protectedTagIds": []
+   },
+   "audienceProtected": false,
+   "freeText": false
+  }
+ },
+ "name contains (personal)": {
+  "definition": {
+   "v": 1,
+   "all": [
+    {
+     "kind": "name",
+     "contains": "O'Brien_50%"
+    }
+   ]
+  },
+  "plan": {
+   "version": 1,
+   "where": {
+    "p": "and",
+    "of": [
+     {
+      "p": "name_like",
+      "pattern": "%o'brien\\_50\\%%"
+     }
+    ]
+   },
+   "sort": "last_activity_desc",
+   "detailOnly": true,
+   "references": {
+    "tagIds": [],
+    "fieldIds": [],
+    "protectedTagIds": []
+   },
+   "audienceProtected": false,
+   "freeText": true
+  }
+ },
+ "fields: set, empty, text": {
+  "definition": {
+   "v": 1,
+   "all": [
+    {
+     "kind": "field",
+     "fieldId": "00000000-0000-4000-8000-0000000000b3",
+     "op": "set"
+    },
+    {
+     "kind": "field",
+     "fieldId": "00000000-0000-4000-8000-0000000000b2",
+     "op": "empty"
+    },
+    {
+     "kind": "field",
+     "fieldId": "00000000-0000-4000-8000-0000000000b3",
+     "op": "text_eq",
+     "value": "Lakeview"
+    },
+    {
+     "kind": "field",
+     "fieldId": "00000000-0000-4000-8000-0000000000b3",
+     "op": "text_contains",
+     "value": "view"
+    }
+   ]
+  },
+  "plan": {
+   "version": 1,
+   "where": {
+    "p": "and",
+    "of": [
+     {
+      "p": "field_set",
+      "fieldId": "00000000-0000-4000-8000-0000000000b3"
+     },
+     {
+      "p": "field_empty",
+      "fieldId": "00000000-0000-4000-8000-0000000000b2"
+     },
+     {
+      "p": "field_text_eq",
+      "fieldId": "00000000-0000-4000-8000-0000000000b3",
+      "text": "lakeview"
+     },
+     {
+      "p": "field_text_like",
+      "fieldId": "00000000-0000-4000-8000-0000000000b3",
+      "pattern": "%view%"
+     }
+    ]
+   },
+   "sort": "last_activity_desc",
+   "detailOnly": true,
+   "references": {
+    "tagIds": [],
+    "fieldIds": [
+     "00000000-0000-4000-8000-0000000000b2",
+     "00000000-0000-4000-8000-0000000000b3"
+    ],
+    "protectedTagIds": []
+   },
+   "audienceProtected": false,
+   "freeText": true
+  }
+ },
+ "fields: numbers": {
+  "definition": {
+   "v": 1,
+   "all": [
+    {
+     "kind": "field",
+     "fieldId": "00000000-0000-4000-8000-0000000000b2",
+     "op": "num_gte",
+     "value": 1500000
+    },
+    {
+     "kind": "field",
+     "fieldId": "00000000-0000-4000-8000-0000000000b2",
+     "op": "num_lt",
+     "value": 3000000.5
+    }
+   ]
+  },
+  "plan": {
+   "version": 1,
+   "where": {
+    "p": "and",
+    "of": [
+     {
+      "p": "field_num",
+      "fieldId": "00000000-0000-4000-8000-0000000000b2",
+      "cmp": "gte",
+      "value": 1500000
+     },
+     {
+      "p": "field_num",
+      "fieldId": "00000000-0000-4000-8000-0000000000b2",
+      "cmp": "lt",
+      "value": 3000000.5
+     }
+    ]
+   },
+   "sort": "last_activity_desc",
+   "detailOnly": true,
+   "references": {
+    "tagIds": [],
+    "fieldIds": [
+     "00000000-0000-4000-8000-0000000000b2"
+    ],
+    "protectedTagIds": []
+   },
+   "audienceProtected": false,
+   "freeText": false
+  }
+ },
+ "fields: dates": {
+  "definition": {
+   "v": 1,
+   "all": [
+    {
+     "kind": "field",
+     "fieldId": "00000000-0000-4000-8000-0000000000b6",
+     "op": "date_before",
+     "value": "2026-03-01"
+    },
+    {
+     "kind": "field",
+     "fieldId": "00000000-0000-4000-8000-0000000000b6",
+     "op": "date_after",
+     "value": "2025-12-31"
+    },
+    {
+     "kind": "field",
+     "fieldId": "00000000-0000-4000-8000-0000000000b6",
+     "op": "date_on",
+     "value": "2026-01-15"
+    },
+    {
+     "kind": "field",
+     "fieldId": "00000000-0000-4000-8000-0000000000b6",
+     "op": "date_within_last_days",
+     "days": 30
+    },
+    {
+     "kind": "field",
+     "fieldId": "00000000-0000-4000-8000-0000000000b6",
+     "op": "date_within_next_days",
+     "days": 30
+    }
+   ]
+  },
+  "plan": {
+   "version": 1,
+   "where": {
+    "p": "and",
+    "of": [
+     {
+      "p": "field_date_between",
+      "fieldId": "00000000-0000-4000-8000-0000000000b6",
+      "from": null,
+      "to": "2026-02-28"
+     },
+     {
+      "p": "field_date_between",
+      "fieldId": "00000000-0000-4000-8000-0000000000b6",
+      "from": "2026-01-01",
+      "to": null
+     },
+     {
+      "p": "field_date_between",
+      "fieldId": "00000000-0000-4000-8000-0000000000b6",
+      "from": "2026-01-15",
+      "to": "2026-01-15"
+     },
+     {
+      "p": "field_date_between",
+      "fieldId": "00000000-0000-4000-8000-0000000000b6",
+      "from": "2026-10-12",
+      "to": "2026-11-11"
+     },
+     {
+      "p": "field_date_between",
+      "fieldId": "00000000-0000-4000-8000-0000000000b6",
+      "from": "2026-11-11",
+      "to": "2026-12-11"
+     }
+    ]
+   },
+   "sort": "last_activity_desc",
+   "detailOnly": true,
+   "references": {
+    "tagIds": [],
+    "fieldIds": [
+     "00000000-0000-4000-8000-0000000000b6"
+    ],
+    "protectedTagIds": []
+   },
+   "audienceProtected": false,
+   "freeText": false
+  }
+ },
+ "fields: coming up (annual)": {
+  "definition": {
+   "v": 1,
+   "all": [
+    {
+     "kind": "field",
+     "fieldId": "00000000-0000-4000-8000-0000000000b1",
+     "op": "coming_up",
+     "days": 14
+    }
+   ]
+  },
+  "plan": {
+   "version": 1,
+   "where": {
+    "p": "and",
+    "of": [
+     {
+      "p": "field_md_in",
+      "fieldId": "00000000-0000-4000-8000-0000000000b1",
+      "ranges": [
+       [
+        1111,
+        1125
+       ]
+      ]
+     }
+    ]
+   },
+   "sort": "last_activity_desc",
+   "detailOnly": true,
+   "references": {
+    "tagIds": [],
+    "fieldIds": [
+     "00000000-0000-4000-8000-0000000000b1"
+    ],
+    "protectedTagIds": []
+   },
+   "audienceProtected": false,
+   "freeText": false
+  }
+ },
+ "fields: options": {
+  "definition": {
+   "v": 1,
+   "all": [
+    {
+     "kind": "field",
+     "fieldId": "00000000-0000-4000-8000-0000000000b5",
+     "op": "opt_all",
+     "optionIds": [
+      "pool",
+      "garage"
+     ]
+    },
+    {
+     "kind": "field",
+     "fieldId": "00000000-0000-4000-8000-0000000000b4",
+     "op": "opt_none",
+     "optionIds": [
+      "later"
+     ]
+    },
+    {
+     "kind": "field",
+     "fieldId": "00000000-0000-4000-8000-0000000000b4",
+     "op": "opt_any",
+     "optionIds": [
+      "now"
+     ]
+    }
+   ]
+  },
+  "plan": {
+   "version": 1,
+   "where": {
+    "p": "and",
+    "of": [
+     {
+      "p": "field_opt_all",
+      "fieldId": "00000000-0000-4000-8000-0000000000b5",
+      "optionIds": [
+       "garage",
+       "pool"
+      ]
+     },
+     {
+      "p": "field_opt_none",
+      "fieldId": "00000000-0000-4000-8000-0000000000b4",
+      "optionIds": [
+       "later"
+      ]
+     },
+     {
+      "p": "field_opt_any",
+      "fieldId": "00000000-0000-4000-8000-0000000000b4",
+      "optionIds": [
+       "now"
+      ]
+     }
+    ]
+   },
+   "sort": "last_activity_desc",
+   "detailOnly": true,
+   "references": {
+    "tagIds": [],
+    "fieldIds": [
+     "00000000-0000-4000-8000-0000000000b4",
+     "00000000-0000-4000-8000-0000000000b5"
+    ],
+    "protectedTagIds": []
+   },
+   "audienceProtected": false,
+   "freeText": false
+  }
+ }
+}

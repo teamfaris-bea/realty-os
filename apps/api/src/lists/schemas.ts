@@ -163,7 +163,14 @@ export const PeopleCountQuery = z.strictObject({ list: Id.optional() });
 export const PeopleQueryBody = z.strictObject({ definition: z.unknown(), cursor: z.string().max(3000).optional(), sort: Sort.optional() });
 export const PeopleCountBody = z.strictObject({ definition: z.unknown() });
 
+/** The People filter builder's value catalogs (lane people-filters): what every member already reads under RLS. */
+export const FilterOptionsResponse = z.object({
+  sources: z.array(z.object({ id: Id, name: z.string(), active: z.boolean() })),
+  members: z.array(z.object({ userId: Id, name: z.string(), role: z.string(), active: z.boolean() })),
+});
+
 export const LISTS_RESPONSE_SCHEMAS = {
+  FilterOptionsResponse,
   TagsResponse,
   TagResponse,
   TagCreatedResponse,

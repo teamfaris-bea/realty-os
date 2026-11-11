@@ -85,7 +85,8 @@ describe('R-PERM-1 route × role matrix (lists routes)', () => {
       want[`${role} POST team list`] = expected(role, 'smart_list.team_manage', {});
       got[`${role} GET /people`] = outcome(await call(c, 'GET', '/people'));
       got[`${role} POST /people/count`] = outcome(await call(c, 'POST', '/people/count', { definition: { v: 1 } }));
-      want[`${role} GET /people`] = want[`${role} POST /people/count`] = expected(role, 'smart_list.personal', {});
+      got[`${role} GET /people/filter-options`] = outcome(await call(c, 'GET', '/people/filter-options'));
+      want[`${role} GET /people`] = want[`${role} POST /people/count`] = want[`${role} GET /people/filter-options`] = expected(role, 'smart_list.personal', {});
       got[`${role} GET /tags`] = outcome(await call(c, 'GET', '/tags'));
       got[`${role} GET /custom-fields`] = outcome(await call(c, 'GET', '/custom-fields'));
       got[`${role} GET /smart-lists`] = outcome(await call(c, 'GET', '/smart-lists'));
@@ -96,7 +97,7 @@ describe('R-PERM-1 route × role matrix (lists routes)', () => {
 
   it('R-PERM-1: every lists route declares its authorization, and an Action route carries authorize(<that action>)', () => {
     const rows = h.app.platform.routeTable.filter((r) => r.method !== 'HEAD' && /^\/api\/(tags|custom-fields|smart-lists|people)|^\/api\/contacts\/:id\/(tags|fields)/.test(r.url));
-    expect(rows.length).toBe(23);
+    expect(rows.length).toBe(24); // + GET /people/filter-options (lane people-filters)
     for (const r of rows) {
       expect(r.auth, `${r.method} ${r.url}`).toBeDefined();
       if (r.auth !== 'self') expect(r.authorizes, `${r.method} ${r.url}`).toBe(r.auth);

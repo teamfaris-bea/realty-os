@@ -23,6 +23,7 @@
 //   POST   /people/query                  run an unsaved definition (tag chip, filters)                 smart_list.personal
 //   GET    /people/count?list=            count, exact to 10,000                                        smart_list.personal
 //   POST   /people/count                  count an unsaved definition                                   smart_list.personal
+//   GET    /people/filter-options         the filter builder's sources and members (names only)          smart_list.personal
 import { can, type ResourceFacts } from '@realty/core/foundation';
 import { applyFieldDefPatch, CUSTOM_FIELD_LIMIT, validateNewFieldDef } from '@realty/core/parity/fields';
 import { LIST_SORTS, type ListSort } from '@realty/core/parity/lists';
@@ -440,6 +441,21 @@ export async function registerListsRoutes(app: FastifyInstance): Promise<void> {
     '/people/count',
     { config: { auth: 'smart_list.personal' }, preHandler: authorize('smart_list.personal', () => ({})), schema: { body: S.PeopleCountBody, response: { 200: S.PeopleCountResponse } } },
     async (req) => listsTx(req, async (tx) => runCount(tx, (await resolveSource(tx, { definition: req.body.definition })).definition)),
+  );
+
+  // lane people-filters: the value catalogs of "Source is / is not" and "Owner is / is not". Both tables are
+  // member-readable under RLS already (lead_sources member_read, memberships members_read); this returns names
+  // and ids only (no ingest tokens, phones or emails). Picking an owner never widens what a run returns: the
+  // run is still under the viewer's RLS, detail-only (E199).
+  r.get(
+    '/people/filter-options',
+    { config: { auth: 'smart_list.personal' }, preHandler: authorize('smart_list.personal', () => ({})), schema: { response: { 200: S.FilterOptionsResponse } } },
+    async (req) =>
+      listsTx(req, async (tx) => {
+        const sources = await catalog.filterSources(tx);
+        const members = await catalog.filterMembers(tx);
+        return { sources, members: members.map((m) => ({ userId: m.user_id, name: m.name, role: m.role, active: m.active })) };
+      }),
   );
 }
 

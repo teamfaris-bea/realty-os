@@ -326,3 +326,22 @@ export async function withSavepoint<T>(tx: Tx, fn: () => Promise<T>): Promise<T>
     throw e;
   }
 }
+
+// ---- filter builder catalogs (lane people-filters) -------------------------------------------------
+
+/** The tenant's lead sources (lead_sources member_read: every member; names only, never the ingest token). */
+export async function filterSources(tx: Tx): Promise<{ id: string; name: string; active: boolean }[]> {
+  const r = await sql<{ id: string; name: string; active: boolean }>`
+    SELECT s.id, s.name, s.active FROM lead_sources s WHERE s.tenant_id = app.tenant_id() ORDER BY s.active DESC, lower(s.name), s.id`.execute(tx);
+  return r.rows;
+}
+
+/** The tenant's members who can own people (memberships members_read + users co-member read): names and roles only. */
+export async function filterMembers(tx: Tx): Promise<{ user_id: string; name: string; role: string; active: boolean }[]> {
+  const r = await sql<{ user_id: string; name: string; role: string; active: boolean }>`
+    SELECT m.user_id, u.display_name AS name, m.role, (m.status = 'active') AS active
+      FROM memberships m JOIN users u ON u.id = m.user_id
+     WHERE m.tenant_id = app.tenant_id() AND m.status IN ('active', 'suspended', 'deactivating', 'removed')
+     ORDER BY (m.status = 'active') DESC, lower(u.display_name), m.user_id`.execute(tx);
+  return r.rows;
+}

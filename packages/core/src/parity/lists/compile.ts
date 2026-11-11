@@ -23,6 +23,12 @@ export type ListPredicate =
   | { p: 'contact_type_in'; types: string[] }
   | { p: 'source_in'; sourceIds: string[] }
   | { p: 'owner_in'; userIds: string[] }
+  // exclusions (E194-E197): a person with no value (NULL source, owner or intent) is kept
+  | { p: 'stage_not_in'; stages: string[] }
+  | { p: 'intent_not_in'; intents: string[] }
+  | { p: 'contact_type_not_in'; types: string[] }
+  | { p: 'source_not_in'; sourceIds: string[] }
+  | { p: 'owner_not_in'; userIds: string[] }
   | { p: 'owner_none' }
   | { p: 'tag_any'; tagIds: string[] }
   | { p: 'tag_all'; tagIds: string[] }
@@ -52,7 +58,8 @@ export type ListPredicateKind = ListPredicate['p'];
 
 /** The whitelist (the fuzz test proves a plan never holds anything else). */
 export const PREDICATE_KINDS: readonly ListPredicateKind[] = [
-  'and', 'or', 'stage_in', 'intent_in', 'contact_type_in', 'source_in', 'owner_in', 'owner_none', 'tag_any', 'tag_all', 'tag_none',
+  'and', 'or', 'stage_in', 'intent_in', 'contact_type_in', 'source_in', 'owner_in', 'owner_none',
+  'stage_not_in', 'intent_not_in', 'contact_type_not_in', 'source_not_in', 'owner_not_in', 'tag_any', 'tag_all', 'tag_none',
   'activity_since', 'activity_before_or_never', 'activity_never', 'created_since', 'created_before', 'task_overdue', 'task_due_between',
   'task_any', 'task_none', 'name_like', 'field_set', 'field_empty', 'field_text_eq', 'field_text_like', 'field_num', 'field_date_between',
   'field_md_in', 'field_opt_any', 'field_opt_all', 'field_opt_none',
@@ -131,14 +138,15 @@ export function compileList(def: SmartListDefinition, viewer: ListViewer, opts: 
     if (isFreeTextClause(c)) freeText = true;
     switch (c.kind) {
       case 'stage':
-        return { p: 'stage_in', stages: sortedUnique(c.in) };
+        return 'not_in' in c ? { p: 'stage_not_in', stages: sortedUnique(c.not_in) } : { p: 'stage_in', stages: sortedUnique(c.in) };
       case 'intent':
-        return { p: 'intent_in', intents: sortedUnique(c.in) };
+        return 'not_in' in c ? { p: 'intent_not_in', intents: sortedUnique(c.not_in) } : { p: 'intent_in', intents: sortedUnique(c.in) };
       case 'contact_type':
-        return { p: 'contact_type_in', types: sortedUnique(c.in) };
+        return 'not_in' in c ? { p: 'contact_type_not_in', types: sortedUnique(c.not_in) } : { p: 'contact_type_in', types: sortedUnique(c.in) };
       case 'source':
-        return { p: 'source_in', sourceIds: sortedUnique(c.in) };
+        return 'not_in' in c ? { p: 'source_not_in', sourceIds: sortedUnique(c.not_in) } : { p: 'source_in', sourceIds: sortedUnique(c.in) };
       case 'owner':
+        if ('not_in' in c) return { p: 'owner_not_in', userIds: sortedUnique(c.not_in) };
         if ('in' in c) return { p: 'owner_in', userIds: sortedUnique(c.in) };
         return c.is === 'me' ? { p: 'owner_in', userIds: [viewer.userId] } : { p: 'owner_none' };
       case 'tag': {
