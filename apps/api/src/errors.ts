@@ -148,6 +148,45 @@ export const ERROR_STATUS = {
   CONNECTION_NOT_CONNECTABLE: 409, // the connection's status does not allow a (re)connect or change
   CONNECTION_ACCOUNT_MISMATCH: 409, // a different external account is a new connection (R-INT-3)
   LEAD_SOURCE_REQUIRED: 422, // an inbound channel needs a lead source before it can go live
+  // parity module 63 (templates and bulk; DATA_MODEL Part 3 R-PAR-23..42)
+  MERGE_FIELD_UNKNOWN: 422, // a template names a merge field outside the closed set, or an unknown custom field
+  MERGE_FIELD_MALFORMED: 422, // an unclosed or nested {{…}}
+  MERGE_FIELD_FALLBACK_INVALID: 422, // a fallback is empty, too long, or holds a bar or control character
+  MERGE_FIELD_TOO_MANY: 422, // more than 100 merge tokens
+  MERGE_FIELD_ARCHIVED: 422, // a template names an archived custom field
+  MERGE_FIELD_EMPTY: 422, // R-PAR-24: this person has no value for a field and there is no fallback (never "Hi ,")
+  TEMPLATE_NAME_INVALID: 422,
+  TEMPLATE_NAME_TAKEN: 409, // a live template of that scope and channel already has this name
+  TEMPLATE_SUBJECT_REQUIRED: 422,
+  TEMPLATE_SUBJECT_NOT_ALLOWED: 422,
+  TEMPLATE_SUBJECT_INVALID: 422,
+  TEMPLATE_BODY_EMPTY: 422,
+  TEMPLATE_BODY_TOO_LONG: 422,
+  TEMPLATE_BODY_INVALID: 422,
+  TEMPLATE_RENDERED_EMPTY: 422,
+  TEMPLATE_RENDERED_TOO_LONG: 422,
+  TEMPLATE_ARCHIVED: 409, // the template was archived
+  TEMPLATE_STALE: 409, // the template changed since it was opened (details.version)
+  SIGNATURE_INVALID: 422, // a signature is 1-1,000 characters of plain text
+  BULK_EMPTY: 422, // nobody selected
+  BULK_TOO_LARGE: 422, // Q-PAR-7 cap for the kind (details.cap)
+  BULK_DAILY_EMAIL_CAP: 409, // Q-PAR-7: the team's bulk-email recipients for today are used up (details.remaining)
+  BULK_NOT_PERMITTED: 404, // TCs run no bulk action; only Owner/Admin/TL assign (R-PERM-5 shape)
+  BULK_PARAMS_INVALID: 422, // the kind's parameters are missing or wrong (tag, stage, target, playbook, template)
+  BULK_NOT_DRAFT: 409, // only a draft is confirmed (details.status)
+  BULK_NOT_LIVE: 409, // the action already finished (details.status)
+  BULK_NOTHING_TO_DO: 409, // everyone selected is skipped: there is nothing to confirm
+  BULK_CONFIRM_ROLE_CHANGED: 409, // R-PAR-33: the creator's role changed since the draft; build a new one
+  AUDIENCE_PROTECTED_PROXY: 409, // R-PAR-8: a protected tag never defines a bulk send or enrollment audience
+  TAG_PROTECTED: 409, // R-PAR-8 S7: a protected tag is never applied or removed in bulk
+  BATCH_TEXT_DISABLED: 409, // R-PAR-40: the Owner has not turned batch texting on
+  BATCH_TEXT_ATTESTATION_REQUIRED: 422, // turning batch text on needs the typed attestation
+  EMAIL_DOMAIN_UNVERIFIED: 409, // R-PAR-39: a bulk email needs a verified sending domain
+  POSTAL_ADDRESS_MISSING: 409, // R-PAR-39: a bulk email needs the brokerage postal address
+  BROKERAGE_IDENTITY_MISSING: 409,
+  SMS_MARKETING_NOT_REGISTERED: 409, // R-PAR-40: batch text needs an approved registration that covers marketing
+  TEMPLATE_CHANNEL_MISMATCH: 422, // an email action needs an email template (and a text action a text one)
+  LIST_SELECTION_UNAVAILABLE: 409, // smart-list selections arrive with module 60 (resolveSelection); select people instead
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

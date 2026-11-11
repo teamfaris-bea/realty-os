@@ -186,7 +186,7 @@ export async function enrollmentsToRevoke(tx: Tx, versionId: string, limit: numb
   return r.rows.map(enrollment);
 }
 
-export async function insertEnrollment(tx: Tx, e: { id: string; playbookId: string; versionId: string; contactId: string; enrolledBy: 'user' | 'new_lead' | 'deal_closed'; userId: string | null; dueAt: Instant | null; anchor: { kind: 'deal' | 'appointment' | 'task'; id: string } | null }): Promise<void> {
+export async function insertEnrollment(tx: Tx, e: { id: string; playbookId: string; versionId: string; contactId: string; enrolledBy: 'user' | 'new_lead' | 'deal_closed' | 'bulk'; userId: string | null; dueAt: Instant | null; anchor: { kind: 'deal' | 'appointment' | 'task'; id: string } | null }): Promise<void> {
   await sql`
     INSERT INTO playbook_enrollments (tenant_id, id, playbook_id, playbook_version_id, contact_id, enrolled_by, enrolled_by_user_id, state, current_step, next_step_due_at,
       anchor_kind, anchor_id)

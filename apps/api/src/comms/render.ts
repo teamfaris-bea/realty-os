@@ -51,7 +51,7 @@ export function unsubscribeUrl(publicBaseUrl: string, secret: Uint8Array, tenant
 /** Header our outbound email carries; the email provider echoes it on delivery/bounce/open events. */
 export const EMAIL_REF_HEADER = 'X-Realty-Ref';
 
-export function renderHumanBody(body: string, o: { channel: 'sms' | 'email'; purpose: 'marketing' | 'informational'; identity: RenderIdentity; unsubscribe: string | null }): string {
+export function renderHumanBody(body: string, o: { channel: 'sms' | 'email'; purpose: 'marketing' | 'informational'; identity: RenderIdentity; unsubscribe: string | null; signature?: string | null }): string {
   const text = body.trim();
   if (o.channel === 'sms') {
     if (o.purpose === 'marketing' && !containsName(text, o.identity.brokerageLegalName)) return `${text}\n— ${o.identity.brokerageLegalName}`;
@@ -59,7 +59,9 @@ export function renderHumanBody(body: string, o: { channel: 'sms' | 'email'; pur
   }
   const footer = [o.identity.brokerageLegalName, ...(o.identity.postalAddress ? [o.identity.postalAddress] : [])];
   if (o.purpose === 'marketing' && o.unsubscribe) footer.push(`Unsubscribe: ${o.unsubscribe}`);
-  return `${text}\n\n--\n${footer.join('\n')}`;
+  // parity module 63 (R-PAR-25): the sender's plain-text signature, above the brokerage footer (never markup)
+  const sig = (o.signature ?? '').replace(/\r\n?/g, '\n').trim();
+  return `${text}${sig ? `\n\n${sig}` : ''}\n\n--\n${footer.join('\n')}`;
 }
 
 /** The deterministic reply token of a conversation (Reply-To r+{token}@in.{host}); only its SHA-256 is stored. */

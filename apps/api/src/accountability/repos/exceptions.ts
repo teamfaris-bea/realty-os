@@ -189,6 +189,7 @@ export async function outboundFacts(tx: Tx, s: InputScope): Promise<OutboundStat
       LEFT JOIN contacts c ON c.tenant_id = m.tenant_id AND c.id = m.contact_id
      WHERE m.tenant_id = app.tenant_id() AND m.direction = 'outbound' AND NOT m.imported AND m.initiator <> 'import'
        AND m.marketing_piece_id IS NULL   -- R-MKT-8: invite recipients are counted on the send, never queued
+       AND m.bulk_action_id IS NULL       -- R-PAR-41 (parity module 63): bulk recipients are counted on bulk_finished, never queued
        AND (m.id = ANY (${s.extra.messageIds}::uuid[])
             OR (m.status = ANY (${FAILING}::text[])
                 AND (CASE WHEN ${s.contactId}::uuid IS NOT NULL THEN m.contact_id = ${s.contactId}::uuid
