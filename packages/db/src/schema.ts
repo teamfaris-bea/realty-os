@@ -1296,6 +1296,14 @@ export interface MessageMediaSkippedTable {
   created_at: Generated<Timestamp>;
 }
 
+/** public.message_search_tokens (table) */
+export interface MessageSearchTokensTable {
+  tenant_id: string;
+  token: string;
+  occurred_at: Timestamp;
+  message_id: string;
+}
+
 /** public.message_status_events (table) */
 export interface MessageStatusEventsTable {
   tenant_id: string;
@@ -1376,6 +1384,14 @@ export interface MfaRecoveryCodesTable {
   code_hash: Buffer;
   created_at: Generated<Timestamp>;
   used_at: Timestamp | null;
+}
+
+/** public.note_search_tokens (table) */
+export interface NoteSearchTokensTable {
+  tenant_id: string;
+  token: string;
+  created_at: Timestamp;
+  note_id: string;
 }
 
 /** public.notes (table) */
@@ -2418,10 +2434,12 @@ export interface DB {
   memberships: MembershipsTable;
   message_media: MessageMediaTable;
   message_media_skipped: MessageMediaSkippedTable;
+  message_search_tokens: MessageSearchTokensTable;
   message_status_events: MessageStatusEventsTable;
   message_templates: MessageTemplatesTable;
   messages: MessagesTable;
   mfa_recovery_codes: MfaRecoveryCodesTable;
+  note_search_tokens: NoteSearchTokensTable;
   notes: NotesTable;
   notification_deliveries: NotificationDeliveriesTable;
   notification_preferences: NotificationPreferencesTable;
@@ -2561,10 +2579,12 @@ export const TABLE_NAMES = [
   'memberships',
   'message_media',
   'message_media_skipped',
+  'message_search_tokens',
   'message_status_events',
   'message_templates',
   'messages',
   'mfa_recovery_codes',
+  'note_search_tokens',
   'notes',
   'notification_deliveries',
   'notification_preferences',

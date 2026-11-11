@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
-import { maskedName, phoneSuffix, prefixTsQuery } from './search.js';
+import { maskedName, phoneSuffix, prefixRangeEnd, prefixTsQuery, tsQueryLexemes } from './search.js';
 import { call, command, contactOf, randomEmail, randomPhone, type WorkspaceWorld, workspaceWorld } from './testing.js';
 
 let h: ApiHarness;
@@ -102,6 +102,46 @@ describe('search', () => {
     );
     expect((await find(a, 'bungalow alder')).messages.map((x) => x.id)).toEqual([msg]);
     expect((await find(b, 'bungalow alder')).messages).toEqual([]);
+  });
+
+  it('message and note search follows edits and deletes of the text (token tables kept by triggers)', async () => {
+    const a = w.agents[0]!;
+    const c = await contactOf(a);
+    const conv = randomUUID();
+    const msg = randomUUID();
+    const noteId = randomUUID();
+    await h.su.query('INSERT INTO conversations (tenant_id, id, contact_id) VALUES ($1,$2,$3)', [w.tenantId, conv, c.id]);
+    await h.su.query(
+      `INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, from_address, to_address, subject, body, status, initiator, occurred_at)
+       VALUES ($1,$2,$3,$4,'email','inbound','x@example.com','y@example.com','Wisteria cottage','Does the porch face west?','received','client', now())`,
+      [w.tenantId, msg, conv, c.id],
+    );
+    await h.su.query("INSERT INTO notes (tenant_id, id, contact_id, author_user_id, body) VALUES ($1,$2,$3,$4,'Loves the Quillfeather mansion')", [w.tenantId, noteId, c.id, a.userId]);
+    expect((await find(a, 'wisteria porch')).messages.map((x) => x.id)).toEqual([msg]); // subject and body both count
+    expect((await find(a, 'quillfeath')).notes.map((x) => x.id)).toEqual([noteId]);
+    await h.su.query("UPDATE messages SET body = 'Does the deck face east?' WHERE tenant_id = $1 AND id = $2", [w.tenantId, msg]);
+    expect((await find(a, 'wisteria porch')).messages).toEqual([]);
+    expect((await find(a, 'wisteria deck')).messages.map((x) => x.id)).toEqual([msg]);
+    await h.su.query('DELETE FROM messages WHERE tenant_id = $1 AND id = $2', [w.tenantId, msg]);
+    await h.su.query('DELETE FROM notes WHERE tenant_id = $1 AND id = $2', [w.tenantId, noteId]);
+    const gone = await find(a, 'wisteria quillfeath');
+    expect([gone.messages, gone.notes, gone.incomplete]).toEqual([[], [], []]);
+    expect((await find(a, 'quillfeath')).notes).toEqual([]);
+  });
+
+  it('token helpers: the prefix range end in code-point order, and the lexemes of a printed tsquery', () => {
+    expect(prefixRangeEnd('abc')).toBe('abd');
+    expect(prefixRangeEnd('café')).toBe('cafê');
+    expect(prefixRangeEnd('a\u{10FFFF}')).toBe('b');
+    expect(prefixRangeEnd('\u{10FFFF}')).toBeNull();
+    expect(prefixRangeEnd('x퟿')).toBe('x');
+    expect(tsQueryLexemes("'jane':* & 'doe':*")).toEqual(['jane', 'doe']);
+    expect(tsQueryLexemes("'pre-approval':* <-> 'pre':* <-> 'approval':*")).toEqual(['pre-approval', 'pre', 'approval']);
+    expect(tsQueryLexemes("( 'a':* <2> 'b':* ) & 'c'")).toEqual(['a', 'b', 'c']);
+    expect(tsQueryLexemes("'o''neil':*")).toEqual(["o'neil"]);
+    expect(tsQueryLexemes('')).toEqual([]);
+    expect(tsQueryLexemes("'a':* | 'b':*")).toBeNull();
+    expect(tsQueryLexemes("!'a':*")).toBeNull();
   });
 
   it('query helpers: prefix tsquery is injection-safe, phone digits use the last 7–10, pond names mask the last name', () => {
