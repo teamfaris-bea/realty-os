@@ -268,3 +268,107 @@ describe('B6 review R1 R-IMPORT-10: undoing history put on a pre-existing contac
     expect(await q('SELECT seq, type, actor_kind FROM lead_ownership_events WHERE contact_id = $1 ORDER BY seq', [c])).toEqual(ledgerBefore);
   });
 });
+
+// Review of B6, R3 and R4 (R-IMPORT-4): a later stage is planned only against a contacts plan that can still happen.
+// R3: the contacts stage dry-run and then skipped kept its records, and contactsStageMap believed them, so history went
+// `will_import` against people (and, through a skipped duplicate, an existing contact) the skipped stage never wrote,
+// failed at commit and could not verify. R4: a record left undecided when the contacts stage committed can never be
+// decided, yet its history said PARENT_NOT_LINKED (needs review), and an Admin's "import" always failed at commit.
+describe('B6 review R3 R4 R-IMPORT-4: later stages are planned against a contacts plan that can still happen', () => {
+  const none = { users: [], textMessages: [], emails: [], calls: [], recordings: {} };
+  const noteOf = (id: number, personId: number) => ({ id, personId, body: `Note ${id}`, created: '2025-06-01T16:00:00Z' });
+
+  /** An earlier batch creates these people; the Owner then assigns each to the first agent (an owned contact). */
+  async function earlier(key: string, people: { id: number; firstName: string; lastName: string; phones: unknown[] }[]): Promise<Record<string, string>> {
+    ih.fub.add(key, { ...none, people, notes: [] });
+    await contactsCommitted(key);
+    const out: Record<string, string> = {};
+    for (const p of people) {
+      const c = (await contactOfRef(String(p.id))) as string;
+      expect((await command(w.owner, c, 'reassign', { toUserId: w.agents[0]!.userId })).status).toBe(200);
+      out[String(p.id)] = c;
+    }
+    return out;
+  }
+
+  it('B6 R3: the contacts stage dry-run, then skipped: the notes dry run plans every note as the commit will find it (PARENT_NOT_FOUND: nothing of this batch was written, and no exact match is followed), the commit agrees and verifies, and nothing lands on the existing contact; a notes dry run made before the skip is no longer current and must be run again', async () => {
+    const ex = await earlier('b6r3-earlier-key-0001', [{ id: 2801, firstName: 'Eve', lastName: 'Exists', phones: [valid('(415) 820-2801')] }]);
+    ih.fub.add('b6r3-later-key-0001', {
+      ...none,
+      people: [
+        { id: 2901, firstName: 'Neil', lastName: 'New', phones: [valid('(415) 820-2901')] },
+        { id: 2902, firstName: 'Neil', lastName: 'Again', phones: [valid('(415) 820-2901')] }, // in-file duplicate of 2901
+        { id: 2903, firstName: 'Eve', lastName: 'Exists', phones: [valid('(415) 820-2801')] }, // exact match, nothing new
+      ],
+      notes: [noteOf(29001, 2901), noteOf(29002, 2902), noteOf(29003, 2903)],
+    });
+    const b = await startFub(ih, w.admin, 'b6r3-later-key-0001');
+    const cd = await dryRunStage(ih, w.admin, b.id, 'contacts');
+    expect(cd.counts).toMatchObject({ source: 3, willImport: 1, duplicate: 2 });
+    // a notes dry run while the contacts plan was still current
+    const early = await dryRunStage(ih, w.admin, b.id, 'notes');
+    expect(early.counts).toMatchObject({ willImport: 3 });
+    expect((await call(w.admin, 'POST', `/imports/${b.id}/stages/contacts/skip`)).status).toBe(200);
+    expect((await call(w.admin, 'POST', `/imports/${b.id}/stages/ownership/skip`)).status).toBe(200);
+    // the skip discarded the plan that dry run was made against: it is no longer current, and cannot be approved
+    const reset = stageOf(await batchOf(w.admin, b.id), 'notes');
+    expect(reset.status).toBe('pending');
+    expect((await approve(w.admin, b.id, 'notes', early.dryRunSha256 as string)).status).toBe(409);
+
+    const r = await history(b.id, 'notes');
+    expect(r.planned.counts).toMatchObject({ source: 3, willImport: 0, rejected: 3 });
+    expect(r.recs.map((x) => [x.sourceRef, x.dryRunOutcome, x.issues.map((i) => i.code)])).toEqual([
+      ['fub:notes/29001', 'rejected', ['PARENT_NOT_FOUND']],
+      ['fub:notes/29002', 'rejected', ['PARENT_NOT_FOUND']],
+      ['fub:notes/29003', 'rejected', ['PARENT_NOT_FOUND']],
+    ]);
+    expect({ failed: r.failed, committed: r.committed.counts, verified: r.verified }).toMatchObject({ failed: [], committed: { imported: 0, rejected: 3 }, verified: 200 });
+    expect(await q('SELECT count(*)::int AS n FROM notes WHERE contact_id = $1 AND imported', [ex['2801']])).toEqual([{ n: 0 }]);
+  });
+
+  it('B6 R4: a contacts record left undecided when its stage committed is final: its notes, and its in-file duplicate’s, are planned rejected (PARENT_REJECTED, never PARENT_NOT_LINKED, so no "import" can fail at commit); the stage commits, verifies, and the next stage can commit after it', async () => {
+    const ex = await earlier('b6r4-earlier-key-0001', [
+      { id: 3101, firstName: 'Olga', lastName: 'Owned', phones: [valid('(415) 820-3101')] },
+      { id: 3102, firstName: 'Omar', lastName: 'Owned', phones: [valid('(415) 820-3102')] },
+    ]);
+    ih.fub.add('b6r4-later-key-0001', {
+      ...none,
+      people: [
+        { id: 3201, firstName: 'Olga', lastName: 'Owned', phones: [valid('(415) 820-3101')], emails: [valid('olga.new@example.com', 'home')] }, // owned match + a new email: needs review, left undecided
+        { id: 3202, firstName: 'Olga', lastName: 'Again', phones: [valid('(415) 820-3101')] }, // in-file duplicate of 3201
+        { id: 3301, firstName: 'Omar', lastName: 'Owned', phones: [valid('(415) 820-3102')], emails: [valid('omar.new@example.com', 'home')] }, // needs review, rejected by the Admin
+        { id: 3302, firstName: 'Omar', lastName: 'Again', phones: [valid('(415) 820-3102')] }, // in-file duplicate of 3301
+      ],
+      notes: [noteOf(33201, 3201), noteOf(33202, 3202), noteOf(33301, 3301), noteOf(33302, 3302)],
+    });
+    const b = await startFub(ih, w.admin, 'b6r4-later-key-0001');
+    const cd = await dryRunStage(ih, w.admin, b.id, 'contacts');
+    const crecs = await records(w.admin, b.id, 'contacts');
+    expect(crecs.map((x) => [x.sourceRef, x.dryRunOutcome])).toEqual([
+      ['fub:people/3201', 'needs_review'],
+      ['fub:people/3202', 'duplicate'],
+      ['fub:people/3301', 'needs_review'],
+      ['fub:people/3302', 'duplicate'],
+    ]);
+    const omar = crecs.find((x) => x.sourceRef === 'fub:people/3301')!;
+    expect((await call(w.admin, 'POST', `/imports/${b.id}/records/${omar.id}/review`, { decision: 'reject' })).status).toBe(200);
+    expect((await approve(w.admin, b.id, 'contacts', cd.dryRunSha256 as string)).status).toBe(200);
+    expect((await commitStage(ih, w.admin, b.id, 'contacts')).status).toBe('committed');
+    expect((await verify(w.admin, b.id, 'contacts')).res.status).toBe(200);
+    expect((await call(w.admin, 'POST', `/imports/${b.id}/stages/ownership/skip`)).status).toBe(200);
+
+    const r = await history(b.id, 'notes');
+    expect(r.recs.map((x) => [x.sourceRef, x.dryRunOutcome, x.issues.map((i) => i.code).sort()])).toEqual([
+      ['fub:notes/33201', 'rejected', ['PARENT_REJECTED']],
+      ['fub:notes/33202', 'rejected', ['PARENT_DUPLICATE', 'PARENT_REJECTED']],
+      ['fub:notes/33301', 'rejected', ['PARENT_REJECTED']],
+      ['fub:notes/33302', 'rejected', ['PARENT_DUPLICATE', 'PARENT_REJECTED']],
+    ]);
+    expect({ failed: r.failed, committed: r.committed.counts, verified: r.verified }).toMatchObject({ failed: [], committed: { imported: 0, rejected: 4 }, verified: 200 });
+    // the batch moves on: the next stage commits (and verifies) after it
+    const m = await fullStage(ih, w.admin, b.id, 'messages');
+    expect(m.status).toBe('committed');
+    expect(stageOf(await batchOf(w.admin, b.id), 'messages').status).toBe('verified');
+    for (const c of Object.values(ex)) expect(await q('SELECT count(*)::int AS n FROM notes WHERE contact_id = $1 AND imported', [c])).toEqual([{ n: 0 }]);
+  });
+});

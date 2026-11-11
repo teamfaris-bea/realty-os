@@ -102,13 +102,28 @@ function personRefOfRecord(r: rrepo.RecordRow): string | null {
   return fub ? (fub[1] as string) : r.source_ref;
 }
 
+/** Contacts-stage statuses whose dry run is a plan that still happens (or happened): the later stages plan against it. */
+const CONTACTS_PLAN_CURRENT: ReadonlySet<brepo.StageStatus> = new Set(['dry_run_ready', 'approved', 'committing', 'committed', 'verified']);
+/** From these on, a record the plan does not apply never will be in this batch (no review, no new dry run). */
+const CONTACTS_PLAN_FINAL: ReadonlySet<brepo.StageStatus> = new Set(['committing', 'committed', 'verified']);
+
 /**
  * The contacts-stage plan for person refs not committed yet (later stages may dry-run first, R-IMPORT-3), and for
  * the people skipped as duplicates: a skip is never committed and writes no external_ref, so a later stage needs to
  * know what the skip points at (B6, R-IMPORT-4; core skippedDuplicateOf, the same rule as core contactsStagePlan).
+ *
+ * Only a plan that can still happen counts (B6 review R3): a contacts stage skipped after its dry run, or reset to
+ * pending by a new snapshot or mapping (or failed, or running again), has no current plan, so the later stages see
+ * only what is committed (external_refs), exactly what their commit will find. And once the contacts stage commits,
+ * a record it left undecided can never be decided in this batch (B6 review R4): it is planned as not imported
+ * (`rejected`), never as waiting for a review (PARENT_NOT_LINKED), so no review decision can make a later stage's
+ * commit differ from its dry run.
  */
 export async function contactsStageMap(tx: Tx, batchId: string): Promise<Map<string, ContactsStagePlan>> {
   const out = new Map<string, ContactsStagePlan>();
+  const status = (await brepo.getStages(tx, batchId)).find((s) => s.category === 'contacts')?.status;
+  if (status === undefined || !CONTACTS_PLAN_CURRENT.has(status)) return out;
+  const final = CONTACTS_PLAN_FINAL.has(status);
   const recs = await rrepo.contactsStageRecords(tx, batchId);
   const refOf = new Map<string, string>();
   for (const r of recs) {
@@ -122,7 +137,7 @@ export async function contactsStageMap(tx: Tx, batchId: string): Promise<Map<str
     if (ref === null) continue;
     const plan = r.plan as PlanAction | null;
     if (r.dry_run_outcome === 'rejected' || r.review_decision === 'reject' || r.outcome === 'rejected') out.set(ref, 'rejected');
-    else if (r.dry_run_outcome === 'needs_review' && r.review_decision === null) out.set(ref, 'needs_review');
+    else if (r.dry_run_outcome === 'needs_review' && r.review_decision === null) out.set(ref, final ? 'rejected' : 'needs_review');
     else if (plan?.kind === 'create_contact' && r.review_decision !== 'merge') out.set(ref, 'create');
     else if (plan?.kind === 'skip') skips.push({ personRef: ref, sameAs: skippedDuplicateOf({ action: plan, issues: r.issues as Issue[] }, (s) => refOf.get(s)) });
     else out.set(ref, 'attach');
@@ -395,6 +410,11 @@ export async function skipStage(deps: ImportDeps, actor: UserActor, batchId: str
         if (why) throw conflict(why);
       }
       if (!(await brepo.transitionStage(tx, stage.id, ['pending', 'dry_run_ready', 'approved', 'failed'], 'skipped'))) throw conflict(stage.status);
+      // B6 review R3 (R-IMPORT-4): every later stage plans its parents against the contacts plan, which a skip discards;
+      // a later dry run made against it is no longer current (a new one plans against what is committed)
+      if (category === 'contacts') {
+        for (const s of stages) if (s.seq > stage.seq && ['dry_run_ready', 'approved'].includes(s.status)) await brepo.resetStageDryRun(tx, s.id, 'pending');
+      }
       await audit(tx, actor, { action: 'import.approved', entity: { type: 'import_stage', id: stage.id }, reason: `${category.toUpperCase()}_SKIPPED` });
       await settleIfLast(tx, batch, stages.map((s) => (s.id === stage.id ? 'skipped' : s.status)));
     },
