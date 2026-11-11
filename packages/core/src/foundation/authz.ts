@@ -143,6 +143,7 @@ export const ACTIONS = [
   'bulk.assign', // parity module 63: bulk assign through the ownership engine (✅ | ✅ | T to team members | — …)
   'bulk.text', // parity module 63: batch text, per person; also needs the Owner's switch (R-PAR-40)
   'settings.batch_text', // parity module 63: the batch-text switch (Owner on 🔒 + attestation; Admin off only)
+  'playbook.auto_enroll_stage', // parity module 67: the stage whose entry enrolls (team: Owner/Admin; an agent: own agent playbook)
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -555,6 +556,8 @@ const MATRIX: Record<Action, ActionRule> = {
   'bulk.text': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: O, isa: O } },
   // settings.batch_text: ✅ 🔒 (on needs re-auth + attestation) | off only | — … ("loosening" = turning it on)
   'settings.batch_text': { roles: { owner: { scopes: ['all'], checks: ['attest_when_loosening'], reauth: 'when_loosening' }, admin: { scopes: ['all'], checks: ['not_loosening'] } } },
+  // playbook.auto_enroll_stage (R-PAR-16): team ✅ | team ✅ | — | own agent playbook | — | —
+  'playbook.auto_enroll_stage': { roles: { owner: { scopes: ['team_playbook'] }, admin: { scopes: ['team_playbook'] }, agent: { scopes: ['own'], checks: ['not_team_playbook'] } } },
 };
 
 const DENY_NOT_FOUND: CanResult = { ok: false, code: 'NOT_FOUND' };

@@ -31,6 +31,8 @@ import { actorOf, detailFacts, idOf, peopleTx, platformOf } from './common.js';
 import * as repo from './repos/people.js';
 import { addressView, collaboratorView, relationshipView, removedPointView } from './views.js';
 import * as S from './schemas.js';
+import { stageChangeAutomation } from '../stageAutomation/index.js';
+import { ownLatestStageEvent } from '../stageAutomation/repos.js';
 
 export function stageFactsOf(r: repo.EditRow): StageFacts {
   return {
@@ -146,8 +148,8 @@ export async function registerContactEditRoutes(app: FastifyInstance): Promise<v
   r.post(
     '/contacts/:id/stage',
     { config: { auth: 'contact.edit' }, preHandler: authorize('contact.edit', editAuth), schema: { params: S.IdParams, body: S.StageBody, response: { 200: S.StageResponse } } },
-    async (req) =>
-      peopleTx(req, async (tx, _now, actor) => {
+    async (req) => {
+      const out = await peopleTx(req, async (tx, _now, actor) => {
         const id = req.params.id;
         const before = await repo.editRow(tx, id);
         if (!before) throw new AppError('NOT_FOUND');
@@ -155,14 +157,21 @@ export async function registerContactEditRoutes(app: FastifyInstance): Promise<v
         if (rv !== before.row_version) throw new AppError('STALE_CONTACT', { rowVersion: before.row_version });
         changeStageCheck(before, actor, req.body.stage);
         const labels = await repo.stageLabels(tx);
+        let eventId: string | null = null;
         if (req.body.stage !== before.stage) {
           const next = await repo.updateContact(tx, id, rv, { stage: req.body.stage });
           if (next === null) return staleOrMissing(tx, id);
           await audit(tx, actor, { action: 'contact.update', entity: { type: 'contact', id }, changes: redactDiff({ stage: before.stage }, { stage: req.body.stage }, { entity: 'contacts' }) });
+          eventId = await ownLatestStageEvent(tx, id, before.stage, req.body.stage); // parity 67
         }
         const after = (await repo.editRow(tx, id))!;
-        return { stage: stageInfo(after, actor, labels), previousStage: before.stage, rowVersion: after.row_version };
-      }),
+        return { stage: stageInfo(after, actor, labels), previousStage: before.stage, rowVersion: after.row_version, eventId };
+      });
+      // parity module 67 (flagged edit): the stage entry's plan, decided after the change committed
+      const { eventId, ...res } = out;
+      const automation = eventId ? await stageChangeAutomation(platformOf(req).db, actorOf(req).tenantId, eventId, req.log) : null;
+      return { ...res, automation };
+    },
   );
 
   r.get('/stage-labels', { config: { auth: 'self' }, schema: { response: { 200: S.StageLabelsResponse } } }, async (req) =>
