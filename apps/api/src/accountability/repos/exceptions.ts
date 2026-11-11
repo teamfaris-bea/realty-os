@@ -273,16 +273,35 @@ export async function lockRecompute(tx: Tx): Promise<void> {
   await sql`SELECT pg_advisory_xact_lock(hashtextextended('exception_recompute:' || app.tenant_id()::text, 0))`.execute(tx);
 }
 
-/** Upserts derived items by dedupe key (core sorts them by key, so concurrent writers lock in one order). */
+/** Rows per upsert statement: bounds the statement's parameter size (a first fill of a 250k tenant is ~12k rows). */
+export const UPSERT_CHUNK = 1000;
+
+/**
+ * Upserts derived items by dedupe key (core sorts them by key, so concurrent writers lock in one order).
+ * One multi-row INSERT ... ON CONFLICT per UPSERT_CHUNK specs, rows in the given order (WITH ORDINALITY),
+ * with the same per-row values and conflict rule as one statement per row (lane perf-misses: the per-row
+ * round trips were 18 s of a first fill of the large tenant). Core returns each dedupe key at most once,
+ * so no statement touches a row twice. An id is drawn for every spec, in order, inserted or not.
+ */
 export async function upsertItems(tx: Tx, specs: readonly ExceptionItemSpec[], ids: IdGenerator, now: Instant): Promise<void> {
   const nowIso = iso(now);
-  for (const x of specs) {
+  for (let i = 0; i < specs.length; i += UPSERT_CHUNK) {
+    const chunk = specs.slice(i, i + UPSERT_CHUNK);
+    const idCol = chunk.map(() => ids.next() as string);
     await sql`
       INSERT INTO exception_items (tenant_id, id, item_type, subject_type, subject_id, contact_id, owner_user_id, detected_at, due_at,
                                    evidence, condition_cleared_at, rule_version, dedupe_key, computed_at)
-      VALUES (app.tenant_id(), ${ids.next()}::uuid, ${x.itemType}, ${x.subjectType}, ${x.subjectId}::uuid, ${x.contactId}::uuid, ${x.ownerUserId}::uuid,
-              ${iso(x.detectedAt)}::timestamptz, ${x.dueAt === null ? null : iso(x.dueAt)}::timestamptz, ${JSON.stringify(x.evidence)}::jsonb,
-              ${x.conditionClearedAt === null ? null : iso(x.conditionClearedAt)}::timestamptz, ${x.ruleVersion}, ${x.dedupeKey}, ${nowIso}::timestamptz)
+      SELECT app.tenant_id(), x.id, x.item_type, x.subject_type, x.subject_id, x.contact_id, x.owner_user_id, x.detected_at, x.due_at,
+             x.evidence, x.condition_cleared_at, x.rule_version, x.dedupe_key, ${nowIso}::timestamptz
+        FROM unnest(${idCol}::uuid[], ${chunk.map((x) => x.itemType)}::text[], ${chunk.map((x) => x.subjectType)}::text[],
+                    ${chunk.map((x) => x.subjectId)}::uuid[], ${chunk.map((x) => x.contactId)}::uuid[], ${chunk.map((x) => x.ownerUserId)}::uuid[],
+                    ${chunk.map((x) => iso(x.detectedAt))}::timestamptz[], ${chunk.map((x) => (x.dueAt === null ? null : iso(x.dueAt)))}::timestamptz[],
+                    ${chunk.map((x) => JSON.stringify(x.evidence))}::jsonb[],
+                    ${chunk.map((x) => (x.conditionClearedAt === null ? null : iso(x.conditionClearedAt)))}::timestamptz[],
+                    ${chunk.map((x) => x.ruleVersion)}::smallint[], ${chunk.map((x) => x.dedupeKey)}::text[])
+             WITH ORDINALITY AS x(id, item_type, subject_type, subject_id, contact_id, owner_user_id, detected_at, due_at, evidence,
+                                  condition_cleared_at, rule_version, dedupe_key, ord)
+       ORDER BY x.ord
       ON CONFLICT (tenant_id, dedupe_key) DO UPDATE SET
         item_type = EXCLUDED.item_type, subject_type = EXCLUDED.subject_type, subject_id = EXCLUDED.subject_id,
         contact_id = EXCLUDED.contact_id, owner_user_id = EXCLUDED.owner_user_id, detected_at = EXCLUDED.detected_at,
