@@ -22,6 +22,7 @@ import { AGENT_ERROR_MESSAGES } from '../feed/lib/messages.js';
 import { useSendCheck } from '../feed/lib/sendCheck.js';
 import type { ActionView, ApproveResponse, ClaimApiView } from '../feed/lib/types.js';
 import { ContactSearches } from './SavedSearchReview.js';
+import { SellerUpdateApproval } from './SellerUpdateApproval.js';
 
 export const INBOX_KEY = ['inbox'] as const;
 
@@ -76,12 +77,13 @@ function Approvals() {
   }
   // one reachability request for every card's contact (not one per card)
   const contactIds = items.flatMap((a) => (a.contactId && a.primaryAction === 'send' && a.draft ? [a.contactId] : []));
+  // a seller update (module 28) belongs to a listing, not a contact: its card loads its own recipients
   return (
     <ReachabilityBatch contactIds={contactIds}>
       <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {items.map((a) => (
           <li key={a.id} id={`action-${a.id}`} className="scroll-mt-20">
-            <ActionCard action={a} />
+            {a.kind === 'seller_update_draft' && a.contactId === null ? <SellerUpdateApproval actionId={a.id} /> : <ActionCard action={a} />}
           </li>
         ))}
       </ul>
