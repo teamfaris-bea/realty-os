@@ -9,7 +9,7 @@
 import type { FactField, ResoLike } from '@realty/core/listings';
 import type { Tx } from '@realty/db';
 import type { TenantId } from '@realty/core/foundation';
-import { SPARK_FIELD_MAPPING } from '../providers/integrations/spark.js';
+import { SPARK_FIELD_MAPPING, SparkError } from '../providers/integrations/spark.js';
 import type { MlsFeed, ResoListing } from '../providers/integrations/types.js';
 import { getSparkConnection } from '../integrations/repos/connections.js';
 import { type SparkDeps, openSparkFeed } from './spark/service.js';
@@ -68,6 +68,8 @@ export async function openRecordFeed(deps: SparkDeps, tx: Tx, tenantId: TenantId
     // the tenant's Spark connection only (an older mls_feed row is not read with its key)
     const conn = await getSparkConnection(tx);
     if (!conn || conn.id !== connectionId) return null;
+    // kill switch first: with live calls off the key is not even decrypted (as in validation)
+    if (!deps.mls.liveCalls) return { fields: SPARK_FIELD_MAPPING, records: () => Promise.reject(new SparkError('LIVE_CALLS_DISABLED')) };
     const spark = await openSparkFeed(deps, tx, tenantId);
     if (!spark) return null;
     return { fields: SPARK_FIELD_MAPPING, records: (c, n) => spark.records(c, n) };

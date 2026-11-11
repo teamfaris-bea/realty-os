@@ -19,7 +19,8 @@ export const MLS_SYNC_EVERY_MS = 60_000;
 export const MLS_SWEEP_EVERY_MS = 5 * 60_000;
 
 type DepsFor = (providers: Providers) => MlsDeps;
-const defaultDeps: DepsFor = (providers) => ({ ...commsRuntime(), providers, mls: loadConfig().mls });
+let mlsConfig: MlsDeps['mls'] | null = null;
+const defaultDeps: DepsFor = (providers) => ({ ...commsRuntime(), providers, mls: (mlsConfig ??= loadConfig().mls) });
 const Empty = jobPayload({});
 
 export function makeMlsHandlers(depsFor: DepsFor = defaultDeps): JobHandler<unknown>[] {

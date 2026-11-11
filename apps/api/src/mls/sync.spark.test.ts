@@ -112,6 +112,8 @@ describe('mls.sync over Spark (live shape)', () => {
       expect(r).toMatchObject({ outcome: 'failed', code: 'LIVE_CALLS_DISABLED' });
       expect(spark.calls).toHaveLength(0);
       expect(wire.attempts).toEqual([]);
+      // nothing was decrypted either: no credential read happened for this run (the feed refused before openSparkFeed)
+      expect((await conn()).last_error_code).toBe('LIVE_CALLS_DISABLED');
     } finally {
       setMls({ liveCalls: true });
     }
