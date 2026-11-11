@@ -47,6 +47,10 @@ export const LEAD_ADMIN_ERROR_MESSAGES: Record<string, string> = {
   // privacy erasure (api/admin erasure, R-DATA-4, E59)
   CONTACT_ON_DEAL: "This person is on a deal, so they can't be erased yet. The deal is a transaction record and stays; the Owner removes them from the deal first.",
   DEAL_STILL_OPEN: 'This person is the primary contact of a deal that is still open. Change the primary contact on the deal first, then remove them here.',
+  // System page job commands (api/observability, lane ops-observability)
+  JOB_NOT_RETRYABLE: "This job can't be retried now: it already finished, is running, or was cancelled. The list below is up to date.",
+  JOB_ALREADY_QUEUED: 'A newer copy of this work is already waiting or running, so retrying this one would do it twice. Nothing was changed.',
+  JOB_NOT_CANCELLABLE: 'Only a job that is waiting can be cancelled. This one is running or already finished; the list below is up to date.',
 };
 
 /** Every sentence these surfaces may need: theirs plus the agent surfaces' (shared codes). */
