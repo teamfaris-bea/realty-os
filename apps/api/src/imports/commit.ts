@@ -240,7 +240,7 @@ function optOutsOf(c: Ctx, rec: rrepo.RecordRow, n: NormalizedContact): ContactO
  * sendable while the later stages are still pending. Revocations already in the ledger are not written
  * twice (the consent stage's dry run then sees them as already imported). Both stay on revert.
  */
-async function applyOptOuts(c: Ctx, rec: rrepo.RecordRow, n: NormalizedContact, contactId: string): Promise<rrepo.CreatedRow[]> {
+async function applyOptOuts(c: Ctx, rec: rrepo.RecordRow, n: NormalizedContact, contactId: string | null): Promise<rrepo.CreatedRow[]> {
   const o = optOutsOf(c, rec, n);
   if (!o) return [];
   const have = await w.importedOptOutKeys(c.tx, o.fields.addresses.map((a) => c.keyOf(a.kind, a.address)));
@@ -261,15 +261,48 @@ async function applyOptOuts(c: Ctx, rec: rrepo.RecordRow, n: NormalizedContact, 
   if (fresh.addresses.length === 0) return [];
   const source = c.system === 'fub' ? 'import_fub' : 'import_csv';
   const created: rrepo.CreatedRow[] = [];
+  const of = contactId === null ? {} : { contactId };
   for (const s of mapImportedConsent(fresh, o.provenance, { ids: c.deps.ids, now: c.now, hmac: c.keyOf, source, contactId, importRecordId: rec.id })) {
     await recordConsentEvent(c.tx, s);
-    created.push({ table: 'consent_events', id: s.id, contactId });
+    created.push({ table: 'consent_events', id: s.id, ...of });
   }
   for (const s of mapImportedSuppressions(fresh, { ids: c.deps.ids, hmac: c.keyOf, source, importRecordId: rec.id })) {
     const id = await w.insertImportedSuppression(c.tx, { id: s.id, addressKind: s.addressKind, addressHmac: s.addressHmac, addressHint: s.addressHint, sourceRef: s.sourceRef, importRecordId: rec.id });
-    if (id) created.push({ table: 'suppressions', id, contactId });
+    if (id) created.push({ table: 'suppressions', id, ...of });
   }
   return created;
+}
+
+/**
+ * The live contact a contacts record skipped as a duplicate points at (B6): for an in-file duplicate, the contact the
+ * earlier row of the stage wrote (or the existing contact that row matched, when it was itself skipped); otherwise
+ * the existing contact it matched (`existingId`). Null when there is none (the earlier row was rejected or failed).
+ */
+async function skipTarget(c: Ctx, rec: rrepo.RecordRow): Promise<string | null> {
+  const plan = rec.plan as { kind?: string; existingId?: string } | null;
+  if (plan?.kind !== 'skip' || !plan.existingId) return null;
+  const inFile = (r: rrepo.RecordRow) => r.issues.some((i) => i.code === 'IN_FILE_DUPLICATE');
+  let id: string | null = plan.existingId;
+  if (inFile(rec)) {
+    const earlier = (await rrepo.getRecordsByRefs(c.tx, c.stage.id, [plan.existingId]))[0];
+    const ep = earlier?.plan as { kind?: string; existingId?: string } | null | undefined;
+    if (earlier?.outcome === 'imported' && earlier.target_table === 'contacts') id = earlier.target_id;
+    else id = earlier && ep?.kind === 'skip' && !inFile(earlier) ? (ep.existingId ?? null) : null;
+  }
+  return id === null ? null : ((await liveId(c.tx, id))?.id ?? null);
+}
+
+/**
+ * B6 review R2 (outbound-2, R-CONSENT-3, E40): a contacts record skipped as a duplicate commits nothing of its person,
+ * but the opt-outs it carries (stored with its plan at the dry run) take effect at the contacts commit like everyone
+ * else's: address-keyed revocations and import_dnc suppressions, in this chunk's transaction, naming the contact the
+ * skip points at when there is one. Like every imported revocation they stay on revert. The consent stage then finds
+ * them in the ledger and adds only the history.
+ */
+async function applySkippedOptOuts(c: Ctx, rec: rrepo.RecordRow): Promise<rrepo.CreatedRow[]> {
+  const n = rec.normalized as NormalizedRecord | null;
+  if (n?.category !== 'contacts') return [];
+  return applyOptOuts(c, rec, n, await skipTarget(c, rec));
 }
 
 /** A definition row as module 60's writers take it. */
@@ -580,6 +613,23 @@ function addressesOfRecords(recs: readonly rrepo.RecordRow[]): { kind: AddressKi
   return out;
 }
 
+async function commitCtx(deps: ImportDeps, tx: Tx, actor: SystemActor, stage: brepo.StageRow, batch: brepo.BatchRow, now: Instant, recs: readonly rrepo.RecordRow[]): Promise<Ctx> {
+  return {
+    deps,
+    tx,
+    actor,
+    tenantId: actor.tenantId,
+    batch,
+    stage,
+    system: SOURCE_SYSTEM[batch.source],
+    now,
+    keyOf: await hmacIndex(deps, tx, actor.tenantId, new Map(), addressesOfRecords(recs)),
+    members: await w.memberIds(tx),
+    settings: await brepo.importSettings(tx),
+    parity: { options: parityOptionsOf(batch), fields: new Map() },
+  };
+}
+
 /**
  * The commit job (imports.commit). Runs chunk transactions until the stage is done or `maxChunks`
  * chunks ran ('more': the job re-queues itself). Idempotent and resumable.
@@ -596,6 +646,20 @@ export async function runCommit(deps: ImportDeps, tenantId: string, stageId: str
         if (!stage || stage.status !== 'committing') return 'skipped';
         const batch = (await brepo.getBatch(tx, stage.batch_id)) as brepo.BatchRow;
         const recs = await rrepo.nextCommitChunk(tx, stage.id, size);
+        // B6 review R2: once the plan's own records are applied, the skipped duplicates' opt-outs, a chunk at a time
+        const skips = recs.length === 0 && stage.category === 'contacts' ? await rrepo.nextSkippedOptOutChunk(tx, stage.id, size) : [];
+        if (skips.length > 0) {
+          const ctx = await commitCtx(deps, tx, actor, stage, batch, now, skips);
+          for (const rec of skips) {
+            try {
+              await rrepo.markOptOutsCarried(tx, rec.id, await inSavepoint(tx, () => applySkippedOptOuts(ctx, rec)));
+            } catch (e) {
+              // never dropped silently: the record fails like any other (COMMIT_FAILED), so the recount refuses to verify
+              await rrepo.markCommitFailed(tx, rec.id, pgCode(e));
+            }
+          }
+          return 'more';
+        }
         if (recs.length === 0) {
           await rrepo.settleUnapplied(tx, stage.id);
           const counts = await rrepo.recount(tx, stage.id);
@@ -606,20 +670,7 @@ export async function runCommit(deps: ImportDeps, tenantId: string, stageId: str
           if (!busy) await brepo.setBatchStatus(tx, batch.id, done ? 'committed' : 'partially_committed');
           return 'done';
         }
-        const ctx: Ctx = {
-          deps,
-          tx,
-          actor,
-          tenantId: actor.tenantId,
-          batch,
-          stage,
-          system: SOURCE_SYSTEM[batch.source],
-          now,
-          keyOf: await hmacIndex(deps, tx, actor.tenantId, new Map(), addressesOfRecords(recs)),
-          members: await w.memberIds(tx),
-          settings: await brepo.importSettings(tx),
-          parity: { options: parityOptionsOf(batch), fields: new Map() },
-        };
+        const ctx = await commitCtx(deps, tx, actor, stage, batch, now, recs);
         const parityTotals: { tagIds: string[]; fieldIds: string[]; counts: Record<string, number> } = { tagIds: [], fieldIds: [], counts: {} };
         if (stage.category === 'contacts') {
           const r = await resolveFields(tx, batch, ctx.parity.options, deps.ids);
