@@ -106,8 +106,9 @@ export default function SparkPage() {
     setError(null);
     setStatus(null);
     setChecked(null);
-    const r = await req.run<unknown>('disconnect', 'POST', `/admin/integrations/connections/${encodeURIComponent(id)}/disconnect`, {});
+    // closed first: the shell's password prompt may open next, and two dialogs must never trap focus at once
     setConfirming(false);
+    const r = await req.run<unknown>('disconnect', 'POST', `/admin/integrations/connections/${encodeURIComponent(id)}/disconnect`, {});
     void qc.invalidateQueries({ queryKey: SPARK_KEY });
     if (!r.ok) setError(r.message);
     else setStatus('Disconnected. The saved Spark key was removed for good.');

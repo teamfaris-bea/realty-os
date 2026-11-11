@@ -220,6 +220,23 @@ describe('R-PERM-5 widget settings', () => {
     expect([bad.status, bad.code]).toEqual([422, 'VALIDATION_FAILED']);
     void codeOf;
   });
+
+  it('R-PERM-5: the embed details (brokerage, disclosure) are Owner/Admin only and never carry the key; a source without a disclosure says so', async () => {
+    const src = await chatSource(h, w.owner, w.tenantId, 'Chat embed');
+    const wid = await createWidget(h, w.owner, src.sourceId, ['https://a.example']);
+    for (const c of w.agents) expect((await call(c, 'GET', `/admin/web-chat/widgets/${wid.id}/embed`)).status).toBe(404);
+    const e = await call<{ brokerage: string; disclosure: { id: string; text: string } | null }>(w.owner, 'GET', `/admin/web-chat/widgets/${wid.id}/embed`);
+    expect(e.status).toBe(200);
+    expect(e.body.disclosure?.id).toBe(src.disclosureId);
+    expect(e.body.brokerage.length).toBeGreaterThan(0);
+    expect(JSON.stringify(e.body)).not.toContain(wid.key);
+    expect(JSON.stringify(e.body)).not.toMatch(/wk_[0-9a-f]{40}/);
+    const bare = await call<{ source: { id: string } }>(w.owner, 'POST', '/lead-sources', { name: 'Chat no disclosure', kind: 'website' });
+    const wid2 = await createWidget(h, w.owner, bare.body.source.id, []);
+    const e2 = await call<{ disclosure: unknown }>(w.owner, 'GET', `/admin/web-chat/widgets/${wid2.id}/embed`);
+    expect([e2.status, e2.body.disclosure]).toEqual([200, null]);
+    expect((await call(w.owner, 'GET', `/admin/web-chat/widgets/${randomUUID()}/embed`)).status).toBe(404);
+  });
 });
 
 describe('R-GATE-15 deliverChannelMessage has one caller', () => {
