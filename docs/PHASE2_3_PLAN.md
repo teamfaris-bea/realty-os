@@ -378,7 +378,7 @@ export interface CalendarProvider { pushEvent(e: CalendarEvent, fence: { syncVer
 export function transitionConnection(c: ConnectionRow, e: ConnectionEvent): ConnectionRow;     // honest status machine
 ```
 - **Rules:** R-INT-1…6, R-TEN-11 (`app.resolve_channel_account`).
-- **Tests:** every adapter has a deterministic fake that is the default; a real adapter refuses to start unconfigured; the status machine; the callback refuses an account the token does not manage (E160); the Meta connect requests no messaging permission (D2, R-MKT-12); `GET /admin/integrations` never lists `messenger_page`, `instagram_account`, `meta_lead_ads` or `ads_meta`; disconnect revokes tokens in the same transaction; `resolve_channel_account` returns only connected/degraded connections (security-review item).
+- **Tests:** every adapter has a deterministic fake that is the default; a real adapter refuses to start unconfigured; the status machine; the callback refuses an account the token does not manage (E160); the Meta connect requests no messaging permission (D2, R-MKT-12); `GET /admin/integrations` never offers `messenger_page`, `instagram_account`, `meta_lead_ads` or `ads_meta`: they are listed only as "Not offered" (no connect start, no callback, no capability), so a row made before D2 still shows its status and can be disconnected (R-INT-2, R-INT-5); disconnect revokes tokens in the same transaction; `resolve_channel_account` returns only connected/degraded connections (security-review item).
 - **Accept when:** the Integrations page can show every service with an honest sentence (including each platform pack's review state) and no UI offers a capability the adapter does not report.
 
 #### 22. `api/channels-inbox`

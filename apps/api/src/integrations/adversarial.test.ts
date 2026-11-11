@@ -44,9 +44,13 @@ describe('tenant isolation', () => {
 
   it('R-TEN-3: no route accepts a tenant id; extra fields are 422', async () => {
     await freshReauth(h, ownerB);
-    expect((await call(ownerB, 'POST', '/admin/integrations/messenger_page/connect', { externalAccountId: 'x', leadSourceId: srcB, tenantId: ownerA.tenantId })).status).toBe(422);
-    expect((await call(ownerB, 'POST', '/admin/integrations/messenger_page/connect', { externalAccountId: 'x', leadSourceId: srcB, status: 'connected' })).status).toBe(422);
-    expect((await call(ownerB, 'POST', '/admin/integrations/messenger_page/connect', { externalAccountId: 'x', leadSourceId: srcA })).status).toBe(404); // A's lead source is invisible
+    expect((await call(ownerB, 'POST', '/admin/integrations/facebook_page/connect', { externalAccountId: 'x', tenantId: ownerA.tenantId })).status).toBe(422);
+    expect((await call(ownerB, 'POST', '/admin/integrations/facebook_page/connect', { externalAccountId: 'x', status: 'connected' })).status).toBe(422);
+    expect((await call(ownerB, 'POST', '/admin/integrations/gbp_location/connect', { externalAccountId: 'x', leadSourceId: srcA })).status).toBe(404); // A's lead source is invisible
+    // D2: a publishing kind refuses every lead source before looking it up: the same answer for A's id and B's own
+    for (const leadSourceId of [srcA, srcB]) {
+      expect((await call(ownerB, 'POST', '/admin/integrations/facebook_page/connect', { externalAccountId: 'x', leadSourceId })).code).toBe('LEAD_SOURCE_NOT_ALLOWED');
+    }
   });
 
   it('app_user without a tenant context sees no connection rows; only the definer resolves, and only to ids', async () => {
@@ -64,7 +68,7 @@ describe('roles (DATA_MODEL §8: Owner/Admin only)', () => {
       const c = await inviteViaApi(h, ownerA, role);
       await freshReauth(h, c);
       expect((await call(c, 'GET', '/admin/integrations')).status, role).toBe(404);
-      expect((await call(c, 'POST', '/admin/integrations/messenger_page/connect', { externalAccountId: 'x', leadSourceId: srcA })).status, role).toBe(404);
+      expect((await call(c, 'POST', '/admin/integrations/facebook_page/connect', { externalAccountId: 'x' })).status, role).toBe(404);
       expect((await call(c, 'PATCH', `/admin/integrations/connections/${connA}`, { displayName: 'x' })).status, role).toBe(404);
       expect((await call(c, 'POST', `/admin/integrations/connections/${connA}/disconnect`)).status, role).toBe(404);
     }
@@ -73,32 +77,37 @@ describe('roles (DATA_MODEL §8: Owner/Admin only)', () => {
 });
 
 describe('the routing key is written only by the provider callback (R-INT-3, DB guard)', () => {
-  it('an Owner writing external_account_id, credential_id, a live status or capabilities directly is refused by the 0018 trigger', async () => {
-    const f = await startFlow(ownerA, 'instagram_account', { externalAccountId: 'adv-ig', leadSourceId: srcA }, { reauth: h });
+  it('an Owner writing external_account_id, credential_id, a live status or capabilities directly is refused by the 0018 trigger (the 0025 publishing kinds too)', async () => {
+    const f = await startFlow(ownerA, 'instagram_business', { externalAccountId: 'adv-ig' }, { reauth: h });
     const attempt = (q: ReturnType<typeof sql>) => withTenantTx(ownerA.actor(), async (tx) => void (await q.execute(tx)), { db: h.database });
     await expect(attempt(sql`UPDATE integration_connections SET external_account_id = 'adv-ig' WHERE id = ${f.connectionId}`)).rejects.toThrow(/CONNECTION_PROOF_REQUIRED/);
     await expect(attempt(sql`UPDATE integration_connections SET status = 'connected', connected_at = now() WHERE id = ${f.connectionId}`)).rejects.toThrow(/CONNECTION_PROOF_REQUIRED/);
-    await expect(attempt(sql`UPDATE integration_connections SET capabilities = '{"send_messages": true}' WHERE id = ${f.connectionId}`)).rejects.toThrow(/CONNECTION_CAPABILITIES_REPORTED/);
+    await expect(attempt(sql`UPDATE integration_connections SET capabilities = '{"publish_posts": true}' WHERE id = ${f.connectionId}`)).rejects.toThrow(/CONNECTION_CAPABILITIES_REPORTED/);
     await expect(attempt(sql`UPDATE integration_connections SET external_account_id = 'other' WHERE id = ${connA}`)).rejects.toThrow(/CONNECTION_ACCOUNT_IMMUTABLE/);
-    await expect(
-      attempt(sql`INSERT INTO integration_connections (tenant_id, id, kind, display_name, external_account_id) VALUES (app.tenant_id(), gen_random_uuid(), 'messenger_page', 'x', 'adv-page-z')`),
-    ).rejects.toThrow(/CONNECTION_PROOF_REQUIRED/);
+    for (const kind of ['facebook_page', 'instagram_business', 'messenger_page']) {
+      await expect(
+        attempt(sql`INSERT INTO integration_connections (tenant_id, id, kind, display_name, external_account_id) VALUES (app.tenant_id(), gen_random_uuid(), ${kind}, 'x', 'adv-page-z')`),
+        kind,
+      ).rejects.toThrow(/CONNECTION_PROOF_REQUIRED/);
+    }
     expect(await connectionRow(h, f.connectionId)).toMatchObject({ status: 'not_configured', external_account_id: null, capabilities: {} });
   });
 });
 
 describe('OAuth callback attacks', () => {
   it('a forged state (tenant or connection swapped, MAC kept) or a state for another kind is refused and writes nothing', async () => {
-    const f = await startFlow(ownerB, 'messenger_page', { externalAccountId: 'adv-page-b', leadSourceId: srcB }, { reauth: h });
+    const f = await startFlow(ownerB, 'facebook_page', { externalAccountId: 'adv-page-b' }, { reauth: h });
     const [body, mac] = f.state.split('.') as [string, string];
     const j = JSON.parse(Buffer.from(body, 'base64url').toString());
     const forge = (patch: Record<string, unknown>) => `${Buffer.from(JSON.stringify({ ...j, ...patch })).toString('base64url')}.${mac}`;
     const code = h.providers.integrations.oauth.meta.issueCode({ codeChallenge: f.challenge, accounts: [{ id: 'adv-page-a' }, { id: 'adv-page-b' }] });
-    expect((await callback(h, 'messenger_page', { state: forge({ t: ownerA.tenantId, c: connA }), code })).result).toBe('STATE_INVALID');
-    expect((await callback(h, 'messenger_page', { state: forge({ a: 'adv-page-a' }), code })).result).toBe('STATE_INVALID');
-    expect((await callback(h, 'instagram_account', { state: f.state, code })).result).toBe('STATE_INVALID');
-    expect((await callback(h, 'messenger_page', { code })).result).toBe('STATE_INVALID');
-    expect((await callback(h, 'messenger_page', { state: 'x'.repeat(30) + '.' + 'y'.repeat(43), code })).result).toBe('STATE_INVALID');
+    expect((await callback(h, 'facebook_page', { state: forge({ t: ownerA.tenantId, c: connA }), code })).result).toBe('STATE_INVALID');
+    expect((await callback(h, 'facebook_page', { state: forge({ a: 'adv-page-a' }), code })).result).toBe('STATE_INVALID');
+    expect((await callback(h, 'instagram_business', { state: f.state, code })).result).toBe('STATE_INVALID');
+    // D2: re-labelling the state as an out-of-scope Meta kind breaks the MAC too (and such a kind finishes no callback)
+    expect((await callback(h, 'messenger_page', { state: forge({ k: 'messenger_page' }), code })).result).toBe('STATE_INVALID');
+    expect((await callback(h, 'facebook_page', { code })).result).toBe('STATE_INVALID');
+    expect((await callback(h, 'facebook_page', { state: 'x'.repeat(30) + '.' + 'y'.repeat(43), code })).result).toBe('STATE_INVALID');
     expect(await connectionRow(h, f.connectionId)).toMatchObject({ status: 'not_configured', external_account_id: null });
     expect(await connectionRow(h, connA)).toMatchObject({ status: 'connected', external_account_id: 'adv-loc-a' });
   });
@@ -113,48 +122,48 @@ describe('OAuth callback attacks', () => {
   });
 
   it('two callbacks racing on one state: exactly one links, the other is refused by the fence', async () => {
-    const f = await startFlow(ownerB, 'instagram_account', { externalAccountId: 'adv-race', leadSourceId: srcB }, { reauth: h });
+    const f = await startFlow(ownerB, 'instagram_business', { externalAccountId: 'adv-race' }, { reauth: h });
     const c1 = h.providers.integrations.oauth.meta.issueCode({ codeChallenge: f.challenge, accounts: [{ id: 'adv-race' }] });
     const c2 = h.providers.integrations.oauth.meta.issueCode({ codeChallenge: f.challenge, accounts: [{ id: 'adv-race' }] });
     const before = await credCount(ownerB.tenantId!);
-    const rs = await Promise.all([callback(h, 'instagram_account', { state: f.state, code: c1 }), callback(h, 'instagram_account', { state: f.state, code: c2 })]);
+    const rs = await Promise.all([callback(h, 'instagram_business', { state: f.state, code: c1 }), callback(h, 'instagram_business', { state: f.state, code: c2 })]);
     expect(rs.map((r) => r.result).sort()).toEqual(['CONNECTED', 'STATE_STALE']);
     expect(await credCount(ownerB.tenantId!)).toBe(before + 1);
   });
 
   it("code injection: an attacker's own authorization code pasted into the victim's callback fails PKCE and links nothing", async () => {
-    const victim = await startFlow(ownerB, 'messenger_page', { externalAccountId: 'adv-victim', leadSourceId: srcB }, { reauth: h });
+    const victim = await startFlow(ownerB, 'facebook_page', { externalAccountId: 'adv-victim' }, { reauth: h });
     // the attacker completed a flow of their own (different verifier), holding a code for an account they manage
     const attackerCode = h.providers.integrations.oauth.meta.issueCode({ codeChallenge: pkceChallenge('attacker-verifier'.padEnd(43, 'z')), accounts: [{ id: 'adv-victim' }] });
-    expect((await callback(h, 'messenger_page', { state: victim.state, code: attackerCode })).result).toBe('PROVIDER_REFUSED');
+    expect((await callback(h, 'facebook_page', { state: victim.state, code: attackerCode })).result).toBe('PROVIDER_REFUSED');
     expect(await connectionRow(h, victim.connectionId)).toMatchObject({ status: 'not_configured', external_account_id: null });
   });
 
   it('an Owner/Admin demoted between start and callback cannot finish the connect', async () => {
     const adminB = await inviteViaApi(h, ownerB, 'admin');
-    const f = await startFlow(adminB, 'messenger_page', { externalAccountId: 'adv-demoted', leadSourceId: srcB }, { reauth: h });
+    const f = await startFlow(adminB, 'facebook_page', { externalAccountId: 'adv-demoted' }, { reauth: h });
     const m = (await call<{ members: { userId: string; version: number }[] }>(ownerB, 'GET', '/members')).body.members.find((x) => x.userId === adminB.userId)!;
     await freshReauth(h, ownerB);
     expect((await call(ownerB, 'PATCH', `/members/${adminB.userId}`, { role: 'agent', version: m.version })).status).toBe(200);
     const code = h.providers.integrations.oauth.meta.issueCode({ codeChallenge: f.challenge, accounts: [{ id: 'adv-demoted' }] });
-    expect((await callback(h, 'messenger_page', { state: f.state, code })).result).toBe('STARTER_NOT_AUTHORIZED');
+    expect((await callback(h, 'facebook_page', { state: f.state, code })).result).toBe('STARTER_NOT_AUTHORIZED');
     expect((await connectionRow(h, f.connectionId))!.external_account_id).toBeNull();
   });
 
   it('an expired state is refused', async () => {
-    const f = await startFlow(ownerB, 'messenger_page', { externalAccountId: 'adv-exp', leadSourceId: srcB }, { reauth: h });
+    const f = await startFlow(ownerB, 'facebook_page', { externalAccountId: 'adv-exp' }, { reauth: h });
     const realNow = Date.now;
     Date.now = () => realNow() + 11 * 60_000;
     try {
       const code = h.providers.integrations.oauth.meta.issueCode({ codeChallenge: f.challenge, accounts: [{ id: 'adv-exp' }] });
-      expect((await callback(h, 'messenger_page', { state: f.state, code })).result).toBe('STATE_EXPIRED');
+      expect((await callback(h, 'facebook_page', { state: f.state, code })).result).toBe('STATE_EXPIRED');
     } finally {
       Date.now = realNow;
     }
   });
 
   it('the callback reflects no attacker-controlled URL: it always lands on the configured web origin', async () => {
-    const r = await callback(h, 'messenger_page', { state: 'nope', code: 'x', redirect_uri: 'https://evil.example/steal' } as Record<string, string>);
+    const r = await callback(h, 'facebook_page', { state: 'nope', code: 'x', redirect_uri: 'https://evil.example/steal' } as Record<string, string>);
     expect(r.status).toBe(303);
     expect(new URL(r.location).origin).toBe(new URL(h.config.webOrigins[0]!).origin);
   });

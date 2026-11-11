@@ -11,6 +11,12 @@
 //   disconnect         Owner/Admin 🔒: status `disconnected` and the credential revoked in the SAME
 //                      transaction (R-INT-5); the grant is revoked at the provider best effort by a job,
 //                      which then purges the secret (the retention sweep purges it within 30 days anyway)
+//
+// Owner decision D2: Meta connects only the publishing kinds `facebook_page` / `instagram_business`, which
+// never take a lead source (0025 CHECK; refused here first, on connect and on rename). The out-of-scope kinds
+// (`messenger_page`, `instagram_account`, `meta_lead_ads`, `ads_meta`) cannot start a connect
+// (INTEGRATION_NOT_CONNECTABLE) or finish one (STATE_INVALID, before any provider call); existing rows of
+// those kinds stay listed and can still be disconnected.
 import type { IdGenerator, Instant, UserActor } from '@realty/core/foundation';
 import { type Database, type Tx, withTenantTx } from '@realty/db';
 import { randomBytes } from 'node:crypto';
@@ -21,7 +27,7 @@ import { AppError } from '../errors.js';
 import type { ConnectionKind, IntegrationAdapters, OAuthProviderName, OAuthToken } from '../providers/integrations/types.js';
 import { systemActor } from '../worker/systemActor.js';
 import { enqueueTyped } from '../worker/registry.js';
-import { type CapabilityView, type MlsDeployment, PER_USER_SERVICES, SERVICES, capabilityViews, packSentence, serviceOf, serviceSentence, statusSentence, type PlatformPack } from './catalog.js';
+import { type CapabilityView, type MlsDeployment, PER_USER_SERVICES, PUBLISHING_KINDS, SERVICES, capabilityViews, packSentence, serviceOf, serviceSentence, statusSentence, type PlatformPack } from './catalog.js';
 import { type OAuthState, STATE_TTL_MS, pkceChallengeOf, pkceVerifier, signState, verifyState } from './oauthState.js';
 import * as repo from './repos/connections.js';
 import { CONNECTABLE_STATUSES, type ConnectionRow, ConnectionTransitionError, transitionConnection } from './status.js';
@@ -80,8 +86,9 @@ export interface IntegrationsView {
   perUser: { key: string; name: string; sentence: string }[];
 }
 
-function packsOf(rows: Awaited<ReturnType<typeof repo.listPlatformPacks>>): PlatformPack[] {
-  return rows.map((p) => ({ key: p.key, version: p.version, reviewedByCounselAt: iso(p.reviewed_by_counsel_at) }));
+/** The published platform packs as the catalog reads them (the list and every connection view use this). */
+export async function loadPlatformPacks(tx: Tx): Promise<PlatformPack[]> {
+  return (await repo.listPlatformPacks(tx)).map((p) => ({ key: p.key, version: p.version, reviewedByCounselAt: iso(p.reviewed_by_counsel_at), vendorReadyAt: p.vendor_ready_at }));
 }
 
 export function connectionView(r: repo.ConnectionDbRow, packs: readonly PlatformPack[]): ConnectionView {
@@ -102,7 +109,7 @@ export function connectionView(r: repo.ConnectionDbRow, packs: readonly Platform
 }
 
 export async function listIntegrations(tx: Tx, adapters: IntegrationAdapters, mls?: MlsDeployment): Promise<IntegrationsView> {
-  const packs = packsOf(await repo.listPlatformPacks(tx));
+  const packs = await loadPlatformPacks(tx);
   const rows = await repo.listConnections(tx);
   return {
     adapterMode: adapters.mode,
@@ -138,6 +145,7 @@ export async function startConnect(deps: IntegrationDeps, tx: Tx, actor: UserAct
   if (!s || s.connect !== 'oauth') throw new AppError('INTEGRATION_NOT_CONNECTABLE', { kind: input.kind });
   const connector = deps.adapters.oauth[s.oauthProvider!];
   if (!connector.configured) throw new AppError('INTEGRATION_NOT_CONFIGURED', { kind: s.kind });
+  if (input.leadSourceId !== undefined && PUBLISHING_KINDS.includes(s.kind)) throw new AppError('LEAD_SOURCE_NOT_ALLOWED', { kind: s.kind });
   if (input.leadSourceId && !(await repo.leadSourceExists(tx, input.leadSourceId))) throw new AppError('NOT_FOUND');
 
   let row: repo.ConnectionDbRow | null;
@@ -253,6 +261,8 @@ export async function oauthCallback(deps: IntegrationDeps, kindParam: string, q:
   const st = v.state;
   if (st.kind !== kindParam) return landing(deps, 'STATE_INVALID', null);
   const s = serviceOf(st.kind);
+  // a state for a kind that is not connected by OAuth (D2: the out-of-scope kinds too) stops here, before any
+  // database write or provider exchange
   if (!s || s.connect !== 'oauth') return landing(deps, 'STATE_INVALID', null);
   const provider = s.oauthProvider!;
   // tenant connections are Meta (publishing) or Google (Business Profile); Microsoft is per-user calendar only
@@ -342,6 +352,7 @@ export async function updateConnection(tx: Tx, actor: UserActor, id: string, p: 
   const row = await repo.getConnection(tx, id, { forUpdate: true });
   if (!row) throw new AppError('NOT_FOUND');
   if (row.status === 'disconnected') throw new AppError('CONNECTION_NOT_CONNECTABLE', { status: row.status });
+  if (p.leadSourceId && PUBLISHING_KINDS.includes(row.kind)) throw new AppError('LEAD_SOURCE_NOT_ALLOWED', { kind: row.kind });
   if (p.leadSourceId && !(await repo.leadSourceExists(tx, p.leadSourceId))) throw new AppError('NOT_FOUND');
   const patch = { ...(p.displayName !== undefined ? { displayName: p.displayName } : {}), ...(p.leadSourceId !== undefined ? { leadSourceId: p.leadSourceId } : {}) };
   await repo.updateLabels(tx, id, patch);

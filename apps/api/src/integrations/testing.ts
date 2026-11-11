@@ -48,8 +48,8 @@ export async function connectFlow(h: ApiHarness, c: TestClient, kind: string, bo
 
 export async function connectionRow(h: ApiHarness, id: string) {
   return (
-    await h.su.query<{ status: string; external_account_id: string | null; credential_id: string | null; capabilities: Record<string, boolean>; last_error_code: string | null; tenant_id: string }>(
-      'SELECT tenant_id, status, external_account_id, credential_id, capabilities, last_error_code FROM integration_connections WHERE id = $1',
+    await h.su.query<{ status: string; external_account_id: string | null; credential_id: string | null; capabilities: Record<string, boolean>; last_error_code: string | null; lead_source_id: string | null; tenant_id: string }>(
+      'SELECT tenant_id, status, external_account_id, credential_id, capabilities, last_error_code, lead_source_id FROM integration_connections WHERE id = $1',
       [id],
     )
   ).rows[0];
