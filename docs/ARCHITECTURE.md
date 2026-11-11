@@ -440,6 +440,16 @@ connection/export test (counts only — no promises before this) → snapshot (e
   - `listings.search_tsv` plus address trigram
 
   Each branch returns at most 10 rows under a 300 ms statement timeout. Transcripts are not searchable (encrypted). Pond-card contacts appear by name only; their points and messages are hidden by RLS. No search index lives outside Postgres.
+- **Priority Feed, incremental (lane `perf-misses`).**
+  - **Storage.** Cards are materialized in `priority_feed_items`. Statement-level SECURITY INVOKER triggers on the
+    input tables add `feed_dirty` marks per (member, group); a group is a contact, a contactless task or
+    appointment, or a deal date.
+  - **Read.** GET /feed first re-scores the dirty groups and the groups whose stored next change instant
+    (`feed_groups.check_at`) has come, as the member under their own RLS, then reads the top 50 in index order.
+    Relative-time wording is stored as a template and rendered at read time.
+  - **Background.** `feed.materialize` keeps feeds current and runs an hourly full reconcile per member.
+  - **Proof.** Equality with a full recompute: `apps/api/src/load/feed_incremental.test.ts`
+    (docs/PERFORMANCE.md §7.1).
 - **Team Lead live exception queue (A5).** `core.accountability.deriveExceptions(snapshot, now)` is pure and deterministic. It upserts `exception_items` by `dedupe_key` and sets `condition_cleared_at` when the condition goes away. Keys are **per occurrence**, so an earlier resolution can never cover a new miss. The types and their keys are:
   - `untouched_lead` (`untouched:{contact}:{ownership_period_seq}`): an ownership period that started an SLA and had no human touch by its `first_touch_due_at`. It is derived from the **ledger** (`v_speed_to_lead`), not the current projection, so auto-release does not erase the miss. The item's owner is the agent who missed.
   - `overdue_promise` (`promise:{task}`): a promise task, extracted with evidence, past due and open.
