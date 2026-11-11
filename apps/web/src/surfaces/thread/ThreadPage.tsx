@@ -13,6 +13,12 @@
 // client replied after it was scheduled (E27) says "Held because Jane replied" and offers its sender
 // Send anyway and Cancel (POST /messages/:id/send | /cancel, both audited); Send anyway is a human tap
 // and is still checked at send time, so an opt-out still blocks it.
+//
+// Phase 2 (module 37): every bubble carries its channel tag (SMS, Email, Call, Web chat; R-INBOX-1: every
+// channel lives in the one conversation per person). The compose box defaults to the channel the client
+// wrote on last while it is open, and says why when it is on another (compose/channelChoice.ts). While a
+// web chat is live the thread refreshes every few seconds, from the server only: there is no typing or
+// presence indicator anywhere (genuineness). D2: no Messenger or Instagram channel, no messaging window.
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useId, useRef } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
@@ -22,6 +28,8 @@ import { type ApiError, messageFor, useApi, usePageTitle, useSession } from '../
 import { useInbox } from '../approvals/ApprovalsPage.js';
 import { TemplatePicker } from '../templates/index.js';
 import { ComposeBox } from '../compose/ComposeBox.js';
+import type { ComposeChannel } from '../compose/channelApi.js';
+import { composeChannelOf } from '../compose/channelChoice.js';
 import { RowAttachments } from './Attachments.js';
 import { useContact } from '../contact/useContact.js';
 import { AgentSheetsProvider, sendOutcomeText, useAgentSheets } from '../feed/lib/AgentSheets.js';
@@ -30,14 +38,29 @@ import { useMutate } from '../feed/lib/hooks.js';
 import { AGENT_ERROR_MESSAGES } from '../feed/lib/messages.js';
 import type { ComposeResponse, ContactFullView, MessageView, TimelineItem, TimelineResponse } from '../feed/lib/types.js';
 
+/** A web-chat message newer than this keeps the thread refreshing quickly (a visitor may still be on the page). */
+export const LIVE_CHAT_MS = 30 * 60_000;
+
 export function useTimeline(contactId: string, enabled = true) {
   const api = useApi();
   return useQuery<TimelineResponse, ApiError>({
     queryKey: ['timeline', contactId],
     queryFn: ({ signal }) => api.get<TimelineResponse>(`/contacts/${contactId}/timeline?limit=100`, { signal }),
     enabled,
-    refetchInterval: 20_000,
+    refetchInterval: (q) => (liveChat(q.state.data?.items ?? []) ? 4_000 : 20_000),
   });
+}
+
+/** The latest message is a web-chat message from the last 30 minutes (the timeline is newest first). */
+export function liveChat(items: readonly TimelineItem[], now = Date.now()): boolean {
+  const last = items.find((i) => i.type === 'message');
+  return !!last && parseDetail(last.detail).channel === 'web_chat' && now - Date.parse(last.occurredAt) < LIVE_CHAT_MS;
+}
+
+/** The channel of the client's latest message (the timeline is newest first); null when they never wrote. */
+export function lastInboundChannel(items: readonly TimelineItem[]): ComposeChannel | null {
+  for (const i of items) if (i.type === 'message' && parseDetail(i.detail).direction === 'inbound') return composeChannelOf(i.detail);
+  return null;
 }
 
 export default function ThreadPage() {
@@ -76,7 +99,9 @@ function Thread() {
   }
   const compose = params.get('compose');
   const draft = params.get('draft');
-  const items = (t.data?.items ?? []).filter((i) => i.type === 'message' || i.type === 'call').slice().reverse();
+  const newest = t.data?.items ?? [];
+  const items = newest.filter((i) => i.type === 'message' || i.type === 'call').slice().reverse();
+  const hasWebChat = newest.some((i) => i.type === 'message' && parseDetail(i.detail).channel === 'web_chat');
   return (
     <div className="mx-auto flex w-full max-w-2xl md:mx-0 flex-col gap-3">
       <ThreadHeader contact={full} />
@@ -87,8 +112,9 @@ function Thread() {
         <ComposeBox
           key={draft ?? 'none'}
           suggestedDraftId={compose !== null && draft === null ? pendingDraft : null}
-          contact={{ id: full.id, name: full.displayName, canText: full.phones.length > 0, canEmail: full.emails.length > 0, ownedByMe: full.ownership.ownedByMe }}
+          contact={{ id: full.id, name: full.displayName, canText: full.phones.length > 0, canEmail: full.emails.length > 0, canWebChat: hasWebChat, ownedByMe: full.ownership.ownedByMe }}
           initialChannel={compose === 'email' ? 'email' : compose === 'sms' ? 'sms' : undefined}
+          lastInboundChannel={t.data ? lastInboundChannel(newest) : null}
           draftActionId={draft}
           autoFocus={compose !== null}
           templatePicker={({ channel, insert }) => <TemplatePicker contactId={full.id} channel={channel} onInsert={insert} />}
@@ -141,6 +167,18 @@ export function parseDetail(detail: string | null): { channel: string; direction
   return { channel, direction };
 }
 
+/** The tag on every bubble. D2: no Messenger or Instagram; a channel this app does not know says only "Message". */
+const CHANNEL_TAG: Record<string, string> = { sms: 'SMS', mms: 'SMS', email: 'Email', web_chat: 'Web chat', call: 'Call' };
+export const channelTag = (channel: string): string => CHANNEL_TAG[channel] ?? 'Message';
+
+export function ChannelTag({ channel }: { channel: string }) {
+  return (
+    <span data-channel-tag={channel} className="rounded-md border border-line px-1.5 py-px text-[12px] font-medium leading-4 text-ink">
+      {channelTag(channel)}
+    </span>
+  );
+}
+
 const CALL_OUTCOME_LABEL: Record<string, string> = {
   connected: 'Talked',
   left_voicemail: 'Left voicemail',
@@ -157,6 +195,8 @@ const CALL_OUTCOME_LABEL: Record<string, string> = {
  * an outline and this line.
  */
 export function outboundStatusLabel(item: Pick<TimelineItem, 'status' | 'statusReason' | 'providerErrorCode' | 'blockedBy' | 'detail'>, contactName = ''): { text: string; failed: boolean; held: boolean } | null {
+  // module 22's refusal of a reply to an ended chat or a disconnected widget (E77, R-INBOX-7), in words
+  if (item.status === 'blocked' && item.statusReason === 'CHANNEL_NOT_CONNECTED') return { text: 'Not sent: the chat had ended', failed: true, held: false };
   const line = messageStatus({ status: item.status, statusReason: item.statusReason, providerErrorCode: item.providerErrorCode, blockedBy: item.blockedBy, channel: parseDetail(item.detail).channel }, firstName(contactName));
   return line ? { text: line.text, failed: line.tone === 'failed', held: line.tone === 'held' } : null;
 }
@@ -167,7 +207,7 @@ export function MessageRow({ item, contact }: { item: TimelineItem; contact?: { 
   if (item.type === 'call') {
     return (
       <li id={item.id} className="self-center rounded-xl bg-surface-2 px-3 py-2 text-center text-[14px] text-ink-muted">
-        {direction === 'inbound' ? 'Call from them' : `Call${item.actor?.displayName ? ` by ${item.actor.displayName}` : ''}`}
+        <ChannelTag channel="call" /> {direction === 'inbound' ? 'Call from them' : `Call${item.actor?.displayName ? ` by ${item.actor.displayName}` : ''}`}
         {item.preview ? ` · ${CALL_OUTCOME_LABEL[item.preview] ?? item.preview.replace(/_/g, ' ')}` : ''} · {formatDateTime(item.occurredAt)}
         {imported ? ' · Imported' : ''}
         {contact ? <RowAttachments contactId={contact.id} item={item} /> : null}
@@ -181,11 +221,13 @@ export function MessageRow({ item, contact }: { item: TimelineItem; contact?: { 
   return (
     <li id={item.id} className={`flex max-w-[85%] flex-col gap-0.5 ${outbound ? 'self-end items-end' : 'self-start items-start'}`}>
       <p className={`whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2 text-[16px] ${bubble}`}>{item.preview ?? ''}</p>
-      <p className="px-1 text-[12px] text-ink-muted">
-        {channel === 'email' ? 'Email · ' : ''}
-        {by ? `${by} · ` : ''}
-        {formatDateTime(item.occurredAt)}
-        {imported ? ' · Imported' : ''}
+      <p className="flex flex-wrap items-center gap-x-1 px-1 text-[12px] text-ink-muted">
+        <ChannelTag channel={channel} />
+        <span>
+          {by ? `${by} · ` : ''}
+          {formatDateTime(item.occurredAt)}
+          {imported ? ' · Imported' : ''}
+        </span>
       </p>
       {st ? <p className={`px-1 text-[13px] font-medium ${st.failed ? 'text-danger' : st.held ? 'text-warn' : 'text-ink-muted'}`}>{st.text}</p> : null}
       {st?.held && contact ? <HeldActions item={item} contact={contact} /> : null}

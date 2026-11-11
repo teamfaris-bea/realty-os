@@ -260,3 +260,32 @@ describe('realty/no-sql-raw (smart-list SQL is parameterised only, R-PAR-29)', (
     ],
   });
 });
+
+describe('realty/isolated-bundle (PHASE2_3_PLAN §5.3, module 37: the chat widget imports no staff-app code)', () => {
+  const widgetFile = new URL('../../../apps/web/src/widget/widget.ts', import.meta.url).pathname;
+  const nested = new URL('../../../apps/web/src/widget/parts/x.ts', import.meta.url).pathname;
+  const opts = [{ dir: 'widget' }];
+  tester.run('isolated-bundle', rules['isolated-bundle'], {
+    valid: [
+      { code: "import { copy } from './copy.js'", filename: widgetFile, options: opts },
+      { code: "import type { ChatApi } from './api.js'", filename: widgetFile, options: opts },
+      { code: "import { x } from '../copy.js'", filename: nested, options: opts },
+      { code: "import src from './api.ts?raw'", filename: widgetFile, options: opts },
+      { code: "import { x } from 'tiny'", filename: widgetFile, options: [{ dir: 'widget', allow: ['tiny'] }] },
+      // a file outside the bundle is not this rule's business
+      { code: "import React from 'react'", filename: new URL('../../../apps/web/src/shell/App.tsx', import.meta.url).pathname, options: opts },
+    ],
+    invalid: [
+      { code: "import { Button } from '../design/index.js'", filename: widgetFile, options: opts, errors: [{ messageId: 'outside' }] },
+      { code: "import { useApi } from '../shell/index.js'", filename: widgetFile, options: opts, errors: [{ messageId: 'outside' }] },
+      { code: "import { ComposeBox } from '../surfaces/compose/ComposeBox.js'", filename: widgetFile, options: opts, errors: [{ messageId: 'outside' }] },
+      { code: "import type { MessageView } from '../surfaces/feed/lib/types.js'", filename: widgetFile, options: opts, errors: [{ messageId: 'outside' }] },
+      { code: "import React from 'react'", filename: widgetFile, options: opts, errors: [{ messageId: 'pkg' }] },
+      { code: "import { x } from '@realty/core'", filename: widgetFile, options: opts, errors: [{ messageId: 'pkg' }] },
+      { code: "export * from '../reasons/index.js'", filename: widgetFile, options: opts, errors: [{ messageId: 'outside' }] },
+      { code: "const m = await import('../shell/api.js')", filename: widgetFile, options: opts, errors: [{ messageId: 'outside' }] },
+      { code: "type T = import('../shell/types.js').X", filename: widgetFile, options: opts, errors: [{ messageId: 'outside' }] },
+      { code: "import { x } from '../widget-extra/x.js'", filename: widgetFile, options: opts, errors: [{ messageId: 'outside' }] },
+    ],
+  });
+});

@@ -193,4 +193,11 @@ describe('eslint.config.js architecture wiring', () => {
       'realty/no-relative-outside-package',
     );
   });
+  it('PHASE2_3_PLAN §5.3 (module 37): the chat widget imports nothing from the staff app; its tests and the staff app are not restricted', async () => {
+    expect(await lint('apps/web/src/widget/widget.ts', "import { Button } from '../design/index.js';\nexport const b = Button;\n")).toContain('realty/isolated-bundle');
+    expect(await lint('apps/web/src/widget/main.ts', "import { createRoot } from 'react-dom/client';\nexport const r = createRoot;\n")).toContain('realty/isolated-bundle');
+    expect(await lint('apps/web/src/widget/api.ts', "import { copy } from './copy.js';\nexport const c = copy;\n")).not.toContain('realty/isolated-bundle');
+    expect(await lint('apps/web/src/widget/widget.test.ts', "import { describe } from 'vitest';\nexport const d = describe;\n")).not.toContain('realty/isolated-bundle');
+    expect(await lint('apps/web/src/surfaces/thread/ThreadPage.tsx', "import { Button } from '../../design/index.js';\nexport const b = Button;\n")).not.toContain('realty/isolated-bundle');
+  });
 });

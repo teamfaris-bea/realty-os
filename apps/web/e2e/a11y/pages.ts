@@ -88,4 +88,7 @@ export const SIGNED_OUT_PAGES: readonly { url: string; h1: string }[] = [
   { url: '/forgot-password', h1: 'Reset your password' },
   { url: '/reset-password?token=x', h1: 'Choose a new password' },
   { url: '/invite/x', h1: 'Join your team' },
+  // module 37: the website chat widget (a separate bundle) on its stand-in brokerage page, closed and open
+  { url: '/src/widget/preview.html', h1: 'Chat widget preview' },
+  { url: '/src/widget/preview.html#realty-chat-open', h1: 'Chat widget preview' },
 ];

@@ -5,7 +5,7 @@
   "type": "module",
   "description": "One responsive web app for phone and desktop (BUILD_PLAN module 17).",
   "scripts": {
-    "build": "pnpm run typecheck && vite build",
+    "build": "pnpm run typecheck && vite build && vite build -c vite.widget.config.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
     "test": "vitest run --passWithNoTests",
     "dev": "vite",

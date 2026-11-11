@@ -77,8 +77,10 @@ describe('Thread', () => {
     await waitFor(() => expect(screen.queryByRole('figure', { name: 'What Jane will get' })).toBeNull());
   });
 
-  it('R-CONSENT-7: an opt-out is said as soon as the box opens, in exact words, from the reachability summary (no stand-in preview); Send stays disabled for that channel', async () => {
-    const fake = threadFake().on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: reachability(IDS.jane, { sms: [stopReason()] }) } });
+  it('R-CONSENT-7: an opt-out is said as soon as the box opens, in exact words, from the reachability summary (no stand-in preview); with no other channel, Send stays disabled for it', async () => {
+    const fake = threadFake()
+      .on(`GET /contacts/${IDS.jane}`, { status: 200, body: { contact: fullContact({ emails: [] }) } })
+      .on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: reachability(IDS.jane, { sms: [stopReason()] }) } });
     agentApp(fake, `/contacts/${IDS.jane}/thread?compose=sms`);
     expect(await screen.findByText('Texted STOP on Nov 10')).toBeInTheDocument();
     await user().type(screen.getByRole('textbox', { name: 'Text message' }), 'Saturday?');
@@ -89,16 +91,21 @@ describe('Thread', () => {
     expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages`)).toEqual([]);
   });
 
-  it('a text STOP does not block email: switching to Email enables Send and previews only the real text', async () => {
+  it('D1: opened to text a person who texted STOP, the box never offers Text: the option is disabled with the exact reason, and it writes by email and says why', async () => {
     const fake = threadFake().on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: reachability(IDS.jane, { sms: [stopReason()] }) } });
     agentApp(fake, `/contacts/${IDS.jane}/thread?compose=sms`);
-    await screen.findByText('Texted STOP on Nov 10');
-    await user().click(screen.getByRole('radio', { name: 'Email' }));
-    expect(screen.queryByText('Texted STOP on Nov 10')).toBeNull();
+    expect(await screen.findByText('Texted STOP on Nov 10')).toBeInTheDocument();
+    const text = screen.getByRole('radio', { name: 'Text' });
+    expect(text).toBeDisabled();
+    expect(text).toHaveAccessibleDescription('Text not offered: Texted STOP on Nov 10');
+    expect(screen.getByRole('radio', { name: 'Email' })).toBeChecked();
+    expect(screen.getByTestId('channel-why')).toHaveTextContent('Writing by email: texting is blocked.');
     await user().type(screen.getByRole('textbox', { name: 'Email message' }), 'Saturday?');
     expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
     await waitFor(() => expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages/preview`).at(-1)!.body).toEqual({ channel: 'email', body: 'Saturday?' }));
-    expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages/preview`).every((c) => (c.body as { body: string }).body !== 'Hi')).toBe(true);
+    // never a stand-in text, and never anything previewed or sent on the blocked channel
+    expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages/preview`).every((c) => (c.body as { channel: string; body: string }).channel === 'email' && (c.body as { body: string }).body !== 'Hi')).toBe(true);
+    expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages`)).toEqual([]);
   });
 
   it('an allowed send shows no badge, no consent question and no quiet-hours wait', async () => {
