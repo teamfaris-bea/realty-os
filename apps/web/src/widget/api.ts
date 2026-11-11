@@ -1,19 +1,32 @@
-// The chat widget's typed client for module 22's public web-chat routes (PHASE2_3_PLAN §5.4, 22
-// api/channels-inbox). None of them exists yet: every call is marked `// STUB(22): <METHOD> <route>`, and
-// api.contract.test.ts pins the shapes against a fake of the §5.4 interface. The orchestrator wires the real
-// routes when module 22 lands.
+// The chat widget's typed client for module 22's public web-chat routes (apps/api/src/channels/routes.ts):
 //
-//   POST /public/chat/:widgetKey/start            {name, phone|email, message, disclosureId}
-//   POST /public/chat/session/:token/messages     {body}
-//   GET  /public/chat/session/:token/poll?after=  the session's own messages after a cursor
+//   GET  /public/chat/:widgetKey                  → {teamName, disclosure: {id, text} | null, assistantNotice}
+//   POST /public/chat/:widgetKey/start            {name, phone | email, message, disclosureId} → {sessionToken, status: 'open'}
+//   POST /public/chat/session/:token/messages     {message, clientMessageId} → {accepted: true}
+//   GET  /public/chat/session/:token/poll?after=  → {messages: [{id, body, sentAt, from: 'team' | 'assistant'}], cursor, open}
 //
-// §5.4 fixes the routes and the start body; the response shapes below are this client's reading of it and
-// are marked VERIFY(22): module 22 owns them. The visitor reads only their own session's messages (R-INBOX-5):
-// the client never asks for anything else, and renders only what the server returned (no typing, no
-// presence, no invented replies; genuineness).
+// The shapes are the API's own: api.contract.test.ts checks every request this client sends and every response it
+// reads against the JSON Schemas the API generates from its Zod definitions (apps/api/src/channels/webContract.json).
+// Errors, which widget.ts says in plain words: 404 (an unknown or rotated key, a website the widget may not run on,
+// an unknown session), 409 CHANNEL_NOT_CONNECTED (the team turned the widget off, R-INBOX-7), 409
+// WEBCHAT_DISCLOSURE_STALE (the notice changed after the visitor saw it), 410 WEBCHAT_SESSION_CLOSED (the chat ended,
+// E77), 429 (rate limits per widget, IP and session, E137), 422 / 413 (refused as invalid).
 //
-// This file is part of the separate widget bundle: it imports nothing outside src/widget
-// (lint: realty/isolated-bundle).
+// The visitor is not a principal (R-TEN-12): no cookie is ever sent. The poll returns only the team's and the
+// assistant's replies in the visitor's own session (R-INBOX-5); the visitor's own messages are the ones this browser
+// sent and the server accepted. Every text is first made to fit the API's checks (no control or format characters
+// except a message's newlines and tabs; the length caps), so a message is never refused for a character the visitor
+// could not see.
+//
+// This file is part of the separate widget bundle: it imports nothing outside src/widget (lint: realty/isolated-bundle).
+
+export interface WidgetConfig {
+  teamName: string;
+  /** the notice the visitor must see before writing; null: the team has none, so no chat can start */
+  disclosure: { id: string; text: string } | null;
+  /** the server's sentence saying replies may come from the team's automated assistant */
+  assistantNotice: string;
+}
 
 export interface StartRequest {
   name: string;
@@ -23,127 +36,161 @@ export interface StartRequest {
   disclosureId: string;
 }
 
-/** One message of the visitor's own session. `from: 'team'` is the team (a person or the team's assistant, whose text signs itself). */
-export interface ChatMessage {
-  id: string;
-  from: 'visitor' | 'team';
-  body: string;
-  at: string;
-}
-
-/** VERIFY(22): start answers with the session token the visitor's later calls carry, and the session so far. */
 export interface StartResponse {
-  token: string;
-  messages: ChatMessage[];
-  cursor: string | null;
+  sessionToken: string;
+  status: 'open';
 }
 
-/** VERIFY(22): poll answers with the messages after the cursor, the next cursor, and whether the session ended (E77). */
+/** One reply in the visitor's own session, as the server delivered it. */
+export interface ChatReply {
+  id: string;
+  body: string;
+  sentAt: string;
+  /** a person on the team, or the team's automated assistant (which never passes as a person) */
+  from: 'team' | 'assistant';
+}
+
 export interface PollResponse {
-  messages: ChatMessage[];
+  messages: ChatReply[];
+  /** passed back unchanged as `after` */
   cursor: string | null;
-  ended: boolean;
-}
-
-/** VERIFY(22): posting a message answers with the stored message. */
-export interface SendResponse {
-  message: ChatMessage;
+  /** false: the chat ended (E77) */
+  open: boolean;
 }
 
 export type ApiFailure =
-  /** 429 (R-INBOX-5 rate limits per widget and per IP, E137) */
+  /** 429 */
   | 'rate_limited'
-  /** the session is over (404/410, or CHANNEL_NOT_CONNECTED on the session) */
-  | 'ended'
-  /** the widget is disconnected or unknown (CHANNEL_NOT_CONNECTED or 404 on start, R-INBOX-7) */
+  /** 404: an unknown or rotated key, a website not on the widget's list, an unknown session */
+  | 'not_found'
+  /** 409 CHANNEL_NOT_CONNECTED: the widget is turned off */
   | 'unavailable'
-  /** the request was refused as invalid (400) */
+  /** 409 WEBCHAT_DISCLOSURE_STALE: the notice changed since the widget showed it */
+  | 'disclosure_stale'
+  /** 410 WEBCHAT_SESSION_CLOSED: the chat ended */
+  | 'closed'
+  /** 422 / 413: refused as invalid */
   | 'invalid'
-  /** anything else: network, 5xx, a response that is not the agreed shape */
+  /** anything else: network, 5xx, a response that is not the API's shape */
   | 'failed';
 
-export type Result<T> = { ok: true; data: T } | { ok: false; failure: ApiFailure };
+/** For 'invalid': the field the server named, when it named one. */
+export type Field = 'name' | 'contact' | 'message';
+
+export type Result<T> = { ok: true; data: T } | { ok: false; failure: ApiFailure; field?: Field };
 
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>;
 
+/** The API's caps (contract webChat.nameMax / messageMax, StartBody's phone and email). */
+export const NAME_MAX = 120;
+export const MESSAGE_MAX = 2000;
+export const PHONE_MAX = 40;
+export const EMAIL_MAX = 254;
+/** Widget keys are `wk_` + 40 hex (contract webChat.widgetKey); the API never looks up any other shape. */
+export const WIDGET_KEY = /^wk_[0-9a-f]{40}$/;
+
+/**
+ * Text as the API accepts it: format characters dropped, control characters a space (a message keeps its newlines
+ * and tabs), trimmed and capped at `max` UTF-16 units without splitting a character in two.
+ */
+export function clean(s: string, max: number, multiline = false): string {
+  const kept = s.replace(/\p{Cf}/gu, '').replace(/\p{Cc}/gu, (c) => (multiline && (c === '\n' || c === '\t') ? c : multiline && c === '\r' ? '' : ' '));
+  const cut = kept.trim().slice(0, max);
+  return (/[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut).trim();
+}
+
+/** A UUID (v4) for clientMessageId: one per typed message, reused when that same message is sent again. */
+export function newMessageId(): string {
+  const c = globalThis.crypto;
+  if (typeof c?.randomUUID === 'function') return c.randomUUID();
+  const b = c.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6]! & 0x0f) | 0x40;
+  b[8] = (b[8]! & 0x3f) | 0x80;
+  const h = [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
 const isStr = (v: unknown): v is string => typeof v === 'string';
+const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
 
-function message(v: unknown): ChatMessage | null {
-  if (!v || typeof v !== 'object') return null;
-  const o = v as Record<string, unknown>;
-  if (!isStr(o.id) || !isStr(o.body) || !isStr(o.at) || (o.from !== 'visitor' && o.from !== 'team')) return null;
-  return { id: o.id, from: o.from, body: o.body, at: o.at };
+export function parseConfig(v: unknown): WidgetConfig | null {
+  const o = obj(v);
+  if (!o || !isStr(o.teamName) || o.teamName.trim() === '' || !isStr(o.assistantNotice)) return null;
+  if (o.disclosure === null) return { teamName: o.teamName, disclosure: null, assistantNotice: o.assistantNotice };
+  const d = obj(o.disclosure);
+  if (!d || !isStr(d.id) || !isStr(d.text)) return null;
+  return { teamName: o.teamName, disclosure: { id: d.id, text: d.text }, assistantNotice: o.assistantNotice };
 }
-
-function messages(v: unknown): ChatMessage[] | null {
-  if (!Array.isArray(v)) return null;
-  const out: ChatMessage[] = [];
-  for (const m of v) {
-    const x = message(m);
-    if (!x) return null;
-    out.push(x);
-  }
-  return out;
-}
-
-const cursor = (v: unknown): string | null | undefined => (v === null ? null : isStr(v) ? v : undefined);
 
 export function parseStart(v: unknown): StartResponse | null {
-  const o = (v ?? {}) as Record<string, unknown>;
-  const ms = messages(o.messages ?? []);
-  const c = cursor(o.cursor ?? null);
-  return isStr(o.token) && o.token.length >= 16 && ms && c !== undefined ? { token: o.token, messages: ms, cursor: c } : null;
+  const o = obj(v);
+  return o && isStr(o.sessionToken) && /^[A-Za-z0-9_-]{16,200}$/.test(o.sessionToken) && o.status === 'open' ? { sessionToken: o.sessionToken, status: 'open' } : null;
+}
+
+export function parseAccepted(v: unknown): { accepted: true } | null {
+  return obj(v)?.accepted === true ? { accepted: true } : null;
+}
+
+function reply(v: unknown): ChatReply | null {
+  const o = obj(v);
+  if (!o || !isStr(o.id) || !isStr(o.body) || !isStr(o.sentAt) || (o.from !== 'team' && o.from !== 'assistant')) return null;
+  return { id: o.id, body: o.body, sentAt: o.sentAt, from: o.from };
 }
 
 export function parsePoll(v: unknown): PollResponse | null {
-  const o = (v ?? {}) as Record<string, unknown>;
-  const ms = messages(o.messages);
-  const c = cursor(o.cursor ?? null);
-  return ms && c !== undefined && typeof (o.ended ?? false) === 'boolean' ? { messages: ms, cursor: c, ended: o.ended === true } : null;
+  const o = obj(v);
+  if (!o || !Array.isArray(o.messages) || typeof o.open !== 'boolean' || (o.cursor !== null && !isStr(o.cursor))) return null;
+  const messages: ChatReply[] = [];
+  for (const m of o.messages) {
+    const r = reply(m);
+    if (!r) return null;
+    messages.push(r);
+  }
+  return { messages, cursor: o.cursor as string | null, open: o.open };
 }
 
-export function parseSend(v: unknown): SendResponse | null {
-  const m = message(((v ?? {}) as Record<string, unknown>).message);
-  return m ? { message: m } : null;
-}
-
-async function errorCode(r: Response): Promise<string | null> {
+/** The error code, and for a validation failure the field its first issue names. */
+async function errorOf(r: Response): Promise<{ code: string | null; field?: Field }> {
   try {
-    const j = (await r.json()) as { error?: { code?: unknown } };
-    return isStr(j.error?.code) ? j.error.code : null;
+    const e = obj(obj(await r.json())?.error);
+    const issues = obj(e?.details)?.issues;
+    const path = Array.isArray(issues) ? obj(issues[0])?.path : undefined;
+    const field: Field | undefined = path === '/name' ? 'name' : path === '/phone' || path === '/email' ? 'contact' : path === '/message' ? 'message' : undefined;
+    return { code: isStr(e?.code) ? e.code : null, ...(field ? { field } : {}) };
   } catch {
-    return null;
+    return { code: null };
   }
 }
 
-async function call<T>(f: Fetch, url: string, init: RequestInit, parse: (v: unknown) => T | null, onSession: boolean): Promise<Result<T>> {
+async function call<T>(f: Fetch, url: string, init: RequestInit, parse: (v: unknown) => T | null): Promise<Result<T>> {
   let r: Response;
   try {
-    r = await f(url, { ...init, credentials: 'omit', headers: { accept: 'application/json', ...(init.body ? { 'content-type': 'application/json' } : {}) } });
+    r = await f(url, { ...init, credentials: 'omit', cache: 'no-store', headers: { accept: 'application/json', ...(init.body ? { 'content-type': 'application/json' } : {}) } });
   } catch {
     return { ok: false, failure: 'failed' };
   }
   if (r.ok) {
-    let j: unknown;
     try {
-      j = await r.json();
+      const d = parse(await r.json());
+      return d ? { ok: true, data: d } : { ok: false, failure: 'failed' };
     } catch {
       return { ok: false, failure: 'failed' };
     }
-    const d = parse(j);
-    return d ? { ok: true, data: d } : { ok: false, failure: 'failed' };
   }
   if (r.status === 429) return { ok: false, failure: 'rate_limited' };
-  const code = await errorCode(r);
-  if (code === 'CHANNEL_NOT_CONNECTED') return { ok: false, failure: onSession ? 'ended' : 'unavailable' };
-  if (r.status === 404 || r.status === 410) return { ok: false, failure: onSession ? 'ended' : 'unavailable' };
-  if (r.status === 400) return { ok: false, failure: 'invalid' };
+  if (r.status === 404) return { ok: false, failure: 'not_found' };
+  if (r.status === 410) return { ok: false, failure: 'closed' };
+  const e = await errorOf(r);
+  if (r.status === 409 && e.code === 'CHANNEL_NOT_CONNECTED') return { ok: false, failure: 'unavailable' };
+  if (r.status === 409 && e.code === 'WEBCHAT_DISCLOSURE_STALE') return { ok: false, failure: 'disclosure_stale' };
+  if (r.status === 422 || r.status === 413) return { ok: false, failure: 'invalid', ...(e.field ? { field: e.field } : {}) };
   return { ok: false, failure: 'failed' };
 }
 
 export interface ChatApi {
+  config(widgetKey: string): Promise<Result<WidgetConfig>>;
   start(widgetKey: string, req: StartRequest): Promise<Result<StartResponse>>;
-  send(token: string, body: string): Promise<Result<SendResponse>>;
+  send(token: string, message: string, clientMessageId: string): Promise<Result<{ accepted: true }>>;
   poll(token: string, after: string | null): Promise<Result<PollResponse>>;
 }
 
@@ -152,19 +199,20 @@ export function chatApi(base: string, f: Fetch = (i, init) => fetch(i, init)): C
   const root = base.replace(/\/+$/, '');
   const enc = encodeURIComponent;
   return {
-    start(widgetKey, req) {
-      const body: StartRequest = { name: req.name, ...(req.phone ? { phone: req.phone } : {}), ...(req.email ? { email: req.email } : {}), message: req.message, disclosureId: req.disclosureId };
-      // STUB(22): POST /public/chat/:widgetKey/start
-      return call(f, `${root}/public/chat/${enc(widgetKey)}/start`, { method: 'POST', body: JSON.stringify(body) }, parseStart, false);
+    config(widgetKey) {
+      return call(f, `${root}/public/chat/${enc(widgetKey)}`, { method: 'GET' }, parseConfig);
     },
-    send(token, body) {
-      // STUB(22): POST /public/chat/session/:token/messages
-      return call(f, `${root}/public/chat/session/${enc(token)}/messages`, { method: 'POST', body: JSON.stringify({ body }) }, parseSend, true);
+    start(widgetKey, req) {
+      const contact = req.phone !== undefined ? { phone: clean(req.phone, PHONE_MAX) } : req.email !== undefined ? { email: clean(req.email, EMAIL_MAX) } : {};
+      const body: StartRequest = { name: clean(req.name, NAME_MAX), ...contact, message: clean(req.message, MESSAGE_MAX, true), disclosureId: req.disclosureId };
+      return call(f, `${root}/public/chat/${enc(widgetKey)}/start`, { method: 'POST', body: JSON.stringify(body) }, parseStart);
+    },
+    send(token, message, clientMessageId) {
+      const body = { message: clean(message, MESSAGE_MAX, true), clientMessageId };
+      return call(f, `${root}/public/chat/session/${enc(token)}/messages`, { method: 'POST', body: JSON.stringify(body) }, parseAccepted);
     },
     poll(token, after) {
-      // STUB(22): GET /public/chat/session/:token/poll
-      return call(f, `${root}/public/chat/session/${enc(token)}/poll${after ? `?after=${enc(after)}` : ''}`, { method: 'GET' }, parsePoll, true);
+      return call(f, `${root}/public/chat/session/${enc(token)}/poll${after !== null ? `?after=${enc(after)}` : ''}`, { method: 'GET' }, parsePoll);
     },
   };
 }
-

@@ -1,37 +1,28 @@
-// The widget's configuration, read from its own <script> tag (the embed snippet a team copies from Realty OS):
+// The widget's embed configuration, read from its own <script> tag (the snippet a team copies from Realty OS):
 //
-//   <script src="https://app.example.com/widget/chat.js" defer
-//           data-widget-key="…" data-brokerage="Harbor Realty LLC"
-//           data-disclosure-id="…" data-disclosure="By starting a chat you agree …"></script>
+//   <script src="https://app.example.com/widget/chat.js" defer data-widget-key="wk_…"></script>
 //
-// The brokerage name and the disclosure are shown before the first message; the disclosure id is sent at start
-// so the server records exactly which stored text the visitor saw (consent_disclosures). `data-api` overrides
-// the API base (default: the script's own origin + /api). A missing key, brokerage or disclosure renders
-// nothing: the widget never shows a chat it cannot start honestly.
+// The key is the only setting. The team name, the notice the visitor must see first (with its id, sent back at
+// start so the server records exactly which stored text they saw, R-INBOX-5) and the assistant sentence all come
+// from the server (GET /public/chat/:widgetKey), so a team that changes its notice never has to touch its website.
+// `data-api` overrides the API base (default: the script's own origin + /api). A missing or malformed key renders
+// nothing: the widget never shows a chat it cannot start.
+import { WIDGET_KEY } from './api.js';
 
-export interface WidgetConfig {
+export interface EmbedConfig {
   widgetKey: string;
-  brokerage: string;
-  disclosureId: string;
-  disclosure: string;
   apiBase: string;
 }
 
-export function readConfig(el: HTMLScriptElement | null, pageUrl: string): WidgetConfig | null {
+export function readConfig(el: HTMLScriptElement | null, pageUrl: string): EmbedConfig | null {
   if (!el) return null;
-  const d = el.dataset;
-  const widgetKey = (d.widgetKey ?? '').trim();
-  const brokerage = (d.brokerage ?? '').trim();
-  const disclosureId = (d.disclosureId ?? '').trim();
-  const disclosure = (d.disclosure ?? '').trim();
-  if (!widgetKey || !brokerage || !disclosureId || !disclosure) return null;
-  let apiBase = (d.api ?? '').trim();
-  if (!apiBase) {
-    try {
-      apiBase = `${new URL(el.src || pageUrl, pageUrl).origin}/api`;
-    } catch {
-      return null;
-    }
+  const widgetKey = (el.dataset.widgetKey ?? '').trim();
+  if (!WIDGET_KEY.test(widgetKey)) return null;
+  let apiBase = (el.dataset.api ?? '').trim();
+  try {
+    apiBase = apiBase ? new URL(apiBase, pageUrl).toString().replace(/\/+$/, '') : `${new URL(el.src || pageUrl, pageUrl).origin}/api`;
+  } catch {
+    return null;
   }
-  return { widgetKey, brokerage: brokerage.slice(0, 120), disclosureId, disclosure: disclosure.slice(0, 2000), apiBase };
+  return { widgetKey, apiBase };
 }

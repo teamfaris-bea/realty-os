@@ -1,114 +1,145 @@
-// Contract test of the widget's STUB(22) client (api.ts) against a fake of the PHASE2_3_PLAN §5.4 (22)
-// public web-chat interface:
-//   POST /public/chat/:widgetKey/start {name, phone|email, message, disclosureId}
-//   POST /public/chat/session/:token/messages
-//   GET  /public/chat/session/:token/poll?after=
-// The fake accepts exactly those requests (strict bodies, no cookies: the visitor is not a principal) and
-// answers with the response shapes api.ts reads (VERIFY(22)). When module 22 lands the orchestrator runs this
-// against the real routes; a shape change fails here first.
+// @vitest-environment node
+// Contract test of the widget's client (api.ts) against module 22's real public chat routes, as the API itself
+// describes them: the JSON Schemas apps/api/src/channels/webContract.ts generates from the routes' own Zod schemas
+// (webContract.json; its drift test keeps it equal to what the API validates and serializes). The fake behind the
+// client (test/contract.ts contractFetch) refuses with 422 any request the API would refuse, and may itself only answer
+// with bodies the API can send and with each error code at the API's status, so the client is held to the real API.
 import { describe, expect, it } from 'vitest';
-import { chatApi, parsePoll, parseStart } from './api.js';
-import apiSource from './api.ts?raw';
+import { type Answer, type Exchange, apiError, contract, contractFetch } from '../test/contract.js';
+import { EMAIL_MAX, MESSAGE_MAX, NAME_MAX, PHONE_MAX, WIDGET_KEY, chatApi, clean, newMessageId, parseConfig, parsePoll, parseStart } from './api.js';
 
-const KEY = 'wk_preview_0123456789abcdef';
-const TOKEN = 'st_0123456789abcdef0123456789abcdef';
+const KEY = `wk_${'0123456789abcdef0123456789abcdef01234567'}`;
+const TOKEN = 'Xq3_kR9vL2mN8pT4wY6zA1bC5dE7fG0hJ2iK4lM6nO8';
 const DISCLOSURE = '01900000-0000-7000-8000-0000000d15c1';
+const BASE = 'https://app.example.test/api/';
+const SENT_AT = '2026-11-11T17:00:30.000Z';
+const REPLY = { id: '01900000-0000-7000-8000-0000000e5503', body: 'Hi Pat, this is the team assistant. Ava will follow up shortly.', sentAt: SENT_AT, from: 'assistant' as const };
+const CONFIG = { teamName: 'Harbor & Pine Team', disclosure: { id: DISCLOSURE, text: 'By starting a chat you agree the team may reply here.' }, assistantNotice: "Replies may come from Harbor & Pine Team's automated assistant or from a person on the team." };
 
-interface Seen {
-  method: string;
-  url: string;
-  body: unknown;
-  credentials: RequestCredentials | undefined;
+/** A fake module 22 that plays exactly by the contract; `seen` and `problems` record what the client sent. */
+function module22(answer: (x: Exchange) => Answer) {
+  const seen: Exchange[] = [];
+  const problems: string[] = [];
+  return { api: chatApi(BASE, contractFetch(answer, seen, problems)), seen, problems };
 }
 
-/** A fake module 22: 400 for anything but the §5.4 shapes. */
-function module22(opts: { limit?: boolean; ended?: boolean; disconnected?: boolean } = {}) {
-  const seen: Seen[] = [];
-  const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
-  const f = async (url: string, init: RequestInit = {}): Promise<Response> => {
-    const body = init.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : undefined;
-    seen.push({ method: init.method ?? 'GET', url, body, credentials: init.credentials });
-    if (opts.limit) return json(429, { error: { code: 'RATE_LIMITED' } });
-    const u = new URL(url, 'https://app.example.com');
-    let m: RegExpExecArray | null;
-    if ((m = /^\/api\/public\/chat\/([^/]+)\/start$/.exec(u.pathname)) && init.method === 'POST') {
-      if (opts.disconnected) return json(409, { error: { code: 'CHANNEL_NOT_CONNECTED' } });
-      const keys = Object.keys(body ?? {}).sort().join(',');
-      const ok = m[1] === KEY && (keys === 'disclosureId,message,name,phone' || keys === 'disclosureId,email,message,name') && body!.disclosureId === DISCLOSURE && String(body!.message).length <= 2000;
-      if (!ok) return json(400, { error: { code: 'VALIDATION_FAILED' } });
-      return json(201, { token: TOKEN, messages: [{ id: 'm1', from: 'visitor', body: body!.message, at: '2026-11-11T17:00:00Z' }], cursor: 'c1' });
-    }
-    if ((m = /^\/api\/public\/chat\/session\/([^/]+)\/messages$/.exec(u.pathname)) && init.method === 'POST') {
-      if (opts.ended) return json(410, { error: { code: 'CHANNEL_NOT_CONNECTED' } });
-      if (m[1] !== TOKEN || Object.keys(body ?? {}).join(',') !== 'body') return json(400, { error: { code: 'VALIDATION_FAILED' } });
-      return json(201, { message: { id: 'm2', from: 'visitor', body: body!.body, at: '2026-11-11T17:01:00Z' } });
-    }
-    if ((m = /^\/api\/public\/chat\/session\/([^/]+)\/poll$/.exec(u.pathname)) && (init.method ?? 'GET') === 'GET') {
-      if (opts.ended) return json(404, { error: { code: 'NOT_FOUND' } });
-      if (m[1] !== TOKEN) return json(404, { error: { code: 'NOT_FOUND' } });
-      const after = u.searchParams.get('after');
-      const all = [
-        { id: 'm1', from: 'visitor', body: 'Is 12 Oak St still available?', at: '2026-11-11T17:00:00Z' },
-        { id: 'm3', from: 'team', body: 'Hi Pat, this is the Harbor team assistant. Ava will reply shortly.', at: '2026-11-11T17:00:30Z' },
-      ];
-      return json(200, { messages: after === 'c1' ? all.slice(1) : all, cursor: 'c2', ended: false });
-    }
-    return json(404, { error: { code: 'NOT_FOUND' } });
-  };
-  return { f, seen };
-}
+const happy = (x: Exchange): Answer => {
+  switch (x.key) {
+    case 'GET /public/chat/:widgetToken':
+      return { status: 200, body: CONFIG };
+    case 'POST /public/chat/:widgetToken/start':
+      return { status: 200, body: { sessionToken: TOKEN, status: 'open' } };
+    case 'POST /public/chat/session/:token/messages':
+      return { status: 200, body: { accepted: true } };
+    case 'GET /public/chat/session/:token/poll':
+      return { status: 200, body: x.query.after ? { messages: [], cursor: x.query.after, open: true } : { messages: [REPLY], cursor: `1762880430000000.${REPLY.id}`, open: true } };
+    default:
+      return apiError('NOT_FOUND');
+  }
+};
 
-const api = (m: ReturnType<typeof module22>) => chatApi('https://app.example.com/api/', m.f);
-
-describe('STUB(22) widget/api.ts against the §5.4 (22) public web-chat interface', () => {
-  it('R-INBOX-5: start sends exactly {name, phone|email, message, disclosureId} to /public/chat/:widgetKey/start, with no cookies', async () => {
-    const m = module22();
-    const byPhone = await api(m).start(KEY, { name: 'Pat Lee', phone: '(415) 555-0101', message: 'Is 12 Oak St still available?', disclosureId: DISCLOSURE });
-    expect(byPhone).toEqual({ ok: true, data: { token: TOKEN, messages: [{ id: 'm1', from: 'visitor', body: 'Is 12 Oak St still available?', at: '2026-11-11T17:00:00Z' }], cursor: 'c1' } });
-    const byEmail = await api(m).start(KEY, { name: 'Pat Lee', email: 'pat@example.com', message: 'Hi', disclosureId: DISCLOSURE });
-    expect(byEmail.ok).toBe(true);
-    expect(m.seen.map((s) => [s.method, s.url, s.credentials])).toEqual([
-      ['POST', `https://app.example.com/api/public/chat/${KEY}/start`, 'omit'],
-      ['POST', `https://app.example.com/api/public/chat/${KEY}/start`, 'omit'],
+describe('widget/api.ts against the real module 22 public chat routes (webContract.json)', () => {
+  it('uses exactly the four public chat routes of the contract, with its key format and length caps', () => {
+    expect(Object.keys(contract.routes).filter((k) => k.includes('/public/chat/')).sort()).toEqual([
+      'GET /public/chat/:widgetToken',
+      'GET /public/chat/session/:token/poll',
+      'POST /public/chat/:widgetToken/start',
+      'POST /public/chat/session/:token/messages',
     ]);
-    expect(m.seen[0]!.body).toEqual({ name: 'Pat Lee', phone: '(415) 555-0101', message: 'Is 12 Oak St still available?', disclosureId: DISCLOSURE });
+    expect(WIDGET_KEY.source).toBe(contract.webChat.widgetKey);
+    expect(KEY).toMatch(WIDGET_KEY);
+    expect(TOKEN).toMatch(new RegExp(contract.webChat.sessionToken));
+    expect([NAME_MAX, MESSAGE_MAX]).toEqual([contract.webChat.nameMax, contract.webChat.messageMax]);
+    const start = contract.routes['POST /public/chat/:widgetToken/start']!.body!.properties as Record<string, { maxLength: number }>;
+    expect([start.phone!.maxLength, start.email!.maxLength, start.name!.maxLength, start.message!.maxLength]).toEqual([PHONE_MAX, EMAIL_MAX, NAME_MAX, MESSAGE_MAX]);
   });
 
-  it('R-INBOX-5: messages go to /public/chat/session/:token/messages as {body}; poll reads only this session after the cursor', async () => {
-    const m = module22();
-    const sent = await api(m).send(TOKEN, 'Can I see it Saturday?');
-    expect(sent).toEqual({ ok: true, data: { message: { id: 'm2', from: 'visitor', body: 'Can I see it Saturday?', at: '2026-11-11T17:01:00Z' } } });
-    const first = await api(m).poll(TOKEN, null);
-    const next = await api(m).poll(TOKEN, 'c1');
-    expect(first.ok && first.data.messages.map((x) => x.id)).toEqual(['m1', 'm3']);
-    expect(next.ok && next.data).toEqual({ messages: [expect.objectContaining({ id: 'm3', from: 'team' })], cursor: 'c2', ended: false });
-    expect(m.seen.map((s) => `${s.method} ${s.url}`)).toEqual([
-      `POST https://app.example.com/api/public/chat/session/${TOKEN}/messages`,
-      `GET https://app.example.com/api/public/chat/session/${TOKEN}/poll`,
-      `GET https://app.example.com/api/public/chat/session/${TOKEN}/poll?after=c1`,
+  it('R-INBOX-5: GET /public/chat/:widgetKey gives the team name, the notice with its id and the assistant sentence; a team without a notice has disclosure null', async () => {
+    const m = module22(happy);
+    expect(await m.api.config(KEY)).toEqual({ ok: true, data: CONFIG });
+    const none = module22((x) => (x.key === 'GET /public/chat/:widgetToken' ? { status: 200, body: { ...CONFIG, disclosure: null } } : happy(x)));
+    expect(await none.api.config(KEY)).toEqual({ ok: true, data: { ...CONFIG, disclosure: null } });
+    expect(m.seen.map((s) => [s.url.pathname, s.credentials])).toEqual([[`/api/public/chat/${KEY}`, 'omit']]);
+    expect([...m.problems, ...none.problems]).toEqual([]);
+  });
+
+  it('R-INBOX-5 start: exactly {name, phone or email, message, disclosureId}, never both contacts, no cookies; it answers {sessionToken, status: "open"}', async () => {
+    const m = module22(happy);
+    expect(await m.api.start(KEY, { name: 'Pat Lee', phone: '(415) 555-0101', message: 'Is 12 Oak St still available?', disclosureId: DISCLOSURE })).toEqual({ ok: true, data: { sessionToken: TOKEN, status: 'open' } });
+    expect(await m.api.start(KEY, { name: 'Pat Lee', email: 'pat@example.com', message: 'Hi', disclosureId: DISCLOSURE })).toEqual({ ok: true, data: { sessionToken: TOKEN, status: 'open' } });
+    expect(m.seen.map((s) => s.body)).toEqual([
+      { name: 'Pat Lee', phone: '(415) 555-0101', message: 'Is 12 Oak St still available?', disclosureId: DISCLOSURE },
+      { name: 'Pat Lee', email: 'pat@example.com', message: 'Hi', disclosureId: DISCLOSURE },
     ]);
+    expect(m.seen.every((s) => s.credentials === 'omit')).toBe(true);
+    expect(m.problems).toEqual([]);
+    // the API refuses both contacts at once (422); handed both, the client sends only the phone
+    const both = module22(happy);
+    await both.api.start(KEY, { name: 'Pat', phone: '4155550101', email: 'pat@example.com', message: 'Hi', disclosureId: DISCLOSURE });
+    expect(both.seen[0]!.body).not.toHaveProperty('email');
+    expect(both.problems).toEqual([]);
   });
 
-  it('E137: rate limits (429) are "rate_limited"; R-INBOX-7: a disconnected widget is "unavailable"; E77: an ended session is "ended"', async () => {
-    expect(await api(module22({ limit: true })).start(KEY, { name: 'x', phone: '4155550101', message: 'x', disclosureId: DISCLOSURE })).toEqual({ ok: false, failure: 'rate_limited' });
-    expect(await api(module22({ limit: true })).send(TOKEN, 'x')).toEqual({ ok: false, failure: 'rate_limited' });
-    expect(await api(module22({ disconnected: true })).start(KEY, { name: 'x', phone: '4155550101', message: 'x', disclosureId: DISCLOSURE })).toEqual({ ok: false, failure: 'unavailable' });
-    expect(await api(module22({ ended: true })).send(TOKEN, 'x')).toEqual({ ok: false, failure: 'ended' });
-    expect(await api(module22({ ended: true })).poll(TOKEN, 'c1')).toEqual({ ok: false, failure: 'ended' });
-    expect(await api(module22()).start('wrong-key', { name: 'x', phone: '4155550101', message: 'x', disclosureId: DISCLOSURE })).toEqual({ ok: false, failure: 'invalid' });
+  it('messages: {message, clientMessageId} answered {accepted: true}; poll passes the cursor back unchanged and reads replies from the team or the assistant', async () => {
+    const m = module22(happy);
+    const id = newMessageId();
+    expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(await m.api.send(TOKEN, 'Can I see it Saturday?', id)).toEqual({ ok: true, data: { accepted: true } });
+    const first = await m.api.poll(TOKEN, null);
+    expect(first).toEqual({ ok: true, data: { messages: [REPLY], cursor: `1762880430000000.${REPLY.id}`, open: true } });
+    const cursor = first.ok ? first.data.cursor : null;
+    expect(await m.api.poll(TOKEN, cursor)).toEqual({ ok: true, data: { messages: [], cursor, open: true } });
+    expect(m.seen.map((s) => [s.key, s.body ?? s.query])).toEqual([
+      ['POST /public/chat/session/:token/messages', { message: 'Can I see it Saturday?', clientMessageId: id }],
+      ['GET /public/chat/session/:token/poll', {}],
+      ['GET /public/chat/session/:token/poll', { after: cursor }],
+    ]);
+    expect(m.problems).toEqual([]);
   });
 
-  it('a response that is not the agreed shape is a failure, never rendered (no invented messages)', () => {
-    expect(parseStart({ token: 'short' })).toBeNull();
-    expect(parseStart({ token: TOKEN, messages: [{ id: 'm', from: 'agent', body: 'x', at: 'y' }] })).toBeNull();
-    expect(parsePoll({ messages: [{ id: 'm', from: 'team', body: 'x', at: 'y' }], cursor: 'c', typing: true, online: true })).toEqual({ messages: [{ id: 'm', from: 'team', body: 'x', at: 'y' }], cursor: 'c', ended: false });
-    expect(parsePoll({ messages: 'nope' })).toBeNull();
-    expect(parsePoll({ messages: [], cursor: 3 })).toBeNull();
+  it('E77 R-INBOX-7 E137: every error the routes answer is a plain failure the widget can say in words', async () => {
+    const failing = (code: string, details?: Record<string, unknown>) => module22(() => apiError(code, details)).api;
+    const start = (api: ReturnType<typeof failing>) => api.start(KEY, { name: 'Pat', phone: '4155550101', message: 'Hi', disclosureId: DISCLOSURE });
+    expect(await failing('NOT_FOUND').config(KEY)).toEqual({ ok: false, failure: 'not_found' });
+    expect(await failing('CHANNEL_NOT_CONNECTED').config(KEY)).toEqual({ ok: false, failure: 'unavailable' });
+    expect(await start(failing('WEBCHAT_DISCLOSURE_STALE'))).toEqual({ ok: false, failure: 'disclosure_stale' });
+    expect(await start(failing('RATE_LIMITED'))).toEqual({ ok: false, failure: 'rate_limited' });
+    expect(await start(failing('VALIDATION_FAILED', { issues: [{ path: '/phone', code: 'invalid' }] }))).toEqual({ ok: false, failure: 'invalid', field: 'contact' });
+    expect(await failing('WEBCHAT_SESSION_CLOSED').send(TOKEN, 'hello?', newMessageId())).toEqual({ ok: false, failure: 'closed' });
+    expect(await failing('CHANNEL_NOT_CONNECTED').poll(TOKEN, null)).toEqual({ ok: false, failure: 'unavailable' });
+    expect(await failing('NOT_FOUND').poll(TOKEN, null)).toEqual({ ok: false, failure: 'not_found' });
+    expect(await failing('PAYLOAD_TOO_LARGE').send(TOKEN, 'x', newMessageId())).toEqual({ ok: false, failure: 'invalid' });
+    expect(await chatApi(BASE, async () => Promise.reject(new TypeError('Failed to fetch'))).poll(TOKEN, null)).toEqual({ ok: false, failure: 'failed' });
   });
 
-  it('every call to a module 22 route that does not exist yet is marked STUB(22) with its method and route', () => {
-    const marks = [...apiSource.matchAll(/\/\/ STUB\(22\): (GET|POST) (\S+)/g)].map((x) => `${x[1]} ${x[2]}`);
-    expect(marks).toEqual(['POST /public/chat/:widgetKey/start', 'POST /public/chat/session/:token/messages', 'GET /public/chat/session/:token/poll']);
-    expect(apiSource.match(/\bcall\(f,/g)).toHaveLength(3);
+  it('what the visitor types is made to fit the API first: no control or format characters (a message keeps its newlines), within the caps, so it is never refused for a character they cannot see', async () => {
+    const m = module22(happy);
+    await m.api.start(KEY, { name: 'Pa\u200bt\tLee\u0007', email: ' pat@example.com\u200e ', message: `Hi\r\nthere\u2028${'x'.repeat(5000)}`, disclosureId: DISCLOSURE });
+    await m.api.send(TOKEN, `\u202eline one\nline two\u0000${'y'.repeat(3000)}`, newMessageId());
+    await m.api.send(TOKEN, `${'z'.repeat(1999)}😀`, newMessageId());
+    expect(m.problems).toEqual([]);
+    const [start, send, emoji] = m.seen.map((s) => s.body as { name?: string; email?: string; message: string });
+    expect(start).toMatchObject({ name: 'Pat Lee', email: 'pat@example.com' });
+    expect(start!.message.startsWith('Hi\nthere')).toBe(true);
+    expect(start!.message).toHaveLength(MESSAGE_MAX);
+    expect(send!.message.startsWith('line one\nline two y')).toBe(true);
+    expect(send!.message.length).toBeLessThanOrEqual(MESSAGE_MAX);
+    // a character is never cut in half at the cap
+    expect(emoji!.message).toBe('z'.repeat(1999));
+    expect(clean('  \u200d  ', 10)).toBe('');
+  });
+
+  it('a response that is not the API shape is a failure and is never rendered (no invented messages)', () => {
+    expect(parseStart({ sessionToken: 'short', status: 'open' })).toBeNull();
+    expect(parseStart({ sessionToken: TOKEN, status: 'closed' })).toBeNull();
+    expect(parseConfig({ teamName: '', disclosure: null, assistantNotice: '' })).toBeNull();
+    expect(parseConfig({ teamName: 'T', disclosure: { id: DISCLOSURE }, assistantNotice: '' })).toBeNull();
+    // the poll carries only replies: a "visitor" message is not one, nor is a body without a time
+    expect(parsePoll({ messages: [{ ...REPLY, from: 'visitor' }], cursor: null, open: true })).toBeNull();
+    expect(parsePoll({ messages: [{ id: 'm', body: 'x', from: 'team' }], cursor: null, open: true })).toBeNull();
+    expect(parsePoll({ messages: [], cursor: 3, open: true })).toBeNull();
+    expect(parsePoll({ messages: [], cursor: null })).toBeNull();
+    // fields the API does not send are dropped, never shown
+    expect(parsePoll({ messages: [{ ...REPLY, typing: true }], cursor: null, open: true, presence: 'online' })).toEqual({ messages: [REPLY], cursor: null, open: true });
   });
 });
