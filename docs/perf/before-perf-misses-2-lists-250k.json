@@ -1,0 +1,587 @@
+{
+  "results": [
+    {
+      "name": "lists: first page, everyone (People tab) (owner)",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 22.35377299999982,
+      "p95": 27.39782299999979,
+      "max": 27.48893999999973,
+      "pass": true
+    },
+    {
+      "name": "lists: second page, everyone (People tab) (owner)",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 24.874927000000298,
+      "p95": 29.27586199999996,
+      "max": 31.075852999999825,
+      "pass": true
+    },
+    {
+      "name": "lists: count, everyone (People tab) (owner)",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 26.55170999999973,
+      "p95": 33.78834599999982,
+      "max": 39.20920500000011,
+      "pass": true
+    },
+    {
+      "name": "lists: first page, tag: popular (owner)",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 36.53619299999991,
+      "p95": 40.78289500000028,
+      "max": 40.95807500000046,
+      "pass": true
+    },
+    {
+      "name": "lists: count, tag: popular (owner)",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 1827.6779000000024,
+      "p95": 1975.3008559999998,
+      "max": 2161.352064999999,
+      "pass": false
+    },
+    {
+      "name": "lists: first page, tag: rare (owner)",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 68.98637299999973,
+      "p95": 85.71771699999954,
+      "max": 90.2044109999988,
+      "pass": true
+    },
+    {
+      "name": "lists: count, tag: rare (owner)",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 1822.6714409999986,
+      "p95": 2082.7239100000006,
+      "max": 2121.1883270000035,
+      "pass": false
+    },
+    {
+      "name": "lists: first page, tag: none of (owner)",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 24.814356999995653,
+      "p95": 27.745750999994925,
+      "max": 45.92064699999173,
+      "pass": true
+    },
+    {
+      "name": "lists: count, tag: none of (owner)",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 90.68530100000498,
+      "p95": 100.70508799998788,
+      "max": 104.26917099999264,
+      "pass": true
+    },
+    {
+      "name": "lists: first page, stage + active in 30 days (owner)",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 20.610299000007217,
+      "p95": 25.70889700000407,
+      "max": 27.32085299999744,
+      "pass": true
+    },
+    {
+      "name": "lists: count, stage + active in 30 days (owner)",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 41.524090000006254,
+      "p95": 44.79922699999588,
+      "max": 52.025815000000875,
+      "pass": true
+    },
+    {
+      "name": "lists: first page, my new leads with a tag (owner)",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 11.515483999988646,
+      "p95": 17.55733599999803,
+      "max": 18.53778900000907,
+      "pass": true
+    },
+    {
+      "name": "lists: count, my new leads with a tag (owner)",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 11.775789999999688,
+      "p95": 13.418939000010141,
+      "max": 13.86993000000075,
+      "pass": true
+    },
+    {
+      "name": "lists: first page, budget ≥ 1.5M (owner)",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 28.506618000013987,
+      "p95": 35.93573299999116,
+      "max": 48.738461000000825,
+      "pass": true
+    },
+    {
+      "name": "lists: count, budget ≥ 1.5M (owner)",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 689.2463920000009,
+      "p95": 766.4101870000013,
+      "max": 770.0094740000059,
+      "pass": true
+    },
+    {
+      "name": "lists: first page, birthday in 14 days (owner)",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 36.2848229999945,
+      "p95": 51.52998700000171,
+      "max": 57.17366600000241,
+      "pass": true
+    },
+    {
+      "name": "lists: count, birthday in 14 days (owner)",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 3012.2672109999985,
+      "p95": 3015.140695000009,
+      "max": 3015.459308999998,
+      "pass": false,
+      "note": "20/20 calls FAILED (503 {\"error\":{\"code\":\"LIST_TOO_SLOW\",\"requestId\":\"01a1caa3-10b0-70cc-a14c-44829cebb8e2\"}})"
+    },
+    {
+      "name": "lists: first page, features pool + timeline now (owner)",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 33.77070600001025,
+      "p95": 43.740942000004,
+      "max": 43.99702999999863,
+      "pass": true
+    },
+    {
+      "name": "lists: count, features pool + timeline now (owner)",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 3012.116026999982,
+      "p95": 3017.233296999999,
+      "max": 3017.5671049999946,
+      "pass": false,
+      "note": "20/20 calls FAILED (503 {\"error\":{\"code\":\"LIST_TOO_SLOW\",\"requestId\":\"01a1caa4-16b3-7eab-ae05-bccf187beeab\"}})"
+    },
+    {
+      "name": "lists: first page, overdue task (owner)",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 25.941768000018783,
+      "p95": 31.05735299998196,
+      "max": 34.320186999975704,
+      "pass": true
+    },
+    {
+      "name": "lists: count, overdue task (owner)",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 446.1592319999763,
+      "p95": 578.0604319999984,
+      "max": 649.2010080000036,
+      "pass": true
+    },
+    {
+      "name": "lists: first page, name contains (owner)",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 456.3535630000115,
+      "p95": 543.8145170000207,
+      "max": 544.2280510000128,
+      "pass": false
+    },
+    {
+      "name": "lists: count, name contains (owner)",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 190.3040640000254,
+      "p95": 235.8120550000458,
+      "max": 250.71389199997066,
+      "pass": true
+    },
+    {
+      "name": "lists: first page, OR group (tag or stage) (owner)",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 20.835107999970205,
+      "p95": 27.4182429999928,
+      "max": 28.36403400002746,
+      "pass": true
+    },
+    {
+      "name": "lists: count, OR group (tag or stage) (owner)",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 643.9817209999892,
+      "p95": 737.6906970000127,
+      "max": 761.9703800000134,
+      "pass": true
+    },
+    {
+      "name": "lists: first page, everyone by name (owner)",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 477.1221299999743,
+      "p95": 572.8901970000006,
+      "max": 602.4594459999935,
+      "pass": false
+    },
+    {
+      "name": "lists: count, everyone by name (owner)",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 20.672816999955103,
+      "p95": 24.8297480000183,
+      "max": 26.572954999981448,
+      "pass": true
+    },
+    {
+      "name": "lists: first page, everyone by next task (owner)",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 928.1726069999859,
+      "p95": 1202.7831869999645,
+      "max": 1255.5447360000107,
+      "pass": false
+    },
+    {
+      "name": "lists: count, everyone by next task (owner)",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 21.580116000026464,
+      "p95": 34.13562499999534,
+      "max": 38.76337499998044,
+      "pass": true
+    },
+    {
+      "name": "lists: first page, everyone (People tab) (agent (2634 own))",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 40.65098199999193,
+      "p95": 47.706494999991264,
+      "max": 49.25405899999896,
+      "pass": true
+    },
+    {
+      "name": "lists: second page, everyone (People tab) (agent (2634 own))",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 31.17914700001711,
+      "p95": 38.367247999995016,
+      "max": 47.74342099996284,
+      "pass": true
+    },
+    {
+      "name": "lists: count, everyone (People tab) (agent (2634 own))",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 18.506204000033904,
+      "p95": 29.214578000013717,
+      "max": 29.419583999959286,
+      "pass": true
+    },
+    {
+      "name": "lists: first page, tag: popular (agent (2634 own))",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 50.4201180000091,
+      "p95": 57.11730800004443,
+      "max": 65.07455399999162,
+      "pass": true
+    },
+    {
+      "name": "lists: count, tag: popular (agent (2634 own))",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 37.67995600000722,
+      "p95": 45.53926799999317,
+      "max": 66.24408099998254,
+      "pass": true
+    },
+    {
+      "name": "lists: first page, tag: rare (agent (2634 own))",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 47.94561699999031,
+      "p95": 53.2488580000354,
+      "max": 57.78200000000652,
+      "pass": true
+    },
+    {
+      "name": "lists: count, tag: rare (agent (2634 own))",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 40.47135700000217,
+      "p95": 45.33527800004231,
+      "max": 65.72821799997473,
+      "pass": true
+    },
+    {
+      "name": "lists: first page, tag: none of (agent (2634 own))",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 72.11951300001238,
+      "p95": 77.51535999996122,
+      "max": 78.47304000001168,
+      "pass": true
+    },
+    {
+      "name": "lists: count, tag: none of (agent (2634 own))",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 48.88650299998699,
+      "p95": 58.961147999973036,
+      "max": 60.068963000027,
+      "pass": true
+    },
+    {
+      "name": "lists: first page, stage + active in 30 days (agent (2634 own))",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 40.47297399997478,
+      "p95": 48.88755200000014,
+      "max": 60.29549699998461,
+      "pass": true
+    },
+    {
+      "name": "lists: count, stage + active in 30 days (agent (2634 own))",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 24.50817400001688,
+      "p95": 25.957128999987617,
+      "max": 26.983399999968242,
+      "pass": true
+    },
+    {
+      "name": "lists: first page, my new leads with a tag (agent (2634 own))",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 30.621641999983694,
+      "p95": 39.374228000000585,
+      "max": 43.82393300003605,
+      "pass": true
+    },
+    {
+      "name": "lists: count, my new leads with a tag (agent (2634 own))",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 21.477837999991607,
+      "p95": 28.25025599997025,
+      "max": 28.869978000002448,
+      "pass": true
+    },
+    {
+      "name": "lists: first page, budget ≥ 1.5M (agent (2634 own))",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 73.03887200000463,
+      "p95": 83.95483200001763,
+      "max": 92.80259100004332,
+      "pass": true
+    },
+    {
+      "name": "lists: count, budget ≥ 1.5M (agent (2634 own))",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 62.285166000016034,
+      "p95": 68.33801599999424,
+      "max": 69.83013500005472,
+      "pass": true
+    },
+    {
+      "name": "lists: first page, birthday in 14 days (agent (2634 own))",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 56.971837000048254,
+      "p95": 77.4781039999798,
+      "max": 79.24408600002062,
+      "pass": true
+    },
+    {
+      "name": "lists: count, birthday in 14 days (agent (2634 own))",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 60.796025999996345,
+      "p95": 72.18988600000739,
+      "max": 83.39923700003419,
+      "pass": true
+    },
+    {
+      "name": "lists: first page, features pool + timeline now (agent (2634 own))",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 65.36386099999072,
+      "p95": 86.73851500003366,
+      "max": 91.17477500002133,
+      "pass": true
+    },
+    {
+      "name": "lists: count, features pool + timeline now (agent (2634 own))",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 49.62002400000347,
+      "p95": 74.14457499998389,
+      "max": 74.31599699996877,
+      "pass": true
+    },
+    {
+      "name": "lists: first page, overdue task (agent (2634 own))",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 52.111817999975756,
+      "p95": 60.50436900003115,
+      "max": 62.692041000002064,
+      "pass": true
+    },
+    {
+      "name": "lists: count, overdue task (agent (2634 own))",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 46.691486999974586,
+      "p95": 52.62100000004284,
+      "max": 53.400568999990355,
+      "pass": true
+    },
+    {
+      "name": "lists: first page, name contains (agent (2634 own))",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 30.909470000013243,
+      "p95": 38.570547999988776,
+      "max": 41.90661900001578,
+      "pass": true
+    },
+    {
+      "name": "lists: count, name contains (agent (2634 own))",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 24.250503000046592,
+      "p95": 29.350888999993913,
+      "max": 30.668587000051048,
+      "pass": true
+    },
+    {
+      "name": "lists: first page, OR group (tag or stage) (agent (2634 own))",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 65.75422800000524,
+      "p95": 77.41756700002588,
+      "max": 80.9479889999493,
+      "pass": true
+    },
+    {
+      "name": "lists: count, OR group (tag or stage) (agent (2634 own))",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 42.577362999960314,
+      "p95": 47.37561399996048,
+      "max": 59.41330300003756,
+      "pass": true
+    },
+    {
+      "name": "lists: first page, everyone by name (agent (2634 own))",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 36.97567600000184,
+      "p95": 40.23318600002676,
+      "max": 45.67977299995255,
+      "pass": true
+    },
+    {
+      "name": "lists: count, everyone by name (agent (2634 own))",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 24.017089999979362,
+      "p95": 26.51844399998663,
+      "max": 28.556523000006564,
+      "pass": true
+    },
+    {
+      "name": "lists: first page, everyone by next task (agent (2634 own))",
+      "budgetMs": 400,
+      "budgetSource": "R-PAR-29: first page p95 ≤ 400 ms",
+      "n": 20,
+      "p50": 58.0939650000073,
+      "p95": 64.25673299998743,
+      "max": 64.42021700000623,
+      "pass": true
+    },
+    {
+      "name": "lists: count, everyone by next task (agent (2634 own))",
+      "budgetMs": 800,
+      "budgetSource": "R-PAR-29: count p95 ≤ 800 ms",
+      "n": 20,
+      "p50": 26.093047000002116,
+      "p95": 27.778790000011213,
+      "max": 28.11094000004232,
+      "pass": true
+    }
+  ],
+  "plans": {}
+}

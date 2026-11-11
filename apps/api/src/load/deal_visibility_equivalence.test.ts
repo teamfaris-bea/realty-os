@@ -2,6 +2,10 @@
 // app.contact_detail_row(...), an inlinable twin of app.contact_detail_visible, so the TC's deal-contact set is
 // built once per statement instead of once per child row. The scale-lane review fixes did the same for the FUB
 // parity detail tables (tags, custom values, stage history, relationships, bulk items: SELECT policies only).
+// Lane perf-misses-2 (migration helper_plan_cache): contact_tags_select and contact_field_values_select gained a
+// leading (SELECT app.is_tenant_wide()) OR ..., and the helpers they call are PL/pgSQL with the same queries; the
+// comparison below (old USING = 0021's per-row app.contact_detail_visible) covers both, and now also runs as support
+// without and with a live grant and as a client (portal) principal.
 // These tests prove WHO-SEES-WHAT is unchanged.
 //
 // Method: for every member (Owner, Admin, Team Lead, Agent, ISA, TC) and the system actor, one transaction
@@ -74,7 +78,8 @@ const OLD_DETAIL = `CREATE FUNCTION pg_temp.old_detail(p_tenant uuid, p_contact 
           OR c.id = ANY (app.my_collab_contact_ids()) OR c.id = ANY (app.my_deal_contact_ids())))
 $$`;
 
-type Actor = { label: string; userId: string; kind: 'user' | 'system' };
+/** user and system as the API sets them; support with or without a live grant; a client (portal) principal (lane perf-misses-2) */
+type Actor = { label: string; userId: string; kind: 'user' | 'system' | 'support' | 'client'; grant?: boolean };
 let db: TestDb;
 let actors: Actor[] = [];
 /** variant name -> contact id (tenant T) */
@@ -82,6 +87,17 @@ const v: Record<string, string> = {};
 let tcUser = '';
 
 async function setContext(c: pg.Client, a: Actor): Promise<void> {
+  if (a.grant) {
+    // a live support grant, inside the test's own transaction (rolled back with it); written as the superuser
+    await c.query(`INSERT INTO support_access_grants (tenant_id, id, support_user_id, granted_by_user_id, reason, expires_at)
+                   SELECT $1, gen_random_uuid(), $2, m.user_id, 'equivalence test', now() + interval '1 hour'
+                     FROM memberships m WHERE m.tenant_id = $1 AND m.role = 'owner' ORDER BY m.user_id LIMIT 1`, [T, a.userId]);
+  }
+  if (a.kind === 'client') {
+    await c.query(`SELECT set_config('app.tenant_id', $1, true), set_config('app.principal_type', 'client', true), set_config('app.portal_account_id', $2, true),
+                          set_config('app.user_id', '', true), set_config('app.actor_kind', '', true), set_config('app.ownership_command', '', true)`, [T, a.userId]);
+    return;
+  }
   await c.query(`SELECT set_config('app.tenant_id', $1, true), set_config('app.user_id', $2, true), set_config('app.actor_kind', $3, true),
                         set_config('app.principal_type', 'staff', true), set_config('app.ownership_command', $4, true)`, [T, a.userId, a.kind, CMD]);
 }
@@ -117,7 +133,11 @@ beforeAll(async () => {
     const coAgent = (await su.query<{ user_id: string }>(`SELECT dm.user_id FROM deal_members dm JOIN memberships m ON m.tenant_id = dm.tenant_id AND m.user_id = dm.user_id
                                                             WHERE dm.tenant_id = $1 AND m.role = 'agent' GROUP BY 1 ORDER BY count(*) DESC, 1 LIMIT 1`, [T])).rows[0]!.user_id;
     const sample = ms.filter((m, i) => ms.findIndex((x) => x.role === m.role) === i || ms.findLastIndex((x) => x.role === m.role) === i || m.user_id === coAgent);
-    actors = [...sample.map((m, i) => ({ label: `${m.role}#${i}`, userId: m.user_id, kind: 'user' as const })), { label: 'system', userId: '', kind: 'system' }];
+    // support staff are platform users outside the tenant (the grant decides); a client principal has no user
+    const supportUser = (await su.query<{ id: string }>(`SELECT id FROM users WHERE id NOT IN (SELECT user_id FROM memberships WHERE tenant_id = $1) ORDER BY id LIMIT 1`, [T])).rows[0]!.id;
+    actors = [...sample.map((m, i) => ({ label: `${m.role}#${i}`, userId: m.user_id, kind: 'user' as const })), { label: 'system', userId: '', kind: 'system' },
+      { label: 'support', userId: supportUser, kind: 'support' }, { label: 'support+grant', userId: supportUser, kind: 'support', grant: true },
+      { label: 'client', userId: loadUuid(SLUG, 'portal-account:none'), kind: 'client' }];
     tcUser = ms.find((m) => m.role === 'tc')!.user_id;
     const agent = ms.find((m) => m.role === 'agent')!.user_id;
 
@@ -237,7 +257,7 @@ afterAll(async () => {
 
 describe('deal visibility once per statement: contact-children and timeline policies keep visibility identical', () => {
   it('the fixture covers every role, every ownership state and every deal variant', async () => {
-    expect(new Set(actors.map((a) => a.label.split('#')[0]))).toEqual(new Set(['owner', 'admin', 'team_lead', 'agent', 'isa', 'tc', 'system']));
+    expect(new Set(actors.map((a) => a.label.split('#')[0]))).toEqual(new Set(['owner', 'admin', 'team_lead', 'agent', 'isa', 'tc', 'system', 'support', 'support+grant', 'client']));
     expect(Object.keys(v).sort()).toEqual(['closedOnTcDeal', 'dealContactsOnly', 'deletedOnTcDeal', 'leftDeal', 'movedByAgent', 'movedByTc',
       'offeredOnTcDeal', 'pondNotOnDeal', 'pondOnTcDeal', 'primaryOnTcDeal', 'primaryOnly'].sort());
     const su = new pg.Client({ connectionString: db.ownerUrl });
@@ -343,11 +363,13 @@ describe('deal visibility once per statement: contact-children and timeline poli
       `(SELECT tenant_id AS t, id FROM contacts WHERE tenant_id = $1) UNION ALL (SELECT tenant_id, id FROM contacts WHERE tenant_id <> $1 ORDER BY id LIMIT 50)`, [T])).rows;
     await su.end();
     for (const a of actors) {
-      const c = new pg.Client({ connectionString: db.appUserUrl });
+      // as the superuser for the context (a support grant row is written in the transaction), then app_user
+      const c = new pg.Client({ connectionString: db.ownerUrl });
       await c.connect();
       try {
         await c.query('BEGIN');
         await setContext(c, a);
+        await c.query('SET LOCAL ROLE app_user');
         await c.query(OLD_DETAIL);
         const r = (await c.query<{ n: number; differ: number; differ_old: number }>(`
           SELECT count(*)::int AS n,

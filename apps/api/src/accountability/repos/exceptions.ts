@@ -361,7 +361,9 @@ export async function queueRows(tx: Tx, f: QueueFilter): Promise<QueueRow[]> {
   const r = await sql<QueueRow>`
     SELECT ${ITEM_COLUMNS},
            (c.id IS NOT NULL) AS contact_visible,
-           COALESCE(c.id IS NOT NULL AND app.contact_detail_visible(c.tenant_id, c.id), false) AS contact_detail_visible,
+           -- app.contact_detail_row is the inlinable twin of contact_detail_visible (migration 0031): its InitPlans
+           -- run once per statement, not once per queue row (lane perf-misses-2; lane perf-misses §7 item 2)
+           COALESCE(c.id IS NOT NULL AND EXISTS (SELECT 1 FROM app.contact_detail_row(c.tenant_id, c.id)), false) AS contact_detail_visible,
            c.first_name AS contact_first_name, c.last_name AS contact_last_name, c.display_name AS contact_display_name,
            c.ownership_state AS contact_ownership_state, c.owner_user_id AS contact_owner_user_id,
            c.offered_to_user_id AS contact_offered_to_user_id, c.ownership_seq AS contact_ownership_seq,

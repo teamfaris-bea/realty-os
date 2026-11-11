@@ -226,11 +226,17 @@ export interface CommandRecord {
 }
 
 export async function commandRecord(tx: Tx, commandId: string): Promise<CommandRecord> {
-  const ev = await sql<{ contact_id: string; type: string }>`SELECT contact_id, type FROM app.ownership_command_events(${commandId}::uuid)`.execute(tx);
-  const rj = await sql<{ contact_id: string | null; command_kind: string }>`
-    SELECT contact_id, command_kind FROM ownership_command_rejections
-     WHERE tenant_id = app.tenant_id() AND command_id = ${commandId}::uuid AND actor_user_id = app.user_id()`.execute(tx);
-  return { events: ev.rows, rejection: rj.rows[0] ?? null };
+  // one round trip (lane perf-misses-2): the two reads are sub-queries of one statement, each unchanged
+  // (the events in the function's own order, the caller's rejection row)
+  const r = await sql<{ events: { contact_id: string; type: string }[] | null; rejection: { contact_id: string | null; command_kind: string } | null }>`
+    SELECT (SELECT json_agg(json_build_object('contact_id', e.contact_id, 'type', e.type) ORDER BY e.ordinality)
+              FROM app.ownership_command_events(${commandId}::uuid) WITH ORDINALITY AS e) AS events,
+           (SELECT json_build_object('contact_id', x.contact_id, 'command_kind', x.command_kind)
+              FROM ownership_command_rejections x
+             WHERE x.tenant_id = app.tenant_id() AND x.command_id = ${commandId}::uuid AND x.actor_user_id = app.user_id()
+             LIMIT 1) AS rejection`.execute(tx);
+  const row = r.rows[0];
+  return { events: row?.events ?? [], rejection: row?.rejection ?? null };
 }
 
 /** Whether the record is empty (the command id is new to this caller). */

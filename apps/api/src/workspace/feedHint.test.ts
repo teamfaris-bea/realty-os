@@ -1,0 +1,75 @@
+// The feed card's channel hint reads the send gate's opt-out fan-out (R-PAR-12, R-CONSENT-7, outbound-3):
+// an opt-out on a phone the agent then removed still blocks texting (calling) the person's other phone, so the
+// card never shows a channel as available while the composer and the send gate refuse it. A phone removed as a
+// confirmed wrong number is outside the fan-out, exactly as in comms/repos/gate.ts optOutFanoutPhoneHmacs.
+import { withTenantTx } from '@realty/db';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
+import { optOutFanoutPhoneHmacs } from '../comms/repos/gate.js';
+import { intake } from '../leads/testing.js';
+import { type AssistantWorld, assistantWorld, call, inboundSms, randomEmail, randomPhone } from '../assistant/testing.js';
+import { gateSummaries } from './repos/feedInputs.js';
+
+let h: ApiHarness;
+let w: AssistantWorld;
+
+beforeAll(async () => {
+  h = await createApiHarness();
+  w = await assistantWorld(h, { agents: 1 });
+});
+afterAll(async () => {
+  await h?.close();
+});
+
+async function person(name: string): Promise<{ contactId: string; first: string; second: string; firstId: string }> {
+  const [first, second] = [randomPhone(), randomPhone()];
+  const r = await intake(h, w, { fullName: name, phones: [first, second], emails: [randomEmail()] });
+  const firstId = (await h.su.query<{ id: string }>('SELECT id FROM contact_points WHERE contact_id = $1 AND address = $2', [r.contactId, first])).rows[0]!.id;
+  return { contactId: r.contactId, first, second, firstId };
+}
+const revoke = async (contactId: string, pointId: string, channel: 'sms' | 'voice') =>
+  expect((await call(w.owner, 'POST', `/contacts/${contactId}/consent`, { kind: 'revoke', pointId, channel, purpose: 'all', evidence: { note: 'asked us to stop' } })).status).toBe(200);
+const remove = async (contactId: string, pointId: string, reason: string) =>
+  expect((await call(w.owner, 'POST', `/contacts/${contactId}/points/${pointId}/remove`, { reason })).status).toBe(200);
+const hint = (contactId: string) =>
+  withTenantTx(w.owner.actor(), async (tx) => (await gateSummaries(tx, [contactId])).get(contactId as never) ?? {}, { db: h.database });
+const fanout = (contactId: string) => withTenantTx(w.owner.actor(), (tx) => optOutFanoutPhoneHmacs(tx, contactId), { db: h.database });
+
+describe('feed channel hint = the send gate\'s opt-out fan-out (R-PAR-12)', () => {
+  it('R-PAR-12 a STOP on a phone that was then removed blocks texting on the card, as the gate does', async () => {
+    const p = await person('Hana Hint');
+    await revoke(p.contactId, p.firstId, 'sms');
+    await remove(p.contactId, p.firstId, 'old');
+    // the gate: the removed phone is in the fan-out, so the remaining phone is denied
+    expect(await fanout(p.contactId)).toHaveLength(2);
+    const g = await hint(p.contactId);
+    expect(g.sms).toEqual({ outcome: 'deny', explanation: 'Opted out of texts' });
+    expect(g.voice).toBeUndefined(); // calling the live phone is still allowed
+    expect(g.email).toBeUndefined();
+  });
+
+  it('R-PAR-12 outbound-3 a "do not call me" on a removed phone blocks calling the other phone on the card', async () => {
+    const p = await person('Vic Voice');
+    await revoke(p.contactId, p.firstId, 'voice');
+    await remove(p.contactId, p.firstId, 'old');
+    const g = await hint(p.contactId);
+    expect(g.voice).toEqual({ outcome: 'deny', explanation: 'Asked not to be called' });
+    expect(g.sms).toBeUndefined();
+  });
+
+  it('R-PAR-12 a phone removed as a confirmed wrong number is outside the fan-out: its STOP does not block the person', async () => {
+    // one phone texts STOP and then "Wrong number" (a recorded wrong-number report), a second phone is added
+    // afterwards, and the first is removed as a confirmed wrong number (the reachability test's E169 shape)
+    const first = randomPhone();
+    const r = await intake(h, w, { fullName: 'Wren Wrong', phones: [first], emails: [randomEmail()] });
+    const p = { contactId: r.contactId };
+    expect((await inboundSms(h, first, w.mainNumber, 'STOP')).statusCode).toBe(200);
+    expect((await inboundSms(h, first, w.mainNumber, 'Wrong number')).statusCode).toBe(200);
+    expect((await call(w.owner, 'POST', `/contacts/${p.contactId}/points`, { kind: 'phone', address: randomPhone(), label: 'work' })).status).toBe(201);
+    const gone = (await h.su.query<{ id: string }>('SELECT id FROM contact_points WHERE contact_id = $1 AND address = $2', [p.contactId, first])).rows[0]!.id;
+    await remove(p.contactId, gone, 'wrong_number');
+    expect(await fanout(p.contactId)).toHaveLength(1);
+    const g = await hint(p.contactId);
+    expect(g.sms).toBeUndefined();
+  });
+});

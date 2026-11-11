@@ -15,6 +15,11 @@ measured on a fresh 250k seed (§4.1):
 | Team scoreboard 30d, team lead / admin | 300 ms | 348 ms / 799 ms | 94 ms / 203 ms |
 | Thread as a TC on about 2,900 deals | 300 ms | 753 ms | 134 ms |
 
+**After lane `perf-misses-2` (§4.2):** the Team Lead's exception queue (468 → 122 ms p95 on the slower lane-2 VM) and
+every smart list of the Owner (58 of 58 measurements within budget) pass; accept (1.01 s → 796 ms) and 44 simultaneous
+claims (573 → 411 ms) still miss on 4 shared vCPUs. §4.3 has the CPU floor and the database cores that would meet the
+budget.
+
 Two operations still miss on this 4-core machine, where the database and the API share the CPU (§7):
 - **Accept with 47 agents at once:** 760 → 637 ms.
 - **44 agents each claiming at once:** 529 → 382 ms.
@@ -238,6 +243,137 @@ Checks (before):
 - They also slow the bulk load: the 250k seed took 1,369 s, against 1,011 s before.
 
 
+### 4.2 Lane `perf-misses-2` (2026-11): before and after
+
+**Runs.** Same method and seed as §4.1 (`pnpm load:seed --contacts 250000`, `pnpm load:bench`, n = 40 per read), on a
+4-vCPU Intel Xeon @ 2.10 GHz cloud VM, 16 GB, Postgres 16.15 with default settings (`shared_buffers` 128 MB), API and
+database on the same host. This VM is about 1.4× slower than §1's: the same "before" code reads the Team Lead queue at
+442-468 ms here against 247-300 ms there, so **only this table's before/after pairs are compared**.
+- The seeded database was copied once as a template (`CREATE DATABASE … TEMPLATE`) and every run started from a fresh
+  copy of it, so before and after ran on identical data.
+- Before = staging `b538cef` (a worktree of it), two runs: `docs/perf/before-perf-misses-2-250k.json` (load average
+  0.66 at start) and `…-run2.json` (1.38). After = this lane's final code with migration `helper_plan_cache`:
+  `docs/perf/after-perf-misses-2-250k.json` (1-minute load average 2.4 at the start, decaying from a test run that had
+  just ended; nothing else ran during the bench).
+- Every correctness check passed before and after: one winner per contested lead (20/20, losers 409
+  `LEAD_ALREADY_CLAIMED` ×180), 200/200 offers accepted by their offerees, 44/44 uncontested claims, 500/500 sends,
+  30/30 opted-out numbers never sent to, import counts reconcile.
+
+| operation | budget (p95) | before p50 / p95 | before p95 (run 2) | after p50 / p95 | after |
+|---|---:|---:|---:|---:|---|
+| feed: GET /feed (busiest agent) | 150 ms | 35 ms / 49 ms | 43 ms | 42 ms / 51 ms | pass |
+| feed: GET /feed (median agent) | 150 ms | 51 ms / 71 ms | 60 ms | 40 ms / 61 ms | pass |
+| feed: GET /feed after 3 new client messages (busiest agent) | 150 ms | 99 ms / 123 ms | 119 ms | 77 ms / 92 ms | pass |
+| search name: GET /search (agent) | 300 ms | 33 ms / 50 ms | 48 ms | 23 ms / 37 ms | pass |
+| search phone: GET /search (agent) | 300 ms | 14 ms / 19 ms | 20 ms | 14 ms / 17 ms | pass |
+| search email: GET /search (agent) | 300 ms | 12 ms / 16 ms | 17 ms | 12 ms / 15 ms | pass |
+| search name: GET /search (admin) | 300 ms | 20 ms / 30 ms | 28 ms | 15 ms / 21 ms | pass |
+| search phone: GET /search (admin) | 300 ms | 15 ms / 22 ms | 21 ms | 15 ms / 17 ms | pass |
+| search email: GET /search (admin) | 300 ms | 13 ms / 18 ms | 16 ms | 12 ms / 16 ms | pass |
+| contact page: 6 calls in parallel (busiest agent) | 300 ms | 62 ms / 76 ms | 72 ms | 47 ms / 55 ms | pass |
+| contact timeline alone: GET /contacts/:id/timeline?limit=100 | 300 ms | 40 ms / 52 ms | 43 ms | 27 ms / 31 ms | pass |
+| thread: contact + timeline (chattiest contacts, 97–57 messages) | 300 ms | 37 ms / 51 ms | 44 ms | 28 ms / 34 ms | pass |
+| thread as the TC (deal visibility): contact + timeline | 300 ms | 200 ms / 242 ms | 257 ms | 141 ms / 174 ms | pass |
+| exception queue: GET /team/exceptions?state=live&limit=200 (team lead) | 300 ms | 389 ms / 468 ms | 442 ms | 95 ms / 122 ms | pass |
+| exception queue: GET /team/exceptions?state=live&limit=200 (admin) | 300 ms | 275 ms / 318 ms | 323 ms | 151 ms / 200 ms | pass |
+| exception queue: GET /team/exceptions?state=live&limit=200 (busiest agent) | 300 ms | 108 ms / 136 ms | 122 ms | 46 ms / 59 ms | pass |
+| scoreboard: GET /scoreboard?range=7d (busiest agent) | 300 ms | 33 ms / 39 ms | 40 ms | 27 ms / 32 ms | pass |
+| scoreboard: GET /scoreboard?range=90d (busiest agent) | 300 ms | 44 ms / 58 ms | 63 ms | 49 ms / 53 ms | pass |
+| team scoreboard: GET /team/scoreboard?range=30d (team lead) | 300 ms | 122 ms / 152 ms | 159 ms | 106 ms / 145 ms | pass |
+| team momentum: GET /team/momentum (team lead) | 300 ms | 40 ms / 44 ms | 44 ms | 33 ms / 38 ms | pass |
+| team scoreboard: GET /team/scoreboard?range=30d (admin) | 300 ms | 267 ms / 307 ms | 288 ms | 210 ms / 277 ms | pass |
+| team momentum: GET /team/momentum (admin) | 300 ms | 45 ms / 59 ms | 57 ms | 36 ms / 47 ms | pass |
+| pond cards: GET /ponds/:id/cards?limit=50 (median agent) | 300 ms | 329 ms / 402 ms | 422 ms | 137 ms / 178 ms | pass |
+| pond cards: GET /ponds/:id/cards?limit=50 (team lead) | 300 ms | 196 ms / 261 ms | 271 ms | 156 ms / 187 ms | pass |
+| pond list: GET /ponds (admin) | 300 ms | 42 ms / 51 ms | 52 ms | 40 ms / 46 ms | pass |
+| accept: 200 live offers, 47 agents accepting at once | 300 ms | 526 ms / 1.01 s | 844 ms | 418 ms / 796 ms | **miss** |
+| claim: 20 pond leads, 10 agents racing on each (all requests) | 300 ms | 150 ms / 241 ms | 247 ms | 98 ms / 154 ms | pass |
+| claim: 44 agents each claim a different lead at once | 300 ms | 468 ms / 573 ms | 615 ms | 333 ms / 411 ms | **miss** |
+| dispatch: 500 immediate SMS sends, concurrency 8 | 300 ms | 293 ms / 355 ms | 367 ms | 192 ms / 233 ms | pass |
+| import: 50000-row CSV dry run (job, one transaction) | — | 22.41 s / 22.41 s | 21.41 s | 17.75 s / 17.75 s | — |
+
+**Smart lists** (`listsBench.ts --n 20`, the same `realty_lists` copy of the seed plus `seedLists.ts`; before =
+`b538cef` code, after = this lane's: `docs/perf/before-perf-misses-2-lists-250k.json`,
+`docs/perf/after-perf-misses-2-lists-250k.json`). Before: 51 of 58 within budget, all seven misses the Owner's. After:
+**58 of 58**. Owner rows that moved (p50 / p95):
+
+| list (Owner) | budget | before | after |
+|---|---:|---:|---:|
+| count, tag: popular | 800 ms | 1,828 / 1,975 ms | 101 / 120 ms |
+| count, tag: rare | 800 ms | 1,823 / 2,083 ms | 47 / 51 ms |
+| count, budget ≥ 1.5M | 800 ms | 689 / 766 ms | 112 / 135 ms |
+| count, birthday in 14 days | 800 ms | 3 s timeout (`LIST_TOO_SLOW`) | 232 / 302 ms |
+| count, features pool + timeline now | 800 ms | 3 s timeout (`LIST_TOO_SLOW`) | 474 / 545 ms |
+| count, OR group (tag or stage) | 800 ms | 644 / 738 ms | 526 / 667 ms |
+| first page, name contains | 400 ms | 456 / 544 ms | 20 / 26 ms |
+| first page, everyone by name | 400 ms | 477 / 573 ms | 13 / 16 ms |
+| first page, everyone by next task | 400 ms | 928 / 1,203 ms | 173 / 226 ms |
+
+The agent "features + timeline" first page that §Smart lists lists at 406 ms reads 65 / 87 ms before and 50 / 72 ms
+after: the scale-lane review's `contact_detail_row` policies (§7.2) had already closed it.
+
+**What changed** (security review: docs/SECURITY.md §6.8).
+
+| change | where | effect (measured at 250k) |
+|---|---|---|
+| Twelve non-inlined RLS helpers (`is_member`, `is_tenant_wide`, `my_role`, `my_pond_ids`, `contact_visible`, …) move from `LANGUAGE sql` to `plpgsql` with the same query: their plans are cached per session instead of re-planned in every statement that calls them | migration `helper_plan_cache` | one tap at a time: Postgres execution per accept 23 → 11 ms, per claim 27 → 13 ms (pg_stat_statements, track = all); a Team Lead's per-row `contact_detail_visible` over the tenant's tasks 98 s → 18-21 s |
+| Exception queue rows read contact detail through `app.contact_detail_row` | `accountability/repos/exceptions.ts` | with the row above: Team Lead queue 468 → 122 ms, admin 318 → 200 ms |
+| Tag and custom-value SELECT policies: `(SELECT app.is_tenant_wide()) OR …` | migration `helper_plan_cache` | Owner/Admin reads of those rows skip the per-row probe |
+| Value-driven counts: the required tag/value rows drive the count (several as one `INTERSECT`) | `lists/repos/people.ts` | the count rows above |
+| Indexes `contacts (tenant_id, lower(display_name), id)` and `contact_field_values (tenant_id, field_id, contact_id) INCLUDE (value_options, value_number, value_date)` | migration `helper_plan_cache` | name sort; features count 888 → 545 ms (without the covering index 960-987 ms) |
+| Owner/Admin "next task" page: one statement in two ordered, page-limited parts | `lists/repos/people.ts` | 1,203 → 226 ms |
+| Owner/Admin name-filter page from a bounded prefix of the sort index | `lists/repos/people.ts` | 544 → 26 ms |
+| Ownership taps: six fewer round trips (tenant facts + people + open deal + clock in one statement; one stored-outcome check under the lock; `commandRecord` in one statement) | `packages/db/src/ownership`, `leads/repos/contacts.ts` | accept 37 → 31 statements, uncontested claim 36 → 30 |
+| Feed card channel hint reads the send gate's opt-out fan-out (correctness, R-PAR-12) | `workspace/repos/feedInputs.ts` | none measurable |
+
+Other rows moved too (pond cards for the median agent 402 → 178 ms, dispatch 355 → 233 ms p95, the import dry run
+22.4 → 17.7 s): the helpers of the first row are called by every policy.
+
+### 4.3 Why accept and claim still miss (lane `perf-misses-2`)
+
+**The cost is CPU, not waits.** Profiled with `pnpm load:bench --profile` (reads first, as the bench runs):
+
+| batch | Postgres CPU per request | API process CPU per request | requests at once | CPU floor per request (concurrent × CPU / 4 cores) | measured p50 / p95 |
+|---|---:|---:|---:|---:|---:|
+| accept | 34.4 ms | 9.1 ms | 47 agents | 47 × 43.5 / 4 = **511 ms** | 418 / 796 ms |
+| claim, 44 different leads | 31.1 ms | 5.0 ms | 44 | 44 × 36.1 / 4 = **397 ms** (the batch wall) | 333 / 411 ms (wall 419) |
+
+- The same accept costs about 19 ms of Postgres execution and planning one tap at a time; concurrency on 4 shared vCPUs
+  inflates it to 34 ms.
+- Sampling shows no lock waits beyond the per-lead advisory lock of a same-lead race. About half of the pooled
+  connections sit idle in a transaction waiting for the API process (one Node event loop, 71% busy, shared with the
+  bench).
+- The p50 sits at the CPU floor. The accept p95 is about twice its p50: the requests that queue behind the busiest
+  moment of the batch.
+
+**What was tried and not adopted.** Named prepared statements for every application statement (plans cached per
+connection): Postgres CPU per claim 30.2 → 22.3 ms, uncontested-claim p95 480 → 374 ms, accept p95 unchanged. It
+changes plan selection (generic plans) for every query of the application, the list and search reads included, so it
+needs its own review; it is not in this lane.
+
+**What would meet 300 ms** (from the floor above, with the API on its own host so the database's cores serve only
+Postgres):
+- Claim, 44 at once: 44 × 31.1 ms / 300 ms ≈ 4.6, so **≥ 5 dedicated database vCPUs** (≥ 6 if the API shares them).
+- Accept, 47 at once with p95 ≈ 2 × p50: p50 ≤ 150 ms needs 47 × 34.4 / 150 ≈ 10.8, so **about 12 database vCPUs** at
+  this per-tap cost. At the 19-24 ms an uncontended core spends per accept, it is 6-8 vCPUs.
+- Per-tap CPU is the other lever (prepared statements, above; fewer statements per tap). Each millisecond saved is
+  about 12 ms of p50 at 47 taps on 4 cores.
+
+**Owner's chosen remedy: a separate database host with ≥ 4 cores (estimate, not measured).** The API leaves the
+database's cores, so the floor uses Postgres CPU per tap only. Two bounds: the per-tap CPU measured under this
+concurrency on the shared host (it includes contention with the API process, so it is pessimistic), and the cost of one
+uncontended tap (pg_stat_statements execution + planning, about 19 ms per accept and 20 ms per claim, plus about 3-5 ms
+of parse and protocol: 22-24 ms; optimistic).
+
+| batch | 4 dedicated DB cores, pessimistic | 4 dedicated DB cores, optimistic | budget met? |
+|---|---:|---:|---|
+| claim, 44 at once (p95 ≈ the batch wall) | 44 × 31.1 / 4 = 342 ms | 44 × 22 / 4 = 242 ms | likely, not certain |
+| accept, 47 at once (p50; p95 ≈ 2 × p50 here) | 47 × 34.4 / 4 = 404 ms → p95 ≈ 800 ms | 47 × 24 / 4 = 282 ms → p95 ≈ 560 ms | **no** |
+
+On 4 dedicated cores the claim batch probably meets 300 ms, but accept does not: its p95 needs p50 ≤ about 150 ms, i.e.
+47 × 24 / 150 ≈ 7.5 → **8 dedicated database cores** at the optimistic cost (about 11-12 at the pessimistic one), or a
+lower CPU per tap. These are arithmetic estimates from this lane's measurements; they need a run on that topology.
+
 ## 5. What was slow, and why
 
 ### 5.1 Per-row visibility checks (the root cause)
@@ -357,7 +493,8 @@ cap of the read they came from). They now count every live item the viewer can s
 
 Lane `perf-misses` closed four of the five misses listed here before (§4.1). What remains:
 
-1. **Accept with 47 agents at once (p95 637 ms) and 44 simultaneous claims (382 ms), budget 300 ms.**
+1. **Accept with 47 agents at once (p95 637 ms) and 44 simultaneous claims (382 ms), budget 300 ms.** Lane
+   `perf-misses-2` cut Postgres execution per tap in half and six round trips, and measured the remaining floor (§4.3).
    - **Profile.** Taken during the lane with the bench's `--profile` option:
      - Sampling found no lock waits besides the per-lead advisory lock in a same-lead race.
      - Each tap held five pooled connections in sequence and sent 54 statements, costing Postgres 40–48 ms of CPU.
@@ -377,9 +514,7 @@ Lane `perf-misses` closed four of the five misses listed here before (§4.1). Wh
      any queueing. The rest is RLS work on `UPDATE contacts` and the ledger insert (WITH CHECK visibility, guards,
      and the feed and scoreboard marking triggers).
    - **What would close it:** more database cores, or a separate, security-reviewed cheaper write-path policy.
-2. **Exception queue for a team lead is close to its budget** (§4.1: 247–300 ms p95). The next step would be the
-   evidence reads' per-row `contact_detail_visible`, through the same inlined helper as the 20 policies of
-   migrations `deal_visibility_once` and `scale_review_fixes` (§7.2).
+2. **Exception queue for a team lead**: closed by lane `perf-misses-2` (§4.2: 122 ms p95).
 3. **Exception recompute** now takes 1.2 s for the large tenant (was 14.4 s). The remaining ~1.7 s seen under
    load is the per-row `messages_select` check on the tenant's failing sends.
 4. **Search worst case.** A query whose words are all common but never occur together (e.g. "the lender" over
@@ -522,7 +657,8 @@ value-driven count shape (a semi-join from the tag or value index, cheap once th
 stage history, relationships and bulk items) read through `app.contact_detail_row`, the inlined form of migration
 `deal_visibility_once` (§7.2): no row read pays a `contact_detail_visible` call any more, for any role. The table
 above was measured before that change and was **not** re-run at 250k (shared machine); §7.2 has the before/after
-on a 6,000-person fixture. The value-driven count shape is still not built.
+on a 6,000-person fixture. The value-driven count shape is still not built. **Lane `perf-misses-2` built it** and re-measured at 250k:
+58 of 58 within budget (§4.2).
 
 Reproduce: `pnpm load:seed --contacts 250000`, then
 `pnpm --filter @realty/api exec tsx --env-file-if-exists=../../.env --conditions=@realty/source src/lists/perf/seedLists.ts`
@@ -536,7 +672,16 @@ pnpm load:bench --out after.json            # about 2 min after perf-misses; con
 pnpm load:bench --explain --explain-ms 30 --out plans.log   # auto_explain plans of the app's SQL
 pnpm load:smoke                             # CI-sized: 20k contacts, about 3.5 min, loose ceilings
 node scripts/perf-table.mjs before.json after.json   # the table in §4
+# lane perf-misses-2 tools (bench-only):
+pnpm --filter @realty/api exec tsx --env-file-if-exists=../../.env --conditions=@realty/source src/load/tapProfile.ts --n 60
+#   one accept / claim at a time; with pg_stat_statements loaded (track = all) prints each statement's execution and planning time
+pnpm --filter @realty/api exec tsx --env-file-if-exists=../../.env --conditions=@realty/source src/lists/perf/explainList.ts --name "tag: popular"
+#   EXPLAIN (ANALYZE, BUFFERS) of one bench list's first page and count as the Owner
 ```
+
+A bench run consumes offers, pond leads and send targets. Lane `perf-misses-2` re-seeded once and copied the result
+(`CREATE DATABASE realty_load_base TEMPLATE realty_load`, 33 s for 7 GB); each run restored `realty_load` from that
+copy and applied the lane's migration, so every run started from the same data.
 
 `pnpm load:smoke` is the repeatable CI check. It seeds 20k contacts into a throwaway database, runs every operation
 with fewer iterations, and fails on:
