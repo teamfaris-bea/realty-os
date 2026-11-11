@@ -128,9 +128,31 @@ export function isRunning(b: ImportBatch): boolean {
   return RUNNING_BATCH.has(b.status) || b.stages.some((s) => RUNNING_STAGE.has(s.status));
 }
 
-/** Does source = will import + needs review + rejected + duplicate? (said, never hidden) */
+/**
+ * Does source = will import + needs review + rejected + duplicate? (said, never hidden) After the commit the other
+ * three are the recount's, so it is checked against what was imported: a record the commit documented as not
+ * imported (a person brought in unassigned, owner decision B4) is in the rejected count, not a gap.
+ */
 export function reconciles(c: NonNullable<ImportStage['counts']>): boolean {
-  return c.source === c.willImport + c.needsReview + c.rejected + c.duplicate;
+  return c.source === (c.imported ?? c.willImport) + c.needsReview + c.rejected + c.duplicate;
+}
+
+// ---- owner decision B4 (2026-11-11): people the ownership commit brought in unassigned ---------------------
+
+/** GET /imports/:id/report, ownership: the people brought in unassigned; "Assign these people" selects exactly `contactIds`. */
+export interface UnassignedView {
+  total: number;
+  stillUnassigned: number;
+  /** the people who still have no owner, at most the bulk Assign cap (2,000) */
+  contactIds: string[];
+  people: { contactId: string; name: string; sentence: string; stillUnassigned: boolean }[];
+}
+
+/** The verification with what the approval expected and the outcomes the commit documented (each with a sentence). */
+export interface DocumentedOutcome {
+  code: string;
+  count: number;
+  sentence: string;
 }
 
 /** Bytes → base64 in chunks (no stack overflow on large files). */

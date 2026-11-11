@@ -339,3 +339,96 @@ describe('Imports', () => {
     expect(within(report).getByRole('table')).toBeInTheDocument();
   });
 });
+
+// Owner decision B4 (2026-11-11): a member who can no longer hold leads at the ownership commit gets none. Their people
+// come in unassigned with the reason, the stage verifies (a documented outcome, never a mismatch), and the report lists
+// them with "Assign these people": the existing bulk Assign, with exactly their ids selected.
+describe('people brought in unassigned (owner decision B4)', () => {
+  const OMAR = '01900000-0000-7000-8000-00000000c101';
+  const QUIN = '01900000-0000-7000-8000-00000000c102';
+  const SAM = '01900000-0000-7000-8000-0000000000b1';
+  const BEA = '01900000-0000-7000-8000-0000000000b2';
+  const ME = '01900000-0000-7000-8000-0000000000aa';
+  const committedOwnership = { source: 7, willImport: 4, imported: 2, needsReview: 0, rejected: 4, duplicate: 1 };
+  const why = "Brought in unassigned: Bea Agent's account is suspended.";
+  const unassigned = (still: boolean) => ({
+    total: 2,
+    stillUnassigned: still ? 2 : 0,
+    contactIds: still ? [OMAR, QUIN] : [],
+    people: [
+      { contactId: OMAR, name: 'Omar Optout', sentence: why, stillUnassigned: still },
+      { contactId: QUIN, name: 'Quin Notext', sentence: why, stillUnassigned: still },
+    ],
+  });
+  const ownershipRow = (still: boolean) => ({
+    category: 'ownership',
+    status: 'verified',
+    phase: 'committed',
+    source: 7,
+    imported: 2,
+    needsReview: 0,
+    rejected: 4,
+    duplicate: 1,
+    reconciles: true,
+    lines: ['7 assignments in Follow Up Boss.', "2 people came in unassigned because Bea Agent's account is suspended."],
+    unassigned: unassigned(still),
+  });
+  const member = (userId: string, displayName: string, role: string, status = 'active') => ({ userId, displayName, email: '', role, status, acceptingLeads: true, mfaEnabled: false, joinedAt: null, version: 1 });
+
+  it('E230 after the commit the card reconciles on what was imported: people brought in unassigned are not called a mismatch', async () => {
+    // the plan said 4 will import; 2 came in unassigned: 7 = 2 imported + 4 not imported + 1 already here
+    expect(reconciles(committedOwnership)).toBe(true);
+    expect(reconciles({ ...committedOwnership, imported: null, rejected: 2 })).toBe(true);
+    expect(reconciles({ ...committedOwnership, imported: 3 })).toBe(false);
+    leadAdminApp(importFake(batch([stage('contacts', 'verified'), stage('ownership', 'verified', { counts: committedOwnership })])), `/imports/${BID}`, 'owner');
+    const card = (await screen.findByRole('heading', { name: '2. Who owns each contact' })).closest('article')!;
+    expect(within(card).getByText('2 of 7 imported')).toBeInTheDocument();
+    expect(within(card).queryByText(/don't add up/)).toBeNull();
+  });
+
+  it('E230 the verification says which outcomes the commit documented, and the recount matches against them', async () => {
+    const b = batch([stage('contacts', 'verified'), stage('ownership', 'committed', { counts: committedOwnership })]);
+    const approved = { source: 7, imported: 4, needs_review: 0, rejected: 2, duplicate: 1 };
+    const expected = { source: 7, imported: 2, needs_review: 0, rejected: 4, duplicate: 1 };
+    const documented = [{ code: 'OWNER_UNAVAILABLE', count: 2, sentence: "2 planned assignments came in unassigned because the member they were matched to can't hold leads now (each record says why). They are counted as not imported." }];
+    leadAdminApp(importFake(b).on(`GET /imports/${BID}/stages/ownership/verification`, { status: 200, body: { expected, approved, documented, db: expected, matches: true, diffs: [], sample: [] } }), `/imports/${BID}`, 'owner');
+    const recount = await screen.findByRole('region', { name: 'Recount of who owns each contact' });
+    expect(screen.getByText(documented[0]!.sentence)).toBeInTheDocument();
+    expect(screen.getByText('The recount matches.')).toBeInTheDocument();
+    // the approval's own numbers stay visible next to what is expected now
+    const row = within(recount).getByRole('rowheader', { name: 'Imported' }).closest('tr')!;
+    expect([...row.querySelectorAll('td')].map((td) => td.textContent)).toEqual(['4', '2', '2']);
+    expect(within(recount).getByRole('columnheader', { name: 'Approved' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Mark verified' })).toBeEnabled();
+  });
+
+  it('E231 the report lists them, and "Assign these people" opens the bulk Assign with exactly their ids (never offering the suspended member)', async () => {
+    const b = batch([stage('contacts', 'verified'), stage('ownership', 'verified', { counts: committedOwnership })]);
+    const draft = { id: '01900000-0000-7000-8000-0000000ba001', kind: 'assign', status: 'draft', mine: true, selected: 2, targetCount: 2, preflight: {}, sharedAddresses: 0, counts: { selected: 2, done: 0, skipped: 0, blocked: 0, failed: 0, canceled: 0, pending: 2, byReason: {} }, templateId: null, templateVersion: null, subject: null, body: null, failureCode: null, createdAt: '2026-11-11T10:00:00Z', confirmedAt: null, finishedAt: null };
+    const fake = importFake(b)
+      .on(`GET /imports/${BID}/report`, { status: 200, body: { source: 'Follow Up Boss', parity: null, notImported: null, categories: [ownershipRow(true)] } })
+      .on('GET /members', { status: 200, body: { members: [member(SAM, 'Sam Lee', 'agent'), member(BEA, 'Bea Agent', 'agent', 'suspended'), member(ME, 'Olivia Owner', 'owner')], invites: [] } })
+      .on('POST /bulk-actions', { status: 201, body: { action: draft } });
+    leadAdminApp(fake, `/imports/${BID}`, 'owner');
+    const u = userEvent.setup();
+    const people = await screen.findByRole('region', { name: 'People who came in unassigned' });
+    expect(within(people).getAllByText(why)).toHaveLength(2);
+    expect(within(people).getByRole('link', { name: 'Omar Optout' })).toHaveAttribute('href', `/contacts/${OMAR}`);
+    expect(within(people).getByText('2 still have no owner.')).toBeInTheDocument();
+    await u.click(within(people).getByRole('button', { name: 'Assign these people' }));
+    const picker = await screen.findByRole('region', { name: 'Assign to' });
+    await waitFor(() => expect(within(picker).getAllByRole('button').map((x) => x.textContent)).toEqual(['Olivia Owner (you)', 'Sam Lee']));
+    await u.click(within(picker).getByRole('button', { name: 'Sam Lee' }));
+    await waitFor(() => expect(fake.callsTo('POST /bulk-actions')).toHaveLength(1));
+    expect(fake.callsTo('POST /bulk-actions')[0]!.body).toMatchObject({ kind: 'assign', selection: { contactIds: [OMAR, QUIN] }, toUserId: SAM });
+    expect(await screen.findByRole('dialog', { name: 'Assign 2 of 2?' })).toBeInTheDocument();
+  });
+
+  it('E231 once each of them has an owner the report says so and offers nothing more', async () => {
+    const b = batch([stage('contacts', 'verified'), stage('ownership', 'verified', { counts: committedOwnership })]);
+    leadAdminApp(importFake(b).on(`GET /imports/${BID}/report`, { status: 200, body: { source: 'Follow Up Boss', parity: null, notImported: null, categories: [{ ...ownershipRow(false), lines: ['Both of them have an owner now.'] }] } }), `/imports/${BID}`, 'owner');
+    const people = await screen.findByRole('region', { name: 'People who came in unassigned' });
+    expect(within(people).getByText('Each of them has an owner now.')).toBeInTheDocument();
+    expect(within(people).queryByRole('button', { name: /Assign/ })).toBeNull();
+  });
+});

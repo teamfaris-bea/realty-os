@@ -262,6 +262,15 @@ export async function mappingTargets(tx: Tx): Promise<{ users: Map<string, { rol
   };
 }
 
+/** Display names of these members (the reason a planned assignment came in unassigned names its member, E230). */
+export async function memberNames(tx: Tx, userIds: readonly string[]): Promise<Map<string, string>> {
+  if (userIds.length === 0) return new Map();
+  const r = await sql<{ user_id: string; display_name: string }>`
+    SELECT m.user_id, u.display_name FROM memberships m JOIN users u ON u.id = m.user_id
+     WHERE m.tenant_id = app.tenant_id() AND m.user_id = ANY (${[...new Set(userIds)]}::uuid[])`.execute(tx);
+  return new Map(r.rows.map((x) => [x.user_id, x.display_name]));
+}
+
 // ---- FUB credential (R-IMPORT-11, R-DATA-1) ---------------------------------------------------------
 
 export async function insertCredential(tx: Tx, id: string, secretEnc: Uint8Array, keyVersion: number): Promise<void> {

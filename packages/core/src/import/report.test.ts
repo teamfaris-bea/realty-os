@@ -3,12 +3,14 @@ import fc from 'fast-check';
 import type { ContactId, UserId } from '../foundation/index.js';
 import {
   type Counts,
+  NO_DOCUMENTED,
   SPOT_CHECKS,
   batchReport,
   buildExistingIndex,
   buildVerification,
   commitPlan,
   dryRun,
+  expectedAfterCommit,
   mapFub,
   optOutPreview,
   reconciles,
@@ -67,6 +69,47 @@ describe('verification (R-IMPORT-5)', () => {
     const small = counts(3, 3, 0, 0, 0);
     const s3 = spotCheckSample(['a', 'b', 'c'], 'x');
     expect(buildVerification({ expected: small, db: small, sample: s3, spotChecks: s3.map((r) => ({ sourceRef: r, matches: true })), verifierUserId: ADMIN, at: T0 }).ok).toBe(true);
+  });
+
+  it('E230 R-IMPORT-5 owner decision B4: a planned assignment the commit brought in unassigned (its member could no longer hold leads) moves from imported to rejected: a documented outcome, never a mismatch', () => {
+    const approved = counts(7, 4, 0, 2, 1);
+    const db = counts(7, 2, 0, 4, 1);
+    expect(expectedAfterCommit(approved, { unassigned: 2 })).toEqual(db);
+    expect(expectedAfterCommit(approved, NO_DOCUMENTED)).toEqual(approved);
+    const sample = ['fub:people/1', 'fub:people/3'];
+    const spotChecks = sample.map((r) => ({ sourceRef: r, matches: true }));
+    const base = { expected: approved, db, sample, spotChecks, verifierUserId: ADMIN, at: T0 };
+    // before B4: the two people of the suspended member stalled the stage for ever
+    expect(buildVerification(base)).toMatchObject({ ok: false, code: 'RECOUNT_MISMATCH' });
+    const ok = buildVerification({ ...base, documented: { unassigned: 2 } });
+    expect(ok).toMatchObject({ ok: true, verification: { recount: { approved, expected: db, db }, documented: { unassigned: 2 } } });
+    // the documented count explains exactly those records: it never hides another difference
+    expect(buildVerification({ ...base, documented: { unassigned: 1 } })).toEqual({
+      ok: false,
+      code: 'RECOUNT_MISMATCH',
+      diffs: [
+        { key: 'imported', source: 3, db: 2 },
+        { key: 'rejected', source: 3, db: 4 },
+      ],
+    });
+    expect(buildVerification({ ...base, db: counts(7, 2, 1, 3, 1), documented: { unassigned: 2 } })).toMatchObject({ ok: false, code: 'RECOUNT_MISMATCH' });
+    // more documented than the approval planned to import can never reconcile
+    expect(expectedAfterCommit(approved, { unassigned: 5 }).imported).toBe(-1);
+    expect(buildVerification({ ...base, db: counts(7, 0, 0, 6, 1), documented: { unassigned: 5 } })).toMatchObject({ ok: false, code: 'RECOUNT_MISMATCH' });
+  });
+
+  it('E230 property: the documented outcome keeps the expectation reconciling, and a real recount verifies only when exactly those k records moved', () => {
+    const c = fc.tuple(fc.nat(50), fc.nat(50), fc.nat(50), fc.nat(50)).map(([a, b, d, e]) => counts(a + b + d + e, a, b, d, e));
+    fc.assert(
+      fc.property(c, fc.nat(60), fc.nat(60), (approved, k, m) => {
+        const after = expectedAfterCommit(approved, { unassigned: k });
+        expect(reconciles(after)).toBe(true);
+        // a real recount: some of the planned imports (never more) were brought in unassigned at the commit
+        const moved = m % (approved.imported + 1);
+        const db = { ...approved, imported: approved.imported - moved, rejected: approved.rejected + moved };
+        expect(verificationReport(after, db).matches).toBe(moved === k);
+      }),
+    );
   });
 
   it('the report counts reconcile exactly for a real dry run → commit plan of the golden fixture', () => {

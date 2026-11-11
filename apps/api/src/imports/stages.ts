@@ -12,13 +12,17 @@
 //   reviewer saw (E42: SNAPSHOT_CHANGED otherwise), and newer than every earlier stage's commit. The
 //   commit plan's expected counts are stored with the approval (the R-IMPORT-5 recount compares them).
 // - Verify (Owner/Admin 🔒, audited): recount (expected vs DB, exact reconciliation) plus 20 spot checks
-//   the verifier confirmed side by side; recorded with the verifier (DB CHECK + trigger).
+//   the verifier confirmed side by side; recorded with the verifier (DB CHECK + trigger). The expected
+//   counts are the approval's with the documented commit outcomes applied (owner decision B4, E230: a
+//   planned assignment brought in unassigned because its member could no longer hold leads is not imported
+//   for that reason, never a mismatch); the stored verification keeps both, and the documented counts.
 import type { AddressKind, Channel } from '@realty/core/compliance';
 import type { ContactId, TenantId, UserActor } from '@realty/core/foundation';
 import {
   type Category,
   type ContactsStagePlan,
   type Counts,
+  type DocumentedOutcomes,
   type ExistingIndex,
   type FubConsentFields,
   type Issue,
@@ -32,6 +36,7 @@ import {
   buildVerification,
   commitPlan,
   dryRun,
+  expectedAfterCommit,
   importedOptOuts,
   mapFub,
   personRefOf,
@@ -50,6 +55,7 @@ import * as rrepo from './repos/records.js';
 import * as vrepo from './repos/verify.js';
 import { summarize } from './parity.js';
 import { FUB_KEY_PURGE_DAYS, type ImportDeps, SOURCE_SYSTEM } from './types.js';
+import { documentedView } from './views.js';
 
 export const DRY_RUN_JOB = { kind: 'imports.dry_run' as const, queue: 'bulk' as const };
 
@@ -443,7 +449,12 @@ export interface SideBySide {
 }
 
 export interface VerificationView {
+  /** what the approval expected, with the documented commit outcomes applied (owner decision B4, E230) */
   expected: Counts;
+  /** what the approval expected */
+  approved: Counts;
+  /** the commit outcomes the approved plan could not predict, each documented on its records, in words */
+  documented: { code: string; count: number; sentence: string }[];
   db: Counts;
   matches: boolean;
   diffs: { key: string; source: number; db: number }[];
@@ -501,9 +512,12 @@ function same(n: NormalizedRecord | null, dbRow: Record<string, unknown> | null)
   }
 }
 
-async function verificationIn(tx: Tx, stage: brepo.StageRow): Promise<VerificationView> {
-  const expected = stage.expected_counts as unknown as Counts;
+async function verificationIn(tx: Tx, stage: brepo.StageRow): Promise<VerificationView & { documentedCounts: DocumentedOutcomes }> {
+  const approved = stage.expected_counts as unknown as Counts;
   const r = await rrepo.recount(tx, stage.id);
+  // owner decision B4 (E230): planned assignments brought in unassigned for a documented reason count as not imported
+  const documentedCounts: DocumentedOutcomes = { unassigned: r.unassigned };
+  const expected = expectedAfterCommit(approved, documentedCounts);
   const db: Counts = { source: r.source, imported: r.imported, needs_review: r.needs_review, rejected: r.rejected, duplicate: r.duplicate };
   const keys = ['source', 'imported', 'needs_review', 'rejected', 'duplicate'] as const;
   const diffs = keys.filter((k) => expected[k] !== db[k]).map((k) => ({ key: k, source: expected[k], db: db[k] }));
@@ -519,7 +533,7 @@ async function verificationIn(tx: Tx, stage: brepo.StageRow): Promise<Verificati
     const dbRow = await vrepo.dbSide(tx, rec);
     sample.push({ sourceRef: ref, recordId: rec.id, source: sourceSide(rec.normalized as NormalizedRecord | null), imported: dbRow, same: same(rec.normalized as NormalizedRecord | null, dbRow) });
   }
-  return { expected, db, matches: diffs.length === 0 && reconciles(expected) && reconciles(db), diffs, sample };
+  return { expected, approved, documented: documentedView(documentedCounts), documentedCounts, db, matches: diffs.length === 0 && reconciles(expected) && reconciles(db), diffs, sample };
 }
 
 /** GET …/verification: the recount and the 20 side-by-side spot checks (deterministic per stage). */
@@ -529,7 +543,9 @@ export async function verificationView(deps: ImportDeps, actor: UserActor, batch
     async (tx) => {
       const { stage } = await loadBatchAndStage(tx, batchId, category);
       if (!['committed', 'verified'].includes(stage.status)) throw conflict(stage.status);
-      return verificationIn(tx, stage);
+      const { documentedCounts, ...view } = await verificationIn(tx, stage);
+      void documentedCounts;
+      return view;
     },
     { db: deps.db },
   );
@@ -543,7 +559,7 @@ export async function verifyStage(deps: ImportDeps, actor: UserActor, batchId: s
       const { batch, stage, stages } = await loadBatchAndStage(tx, batchId, category, { lock: true });
       if (stage.status !== 'committed') throw conflict(stage.status);
       const v = await verificationIn(tx, stage);
-      const res = buildVerification({ expected: v.expected, db: v.db, sample: v.sample.map((s) => s.sourceRef), spotChecks, verifierUserId: actor.userId, at: now });
+      const res = buildVerification({ expected: v.approved, documented: v.documentedCounts, db: v.db, sample: v.sample.map((s) => s.sourceRef), spotChecks, verifierUserId: actor.userId, at: now });
       if (!res.ok) {
         if (res.code === 'RECOUNT_MISMATCH') throw new AppError('RECOUNT_MISMATCH', { diffs: res.diffs ?? [] });
         if (res.code === 'SPOT_CHECKS_INCOMPLETE') throw new AppError('SPOT_CHECKS_INCOMPLETE', { sourceRefs: (res.sourceRefs ?? []).slice(0, 50) });

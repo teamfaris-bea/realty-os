@@ -1,10 +1,12 @@
 // API shapes of api/imports and the plain sentences the review list and the report show (BUILD_PLAN
 // module 16; R-IMPORT-1 copy, R-IMPORT-5; product values: honest copy, every number is a count).
 // No confidence scores anywhere (R-AST-13); no tenant id in any shape (R-TEN-3).
-import { type Category, type ConsentSummary, type Counts, type NormalizedRecord, type ParityReportRow, type SourceName, batchReport, connectionTestLines, optOutPreview, parityCommittedReport, parityLines, parityReport, reportLines } from '@realty/core/import';
+import { type Category, type ConsentSummary, type Counts, type DocumentedOutcomes, type NormalizedRecord, type ParityReportRow, type SourceName, batchReport, connectionTestLines, optOutPreview, parityCommittedReport, parityLines, parityReport, reportLines } from '@realty/core/import';
 import type { Channel } from '@realty/core/compliance';
+import { BULK_CAPS } from '@realty/core/parity/bulk';
 import type { BatchRow, MappingRow, StageRow } from './repos/batches.js';
-import type { RecordRow } from './repos/records.js';
+import type { RecordRow, UnassignedPersonRow } from './repos/records.js';
+import { OWNER_UNAVAILABLE, type UnassignedIssue, type UnassignedReason } from './types.js';
 
 /** One plain sentence per issue code (the web maps codes too; unknown codes get a generic sentence). */
 export const ISSUE_SENTENCES: Record<string, string> = {
@@ -51,12 +53,85 @@ export const ISSUE_SENTENCES: Record<string, string> = {
   RECORDING_NOT_AVAILABLE: 'The recording could not be copied from Follow Up Boss; the call is imported without it.',
   USER_MAPPING_INCOMPLETE: 'Map every Follow Up Boss user before approving this step.',
   COMMIT_FAILED: 'This record could not be written; nothing else was affected.',
+  // owner decision B4 (E230); shown with the member's name and the reason when the issue carries them (unassignedSentence)
+  [OWNER_UNAVAILABLE]: "Brought in unassigned: the member they were matched to can't hold leads now.",
 };
 
 export const GENERIC_ISSUE = 'Something about this record needs a look.';
 
-export function issueView(i: { code: string; severity: string; field?: string }): { code: string; severity: string; field: string | null; sentence: string } {
-  return { code: i.code, severity: i.severity, field: i.field ?? null, sentence: ISSUE_SENTENCES[i.code] ?? GENERIC_ISSUE };
+/** Display names of members, for the sentences that name one (the review list, the report). */
+export type MemberNames = ReadonlyMap<string, string>;
+const NO_NAMES: MemberNames = new Map();
+
+/** Owner decision B4 (E230): why a planned assignment came in unassigned, naming the member when we can. */
+export function unassignedClause(reason: UnassignedReason, name: string | undefined): string {
+  if (name === undefined || name.trim() === '') {
+    switch (reason) {
+      case 'suspended':
+        return 'the account of the member they were matched to is suspended';
+      case 'inactive':
+        return 'the member they were matched to is no longer an active member of the team';
+      case 'role':
+        return "the role of the member they were matched to can't hold leads";
+      case 'unavailable':
+        return "the member they were matched to couldn't take leads when the owners were imported";
+    }
+  }
+  switch (reason) {
+    case 'suspended':
+      return `${name}'s account is suspended`;
+    case 'inactive':
+      return `${name} is no longer an active member of the team`;
+    case 'role':
+      return `${name}'s role can't hold leads`;
+    case 'unavailable':
+      return `${name} couldn't take leads when the owners were imported`;
+  }
+}
+
+const REASONS: ReadonlySet<string> = new Set<UnassignedReason>(['suspended', 'inactive', 'role', 'unavailable']);
+function asUnassigned(i: { code: string }): UnassignedIssue | null {
+  const x = i as Partial<UnassignedIssue>;
+  return x.code === OWNER_UNAVAILABLE && typeof x.userId === 'string' && REASONS.has(String(x.reason)) ? (x as UnassignedIssue) : null;
+}
+
+/** "Brought in unassigned: Blake Chen's account is suspended." */
+export function unassignedSentence(issue: UnassignedIssue, names: MemberNames = NO_NAMES): string {
+  return `Brought in unassigned: ${unassignedClause(issue.reason, names.get(issue.userId))}.`;
+}
+
+/** The members the issues of these records name (their names are looked up once per page). */
+export function namedMembers(records: Iterable<{ issues: readonly { code: string }[] }>): string[] {
+  const out = new Set<string>();
+  for (const r of records) {
+    for (const i of r.issues) {
+      const u = asUnassigned(i);
+      if (u) out.add(u.userId);
+    }
+  }
+  return [...out];
+}
+
+export function issueView(i: { code: string; severity: string; field?: string }, names: MemberNames = NO_NAMES): { code: string; severity: string; field: string | null; sentence: string } {
+  const u = asUnassigned(i);
+  return { code: i.code, severity: i.severity, field: i.field ?? null, sentence: u ? unassignedSentence(u, names) : (ISSUE_SENTENCES[i.code] ?? GENERIC_ISSUE) };
+}
+
+function plural(n: number, one: string, many: string): string {
+  return `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
+}
+
+/** The verification's documented commit outcomes (owner decision B4, E230), in words; empty when there are none. */
+export function documentedView(d: DocumentedOutcomes): { code: string; count: number; sentence: string }[] {
+  if (d.unassigned === 0) return [];
+  const one = d.unassigned === 1;
+  return [
+    {
+      code: OWNER_UNAVAILABLE,
+      count: d.unassigned,
+      sentence: `${plural(d.unassigned, 'planned assignment', 'planned assignments')} came in unassigned because the member ${one ? 'it was' : 'they were'} matched to can't hold leads now (each record says why). ${one ? 'It is' : 'They are'} counted as not imported.`,
+    },
+  ];
 }
 
 export function sourceName(b: BatchRow): SourceName {
@@ -84,7 +159,7 @@ export function stageView(s: StageRow) {
           },
     dryRunSha256: s.dry_run_sha256,
     dryRunCompletedAt: iso(s.dry_run_completed_at),
-    blockers: s.blockers.map(issueView),
+    blockers: s.blockers.map((i) => issueView(i)),
     approvedAt: iso(s.approved_at),
     approvedByUserId: s.approved_by_user_id,
     committedAt: iso(s.committed_at),
@@ -154,7 +229,7 @@ const PLAN_WORD: Record<string, string> = {
   record_consent: 'record',
 };
 
-export function recordView(r: RecordRow) {
+export function recordView(r: RecordRow, names: MemberNames = NO_NAMES) {
   const plan = r.plan as { kind?: string; duplicateCandidates?: { contactId: string; reason: string }[]; staysOptedOut?: Channel[]; mergeIntoContactId?: string } | null;
   return {
     id: r.id,
@@ -162,7 +237,7 @@ export function recordView(r: RecordRow) {
     outcome: r.outcome,
     dryRunOutcome: r.dry_run_outcome,
     planned: plan?.kind ? (PLAN_WORD[plan.kind] ?? null) : null,
-    issues: r.issues.map(issueView),
+    issues: r.issues.map((i) => issueView(i, names)),
     record: summary(r.normalized as NormalizedRecord | null),
     matchContactId: r.match_contact_id,
     duplicateCandidates: (plan?.duplicateCandidates ?? []).map((d) => ({ contactId: d.contactId, reason: d.reason })),
@@ -227,9 +302,52 @@ function revertLines(s: StageRow): string[] {
   return lines;
 }
 
+/** People an ownership commit brought in unassigned (owner decision B4, E231): who, why, and who still has no owner. */
+export interface UnassignedReport {
+  /** records the commit brought in unassigned for a documented reason (OWNER_UNAVAILABLE) */
+  total: number;
+  /** of those people, how many still have no owner (live, not merged away, not in a pond or on offer) */
+  stillUnassigned: number;
+  /** the people who still have no owner, in record order, at most the bulk Assign cap: "Assign these people" selects exactly these */
+  contactIds: string[];
+  /** the first UNASSIGNED_LISTED people, with the reason in words */
+  people: { contactId: string; name: string; sentence: string; stillUnassigned: boolean }[];
+}
+export const UNASSIGNED_LISTED = 50;
+
+/** The report's listing of the people brought in unassigned, and its plain lines (every number is a count). */
+export function unassignedReport(rows: readonly UnassignedPersonRow[], names: MemberNames): { view: UnassignedReport; lines: string[] } | null {
+  const valid = rows.filter((r) => asUnassigned(r.issue ?? { code: '' }) !== null);
+  if (valid.length === 0) return null;
+  const still = valid.filter((r) => r.still_unassigned);
+  const groups = new Map<string, { reason: UnassignedReason; userId: string; n: number }>();
+  for (const r of valid) {
+    const k = `${r.issue.userId}:${r.issue.reason}`;
+    const g = groups.get(k);
+    if (g) g.n += 1;
+    else groups.set(k, { reason: r.issue.reason, userId: r.issue.userId, n: 1 });
+  }
+  const lines = [...groups.values()].map((g) => `${plural(g.n, 'person', 'people')} came in unassigned because ${unassignedClause(g.reason, names.get(g.userId))}.`);
+  lines.push('Nothing was assigned to them, and the import started no offer, timer or routing.');
+  if (still.length > 0) lines.push(`${plural(still.length, 'person still has', 'people still have')} no owner: use "${still.length === 1 ? 'Assign this person' : 'Assign these people'}" to give them one.`);
+  else lines.push(valid.length === 1 ? 'That person has an owner now.' : valid.length === 2 ? 'Both of them have an owner now.' : 'All of them have an owner now.');
+  return {
+    view: {
+      total: valid.length,
+      stillUnassigned: still.length,
+      contactIds: still.slice(0, BULK_CAPS.assign).map((r) => r.contact_id),
+      people: valid.slice(0, UNASSIGNED_LISTED).map((r) => ({ contactId: r.contact_id, name: r.display_name ?? 'Unnamed person', sentence: unassignedSentence(r.issue, names), stillUnassigned: r.still_unassigned })),
+    },
+    lines,
+  };
+}
+
 /** GET /imports/:id/report: per category source | imported | needs review | rejected | duplicate, plus plain lines. */
-export function reportView(b: BatchRow, stages: readonly StageRow[]) {
+export function reportView(b: BatchRow, stages: readonly StageRow[], extra: { unassigned?: readonly UnassignedPersonRow[]; names?: MemberNames } = {}) {
   const name = sourceName(b);
+  // owner decision B4 (E231): the ownership stage's report lists the people it brought in unassigned while it stands
+  const ownership = stages.find((s) => s.category === 'ownership');
+  const unassigned = ownership && ['committed', 'verified'].includes(ownership.status) ? unassignedReport(extra.unassigned ?? [], extra.names ?? NO_NAMES) : null;
   const rows = stages
     .filter((s) => s.count_source !== null)
     .map((s) => {
@@ -260,7 +378,11 @@ export function reportView(b: BatchRow, stages: readonly StageRow[]) {
         rejected: t.rejected,
         duplicate: t.duplicate,
         reconciles: t.reconciles,
-        lines: r.phase === 'reverted' ? revertLines(r.stage) : reportLines(t.category, r.phase, r.counts, name, (r.stage.consent_summary as ConsentSummary | null) ?? null),
+        lines: [
+          ...(r.phase === 'reverted' ? revertLines(r.stage) : reportLines(t.category, r.phase, r.counts, name, (r.stage.consent_summary as ConsentSummary | null) ?? null)),
+          ...(t.category === 'ownership' && unassigned ? unassigned.lines : []),
+        ],
+        unassigned: t.category === 'ownership' && unassigned ? unassigned.view : null,
       };
     }),
   };

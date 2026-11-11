@@ -2568,6 +2568,64 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
             "status": {
               "type": "string",
             },
+            "unassigned": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contactIds": {
+                      "items": {
+                        "type": "string",
+                      },
+                      "type": "array",
+                    },
+                    "people": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "contactId": {
+                            "type": "string",
+                          },
+                          "name": {
+                            "type": "string",
+                          },
+                          "sentence": {
+                            "type": "string",
+                          },
+                          "stillUnassigned": {
+                            "type": "boolean",
+                          },
+                        },
+                        "required": [
+                          "contactId",
+                          "name",
+                          "sentence",
+                          "stillUnassigned",
+                        ],
+                        "type": "object",
+                      },
+                      "type": "array",
+                    },
+                    "stillUnassigned": {
+                      "type": "number",
+                    },
+                    "total": {
+                      "type": "number",
+                    },
+                  },
+                  "required": [
+                    "total",
+                    "stillUnassigned",
+                    "contactIds",
+                    "people",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
           },
           "required": [
             "category",
@@ -2580,6 +2638,7 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
             "duplicate",
             "reconciles",
             "lines",
+            "unassigned",
           ],
           "type": "object",
         },
@@ -2672,6 +2731,34 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
     "properties": {
+      "approved": {
+        "additionalProperties": false,
+        "properties": {
+          "duplicate": {
+            "type": "number",
+          },
+          "imported": {
+            "type": "number",
+          },
+          "needs_review": {
+            "type": "number",
+          },
+          "rejected": {
+            "type": "number",
+          },
+          "source": {
+            "type": "number",
+          },
+        },
+        "required": [
+          "source",
+          "imported",
+          "needs_review",
+          "rejected",
+          "duplicate",
+        ],
+        "type": "object",
+      },
       "db": {
         "additionalProperties": false,
         "properties": {
@@ -2718,6 +2805,29 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
             "key",
             "source",
             "db",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "documented": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string",
+            },
+            "count": {
+              "type": "number",
+            },
+            "sentence": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "code",
+            "count",
+            "sentence",
           ],
           "type": "object",
         },
@@ -2803,6 +2913,8 @@ exports[`api/imports route table and schemas > R-AST-13 R-TEN-3: import response
     },
     "required": [
       "expected",
+      "approved",
+      "documented",
       "db",
       "matches",
       "diffs",

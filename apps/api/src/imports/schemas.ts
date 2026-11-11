@@ -157,7 +157,12 @@ export const RecordResponse = z.object({ record: ImportRecord });
 const Counts = z.object({ source: z.number(), imported: z.number(), needs_review: z.number(), rejected: z.number(), duplicate: z.number() });
 export const ApproveResponse = z.object({ batch: Batch, expected: Counts });
 export const VerificationResponse = z.object({
+  /** what the approval expected, with the documented commit outcomes applied (owner decision B4, E230) */
   expected: Counts,
+  /** what the approval expected */
+  approved: Counts,
+  /** commit outcomes the approved plan could not predict, documented on their records (a count and a sentence) */
+  documented: z.array(z.object({ code: z.string(), count: z.number(), sentence: z.string() })),
   db: Counts,
   matches: z.boolean(),
   diffs: z.array(z.object({ key: z.string(), source: z.number(), db: z.number() })),
@@ -177,6 +182,15 @@ export const ReportResponse = z.object({
       duplicate: z.number(),
       reconciles: z.boolean(),
       lines: z.array(z.string()),
+      /** ownership (owner decision B4, E231): the people the commit brought in unassigned; "Assign these people" selects `contactIds` */
+      unassigned: z
+        .object({
+          total: z.number(),
+          stillUnassigned: z.number(),
+          contactIds: z.array(z.string()),
+          people: z.array(z.object({ contactId: z.string(), name: z.string(), sentence: z.string(), stillUnassigned: z.boolean() })),
+        })
+        .nullable(),
     }),
   ),
   /** PARITY 65 (R-PAR-46): stages, tags and custom fields: source vs imported vs needs review vs rejected */

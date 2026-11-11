@@ -21,6 +21,14 @@
 //              matches become duplicate candidates, never merges.
 //   ownership  import_assign to the mapped target, only for contacts this batch created that are
 //              still in their imported creation state (core decides; R-IMPORT-8: no offer/SLA/notice).
+//              Owner decision B4 (2026-11-11, E230-E232): when the engine refuses the mapped member
+//              (TARGET_NOT_ELIGIBLE: suspended since the approval, no longer an active member, a role that
+//              holds no leads), nothing is assigned and the person stays as the contacts stage left them
+//              (unassigned, never routed); the record is not imported for that documented reason
+//              (OWNER_UNAVAILABLE, with the member and why), which the recount counts, so the stage
+//              verifies and the later stages commit. Before a chunk commits it re-reads, FOR SHARE, every
+//              member it assigned a lead to: one suspended meanwhile makes the chunk run again (and its
+//              people come in unassigned); a suspension asked for after that waits for the chunk.
 //   notes / messages / call_recordings
 //              `imported = true` rows with the original timestamps (R-IMPORT-6); recordings point at the
 //              copy made at snapshot time, labelled "recording notice unknown", not transcribed unless
@@ -55,8 +63,9 @@ import {
   personRefOf,
 } from '@realty/core/import';
 import type { AddressKind } from '@realty/core/compliance';
-import type { ContactId, Instant, SystemActor, TenantId, UserActor } from '@realty/core/foundation';
-import { toIso } from '@realty/core/foundation';
+import type { ContactId, Instant, SystemActor, TenantId, UserActor, UserId } from '@realty/core/foundation';
+import { canOwnLeads, toIso } from '@realty/core/foundation';
+import { canReceiveLead } from '@realty/core/ownership';
 import type { FieldDef } from '@realty/core/parity/fields';
 import { type Tx, applyOwnershipCommandInTx, derivedCommandId, enqueueJob, lockContact, recordConsentEvent, setOwnershipCommand, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
@@ -72,7 +81,7 @@ import { parityOptionsOf, sourceKindOf } from './parity.js';
 import * as rrepo from './repos/records.js';
 import * as w from './repos/writes.js';
 import { type ContactOptOuts, hmacIndex, loadBatchAndStage } from './stages.js';
-import { type ImportDeps, SOURCE_SYSTEM, type SourceSystem } from './types.js';
+import { type ImportDeps, OWNER_UNAVAILABLE, SOURCE_SYSTEM, type SourceSystem, type UnassignedReason } from './types.js';
 
 export const COMMIT_JOB = { kind: 'imports.commit' as const, queue: 'bulk' as const };
 /** Chunks per job run before the job yields (an early wake): keeps every lease short on 50k stages. */
@@ -84,6 +93,16 @@ export class RecordError extends Error {
   constructor(readonly code: string) {
     super(code);
   }
+}
+
+/**
+ * E232: a member this chunk assigned a lead to can no longer hold leads (suspended while the chunk ran). Thrown
+ * after the chunk's member fence, it rolls the whole chunk back and withTenantTx runs it again (40001, like a
+ * serialization failure): the engine then sees the member as they are, and those people come in unassigned.
+ */
+class MemberChangedDuringChunk extends Error {
+  override readonly name = 'MemberChangedDuringChunk';
+  readonly code = '40001';
 }
 
 function pgCode(e: unknown): string {
@@ -152,6 +171,10 @@ interface Applied {
   duplicate?: boolean;
   extraIssues?: { code: string; severity: 'info' }[];
   parity?: ParityApplied;
+  /** owner decision B4 (E230): the planned assignment was not made; the person stays unassigned, for this reason */
+  unassigned?: { contactId: string; userId: string; reason: UnassignedReason };
+  /** the member this record assigned a lead to (fenced before the chunk commits, E232) */
+  assignedTo?: string;
 }
 
 let sp = 0;
@@ -446,18 +469,53 @@ async function applyContact(c: Ctx, rec: rrepo.RecordRow, n: NormalizedContact, 
   return { target: { table: 'contacts', id: live.id }, created, parity };
 }
 
+/** Why the engine refused the mapped member, as their membership reads now (the sentence names them, E230). */
+function unassignedReason(m: w.MemberStatusRow | null): UnassignedReason {
+  if (m === null) return 'inactive';
+  if (m.status === 'suspended') return 'suspended';
+  if (m.status !== 'active') return 'inactive';
+  if (!canOwnLeads(m.role)) return 'role';
+  return 'unavailable'; // eligible again by the time it was read (a race): the engine's refusal still stands
+}
+
 async function applyOwnership(c: Ctx, rec: rrepo.RecordRow, n: NormalizedOwnership, plan: Extract<PlanAction, { kind: 'assign' }>): Promise<Applied> {
   void n;
   const contactId = await resolveRef(c, plan.contact);
+  const toUser = plan.target !== 'unassigned' && 'userId' in plan.target ? plan.target.userId : null;
   const r = await applyOwnershipCommandInTx(c.tx, c.actor, contactId as ContactId, { kind: 'import_assign', target: plan.target }, {
     commandId: derivedCommandId('import.ownership', rec.id),
     ids: c.deps.ids,
   });
   await setOwnershipCommand(c.tx, null);
-  if (!r.outcome.ok) throw new RecordError(r.outcome.code);
+  if (!r.outcome.ok) {
+    // Owner decision B4 (E230): the mapped member can no longer hold leads (the engine decides: canReceiveLead).
+    // Nothing is assigned to them, and the person stays exactly as the contacts stage left them: unassigned, never
+    // routed, no offer, SLA or notice. Not a failure: a documented outcome the recount counts and the report lists.
+    if (r.outcome.code === 'TARGET_NOT_ELIGIBLE' && toUser !== null) {
+      return { target: { table: 'contacts', id: contactId }, created: [], unassigned: { contactId, userId: toUser, reason: unassignedReason(await w.memberStatus(c.tx, toUser)) } };
+    }
+    throw new RecordError(r.outcome.code);
+  }
   const ev = r.outcome.events[0];
   if (!ev) return { target: null, created: [], duplicate: true, extraIssues: [{ code: 'OWNER_KEPT', severity: 'info' }] };
-  return { target: { table: 'lead_ownership_events', id: ev.eventId }, created: [{ table: 'lead_ownership_events', id: ev.eventId, contactId }] };
+  return {
+    target: { table: 'lead_ownership_events', id: ev.eventId },
+    created: [{ table: 'lead_ownership_events', id: ev.eventId, contactId }],
+    ...(ev.toState === 'owned' && ev.ownerUserId !== null ? { assignedTo: ev.ownerUserId } : {}),
+  };
+}
+
+/**
+ * E232: before a chunk commits, the members it assigned leads to are re-read and held FOR SHARE until it commits. If
+ * one can no longer hold leads (a suspension committed while the chunk ran), the chunk runs again from the start.
+ * A suspension asked for after this waits for the commit, so no import assignment ever commits after the
+ * suspension of its member did.
+ */
+async function fenceAssignedMembers(tx: Tx, assignedTo: ReadonlySet<string>): Promise<void> {
+  if (assignedTo.size === 0) return;
+  const now = await w.lockMembers(tx, [...assignedTo]);
+  const eligible = new Set(now.filter((m) => canReceiveLead({ userId: m.user_id as UserId, role: m.role, status: m.status, acceptingLeads: m.accepting_leads })).map((m) => m.user_id));
+  if ([...assignedTo].some((id) => !eligible.has(id))) throw new MemberChangedDuringChunk('a member assigned in this chunk can no longer hold leads');
 }
 
 const member = (c: Ctx, id: string | null) => (id !== null && c.members.has(id) ? id : null);
@@ -677,11 +735,17 @@ export async function runCommit(deps: ImportDeps, tenantId: string, stageId: str
           ctx.parity.fields = r.fields;
           parityTotals.fieldIds.push(...r.createdIds);
         }
+        const assignedTo = new Set<string>();
         for (const rec of recs) {
           try {
             const a = await inSavepoint(tx, () => applyRecord(ctx, rec));
-            await rrepo.markImported(tx, rec.id, a.target, a.created, a.duplicate ? 'duplicate' : 'imported');
-            await addIssues(tx, rec.id, a.extraIssues ?? []);
+            if (a.unassigned) {
+              await rrepo.markUnassigned(tx, rec.id, a.unassigned.contactId, { code: OWNER_UNAVAILABLE, severity: 'info', reason: a.unassigned.reason, userId: a.unassigned.userId });
+            } else {
+              await rrepo.markImported(tx, rec.id, a.target, a.created, a.duplicate ? 'duplicate' : 'imported');
+              await addIssues(tx, rec.id, a.extraIssues ?? []);
+            }
+            if (a.assignedTo) assignedTo.add(a.assignedTo);
             if (a.parity) {
               parityTotals.tagIds.push(...a.parity.tagIds);
               for (const [k, v] of Object.entries(a.parity.counts)) parityTotals.counts[k] = (parityTotals.counts[k] ?? 0) + v;
@@ -691,6 +755,9 @@ export async function runCommit(deps: ImportDeps, tenantId: string, stageId: str
           }
         }
         if (stage.category === 'contacts') await prepo.recordParity(tx, batch.id, parityTotals);
+        await deps.inCommitChunk?.({ category: stage.category, phase: 'applied', assignedTo: [...assignedTo] });
+        await fenceAssignedMembers(tx, assignedTo);
+        await deps.inCommitChunk?.({ category: stage.category, phase: 'fenced', assignedTo: [...assignedTo] });
         return 'more';
       },
       { db: deps.db, retries: 2 },

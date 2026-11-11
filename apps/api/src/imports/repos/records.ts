@@ -3,6 +3,10 @@
 // never duplicates a record (R-IMPORT-9).
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
+import { OWNER_UNAVAILABLE, type UnassignedIssue } from '../types.js';
+
+/** jsonb containment of the documented-outcome issue (owner decision B4, E230) */
+const UNASSIGNED_MARK = JSON.stringify([{ code: OWNER_UNAVAILABLE }]);
 
 export type RecordOutcomeDb = 'will_import' | 'imported' | 'needs_review' | 'rejected' | 'duplicate' | 'merged' | 'reverted' | 'skipped';
 
@@ -174,6 +178,17 @@ export async function markImported(tx: Tx, id: string, target: { table: string; 
              WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx);
 }
 
+/**
+ * Owner decision B4 (E230): a planned assignment the commit did not make because the mapped member could no longer
+ * hold leads. Not imported, for this documented reason (the recount counts it, core expectedAfterCommit); the target
+ * is the person, left exactly as the contacts stage made them (unassigned); nothing was written.
+ */
+export async function markUnassigned(tx: Tx, id: string, contactId: string, issue: UnassignedIssue): Promise<void> {
+  await sql`UPDATE import_records SET outcome = 'rejected', target_table = 'contacts', target_id = ${contactId}, created_rows = '[]'::jsonb,
+              issues = issues || jsonb_build_array(${JSON.stringify(issue)}::jsonb)
+             WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx);
+}
+
 export async function markCommitFailed(tx: Tx, id: string, code: string): Promise<void> {
   await sql`UPDATE import_records SET outcome = 'rejected',
               issues = issues || jsonb_build_array(jsonb_build_object('code', 'COMMIT_FAILED', 'severity', 'error', 'detail', ${code}::text))
@@ -196,11 +211,13 @@ export interface OutcomeCounts {
 
 /**
  * The database side of the R-IMPORT-5 recount. `imported` counts only records whose target row still
- * exists (a record marked imported whose row is gone is not imported).
+ * exists (a record marked imported whose row is gone is not imported). `unassigned`: the rejected records
+ * that are documented commit outcomes (OWNER_UNAVAILABLE, owner decision B4, E230).
  */
-export async function recount(tx: Tx, stageId: string): Promise<OutcomeCounts & { importedMarked: number }> {
-  const r = await sql<{ source: number; marked: number; imported: number; needs_review: number; rejected: number; duplicate: number }>`
+export async function recount(tx: Tx, stageId: string): Promise<OutcomeCounts & { importedMarked: number; unassigned: number }> {
+  const r = await sql<{ source: number; marked: number; imported: number; needs_review: number; rejected: number; duplicate: number; unassigned: number }>`
     SELECT count(*) FILTER (WHERE dry_run_outcome IS NOT NULL)::int AS source,
+           count(*) FILTER (WHERE outcome = 'rejected' AND dry_run_outcome IS NOT NULL AND issues @> ${UNASSIGNED_MARK}::jsonb)::int AS unassigned,
            count(*) FILTER (WHERE outcome = 'imported')::int AS marked,
            count(*) FILTER (WHERE outcome = 'imported' AND (
              CASE r.target_table
@@ -217,7 +234,33 @@ export async function recount(tx: Tx, stageId: string): Promise<OutcomeCounts & 
            count(*) FILTER (WHERE outcome = 'duplicate' AND dry_run_outcome IS NOT NULL)::int AS duplicate
       FROM import_records r WHERE r.tenant_id = app.tenant_id() AND r.stage_id = ${stageId}`.execute(tx);
   const x = r.rows[0]!;
-  return { source: x.source, imported: x.imported, needs_review: x.needs_review, rejected: x.rejected, duplicate: x.duplicate, importedMarked: x.marked };
+  return { source: x.source, imported: x.imported, needs_review: x.needs_review, rejected: x.rejected, duplicate: x.duplicate, importedMarked: x.marked, unassigned: x.unassigned };
+}
+
+export interface UnassignedPersonRow {
+  record_id: string;
+  source_ref: string;
+  contact_id: string;
+  issue: UnassignedIssue;
+  display_name: string | null;
+  /** live, not merged away, and still nobody's (no owner, offer or pond) */
+  still_unassigned: boolean;
+}
+
+/** Owner decision B4 (E231): the people an ownership commit brought in unassigned (record order), and who of them still has no owner. */
+export async function unassignedPeople(tx: Tx, stageId: string): Promise<UnassignedPersonRow[]> {
+  return (
+    await sql<UnassignedPersonRow>`
+      SELECT r.id AS record_id, r.source_ref, r.target_id AS contact_id,
+             (SELECT i FROM jsonb_array_elements(r.issues) i WHERE i->>'code' = ${OWNER_UNAVAILABLE} LIMIT 1) AS issue,
+             c.display_name,
+             COALESCE(c.deleted_at IS NULL AND c.merged_into_contact_id IS NULL AND c.ownership_state = 'unassigned', false) AS still_unassigned
+        FROM import_records r
+        LEFT JOIN contacts c ON c.tenant_id = r.tenant_id AND c.id = r.target_id
+       WHERE r.tenant_id = app.tenant_id() AND r.stage_id = ${stageId} AND r.outcome = 'rejected' AND r.target_table = 'contacts'
+         AND r.issues @> ${UNASSIGNED_MARK}::jsonb
+       ORDER BY r.id`.execute(tx)
+  ).rows;
 }
 
 export async function importedRecords(tx: Tx, stageId: string): Promise<RecordRow[]> {

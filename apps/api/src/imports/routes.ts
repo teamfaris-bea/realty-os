@@ -18,7 +18,8 @@
 //   POST /imports/:id/revert                          { category? } (R-IMPORT-10)
 //   POST /imports/:id/abandon                         purge the FUB key now (R-IMPORT-11)
 //   GET|PUT /imports/:id/parity                     stage map, keep-stage-as-tag, typed custom fields (R-PAR-46; resets the contacts dry run)
-//   GET  /imports/:id/report                          per category source | imported | needs review | rejected | duplicate
+//   GET  /imports/:id/report                          per category source | imported | needs review | rejected | duplicate;
+//                                                     the people the ownership commit brought in unassigned (owner decision B4)
 import type { UserActor } from '@realty/core/foundation';
 import { type Category } from '@realty/core/import';
 import { withTenantTx } from '@realty/db';
@@ -40,7 +41,7 @@ import * as S from './schemas.js';
 import { MAX_FILE_BASE64_CHARS } from './schemas.js';
 import { approveStage, requestDryRun, reviewRecord, skipStage, verificationView, verifyStage } from './stages.js';
 import type { ImportDeps } from './types.js';
-import { batchView, mappingView, recordView, reportView } from './views.js';
+import { batchView, mappingView, namedMembers, recordView, reportView } from './views.js';
 
 /**
  * Request body cap of POST /imports: the strict base64 of the largest file plus room for the JSON
@@ -187,7 +188,9 @@ export function makeImportsRoutes(depsFor?: ImportDepsFromPlatform): RouteModule
             const q = req.query;
             const rows = await rrepo.listRecords(tx, s.id, { ...(q.outcome ? { outcome: q.outcome } : {}), after: q.after ?? null, limit: q.limit + 1 });
             const page = rows.slice(0, q.limit);
-            return { records: page.map(recordView), next: rows.length > q.limit ? (page[page.length - 1]?.id ?? null) : null };
+            // owner decision B4 (E230): a record brought in unassigned names its member (looked up, never stored)
+            const names = await brepo.memberNames(tx, namedMembers(page));
+            return { records: page.map((r) => recordView(r, names)), next: rows.length > q.limit ? (page[page.length - 1]?.id ?? null) : null };
           },
           { db: deps(req).db },
         ),
@@ -240,7 +243,12 @@ export function makeImportsRoutes(depsFor?: ImportDepsFromPlatform): RouteModule
           async (tx) => {
             const b = await brepo.getBatch(tx, req.params.id);
             if (!b) throw new AppError('NOT_FOUND');
-            return reportView(b, await brepo.getStages(tx, b.id));
+            const stages = await brepo.getStages(tx, b.id);
+            // owner decision B4 (E231): the people the ownership commit brought in unassigned, and who still has no owner
+            const own = stages.find((s) => s.category === 'ownership');
+            const unassigned = own ? await rrepo.unassignedPeople(tx, own.id) : [];
+            const names = await brepo.memberNames(tx, unassigned.map((u) => u.issue?.userId).filter((x): x is string => typeof x === 'string'));
+            return reportView(b, stages, { unassigned, names });
           },
           { db: deps(req).db },
         ),

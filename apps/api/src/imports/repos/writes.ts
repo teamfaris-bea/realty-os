@@ -3,6 +3,8 @@
 // these are the non-ownership columns and the children. Imported history is always `imported = true`
 // with the original timestamps, so it never pauses, hands back, counts toward caps/SLAs/scoreboards or
 // raises exceptions (R-IMPORT-6: every such path filters `imported`).
+import type { Role } from '@realty/core/foundation';
+import type { MembershipStatus } from '@realty/core/ownership';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 
@@ -126,6 +128,33 @@ export async function primaryAddress(tx: Tx, contactId: string, kind: 'phone' | 
 /** Active member ids (FK targets for authors / agents of imported history). */
 export async function memberIds(tx: Tx): Promise<Set<string>> {
   return new Set((await sql<{ user_id: string }>`SELECT user_id FROM memberships WHERE tenant_id = app.tenant_id()`.execute(tx)).rows.map((r) => r.user_id));
+}
+
+export interface MemberStatusRow {
+  user_id: string;
+  role: Role;
+  status: MembershipStatus;
+  accepting_leads: boolean;
+}
+
+/** A member's status and role now (why the engine refused an import assignment, owner decision B4, E230). */
+export async function memberStatus(tx: Tx, userId: string): Promise<MemberStatusRow | null> {
+  const r = await sql<MemberStatusRow>`SELECT user_id, role, status, accepting_leads FROM memberships WHERE tenant_id = app.tenant_id() AND user_id = ${userId}`.execute(tx);
+  return r.rows[0] ?? null;
+}
+
+/**
+ * E232: the members a commit chunk assigned leads to, re-read and held FOR SHARE (sorted) until the chunk commits.
+ * A suspension (PATCH /members locks the row FOR NO KEY UPDATE) either committed before this read, so it is seen
+ * here and the chunk runs again, or it waits until the chunk has committed: no assignment ever commits after the
+ * member's suspension did. Held only for the end of the chunk, so a suspension waits for a commit, not a chunk.
+ */
+export async function lockMembers(tx: Tx, userIds: readonly string[]): Promise<MemberStatusRow[]> {
+  if (userIds.length === 0) return [];
+  return (
+    await sql<MemberStatusRow>`SELECT user_id, role, status, accepting_leads FROM memberships
+                                WHERE tenant_id = app.tenant_id() AND user_id = ANY (${[...userIds]}::uuid[]) ORDER BY user_id FOR SHARE`.execute(tx)
+  ).rows;
 }
 
 export async function insertNote(tx: Tx, n: { id: string; contactId: string; authorUserId: string | null; body: string; occurredAt: string; recordId: string }): Promise<void> {

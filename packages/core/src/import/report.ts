@@ -49,27 +49,55 @@ export interface SpotCheck {
   matches: boolean;
 }
 
+/**
+ * Owner decision B4 (2026-11-11, E230): outcomes of a commit that the approved plan could not predict, each
+ * documented on its records with the reason. Today there is one: a planned assignment the ownership commit
+ * brought in unassigned because its member could no longer hold leads at that moment (suspended, no longer an
+ * active member, or a role that holds none). Nothing is assigned to them; the record counts as not imported.
+ */
+export interface DocumentedOutcomes {
+  /** planned assignments the ownership commit brought in unassigned (api/imports OWNER_UNAVAILABLE) */
+  unassigned: number;
+}
+
+export const NO_DOCUMENTED: DocumentedOutcomes = { unassigned: 0 };
+
+/**
+ * The counts the approval expected, with the documented commit outcomes applied: each one moves exactly one
+ * record from imported to rejected. Never clamped, so a documented count larger than the planned imports can
+ * never match a real recount, and it never hides any other difference (R-IMPORT-5 stays exact).
+ */
+export function expectedAfterCommit(approved: Counts, d: DocumentedOutcomes): Counts {
+  return { ...approved, imported: approved.imported - d.unassigned, rejected: approved.rejected + d.unassigned };
+}
+
 /** The `import_stages.verification` document. */
 export interface StageVerification {
   verifiedByUserId: UserId;
   verifiedAt: Instant;
-  recount: { expected: Counts; db: Counts };
+  /** `approved`: what the approval expected; `expected`: that with the documented outcomes applied (E230) */
+  recount: { approved: Counts; expected: Counts; db: Counts };
+  documented: DocumentedOutcomes;
   spotChecks: SpotCheck[];
 }
 
 /**
  * R-IMPORT-5: a stage can be marked verified only when the recount matches and every sampled record
- * was checked and matched. Returns the verification document to store with the verifier.
+ * was checked and matched. Returns the verification document to store with the verifier. `expected` is what
+ * the approval expected; the documented commit outcomes (E230) are applied to it before the recount.
  */
 export function buildVerification(i: {
   expected: Counts;
+  documented?: DocumentedOutcomes;
   db: Counts;
   sample: readonly string[];
   spotChecks: readonly SpotCheck[];
   verifierUserId: UserId;
   at: Instant;
 }): { ok: true; verification: StageVerification } | { ok: false; code: Extract<ImportErrorCode, 'RECOUNT_MISMATCH' | 'SPOT_CHECKS_INCOMPLETE' | 'SPOT_CHECK_FAILED'>; diffs?: CountDiff[]; sourceRefs?: string[] } {
-  const recount = verificationReport(i.expected, i.db);
+  const documented = i.documented ?? NO_DOCUMENTED;
+  const expected = expectedAfterCommit(i.expected, documented);
+  const recount = verificationReport(expected, i.db);
   if (!recount.matches) return { ok: false, code: 'RECOUNT_MISMATCH', diffs: recount.diffs };
   const required = Math.min(SPOT_CHECKS, i.db.imported);
   const checked = new Map(i.spotChecks.map((s) => [s.sourceRef, s]));
@@ -82,7 +110,8 @@ export function buildVerification(i: {
     verification: {
       verifiedByUserId: i.verifierUserId,
       verifiedAt: i.at,
-      recount: { expected: i.expected, db: i.db },
+      recount: { approved: i.expected, expected, db: i.db },
+      documented,
       spotChecks: i.sample.map((r) => checked.get(r) as SpotCheck),
     },
   };
