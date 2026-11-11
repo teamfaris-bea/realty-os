@@ -34,7 +34,12 @@ export interface EditedPayload {
   channel?: 'sms' | 'email' | undefined;
   subject?: string | undefined;
   body?: string | undefined;
+  /** seller updates only: the approver's own recommendation, never prefilled (R-SELL-3) */
+  recommendation?: string | undefined;
 }
+
+/** R-SELL-3: the shortest recommendation the database accepts on an approved seller update (0015 CHECK). */
+export const SELLER_RECOMMENDATION_MIN = 20;
 
 export interface ApproveInput {
   commandId: string;
@@ -128,9 +133,13 @@ export async function approveAction(actor: UserActor, actionId: string, input: A
         a.pinnedInboundSeq = conv.inboundSeq;
       }
     }
-    // R-AST-17: a seller update is never sent as drafted: the agent adds their own recommendation (an edit) and taps send
-    if (a.kind === 'seller_update_draft' && !input.editedPayload?.body) throw new AppError('SELLER_UPDATE_NEEDS_RECOMMENDATION');
-    const draft = SENDABLE.has(a.kind) ? mergedDraft(a, input.editedPayload) : null;
+    // R-AST-17 / R-SELL-3: a seller update is never sent as drafted: the agent writes their own recommendation
+    // (one shape: editedPayload.recommendation, which the 0015 CHECK requires on the approval) and taps send;
+    // it goes out after the assembled update
+    const recommendation = input.editedPayload?.recommendation?.trim() ?? '';
+    if (a.kind === 'seller_update_draft' && recommendation.length < SELLER_RECOMMENDATION_MIN) throw new AppError('SELLER_UPDATE_NEEDS_RECOMMENDATION');
+    const merged = SENDABLE.has(a.kind) ? mergedDraft(a, input.editedPayload) : null;
+    const draft = merged && a.kind === 'seller_update_draft' ? { ...merged, body: `${merged.body}\n\n${recommendation}` } : merged;
     const edited = input.editedPayload !== undefined && draft !== null;
     if (draft === null || !a.contactId) {
       // nothing to send: a summary / proposal reviewed, or a handback the agent will answer themselves
@@ -165,7 +174,7 @@ export async function approveAction(actor: UserActor, actionId: string, input: A
       await A.mergePayload(tx, a.id, { sentActionId: sendActionId });
       await A.setDecision(tx, a.id, { status: 'approved', decidedByUserId: actor.userId, now });
     } else {
-      await A.setDecision(tx, a.id, { status: 'approved', decidedByUserId: actor.userId, now, editedPayload: edited ? { channel: draft.channel, body: draft.body, ...(draft.subject ? { subject: draft.subject } : {}) } : null });
+      await A.setDecision(tx, a.id, { status: 'approved', decidedByUserId: actor.userId, now, editedPayload: edited ? { channel: draft.channel, body: draft.body, ...(draft.subject ? { subject: draft.subject } : {}), ...(a.kind === 'seller_update_draft' ? { recommendation } : {}) } : null });
     }
     if (edited) {
       const before = mergedDraft(a, undefined);

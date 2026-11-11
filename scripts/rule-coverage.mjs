@@ -16,6 +16,7 @@
 //                                              `pnpm test:report`): only PASSED tests count
 //   --json                                     machine-readable output
 //   --no-fail                                  exit 0 even with gaps (default: exit 1 on any gap, as in CI)
+//   --phase=2-3                                report DATA_MODEL Part 2 (Phase 2-3 rules §9, edge cases §10)
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,15 +36,27 @@ if (rulesStart < 0 || edgeStart < 0) {
   process.exit(2);
 }
 const RETIRED_MARK = '**Retired:';
-const ruleEntries = [...dataModel.slice(rulesStart, edgeStart).matchAll(/^- \*\*(R-[A-Z]+-\d+)\*\*(.*)$/gm)].map((m) => ({ id: m[1], retired: m[2].trimStart().startsWith(RETIRED_MARK) }));
-const edgeEntries = [...dataModel.slice(edgeStart).matchAll(/^\| (E\d+) \|[^|]*\|(.*)$/gm)].map((m) => ({ id: m[1], retired: m[2].trimStart().startsWith(RETIRED_MARK) }));
+// DATA_MODEL "Part 2: Phase 2-3" (added with migration 0015) has its own rules (§9) and edge cases (§10).
+// `--phase=2-3` reports those; the default reports Phase 1. Ids of both parts are known either way.
+const phase23 = args.has('--phase=2-3');
+const p23Start = dataModel.indexOf('\n# Part 2: Phase 2-3');
+const p23Rules = dataModel.indexOf('## 9. Phase 2-3 business rules');
+const p23Edges = dataModel.indexOf('## 10. Phase 2-3 edge cases');
+const end1 = p23Start < 0 ? dataModel.length : p23Start;
+const parseRules = (text) => [...text.matchAll(/^- \*\*(R-[A-Z]+-\d+)\*\*(.*)$/gm)].map((m) => ({ id: m[1], retired: m[2].trimStart().startsWith(RETIRED_MARK) }));
+const parseEdges = (text) => [...text.matchAll(/^\| (E\d+) \|[^|]*\|(.*)$/gm)].map((m) => ({ id: m[1], retired: m[2].trimStart().startsWith(RETIRED_MARK) }));
+const p1 = { rules: parseRules(dataModel.slice(rulesStart, edgeStart)), edges: parseEdges(dataModel.slice(edgeStart, end1)) };
+const p2 = p23Rules < 0 || p23Edges < 0 ? { rules: [], edges: [] }
+  : { rules: parseRules(dataModel.slice(p23Rules, p23Edges)), edges: parseEdges(dataModel.slice(p23Edges)) };
+const ruleEntries = phase23 ? p2.rules : p1.rules;
+const edgeEntries = phase23 ? p2.edges : p1.edges;
 const allRuleIds = ruleEntries.map((e) => e.id);
 const allEdgeIds = edgeEntries.map((e) => e.id);
 const retiredIds = [...ruleEntries, ...edgeEntries].filter((e) => e.retired).map((e) => e.id);
 const retired = new Set(retiredIds);
 const ruleIds = allRuleIds.filter((id) => !retired.has(id));
 const edgeIds = allEdgeIds.filter((id) => !retired.has(id));
-const known = new Set([...allRuleIds, ...allEdgeIds]);
+const known = new Set([...p1.rules, ...p1.edges, ...p2.rules, ...p2.edges].map((e) => e.id));
 
 const ID_RE = /\b(R-[A-Z]+-\d+|E\d{1,3})\b/g;
 
@@ -130,7 +143,7 @@ const summary = {
 if (asJson) {
   console.log(JSON.stringify(summary, null, 2));
 } else {
-  console.log(`rule coverage (${summary.mode}; DATA_MODEL.md §4/§5)`);
+  console.log(`rule coverage (${summary.mode}; DATA_MODEL.md ${phase23 ? 'Part 2 §9/§10 (Phase 2-3)' : '§4/§5'})`);
   console.log(`  R-* rules:  ${summary.rules.covered}/${summary.rules.total} linked to a test`);
   for (const [fam, c] of Object.entries(byFamily)) console.log(`    R-${fam.padEnd(8)} ${c.covered}/${c.total}`);
   console.log(`  edge cases: ${summary.edgeCases.covered}/${summary.edgeCases.total} linked to a test`);

@@ -125,7 +125,9 @@ describe('tap-to-call (path 3)', () => {
     const ins = (initiator: string, handled: string) =>
       h.su.query("INSERT INTO calls (tenant_id, id, conversation_id, contact_id, direction, client_address, initiator, handled_by, status, started_at, recording_mode, recording_decision) VALUES ($1,$2,(SELECT id FROM conversations WHERE contact_id = $3),$3,'inbound',$4,$5,$6,'ringing',now(),'off','{}')", [w.tenantId, randomUUID(), c.id, c.phone, initiator, handled]);
     await expect(ins('assistant', 'human')).rejects.toThrow(/check/i);
-    await expect(ins('client', 'assistant')).rejects.toThrow(/check/i);
+    // 0015: the voice guard runs even without a tenant context and refuses first (no approved voice playbook);
+    // the inbound-only CHECK refuses the same row
+    await expect(ins('client', 'assistant')).rejects.toThrow(/check|VOICE_PLAYBOOK_NOT_APPROVED/i);
   });
 
   it('R-OWN-14: a gate-allowed call by the owner is the touch (recorded in the dial transaction)', async () => {

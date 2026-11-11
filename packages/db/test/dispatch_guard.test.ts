@@ -1,11 +1,14 @@
-// 0013 dispatch guards (core-compliance/2.0.0). The per-send gate decision is gone; what the database
-// still refuses at dispatch, for every role and every write path, is:
+// Dispatch guards: 0013 (core-compliance/2.0.0), replaced in 0015 with an explicit channel map, the DM and web-chat
+// channels, the person-level do-not-contact (merge-safe) and the platform:meta clearance; the last block runs the
+// shared opt-out case table (fixtures/opt_out_cases.json, R-CHAN-5) per channel. The per-send gate decision is gone;
+// what the database still refuses at dispatch, for every role and every write path, is:
 //   - a message or call to an address that opted out (STOP / unsubscribe / agent-recorded do-not-contact),
 //     including a STOP on another of the contact's phones for SMS, or that is actively suppressed;
 //   - an assistant message without an approved playbook / human approval (assistant autonomy, A3/A7).
 // A normal human send needs no gate_decisions row at all. Every write below runs as app_user (RLS);
 // the superuser pool only seeds fixtures with no application path (numbers, playbooks).
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import type { ConsentEventSpec } from '@realty/core/compliance';
 import type { Actor, Instant } from '@realty/core/foundation';
 import { sql } from 'kysely';
@@ -53,7 +56,9 @@ const revoke = (addr: string, o: Partial<ConsentEventSpec> = {}, as: Actor = w.s
   withTenantTx(as, (tx) => recordConsentEvent(tx, revokeSpec(addr, o)), { db: h.app });
 
 /** An agent-owned contact with the given points, and its conversation, all written by the agent (app_user). */
-async function contactWith(points: { kind: 'phone' | 'email'; address: string }[]): Promise<{ contactId: string; conversationId: string }> {
+type PointKind = 'phone' | 'email' | 'messenger' | 'instagram' | 'web_chat';
+
+async function contactWith(points: { kind: PointKind; address: string }[]): Promise<{ contactId: string; conversationId: string }> {
   const contactId = await selfCreated(h.app, w, agent, `Guard ${++seq}`);
   const conversationId = uuid();
   await withTenantTx(agent.actor, async (tx) => {
@@ -300,4 +305,171 @@ describe('0013: assistant autonomy stays exactly as strict (R-GATE-4)', () => {
     await revoke(s.to);
     await expect(insertMessage(w.system('assistant'), s)).rejects.toThrow(/RECIPIENT_OPTED_OUT/);
   });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 0015: the shared opt-out case table (R-CHAN-5, review finding F17). Every row of fixtures/opt_out_cases.json is
+// written against the real guards, per channel. Module 19's core equivalence test reads the same rows and asserts that
+// canContact denies every case the guard denies. Revokes, suppressions and inbound keywords are written as the system
+// (provider) actor, a person-level do-not-contact and a merge as the Owner, and every send as app_user.
+// ---------------------------------------------------------------------------------------------------------------------
+interface RevokeFact { channel: string; purpose: 'all' | 'informational' | 'marketing' }
+interface OptOutCase {
+  id: string;
+  why: string;
+  channel: string;
+  expect: string;
+  initiator: 'human' | 'system';
+  purpose: 'informational' | 'marketing';
+  actionCategory: string;
+  recipientRevoked: RevokeFact[];
+  otherPointRevoked: RevokeFact[];
+  otherKindRevoked: (RevokeFact & { kind: PointKind })[];
+  suppression: { channel: string; reason: string } | null;
+  personDoNotContact: boolean;
+  mergedDuplicateDoNotContact: boolean;
+  keywordWithin24h: boolean;
+  platformCleared: boolean | null;
+}
+type CaseRow = Partial<OptOutCase> & Pick<OptOutCase, 'id' | 'why' | 'channel' | 'expect'>;
+const optOutTable = JSON.parse(readFileSync(new URL('./fixtures/opt_out_cases.json', import.meta.url), 'utf8')) as {
+  defaults: Omit<OptOutCase, 'id' | 'why' | 'channel' | 'expect'>;
+  cases: CaseRow[];
+};
+const optOutCases: OptOutCase[] = optOutTable.cases.map((c) => ({ ...optOutTable.defaults, ...c }));
+const KIND_OF: Record<string, PointKind> = {
+  sms: 'phone', mms: 'phone', voice: 'phone', email: 'email', messenger: 'messenger', instagram: 'instagram', web_chat: 'web_chat',
+};
+const PLATFORM = ['messenger', 'instagram', 'web_chat'] as const;
+type PlatformChannel = (typeof PLATFORM)[number];
+const isPlatform = (ch: string): ch is PlatformChannel => (PLATFORM as readonly string[]).includes(ch);
+
+describe('0015: the shared opt-out case table (R-CHAN-5, F17)', () => {
+  const conn: Record<PlatformChannel, string> = { messenger: uuid(), instagram: uuid(), web_chat: uuid() };
+  const FROM: Record<string, string> = { messenger: 'fb:4001', instagram: 'ig:5001', web_chat: 'wc', email: 'team@guard.test' };
+  let n = 0;
+
+  beforeAll(async () => {
+    const credentialId = uuid();
+    // the provider callback's writes (system actor): a credential, then the live Page, Instagram account and chat widget
+    await withTenantTx(w.system('provider'), async (tx) => {
+      await sql`INSERT INTO provider_credentials (tenant_id, id, provider, secret_enc, key_version)
+                VALUES (app.tenant_id(), ${credentialId}, 'meta', '\\x00'::bytea, 1)`.execute(tx);
+      await sql`INSERT INTO integration_connections (tenant_id, id, kind, status, display_name, external_account_id, credential_id,
+                  lead_source_id, connected_at)
+                VALUES (app.tenant_id(), ${conn.messenger}, 'messenger_page', 'connected', 'Guard Page', '4001', ${credentialId}, ${w.leadSourceId}, now()),
+                       (app.tenant_id(), ${conn.instagram}, 'instagram_account', 'connected', 'Guard IG', '5001', ${credentialId}, ${w.leadSourceId}, now())`.execute(tx);
+      await sql`INSERT INTO integration_connections (tenant_id, id, kind, status, display_name, lead_source_id, connected_at, widget_key_hash,
+                  allowed_origins)
+                VALUES (app.tenant_id(), ${conn.web_chat}, 'web_chat_widget', 'connected', 'Guard chat', ${w.leadSourceId}, now(), ${randomBytes(32)},
+                  ARRAY['https://guard.test'])`.execute(tx);
+    }, { db: h.app });
+  });
+
+  const address = (kind: PointKind, other = false): string => {
+    n += 1;
+    switch (kind) {
+      case 'phone': return nextPhone();
+      case 'email': return `case${n}@optout.test`;
+      case 'messenger': return `fb:${other ? 4002 : 4001}:${700000 + n}`;
+      case 'instagram': return `ig:${other ? 5002 : 5001}:${800000 + n}`;
+      case 'web_chat': return `wc:${randomBytes(16).toString('hex')}`;
+    }
+  };
+
+  /** A revoke in the ledger and its projection, for any channel (each address in a case is fresh: one ledger event). */
+  const revokeRow = (kind: PointKind, addr: string, r: RevokeFact, contactId: string) =>
+    withTenantTx(w.system('provider'), async (tx) => {
+      const eventId = uuid();
+      await sql`INSERT INTO consent_events (tenant_id, id, address_kind, address_hmac, address_hint, channel, purpose, event_type, consent_level,
+                  source, occurred_at, actor_kind, contact_id, evidence_message_id)
+                VALUES (app.tenant_id(), ${eventId}, ${kind}, decode(${hmacHex(addr)}, 'hex'), '•••', ${r.channel}, ${r.purpose}, 'revoke', 'none',
+                  ${r.channel === 'voice' || r.channel === 'web_chat' ? 'inbound_language' : 'inbound_keyword'}, now(), 'system', ${contactId}, ${uuid()})`.execute(tx);
+      for (const purpose of r.purpose === 'all' ? ['informational', 'marketing'] : [r.purpose]) {
+        await sql`INSERT INTO consent_state (tenant_id, channel, purpose, address_hmac, status, consent_level, basis_event_id, ledger_event_count)
+                  VALUES (app.tenant_id(), ${r.channel}, ${purpose}, decode(${hmacHex(addr)}, 'hex'), 'revoked', 'none', ${eventId}, 1)`.execute(tx);
+      }
+    }, { db: h.app });
+
+  /** The Owner records a person-level do-not-contact; its ledger evidence is a revoke on an address the contact no longer uses. */
+  const markDoNotContact = (contactId: string) =>
+    withTenantTx(w.owner.actor, async (tx) => {
+      const eventId = uuid();
+      await sql`INSERT INTO consent_events (tenant_id, id, address_kind, address_hmac, address_hint, channel, purpose, event_type, consent_level,
+                  source, occurred_at, actor_kind, actor_user_id, contact_id)
+                VALUES (app.tenant_id(), ${eventId}, 'email', decode(${hmacHex(`old-${eventId}@optout.test`)}, 'hex'), '•••', 'email', 'all', 'revoke',
+                  'none', 'agent_revoke', now(), 'user', ${w.owner.id}, ${contactId})`.execute(tx);
+      await sql`UPDATE contacts SET do_not_contact_at = now(), do_not_contact_event_id = ${eventId}
+                WHERE tenant_id = app.tenant_id() AND id = ${contactId}`.execute(tx);
+    }, { db: h.app });
+
+  const setMetaCleared = (cleared: boolean) =>
+    h.su.query(`UPDATE jurisdiction_packs SET reviewed_by_counsel_at = ${cleared ? 'now()' : 'NULL'} WHERE key = 'platform:meta' AND status = 'published'`);
+
+  function send(c: OptOutCase, s: { contactId: string; conversationId: string; to: string }): Promise<unknown> {
+    const actor = c.initiator === 'human' ? agent.actor : w.system('provider');
+    if (c.channel === 'voice') {
+      return withTenantTx(actor, (tx) => sql`
+        INSERT INTO calls (tenant_id, id, conversation_id, contact_id, direction, phone_number_id, agent_user_id, client_address, initiator,
+          status, started_at, recording_mode, recording_decision)
+        VALUES (app.tenant_id(), ${uuid()}, ${s.conversationId}, ${s.contactId}, 'outbound', ${numberId}, ${agent.id}, ${s.to}, 'human',
+          'initiated', now(), 'off', '{"mode":"off"}'::jsonb)`.execute(tx), { db: h.app });
+    }
+    const phoneLike = !isPlatform(c.channel) && c.channel !== 'email';
+    return withTenantTx(actor, (tx) => sql`
+      INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, email_identity_id,
+        integration_connection_id, from_address, to_address, subject, body, status, initiator, initiated_by_user_id, purpose, action_category,
+        dispatched_at, occurred_at)
+      VALUES (app.tenant_id(), ${uuid()}, ${s.conversationId}, ${s.contactId}, ${c.channel}, 'outbound', ${phoneLike ? numberId : null},
+        ${c.channel === 'email' ? emailIdentityId : null}, ${isPlatform(c.channel) ? conn[c.channel] : null},
+        ${FROM[c.channel] ?? '+15555559100'}, ${s.to}, ${c.channel === 'email' ? 'Hello' : null}, 'Hi there', 'dispatching', ${c.initiator},
+        ${c.initiator === 'human' ? agent.id : null}, ${c.purpose}, ${c.actionCategory}, now(), now())`.execute(tx), { db: h.app });
+  }
+
+  it('covers every channel of the guard map, a call, an unknown channel and every opt-out reason code', () => {
+    expect(new Set(optOutCases.map((c) => c.channel))).toEqual(new Set(['sms', 'mms', 'email', 'messenger', 'instagram', 'web_chat', 'voice', 'fax']));
+    expect(new Set(optOutCases.map((c) => c.expect))).toEqual(
+      new Set(['allow', 'RECIPIENT_OPTED_OUT', 'RECIPIENT_SUPPRESSED', 'PERSON_DO_NOT_CONTACT', 'PLATFORM_NOT_CLEARED', 'CHANNEL_UNKNOWN']));
+    expect(new Set(optOutCases.map((c) => c.id)).size).toBe(optOutCases.length);
+  });
+
+  for (const c of optOutCases) {
+    it(`${c.id}: ${c.why} ⇒ ${c.expect}`, async () => {
+      if (c.platformCleared !== null) await setMetaCleared(c.platformCleared);
+      const kind = KIND_OF[c.channel] ?? 'phone';
+      const to = address(kind);
+      const points: { kind: PointKind; address: string }[] = [{ kind, address: to }];
+      const other = c.otherPointRevoked.length > 0 ? address(kind, true) : null;
+      if (other) points.push({ kind, address: other });
+      const otherKind = c.otherKindRevoked.map((r) => ({ ...r, address: address(r.kind) }));
+      for (const p of otherKind) points.push({ kind: p.kind, address: p.address });
+      const s = await contactWith(points);
+      for (const r of c.recipientRevoked) await revokeRow(kind, to, r, s.contactId);
+      for (const r of c.otherPointRevoked) await revokeRow(kind, other!, r, s.contactId);
+      for (const p of otherKind) await revokeRow(p.kind, p.address, p, s.contactId);
+      if (c.suppression) {
+        const sup = c.suppression;
+        await withTenantTx(w.system('provider'), (tx) => sql`
+          INSERT INTO suppressions (tenant_id, id, address_kind, address_hmac, address_hint, channel, reason)
+          VALUES (app.tenant_id(), ${uuid()}, ${kind}, decode(${hmacHex(to)}, 'hex'), '•••', ${sup.channel}, ${sup.reason})`.execute(tx), { db: h.app });
+      }
+      if (c.personDoNotContact) await markDoNotContact(s.contactId);
+      if (c.mergedDuplicateDoNotContact) {
+        const dup = await contactWith([]);
+        await markDoNotContact(dup.contactId);
+        await withTenantTx(w.owner.actor, (tx) => sql`
+          UPDATE contacts SET merged_into_contact_id = ${s.contactId} WHERE tenant_id = app.tenant_id() AND id = ${dup.contactId}`.execute(tx), { db: h.app });
+      }
+      if (c.keywordWithin24h) {
+        await withTenantTx(w.system('provider'), (tx) => sql`
+          INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, from_address, to_address, body, status, initiator,
+            opt_out_keyword, occurred_at)
+          VALUES (app.tenant_id(), ${uuid()}, ${s.conversationId}, ${s.contactId}, ${c.channel}, 'inbound', ${to}, ${FROM[c.channel] ?? '+15555559100'},
+            'STOP', 'received', 'client', 'STOP', now())`.execute(tx), { db: h.app });
+      }
+      const result = send(c, { ...s, to });
+      if (c.expect === 'allow') await expect(result).resolves.toBeDefined();
+      else await expect(result).rejects.toThrow(new RegExp(c.expect));
+    });
+  }
 });

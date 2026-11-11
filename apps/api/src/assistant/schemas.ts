@@ -57,6 +57,7 @@ export const ApproveBody = z.strictObject({
       channel: z.enum(['sms', 'email']).optional(),
       subject: z.string().trim().min(1).max(300).optional(),
       body: z.string().trim().min(1).max(10_000).optional(),
+      recommendation: z.string().trim().min(1).max(2_000).optional(),
     })
     .optional(),
   reviewedInboundSeq: z.number().int().min(0).optional(),

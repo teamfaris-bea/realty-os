@@ -60,11 +60,11 @@ const OVERRIDES: Record<string, Record<string, string>> = {
   playbooks: { kind: "'nurture'", scope: "'team'" },
   playbook_versions: { status: "'draft'", steps: "'[]'" },
   playbook_enrollments: { state: "'active'", enrolled_by: "'new_lead'" },
-  playbook_step_runs: { status: "'scheduled'" },
+  playbook_step_runs: { status: "'scheduled'", enrollment_id: 'gen_random_uuid()' }, // 0015: enrollment XOR trigger_key
   priority_feed_items: { reasons: "'[\"FIXTURE\"]'", state: "'open'" },
   exception_items: { evidence: "'[{\"k\":\"fixture\"}]'" },
   exception_events: { action: "'reopened'" },
-  listings: { source: "'mls'" },
+  listings: { source: "'team'", listing_agent_user_id: 'gen_random_uuid()' }, // 0015: an mls row needs its feed connection
   deals: { stage: "'prospect'" },
   deal_dates: { kind: "'inspection'" },
   tasks: { status: "'open'", created_by_kind: "'system'", due_at: 'NULL' },
@@ -87,7 +87,7 @@ const OVERRIDES: Record<string, Record<string, string>> = {
   saved_searches: { status: "'proposed'" },
   showings: { starts_at: 'now()', ends_at: "now() + interval '1 hour'" },
   showing_feedback: { rating: '3' },
-  home_valuations: {},
+  home_valuations: { value_cents: '1' }, // 0015: an 'ok' estimate carries its value
   sessions: {},
   agent_goals: {},
   ownership_command_rejections: { observed_seq: '1', actor_kind: "'system'" },
@@ -100,6 +100,18 @@ const OVERRIDES: Record<string, Record<string, string>> = {
   jobs: { kind: "'fixture.job'" },
   sender_registrations: {},
   lead_inquiries: { fingerprint: "'fp'", outcome: "'new_contact'" },
+  // 0015 (Phase 2-3 schema)
+  webchat_sessions: { purge_after: 'now()' },
+  lead_source_costs: { month: "date_trunc('month', now())::date", origin: "'ads_sync'" },
+  call_scores: { rubric_version: "'rubric/1'" },
+  contact_predictions: { band: "'none'", inputs_sha256: "repeat('ab', 32)" },
+  ad_budget_caps: { attestation: "'fixture attestation text'" },
+  ad_allocation_events: { event_kind: "'failed'" },
+  documents: { contact_id: 'gen_random_uuid()' },
+  portal_grants: { deal_id: 'gen_random_uuid()' },
+  portal_items: { published_by_kind: "'system'", kind: "'milestone'" },
+  portal_accounts: { status: "'invited'" },
+  user_calendar_links: { status: "'pending_review'" },
 };
 
 function firstInList(checks: string[], col: string): string | null {
