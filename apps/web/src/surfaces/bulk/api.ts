@@ -97,5 +97,5 @@ export const BULK_ERROR_MESSAGES: Record<string, string> = {
   BROKERAGE_IDENTITY_MISSING: "Bulk messages need the brokerage's name. Ask the Owner.",
   SMS_MARKETING_NOT_REGISTERED: 'Batch text needs a texting registration approved for marketing.',
   TEMPLATE_CHANNEL_MISMATCH: 'Pick a template for this kind of message.',
-  LIST_SELECTION_UNAVAILABLE: 'Pick people from the list first; whole-list actions arrive with smart lists.',
+  LIST_TOO_SLOW: 'This list took too long to load. Narrow it with another filter and try again.',
 };

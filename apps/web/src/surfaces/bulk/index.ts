@@ -4,7 +4,7 @@ import { lazy } from 'react';
 import type { SurfaceModule } from '../../shell/index.js';
 import { BULK_ERROR_MESSAGES } from './api.js';
 
-export { BulkActionSheet, type BulkActionSheetProps } from './BulkActionSheet.js';
+export { BulkActionSheet, type BulkActionSheetProps, type BulkListSelection } from './BulkActionSheet.js';
 
 const RUNS = ['owner', 'admin', 'team_lead', 'agent', 'isa'] as const;
 

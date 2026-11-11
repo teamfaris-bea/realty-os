@@ -4,9 +4,11 @@ import { z } from 'zod';
 
 export const Kind = z.enum(BULK_KINDS as unknown as ['tag', 'untag', 'stage', 'assign', 'enroll', 'email', 'text']);
 
+/** resolveSelection's input (PARITY_PLAN §4.2): people picked by id, a saved smart list, or an unsaved definition (a tag chip view). */
 export const Selection = z.union([
   z.strictObject({ contactIds: z.array(z.uuid()).min(1).max(10_001) }),
   z.strictObject({ listId: z.uuid() }),
+  z.strictObject({ definition: z.record(z.string(), z.unknown()) }),
 ]);
 
 export const CreateBody = z.strictObject({

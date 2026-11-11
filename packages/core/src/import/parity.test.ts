@@ -2,13 +2,17 @@
 // (R-PAR-46, R-PAR-6, R-PAR-8, R-PAR-17, R-PAR-18, E190, E191).
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
+import { validateFieldValue } from '../parity/fields/index.js';
+import { classifyProtected as parityClassifyProtected, normalizeTagName as parityNormalizeTagName } from '../parity/tags/index.js';
 import {
   DEFAULT_PARITY_OPTIONS,
   type FieldType,
   classifyProtected,
   contactTagNames,
   fieldKeyFrom,
+  fieldKeyProtected,
   fieldLabelFromKey,
+  fieldValueInput,
   mappedStage,
   normalizeTagName,
   optionsFromValues,
@@ -98,8 +102,34 @@ describe('R-PAR-6 R-PAR-8 tags', () => {
   });
 
   it('R-PAR-8 C-PAR-3: tags and field names that read like a protected attribute are classified (VERIFY WITH COUNSEL: the lexicon)', () => {
-    for (const n of ['VA buyer', 'Military status', 'Has kids', 'Section 8', 'Spanish speaker', 'Christian', 'Disabled']) expect(classifyProtected(n)).toBe(true);
-    for (const n of ['Buyer', 'Hot', 'Lead score', 'Budget', 'Pre-approved', 'DNC', 'School district']) expect(classifyProtected(n)).toBe(false);
+    // module 59's lexicon also reads "school" as a protected proxy (core module 20's attribute vocabulary)
+    for (const n of ['VA buyer', 'Military status', 'Has kids', 'Section 8', 'Spanish speaker', 'Christian', 'Disabled', 'School district', 'Active duty', 'Sexual']) expect(classifyProtected(n)).toBe(true);
+    for (const n of ['Buyer', 'Hot', 'Lead score', 'Budget', 'Pre-approved', 'DNC']) expect(classifyProtected(n)).toBe(false);
+    // a source field key is read as the words of its label too
+    for (const k of ['customMilitaryStatus', 'customHasKids', 'customReligion', 'customVaLoan']) expect(fieldKeyProtected(k), k).toBe(true);
+    for (const k of ['customLeadScore', 'customTimeline', 'customClosingDate']) expect(fieldKeyProtected(k), k).toBe(false);
+  });
+
+  it('R-PAR-8 property: the import classifies tag names exactly as module 59 (the tag writer) does, so "created protected" counts are true', () => {
+    fc.assert(
+      fc.property(fc.string({ maxLength: 40 }), (n) => {
+        expect(classifyProtected(n)).toBe(parityClassifyProtected(n));
+      }),
+    );
+    for (const n of ['VA buyer', 'Seniors', 'Buyer', 'Section 8', 'FUB stage: Hot Prospect']) expect(classifyProtected(n)).toBe(parityClassifyProtected(n));
+  });
+
+  it('R-PAR-6 property: an import tag name is module 59\'s normalized name (same key as tags.name_key), cut to the tag length', () => {
+    fc.assert(
+      fc.property(fc.string({ maxLength: 120 }), (raw) => {
+        const n = normalizeTagName(raw);
+        if (n === null) return;
+        expect(parityNormalizeTagName(n.name)).toEqual({ ok: true, name: n.name, key: n.key });
+      }),
+    );
+    expect(normalizeTagName('  Ｂｕｙｅｒ  ')).toEqual({ name: 'Ｂｕｙｅｒ', key: 'buyer' });
+    expect(normalizeTagName(`VIP${'​'}`)).toEqual({ name: 'VIP', key: 'vip' });
+    expect(normalizeTagName('x'.repeat(100))?.name).toBe('x'.repeat(64)); // shortened, not dropped
   });
 
   it('R-PAR-7 R-CONSENT-3: a DNC-looking tag is counted as an opt-out for the report (the consent rules make it real), and it stays a tag', () => {
@@ -144,6 +174,27 @@ describe('R-PAR-17 R-PAR-18 custom fields', () => {
     const m = optionsFromValues(['Pool, Garage', 'Garage'], true);
     expect(typedFieldValue('multi_select', m, 'Garage; pool')).toEqual({ ok: true, value: { options: ['garage', 'pool'] } });
     expect(typedFieldValue('text', [], 'x'.repeat(1001)).ok).toBe(false);
+    // an archived choice is never written (module 59 accepts live option ids only)
+    expect(typedFieldValue('single_select', [{ id: 'later', label: 'Later', archived: true }], 'Later').ok).toBe(false);
+    // an empty source value is never a value (it would clear one)
+    expect(typedFieldValue('text', [], '   ').ok).toBe(false);
+  });
+
+  it('R-PAR-17 R-PAR-19 property: every value the import accepts is accepted by module 59\'s validateFieldValue for that definition, as the same typed value', () => {
+    const opts = optionsFromValues(['Red', 'Blue', 'Green'], false);
+    const TYPES: FieldType[] = ['text', 'number', 'date', 'single_select', 'multi_select'];
+    const sample = fc.oneof(fc.string({ maxLength: 40 }), fc.constantFrom('$1,200', '12/31/2026', '2026-02-29', '2024-02-29', 'red', 'Blue; green', '1e3', '-0', '.5'));
+    fc.assert(
+      fc.property(fc.constantFrom(...TYPES), sample, (t, raw) => {
+        const r = typedFieldValue(t, opts, raw);
+        if (!r.ok) return;
+        const def = { id: 'f', key: 'k', label: 'K', fieldType: t, options: opts, annual: false, archived: false };
+        const v = validateFieldValue(def, fieldValueInput(r.value));
+        expect(v.ok).toBe(true);
+        if (v.ok && v.value) expect(v.value.type === 'options' ? { options: v.value.optionIds } : v.value.type === 'text' ? { text: v.value.text } : v.value.type === 'number' ? { number: v.value.number } : { date: v.value.date }).toEqual(r.value);
+      }),
+      { numRuns: 500 },
+    );
   });
 
   it('R-PAR-17: option ids are unique, valid and stable for repeated labels; at most 100', () => {

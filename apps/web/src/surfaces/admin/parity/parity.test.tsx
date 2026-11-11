@@ -1,6 +1,6 @@
 // Admin parity pages in jsdom (module 61): the tag catalog commands (rename/color/protect, merge, delete),
 // the custom field sheet (types, every-year dates, choices; the protected-trait refusal points at the
-// self-reported details) and stage labels (honest until module 57's API exists).
+// self-reported details) and stage labels (module 57's GET/PUT /stage-labels).
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
@@ -86,9 +86,32 @@ describe('Admin → Custom fields (R-PAR-17, R-PAR-18)', () => {
 });
 
 describe('Admin → Stage labels (R-PAR-13)', () => {
-  it('says plainly that labels cannot be saved yet while the people lane API is absent', async () => {
-    app(new FakeFetch(), '/admin/stage-labels');
-    expect(await screen.findByText("Stage labels can't be saved yet")).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Save labels' })).toBeDisabled();
+  const stages = (labels: Record<string, string>) => ({
+    labels,
+    stages: ['new', 'attempting', 'connected', 'nurture', 'active', 'under_contract', 'closed', 'lost'].map((key) => ({ key, label: labels[key] ?? key })),
+  });
+
+  it('R-PAR-13: reads module 57\'s GET /stage-labels and saves the whole set with PUT /stage-labels (an emptied field goes back to the default)', async () => {
+    const fake = new FakeFetch().on('GET /stage-labels', { status: 200, body: stages({ nurture: 'Long term' }) }).on('PUT /stage-labels', (c) => ({ status: 200, body: stages((c.body as { labels: Record<string, string> }).labels) }));
+    app(fake, '/admin/stage-labels');
+    const user = userEvent.setup();
+    const nurture = await screen.findByLabelText('Nurture');
+    expect(nurture).toHaveValue('Long term');
+    await user.clear(nurture);
+    await user.type(screen.getByLabelText('New'), '  Fresh lead ');
+    await user.click(screen.getByRole('button', { name: 'Save labels' }));
+    await waitFor(() => expect(fake.callsTo('PUT /stage-labels')[0]?.body).toEqual({ labels: { new: 'Fresh lead' } }));
+    await waitFor(() => expect(screen.getByTestId('toast')).toHaveTextContent('Stage labels saved'));
+    expect(screen.queryByText(/can't be saved yet/)).toBeNull();
+    expect(fake.callsTo('GET /settings/stage-labels')).toHaveLength(0);
+  });
+
+  it('R-PAR-13: a refused label says why in plain words', async () => {
+    const fake = new FakeFetch().on('GET /stage-labels', { status: 200, body: stages({}) }).on('PUT /stage-labels', err(422, 'STAGE_LABEL_INVALID'));
+    app(fake, '/admin/stage-labels');
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText('Lost'), 'x');
+    await user.click(screen.getByRole('button', { name: 'Save labels' }));
+    expect(await screen.findByText('Each stage label is 1 to 24 characters.')).toBeInTheDocument();
   });
 });

@@ -255,6 +255,21 @@ export async function upsertFieldValue(tx: Tx, contactId: string, fieldId: strin
           updated_by_user_id = EXCLUDED.updated_by_user_id, import_batch_id = EXCLUDED.import_batch_id`.execute(tx);
 }
 
+/** Writes the value only where the person has none, even one written since the caller looked (E41); true when written. */
+export async function insertFieldValueIfAbsent(tx: Tx, contactId: string, fieldId: string, v: TypedValue, by: ValueBy): Promise<boolean> {
+  const text = v.type === 'text' ? v.text : null;
+  const num = v.type === 'number' ? String(v.number) : null;
+  const date = v.type === 'date' ? v.date : null;
+  const opts = v.type === 'options' ? v.optionIds : null;
+  const userId = by.kind === 'import' ? null : by.userId;
+  const batch = by.kind === 'import' ? by.importBatchId : null;
+  const r = await sql<{ field_id: string }>`
+    INSERT INTO contact_field_values (tenant_id, contact_id, field_id, value_text, value_number, value_date, value_options, updated_by_kind, updated_by_user_id, import_batch_id)
+    VALUES (app.tenant_id(), ${contactId}::uuid, ${fieldId}::uuid, ${text}, ${num}::numeric, ${date}::date, ${opts}::text[], ${by.kind}, ${userId}::uuid, ${batch}::uuid)
+    ON CONFLICT (tenant_id, contact_id, field_id) DO NOTHING RETURNING field_id`.execute(tx);
+  return r.rows.length > 0;
+}
+
 export async function deleteFieldValue(tx: Tx, contactId: string, fieldId: string): Promise<boolean> {
   const r = await sql`DELETE FROM contact_field_values WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId}::uuid AND field_id = ${fieldId}::uuid`.execute(tx);
   return Number(r.numAffectedRows ?? 0) > 0;

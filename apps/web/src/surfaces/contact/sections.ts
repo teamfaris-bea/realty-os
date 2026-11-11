@@ -5,6 +5,7 @@
 import { type ComponentType, createElement, Fragment } from 'react';
 import type { ContactFullView } from '../feed/lib/types.js';
 import { PeopleSections } from '../people-edit/PeopleSections.js';
+import { ContactTagsSection } from '../people/ContactTags.js';
 
 export interface ContactSection {
   id: string;
@@ -15,6 +16,7 @@ export interface ContactSection {
 
 export const contactSections: ContactSection[] = [
   { id: 'people', order: 10, component: PeopleSections },
+  { id: 'tags', order: 5, component: ContactTagsSection },
   // registry: add new entries above this line
 ];
 

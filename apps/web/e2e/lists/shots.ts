@@ -56,8 +56,8 @@ try {
       await page.getByRole('dialog').waitFor();
       await shot('bulk-tag-picker');
       await page.getByRole('dialog').getByRole('button', { name: 'Investor' }).click();
-      await page.getByText(/Nothing was changed/).waitFor();
-      await shot('bulk-tag-stub');
+      await page.getByRole('dialog', { name: /^Tag \d+ of \d+\?$/ }).waitFor();
+      await shot('bulk-tag-confirm');
       await page.keyboard.press('Escape');
       await page.getByRole('list', { name: 'People' }).getByRole('link').first().click();
       await page.getByText(/^1 of 30/).waitFor();

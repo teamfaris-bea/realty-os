@@ -1,8 +1,9 @@
 // The People page (PARITY_PLAN §5, module 61): everyone the viewer can see, or a saved smart list,
 // or an unsaved filter (a tapped tag chip). Phone: list chips across the top (People → list = 2
 // taps); desktop: lists in a left column (1 click). Rows have checkboxes; selecting shows the bulk
-// bar (Tag, Remove tag, Stage, Email, Assign …) whose confirm sheets are module 64's (stub until
-// lane L3 merges). Bulk tag 30 from a list: People → list → Select all → Tag → tag = 5 taps.
+// bar (Tag, Remove tag, Stage, Email, Assign …), which opens module 64's bulk sheet with the selection
+// (the checked people, or the whole list after "Select all"). Bulk tag 30 from a list: People → list →
+// Select all → Tag → tag = 5 taps to the count sheet with the frozen target, + Confirm in the sheet.
 //
 // Honest UI: the page always says "Showing people you can see" (R-PAR-28, E181); a count is exact to
 // 10,000 and then says "10,000+"; a list that uses a protected tag says so before any send.
@@ -24,12 +25,14 @@ import {
   type TagView,
   chipClass,
   countText,
+  definitionTagIds,
   selectionOf,
   sourceKey,
   tagSource,
   useSmartLists,
   usePeople,
   usePeopleCount,
+  useTags,
 } from './api.js';
 import { BULK_LABEL, BulkConfirmSheet, type BulkKind, type BulkRequest } from './bulkSlot.js';
 import { LISTS_ERROR_MESSAGES } from './messages.js';
@@ -76,6 +79,7 @@ function People() {
   };
   const activeList = source.kind === 'list' ? lists.data?.lists.find((l) => l.id === source.listId) : undefined;
   const title = source.kind === 'all' ? 'Everyone' : source.kind === 'list' ? (activeList?.name ?? 'List') : source.label;
+  const sourceDefinition = source.kind === 'definition' ? source.definition : activeList?.definition;
 
   return (
     <div className="flex flex-col gap-4 md:flex-row md:items-start md:gap-6">
@@ -93,6 +97,7 @@ function People() {
           onTag={(t) => open(tagSource(t))}
           onClearFilter={() => open(EVERYONE)}
           saveable={source.kind === 'definition'}
+          sourceTagIds={definitionTagIds(sourceDefinition)}
         />
       </div>
     </div>
@@ -147,6 +152,8 @@ function Rows(p: {
   onTag: (t: { id: string; name: string }) => void;
   onClearFilter: () => void;
   saveable: boolean;
+  /** the tags the rows were found by (the list's tag clauses) */
+  sourceTagIds: string[];
 }) {
   const q = usePeople(p.source);
   const count = usePeopleCount(p.source);
@@ -160,6 +167,11 @@ function Rows(p: {
   const [saving, setSaving] = useState(false);
   const selCount = p.allSelected ? (count.data?.count ?? people.length) : p.selected.size;
   const selection = p.allSelected ? selectionOf(p.source) : { contactIds: [...p.selected] };
+  // R-PAR-8: people hand-picked from a list built on a protected tag are still that list's audience, so the
+  // tags it was built from go with the request (protected ones first; the server decides)
+  const catalog = useTags();
+  const isProtected = new Set((catalog.data?.tags ?? []).filter((t) => t.protected).map((t) => t.id));
+  const audienceTagIds = [...p.sourceTagIds.filter((id) => isProtected.has(id)), ...p.sourceTagIds.filter((id) => !isProtected.has(id))].slice(0, 20);
 
   const toggle = (id: string) => {
     const next = new Set(p.selected);
@@ -176,7 +188,7 @@ function Rows(p: {
     nav(`/people/work/${id}`);
   };
   const ask = (kind: BulkKind, tag?: TagView) =>
-    setBulk({ kind, selection, count: selCount, countCapped: p.allSelected && (count.data?.capped ?? false), audienceProtected, ...(tag ? { tag: { id: tag.id, name: tag.name, protected: tag.protected } } : {}) });
+    setBulk({ kind, selection, count: selCount, countCapped: p.allSelected && (count.data?.capped ?? false), audienceProtected, ...(audienceTagIds.length > 0 ? { audienceTagIds } : {}), ...(tag ? { tag: { id: tag.id, name: tag.name, protected: tag.protected } } : {}) });
 
   const canAssign = p.role === 'owner' || p.role === 'admin' || p.role === 'team_lead';
   const canBulk = p.role !== 'tc';
@@ -289,7 +301,17 @@ function Rows(p: {
           }}
         />
       ) : null}
-      {bulk ? <BulkConfirmSheet request={bulk} onClose={() => setBulk(null)} onDone={() => setBulk(null)} /> : null}
+      {bulk ? (
+        <BulkConfirmSheet
+          request={bulk}
+          onClose={() => setBulk(null)}
+          onDone={() => {
+            // started: the selection is used up (the sheet stays open with its progress link until Done)
+            p.setSelected(new Set());
+            p.setAllSelected(false);
+          }}
+        />
+      ) : null}
       {saving && p.source.kind === 'definition' ? <SaveListSheet source={p.source} onClose={() => setSaving(false)} role={p.role} /> : null}
     </section>
   );

@@ -3,8 +3,8 @@
 // projects. Each job of PARITY_PLAN §5 is run with its taps counted:
 //   open a smart list: phone People → list = 2 · desktop list = 1 (from the People page)
 //   see everyone with a tag: tap chip = 1
-//   bulk tag 30 from a list: phone People → list → Select all → Tag → tag = 5 · desktop 4
-//     (module 64's confirm sheet is a stub until lane L3 merges: it opens, says nothing changed)
+//   bulk tag 30 from a list: phone People → list → Select all → Tag → tag = 5 · desktop 4 to module 64's
+//     count sheet (the frozen target, built by the server from the whole list), then Confirm in the sheet
 //   next person in a list: Next = 1 · desktop J = 1
 // Then 44 px tap targets on the People page and no horizontal scroll on a phone.
 import { type Locator, type Page, expect, test } from 'playwright/test';
@@ -66,7 +66,7 @@ test('see everyone with a tag: 1 tap on a chip', async ({ page }) => {
   expect(c.taps).toBe(1);
 });
 
-test('bulk tag 30 from a list: phone 5 taps, desktop 4 (the confirm sheet is module 64\'s; stubbed, it changes nothing)', async ({ page }) => {
+test('bulk tag 30 from a list: phone 5 taps, desktop 4 to module 64\'s count sheet with the frozen target; Confirm starts it', async ({ page }) => {
   await signIn(page);
   const c = { taps: 0 };
   if (isPhone(page)) await tap(page, peopleNav(page), c);
@@ -78,9 +78,13 @@ test('bulk tag 30 from a list: phone 5 taps, desktop 4 (the confirm sheet is mod
   await expect(bar.getByText('30 selected')).toBeVisible();
   await tap(page, bar.getByRole('button', { name: 'Tag', exact: true }), c);
   await tap(page, page.getByRole('dialog').getByRole('button', { name: 'Investor' }), c);
-  await expect(page.getByRole('dialog', { name: 'Tag "Investor" · 30 people' })).toBeVisible();
-  await expect(page.getByText(/Nothing was changed/)).toBeVisible();
+  const sheet = page.getByRole('dialog', { name: 'Tag 30 of 30?' });
+  await expect(sheet).toBeVisible();
+  await expect(sheet.getByText('Tag "Investor"')).toBeVisible();
   expect(c.taps).toBe(isPhone(page) ? 5 : 4);
+  await tap(page, sheet.getByRole('button', { name: 'Tag 30 people' }), c);
+  await expect(page.getByText(/Started: 30 people/)).toBeVisible();
+  expect(c.taps).toBe(isPhone(page) ? 6 : 5);
 });
 
 test('next person in a list: 1 tap (phone) or J (desktop)', async ({ page }) => {

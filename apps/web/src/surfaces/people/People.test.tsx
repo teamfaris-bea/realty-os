@@ -1,7 +1,8 @@
 // The People surface in jsdom (PARITY_PLAN module 61): rows only of people the viewer can see, the
 // honest count, tag chip → everyone with the tag (1 tap), the list picker, select all and the bulk bar
-// (module 64's sheets are stubbed: nothing is changed and the stub says so), a person's tag chips
-// (add by typing, remove, the opt-out-looking tag prompt) and "Next person".
+// (module 64's real bulk sheet, with the selection: the checked people or the whole list), a person's tag
+// chips (add by typing, remove, the opt-out-looking tag prompt with the one-tap do-not-contact) and
+// "Next person".
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -9,7 +10,7 @@ import { FakeFetch, err, renderApp, sessionFixture, tableWith } from '../../shel
 import { surface as contactSurface } from '../contact/index.js';
 import { surface as paritySurface } from '../admin/parity/index.js';
 import { surface as peopleSurface } from './index.js';
-import { ContactTags } from './ContactTags.js';
+import { ContactTags, ContactTagsSection } from './ContactTags.js';
 import type { PersonView } from './api.js';
 import { startWork, stepOf, readWork } from './workList.js';
 import { sourceFromParams } from './PeoplePage.js';
@@ -35,6 +36,27 @@ const person = (n: number, over: Partial<PersonView> = {}): PersonView => ({
   createdAt: '2026-11-01T12:00:00Z',
   nextTaskDueAt: null,
   tags: n === 1 ? [{ id: T_BUYER, name: 'Buyer', color: 'blue' }] : [],
+  ...over,
+});
+const ACTION = '01900000-0000-7000-8000-0000000ba001';
+const bulkDraft = (over: Record<string, unknown> = {}) => ({
+  id: ACTION,
+  kind: 'tag',
+  status: 'draft',
+  mine: true,
+  selected: 30,
+  targetCount: 30,
+  preflight: {},
+  sharedAddresses: 0,
+  counts: { selected: 30, done: 0, skipped: 0, blocked: 0, failed: 0, canceled: 0, pending: 30, byReason: {} },
+  templateId: null,
+  templateVersion: null,
+  subject: null,
+  body: null,
+  failureCode: null,
+  createdAt: '2026-11-10T10:00:00Z',
+  confirmedAt: null,
+  finishedAt: null,
   ...over,
 });
 const page = (people: PersonView[], o: { nextCursor?: string | null; audienceProtected?: boolean } = {}) => ({ people, nextCursor: o.nextCursor ?? null, sort: 'last_activity_desc', list: null, scope: 'people_you_can_see', audienceProtected: o.audienceProtected ?? false });
@@ -86,8 +108,10 @@ describe('People page (module 61)', () => {
     expect(fake.callsTo(`GET /people?list=${L_HOT}`).length).toBeGreaterThanOrEqual(1);
   });
 
-  it('bulk tag 30 from a list: Select all → Tag → tag opens the confirm sheet (module 64; stubbed, changes nothing) — 3 taps on the page', async () => {
-    const fake = base();
+  it('bulk tag 30 from a list: Select all → Tag → tag opens module 64\'s sheet with the whole list as the selection; Confirm starts it (3 taps on the page + Confirm)', async () => {
+    const fake = base()
+      .on('POST /bulk-actions', { status: 201, body: { action: bulkDraft() } })
+      .on(`POST /bulk-actions/${ACTION}/confirm`, { status: 200, body: { action: bulkDraft({ status: 'confirmed', confirmedAt: '2026-11-10T10:01:00Z' }) } });
     app(fake);
     const user = userEvent.setup();
     let taps = 0;
@@ -99,24 +123,70 @@ describe('People page (module 61)', () => {
     taps++;
     await user.click(await screen.findByRole('button', { name: 'Buyer' }));
     taps++;
-    const sheet = await screen.findByRole('dialog', { name: 'Tag "Buyer" · 30 people' });
-    expect(within(sheet).getByText(/Nothing was changed/)).toBeInTheDocument();
-    expect(taps).toBe(3); // + People tab and the list = 5 on a phone (PARITY_PLAN §5)
-    expect(fake.calls.filter((c) => c.method !== 'GET')).toEqual([]);
+    // the server builds the draft at once (nothing to choose): the frozen target, counted by the server
+    const sheet = await screen.findByRole('dialog', { name: 'Tag 30 of 30?' });
+    expect(taps).toBe(3); // + People tab and the list = 5 on a phone to the count sheet (PARITY_PLAN §5)
+    expect(within(sheet).getByText('Tag "Buyer"')).toBeInTheDocument();
+    const created = fake.callsTo('POST /bulk-actions')[0]!.body as Record<string, unknown>;
+    expect(created).toMatchObject({ kind: 'tag', selection: { definition: { v: 1 } }, tagId: T_BUYER });
+    expect(fake.callsTo(`POST /bulk-actions/${ACTION}/confirm`)).toHaveLength(0); // nothing starts before Confirm
+    await user.click(within(sheet).getByRole('button', { name: 'Tag 30 people' }));
+    taps++;
+    await waitFor(() => expect(fake.callsTo(`POST /bulk-actions/${ACTION}/confirm`)).toHaveLength(1));
+    expect(await screen.findByText(/Started: 30 people/)).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing was changed/)).toBeNull();
+    expect(taps).toBe(4);
+    // the selection is used up; Done closes the sheet
+    expect(screen.queryByRole('region', { name: 'Bulk actions' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
-  it('R-PAR-8 E189: a protected tag is never applied in bulk and a protected list is never a bulk send audience (the sheet says so before anything)', async () => {
-    const fake = base().on('GET /people', { status: 200, body: page([person(1), person(2)], { audienceProtected: true }) });
+  it('checked rows are sent as ids; a saved list\'s "Select all" is sent as the list (resolveSelection\'s input)', async () => {
+    const fake = base()
+      .on(`GET /people?list=${L_HOT}`, { status: 200, body: { ...page([person(2), person(3)]), list: { id: L_HOT, name: 'Hot buyers', scope: 'team' } } })
+      .on(`GET /people/count?list=${L_HOT}`, { status: 200, body: { count: 2, capped: false } })
+      .on('POST /bulk-actions', { status: 201, body: { action: bulkDraft({ selected: 2, targetCount: 2 }) } });
     app(fake);
     const user = userEvent.setup();
-    expect(await screen.findByText(/This list uses a protected tag/)).toBeInTheDocument();
+    await user.click(await screen.findByRole('checkbox', { name: 'Select Person 1' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Select Person 2' }));
+    await user.click(within(await screen.findByRole('region', { name: 'Bulk actions' })).getByRole('button', { name: 'Tag' }));
+    await user.click(await screen.findByRole('button', { name: 'Buyer' }));
+    await screen.findByRole('dialog', { name: 'Tag 2 of 2?' });
+    expect(fake.callsTo('POST /bulk-actions')[0]!.body).toMatchObject({ kind: 'tag', selection: { contactIds: [id(1), id(2)] }, tagId: T_BUYER });
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await user.click(await screen.findByRole('button', { name: 'Hot buyers' }));
     await user.click(await screen.findByRole('checkbox', { name: /Select all/ }));
+    await user.click(within(await screen.findByRole('region', { name: 'Bulk actions' })).getByRole('button', { name: 'Tag' }));
+    await user.click(await screen.findByRole('button', { name: 'Buyer' }));
+    await waitFor(() => expect(fake.callsTo('POST /bulk-actions')).toHaveLength(2));
+    expect(fake.callsTo('POST /bulk-actions')[1]!.body).toMatchObject({ kind: 'tag', selection: { listId: L_HOT } });
+  });
+
+  it('R-PAR-8 E189: a protected tag is never applied in bulk and a protected list is never a bulk send audience (the page says so up front; the server refuses, and the sheet says why)', async () => {
+    const VA_LIST = '01900000-0000-7000-8000-0000000000e2';
+    const fake = base()
+      .on('GET /smart-lists', { status: 200, body: { lists: [{ id: VA_LIST, scope: 'personal', mine: true, name: 'VA list', definition: { v: 1, all: [{ kind: 'tag', op: 'any', tagIds: [T_VA] }] }, sort: 'last_activity_desc', position: 0, updatedAt: '2026-11-01T00:00:00Z', audienceProtected: true }] } })
+      .on(`GET /people?list=${VA_LIST}`, { status: 200, body: { ...page([person(1), person(2)], { audienceProtected: true }), list: { id: VA_LIST, name: 'VA list', scope: 'personal' } } })
+      .on(`GET /people/count?list=${VA_LIST}`, { status: 200, body: { count: 2, capped: false } })
+      .on('GET /templates?channel=email', { status: 200, body: { templates: [{ id: '01900000-0000-7000-8000-0000000071a1', scope: 'team', mine: false, channel: 'email', name: 'New listings', subject: 'New homes', body: 'Hi', version: 3, mergeFields: [], archived: false, editable: false, updatedAt: '2026-11-10T10:00:00Z' }] } })
+      .on('POST /bulk-actions', (c) => ((c.body as { kind: string }).kind === 'email' ? err(422, 'AUDIENCE_PROTECTED_PROXY') : err(409, 'TAG_PROTECTED')));
+    app(fake, `/people?list=${VA_LIST}`);
+    const user = userEvent.setup();
+    expect(await screen.findByText(/This list uses a protected tag/)).toBeInTheDocument();
+    // hand-picked people from the list are still its audience: the list's (protected) tag goes with them
+    await user.click(await screen.findByRole('checkbox', { name: 'Select Person 1' }));
     await user.click(within(await screen.findByRole('region', { name: 'Bulk actions' })).getByRole('button', { name: 'Email' }));
-    expect(await within(await screen.findByRole('dialog')).findByText(/cannot be the audience of a bulk email/)).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Close' }));
+    await user.click(await screen.findByRole('button', { name: /New listings/ }));
+    expect(await screen.findByText(/can't get bulk messages or plans/)).toBeInTheDocument();
+    expect(fake.callsTo('POST /bulk-actions')[0]!.body).toMatchObject({ kind: 'email', selection: { contactIds: [id(1)] }, audienceTagIds: [T_VA] });
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     await user.click(within(screen.getByRole('region', { name: 'Bulk actions' })).getByRole('button', { name: 'Tag' }));
     await user.click(await screen.findByRole('button', { name: /VA buyer/ }));
-    expect(await screen.findByText(/added one person at a time, never in bulk/)).toBeInTheDocument();
+    expect(await screen.findByText(/can't be added or removed in bulk/)).toBeInTheDocument();
+    expect(fake.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/confirm'))).toEqual([]);
   });
 
   it('a TC sees the list but gets no checkboxes and no bulk bar (TCs run no bulk actions)', async () => {
@@ -170,12 +240,13 @@ describe("a person's tag chips (R-PAR-6, R-PAR-7)", () => {
     );
   }
 
-  it('R-PAR-7 E167: adding "DNC" saves the tag and says plainly that tags never stop messages; chips read "Tag Buyer, remove" to VoiceOver', async () => {
+  it('R-PAR-7 E167 R-PAR-32: adding "DNC" saves the tag, says plainly that tags never stop messages, and records the real do-not-contact in one tap; chips read "Tag Buyer, remove" to VoiceOver', async () => {
     const DNC = '01900000-0000-7000-8000-0000000000d9';
     const fake = new FakeFetch()
       .on(`GET /contacts/${id(9)}/tags`, { status: 200, body: { tags: [{ id: T_BUYER, name: 'Buyer', color: 'blue', protected: false }] } })
       .on('GET /tags', { status: 200, body: tags })
-      .on(`POST /contacts/${id(9)}/tags`, { status: 200, body: { tags: [{ id: T_BUYER, name: 'Buyer', color: 'blue', protected: false }, { id: DNC, name: 'DNC', color: null, protected: false }], added: [DNC], optOutLike: [DNC] } });
+      .on(`POST /contacts/${id(9)}/tags`, { status: 200, body: { tags: [{ id: T_BUYER, name: 'Buyer', color: 'blue', protected: false }, { id: DNC, name: 'DNC', color: null, protected: false }], added: [DNC], optOutLike: [DNC] } })
+      .on(`POST /contacts/${id(9)}/do-not-contact`, { status: 200, body: { doNotContact: true, alreadySet: false, revokedPoints: 1 } });
     mount(fake);
     const user = userEvent.setup();
     expect(await screen.findByRole('button', { name: 'Tag Buyer, remove' })).toBeInTheDocument();
@@ -183,8 +254,35 @@ describe("a person's tag chips (R-PAR-6, R-PAR-7)", () => {
     await user.type(await screen.findByLabelText('Tag'), 'DNC');
     await user.click(screen.getByRole('button', { name: 'Create "DNC"' }));
     expect(await screen.findByText("Tags don't stop messages")).toBeInTheDocument();
-    expect(screen.getByText(/record "Do not contact" on Jane's page/)).toBeInTheDocument();
+    expect(screen.getByText(/Record "do not contact" for Jane\?/)).toBeInTheDocument();
     expect(fake.callsTo(`POST /contacts/${id(9)}/tags`)[0]?.body).toEqual({ names: ['DNC'] });
+    expect(fake.callsTo(`POST /contacts/${id(9)}/do-not-contact`)).toHaveLength(0); // the tag alone records nothing
+    await user.click(screen.getByRole('button', { name: 'Record do not contact' })); // one tap
+    expect(await screen.findByText('Recorded: do not contact Jane')).toBeInTheDocument();
+    expect(fake.callsTo(`POST /contacts/${id(9)}/do-not-contact`).map((c) => c.body)).toEqual([{ reason: 'other' }]);
+    // it only tightens: there is nothing to undo
+    expect(screen.getByText(/Only Jane can undo it/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Undo/ })).toBeNull();
+  });
+
+  it('R-PAR-7: "Not now" leaves the tag as a tag and records nothing; a person with no phone or email says so', async () => {
+    const DNC = '01900000-0000-7000-8000-0000000000d9';
+    const dncTag = { id: DNC, name: 'Do not call', color: null, protected: false };
+    let n = 0;
+    const fake = new FakeFetch()
+      .on(`GET /contacts/${id(9)}/tags`, { status: 200, body: { tags: [] } })
+      .on('GET /tags', { status: 200, body: { tags: [...tags.tags, { ...dncTag, createdByKind: 'user', usage: null }] } })
+      .on(`POST /contacts/${id(9)}/tags`, { status: 200, body: { tags: [dncTag], added: [DNC], optOutLike: [DNC] } })
+      .on(`POST /contacts/${id(9)}/do-not-contact`, () => (++n, err(409, 'NO_ADDRESS_TO_REVOKE')));
+    mount(fake);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Add a tag' }));
+    await user.click(await screen.findByRole('button', { name: 'Do not call' }));
+    await user.click(await screen.findByRole('button', { name: 'Record do not contact' }));
+    expect(await screen.findByText('This person has no phone or email to record that on.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Not now' }));
+    expect(screen.queryByText("Tags don't stop messages")).toBeNull();
+    expect(n).toBe(1);
   });
 
   it('R-PAR-6 E165: typing "buyer" picks the existing "Buyer" (2 taps: + then the tag)', async () => {
@@ -199,6 +297,28 @@ describe("a person's tag chips (R-PAR-6, R-PAR-7)", () => {
     await user.click(await screen.findByRole('button', { name: 'Buyer' }));
     await waitFor(() => expect(fake.callsTo(`POST /contacts/${id(9)}/tags`)[0]?.body).toEqual({ tagIds: [T_BUYER] }));
     expect(await screen.findByRole('button', { name: 'Tag Buyer, remove' })).toBeInTheDocument();
+  });
+
+  it('R-PAR-7: on the person\'s page (the contact section registry) the chips are read-only when the details say the viewer may not edit', async () => {
+    const fake = new FakeFetch()
+      .on(`GET /contacts/${id(9)}/tags`, { status: 200, body: { tags: [{ id: T_BUYER, name: 'Buyer', color: 'blue', protected: false }] } })
+      .on(`GET /contacts/${id(9)}/details`, { status: 200, body: { details: { contactId: id(9), canEdit: false, stageLabels: {} } } });
+    const api = new ApiClient({ fetch: fake.fetch });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    fake.on('GET /auth/session', { status: 200, body: sessionFixture() });
+    render(
+      <QueryClientProvider client={qc}>
+        <ShellProvider api={api} table={tableWith(peopleSurface)}>
+          <MemoryRouter>
+            <ContactTagsSection contact={{ id: id(9), displayName: 'Jane Doe' } as never} />
+          </MemoryRouter>
+        </ShellProvider>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByRole('button', { name: 'Tag Buyer, show everyone with it' })).toBeInTheDocument();
+    await waitFor(() => expect(fake.callsTo(`GET /contacts/${id(9)}/details`).length).toBeGreaterThan(0));
+    expect(screen.queryByRole('button', { name: 'Add a tag' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Tag Buyer, remove' })).toBeNull();
   });
 
   it('shows nothing for a card view (tags are detail-only, R-PAR-7)', async () => {

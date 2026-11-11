@@ -84,6 +84,15 @@ export function sourceKey(s: Source): string {
   return s.kind === 'all' ? 'all' : s.kind === 'list' ? `list:${s.listId}` : `def:${JSON.stringify(s.definition)}`;
 }
 
+/** The tag ids a definition's tag clauses name (the server's own reading is api/lists definitionTagIds). */
+export function definitionTagIds(d: Definition | undefined): string[] {
+  const out = new Set<string>();
+  for (const c of [...(d?.all ?? []), ...(d?.any ?? [])]) {
+    if (c.kind === 'tag' && Array.isArray(c['tagIds'])) for (const id of c['tagIds'] as unknown[]) if (typeof id === 'string') out.add(id.toLowerCase());
+  }
+  return [...out];
+}
+
 /** The bulk selection for a source (resolveSelection's input shape, PARITY_PLAN §4.2). */
 export function selectionOf(s: Source): { listId: string } | { definition: Definition } {
   return s.kind === 'list' ? { listId: s.listId } : { definition: s.kind === 'definition' ? s.definition : { v: 1 } };

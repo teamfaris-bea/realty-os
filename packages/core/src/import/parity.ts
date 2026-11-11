@@ -15,28 +15,31 @@
 //   - Opt-outs: no tag ever acts as anything but a tag, except the existing opt-out tag conversion
 //     (fub.ts mapConsent: a DNC-looking tag becomes a real opt-out).
 //
-// STUBS (module 59, lane L2, replaces them once merged; same contracts as PARITY_PLAN §4.2):
-//   normalizeTagName  → core/parity/tags normalizeTagName
-//   classifyProtected → core/parity/tags classifyProtected (core module 20 lexicon)
-//   typedFieldValue   → core/parity/fields validateFieldValue
-import { DEFAULT_FAIR_HOUSING_PACK, check, hasAnyMatch } from '../fairhousing/index.js';
+// Module 59 (core/parity/tags, core/parity/fields; PARITY_PLAN §4.2) decides what a tag name and its key
+// are, what reads like a protected attribute and what fits a typed field. This file only reads the
+// source's text into the shape those functions take:
+//   normalizeTagName  → core/parity/tags normalizeTagName, after the import's clean-up of the source text
+//                       (control characters out, cut to the tag length: a long FUB tag is shortened, not lost)
+//   classifyProtected → core/parity/tags classifyProtected (core module 20's lexicon + the parity proxy list),
+//                       exactly as the tag writer (api/lists ensureTags) applies it; fieldKeyProtected also
+//                       reads a source field KEY ("customMilitaryStatus") as its words
+//   typedFieldValue   → core/parity/fields validateFieldValue, after reading the source's formats ("$1,250",
+//                       M/D/YYYY dates, option labels → option ids, "a, b" lists)
+import { BUILT_IN_PROTECTED_KEYS, CUSTOM_FIELD_LIMIT as PARITY_FIELD_LIMIT, FIELD_TYPES as PARITY_FIELD_TYPES, type FieldDef, type FieldOption as ParityFieldOption, type FieldType as ParityFieldType, type TypedValue as ParityTypedValue, validateFieldValue } from '../parity/fields/index.js';
+import { TAG_LIMIT_PER_CONTACT, TAG_LIMIT_PER_TENANT, TAG_NAME_MAX, classifyProtected as classifyParityProtected, normalizeTagName as normalizeParityTagName } from '../parity/tags/index.js';
 import { suggestStage } from './csv.js';
 import type { ContactStage, NormalizedContact } from './types.js';
 
 export const PARITY_STAGES: readonly ContactStage[] = ['new', 'attempting', 'connected', 'nurture', 'active', 'under_contract', 'closed', 'lost'];
-export const FIELD_TYPES = ['text', 'number', 'date', 'single_select', 'multi_select'] as const;
-export type FieldType = (typeof FIELD_TYPES)[number];
+export const FIELD_TYPES = PARITY_FIELD_TYPES;
+export type FieldType = ParityFieldType;
 
-export const TAG_CATALOG_LIMIT = 1000;
-export const CUSTOM_FIELD_LIMIT = 50;
-export const CONTACT_TAG_LIMIT = 100;
-export const MAX_TAG_NAME = 64;
-export const MAX_FIELD_TEXT = 1000;
+export const TAG_CATALOG_LIMIT = TAG_LIMIT_PER_TENANT;
+export const CUSTOM_FIELD_LIMIT = PARITY_FIELD_LIMIT;
+export const CONTACT_TAG_LIMIT = TAG_LIMIT_PER_CONTACT;
+export const MAX_TAG_NAME = TAG_NAME_MAX;
 
-export interface FieldOption {
-  id: string;
-  label: string;
-}
+export type FieldOption = ParityFieldOption;
 
 /** What to do with one source custom field (keyed by its source key, e.g. `customLeadScore`). */
 export type FieldAction =
@@ -74,11 +77,16 @@ export function stripControls(s: string): string {
   }).join('');
 }
 
-/** STUB for module 59 normalizeTagName: trimmed, whitespace collapsed, ≤ 64, no control characters; key = lower(NFKC). */
+/**
+ * A source tag as a catalog name (R-PAR-6). The source text is cleaned up first (control characters out,
+ * whitespace collapsed, cut to the 64-character tag length, so a long FUB tag is shortened rather than
+ * lost); module 59's normalizeTagName then decides the stored name and its key (the key `tags.name_key`
+ * computes). Null when nothing is left.
+ */
 export function normalizeTagName(raw: string): { name: string; key: string } | null {
-  const name = stripControls(raw.normalize('NFC')).replace(/\s+/g, ' ').trim().slice(0, MAX_TAG_NAME).trim();
-  if (name === '') return null;
-  return { name, key: name.normalize('NFKC').toLowerCase() };
+  const cleaned = stripControls(raw.normalize('NFC')).replace(/\s+/g, ' ').trim();
+  const n = normalizeParityTagName([...cleaned].slice(0, MAX_TAG_NAME).join(''));
+  return n.ok ? { name: n.name, key: n.key } : null;
 }
 
 /** E191: the tag that keeps a source stage ("FUB stage: Hot Prospect"), cut to the tag length. */
@@ -87,19 +95,21 @@ export function stageTagName(label: string, source: 'fub' | 'csv' = 'fub'): stri
   return n ? n.name : `${source === 'fub' ? 'FUB' : 'Imported'} stage`;
 }
 
-/** Built-in protected attributes (R-AST-12 list; the DB CHECK refuses these keys too). */
-const PROTECTED_WORDS = /\b(military|veteran|va|va\s*loan|pcs|active\s*duty|source\s*of\s*income|section\s*8|voucher|familial|children|kids|pregnan|single\s*(mom|dad|parent)|disabilit|disabled|handicap|wheelchair|religio|church|christian|catholic|jewish|muslim|mosque|synagogue|national\s*origin|ethnic|race|racial|nationality|immigra|citizenship|hispanic|latin[oax]|asian|spanish\s*speak|sexual|gender|marital|senior|age\b)/i;
-
 /**
- * STUB for module 59 classifyProtected: a tag or field name that reads like a fair-housing protected
- * attribute (core module 20 lexicon, plus the built-in protected attribute words). VERIFY WITH COUNSEL (C-PAR-3).
+ * R-PAR-8, R-PAR-18: a tag name, field label or choice that reads like a fair-housing protected attribute.
+ * This is module 59's classifier, exactly as the tag writer applies it when it creates a tag, so the dry
+ * run's "created protected" count is what the catalog gets. **VERIFY WITH COUNSEL (C-PAR-3).**
  */
 export function classifyProtected(name: string): boolean {
-  if (PROTECTED_WORDS.test(name.replace(/[_-]+/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2'))) return true;
-  return hasAnyMatch(check(name, DEFAULT_FAIR_HOUSING_PACK));
+  return classifyParityProtected(name);
 }
 
-const BUILTIN_PROTECTED_KEYS = new Set(['military_status', 'va_loan_interest', 'pcs_orders', 'pcs_timeline', 'source_of_income', 'familial_status', 'disability', 'religion', 'national_origin']);
+/** A source field KEY ("customMilitaryStatus") is classified as typed and as the words of its label ("Military Status"). */
+export function fieldKeyProtected(sourceKey: string): boolean {
+  return classifyProtected(sourceKey) || classifyProtected(fieldLabelFromKey(sourceKey));
+}
+
+const BUILTIN_PROTECTED_KEYS: ReadonlySet<string> = new Set(BUILT_IN_PROTECTED_KEYS);
 
 /** "customLeadScore" / "Lead score" → "Lead Score" (a readable label, ≤ 60). */
 export function fieldLabelFromKey(sourceKey: string): string {
@@ -161,57 +171,87 @@ export function optionsFromValues(values: readonly string[], multi: boolean): Fi
 
 export type TypedValue = { text: string } | { number: number } | { date: string } | { options: string[] };
 
-function isoDate(raw: string): string | null {
-  const t = raw.trim();
-  let y: number;
-  let m: number;
-  let d: number;
+/** A source date ("2026-12-15", "2026-12-15T10:00:00Z", "12/31/2026") as `YYYY-MM-DD`; the calendar is checked by module 59. */
+function sourceDate(t: string): string | null {
+  let y: string;
+  let m: string;
+  let d: string;
   let r = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T ].*)?$/.exec(t);
-  if (r) [y, m, d] = [Number(r[1]), Number(r[2]), Number(r[3])];
+  if (r) [y, m, d] = [r[1]!, r[2]!, r[3]!];
   else {
     r = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(t);
     if (!r) return null;
-    [m, d, y] = [Number(r[1]), Number(r[2]), Number(r[3])];
+    [m, d, y] = [r[1]!, r[2]!, r[3]!];
   }
-  if (y < 1800 || y > 2200 || m < 1 || m > 12 || d < 1) return null;
-  const days = new Date(Date.UTC(y, m, 0)).getUTCDate();
-  if (d > days) return null;
-  return `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+}
+
+/** The live option whose label is `label` (case and spacing aside): source values carry labels, a value holds the option id. */
+function optionIdOf(options: readonly FieldOption[], label: string): string | null {
+  const fold = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
+  const l = fold(label);
+  return options.find((o) => o.archived !== true && fold(o.label) === l)?.id ?? null;
 }
 
 /**
- * STUB for module 59 validateFieldValue: a raw source value as the field's type, or CUSTOM_VALUE_INVALID
- * (the raw text then stays in imported_fields only). Select values match an option label, case-insensitively.
+ * The source's text as the input module 59's validateFieldValue reads for this type, or null when the text
+ * cannot be one: "$1,250.50" → "1,250.50" (validateFieldValue drops the separators), M/D/YYYY → YYYY-MM-DD,
+ * option labels → option ids ("a, b; c" for several), deduped. An empty text is never a value (it would
+ * clear one).
  */
-export function typedFieldValue(type: FieldType, options: readonly FieldOption[], raw: string): { ok: true; value: TypedValue } | { ok: false; code: 'CUSTOM_VALUE_INVALID' } {
+function fieldInput(type: FieldType, options: readonly FieldOption[], raw: string): string | string[] | null {
   const v = raw.trim();
-  if (v === '') return { ok: false, code: 'CUSTOM_VALUE_INVALID' };
+  if (v === '') return null;
   switch (type) {
     case 'text':
-      return v.length <= MAX_FIELD_TEXT ? { ok: true, value: { text: v } } : { ok: false, code: 'CUSTOM_VALUE_INVALID' };
-    case 'number': {
-      const cleaned = v.replace(/[$,\s]/g, '');
-      if (!/^-?\d+(\.\d+)?$/.test(cleaned)) return { ok: false, code: 'CUSTOM_VALUE_INVALID' };
-      const n = Number(cleaned);
-      return Number.isFinite(n) && Math.abs(n) < 1e15 ? { ok: true, value: { number: n } } : { ok: false, code: 'CUSTOM_VALUE_INVALID' };
-    }
-    case 'date': {
-      const d = isoDate(v);
-      return d ? { ok: true, value: { date: d } } : { ok: false, code: 'CUSTOM_VALUE_INVALID' };
-    }
+      return v;
+    case 'number':
+      return v.replace(/[$\s]/g, '');
+    case 'date':
+      return sourceDate(v);
     case 'single_select':
+      return optionIdOf(options, v);
     case 'multi_select': {
-      const parts = type === 'multi_select' ? v.split(/[,;|]/).map((x) => x.trim()).filter((x) => x !== '') : [v];
       const ids: string[] = [];
-      for (const p of parts) {
-        const o = options.find((x) => x.label.toLowerCase() === p.toLowerCase());
-        if (!o) return { ok: false, code: 'CUSTOM_VALUE_INVALID' };
-        if (!ids.includes(o.id)) ids.push(o.id);
+      for (const p of v.split(/[,;|]/).map((x) => x.trim()).filter((x) => x !== '')) {
+        const id = optionIdOf(options, p);
+        if (id === null) return null;
+        if (!ids.includes(id)) ids.push(id);
       }
-      if (ids.length === 0 || ids.length > 50) return { ok: false, code: 'CUSTOM_VALUE_INVALID' };
-      return { ok: true, value: { options: ids } };
+      return ids.length === 0 ? null : ids;
     }
   }
+}
+
+function importValue(v: ParityTypedValue): TypedValue {
+  switch (v.type) {
+    case 'text':
+      return { text: v.text };
+    case 'number':
+      return { number: v.number };
+    case 'date':
+      return { date: v.date };
+    case 'options':
+      return { options: [...v.optionIds] };
+  }
+}
+
+/**
+ * A raw source value as the field's type, decided by module 59's validateFieldValue, or CUSTOM_VALUE_INVALID
+ * (the raw text then stays in imported_fields only). Select values match a live option's label, case-insensitively.
+ */
+export function typedFieldValue(type: FieldType, options: readonly FieldOption[], raw: string): { ok: true; value: TypedValue } | { ok: false; code: 'CUSTOM_VALUE_INVALID' } {
+  const input = fieldInput(type, options, raw);
+  if (input === null) return { ok: false, code: 'CUSTOM_VALUE_INVALID' };
+  const def: FieldDef = { id: '', key: '', label: '', fieldType: type, options, annual: false, archived: false };
+  const r = validateFieldValue(def, input);
+  if (!r.ok || r.value === null) return { ok: false, code: 'CUSTOM_VALUE_INVALID' };
+  return { ok: true, value: importValue(r.value) };
+}
+
+/** A typed value as the input module 60's setFieldValue takes (it validates it again, against the stored definition). */
+export function fieldValueInput(v: TypedValue): string | number | string[] {
+  return 'text' in v ? v.text : 'number' in v ? v.number : 'date' in v ? v.date : v.options;
 }
 
 /** A suggested type from the values seen (the Admin decides; the suggestion never imports anything). */
@@ -219,7 +259,7 @@ export function suggestFieldType(values: readonly string[]): FieldType {
   const vs = values.map((v) => v.trim()).filter((v) => v !== '');
   if (vs.length === 0) return 'text';
   if (vs.every((v) => typedFieldValue('number', [], v).ok)) return 'number';
-  if (vs.every((v) => isoDate(v) !== null)) return 'date';
+  if (vs.every((v) => typedFieldValue('date', [], v).ok)) return 'date';
   const distinct = new Set(vs.map((v) => v.toLowerCase()));
   if (distinct.size <= 10 && vs.length >= distinct.size * 2) return vs.some((v) => /[,;|]/.test(v)) ? 'multi_select' : 'single_select';
   return 'text';
@@ -283,7 +323,8 @@ const OPT_OUT_TAG = /^(dnc|do[\s_-]*not[\s_-]*(contact|call)|opted[\s_-]*out|opt
 /** The stage a contact gets: the Admin's mapping, else the plain suggestion; null when nobody mapped the label. */
 export function mappedStage(label: string | null | undefined, o: ParityOptions): ContactStage | null {
   if (label === null || label === undefined) return 'new';
-  return o.stageMap[label] ?? suggestStage(label);
+  // own keys only: a source label such as "constructor" or "valueOf" is a label, not Object.prototype's member
+  return Object.hasOwn(o.stageMap, label) ? (o.stageMap[label] ?? null) : suggestStage(label);
 }
 
 /** The tag names a contact gets (the source's tags + the kept stage), deduped by name key, in order. */
@@ -355,9 +396,9 @@ export function paritySummary(contacts: readonly NormalizedContact[], o: ParityO
     .map(([sourceKey, values]) => {
       const label = fieldLabelFromKey(sourceKey);
       const suggestedType = suggestFieldType(values);
-      // R-PAR-18: the label, or (for a choice-like field) one of its options, reads like a protected attribute
+      // R-PAR-18: the key (as its label's words), or (for a choice-like field) one of its options, reads like a protected attribute
       const choiceLike = suggestedType === 'single_select' || suggestedType === 'multi_select';
-      const prot = classifyProtected(label) || (choiceLike && optionsFromValues(values, suggestedType === 'multi_select').some((x) => classifyProtected(x.label)));
+      const prot = fieldKeyProtected(sourceKey) || (choiceLike && optionsFromValues(values, suggestedType === 'multi_select').some((x) => classifyProtected(x.label)));
       const chosen = o.fields[sourceKey];
       const action: FieldAction = prot ? { action: 'skip' } : (chosen ?? { action: 'skip' });
       const multi = action.action === 'create' ? action.type === 'multi_select' : suggestedType === 'multi_select';

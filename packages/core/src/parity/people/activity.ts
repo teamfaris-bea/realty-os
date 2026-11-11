@@ -3,6 +3,10 @@
 // satisfies or delays first-touch SLA, release or inactivity release, never unlocks R-PAR-14 and never
 // appears in touch counts. It is shown "Logged by <name>", at the time it happened, and "not verified".
 import { DAY_MS, type Instant, MINUTE_MS } from '../../foundation/time.js';
+// The tag rule's own file, not the tags index: the index also carries the fair-housing lexicon, whose Zod
+// schemas are built at load (Zod 4 probes `new Function`), and this module is in the web's contact page
+// bundle, whose CSP forbids eval (csp.spec; the same reason contactPatch.ts builds its schema on first use).
+import { tagReadsLikeOptOut } from '../tags/normalize.js';
 
 export const ACTIVITY_KINDS = ['call', 'text', 'email'] as const;
 export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
@@ -95,11 +99,9 @@ export function suggestsDoNotContact(text: string | null | undefined): boolean {
 
 // R-PAR-7 / E167: a tag that reads like an opt-out ("DNC", "Opted out", "Unsubscribed") never stops a
 // message; the app asks "Tags don't stop messages. Record 'do not contact' for Jane?" and offers the real
-// person-level do-not-contact. Same patterns as the importer's TAG_DNC / TAG_OPT_OUT / TAG_UNSUB
-// (core/import/fub.ts), so a typed tag and an imported one are read alike.
-const TAG_OPT_OUT_PATTERNS = [/^(dnc|do[\s_-]*not[\s_-]*(contact|call))$/i, /^(opted[\s_-]*out|opt[\s_-]*out|stop)$/i, /^unsubscribed$/i];
-
+// person-level do-not-contact. There is one opt-out-looking-tag rule: module 59's `tagReadsLikeOptOut`
+// (core/parity/tags: the importer's TAG_DNC / TAG_OPT_OUT / TAG_UNSUB patterns, matched on the normalized
+// tag name). This name stays for module 57's callers.
 export function tagReadsAsOptOut(name: string): boolean {
-  const t = name.trim();
-  return TAG_OPT_OUT_PATTERNS.some((re) => re.test(t));
+  return tagReadsLikeOptOut(name);
 }

@@ -31,7 +31,7 @@ export interface ProtectedLexicon {
   version: string;
 }
 
-export const PARITY_PROXY_LEXICON_VERSION = 'par-proxy/1';
+export const PARITY_PROXY_LEXICON_VERSION = 'par-proxy/2';
 
 const WORDS: Record<string, ProtectedClass> = {
   // military status (VA loans, PCS moves)
@@ -56,7 +56,7 @@ const WORDS: Record<string, ProtectedClass> = {
   spanish: 'national_origin', chinese: 'national_origin', mexican: 'national_origin', indian: 'national_origin', korean: 'national_origin',
   vietnamese: 'national_origin', russian: 'national_origin', haitian: 'national_origin', filipino: 'national_origin',
   // sexual orientation, gender identity, sex
-  lgbt: 'sexual_orientation', lgbtq: 'sexual_orientation', gay: 'sexual_orientation', lesbian: 'sexual_orientation', queer: 'sexual_orientation',
+  lgbt: 'sexual_orientation', lgbtq: 'sexual_orientation', gay: 'sexual_orientation', lesbian: 'sexual_orientation', queer: 'sexual_orientation', sexual: 'sexual_orientation',
   trans: 'gender_identity', transgender: 'gender_identity', nonbinary: 'gender_identity',
   // marital status
   divorced: 'marital_status', divorce: 'marital_status', divorcing: 'marital_status', widow: 'marital_status', widowed: 'marital_status', widower: 'marital_status',
@@ -65,6 +65,8 @@ const WORDS: Record<string, ProtectedClass> = {
 const PHRASES: { words: string[]; class: ProtectedClass }[] = [
   { words: ['section', '8'], class: 'source_of_income' },
   { words: ['gi', 'bill'], class: 'military_status' },
+  // par-proxy/2: from the import's interim list (module 65), so one lexicon holds both lanes' words
+  { words: ['active', 'duty'], class: 'military_status' },
   { words: ['green', 'card'], class: 'national_origin' },
   { words: ['single', 'mom'], class: 'familial_status' },
   { words: ['single', 'dad'], class: 'familial_status' },

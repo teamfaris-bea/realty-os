@@ -1,4 +1,6 @@
 // Code → sentence for the api/lists codes the People and admin pages show (CONVENTIONS §7).
+import { BULK_ERROR_MESSAGES } from '../bulk/api.js';
+
 export const LISTS_ERROR_MESSAGES: Record<string, string> = {
   TAG_NAME_EMPTY: 'Type a name for the tag.',
   TAG_NAME_TOO_LONG: 'Tag names are at most 64 characters.',
@@ -8,7 +10,8 @@ export const LISTS_ERROR_MESSAGES: Record<string, string> = {
   TAG_NAME_TAKEN: 'Another tag already has that name. Merge the two instead.',
   TAG_MERGE_INVALID: 'Pick a different tag to merge into.',
   TAG_PROTECTION_OWNER_ONLY: 'Only the Owner can lift a fair-housing protection.',
-  AUDIENCE_PROTECTED_PROXY: 'This list uses a protected tag, so it cannot be the audience of a bulk email, text or plan. You can still view it and work it one person at a time.',
+  // one sentence per code across surfaces (shell/pages.ts validateRegistry): the bulk sheet is where this refusal shows
+  AUDIENCE_PROTECTED_PROXY: BULK_ERROR_MESSAGES['AUDIENCE_PROTECTED_PROXY']!,
   CUSTOM_FIELD_LIMIT: 'Your team has 50 custom fields, the most it can have. Archive one first.',
   CUSTOM_FIELD_PROTECTED: 'That would record a fair-housing protected trait. Use the built-in self-reported details on the person instead ("the client told me").',
   CUSTOM_FIELD_LABEL_TAKEN: 'Another field already has that name.',
@@ -35,4 +38,5 @@ export const LISTS_ERROR_MESSAGES: Record<string, string> = {
   LIST_TOO_SLOW: 'This list took too long to load. Narrow it with another filter and try again.',
   SMART_LIST_IMMUTABLE: 'A list keeps who it belongs to. Copy it instead.',
   SELECTION_TOO_LARGE: 'Too many people for one bulk action. Narrow the list first.',
+  STAGE_LABEL_INVALID: 'Each stage label is 1 to 24 characters.',
 };

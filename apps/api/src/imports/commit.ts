@@ -42,6 +42,8 @@ import {
   computeFill,
   contactTagNames,
   fieldKeyFrom,
+  fieldKeyProtected,
+  fieldValueInput,
   mappedStage,
   type ParityOptions,
   type ResolvedField,
@@ -55,11 +57,13 @@ import {
 import type { AddressKind } from '@realty/core/compliance';
 import type { ContactId, Instant, SystemActor, TenantId, UserActor } from '@realty/core/foundation';
 import { toIso } from '@realty/core/foundation';
+import type { FieldDef } from '@realty/core/parity/fields';
 import { type Tx, applyOwnershipCommandInTx, derivedCommandId, enqueueJob, lockContact, recordConsentEvent, setOwnershipCommand, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { audit } from '../audit.js';
 import { TRANSCRIBE_JOB } from '../comms/recordings.js';
 import { AppError } from '../errors.js';
+import { addContactTags, ensureFieldDef, ensureTags, setFieldValue } from '../lists/index.js';
 import { systemActor } from '../worker/systemActor.js';
 import * as brepo from './repos/batches.js';
 import * as existing from './repos/existing.js';
@@ -129,8 +133,11 @@ interface Ctx {
   members: Set<string>;
   settings: { recordingRetentionDays: number; transcribeImported: boolean };
   /** PARITY 65: the contacts stage's stage map / tag / field plan, and the resolved field definitions */
-  parity: { options: ParityOptions; fields: Map<string, ResolvedField> };
+  parity: { options: ParityOptions; fields: Map<string, ImportField> };
 }
+
+/** A resolved field and its stored definition (module 60's setFieldValue validates each value against it). */
+type ImportField = ResolvedField & { def: FieldDef };
 
 /** PARITY 65: what one contact record wrote of the parity plan (merged into the batch only when the record commits). */
 interface ParityApplied {
@@ -260,61 +267,70 @@ async function applyOptOuts(c: Ctx, rec: rrepo.RecordRow, n: NormalizedContact, 
   return created;
 }
 
+/** A definition row as module 60's writers take it. */
+function fieldDefOf(r: prepo.FieldDefRow): FieldDef {
+  return { id: r.id, key: r.key, label: r.label, fieldType: r.field_type, options: r.options, annual: r.annual, archived: r.archived };
+}
+
 /**
  * PARITY 65 (R-PAR-46): the definitions this contacts commit writes values into: existing fields as mapped,
  * and new typed fields created once per chunk, OUTSIDE the per-record savepoints (a rejected record never
- * takes a definition with it). A protected-looking field is never created (R-PAR-18).
+ * takes a definition with it), through module 60's ensureFieldDef (core validates the type, key, choices and
+ * the protected-trait lexicon). A protected-looking field is never created (R-PAR-18).
  */
-async function resolveFields(tx: Tx, batch: brepo.BatchRow, options: ParityOptions, ids: ImportDeps['ids']): Promise<{ fields: Map<string, ResolvedField>; createdIds: string[] }> {
-  const fields = new Map<string, ResolvedField>();
+async function resolveFields(tx: Tx, batch: brepo.BatchRow, options: ParityOptions, ids: ImportDeps['ids']): Promise<{ fields: Map<string, ImportField>; createdIds: string[] }> {
+  const fields = new Map<string, ImportField>();
   const createdIds: string[] = [];
   if (Object.keys(options.fields).length === 0) return { fields, createdIds };
   const defs = await prepo.fieldDefs(tx);
   const summary = batch.options.paritySummary;
+  const use = (sourceKey: string, d: FieldDef) => fields.set(sourceKey, { sourceKey, fieldId: d.id, key: d.key, type: d.fieldType, options: d.options, def: d });
   for (const [sourceKey, a] of Object.entries(options.fields)) {
     if (a.action === 'skip') continue;
     if (a.action === 'existing') {
       const d = defs.find((x) => x.id === a.fieldId && !x.archived);
-      if (d) fields.set(sourceKey, { sourceKey, fieldId: d.id, key: d.key, type: d.field_type, options: d.options });
+      if (d) use(sourceKey, fieldDefOf(d));
       continue;
     }
-    if (classifyProtected(a.label) || classifyProtected(sourceKey)) continue;
+    if (classifyProtected(a.label) || fieldKeyProtected(sourceKey)) continue;
     const key = fieldKeyFrom(sourceKey, sourceKindOf(batch));
     if (key === null) continue;
     const have = defs.find((x) => x.key === key);
     if (have) {
-      if (!have.archived && have.field_type === a.type) fields.set(sourceKey, { sourceKey, fieldId: have.id, key, type: have.field_type, options: have.options });
+      if (!have.archived && have.field_type === a.type) use(sourceKey, fieldDefOf(have));
       continue;
     }
     const opts = a.type === 'single_select' || a.type === 'multi_select' ? (summary?.fields.find((f) => f.sourceKey === sourceKey)?.options ?? []) : [];
-    const id = ids.next<'CustomFieldId'>();
     const label = defs.some((x) => !x.archived && x.label.toLowerCase() === a.label.toLowerCase()) ? `${a.label} (imported)`.slice(0, 60) : a.label;
-    const made = await prepo.guarded(tx, () => prepo.createFieldDef(tx, { id, key, label, type: a.type, options: opts, origin: batch.source === 'csv' ? 'csv_import' : 'fub_import' }));
-    if (!made.ok) continue;
-    createdIds.push(id);
-    fields.set(sourceKey, { sourceKey, fieldId: id, key, type: a.type, options: opts });
+    const made = await prepo.guarded(tx, () => ensureFieldDef(tx, ids, { label, fieldType: a.type, key, options: opts }, batch.source === 'csv' ? 'csv_import' : 'fub_import', null));
+    if (!made.ok || !made.value.ok) continue;
+    if (made.value.created) createdIds.push(made.value.def.id);
+    use(sourceKey, made.value.def);
   }
   return { fields, createdIds };
 }
 
 /**
  * PARITY 65 (R-PAR-46, R-PAR-10): the person's tags go into the catalog and contact_tags (never
- * contacts.tags); custom values are written only where the person has none (E41 fill-empty); a value that
- * does not fit stays as raw text in imported_fields. Tags never change whether anyone can be contacted:
- * a DNC-looking tag's opt-out comes from the consent rules (applyOptOuts), not from the tag.
+ * contacts.tags) through module 60's ensureTags / addContactTags, stamped with the batch (added_by_kind
+ * 'import'); custom values go through setFieldValue with fillEmptyOnly (E41: written only where the person
+ * has none); a value that does not fit stays as raw text in imported_fields. Each tag and value is written in
+ * its own savepoint, so a limit hit skips that one, never the person. Tags never change whether anyone can
+ * be contacted: a DNC-looking tag's opt-out comes from the consent rules (applyOptOuts), not from the tag.
  */
 async function applyParity(c: Ctx, contactId: string, n: NormalizedContact, isNew: boolean): Promise<ParityApplied> {
   const counts: Record<string, number> = { tagLinks: 0, tagLinksExisting: 0, tagsSkipped: 0, values: 0, valuesKept: 0, valuesMisfit: 0, stagesSet: 0, stagesKept: 0 };
   const tagIds: string[] = [];
   for (const t of contactTagNames(n, c.parity.options, sourceKindOf(c.batch))) {
-    const up = await prepo.guarded(c.tx, () => prepo.upsertTag(c.tx, c.deps.ids.next<'TagId'>(), t.name, classifyProtected(t.name)));
-    if (!up.ok || !up.value) {
-      counts.tagsSkipped! += 1;
+    const up = await prepo.guarded(c.tx, () => ensureTags(c.tx, c.deps.ids, [t.name], { kind: 'import' }));
+    const tag = up.ok ? up.value.tags[0] : undefined;
+    if (!tag) {
+      counts.tagsSkipped! += 1; // TAG_LIMIT (E190) or a DB guard: the raw tag stays in imported_fields
       continue;
     }
-    if (up.value.created) tagIds.push(up.value.id);
-    const linked = await prepo.guarded(c.tx, () => prepo.linkTag(c.tx, contactId, up.value!.id, c.batch.id));
-    if (linked.ok && linked.value) counts.tagLinks! += 1;
+    if (tag.created) tagIds.push(tag.id);
+    const linked = await prepo.guarded(c.tx, () => addContactTags(c.tx, contactId, [tag.id], { kind: 'import', importBatchId: c.batch.id }));
+    if (linked.ok && linked.value.added.length > 0) counts.tagLinks! += 1;
     else if (linked.ok) counts.tagLinksExisting! += 1;
     else counts.tagsSkipped! += 1;
   }
@@ -326,9 +342,9 @@ async function applyParity(c: Ctx, contactId: string, n: NormalizedContact, isNe
       counts.valuesMisfit! += 1;
       continue;
     }
-    const wrote = await prepo.guarded(c.tx, () => prepo.setValueIfEmpty(c.tx, contactId, f.fieldId, v.value, c.batch.id));
-    if (wrote.ok && wrote.value) counts.values! += 1;
-    else if (wrote.ok) counts.valuesKept! += 1;
+    const wrote = await prepo.guarded(c.tx, () => setFieldValue(c.tx, contactId, f.def, fieldValueInput(v.value), { kind: 'import', importBatchId: c.batch.id }, { fillEmptyOnly: true }));
+    if (wrote.ok && wrote.value.ok && wrote.value.changed) counts.values! += 1;
+    else if (wrote.ok && wrote.value.ok) counts.valuesKept! += 1;
     else counts.valuesMisfit! += 1;
   }
   if (n.stageLabel) counts[isNew ? 'stagesSet' : 'stagesKept']! += 1;

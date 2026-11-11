@@ -244,7 +244,6 @@ export const ERROR_STATUS = {
   BROKERAGE_IDENTITY_MISSING: 409,
   SMS_MARKETING_NOT_REGISTERED: 409, // R-PAR-40: batch text needs an approved registration that covers marketing
   TEMPLATE_CHANNEL_MISMATCH: 422, // an email action needs an email template (and a text action a text one)
-  LIST_SELECTION_UNAVAILABLE: 409, // smart-list selections arrive with module 60 (resolveSelection); select people instead
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

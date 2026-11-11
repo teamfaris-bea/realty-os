@@ -72,6 +72,8 @@ describe('classifyProtected (R-PAR-8, core module 20 lexicon)', () => {
     'Family size', // module 20 attribute vocabulary
     'Household income',
     'Religion',
+    'Active duty', // par-proxy/2 (the import's interim list)
+    'Sexual orientation',
   ];
   const NOT_PROTECTED = ['Buyer', 'Seller', 'Hot', 'A-Lead', 'Pre-approved', 'First-time buyer', 'Investor', 'Sphere', 'Open house 5/12', 'Zillow', 'Referral',
     'Birthday', 'Home anniversary', 'Closing date', 'Move-in date', 'Price range', 'Lender', 'Interest rate', 'Family room', 'Single family', 'Church St listing', 'Pool', 'Condo'];

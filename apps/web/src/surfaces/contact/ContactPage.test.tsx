@@ -160,6 +160,19 @@ describe('Contact: full view', () => {
     await waitFor(() => expect(screen.getByTestId('announcer')).toHaveTextContent('First contact with Jane Doe: 30 seconds left'), { timeout: 3000 });
   });
 
+  it('R-PAR-7: the full view shows the person\'s tag chips under the name (module 61\'s section in the registry), editable when the details allow it', async () => {
+    const c = fullContact();
+    const details = { contactId: c.id, rowVersion: 1, doNotContact: false, stage: { stage: 'new', label: 'New', locked: [], lockedReason: null }, stageLabels: {}, addresses: [], collaborators: [], relationships: [], removedPoints: [], canEdit: true, canManageCollaborators: false };
+    const fake = fullFake(c)
+      .on(`GET /contacts/${c.id}/tags`, { status: 200, body: { tags: [{ id: '01900000-0000-7000-8000-0000000000b1', name: 'Buyer', color: 'blue', protected: false }] } })
+      .on(`GET /contacts/${c.id}/details`, { status: 200, body: { details } });
+    agentApp(fake, `/contacts/${c.id}`);
+    const tags = await screen.findByRole('region', { name: 'Tags' });
+    expect(within(tags).getByRole('button', { name: 'Tag Buyer, show everyone with it' })).toBeInTheDocument();
+    expect(await within(tags).findByRole('button', { name: 'Tag Buyer, remove' })).toBeInTheDocument();
+    expect(within(tags).getByRole('button', { name: 'Add a tag' })).toBeInTheDocument();
+  });
+
   it('an invisible or missing contact reads as not available, the same either way', async () => {
     const fake = new FakeFetch().on(`GET /contacts/${IDS.pat}`, err(404, 'NOT_FOUND'));
     agentApp(fake, `/contacts/${IDS.pat}`);

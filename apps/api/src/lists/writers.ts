@@ -112,6 +112,11 @@ export async function setFieldValue(tx: Tx, contactId: string, def: FieldDef, ra
   const current = await catalog.fieldValue(tx, contactId, def.id);
   if (opts.fillEmptyOnly && current !== null) return { ok: true, changed: false, skipped: 'not_empty' };
   if (v.value === null) return { ok: true, changed: current === null ? false : await catalog.deleteFieldValue(tx, contactId, def.id) };
+  if (opts.fillEmptyOnly) {
+    // E41 holds under concurrency too: a value another session wrote after the read above is never overwritten
+    const wrote = await catalog.insertFieldValueIfAbsent(tx, contactId, def.id, v.value, by);
+    return wrote ? { ok: true, changed: true } : { ok: true, changed: false, skipped: 'not_empty' };
+  }
   await catalog.upsertFieldValue(tx, contactId, def.id, v.value, by);
   return { ok: true, changed: true };
 }

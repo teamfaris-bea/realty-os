@@ -1,11 +1,11 @@
-// Tag catalog and custom-field writes of the import (PARITY_PLAN module 65; R-PAR-46, R-PAR-6, R-PAR-10,
-// R-PAR-17, R-PAR-19). The import writes as the system actor (RLS: `added_by_kind = 'import'`,
-// `created_by_kind = 'import'`, `origin = 'fub_import' | 'csv_import'`, tenant-wide system only).
-//
-// STUB NOTE: module 60 (lane L2, api/lists) owns the tag catalog and custom-field APIs. These are the
-// import's own minimal writers against the same tables and DB guards (TAG_LIMIT, CONTACT_TAG_LIMIT,
-// CUSTOM_FIELD_LIMIT, type checks); once L2 merges they can call its writers instead.
-import type { FieldOption, FieldType, TypedValue } from '@realty/core/import';
+// The import's parity reads and bookkeeping (PARITY_PLAN module 65; R-PAR-46, R-PAR-6, R-PAR-10, R-PAR-17,
+// R-PAR-19). Every catalog, tag-link, field-definition and value WRITE goes through module 60's writers
+// (apps/api/src/lists/index.ts: ensureTags, addContactTags, ensureFieldDef, setFieldValue with
+// fillEmptyOnly), called by commit.ts as the import system actor (RLS: `added_by_kind = 'import'` with the
+// batch id, `created_by_kind = 'import'`, `origin = 'fub_import' | 'csv_import'`, tenant-wide system only).
+// What stays here: the catalog reads of the dry run, the savepoint that keeps one refused tag or value
+// from rejecting the person, the batch's bookkeeping and the revert's batch-scoped deletes.
+import type { FieldOption, FieldType } from '@realty/core/import';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 
@@ -33,59 +33,20 @@ export async function catalog(tx: Tx): Promise<Map<string, string>> {
   return new Map(r.rows.map((x) => [x.name_key, x.id]));
 }
 
-/** Upserts one catalog tag (first spelling wins, R-PAR-6). Returns its id and whether this call created it. */
-export async function upsertTag(tx: Tx, id: string, name: string, protectedProxy: boolean): Promise<{ id: string; created: boolean } | null> {
-  const ins = await sql<{ id: string }>`
-    INSERT INTO tags (tenant_id, id, name, created_by_kind, protected_proxy)
-    VALUES (app.tenant_id(), ${id}, ${name}, 'import', ${protectedProxy})
-    ON CONFLICT (tenant_id, name_key) DO NOTHING RETURNING id`.execute(tx);
-  if (ins.rows[0]) return { id: ins.rows[0].id, created: true };
-  const got = await sql<{ id: string }>`SELECT id FROM tags WHERE tenant_id = app.tenant_id() AND name_key = lower(normalize(${name}, NFKC))`.execute(tx);
-  return got.rows[0] ? { id: got.rows[0].id, created: false } : null;
-}
-
-/** Links a tag to a person as this import (never a duplicate link). True when a link was written. */
-export async function linkTag(tx: Tx, contactId: string, tagId: string, batchId: string): Promise<boolean> {
-  const r = await sql<{ tag_id: string }>`
-    INSERT INTO contact_tags (tenant_id, contact_id, tag_id, added_by_kind, import_batch_id)
-    VALUES (app.tenant_id(), ${contactId}, ${tagId}, 'import', ${batchId})
-    ON CONFLICT (tenant_id, contact_id, tag_id) DO NOTHING RETURNING tag_id`.execute(tx);
-  return r.rows.length > 0;
-}
-
 export interface FieldDefRow {
   id: string;
   key: string;
   label: string;
   field_type: FieldType;
   options: FieldOption[];
+  annual: boolean;
   archived: boolean;
 }
 
 export async function fieldDefs(tx: Tx): Promise<FieldDefRow[]> {
   const r = await sql<FieldDefRow>`
-    SELECT id, key, label, field_type, options, archived_at IS NOT NULL AS archived FROM custom_field_defs WHERE tenant_id = app.tenant_id() ORDER BY position, key`.execute(tx);
+    SELECT id, key, label, field_type, options, annual, archived_at IS NOT NULL AS archived FROM custom_field_defs WHERE tenant_id = app.tenant_id() ORDER BY position, key`.execute(tx);
   return r.rows;
-}
-
-/** A new definition of import origin (R-PAR-17: ≤ 50 live, key/type immutable; the DB guards hold). */
-export async function createFieldDef(tx: Tx, d: { id: string; key: string; label: string; type: FieldType; options: readonly FieldOption[]; origin: 'fub_import' | 'csv_import' }): Promise<void> {
-  await sql`
-    INSERT INTO custom_field_defs (tenant_id, id, key, label, field_type, options, origin)
-    VALUES (app.tenant_id(), ${d.id}, ${d.key}, ${d.label}, ${d.type}, ${JSON.stringify(d.options)}::jsonb, ${d.origin})`.execute(tx);
-}
-
-/** E41 fill-empty: writes a value only where the person has none (an agent's value is never overwritten). */
-export async function setValueIfEmpty(tx: Tx, contactId: string, fieldId: string, v: TypedValue, batchId: string): Promise<boolean> {
-  const text = 'text' in v ? v.text : null;
-  const num = 'number' in v ? v.number : null;
-  const date = 'date' in v ? v.date : null;
-  const opts = 'options' in v ? v.options : null;
-  const r = await sql<{ field_id: string }>`
-    INSERT INTO contact_field_values (tenant_id, contact_id, field_id, value_text, value_number, value_date, value_options, updated_by_kind, import_batch_id)
-    VALUES (app.tenant_id(), ${contactId}, ${fieldId}, ${text}, ${num}, ${date}::date, ${opts}::text[], 'import', ${batchId})
-    ON CONFLICT (tenant_id, contact_id, field_id) DO NOTHING RETURNING field_id`.execute(tx);
-  return r.rows.length > 0;
 }
 
 /** The tag names a contact holds now (for E41 previews and the review list). */

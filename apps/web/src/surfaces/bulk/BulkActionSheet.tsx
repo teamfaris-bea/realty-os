@@ -1,6 +1,8 @@
 // The bulk action sheet (parity module 64; R-PAR-33..R-PAR-42, PARITY_PLAN §5 honest UI). Exported for the
-// People page bulk bar (module 61), which opens it with the selected people and, for tag/untag/assign/
-// enroll, the chosen tag, person or plan. Email and text pick their template here; stage picks here.
+// People page bulk bar (module 61), which opens it with the selection (the checked people, or the whole
+// smart list after "Select all") and, for tag/untag/assign/enroll, the chosen tag, person or plan. Email and
+// text pick their template here; stage picks here. The server freezes the selection at draft (module 60's
+// resolveSelection: detail-visible people only, the kind's cap, no protected-tag audience for sends).
 //
 //   1. choose  (email/text: a template; stage: a stage)           1 tap
 //   2. the confirm sheet: the draft the server built, with the frozen target. Everyone selected is counted:
@@ -27,9 +29,17 @@ export const STAGE_CHOICES: readonly { key: string; label: string }[] = [
   { key: 'lost', label: 'Lost' },
 ];
 
+/** A whole smart list as resolveSelection's input (PARITY_PLAN §4.2): a saved list, or an unsaved definition (a tag chip view). */
+export type BulkListSelection = { listId: string } | { definition: unknown };
+
 export interface BulkActionSheetProps {
   kind: BulkKind;
-  contactIds: readonly string[];
+  /** the people picked by id */
+  contactIds?: readonly string[];
+  /** or everyone in a smart list ("Select all"); the server resolves and freezes it at draft */
+  selection?: BulkListSelection;
+  /** the selection as the caller counts it ("30 people", "10,000+ people") until the draft's own count */
+  selectedText?: string;
   /** tags the selection was built from (a tag chip): a protected one refuses sends (R-PAR-8) */
   audienceTagIds?: readonly string[];
   /** tag/untag: the tag; assign: the person; enroll: the plan (chosen by the caller) */
@@ -40,7 +50,7 @@ export interface BulkActionSheetProps {
   onConfirmed?(a: BulkActionView): void;
 }
 
-export function BulkActionSheet({ kind, contactIds, audienceTagIds, params = {}, paramLabel, onClose, onConfirmed }: BulkActionSheetProps) {
+export function BulkActionSheet({ kind, contactIds = [], selection, selectedText, audienceTagIds, params = {}, paramLabel, onClose, onConfirmed }: BulkActionSheetProps) {
   const api = useApi();
   const id = useId();
   const send = kind === 'email' || kind === 'text';
@@ -60,7 +70,7 @@ export function BulkActionSheet({ kind, contactIds, audienceTagIds, params = {},
   const build = async (c: { templateId?: string; stage?: string; label: string } | null) => {
     setChoice(c);
     setError(null);
-    const r = await create.run({ kind, selection: { contactIds: [...contactIds] }, ...(audienceTagIds?.length ? { audienceTagIds: [...audienceTagIds] } : {}), ...params, ...(c?.templateId ? { templateId: c.templateId } : {}), ...(c?.stage ? { stage: c.stage } : {}) });
+    const r = await create.run({ kind, selection: selection ?? { contactIds: [...contactIds] }, ...(audienceTagIds?.length ? { audienceTagIds: [...audienceTagIds] } : {}), ...params, ...(c?.templateId ? { templateId: c.templateId } : {}), ...(c?.stage ? { stage: c.stage } : {}) });
     if (r.ok) setDraft(r.data.action);
     else setError(messageFor({ code: r.code, details: r.details }, BULK_ERROR_MESSAGES));
   };
@@ -74,7 +84,7 @@ export function BulkActionSheet({ kind, contactIds, audienceTagIds, params = {},
   };
 
   const words = KIND_WORDS[kind];
-  const title = confirmed ? `${words.verb} started` : draft ? `${words.verb} ${draft.targetCount} of ${draft.selected}?` : `${words.verb} ${contactIds.length} ${contactIds.length === 1 ? 'person' : 'people'}`;
+  const title = confirmed ? `${words.verb} started` : draft ? `${words.verb} ${draft.targetCount} of ${draft.selected}?` : `${words.verb} ${selectedText ?? `${contactIds.length} ${contactIds.length === 1 ? 'person' : 'people'}`}`;
 
   // the server builds the draft as soon as there is nothing left to choose
   const started = useRef(false);

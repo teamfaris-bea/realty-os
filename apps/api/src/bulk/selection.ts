@@ -1,29 +1,33 @@
-// STUB of module 60's resolveSelection (PARITY_PLAN §4.2), with exactly its signature, until lane L2
-// (lane/par-lists, apps/api/src/lists/**) merges. At merge, this file re-exports L2's implementation:
-//   export { resolveSelection } from '../lists/<its file>.js';
-// and the LIST_SELECTION_UNAVAILABLE branch disappears.
+// The bulk target's selection (PARITY_PLAN §4.2) is module 60's resolveSelection (apps/api/src/lists):
 //
-// Contract (§4.2): the people of a selection whose DETAIL the caller sees (app.contact_detail_visible; a pond
-// or offer card is never returned), at most `cap`, under the caller's own RLS in `tx`. This stub implements
-// the explicit-ids case fully (it is what the People page multi-select sends) and refuses smart-list ids and
-// definitions with LIST_SELECTION_UNAVAILABLE (409) rather than guessing at L2's compiler.
+//   resolveSelection(tx, { contactIds } | { listId } | { definition }, opts?): ContactId[]
+//
+// called as it is, under the creator's own RLS in `tx`: only people whose DETAIL the caller sees (a pond or
+// offer card is never returned), live only, in list order, at most `opts.cap`, never silently truncated; a
+// saved list or definition that names a protected-proxy tag is refused as the audience of a send or an
+// enrollment (AUDIENCE_PROTECTED_PROXY, R-PAR-8, E189). This adapter only maps lists' "more people than the
+// cap" (SELECTION_TOO_LARGE) to the bulk cap code the bulk sheet and module 63 speak (BULK_TOO_LARGE,
+// details.cap), and picks the cap and the audience rule from the bulk kind.
+import { type BulkKind, BULK_CAPS, isSendKind } from '@realty/core/parity/bulk';
 import type { ContactId } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
-import { sql } from 'kysely';
 import { AppError } from '../errors.js';
+import { type Selection, type SelectionOptions, resolveSelection as resolveListSelection } from '../lists/index.js';
 
-export type SelectionDef = { contactIds: readonly string[] } | { listId: string } | { definition: unknown };
+export type SelectionDef = Selection;
+export type { SelectionOptions };
 
-/** The cap the caller wants enforced: one more than the kind's cap, so "too large" is detectable. */
-export async function resolveSelection(tx: Tx, def: SelectionDef, cap = 10_001): Promise<ContactId[]> {
-  if (!('contactIds' in def)) throw new AppError('LIST_SELECTION_UNAVAILABLE');
-  const ids = [...new Set(def.contactIds.map((s) => s.toLowerCase()))];
-  if (ids.length === 0) return [];
-  const r = await sql<{ id: string }>`
-    SELECT c.id FROM contacts c
-     WHERE c.tenant_id = app.tenant_id() AND c.id = ANY (${ids}::uuid[])
-       AND app.contact_detail_visible(c.tenant_id, c.id)
-     ORDER BY c.id
-     LIMIT ${cap}`.execute(tx);
-  return r.rows.map((x) => x.id as ContactId);
+/** PARITY_PLAN §4.2, as module 60 exports it; SELECTION_TOO_LARGE is BULK_TOO_LARGE here. */
+export async function resolveSelection(tx: Tx, sel: SelectionDef, opts: SelectionOptions = {}): Promise<ContactId[]> {
+  try {
+    return await resolveListSelection(tx, sel, opts);
+  } catch (e) {
+    if (e instanceof AppError && e.code === 'SELECTION_TOO_LARGE') throw new AppError('BULK_TOO_LARGE', e.details);
+    throw e;
+  }
+}
+
+/** A bulk kind's selection options: its cap (Q-PAR-7, on the people selected), and the send-audience rule for email, text and enroll. */
+export function selectionOptionsFor(kind: BulkKind): SelectionOptions {
+  return { cap: BULK_CAPS[kind], audience: isSendKind(kind) || kind === 'enroll' ? 'send' : 'edit' };
 }

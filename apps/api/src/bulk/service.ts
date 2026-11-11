@@ -13,7 +13,7 @@
 //
 // Job payloads hold only the action id (R-TEN-7). Counts and audits hold codes and numbers only.
 import type { IdGenerator, UserActor } from '@realty/core/foundation';
-import { type BulkKind, type BulkKindFacts, BULK_CAPS, bulkActionPreflight, bulkPreflight, isSendKind, isStage, tally } from '@realty/core/parity/bulk';
+import { type BulkKind, type BulkKindFacts, bulkActionPreflight, bulkPreflight, isSendKind, isStage, tally } from '@realty/core/parity/bulk';
 import { type Database, type Tx, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { audit, redactSnapshot } from '../audit.js';
@@ -26,7 +26,7 @@ import * as T from '../templates/repos/templates.js';
 import { BULK_RUN } from './contract.js';
 import { assignTarget, kindFacts, personFacts, personRow, sendContext, sendFacts } from './facts.js';
 import * as B from './repos/bulk.js';
-import { type SelectionDef, resolveSelection } from './selection.js';
+import { type SelectionDef, resolveSelection, selectionOptionsFor } from './selection.js';
 import { notifyFinished } from './notices.js';
 
 export interface BulkDeps {
@@ -144,7 +144,9 @@ export async function createDraft(actor: UserActor, input: CreateInput, deps: Bu
       return prior.id;
     }
     const requested = 'contactIds' in input.selection ? new Set(input.selection.contactIds.map((s) => s.toLowerCase())).size : 0;
-    const ids = await resolveSelection(tx, input.selection, BULK_CAPS[input.kind] + 1);
+    // module 60's resolveSelection: detail-visible people only, at most the kind's cap (BULK_TOO_LARGE past
+    // it), and a list or definition built on a protected tag is never a send/enroll audience (R-PAR-8)
+    const ids = await resolveSelection(tx, input.selection, selectionOptionsFor(input.kind));
     const selected = Math.max(requested, ids.length);
 
     // ---- the action as a whole (core) ----

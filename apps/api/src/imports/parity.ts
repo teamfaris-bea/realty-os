@@ -19,6 +19,7 @@ import {
   type ParityOptions,
   type ParitySummary,
   classifyProtected,
+  fieldKeyProtected,
   parityLines,
   parityReport,
   paritySummary,
@@ -105,7 +106,7 @@ export async function setParity(deps: ImportDeps, actor: UserActor, batchId: str
       if (['abandoned', 'reverting', 'reverted'].includes(b.status)) throw new AppError('IMPORT_STATE_CONFLICT', { status: b.status });
       const ctx = await catalogContext(tx);
       for (const [key, a] of Object.entries(input.fields)) {
-        if (a.action === 'create' && (classifyProtected(a.label) || classifyProtected(key))) throw new AppError('CUSTOM_FIELD_PROTECTED', { field: key });
+        if (a.action === 'create' && (classifyProtected(a.label) || fieldKeyProtected(key))) throw new AppError('CUSTOM_FIELD_PROTECTED', { field: key });
         if (a.action === 'existing' && !ctx.existingFields.has(a.fieldId)) throw new AppError('VALIDATION_FAILED', { issues: [{ path: `/fields/${key}`, code: 'field_not_found' }] });
       }
       const stages = await brepo.lockStages(tx, batchId);
