@@ -18,7 +18,8 @@
 //              this session's own new contact, E155); routing and the 60-second first response are intake's
 //   messages   a visitor's message: the Phase 1 ingestion transaction (comms/inbound.ts ingestChannelInbound): pause,
 //              cancel queued assistant messages and scheduled trigger runs, one handback, the same feed card as a text
-//   poll       that session's delivered replies only (app.webchat_poll), oldest first, with a cursor
+//   poll       that session's delivered replies only (app.webchat_poll), oldest first, with a cursor; nothing once the
+//              session ended (open: false)
 // A widget that is not connected answers CHANNEL_NOT_CONNECTED (R-INBOX-7); a closed or idle session (30 min, E77)
 // takes no visitor message (WEBCHAT_SESSION_CLOSED) and no reply (dispatch: CHANNEL_NOT_CONNECTED).
 import { createHash, createHmac, randomBytes } from 'node:crypto';
@@ -319,8 +320,14 @@ export async function pollSession(deps: WebChatDeps, token: string, ip: string, 
   if (!s) throw new AppError('NOT_FOUND');
   await enforceLimits(deps.comms.db, deps.secret, POLL_LIMITS(s.sessionId, ipHash(deps.secret, ip).toString('hex')));
   if (!s.widgetLive) throw new AppError('CHANNEL_NOT_CONNECTED');
+  // An ended session (closed, or idle 30 minutes: E77) reads nothing more (finding chat-ended-session-readable): no
+  // reply can be sent to it any more, and its token must not stay a read key for the conversation for as long as the
+  // widget is connected (a token left in a shared tab, or copied from anywhere). The widget polls at least once a
+  // minute while its page is open, so it has already shown every reply sent before the end; its cursor comes back
+  // unchanged.
+  if (!s.open) return { messages: [], cursor: after ?? null, open: false };
   const rows = await repo.poll(deps.comms.db, hash, cursor, 50);
-  if (s.open && s.contactId) await withTenantTx(systemActor(s.tenantId, 'provider'), (tx) => repo.touchSession(tx, s.sessionId), { db: deps.comms.db, retries: 2 });
+  if (s.contactId) await withTenantTx(systemActor(s.tenantId, 'provider'), (tx) => repo.touchSession(tx, s.sessionId), { db: deps.comms.db, retries: 2 });
   const last = rows[rows.length - 1];
   return {
     messages: rows.map((r) => ({ id: r.id, body: r.body, sentAt: r.sentAt.toISOString(), from: r.author })),

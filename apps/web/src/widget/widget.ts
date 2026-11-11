@@ -16,27 +16,48 @@
 //
 // Privacy: the browser keeps only the session token (per tab), never anything the visitor typed. A chat continued
 // after a page change therefore shows the replies (the poll returns them all) and says the visitor's earlier
-// messages are not shown here.
+// messages are not shown here. Once the chat ended the tab forgets the token, so the next page view (or the next
+// person at a shared computer) starts fresh, and the server returns nothing for an ended session anyway.
+//
+// Staying in the chat (E77, findings F2 / UXA-1): the server counts a visitor as gone after 30 minutes without a
+// poll or a message from them, so the widget polls for as long as it holds a session and the page is open: every 3 s
+// while the panel is open and the page in view, once a minute otherwise (panel closed, another page of the site, a
+// tab in the background). Replies that arrive while the panel is closed are counted on the chat button, in words.
+//
+// On a phone the panel covers the whole page, so it is modal there (WCAG 2.4.11, finding UXA-2): aria-modal, Tab and
+// Shift+Tab wrap inside it, and the page behind it is inert until it closes. On a wide screen it floats beside the
+// page, which stays usable.
 //
 // Separate bundle: imports nothing outside src/widget (lint: realty/isolated-bundle), no framework, so the
 // production build stays far under its 30 kB gzip budget (size.test.ts).
 import { type ChatApi, EMAIL_MAX, MESSAGE_MAX, NAME_MAX, PHONE_MAX, type WidgetConfig, clean, newMessageId } from './api.js';
 import type { EmbedConfig } from './config.js';
 import { ASSISTANT_LINE, copy } from './copy.js';
-import { CSS } from './styles.js';
+import { CSS, FULL_SCREEN_MEDIA } from './styles.js';
 
 export interface WidgetDeps {
   api: ChatApi;
   /** per-tab storage for the session token (sessionStorage in the page; absent when the browser refuses it) */
   storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null;
-  /** poll interval in ms (default 3000), and after a failed poll (default 15000) */
+  /** poll interval in ms while the panel is open and the page in view (default 3000), and after a failed poll (default 15000) */
   pollMs?: number;
   retryMs?: number;
+  /** poll interval while the visitor is not looking at the chat (default 60000): it keeps the session open (E77) */
+  idleMs?: number;
+  /** the page is in view (default: document.visibilityState) */
+  visible?: () => boolean;
+  /** the panel takes the whole screen, so it is modal (default: the FULL_SCREEN_MEDIA query) */
+  fullScreen?: () => boolean;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (t: unknown) => void;
   /** the time a visitor's own message was accepted (tests) */
   now?: () => Date;
 }
+
+/** What the full-screen panel covers and may take focus: everything the browser would Tab to inside it. */
+const FOCUSABLE = 'button, input, textarea, select, a[href], [tabindex]:not([tabindex="-1"])';
+/** Elements of the page that never need to be made inert (they are not shown). */
+const NOT_SHOWN = new Set(['SCRIPT', 'STYLE', 'TEMPLATE', 'LINK', 'META', 'NOSCRIPT']);
 
 type Attrs = Record<string, string | boolean | undefined>;
 function h<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Attrs = {}, ...kids: (Node | string | null)[]): HTMLElementTagNameMap[K] {
@@ -111,6 +132,18 @@ export class ChatWidget {
   private pending: { text: string; id: string } | null = null;
   /** a reply the visitor could not send because the chat ended, carried into a new chat */
   private carry = '';
+  /** replies that arrived while the panel was closed (the chat button says how many) */
+  private unread = 0;
+  /** false until the first poll of a session kept from another page: the replies it returns are not new to the visitor */
+  private baseline = true;
+  /** a polite live region beside the chat button (new replies) and one inside the panel (the chat ended) */
+  private announce: HTMLParagraphElement;
+  private status: HTMLParagraphElement | null = null;
+  /** "Replies appear here while this page is open." while the chat can still get replies */
+  private openNote: HTMLParagraphElement | null = null;
+  /** the page's elements this widget made inert while its full-screen panel is open */
+  private inerted: Element[] | null = null;
+  private mode: MediaQueryList | null = null;
   private readonly key: string;
 
   constructor(
@@ -122,6 +155,7 @@ export class ChatWidget {
     this.root = this.host.attachShadow({ mode: 'open' });
     this.root.append(h('style', {}, CSS));
     this.wrap = h('div', { class: 'w' });
+    this.announce = h('p', { class: 'sr', role: 'status' });
     this.root.append(this.wrap);
     try {
       const s = this.deps.storage?.getItem(this.key);
@@ -129,6 +163,7 @@ export class ChatWidget {
       if (saved && typeof saved.token === 'string') {
         this.token = saved.token;
         this.restored = true;
+        this.baseline = false;
       }
     } catch {
       this.token = null;
@@ -154,6 +189,9 @@ export class ChatWidget {
     this.launcher?.remove();
     this.launcher = launcher;
     this.wrap.prepend(launcher);
+    if (!this.announce.isConnected) this.wrap.append(this.announce);
+    // a session kept from another page of the site: the visitor is still here (E77), and the chat may have ended
+    if (this.token && !this.ended && this.timer === null) this.schedule(0);
     return true;
   }
 
@@ -161,29 +199,99 @@ export class ChatWidget {
     if (this.panel || !this.config || !this.launcher) return;
     this.launcher.hidden = true;
     this.launcher.setAttribute('aria-expanded', 'true');
+    this.unread = 0;
+    this.labelLauncher();
     this.title = h('h2', { id: 'rw-title' }, this.config.teamName);
     const close = h('button', { type: 'button', class: 'x' }, copy.close);
     close.addEventListener('click', () => this.close());
-    this.panel = h('div', { class: 'panel', id: 'rw-panel', role: 'dialog', 'aria-labelledby': 'rw-title' }, h('div', { class: 'head' }, this.title, close));
+    // in the panel from the start, so what is said in it later (the chat ended) is announced
+    this.status = h('p', { class: 'sr', role: 'status' });
+    this.panel = h('div', { class: 'panel', id: 'rw-panel', role: 'dialog', 'aria-labelledby': 'rw-title' }, h('div', { class: 'head' }, this.title, close), this.status);
     this.panel.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') this.close();
+      else this.wrapTab(e);
     });
     this.wrap.append(this.panel);
+    this.applyMode();
+    if (!this.deps.fullScreen && typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+      this.mode = window.matchMedia(FULL_SCREEN_MEDIA);
+      this.mode.addEventListener?.('change', this.applyMode);
+    }
     if (this.token) this.showChat();
     else this.showStart();
   }
 
   close(): void {
-    this.stopPolling();
+    this.mode?.removeEventListener?.('change', this.applyMode);
+    this.mode = null;
+    this.inertPage(false);
     this.panel?.remove();
     this.panel = null;
     this.log = null;
     this.notice = null;
+    this.status = null;
+    this.openNote = null;
     if (this.launcher) {
       this.launcher.hidden = false;
       this.launcher.setAttribute('aria-expanded', 'false');
       this.launcher.focus();
     }
+    // the chat goes on behind the button, at the idle pace (E77: closing the panel is not leaving the page)
+    if (this.token && !this.ended && this.timer !== null) this.schedule(this.nextPollMs());
+  }
+
+  /** The visitor came back to the tab: an open chat looks for replies at once. */
+  wake(): void {
+    if (this.token && !this.ended && this.panel) this.schedule(0);
+  }
+
+  /** On a phone the panel covers the page: modal, with the page behind it inert. Floating beside it: neither. */
+  private applyMode = (): void => {
+    if (!this.panel) return;
+    const full = this.deps.fullScreen ? this.deps.fullScreen() : (this.mode ?? (typeof window !== 'undefined' && typeof window.matchMedia === 'function' ? window.matchMedia(FULL_SCREEN_MEDIA) : null))?.matches === true;
+    if (full) this.panel.setAttribute('aria-modal', 'true');
+    else this.panel.removeAttribute('aria-modal');
+    this.inertPage(full);
+  };
+
+  /** Every element of the page beside the widget's way up to <body> (what the full-screen panel covers). */
+  private inertPage(on: boolean): void {
+    if (!on) {
+      for (const el of this.inerted ?? []) el.removeAttribute('inert');
+      this.inerted = null;
+      return;
+    }
+    if (this.inerted) return;
+    const out: Element[] = [];
+    for (let node: Element = this.host; node.parentElement && node !== document.body; node = node.parentElement) {
+      for (const sib of node.parentElement.children) {
+        // what the site made inert itself stays its own business
+        if (sib !== node && !NOT_SHOWN.has(sib.tagName) && !sib.hasAttribute('inert')) out.push(sib);
+      }
+    }
+    for (const el of out) el.setAttribute('inert', '');
+    this.inerted = out;
+  }
+
+  /** In the modal panel, Tab from the last control goes to the first and Shift+Tab from the first to the last. */
+  private wrapTab(e: KeyboardEvent): void {
+    if (e.key !== 'Tab' || !this.panel || this.panel.getAttribute('aria-modal') !== 'true') return;
+    const controls = [...this.panel.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((c) => !c.hasAttribute('disabled') && !c.closest('[hidden]'));
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    if (!first || !last) return;
+    const active = this.root.activeElement;
+    const inside = active !== null && this.panel.contains(active);
+    if (!inside || active === (e.shiftKey ? first : last)) {
+      e.preventDefault();
+      (e.shiftKey ? last : first).focus();
+    }
+  }
+
+  private labelLauncher(): void {
+    const team = this.config?.teamName ?? '';
+    if (this.launcher) this.launcher.textContent = this.unread > 0 ? copy.launcherNew(team, this.unread) : copy.launcher(team);
+    this.announce.textContent = this.unread > 0 ? copy.newReplies(team, this.unread) : '';
   }
 
   /** The team's notice and the assistant sentence, shown before the visitor can write anything. */
@@ -246,11 +354,12 @@ export class ChatWidget {
     if (!r.ok) {
       setBusy(go, null, copy.start);
       if (r.failure === 'disclosure_stale') return this.refreshNotice(err);
-      err.textContent = r.failure === 'invalid' && r.field ? copy.check[r.field] : copy.failure[r.failure];
+      err.textContent = r.failure === 'invalid' && r.field ? copy.check[r.field] : r.failure === 'rate_limited' ? copy.tooManyStarts(r.retryAfterSeconds) : copy.failure[r.failure];
       return;
     }
     this.token = r.data.sessionToken;
     this.restored = false;
+    this.baseline = true;
     this.cursor = null;
     this.ended = null;
     this.pending = null;
@@ -281,13 +390,15 @@ export class ChatWidget {
     this.seen.clear();
     this.log = h('ol', { class: 'log' });
     const restored = this.restored ? [h('p', { class: 'note' }, copy.restoredNote)] : [];
-    this.body(...this.noticeNodes(), ...restored, h('div', { role: 'log', 'aria-label': copy.log, 'aria-live': 'polite' }, this.log), h('p', { class: 'note' }, copy.openNote));
+    this.openNote = this.ended ? null : h('p', { class: 'note' }, copy.openNote);
+    this.body(...this.noticeNodes(), ...restored, h('div', { role: 'log', 'aria-label': copy.log, 'aria-live': 'polite' }, this.log), ...(this.openNote ? [this.openNote] : []));
     const earlier = this.items;
     this.items = [];
     this.add(first ? [...earlier, first] : earlier);
     this.footer();
-    // the keyboard goes where the visitor acts next (the start form it was in is gone): the reply box, or a new chat
-    this.panel?.querySelector<HTMLElement>('.foot textarea, .foot button')?.focus();
+    // the keyboard goes where the visitor acts next (the start form it was in is gone): the reply box, or a new chat,
+    // or (a chat that can no longer be had) the Close button
+    (this.panel?.querySelector<HTMLElement>('.foot textarea, .foot button') ?? this.panel?.querySelector<HTMLElement>('.x'))?.focus();
     if (!this.ended) this.schedule(0);
   }
 
@@ -298,12 +409,20 @@ export class ChatWidget {
     old?.remove();
     if (!this.panel) return;
     if (this.ended) {
+      const said = h('p', { class: 'note' }, this.ended === 'unavailable' ? copy.turnedOff : copy.ended);
+      // a widget turned off (R-INBOX-7) can start no new chat: offering one would end in a refusal after the whole
+      // form was filled in again (finding UXA-7)
+      if (this.ended === 'unavailable') {
+        this.panel.append(h('div', { class: 'foot' }, said));
+        if (hadFocus) this.panel.querySelector<HTMLElement>('.x')?.focus();
+        return;
+      }
       const again = h('button', { type: 'button', class: 'go' }, copy.newChat);
       again.addEventListener('click', () => {
         this.forget();
         this.showStart();
       });
-      this.panel.append(h('div', { class: 'foot' }, h('p', { class: 'note', role: 'status' }, this.ended === 'unavailable' ? copy.turnedOff : copy.ended), again));
+      this.panel.append(h('div', { class: 'foot' }, said, again));
       if (hadFocus) again.focus();
       return;
     }
@@ -340,7 +459,7 @@ export class ChatWidget {
       this.carry = field.value;
       return this.end(r.failure === 'unavailable' ? 'unavailable' : 'closed');
     }
-    err.textContent = r.failure === 'invalid' && r.field === 'message' ? copy.check.message : copy.failure[r.failure];
+    err.textContent = r.failure === 'invalid' && r.field === 'message' ? copy.check.message : r.failure === 'rate_limited' ? copy.tooManyMessages(r.retryAfterSeconds) : copy.failure[r.failure];
   }
 
   /** Render messages once each, in the order given (the visitor's own as accepted; replies as the poll returned them). */
@@ -370,30 +489,55 @@ export class ChatWidget {
     this.timer = null;
   }
 
-  /** One poll: the replies in this session after the cursor (R-INBOX-5). Stops when the panel closes or the chat ends. */
+  /** 3 s while the visitor is looking at the open panel; a minute otherwise (enough to keep the session open, E77). */
+  private nextPollMs(): number {
+    const visible = this.deps.visible ? this.deps.visible() : typeof document === 'undefined' || document.visibilityState !== 'hidden';
+    return this.panel && visible ? (this.deps.pollMs ?? 3_000) : (this.deps.idleMs ?? 60_000);
+  }
+
+  /**
+   * One poll: the replies in this session after the cursor (R-INBOX-5). It runs for as long as the widget holds a
+   * session that has not ended, panel open or not: each poll tells the server the visitor is still on the page (E77).
+   */
   async poll(): Promise<void> {
     this.timer = null;
     const token = this.token;
-    if (!token || !this.panel || this.ended) return;
+    if (!token || this.ended) return;
     const r = await this.deps.api.poll(token, this.cursor);
-    if (!this.panel || this.ended || token !== this.token) return;
+    if (this.ended || token !== this.token) return;
     if (!r.ok) {
       if (r.failure === 'closed' || r.failure === 'not_found') return this.end('closed');
       if (r.failure === 'unavailable') return this.end('unavailable');
-      this.schedule(this.deps.retryMs ?? 15_000);
+      this.schedule(Math.max(this.deps.retryMs ?? 15_000, this.nextPollMs()));
       return;
     }
+    const before = this.items.length;
     this.add(r.data.messages.map((m) => ({ id: m.id, from: m.from, body: m.body, at: m.sentAt })));
+    if (!this.panel && this.baseline && this.items.length > before) {
+      this.unread += this.items.length - before;
+      this.labelLauncher();
+    }
+    this.baseline = true;
     // passed back unchanged, as the server gave it
     this.cursor = r.data.cursor;
     if (!r.data.open) return this.end('closed');
-    this.schedule(this.deps.pollMs ?? 3_000);
+    this.schedule(this.nextPollMs());
   }
 
   private end(kind: 'closed' | 'unavailable'): void {
+    // a reply the visitor was typing is not lost: it starts the new chat (finding UXA-6)
+    const typing = this.panel?.querySelector<HTMLTextAreaElement>('.foot textarea')?.value ?? '';
+    if (this.carry === '' && typing.trim() !== '') this.carry = typing;
     this.ended = kind;
     this.pending = null;
     this.stopPolling();
+    // the tab forgets the session: a later page view, or the next person at this computer, starts fresh
+    this.unsave();
+    // a session kept from another page that had already ended when this page asked: nothing to show, start fresh
+    if (this.restored && !this.panel && this.items.length === 0) return this.forget();
+    this.openNote?.remove();
+    this.openNote = null;
+    if (this.status) this.status.textContent = kind === 'unavailable' ? copy.turnedOff : copy.ended;
     this.footer();
   }
 
@@ -409,18 +553,26 @@ export class ChatWidget {
     }
   }
 
+  private unsave(): void {
+    try {
+      this.deps.storage?.removeItem(this.key);
+    } catch {
+      /* nothing stored */
+    }
+  }
+
   private forget(): void {
     this.stopPolling();
     this.token = null;
     this.cursor = null;
     this.ended = null;
     this.restored = false;
+    this.baseline = true;
     this.pending = null;
     this.items = [];
-    try {
-      this.deps.storage?.removeItem(this.key);
-    } catch {
-      /* nothing stored */
-    }
+    this.unread = 0;
+    this.labelLauncher();
+    if (this.status) this.status.textContent = '';
+    this.unsave();
   }
 }

@@ -8,8 +8,15 @@
 
 export const ASSISTANT_LINE = "The first reply may come from the team's assistant.";
 
+const replies = (n: number) => `${n} new ${n === 1 ? 'reply' : 'replies'}`;
+/** The wait the server named for a rate limit, in words ("in a minute", "in about 29 minutes"); unknown: "later". */
+const inWait = (seconds: number | undefined) => (seconds === undefined ? 'later' : seconds <= 60 ? 'in a minute' : `in about ${Math.ceil(seconds / 60)} minutes`);
+
 export const copy = {
   launcher: (team: string) => `Chat with ${team}`,
+  /** replies the server delivered while the panel was closed: a count of real messages, never presence */
+  launcherNew: (team: string, n: number) => `Chat with ${team} · ${replies(n)}`,
+  newReplies: (team: string, n: number) => `${replies(n)} in your chat with ${team}`,
   close: 'Close chat',
   intro: 'Ask a question and the team will answer here.',
   name: 'Your name',
@@ -44,8 +51,11 @@ export const copy = {
     contact: 'Please check the phone number or email address.',
     message: 'Please check your message.',
   },
+  /** E137: a refused start or message, with the wait the server named (error.details.retryAfterSeconds) */
+  tooManyStarts: (seconds?: number) => `Too many chats were started from this connection. Please try again ${inWait(seconds)}.`,
+  tooManyMessages: (seconds?: number) => `Too many messages right now. Please try again ${inWait(seconds)}.`,
   failure: {
-    rate_limited: 'Too many messages right now. Please wait a minute and try again.',
+    rate_limited: 'Too many messages right now. Please try again later.',
     unavailable: "Chat isn't available right now. Please try again later.",
     not_found: "Chat isn't available right now. Please try again later.",
     disclosure_stale: 'The notice above has just changed. Please read it, then tap Start chat again.',

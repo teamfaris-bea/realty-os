@@ -36,10 +36,32 @@ function fakeApi(config: Result<WidgetConfig> = { ok: true, data: CONFIG }) {
   return { api, polls };
 }
 
-async function mount(api: ChatApi, storage: Map<string, string> | null = new Map()) {
-  const timers: (() => void)[] = [];
+interface Timer {
+  id: number;
+  fn: () => void;
+  ms: number;
+}
+
+async function mount(api: ChatApi, storage: Map<string, string> | null = new Map(), o: { visible?: () => boolean; fullScreen?: () => boolean } = {}) {
+  /** the pending timers, as the page's clock holds them (a cleared one is gone) */
+  const timers: Timer[] = [];
+  let next = 0;
   const store = storage && { getItem: (k: string) => storage.get(k) ?? null, setItem: (k: string, v: string) => void storage.set(k, v), removeItem: (k: string) => void storage.delete(k) };
-  const w = new ChatWidget(EMBED, { api, storage: store, setTimer: (fn) => timers.push(fn), clearTimer: () => undefined, now: () => new Date('2026-11-11T17:00:00.000Z') });
+  const w = new ChatWidget(EMBED, {
+    api,
+    storage: store,
+    setTimer: (fn, ms) => {
+      next += 1;
+      timers.push({ id: next, fn, ms });
+      return next;
+    },
+    clearTimer: (t) => {
+      const i = timers.findIndex((x) => x.id === t);
+      if (i >= 0) timers.splice(i, 1);
+    },
+    now: () => new Date('2026-11-11T17:00:00.000Z'),
+    ...o,
+  });
   const loaded = await w.load();
   document.body.append(w.host);
   const $ = <T extends Element = HTMLElement>(sel: string) => w.shadow.querySelector<T>(sel);
@@ -47,11 +69,13 @@ async function mount(api: ChatApi, storage: Map<string, string> | null = new Map
   /** run the pending poll timer(s), as the clock would */
   const tick = async () => {
     const due = timers.splice(0);
-    for (const fn of due) fn();
+    for (const t of due) t.fn();
     await vi.waitFor(() => undefined);
     await Promise.resolve();
   };
-  return { w, loaded, $, text, tick, timers };
+  /** the delays of the pending timers */
+  const delays = () => timers.map((t) => t.ms);
+  return { w, loaded, $, text, tick, timers, delays };
 }
 
 type Mounted = Awaited<ReturnType<typeof mount>>;
@@ -228,6 +252,7 @@ describe('chat widget (module 37)', () => {
       else await sendReply(m, 'still there?');
       await vi.waitFor(() => expect(m.text()).toContain("This chat isn't available any more."));
       expect(m.$('textarea[name=reply]')).toBeNull();
+      expect([...m.w.shadow.querySelectorAll('button')].map((b) => b.textContent)).not.toContain('Start a new chat');
     }
   });
 
@@ -260,7 +285,7 @@ describe('chat widget (module 37)', () => {
     fill(m, { name: 'Pat', contact: 'pat@example.com', message: 'Hi' });
     const alert = () => m.$('[role=alert]')!.textContent;
     m.$<HTMLFormElement>('form')!.requestSubmit();
-    await vi.waitFor(() => expect(alert()).toBe('Too many messages right now. Please wait a minute and try again.'));
+    await vi.waitFor(() => expect(alert()).toBe('Too many chats were started from this connection. Please try again later.'));
     expect(m.$<HTMLTextAreaElement>('textarea[name=message]')!.value).toBe('Hi');
     m.$<HTMLFormElement>('form')!.requestSubmit();
     await vi.waitFor(() => expect(alert()).toBe('Please check the phone number or email address.'));
@@ -317,7 +342,7 @@ describe('chat widget (module 37)', () => {
     expect(f.api.poll).toHaveBeenLastCalledWith(TOKEN, 'c1');
   });
 
-  it('Escape or Close closes the panel, stops polling and returns focus to the chat button', async () => {
+  it('Escape or Close closes the panel and returns focus to the chat button; the chat stays open behind it at the idle pace (E77: the visitor is still on the page)', async () => {
     const f = fakeApi();
     const m = await mount(f.api);
     await startChat(m);
@@ -325,10 +350,180 @@ describe('chat widget (module 37)', () => {
     expect(m.$('[role=dialog]')).toBeNull();
     expect(m.w.shadow.activeElement).toBe(m.$('.launch'));
     expect(m.$('.launch')!.getAttribute('aria-expanded')).toBe('false');
-    // a poll timer that fires after closing asks nothing
+    // the next poll is a minute away, not three seconds
+    expect(m.delays()).toEqual([60_000]);
     const calls = f.api.poll.mock.calls.length;
     await m.tick();
-    expect(f.api.poll.mock.calls.length).toBe(calls);
+    expect(f.api.poll.mock.calls.length).toBe(calls + 1);
+    expect(m.delays()).toEqual([60_000]);
+  });
+
+  it('E77 (findings F2, UXA-1): with the panel closed, or after a page change, the widget keeps polling once a minute while it holds a session, so a visitor still on the site keeps the chat open; replies that arrive meanwhile are counted, in words, on the chat button and shown when it opens', async () => {
+    const f = fakeApi();
+    const m = await mount(f.api);
+    await startChat(m);
+    await m.tick();
+    m.$<HTMLButtonElement>('.x')!.click();
+    f.polls.push({ ok: true, data: { messages: [reply('r1', 'team', 'Hi Pat, Ava here.')], cursor: 'c1', open: true } });
+    await m.tick();
+    expect(m.$('.launch')!.textContent).toBe('Chat with Harbor & Pine Team · 1 new reply');
+    expect(m.$('.w > [role=status]')!.textContent).toBe('1 new reply in your chat with Harbor & Pine Team');
+    f.polls.push({ ok: true, data: { messages: [reply('r2', 'assistant', 'Saturday works.')], cursor: 'c2', open: true } });
+    await m.tick();
+    expect(m.$('.launch')!.textContent).toBe('Chat with Harbor & Pine Team · 2 new replies');
+    expect(f.api.poll).toHaveBeenLastCalledWith(TOKEN, 'c1');
+    m.$<HTMLButtonElement>('.launch')!.click();
+    expect(log(m).map(([, b]) => b)).toEqual(['Is 12 Oak St still available?', 'Hi Pat, Ava here.', 'Saturday works.']);
+    expect(m.$('.launch')!.textContent).toBe('Chat with Harbor & Pine Team');
+    // open again: polls at the chat's own pace, from the cursor
+    expect(m.delays()).toEqual([0]);
+    await m.tick();
+    expect(f.api.poll).toHaveBeenLastCalledWith(TOKEN, 'c2');
+    expect(m.delays()).toEqual([3_000]);
+    // a page the visitor is not looking at (another tab) polls at the idle pace too
+    document.body.innerHTML = '';
+    const g = fakeApi();
+    let shown = true;
+    const n = await mount(g.api, new Map(), { visible: () => shown });
+    await startChat(n);
+    shown = false;
+    await n.tick();
+    expect(n.delays()).toEqual([60_000]);
+    // a session kept for this tab is polled at once on the next page, panel closed, and its replies so far are not "new"
+    document.body.innerHTML = '';
+    const store = new Map([[`realty-chat:${KEY}`, JSON.stringify({ token: TOKEN })]]);
+    const k = fakeApi();
+    k.polls.push({ ok: true, data: { messages: [reply('r1', 'team', 'Hi Pat, Ava here.')], cursor: 'c1', open: true } });
+    const p = await mount(k.api, store);
+    expect(p.delays()).toEqual([0]);
+    await p.tick();
+    expect(k.api.poll).toHaveBeenCalledWith(TOKEN, null);
+    expect(p.$('[role=dialog]')).toBeNull();
+    expect(p.$('.launch')!.textContent).toBe('Chat with Harbor & Pine Team');
+    expect(p.delays()).toEqual([60_000]);
+  });
+
+  it('E77 (finding chat-ended-session-readable): when the chat ends this tab forgets the session, so a later page view starts a new chat; a kept session that already ended is never shown again', async () => {
+    const store = new Map<string, string>();
+    const f = fakeApi();
+    const m = await mount(f.api, store);
+    await startChat(m);
+    expect(store.has(`realty-chat:${KEY}`)).toBe(true);
+    f.polls.push({ ok: true, data: { messages: [], cursor: null, open: false } });
+    await m.tick();
+    expect(m.text()).toContain('This chat has ended.');
+    expect(store.has(`realty-chat:${KEY}`)).toBe(false);
+    // this page still shows the ended chat when the panel is closed and opened again
+    m.$<HTMLButtonElement>('.x')!.click();
+    m.$<HTMLButtonElement>('.launch')!.click();
+    expect(m.text()).toContain('This chat has ended.');
+    // the next person in a shared tab: a kept session the server says has ended is forgotten unseen
+    for (const ended of [{ ok: true as const, data: { messages: [], cursor: null, open: false } }, { ok: false as const, failure: 'closed' as const }]) {
+      document.body.innerHTML = '';
+      const kept = new Map([[`realty-chat:${KEY}`, JSON.stringify({ token: TOKEN })]]);
+      const g = fakeApi();
+      g.polls.push(ended);
+      const n = await mount(g.api, kept);
+      await n.tick();
+      expect(kept.has(`realty-chat:${KEY}`)).toBe(false);
+      n.$<HTMLButtonElement>('.launch')!.click();
+      expect(n.$('form[aria-label="Start chat"]')).not.toBeNull();
+      expect(n.text()).not.toContain('This chat has ended.');
+      expect(n.timers).toHaveLength(0);
+    }
+  });
+
+  it('E77 (finding UXA-6): a reply being typed when a poll ends the chat carries into the new chat; the ended chat no longer says replies appear here; the end is said in a live region that was already in the panel', async () => {
+    for (const ending of [{ ok: true as const, data: { messages: [], cursor: null, open: false } }, { ok: false as const, failure: 'closed' as const }, { ok: false as const, failure: 'not_found' as const }]) {
+      document.body.innerHTML = '';
+      const f = fakeApi();
+      const m = await mount(f.api);
+      await startChat(m);
+      const live = m.$('[role=dialog] > [role=status]')!;
+      expect(live.textContent).toBe('');
+      m.$<HTMLTextAreaElement>('textarea[name=reply]')!.value = 'I can come by at 3pm today';
+      f.polls.push(ending);
+      await m.tick();
+      expect(live.isConnected).toBe(true);
+      expect(live.textContent).toBe('This chat has ended.');
+      expect(m.text()).not.toContain('Replies appear here while this page is open.');
+      [...m.w.shadow.querySelectorAll('button')].find((b) => b.textContent === 'Start a new chat')!.click();
+      expect(m.$<HTMLTextAreaElement>('textarea[name=message]')!.value).toBe('I can come by at 3pm today');
+    }
+  });
+
+  it('R-INBOX-7 (finding UXA-7): a widget turned off during the chat offers no new chat, which could never start; the keyboard stays in the panel', async () => {
+    const f = fakeApi();
+    f.polls.push({ ok: false, failure: 'unavailable' });
+    const m = await mount(f.api);
+    await startChat(m);
+    m.$<HTMLTextAreaElement>('textarea[name=reply]')!.focus();
+    await m.tick();
+    expect(m.text()).toContain("This chat isn't available any more.");
+    expect([...m.w.shadow.querySelectorAll('button')].map((b) => b.textContent)).not.toContain('Start a new chat');
+    expect(m.w.shadow.activeElement).toBe(m.$('.x'));
+    expect(m.timers).toHaveLength(0);
+  });
+
+  it('E137 (finding UXA-10): a refused start says too many chats were started from this connection and how long to wait, from the server\'s retryAfterSeconds; a refused message says how long too', async () => {
+    const f = fakeApi();
+    f.api.start.mockResolvedValueOnce({ ok: false, failure: 'rate_limited', retryAfterSeconds: 1721 }).mockResolvedValueOnce({ ok: false, failure: 'rate_limited', retryAfterSeconds: 41 });
+    const m = await mount(f.api);
+    m.$<HTMLButtonElement>('.launch')!.click();
+    fill(m, { message: 'Hi' });
+    const alert = () => m.$('[role=alert]')!.textContent;
+    m.$<HTMLFormElement>('form')!.requestSubmit();
+    await vi.waitFor(() => expect(alert()).toBe('Too many chats were started from this connection. Please try again in about 29 minutes.'));
+    m.$<HTMLFormElement>('form')!.requestSubmit();
+    await vi.waitFor(() => expect(alert()).toBe('Too many chats were started from this connection. Please try again in a minute.'));
+    expect(m.$<HTMLTextAreaElement>('textarea[name=message]')!.value).toBe('Hi');
+    m.$<HTMLFormElement>('form')!.requestSubmit();
+    await vi.waitFor(() => expect(m.$('[role=log]')).not.toBeNull());
+    f.api.send.mockResolvedValueOnce({ ok: false, failure: 'rate_limited', retryAfterSeconds: 30 });
+    await sendReply(m, 'Hello?');
+    expect(m.$('.foot [role=alert]')!.textContent).toBe('Too many messages right now. Please try again in a minute.');
+  });
+
+  it('WCAG 2.4.11 (finding UXA-2): on a phone the full-screen panel is modal: aria-modal, Tab and Shift+Tab wrap inside it and the page behind is inert until it closes; on a wide screen the floating panel stays non-modal', async () => {
+    const page = document.createElement('main');
+    page.innerHTML = '<a href="/listings">See our listings</a><a href="/contact">Contact the office</a>';
+    const already = document.createElement('div');
+    already.setAttribute('inert', '');
+    document.body.append(page, already);
+    const f = fakeApi();
+    const m = await mount(f.api, new Map(), { fullScreen: () => true });
+    m.$<HTMLButtonElement>('.launch')!.click();
+    const panel = m.$('[role=dialog]')!;
+    expect(panel.getAttribute('aria-modal')).toBe('true');
+    expect(page.hasAttribute('inert')).toBe(true);
+    expect(m.w.host.hasAttribute('inert')).toBe(false);
+    const controls = [...panel.querySelectorAll<HTMLElement>('button, input, textarea')];
+    const first = controls[0]!;
+    const last = controls[controls.length - 1]!;
+    const tab = (shiftKey: boolean) => {
+      const e = new KeyboardEvent('keydown', { key: 'Tab', shiftKey, bubbles: true, cancelable: true });
+      (m.w.shadow.activeElement ?? panel).dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    first.focus();
+    expect(tab(true)).toBe(true);
+    expect(m.w.shadow.activeElement).toBe(last);
+    expect(tab(false)).toBe(true);
+    expect(m.w.shadow.activeElement).toBe(first);
+    // in the middle, the browser moves focus as usual
+    controls[1]!.focus();
+    expect(tab(false)).toBe(false);
+    m.$<HTMLButtonElement>('.x')!.click();
+    expect(page.hasAttribute('inert')).toBe(false);
+    // what the site itself had made inert stays inert
+    expect(already.hasAttribute('inert')).toBe(true);
+    // a wide screen: a floating panel, the page stays usable
+    document.body.innerHTML = '';
+    document.body.append(page);
+    const n = await mount(fakeApi().api, new Map(), { fullScreen: () => false });
+    n.$<HTMLButtonElement>('.launch')!.click();
+    expect(n.$('[role=dialog]')!.hasAttribute('aria-modal')).toBe(false);
+    expect(page.hasAttribute('inert')).toBe(false);
   });
 
   it('the embed needs only a well-formed widget key; the API base is the script\'s own origin unless data-api says otherwise', () => {

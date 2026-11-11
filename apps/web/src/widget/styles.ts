@@ -1,6 +1,10 @@
 // The widget's styles, inside its own shadow root so the brokerage's site cannot restyle it and it cannot
-// restyle the site. Phone-first: under 480 px the panel takes the whole screen; every control is at least
-// 44 × 44 px; light and dark follow the visitor's setting; text contrast is AA or better in both.
+// restyle the site. Phone-first: under 480 px the panel takes the whole screen (and is then modal, widget.ts); every
+// control is at least 44 × 44 px; light and dark follow the visitor's setting; text contrast is AA or better in both.
+
+/** Where the panel takes the whole screen (and widget.ts makes it modal: the page behind it is covered). */
+export const FULL_SCREEN_MEDIA = '(max-width:479.98px)';
+
 export const CSS = `
 :host{all:initial}
 *{box-sizing:border-box}
@@ -12,7 +16,7 @@ button,input,textarea{font:inherit;color:inherit}
 background:var(--accent);color:var(--accent-ink);font-weight:600;box-shadow:0 4px 14px rgba(0,0,0,.25);cursor:pointer}
 .panel{position:fixed;right:16px;bottom:16px;z-index:2147483647;width:380px;max-width:calc(100vw - 32px);height:min(640px,calc(100vh - 32px));
 display:flex;flex-direction:column;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,.3);overflow:hidden}
-@media (max-width:479.98px){.panel{inset:0;width:100%;max-width:none;height:100%;border-radius:0;border:0}}
+@media ${FULL_SCREEN_MEDIA}{.panel{inset:0;width:100%;max-width:none;height:100%;border-radius:0;border:0}}
 .head{display:flex;align-items:center;gap:8px;padding:8px 8px 8px 16px;border-bottom:1px solid var(--line)}
 .head h2{flex:1;margin:0;font-size:17px;font-weight:600;overflow-wrap:anywhere}
 .x{min-width:44px;min-height:44px;border:0;border-radius:10px;background:transparent;cursor:pointer;font-size:15px;color:var(--ink);text-decoration:underline}

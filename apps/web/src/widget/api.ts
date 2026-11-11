@@ -10,7 +10,8 @@
 // Errors, which widget.ts says in plain words: 404 (an unknown or rotated key, a website the widget may not run on,
 // an unknown session), 409 CHANNEL_NOT_CONNECTED (the team turned the widget off, R-INBOX-7), 409
 // WEBCHAT_DISCLOSURE_STALE (the notice changed after the visitor saw it), 410 WEBCHAT_SESSION_CLOSED (the chat ended,
-// E77), 429 (rate limits per widget, IP and session, E137), 422 / 413 (refused as invalid).
+// E77), 429 (rate limits per widget, IP and session, E137; the wait is in error.details.retryAfterSeconds), 422 / 413
+// (refused as invalid).
 //
 // The visitor is not a principal (R-TEN-12): no cookie is ever sent. The poll returns only the team's and the
 // assistant's replies in the visitor's own session (R-INBOX-5); the visitor's own messages are the ones this browser
@@ -77,7 +78,11 @@ export type ApiFailure =
 /** For 'invalid': the field the server named, when it named one. */
 export type Field = 'name' | 'contact' | 'message';
 
-export type Result<T> = { ok: true; data: T } | { ok: false; failure: ApiFailure; field?: Field };
+/**
+ * `retryAfterSeconds`: for 'rate_limited', the wait the API names (error.details.retryAfterSeconds; up to an hour for
+ * the 20-starts-an-hour limit). The Retry-After header is not readable across origins, the body is.
+ */
+export type Result<T> = { ok: true; data: T } | { ok: false; failure: ApiFailure; field?: Field; retryAfterSeconds?: number };
 
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -137,26 +142,29 @@ function reply(v: unknown): ChatReply | null {
   return { id: o.id, body: o.body, sentAt: o.sentAt, from: o.from };
 }
 
+/**
+ * A page of replies. An entry this widget cannot show (a sender it does not know yet, a field missing) is skipped, never
+ * drawn, while the page and its cursor still count: refusing the whole page would poll the same cursor for ever, and
+ * the visitor would never see a later reply (finding F4). A page that is not the API's shape at all is refused.
+ */
 export function parsePoll(v: unknown): PollResponse | null {
   const o = obj(v);
   if (!o || !Array.isArray(o.messages) || typeof o.open !== 'boolean' || (o.cursor !== null && !isStr(o.cursor))) return null;
-  const messages: ChatReply[] = [];
-  for (const m of o.messages) {
-    const r = reply(m);
-    if (!r) return null;
-    messages.push(r);
-  }
+  const messages = o.messages.map(reply).filter((r): r is ChatReply => r !== null);
   return { messages, cursor: o.cursor as string | null, open: o.open };
 }
 
-/** The error code, and for a validation failure the field its first issue names. */
-async function errorOf(r: Response): Promise<{ code: string | null; field?: Field }> {
+/** The error code, for a validation failure the field its first issue names, and for a rate limit the wait. */
+async function errorOf(r: Response): Promise<{ code: string | null; field?: Field; retryAfterSeconds?: number }> {
   try {
     const e = obj(obj(await r.json())?.error);
-    const issues = obj(e?.details)?.issues;
+    const details = obj(e?.details);
+    const issues = details?.issues;
     const path = Array.isArray(issues) ? obj(issues[0])?.path : undefined;
     const field: Field | undefined = path === '/name' ? 'name' : path === '/phone' || path === '/email' ? 'contact' : path === '/message' ? 'message' : undefined;
-    return { code: isStr(e?.code) ? e.code : null, ...(field ? { field } : {}) };
+    const wait = details?.retryAfterSeconds;
+    const retryAfterSeconds = typeof wait === 'number' && Number.isFinite(wait) && wait >= 0 ? Math.ceil(wait) : undefined;
+    return { code: isStr(e?.code) ? e.code : null, ...(field ? { field } : {}), ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}) };
   } catch {
     return { code: null };
   }
@@ -177,10 +185,10 @@ async function call<T>(f: Fetch, url: string, init: RequestInit, parse: (v: unkn
       return { ok: false, failure: 'failed' };
     }
   }
-  if (r.status === 429) return { ok: false, failure: 'rate_limited' };
   if (r.status === 404) return { ok: false, failure: 'not_found' };
   if (r.status === 410) return { ok: false, failure: 'closed' };
   const e = await errorOf(r);
+  if (r.status === 429) return { ok: false, failure: 'rate_limited', ...(e.retryAfterSeconds !== undefined ? { retryAfterSeconds: e.retryAfterSeconds } : {}) };
   if (r.status === 409 && e.code === 'CHANNEL_NOT_CONNECTED') return { ok: false, failure: 'unavailable' };
   if (r.status === 409 && e.code === 'WEBCHAT_DISCLOSURE_STALE') return { ok: false, failure: 'disclosure_stale' };
   if (r.status === 422 || r.status === 413) return { ok: false, failure: 'invalid', ...(e.field ? { field: e.field } : {}) };

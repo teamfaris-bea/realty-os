@@ -10,7 +10,9 @@
 //   - a visitor gone 30 minutes: the widget says the chat ended and offers a new one (E77);
 //   - the team replaced its notice after the visitor opened the chat: the new notice is shown and the next tap
 //     starts the chat (WEBCHAT_DISCLOSURE_STALE);
-//   - the brokerage's own link to #realty-chat-open opens the chat in place;
+//   - the brokerage's own link to #realty-chat-open opens the chat in place, every time it is followed;
+//   - on a phone the full-screen panel keeps the keyboard inside it (the page behind is inert);
+//   - a visitor who moves to another page keeps the chat (the next page polls at once, panel closed);
 //   - on a website the widget may not run on, nothing is shown (the API answers 404 there);
 //   - a start beyond the per-IP limit is refused in words, keeping what was typed (E137);
 //   - axe-clean in light and dark at every step; on a phone the panel takes the whole screen with 44 px targets.
@@ -174,9 +176,12 @@ test('E77: when the visitor has been gone 30 minutes the widget says the chat en
   await expect(panel.getByRole('textbox', { name: 'Your reply' })).toBeVisible();
   // the visitor's session has been idle 30 minutes (clock fixture): the next poll says the chat is over
   await stack.fixture('/age-chat', { token: await tokenOf(page) });
-  await expect(panel.getByText('This chat has ended.')).toBeVisible({ timeout: 10_000 });
+  await expect(panel.getByText('This chat has ended.', { exact: true }).last()).toBeVisible({ timeout: 10_000 });
   await expect(panel.getByRole('button', { name: 'Start a new chat' })).toBeVisible();
   await expect(panel.getByRole('textbox', { name: 'Your reply' })).toHaveCount(0);
+  await expect(panel).not.toContainText('Replies appear here while this page is open.');
+  // the tab forgot the session (finding chat-ended-session-readable): the next page view starts a new chat
+  await expect.poll(() => page.evaluate((k) => sessionStorage.getItem(k), `realty-chat:${world.widgetKey}`)).toBeNull();
   expect(await axe(page)).toEqual([]);
   await shot(page, 'ended', info.project.name);
   await page.keyboard.press('Escape');
@@ -199,7 +204,7 @@ test('WEBCHAT_DISCLOSURE_STALE: the team replaced its notice after the visitor o
   await expect(panel.getByRole('log', { name: 'Conversation' }).locator('[data-from=visitor]')).toHaveText([/Hello, I have a question about a listing\./]);
 });
 
-test('a link on the brokerage\'s own page to #realty-chat-open opens the chat in place, without a reload', async ({ page }) => {
+test('a link on the brokerage\'s own page to #realty-chat-open opens the chat in place, without a reload, every time it is followed (findings F6, UXA-4)', async ({ page }) => {
   newVisitor();
   await page.goto(stack.widgetPage(world.widgetKey));
   await expect(page.getByRole('button', { name: `Chat with ${world.teamName}` })).toBeVisible({ timeout: 15_000 });
@@ -212,9 +217,84 @@ test('a link on the brokerage\'s own page to #realty-chat-open opens the chat in
     return true;
   });
   expect(marker).toBe(true);
-  await page.getByRole('link', { name: 'Chat with us' }).click();
-  await expect(page.getByRole('dialog', { name: world.teamName })).toBeVisible();
+  const dialog = page.getByRole('dialog', { name: world.teamName });
+  for (let click = 1; click <= 3; click++) {
+    await page.getByRole('link', { name: 'Chat with us' }).click();
+    await expect(dialog, `click ${click}`).toBeVisible();
+    await dialog.getByRole('button', { name: 'Close chat' }).click();
+    await expect(dialog).toHaveCount(0);
+  }
   expect(await page.evaluate(() => (window as { __samePage?: boolean }).__samePage)).toBe(true);
+  // arriving on a shared link (a fresh page load, not a jump within this one) opens it; afterwards the site's own link
+  // still works
+  await page.goto('about:blank');
+  await page.goto(`${stack.widgetPage(world.widgetKey)}#realty-chat-open`);
+  await expect(dialog).toBeVisible({ timeout: 15_000 });
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await page.evaluate(() => {
+    const a = document.createElement('a');
+    a.href = '#realty-chat-open';
+    a.textContent = 'Chat with us';
+    document.querySelector('main')!.append(a);
+  });
+  await page.getByRole('link', { name: 'Chat with us' }).click();
+  await expect(dialog).toBeVisible();
+});
+
+test('WCAG 2.4.11 (finding UXA-2): on a phone the full-screen chat is modal: Tab and Shift+Tab stay inside it and the page behind is inert; on desktop the page stays usable beside it', async ({ page }) => {
+  newVisitor();
+  await page.goto(stack.widgetPage(world.widgetKey));
+  await page.evaluate(() => {
+    const main = document.querySelector('main')!;
+    for (const name of ['See our listings', 'Contact the office']) {
+      const a = document.createElement('a');
+      a.href = `#${name.replace(/ /g, '-')}`;
+      a.textContent = name;
+      main.append(a);
+    }
+  });
+  await page.getByRole('button', { name: `Chat with ${world.teamName}` }).click();
+  const dialog = page.getByRole('dialog', { name: world.teamName });
+  await expect(dialog.getByRole('textbox', { name: 'Your name' })).toBeFocused();
+  /** where the keyboard is: inside the widget, or on the page (the link text) */
+  const focusIn = () => page.evaluate(() => (document.activeElement?.hasAttribute('data-realty-chat') ? 'widget' : (document.activeElement?.textContent ?? 'body')));
+  if (isPhone(page)) {
+    await expect(dialog).toHaveAttribute('aria-modal', 'true');
+    await expect(page.locator('main')).toHaveAttribute('inert', '');
+    for (let i = 0; i < 8; i++) {
+      await page.keyboard.press('Shift+Tab');
+      expect(await focusIn(), `Shift+Tab ${i + 1}`).toBe('widget');
+    }
+    for (let i = 0; i < 8; i++) {
+      await page.keyboard.press('Tab');
+      expect(await focusIn(), `Tab ${i + 1}`).toBe('widget');
+    }
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect(page.locator('main')).not.toHaveAttribute('inert', '');
+  } else {
+    await expect(dialog).not.toHaveAttribute('aria-modal', 'true');
+    await expect(page.locator('main')).not.toHaveAttribute('inert', '');
+  }
+});
+
+test('E77 (findings F2, UXA-1): a visitor who moves to another page of the site keeps the chat: the next page asks the server at once, with the panel still closed, so the session stays open', async ({ page }) => {
+  newVisitor();
+  const panel = await openWidget(page);
+  await fillStart(panel, 'Is the open house still on Sunday?');
+  await panel.getByRole('button', { name: 'Start chat' }).click();
+  await expect(panel.getByRole('textbox', { name: 'Your reply' })).toBeVisible();
+  const polls: string[] = [];
+  page.on('request', (r) => {
+    if (r.url().includes('/api/public/chat/session/') && r.url().includes('/poll')) polls.push(r.url());
+  });
+  // another page of the brokerage's site in the same tab
+  await page.reload();
+  await expect(page.getByRole('button', { name: `Chat with ${world.teamName}` })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect.poll(() => polls.length, { timeout: 10_000 }).toBeGreaterThan(0);
+  expect(await tokenOf(page)).toBeTruthy();
 });
 
 test('on a website the widget may not run on, nothing is shown: the API answers 404 there', async ({ page }) => {
@@ -238,7 +318,8 @@ test('E137: a start beyond the per-IP limit is refused in words, and what the vi
   const panel = await openWidget(page);
   await fillStart(panel, 'Hello');
   await panel.getByRole('button', { name: 'Start chat' }).click();
-  await expect(panel.getByRole('alert')).toHaveText('Too many messages right now. Please wait a minute and try again.');
+  // the server's own wait, and words that fit a start (finding UXA-10)
+  await expect(panel.getByRole('alert')).toHaveText('Too many chats were started from this connection. Please try again in a minute.');
   await expect(panel.getByRole('textbox', { name: 'Message' })).toHaveValue('Hello');
   await expect(panel.getByRole('log', { name: 'Conversation' })).toHaveCount(0);
 });

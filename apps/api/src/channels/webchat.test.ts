@@ -166,6 +166,25 @@ describe('R-GATE-14 R-GATE-15 replies in chat go through dispatchOutbound', () =
     expect([v.statusCode, codeOf(v)]).toEqual([410, 'WEBCHAT_SESSION_CLOSED']);
   });
 
+  it('E77 (finding chat-ended-session-readable): once the session ended, its token reads nothing more: the poll says open:false with no replies, whatever cursor is sent', async () => {
+    const c = await openChat(h, widget.key, src.disclosureId, { name: 'Sam Shared' });
+    const agent = await acceptLead(h, w.agents, c.contactId);
+    const said = 'Hi Sam, your showing at 12 Oak St is Saturday 10am';
+    expect((await call<{ result: string }>(agent, 'POST', `/contacts/${c.contactId}/messages`, { channel: 'web_chat', body: said, idempotencyKey: `chat-${randomUUID()}` })).body.result).toBe('sent');
+    const live = await pollBody(h, c.token);
+    expect([live.open, live.messages.map((m) => m.body)]).toEqual([true, [said]]);
+    // the visitor has been gone 30 minutes (clock fixture, as E77 above)
+    await h.su.query("UPDATE webchat_sessions SET last_seen_at = now() - interval '31 minutes', started_at = LEAST(started_at, now() - interval '40 minutes') WHERE id = $1", [c.sessionId]);
+    for (const after of [undefined, '0.00000000-0000-0000-0000-000000000000', live.cursor!]) {
+      const p = await pollBody(h, c.token, after);
+      expect([p.open, p.messages], String(after)).toEqual([false, []]);
+      // the cursor the widget holds goes back unchanged, so a widget still on the page loses nothing it had
+      expect(p.cursor).toBe(after ?? null);
+    }
+    // a poll of an ended session does not reopen it
+    expect((await h.su.query('SELECT last_seen_at < now() - interval \'30 minutes\' AS idle FROM webchat_sessions WHERE id = $1', [c.sessionId])).rows[0].idle).toBe(true);
+  });
+
   it('R-GATE-14: an approved draft may answer in web chat (drafts.ts), through the same send path', async () => {
     const c = await openChat(h, widget.key, src.disclosureId, { name: 'Dora Draft' });
     const agent = await acceptLead(h, w.agents, c.contactId);

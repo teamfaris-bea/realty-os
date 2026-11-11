@@ -5,7 +5,7 @@
 // client (test/contract.ts contractFetch) refuses with 422 any request the API would refuse, and may itself only answer
 // with bodies the API can send and with each error code at the API's status, so the client is held to the real API.
 import { describe, expect, it } from 'vitest';
-import { type Answer, type Exchange, apiError, contract, contractFetch } from '../test/contract.js';
+import { type Answer, type Exchange, apiError, contract, contractFetch, violations } from '../test/contract.js';
 import { EMAIL_MAX, MESSAGE_MAX, NAME_MAX, PHONE_MAX, WIDGET_KEY, chatApi, clean, newMessageId, parseConfig, parsePoll, parseStart } from './api.js';
 
 const KEY = `wk_${'0123456789abcdef0123456789abcdef01234567'}`;
@@ -104,6 +104,9 @@ describe('widget/api.ts against the real module 22 public chat routes (webContra
     expect(await failing('CHANNEL_NOT_CONNECTED').config(KEY)).toEqual({ ok: false, failure: 'unavailable' });
     expect(await start(failing('WEBCHAT_DISCLOSURE_STALE'))).toEqual({ ok: false, failure: 'disclosure_stale' });
     expect(await start(failing('RATE_LIMITED'))).toEqual({ ok: false, failure: 'rate_limited' });
+    // the wait the API names (details.retryAfterSeconds: up to an hour for the 20-starts-an-hour limit), finding UXA-10
+    expect(await start(failing('RATE_LIMITED', { retryAfterSeconds: 1721 }))).toEqual({ ok: false, failure: 'rate_limited', retryAfterSeconds: 1721 });
+    expect(await failing('RATE_LIMITED', { retryAfterSeconds: 41 }).send(TOKEN, 'hello?', newMessageId())).toEqual({ ok: false, failure: 'rate_limited', retryAfterSeconds: 41 });
     expect(await start(failing('VALIDATION_FAILED', { issues: [{ path: '/phone', code: 'invalid' }] }))).toEqual({ ok: false, failure: 'invalid', field: 'contact' });
     expect(await failing('WEBCHAT_SESSION_CLOSED').send(TOKEN, 'hello?', newMessageId())).toEqual({ ok: false, failure: 'closed' });
     expect(await failing('CHANNEL_NOT_CONNECTED').poll(TOKEN, null)).toEqual({ ok: false, failure: 'unavailable' });
@@ -129,14 +132,32 @@ describe('widget/api.ts against the real module 22 public chat routes (webContra
     expect(clean('  \u200d  ', 10)).toBe('');
   });
 
+  it('finding F4: the parsers accept every response the contract allows: each sender of the poll, a null cursor, a null notice; an entry from a sender this widget does not know yet is skipped and the cursor still moves on, so later replies keep coming', async () => {
+    const poll = contract.routes['GET /public/chat/session/:token/poll']!.response as { properties: { messages: { items: { properties: { from: { enum: string[] } } } } } };
+    const senders = poll.properties.messages.items.properties.from.enum;
+    expect(senders.length).toBeGreaterThan(0);
+    for (const from of senders) {
+      const page = { messages: [{ ...REPLY, from }], cursor: null, open: true };
+      expect(violations(poll as never, page), from).toEqual([]);
+      expect(parsePoll(page), from).toEqual(page);
+    }
+    expect(parseConfig({ ...CONFIG, disclosure: null })).toEqual({ ...CONFIG, disclosure: null });
+    // a sender added to the API later (say 'system'; today's contract has none, so a raw response stands in for that
+    // API): the widget shows the replies it knows and moves past the rest
+    const later = { id: '01900000-0000-7000-8000-0000000e5504', body: 'Ava will call you at 3.', sentAt: SENT_AT, from: 'team' as const };
+    const future = chatApi(BASE, async () => new Response(JSON.stringify({ messages: [{ ...REPLY, from: 'system' }, later], cursor: `1762880431000000.${later.id}`, open: true }), { status: 200 }));
+    expect(await future.poll(TOKEN, null)).toEqual({ ok: true, data: { messages: [later], cursor: `1762880431000000.${later.id}`, open: true } });
+  });
+
   it('a response that is not the API shape is a failure and is never rendered (no invented messages)', () => {
     expect(parseStart({ sessionToken: 'short', status: 'open' })).toBeNull();
     expect(parseStart({ sessionToken: TOKEN, status: 'closed' })).toBeNull();
     expect(parseConfig({ teamName: '', disclosure: null, assistantNotice: '' })).toBeNull();
     expect(parseConfig({ teamName: 'T', disclosure: { id: DISCLOSURE }, assistantNotice: '' })).toBeNull();
-    // the poll carries only replies: a "visitor" message is not one, nor is a body without a time
-    expect(parsePoll({ messages: [{ ...REPLY, from: 'visitor' }], cursor: null, open: true })).toBeNull();
-    expect(parsePoll({ messages: [{ id: 'm', body: 'x', from: 'team' }], cursor: null, open: true })).toBeNull();
+    // the poll carries only replies: a "visitor" message is not one, nor is a body without a time; such an entry is
+    // skipped (never drawn) while the page itself, and its cursor, still count (finding F4)
+    expect(parsePoll({ messages: [{ ...REPLY, from: 'visitor' }], cursor: null, open: true })).toEqual({ messages: [], cursor: null, open: true });
+    expect(parsePoll({ messages: [{ id: 'm', body: 'x', from: 'team' }], cursor: null, open: true })).toEqual({ messages: [], cursor: null, open: true });
     expect(parsePoll({ messages: [], cursor: 3, open: true })).toBeNull();
     expect(parsePoll({ messages: [], cursor: null })).toBeNull();
     // fields the API does not send are dropped, never shown
