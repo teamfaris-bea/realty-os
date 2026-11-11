@@ -302,3 +302,4 @@ A KMS-backed KEK (wrap and unwrap as KMS calls) is a drop-in for the same interf
 - [ ] Backups configured, and one restore drill done and timed.
 - [ ] Logs collected; alerts on dead realtime jobs, sweeper lateness, unrouted inbound and webhook signature failures (ARCHITECTURE §15).
 - [ ] Counsel items in ARCHITECTURE §19 reviewed for the launch states.
+- [ ] Phase 2, Gmail inbox sync (owner decision D2): ships dark. `platform:gmail` stays uncleared (no `reviewed_by_counsel_at`, no `rules.vendor_ready_at`) until counsel item C14 and Google's verification of the restricted `gmail.readonly` scope plus its security assessment (N19, **VERIFY** current requirements and renewal) have passed; the Google OAuth client requests that scope only. Until then no tenant can turn sync on (DB).
