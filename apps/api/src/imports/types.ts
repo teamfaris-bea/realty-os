@@ -37,8 +37,10 @@ export interface ImportDeps {
 
 /**
  * Owner decision B4 (2026-11-11, E230): the issue on an ownership record whose planned assignment the commit did
- * not make because the mapped member could no longer hold leads. The record is `rejected` (not imported) for this
- * documented reason, its target is the person (unassigned), and the recount counts it so (core expectedAfterCommit).
+ * not make because the mapped member could no longer hold leads. The owner decided it for a member suspended between
+ * the ownership approval and the commit; the implementation handles every reason the engine refuses the target
+ * (TARGET_NOT_ELIGIBLE) the same way. The record is `rejected` (not imported) for this documented reason, its target
+ * is the person (unassigned), and the recount counts it so (core expectedAfterCommit).
  */
 export const OWNER_UNAVAILABLE = 'OWNER_UNAVAILABLE';
 /** Why, as the commit read the member: suspended, no longer an active member, a role that holds no leads, or (a race) none of these any more. */
@@ -46,10 +48,18 @@ export type UnassignedReason = 'suspended' | 'inactive' | 'role' | 'unavailable'
 export interface UnassignedIssue {
   code: typeof OWNER_UNAVAILABLE;
   severity: 'info';
+  /** as the commit read it: said in the present only while the member's membership still shows it (review B4-R2) */
   reason: UnassignedReason;
   /** the member the person was matched to (the name is looked up when shown, never stored here) */
   userId: string;
 }
+
+/**
+ * Where a person the ownership commit brought in unassigned is now (E231, review B4-R1): still unassigned (the only
+ * ones "Assign these people" selects), owned, on offer, in a pond, closed, deleted (or purged), or merged into another
+ * contact. Only `owned` has an owner.
+ */
+export type UnassignedNow = 'unassigned' | 'owned' | 'offered' | 'in_pond' | 'closed' | 'deleted' | 'merged';
 
 /** Deps for the HTTP side: the import routes build them from the platform plus the FUB connector. */
 export type ImportDepsFactory = () => ImportDeps;

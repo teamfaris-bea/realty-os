@@ -21,9 +21,9 @@
 //              matches become duplicate candidates, never merges.
 //   ownership  import_assign to the mapped target, only for contacts this batch created that are
 //              still in their imported creation state (core decides; R-IMPORT-8: no offer/SLA/notice).
-//              Owner decision B4 (2026-11-11, E230-E232): when the engine refuses the mapped member
-//              (TARGET_NOT_ELIGIBLE: suspended since the approval, no longer an active member, a role that
-//              holds no leads), nothing is assigned and the person stays as the contacts stage left them
+//              Owner decision B4 (2026-11-11, E230-E232) for a member suspended since the approval,
+//              applied by the implementation to every TARGET_NOT_ELIGIBLE refusal (also no longer an active
+//              member, a role that holds no leads): nothing is assigned and the person stays as the contacts stage left them
 //              (unassigned, never routed); the record is not imported for that documented reason
 //              (OWNER_UNAVAILABLE, with the member and why), which the recount counts, so the stage
 //              verifies and the later stages commit. Before a chunk commits it re-reads, FOR SHARE, every

@@ -7,9 +7,10 @@
 // deterministic FAKE Follow Up Boss connector (imports/fub.ts FakeFub). Nothing real is called or sent.
 // The superuser pool only reads back.
 //
-// Owner decisions of 2026-11-11 (docs/PARITY_PLAN.md §2.2): B4, a member who can no longer hold leads at the
-// ownership commit gets none: their people come in unassigned with the reason, the stage verifies, the later
-// stages commit and the report offers "Assign these people" (E230-E232); B7, FUB tasks and appointments are
+// Owner decisions of 2026-11-11 (docs/PARITY_PLAN.md §2.2): B4, a member suspended between the ownership approval
+// and its commit (the implementation: any member who can no longer hold leads then) gets none: their people come in
+// unassigned with the reason, the stage verifies, the later stages commit and the report offers "Assign these
+// people", and says what is true of them when it is read (E230-E232); B7, FUB tasks and appointments are
 // counted, never read, and the import says plainly they don't come over (E233).
 //
 // FUB shapes: the person/note/text/email/call/user fields follow core/import/fub.ts, whose consent flag
@@ -160,7 +161,13 @@ async function bulkDrain(): Promise<void> {
   await createWorker({ db: ih.h.database, registry, providers: ih.h.providers, queues: ['default'], concurrency: 1, worker: `imports-bulk-${randomUUID().slice(0, 8)}`, idleMs: 5, log: silentLogger }).drain(50);
 }
 
-type UnassignedView = { total: number; stillUnassigned: number; contactIds: string[]; people: { contactId: string; name: string; sentence: string; stillUnassigned: boolean }[] };
+type UnassignedView = {
+  total: number;
+  stillUnassigned: number;
+  contactIds: string[];
+  summary: string[];
+  people: { contactId: string; name: string; sentence: string; stillUnassigned: boolean; now: string; nowSentence: string | null }[];
+};
 type ReportView = {
   categories: { category: Category; status: string; phase: string; imported: number; rejected: number; lines: string[]; unassigned: UnassignedView | null }[];
   notImported: { tasks: number | null; appointments: number | null; lines: string[] } | null;
@@ -469,12 +476,20 @@ describe('M1 M2 M5: a full staged FUB migration, category by category, then undo
   });
 });
 
+/** FUB users 11, 12 and 13 (Jane, Omar, Pia, Quin) → agent1; 99 → nobody. */
+const ALL_TO_AGENT1 = (w: ImportWorld) => [
+  { sourceRef: '11', target: { kind: 'user', userId: w.agents[1]!.userId } },
+  { sourceRef: '12', target: { kind: 'user', userId: w.agents[1]!.userId } },
+  { sourceRef: '13', target: { kind: 'user', userId: w.agents[1]!.userId } },
+  { sourceRef: '99', target: { kind: 'unassigned' } },
+];
+
 /** A tenant whose contacts stage is verified and whose ownership dry run is approved: FUB users 12 and 13 (Omar, Quin) → agent1. */
-async function ownershipApproved(key: string, p: number, seed: number): Promise<{ w: ImportWorld; b: BatchView }> {
+async function ownershipApproved(key: string, p: number, seed: number, mappings: (w: ImportWorld) => unknown[] = ALL_MAPPED): Promise<{ w: ImportWorld; b: BatchView }> {
   const w = await importWorld(ih);
   ih.fub.add(key, account(p, seed));
   const b = await startFub(ih, w.admin, key);
-  expect((await call(w.admin, 'PUT', `/imports/${b.id}/user-mappings`, { mappings: ALL_MAPPED(w) })).status).toBe(200);
+  expect((await call(w.admin, 'PUT', `/imports/${b.id}/user-mappings`, { mappings: mappings(w) })).status).toBe(200);
   await fullStage(ih, w.admin, b.id, 'contacts');
   expect(stageOf(await batchOf(w.admin, b.id), 'contacts').status).toBe('verified');
   const d = await dryRunStage(ih, w.admin, b.id, 'ownership');
@@ -538,7 +553,7 @@ describe('M2: a member suspended between the ownership approval and its commit (
     expect(v.view.approved).toEqual({ source: 7, imported: 4, needs_review: 0, rejected: 2, duplicate: 1 });
     expect(v.view.expected).toEqual({ source: 7, imported: 2, needs_review: 0, rejected: 4, duplicate: 1 });
     expect(v.view.db).toEqual(v.view.expected);
-    expect(v.view.documented).toEqual([{ code: 'OWNER_UNAVAILABLE', count: 2, sentence: "2 planned assignments came in unassigned because the member they were matched to can't hold leads now (each record says why). They are counted as not imported." }]);
+    expect(v.view.documented).toEqual([{ code: 'OWNER_UNAVAILABLE', count: 2, sentence: "2 planned assignments came in unassigned because the member they were matched to couldn't hold leads when the owners were imported (each record says why). They are counted as not imported." }]);
     expect(v.view.sample.map((x) => x.sourceRef).sort()).toEqual(['fub:people/7201', 'fub:people/7203']);
     // the verification is stored with what the approval expected and why the recount differs from it
     const stored = (await q<{ verification: { recount: Record<string, unknown>; documented: unknown } }>("SELECT verification FROM import_stages WHERE batch_id = $1 AND category = 'ownership'", [b.id]))[0]!.verification;
@@ -561,20 +576,18 @@ describe('M2: a member suspended between the ownership approval and its commit (
     const [omar, quin] = [await contactOf(b.id, 'Omar'), await contactOf(b.id, 'Quin')];
     const why = `Brought in unassigned: ${bea}'s account is suspended.`;
     const own = (await report(w, b.id)).categories.find((c) => c.category === 'ownership')!;
+    const stillLine = '2 people are still unassigned: use "Assign these people" to give them an owner.';
     expect(own.unassigned).toEqual({
       total: 2,
       stillUnassigned: 2,
       contactIds: [omar, quin],
+      summary: [stillLine],
       people: [
-        { contactId: omar, name: 'Omar Optout4', sentence: why, stillUnassigned: true },
-        { contactId: quin, name: 'Quin Notext4', sentence: why, stillUnassigned: true },
+        { contactId: omar, name: 'Omar Optout4', sentence: why, stillUnassigned: true, now: 'unassigned', nowSentence: null },
+        { contactId: quin, name: 'Quin Notext4', sentence: why, stillUnassigned: true, now: 'unassigned', nowSentence: null },
       ],
     });
-    expect(own.lines.slice(2)).toEqual([
-      `2 people came in unassigned because ${bea}'s account is suspended.`,
-      'Nothing was assigned to them, and the import started no offer, timer or routing.',
-      '2 people still have no owner: use "Assign these people" to give them one.',
-    ]);
+    expect(own.lines.slice(2)).toEqual([`2 people came in unassigned because ${bea}'s account is suspended.`, 'Nothing was assigned to them, and the import started no offer, timer or routing.', stillLine]);
     const ids = own.unassigned!.contactIds;
     const assign = (c: typeof w.admin, toUserId: string) => call<{ action: { id: string; targetCount: number; preflight: Record<string, number> } }>(c, 'POST', '/bulk-actions', { kind: 'assign', selection: { contactIds: ids }, toUserId, idempotencyKey: `imp-assign-${randomUUID()}` });
     // an agent may not run a bulk Assign (and sees neither person)
@@ -603,9 +616,87 @@ describe('M2: a member suspended between the ownership approval and its commit (
       { type: 'assigned', actor_kind: 'user', actor_user_id: w.admin.userId },
     ]);
     const after = (await report(w, b.id)).categories.find((c) => c.category === 'ownership')!;
-    expect(after.unassigned).toMatchObject({ total: 2, stillUnassigned: 0, contactIds: [] });
-    expect(after.unassigned!.people.map((p) => p.stillUnassigned)).toEqual([false, false]);
+    expect(after.unassigned).toMatchObject({ total: 2, stillUnassigned: 0, contactIds: [], summary: ['Both of them have an owner now.'] });
+    expect(after.unassigned!.people.map((p) => [p.stillUnassigned, p.now, p.nowSentence])).toEqual([
+      [false, 'owned', 'Has an owner now.'],
+      [false, 'owned', 'Has an owner now.'],
+    ]);
     expect(after.lines.at(-1)).toBe('Both of them have an owner now.');
+  });
+});
+
+// Reviews B4-R2/F2 and B4-R1/F1. The reason was read once, at the commit, but always said in the present, so a member
+// reactivated since was still "suspended" everywhere; and the report said "has an owner now" of anyone who was not
+// still unassigned, including people closed, deleted, merged away or released to a pond, none of whom has an owner.
+describe('E230 E231 after the ownership commit, the review list, the verification and the report say what is true when read', () => {
+  const key = 'fub-m2n-' + randomUUID().slice(0, 8);
+  let w: ImportWorld;
+  let b: BatchView;
+  const ids = {} as Record<'Jane' | 'Omar' | 'Pia' | 'Quin' | 'Rae', string>;
+  const ownership = async () => (await report(w, b.id)).categories.find((c) => c.category === 'ownership')!;
+  const command = (c: typeof w.admin, verb: string, contactId: string, body: Record<string, unknown> = {}) => call(c, 'POST', `/leads/${contactId}/${verb}`, { commandId: randomUUID(), ...body });
+
+  it('E230 a member reactivated after the commit is never said to be suspended: each sentence says what was true when the owners were imported (review B4-R2, F2)', async () => {
+    ({ w, b } = await ownershipApproved(key, 7700, 9, ALL_TO_AGENT1));
+    const agent1 = w.agents[1]!.userId as string;
+    await suspend(w, agent1);
+    const bea = (await memberOf(w, agent1)).displayName;
+    expect((await commitStage(ih, w.admin, b.id, 'ownership')).status).toBe('committed');
+    for (const first of ['Jane', 'Omar', 'Pia', 'Quin', 'Rae'] as const) ids[first] = await contactOf(b.id, first);
+    const reasons = async () => (await records(w.admin, b.id, 'ownership')).flatMap((r) => r.issues.filter((i) => i.code === 'OWNER_UNAVAILABLE').map((i) => [r.sourceRef, i.sentence]));
+    const refs = ['fub:people/7701', 'fub:people/7702', 'fub:people/7703', 'fub:people/7704'];
+    // while the member is suspended it is said in the present, in the owner's own words
+    const is = `Brought in unassigned: ${bea}'s account is suspended.`;
+    expect(await reasons()).toEqual(refs.map((r) => [r, is]));
+    expect((await ownership()).lines[2]).toBe(`4 people came in unassigned because ${bea}'s account is suspended.`);
+    await setStatus(w, agent1, 'active');
+    expect((await memberOf(w, agent1)).status).toBe('active');
+    const was = `Brought in unassigned: ${bea}'s account was suspended when the owners were imported.`;
+    expect(await reasons()).toEqual(refs.map((r) => [r, was]));
+    const own = await ownership();
+    expect(own.lines.slice(2)).toEqual([
+      `4 people came in unassigned because ${bea}'s account was suspended when the owners were imported.`,
+      'Nothing was assigned to them, and the import started no offer, timer or routing.',
+      '4 people are still unassigned: use "Assign these people" to give them an owner.',
+    ]);
+    expect(own.unassigned!.people.map((p) => p.sentence)).toEqual(refs.map(() => was));
+    const v = await call<{ documented: { code: string; count: number; sentence: string }[] }>(w.admin, 'GET', `/imports/${b.id}/stages/ownership/verification`);
+    expect(v.body.documented).toEqual([{ code: 'OWNER_UNAVAILABLE', count: 4, sentence: "4 planned assignments came in unassigned because the member they were matched to couldn't hold leads when the owners were imported (each record says why). They are counted as not imported." }]);
+    // reactivating the member gave them nobody: the people still wait for the Owner
+    await neverAssignedTo(b.id, agent1);
+    expect(own.unassigned).toMatchObject({ stillUnassigned: 4, contactIds: [ids.Jane, ids.Omar, ids.Pia, ids.Quin] });
+  });
+
+  it('E231 people given an owner, closed, deleted or merged away since are said to be so ("has an owner" only of someone owned), and one released to a pond is in a pond with no owner (review B4-R1, F1)', async () => {
+    expect((await command(w.admin, 'reassign', ids.Jane, { toUserId: w.agents[0]!.userId })).status).toBe(200);
+    expect((await command(w.admin, 'close', ids.Omar, { reason: 'not_a_lead' })).status).toBe(200);
+    expect((await command(w.admin, 'merge', ids.Rae, { loserId: ids.Pia })).status).toBe(200);
+    expect((await command(w.admin, 'delete', ids.Quin)).status).toBe(200);
+    expect(await q('SELECT first_name, ownership_state, owner_user_id, deleted_at IS NOT NULL AS deleted, merged_into_contact_id FROM contacts WHERE id = ANY ($1) ORDER BY first_name', [[ids.Jane, ids.Omar, ids.Pia, ids.Quin]])).toEqual([
+      { first_name: 'Jane', ownership_state: 'owned', owner_user_id: w.agents[0]!.userId, deleted: false, merged_into_contact_id: null },
+      { first_name: 'Omar', ownership_state: 'closed', owner_user_id: null, deleted: false, merged_into_contact_id: null },
+      { first_name: 'Pia', ownership_state: 'closed', owner_user_id: null, deleted: false, merged_into_contact_id: ids.Rae },
+      { first_name: 'Quin', ownership_state: 'closed', owner_user_id: null, deleted: true, merged_into_contact_id: null },
+    ]);
+    const people = (u: UnassignedView) => u.people.map((p) => [p.name.split(' ')[0], p.now, p.nowSentence, p.stillUnassigned]);
+    let own = await ownership();
+    expect(people(own.unassigned!)).toEqual([
+      ['Jane', 'owned', 'Has an owner now.', false],
+      ['Omar', 'closed', 'Closed after the import.', false],
+      ['Pia', 'merged', 'Merged into another contact after the import.', false],
+      ['Quin', 'deleted', 'Deleted after the import.', false],
+    ]);
+    expect([own.unassigned!.stillUnassigned, own.unassigned!.contactIds]).toEqual([0, []]);
+    expect(own.lines.slice(4)).toEqual(['After the import, 1 was given an owner, 1 was closed, 1 was deleted and 1 was merged into another contact.']);
+    expect(own.unassigned!.summary).toEqual(own.lines.slice(4));
+    // Jane's agent releases her to the Team Pond: nobody owns her again, and the report says where she is
+    expect((await command(w.agents[0]!, 'release', ids.Jane, { reason: 'not_a_fit' })).status).toBe(200);
+    expect(await q('SELECT ownership_state, owner_user_id FROM contacts WHERE id = $1', [ids.Jane])).toEqual([{ ownership_state: 'in_pond', owner_user_id: null }]);
+    own = await ownership();
+    expect(people(own.unassigned!)[0]).toEqual(['Jane', 'in_pond', 'In a pond now, with no owner.', false]);
+    expect(own.lines.at(-1)).toBe('After the import, 1 was put in a pond, 1 was closed, 1 was deleted and 1 was merged into another contact.');
+    expect(own.lines.join(' ')).not.toMatch(/an owner now/);
+    expect([own.unassigned!.stillUnassigned, own.unassigned!.contactIds]).toEqual([0, []]);
   });
 });
 

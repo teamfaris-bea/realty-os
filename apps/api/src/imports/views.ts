@@ -3,10 +3,11 @@
 // No confidence scores anywhere (R-AST-13); no tenant id in any shape (R-TEN-3).
 import { type Category, type ConsentSummary, type Counts, type DocumentedOutcomes, type NormalizedRecord, type ParityReportRow, type SourceName, batchReport, connectionTestLines, notImportedLines, optOutPreview, parityCommittedReport, parityLines, parityReport, reportLines } from '@realty/core/import';
 import type { Channel } from '@realty/core/compliance';
+import { type Role, canOwnLeads } from '@realty/core/foundation';
 import { BULK_CAPS } from '@realty/core/parity/bulk';
 import type { BatchRow, MappingRow, StageRow } from './repos/batches.js';
 import type { RecordRow, UnassignedPersonRow } from './repos/records.js';
-import { OWNER_UNAVAILABLE, type UnassignedIssue, type UnassignedReason } from './types.js';
+import { OWNER_UNAVAILABLE, type UnassignedIssue, type UnassignedNow, type UnassignedReason } from './types.js';
 
 /** One plain sentence per issue code (the web maps codes too; unknown codes get a generic sentence). */
 export const ISSUE_SENTENCES: Record<string, string> = {
@@ -54,38 +55,62 @@ export const ISSUE_SENTENCES: Record<string, string> = {
   USER_MAPPING_INCOMPLETE: 'Map every Follow Up Boss user before approving this step.',
   COMMIT_FAILED: 'This record could not be written; nothing else was affected.',
   // owner decision B4 (E230); shown with the member's name and the reason when the issue carries them (unassignedSentence)
-  [OWNER_UNAVAILABLE]: "Brought in unassigned: the member they were matched to can't hold leads now.",
+  [OWNER_UNAVAILABLE]: "Brought in unassigned: the member they were matched to couldn't hold leads when the owners were imported.",
 };
 
 export const GENERIC_ISSUE = 'Something about this record needs a look.';
 
-/** Display names of members, for the sentences that name one (the review list, the report). */
-export type MemberNames = ReadonlyMap<string, string>;
+/** A member a sentence names, with their membership as it reads now (repos/batches memberNames). */
+export interface MemberNow {
+  name: string;
+  status: string;
+  role: string;
+}
+/** The members the sentences of a page name (the review list, the report), looked up when shown. */
+export type MemberNames = ReadonlyMap<string, MemberNow>;
 const NO_NAMES: MemberNames = new Map();
 
-/** Owner decision B4 (E230): why a planned assignment came in unassigned, naming the member when we can. */
-export function unassignedClause(reason: UnassignedReason, name: string | undefined): string {
-  if (name === undefined || name.trim() === '') {
-    switch (reason) {
-      case 'suspended':
-        return 'the account of the member they were matched to is suspended';
-      case 'inactive':
-        return 'the member they were matched to is no longer an active member of the team';
-      case 'role':
-        return "the role of the member they were matched to can't hold leads";
-      case 'unavailable':
-        return "the member they were matched to couldn't take leads when the owners were imported";
-    }
-  }
+/** Whether the reason the commit read still describes the member now (review B4-R2: only then is it said in the present). */
+function reasonHolds(reason: UnassignedReason, m: MemberNow | undefined): boolean {
+  if (m === undefined) return false;
   switch (reason) {
     case 'suspended':
-      return `${name}'s account is suspended`;
+      return m.status === 'suspended';
     case 'inactive':
-      return `${name} is no longer an active member of the team`;
+      return m.status !== 'active';
     case 'role':
-      return `${name}'s role can't hold leads`;
+      return !canOwnLeads(m.role as Role);
     case 'unavailable':
-      return `${name} couldn't take leads when the owners were imported`;
+      return false;
+  }
+}
+
+const AT_IMPORT = 'when the owners were imported';
+
+/**
+ * Owner decision B4 (E230): why a planned assignment came in unassigned, naming the member when we can. The reason is
+ * the one the commit read. It is said in the present ("Blake Chen's account is suspended") while the member's
+ * membership still shows it, and otherwise as it was then ("was suspended when the owners were imported"), so a
+ * member reactivated, or given a role that holds leads, since the commit is never described as they were (B4-R2).
+ */
+export function unassignedClause(reason: UnassignedReason, member: MemberNow | undefined): string {
+  const name = member !== undefined && member.name.trim() !== '' ? member.name : null;
+  const now = reasonHolds(reason, member);
+  switch (reason) {
+    case 'suspended': {
+      const whose = name === null ? 'the account of the member they were matched to' : `${name}'s account`;
+      return now ? `${whose} is suspended` : `${whose} was suspended ${AT_IMPORT}`;
+    }
+    case 'inactive': {
+      const who = name ?? 'the member they were matched to';
+      return now ? `${who} is no longer an active member of the team` : `${who} was no longer an active member of the team ${AT_IMPORT}`;
+    }
+    case 'role': {
+      const whose = name === null ? 'the role of the member they were matched to' : `${name}'s role`;
+      return now ? `${whose} can't hold leads` : `${whose} couldn't hold leads ${AT_IMPORT}`;
+    }
+    case 'unavailable':
+      return `${name ?? 'the member they were matched to'} couldn't take leads ${AT_IMPORT}`;
   }
 }
 
@@ -121,7 +146,10 @@ function plural(n: number, one: string, many: string): string {
   return `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
 }
 
-/** The verification's documented commit outcomes (owner decision B4, E230), in words; empty when there are none. */
+/**
+ * The verification's documented commit outcomes (owner decision B4, E230), in words; empty when there are none. Said
+ * as it was at the commit, which stays true whatever the members' state is when it is read (review B4-R2).
+ */
 export function documentedView(d: DocumentedOutcomes): { code: string; count: number; sentence: string }[] {
   if (d.unassigned === 0) return [];
   const one = d.unassigned === 1;
@@ -129,7 +157,7 @@ export function documentedView(d: DocumentedOutcomes): { code: string; count: nu
     {
       code: OWNER_UNAVAILABLE,
       count: d.unassigned,
-      sentence: `${plural(d.unassigned, 'planned assignment', 'planned assignments')} came in unassigned because the member ${one ? 'it was' : 'they were'} matched to can't hold leads now (each record says why). ${one ? 'It is' : 'They are'} counted as not imported.`,
+      sentence: `${plural(d.unassigned, 'planned assignment', 'planned assignments')} came in unassigned because the member ${one ? 'it was' : 'they were'} matched to couldn't hold leads ${AT_IMPORT} (each record says why). ${one ? 'It is' : 'They are'} counted as not imported.`,
     },
   ];
 }
@@ -172,13 +200,21 @@ export function stageView(s: StageRow) {
 /**
  * Owner decision B7 (E233): what Follow Up Boss holds that the import never brings over (tasks, appointments),
  * from the latest count (the connection test, the snapshot, or the export file), with the plain sentence. Null for
- * a CSV file. A batch counted before B7 has no counts: said as "could not count", never guessed.
+ * a CSV file. A batch counted before B7 has no counts: said as "could not count", never guessed. A count the latest
+ * counting could not read again is the earlier one, named in `keptFrom` and said with when it was taken (review F4).
  */
-export function notImportedView(b: BatchRow): { tasks: number | null; appointments: number | null; countedAt: 'connection_test' | 'snapshot' | 'export_file' | null; lines: string[] } | null {
+export function notImportedView(b: BatchRow): {
+  tasks: number | null;
+  appointments: number | null;
+  countedAt: 'connection_test' | 'snapshot' | 'export_file' | null;
+  keptFrom?: NonNullable<BatchRow['options']['notImported']>['keptFrom'];
+  lines: string[];
+} | null {
   if (b.source === 'csv') return null;
   const c = b.options.notImported;
   const counts = { tasks: c?.tasks ?? null, appointments: c?.appointments ?? null };
-  return { ...counts, countedAt: c?.countedAt ?? null, lines: notImportedLines(counts, sourceName(b)) };
+  const kept = c?.keptFrom && Object.keys(c.keptFrom).length > 0 ? c.keptFrom : undefined;
+  return { ...counts, countedAt: c?.countedAt ?? null, ...(kept ? { keptFrom: kept } : {}), lines: notImportedLines({ ...counts, ...(kept ? { kept } : {}) }, sourceName(b)) };
 }
 
 export function batchView(b: BatchRow, stages: readonly StageRow[]) {
@@ -315,24 +351,63 @@ function revertLines(s: StageRow): string[] {
   return lines;
 }
 
-/** People an ownership commit brought in unassigned (owner decision B4, E231): who, why, and who still has no owner. */
+/** People an ownership commit brought in unassigned (owner decision B4, E231): who, why, and where each is now. */
 export interface UnassignedReport {
   /** records the commit brought in unassigned for a documented reason (OWNER_UNAVAILABLE) */
   total: number;
-  /** of those people, how many still have no owner (live, not merged away, not in a pond or on offer) */
+  /** of those people, how many are still unassigned (live, not merged away, nobody's: no owner, offer or pond) */
   stillUnassigned: number;
-  /** the people who still have no owner, in record order, at most the bulk Assign cap: "Assign these people" selects exactly these */
+  /** the people still unassigned, in record order, at most the bulk Assign cap: "Assign these people" selects exactly these */
   contactIds: string[];
-  /** the first UNASSIGNED_LISTED people, with the reason in words */
-  people: { contactId: string; name: string; sentence: string; stillUnassigned: boolean }[];
+  /** where they are now, in words (the report's last lines): every number a count, "an owner" only of the owned */
+  summary: string[];
+  /** the first UNASSIGNED_LISTED people, with the reason in words and what is true of them now */
+  people: { contactId: string; name: string; sentence: string; stillUnassigned: boolean; now: UnassignedNow; nowSentence: string | null }[];
 }
 export const UNASSIGNED_LISTED = 50;
+
+/** What is true of one of these people now (review B4-R1): only someone owned "has an owner". */
+const NOW_SENTENCE: Record<UnassignedNow, string | null> = {
+  unassigned: null,
+  owned: 'Has an owner now.',
+  offered: 'On offer to an agent now, with no owner yet.',
+  in_pond: 'In a pond now, with no owner.',
+  closed: 'Closed after the import.',
+  deleted: 'Deleted after the import.',
+  merged: 'Merged into another contact after the import.',
+};
+
+/** What happened to them after the import, in the order the summary names them: [state, one, many]. */
+const AFTER_IMPORT: readonly [UnassignedNow, string, string][] = [
+  ['owned', 'was given an owner', 'were given an owner'],
+  ['in_pond', 'was put in a pond', 'were put in a pond'],
+  ['offered', 'was offered to an agent', 'were each offered to an agent'],
+  ['closed', 'was closed', 'were closed'],
+  ['deleted', 'was deleted', 'were deleted'],
+  ['merged', 'was merged into another contact', 'were each merged into another contact'],
+];
+
+function andList(parts: readonly string[]): string {
+  return parts.length === 1 ? parts[0]! : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)!}`;
+}
+
+/** Where the people brought in unassigned are now, in words that stay true (review B4-R1: never "an owner" for someone with none). */
+function nowLines(rows: readonly UnassignedPersonRow[]): string[] {
+  const n = (s: UnassignedNow) => rows.filter((r) => r.now === s).length;
+  if (n('owned') === rows.length) return [rows.length === 1 ? 'That person has an owner now.' : rows.length === 2 ? 'Both of them have an owner now.' : 'All of them have an owner now.'];
+  const out: string[] = [];
+  const after = AFTER_IMPORT.filter(([s]) => n(s) > 0).map(([s, one, many]) => `${n(s).toLocaleString('en-US')} ${n(s) === 1 ? one : many}`);
+  if (after.length > 0) out.push(`After the import, ${andList(after)}.`);
+  const still = n('unassigned');
+  if (still > 0) out.push(`${plural(still, 'person is', 'people are')} still unassigned: use "${still === 1 ? 'Assign this person' : 'Assign these people'}" to give them an owner.`);
+  return out;
+}
 
 /** The report's listing of the people brought in unassigned, and its plain lines (every number is a count). */
 export function unassignedReport(rows: readonly UnassignedPersonRow[], names: MemberNames): { view: UnassignedReport; lines: string[] } | null {
   const valid = rows.filter((r) => asUnassigned(r.issue ?? { code: '' }) !== null);
   if (valid.length === 0) return null;
-  const still = valid.filter((r) => r.still_unassigned);
+  const still = valid.filter((r) => r.now === 'unassigned');
   const groups = new Map<string, { reason: UnassignedReason; userId: string; n: number }>();
   for (const r of valid) {
     const k = `${r.issue.userId}:${r.issue.reason}`;
@@ -342,14 +417,22 @@ export function unassignedReport(rows: readonly UnassignedPersonRow[], names: Me
   }
   const lines = [...groups.values()].map((g) => `${plural(g.n, 'person', 'people')} came in unassigned because ${unassignedClause(g.reason, names.get(g.userId))}.`);
   lines.push('Nothing was assigned to them, and the import started no offer, timer or routing.');
-  if (still.length > 0) lines.push(`${plural(still.length, 'person still has', 'people still have')} no owner: use "${still.length === 1 ? 'Assign this person' : 'Assign these people'}" to give them one.`);
-  else lines.push(valid.length === 1 ? 'That person has an owner now.' : valid.length === 2 ? 'Both of them have an owner now.' : 'All of them have an owner now.');
+  const summary = nowLines(valid);
+  lines.push(...summary);
   return {
     view: {
       total: valid.length,
       stillUnassigned: still.length,
       contactIds: still.slice(0, BULK_CAPS.assign).map((r) => r.contact_id),
-      people: valid.slice(0, UNASSIGNED_LISTED).map((r) => ({ contactId: r.contact_id, name: r.display_name ?? 'Unnamed person', sentence: unassignedSentence(r.issue, names), stillUnassigned: r.still_unassigned })),
+      summary,
+      people: valid.slice(0, UNASSIGNED_LISTED).map((r) => ({
+        contactId: r.contact_id,
+        name: r.display_name ?? 'Unnamed person',
+        sentence: unassignedSentence(r.issue, names),
+        stillUnassigned: r.now === 'unassigned',
+        now: r.now,
+        nowSentence: NOW_SENTENCE[r.now] ?? null,
+      })),
     },
     lines,
   };

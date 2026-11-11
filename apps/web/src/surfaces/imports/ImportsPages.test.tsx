@@ -4,7 +4,7 @@
 // promised, the per-record review list, approval bound to the snapshot hash, the commit waiting for
 // earlier categories, verification only after a matching recount and every side-by-side check, and
 // re-auth on every import call.
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { FakeFetch, err, leadAdminApp } from '../admin/lib/testing.js';
@@ -340,9 +340,10 @@ describe('Imports', () => {
   });
 });
 
-// Owner decision B4 (2026-11-11): a member who can no longer hold leads at the ownership commit gets none. Their people
-// come in unassigned with the reason, the stage verifies (a documented outcome, never a mismatch), and the report lists
-// them with "Assign these people": the existing bulk Assign, with exactly their ids selected.
+// Owner decision B4 (2026-11-11): a member suspended between the ownership approval and its commit gets no leads (the
+// implementation does the same for every reason the engine refuses the member). Their people come in unassigned with
+// the reason, the stage verifies (a documented outcome, never a mismatch), and the report lists them, with where each
+// is now, and "Assign these people": the existing bulk Assign, with exactly the ids of those still unassigned.
 describe('people brought in unassigned (owner decision B4)', () => {
   const OMAR = '01900000-0000-7000-8000-00000000c101';
   const QUIN = '01900000-0000-7000-8000-00000000c102';
@@ -351,14 +352,13 @@ describe('people brought in unassigned (owner decision B4)', () => {
   const ME = '01900000-0000-7000-8000-0000000000aa';
   const committedOwnership = { source: 7, willImport: 4, imported: 2, needsReview: 0, rejected: 4, duplicate: 1 };
   const why = "Brought in unassigned: Bea Agent's account is suspended.";
+  const person = (contactId: string, name: string, still: boolean) => ({ contactId, name, sentence: why, stillUnassigned: still, now: still ? 'unassigned' : 'owned', nowSentence: still ? null : 'Has an owner now.' });
   const unassigned = (still: boolean) => ({
     total: 2,
     stillUnassigned: still ? 2 : 0,
     contactIds: still ? [OMAR, QUIN] : [],
-    people: [
-      { contactId: OMAR, name: 'Omar Optout', sentence: why, stillUnassigned: still },
-      { contactId: QUIN, name: 'Quin Notext', sentence: why, stillUnassigned: still },
-    ],
+    summary: still ? ['2 people are still unassigned: use "Assign these people" to give them an owner.'] : ['Both of them have an owner now.'],
+    people: [person(OMAR, 'Omar Optout', still), person(QUIN, 'Quin Notext', still)],
   });
   const ownershipRow = (still: boolean) => ({
     category: 'ownership',
@@ -390,7 +390,7 @@ describe('people brought in unassigned (owner decision B4)', () => {
     const b = batch([stage('contacts', 'verified'), stage('ownership', 'committed', { counts: committedOwnership })]);
     const approved = { source: 7, imported: 4, needs_review: 0, rejected: 2, duplicate: 1 };
     const expected = { source: 7, imported: 2, needs_review: 0, rejected: 4, duplicate: 1 };
-    const documented = [{ code: 'OWNER_UNAVAILABLE', count: 2, sentence: "2 planned assignments came in unassigned because the member they were matched to can't hold leads now (each record says why). They are counted as not imported." }];
+    const documented = [{ code: 'OWNER_UNAVAILABLE', count: 2, sentence: "2 planned assignments came in unassigned because the member they were matched to couldn't hold leads when the owners were imported (each record says why). They are counted as not imported." }];
     leadAdminApp(importFake(b).on(`GET /imports/${BID}/stages/ownership/verification`, { status: 200, body: { expected, approved, documented, db: expected, matches: true, diffs: [], sample: [] } }), `/imports/${BID}`, 'owner');
     const recount = await screen.findByRole('region', { name: 'Recount of who owns each contact' });
     expect(screen.getByText(documented[0]!.sentence)).toBeInTheDocument();
@@ -414,7 +414,7 @@ describe('people brought in unassigned (owner decision B4)', () => {
     const people = await screen.findByRole('region', { name: 'People who came in unassigned' });
     expect(within(people).getAllByText(why)).toHaveLength(2);
     expect(within(people).getByRole('link', { name: 'Omar Optout' })).toHaveAttribute('href', `/contacts/${OMAR}`);
-    expect(within(people).getByText('2 still have no owner.')).toBeInTheDocument();
+    expect(within(people).getByText('2 people are still unassigned: use "Assign these people" to give them an owner.')).toBeInTheDocument();
     await u.click(within(people).getByRole('button', { name: 'Assign these people' }));
     const picker = await screen.findByRole('region', { name: 'Assign to' });
     await waitFor(() => expect(within(picker).getAllByRole('button').map((x) => x.textContent)).toEqual(['Olivia Owner (you)', 'Sam Lee']));
@@ -428,8 +428,39 @@ describe('people brought in unassigned (owner decision B4)', () => {
     const b = batch([stage('contacts', 'verified'), stage('ownership', 'verified', { counts: committedOwnership })]);
     leadAdminApp(importFake(b).on(`GET /imports/${BID}/report`, { status: 200, body: { source: 'Follow Up Boss', parity: null, notImported: null, categories: [{ ...ownershipRow(false), lines: ['Both of them have an owner now.'] }] } }), `/imports/${BID}`, 'owner');
     const people = await screen.findByRole('region', { name: 'People who came in unassigned' });
-    expect(within(people).getByText('Each of them has an owner now.')).toBeInTheDocument();
+    expect(within(people).getByText('Both of them have an owner now.')).toBeInTheDocument();
+    expect(within(people).getAllByText('Has an owner now.')).toHaveLength(2);
     expect(within(people).queryByRole('button', { name: /Assign/ })).toBeNull();
+  });
+
+  // Review B4-R1/F1: the card said "Has an owner now." next to anyone not still unassigned, and "Each of them has an
+  // owner now." below, for people who were closed, deleted or merged away with no owner at all.
+  it('E231 people closed, deleted or merged away since are said to be so, never to have an owner; a deleted person is no link; only those still unassigned are selected (review B4-R1, F1)', async () => {
+    const RAE = '01900000-0000-7000-8000-00000000c103';
+    const PIA = '01900000-0000-7000-8000-00000000c104';
+    const view = {
+      total: 4,
+      stillUnassigned: 1,
+      contactIds: [RAE],
+      summary: ['After the import, 1 was closed, 1 was deleted and 1 was merged into another contact.', '1 person is still unassigned: use "Assign this person" to give them an owner.'],
+      people: [
+        { contactId: OMAR, name: 'Omar Optout', sentence: why, stillUnassigned: false, now: 'closed', nowSentence: 'Closed after the import.' },
+        { contactId: QUIN, name: 'Quin Notext', sentence: why, stillUnassigned: false, now: 'deleted', nowSentence: 'Deleted after the import.' },
+        { contactId: PIA, name: 'Pia Dnc', sentence: why, stillUnassigned: false, now: 'merged', nowSentence: 'Merged into another contact after the import.' },
+        { contactId: RAE, name: 'Rae Nobody', sentence: why, stillUnassigned: true, now: 'unassigned', nowSentence: null },
+      ],
+    };
+    const b = batch([stage('contacts', 'verified'), stage('ownership', 'verified', { counts: committedOwnership })]);
+    const row = { ...ownershipRow(true), lines: ['7 assignments in Follow Up Boss.', ...view.summary], unassigned: view };
+    leadAdminApp(importFake(b).on(`GET /imports/${BID}/report`, { status: 200, body: { source: 'Follow Up Boss', parity: null, notImported: null, categories: [row] } }), `/imports/${BID}`, 'owner');
+    const people = await screen.findByRole('region', { name: 'People who came in unassigned' });
+    expect(within(people).queryByText(/has an owner/i)).toBeNull();
+    for (const s of ['Closed after the import.', 'Deleted after the import.', 'Merged into another contact after the import.', ...view.summary]) expect(within(people).getByText(s)).toBeInTheDocument();
+    // the deleted person's contact is gone from the book: named, not linked
+    expect(within(people).getByText('Quin Notext')).toBeInTheDocument();
+    expect(within(people).queryByRole('link', { name: 'Quin Notext' })).toBeNull();
+    expect(within(people).getByRole('link', { name: 'Omar Optout' })).toHaveAttribute('href', `/contacts/${OMAR}`);
+    expect(within(people).getByRole('button', { name: 'Assign this person' })).toBeInTheDocument();
   });
 });
 
@@ -464,5 +495,34 @@ describe('tasks and appointments that do not come over (owner decision B7)', () 
     expect(await screen.findByText(/Working from the snapshot taken/)).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: "What doesn't come over" })).toBeNull();
     expect(screen.queryByText(/tasks or appointments/)).toBeNull();
+  });
+
+  // Review F3: from "Count what's there" on, the page showed a "Report" section holding an empty card and the same
+  // sentence a second time ("Not brought over"), before anything had been checked or imported.
+  it('E233 until something is imported it is said once, under "What doesn\'t come over": no empty report and no second copy (review F3)', async () => {
+    const left = { tasks: 1240, appointments: 85, lines: [sentence] };
+    const report = (categories: unknown[]) => ({ status: 200, body: { source: 'Follow Up Boss', parity: null, notImported: left, categories } });
+    const counted = batch([stage('contacts', 'pending'), stage('ownership', 'pending')], { status: 'connection_test', snapshotSha256: null, snapshotAt: null, notImported: { ...left, countedAt: 'connection_test' } } as Partial<ImportBatch>);
+    let answered = 0;
+    const fake = importFake(counted).on(`GET /imports/${BID}/report`, () => {
+      answered += 1;
+      return report([]);
+    });
+    const first = leadAdminApp(fake, `/imports/${BID}`, 'owner');
+    expect(await screen.findByRole('region', { name: "What doesn't come over" })).toBeInTheDocument();
+    await waitFor(() => expect(answered).toBeGreaterThan(0));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(screen.queryByRole('heading', { name: 'Report' })).toBeNull();
+    expect(screen.getAllByText(sentence)).toHaveLength(1);
+    first.view.unmount();
+    // once a dry run is ready the report says what would happen, still without the second copy
+    const dry = batch([stage('contacts', 'dry_run_ready', { counts, dryRunSha256: 'd'.repeat(64) })], { notImported: { ...left, countedAt: 'snapshot' } } as Partial<ImportBatch>);
+    const dryRow = { category: 'contacts', status: 'dry_run_ready', phase: 'dry_run', source: 1200, imported: 1150, needsReview: 30, rejected: 5, duplicate: 15, reconciles: true, lines: ['1,200 contacts in Follow Up Boss.'] };
+    leadAdminApp(importFake(dry).on(`GET /imports/${BID}/report`, report([dryRow])), `/imports/${BID}`, 'owner');
+    expect(await screen.findByText('1,200 contacts in Follow Up Boss.')).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Not brought over' })).toBeNull();
+    expect(screen.getAllByText(sentence)).toHaveLength(1);
   });
 });

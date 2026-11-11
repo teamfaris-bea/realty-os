@@ -12,7 +12,8 @@
 //                  snapshot, never live FUB (R-IMPORT-1, R-IMPORT-4). Files: the uploaded bytes are the
 //                  snapshot. A new snapshot (a delta, E42) resets every stage that has not committed.
 //                  Tasks and appointments are counted again (count pages only, E233); a failed count
-//                  keeps the earlier one and never fails the snapshot.
+//                  keeps the earlier one with the step that counted it, said so (review F4), and never
+//                  fails the snapshot.
 //   abandon        purges the FUB key at once (R-IMPORT-11) and drops the snapshot objects.
 import { createHash } from 'node:crypto';
 import type { TenantId, UserActor } from '@realty/core/foundation';
@@ -98,6 +99,24 @@ async function countNotImported(client: FubClient): Promise<{ tasks: number | nu
     }
   }
   return fubNotImportedCounts(pages);
+}
+
+/**
+ * E233 at the snapshot: what this snapshot counted, and, for a count it could not read, the earlier one with the step
+ * that counted it (review F4: kept, never relabelled as this snapshot's). A count never read stays null.
+ */
+function recounted(fresh: { tasks: number | null; appointments: number | null }, was: repo.NotImportedOption | undefined): repo.NotImportedOption {
+  const keptFrom: NonNullable<repo.NotImportedOption['keptFrom']> = {};
+  const count = (k: FubCountOnlyCollection): number | null => {
+    if (fresh[k] !== null) return fresh[k];
+    if (!was || was[k] === null) return null;
+    // a live FUB batch is counted only at its connection test and at its snapshots
+    keptFrom[k] = was.keptFrom?.[k] ?? (was.countedAt === 'connection_test' ? 'connection_test' : 'snapshot');
+    return was[k];
+  };
+  const tasks = count('tasks');
+  const appointments = count('appointments');
+  return { tasks, appointments, countedAt: 'snapshot', ...(Object.keys(keptFrom).length > 0 ? { keptFrom } : {}) };
 }
 
 /** E233: tasks and appointments in a FUB export file (top level or under `collections`), counted, never read. */
@@ -283,12 +302,9 @@ export async function takeSnapshot(deps: ImportDeps, tenantId: string, batchId: 
       }, { db: deps.db });
       return 'done';
     }
-    // E233: the tasks and appointments FUB holds now, counted again (never read); a count that fails keeps the earlier one
-    const fresh = await countNotImported(client);
-    const was = batch.options.notImported;
-    if (fresh.tasks !== null || fresh.appointments !== null || !was) {
-      options.notImported = { tasks: fresh.tasks ?? was?.tasks ?? null, appointments: fresh.appointments ?? was?.appointments ?? null, countedAt: 'snapshot' };
-    }
+    // E233: the tasks and appointments FUB holds now, counted again (never read). A count that fails keeps the earlier
+    // one with the step that counted it (review F4), so it is never taken for this snapshot's or said as what FUB holds now.
+    options.notImported = recounted(await countNotImported(client), batch.options.notImported);
     // Recordings are copied now, into encrypted storage, so no later step needs live FUB (R-IMPORT-1).
     const recordings: Record<string, string> = {};
     for (const raw of snap.collections.calls ?? []) {

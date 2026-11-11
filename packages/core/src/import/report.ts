@@ -7,7 +7,7 @@
 //   one of the counts, and nothing is promised before the connection test (R-IMPORT-1).
 import { type Channel, sha256Hex } from '../compliance/index.js';
 import type { Instant, UserId } from '../foundation/index.js';
-import { CATEGORIES, type Category, type ConsentSummary, type CountDiff, type Counts, type ImportErrorCode, type NotImportedCounts, type StageCounts } from './types.js';
+import { CATEGORIES, type Category, type ConsentSummary, type CountDiff, type Counts, type ImportErrorCode, type NotImportedCounts, type NotImportedStep, type StageCounts } from './types.js';
 
 const KEYS: readonly (keyof Counts)[] = ['source', 'imported', 'needs_review', 'rejected', 'duplicate'];
 
@@ -52,8 +52,9 @@ export interface SpotCheck {
 /**
  * Owner decision B4 (2026-11-11, E230): outcomes of a commit that the approved plan could not predict, each
  * documented on its records with the reason. Today there is one: a planned assignment the ownership commit
- * brought in unassigned because its member could no longer hold leads at that moment (suspended, no longer an
- * active member, or a role that holds none). Nothing is assigned to them; the record counts as not imported.
+ * brought in unassigned because its member could no longer hold leads at that moment. The owner decided it for a
+ * member suspended since the approval; the implementation treats the engine's other refusals the same way (no
+ * longer an active member, a role that holds none). Nothing is assigned to them; the record counts as not imported.
  */
 export interface DocumentedOutcomes {
   /** planned assignments the ownership commit brought in unassigned (api/imports OWNER_UNAVAILABLE) */
@@ -206,20 +207,37 @@ export function connectionTestLines(categories: Record<Category, number | null>,
   return lines;
 }
 
+const COUNTED_AT: Record<NotImportedStep, string> = { connection_test: 'at the connection test', snapshot: 'at an earlier snapshot' };
+
 /**
  * Owner decision B7 (2026-11-11, E233): what Follow Up Boss has that the import never brings over, said plainly
  * on the Imports page (from the connection test and the snapshot) and in the final report. Every number is a
  * count; one that could not be read is said so. A CSV file has neither, so nothing is said for it.
+ *
+ * Review F4: a count the latest counting could not read again keeps the number an earlier step counted, and is said
+ * with that step ("we could not count its tasks again (it had 3 tasks at the connection test)"): only a count taken
+ * just now is said as what the source has.
  */
 export function notImportedLines(c: NotImportedCounts, source: SourceName): string[] {
   if (source === 'your file') return [];
   const tail = `Realty OS doesn't bring tasks or appointments over: finish or note the open ones in ${source} before you switch.`;
-  const { tasks, appointments } = c;
+  const keptTasks = c.tasks !== null ? c.kept?.tasks : undefined;
+  const keptAppointments = c.appointments !== null ? c.kept?.appointments : undefined;
+  // what the latest counting read; a kept count is only ever said with when it was taken (below)
+  const tasks = keptTasks ? null : c.tasks;
+  const appointments = keptAppointments ? null : c.appointments;
+  const t = (x: number) => plural(x, 'task', 'tasks');
+  const a = (x: number) => plural(x, 'appointment', 'appointments');
+  let earlier = '';
+  if (keptTasks && keptAppointments && keptTasks === keptAppointments) earlier = ` (${COUNTED_AT[keptTasks]} it had ${t(c.tasks as number)} and ${a(c.appointments as number)})`;
+  else if (keptTasks && keptAppointments) earlier = ` (it had ${t(c.tasks as number)} ${COUNTED_AT[keptTasks]} and ${a(c.appointments as number)} ${COUNTED_AT[keptAppointments]})`;
+  else if (keptTasks) earlier = ` (it had ${t(c.tasks as number)} ${COUNTED_AT[keptTasks]})`;
+  else if (keptAppointments) earlier = ` (it had ${a(c.appointments as number)} ${COUNTED_AT[keptAppointments]})`;
   if (tasks === 0 && appointments === 0) return [`${source} has no tasks or appointments. Realty OS doesn't bring tasks or appointments over.`];
-  if (tasks !== null && appointments !== null) return [`${source} has ${plural(tasks, 'task', 'tasks')} and ${plural(appointments, 'appointment', 'appointments')}. ${tail}`];
-  if (tasks !== null) return [`${source} has ${plural(tasks, 'task', 'tasks')}; we could not count its appointments. ${tail}`];
-  if (appointments !== null) return [`${source} has ${plural(appointments, 'appointment', 'appointments')}; we could not count its tasks. ${tail}`];
-  return [`We could not count tasks or appointments in ${source}. ${tail}`];
+  if (tasks !== null && appointments !== null) return [`${source} has ${t(tasks)} and ${a(appointments)}. ${tail}`];
+  if (tasks !== null) return [`${source} has ${t(tasks)}; we could not count its appointments${keptAppointments ? ' again' : ''}${earlier}. ${tail}`];
+  if (appointments !== null) return [`${source} has ${a(appointments)}; we could not count its tasks${keptTasks ? ' again' : ''}${earlier}. ${tail}`];
+  return [`We could not count tasks or appointments in ${source}${keptTasks && keptAppointments ? ' again' : ''}${earlier}. ${tail}`];
 }
 
 const CHANNEL_WORD: Record<Channel, string> = { sms: 'texts', voice: 'calls', email: 'email', web_chat: 'website chat' };

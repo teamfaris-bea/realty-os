@@ -3,7 +3,7 @@
 // never duplicates a record (R-IMPORT-9).
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
-import { OWNER_UNAVAILABLE, type UnassignedIssue } from '../types.js';
+import { OWNER_UNAVAILABLE, type UnassignedIssue, type UnassignedNow } from '../types.js';
 
 /** jsonb containment of the documented-outcome issue (owner decision B4, E230) */
 const UNASSIGNED_MARK = JSON.stringify([{ code: OWNER_UNAVAILABLE }]);
@@ -243,18 +243,24 @@ export interface UnassignedPersonRow {
   contact_id: string;
   issue: UnassignedIssue;
   display_name: string | null;
-  /** live, not merged away, and still nobody's (no owner, offer or pond) */
-  still_unassigned: boolean;
+  /** where the person is now: only `unassigned` (live, not merged away, nobody's) is still unassigned (review B4-R1) */
+  now: UnassignedNow;
 }
 
-/** Owner decision B4 (E231): the people an ownership commit brought in unassigned (record order), and who of them still has no owner. */
+/**
+ * Owner decision B4 (E231): the people an ownership commit brought in unassigned (record order), each with where they
+ * are now. A contact that is gone (purged after its delete, or erased) or soft-deleted is `deleted`; one merged into
+ * another contact is `merged`; any other is its ownership state (contacts CHECK: only `owned` has an owner).
+ */
 export async function unassignedPeople(tx: Tx, stageId: string): Promise<UnassignedPersonRow[]> {
   return (
     await sql<UnassignedPersonRow>`
       SELECT r.id AS record_id, r.source_ref, r.target_id AS contact_id,
              (SELECT i FROM jsonb_array_elements(r.issues) i WHERE i->>'code' = ${OWNER_UNAVAILABLE} LIMIT 1) AS issue,
              c.display_name,
-             COALESCE(c.deleted_at IS NULL AND c.merged_into_contact_id IS NULL AND c.ownership_state = 'unassigned', false) AS still_unassigned
+             CASE WHEN c.id IS NULL OR c.deleted_at IS NOT NULL THEN 'deleted'
+                  WHEN c.merged_into_contact_id IS NOT NULL THEN 'merged'
+                  ELSE c.ownership_state END AS now
         FROM import_records r
         LEFT JOIN contacts c ON c.tenant_id = r.tenant_id AND c.id = r.target_id
        WHERE r.tenant_id = app.tenant_id() AND r.stage_id = ${stageId} AND r.outcome = 'rejected' AND r.target_table = 'contacts'

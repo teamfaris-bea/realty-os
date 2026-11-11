@@ -1,7 +1,7 @@
 // Queries for import batches, stages, user mappings, the FUB credential and snapshot objects
 // (BUILD_PLAN module 16). Every query runs inside the caller's withTenantTx: RLS (Owner/Admin/system,
 // 0001 Layer 2 (b)) decides what is visible; tenant_id always comes from app.tenant_id().
-import type { ParityOptions, ParitySummary } from '@realty/core/import';
+import type { NotImportedStep, ParityOptions, ParitySummary } from '@realty/core/import';
 import { type Category, CATEGORIES, categorySeq } from '@realty/core/import';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
@@ -67,7 +67,13 @@ export interface BatchOptions {
 export interface NotImportedOption {
   tasks: number | null;
   appointments: number | null;
+  /** the step that counted last (the connection test, the latest snapshot, or the export file) */
   countedAt: 'connection_test' | 'snapshot' | 'export_file';
+  /**
+   * Review F4: a count that step could not read again, kept from an earlier step: the step that counted it. Absent
+   * when every number is that step's own.
+   */
+  keptFrom?: Partial<Record<'tasks' | 'appointments', NotImportedStep>>;
 }
 
 export interface StageRow {
@@ -273,13 +279,17 @@ export async function mappingTargets(tx: Tx): Promise<{ users: Map<string, { rol
   };
 }
 
-/** Display names of these members (the reason a planned assignment came in unassigned names its member, E230). */
-export async function memberNames(tx: Tx, userIds: readonly string[]): Promise<Map<string, string>> {
+/**
+ * These members' display names and their membership as it is now (E230): the reason a planned assignment came in
+ * unassigned names its member, and is said in the present only while their status and role still show it (review
+ * B4-R2). A member without a membership here is left out (said as it was when the owners were imported).
+ */
+export async function memberNames(tx: Tx, userIds: readonly string[]): Promise<Map<string, { name: string; status: string; role: string }>> {
   if (userIds.length === 0) return new Map();
-  const r = await sql<{ user_id: string; display_name: string }>`
-    SELECT m.user_id, u.display_name FROM memberships m JOIN users u ON u.id = m.user_id
+  const r = await sql<{ user_id: string; display_name: string; status: string; role: string }>`
+    SELECT m.user_id, u.display_name, m.status, m.role FROM memberships m JOIN users u ON u.id = m.user_id
      WHERE m.tenant_id = app.tenant_id() AND m.user_id = ANY (${[...new Set(userIds)]}::uuid[])`.execute(tx);
-  return new Map(r.rows.map((x) => [x.user_id, x.display_name]));
+  return new Map(r.rows.map((x) => [x.user_id, { name: x.display_name, status: x.status, role: x.role }]));
 }
 
 // ---- FUB credential (R-IMPORT-11, R-DATA-1) ---------------------------------------------------------

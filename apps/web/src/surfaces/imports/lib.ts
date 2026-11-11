@@ -144,7 +144,18 @@ export interface NotImportedView {
   tasks: number | null;
   appointments: number | null;
   countedAt?: 'connection_test' | 'snapshot' | 'export_file' | null;
+  /** review F4: a count the latest counting could not read again, kept from an earlier step (the sentence says when) */
+  keptFrom?: Partial<Record<'tasks' | 'appointments', 'connection_test' | 'snapshot'>>;
   lines: string[];
+}
+
+/**
+ * The final report says what does not come over once something has been imported (review F3). Before that, the
+ * import page's "What doesn't come over" notice is the one place it is said, so it is never repeated beside an empty
+ * or dry-run-only report.
+ */
+export function reportSaysNotImported(stages: readonly { status: string }[]): boolean {
+  return stages.some((s) => ['committed', 'verified', 'reverting', 'reverted'].includes(s.status));
 }
 
 /** A batch as GET /imports/:id returns it (owner decision B7 adds `notImported`). */
@@ -152,13 +163,18 @@ export type ImportBatchView = ImportBatch & { notImported?: NotImportedView | nu
 
 // ---- owner decision B4 (2026-11-11): people the ownership commit brought in unassigned ---------------------
 
+/** Where a person brought in unassigned is now (review B4-R1): only `owned` has an owner, only `unassigned` is selected. */
+export type UnassignedNow = 'unassigned' | 'owned' | 'offered' | 'in_pond' | 'closed' | 'deleted' | 'merged';
+
 /** GET /imports/:id/report, ownership: the people brought in unassigned; "Assign these people" selects exactly `contactIds`. */
 export interface UnassignedView {
   total: number;
   stillUnassigned: number;
-  /** the people who still have no owner, at most the bulk Assign cap (2,000) */
+  /** the people still unassigned, at most the bulk Assign cap (2,000) */
   contactIds: string[];
-  people: { contactId: string; name: string; sentence: string; stillUnassigned: boolean }[];
+  /** where they are now, in the server's words (every number a count) */
+  summary: string[];
+  people: { contactId: string; name: string; sentence: string; stillUnassigned: boolean; now: UnassignedNow; nowSentence: string | null }[];
 }
 
 /** The verification with what the approval expected and the outcomes the commit documented (each with a sentence). */

@@ -244,7 +244,8 @@ export function makeImportsRoutes(depsFor?: ImportDepsFromPlatform): RouteModule
             const b = await brepo.getBatch(tx, req.params.id);
             if (!b) throw new AppError('NOT_FOUND');
             const stages = await brepo.getStages(tx, b.id);
-            // owner decision B4 (E231): the people the ownership commit brought in unassigned, and who still has no owner
+            // owner decision B4 (E231): the people the ownership commit brought in unassigned and where each is now, with
+            // the members they were matched to as their membership reads now (reviews B4-R1, B4-R2)
             const own = stages.find((s) => s.category === 'ownership');
             const unassigned = own ? await rrepo.unassignedPeople(tx, own.id) : [];
             const names = await brepo.memberNames(tx, unassigned.map((u) => u.issue?.userId).filter((x): x is string => typeof x === 'string'));

@@ -22,7 +22,7 @@ import type { ImportBatch, ImportCounts, ImportRecord, ImportStage, MappingsResp
 import { ErrorLine, Pill, Section, Segmented, SelectField, StatusLine } from '../admin/lib/ui.js';
 import { BulkActionSheet, mayBulkAssign } from '../bulk/index.js';
 import { ParityMapping } from './ParityMapping.js';
-import { CATEGORY_LABEL, CATEGORY_NOTE, type DocumentedOutcome, type ImportBatchView, type NotImportedView, PARITY_CATEGORY_LABEL, type ParityResponse, type ParityRowView, type UnassignedView, parityEditable, OUTCOME_LABEL, SKIP_WARNING, SOURCE_LABEL, STAGE_STATUS, blockingEarlier, canSkipStage, canUndoStage, consentNeedsDryRunToSkip, isRunning, nextStep, ordered, reconciles, recordSummary, spotChecksReady, toBase64 } from './lib.js';
+import { CATEGORY_LABEL, CATEGORY_NOTE, type DocumentedOutcome, type ImportBatchView, type NotImportedView, PARITY_CATEGORY_LABEL, type ParityResponse, type ParityRowView, type UnassignedView, parityEditable, OUTCOME_LABEL, SKIP_WARNING, SOURCE_LABEL, STAGE_STATUS, blockingEarlier, canSkipStage, canUndoStage, consentNeedsDryRunToSkip, isRunning, nextStep, ordered, reconciles, recordSummary, reportSaysNotImported, spotChecksReady, toBase64 } from './lib.js';
 
 const IMPORTS_KEY = ['imports'] as const;
 const POLL_MS = 2000;
@@ -673,19 +673,23 @@ function Report({ batch }: { batch: ImportBatch }) {
   const lines = q.data.categories.flatMap((c) => c.lines.map((l) => ({ c: c.category, l })));
   const parity = q.data.parity ?? null;
   const unassigned = q.data.categories.find((c) => c.category === 'ownership')?.unassigned ?? null;
-  const left = q.data.notImported?.lines ?? [];
+  // owner decision B7: the final report says what doesn't come over once something was imported; until then the
+  // "What doesn't come over" notice above is the one place it is said (review F3: no report of that sentence alone)
+  const left = reportSaysNotImported(batch.stages) ? (q.data.notImported?.lines ?? []) : [];
   if (lines.length === 0 && !parity && !unassigned && left.length === 0) return null;
   return (
     <Section title="Report">
-      <Card>
-        <ul className="flex flex-col gap-1 text-[15px] text-ink">
-          {lines.map(({ c, l }, i) => (
-            <li key={`${c}:${i}`}>
-              <span className="font-semibold">{CATEGORY_LABEL[c]}:</span> {l}
-            </li>
-          ))}
-        </ul>
-      </Card>
+      {lines.length > 0 ? (
+        <Card>
+          <ul className="flex flex-col gap-1 text-[15px] text-ink">
+            {lines.map(({ c, l }, i) => (
+              <li key={`${c}:${i}`}>
+                <span className="font-semibold">{CATEGORY_LABEL[c]}:</span> {l}
+              </li>
+            ))}
+          </ul>
+        </Card>
+      ) : null}
       {parity ? (
         <Card className="flex flex-col gap-2">
           <h3 className="text-[16px] font-semibold text-ink">Stages, tags and custom fields</h3>
@@ -743,8 +747,10 @@ function Report({ batch }: { batch: ImportBatch }) {
 /**
  * Owner decision B4 (2026-11-11): the people the ownership commit brought in unassigned, because the member they were
  * matched to could no longer hold leads, each with the reason. "Assign these people" opens the existing bulk Assign
- * (parity module 64's sheet) with exactly the ones who still have no owner selected by id; the server decides each
- * person again, and the sheet only offers members who can hold leads.
+ * (parity module 64's sheet) with exactly the ones still unassigned selected by id; the server decides each person
+ * again, and the sheet only offers members who can hold leads. What is true of each person now, and the summary, are
+ * the server's words (review B4-R1: "has an owner" only of someone owned; closed, deleted, merged away, in a pond or
+ * on offer are said so). A deleted person is named, not linked: their contact is gone from the book.
  */
 function UnassignedPeople({ view, onClosed }: { view: UnassignedView; onClosed(): void }) {
   const { session } = useSession();
@@ -758,16 +764,24 @@ function UnassignedPeople({ view, onClosed }: { view: UnassignedView; onClosed()
         <ul className="flex flex-col gap-1 text-[15px] text-ink">
           {view.people.map((p) => (
             <li key={p.contactId}>
-              <Link to={`/contacts/${p.contactId}`} className="font-semibold text-accent underline">
-                {p.name}
-              </Link>{' '}
+              {p.now === 'deleted' ? (
+                <span className="font-semibold">{p.name}</span>
+              ) : (
+                <Link to={`/contacts/${p.contactId}`} className="font-semibold text-accent underline">
+                  {p.name}
+                </Link>
+              )}{' '}
               {p.sentence}
-              {p.stillUnassigned ? null : <span className="text-ink-muted"> Has an owner now.</span>}
+              {p.nowSentence ? <span className="text-ink-muted"> {p.nowSentence}</span> : null}
             </li>
           ))}
         </ul>
         {view.total > view.people.length ? <p className="text-[14px] text-ink-muted">And {plural(view.total - view.people.length, 'more person', 'more people')}.</p> : null}
-        <p className="text-[15px] text-ink">{still > 0 ? `${still} still ${still === 1 ? 'has' : 'have'} no owner.` : view.total === 1 ? 'They have an owner now.' : 'Each of them has an owner now.'}</p>
+        {view.summary.map((l) => (
+          <p key={l} className="text-[15px] text-ink">
+            {l}
+          </p>
+        ))}
         {still > selected ? <p className="text-[14px] text-ink-muted">The first {selected} are selected; assign the rest after.</p> : null}
         {selected > 0 && mayBulkAssign(session?.tenant?.role) ? (
           <div>

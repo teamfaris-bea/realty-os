@@ -111,6 +111,50 @@ describe('owner decision B7: FUB tasks and appointments are counted and said pla
     expect(d.status).toBe(202);
   });
 
+  // Review F4: a count that failed at the snapshot kept the connection test's number but called it the snapshot's,
+  // and the sentence stated that old number as what Follow Up Boss holds, never saying the count had failed.
+  it('E233 a count that fails at the snapshot keeps the earlier one with when it was taken: never labelled as the snapshot\'s, never said as what FUB holds now (review F4)', async () => {
+    const k = key('mx');
+    ih.fub.add(k, { ...fubFixture({ prefix: 2500, phoneSeed: 5 }), tasks: tasksOf(3), appointments: appointmentsOf(1) });
+    const created = await call<{ batch: Batch }>(w.admin, 'POST', '/imports', { source: 'fub_api', apiKey: k });
+    expect(created.body.batch.notImported).toEqual({ tasks: 3, appointments: 1, countedAt: 'connection_test', lines: [`Follow Up Boss has 3 tasks and 1 appointment. ${TAIL}`] });
+    const id = created.body.batch.id;
+    const snapshot = async (): Promise<Batch & { snapshotError: string | null }> => {
+      expect((await call(w.admin, 'POST', `/imports/${id}/snapshot`)).status).toBe(202);
+      await ih.drain();
+      return (await batchOf(w.admin, id)) as Batch & { snapshotError: string | null };
+    };
+    // FUB grows, and at the snapshot only the task count fails (a transient server error)
+    ih.fub.mutate(k, (d) => {
+      (d.tasks as unknown[]).push(...tasksOf(1237));
+      d.appointments = appointmentsOf(85);
+      d.failing = { tasks: 503 };
+    });
+    let b = await snapshot();
+    expect([b.status, b.snapshotError]).toEqual(['dry_run', null]);
+    const mixed = `Follow Up Boss has 85 appointments; we could not count its tasks again (it had 3 tasks at the connection test). ${TAIL}`;
+    expect(b.notImported).toEqual({ tasks: 3, appointments: 85, countedAt: 'snapshot', keptFrom: { tasks: 'connection_test' }, lines: [mixed] });
+    expect((await report(id)).notImported).toEqual({ tasks: 3, appointments: 85, lines: [mixed] });
+    // a new snapshot that can count neither keeps both, each with the step it was counted at
+    ih.fub.mutate(k, (d) => {
+      d.failing = { tasks: 503, appointments: 503 };
+    });
+    b = await snapshot();
+    expect(b.notImported).toEqual({
+      tasks: 3,
+      appointments: 85,
+      countedAt: 'snapshot',
+      keptFrom: { tasks: 'connection_test', appointments: 'snapshot' },
+      lines: [`We could not count tasks or appointments in Follow Up Boss again (it had 3 tasks at the connection test and 85 appointments at an earlier snapshot). ${TAIL}`],
+    });
+    // once FUB answers again, the snapshot's own counts are the ones said
+    ih.fub.mutate(k, (d) => {
+      d.failing = {};
+    });
+    b = await snapshot();
+    expect(b.notImported).toEqual({ tasks: 1240, appointments: 85, countedAt: 'snapshot', lines: [`Follow Up Boss has 1,240 tasks and 85 appointments. ${TAIL}`] });
+  });
+
   it('E233 a FUB export file: tasks and appointments in the file are counted; a file without them says it could not count them', async () => {
     const withTasks = { ...fubFixture({ prefix: 2400, phoneSeed: 4 }), tasks: tasksOf(7), appointments: [] };
     const r = await call<{ batch: Batch }>(w.admin, 'POST', '/imports', { source: 'fub_export', fileName: 'fub-export.json', fileBase64: Buffer.from(JSON.stringify(withTasks)).toString('base64') });

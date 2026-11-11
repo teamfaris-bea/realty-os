@@ -176,6 +176,33 @@ describe('report rows and copy', () => {
     );
   });
 
+  it('E233 a count the latest counting could not read again keeps its earlier number, said with when it was taken, never as what Follow Up Boss holds now (review F4)', () => {
+    const tail = "Realty OS doesn't bring tasks or appointments over: finish or note the open ones in Follow Up Boss before you switch.";
+    // one count failed again at the snapshot: the other is the snapshot's, the kept one says when it was counted
+    expect(notImportedLines({ tasks: 3, appointments: 85, kept: { tasks: 'connection_test' } }, 'Follow Up Boss')).toEqual([`Follow Up Boss has 85 appointments; we could not count its tasks again (it had 3 tasks at the connection test). ${tail}`]);
+    expect(notImportedLines({ tasks: 1240, appointments: 1, kept: { appointments: 'connection_test' } }, 'Follow Up Boss')).toEqual([`Follow Up Boss has 1,240 tasks; we could not count its appointments again (it had 1 appointment at the connection test). ${tail}`]);
+    // neither could be counted again
+    expect(notImportedLines({ tasks: 3, appointments: 1, kept: { tasks: 'connection_test', appointments: 'connection_test' } }, 'Follow Up Boss')).toEqual([`We could not count tasks or appointments in Follow Up Boss again (at the connection test it had 3 tasks and 1 appointment). ${tail}`]);
+    expect(notImportedLines({ tasks: 3, appointments: 85, kept: { tasks: 'connection_test', appointments: 'snapshot' } }, 'Follow Up Boss')).toEqual([`We could not count tasks or appointments in Follow Up Boss again (it had 3 tasks at the connection test and 85 appointments at an earlier snapshot). ${tail}`]);
+    // one was never counted: no "again"
+    expect(notImportedLines({ tasks: 3, appointments: null, kept: { tasks: 'connection_test' } }, 'Follow Up Boss')).toEqual([`We could not count tasks or appointments in Follow Up Boss (it had 3 tasks at the connection test). ${tail}`]);
+    // "no tasks or appointments" only when both were counted just now; a kept marker on a count we never had says nothing
+    expect(notImportedLines({ tasks: 0, appointments: 0, kept: { tasks: 'connection_test' } }, 'Follow Up Boss')).toEqual([`Follow Up Boss has 0 appointments; we could not count its tasks again (it had 0 tasks at the connection test). ${tail}`]);
+    expect(notImportedLines({ tasks: null, appointments: 4, kept: { tasks: 'connection_test' } }, 'Follow Up Boss')).toEqual([`Follow Up Boss has 4 appointments; we could not count its tasks. ${tail}`]);
+    const step = fc.option(fc.constantFrom('connection_test' as const, 'snapshot' as const), { nil: undefined });
+    fc.assert(
+      fc.property(fc.option(fc.nat(100_000), { nil: null }), fc.option(fc.nat(100_000), { nil: null }), step, step, (tasks, appointments, kt, ka) => {
+        const kept = { ...(kt ? { tasks: kt } : {}), ...(ka ? { appointments: ka } : {}) };
+        const line = notImportedLines({ tasks, appointments, kept }, 'Follow Up Boss').join(' ');
+        for (const x of (line.match(/\d[\d,]*/g) ?? []).map((v) => Number(v.replace(/,/g, '')))) expect([tasks, appointments]).toContain(x);
+        // a kept count is never said as what Follow Up Boss has now
+        if (kt && tasks !== null) expect(line).not.toContain(`has ${tasks.toLocaleString('en-US')} task`);
+        if (ka && appointments !== null) expect(line).not.toContain(`has ${appointments.toLocaleString('en-US')} appointment`);
+      }),
+      { numRuns: 300 },
+    );
+  });
+
   it('report copy never claims a count it was not given (property)', () => {
     const n = fc.nat(100_000);
     fc.assert(

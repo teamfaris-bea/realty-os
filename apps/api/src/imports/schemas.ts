@@ -96,6 +96,7 @@ export const RevertBody = z.strictObject({ category: CategoryParam.optional() })
 // ---- responses ----------------------------------------------------------------------------------
 
 const Issue = z.object({ code: z.string(), severity: z.string(), field: z.string().nullable(), sentence: z.string() });
+const NotImportedStep = z.enum(['connection_test', 'snapshot']);
 const StageCounts = z.object({ source: z.number(), willImport: z.number(), imported: z.number().nullable(), needsReview: z.number(), rejected: z.number(), duplicate: z.number() }).nullable();
 const Stage = z.object({
   id: z.string(),
@@ -130,7 +131,14 @@ export const Batch = z.object({
   connectionTest: z.array(z.string()),
   /** owner decision B7 (E233): Follow Up Boss tasks and appointments, counted (never read), and that they don't come over; null for CSV */
   notImported: z
-    .object({ tasks: z.number().nullable(), appointments: z.number().nullable(), countedAt: z.enum(['connection_test', 'snapshot', 'export_file']).nullable(), lines: z.array(z.string()) })
+    .object({
+      tasks: z.number().nullable(),
+      appointments: z.number().nullable(),
+      countedAt: z.enum(['connection_test', 'snapshot', 'export_file']).nullable(),
+      /** review F4: a count the latest counting could not read again, kept from an earlier step (the step that counted it) */
+      keptFrom: z.object({ tasks: NotImportedStep.optional(), appointments: NotImportedStep.optional() }).optional(),
+      lines: z.array(z.string()),
+    })
     .nullable(),
 });
 export const BatchResponse = z.object({ batch: Batch });
@@ -192,7 +200,19 @@ export const ReportResponse = z.object({
           total: z.number(),
           stillUnassigned: z.number(),
           contactIds: z.array(z.string()),
-          people: z.array(z.object({ contactId: z.string(), name: z.string(), sentence: z.string(), stillUnassigned: z.boolean() })),
+          /** where they are now, in words (review B4-R1) */
+          summary: z.array(z.string()),
+          people: z.array(
+            z.object({
+              contactId: z.string(),
+              name: z.string(),
+              sentence: z.string(),
+              stillUnassigned: z.boolean(),
+              /** review B4-R1: where the person is now; only `owned` has an owner, only `unassigned` is selected */
+              now: z.enum(['unassigned', 'owned', 'offered', 'in_pond', 'closed', 'deleted', 'merged']),
+              nowSentence: z.string().nullable(),
+            }),
+          ),
         })
         .nullable(),
     }),
