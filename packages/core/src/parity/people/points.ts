@@ -73,7 +73,10 @@ export function pointCountsForOptOut(p: Pick<ExistingPoint, 'removed' | 'removed
   return !p.removed || p.removedReason !== 'wrong_number';
 }
 
-/** A confirmed wrong number is never restored (add the number again instead). */
+/**
+ * A confirmed wrong number is never restored: it is final for its person (R-PAR-12). The person has one row per
+ * address, so it cannot be added again either; the API answers WRONG_NUMBER_FINAL.
+ */
 export function restorable(p: Pick<ExistingPoint, 'removed' | 'removedReason'>): boolean {
   return p.removed && p.removedReason !== 'wrong_number';
 }

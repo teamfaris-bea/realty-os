@@ -106,6 +106,11 @@ const routes = {
     const r = must(await call(agent, 'POST', '/deals', { primaryContactId: b.contactId, side: 'buy', priceCents: 85000000, expectedCloseDate: '2026-12-18' }), 'deal');
     return { id: r.deal.id };
   },
+  // an address on the person (module 57's add-address route; the web offers delete, not add)
+  async '/address'(b) {
+    const r = must(await call(agent, 'POST', '/contacts/' + b.contactId + '/addresses', { kind: b.kind ?? 'home', line1: b.line1 ?? '12 Oak St', city: b.city ?? 'Oakland', region: b.region ?? 'CA', postalCode: b.postalCode ?? '94610' }), 'address');
+    return { id: r.address.id };
+  },
   async '/listing'() {
     const r = must(await call(agent, 'POST', '/listings', { status: 'active', addressLine1: '12 Oak St', city: 'Oakland', region: 'CA', postalCode: '94610', listPriceCents: 85000000, beds: 3, bathsX10: 20, sqft: 1450, propertyType: 'single_family' }), 'listing');
     return { id: r.listing.id };
@@ -133,7 +138,7 @@ process.stdin.resume();
 })().catch((e) => { console.error(e); process.exit(1); });
 `;
 
-export type FixturePath = '/world' | '/contact' | '/offer' | '/draft' | '/task' | '/appointment' | '/deal' | '/listing' | '/held' | '/attempt' | '/dnc';
+export type FixturePath = '/world' | '/contact' | '/offer' | '/draft' | '/task' | '/appointment' | '/deal' | '/listing' | '/held' | '/attempt' | '/dnc' | '/address';
 
 export interface AgentStack {
   webUrl: string;

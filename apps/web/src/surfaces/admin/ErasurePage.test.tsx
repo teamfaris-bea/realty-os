@@ -66,6 +66,23 @@ describe('Erase a contact', () => {
     expect(fake.callsTo(`POST /contacts/${C}/erase`).map((c) => c.body)).toEqual([{ reason: 'DUPLICATE_RECORD' }]);
   });
 
+  it('R-DATA-4: the page says before the tap that the duplicate records merged into the person are erased with them; nothing is said when there are none', async () => {
+    leadAdminApp(erasureFake({ preview: { ...free, mergedRecords: 2 } }), PATH, 'owner');
+    expect(await screen.findByText('2 duplicate records were merged into Rosa Diaz. Erasing Rosa Diaz erases them too.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Erase Rosa Diaz' })).toBeInTheDocument();
+  });
+
+  it('R-DATA-4: one merged duplicate is named in the singular', async () => {
+    leadAdminApp(erasureFake({ preview: { ...free, mergedRecords: 1 } }), PATH, 'admin');
+    expect(await screen.findByText('1 duplicate record was merged into Rosa Diaz. Erasing Rosa Diaz erases it too.')).toBeInTheDocument();
+  });
+
+  it('R-DATA-4: no merged records, no sentence about them', async () => {
+    leadAdminApp(erasureFake({ preview: { ...free, mergedRecords: 0 } }), PATH, 'owner');
+    expect(await screen.findByRole('button', { name: 'Erase Rosa Diaz' })).toBeInTheDocument();
+    expect(screen.queryByText(/duplicate record/)).toBeNull();
+  });
+
   it('E59 R-DATA-4: cancelling the confirmation sends nothing', async () => {
     const fake = erasureFake({ preview: free });
     leadAdminApp(fake, PATH, 'owner');

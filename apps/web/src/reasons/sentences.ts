@@ -108,13 +108,21 @@ const BLOCKED: Record<string, string> = {
   PLAYBOOK_OWNER_NOT_CONTACT_OWNER: 'the playbook belongs to an agent who no longer owns the lead',
   ENROLLMENT_NOT_ACTIVE: 'the playbook for this contact is paused or stopped',
   AUTONOMY_DOWNGRADED: 'the assistant held it for review',
-  // the dispatch guards' own refusals, stored when the database refused a send the app gate allowed
-  RECIPIENT_OPTED_OUT: 'they opted out',
+  // the person-level do-not-contact: the gate's code, and the dispatch guards' own (the same code, R-CHAN-2)
+  PERSON_DO_NOT_CONTACT: 'they asked not to be contacted',
+  // a dispatch guard's own refusal with no gate code for the same fact
   RECIPIENT_NOT_A_CONTACT_POINT: "the number or address isn't on their record, so their opt-outs couldn't be checked",
 };
 
-/** status_reason codes that say the person opted out of the channel: the gate's, and the dispatch guard's own. */
-const OPTED_OUT_REASONS: ReadonlySet<string> = new Set(['CONSENT_REVOKED', 'RECIPIENT_OPTED_OUT']);
+/**
+ * The dispatch guards' own refusals (stored when the database refused a send the app gate allowed) that state a
+ * fact the gate states with its own code: said with exactly the gate's words, so the same fact is always said
+ * the same way. PERSON_DO_NOT_CONTACT needs no entry: the guard and the gate use the same code.
+ */
+const GUARD_SAME_FACT: Readonly<Record<string, string>> = { RECIPIENT_OPTED_OUT: 'CONSENT_REVOKED', RECIPIENT_SUPPRESSED: 'SUPPRESSED' };
+
+/** status_reason codes that say the person opted out of the channel (after GUARD_SAME_FACT). */
+const OPTED_OUT_REASONS: ReadonlySet<string> = new Set(['CONSENT_REVOKED']);
 
 /** Twilio-style carrier error codes worth naming; anything else is "the carrier rejected it". */
 const CARRIER: Record<string, string> = {
@@ -263,10 +271,12 @@ export function messageStatus(m: MessageStatusFacts, contactFirstName: string, n
   const reason = m.statusReason ?? '';
   if (isHeld(m)) return { text: `Held because ${contactFirstName || 'they'} replied`, tone: 'held' };
   switch (m.status) {
-    case 'blocked':
+    case 'blocked': {
       if (m.blockedBy) return { text: `Not sent: ${lowerFirst(reachSentence(m.blockedBy, ch, now))}`, tone: 'failed' };
-      if (OPTED_OUT_REASONS.has(reason)) return { text: `Not sent: opted out of ${NOUN[ch]}`, tone: 'failed' };
-      return { text: `Not sent: ${BLOCKED[reason] ?? 'blocked by a sending rule'}`, tone: 'failed' };
+      const code = Object.hasOwn(GUARD_SAME_FACT, reason) ? GUARD_SAME_FACT[reason]! : reason;
+      if (OPTED_OUT_REASONS.has(code)) return { text: `Not sent: opted out of ${NOUN[ch]}`, tone: 'failed' };
+      return { text: `Not sent: ${(Object.hasOwn(BLOCKED, code) ? BLOCKED[code] : undefined) ?? 'blocked by a sending rule'}`, tone: 'failed' };
+    }
     case 'failed':
     case 'undelivered': {
       const rejected = ch === 'email' ? 'the email service rejected it' : 'the carrier rejected it';

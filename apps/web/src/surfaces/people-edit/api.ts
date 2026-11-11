@@ -127,7 +127,8 @@ export const PEOPLE_ERROR_MESSAGES: Record<string, string> = {
   POINT_UNCHANGED: 'That is the same number or email.',
   POINT_REMOVED: 'That number or email was already removed.',
   WRONG_NUMBER_NOT_RECORDED: 'Only a number reported as a wrong number (from a call outcome or a reply) can be removed as one.',
-  WRONG_NUMBER_FINAL: 'That number was confirmed as a wrong number and can’t be added back.',
+  // R-PAR-12: the API answers this for a phone or an email (a "wrong person" reply) removed as a confirmed wrong number
+  WRONG_NUMBER_FINAL: 'That number or email was confirmed as reaching someone else (a wrong number), so it can’t be added back to this person.',
   COLLABORATOR_NOT_ELIGIBLE: 'That person can’t be added as a collaborator.',
   RELATIONSHIP_EXISTS: 'These two are already linked that way.',
   MENTION_LIMIT: 'A note can mention at most 10 people.',

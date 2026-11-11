@@ -193,6 +193,13 @@ export async function updateAddress(tx: Tx, contactId: string, id: string, a: Ad
   return r.rows.length > 0;
 }
 
+/** Deletes one address of the contact (RLS: contact_addresses_delete); null when there is none this caller may delete. */
+export async function deleteAddress(tx: Tx, contactId: string, id: string): Promise<{ id: string; kind: string } | null> {
+  const r = await sql<{ id: string; kind: string }>`
+    DELETE FROM contact_addresses WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId}::uuid AND id = ${id}::uuid RETURNING id, kind`.execute(tx);
+  return r.rows[0] ?? null;
+}
+
 // ---- collaborators ---------------------------------------------------------------------------------
 
 export interface CollaboratorRow {

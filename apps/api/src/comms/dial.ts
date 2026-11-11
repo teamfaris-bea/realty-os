@@ -8,8 +8,9 @@
 //     decision (core.decideRecording; announce unless every party is one-party and the Owner attested)
 //     + the touch in the same transaction (R-OWN-14). deny ⇒ a gate_decisions row (the blocked-call
 //     evidence), the decision is returned and no call exists. If the guard refuses a call the gate
-//     allowed (RECIPIENT_OPTED_OUT / RECIPIENT_NOT_A_CONTACT_POINT: defence in depth, as in dispatch.ts),
-//     the transaction rolls back and a NEW one records it as that deny; nothing is dialed, never a 500.
+//     allowed about its recipient (RECIPIENT_OPTED_OUT, PERSON_DO_NOT_CONTACT, RECIPIENT_SUPPRESSED,
+//     RECIPIENT_NOT_A_CONTACT_POINT: defence in depth, as in dispatch.ts), the transaction rolls back and
+//     a NEW one records it as that deny; nothing is dialed, never a 500.
 //   dialOutbound (after commit): provider.dialCall(idempotencyKey = call id) with the announcement;
 //     'ringing' + provider ref, or 'failed'. Never re-dials a call that already has a provider ref.
 //   applyCallStatus (provider callbacks): forward-only status; an announcement that failed to play

@@ -1,5 +1,5 @@
-// Details (PARITY_PLAN §5): phones and emails with labels, addresses, relationships, collaborators, and a
-// pencil to edit. "Edit / replace a phone": phone Details ✎ → field → Save = 3 taps; desktop inline → ↵ = 1.
+// Details (PARITY_PLAN §5): phones and emails with labels, addresses (Remove, with Undo), relationships,
+// collaborators, and a pencil to edit. "Edit / replace a phone": phone Details ✎ → field → Save = 3 taps; desktop inline → ↵ = 1.
 // A number is never edited in place: changing it replaces it (the old one is removed and keeps its opt-out
 // history, R-PAR-11). If a number you removed opted out, texting stays blocked and this says why (R-PAR-12).
 import { useQuery } from '@tanstack/react-query';
@@ -9,7 +9,7 @@ import { Button, Dialog, Notice, TextField } from '../../design/index.js';
 import { type ApiError, useApi } from '../../shell/index.js';
 import { formatPhone, intentLabel } from '../feed/lib/format.js';
 import type { ContactFullView } from '../feed/lib/types.js';
-import { type Details, type PointDetail, RELATIONSHIP_LABEL, firstNameOf, pointsKey, useCandidates } from './api.js';
+import { type AddressView, type Details, type PointDetail, RELATIONSHIP_LABEL, firstNameOf, pointsKey, useCandidates } from './api.js';
 import { selectClass, useIsDesktop, usePersonAction, useToast } from './hooks.js';
 
 const LABELS = ['mobile', 'home', 'work', 'other'] as const;
@@ -296,6 +296,14 @@ export function DetailsSection({ contact, details }: { contact: ContactFullView;
   const first = firstNameOf(contact.displayName);
   const blockingRemoved = details.removedPoints.filter((p) => p.optedOut && p.stillBlocks);
   const close = () => setOpen(null);
+  // Delete an address (module 57): one tap, then an Undo toast instead of a confirm modal (PARITY_PLAN §5,
+  // reversible one-person edits). Undo adds the same address back.
+  const removeAddress = async (a: AddressView) => {
+    const r = await act.run('DELETE', `/contacts/${contact.id}/addresses/${a.id}`);
+    if (!r.ok) return;
+    const again = { kind: a.kind, line1: a.line1, line2: a.line2, city: a.city, region: a.region, postalCode: a.postalCode, country: a.country };
+    toast({ text: 'Address removed', undo: () => void act.run('POST', `/contacts/${contact.id}/addresses`, again) });
+  };
 
   return (
     <div className="flex flex-col gap-3">
@@ -327,12 +335,22 @@ export function DetailsSection({ contact, details }: { contact: ContactFullView;
       {details.doNotContact ? <Notice tone="warn">{first} asked not to be contacted. Nobody on the team can text, email or call them.</Notice> : null}
 
       {details.addresses.length > 0 ? (
-        <ul className="flex flex-col gap-1 text-[15px] text-ink">
-          {details.addresses.map((a) => (
-            <li key={a.id}>
-              {[a.line1, a.line2, a.city, a.region, a.postalCode].filter(Boolean).join(', ')} <span className="text-ink-muted">· {a.kind}</span>
-            </li>
-          ))}
+        <ul className="flex flex-col gap-1 text-[15px] text-ink" aria-label="Addresses">
+          {details.addresses.map((a) => {
+            const text = [a.line1, a.line2, a.city, a.region, a.postalCode].filter(Boolean).join(', ');
+            return (
+              <li key={a.id} className="flex items-center gap-2">
+                <span className="flex-1">
+                  {text} <span className="text-ink-muted">· {a.kind}</span>
+                </span>
+                {details.canEdit ? (
+                  <Button variant="quiet" aria-label={`Remove address ${text || a.kind}`} onClick={() => void removeAddress(a)}>
+                    Remove
+                  </Button>
+                ) : null}
+              </li>
+            );
+          })}
         </ul>
       ) : null}
 

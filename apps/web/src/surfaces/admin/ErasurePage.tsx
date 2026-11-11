@@ -9,6 +9,8 @@
 //   offering a removal that would be refused.
 // - Erasing is irreversible, so it takes an explicit second step that names the person. A deal that
 //   appears meanwhile (CONTACT_ON_DEAL from the erase) is worded and the deal list reloads.
+// - The person is the contact and every duplicate record merged into it: erasing them erases those too, and
+//   the page says how many (the deals listed are those of any of these records). VERIFY WITH COUNSEL.
 // - Deep link: /admin/erasure?contact=<id> (e.g. from a contact page). Without it, a search field
 //   finds the contact (GET /search, read-only reuse of the search surface's endpoint).
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -36,6 +38,8 @@ export interface ErasurePreview {
   contactId: string;
   erasable: boolean;
   deals: ErasureDeal[];
+  /** duplicate records merged into the person, erased with them (migration 0037; absent from older servers) */
+  mergedRecords?: number;
 }
 
 const REASONS: readonly { value: ErasureReason; label: string }[] = [
@@ -204,7 +208,7 @@ function ContactErasure({ contactId, onPickAnother, onErased, announce }: { cont
           {p.deals.length > 0 ? (
             <OnDeals contactId={contactId} name={name} deals={p.deals} viewer={viewer} reason={reason} announce={onRemoved} />
           ) : p.erasable ? (
-            <EraseStep contactId={contactId} name={name} reason={reason} onErased={() => onErased(name)} onRefused={setRefusal} />
+            <EraseStep contactId={contactId} name={name} reason={reason} mergedRecords={p.mergedRecords ?? 0} onErased={() => onErased(name)} onRefused={setRefusal} />
           ) : null}
         </>
       ) : null}
@@ -293,7 +297,7 @@ function DealRow({ contactId, name, deal, viewer, reason, announce }: { contactI
   );
 }
 
-function EraseStep({ contactId, name, reason, onErased, onRefused }: { contactId: string; name: string; reason: ErasureReason; onErased(): void; onRefused(message: string): void }) {
+function EraseStep({ contactId, name, reason, mergedRecords, onErased, onRefused }: { contactId: string; name: string; reason: ErasureReason; mergedRecords: number; onErased(): void; onRefused(message: string): void }) {
   const qc = useQueryClient();
   const [confirming, setConfirming] = useState(false);
   const erase = useAction<{ reason: ErasureReason }, { erased: true }>('POST');
@@ -313,6 +317,11 @@ function EraseStep({ contactId, name, reason, onErased, onRefused }: { contactId
         {name} is on no deals, so they can be erased. This deletes {name} and what Realty OS holds about them, such as messages and call recordings. An opt-out they gave is kept without their
         details, so they aren't contacted again by mistake. The audit log notes that an erasure happened and why.
       </p>
+      {mergedRecords > 0 ? (
+        <p className="text-[15px] text-ink">
+          {plural(mergedRecords, 'duplicate record')} {mergedRecords === 1 ? 'was' : 'were'} merged into {name}. Erasing {name} erases {mergedRecords === 1 ? 'it' : 'them'} too.
+        </p>
+      ) : null}
       {!confirming ? (
         <Button
           ref={opener}

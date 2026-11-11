@@ -2,7 +2,8 @@
 //
 //   POST   /contacts/:id/addresses                    add               contact.edit
 //   PATCH  /contacts/:id/addresses/:addressId         edit              contact.edit
-//   (no address delete: app_user holds no DELETE grant on contact_addresses; see the lane report)
+//   DELETE /contacts/:id/addresses/:addressId         delete (audited)  contact.edit
+//          (the DB's contact_addresses_delete policy, migration 0037: detail visible + an editing role as itself)
 //   GET    /contacts/:id/collaborators                list              contact.view_detail
 //   POST   /contacts/:id/collaborators                add (audited)     collaborator.manage (existing RLS)
 //   DELETE /contacts/:id/collaborators/:userId        remove (audited)  collaborator.manage
@@ -17,7 +18,7 @@
 import type { ResourceFacts } from '@realty/core/foundation';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import { audit, redactSnapshot } from '../audit.js';
+import { audit, redactDiff, redactSnapshot } from '../audit.js';
 import { AppError } from '../errors.js';
 import { factsOf } from '../leads/contacts.js';
 import * as leads from '../leads/repos/contacts.js';
@@ -62,6 +63,16 @@ export async function registerLinkRoutes(app: FastifyInstance): Promise<void> {
       if (!(await repo.updateAddress(tx, req.params.id, req.params.addressId, addressInput(req.body)))) throw new AppError('NOT_FOUND');
       await audit(tx, actor, { action: 'contact.update', entity: { type: 'contact', id: req.params.id }, changes: redactSnapshot({ address_action: 'edit' }, { entity: 'contact_address' }) });
       return { address: addressView((await repo.addresses(tx, req.params.id)).find((a) => a.id === req.params.addressId)!) };
+    }),
+  );
+  r.delete('/contacts/:id/addresses/:addressId', { config: { auth: 'contact.edit' }, preHandler: authorize('contact.edit', editAuth), schema: { params: S.AddressParams, response: { 200: S.OkResponse } } }, async (req) =>
+    peopleTx(req, async (tx, _now, actor) => {
+      // an address of another person, or one RLS does not let this caller delete, is simply not found (R-PERM-5)
+      const gone = await repo.deleteAddress(tx, req.params.id, req.params.addressId);
+      if (!gone) throw new AppError('NOT_FOUND');
+      // the diff reads as a removal: the address id and kind go to null (ids and codes only, never the address text)
+      await audit(tx, actor, { action: 'contact.update', entity: { type: 'contact', id: req.params.id }, changes: redactDiff({ address_id: gone.id, kind: gone.kind }, { address_action: 'delete', address_id: null, kind: null }, { entity: 'contact_address' }) });
+      return { ok: true as const };
     }),
   );
   // ---- collaborators ----

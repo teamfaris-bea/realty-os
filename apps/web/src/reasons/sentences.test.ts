@@ -72,6 +72,20 @@ describe('messageStatus: what the thread says under a message that did not simpl
     // with evidence, the opt-out it rested on is named, as for any blocked send
     expect(messageStatus({ status: 'blocked', statusReason: 'RECIPIENT_OPTED_OUT', blockedBy: reason({}), channel: 'sms' }, 'Ana', NOW)!.text).toBe('Not sent: texted STOP on Nov 10');
   });
+  it('R-CHAN-2 R-PAR-12: the guards’ person-level do-not-contact and suppression refusals read exactly like the gate’s own reasons for the same fact, never "a sending rule"', () => {
+    for (const channel of ['sms', 'email', 'mms']) {
+      const said = (statusReason: string) => messageStatus({ status: 'blocked', statusReason, channel }, 'Ana')!;
+      // the same fact, said the same way: the guard's code and the gate's code give one sentence
+      expect(said('RECIPIENT_SUPPRESSED')).toEqual(said('SUPPRESSED'));
+      expect(said('RECIPIENT_OPTED_OUT')).toEqual(said('CONSENT_REVOKED'));
+      expect(said('RECIPIENT_SUPPRESSED')).toEqual({ text: 'Not sent: the address is blocked (bounce, complaint or do-not-contact)', tone: 'failed' });
+      // PERSON_DO_NOT_CONTACT is one code for the gate and both guards
+      expect(said('PERSON_DO_NOT_CONTACT')).toEqual({ text: 'Not sent: they asked not to be contacted', tone: 'failed' });
+      for (const code of ['RECIPIENT_SUPPRESSED', 'PERSON_DO_NOT_CONTACT', 'SUPPRESSED', 'RECIPIENT_OPTED_OUT', 'RECIPIENT_NOT_A_CONTACT_POINT']) expect(said(code).text).not.toMatch(/sending rule|[A-Z]{2,}_/);
+    }
+    // a key of Object.prototype is no code: it gets the honest generic sentence
+    expect(messageStatus({ status: 'blocked', statusReason: 'constructor', channel: 'sms' }, 'Ana')!.text).toBe('Not sent: blocked by a sending rule');
+  });
   it('an undelivered text says the carrier rejected it, naming a known carrier code', () => {
     expect(messageStatus({ status: 'undelivered', statusReason: 'PROVIDER_UNDELIVERED', providerErrorCode: '30008', channel: 'sms' }, 'Owen')!.text).toBe('Not delivered: the carrier rejected it');
     expect(messageStatus({ status: 'undelivered', statusReason: 'PROVIDER_UNDELIVERED', providerErrorCode: '99999', channel: 'sms' }, 'Owen')!.text).toBe('Not delivered: the carrier rejected it');

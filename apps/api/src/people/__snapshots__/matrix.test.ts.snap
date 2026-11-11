@@ -1614,6 +1614,7 @@ exports[`route table and schemas > every api/people route declares its authoriza
   "PATCH /api/contacts/:id/points/:pointId → contact.edit",
   "POST /api/contacts/:id/addresses → contact.edit",
   "PATCH /api/contacts/:id/addresses/:addressId → contact.edit",
+  "DELETE /api/contacts/:id/addresses/:addressId → contact.edit",
   "GET /api/contacts/:id/collaborators → contact.view_detail",
   "HEAD /api/contacts/:id/collaborators → contact.view_detail",
   "POST /api/contacts/:id/collaborators → collaborator.manage",
