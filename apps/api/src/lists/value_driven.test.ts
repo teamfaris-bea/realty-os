@@ -16,7 +16,9 @@ import { loadUuid } from '../load/generate.js';
 import { seedLoad } from '../load/seed.js';
 import { benchDefinitions } from './perf/listsBench.js';
 import { perfFieldId, perfTagId, seedLists } from './perf/seedLists.js';
-import { driverSql, pageKeysVia, pageQuery, plainWhereSql, whereSql } from './repos/people.js';
+import { driverSql, pageKeys, pageKeysVia, pageQuery, plainWhereSql, whereSql } from './repos/people.js';
+import { limitListStatement, mapListsDbError } from './common.js';
+import { sql } from 'kysely';
 import { viewerFor } from './run.js';
 
 const DB = `realty_lists_vd_${process.pid}`;
@@ -196,4 +198,36 @@ describe('value-driven list runs return the same people (lane perf-misses-2)', (
     expect(diffs).toEqual([]);
     expect(rows).toBeGreaterThan(500);
   }, 900_000);
+  it('review fixes: the wide next-task page is ONE statement (one snapshot), and a timeout in a pinned statement surfaces as the timeout (LIST_TOO_SLOW), not 25P02', async () => {
+    const next = plans.find((p) => p.name === 'everyone (People tab)')!;
+    const statements: string[] = [];
+    await su.query('BEGIN');
+    try {
+      await enterAs(su, actors.find((a) => a.label.startsWith('owner:'))!);
+      const run = async (q: ReturnType<typeof pageQuery>) => {
+        const c = q.compile(database.kysely);
+        statements.push(c.sql);
+        return (await su.query<{ id: string; sort_key: string | null }>(c.sql, c.parameters as unknown[])).rows;
+      };
+      for (const cur of [null, { sort: 'next_task_asc' as const, key: null, id: '00000000-0000-0000-0000-000000000000' }]) {
+        statements.length = 0;
+        await pageKeysVia(run, { ...next.plan, sort: 'next_task_asc' }, cur, 40, 'wide', async () => {});
+        expect(statements).toHaveLength(1);
+      }
+      await leave(su);
+    } finally {
+      await su.query('ROLLBACK');
+    }
+    // the real path (withTenantTx, the list timeout, pageKeys): the prefix statement times out; the error that
+    // reaches mapListsDbError is the timeout itself (the abort is not hidden by resetting enable_sort)
+    const named = plans.find((p) => p.name === 'name contains')!;
+    const owner = actors.find((a) => a.label.startsWith('owner:'))!;
+    const err = await withTenantTx({ kind: 'user', userId: owner.userId as UserId, tenantId: T as TenantId, role: 'owner', sessionId: 'eq' }, async (tx) => {
+      await limitListStatement(tx, 1);
+      await sql`SELECT pg_sleep(0)`.execute(tx);
+      return pageKeys(tx, named.plan, null, 40, 'wide');
+    }, { db: database }).then(() => null, (e: unknown) => e as { code?: string });
+    expect(err?.code).toBe('57014');
+    expect(mapListsDbError(err)?.code).toBe('LIST_TOO_SLOW');
+  }, 120_000);
 });

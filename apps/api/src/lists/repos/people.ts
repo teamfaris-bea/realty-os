@@ -281,32 +281,37 @@ export function pageQuery(plan: ListPlan, cursor: ListCursor | null, limit: numb
 }
 
 /**
- * The "next task" page of an Owner or Admin ('wide'), in two parts (lane perf-misses-2). The key,
- * min(due_at) of the person's open tasks the viewer sees, is NULL exactly for the people with no dated open
- * task, so the list in (key ASC NULLS LAST, id) order is the dated people in (key, id) order followed by the
- * undated people in id order.
- *   dated:   the open dated tasks grouped by person (the same rows and the same min as the per-person key:
- *            one read of the tenant's open tasks, no per-row check for a tenant-wide viewer), joined to the
- *            people the list holds, in key order, until the page is full;
- *   undated: only when the page is not full, the people the list holds whose key is NULL, in id order.
- * The single scan computed the key of every person of the tenant and sorted them all (1.3 s at 250k).
- * Proven equal to pageQuery page after page in lists/value_driven.test.ts.
+ * The "next task" page of an Owner or Admin ('wide'), as ONE statement in two ordered parts (lane
+ * perf-misses-2; one statement, so one snapshot: a task changed during the request can neither show a
+ * person twice nor drop one). The key, min(due_at) of the person's open tasks the viewer sees, is NULL
+ * exactly for the people with no dated open task, so the list in (key ASC NULLS LAST, id) order is the dated
+ * people in (key, id) order followed by the undated people in id order.
+ *   part 1: the open dated tasks grouped by person (the same rows and the same min as the per-person key:
+ *           one read of the tenant's open tasks, no per-row check for a tenant-wide viewer), joined to the
+ *           people the list holds, in key order;
+ *   part 2: the people the list holds whose key is NULL, in id order.
+ * Each part reads only its first `limit` rows (the page cannot hold more from either); the caller pins
+ * enable_sort off for this statement so part 2 walks the primary key instead of sorting every undated person
+ * (pageKeysVia). The single scan computed the key of every person of the tenant
+ * and sorted them all (1.3 s at 250k). Proven equal to pageQuery page after page in lists/value_driven.test.ts.
  */
-export function nextTaskPageParts(plan: ListPlan, cursor: ListCursor | null, limit: number, hint: ScopeHint): { dated: Frag | null; undated: (n: number) => Frag } {
+export function nextTaskPageQuery(plan: ListPlan, cursor: ListCursor | null, limit: number, hint: ScopeHint): Frag {
   const s = SORTS.next_task_asc;
-  const dated = cursor !== null && cursor.key === null ? null : sql`
-    SELECT c.id, ${isoText(sql`g.k`)} AS sort_key
+  const nullCursor = cursor !== null && cursor.key === null;
+  // after a NULL-key cursor no dated person can follow: part 1 is empty
+  const dated = sql`
+    SELECT 1 AS part, g.k, c.id, ${isoText(sql`g.k`)} AS sort_key
       FROM (SELECT t.contact_id, min(t.due_at) AS k FROM tasks t
              WHERE t.tenant_id = app.tenant_id() AND t.status = 'open' AND t.contact_id IS NOT NULL AND t.due_at IS NOT NULL
              GROUP BY t.contact_id) g
       JOIN contacts c ON c.tenant_id = app.tenant_id() AND c.id = g.contact_id
-     WHERE ${whereSql(plan, hint)}${cursor === null ? sql`` : sql` AND (g.k > ${cursor.key}::timestamptz OR (g.k = ${cursor.key}::timestamptz AND c.id > ${cursor.id}::uuid))`}
-     ORDER BY g.k ASC, c.id ASC LIMIT ${limit}`;
-  const undated = (n: number) => sql`
-    SELECT c.id, NULL::text AS sort_key FROM contacts c
-     WHERE ${whereSql(plan, hint)} AND ${s.key} IS NULL${cursor !== null && cursor.key === null ? sql` AND c.id > ${cursor.id}::uuid` : sql``}
-     ORDER BY c.id ASC LIMIT ${n}`;
-  return { dated, undated };
+     WHERE ${whereSql(plan, hint)}${nullCursor ? sql` AND FALSE` : cursor === null ? sql`` : sql` AND (g.k > ${cursor.key}::timestamptz OR (g.k = ${cursor.key}::timestamptz AND c.id > ${cursor.id}::uuid))`}`;
+  const undated = sql`
+    SELECT 2 AS part, NULL::timestamptz AS k, c.id, NULL::text AS sort_key FROM contacts c
+     WHERE ${whereSql(plan, hint)} AND ${s.key} IS NULL${nullCursor ? sql` AND c.id > ${cursor!.id}::uuid` : sql``}`;
+  // each part's own first `limit` rows hold the page's rows from that part
+  return sql`SELECT p.id, p.sort_key FROM ((${dated} ORDER BY 2, 3 LIMIT ${limit}) UNION ALL (${undated} ORDER BY 3 LIMIT ${limit})) p
+     ORDER BY p.part, p.k, p.id LIMIT ${limit}`;
 }
 
 /** Whether the predicate tree holds a free-text name filter. */
@@ -341,22 +346,21 @@ export function prefixPageQuery(plan: ListPlan, cursor: ListCursor | null, limit
  */
 export async function pageKeysVia(run: (q: Frag) => Promise<PageKeyRow[]>, plan: ListPlan, cursor: ListCursor | null, limit: number, hint: ScopeHint = null,
   pinSort: (off: boolean) => Promise<void> = async () => {}, prefixRows = PREFIX_ROWS): Promise<PageKeyRow[]> {
-  if (hint === 'wide' && INDEXED_SORTS.has(plan.sort) && hasNameLike(plan.where)) {
+  // A pinned statement: enable_sort off for it only. On an error the transaction is aborted (SET LOCAL ends
+  // with it), so nothing is reset and the statement's own error (e.g. the list timeout) is what propagates.
+  const pinned = async (q: Frag): Promise<PageKeyRow[]> => {
     await pinSort(true);
-    let pre: PageKeyRow[];
-    try {
-      pre = await run(prefixPageQuery(plan, cursor, limit, hint, prefixRows));
-    } finally {
-      await pinSort(false);
-    }
+    const rows = await run(q);
+    await pinSort(false);
+    return rows;
+  };
+  if (hint === 'wide' && INDEXED_SORTS.has(plan.sort) && hasNameLike(plan.where)) {
+    const pre = await pinned(prefixPageQuery(plan, cursor, limit, hint, prefixRows));
     if (pre.length >= limit) return pre;
     return run(pageQuery(plan, cursor, limit, hint));
   }
-  if (plan.sort !== 'next_task_asc' || hint !== 'wide') return run(pageQuery(plan, cursor, limit, hint));
-  const parts = nextTaskPageParts(plan, cursor, limit, hint);
-  const first = parts.dated === null ? [] : await run(parts.dated);
-  if (first.length >= limit) return first;
-  return [...first, ...(await run(parts.undated(limit - first.length)))];
+  if (plan.sort === 'next_task_asc' && hint === 'wide') return pinned(nextTaskPageQuery(plan, cursor, limit, hint));
+  return run(pageQuery(plan, cursor, limit, hint));
 }
 
 export interface PageKeyRow {

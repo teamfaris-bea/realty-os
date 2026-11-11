@@ -9,7 +9,8 @@ import { loadUrls } from '../../load/db.js';
 import { loadUuid } from '../../load/generate.js';
 import { argValue } from '../../load/seed.js';
 import { limitListStatement } from '../common.js';
-import { countQuery, pageQuery, scopeHintFor } from '../repos/people.js';
+import { countQuery, nextTaskPageQuery, pageQuery, scopeHintFor } from '../repos/people.js';
+import { sql } from 'kysely';
 import { viewerFor } from '../run.js';
 import { benchDefinitions } from './listsBench.js';
 
@@ -29,7 +30,10 @@ async function main(): Promise<void> {
       const r = compileList(def, await viewerFor(tx, def), { sort: (d.sort ?? 'last_activity_desc') as 'name_asc' });
       if (!r.ok) throw new Error(r.code);
       const hint = scopeHintFor('owner');
-      for (const [label, q] of [['page', pageQuery(r.plan, null, 51, hint)], ['count', countQuery(r.plan, 10_000, hint)]] as const) {
+      // the 'next task' page of a wide viewer is the one-statement shape the API runs, with enable_sort pinned off
+      const wideNext = r.plan.sort === 'next_task_asc' && hint === 'wide';
+      if (wideNext) await sql`SET LOCAL enable_sort = off`.execute(tx);
+      for (const [label, q] of [['page', wideNext ? nextTaskPageQuery(r.plan, null, 51, hint) : pageQuery(r.plan, null, 51, hint)], ['count', countQuery(r.plan, 10_000, hint)]] as const) {
         if (argValue(args, 'only') && argValue(args, 'only') !== label) continue;
         const c = q.compile(tx);
         const e = await tx.executeQuery<{ 'QUERY PLAN': string }>({ ...c, sql: `EXPLAIN (ANALYZE, BUFFERS, COSTS OFF) ${c.sql}` });

@@ -532,3 +532,103 @@ wrong count, or adds a missing mark, and each is proved by a test that fails wit
 **Left as found.** `mail_messages_select` (D2) has the same per-row shape as the five parity policies; it has no read
 route yet, and the pending D2 review migration both reorders it and pins its text in its smoke test, so it is not
 rewritten here.
+
+## 7. Performance lane 2: security review items (lane `perf-misses-2`, migration `helper_plan_cache`)
+
+Every change of this lane that touches who-sees-what, a helper, a policy or the send gate is listed here with its
+proof. None marks anything LEAKPROOF, none adds `USING (true)` or BYPASSRLS, none adds or widens a definer or a grant,
+and nothing is cached across tenants or users except query **plans** (which hold no data; below).
+
+### 7.1 RLS helpers keep their plans (LANGUAGE sql → plpgsql, same query)
+
+**What.** Twelve helpers: the definers `app.my_role`, `is_tenant_wide`, `is_member`, `sees_all_detail`,
+`my_team_member_ids`, `my_pond_ids`, `my_deal_contact_ids`, `my_collab_contact_ids`, `contact_exists`, and the
+invokers `app.contact_visible`, `contact_detail_visible`, `deal_visible`, `contact_owned_by_my_team`. Each body is
+the previous SQL body word for word, as `RETURN (<body>)`. None of them was inlined before (definers with a `SET`
+clause; the invokers' bodies hold an `EXISTS` sublink), so nothing loses inlining; `app.contact_detail_row` (the
+inlined twin) stays `LANGUAGE sql`.
+
+**Why it is the same function.**
+- Same signature, return type, volatility (`STABLE`: the caller's snapshot), `SECURITY DEFINER` / invoker exactly as
+  before, the same pinned `search_path` on the definers, no `SET` on the invokers. `CREATE OR REPLACE` keeps the
+  owner (`app_definer` for the definers), the ACL (no `PUBLIC` EXECUTE on the definers) and the comments; the
+  migration's self-check fails otherwise.
+- Every body returns exactly one row (an `EXISTS`, an aggregate or a boolean expression), except `my_role`, which
+  reads at most one (`memberships` primary key `(tenant_id, user_id)`). A scalar sub-query of zero rows is NULL,
+  as a SQL function of no row is.
+- **Plan caching holds no data and no context.** Every GUC is read by a function call *inside* the query at
+  execution time (`app.tenant_id()`, `app.user_id()`, `app.actor_kind()`, `app.principal_type()`), and the
+  arguments are plpgsql parameters, so one cached plan is valid for every tenant, user and actor. Postgres
+  re-plans a cached plan when the role, `row_security` or a referenced object changes, so an invoker's plan is
+  never reused with another role's policies. This is the same mechanism every existing plpgsql guard of the
+  schema already uses.
+
+**Proof.** `apps/api/src/load/helper_plan_equivalence.test.ts` writes the previous bodies out as temporary SQL
+functions (definers as definers, invokers as invokers, nested calls to the previous twins) and compares every helper
+with its twin under every request context (each role, two members where the tenant has two; the system actor;
+support without a grant and with a live grant; a client principal; an agent inside its own ownership command), on
+every contact of the tenant (every ownership state, collaborated, on deals, pond and offered people on the TC's deal,
+soft-deleted, moved by the command) plus another tenant's, and `deal_visible` on every deal. All contexts run
+interleaved on **one connection** for six rounds, past the plan cache's switch to generic plans. Zero differences.
+Dropping the deal branch from the new `contact_detail_visible` makes it fail (6 contacts, as the TC).
+
+### 7.2 Tag and custom-value SELECT policies: tenant-wide callers first
+
+**What.** `contact_tags_select` and `contact_field_values_select` (SELECT only):
+`(SELECT app.is_tenant_wide()) OR EXISTS (SELECT 1 FROM app.contact_detail_row(t.tenant_id, t.contact_id))`.
+
+**Why the rows are the same.** For a tenant-wide caller (the system actor, an Owner or Admin, support with a live
+grant; staff principal with a tenant set) the old `EXISTS` is true for every row the tenant policy admits: the
+row's `(tenant_id, contact_id)` references `contacts (tenant_id, id)` (FOREIGN KEY, `ON DELETE CASCADE`, not
+deferrable), that contact passes `contacts_select` through its `(SELECT app.is_tenant_wide())` branch (no
+`deleted_at` condition) and the tenant policy, and `contact_detail_row`'s detail test passes through
+`sees_all_detail()`, which includes `is_tenant_wide()`. For any other caller the first operand is false and the
+policy is the old one. WITH CHECK, INSERT, UPDATE and DELETE policies are unchanged (self-check).
+
+**Proof.** `apps/api/src/load/deal_visibility_equivalence.test.ts` (old USING = 0021's per-row
+`contact_detail_visible`, row by row) now also runs as support without and with a live grant and as a client
+principal. Zero differences. Writing the shortcut with `sees_all_detail()` instead (which also admits Team Leads)
+makes it fail: a Team Lead would see 292 more tag rows.
+
+### 7.3 Query shapes (no policy change)
+
+| change | why the rows are the same | proof |
+|---|---|---|
+| Exception queue rows read contact detail through `EXISTS (… app.contact_detail_row …)` | the helper's documented equivalence with `contact_detail_visible` (§2.10) | `deal_visibility_equivalence.test.ts` compares the two for every actor and contact |
+| Smart-list counts of non-book viewers add `c.id IN (<the required tag / value rows>)`, several of them as one `INTERSECT` | the WHERE already requires a visible row of each set, read under the same RLS: the clause is implied | `apps/api/src/lists/value_driven.test.ts`: driven = plain WHERE id for id, 21 definitions, every context of §7.1 |
+| Owner/Admin "next task" page as one statement in two ordered parts (dated open tasks grouped by person, then the undated people), each read only to the page size | the key is `min(due_at)` of the same visible open tasks; it is NULL exactly for the undated people, who sort last. One statement, so one snapshot (the self-review found that a first two-statement version could show a person twice, or drop one, when a task changed between the statements) | same file: page after page through the cursor, across the dated/undated boundary, with undated tasks in the fixture; removing `due_at IS NOT NULL` is caught; a test pins the page to one statement |
+| Owner/Admin name-filter page from the first 2,000 people of the sort index when that holds a full page | the prefix is the start of the list order; otherwise the single scan runs. `enable_sort` is pinned off for that one bounded statement only (a planner choice); after an error nothing is reset in the aborted transaction, so a timeout still answers `LIST_TOO_SLOW` (the self-review found the reset hid it behind a 500) | same file, with the production prefix and a 100-row prefix; returning a short prefix is caught; the timeout test fails with the reset in a `finally` |
+
+### 7.4 Ownership engine round trips (no policy change)
+
+- The tenant facts, people, open-deal fact and DB clock are read in one statement (`loadCommandFacts`), after the
+  contact lock; the clock is read again only when the context took further locks (routing, memberships), so the
+  decision clock is still read after every lock (R-OWN-6).
+- The stored-outcome check (R-OWN-7) runs once, under the contact lock. The removed read before the lock was the
+  same check without the lock: a replay now waits for the lock and returns the same stored outcome. Merges keep both.
+- `commandRecord` reads the events and the caller's rejection in one statement (the same two sub-queries).
+- Proof: `packages/db/test/ownership.*` (replay, concurrency, merge) and `apps/api/src/leads/*` pass unchanged, and
+  the bench's ownership checks stay green at 250k (one winner per contested lead, 200/200 offers accepted by their
+  offerees).
+
+### 7.5 Feed channel hint = the send gate's opt-out fan-out (R-PAR-12)
+
+`workspace/repos/feedInputs.ts gateSummaries` read opt-outs only from live points, so a person whose removed phone
+texted STOP could show texting as available on the card while the composer and the gate refused it. It now reads
+the gate's fan-out (`kind = 'phone' AND (removed_at IS NULL OR removed_reason IS DISTINCT FROM 'wrong_number')`):
+a revoke on any of those phones blocks texting (`sms`) or calling (`voice`) every phone of the person, as
+`canContact` does. The hint only became stricter; the send gate, `canContact` and the dispatch guards are
+untouched (D1 unchanged). Proof: `apps/api/src/workspace/feedHint.test.ts` (a removed phone's STOP and "do not
+call" block the card; a confirmed wrong number does not); its two R-PAR-12 cases fail without the change.
+
+### 7.6 Adversarial self-review
+
+An independent review (a separate agent given only the diff, the docs and a database) looked for any row a context
+can see or write after the change that it could not before, and any send the gate now allows that it refused before.
+It compared every helper body and catalog attribute with the previous definition, exercised the plan cache across
+role, tenant, actor kind, support grant, client principal, ownership command and `search_path` changes on one
+session, checked the tenant-wide policy shortcut against the foreign key and every policy branch, and read the
+smart-list shapes, the ownership engine and the feed hint. It found **no visibility, write or send regression**. It
+reproduced two correctness bugs in the smart-list page shapes, both fixed above (§7.3) with tests that fail without
+the fix. It did not run concurrent claims or accepts against a live database; those rest on the unchanged contact
+lock, `FOR UPDATE` and seq check, the db ownership tests and the bench's 250k ownership checks.
