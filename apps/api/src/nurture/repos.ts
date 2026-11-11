@@ -280,7 +280,7 @@ export interface ClosedDealRow {
 export async function closedDealsOn(tx: Tx, monthDays: readonly string[], zoneName: string, afterDealId: string | null, limit: number): Promise<ClosedDealRow[]> {
   const r = await sql<{ id: string; closed_on: string; contact_ids: string[]; address: string }>`
     SELECT d.id, to_char((d.closed_at AT TIME ZONE ${zoneName})::date, 'YYYY-MM-DD') AS closed_on,
-           COALESCE(l.address_line1, d.name) AS address,
+           COALESCE(l.address_line1, 'your home') AS address,
            ARRAY(SELECT DISTINCT c.id FROM contacts c
                   WHERE c.tenant_id = d.tenant_id AND c.deleted_at IS NULL AND c.merged_into_contact_id IS NULL
                     AND (c.id = d.primary_contact_id OR EXISTS (SELECT 1 FROM deal_contacts dc WHERE dc.tenant_id = d.tenant_id AND dc.deal_id = d.id
@@ -295,7 +295,7 @@ export async function closedDealsOn(tx: Tx, monthDays: readonly string[], zoneNa
 
 export async function dealState(tx: Tx, dealId: string, contactId: string): Promise<{ status: 'open' | 'closed' | 'canceled'; contactIsParty: boolean; address: string; closedAt: Instant | null } | null> {
   const r = await sql<{ stage: string; party: boolean; address: string; closed_at: Date | null }>`
-    SELECT d.stage, d.closed_at, COALESCE(l.address_line1, d.name) AS address,
+    SELECT d.stage, d.closed_at, COALESCE(l.address_line1, 'your home') AS address,
            (d.primary_contact_id = ${contactId} OR EXISTS (SELECT 1 FROM deal_contacts dc WHERE dc.tenant_id = d.tenant_id AND dc.deal_id = d.id AND dc.contact_id = ${contactId}
                                                             AND dc.role IN ('buyer','seller','co_buyer','co_seller'))) AS party
       FROM deals d LEFT JOIN listings l ON l.tenant_id = d.tenant_id AND l.id = d.listing_id

@@ -82,7 +82,10 @@ async function currentFact(tx: Tx, f: Firing, e: MlsEligibility): Promise<Pick<I
       if (!row) return { current: { kind: 'gone' } };
       const view = clientView(e, row);
       // an MLS row reaches a client only through its display rules; a price drop needs the price to be shown
-      const displayAllowed = row.source === 'team' ? true : view !== null && (r.kind !== 'price_drop' || (view.listPriceCents !== undefined && view.listPriceCents !== null));
+      // (a home that left the market is reported as that, the true reason, rather than as not displayable: the
+      // licence pack hides off-market statuses from clients, so the display check would otherwise answer first)
+      const onMarket = row.status === 'active' || row.status === 'coming_soon';
+      const displayAllowed = row.source === 'team' || !onMarket ? true : view !== null && (r.kind !== 'price_drop' || (view.listPriceCents !== undefined && view.listPriceCents !== null));
       const feedFresh = row.source === 'team' ? true : row.mls_connection_id !== null && !e.staleIds.includes(row.mls_connection_id);
       return { current: { kind: 'listing', status: row.status, priceCents: row.list_price_cents === null ? null : Number(row.list_price_cents), displayAllowed, feedFresh }, listing: { row, view } };
     }
@@ -274,7 +277,9 @@ export async function executeTriggerRunInTx(tx: Tx, deps: NurtureDeps, tenantId:
     return { kind: 'skipped', runIds: skipped.map((s) => s.run.id), reasons: skipped.map((s) => s.reason) };
   }
   // R-MLS-2: every MLS rendering carries its pack's attribution and disclaimer (once per pack)
-  const notes = [...new Set(kept.flatMap((it) => (it.listing?.view && it.listing.row.source === 'mls' ? [it.listing.view.attribution, it.listing.view.disclaimer] : [])).filter((x): x is string => x !== null && x !== undefined).map(literal))];
+  // (one home: the approved template has no brokerage slot, so the listing brokerage the pack requires is a note too)
+  const broker = kept.length === 1 && kept[0]!.listing?.row.source === 'mls' ? kept[0]!.listing.view?.listingBrokerageName : null;
+  const notes = [...new Set([...(broker ? [`Listed by ${broker}.`] : []), ...kept.flatMap((it) => (it.listing?.view && it.listing.row.source === 'mls' ? [it.listing.view.attribution, it.listing.view.disclaimer] : []))].filter((x): x is string => x !== null && x !== undefined).map(literal))];
   let text = notes.length > 0 ? `${rendered.text}\n${notes.join('\n')}` : rendered.text;
   if (step.channel === 'email' && step.purpose === 'marketing') text = `${text}\n${EMAIL_UNSUBSCRIBE_LINE}`;
   const subject = step.channel === 'email' ? (kept.length === 1 ? (rendered.subject ?? tstep.subject ?? 'A note from your agent') : DIGEST_SUBJECT(kept.length)) : undefined;

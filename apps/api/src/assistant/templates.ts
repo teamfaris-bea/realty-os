@@ -149,7 +149,7 @@ export const BUILT_IN_TEMPLATES: readonly BuiltInTemplate[] = [
     templateVersion: 2,
     steps: [
       { stepKey: 'settled_in', channel: 'sms', delay: { anchor: 'event', offsetSeconds: 14 * DAY_S }, purpose: 'marketing', category: 'nurture_step', intent: 'check_in', template: 'Hi {{first_name}}, how are you settling in? If anything comes up with the house, I am happy to point you to someone good.', personalization: 'none', slots: ['first_name'], maxLength: 480, stopIf: [] },
-      { stepKey: 'review_request', channel: 'email', delay: { anchor: 'event', offsetSeconds: 30 * DAY_S }, purpose: 'marketing', category: 'nurture_step', intent: 'review_request', subject: 'A quick favor', template: 'Hi {{first_name}},\n\nIf you have a minute, would you write a short review of how your move went? Honest feedback of any kind helps other families find their way, and it helps me get better. Just reply to this email with it, or tell me if you would rather not.', personalization: 'none', slots: ['first_name'], maxLength: 2000, stopIf: [], requires: ['review_requests'] },
+      { stepKey: 'review_request', channel: 'email', delay: { anchor: 'event', offsetSeconds: 30 * DAY_S }, purpose: 'marketing', category: 'nurture_step', intent: 'review_request', subject: 'A quick favor', template: 'Hi {{first_name}},\n\nIf you have a minute, would you write a short review of how your move went? Honest feedback of any kind helps others choose an agent, and it helps me get better. Just reply to this email with it, or tell me if you would rather not.', personalization: 'none', slots: ['first_name'], maxLength: 2000, stopIf: [], requires: ['review_requests'] },
     ],
   },
   {
