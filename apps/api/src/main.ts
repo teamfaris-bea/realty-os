@@ -10,18 +10,43 @@ import { instant, uuidv7Generator } from '@realty/core/foundation';
 import { closeDefaultDatabase, configureDatabase, withPreTenant } from '@realty/db';
 import { sql } from 'kysely';
 import { loadConfig, redactConfig } from './config.js';
-import { markDraining } from './health.js';
+import { markDraining, registerReadinessCheck } from './health.js';
+import { loadObservabilityConfig } from './observability/config.js';
+import { createErrorReporter } from './observability/errors.js';
+import { startMetricsListener } from './observability/listener.js';
+import { instrumentPool, instrumentProcess } from './observability/metrics.js';
+import { Registry } from './observability/prometheus.js';
 import { createProviders } from './providers/index.js';
 import { buildServer } from './server.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
+  const obs = loadObservabilityConfig(process.env);
+  const errorReporter = createErrorReporter(obs.errorReporting);
+  process.on('uncaughtException', (e) => errorReporter.capture(e, { process: 'api', level: 'fatal', code: 'UNCAUGHT' }));
+  process.on('unhandledRejection', (e) => errorReporter.capture(e, { process: 'api', code: 'UNHANDLED_REJECTION' }));
   const db = configureDatabase({ url: config.databaseUrl, applicationName: 'realty-api' });
   const role = await withPreTenant(async (tx) => (await sql<{ su: boolean; bypass: boolean }>`SELECT rolsuper AS su, rolbypassrls AS bypass FROM pg_roles WHERE rolname = current_user`.execute(tx)).rows[0], { db });
   if (!role || role.su || role.bypass) throw Object.assign(new Error('DATABASE_URL must be the RLS-bound app role (not superuser, no BYPASSRLS)'), { name: 'ConfigError' });
   const clock = { now: () => instant(Date.now()) };
   const ids = uuidv7Generator(clock, (n) => new Uint8Array(randomBytes(n)));
-  const app = buildServer(config, { providers: createProviders(config, { clock }), clock, ids, db });
+  const metrics = new Registry();
+  instrumentProcess(metrics, { process: 'api', release: obs.errorReporting.release });
+  instrumentPool(metrics, db, 'api');
+  const app = buildServer(config, { providers: createProviders(config, { clock }), clock, ids, db, metrics, errorReporter });
+  // readiness: the provider configuration still loads (e.g. a rotated secret file or env stays valid)
+  registerReadinessCheck(app, {
+    name: 'providers',
+    run: async () => {
+      try {
+        createProviders(loadConfig(), { clock });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  });
+  const metricsServer = obs.metrics ? await startMetricsListener({ ...obs.metrics, registry: metrics }) : null;
   app.log.info({ config: redactConfig(config) }, 'starting api');
   let stopping = false;
   const stop = async (signal: string) => {
@@ -36,6 +61,8 @@ async function main(): Promise<void> {
     markDraining(app);
     await new Promise((r) => setTimeout(r, config.shutdownDrainMs));
     await app.close();
+    metricsServer?.close();
+    await errorReporter.flush();
     await closeDefaultDatabase();
     app.log.info('stopped');
     process.exit(0);

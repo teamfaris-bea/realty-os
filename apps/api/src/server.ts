@@ -35,6 +35,9 @@ import { localKek } from './crypto/kek.js';
 import { AppError, type ErrorCode, errorBody } from './errors.js';
 import type { Providers } from './providers/index.js';
 import { webhookGuard } from './providers/webhooks.js';
+import { type ErrorReporter, MemoryErrorReporter } from './observability/errors.js';
+import { instrumentHttp } from './observability/metrics.js';
+import type { Registry } from './observability/prometheus.js';
 import { type RouteTableEntry, securedPreHandlers } from './rbac.js';
 import { type RouteModule, routeModules as defaultRouteModules } from './routes.js';
 
@@ -48,6 +51,8 @@ export interface Platform {
   envelope: EnvelopeService;
   /** every registered route and its authorization declaration (filled as routes register) */
   routeTable: RouteTableEntry[];
+  /** unexpected errors go here (observability/errors.ts; scrubbed, tagged with the request id) */
+  errorReporter: ErrorReporter;
 }
 
 declare module 'fastify' {
@@ -67,6 +72,10 @@ export interface ServerDeps {
   /** pino destination (tests capture logs here) */
   logStream?: { write(line: string): void };
   envelope?: EnvelopeService;
+  /** Prometheus registry for request metrics (observability; default: none) */
+  metrics?: Registry;
+  /** error reporting adapter (default: the in-memory fake) */
+  errorReporter?: ErrorReporter;
 }
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -94,6 +103,7 @@ function badBody(): FastifyError {
 }
 
 function sendError(reply: FastifyReply, req: FastifyRequest, code: ErrorCode, status: number, details?: Record<string, unknown>) {
+  req.errorCode = code;
   if (code === 'RATE_LIMITED' && typeof details?.retryAfterSeconds === 'number') reply.header('retry-after', String(details.retryAfterSeconds));
   return reply.status(status).send(errorBody(code, String(req.id), details));
 }
@@ -108,6 +118,7 @@ export function buildServer(cfg: Config, deps: ServerDeps): FastifyInstance {
     providers: deps.providers,
     envelope: deps.envelope ?? new EnvelopeService(localKek(cfg.kek, cfg.kekRef)),
     routeTable: [],
+    errorReporter: deps.errorReporter ?? new MemoryErrorReporter(),
   };
 
   const app = Fastify({
@@ -144,6 +155,9 @@ export function buildServer(cfg: Config, deps: ServerDeps): FastifyInstance {
   });
 
   app.decorate('platform', platform);
+  if (deps.metrics) instrumentHttp(app, deps.metrics);
+  const report = (err: unknown, req: FastifyRequest, code: string) =>
+    platform.errorReporter.capture(err, { requestId: String(req.id), route: req.routeOptions?.url ?? 'unmatched', method: req.method, status: 500, code, process: 'api' });
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
 
@@ -191,7 +205,10 @@ export function buildServer(cfg: Config, deps: ServerDeps): FastifyInstance {
 
   app.setErrorHandler((err: FastifyError, req, reply) => {
     if (err instanceof AppError) {
-      if (err.status >= 500) req.log.error({ code: err.code }, 'request failed');
+      if (err.status >= 500) {
+        req.log.error({ code: err.code }, 'request failed');
+        report(err, req, err.code);
+      }
       return sendError(reply, req, err.code, err.status, err.details);
     }
     if (hasZodFastifySchemaValidationErrors(err)) {
@@ -200,6 +217,7 @@ export function buildServer(cfg: Config, deps: ServerDeps): FastifyInstance {
     }
     if (isResponseSerializationError(err)) {
       req.log.error({ code: 'RESPONSE_SERIALIZATION' }, 'response did not match its schema');
+      report(err, req, 'RESPONSE_SERIALIZATION');
       return sendError(reply, req, 'INTERNAL_ERROR', 500);
     }
     if (err.statusCode === 429) return sendError(reply, req, 'RATE_LIMITED', 429);
@@ -209,6 +227,7 @@ export function buildServer(cfg: Config, deps: ServerDeps): FastifyInstance {
       return sendError(reply, req, 'VALIDATION_FAILED', 422);
     }
     req.log.error({ err, code: (err as { code?: string }).code ?? 'UNEXPECTED' }, 'unhandled error');
+    report(err, req, 'INTERNAL_ERROR');
     return sendError(reply, req, 'INTERNAL_ERROR', 500);
   });
 
