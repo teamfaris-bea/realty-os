@@ -3,14 +3,15 @@
 // dispatchOutbound()/dialOutbound().
 //
 // Reported anywhere outside the allowlist (configured in eslint.config.js):
-//   - any reference to a reserved outbound method name: `x.sendSms`, `x.sendEmail`, `x.dialCall`
+//   - any reference to a reserved outbound method name: `x.sendSms`, `x.sendEmail`, `x.dialCall`,
+//     `x.deliverChannelMessage` (module 22: the web-chat transport, R-GATE-15; only comms/dispatch.ts)
 //     (calls, references passed as callbacks, destructuring `const { sendSms } = ...`)
 //   - a `send` / `dial` member on a provider object, e.g. `providers.telephony.send(...)`,
 //     `telephony.dial(...)` (Fastify's `reply.send()` is not affected)
 
 /** @typedef {import('eslint').Rule.RuleModule} RuleModule */
 
-const DEFAULT_RESERVED = ['sendSms', 'sendEmail', 'dialCall'];
+const DEFAULT_RESERVED = ['sendSms', 'sendEmail', 'dialCall', 'deliverChannelMessage'];
 const DEFAULT_PROVIDER_IDS = ['providers', 'telephony', 'email', 'telephonyProvider', 'emailProvider'];
 
 /**

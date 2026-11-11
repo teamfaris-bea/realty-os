@@ -45,7 +45,7 @@ export interface ActionView {
   explanation: string;
   /** what one tap does: send a reply, or just mark it reviewed */
   primaryAction: 'send' | 'acknowledge';
-  draft: { channel: 'sms' | 'email'; subject: string | null; body: string } | null;
+  draft: { channel: 'sms' | 'email' | 'web_chat'; subject: string | null; body: string } | null;
   claims: ClaimView[];
   createdAt: string;
 }
@@ -54,7 +54,7 @@ function draftOf(a: ActionRow): ActionView['draft'] {
   const p = { ...a.payload, ...(a.editedPayload ?? {}) } as { channel?: string; body?: string; subject?: string; draft?: { channel?: string; body?: string; subject?: string } };
   const d = a.kind === 'handback' ? p.draft : p;
   if (!d || typeof d.body !== 'string' || d.body.trim() === '') return null;
-  return { channel: d.channel === 'email' ? 'email' : 'sms', subject: typeof d.subject === 'string' ? d.subject : null, body: d.body };
+  return { channel: d.channel === 'email' ? 'email' : d.channel === 'web_chat' || d.channel === 'inbound_channel' ? 'web_chat' : 'sms', subject: typeof d.subject === 'string' ? d.subject : null, body: d.body };
 }
 
 async function transcriptReadable(tx: Tx, actor: UserActor, callId: string, cache: Map<string, boolean>): Promise<boolean> {

@@ -270,9 +270,11 @@ describe('SmtpEmail.sendEmail', () => {
   it('delivers with List-Unsubscribe, List-Unsubscribe-Post, X-Realty-Ref and Reply-To verbatim, deterministic Message-ID and queue id', async () => {
     const srv = await startServer();
     const out = await new SmtpEmail(opts(srv.port)).sendEmail(req());
-    expect(out).toEqual({ providerRef: 'ABC123XYZ', status: 'queued' });
+    expect(out).toMatchObject({ providerRef: 'ABC123XYZ', status: 'queued' });
     expect(srv.messages).toHaveLength(1);
     const m = parse(srv.messages[0]!);
+    // module 22 (R-GMAIL-12): a plain SMTP relay keeps our Message-ID, so it is reported for the hash
+    expect(out.rfcMessageId).toBe(m.header('Message-ID'));
     expect(m.header('List-Unsubscribe')).toBe('<https://app.example.com/api/email/unsubscribe/tok_123>');
     expect(m.header('List-Unsubscribe-Post')).toBe('List-Unsubscribe=One-Click');
     expect(m.header('X-Realty-Ref')).toBe('ref_ABC-123');

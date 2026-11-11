@@ -24,9 +24,11 @@ import * as msgs from './repos/messages.js';
 import { asUser } from './runtime.js';
 import { senderSignature } from '../templates/repos/signature.js';
 import type { CommsDeps, DecisionView, DispatchResult, OutboundIntent } from './types.js';
+import { chatRoutes } from '../channels/repos/webchat.js';
 
 export interface ComposeInput {
-  channel: 'sms' | 'email';
+  /** 'web_chat' (module 22): a reply in the contact's website chat, through the session's widget; never scheduled */
+  channel: 'sms' | 'email' | 'web_chat';
   body: string;
   subject?: string | undefined;
   scheduleAt?: string | undefined;
@@ -40,7 +42,7 @@ export interface ComposeInput {
 
 export interface MessageView {
   id: string;
-  channel: 'sms' | 'mms' | 'email';
+  channel: 'sms' | 'mms' | 'email' | 'web_chat';
   status: string;
   statusReason: string | null;
   purpose: 'marketing' | 'informational' | null;
@@ -78,6 +80,13 @@ interface Draft {
   fromAddress: string | null;
   purpose: 'marketing' | 'informational';
   inboundSeq: number;
+  /** web chat (module 22): the widget the session came through and whether it can take a reply now (R-INBOX-7, E77) */
+  chat: { connectionId: string; live: boolean } | null;
+}
+
+/** The chat-widget fact for the gate (core check 10): a closed session takes no reply, like a disconnected widget (E77). */
+export function chatConnection(chat: Draft['chat']): OutboundIntent['connection'] {
+  return chat === null ? null : { status: chat.live ? 'connected' : 'other' };
 }
 
 /** Number choice by continuity (sticky → own direct → team main), never by registration (R-CONSENT-17). */
@@ -93,12 +102,13 @@ async function chooseNumber(tx: Tx, conv: g.ConversationRow | null, userId: stri
 }
 
 function pickPoint(points: readonly g.PointRow[], channel: Channel, toPointId: string | undefined): g.PointRow | null {
-  const kind = channel === 'email' ? 'email' : 'phone';
+  const kind = channel === 'email' ? 'email' : channel === 'web_chat' ? 'web_chat' : 'phone';
   if (toPointId) return points.find((p) => p.id === toPointId && p.kind === kind) ?? null;
   return points.find((p) => p.kind === kind && p.status === 'active') ?? points.find((p) => p.kind === kind) ?? null;
 }
 
-async function draftFor(tx: Tx, deps: CommsDeps, contactId: string, userId: string | null, channel: 'sms' | 'email', toPointId: string | undefined, now: Instant, o: { firstResponse?: boolean; purpose?: 'marketing' | 'informational'; phoneNumberId?: string | null } = {}): Promise<Draft> {
+async function draftFor(tx: Tx, deps: CommsDeps, contactId: string, userId: string | null, channel: 'sms' | 'email' | 'web_chat', toPointId: string | undefined, now: Instant, o: { firstResponse?: boolean; purpose?: 'marketing' | 'informational'; phoneNumberId?: string | null } = {}): Promise<Draft> {
+  if (channel === 'web_chat') return chatDraftFor(tx, deps, contactId, toPointId, now, o);
   const point = pickPoint(await g.contactPoints(tx, contactId), channel, toPointId);
   if (!point) throw new AppError('CONTACT_POINT_MISSING');
   const conversationId = await msgs.ensureConversation(tx, deps.ids.next<'ConversationId'>(), contactId, null);
@@ -117,7 +127,23 @@ async function draftFor(tx: Tx, deps: CommsDeps, contactId: string, userId: stri
     if (emailIdentityId) fromAddress = (await g.emailIdentityFacts(tx, emailIdentityId))?.fromAddress ?? null;
   }
   const purpose = o.purpose ?? classifyHumanPurpose({ lastInboundAt: conv?.lastInboundAt ?? null, dealOrAppointmentContext: await dealOrAppointmentContext(tx, contactId), now });
-  return { point, conversationId, phoneNumberId, emailIdentityId, fromAddress, purpose, inboundSeq: conv?.inboundSeq ?? 0 };
+  return { point, conversationId, phoneNumberId, emailIdentityId, fromAddress, purpose, inboundSeq: conv?.inboundSeq ?? 0, chat: null };
+}
+
+/**
+ * A reply in website chat (module 22): to the contact's chat identity (the open session's first), sent by the
+ * session's widget connection. Never to anything the visitor typed (R-INBOX-5, E154): that is not a point.
+ */
+async function chatDraftFor(tx: Tx, deps: CommsDeps, contactId: string, toPointId: string | undefined, now: Instant, o: { purpose?: 'marketing' | 'informational' }): Promise<Draft> {
+  const routes = await chatRoutes(tx, contactId);
+  const route = toPointId ? routes.find((r) => r.pointId === toPointId) : routes[0];
+  const point = route ? (await g.contactPoints(tx, contactId)).find((p) => p.id === route.pointId && p.kind === 'web_chat') : undefined;
+  if (!route || !point) throw new AppError('CONTACT_POINT_MISSING');
+  const conversationId = await msgs.ensureConversation(tx, deps.ids.next<'ConversationId'>(), contactId, null);
+  const conv = await g.conversationOf(tx, contactId);
+  const purpose = o.purpose ?? classifyHumanPurpose({ lastInboundAt: conv?.lastInboundAt ?? null, dealOrAppointmentContext: await dealOrAppointmentContext(tx, contactId), now });
+  const live = route.sessionOpen && (route.connectionStatus === 'connected' || route.connectionStatus === 'degraded');
+  return { point, conversationId, phoneNumberId: null, emailIdentityId: null, fromAddress: `widget:${route.connectionId}`, purpose, inboundSeq: conv?.inboundSeq ?? 0, chat: { connectionId: route.connectionId, live } };
 }
 
 function humanIntent(contactId: string, d: Draft, channel: Channel, body: string): OutboundIntent {
@@ -129,8 +155,12 @@ function humanIntent(contactId: string, d: Draft, channel: Channel, body: string
     category: 'none',
     sender: { phoneNumberId: d.phoneNumberId, emailIdentityId: d.emailIdentityId },
     body,
+    connection: chatConnection(d.chat),
   };
 }
+
+/** Chat text renders like a text message (brokerage name on marketing); email keeps its footer. */
+const renderChannel = (c: 'sms' | 'email' | 'web_chat'): 'sms' | 'email' => (c === 'email' ? 'email' : 'sms');
 
 /** POST /contacts/:id/messages/preview: what the gate would say now (nothing is sent, created or stored). */
 export async function previewHumanMessage(actor: UserActor, contactId: string, input: Omit<ComposeInput, 'idempotencyKey' | 'scheduleAt'>, deps: CommsDeps): Promise<{ decision: DecisionView; body: string }> {
@@ -138,7 +168,7 @@ export async function previewHumanMessage(actor: UserActor, contactId: string, i
     if (!(await detailVisibleContact(tx, contactId))) throw new AppError('NOT_FOUND');
     const d = await draftFor(tx, deps, contactId, actor.userId, input.channel, input.toPointId, now);
     const { tenant } = await resolvedPolicy(tx);
-    const body = renderHumanBody(input.body, { channel: input.channel, purpose: d.purpose, identity: { brokerageLegalName: tenant.brokerageLegalName, postalAddress: tenant.postalAddress }, unsubscribe: d.purpose === 'marketing' ? '(unsubscribe link)' : null, signature: input.channel === 'email' ? await senderSignature(tx) : null });
+    const body = renderHumanBody(input.body, { channel: renderChannel(input.channel), purpose: d.purpose, identity: { brokerageLegalName: tenant.brokerageLegalName, postalAddress: tenant.postalAddress }, unsubscribe: d.purpose === 'marketing' ? '(unsubscribe link)' : null, signature: input.channel === 'email' ? await senderSignature(tx) : null });
     const intent = humanIntent(contactId, d, input.channel, body);
     const evaluated = await evaluateGate(tx, intent, now);
     return { decision: decisionView({ id: null, ...verdictOf(evaluated.decision) }, 'preview'), body };
@@ -158,6 +188,7 @@ export async function composeHumanMessage(actor: UserActor, contactId: string, i
     if (!(await detailVisibleContact(tx, contactId))) throw new AppError('NOT_FOUND');
     if (input.channel === 'email' && !(input.subject ?? '').trim()) throw new AppError('SUBJECT_REQUIRED');
     let scheduledFor: Instant | null = null;
+    if (input.scheduleAt && input.channel === 'web_chat') throw new AppError('VALIDATION_FAILED', { issues: [{ path: '/scheduleAt', code: 'chat_not_scheduled' }] });
     if (input.scheduleAt) {
       scheduledFor = at(input.scheduleAt);
       if (scheduledFor <= now) throw new AppError('SCHEDULE_IN_PAST');
@@ -166,7 +197,7 @@ export async function composeHumanMessage(actor: UserActor, contactId: string, i
     const messageId = deps.ids.next<'MessageId'>();
     const { tenant } = await resolvedPolicy(tx);
     const unsub = input.channel === 'email' && d.purpose === 'marketing' ? unsubscribeUrl(deps.publicBaseUrl, deps.linkSecret, actor.tenantId, messageId) : null;
-    const body = renderHumanBody(input.body, { channel: input.channel, purpose: d.purpose, identity: { brokerageLegalName: tenant.brokerageLegalName, postalAddress: tenant.postalAddress }, unsubscribe: unsub, signature: input.channel === 'email' ? await senderSignature(tx) : null });
+    const body = renderHumanBody(input.body, { channel: renderChannel(input.channel), purpose: d.purpose, identity: { brokerageLegalName: tenant.brokerageLegalName, postalAddress: tenant.postalAddress }, unsubscribe: unsub, signature: input.channel === 'email' ? await senderSignature(tx) : null });
     if (!d.fromAddress) {
       // No sending number / identity: the send is blocked (SENDER_UNAVAILABLE) and logged; nothing to create.
       const intent = humanIntent(contactId, d, input.channel, body);
@@ -199,6 +230,7 @@ export async function composeHumanMessage(actor: UserActor, contactId: string, i
       idempotencyKey: key,
       occurredAt: scheduledFor ?? now,
       bulkActionId: input.bulkActionId ?? null,
+      integrationConnectionId: d.chat?.connectionId ?? null,
     });
     if (!inserted) {
       // the same command raced in (double tap, network retry): it is that command's message
@@ -265,7 +297,8 @@ async function viewOf(actor: UserActor, messageId: string, deps: CommsDeps): Pro
 
 export interface QueueSpec {
   contactId: string;
-  channel: 'sms' | 'email';
+  /** 'web_chat' (module 22): the first response where the lead wrote, or an approved draft (R-INBOX-4) */
+  channel: 'sms' | 'email' | 'web_chat';
   body: string;
   subject?: string;
   initiator: 'assistant' | 'system';
@@ -322,6 +355,7 @@ export async function queueOutboundInTx(tx: Tx, deps: Pick<CommsDeps, 'ids'>, sp
     pinnedInboundSeq: d.inboundSeq,
     idempotencyKey: spec.idempotencyKey,
     occurredAt: now,
+    integrationConnectionId: d.chat?.connectionId ?? null,
   });
   if (!inserted) {
     const winner = await msgs.messageByIdempotencyKey(tx, spec.idempotencyKey);

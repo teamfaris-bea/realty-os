@@ -35,6 +35,10 @@ describe('realty/no-provider-outbound (provider send/dial only in comms dispatch
       { code: 'telephony.send(m)', errors: [{ messageId: 'outbound' }] },
       { code: 'ctx.providers.email.send(m)', errors: [{ messageId: 'outbound' }] },
       { code: 'telephony.dial(m)', errors: [{ messageId: 'outbound' }] },
+      // R-GATE-15 (module 22): the web-chat transport's reserved name, only in comms/dispatch.ts
+      { code: 'await deps.providers.webChat.deliverChannelMessage(m)', errors: [{ messageId: 'outbound' }] },
+      { code: 'const { deliverChannelMessage } = transport', errors: [{ messageId: 'outbound' }] },
+      { code: "transport['deliverChannelMessage'](m)", errors: [{ messageId: 'outbound' }] },
     ],
   });
 });

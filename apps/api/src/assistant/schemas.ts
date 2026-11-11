@@ -34,7 +34,7 @@ export const ActionSchema = z.object({
   contactName: z.string().nullable(),
   explanation: z.string(),
   primaryAction: z.enum(['send', 'acknowledge']),
-  draft: z.object({ channel: z.enum(['sms', 'email']), subject: z.string().nullable(), body: z.string() }).nullable(),
+  draft: z.object({ channel: z.enum(['sms', 'email', 'web_chat']), subject: z.string().nullable(), body: z.string() }).nullable(),
   claims: z.array(ClaimSchema),
   createdAt: z.string(),
 });
@@ -54,7 +54,7 @@ export const ApproveBody = z.strictObject({
   commandId: Id,
   editedPayload: z
     .strictObject({
-      channel: z.enum(['sms', 'email']).optional(),
+      channel: z.enum(['sms', 'email', 'web_chat']).optional(),
       subject: z.string().trim().min(1).max(300).optional(),
       body: z.string().trim().min(1).max(10_000).optional(),
       recommendation: z.string().trim().min(1).max(2_000).optional(),

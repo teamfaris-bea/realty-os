@@ -30,6 +30,7 @@ import { bulkRoutes } from './bulk/routes.js';
 import { stageAutomationRoutes } from './stageAutomation/routes.js';
 import { leadEmailRoutes } from './leadEmail/routes.js';
 import { mlsRoutes } from './mls/routes.js';
+import { channelRoutes } from './channels/routes.js';
 
 export interface RouteModule {
   name: string;
@@ -58,5 +59,6 @@ export const routeModules: RouteModule[] = [
   stageAutomationRoutes,
   leadEmailRoutes,
   mlsRoutes,
+  channelRoutes,
   // registry: add new entries above this line
 ];

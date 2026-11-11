@@ -8,7 +8,7 @@ export interface MessageRow {
   id: string;
   conversationId: string;
   contactId: string;
-  channel: 'sms' | 'mms' | 'email';
+  channel: 'sms' | 'mms' | 'email' | 'web_chat';
   direction: 'inbound' | 'outbound';
   status: string;
   statusReason: string | null;
@@ -32,6 +32,8 @@ export interface MessageRow {
   imported: boolean;
   /** the bulk action of a bulk send (parity module 63; never a touch, R-PAR-37); null otherwise */
   bulkActionId: string | null;
+  /** module 22: the widget connection a web-chat message goes through (messages_platform_sender); null otherwise */
+  integrationConnectionId: string | null;
 }
 
 interface Raw {
@@ -61,11 +63,12 @@ interface Raw {
   provider_message_ref: string | null;
   imported: boolean;
   bulk_action_id: string | null;
+  integration_connection_id: string | null;
 }
 
 const COLS = sql`id, conversation_id, contact_id, channel, direction, status, status_reason, initiator, initiated_by_user_id, purpose,
   action_category, assistant_action_id, playbook_step_run_id, phone_number_id, email_identity_id, from_address, to_address, subject,
-  body, pinned_inbound_seq, scheduled_for, dispatched_at, gate_decision_id, provider_message_ref, imported, bulk_action_id`;
+  body, pinned_inbound_seq, scheduled_for, dispatched_at, gate_decision_id, provider_message_ref, imported, bulk_action_id, integration_connection_id`;
 
 function row(x: Raw): MessageRow {
   return {
@@ -95,6 +98,7 @@ function row(x: Raw): MessageRow {
     providerMessageRef: x.provider_message_ref,
     imported: x.imported,
     bulkActionId: x.bulk_action_id,
+    integrationConnectionId: x.integration_connection_id,
   };
 }
 
@@ -132,7 +136,7 @@ export interface OutboundInsert {
   id: string;
   conversationId: string;
   contactId: string;
-  channel: 'sms' | 'email';
+  channel: 'sms' | 'email' | 'web_chat';
   phoneNumberId: string | null;
   emailIdentityId: string | null;
   fromAddress: string;
@@ -152,6 +156,8 @@ export interface OutboundInsert {
   occurredAt: Instant;
   /** parity module 63: a bulk send's action (messages_bulk_guard checks it); absent = none */
   bulkActionId?: string | null;
+  /** module 22: a web-chat message's widget connection (messages_platform_sender); absent = none */
+  integrationConnectionId?: string | null;
 }
 
 /**
@@ -162,11 +168,12 @@ export async function insertOutbound(tx: Tx, m: OutboundInsert): Promise<boolean
   const r = await sql<{ id: string }>`
     INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, email_identity_id, from_address,
       to_address, subject, body, status, initiator, initiated_by_user_id, purpose, action_category, assistant_action_id, playbook_step_run_id,
-      pinned_inbound_seq, idempotency_key, scheduled_for, occurred_at, bulk_action_id)
+      pinned_inbound_seq, idempotency_key, scheduled_for, occurred_at, bulk_action_id, integration_connection_id)
     VALUES (app.tenant_id(), ${m.id}, ${m.conversationId}, ${m.contactId}, ${m.channel}, 'outbound', ${m.phoneNumberId}, ${m.emailIdentityId},
       ${m.fromAddress}, ${m.toAddress}, ${m.subject}, ${m.body}, ${m.status}, ${m.initiator}, ${m.initiatedByUserId}, ${m.purpose},
       ${m.actionCategory}, ${m.assistantActionId}, ${m.playbookStepRunId}, ${m.pinnedInboundSeq}, ${m.idempotencyKey},
-      ${m.scheduledFor === null ? null : toIso(m.scheduledFor)}::timestamptz, ${toIso(m.occurredAt)}::timestamptz, ${m.bulkActionId ?? null}::uuid)
+      ${m.scheduledFor === null ? null : toIso(m.scheduledFor)}::timestamptz, ${toIso(m.occurredAt)}::timestamptz, ${m.bulkActionId ?? null}::uuid,
+      ${m.integrationConnectionId ?? null}::uuid)
     ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING RETURNING id`.execute(tx);
   return r.rows.length === 1;
 }
@@ -214,9 +221,12 @@ export async function repin(tx: Tx, id: string, seq: number): Promise<void> {
  * TX2: dispatching → sent. The provider ref is stored even when a status callback already moved the
  * message on (out-of-order callbacks); the status itself only moves forward.
  */
-export async function markSent(tx: Tx, id: string, provider: string, ref: string): Promise<boolean> {
+export async function markSent(tx: Tx, id: string, provider: string, ref: string, rfcMessageIdSha256: Buffer | null = null): Promise<boolean> {
+  // module 22 (R-GMAIL-12): the Message-ID hash the provider confirmed, set once, as the system (TX2): the
+  // messages_rfc_guard trigger refuses it from anyone else and refuses any later change
   const r = await sql`
     UPDATE messages SET provider = COALESCE(provider, ${provider}), provider_message_ref = COALESCE(provider_message_ref, ${ref}),
+           rfc_message_id_sha256 = COALESCE(rfc_message_id_sha256, ${rfcMessageIdSha256}),
            status = CASE WHEN status IN ('dispatching','dispatch_unknown') THEN 'sent' ELSE status END,
            status_reason = CASE WHEN status IN ('dispatching','dispatch_unknown') THEN NULL ELSE status_reason END
      WHERE tenant_id = app.tenant_id() AND id = ${id} AND direction = 'outbound'`.execute(tx);
@@ -310,7 +320,7 @@ export interface InboundInsert {
   id: string;
   conversationId: string;
   contactId: string;
-  channel: 'sms' | 'mms' | 'email';
+  channel: 'sms' | 'mms' | 'email' | 'web_chat';
   phoneNumberId: string | null;
   fromAddress: string;
   toAddress: string;
@@ -321,15 +331,20 @@ export interface InboundInsert {
   provider: string;
   providerRef: string;
   occurredAt: Instant;
+  /** module 22: a web-chat message's widget connection */
+  integrationConnectionId?: string | null;
+  /** module 22 (R-GMAIL-12): platform inbound email's Message-ID hash, written by the system ingestion */
+  rfcMessageIdSha256?: Buffer | null;
 }
 
 export async function insertInbound(tx: Tx, m: InboundInsert): Promise<boolean> {
   const r = await sql<{ id: string }>`
     INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, from_address, to_address, subject,
-      body, status, initiator, is_auto_reply, opt_out_keyword, provider, provider_message_ref, occurred_at)
+      body, status, initiator, is_auto_reply, opt_out_keyword, provider, provider_message_ref, occurred_at, integration_connection_id,
+      rfc_message_id_sha256)
     VALUES (app.tenant_id(), ${m.id}, ${m.conversationId}, ${m.contactId}, ${m.channel}, 'inbound', ${m.phoneNumberId}, ${m.fromAddress},
       ${m.toAddress}, ${m.subject}, ${m.body.slice(0, 20000)}, 'received', 'client', ${m.isAutoReply}, ${m.optOutKeyword}, ${m.provider},
-      ${m.providerRef}, ${toIso(m.occurredAt)}::timestamptz)
+      ${m.providerRef}, ${toIso(m.occurredAt)}::timestamptz, ${m.integrationConnectionId ?? null}::uuid, ${m.rfcMessageIdSha256 ?? null})
     ON CONFLICT DO NOTHING RETURNING id`.execute(tx);
   return r.rows.length === 1;
 }
@@ -351,4 +366,25 @@ export async function hmacPoints(tx: Tx, hmac: string): Promise<{ id: string; co
        AND c.deleted_at IS NULL AND c.merged_into_contact_id IS NULL
      ORDER BY p.contact_id`.execute(tx);
   return r.rows.map((x) => ({ id: x.id, contactId: x.contact_id, kind: x.kind, address: x.address }));
+}
+
+/** module 22: cancel queued/scheduled messages of one non-SMS channel to these addresses (web-chat opt-outs). */
+export async function cancelQueuedTo(tx: Tx, channel: 'web_chat', addresses: readonly string[], reason: string): Promise<string[]> {
+  if (addresses.length === 0) return [];
+  const r = await sql<{ id: string }>`
+    UPDATE messages SET status = 'canceled', status_reason = ${reason}
+     WHERE tenant_id = app.tenant_id() AND direction = 'outbound' AND NOT imported AND channel = ${channel}
+       AND status IN ('scheduled','queued') AND to_address = ANY (${addresses}::text[])
+    RETURNING id`.execute(tx);
+  return r.rows.map((x) => x.id);
+}
+
+/** R-NURT-5 (module 22): an inbound message cancels the scheduled trigger runs of these contacts. */
+export async function cancelScheduledTriggerRuns(tx: Tx, contactIds: readonly string[]): Promise<string[]> {
+  if (contactIds.length === 0) return [];
+  const r = await sql<{ id: string }>`
+    UPDATE playbook_step_runs SET status = 'canceled_paused', updated_at = now()
+     WHERE tenant_id = app.tenant_id() AND enrollment_id IS NULL AND contact_id = ANY (${contactIds}::uuid[]) AND status = 'scheduled'
+    RETURNING id`.execute(tx);
+  return r.rows.map((x) => x.id);
 }

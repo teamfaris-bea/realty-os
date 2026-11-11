@@ -34,7 +34,8 @@ import type { AssistantDeps } from './types.js';
 import { type ActionView, actionViews } from './views.js';
 
 export interface EditedPayload {
-  channel?: 'sms' | 'email' | undefined;
+  /** 'web_chat' (module 22, R-INBOX-4): an approved draft may answer in the lead's website chat */
+  channel?: 'sms' | 'email' | 'web_chat' | undefined;
   subject?: string | undefined;
   body?: string | undefined;
   /** seller updates only: the approver's own recommendation, never prefilled (R-SELL-3) */
@@ -65,16 +66,16 @@ interface Planned {
   kind: 'send' | 'acknowledged' | 'replay' | 'invalidated';
   sendActionId: string;
   messageKey: string;
-  channel: 'sms' | 'email';
+  channel: 'sms' | 'email' | 'web_chat';
   subject: string | null;
   body: string;
   pinnedInboundSeq: number;
   contactId: string;
 }
 
-function mergedDraft(a: A.ActionRow, edit: EditedPayload | undefined): { channel: 'sms' | 'email'; subject: string | null; body: string } | null {
+function mergedDraft(a: A.ActionRow, edit: EditedPayload | undefined): { channel: 'sms' | 'email' | 'web_chat'; subject: string | null; body: string } | null {
   const base = (a.kind === 'handback' ? (a.payload.draft as Record<string, unknown> | undefined) : a.payload) ?? {};
-  const channel = edit?.channel ?? (base.channel === 'email' ? 'email' : 'sms');
+  const channel = edit?.channel ?? (base.channel === 'email' ? 'email' : base.channel === 'web_chat' || base.channel === 'inbound_channel' ? 'web_chat' : 'sms');
   const body = (edit?.body ?? (typeof base.body === 'string' ? base.body : '')).trim();
   const subject = (edit?.subject ?? (typeof base.subject === 'string' ? base.subject : '')).trim();
   if (body === '') return null;
@@ -234,7 +235,8 @@ async function queueAndSend(actor: UserActor, actionId: string, plan: Planned, d
     const purpose = classifyHumanPurpose({ lastInboundAt: conv?.lastInboundAt ?? null, dealOrAppointmentContext: await dealOrAppointmentContext(tx, plan.contactId), now });
     const t = await tenantFacts(tx);
     const identity = { brokerageLegalName: t.brokerageLegalName, postalAddress: t.postalAddress };
-    const body = plan.channel === 'sms' ? renderHumanBody(plan.body, { channel: 'sms', purpose, identity, unsubscribe: null }) : plan.body;
+    // a chat reply renders like a text (brokerage name on marketing)
+    const body = plan.channel !== 'email' ? renderHumanBody(plan.body, { channel: 'sms', purpose, identity, unsubscribe: null }) : plan.body;
     const r = await queueOutboundInTx(tx, deps, {
       contactId: plan.contactId,
       channel: plan.channel,

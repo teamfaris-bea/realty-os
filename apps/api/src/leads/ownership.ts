@@ -14,7 +14,10 @@
 //   every other rejection          409/422 with its code (the rejection is already in the log)
 import type { Actor, ContactId, IdGenerator } from '@realty/core/foundation';
 import type { OwnershipCommand, OwnershipErrorCode, OwnershipEvent, OwnershipProjection } from '@realty/core/ownership';
-import { type Database, type Tx, applyOwnershipCommandThen } from '@realty/db';
+import { type Database, type Tx, applyOwnershipCommandInTx, applyOwnershipCommandThen, setOwnershipCommand, withTenantTx } from '@realty/db';
+
+/** module 22: the engine did not apply the command; the hook's writes are rolled back with it */
+class NotApplied extends Error {}
 import type { z } from 'zod';
 import { AppError, type ErrorCode, isErrorCode } from '../errors.js';
 import { projectionOfRow, projectionRow } from './repos/ownership.js';
@@ -34,6 +37,14 @@ export type OwnershipResult =
 export interface RunOptions {
   db?: Database;
   ids?: IdGenerator;
+  /**
+   * Module 22 (F19): work that must commit in the SAME transaction as the command and only if the engine applies it
+   * (not a rejection, not a replay), e.g. closing as do_not_contact records the person-level opt-out. It runs BEFORE
+   * the engine (a close takes the lead out of the closer's sight); when the engine does not apply the command, the
+   * whole transaction is rolled back and the command runs again on its own, so its rejection or replay is recorded
+   * exactly as without the hook.
+   */
+  beforeApply?: (tx: Tx) => Promise<void>;
 }
 
 function summary(events: readonly OwnershipEvent[], contactId: ContactId): OwnershipEventSummary[] {
@@ -66,6 +77,24 @@ export async function runOwnershipCommand(
   opts: RunOptions = {},
 ): Promise<OwnershipResult> {
   const id = (cmd.kind === 'merge' ? cmd.survivorId : contactId) as ContactId;
+  if (opts.beforeApply) {
+    const hook = opts.beforeApply;
+    try {
+      return await withTenantTx(
+        actor,
+        async (tx) => {
+          await hook(tx);
+          const r = await applyOwnershipCommandInTx(tx, actor, contactId, cmd, { commandId, ...(expectedSeq !== undefined ? { expectedSeq } : {}), ...(opts.ids ? { ids: opts.ids } : {}) });
+          if (!r.outcome.ok || r.replayed) throw new NotApplied();
+          await setOwnershipCommand(tx, null);
+          return { ok: true as const, contactId: id, replayed: false, events: summary(r.outcome.events, id), projection: await visibleProjection(tx, id) };
+        },
+        { retries: 3, ...(opts.db ? { db: opts.db } : {}) },
+      );
+    } catch (e) {
+      if (!(e instanceof NotApplied)) throw e;
+    }
+  }
   const { result: r, after: projection } = await applyOwnershipCommandThen(
     actor,
     contactId,

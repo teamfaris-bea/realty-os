@@ -13,16 +13,13 @@
 // (core validateContactPatch refuses them; the contacts_guard and opt-out guard back it up). A stage
 // change is checked by core first so the caller learns STAGE_NEEDS_CONTACT up front, and the DB guard
 // app.contacts_stage_guard refuses it anyway; the definer trigger writes the stage history (R-PAR-15).
-import { type ConsentEventSpec, validateConsentEventSpec } from '@realty/core/compliance';
-import { type Instant, type UserActor, can } from '@realty/core/foundation';
+import { type UserActor, can } from '@realty/core/foundation';
 import { STAGES, type Stage, type StageFacts, isStage, lockedStages, stageChangeAllowed, stageLabel, validateContactPatch, validateStageLabels } from '@realty/core/parity/people';
 import { instantFromDate } from '@realty/core/foundation';
-import { type Tx, recordConsentEvent } from '@realty/db';
+import type { Tx } from '@realty/db';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { audit, redactDiff, redactSnapshot } from '../audit.js';
-import { hint } from '../comms/dispatch.js';
-import { cancelQueuedSmsTo } from '../comms/repos/messages.js';
 import { AppError } from '../errors.js';
 import { factsOf } from '../leads/contacts.js';
 import * as leads from '../leads/repos/contacts.js';
@@ -33,6 +30,7 @@ import { addressView, collaboratorView, relationshipView, removedPointView } fro
 import * as S from './schemas.js';
 import { stageChangeAutomation } from '../stageAutomation/index.js';
 import { ownLatestStageEvent } from '../stageAutomation/repos.js';
+import { recordPersonDoNotContactInTx } from '../channels/personOptOut.js';
 
 export function stageFactsOf(r: repo.EditRow): StageFacts {
   return {
@@ -222,54 +220,12 @@ async function recordDoNotContact(req: FastifyRequest, contactId: string, reason
   return peopleTx(req, async (tx, now, actor) => {
     const row = await repo.editRow(tx, contactId);
     if (!row) throw new AppError('NOT_FOUND');
-    const points = (await repo.allPoints(tx, contactId)).filter((x) => x.removed_at === null).sort((a, b) => (a.hmac < b.hmac ? -1 : 1));
-    let firstEvent: string | null = null;
-    for (const pt of points) {
-      const channels = pt.kind === 'email' ? (['email'] as const) : (['sms', 'voice'] as const);
-      for (const channel of channels) {
-        const id = p.ids.next<'ConsentEventId'>();
-        const spec = revokeSpec(id, pt, channel, now, contactId, actor, reason);
-        const issues = validateConsentEventSpec(spec);
-        if (issues.length > 0) throw new AppError('INTERNAL_ERROR');
-        await recordConsentEvent(tx, spec);
-        firstEvent ??= id;
-      }
-    }
-    if (firstEvent === null) throw new AppError('NO_ADDRESS_TO_REVOKE');
-    await cancelQueuedSmsTo(tx, points.filter((x) => x.kind === 'phone').map((x) => x.address), 'OPTED_OUT');
-    const set = row.do_not_contact_at === null ? await repo.setDoNotContact(tx, contactId, firstEvent) : false;
+    // module 22: the one person-level do-not-contact path (also used by closing a lead as do-not-contact, F19)
+    const out = await recordPersonDoNotContactInTx(tx, p.ids, actor, contactId, reason, now);
+    if (out.firstEventId === null) throw new AppError('NO_ADDRESS_TO_REVOKE');
     await audit(tx, actor, { action: 'consent.recorded', entity: { type: 'contact', id: contactId }, changes: redactSnapshot({ kind: 'revoke', source: 'agent_revoke', scope: 'person' }, { entity: 'consent_event' }), reason: 'PERSON_DO_NOT_CONTACT' });
-    return { doNotContact: true as const, alreadySet: !set, revokedPoints: points.length };
+    return { doNotContact: true as const, alreadySet: !out.set, revokedPoints: out.revokedPoints };
   });
-}
-
-function revokeSpec(id: string, pt: repo.PointRow, channel: 'sms' | 'voice' | 'email', now: Instant, contactId: string, actor: UserActor, reason: string): ConsentEventSpec {
-  return {
-    id,
-    addressKind: pt.kind,
-    addressHmac: pt.hmac,
-    addressHint: hint(pt.address),
-    channel,
-    purpose: 'all',
-    eventType: 'revoke',
-    level: 'none',
-    source: 'agent_revoke',
-    occurredAt: now,
-    contactId,
-    actor: { kind: 'user', userId: actor.userId },
-    disclosureId: null,
-    evidenceObjectId: null,
-    evidenceMessageId: null,
-    evidenceCallId: null,
-    evidenceCallOffsetMs: null,
-    evidence: { entered_by: 'staff', scope: 'person', reason },
-    imported: false,
-    importRecordId: null,
-    originalProvenance: null,
-    revertsEventId: null,
-    expiresAt: null,
-    needsReview: false,
-  };
 }
 
 export { actorOf, idOf };

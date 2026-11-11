@@ -286,6 +286,9 @@ export const AUDIT_ACTIONS = [
   'lead_email.sender_domains_changed', // module 22 lead-email slice: the allowlisted DKIM sender domains of an inbox changed
   'lead_email.review_accepted', // module 22 lead-email slice: a held lead email was accepted as a lead (through intake)
   'lead_email.review_discarded', // module 22 lead-email slice: a held lead email was discarded (its content purged)
+  'webchat.widget_created', // module 22: an Owner/Admin created a website chat widget (its key is shown once)
+  'webchat.widget_key_rotated', // module 22: the widget key was replaced; the old embed stops working at once
+  'webchat.widget_origins_changed', // module 22: the websites a widget may run on changed
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

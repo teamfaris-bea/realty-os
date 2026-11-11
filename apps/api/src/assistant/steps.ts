@@ -146,6 +146,12 @@ export interface BuildInput {
   firstResponse?: boolean;
   /** the card's one-line why (default: which playbook step this is) */
   explanation?: string;
+  /**
+   * Module 22 (flagged edit, R-INBOX-4): an `inbound_channel` step goes out where the lead wrote: 'web_chat' (the
+   * first response in the lead's open website chat, to that chat identity). Absent ⇒ such a step is skipped.
+   */
+  sendChannel?: 'web_chat';
+  toPointId?: string | undefined;
 }
 
 /** Builds, authorizes and queues (or drafts) ONE step. Caller holds the contact lock. */
@@ -161,9 +167,10 @@ export async function buildStep(tx: Tx, deps: AssistantDeps, tenantId: string, b
     await upsertRun(tx, b, runId, 'skipped_ineligible', null);
     return { kind: 'skipped', stepKey: step.stepKey, reason: `${rendered.code}:${rendered.slot}` };
   }
-  // core module 25 added the `inbound_channel` step channel (R-INBOX-4). DM/chat dispatch arrives with
-  // module 22; until then such a step is skipped visibly and never sent on another channel.
-  if (step.channel === 'inbound_channel') {
+  // core module 25 added the `inbound_channel` step channel (R-INBOX-4). Module 22: it goes out in web chat when
+  // the caller resolved where the lead wrote (b.sendChannel); otherwise it is skipped visibly and never sent on
+  // another channel.
+  if (step.channel === 'inbound_channel' && b.sendChannel !== 'web_chat') {
     await upsertRun(tx, b, runId, 'skipped_ineligible', null);
     return { kind: 'skipped', stepKey: step.stepKey, reason: 'STEP_CHANNEL_UNAVAILABLE' };
   }
@@ -240,7 +247,8 @@ export async function buildStep(tx: Tx, deps: AssistantDeps, tenantId: string, b
   await upsertRun(tx, b, runId, 'scheduled', actionId);
   const q = await queueOutboundInTx(tx, deps, {
     contactId: contact.id,
-    channel: step.channel,
+    channel: step.channel === 'inbound_channel' ? 'web_chat' : step.channel,
+    ...(step.channel === 'inbound_channel' && b.toPointId ? { toPointId: b.toPointId } : {}),
     body: text,
     ...(step.channel === 'email' ? { subject: rendered.subject ?? 'A note from your agent' } : {}),
     initiator: 'assistant',

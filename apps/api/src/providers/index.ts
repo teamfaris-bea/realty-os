@@ -35,6 +35,7 @@ import type {
 } from './types.js';
 import { webPushProvider } from './webpush.js';
 import { type FakeIntegrationAdapters, type IntegrationAdapters, createFakeIntegrations, selectIntegrations } from './integrations/index.js';
+import { InProcessWebChat, type WebChatTransport } from '../channels/transport.js';
 
 export * from './types.js';
 export { FakeAi, FAKE_BAD_QUOTE, parseFakeSources } from './fake/ai.js';
@@ -63,6 +64,8 @@ export interface Providers {
   accountMail: AccountMailer;
   /** Phase 2-3 adapters (module 21 api/integrations): Meta, lead feeds, MLS, AVM, calendar, publishing, showings, PDF */
   integrations: IntegrationAdapters;
+  /** module 22: the web-chat transport (in-process; the visitor's poll is the delivery). Absent ⇒ chat sends fail closed. */
+  webChat?: WebChatTransport;
 }
 
 /** The fakes with their concrete types, so tests can inspect outboxes and inject failures. */
@@ -79,6 +82,7 @@ export interface FakeProviders extends Providers {
   push: FakePush;
   accountMail: FakeAccountMailer;
   integrations: FakeIntegrationAdapters;
+  webChat: InProcessWebChat;
 }
 
 export function createFakeProviders(opts: { clock?: Clock } = {}): FakeProviders {
@@ -96,6 +100,7 @@ export function createFakeProviders(opts: { clock?: Clock } = {}): FakeProviders
     push: new FakePush(),
     accountMail: new FakeAccountMailer(),
     integrations: createFakeIntegrations(),
+    webChat: new InProcessWebChat(),
   };
 }
 

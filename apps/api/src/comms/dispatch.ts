@@ -18,7 +18,12 @@
 //                and runs again in a NEW transaction with the guard's code as a deny: recorded as above,
 //                answered as blocked, never sent, never retried, never a 500
 //   provider.send(idempotencyKey = message.id)        (never inside a transaction)
+//        web chat (module 22): the transport's deliverChannelMessage (reserved name: only this file calls it,
+//        R-GATE-15), through the session's widget connection; a closed session or a widget that is not connected is
+//        CHANNEL_NOT_CONNECTED in TX1 (core check 10; R-INBOX-7, E77)
 //   TX2  'sent' + provider ref | 'failed' | timeout ⇒ 'dispatch_unknown' + comms.reconcile (never resent)
+//        email (module 22, R-GMAIL-12): TX2, as the SYSTEM, stores the hash of the Message-ID the provider confirmed
+//        (messages.rfc_message_id_sha256; the messages_rfc_guard trigger refuses it from TX1, which runs as the person)
 //
 // Who runs TX1 (R-TEN-3): the session user for an in-request human send; for a human message the
 // worker sends later, that human (rebuilt from the message row while the membership is active, so RLS
@@ -46,6 +51,8 @@ import * as g from './repos/gate.js';
 import * as msgs from './repos/messages.js';
 import { notifyUser } from './repos/notify.js';
 import { asSystem, senderActor } from './runtime.js';
+import { routeOfAddress } from '../channels/repos/webchat.js';
+import { rfcMessageIdSha256 } from '../channels/rfcMessageId.js';
 import { LEDGER_SYSTEM, SYSTEM_NOTICE, type CommsDeps, type DispatchResult, type OutboundIntent } from './types.js';
 
 export interface DispatchOptions {
@@ -59,7 +66,7 @@ export interface DispatchOptions {
 
 interface SendPlan {
   m: msgs.MessageRow;
-  channel: 'sms' | 'email';
+  channel: 'sms' | 'email' | 'web_chat';
   emailFrom: { address: string; name: string } | null;
   replyTo: string | null;
   headers: Record<string, string> | null;
@@ -151,7 +158,7 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
   }
   if (human && c.opts.retap && conv) await msgs.repin(tx, m.id, conv.inboundSeq);
 
-  const channel: Channel = m.channel === 'email' ? 'email' : 'sms';
+  const channel: Channel = m.channel === 'email' ? 'email' : m.channel === 'web_chat' ? 'web_chat' : 'sms';
   // Purpose of a human free-form message, decided NOW (send-time inputs): it was informational when
   // written because the contact had written in within 30 days (or a deal/appointment was open); days
   // later that may no longer hold. Only ever tightened: informational → marketing (marketing adds the
@@ -166,7 +173,15 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
   }
   const env = c.deps.envelope.inTx(tx, c.tenantId as TenantId);
   const addressHmac = Buffer.from(await env.hmacAddress(c.tenantId as TenantId, m.toAddress)).toString('hex');
-  const point = (await g.contactPoints(tx, m.contactId)).find((p) => p.kind === (channel === 'email' ? 'email' : 'phone') && p.address === m.toAddress) ?? null;
+  const pointKind = channel === 'email' ? 'email' : channel === 'web_chat' ? 'web_chat' : 'phone';
+  const point = (await g.contactPoints(tx, m.contactId)).find((p) => p.kind === pointKind && p.address === m.toAddress) ?? null;
+  // web chat (module 22): the widget this message goes through, and whether its session can take it NOW
+  let chatConnection: OutboundIntent['connection'] = null;
+  if (channel === 'web_chat') {
+    const route = await routeOfAddress(tx, m.contactId, m.toAddress);
+    const live = route !== null && route.connectionId === m.integrationConnectionId && route.sessionOpen && (route.connectionStatus === 'connected' || route.connectionStatus === 'degraded');
+    chatConnection = { status: live ? 'connected' : 'other' };
+  }
   const owner = await contactOwnership(tx, m.contactId);
   const { policy, tenant } = await resolvedPolicy(tx);
 
@@ -182,8 +197,9 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
       const facts = await contactFacts(tx, m.contactId);
       const ok = facts !== null && can(c.actor, 'comms.send', { ...facts, purpose }).ok;
       if (!ok && !extra.includes('SENDER_NOT_AUTHORIZED')) extra.push('SENDER_NOT_AUTHORIZED');
-      // parity module 63 (R-PAR-37): a bulk send is never a touch
-      touch = ok && facts !== null && (facts.own === true || facts.collaborator === true) && m.bulkActionId === null;
+      // parity module 63 (R-PAR-37): a bulk send is never a touch. Web chat: core's touch has no chat `via` yet
+      // (lane gap), so a chat reply is not recorded as a touch rather than mislabelled as a text.
+      touch = ok && facts !== null && (facts.own === true || facts.collaborator === true) && m.bulkActionId === null && channel !== 'web_chat';
     }
   } else if (m.initiator === 'assistant') {
     const a = m.assistantActionId ? await auto.actionFacts(tx, m.assistantActionId) : null;
@@ -208,6 +224,7 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
     category: m.actionCategory as OutboundIntent['category'],
     sender: { phoneNumberId: m.phoneNumberId, emailIdentityId: m.emailIdentityId },
     body: m.body,
+    connection: chatConnection,
   };
   const evaluated = await evaluateGate(tx, intent, now);
   const verdict = verdictOf(evaluated.decision, extra);
@@ -247,7 +264,7 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
     headers = { [EMAIL_REF_HEADER]: signedRef(c.deps.linkSecret, 'email-ref', c.tenantId, m.id) };
     if (purpose === 'marketing') headers = { ...headers, ...listUnsubscribeHeaders(unsubscribeUrl(c.deps.publicBaseUrl, c.deps.linkSecret, c.tenantId, m.id)) };
   }
-  return { kind: 'send', plan: { m: { ...m, status: 'dispatching', dispatchedAt }, channel, emailFrom, replyTo, headers }, decision: { id: null, ...verdict } };
+  return { kind: 'send', plan: { m: { ...m, status: 'dispatching', dispatchedAt }, channel: channel === 'email' ? 'email' : channel === 'web_chat' ? 'web_chat' : 'sms', emailFrom, replyTo, headers }, decision: { id: null, ...verdict } };
 }
 
 async function contactOwnership(tx: Tx, contactId: string): Promise<{ ownerUserId: string | null; periodSeq: number | null }> {
@@ -278,7 +295,7 @@ async function playbookReasons(
   const raw = pb.steps.find((s) => (s as { stepKey?: string }).stepKey === run.stepKey);
   const parsed = raw === undefined ? null : PlaybookStepSchema.safeParse(raw);
   if (!parsed || !parsed.success) return [...out, 'AUTONOMY_DOWNGRADED'];
-  const step = stepForChannel(parsed.data, channel === 'email' ? 'email' : 'sms') ?? parsed.data;
+  const step = stepForChannel(parsed.data, channel === 'email' ? 'email' : channel === 'web_chat' ? 'web_chat' : 'sms') ?? parsed.data;
   if (ALWAYS_HUMAN_CATEGORIES.has(m.actionCategory as never)) return [...out, 'AUTONOMY_DOWNGRADED'];
   const first = conversationId === null ? true : !(await msgs.hasPriorOutbound(tx, conversationId, m.id));
   const verdict = authorizeAutonomousAction({
@@ -307,7 +324,7 @@ async function afterSystemBlock(tx: Tx, c: Tx1Context, m: msgs.MessageRow, owner
   }
 }
 
-type SendOutcome = { ok: true; provider: 'telephony' | 'email'; ref: string } | { ok: false; kind: ProviderError['kind']; code: string | null };
+type SendOutcome = { ok: true; provider: 'telephony' | 'email' | 'web_chat'; ref: string; rfcMessageId?: string } | { ok: false; kind: ProviderError['kind']; code: string | null };
 
 async function providerSend(plan: SendPlan, deps: CommsDeps, tenantId: string): Promise<SendOutcome> {
   const m = plan.m;
@@ -325,6 +342,12 @@ async function providerSend(plan: SendPlan, deps: CommsDeps, tenantId: string): 
       });
       return { ok: true, provider: 'telephony', ref: r.providerRef };
     }
+    if (plan.channel === 'web_chat') {
+      const transport = deps.providers.webChat;
+      if (!transport || !m.integrationConnectionId) return { ok: false, kind: 'not_configured', code: 'WEBCHAT_NOT_CONFIGURED' };
+      const r = await transport.deliverChannelMessage({ connectionId: m.integrationConnectionId, toAddress: m.toAddress, messageId: m.id, body: m.body });
+      return { ok: true, provider: 'web_chat', ref: r.providerRef };
+    }
     if (!plan.emailFrom) return { ok: false, kind: 'not_configured', code: 'EMAIL_IDENTITY_MISSING' };
     const r = await deps.providers.email.sendEmail({
       from: plan.emailFrom,
@@ -335,7 +358,7 @@ async function providerSend(plan: SendPlan, deps: CommsDeps, tenantId: string): 
       ...(plan.headers ? { headers: plan.headers } : {}),
       idempotencyKey: m.id,
     });
-    return { ok: true, provider: 'email', ref: r.providerRef };
+    return { ok: true, provider: 'email', ref: r.providerRef, ...(r.rfcMessageId ? { rfcMessageId: r.rfcMessageId } : {}) };
   } catch (e) {
     if (e instanceof ProviderError) return { ok: false, kind: e.kind, code: e.providerCode ?? null };
     return { ok: false, kind: 'timeout', code: 'UNEXPECTED_ERROR' }; // unknown whether it left: reconcile, never resend
@@ -352,7 +375,8 @@ async function sendAndRecord(plan: SendPlan, decision: StoredDecision, deps: Com
   return asSystem(deps, tenantId, 'provider', async (tx, now) => {
     await lockContact(tx, m.contactId as ContactId);
     if (out.ok) {
-      await msgs.markSent(tx, m.id, out.provider, out.ref);
+      // R-GMAIL-12: only the Message-ID the provider confirmed is hashed (TX2 runs as the system)
+      await msgs.markSent(tx, m.id, out.provider, out.ref, out.provider === 'email' ? rfcMessageIdSha256(out.rfcMessageId ?? null) : null);
       if (m.playbookStepRunId) await auto.updateStepRun(tx, m.playbookStepRunId, { status: 'sent', decisionId: null, messageId: m.id });
       if (m.assistantActionId) await auto.markActionExecuted(tx, m.assistantActionId);
       return { kind: 'sent', messageId: m.id, decision: view, providerRef: out.ref } satisfies DispatchResult;
@@ -429,6 +453,7 @@ export async function reconcileOutbound(messageId: string, deps: CommsDeps, tena
   let found: { providerRef: string; status: string } | null = null;
   try {
     if (m.channel === 'email') found = await deps.providers.email.lookupMessage(m.id);
+    else if (m.channel === 'web_chat') found = null; // in-process transport: nothing to look up; never resent
     else {
       const account = await asSystem(deps, tenantId, 'worker', (tx) => telephonyAccount(tx, deps.envelope, tenantId));
       // vendors without submit idempotency keys (Twilio) find the submit by sender, recipient, body and time

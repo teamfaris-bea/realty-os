@@ -10,6 +10,9 @@
 //     sign-off "— the {Team} assistant", brokerage name and "Reply STOP to opt out" on the first text.
 //   - the message's comms.dispatch job (realtime) gates it at SEND time (opt-out, pause, sender) and it
 //     goes at once.
+//   - module 22 (R-INBOX-4): an approved step with channel `inbound_channel` replies where the lead wrote: in the
+//     lead's open website chat (through its widget) when there is one; otherwise core decides (email fallback).
+//     Nothing automated ever goes to a phone or email the visitor only typed into chat (E154): those are not points.
 // When nothing may be sent, nothing is sent, and the lead's open feed card says why. The first response
 // never counts as a touch (R-AST-15): it is an assistant message, and only gate-allowed HUMAN sends are
 // touches (dispatch records them).
@@ -20,7 +23,8 @@ import { plusMs } from '@realty/core/foundation';
 import { type Tx, lockContact, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { resolvedPolicy } from '../comms/gateInput.js';
-import { consentRows, contactPoints, optOutFanoutPhoneHmacs, suppressionRows } from '../comms/repos/gate.js';
+import { chatFanoutHmacs, consentRows, contactPoints, optOutFanoutPhoneHmacs, suppressionRows } from '../comms/repos/gate.js';
+import { chatRoutes } from '../channels/repos/webchat.js';
 import { enqueueStep } from './enrollments.js';
 import { contactCore } from './repos/context.js';
 import * as P from './repos/playbooks.js';
@@ -72,6 +76,18 @@ export async function sendFirstResponseInTx(tx: Tx, deps: AssistantDeps, tenantI
     const sup = await suppressionRows(tx, email.hmac);
     emailBlocked = optedOut(rows, 'email', purpose, email.hmac) || sup.some((s) => s.liftedAt === null && (s.channel === 'email' || s.channel === 'all'));
   }
+  // R-INBOX-4: where the lead wrote (web chat only, D2): the open session's identity through a live widget
+  const chat = (await chatRoutes(tx, contactId))[0] ?? null;
+  let inbound: { channel: 'web_chat'; reachable: boolean; revokedOrSuppressed: boolean } | undefined;
+  if (chat) {
+    const rows = await consentRows(tx, 'web_chat', await chatFanoutHmacs(tx, contactId));
+    const sup = await suppressionRows(tx, chat.hmac);
+    inbound = {
+      channel: 'web_chat',
+      reachable: chat.sessionOpen && (chat.connectionStatus === 'connected' || chat.connectionStatus === 'degraded'),
+      revokedOrSuppressed: optedOut(rows, 'web_chat', purpose, chat.hmac) || sup.some((s) => s.liftedAt === null && (s.channel === 'web_chat' || s.channel === 'all')),
+    };
+  }
   const plan = planFirstResponse({
     now,
     version: version ? { status: version.status, contentSha256: version.contentSha256 } : null,
@@ -80,6 +96,7 @@ export async function sendFirstResponseInTx(tx: Tx, deps: AssistantDeps, tenantI
     tenantAutonomous: policy.autonomous,
     sms: { reachable: phone !== null && phone.lineType !== 'landline', revokedOrSuppressed: smsBlocked },
     email: { reachable: email !== null, revokedOrSuppressed: emailBlocked },
+    ...(inbound ? { inbound } : {}),
     lastFirstResponseAt: await lastFirstResponseAt(tx, contactId),
   });
   if (!plan.send) {
@@ -98,6 +115,7 @@ export async function sendFirstResponseInTx(tx: Tx, deps: AssistantDeps, tenantI
   await P.insertEnrollment(tx, { id: enrollmentId, playbookId: pb!.id, versionId: version!.id, contactId, enrolledBy: 'new_lead', userId: null, dueAt: null, anchor: null });
   const e = (await P.enrollmentById(tx, enrollmentId))!;
   const channelStep = stepForChannel(step!, plan.channel)!;
+  const sendChannel = plan.channel === 'web_chat' ? ({ sendChannel: 'web_chat', toPointId: chat?.pointId } as const) : {};
   const out = await buildStep(tx, deps, tenantId, {
     enrollment: e,
     playbook: pb!,
@@ -109,6 +127,7 @@ export async function sendFirstResponseInTx(tx: Tx, deps: AssistantDeps, tenantI
     now,
     firstResponse: true,
     explanation: plan.explanation,
+    ...sendChannel,
   });
   // look again after the send so the one-step enrollment completes
   const back = plusMs(now, CHECK_BACK_MS);

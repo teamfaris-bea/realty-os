@@ -311,7 +311,7 @@ export function vendorHeaders(o: Pick<SmtpOptions, 'vendor' | 'postmarkMessageSt
 class SmtpTransport {
   constructor(private readonly o: SmtpOptions) {}
 
-  async deliver(r: EmailRequest): Promise<{ providerRef: string; status: ProviderMessageStatus }> {
+  async deliver(r: EmailRequest): Promise<{ providerRef: string; status: ProviderMessageStatus; rfcMessageId?: string }> {
     const o = this.o;
     // Everything that can be rejected locally is rejected before connecting.
     const from = checkAddress(r.from.address);
@@ -362,7 +362,9 @@ class SmtpTransport {
       const done = want(await conn.read(), (c) => c === 250);
       const providerRef = queueIdFromReply(done.lines.join(' ')) ?? messageId.slice(1, -1);
       await conn.quit();
-      return { providerRef, status: 'queued' };
+      // module 22 (R-GMAIL-12): the Message-ID we generated, reported only where the relay keeps it. A plain SMTP
+      // server does; SES, Mailgun, SendGrid and Postmark may assign their own (VERIFY per vendor), so none is reported.
+      return { providerRef, status: 'queued', ...((o.vendor ?? 'generic') === 'generic' ? { rfcMessageId: messageId } : {}) };
     } finally {
       conn.close();
     }
@@ -415,7 +417,7 @@ export class SmtpEmail implements EmailProvider {
     this.transport = new SmtpTransport(o);
   }
 
-  async sendEmail(r: EmailRequest): Promise<{ providerRef: string; status: ProviderMessageStatus }> {
+  async sendEmail(r: EmailRequest): Promise<{ providerRef: string; status: ProviderMessageStatus; rfcMessageId?: string }> {
     return this.transport.deliver(r);
   }
 

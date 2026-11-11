@@ -257,6 +257,9 @@ export const ERROR_STATUS = {
   LEAD_EMAIL_NO_CONTACT_POINT: 422, // module 22 lead-email: accepting needs at least one valid phone or email (R-INBOX-9)
   LEAD_EMAIL_DOMAIN_INVALID: 422, // module 22 lead-email: an allowlisted sender domain must be a registrable domain (no wildcard, no public suffix)
   LEAD_EMAIL_NOT_CONFIGURED: 409, // module 22 lead-email: this deployment has no inbound lead-email domain (LEAD_EMAIL_INBOUND_DOMAIN)
+  CHANNEL_NOT_CONNECTED: 409, // module 22: the web-chat widget is not connected (disconnected, revoked or never switched on; R-INBOX-7)
+  WEBCHAT_DISCLOSURE_STALE: 409, // module 22: the chat must start after the visitor saw the widget's current disclosure (R-INBOX-5)
+  WEBCHAT_SESSION_CLOSED: 410, // module 22: the chat session ended (idle 30 min or closed, E77); start a new chat
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 
