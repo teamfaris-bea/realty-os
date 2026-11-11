@@ -112,6 +112,15 @@ const OVERRIDES: Record<string, Record<string, string>> = {
   portal_items: { published_by_kind: "'system'", kind: "'milestone'" },
   portal_accounts: { status: "'invited'" },
   user_calendar_links: { status: "'pending_review'" },
+  // FUB parity schema
+  bulk_actions: { kind: "'tag'", source: "'selection'", idempotency_key: "'fixture-' || gen_random_uuid()" },
+  contact_tags: { added_by_kind: "'migrated'" },
+  tags: { created_by_kind: "'import'" },
+  contact_field_values: { value_text: "'fixture'", updated_by_kind: "'import'", import_batch_id: 'gen_random_uuid()' },
+  contact_stage_events: { actor_kind: "'system'" },
+  contact_relationships: { kind: "'spouse_partner'" },
+  message_templates: { scope: "'team'", channel: "'sms'" },
+  smart_lists: { scope: "'team'" },
 };
 
 function firstInList(checks: string[], col: string): string | null {
