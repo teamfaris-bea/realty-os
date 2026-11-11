@@ -131,9 +131,12 @@ $DC run --rm --no-deps --env-from-file .env.owner -v "$DEMO:/app/.demo" api node
 The seed writes through the owner role where no application path exists yet, so this one-off container gets
 `.env.owner` explicitly (`--env-from-file`, Compose 2.27 or later); the long-running api and worker never do.
 
-11–14 s. It creates 40 contacts, 7 users and the rest of the README's tour. Its passwords are public: never seed
-an environment that real people's data will ever reach. To start over: `$DC down -v` (this deletes the database
-and the storage volume), then §4 again.
+11–14 s. It creates 40 contacts, 7 users and the rest of the README's tour, except its lead-email example: the
+env file sets no `LEAD_EMAIL_INBOUND_DOMAIN`, so the seed skips that step (it logs one line saying so). The
+tour's Needs review is then empty, and a lead source's Email intake says lead email isn't set up on this server
+instead of offering *Turn on lead email*. Its passwords are public: never seed an environment that real
+people's data will ever reach. To start over: `$DC down -v` (this deletes the database and the storage volume),
+then §4 again.
 
 **Synthetic check** (OPERATIONS §6), from the image and inside the compose network. With the demo data, the
 agent Avery and her contact Noah Bennett can stand in for the dedicated check user:

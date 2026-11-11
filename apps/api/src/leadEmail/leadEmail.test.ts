@@ -41,7 +41,8 @@ describe('R-LEM-1 the inbound address of a lead source', () => {
     expect(again.body.inbox.address).toBe(address);
     expect(again.body.inbox.allowedSenderDomains).toEqual(['zillow.com', 'realtor.com', 'portal.test']);
     // a suggestion's label is the portal's name: the page marks it "suggested" and says it is unconfirmed until a
-    // test lead arrives; the VERIFY marker is for engineers and counsel (trust.ts), never in what an Owner reads
+    // test lead from that portal becomes a lead automatically; the VERIFY marker is for engineers and counsel
+    // (trust.ts), never in what an Owner reads
     expect(again.body.inbox.suggestedSenderDomains).toEqual([
       { domain: 'zillow.com', label: 'Zillow' },
       { domain: 'realtor.com', label: 'Realtor.com' },

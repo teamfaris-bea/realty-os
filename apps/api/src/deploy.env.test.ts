@@ -70,6 +70,29 @@ describe('deploy/env.staging.example', () => {
       expect(() => loadConfig(rest), k).toThrow(ConfigError);
     }
   });
+
+  // Demo polish review F3: with no inbound domain the demo seed skips its lead-email step (seed/demo.ts), so a
+  // staging demo has no held email in Needs review. The docs a staging reader follows must say so; if staging
+  // ever gets an inbound domain, this fails and the caveats can go.
+  it('sets no LEAD_EMAIL_INBOUND_DOMAIN, so the demo seed has no Needs review example there, and STAGING §5 and the README tour step that opens Needs review say so', () => {
+    expect(vars.get('LEAD_EMAIL_INBOUND_DOMAIN') ?? '').toBe('');
+    expect(loadConfig(filled(vars)).leadEmail.inboundDomain).toBeNull();
+    const part = (rel: string, from: string, to: string) => {
+      const text = readFileSync(resolve(repo, rel), 'utf8');
+      const start = text.indexOf(from);
+      expect(start, `${rel}: ${from}`).toBeGreaterThanOrEqual(0);
+      const end = text.indexOf(to, start);
+      return text.slice(start, end < 0 ? undefined : end);
+    };
+    // STAGING §5 says what the seed creates there ("the rest of the README's tour"); a paragraph wraps anywhere
+    const s5 = part('docs/STAGING.md', '## 5.', '## 6.').replace(/\s+/g, ' ');
+    expect(s5).toContain('LEAD_EMAIL_INBOUND_DOMAIN');
+    expect(s5).toContain('Needs review');
+    // each tour step is one line
+    const steps = part('README.md', '### A five-minute tour', '\n## ').split('\n').filter((l) => l.includes('Needs review'));
+    expect(steps).toHaveLength(1);
+    expect(steps[0]).toContain('LEAD_EMAIL_INBOUND_DOMAIN');
+  });
 });
 
 const fillStaging = (...args: string[]) => {

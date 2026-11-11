@@ -110,7 +110,7 @@ exceptions are marked in `apps/api/src/seed/demo.ts`:
 - An **approved team nurture playbook**, "Sphere check-ins" (two emails), with 4 enrollments.
 - A recorded call with Sophia Nguyen 5 days ago. The real call pipeline turned it into a summary, a promise that is now **overdue**, and a **saved buyer search pending Avery's approval**. Each criterion is quoted at its offset in the call.
 - **Tags** on 11 people (Pre-approved, First-time buyer, Investor, Past client, Relocating), each typed on by the agent who owns the person, and four **custom fields** the Owner defined: Budget (a number), Timeline (choices), Pre-approval expires (a date) and Birthday (a yearly date: the person's agent gets a reminder task the week before). Several people have values; Sophia Nguyen has all four.
-- **Lead email**: a "Zillow" lead source with email intake on (allowed sender `zillow.com`), and one email waiting in **Needs review**. It claims to come from `leads@zillow.com` but was signed by another domain, so the trust rule held it and no lead exists yet. The "Website inquiry form" source's email intake stays off, so you can try *Turn on lead email*. (Only when the deployment has an inbound domain; dev has one by default.)
+- **Lead email**: a "Zillow" lead source with email intake on (allowed sender `zillow.com`), and one email waiting in **Needs review**. It claims to come from `leads@zillow.com` but was signed by another domain, so the trust rule held it and no lead exists yet. The "Website inquiry form" source's email intake stays off, so you can try *Turn on lead email*. (Only when the deployment has an inbound domain, `LEAD_EMAIL_INBOUND_DOMAIN`: dev has one by default; the staging demo has none, so the seed skips this there.)
 - The exception queue then holds every type: untouched lead, overdue promise, undelivered text and missing outcome.
 
 Offers and SLAs are real timers. If you open the demo long after seeding, the worker will have moved
@@ -120,7 +120,7 @@ starts over.
 ### A five-minute tour
 
 1. **Avery** (phone-sized window works best): see the Home feed's "Due now" band with live countdowns. **Accept** an offer. Use **Search** to find Noah and send him a text. Open **Owen Price** and try to text him: the send is blocked inline with "Opted out of texts", and the thread marks the attempt "Not sent". In **Approvals**, send Jane's or Lena's draft. Look at Sophia's saved-search proposal and its call quotes.
-2. **Taylor** (Team Lead): open **Needs attention**. **Reassign** an untouched lead (2 taps), then **Verify** an item. In **Needs review**, read why Elena Marsh's Zillow email is waiting, then **Accept** it to make the lead or **Discard** it.
+2. **Taylor** (Team Lead): open **Needs attention**. **Reassign** an untouched lead (2 taps), then **Verify** an item. In **Needs review**, read why Elena Marsh's Zillow email is waiting, then **Accept** it to make the lead or **Discard** it (dev only: a deployment without `LEAD_EMAIL_INBOUND_DOMAIN`, such as the staging demo, has no lead email, so its Needs review is empty).
 3. **Olivia** (Owner, MFA code from `pnpm demo:totp`): **Imports**, choose a CSV file, then *Count what's there*, *Take snapshot* and *Run dry run* on Contacts. Read the per-category report and the per-record review list. Nothing is written until each category is approved.
 
 ## What is real and what is faked

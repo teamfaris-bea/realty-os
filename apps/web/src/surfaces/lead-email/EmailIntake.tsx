@@ -3,8 +3,10 @@
 // - Off: "Turn on lead email" with the sender domains pre-filled from the server's suggestions (each a
 //   removable chip). The suggestions are guesses (VERIFY with each portal which domain really signs its
 //   mail): a suggested chip says "suggested" after the portal's name, and one plain sentence under the
-//   chips says they are unconfirmed until a test lead arrives. The VERIFY marker itself is for engineers
-//   and counsel and never shows.
+//   chips says they are unconfirmed until a test lead from each portal becomes a lead automatically (the
+//   trust sentence's own words: a test lead that arrives but waits in Needs review, signed by the portal's
+//   email vendor say, confirms nothing). The VERIFY marker itself is for engineers and counsel and never
+//   shows.
 // - On: the inbound address (read-only, with Copy and an announced "Copied"), the allowed sender
 //   domains (add / remove, Save), and "Get a new address", which asks first because the old address
 //   stops working at once.
@@ -27,7 +29,7 @@ export const MAX_DOMAINS = 10;
 export const TRUST_SENTENCE = 'Only emails DKIM-signed by an allowed domain become leads automatically; everything else waits in Needs review.';
 export const ROTATE_WARNING = 'The old address stops working at once: emails sent to it from now on are not received. Give the new address to every portal that uses the old one.';
 /** Under the sender-domain chips while any of them is one of the server's suggestions. */
-export const SUGGESTED_UNCONFIRMED = 'Suggested domains are unconfirmed until a test lead from each portal arrives.';
+export const SUGGESTED_UNCONFIRMED = 'Suggested domains are unconfirmed until a test lead from each portal becomes a lead automatically.';
 
 /** "Zillow.com." / "@zillow.com" → "zillow.com"; null when it is not even shaped like a domain. */
 export function cleanDomain(raw: string): string | null {

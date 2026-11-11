@@ -1,8 +1,9 @@
 // Email intake of a lead source on Lead routing (Owner/Admin): off → "Turn on lead email" with the
 // suggested sender domains as removable chips (each marked "suggested", with one plain sentence that they
-// are unconfirmed until a test lead arrives; the internal VERIFY marker never shows) and re-auth on a stale
-// session; on → the address read-only with Copy ("Copied" announced), sender domains add/remove/Save, and
-// "Get a new address" behind a confirm that says the old address stops working at once. Codes never show.
+// are unconfirmed until a test lead from each portal becomes a lead automatically; the internal VERIFY marker
+// never shows) and re-auth on a stale session; on → the address read-only with Copy ("Copied" announced),
+// sender domains add/remove/Save, and "Get a new address" behind a confirm that says the old address stops
+// working at once. Codes never show.
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -30,7 +31,9 @@ type Box = Awaited<ReturnType<typeof intake>>;
 
 /** What each sender-domain chip says (its text, without the Remove control). */
 const chips = (box: Box) => within(box.getByRole('list', { name: 'Allowed sender domains' })).queryAllByRole('listitem').map((li) => li.querySelector('span')?.textContent ?? '');
-const UNCONFIRMED = 'Suggested domains are unconfirmed until a test lead from each portal arrives.';
+// What confirms a suggestion is the trust sentence's own condition: a test lead that arrives but waits in Needs
+// review (signed by the portal's email vendor, say) confirms nothing, so "arrives" would mislead.
+const UNCONFIRMED = 'Suggested domains are unconfirmed until a test lead from each portal becomes a lead automatically.';
 
 afterEach(() => {
   vi.restoreAllMocks();
