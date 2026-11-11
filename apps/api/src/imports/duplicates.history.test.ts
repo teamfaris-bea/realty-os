@@ -9,6 +9,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Category } from '@realty/core/import';
 import type { FubDataset } from './fub.js';
+import { command } from '../leads/testing.js';
 import { type ImportWorld, type ImportsHarness, type StageView, approve, batchOf, call, commitStage, dryRunStage, fullStage, importWorld, importsHarness, records, stageOf, startFub, verify } from './testing.js';
 
 let ih: ImportsHarness;
@@ -210,5 +211,60 @@ describe('B6 R-IMPORT-4: history of a person whose contacts record was a skipped
     }
     expect(await footprint()).toEqual(before);
     expect([await contactOfRef('502'), await contactOfRef('503'), await contactOfRef('701')]).toEqual([null, null, null]);
+  });
+});
+
+// Review of B6, R1 (R-IMPORT-10): the undo of history that went on a pre-existing contact through a skipped duplicate.
+// The revert's "touched since import" baseline came only from this batch's contacts-stage rows for the contact; a skip
+// writes none, so the baseline fell back to the start of the contact's ledger and every human event from BEFORE the
+// import (an assignment) counted as a touch: the rows were left for a human decision (TOUCHED) and never removed.
+describe('B6 review R1 R-IMPORT-10: undoing history put on a pre-existing contact through a skipped duplicate', () => {
+  const R1_PHONE = '(415) 820-1601';
+  const counts = async (contactId: string) =>
+    (
+      await q<{ notes: number; messages: number; calls: number }>(
+        `SELECT (SELECT count(*)::int FROM notes WHERE contact_id = $1 AND imported) AS notes,
+                (SELECT count(*)::int FROM messages WHERE contact_id = $1 AND imported) AS messages,
+                (SELECT count(*)::int FROM calls WHERE contact_id = $1 AND imported) AS calls`,
+        [contactId],
+      )
+    )[0];
+
+  it('B6 R-IMPORT-10: an exact-match skip only (no sibling record attaches) on a contact a person assigned before the import: undoing the batch removes every history row it put there (none left as TOUCHED), and the contact stays as it was', async () => {
+    ih.fub.add('b6r1-earlier-key-0001', { users: [], people: [{ id: 1601, firstName: 'Ray', lastName: 'Assigned', phones: [valid(R1_PHONE)] }], notes: [], textMessages: [], emails: [], calls: [], recordings: {} });
+    await contactsCommitted('b6r1-earlier-key-0001');
+    const c = (await contactOfRef('1601')) as string;
+    // a person assigns the contact before the later import: a ledger event that is not the import's
+    const re = await command(w.owner, c, 'reassign', { toUserId: w.agents[0]!.userId });
+    expect(re.status, JSON.stringify(re.body)).toBe(200);
+    const ledgerBefore = await q('SELECT seq, type, actor_kind FROM lead_ownership_events WHERE contact_id = $1 ORDER BY seq', [c]);
+    expect(ledgerBefore.map((e) => (e as { actor_kind: string }).actor_kind)).toEqual(['import', 'user']);
+
+    ih.fub.add('b6r1-later-key-0001', {
+      users: [],
+      people: [{ id: 1701, firstName: 'Ray', lastName: 'Assigned', phones: [valid(R1_PHONE)] }],
+      notes: [{ id: 19701, personId: 1701, body: 'Note through the skipped duplicate', created: '2025-05-01T16:00:00Z' }],
+      textMessages: [{ id: 18701, personId: 1701, created: '2025-05-02T18:00:00Z', isIncoming: true, message: 'Still looking in Elm Park', status: 'Received' }],
+      emails: [],
+      calls: [{ id: 17701, personId: 1701, created: '2025-05-03T15:00:00Z', isIncoming: false, duration: 60, outcome: 'Interested' }],
+      recordings: {},
+    });
+    const { batchId, contacts } = await contactsCommitted('b6r1-later-key-0001');
+    expect(contacts.counts).toMatchObject({ source: 1, imported: 0, duplicate: 1 });
+    for (const cat of ['notes', 'messages', 'call_recordings'] as const) {
+      const r = await history(batchId, cat);
+      expect({ cat, match: r.recs.map((x) => x.matchContactId), failed: r.failed, committed: r.committed.counts, verified: r.verified }).toMatchObject({ cat, match: [c], failed: [], committed: { imported: 1 }, verified: 200 });
+    }
+    expect(await counts(c)).toEqual({ notes: 1, messages: 1, calls: 1 });
+
+    expect((await call(w.admin, 'POST', `/imports/${batchId}/revert`, {})).status).toBe(202);
+    await ih.drain();
+    const b = await batchOf(w.admin, batchId);
+    expect(b.status).toBe('reverted');
+    for (const cat of ['notes', 'messages', 'call_recordings'] as const) expect({ cat, revert: stageOf(b, cat).revert }).toMatchObject({ cat, revert: { removed: 1, needsDecision: 0 } });
+    expect(await counts(c)).toEqual({ notes: 0, messages: 0, calls: 0 });
+    // the contact an earlier batch created stays, with its owner and its ledger
+    expect(await q('SELECT deleted_at, owner_user_id FROM contacts WHERE id = $1', [c])).toEqual([{ deleted_at: null, owner_user_id: w.agents[0]!.userId }]);
+    expect(await q('SELECT seq, type, actor_kind FROM lead_ownership_events WHERE contact_id = $1 ORDER BY seq', [c])).toEqual(ledgerBefore);
   });
 });

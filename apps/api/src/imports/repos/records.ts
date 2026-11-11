@@ -30,7 +30,11 @@ export interface CreatedRow {
   contactId?: string;
   /** contacts: fingerprint of the editable fields the import left (a later edit changes it: "touched") */
   fp?: string;
-  /** contacts: the ownership ledger head when the import wrote it (later non-import events: "touched") */
+  /**
+   * contacts, and history rows (notes, messages, calls, recordings): the contact's ownership ledger head when the
+   * import wrote it (later non-import events: "touched"). A history row's is the baseline only for a contact this
+   * batch's contacts stage did not write (B6 review R1).
+   */
   seq?: number;
   /** contacts: create | attach | update */
   action?: 'create' | 'attach' | 'update';

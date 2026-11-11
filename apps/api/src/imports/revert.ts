@@ -137,18 +137,32 @@ function importedRowsOf(rec: rrepo.RecordRow, consent: Map<string, rv.ImportedCo
 const DELETABLE = ['notes', 'messages', 'calls', 'contact_points', 'contact_addresses'] as const;
 
 /**
- * The import's baseline for every contact these records touch: from the contacts stage's own
- * created_rows (what the import left), or, for history attached to a contact, that contact's baseline.
+ * The import's baseline for every contact these records touch: from the contacts stage's own created_rows (what
+ * the import left), or, for a contact this batch's contacts stage did not write (history a skipped duplicate put on
+ * a pre-existing contact, B6; a re-run's ALREADY_IMPORTED person), the earliest ledger head these history rows
+ * recorded when the import wrote them (B6 review R1: a human event from before the import is not a touch). Rows
+ * written before history rows recorded one fall back to the start of the ledger, as before.
  */
 async function contactBaselines(tx: Tx, batchId: string, recs: readonly rrepo.RecordRow[]): Promise<Map<string, rv.ContactBaseline>> {
   const out = new Map<string, rv.ContactBaseline>();
   const ids = new Set<string>();
-  for (const r of recs) for (const c of r.created_rows) ids.add(c.table === 'contacts' ? c.id : (c.contactId ?? ''));
-  ids.delete('');
+  // contact id -> the earliest ledger head recorded by a history row (null: a row recorded none)
+  const historySeq = new Map<string, number | null>();
+  for (const r of recs) {
+    for (const c of r.created_rows) {
+      const id = c.table === 'contacts' ? c.id : (c.contactId ?? '');
+      if (id === '') continue;
+      ids.add(id);
+      if (c.table === 'contacts') continue;
+      const was = historySeq.get(id);
+      const seq = c.seq ?? null;
+      historySeq.set(id, was === undefined ? seq : was === null || seq === null ? null : Math.min(was, seq));
+    }
+  }
   for (const r of await rrepo.contactsStageRecordsFor(tx, batchId, [...ids])) {
     for (const c of r.created_rows) if (c.table === 'contacts' && ids.has(c.id) && !out.has(c.id)) out.set(c.id, { fp: c.fp ?? null, seq: c.seq ?? 1 });
   }
-  for (const id of ids) if (!out.has(id)) out.set(id, { fp: null, seq: 1 });
+  for (const id of ids) if (!out.has(id)) out.set(id, { fp: null, seq: historySeq.get(id) ?? 1 });
   return out;
 }
 

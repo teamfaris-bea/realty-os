@@ -185,12 +185,17 @@ async function liveId(tx: Tx, id: string): Promise<{ id: string; rowVersion: num
   return null;
 }
 
-async function resolveRef(c: Ctx, ref: ContactRef): Promise<string> {
+/** The live contact a record's parent ref resolves to now, with its ownership ledger head (the revert's baseline). */
+async function resolveLive(c: Ctx, ref: ContactRef): Promise<{ id: string; seq: number }> {
   const id = 'contactId' in ref ? ref.contactId : await w.externalRef(c.tx, c.system, 'contact', ref.pendingPersonRef);
   if (id === null) throw new RecordError('PARENT_NOT_FOUND');
   const live = await liveId(c.tx, id);
   if (!live) throw new RecordError('PARENT_NOT_FOUND');
-  return live.id;
+  return { id: live.id, seq: live.seq };
+}
+
+async function resolveRef(c: Ctx, ref: ContactRef): Promise<string> {
+  return (await resolveLive(c, ref)).id;
 }
 
 async function addPoints(c: Ctx, contactId: string, phones: NormalizedContact['phones'], emails: NormalizedContact['emails']): Promise<rrepo.CreatedRow[]> {
@@ -424,18 +429,22 @@ async function applyOwnership(c: Ctx, rec: rrepo.RecordRow, n: NormalizedOwnersh
 
 const member = (c: Ctx, id: string | null) => (id !== null && c.members.has(id) ? id : null);
 
+// History rows carry the contact's ownership ledger head when the import wrote them (`seq`): the revert's "touched
+// since import" baseline for a contact this batch's contacts stage did not write (a pre-existing contact a skipped
+// duplicate's history went on, B6; a re-run's ALREADY_IMPORTED person), so a human event from before the import is
+// never taken for a touch (review of B6, R1).
 async function applyNote(c: Ctx, rec: rrepo.RecordRow, n: NormalizedNote, plan: Extract<PlanAction, { kind: 'insert_history' }>): Promise<Applied> {
-  const contactId = await resolveRef(c, plan.contact);
+  const { id: contactId, seq } = await resolveLive(c, plan.contact);
   const id = c.deps.ids.next<'NoteId'>();
   await w.insertNote(c.tx, { id, contactId, authorUserId: member(c, n.authorUserId), body: n.body, occurredAt: toIso(n.occurredAt), recordId: rec.id });
   await w.insertExternalRef(c.tx, { system: c.system, entityType: 'note', externalId: n.externalId, entityId: id, batchId: c.batch.id });
-  return { target: { table: 'notes', id }, created: [{ table: 'notes', id, contactId }] };
+  return { target: { table: 'notes', id }, created: [{ table: 'notes', id, contactId, seq }] };
 }
 
 const OUR_SIDE = 'imported';
 
 async function applyMessage(c: Ctx, rec: rrepo.RecordRow, n: NormalizedMessage, plan: Extract<PlanAction, { kind: 'insert_history' }>): Promise<Applied> {
-  const contactId = await resolveRef(c, plan.contact);
+  const { id: contactId, seq } = await resolveLive(c, plan.contact);
   const conv = await w.ensureConversation(c.tx, c.deps.ids.next<'ConversationId'>(), contactId);
   const client = (await w.primaryAddress(c.tx, contactId, n.channel === 'email' ? 'email' : 'phone')) ?? 'unknown';
   const id = c.deps.ids.next<'MessageId'>();
@@ -455,11 +464,11 @@ async function applyMessage(c: Ctx, rec: rrepo.RecordRow, n: NormalizedMessage, 
     recordId: rec.id,
   });
   await w.insertExternalRef(c.tx, { system: c.system, entityType: 'message', externalId: n.externalId, entityId: id, batchId: c.batch.id });
-  return { target: { table: 'messages', id }, created: [{ table: 'messages', id, contactId }] };
+  return { target: { table: 'messages', id }, created: [{ table: 'messages', id, contactId, seq }] };
 }
 
 async function applyCall(c: Ctx, rec: rrepo.RecordRow, n: NormalizedCall, plan: Extract<PlanAction, { kind: 'insert_history' }>): Promise<Applied> {
-  const contactId = await resolveRef(c, plan.contact);
+  const { id: contactId, seq } = await resolveLive(c, plan.contact);
   const conv = await w.ensureConversation(c.tx, c.deps.ids.next<'ConversationId'>(), contactId);
   const client = (await w.primaryAddress(c.tx, contactId, 'phone')) ?? 'unknown';
   const callId = c.deps.ids.next<'CallId'>();
@@ -478,17 +487,17 @@ async function applyCall(c: Ctx, rec: rrepo.RecordRow, n: NormalizedCall, plan: 
     hasRecording: objectId !== null,
     recordId: rec.id,
   });
-  const created: rrepo.CreatedRow[] = [{ table: 'calls', id: callId, contactId }];
+  const created: rrepo.CreatedRow[] = [{ table: 'calls', id: callId, contactId, seq }];
   const extraIssues: Applied['extraIssues'] = [];
   if (n.note) {
     const noteId = c.deps.ids.next<'NoteId'>();
     await w.insertNote(c.tx, { id: noteId, contactId, authorUserId: member(c, n.agentUserId), body: n.note, occurredAt: toIso(n.startedAt), recordId: rec.id });
-    created.push({ table: 'notes', id: noteId, contactId });
+    created.push({ table: 'notes', id: noteId, contactId, seq });
   }
   if (objectId !== null) {
     const recId = c.deps.ids.next<'RecordingId'>();
     await w.insertRecording(c.tx, { id: recId, callId, contactId, agentUserId: member(c, n.agentUserId), objectId, durationS: n.durationS, retainDays: c.settings.recordingRetentionDays });
-    created.push({ table: 'recordings', id: recId, contactId });
+    created.push({ table: 'recordings', id: recId, contactId, seq });
     // R-IMPORT-12: not transcribed unless the team turned it on (an agent may still ask for one)
     if (c.settings.transcribeImported) {
       await enqueueJob(c.tx, { queue: TRANSCRIBE_JOB.queue, kind: TRANSCRIBE_JOB.kind, payload: { recordingId: recId }, dedupeKey: TRANSCRIBE_JOB.dedupeKey(recId) });
