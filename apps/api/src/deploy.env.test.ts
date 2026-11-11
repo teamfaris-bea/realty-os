@@ -5,6 +5,7 @@
 // The rehearsal found the fake-provider staging refused at start-up: TELEPHONY_WEBHOOK_SECRET and
 // EMAIL_WEBHOOK_SECRET were in no template, and DEPLOY §4 called the first optional.
 /// <reference types="node" />
+import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -64,6 +65,33 @@ describe('deploy/env.staging.example', () => {
       const { [k]: _drop, ...rest } = env;
       expect(() => loadConfig(rest), k).toThrow(ConfigError);
     }
+  });
+});
+
+describe('deploy/fill-staging-env.sh', () => {
+  it('prints a loadable staging configuration: every secret generated, every placeholder filled, two runs never share a key', () => {
+    const run = () => {
+      const out = execFileSync('sh', [resolve(repo, 'deploy/fill-staging-env.sh'), 'staging.example.test', 'postgres'], { encoding: 'utf8' });
+      const env: Record<string, string> = {};
+      for (const line of out.split('\n')) {
+        const m = /^([A-Z][A-Z0-9_]*)=(.*)$/.exec(line);
+        if (m) env[m[1]!] = m[2]!;
+      }
+      return env;
+    };
+    const a = run();
+    const b = run();
+    expect(Object.values(a).join('\n')).not.toMatch(/<[a-z-]+>/);
+    const c = loadConfig(a);
+    expect(c.providers).toEqual({ ai: 'fake', telephony: 'fake', email: 'fake', storage: 'local', push: 'fake' });
+    expect(c.publicBaseUrl).toBe('https://staging.example.test');
+    expect(new URL(a.MIGRATION_DATABASE_URL!).password).toBe(a.POSTGRES_OWNER_PASSWORD);
+    expect(new URL(a.DATABASE_URL!).username).toBe('app_user');
+    for (const k of ['KEK_BASE64', 'SESSION_SECRET_BASE64', 'LEAD_WEBHOOK_SECRET', 'TELEPHONY_WEBHOOK_SECRET', 'EMAIL_WEBHOOK_SECRET', 'METRICS_TOKEN', 'POSTGRES_OWNER_PASSWORD']) {
+      expect(a[k], k).toBeTruthy();
+      expect(a[k], k).not.toBe(b[k]);
+    }
+    expect(loadObservabilityConfig(a).metrics).toMatchObject({ port: 9464, host: '0.0.0.0' });
   });
 });
 
