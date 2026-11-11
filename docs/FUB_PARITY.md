@@ -50,7 +50,7 @@ Frequency is a judgement about an agent's day: several times an hour, several ti
 
 The model is in `docs/DATA_MODEL.md` Part 3 and the build in `docs/PARITY_PLAN.md`. In one line each:
 
-1. **Notes**: a notes API with mentions stored in `note_mentions`. A job checks the mentioned person's access **as that person**; the notification never contains note text. Notes can be deleted (author) and pinned.
+1. **Notes**: a notes API with @mentions. Each mention is checked **as the mentioned person** while saving, so the author learns at once who was not told. The notification never contains note text. Notes can be deleted (author) and pinned.
 2. **Logged activity**: a note with `source = 'logged_activity'` plus kind, direction, time and outcome. It is never a `messages`/`calls` row, never a touch, and always labelled "Logged by …".
 3. **Tags**: a `tags` catalog (case- and width-insensitive, colours, rename in one row, Admin merge) and `contact_tags`, whose rows are visible exactly when the person's details are. `contacts.tags` is backfilled and retired.
 4. **Stages**: the fixed eight stay. Teams get display labels, an append-only `contact_stage_events` history, and a guard against parking an untouched routed lead outside `new`/`attempting`.
@@ -59,7 +59,7 @@ The model is in `docs/DATA_MODEL.md` Part 3 and the build in `docs/PARITY_PLAN.m
 7. **Smart lists**: `smart_lists` stores a typed definition, compiled only to parameterised SQL and always run under the viewer's own access. New list indexes, with a 250k-contact performance budget.
 8. **Tasks / appointments**: UI only (APIs exist).
 9. **Signature / schedule**: `memberships.email_signature` (plain text); the composer exposes the existing `scheduleAt`. Attachments and MMS are deferred to Phase 2 modules 22/37 (they own dispatch and compose).
-10. **Custom fields**: `custom_field_defs` (text, number, date, single select, multi select; at most 50 live; `annual` for birthdays and anniversaries) and typed `contact_field_values`. Fair-housing proxies are protected and self-reported only.
+10. **Custom fields**: `custom_field_defs` (text, number, date, single select, multi select; at most 50 live; `annual` for birthdays and anniversaries) and typed `contact_field_values`. A field name matching the fair-housing lexicon is refused, and those facts stay in the built-in self-reported attributes. Protected tags are never a bulk audience.
 11. **Bulk**: `bulk_actions` + `bulk_action_items`. The target is frozen at confirm, and only the creator confirms. Each item runs as the creator. Every send goes through `dispatchOutbound` and both DB guards. Bulk email is always marketing and never a touch. Batch text sits behind an Owner switch that is off by default (**VERIFY WITH COUNSEL**).
 12. **Relationships**: `contact_relationships`, which a viewer sees only when they can see both people.
 13. **Stage-entry enrollment**: `playbooks.auto_enroll_stage` (approved versions only, one live enrollment per person).

@@ -65,7 +65,7 @@ The full list with reasons is `docs/FUB_PARITY.md` §4.
 |---|---|---|
 | Tag storage | **B**: `tags` + `contact_tags`; `contacts.tags` backfilled and retired | `contacts.tags` sits on the contact row, which pond/offer card viewers can SELECT, so a person's tags were readable without detail. A rename on an array rewrites up to 250k guarded rows, but on a catalog it is one row. A join row gives "visible exactly when the person is" by construction |
 | Custom field values | **B**: typed `contact_field_values` | `contact_attributes` is the assistant's evidence-backed fact store. Typed columns make list filters indexable |
-| Mentions | **B's rule** ("decided as the mentioned user, no definer") with the **simplicity critic's timing** (checked synchronously at save) | A's `app.user_sees_contact_detail` definer would re-implement the central RLS rule for another user and drift. A save-time check tells the author at once and lets the picker show who can see the person |
+| Mentions | **B's rule** ("decided as the mentioned user, no definer") with the **simplicity critic's timing** (checked synchronously at save, no mentions table) | A's `app.user_sees_contact_detail` definer would re-implement the central RLS rule for another user and drift. A save-time check tells the author at once and lets the picker show who can see the person |
 | Logged activity | **A + B agree**: a note with `source = 'logged_activity'` | `messages`/`calls` are the dispatch record (guards, touches, inbox) |
 | Stages | **Fixed eight + labels (both)**, history table (B), anti-parking guard (B) | Engine meaning of `new`/`attempting`. The guard stops a lead being hidden from the inactivity release |
 | Removed points | **B's live-gap fix** in both guards | An opt-out on a removed phone must keep blocking the person's other phones (D1) |
@@ -95,7 +95,11 @@ Counsel items (**VERIFY WITH COUNSEL**):
 
 ### 2.3 Review (two critics; verdicts in ARCHITECTURE §20 "FUB parity design review")
 
-Applied changes are listed there with the finding that caused them. Summary: simplicity cuts (mention table, template provenance columns, custom-field protection flag, tag provenance kinds, smart-list ref arrays, target re-preview) and security fixes. The security critic's applied fixes are listed in §20.
+Applied changes are listed there, each with the finding that caused it.
+
+- **Security:** S1–S8, all applied. The highest was S1: an agent could make a STOP stop counting for the person's other phones with two status edits. Removing a number as a wrong number now needs a ledger record.
+- **Simplicity:** cut the mentions table, the template provenance columns, custom-field protection, the smart-list ref arrays, the bulk re-preview loop, and the reason picker on phone edits. Added "Next person", the merge UI, a follow-up task on the log sheet, and tap a tag to see everyone with it.
+- **Kept against a critic:** the DB batch-text ceiling, and the tag provenance kind (needed by S7).
 
 ## 3. Schema
 
