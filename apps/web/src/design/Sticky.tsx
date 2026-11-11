@@ -11,7 +11,7 @@ export const STICKY_BOTTOM_VAR = '--sticky-bottom-h';
 
 /** Ref callback for one bottom sticky bar; its height is in the scroll padding while it is mounted. */
 export function useStickyBottom<T extends HTMLElement>(): RefCallback<T> {
-  const observer = useRef<ResizeObserver | null>(null);
+  const observer = useRef<{ disconnect(): void } | null>(null);
   const stop = () => {
     observer.current?.disconnect();
     observer.current = null;
@@ -21,11 +21,15 @@ export function useStickyBottom<T extends HTMLElement>(): RefCallback<T> {
   return useCallback((el: T | null) => {
     stop();
     if (!el) return;
-    const publish = () => document.documentElement.style.setProperty(STICKY_BOTTOM_VAR, `${Math.ceil(el.getBoundingClientRect().height)}px`);
+    // a bar that is in the flow right now (a short screen or large zoom can turn sticky off) covers nothing
+    const publish = () => {
+      const floats = ['sticky', 'fixed'].includes(getComputedStyle(el).position);
+      document.documentElement.style.setProperty(STICKY_BOTTOM_VAR, `${floats ? Math.ceil(el.getBoundingClientRect().height) : 0}px`);
+    };
     publish();
-    if (typeof ResizeObserver !== 'undefined') {
-      observer.current = new ResizeObserver(publish);
-      observer.current.observe(el);
-    }
+    window.addEventListener('resize', publish);
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(publish) : null;
+    ro?.observe(el);
+    observer.current = { disconnect: () => (ro?.disconnect(), window.removeEventListener('resize', publish)) };
   }, []);
 }

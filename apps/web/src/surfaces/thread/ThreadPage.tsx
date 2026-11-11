@@ -58,7 +58,9 @@ function Thread() {
   const inbox = useInbox();
   const pendingDraft = inbox.data?.items.find((a) => a.contactId === contactId && a.status === 'proposed' && a.primaryAction === 'send' && a.draft !== null && (params.get('compose') === 'email' ? a.draft.channel === 'email' : a.draft.channel === 'sms'))?.id ?? null;
   // the compose bar floats over a long conversation: its height is part of the scroll padding, so a
-  // focused control is never left behind it (WCAG 2.4.11)
+  // focused control is never left behind it (WCAG 2.4.11). On a short screen (a landscape phone, or
+  // 200 % zoom: a 390 × 844 phone becomes 195 × 422) it would cover half the conversation, so there it
+  // scrolls with the page instead, at the end of the conversation where the page opens.
   const composeBar = useStickyBottom<HTMLDivElement>();
 
   if (c.isPending) return <p className="py-10 text-center text-[15px] text-ink-muted">Loading</p>;
@@ -79,7 +81,7 @@ function Thread() {
       {t.isError ? <Notice tone="error">{messageFor(t.error, AGENT_ERROR_MESSAGES)}</Notice> : null}
       {t.data && items.length === 0 ? <p className="py-6 text-center text-[15px] text-ink-muted">No messages or calls yet.</p> : null}
       <Messages items={items} contact={{ id: full.id, name: full.displayName }} />
-      <div ref={composeBar} data-sticky className="sticky bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))] -mx-4 border-t border-line bg-canvas/95 px-4 py-3 backdrop-blur md:bottom-0 md:mx-0 md:rounded-2xl md:border md:bg-surface">
+      <div ref={composeBar} data-sticky className="sticky bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))] -mx-4 border-t border-line bg-canvas/95 px-4 py-3 backdrop-blur md:bottom-0 md:mx-0 md:rounded-2xl md:border md:bg-surface [@media(max-height:559.98px)]:static">
         <ComposeBox
           key={draft ?? 'none'}
           suggestedDraftId={compose !== null && draft === null ? pendingDraft : null}

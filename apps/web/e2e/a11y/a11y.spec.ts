@@ -86,6 +86,14 @@ test('a long conversation: the compose bar is a marked sticky bar and no focused
   expect(await obscuredFocus(page)).toEqual([]);
   await expect(page.locator('main [data-sticky]')).toHaveCount(1);
   expect(await axe(page)).toEqual([]);
+  // a short screen (landscape phone, or 200 % zoom on a phone: 390 × 844 becomes 195 × 422): the bar
+  // would cover half the conversation, so it scrolls with the page and adds no scroll padding
+  const size = page.viewportSize()!;
+  await page.setViewportSize({ width: isPhone(page) ? 390 : 1440, height: 422 });
+  await expect.poll(() => page.locator('main [data-sticky]').evaluate((e) => getComputedStyle(e).position)).toBe('static');
+  await expect.poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue('--sticky-bottom-h'))).toBe('0px');
+  expect(await obscuredFocus(page)).toEqual([]);
+  await page.setViewportSize(size);
 });
 
 test('signed-out screens pass axe in light and dark, and hold up on a phone', async ({ page }) => {
