@@ -36,6 +36,22 @@ export interface StageAutomationDeps {
   db: Database;
 }
 
+/** What the person who changed the stage sees now, by THEIR OWN RLS. */
+export interface ChangerView {
+  /** they still see the person's detail (R-PAR-16) */
+  sees: boolean;
+  /** the change was made by their bulk action, and its audience is built from a protected tag now (R-PAR-8) */
+  protectedAudience: boolean;
+}
+
+/**
+ * Read-only, as the person who changed the stage: do they still see this person (R-PAR-16)? And for a change their
+ * bulk stage action made (the history names it only for its own creator, migration 0041), is that action's audience
+ * protected now (R-PAR-8, batch 5 review F1: the tags its draft recorded and its saved list's plan, read as the
+ * creator, who can read their own personal list; bulk/audience.ts)?
+ */
+export async function changerView(deps: StageAutomationDeps, tenantId: string, who: { userId: string; role: string; contactId: string; bulkActionId: string | null }): Promise<ChangerView> {
+  const asUser: Actor = { kind: 'user', userId: who.userId as never, tenantId: tenantId as never, role: who.role as Role, sessionId: 'stage-automation-check' };
   return withTenantTx(
     asUser,
     async (tx) => {

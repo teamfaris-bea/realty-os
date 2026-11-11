@@ -253,7 +253,7 @@ describe('F2 R-OWN-24 R-PAR-16: a merged-away record is never enrolled, by any p
     const former = await enroll(l, plan.text.id);
     expect([former.status, former.code]).toEqual([404, 'NOT_FOUND']);
     // decide.ts says the same of this person: person_removed
-    expect(decideStageEntry({ actorKind: 'user', toStage: 'active', contact: { exists: true, deleted: false, merged: true, stage: 'active', ownerUserId: null }, changerSeesDetail: true, candidates: [{ id: plan.text.id, name: plan.text.name, scope: 'team', ownerUserId: null, approvedVersionId: randomUUID() }], liveEnrollment: false, reachable: true })).toMatchObject({ kind: 'skip', reason: 'person_removed' });
+    expect(decideStageEntry({ actorKind: 'user', toStage: 'active', contact: { exists: true, deleted: false, merged: true, stage: 'active', ownerUserId: null }, changerSeesDetail: true, protectedAudience: false, candidates: [{ id: plan.text.id, name: plan.text.name, scope: 'team', ownerUserId: null, approvedVersionId: randomUUID() }], liveEnrollment: false, reachable: true })).toMatchObject({ kind: 'skip', reason: 'person_removed' });
     // nothing was written: the loser has only the enrollment the merge stopped (none here), the survivor keeps its own
     expect(await enrollmentsOf(h, l)).toEqual([]);
     expect(await enrollmentsOf(h, s)).toEqual(sBefore);
