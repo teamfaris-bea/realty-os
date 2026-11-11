@@ -11,6 +11,16 @@
 // `violations` implements the part of JSON Schema (2020-12) that z.toJSONSchema emits for these routes. A keyword it
 // does not know is reported as a violation, so a new kind of schema fails loudly instead of passing unchecked.
 // Lengths count UTF-16 code units, as Zod's .min/.max do (the API's real check).
+//
+// What a JSON Schema cannot carry, and how the checker still holds requests to it (finding F3: the checker had
+// accepted requests the API refuses):
+//   - a string the API trims before its checks (Zod .trim()) is marked `x-trim` by the generator; it is checked
+//     trimmed, so "   " fails a minLength of 1 and a trailing space does not count against a maxLength;
+//   - rules a handler or a transform applies (`contract.rules`): exactly one of a set of body keys (start's phone or
+//     email), and a query key holding a comma-separated list whose items each match a schema (GET /reachability's
+//     contactIds); apps/api's webContract.test.ts proves the real routes refuse exactly these.
+// Anything else a handler decides (a phone number that does not parse, a stale disclosure, a closed session) is the
+// route's answer, not a request shape: a client test meets it as the API's error, through `apiError`.
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,8 +34,15 @@ export interface RouteContract {
   response: Schema;
 }
 
+/** What a handler or a Zod transform checks beyond the JSON Schema (apps/api webContract.ts RequestRule). */
+export interface RequestRule {
+  exactlyOneOf?: string[];
+  commaList?: { key: string; items: Schema; minItems: number; maxItems: number };
+}
+
 export interface Contract {
   routes: Record<string, RouteContract>;
+  rules: Record<string, RequestRule>;
   errors: Record<string, number>;
   webChat: { widgetKey: string; sessionToken: string; nameMax: number; messageMax: number };
 }
@@ -46,7 +63,7 @@ export function routeFor(method: string, path: string): string | null {
   return null;
 }
 
-const KNOWN = new Set(['type', 'enum', 'const', 'anyOf', 'properties', 'required', 'additionalProperties', 'items', 'minItems', 'maxItems', 'minLength', 'maxLength', 'pattern', 'format', 'minimum', 'maximum', '$ref', '$defs', 'default', 'description']);
+const KNOWN = new Set(['type', 'enum', 'const', 'anyOf', 'properties', 'required', 'additionalProperties', 'items', 'minItems', 'maxItems', 'minLength', 'maxLength', 'pattern', 'format', 'minimum', 'maximum', '$ref', '$defs', 'default', 'description', 'x-trim']);
 
 const typeOf = (v: unknown): string => (v === null ? 'null' : Array.isArray(v) ? 'array' : Number.isInteger(v) ? 'integer' : typeof v);
 const isType = (v: unknown, t: string) => t === typeOf(v) || (t === 'number' && typeof v === 'number');
@@ -74,9 +91,11 @@ export function violations(schema: Schema, value: unknown, path = '', root: Sche
   if (schema.const !== undefined && value !== schema.const) out.push(`${at}: expected ${JSON.stringify(schema.const)}`);
   if (Array.isArray(schema.enum) && !(schema.enum as unknown[]).includes(value)) out.push(`${at}: ${JSON.stringify(value)} is not one of ${JSON.stringify(schema.enum)}`);
   if (typeof value === 'string') {
-    if (typeof schema.minLength === 'number' && value.length < schema.minLength) out.push(`${at}: shorter than ${schema.minLength}`);
-    if (typeof schema.maxLength === 'number' && value.length > schema.maxLength) out.push(`${at}: longer than ${schema.maxLength}`);
-    if (typeof schema.pattern === 'string' && !new RegExp(schema.pattern, 'u').test(value)) out.push(`${at}: does not match ${schema.pattern}`);
+    // Zod trims first, then checks the length and the pattern (x-trim)
+    const v = schema['x-trim'] === true ? value.trim() : value;
+    if (typeof schema.minLength === 'number' && v.length < schema.minLength) out.push(`${at}: shorter than ${schema.minLength}`);
+    if (typeof schema.maxLength === 'number' && v.length > schema.maxLength) out.push(`${at}: longer than ${schema.maxLength}`);
+    if (typeof schema.pattern === 'string' && !new RegExp(schema.pattern, 'u').test(v)) out.push(`${at}: does not match ${schema.pattern}`);
   }
   if (typeof value === 'number') {
     if (typeof schema.minimum === 'number' && value < schema.minimum) out.push(`${at}: below ${schema.minimum}`);
@@ -110,6 +129,17 @@ export function requestViolations(key: string, body: unknown, query: Record<stri
   else if (body !== undefined) out.push('body: this route takes none');
   if (r.query) out.push(...violations(r.query, query).map((v) => `query ${v}`));
   else if (Object.keys(query).length > 0) out.push('query: this route takes none');
+  const rule = contract.rules?.[key];
+  if (rule?.exactlyOneOf && body !== null && typeof body === 'object') {
+    const present = rule.exactlyOneOf.filter((k) => (body as Record<string, unknown>)[k] !== undefined);
+    if (present.length !== 1) out.push(`body /: exactly one of ${rule.exactlyOneOf.join(', ')} (got ${present.length})`);
+  }
+  if (rule?.commaList && typeof query[rule.commaList.key] === 'string') {
+    const { key: k, items, minItems, maxItems } = rule.commaList;
+    const list = query[k]!.split(',').filter(Boolean);
+    if (list.length < minItems || list.length > maxItems) out.push(`query /${k}: ${list.length} items, not ${minItems} to ${maxItems}`);
+    list.forEach((item, i) => out.push(...violations(items, item).map((v) => `query /${k}/${i}${v.slice(1)}`)));
+  }
   return out;
 }
 

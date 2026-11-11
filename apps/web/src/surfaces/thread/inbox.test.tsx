@@ -24,10 +24,12 @@ function chatThenText() {
   ];
 }
 
+/** Jane's thread as the API serves it: her summary says her website chat is open (a test about another state sets its own). */
 function fake(items = chatThenText()) {
   return new FakeFetch()
     .on(`GET /contacts/${IDS.jane}`, { status: 200, body: { contact: fullContact() } })
     .on(`GET /contacts/${IDS.jane}/timeline?limit=100`, { status: 200, body: { items, nextCursor: null } })
+    .on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: reachability(IDS.jane, {}, 'open') } })
     .on(`POST /contacts/${IDS.jane}/messages/preview`, (c) => ({ status: 200, body: { decision: decision({ id: null, phase: 'preview' }), body: (c.body as { body: string }).body } }));
 }
 
@@ -305,7 +307,8 @@ describe('module 37: compose on the client\'s last open channel', () => {
 
   it('R-PAR-12 E168: a STOP from a phone the agent removed still blocks texting; the box never offers Text and names the removed number', async () => {
     const removed = stopReason({ otherAddress: true, addressHint: '•••-•••-0199', addressRemoved: true });
-    agentApp(fake().on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: reachability(IDS.jane, { sms: [removed] }) } }), `/contacts/${IDS.jane}/thread?compose=sms`);
+    // Jane's chat is open (the summary's web_chat entry, as the API sends it)
+    agentApp(fake().on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: reachability(IDS.jane, { sms: [removed] }, 'open') } }), `/contacts/${IDS.jane}/thread?compose=sms`);
     const text = await screen.findByRole('radio', { name: 'Text' });
     await waitFor(() => expect(text).toBeDisabled());
     expect(text).toHaveAccessibleDescription('Text not offered: Texted STOP from •••‑•••‑0199 (removed number) on Nov 10');

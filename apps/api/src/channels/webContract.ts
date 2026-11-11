@@ -26,8 +26,11 @@ interface RouteSpec {
   response: z.ZodType;
 }
 
-/** Keyed "METHOD url" exactly as the route table lists it, without the /api prefix. */
-const ROUTES: Record<string, RouteSpec> = {
+/**
+ * Keyed "METHOD url" exactly as the route table lists it, without the /api prefix. webContract.test.ts proves each spec
+ * holds the very schema objects its route registered (a route bound to another object fails there, finding F4).
+ */
+export const CONTRACT_ROUTES: Readonly<Record<string, RouteSpec>> = {
   // the website chat widget (public, credential-less)
   'GET /public/chat/:widgetToken': { response: ConfigResponse },
   'POST /public/chat/:widgetToken/start': { body: StartBody, response: StartResponse },
@@ -56,8 +59,48 @@ const ERRORS = [
   'DRAFT_INVALIDATED',
 ] as const satisfies readonly ErrorCode[];
 
+/**
+ * Rules a route's handler or a Zod transform applies that its JSON Schema cannot carry (finding F3). The web's checker
+ * applies them (apps/web/src/test/contract.ts); webContract.test.ts proves the real routes refuse exactly that:
+ *   exactlyOneOf  exactly one of these body keys is present (start's claimOf: both, or neither, is 422)
+ *   commaList     a query string key holding a comma-separated list, each item checked against `items`
+ */
+export interface RequestRule {
+  exactlyOneOf?: string[];
+  commaList?: { key: string; items: unknown; minItems: number; maxItems: number };
+}
+
+const RULES: Record<string, RequestRule> = {
+  'POST /public/chat/:widgetToken/start': { exactlyOneOf: ['phone', 'email'] },
+  'GET /reachability': { commaList: { key: 'contactIds', items: null, minItems: 1, maxItems: 50 } },
+};
+
+/**
+ * A string schema whose value Zod trims before its length and pattern checks (`.trim()` is an overwrite check that
+ * trims). JSON Schema has no keyword for it, so the contract marks it `x-trim` and the web's checker trims first.
+ */
+function trims(s: unknown): boolean {
+  const def = (s as { _zod?: { def?: { type?: string; checks?: { _zod?: { def?: { check?: string; tx?: (v: string) => unknown } } }[] } } })._zod?.def;
+  if (def?.type !== 'string') return false;
+  return (def.checks ?? []).some((c) => {
+    const d = c._zod?.def;
+    if (d?.check !== 'overwrite' || typeof d.tx !== 'function') return false;
+    try {
+      return d.tx('  x  ') === 'x';
+    } catch {
+      return false;
+    }
+  });
+}
+
 const json = (s: z.ZodType, io: 'input' | 'output') => {
-  const { $schema: _drop, ...rest } = z.toJSONSchema(s, { io, reused: 'ref' }) as Record<string, unknown>;
+  const { $schema: _drop, ...rest } = z.toJSONSchema(s, {
+    io,
+    reused: 'ref',
+    override: (ctx) => {
+      if (io === 'input' && trims(ctx.zodSchema)) (ctx.jsonSchema as Record<string, unknown>)['x-trim'] = true;
+    },
+  }) as Record<string, unknown>;
   return rest;
 };
 const params = (url: string) => [...url.matchAll(/:([A-Za-z]+)/g)].map((m) => m[1]!);
@@ -65,6 +108,8 @@ const params = (url: string) => [...url.matchAll(/:([A-Za-z]+)/g)].map((m) => m[
 export interface WebContract {
   $comment: string;
   routes: Record<string, { inputKeys: string[]; body: unknown; query: unknown; response: unknown }>;
+  /** what each route's handler or Zod transforms check beyond its JSON Schema (finding F3) */
+  rules: Record<string, RequestRule>;
   errors: Record<(typeof ERRORS)[number], number>;
   webChat: { widgetKey: string; sessionToken: string; nameMax: number; messageMax: number };
 }
@@ -73,11 +118,14 @@ export function webContract(): WebContract {
   return {
     $comment: 'GENERATED from the API Zod schemas by apps/api/src/channels/webContract.ts (--write). Do not edit: apps/api/src/channels/webContract.test.ts fails when this file drifts.',
     routes: Object.fromEntries(
-      Object.entries(ROUTES).map(([key, r]) => {
+      Object.entries(CONTRACT_ROUTES).map(([key, r]) => {
         const url = key.split(' ')[1]!;
         const inputKeys = [...new Set([...params(url), ...zodInputKeys(r.body), ...zodInputKeys(r.query)])].sort();
         return [key, { inputKeys, body: r.body ? json(r.body, 'input') : null, query: r.query ? json(r.query, 'input') : null, response: json(r.response, 'output') }];
       }),
+    ),
+    rules: Object.fromEntries(
+      Object.entries(RULES).map(([k, r]) => [k, r.commaList ? { ...r, commaList: { ...r.commaList, items: json(z.uuid(), 'input') } } : r]),
     ),
     errors: Object.fromEntries(ERRORS.map((c) => [c, ERROR_STATUS[c]])) as WebContract['errors'],
     webChat: { widgetKey: WIDGET_KEY_RE.source, sessionToken: SESSION_TOKEN_RE.source, nameMax: NAME_MAX, messageMax: MESSAGE_MAX },

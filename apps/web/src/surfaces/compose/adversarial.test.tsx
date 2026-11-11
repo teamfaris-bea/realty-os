@@ -17,6 +17,8 @@ function fake(items = [timelineItem({ detail: 'web_chat:inbound', preview: 'stil
   return new FakeFetch()
     .on(`GET /contacts/${IDS.jane}`, { status: 200, body: { contact: fullContact() } })
     .on(`GET /contacts/${IDS.jane}/timeline?limit=100`, { status: 200, body: { items, nextCursor: null } })
+    // the summary as the API sends it: Jane's website chat is open (a test about another state sets its own)
+    .on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: reachability(IDS.jane, {}, 'open') } })
     .on(`POST /contacts/${IDS.jane}/messages/preview`, { status: 200, body: { decision: decision({ id: null, phase: 'preview' }), body: '' } });
 }
 
@@ -25,7 +27,7 @@ const sends = (f: FakeFetch) => f.calls.filter((c) => c.method === 'POST' && (/\
 
 describe('module 37 adversarial', () => {
   it('R-PAR-12 D1: a STOP from a removed phone: clicking the disabled Text option, pressing Enter and tapping Send never send a text', async () => {
-    const f = fake().on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: reachability(IDS.jane, { sms: [removedStop] }) } }).on(`POST /contacts/${IDS.jane}/messages`, chatEndedReply('Hello'));
+    const f = fake().on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: reachability(IDS.jane, { sms: [removedStop] }, 'open') } }).on(`POST /contacts/${IDS.jane}/messages`, chatEndedReply('Hello'));
     agentApp(f, `/contacts/${IDS.jane}/thread?compose=sms`);
     const text = await screen.findByRole('radio', { name: 'Text' });
     await waitFor(() => expect(text).toBeDisabled());

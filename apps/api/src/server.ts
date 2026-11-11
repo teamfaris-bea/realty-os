@@ -52,6 +52,11 @@ export interface Platform {
   envelope: EnvelopeService;
   /** every registered route and its authorization declaration (filled as routes register) */
   routeTable: RouteTableEntry[];
+  /**
+   * the schema objects each route registered ("METHOD /api/url" → body, querystring, 200 response), so a generated
+   * contract can prove it describes the very objects the route validates and serializes with (webContract.test.ts)
+   */
+  routeSchemas: Map<string, { body?: unknown; querystring?: unknown; response?: unknown }>;
   /** unexpected errors go here (observability/errors.ts; scrubbed, tagged with the request id) */
   errorReporter: ErrorReporter;
 }
@@ -126,6 +131,7 @@ export function buildServer(cfg: Config, deps: ServerDeps): FastifyInstance {
     providers: deps.providers,
     envelope: deps.envelope ?? new EnvelopeService(localKek(cfg.kek, cfg.kekRef)),
     routeTable: [],
+    routeSchemas: new Map(),
     errorReporter: deps.errorReporter ?? new MemoryErrorReporter(),
   };
 
@@ -283,6 +289,8 @@ export function buildServer(cfg: Config, deps: ServerDeps): FastifyInstance {
           route.preValidation = [guard as unknown as preValidationHookHandler, ...own];
         }
         platform.routeTable.push(entry);
+        const sch = (route.schema ?? {}) as { body?: unknown; querystring?: unknown; response?: Record<number, unknown> };
+        platform.routeSchemas.set(`${entry.method} ${entry.url}`, { body: sch.body, querystring: sch.querystring, response: sch.response?.[200] });
       });
       // Authentication before the body is read: a route that needs a session refuses an anonymous (or
       // unknown-cookie) request in preParsing, i.e. after the Origin check and the rate limit

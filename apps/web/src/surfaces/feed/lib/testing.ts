@@ -202,13 +202,17 @@ export function stopReason(over: Partial<ReachReason> = {}): ReachReason {
     suppressionReason: null,
     addressHint: '•••-•••-0101',
     otherAddress: false,
+    addressRemoved: false,
     evidence: { consentEventId: '01900000-0000-7000-8000-0000000ce001', inboundMessageId: '01900000-0000-7000-8000-0000000e5599', callId: null, suppressionId: null },
     ...over,
   };
 }
 
+/** a contact point id as the API sends it (a UUID; test/contract.test.ts holds these fixtures to the API's schema) */
+const POINT = '01900000-0000-7000-8000-0000000ab001';
+
 function channelReach(reasons: ReachReason[] = []): ChannelReach {
-  return { hasAddress: true, defaultPointId: '01900000-0000-7000-8000-0000000p0001', blocked: reasons.length > 0, reasons, points: [{ pointId: '01900000-0000-7000-8000-0000000p0001', addressHint: '•••-•••-0101', blocked: reasons.length > 0, reasons }] };
+  return { hasAddress: true, defaultPointId: POINT, blocked: reasons.length > 0, reasons, points: [{ pointId: POINT, addressHint: '•••-•••-0101', blocked: reasons.length > 0, reasons }] };
 }
 
 /**
@@ -226,11 +230,12 @@ function chatReach(f: WebChatFixture): ChatReach {
 }
 
 /**
- * A summary: pass the reasons that block each channel (none = reachable), and the website chat when the test is
- * about it (left out, the summary is an API's without the entry and the thread decides).
+ * A summary exactly as the API sends it: pass the reasons that block each channel (none = reachable), and the website
+ * chat when the test is about it. Left out, it is what the API says of a contact who never chatted ('none': no chat
+ * identity, no session), never an API without the entry (finding F3: the fixtures must be what the API can send).
  */
-export function reachability(contactId: string = IDS.jane, blocks: Partial<Record<'sms' | 'voice' | 'email', ReachReason[]>> = {}, webChat?: WebChatFixture): Reachability {
-  return { contactId, purposeNow: 'informational', channels: { sms: channelReach(blocks.sms), voice: channelReach(blocks.voice), email: channelReach(blocks.email), ...(webChat ? { web_chat: chatReach(webChat) } : {}) } };
+export function reachability(contactId: string = IDS.jane, blocks: Partial<Record<'sms' | 'voice' | 'email', ReachReason[]>> = {}, webChat: WebChatFixture = 'none'): Reachability {
+  return { contactId, purposeNow: 'informational', channels: { sms: channelReach(blocks.sms), voice: channelReach(blocks.voice), email: channelReach(blocks.email), web_chat: chatReach(webChat) } };
 }
 
 /** The reply's answer when the send-time check refused it because the chat ended or its widget is off (E77, R-INBOX-7). */

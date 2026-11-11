@@ -66,25 +66,29 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 120,
-            "pattern": "^[^\\p{Cc}\\p{Cf}]*$"
+            "pattern": "^[^\\p{Cc}\\p{Cf}]*$",
+            "x-trim": true
           },
           "phone": {
             "type": "string",
             "minLength": 3,
             "maxLength": 40,
-            "pattern": "^[^\\p{Cc}\\p{Cf}]*$"
+            "pattern": "^[^\\p{Cc}\\p{Cf}]*$",
+            "x-trim": true
           },
           "email": {
             "type": "string",
             "minLength": 3,
             "maxLength": 254,
-            "pattern": "^[^\\p{Cc}\\p{Cf}]*$"
+            "pattern": "^[^\\p{Cc}\\p{Cf}]*$",
+            "x-trim": true
           },
           "message": {
             "type": "string",
             "minLength": 1,
             "maxLength": 2000,
-            "pattern": "^(?:[^\\p{Cc}\\p{Cf}]|[\\n\\t])*$"
+            "pattern": "^(?:[^\\p{Cc}\\p{Cf}]|[\\n\\t])*$",
+            "x-trim": true
           },
           "disclosureId": {
             "type": "string",
@@ -131,7 +135,8 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 2000,
-            "pattern": "^(?:[^\\p{Cc}\\p{Cf}]|[\\n\\t])*$"
+            "pattern": "^(?:[^\\p{Cc}\\p{Cf}]|[\\n\\t])*$",
+            "x-trim": true
           },
           "clientMessageId": {
             "type": "string",
@@ -253,12 +258,14 @@
           "body": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 10000
+            "maxLength": 10000,
+            "x-trim": true
           },
           "subject": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 300
+            "maxLength": 300,
+            "x-trim": true
           },
           "scheduleAt": {
             "type": "string",
@@ -457,12 +464,14 @@
           "body": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 10000
+            "maxLength": 10000,
+            "x-trim": true
           },
           "subject": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 300
+            "maxLength": 300,
+            "x-trim": true
           },
           "toPointId": {
             "type": "string",
@@ -572,17 +581,20 @@
               "subject": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": 300
+                "maxLength": 300,
+                "x-trim": true
               },
               "body": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": 10000
+                "maxLength": 10000,
+                "x-trim": true
               },
               "recommendation": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": 2000
+                "maxLength": 2000,
+                "x-trim": true
               }
             },
             "additionalProperties": false
@@ -1471,6 +1483,26 @@
             }
           }
         }
+      }
+    }
+  },
+  "rules": {
+    "POST /public/chat/:widgetToken/start": {
+      "exactlyOneOf": [
+        "phone",
+        "email"
+      ]
+    },
+    "GET /reachability": {
+      "commaList": {
+        "key": "contactIds",
+        "items": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "minItems": 1,
+        "maxItems": 50
       }
     }
   },
