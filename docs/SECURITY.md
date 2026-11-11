@@ -734,3 +734,32 @@ points and the flag, and an imported DNC stays as an address-keyed `import_dnc` 
   a protected one is caught only through the recorded tag ids of the draft, not the rewritten definition.
 - **Not reachable through the API:** an Admin or the creator could write `bulk_actions.counts` directly in the DB
   (`counts.selected` feeds the confirm-time email budget); freezing it after the draft would need a migration.
+
+## 8. Batch 5 interaction review: merged-away records (migration `merged_person_opt_outs`)
+
+The review of the batch 5 fixes probed merges against owner rule D1 with the real server, Postgres and the fake
+providers. Each fix only refuses more, and each is proved by a test that failed before it.
+
+| finding | severity | fix | proof |
+|---|---|---|---|
+| A survivor's opt-outs recorded before a merge did not block sends addressed to the merged-away record: the survivor's person-level do-not-contact, or a STOP from a phone only the survivor had, reached neither canContact nor the dispatch guards for that record (they checked the recipient, the records merged INTO it and the recipient's own phones). The Owner, an Admin or a collaborator of the loser could text or call the person, and a direct enrollment's plan texts and an automatic saved-search alert went out (F1, pre-existing) | high | Both guards (`app.messages_dispatch_guard`, `app.calls_dispatch_guard`) and core canContact's inputs (`comms/repos/gate.ts`) judge a recipient by its whole person, `app.contact_person_ids`: the root survivor reached through `merged_into_contact_id` and every record merged into it, along chains. And nothing new is addressed to a merged-away record: a text, email, compose preview and call are 409 `CONTACT_MERGED` before anything is created (`details.mergedInto` only for a caller who sees the survivor), no assistant or system message is queued to one, its saved searches send no alert | `comms/guardEquivalence.test.ts` (the merged-away record and the survivor's copies of its addresses get the same verdict in both layers, directly and along a chain), `packages/db/test/fixtures/opt_out_cases.json` (the `merged-into` rows, run against the guards, canContact and bulk preflight), `comms/merged.recipient.test.ts` (every send path; a message that raced onto the record is blocked at dispatch) |
+| A direct enrollment of a merged-away record was accepted (201): a second live plan for one person, stranded on the loser; the step runner kept it running and a closed deal of the loser enrolled it with no human involved (F2) | medium | `enrollContact` refuses it (409 `CONTACT_MERGED`, `details.reason = person_removed`, the stage entry's skip reason), the runner stops one live anyway (`stop_reason = merged`), the post-closing path skips it | `assistant/enroll.reach.test.ts` |
+
+Security review items of the migration (CONVENTIONS §4):
+- **New function `app.contact_person_ids(uuid, uuid) RETURNS uuid[]`**: plain SQL, not a definer, `STABLE`, pinned
+  `search_path`, explicit tenant filter, schema-qualified tables, writes nothing; `CYCLE` clauses end both walks even
+  on corrupt data. EXECUTE is revoked from PUBLIC and granted to `app_user`, for which it runs under the caller's RLS
+  and returns only records the caller can select, and to `app_definer`, as which the guards run it (they already read
+  every contact and point of the tenant). A caller who does not see every record of the person (a collaborator of the
+  loser does not see the survivor) gets a smaller set from canContact, but never reaches the gate for a merged-away
+  record (the API refuses it), and the guard, which sees every record, still refuses: the refusal is mapped to a
+  blocked send (`gateInput.ts` `GUARD_DENY_REASONS`).
+- **`app.messages_dispatch_guard()` and `app.calls_dispatch_guard()` replaced** (SECURITY DEFINER, owner
+  `app_definer`, pinned `search_path`, bindings unchanged), verbatim from 0021 except the lines marked F1: the
+  do-not-contact check and the phone fan-out read the recipient's whole person. A larger set of records only refuses
+  more sends. For a record nobody merged anything into or away the person is the record itself, and for a survivor
+  nothing changes (the merge copied the losers' points and carried their do-not-contact onto it).
+- **Not changed, for the owner:** a merge still moves no saved search, deal or appointment. A merged-away record's
+  saved search now stays `active` but never alerts; moving it to the survivor, or pausing it at the merge, is a product
+  decision. The contact page's reachability summary for a merged-away record (seen only by tenant-wide roles and the
+  loser's collaborators) still describes that record's own points, though every send from it is refused.

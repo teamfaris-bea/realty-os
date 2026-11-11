@@ -11,17 +11,26 @@ export interface ContactBasics {
   displayName: string;
   firstName: string | null;
   stage: string;
+  /** set when this record was merged away into another: never a send target (F1) */
+  mergedIntoContactId: string | null;
 }
 
 /** The contact if the caller can see its DETAIL (phones, timeline); null otherwise (404, R-PERM-5). */
 export async function detailVisibleContact(tx: Tx, contactId: string): Promise<ContactBasics | null> {
-  const r = await sql<{ id: string; owner_user_id: string | null; ownership_state: string; ownership_period_seq: string | null; display_name: string; first_name: string | null; stage: string; v: boolean }>`
-    SELECT id, owner_user_id, ownership_state, ownership_period_seq, display_name, first_name, stage,
+  const r = await sql<{ id: string; owner_user_id: string | null; ownership_state: string; ownership_period_seq: string | null; display_name: string; first_name: string | null; stage: string; merged_into_contact_id: string | null; v: boolean }>`
+    SELECT id, owner_user_id, ownership_state, ownership_period_seq, display_name, first_name, stage, merged_into_contact_id,
            app.contact_detail_visible(tenant_id, id) AS v
       FROM contacts WHERE tenant_id = app.tenant_id() AND id = ${contactId} AND deleted_at IS NULL`.execute(tx);
   const c = r.rows[0];
   if (!c || !c.v) return null;
-  return { id: c.id, ownerUserId: c.owner_user_id, ownershipState: c.ownership_state, periodSeq: c.ownership_period_seq === null ? null : Number(c.ownership_period_seq), displayName: c.display_name, firstName: c.first_name, stage: c.stage };
+  return { id: c.id, ownerUserId: c.owner_user_id, ownershipState: c.ownership_state, periodSeq: c.ownership_period_seq === null ? null : Number(c.ownership_period_seq), displayName: c.display_name, firstName: c.first_name, stage: c.stage, mergedIntoContactId: c.merged_into_contact_id };
+}
+
+/** Whether the contact was merged away into another record (F1: an assistant or system message is never queued to one). */
+export async function mergedAway(tx: Tx, contactId: string): Promise<boolean> {
+  const r = await sql<{ m: boolean }>`
+    SELECT merged_into_contact_id IS NOT NULL AS m FROM contacts WHERE tenant_id = app.tenant_id() AND id = ${contactId}`.execute(tx);
+  return r.rows[0]?.m === true;
 }
 
 /** Relationship facts of the CURRENT user (the transaction's app.user_id()) to a contact. */

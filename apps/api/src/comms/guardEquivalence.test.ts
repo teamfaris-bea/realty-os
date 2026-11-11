@@ -1,6 +1,7 @@
 // R-CHAN-2 and the suppressions at the send-time gate: core canContact (buildGateInput: repos/gate.ts
-// personDoNotContact, suppressionRows) and the DB dispatch guards (app.messages_dispatch_guard,
-// app.calls_dispatch_guard, migration 0021) must refuse exactly the same texts, calls and emails, so the API's
+// personDoNotContact, optOutFanoutPhoneHmacs, suppressionRows) and the DB dispatch guards (app.messages_dispatch_guard,
+// app.calls_dispatch_guard, migration 0041: both judge a recipient by its whole person, app.contact_person_ids, so a
+// merged-away record gets the survivor's opt-outs too, F1) must refuse exactly the same texts, calls and emails, so the API's
 // mapping of a guard refusal to a blocked send (gateInput.ts GUARD_DENY_REASONS, guardRefusal.test.ts) is only
 // defence in depth. Each case is arranged through the real paths (the one-tap do-not-contact, the merge
 // command, the point routes), then the app gate is asked as the agent and the guard is asked, core bypassed,
@@ -75,11 +76,11 @@ async function suppress(hmac: string, kind: 'phone' | 'email', channel: 'all' | 
 
 const OPT_OUT = ['PERSON_DO_NOT_CONTACT', 'CONSENT_REVOKED', 'SUPPRESSED'] as const;
 
-/** The app gate (buildGateInput + core.canContact) as the agent, for a human send/call to `to`; only its opt-out reasons. */
-async function appOptOuts(contactId: string, to: Pt, channel: 'sms' | 'voice' | 'email', purpose: Purpose): Promise<string[]> {
+/** The app gate (buildGateInput + core.canContact) as `by` (the agent), for a human send/call to `to`; only its opt-out reasons. */
+async function appOptOuts(contactId: string, to: Pt, channel: 'sms' | 'voice' | 'email', purpose: Purpose, by: TestClient = agent): Promise<string[]> {
   const body = `${brokerage}: checking in about the house. Reply STOP to opt out. Unsubscribe: https://x.example/u`;
   const e = await withTenantTx(
-    agent.actor(),
+    by.actor(),
     (tx, now) =>
       evaluateGate(tx, { contactId, recipient: { kind: 'contact', addressHmac: to.hmac, channel, pointId: to.id }, purpose, initiator: 'human', category: 'none', sender: { phoneNumberId: channel === 'email' ? null : w.mainNumberId, emailIdentityId: channel === 'email' ? identity.id : null }, body: channel === 'voice' ? null : body }, now),
     { db: h.database },
@@ -89,27 +90,27 @@ async function appOptOuts(contactId: string, to: Pt, channel: 'sms' | 'voice' | 
 
 class Rollback extends Error {}
 
-/** The DB guard, core bypassed, as the agent, rolled back: a queued text/email moved to dispatching, or an outbound call row. */
-async function guardSays(contactId: string, to: Pt, channel: 'sms' | 'voice' | 'email', purpose: Purpose): Promise<string> {
+/** The DB guard, core bypassed, as `by` (the agent), rolled back: a queued text/email moved to dispatching, or an outbound call row. */
+async function guardSays(contactId: string, to: Pt, channel: 'sms' | 'voice' | 'email', purpose: Purpose, by: TestClient = agent): Promise<string> {
   const write = async (tx: Tx, now: Instant): Promise<void> => {
     const conversationId = await msgs.ensureConversation(tx, randomUUID(), contactId, null);
     if (channel === 'voice') {
       await sql`
         INSERT INTO calls (tenant_id, id, conversation_id, contact_id, direction, phone_number_id, agent_user_id, client_address, initiator, status, started_at, recording_mode, recording_decision)
-        VALUES (app.tenant_id(), ${randomUUID()}, ${conversationId}, ${contactId}, 'outbound', ${w.mainNumberId}, ${agent.userId}, ${to.address}, 'human', 'initiated', now(), 'off', '{"mode":"off"}'::jsonb)`.execute(tx);
+        VALUES (app.tenant_id(), ${randomUUID()}, ${conversationId}, ${contactId}, 'outbound', ${w.mainNumberId}, ${by.userId}, ${to.address}, 'human', 'initiated', now(), 'off', '{"mode":"off"}'::jsonb)`.execute(tx);
       return;
     }
     const id = randomUUID();
     await msgs.insertOutbound(tx, {
       id, conversationId, contactId, channel, phoneNumberId: channel === 'sms' ? w.mainNumberId : null, emailIdentityId: channel === 'email' ? identity.id : null,
       fromAddress: channel === 'sms' ? w.mainNumber : identity.address, toAddress: to.address, subject: channel === 'email' ? 'Checking in' : null,
-      body: 'Checking in', status: 'queued', scheduledFor: null, initiator: 'human', initiatedByUserId: agent.userId!, purpose, actionCategory: 'none',
+      body: 'Checking in', status: 'queued', scheduledFor: null, initiator: 'human', initiatedByUserId: by.userId!, purpose, actionCategory: 'none',
       assistantActionId: null, playbookStepRunId: null, pinnedInboundSeq: null, idempotencyKey: `eq:${id}`, occurredAt: now,
     });
     await msgs.markDispatching(tx, id, now);
   };
   try {
-    await withTenantTx(agent.actor(), async (tx, now) => {
+    await withTenantTx(by.actor(), async (tx, now) => {
       await write(tx, now);
       throw new Rollback('rolled back on purpose');
     }, { db: h.database });
@@ -172,6 +173,8 @@ interface Case {
   email: Pt;
   /** what the guards must answer, per channel, whatever the purpose (independent of the app) */
   want: Record<'sms' | 'voice' | 'email', string>;
+  /** who asks both layers (default the agent; the Owner for a merged-away record, which only tenant-wide roles still see) */
+  by?: TestClient;
 }
 
 async function check(k: Case): Promise<void> {
@@ -179,8 +182,8 @@ async function check(k: Case): Promise<void> {
     const to = channel === 'email' ? k.email : k.phone;
     for (const purpose of ['informational', 'marketing'] as const) {
       const label = `${k.label} / ${channel} ${purpose}`;
-      const app = await appOptOuts(k.contactId, to, channel, purpose);
-      const guard = await guardSays(k.contactId, to, channel, purpose);
+      const app = await appOptOuts(k.contactId, to, channel, purpose, k.by);
+      const guard = await guardSays(k.contactId, to, channel, purpose, k.by);
       // the two layers agree, case by case: canContact refuses for exactly the reason the guard would refuse with
       expect({ label, guard }).toEqual({ label, guard: predicted(app) });
       // and both follow the rule, stated independently of either layer
@@ -253,6 +256,45 @@ describe('R-CHAN-2 equivalence: the app gate decides exactly what the DB dispatc
     for (const id of [before.id, after.id, chain.id]) expect((await h.su.query('SELECT do_not_contact_at IS NOT NULL AS dnc FROM contacts WHERE id = $1', [id])).rows[0]).toEqual({ dnc: true });
     for (const k of cases) await check(k);
   }, 120_000);
+
+  it('R-CHAN-2 D1 F1: a merged-away record gets the whole person’s verdict, never only its own: the survivor asked, or a phone only the survivor had texted STOP, before the merge (directly and along a chain); the Owner, who still sees the merged-away record, asks both layers; the survivor’s copies of the same addresses answer the same for the agent', async () => {
+    const cases: Case[] = [];
+    /** S (asked or not before), then L merged into S: L's own phone and email carry no revoke of their own */
+    const pair = async (before: (s: string) => Promise<void>, o: { chain?: boolean } = {}) => {
+      const s = await recipient();
+      await before(s.id);
+      const l = await recipient();
+      if (o.chain) {
+        // L merged into A first, then A into S: L is two hops from the record the person lives on
+        const a = await person({ emails: [randomEmail()] });
+        await merge(a, l.id);
+        await merge(s.id, a);
+      } else await merge(s.id, l.id);
+      expect((await call(agent, 'GET', `/contacts/${l.id}`)).status).toBe(404);
+      return { s, l, copy: { phone: await pointOf(s.id, l.phone.address), email: await pointOf(s.id, l.email.address) } };
+    };
+    const add = (label: string, p: Awaited<ReturnType<typeof pair>>, want: Case['want']) => {
+      cases.push({ label: `${label}: the merged-away record`, contactId: p.l.id, phone: p.l.phone, email: p.l.email, want, by: w.owner });
+      cases.push({ label: `${label}: the survivor's copy`, contactId: p.s.id, phone: p.copy.phone, email: p.copy.email, want });
+    };
+    add('nobody asked', await pair(async () => undefined), ALLOW);
+    add('the survivor asked before the merge', await pair((s) => doNotContact(agent, s)), DNC);
+    add('the survivor asked before a chain of merges', await pair((s) => doNotContact(agent, s), { chain: true }), DNC);
+    // a STOP from a phone only the survivor had: texts to every phone of the person are refused; calls and email are not
+    // (a STOP is the text channel), exactly as for the survivor itself
+    const STOP = { sms: 'RECIPIENT_OPTED_OUT', voice: 'allow', email: 'allow' } as const;
+    add('a phone only the survivor had texted STOP before the merge', await pair(async (s) => {
+      const only = randomPhone();
+      await addPoint(s, 'phone', only);
+      expect((await inboundSms(h, only, w.mainNumber, 'STOP')).statusCode).toBe(200);
+    }), STOP);
+    add('a phone only the survivor had texted STOP before a chain of merges', await pair(async (s) => {
+      const only = randomPhone();
+      await addPoint(s, 'phone', only);
+      expect((await inboundSms(h, only, w.mainNumber, 'STOP')).statusCode).toBe(200);
+    }, { chain: true }), STOP);
+    for (const k of cases) await check(k);
+  }, 180_000);
 
   it('R-CONSENT-1 R-CHAN-2: suppressions of the recipient’s own address (every channel scope, live or lifted), of another of the person’s phones, of the same number through another contact, and together with a do-not-contact: texts, calls and email, every purpose', async () => {
     const cases: Case[] = [];

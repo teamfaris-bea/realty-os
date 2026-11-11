@@ -321,11 +321,14 @@ function alertLines(s: SearchRow, listings: readonly RawListing[]): string {
 /**
  * Sends the due alerts: an active search with matches not yet alerted, whose frequency window has passed
  * (instant: at once; daily / weekly). Queued as `search_alert` marketing from the system; the send-time
- * gate decides (opt-out / unsubscribe, suppression, brokerage name, autonomy switch, pause).
+ * gate decides (opt-out / unsubscribe, suppression, brokerage name, autonomy switch, pause). A search of a
+ * deleted or merged-away record sends nothing (F1: a merge moves no saved search; the person lives on the
+ * survivor, and a merged-away record is never a send target).
  */
 export async function sendDueAlertsInTx(tx: Tx, deps: AssistantDeps, tenantId: string, now: Instant, o: { searchId?: string; limit?: number }): Promise<number> {
   // the frequency window is applied in the query, so searches that are not due yet never fill the batch
-  // and starve the ones that are (a daily digest waiting for tomorrow is not "due")
+  // and starve the ones that are (a daily digest waiting for tomorrow is not "due"); searches of records that
+  // can never be alerted (deleted, merged away) are left out for the same reason
   const nowIso = new Date(now).toISOString();
   const due = await sql<RawSearch>`
     SELECT ${COLS} FROM saved_searches s WHERE s.tenant_id = app.tenant_id() AND s.status = 'active'
@@ -333,6 +336,7 @@ export async function sendDueAlertsInTx(tx: Tx, deps: AssistantDeps, tenantId: s
        AND (s.last_alerted_at IS NULL OR s.alert_frequency = 'instant'
             OR s.last_alerted_at <= ${nowIso}::timestamptz - CASE s.alert_frequency WHEN 'weekly' THEN interval '7 days' ELSE interval '1 day' END)
        AND EXISTS (SELECT 1 FROM saved_search_matches m WHERE m.tenant_id = s.tenant_id AND m.search_id = s.id AND m.alerted_message_id IS NULL)
+       AND EXISTS (SELECT 1 FROM contacts c WHERE c.tenant_id = s.tenant_id AND c.id = s.contact_id AND c.deleted_at IS NULL AND c.merged_into_contact_id IS NULL)
      ORDER BY s.contact_id, s.id LIMIT ${o.limit ?? 200}`.execute(tx);
   let sent = 0;
   for (const s0 of due.rows.map(row)) {
@@ -347,7 +351,7 @@ export async function sendDueAlertsInTx(tx: Tx, deps: AssistantDeps, tenantId: s
        ORDER BY m.matched_at, l.id LIMIT ${ALERT_DIGEST_MAX}`.execute(tx);
     if (m.rows.length === 0) continue;
     const c = await contactCore(tx, s.contactId);
-    if (!c || c.deleted) continue;
+    if (!c || c.deleted || c.merged) continue; // re-read under the contact lock: a merge may have committed since
     const identity = await identityFacts(tx, { scope: c.ownerUserId ? 'agent' : 'team', agentUserId: c.ownerUserId });
     const first = await firstInThread(tx, c.id);
     const lines = [`Hi ${c.firstName?.trim() || 'there'},`, alertLines(s, m.rows), signOffFor(identity), identity.brokerageLegalName];
