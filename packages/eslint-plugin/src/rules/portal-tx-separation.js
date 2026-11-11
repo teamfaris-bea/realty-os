@@ -1,8 +1,10 @@
 // R-TEN-14 / R-PORTAL-4 (PHASE2_3_PLAN module 43): staff and client transaction helpers never mix.
 //
 //   mode 'client' (portal client code, configured in eslint.config.js: apps/api/src/portal/client/**):
-//       the staff and pre-tenant helpers withTenantTx, withPreTenant, withNoContext and actorGucs are banned;
-//       client code reaches the database only through withPortalTx and the portal wrappers of @realty/db.
+//       the staff and pre-tenant helpers withTenantTx, withPreTenant, withPreTenantThenTenant, withNoContext and
+//       actorGucs are banned, and so are applyOwnershipCommand and applyOwnershipCommandThen (each opens its own
+//       withTenantTx for a staff actor); client code reaches the database only through withPortalTx and the
+//       portal wrappers of @realty/db.
 //   mode 'staff' (everything else except packages/db/src/portalTx.ts and tests):
 //       withPortalTx is banned, and so is constructing a client actor ({ kind: 'client', ... } with a
 //       portalAccountId / tenantId / sessionId or a spread): a ClientActor comes only from resolvePortalSession.
@@ -13,7 +15,9 @@
 /** @typedef {import('eslint').Rule.RuleModule} RuleModule */
 
 const BANNED = {
-  client: ['withTenantTx', 'withPreTenant', 'withNoContext', 'actorGucs'],
+  // withPreTenantThenTenant is withPreTenant then withTenantTx's GUCs in one transaction (principal 'staff'):
+  // with `actorOf = () => null` it is the pre-tenant context, with a staff actor the staff context.
+  client: ['withTenantTx', 'withPreTenant', 'withPreTenantThenTenant', 'withNoContext', 'actorGucs', 'applyOwnershipCommand', 'applyOwnershipCommandThen'],
   staff: ['withPortalTx'],
 };
 

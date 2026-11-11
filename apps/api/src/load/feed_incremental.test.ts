@@ -9,9 +9,10 @@
 // full recompute of the whole book (refreshFeed) run on top of it in a transaction that is rolled back:
 //   - the GET /feed view (cards, ids, order, wording, actions, total) is identical;
 //   - the full recompute changes no stored card row and no stored change instant.
-import { randomBytes } from 'node:crypto';
-import type { Instant, TenantId, UserActor } from '@realty/core/foundation';
+import { randomBytes, randomUUID } from 'node:crypto';
+import type { ContactId, Instant, TenantId, UserActor, UserId } from '@realty/core/foundation';
 import { instant, uuidv7Generator } from '@realty/core/foundation';
+import type { OwnershipCommand } from '@realty/core/ownership';
 import { type Database, type Tx, createDatabase, withTenantTx } from '@realty/db';
 import { type TestDb, createTestDb } from '@realty/db/testing';
 import fc from 'fast-check';
@@ -19,7 +20,10 @@ import { sql } from 'kysely';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { EnvelopeService } from '../crypto/envelope.js';
+import { runOwnershipCommand } from '../leads/ownership.js';
+import { addDealContact } from '../workspace/deals.js';
 import { type FeedDeps, actOnFeedItem, materializeFeed, readFeed, refreshFeed } from '../workspace/feed.js';
+import { createTask } from '../workspace/tasks.js';
 import { materializeAll } from './db.js';
 import { defaultSpec, generateLoad, loadUuid } from './generate.js';
 import { kekFromEnv } from './seed.js';
@@ -333,4 +337,189 @@ describe('incremental feed equals a full recompute (lane perf-misses)', () => {
     expect(stats.cards).toBeGreaterThan(1_000);
     expect(stats.incremental).toBeGreaterThan(50);
   }, 1_800_000);
+});
+
+// Writes that change WHO can hold a card on a contact, not only its owner (scale-lane review fixes): a member's own
+// task, appointment or assistant action names a contact whatever its owner (feedInputs.ts), and the member's card is
+// written and counted only while that contact is visible to them. A reassignment, a merge, a person added to or
+// removed from a deal, a deal's primary person and a team move change that visibility for a Team Lead or a TC who
+// holds such a card; each must mark them. And two marks that were wrong: a deleted contact point (an import revert)
+// marked nothing, and every settings write (stage labels, batch text, Gmail sync) marked every member '!full'.
+describe('incremental feed after ownership, deal, team, contact point and settings writes (scale-lane review fixes)', () => {
+  type Member = { userId: string; role: string };
+  const used: string[] = [];
+  const dueIn = (h: number) => new Date(now + h * HOUR).toISOString();
+  const marks = async (userId: string, group: string) =>
+    Number((await su.query<{ n: string }>(`SELECT count(*) AS n FROM feed_dirty WHERE tenant_id = $1 AND user_id = $2 AND group_key = $3`, [T, userId, group])).rows[0]!.n);
+  const asMember = <R>(m: Member, fn: (tx: Tx) => Promise<R>) => withTenantTx(actorOf(m), fn, { db: app });
+  /** an owned lead of one of `owners`, on no deal and with no collaborator (visibility only through its owner) */
+  const pickLead = async (owners: string[]) => {
+    const c = (await su.query<{ id: string; owner: string }>(`
+      SELECT c.id, c.owner_user_id AS owner FROM contacts c
+       WHERE c.tenant_id = $1 AND c.ownership_state = 'owned' AND c.deleted_at IS NULL AND c.merged_into_contact_id IS NULL
+         AND c.owner_user_id = ANY ($2::uuid[]) AND NOT (c.id = ANY ($3::uuid[]))
+         AND NOT EXISTS (SELECT 1 FROM deal_contacts dc WHERE dc.tenant_id = c.tenant_id AND dc.contact_id = c.id)
+         AND NOT EXISTS (SELECT 1 FROM deals d WHERE d.tenant_id = c.tenant_id AND d.primary_contact_id = c.id)
+         AND NOT EXISTS (SELECT 1 FROM contact_collaborators k WHERE k.tenant_id = c.tenant_id AND k.contact_id = c.id)
+       ORDER BY md5(c.id::text) LIMIT 1`, [T, owners, used])).rows[0]!;
+    used.push(c.id);
+    return c;
+  };
+  /** a task of `assignee` on `contactId`, due in 2 h of the feed's clock, created through the API's code by `by` */
+  const taskFor = (by: Member, contactId: string, assignee: Member) =>
+    asMember(by, (tx) => createTask(tx, actorOf(by), deps.ids, { title: 'Call them back', kind: 'callback', dueAt: dueIn(2), contactId, assigneeUserId: assignee.userId }));
+  const command = async (by: Member, contactId: string, cmd: OwnershipCommand) => {
+    const r = await runOwnershipCommand(actorOf(by), contactId as ContactId, cmd, randomUUID(), undefined, { db: app, ids: deps.ids });
+    expect(r.ok, JSON.stringify(r)).toBe(true);
+  };
+  const visibleTo = (m: Member, contactId: string) =>
+    asMember(m, async (tx) => (await sql<{ v: boolean }>`SELECT EXISTS (SELECT 1 FROM contacts WHERE tenant_id = app.tenant_id() AND id = ${contactId}) AS v`.execute(tx)).rows[0]!.v);
+
+  let owner: Member;
+  let tl: Member;
+  let tc: Member;
+  let tlTeam = '';
+  let inside: string[] = [];
+  let outside: string[] = [];
+  beforeAll(async () => {
+    owner = (await su.query<Member>(`SELECT user_id AS "userId", role FROM memberships WHERE tenant_id = $1 AND role = 'owner'`, [T])).rows[0]!;
+    tl = users.find((u) => u.role === 'team_lead')!;
+    tc = users.find((u) => u.role === 'tc')!;
+    tlTeam = (await su.query<{ team_id: string }>(`SELECT team_id FROM team_members WHERE tenant_id = $1 AND user_id = $2 AND is_lead`, [T, tl.userId])).rows[0]!.team_id;
+    const agents = (await su.query<{ user_id: string; mine: boolean }>(`
+      SELECT m.user_id, EXISTS (SELECT 1 FROM team_members x WHERE x.tenant_id = m.tenant_id AND x.team_id = $2 AND x.user_id = m.user_id) AS mine
+        FROM memberships m WHERE m.tenant_id = $1 AND m.role = 'agent' AND m.status = 'active' ORDER BY m.user_id`, [T, tlTeam])).rows;
+    inside = agents.filter((a) => a.mine).map((a) => a.user_id);
+    outside = agents.filter((a) => !a.mine).map((a) => a.user_id);
+    expect(inside.length).toBeGreaterThan(1);
+    expect(outside.length).toBeGreaterThan(1);
+  });
+
+  it('a reassignment into or out of a team, and a merge, mark the Team Lead who holds a task on the lead', async () => {
+    // into the team: the Owner gave the Team Lead a task on an outside agent's lead (hidden from them until now)
+    const x = await pickLead(outside);
+    await taskFor(owner, x.id, tl);
+    expect(await visibleTo(tl, x.id)).toBe(false);
+    await compare(tl, 'a Team Lead task on an outside lead');
+    await command(owner, x.id, { kind: 'reassign', toUserId: inside[0] as UserId, reason: 'MANUAL_REASSIGN' });
+    expect(await visibleTo(tl, x.id)).toBe(true);
+    expect(await marks(tl.userId, `c:${x.id}`)).toBeGreaterThan(0);
+    await compare(tl, 'reassigned into the Team Lead\'s team');
+    // out of the team: the Team Lead's own task on a team member's lead
+    const z = await pickLead([inside[1]!]);
+    await taskFor(tl, z.id, tl);
+    await compare(tl, 'a Team Lead task on a team lead');
+    await command(owner, z.id, { kind: 'reassign', toUserId: outside[0] as UserId, reason: 'MANUAL_REASSIGN' });
+    expect(await visibleTo(tl, z.id)).toBe(false);
+    expect(await marks(tl.userId, `c:${z.id}`)).toBeGreaterThan(0);
+    await compare(tl, 'reassigned out of the Team Lead\'s team');
+    // merge: a team lead (with the Team Lead's task) merged into an outside agent's lead; the loser closes, unowned
+    const loser = await pickLead([inside[0]!]);
+    const survivor = await pickLead([outside[1]!]);
+    await taskFor(tl, loser.id, tl);
+    await compare(tl, 'a Team Lead task on the lead about to be merged away');
+    await command(owner, survivor.id, { kind: 'merge', survivorId: survivor.id as ContactId, loserId: loser.id as ContactId, ownerChoice: survivor.owner as UserId });
+    expect(await visibleTo(tl, loser.id)).toBe(false);
+    expect(await marks(tl.userId, `c:${loser.id}`)).toBeGreaterThan(0);
+    await compare(tl, 'merged into an outside lead');
+  }, 300_000);
+
+  it('a person added to or removed from a deal, and a deal\'s primary person, mark the deal\'s TC who holds a task on them', async () => {
+    const deals = (await su.query<{ id: string; owner: string; stage: string; primary: string }>(`
+      SELECT d.id, d.owner_user_id AS owner, d.stage, d.primary_contact_id AS primary FROM deals d
+        JOIN deal_members dm ON dm.tenant_id = d.tenant_id AND dm.deal_id = d.id AND dm.user_id = $2
+        JOIN memberships m ON m.tenant_id = d.tenant_id AND m.user_id = d.owner_user_id AND m.role = 'agent'
+       WHERE d.tenant_id = $1 ORDER BY d.stage = 'closed' DESC, d.id`, [T, tc.userId])).rows;
+    const open = deals.find((d) => d.stage !== 'closed')!;
+    const closed = deals.find((d) => d.stage === 'closed')!;
+    expect(open && closed).toBeTruthy();
+    const dealOwner = { userId: open.owner, role: 'agent' };
+    // a person added to the deal (POST /deals/:id/contacts), then removed again (the erasure path's removal)
+    const y = await pickLead([open.owner]);
+    await taskFor(owner, y.id, tc);
+    expect(await visibleTo(tc, y.id)).toBe(false);
+    await compare(tc, 'a TC task on a lead of the deal owner');
+    await asMember(dealOwner, (tx) => addDealContact(tx, open.id, y.id, 'co_buyer'));
+    expect(await visibleTo(tc, y.id)).toBe(true);
+    expect(await marks(tc.userId, `c:${y.id}`)).toBeGreaterThan(0);
+    await compare(tc, 'added to the TC\'s deal');
+    await asMember(dealOwner, (tx) => sql`DELETE FROM deal_contacts WHERE tenant_id = app.tenant_id() AND deal_id = ${open.id} AND contact_id = ${y.id}`.execute(tx));
+    expect(await visibleTo(tc, y.id)).toBe(false);
+    expect(await marks(tc.userId, `c:${y.id}`)).toBeGreaterThan(0);
+    await compare(tc, 'removed from the TC\'s deal');
+    // the primary person of a closed deal: the Owner removes them (as erasure does), then names another person
+    const q = await pickLead([closed.owner]);
+    await taskFor(owner, closed.primary, tc);
+    await taskFor(owner, q.id, tc);
+    await asMember(owner, (tx) => sql`DELETE FROM deal_contacts WHERE tenant_id = app.tenant_id() AND deal_id = ${closed.id} AND contact_id = ${closed.primary}`.execute(tx));
+    await compare(tc, 'the primary person stays visible through the deal');
+    await asMember(owner, (tx) => sql`UPDATE deals SET primary_contact_id = NULL, row_version = row_version + 1 WHERE tenant_id = app.tenant_id() AND id = ${closed.id}`.execute(tx));
+    expect(await visibleTo(tc, closed.primary)).toBe(false);
+    expect(await marks(tc.userId, `c:${closed.primary}`)).toBeGreaterThan(0);
+    await compare(tc, 'the primary person removed from the deal');
+    await asMember(owner, (tx) => sql`UPDATE deals SET primary_contact_id = ${q.id}, row_version = row_version + 1 WHERE tenant_id = app.tenant_id() AND id = ${closed.id}`.execute(tx));
+    expect(await visibleTo(tc, q.id)).toBe(true);
+    expect(await marks(tc.userId, `c:${q.id}`)).toBeGreaterThan(0);
+    await compare(tc, 'a new primary person');
+  }, 300_000);
+
+  it('a member leaving or joining a team marks the team\'s lead for a whole-book recompute', async () => {
+    const mover = inside.at(-1)!;
+    const k = await pickLead([mover]);
+    await taskFor(tl, k.id, tl);
+    await compare(tl, 'a Team Lead task on a team member\'s lead');
+    await asMember(owner, (tx) => sql`DELETE FROM team_members WHERE tenant_id = app.tenant_id() AND team_id = ${tlTeam} AND user_id = ${mover}`.execute(tx));
+    expect(await visibleTo(tl, k.id)).toBe(false);
+    expect(await marks(tl.userId, '!full')).toBeGreaterThan(0);
+    await compare(tl, 'the member left the team');
+    await asMember(owner, (tx) => sql`INSERT INTO team_members (tenant_id, team_id, user_id, is_lead) VALUES (app.tenant_id(), ${tlTeam}, ${mover}, false)`.execute(tx));
+    expect(await visibleTo(tl, k.id)).toBe(true);
+    expect(await marks(tl.userId, '!full')).toBeGreaterThan(0);
+    await compare(tl, 'the member joined the team again');
+  }, 300_000);
+
+  it('a contact point removed by an import revert marks its contact (the card\'s channels change)', async () => {
+    const agent = users[0]!;
+    // a person of the agent's with a materialized card and no phone; an import adds one, then is reverted
+    const c = (await su.query<{ id: string }>(`
+      SELECT c.id FROM contacts c WHERE c.tenant_id = $1 AND c.owner_user_id = $2 AND c.deleted_at IS NULL
+         AND EXISTS (SELECT 1 FROM priority_feed_items f WHERE f.tenant_id = c.tenant_id AND f.user_id = $2 AND f.contact_id = c.id AND f.state = 'open' AND f.card IS NOT NULL)
+         AND NOT EXISTS (SELECT 1 FROM contact_points p WHERE p.tenant_id = c.tenant_id AND p.contact_id = c.id AND p.kind = 'phone')
+       ORDER BY md5(c.id::text) LIMIT 1`, [T, agent.userId])).rows[0]!;
+    expect(c).toBeDefined();
+    const batch = randomUUID();
+    const stage = randomUUID();
+    const point = randomUUID();
+    await su.query(`INSERT INTO import_batches (tenant_id, id, source, status, created_by_user_id, source_snapshot_sha256) VALUES ($1, $2, 'csv', 'committed', $3, $4)`,
+      [T, batch, owner.userId, 'b'.repeat(64)]);
+    await su.query(`INSERT INTO import_stages (tenant_id, id, batch_id, category, seq, status) VALUES ($1, $2, $3, 'contacts', 1, 'reverting')`, [T, stage, batch]);
+    await su.query(`INSERT INTO contact_points (tenant_id, id, contact_id, kind, address, address_hmac, label, line_type, status, is_primary, import_batch_id)
+                    VALUES ($1, $2, $3, 'phone', '+14155550142', sha256(convert_to('+14155550142', 'UTF8')), 'mobile', 'mobile', 'active', true, $4)`, [T, point, c.id, batch]);
+    await compare(agent, 'an imported phone');
+    const card = async () => (await su.query<{ card: unknown }>(`SELECT card FROM priority_feed_items WHERE tenant_id = $1 AND user_id = $2 AND contact_id = $3 AND state = 'open' ORDER BY dedupe_key LIMIT 1`, [T, agent.userId, c.id])).rows[0]!.card;
+    const withPhone = JSON.stringify(await card());
+    const removed = await asMember(owner, async (tx) => (await sql<{ id: string }>`SELECT x::text AS id FROM app.import_revert_delete(${stage}::uuid, 'contact_points', ${[point]}::uuid[]) AS x`.execute(tx)).rows);
+    expect(removed).toEqual([{ id: point }]);
+    expect(await marks(agent.userId, `c:${c.id}`)).toBeGreaterThan(0);
+    await compare(agent, 'the imported phone reverted');
+    expect(JSON.stringify(await card())).not.toBe(withPhone);
+  }, 300_000);
+
+  it('a settings write marks no member unless the zone changes; a zone change marks every member \'!full\'', async () => {
+    const full = async () => Number((await su.query<{ n: string }>(`SELECT count(*) AS n FROM feed_dirty WHERE tenant_id = $1 AND group_key = '!full'`, [T])).rows[0]!.n);
+    const members = Number((await su.query<{ n: string }>(`SELECT count(*) AS n FROM memberships WHERE tenant_id = $1`, [T])).rows[0]!.n);
+    const zone = (await su.query<{ z: string }>(`SELECT default_timezone AS z FROM tenant_settings WHERE tenant_id = $1`, [T])).rows[0]!.z;
+    const before = await full();
+    // what the stage-label editor, the batch-text switch and the routing settings write (as the Owner)
+    await asMember(owner, (tx) => sql`UPDATE tenant_settings SET stage_labels = '{"active":"Hot"}'::jsonb WHERE tenant_id = app.tenant_id()`.execute(tx));
+    await asMember(owner, (tx) => sql`UPDATE tenant_settings SET default_timezone = default_timezone WHERE tenant_id = app.tenant_id()`.execute(tx));
+    expect(await full()).toBe(before);
+    for (const u of users) await compare(u, 'stage labels renamed');
+    const other = zone === 'America/New_York' ? 'America/Chicago' : 'America/New_York';
+    await asMember(owner, (tx) => sql`UPDATE tenant_settings SET default_timezone = ${other} WHERE tenant_id = app.tenant_id()`.execute(tx));
+    expect(await full()).toBe(before + members);
+    for (const u of users) await compare(u, 'the zone changed');
+    await asMember(owner, (tx) => sql`UPDATE tenant_settings SET default_timezone = ${zone} WHERE tenant_id = app.tenant_id()`.execute(tx));
+    for (const u of users) await compare(u, 'the zone changed back');
+  }, 300_000);
 });

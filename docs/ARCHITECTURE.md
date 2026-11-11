@@ -441,9 +441,12 @@ connection/export test (counts only — no promises before this) → snapshot (e
 
   Each branch returns at most 10 rows under a 300 ms statement timeout. Transcripts are not searchable (encrypted). Pond-card contacts appear by name only; their points and messages are hidden by RLS. No search index lives outside Postgres.
 - **Priority Feed, incremental (lane `perf-misses`).**
-  - **Storage.** Cards are materialized in `priority_feed_items`. Statement-level SECURITY INVOKER triggers on the
-    input tables add `feed_dirty` marks per (member, group); a group is a contact, a contactless task or
-    appointment, or a deal date.
+  - **Storage.** Cards are materialized in `priority_feed_items`. SECURITY INVOKER triggers on the input tables
+    (statement level; the tenant-zone one per row) add `public.feed_dirty` marks per (member, group); a group is a
+    contact, a contactless task or appointment, or a deal date. A write marks every member whose cards it can change:
+    the contact's owner and offeree, and on an ownership, visibility, deal-people or team change also the members who
+    hold a task, appointment or assistant-action card on it (docs/SECURITY.md §6.1). Only a zone change marks every
+    member for a whole-book recompute.
   - **Read.** GET /feed first re-scores the dirty groups and the groups whose stored next change instant
     (`feed_groups.check_at`) has come, as the member under their own RLS, then reads the top 50 in index order.
     Relative-time wording is stored as a template and rendered at read time.
@@ -465,7 +468,7 @@ connection/export test (counts only — no promises before this) → snapshot (e
   - reopen
 
   Recomputation never loses human actions.
-- **Scoreboard (A7e) and momentum.** These are SQL views (`v_speed_to_lead`, `v_agent_activity_daily`, `v_pipeline_momentum`) with `security_invoker` so the caller's RLS applies, and every number shows its denominator. Speed-to-lead comes from the ownership ledger. Touches count human outbound only. Momentum compares current stage dwell with the tenant median (aggregate-only definer `app.stage_dwell_norms`) and flags `> 1.5×` when the sample is at least 5. Goals and weekly plans are Phase 2 (the `agent_goals` table exists).
+- **Scoreboard (A7e) and momentum.** The views `v_speed_to_lead`, `v_agent_activity_daily` and `v_pipeline_momentum` have `security_invoker`, so the caller's RLS applies; the scoreboard itself reads the aggregate definers `app.scoreboard_speed` and `app.scoreboard_activity` (a member's numbers whatever happened to the contacts since) and their daily rollup, and every number shows its denominator. Speed-to-lead comes from the ownership ledger. Touches count human outbound only: never imported, assistant or bulk messages (R-PAR-37). Momentum compares current stage dwell with the tenant median (aggregate-only definer `app.stage_dwell_norms`) and flags `> 1.5×` when the sample is at least 5. Goals and weekly plans are Phase 2 (the `agent_goals` table exists).
 
 ---
 
@@ -906,7 +909,7 @@ Migration `0023_p3_portal_auth.sql` (lane number; the orchestrator renumbers it)
 | `portal.audit_internal(...)`, `portal.document_chain_internal(item)` | helpers | — | invoker rights, **not executable by app_user** (only by app_definer inside the definers above). The chain: client context names an active account of an active tenant → the item is an unretracted document item of an unrevoked, unexpired grant of that account → `app.portal_party_ok` still holds → the document is that item's document, of the grant's own deal or listing, not contact-scoped, shared and clean → its stored object is a live `document` object → `platform:portal` is cleared. |
 - **Audit identity.** `audit_log.actor_kind` has no `client` value and this module changes no table, so portal rows are `actor_kind = 'system'`, `actor_via = 'api'`, with `changes.principal = 'client'` and `changes.portal_account_id`. Reports that count client actions filter on `changes->>'principal'`.
 - **Tables.** `portal_login_tokens`, `portal_sessions` and `portal_stream_tokens` keep the staff Layer 1 policy, the support read-only policies and statement trigger, and a single permissive policy `USING (false)`; `app_user` has no privilege on them at all. `portal_stream_tokens` is not in PHASE2_3_PLAN §4's list: R-PORTAL-7's single-use 60 s token needs state, and it is definer-only like the other two.
-- **The client actor.** `ClientActor` carries a module-private brand: only `resolvePortalSession` (and `consumePortalLogin`, which resolves the new session) constructs one. Lint `realty/portal-tx-separation` bans `withPortalTx` and client-actor literals outside `packages/db/src/portalTx.ts` and `apps/api/src/portal/client/**`, and bans `withTenantTx`, `withPreTenant`, `withNoContext` and `actorGucs` inside `apps/api/src/portal/client/**` (module 45 puts its client routes there and its staff invite/grant/publish routes elsewhere, e.g. `apps/api/src/portal/staff/**`). `withPortalTx` sets exactly `app.tenant_id`, `app.principal_type = 'client'` and `app.portal_account_id` and clears `app.user_id`, `app.actor_kind` and `app.ownership_command`, transaction-locally.
+- **The client actor.** `ClientActor` carries a module-private brand: only `resolvePortalSession` (and `consumePortalLogin`, which resolves the new session) constructs one. Lint `realty/portal-tx-separation` bans `withPortalTx` and client-actor literals outside `packages/db/src/portalTx.ts` and `apps/api/src/portal/client/**`, and bans `withTenantTx`, `withPreTenant`, `withPreTenantThenTenant`, `withNoContext`, `actorGucs`, `applyOwnershipCommand` and `applyOwnershipCommandThen` inside `apps/api/src/portal/client/**` (module 45 puts its client routes there and its staff invite/grant/publish routes elsewhere, e.g. `apps/api/src/portal/staff/**`). `withPortalTx` sets exactly `app.tenant_id`, `app.principal_type = 'client'` and `app.portal_account_id` and clears `app.user_id`, `app.actor_kind` and `app.ownership_command`, transaction-locally.
 - **Residual (Q11).** A compromised API process can still put any account id in the client GUCs: RLS trusts the context, as Phase 1 trusts `app.user_id`. The brand, the lint rule and the definers' re-checks narrow it; a separate DB login role for the portal remains open question Q11.
 - **Not done here (later modules or ops).** Sending the link (module 45, `dispatchOutbound`), HTTP rate limits per IP and per address (module 45, `auth.rate_limit_hit`), the `__Host-psid` cookie and CSRF secret (module 45), and purging expired tokens and sessions (inert once expired; a retention step is not yet written).
 ### 21.8 Security notes: module 21 `api/integrations`

@@ -696,6 +696,44 @@ VALUES (:tA, gen_random_uuid(), :cvA, :c1, 'email', 'outbound', :eid, 'team@a-re
         'Hi Alice', 'sent', 'human', :agA1, 'marketing', now(), now(), :bkE);
 SELECT pg_temp.ok(NOT EXISTS (SELECT 1 FROM v_agent_activity_daily WHERE user_id = :agA1 AND touches > 0),
   'R-PAR-37: a sent bulk email is not a touch in the activity view');
+-- ... nor on the scoreboard, which reads its own definers, not the view: the live count (app.scoreboard_activity) and
+-- the daily rollup's writer count the agent's human sends without the bulk ones (the expected counts are read as the
+-- superuser, without RLS, as the definers count)
+RESET ROLE;
+SELECT pg_temp.ok(EXISTS (SELECT 1 FROM messages m WHERE m.bulk_action_id = :bkE AND m.status = 'sent' AND m.initiated_by_user_id = :agA1)
+              AND (SELECT a.texts_and_emails FROM app.scoreboard_activity(ARRAY[:agA1]::uuid[], now() - interval '30 days', now() + interval '1 hour') a)
+                = (SELECT count(*) FROM messages m WHERE m.tenant_id = :tA AND m.initiated_by_user_id = :agA1 AND m.direction = 'outbound'
+                      AND m.initiator = 'human' AND NOT m.imported AND m.dispatched_at > now() - interval '30 days' AND m.bulk_action_id IS NULL),
+  'R-PAR-37: a sent bulk email is not a touch on the live scoreboard (app.scoreboard_activity)');
+SET LOCAL ROLE app_user;
+-- a bulk send two days ago (still the running action and Alice's pending item): it marks no rollup day, and the day
+-- the job rolls holds none of it
+INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, email_identity_id, from_address, to_address,
+       subject, body, status, initiator, initiated_by_user_id, purpose, dispatched_at, occurred_at, bulk_action_id)
+VALUES (:tA, 'a0000000-0000-7000-8000-0000000ad0e2', :cvA, :c1, 'email', 'outbound', :eid, 'team@a-realty.test', 'alice@example.test',
+        'A home you might like', 'Hi Alice', 'sent', 'human', :agA1, 'marketing', now() - interval '2 days', now() - interval '2 days', :bkE);
+RESET ROLE;
+SELECT pg_temp.ok(NOT EXISTS (SELECT 1 FROM scoreboard_rollup_dirty d JOIN tenant_settings s ON s.tenant_id = d.tenant_id
+                               WHERE d.tenant_id = :tA AND d.day = app.scoreboard_day_of(now() - interval '2 days', s.default_timezone)),
+  'R-PAR-37: a backdated bulk send marks no scoreboard day dirty (it is counted on none)');
+INSERT INTO scoreboard_rollup_state (tenant_id, zone, safe_until)
+SELECT tenant_id, default_timezone, clock_timestamp() FROM tenant_settings WHERE tenant_id = :tA
+ON CONFLICT (tenant_id) DO UPDATE SET zone = EXCLUDED.zone, safe_until = EXCLUDED.safe_until, pending_at = NULL, pending_xid = NULL;
+SET LOCAL ROLE app_user;
+SELECT pg_temp.ctx(:tA, NULL, 'system');
+SELECT pg_temp.ok((SELECT r.days_rolled FROM app.scoreboard_rollup_roll(92, 92) r) >= 90, 'the scoreboard rollup job rolls the window');
+RESET ROLE;
+SELECT pg_temp.ok(EXISTS (SELECT 1 FROM scoreboard_rollup_days r JOIN tenant_settings s ON s.tenant_id = r.tenant_id
+                           WHERE r.tenant_id = :tA AND r.day = app.scoreboard_day_of(now() - interval '2 days', s.default_timezone))
+              AND (SELECT COALESCE(sum(a.texts_and_emails), 0) FROM scoreboard_activity_daily a JOIN tenant_settings s ON s.tenant_id = a.tenant_id
+                    WHERE a.tenant_id = :tA AND a.user_id = :agA1 AND a.day = app.scoreboard_day_of(now() - interval '2 days', s.default_timezone))
+                = (SELECT count(*) FROM messages m JOIN tenant_settings s ON s.tenant_id = m.tenant_id
+                    WHERE m.tenant_id = :tA AND m.initiated_by_user_id = :agA1 AND m.direction = 'outbound' AND m.initiator = 'human'
+                      AND NOT m.imported AND m.bulk_action_id IS NULL AND m.dispatched_at IS NOT NULL
+                      AND app.scoreboard_day_of(m.dispatched_at, s.default_timezone) = app.scoreboard_day_of(now() - interval '2 days', s.default_timezone)),
+  'R-PAR-37: the scoreboard''s daily rollup counts no bulk send (the rolled day holds the human sends only)');
+SET LOCAL ROLE app_user;
+SELECT pg_temp.ctx(:tA, :agA1, 'user');
 SELECT pg_temp.expect_error(format($q$UPDATE messages SET bulk_action_id = NULL WHERE bulk_action_id = %L$q$, :bkE),
   'R-PAR-37 S5: a bulk message cannot be turned into a touch', '%BULK_MESSAGE_IMMUTABLE%');
 -- Alice unsubscribes; the next bulk email to her is refused by the database guard, whatever the app does

@@ -10,7 +10,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ContactId, PondId, TenantId, UserActor, UserId } from '@realty/core/foundation';
 import type { OwnershipCommand } from '@realty/core/ownership';
-import { type Database, applyOwnershipCommand, createDatabase, withTenantTx } from '@realty/db';
+import { type Database, FOLLOWUP_JOB_KIND, applyOwnershipCommand, createDatabase, runOwnershipFollowup, withTenantTx } from '@realty/db';
 import { type TestDb, createTestDb } from '@realty/db/testing';
 import { sql } from 'kysely';
 import pg from 'pg';
@@ -235,7 +235,107 @@ beforeAll(async () => {
     await c.query('ROLLBACK').catch(() => undefined);
     c.release();
   }
+  await parityFixture(agents);
 }, 600_000);
+
+/** The FUB parity rows of the fixture (the generator makes none); what the explicit-count test checks. */
+const parity = { agent: '', importedCalls: 0, importedMessages: 0, importedAppointments: 0, bulkSends: 0, loggedActivity: 0, merged: '' };
+
+/**
+ * Rows on past days of the window that the scoreboard must count on NO day (imported calls, messages and
+ * appointments: R-IMPORT-6; bulk email sends of a running action: R-PAR-37), or that must change no count (logged
+ * activity notes; a merge through the ownership engine, which re-points the loser's messages and calls). Written with
+ * every trigger and guard on; the bulk action goes through its lifecycle as its creator.
+ */
+async function parityFixture(agents: string[]): Promise<void> {
+  const agent = agents[0]!;
+  parity.agent = agent;
+  const c = await su.connect();
+  try {
+    await c.query('BEGIN');
+    await c.query(`SELECT set_config('app.tenant_id', $1, true), set_config('app.user_id', $2, true), set_config('app.actor_kind', 'user', true),
+                          set_config('app.principal_type', 'staff', true)`, [T, agent]);
+    // imported rows (an import batch's records), on the agent's contacts, 3-8 days ago
+    const owner = members.find((m) => m.role === 'owner')!.userId;
+    const [batch, stage, rec] = [randomUUID(), randomUUID(), randomUUID()];
+    await c.query(`INSERT INTO import_batches (tenant_id, id, source, status, created_by_user_id, source_snapshot_sha256) VALUES ($1, $2, 'csv', 'committed', $3, $4)`, [T, batch, owner, 'd'.repeat(64)]);
+    await c.query(`INSERT INTO import_stages (tenant_id, id, batch_id, category, seq, status) VALUES ($1, $2, $3, 'messages', 4, 'pending')`, [T, stage, batch]);
+    await c.query(`INSERT INTO import_records (tenant_id, id, stage_id, source_ref, outcome, raw_purged_at, target_id) VALUES ($1, $2, $3, 'fub.csv#row=2', 'imported', now(), $4)`, [T, rec, stage, randomUUID()]);
+    parity.importedCalls = (await c.query(`
+      INSERT INTO calls (tenant_id, id, conversation_id, contact_id, direction, phone_number_id, agent_user_id, client_address, initiator, imported, import_record_id,
+                         status, started_at, answered_at, ended_at, duration_s, recording_mode, recording_decision, created_at, updated_at)
+      SELECT k.tenant_id, gen_random_uuid(), k.conversation_id, k.contact_id, 'outbound', k.phone_number_id, k.agent_user_id, k.client_address, 'import', true, $3,
+             'completed', now() - (3 + n) * interval '1 day', now() - (3 + n) * interval '1 day' + interval '5 seconds', now() - (3 + n) * interval '1 day' + interval '2 minutes',
+             115, 'off', '{"mode":"off"}'::jsonb, now(), now()
+        FROM (SELECT k.*, row_number() OVER (ORDER BY k.id) AS n FROM calls k
+               WHERE k.tenant_id = $1 AND k.agent_user_id = $2 AND k.direction = 'outbound' AND k.initiator = 'human' ORDER BY k.id LIMIT 5) k`, [T, agent, rec])).rowCount ?? 0;
+    parity.importedMessages = (await c.query(`
+      INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, from_address, to_address, body, status, initiator, imported,
+                            import_record_id, initiated_by_user_id, dispatched_at, occurred_at)
+      SELECT m.tenant_id, gen_random_uuid(), m.conversation_id, m.contact_id, m.channel, 'outbound', m.phone_number_id, m.from_address, m.to_address, 'Imported text',
+             'delivered', 'import', true, $3, m.initiated_by_user_id, now() - (3 + n) * interval '1 day', now() - (3 + n) * interval '1 day'
+        FROM (SELECT m.*, row_number() OVER (ORDER BY m.id) AS n FROM messages m
+               WHERE m.tenant_id = $1 AND m.initiated_by_user_id = $2 AND m.direction = 'outbound' AND m.initiator = 'human' ORDER BY m.id LIMIT 5) m`, [T, agent, rec])).rowCount ?? 0;
+    parity.importedAppointments = (await c.query(`
+      INSERT INTO appointments (tenant_id, id, contact_id, user_id, set_by_user_id, kind, starts_at, ends_at, status, created_by_kind, created_at, updated_at)
+      SELECT $1, gen_random_uuid(), c.id, $2, $2, 'consult', now() - (3 + n) * interval '1 day', now() - (3 + n) * interval '1 day' + interval '1 hour', 'held', 'import',
+             now() - (3 + n) * interval '1 day', now()
+        FROM (SELECT id, row_number() OVER (ORDER BY id) AS n FROM contacts WHERE tenant_id = $1 AND owner_user_id = $2 ORDER BY id LIMIT 5) c`, [T, agent])).rowCount ?? 0;
+    // a running bulk email of the agent's, one message per person, each sent on another past day
+    const people = (await c.query<{ id: string; address: string; hmac: Buffer; conv: string }>(`
+      SELECT c.id, p.address, p.address_hmac AS hmac, v.id AS conv FROM contacts c
+        JOIN contact_points p ON p.tenant_id = c.tenant_id AND p.contact_id = c.id AND p.kind = 'email' AND p.removed_at IS NULL
+        JOIN LATERAL (SELECT v.id FROM conversations v WHERE v.tenant_id = c.tenant_id AND v.contact_id = c.id ORDER BY v.id LIMIT 1) v ON true
+       WHERE c.tenant_id = $1 AND c.owner_user_id = $2 AND c.ownership_state = 'owned' AND c.deleted_at IS NULL
+         AND NOT EXISTS (SELECT 1 FROM consent_state s WHERE s.tenant_id = c.tenant_id AND s.address_hmac = p.address_hmac AND s.status = 'revoked')
+         AND NOT EXISTS (SELECT 1 FROM suppressions x WHERE x.tenant_id = c.tenant_id AND x.address_hmac = p.address_hmac)
+       ORDER BY md5(c.id::text) LIMIT 6`, [T, agent])).rows;
+    expect(people.length).toBe(6);
+    const [identity, action] = [randomUUID(), randomUUID()];
+    await c.query(`INSERT INTO email_identities (tenant_id, id, from_address, display_name) VALUES ($1, $2, 'agent-bulk@rollup.example.test', 'Agent')`, [T, identity]);
+    await c.query(`INSERT INTO bulk_actions (tenant_id, id, kind, created_by_user_id, created_by_role, source, idempotency_key) VALUES ($1, $2, 'email', $3, 'agent', 'selection', 'rollup-bulk-email-1')`, [T, action, agent]);
+    for (const p of people) await c.query(`INSERT INTO bulk_action_items (tenant_id, bulk_action_id, contact_id, address_hmac) VALUES ($1, $2, $3, $4)`, [T, action, p.id, p.hmac]);
+    await c.query(`UPDATE bulk_actions SET status = 'confirmed', confirmed_at = now(), target_count = $2, subject_snapshot = 'New homes', body_snapshot = 'Hi {{contact.first_name}}' WHERE id = $1`, [action, people.length]);
+    await c.query(`UPDATE bulk_actions SET status = 'running', started_at = now() WHERE id = $1`, [action]);
+    for (const [i, p] of people.entries()) {
+      await c.query(`
+        INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, email_identity_id, from_address, to_address, subject, body, status, initiator,
+                              initiated_by_user_id, purpose, dispatched_at, occurred_at, bulk_action_id)
+        VALUES ($1, gen_random_uuid(), $2, $3, 'email', 'outbound', $4, 'agent-bulk@rollup.example.test', $5, 'New homes', 'Hi', 'sent', 'human', $6, 'marketing',
+                now() - ($7::int + 2) * interval '1 day', now() - ($7::int + 2) * interval '1 day', $8)`, [T, p.conv, p.id, identity, p.address, agent, i, action]);
+      parity.bulkSends++;
+    }
+    // logged activity (a call the agent logged by hand, with the time it happened)
+    parity.loggedActivity = (await c.query(`
+      INSERT INTO notes (tenant_id, id, contact_id, author_user_id, body, source, activity_kind, activity_direction, activity_outcome, activity_at)
+      SELECT $1, gen_random_uuid(), id, $2, 'Called, left a message', 'logged_activity', 'call', 'outbound', 'left_voicemail', now() - (3 + n) * interval '1 day'
+        FROM (SELECT id, row_number() OVER (ORDER BY id) AS n FROM contacts WHERE tenant_id = $1 AND owner_user_id = $2 ORDER BY md5(id::text) LIMIT 3) c`, [T, agent])).rowCount ?? 0;
+    await c.query('COMMIT');
+  } finally {
+    await c.query('ROLLBACK').catch(() => undefined);
+    c.release();
+  }
+  // a merge through the ownership engine (as the Owner): the loser had human sends and calls in the window
+  const pair = (await q<{ loser: string; survivor: string }>(`
+    SELECT l.id AS loser, (SELECT s.id FROM contacts s WHERE s.tenant_id = l.tenant_id AND s.owner_user_id = l.owner_user_id AND s.id <> l.id
+                             AND s.ownership_state = 'owned' AND s.deleted_at IS NULL AND s.merged_into_contact_id IS NULL ORDER BY md5(s.id::text) LIMIT 1) AS survivor
+      FROM contacts l WHERE l.tenant_id = $1 AND l.owner_user_id = $2 AND l.ownership_state = 'owned' AND l.deleted_at IS NULL
+       AND NOT EXISTS (SELECT 1 FROM deal_contacts d WHERE d.tenant_id = l.tenant_id AND d.contact_id = l.id)
+       AND NOT EXISTS (SELECT 1 FROM deals d WHERE d.tenant_id = l.tenant_id AND d.primary_contact_id = l.id)
+       AND EXISTS (SELECT 1 FROM messages m WHERE m.tenant_id = l.tenant_id AND m.contact_id = l.id AND m.initiator = 'human' AND m.dispatched_at > now() - interval '80 days')
+       AND EXISTS (SELECT 1 FROM calls k WHERE k.tenant_id = l.tenant_id AND k.contact_id = l.id AND k.initiator = 'human' AND k.started_at > now() - interval '80 days')
+     ORDER BY md5(l.id::text) LIMIT 1`, [T, agents[1]]))[0]!;
+  const owner = users.find((u) => u.role === 'owner')!;
+  const r = await applyOwnershipCommand(owner, pair.survivor as ContactId, { kind: 'merge', survivorId: pair.survivor as ContactId, loserId: pair.loser as ContactId, ownerChoice: null },
+    { commandId: randomUUID(), db: database });
+  expect(r.outcome.ok, JSON.stringify(r.outcome)).toBe(true);
+  // the follow-up job re-points the loser's messages and calls to the survivor (mergeCommunication)
+  const jobs = await q<{ payload: unknown }>(`SELECT payload FROM jobs WHERE tenant_id = $1 AND kind = $2 AND status = 'pending'
+                                               AND payload->>'contactId' IN ($3, $4)`, [T, FOLLOWUP_JOB_KIND, pair.survivor, pair.loser]);
+  expect(jobs.length).toBeGreaterThan(0);
+  for (const j of jobs) await runOwnershipFollowup(sys(), j.payload, { db: database });
+  parity.merged = pair.loser;
+}
 
 afterAll(async () => {
   await su?.end();
@@ -326,6 +426,10 @@ describe('0027 scoreboard rollup: rollup + live equals live', () => {
       [T],
     ))[0]!;
     for (const [k, v] of Object.entries(c)) expect(Number(v), k).toBeGreaterThan(0);
+    // and the FUB parity rows: imported calls, texts and appointments, bulk sends, logged activity, a merged lead
+    expect(parity).toMatchObject({ importedCalls: 5, importedMessages: 5, importedAppointments: 5, bulkSends: 6, loggedActivity: 3, merged: expect.any(String) });
+    const merged = (await q<{ s: string; m: number }>(`SELECT ownership_state AS s, (SELECT count(*)::int FROM messages WHERE tenant_id = $1 AND contact_id = $2) AS m FROM contacts WHERE tenant_id = $1 AND id = $2`, [T, parity.merged]))[0]!;
+    expect(merged).toEqual({ s: 'closed', m: 0 }); // the loser's messages moved to the survivor
   });
 
   it('with no rollup at all (a fresh database before the first job run) both paths agree', async () => {
@@ -341,6 +445,55 @@ describe('0027 scoreboard rollup: rollup + live equals live', () => {
     await expectRollupRowsExact();
     const e = await expectEquivalent('backfilled');
     expect(e.rolledUsed).toBeGreaterThanOrEqual(88); // the 90d range really reads the rollup
+  }, 600_000);
+
+  // Equal paths are not enough: both could count a bulk send. The definitions, counted independently per day.
+  it('R-PAR-37 R-IMPORT-6: bulk sends and imported rows count on no rolled day and not live; logged activity and a merge change no count', async () => {
+    await rollAll();
+    const days = await q<{ day: string; rolled_texts: number; texts: number; bulk: number; rolled_calls: number; calls: number; imported_calls: number;
+                           rolled_held: number; held: number; imported_held: number }>(`
+      WITH z AS (SELECT default_timezone AS zone FROM tenant_settings WHERE tenant_id = $1),
+      d AS (SELECT DISTINCT app.scoreboard_day_of(x.at, z.zone) AS day FROM z, (
+              SELECT dispatched_at AS at FROM messages WHERE tenant_id = $1 AND (bulk_action_id IS NOT NULL OR imported) AND initiated_by_user_id = $2
+              UNION ALL SELECT started_at FROM calls WHERE tenant_id = $1 AND imported AND agent_user_id = $2
+              UNION ALL SELECT starts_at FROM appointments WHERE tenant_id = $1 AND created_by_kind = 'import' AND user_id = $2) x)
+      SELECT d.day::text,
+             COALESCE(a.texts_and_emails, 0) AS rolled_texts, COALESCE(a.calls, 0) AS rolled_calls, COALESCE(a.appointments_held, 0) AS rolled_held,
+             (SELECT count(*)::int FROM messages m WHERE m.tenant_id = $1 AND m.initiated_by_user_id = $2 AND m.direction = 'outbound' AND m.initiator = 'human'
+                 AND NOT m.imported AND m.bulk_action_id IS NULL AND m.dispatched_at IS NOT NULL AND app.scoreboard_day_of(m.dispatched_at, z.zone) = d.day) AS texts,
+             (SELECT count(*)::int FROM messages m WHERE m.tenant_id = $1 AND m.initiated_by_user_id = $2 AND m.bulk_action_id IS NOT NULL AND app.scoreboard_day_of(m.dispatched_at, z.zone) = d.day) AS bulk,
+             (SELECT count(*)::int FROM calls k WHERE k.tenant_id = $1 AND k.agent_user_id = $2 AND k.direction = 'outbound' AND k.initiator = 'human' AND NOT k.imported
+                 AND app.scoreboard_day_of(k.started_at, z.zone) = d.day) AS calls,
+             (SELECT count(*)::int FROM calls k WHERE k.tenant_id = $1 AND k.agent_user_id = $2 AND k.imported AND app.scoreboard_day_of(k.started_at, z.zone) = d.day) AS imported_calls,
+             (SELECT count(*)::int FROM appointments p WHERE p.tenant_id = $1 AND p.user_id = $2 AND p.created_by_kind <> 'import' AND p.status = 'held'
+                 AND app.scoreboard_day_of(p.starts_at, z.zone) = d.day) AS held,
+             (SELECT count(*)::int FROM appointments p WHERE p.tenant_id = $1 AND p.user_id = $2 AND p.created_by_kind = 'import' AND p.status = 'held'
+                 AND app.scoreboard_day_of(p.starts_at, z.zone) = d.day) AS imported_held
+        FROM d CROSS JOIN z
+        JOIN scoreboard_rollup_days r ON r.tenant_id = $1 AND r.day = d.day AND r.zone = z.zone
+        LEFT JOIN scoreboard_activity_daily a ON a.tenant_id = $1 AND a.user_id = $2 AND a.day = d.day
+       ORDER BY 1`, [T, parity.agent]);
+    // every parity day is rolled, and holds what the definitions say: no bulk send, no imported call or appointment
+    expect(days.length).toBeGreaterThanOrEqual(6);
+    expect(days.reduce((s, x) => s + x.bulk, 0)).toBe(parity.bulkSends);
+    expect(days.reduce((s, x) => s + x.imported_calls, 0)).toBe(parity.importedCalls);
+    expect(days.reduce((s, x) => s + x.imported_held, 0)).toBe(parity.importedAppointments);
+    for (const x of days) expect({ day: x.day, texts: x.rolled_texts, calls: x.rolled_calls, held: x.rolled_held }).toEqual({ day: x.day, texts: x.texts, calls: x.calls, held: x.held });
+    // the live definer over the window, for the agent: the same definitions
+    const live = await inTx(sys(), async (tx) => (await sql<{ texts: number; calls: number; held: number }>`
+      SELECT texts_and_emails::int AS texts, calls::int AS calls, appointments_held::int AS held
+        FROM app.scoreboard_activity(${[parity.agent]}::uuid[], now() - interval '90 days', now())`.execute(tx)).rows[0]!);
+    const want = (await q<{ texts: number; calls: number; held: number }>(`
+      SELECT (SELECT count(*)::int FROM messages WHERE tenant_id = $1 AND initiated_by_user_id = $2 AND direction = 'outbound' AND initiator = 'human' AND NOT imported
+                 AND bulk_action_id IS NULL AND dispatched_at >= now() - interval '90 days' AND dispatched_at < now()) AS texts,
+             (SELECT count(*)::int FROM calls WHERE tenant_id = $1 AND agent_user_id = $2 AND direction = 'outbound' AND initiator = 'human' AND NOT imported
+                 AND started_at >= now() - interval '90 days' AND started_at < now()) AS calls,
+             (SELECT count(*)::int FROM appointments WHERE tenant_id = $1 AND user_id = $2 AND created_by_kind <> 'import' AND status = 'held'
+                 AND starts_at >= now() - interval '90 days' AND starts_at < now()) AS held`, [T, parity.agent]))[0]!;
+    expect(live).toEqual(want);
+    await expectRollupRowsExact();
+    const e = await expectEquivalent('parity rows');
+    expect(e.rolledUsed).toBeGreaterThanOrEqual(88);
   }, 600_000);
 
   it('visibility changes after a day was rolled change nothing: contact reassigned outside the team, soft-deleted, sent to a pond; a member leaves the team; a member deactivated', async () => {
@@ -455,9 +608,16 @@ describe('0027 scoreboard rollup: rollup + live equals live', () => {
       await c.query('ROLLBACK').catch(() => undefined);
       c.release();
     }
-    // 7. imported rows never count, so a backdated import marks nothing
+    // 7. imported rows never count, so a backdated import marks nothing (the fixture's imported calls: the UPDATE hits rows)
     const before = (await marks()).length;
-    await q(`UPDATE calls SET started_at = now() - interval '9 days' WHERE tenant_id = $1 AND id IN (SELECT id FROM calls WHERE tenant_id = $1 AND imported LIMIT 3)`, [T]);
+    const backdated = await su.query(`UPDATE calls SET started_at = now() - interval '9 days', answered_at = NULL, ended_at = now() - interval '9 days' + interval '1 minute'
+                                       WHERE tenant_id = $1 AND id IN (SELECT id FROM calls WHERE tenant_id = $1 AND imported LIMIT 3)`, [T]);
+    expect(backdated.rowCount).toBeGreaterThan(0);
+    expect((await marks()).length).toBe(before);
+    // ... and a backdated bulk send marks nothing either (it counts on no day, R-PAR-37)
+    const bulkBackdated = await su.query(`UPDATE messages SET dispatched_at = dispatched_at - interval '1 day'
+                                            WHERE tenant_id = $1 AND id IN (SELECT id FROM messages WHERE tenant_id = $1 AND bulk_action_id IS NOT NULL LIMIT 2)`, [T]);
+    expect(bulkBackdated.rowCount).toBe(2);
     expect((await marks()).length).toBe(before);
 
     const dirty = await marks();

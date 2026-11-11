@@ -1,6 +1,8 @@
 // Lane perf-misses, miss #4 (TC deal visibility): the contact-children and timeline policies now read through
 // app.contact_detail_row(...), an inlinable twin of app.contact_detail_visible, so the TC's deal-contact set is
-// built once per statement instead of once per child row. These tests prove WHO-SEES-WHAT is unchanged.
+// built once per statement instead of once per child row. The scale-lane review fixes did the same for the FUB
+// parity detail tables (tags, custom values, stage history, relationships, bulk items: SELECT policies only).
+// These tests prove WHO-SEES-WHAT is unchanged.
 //
 // Method: for every member (Owner, Admin, Team Lead, Agent, ISA, TC) and the system actor, one transaction
 // as app_user under the API's set_config context reads every row of each rewritten table through the CURRENT
@@ -51,8 +53,19 @@ const OLD_USING: { table: string; policy: string; using: string }[] = [
           OR contact_id = ANY ((SELECT app.my_deal_contact_ids())::uuid[])
           OR app.contact_owned_by_my_team(tenant_id, contact_id)
          ELSE app.contact_detail_visible(tenant_id, contact_id) END` },
+  // the FUB parity detail tables (0021's SELECT policies; read through the helper since the scale-lane review fixes)
+  { table: 'contact_tags', policy: 'contact_tags_select', using: 'app.contact_detail_visible(tenant_id, contact_id)' },
+  { table: 'contact_field_values', policy: 'contact_field_values_select', using: 'app.contact_detail_visible(tenant_id, contact_id)' },
+  { table: 'contact_stage_events', policy: 'contact_stage_events_select', using: 'app.contact_detail_visible(tenant_id, contact_id)' },
+  { table: 'contact_relationships', policy: 'contact_relationships_select', using: `
+      app.contact_detail_visible(tenant_id, contact_id) AND app.contact_detail_visible(tenant_id, related_contact_id)` },
+  { table: 'bulk_action_items', policy: 'bulk_action_items_select', using: `
+      EXISTS (SELECT 1 FROM bulk_actions b WHERE b.tenant_id = bulk_action_items.tenant_id AND b.id = bulk_action_items.bulk_action_id)
+      AND app.contact_detail_visible(tenant_id, contact_id)` },
 ];
 const TABLES = OLD_USING.map((p) => p.table);
+/** The parity detail tables: the generator writes none of their rows, the fixture below does. */
+const PARITY = ['contact_tags', 'contact_field_values', 'contact_stage_events', 'contact_relationships', 'bulk_action_items'] as const;
 
 /** contact_detail_visible as 0020 wrote it (the function is unchanged; this pins it). */
 const OLD_DETAIL = `CREATE FUNCTION pg_temp.old_detail(p_tenant uuid, p_contact uuid) RETURNS boolean LANGUAGE sql STABLE AS $$
@@ -180,6 +193,39 @@ beforeAll(async () => {
     // the TC as a member of a deal in ANOTHER tenant (must never widen what the TC sees in this tenant)
     const other = (await su.query<{ tenant_id: string; id: string }>(`SELECT tenant_id, id FROM deals WHERE tenant_id <> $1 ORDER BY id LIMIT 3`, [T])).rows;
     for (const d of other) await su.query(`INSERT INTO deal_members (tenant_id, deal_id, user_id, role) VALUES ($1, $2, $3, 'tc') ON CONFLICT DO NOTHING`, [d.tenant_id, d.id, tcUser]);
+    // FUB parity detail rows (the generator writes none): tags, custom values, stage history, relationships between
+    // two people (visible and hidden ones paired) and bulk-action items of an agent's, a team lead's and the Owner's
+    // actions, on every variant and on a sample of every ownership state, in this tenant and in the other one
+    const T2 = other[0]!.tenant_id;
+    const sampleOf = async (tenant: string, n: number) =>
+      (await su.query<{ id: string }>(`SELECT id FROM contacts WHERE tenant_id = $1 ORDER BY md5(id::text) LIMIT ${n}`, [tenant])).rows.map((r) => r.id);
+    for (const [tenant, ids] of [[T, [...Object.values(v), ...(await sampleOf(T, 300))]], [T2, await sampleOf(T2, 40)]] as const) {
+      const people = (await su.query<{ user_id: string; role: string }>(`SELECT DISTINCT ON (role) user_id, role FROM memberships
+                                                                          WHERE tenant_id = $1 AND role IN ('agent','team_lead','owner') ORDER BY role, user_id`, [tenant])).rows;
+      const by = people.find((p) => p.role === 'agent')!.user_id;
+      const uniq = [...new Set(ids)];
+      await su.query(`INSERT INTO tags (tenant_id, id, name, created_by_kind) SELECT $1, gen_random_uuid(), 'Parity tag ' || i, 'import' FROM generate_series(1, 3) i`, [tenant]);
+      await su.query(`INSERT INTO custom_field_defs (tenant_id, id, key, label, field_type, origin)
+                      SELECT $1, gen_random_uuid(), 'parity_field_' || i, 'Parity field ' || i, 'text', 'csv_import' FROM generate_series(1, 2) i`, [tenant]);
+      await su.query(`INSERT INTO contact_tags (tenant_id, contact_id, tag_id, added_by_kind)
+                      SELECT $1, c.id, t.id, 'migrated' FROM unnest($2::uuid[]) c(id)
+                       CROSS JOIN LATERAL (SELECT id FROM tags WHERE tenant_id = $1 AND name LIKE 'Parity tag %' ORDER BY md5(c.id::text || id::text) LIMIT 2) t`, [tenant, uniq]);
+      await su.query(`INSERT INTO contact_field_values (tenant_id, contact_id, field_id, value_text, updated_by_kind, updated_by_user_id)
+                      SELECT $1, c.id, f.id, 'value', 'user', $3 FROM unnest($2::uuid[]) c(id)
+                       CROSS JOIN (SELECT id FROM custom_field_defs WHERE tenant_id = $1 AND key LIKE 'parity_field_%') f`, [tenant, uniq, by]);
+      await su.query(`INSERT INTO contact_stage_events (tenant_id, id, contact_id, from_stage, to_stage, actor_kind, occurred_at)
+                      SELECT $1, gen_random_uuid(), c.id, 'new', s, 'system', now() - interval '1 day' FROM unnest($2::uuid[]) c(id)
+                       CROSS JOIN (VALUES ('attempting'), ('connected')) x(s)`, [tenant, uniq]);
+      await su.query(`WITH p AS (SELECT id, row_number() OVER (ORDER BY md5(id::text)) AS n FROM unnest($2::uuid[]) id)
+                      INSERT INTO contact_relationships (tenant_id, id, contact_id, related_contact_id, kind, created_by_user_id)
+                      SELECT $1, gen_random_uuid(), a.id, b.id, 'family', $3 FROM p a JOIN p b ON b.n IN (a.n + 1, a.n + 7)`, [tenant, uniq, by]);
+      await su.query(`INSERT INTO bulk_actions (tenant_id, id, kind, created_by_user_id, created_by_role, source, idempotency_key)
+                      SELECT $1, gen_random_uuid(), 'tag', u.user_id, u.role, 'selection', 'parity-vis-' || u.role
+                        FROM unnest($2::uuid[], $3::text[]) u(user_id, role)`, [tenant, people.map((p) => p.user_id), people.map((p) => p.role)]);
+      await su.query(`INSERT INTO bulk_action_items (tenant_id, bulk_action_id, contact_id)
+                      SELECT $1, b.id, c.id FROM bulk_actions b CROSS JOIN unnest($2::uuid[]) c(id)
+                       WHERE b.tenant_id = $1 AND b.idempotency_key LIKE 'parity-vis-%'`, [tenant, uniq]);
+    }
     await su.query('COMMIT');
   } finally {
     await su.end();
@@ -205,10 +251,20 @@ describe('deal visibility once per statement: contact-children and timeline poli
       expect(pol.map((p) => `${p.tablename}.${p.policyname}`).sort()).toEqual(OLD_USING.map((p) => `${p.table}.${p.policy}`).sort());
       for (const p of pol) expect(p.qual, p.policyname).not.toContain('contact_detail_visible');
       // every table in the comparison has rows in this tenant for the non-vacuous ones
-      for (const t of ['messages', 'calls', 'notes', 'contact_points', 'lead_ownership_events', 'appointments', 'behavior_events', 'lead_inquiries']) {
+      for (const t of ['messages', 'calls', 'notes', 'contact_points', 'lead_ownership_events', 'appointments', 'behavior_events', 'lead_inquiries', ...PARITY]) {
         const n = (await su.query<{ n: number }>(`SELECT count(*)::int AS n FROM public.${t} WHERE tenant_id = $1`, [T])).rows[0]!.n;
         expect(n, t).toBeGreaterThan(0);
       }
+      // the rewrite touched the SELECT policies' USING only: the parity tables' write policies still check
+      // contact_detail_visible (single written rows), exactly as 0021 wrote them
+      const writes = (await su.query<{ p: string; q: string }>(
+        `SELECT tablename || '.' || policyname AS p, COALESCE(qual, '') || ' ' || COALESCE(with_check, '') AS q FROM pg_policies
+          WHERE schemaname = 'public' AND tablename = ANY ($1::text[]) AND cmd <> 'SELECT' AND permissive = 'PERMISSIVE'`, [[...PARITY]])).rows;
+      expect(writes.filter((w) => w.q.includes('contact_detail_visible')).map((w) => w.p).sort()).toEqual([
+        'bulk_action_items.bulk_action_items_insert', 'contact_field_values.contact_field_values_delete', 'contact_field_values.contact_field_values_insert',
+        'contact_field_values.contact_field_values_update', 'contact_relationships.contact_relationships_delete', 'contact_relationships.contact_relationships_insert',
+        'contact_tags.contact_tags_delete', 'contact_tags.contact_tags_insert']);
+      expect(writes.filter((w) => w.q.includes('contact_detail_row')).map((w) => w.p)).toEqual([]);
     } finally {
       await su.end();
     }
@@ -256,16 +312,20 @@ describe('deal visibility once per statement: contact-children and timeline poli
       await setContext(su, { label: 'tc', userId: tcUser, kind: 'user' });
       const vis = await visibleRows(su);
       const covered = new Map<string, Set<boolean>>();
+      const perContact = ['messages', 'calls', 'notes', 'contact_points', 'contact_tags', 'contact_field_values', 'contact_stage_events'];
       for (const [name, want] of Object.entries(expected)) {
-        for (const t of ['messages', 'calls', 'notes', 'contact_points']) {
+        for (const t of perContact) {
           const rows = await rowsOf(su, t, v[name]!);
           if ((t === 'messages' || t === 'contact_points') && name !== 'closedOnTcDeal') expect(rows.length, `${name} ${t}`).toBeGreaterThan(0);
+          if (t.startsWith('contact_') && t !== 'contact_points') expect(rows.length, `${name} ${t}`).toBeGreaterThan(0);
           if (rows.length > 0) covered.set(t, (covered.get(t) ?? new Set()).add(want));
           expect({ name, t, visible: rows.filter((k) => vis.get(t)!.has(k)).length }).toEqual({ name, t, visible: want ? rows.length : 0 });
         }
       }
       // each child table is checked on at least one visible and one hidden deal variant
-      for (const t of ['messages', 'calls', 'notes', 'contact_points']) expect([...(covered.get(t) ?? [])].sort(), t).toEqual([false, true]);
+      for (const t of perContact) expect([...(covered.get(t) ?? [])].sort(), t).toEqual([false, true]);
+      // a TC runs no bulk action and reads no other member's (bulk_actions_select), so no item, whoever it names
+      expect(vis.get('bulk_action_items')!.size).toBe(0);
       // nothing of another tenant, although the TC is a member of deals there
       await su.query('SET LOCAL ROLE app_user');
       const foreign = (await su.query<{ n: number }>(`SELECT count(*)::int AS n FROM messages WHERE tenant_id <> $1`, [T])).rows[0]!.n;
@@ -302,4 +362,36 @@ describe('deal visibility once per statement: contact-children and timeline poli
       }
     }
   }, 300_000);
+
+  it('the TC reads tags, custom values, stage history and relationships with its deal-contact set built once per statement, never once per row', async () => {
+    const su = new pg.Client({ connectionString: db.ownerUrl });
+    await su.connect();
+    try {
+      const inTenant = new Map<string, number>();
+      for (const t of PARITY) inTenant.set(t, (await su.query<{ n: number }>(`SELECT count(*)::int AS n FROM public.${t} WHERE tenant_id = $1`, [T])).rows[0]!.n);
+      await su.query('BEGIN');
+      await su.query(`SET LOCAL track_functions = 'all'`);
+      await setContext(su, { label: 'tc', userId: tcUser, kind: 'user' });
+      await su.query('SET LOCAL ROLE app_user');
+      const calls = async () => (await su.query<{ visible: number; deal: number }>(`
+        SELECT COALESCE(pg_stat_get_xact_function_calls('app.contact_detail_visible(uuid,uuid)'::regprocedure), 0)::int AS visible,
+               COALESCE(pg_stat_get_xact_function_calls('app.my_deal_contact_ids()'::regprocedure), 0)::int AS deal`)).rows[0]!;
+      // the counters are live: one direct call counts once
+      const c0 = await calls();
+      await su.query(`SELECT app.contact_detail_visible($1, $2)`, [T, v.primaryOnTcDeal]);
+      expect((await calls()).visible).toBe(c0.visible + 1);
+      for (const t of ['contact_tags', 'contact_field_values', 'contact_stage_events', 'contact_relationships'] as const) {
+        const before = await calls();
+        const n = (await su.query<{ n: number }>(`SELECT count(*)::int AS n FROM public.${t}`)).rows[0]!.n;
+        const after = await calls();
+        expect(inTenant.get(t)!, t).toBeGreaterThan(200);
+        if (t !== 'contact_relationships') expect(n, `${t}: the TC sees its deal people's rows`).toBeGreaterThan(0);
+        expect({ t, perRowChecks: after.visible - before.visible, dealSetBuilt: Math.min(after.deal - before.deal, 99) }).toEqual({ t, perRowChecks: 0, dealSetBuilt: expect.any(Number) });
+        expect(after.deal - before.deal, `${t}: deal-contact set builds for ${inTenant.get(t)} rows`).toBeLessThanOrEqual(4);
+      }
+    } finally {
+      await su.query('ROLLBACK').catch(() => undefined);
+      await su.end();
+    }
+  }, 120_000);
 });

@@ -104,6 +104,8 @@ describe('realty/portal-tx-separation (R-TEN-14, module 43)', () => {
   tester.run('portal-tx-separation (staff mode)', rules['portal-tx-separation'], {
     valid: [
       { code: "import { withTenantTx } from '@realty/db';\nawait withTenantTx(actor, fn)", options: [{ mode: 'staff' }] },
+      // staff code (the session resolver, apps/api/src/auth/sessions.ts) keeps the session-then-act helper
+      { code: "import { withPreTenantThenTenant } from '@realty/db';\nawait withPreTenantThenTenant(pre, actorOf, fn)", options: [{ mode: 'staff' }] },
       { code: "import type { ClientActor } from '@realty/db';\nexport type A = ClientActor", options: [{ mode: 'staff' }] },
       { code: "import { type withPortalTx } from '@realty/db';", options: [{ mode: 'staff' }] },
       { code: "const m = { kind: 'client', body: 'x' }", options: [{ mode: 'staff' }] },
@@ -132,6 +134,17 @@ describe('realty/portal-tx-separation (R-TEN-14, module 43)', () => {
       { code: 'await db.withPreTenant(fn)', options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
       { code: 'await withNoContext(db, fn)', options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
       { code: "import { actorGucs as g } from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      // the session-then-act helper is withPreTenant (actorOf => null) or withTenantTx (a staff actor) in one transaction
+      { code: "import { withPreTenantThenTenant } from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      { code: "import { withPreTenantThenTenant as resolveThenAct } from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      { code: 'await withPreTenantThenTenant(pre, actorOf, fn)', options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      { code: 'await withPreTenantThenTenant(async () => 1, () => null, fn)', options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      { code: 'await db.withPreTenantThenTenant(pre, actorOf, fn)', options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      { code: "await db['withPreTenantThenTenant'](pre, actorOf, fn)", options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      { code: 'run(withPreTenantThenTenant)', options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      // the ownership engine's own-transaction entry points open withTenantTx for a staff actor
+      { code: "import { applyOwnershipCommand } from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      { code: 'await applyOwnershipCommandThen(actor, id, cmd, opts, readBack)', options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
     ],
   });
 });

@@ -378,8 +378,8 @@ Lane `perf-misses` closed four of the five misses listed here before (§4.1). Wh
      and the feed and scoreboard marking triggers).
    - **What would close it:** more database cores, or a separate, security-reviewed cheaper write-path policy.
 2. **Exception queue for a team lead is close to its budget** (§4.1: 247–300 ms p95). The next step would be the
-   evidence reads' per-row `contact_detail_visible`, through the same inlined helper as the 15 policies of
-   migration `deal_visibility_once`.
+   evidence reads' per-row `contact_detail_visible`, through the same inlined helper as the 20 policies of
+   migrations `deal_visibility_once` and `scale_review_fixes` (§7.2).
 3. **Exception recompute** now takes 1.2 s for the large tenant (was 14.4 s). The remaining ~1.7 s seen under
    load is the per-row `messages_select` check on the tenant's failing sends.
 4. **Search worst case.** A query whose words are all common but never occur together (e.g. "the lender" over
@@ -394,7 +394,7 @@ Lane `perf-misses` closed four of the five misses listed here before (§4.1). Wh
 | Priority Feed | Cards are materialized. Statement-level SECURITY INVOKER triggers mark the groups (contact, task, appointment or deal date) a write can change. GET re-scores only dirty and due groups under the member's own RLS, then reads the top 50 in index order. Relative-time wording is stored as a template and rendered at read time. The `feed.materialize` job keeps feeds current and runs an hourly full reconcile. | `workspace/feed.ts`, `repos/feedInputs.ts`, `feedJob.ts`, `core/priority/incremental.ts`, migration `feed_incremental` | `load/feed_incremental.test.ts` (random event sequences: incremental == full recompute after every event), `core/priority/incremental.test.ts` |
 | Search | Token side tables for messages and notes, visible exactly when their parent row is (EXISTS under the caller's RLS), probed with comparisons that are already leakproof. The `tsquery` is re-checked on the parent. | `workspace/search.ts`, migration `search_visibility` | `load/search_equivalence.test.ts` |
 | Team scoreboard | A daily rollup per (member, local day) for closed days, plus a live count for today. Late or backdated writes mark their day dirty. | `accountability/scoreboardRollup.ts`, `repos/scoreboard.ts`, migration `scoreboard_rollup` | `accountability/scoreboard_rollup.test.ts` |
-| TC thread | Fifteen contact-detail policies read through `app.contact_detail_row`, an inlined invoker helper. The deal-contact set is built once per statement, not once per row. | migration `deal_visibility_once` | `load/deal_visibility_equivalence.test.ts` |
+| TC thread | Fifteen contact-detail policies read through `app.contact_detail_row`, an inlined invoker helper (twenty since the merge review: the FUB parity tag, custom value, stage history, relationship and bulk item SELECT policies, §7.2). The deal-contact set is built once per statement, not once per row. | migrations `deal_visibility_once`, `scale_review_fixes` | `load/deal_visibility_equivalence.test.ts` |
 | Accept / claim | Fewer connections and statements per tap (item 1 above), plus the `DB_POOL_MAX` setting. | `leads/`, `packages/db/src/ownership/`, `tenantTx.ts` | `leads/ownership.test.ts`, `leads/commands.test.ts`, `packages/db/test/ownership.*` |
 | Exception recompute (no budget) | Exception upserts are batched, one statement per 1,000 items. | `accountability/repos/exceptions.ts` | `accountability/recompute_equivalence.test.ts` |
 
@@ -402,6 +402,66 @@ Lane `perf-misses` closed four of the five misses listed here before (§4.1). Wh
 cap that bounded the per-request recompute). It now considers every unanswered conversation of the 14-day window.
 For a book with more than 300 unanswered messages, the oldest waiting clients now appear in the top 50 and in the
 total. Books under the cap are unchanged.
+
+### 7.2 Merge review fixes (migration `scale_review_fixes`)
+
+The review of this lane against main's FUB parity code (docs/SECURITY.md §6.6) changed five things that bear on speed.
+Measured on the shared 4-core machine while other work ran (load average 4-5); the before/after pairs ran back to back
+on the same data, so their ratio is the signal, not the absolute times.
+
+**Parity detail policies: the TC's tag, value and stage-history reads.** Main's People page and contact page read
+`contact_tags` (and the contact page `contact_field_values` and the timeline `contact_stage_events`) under SELECT
+policies that called `app.contact_detail_visible` per row: for a TC that rebuilt the deal-contact set for every row. They
+now read through `app.contact_detail_row` like the fifteen of `deal_visibility_once`. EXPLAIN ANALYZE as `app_user`, on
+the review's TC fixture (6,000 contacts, the TC on 3,000 deals = 6,000 deal-contact ids, the 250k TC shape):
+
+| read (as the TC) | before | after |
+|---|---:|---:|
+| `contact_tags`, 200 rows | 3,285 ms | 18 ms |
+| `contact_field_values`, 250 rows | 4,196 ms | 17 ms |
+| `contact_stage_events`, 150 rows | 2,743 ms | 16 ms |
+| `contact_relationships`, 50 rows (two checks per row) | 2,329 ms | 36 ms |
+| People page shape: 50 people with their 4 tags each | 3,333 ms | 66 ms |
+
+The Owner and an agent gain too: 200 tag rows took 48-89 ms (Owner) and 24-28 ms (agent) before, 1.5-2.0 ms and
+0.4-0.5 ms after. The load generator writes no tag or custom-value rows, so neither the 250k bench's TC thread row
+(§4.1) nor `pnpm load:smoke` exercises these reads, and the smart-list table below predates the change; neither was
+re-run at 250k. A function-call count in `load/deal_visibility_equivalence.test.ts` pins the shape: the TC's read of
+600+ tag rows makes no per-row `contact_detail_visible` call (618 before) and builds the deal-contact set at most 4 times.
+
+**Scoreboard counts without bulk sends.** The live count and the rollup's writer now skip `bulk_action_id IS NOT NULL`.
+0020's partial index `messages_human_sent_idx` matched the old filter exactly; it was rebuilt with the same name and
+columns and the bulk exclusion added to its predicate, so the count stays an index-only scan: on the 20k smoke
+database the busiest agent's 90-day count (15,603 sends) reads in 2.5-2.8 ms by an index-only scan; over the old index
+shape the same count visits the heap, 15-17 ms.
+
+**Feed marks.** A settings write other than the tenant's zone (stage labels, batch text, Gmail sync, routing hours) no
+longer marks every member `'!full'`. Before, each such write made every member's next materialization a whole-book
+recompute (the review measured 12 of 12 members in mode `full` at 800 contacts; at 250k a full recompute is the pre-lane
+GET cost, 2.03 s for the busiest agent). A contact's ownership or visibility change now also looks up the assignees of
+its open tasks, the users of its open appointments and the owners of its proposed assistant actions (three index probes
+under the writer's RLS; a new partial index `appointments_open_contact_idx` serves the second); a deal's people and a
+team's membership mark their deal members and team leads. These run on ownership writes, so they are part of the
+accept and claim taps (§7 item 1). In `pnpm load:smoke` (below) accept p95 read 97 ms before and 74 ms after, the claim
+race 106 / 115 ms and uncontested claims 71 / 71 ms: inside this machine's run-to-run noise, so no measurable cost.
+
+**Feed touches.** The touches read gained `m.bulk_action_id IS NULL`, a filter on rows already read by contact; no
+measurable change.
+
+**`pnpm load:smoke` before and after** (20k contacts, n = 15 per read; before = this tree without the review fixes,
+after = with them; back to back on the same machine, load average under 1 at the start). Both passed every ceiling
+(168 s and 164 s). p95 in ms:
+
+| operation | before | after | ceiling |
+|---|---:|---:|---:|
+| feed: GET /feed (busiest agent) | 63 | 58 | 150 |
+| feed: GET /feed after 3 new client messages (busiest agent) | 118 | 124 | 150 |
+| search name: GET /search (agent) | 35 | 28 | 300 |
+| thread as the TC (deal visibility): contact + timeline | 55 | 60 | 300 |
+| team scoreboard: GET /team/scoreboard?range=30d (team lead) | 46 | 37 | 300 |
+| team scoreboard: GET /team/scoreboard?range=30d (admin) | 43 | 40 | 300 |
+| accept: 104 live offers, 5 agents accepting at once | 97 | 74 | 900 |
+| claim: 10 pond leads, 5 agents racing on each | 106 | 115 | 1,200 |
 
 ## Smart lists (R-PAR-29, lane par-lists)
 
@@ -443,11 +503,17 @@ Two plan rules made the rest pass (both in `apps/api/src/lists/repos/people.ts`,
 (a scalar sub-query the planner cannot turn into a hash over the whole table), and for an Agent, ISA or TC
 the implied "owned, collaborating or on my deal" predicate lets the planner start from the owner index.
 
-**Evidence for the owner (not applied: lanes do not change policies).** On the scratch load database only,
+**Evidence for the owner (measured by lane par-lists, not applied there).** On the scratch load database only,
 the provably equivalent policy form `(SELECT app.is_tenant_wide()) OR app.contact_detail_visible(tenant_id,
 contact_id)` on `contact_tags` and `contact_field_values` (reverted afterwards) gave Owner first pages of
 12-36 ms (from 84-386 ms) and counts of 240-1,982 ms (from 925-3,015 ms). Counts would then also need the
 value-driven count shape (a semi-join from the tag or value index, cheap once the policy is) to meet 800 ms.
+
+**Since the scale-lane merge review** the SELECT policies of `contact_tags` and `contact_field_values` (and of
+stage history, relationships and bulk items) read through `app.contact_detail_row`, the inlined form of migration
+`deal_visibility_once` (§7.2): no row read pays a `contact_detail_visible` call any more, for any role. The table
+above was measured before that change and was **not** re-run at 250k (shared machine); §7.2 has the before/after
+on a 6,000-person fixture. The value-driven count shape is still not built.
 
 Reproduce: `pnpm load:seed --contacts 250000`, then
 `pnpm --filter @realty/api exec tsx --env-file-if-exists=../../.env --conditions=@realty/source src/lists/perf/seedLists.ts`

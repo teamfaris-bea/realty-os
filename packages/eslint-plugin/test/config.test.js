@@ -78,6 +78,10 @@ describe('eslint.config.js architecture wiring', () => {
     const staffUse = "import { withTenantTx, type Tx } from '@realty/db';\nexport const f = (a: Parameters<typeof withTenantTx>[0]) => withTenantTx(a, async (_tx: Tx) => 1);\n";
     expect(await lint('apps/api/src/portal/client/routes.ts', portalUse)).toEqual([]);
     expect(await lint('apps/api/src/portal/client/routes.ts', staffUse)).toContain('realty/portal-tx-separation');
+    // the session-then-act helper is a staff/pre-tenant transaction too (withPreTenant, then withTenantTx's GUCs)
+    const preThenStaff = "import { withPreTenantThenTenant } from '@realty/db';\nexport const f = () => withPreTenantThenTenant(async () => 1, () => null, async () => 1);\n";
+    expect(await lint('apps/api/src/portal/client/session.ts', preThenStaff)).toContain('realty/portal-tx-separation');
+    expect(await lint('apps/api/src/auth/sessions.ts', preThenStaff)).toEqual([]);
     expect(await lint('apps/api/src/portal/staff/invite.ts', portalUse)).toContain('realty/portal-tx-separation');
     expect(await lint('apps/api/src/portal/staff/invite.ts', staffUse)).toEqual([]);
     expect(await lint('apps/api/src/workspace/deals.ts', portalUse)).toContain('realty/portal-tx-separation');

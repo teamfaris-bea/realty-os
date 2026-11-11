@@ -18,8 +18,8 @@
 // BY as the pre-change branch, per term): running it term by term would scan every row under RLS each time.
 // Pre-change, ties on the timestamp had no order; both sides here break ties by id DESC (the new query does).
 import { randomUUID } from 'node:crypto';
-import type { Actor, Role, TenantId, UserId } from '@realty/core/foundation';
-import { type Database, createDatabase, withTenantTx } from '@realty/db';
+import type { Actor, ContactId, Role, TenantId, UserId } from '@realty/core/foundation';
+import { type Database, applyOwnershipCommand, createDatabase, withTenantTx } from '@realty/db';
 import { type TestDb, createTestDb } from '@realty/db/testing';
 import { sql } from 'kysely';
 import pg from 'pg';
@@ -283,5 +283,129 @@ describe('search token tables keep notes and messages search identical', () => {
     ]) {
       await expect(withTenantTx(a, (tx) => stmt.execute(tx), { db: appDb })).rejects.toMatchObject({ code: '42501' });
     }
+  });
+});
+
+// The token tables hold message and note text (their `token` column is PII). Rows are removed only by the
+// AFTER DELETE statement triggers, which must also fire for the FK cascades of erasure and retention, for the
+// import revert definer, and must leave nothing behind when a merge re-points notes. An orphan token row would be
+// invisible to every member (its EXISTS-over-parent policy is false), so only the superuser can see the leak.
+describe('search token tables after erasure, retention, a merge and an import revert', () => {
+  const ownerOf = () => actors.find((a) => a.label.startsWith('owner'))!.actor;
+  const tokensOf = async (messageIds: string[], noteIds: string[]) => (await su.query<{ m: number; n: number }>(`
+    SELECT (SELECT count(*)::int FROM message_search_tokens WHERE message_id = ANY ($1::uuid[])) AS m,
+           (SELECT count(*)::int FROM note_search_tokens WHERE note_id = ANY ($2::uuid[])) AS n`, [messageIds, noteIds])).rows[0]!;
+  const orphans = async () => (await su.query<{ m: number; n: number }>(`
+    SELECT (SELECT count(*)::int FROM message_search_tokens t WHERE NOT EXISTS (SELECT 1 FROM messages p WHERE p.tenant_id = t.tenant_id AND p.id = t.message_id)) AS m,
+           (SELECT count(*)::int FROM note_search_tokens t WHERE NOT EXISTS (SELECT 1 FROM notes p WHERE p.tenant_id = t.tenant_id AND p.id = t.note_id)) AS n`)).rows[0]!;
+  /** a contact of the large tenant on no deal, with messages and notes that have tokens; its message and note ids */
+  const taken: string[] = [];
+  const pick = async () => {
+    const c = (await su.query<{ id: string; owner: string | null }>(`
+      SELECT c.id, c.owner_user_id AS owner FROM contacts c WHERE c.tenant_id = $1 AND c.deleted_at IS NULL AND c.merged_into_contact_id IS NULL
+         AND c.ownership_state = 'owned' AND NOT (c.id = ANY ($2::uuid[]))
+         AND NOT EXISTS (SELECT 1 FROM deal_contacts d WHERE d.tenant_id = c.tenant_id AND d.contact_id = c.id)
+         AND NOT EXISTS (SELECT 1 FROM deals d WHERE d.tenant_id = c.tenant_id AND d.primary_contact_id = c.id)
+         AND EXISTS (SELECT 1 FROM message_search_tokens t JOIN messages m ON m.tenant_id = t.tenant_id AND m.id = t.message_id WHERE m.tenant_id = c.tenant_id AND m.contact_id = c.id)
+         AND EXISTS (SELECT 1 FROM note_search_tokens t JOIN notes n ON n.tenant_id = t.tenant_id AND n.id = t.note_id WHERE n.tenant_id = c.tenant_id AND n.contact_id = c.id)
+       ORDER BY md5(c.id::text) LIMIT 1`, [T, taken])).rows[0]!;
+    taken.push(c.id);
+    const messageIds = (await su.query<{ id: string }>(`SELECT id FROM messages WHERE tenant_id = $1 AND contact_id = $2`, [T, c.id])).rows.map((r) => r.id);
+    const noteIds = (await su.query<{ id: string }>(`SELECT id FROM notes WHERE tenant_id = $1 AND contact_id = $2`, [T, c.id])).rows.map((r) => r.id);
+    const before = await tokensOf(messageIds, noteIds);
+    expect(before.m).toBeGreaterThan(0);
+    expect(before.n).toBeGreaterThan(0);
+    return { ...c, messageIds, noteIds };
+  };
+  const exact = async () => {
+    const r = (await su.query<{ m_extra: number; m_missing: number; n_extra: number; n_missing: number }>(`
+      WITH mt AS (SELECT tenant_id, token::text AS token, occurred_at, message_id FROM message_search_tokens),
+           md AS (SELECT m.tenant_id, l.token, m.occurred_at, m.id AS message_id FROM messages m, unnest(tsvector_to_array(m.search_tsv)) l(token)),
+           nt AS (SELECT tenant_id, token::text AS token, created_at, note_id FROM note_search_tokens),
+           nd AS (SELECT n.tenant_id, l.token, n.created_at, n.id AS note_id FROM notes n, unnest(tsvector_to_array(n.search_tsv)) l(token))
+      SELECT (SELECT count(*)::int FROM (SELECT * FROM mt EXCEPT SELECT * FROM md) x) AS m_extra,
+             (SELECT count(*)::int FROM (SELECT * FROM md EXCEPT SELECT * FROM mt) x) AS m_missing,
+             (SELECT count(*)::int FROM (SELECT * FROM nt EXCEPT SELECT * FROM nd) x) AS n_extra,
+             (SELECT count(*)::int FROM (SELECT * FROM nd EXCEPT SELECT * FROM nt) x) AS n_missing`)).rows[0]!;
+    expect(r).toEqual({ m_extra: 0, m_missing: 0, n_extra: 0, n_missing: 0 });
+    expect(await orphans()).toEqual({ m: 0, n: 0 });
+  };
+
+  it('R-DATA-4 R-DATA-7: erasure (app.erase_contact, FK cascade) leaves no token row of the contact\'s messages and notes', async () => {
+    const c = await pick();
+    await withTenantTx(ownerOf(), (tx) => sql`SELECT app.erase_contact(${c.id}::uuid, ${randomUUID()}::uuid, 'search token erasure check')`.execute(tx), { db: appDb });
+    expect((await su.query(`SELECT 1 FROM contacts WHERE tenant_id = $1 AND id = $2`, [T, c.id])).rowCount).toBe(0);
+    expect(await tokensOf(c.messageIds, c.noteIds)).toEqual({ m: 0, n: 0 });
+    await exact();
+  });
+
+  it('R-DATA-3 R-DATA-5: the retention sweep\'s purge of a soft-deleted contact leaves no token row behind', async () => {
+    const c = await pick();
+    await su.query('BEGIN');
+    await su.query('SET LOCAL session_replication_role = replica');
+    await su.query(`UPDATE contacts SET deleted_at = now() - interval '31 days', purge_after = now() - interval '1 minute', ownership_state = 'closed', closed_reason = 'deleted',
+                           owner_user_id = NULL, owned_at = NULL, first_touch_due_at = NULL, first_touch_at = NULL, first_touch_breached_at = NULL, release_due_at = NULL,
+                           inactivity_warn_at = NULL, inactivity_release_at = NULL, ownership_period_seq = NULL WHERE tenant_id = $1 AND id = $2`, [T, c.id]);
+    await su.query('COMMIT');
+    const app = new pg.Client({ connectionString: db.appUserUrl });
+    await app.connect();
+    try {
+      const r = (await app.query<{ r: { contacts_purged: number } }>(`SELECT app.retention_sweep(now()) AS r`)).rows[0]!.r;
+      expect(r.contacts_purged).toBe(1);
+    } finally {
+      await app.end();
+    }
+    expect((await su.query(`SELECT 1 FROM contacts WHERE tenant_id = $1 AND id = $2`, [T, c.id])).rowCount).toBe(0);
+    expect(await tokensOf(c.messageIds, c.noteIds)).toEqual({ m: 0, n: 0 });
+    await exact();
+  });
+
+  it('R-PAR-45: a merge re-points the loser\'s notes with their tokens (nothing orphaned, nothing lost)', async () => {
+    const loser = await pick();
+    const survivor = (await su.query<{ id: string }>(`
+      SELECT id FROM contacts WHERE tenant_id = $1 AND owner_user_id = $2 AND ownership_state = 'owned' AND deleted_at IS NULL AND merged_into_contact_id IS NULL
+         AND id <> $3 AND NOT (id = ANY ($4::uuid[])) ORDER BY md5(id::text) LIMIT 1`, [T, loser.owner, loser.id, taken])).rows[0]!.id;
+    taken.push(survivor);
+    const before = await tokensOf(loser.messageIds, loser.noteIds);
+    const r = await applyOwnershipCommand(ownerOf(), survivor as ContactId, { kind: 'merge', survivorId: survivor as ContactId, loserId: loser.id as ContactId, ownerChoice: null },
+      { commandId: randomUUID(), db: appDb });
+    expect(r.outcome.ok, JSON.stringify(r.outcome)).toBe(true);
+    const moved = (await su.query<{ n: number }>(`SELECT count(*)::int AS n FROM notes WHERE tenant_id = $1 AND contact_id = $2 AND id = ANY ($3::uuid[])`, [T, survivor, loser.noteIds])).rows[0]!.n;
+    expect(moved).toBe(loser.noteIds.length);
+    expect(await tokensOf(loser.messageIds, loser.noteIds)).toEqual(before);
+    await exact();
+  });
+
+  it('an import revert (app.import_revert_delete) removes the reverted messages\' and notes\' tokens', async () => {
+    const owner = ownerOf() as Extract<Actor, { kind: 'user' }>;
+    const c = await pick();
+    const batch = randomUUID();
+    const stage = randomUUID();
+    const rec = randomUUID();
+    await su.query(`INSERT INTO import_batches (tenant_id, id, source, status, created_by_user_id, source_snapshot_sha256) VALUES ($1, $2, 'csv', 'committed', $3, $4)`, [T, batch, owner.userId, 'c'.repeat(64)]);
+    await su.query(`INSERT INTO import_stages (tenant_id, id, batch_id, category, seq, status) VALUES ($1, $2, $3, 'messages', 4, 'reverting')`, [T, stage, batch]);
+    await su.query(`INSERT INTO import_records (tenant_id, id, stage_id, source_ref, outcome, raw_purged_at, target_id) VALUES ($1, $2, $3, 'file.csv#row=9', 'imported', now(), $4)`, [T, rec, stage, randomUUID()]);
+    const messageIds = [randomUUID(), randomUUID()];
+    const noteIds = [randomUUID(), randomUUID()];
+    for (const id of messageIds) {
+      await su.query(`INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, from_address, to_address, body, status, initiator, imported, import_record_id, occurred_at)
+                      SELECT tenant_id, $2, id, contact_id, 'sms', 'inbound', '+14155550100', '+14155550101', 'revertword imported from FUB', 'received', 'import', true, $3, now() - interval '5 days'
+                        FROM conversations WHERE tenant_id = $1 AND contact_id = $4 LIMIT 1`, [T, id, rec, c.id]);
+    }
+    for (const id of noteIds) {
+      await su.query(`INSERT INTO notes (tenant_id, id, contact_id, body, source, imported, import_record_id, created_at) VALUES ($1, $2, $3, 'revertword imported note', 'import', true, $4, now() - interval '5 days')`, [T, id, c.id, rec]);
+    }
+    const inserted = await tokensOf(messageIds, noteIds);
+    expect(inserted.m).toBeGreaterThan(0);
+    expect(inserted.n).toBeGreaterThan(0);
+    const reverted = await withTenantTx(owner, async (tx) => [
+      ...(await sql<{ id: string }>`SELECT x::text AS id FROM app.import_revert_delete(${stage}::uuid, 'messages', ${messageIds}::uuid[]) AS x`.execute(tx)).rows,
+      ...(await sql<{ id: string }>`SELECT x::text AS id FROM app.import_revert_delete(${stage}::uuid, 'notes', ${noteIds}::uuid[]) AS x`.execute(tx)).rows,
+    ], { db: appDb });
+    expect(reverted.map((r) => r.id).sort()).toEqual([...messageIds, ...noteIds].sort());
+    expect(await tokensOf(messageIds, noteIds)).toEqual({ m: 0, n: 0 });
+    // the contact's own messages and notes keep theirs
+    expect((await tokensOf(c.messageIds, c.noteIds)).m).toBeGreaterThan(0);
+    await exact();
   });
 });
