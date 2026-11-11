@@ -6,6 +6,14 @@
 // real send-time gate on real rows). This module only names the evidence: which ledger event, inbound
 // message, call or suppression each block rests on, who recorded it and when. The web turns that into
 // one plain sentence ("Texted STOP on Nov 10"); no raw code is shown.
+//
+// Web chat (module 22): `channels.web_chat` says whether a reply in the contact's website chat can go out now.
+// Its point is the chat identity a reply goes to (compose's own choice, channels/repos/webchat.ts chatRoutes: the
+// open session's identity first), never anything the visitor typed. Besides the opt-outs on the chat identities
+// (pointBlocks, as for texts), `session` carries what the send-time gate's check 10 reads for a chat reply: the
+// session is still open (the visitor was seen in the last 30 minutes, E77) and its widget is connected or degraded
+// (R-INBOX-7); either one false is the gate's CHANNEL_NOT_CONNECTED. channels/chatReachability.test.ts proves the
+// entry agrees with the gate.
 import {
   type Channel,
   type ConsentStateRow,
@@ -13,6 +21,7 @@ import {
   type ReachBlock,
   type ReachPoint,
   type ReachSuppression,
+  type ReachabilityInput,
   type ReachabilityReason,
   type SuppressionRow,
   classifyHumanPurpose,
@@ -21,6 +30,7 @@ import {
 } from '@realty/core/compliance';
 import { type Instant, instantFromDate } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
+import { type ChatRoute, chatRoutesFor } from '../channels/repos/webchat.js';
 import { hint } from './dispatch.js';
 import * as rr from './repos/reachability.js';
 
@@ -82,12 +92,31 @@ export interface ChannelReachView {
   points: PointReachView[];
 }
 
+/** The website chat a reply goes to, as the send-time gate's check 10 sees it (module 22). */
+export interface ChatSessionView {
+  /** not closed, and the visitor was seen in the last 30 minutes (E77) */
+  open: boolean;
+  /** the widget the session came through is connected or degraded (R-INBOX-7) */
+  widgetConnected: boolean;
+}
+
+export interface ChatReachView extends ChannelReachView {
+  /**
+   * The session behind the default chat identity; null when the contact never wrote in website chat. A reply is
+   * refused (CHANNEL_NOT_CONNECTED) unless it is open and its widget connected, so `blocked` is then true too.
+   */
+  session: ChatSessionView | null;
+}
+
 export interface ReachabilityView {
   contactId: string;
   /** what a human one-to-one message would be classified as right now (R-CONSENT-5 rules) */
   purposeNow: Purpose;
-  channels: Record<'sms' | 'voice' | 'email', ChannelReachView>;
+  channels: Record<'sms' | 'voice' | 'email', ChannelReachView> & { web_chat: ChatReachView };
 }
+
+/** What a chat identity is called wherever an address hint would be shown (never its wc: value). */
+export const CHAT_POINT_HINT = 'Website chat';
 
 const ORDER: ReachabilityReason[] = ['CONSENT_REVOKED', 'SUPPRESSED', 'WRONG_NUMBER', 'CONTACT_POINT_INVALID', 'LANDLINE_NO_SMS'];
 
@@ -192,9 +221,11 @@ export async function reachabilityFor(tx: Tx, contactIds: readonly string[], now
   const sups = await rr.suppressionsFor(tx, hmacs);
   const events = await rr.revokeEvents(tx, consent.filter((r) => r.status === 'revoked' && r.basisEventId !== null).map((r) => r.basisEventId!));
   const supById = new Map(sups.map((s) => [s.id, s]));
+  // module 22: the chat a reply would go to, for every contact at once, in compose's own order
+  const chats = await chatRoutesFor(tx, ids);
   const out = new Map<string, ReachabilityView>();
   for (const contactId of ids) {
-    // texts, calls and email only: a web-chat identity (module 22) is not a reachability point
+    // texts, calls and email here; a web-chat identity (module 22) has its own entry below (chatChannel)
     const pts = (byContact.get(contactId) ?? []).filter((p): p is typeof p & { kind: 'phone' | 'email' } => p.kind === 'phone' || p.kind === 'email');
     const f = facts.get(contactId)!;
     const purposeNow = classifyHumanPurpose({ lastInboundAt: f.lastInboundAt ? instantFromDate(f.lastInboundAt) : null, dealOrAppointmentContext: f.dealOrAppointmentContext, now });
@@ -220,9 +251,49 @@ export async function reachabilityFor(tx: Tx, contactIds: readonly string[], now
       const dp = def ? (points.find((p) => p.pointId === def.id) ?? null) : null;
       return { hasAddress: points.length > 0, defaultPointId: def?.id ?? null, blocked: dp?.blocked ?? false, reasons: dp ? dp.reasons.filter((r) => r.purposes.includes(purposeNow)) : [], points };
     };
-    out.set(contactId, { contactId, purposeNow, channels: { sms: channel('sms'), voice: channel('voice'), email: channel('email') } });
+    const chatPoints = (byContact.get(contactId) ?? []).filter((p) => p.kind === 'web_chat');
+    const web_chat = chatChannel(chatPoints, chats.get(contactId) ?? [], consent, sups, purposeNow, events, supById);
+    out.set(contactId, { contactId, purposeNow, channels: { sms: channel('sms'), voice: channel('voice'), email: channel('email'), web_chat } });
   }
   return out;
+}
+
+/**
+ * The web_chat entry (module 22). The default point is the identity compose sends a reply to (`routes[0]`: the open
+ * session first); its opt-outs are pointBlocks over every chat identity of the contact (an opt-out on any of them
+ * blocks all of them, R-CHAN-4, as the gate's chatFanoutHmacs); and the session decides check 10.
+ */
+function chatChannel(
+  chatPoints: readonly { id: string; hmac: string; status: ReachPoint['status']; lineType: ReachPoint['lineType'] }[],
+  routes: readonly ChatRoute[],
+  consent: readonly ConsentStateRow[],
+  sups: readonly rr.SuppressionFacts[],
+  purposeNow: Purpose,
+  events: ReadonlyMap<string, rr.RevokeEventFacts>,
+  supById: ReadonlyMap<string, rr.SuppressionFacts>,
+): ChatReachView {
+  const own = new Set(chatPoints.map((p) => p.hmac));
+  const input: ReachabilityInput = {
+    points: chatPoints.map((p): ReachPoint => ({ id: p.id, kind: 'web_chat', addressHmac: p.hmac, status: p.status, lineType: p.lineType })),
+    consent: consent.filter((r) => own.has(r.addressHmac)),
+    suppressions: sups.filter((s) => own.has(s.addressHmac)).map((s): ReachSuppression => ({ id: s.id, addressHmac: s.addressHmac, channel: s.channel, reason: s.reason, liftedAt: s.liftedAt ? instantFromDate(s.liftedAt) : null })),
+  };
+  const points = input.points.map((p): PointReachView => {
+    const blocks = { informational: pointBlocks(input, p, 'web_chat', 'informational'), marketing: pointBlocks(input, p, 'web_chat', 'marketing') };
+    return { pointId: p.id, addressHint: CHAT_POINT_HINT, blocked: blocks[purposeNow].length > 0, reasons: reasonsFor(blocks, p, events, supById, new Set()) };
+  });
+  const route = routes[0] ?? null;
+  const dp = route ? (points.find((p) => p.pointId === route.pointId) ?? null) : null;
+  if (!route || !dp) return { hasAddress: false, defaultPointId: null, blocked: false, reasons: [], points, session: null };
+  const session: ChatSessionView = { open: route.sessionOpen, widgetConnected: route.connectionStatus === 'connected' || route.connectionStatus === 'degraded' };
+  return {
+    hasAddress: true,
+    defaultPointId: dp.pointId,
+    blocked: dp.blocked || !session.open || !session.widgetConnected,
+    reasons: dp.reasons.filter((r) => r.purposes.includes(purposeNow)),
+    points,
+    session,
+  };
 }
 
 // ---- why a message was not sent ----------------------------------------------------------------

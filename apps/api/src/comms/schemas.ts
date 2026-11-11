@@ -79,10 +79,14 @@ const ChannelReachSchema = z.object({
   reasons: z.array(ReachReasonSchema),
   points: z.array(z.object({ pointId: z.uuid(), addressHint: z.string(), blocked: z.boolean(), reasons: z.array(ReachReasonSchema) })),
 });
+/** module 22: the website chat a reply goes to; `session` null = the contact never wrote in website chat */
+const ChatReachSchema = ChannelReachSchema.extend({
+  session: z.object({ open: z.boolean(), widgetConnected: z.boolean() }).nullable(),
+});
 const ReachabilitySchema = z.object({
   contactId: z.uuid(),
   purposeNow: z.enum(['marketing', 'informational']),
-  channels: z.object({ sms: ChannelReachSchema, voice: ChannelReachSchema, email: ChannelReachSchema }),
+  channels: z.object({ sms: ChannelReachSchema, voice: ChannelReachSchema, email: ChannelReachSchema, web_chat: ChatReachSchema }),
 });
 export const ReachabilityResponse = z.object({ reachability: ReachabilitySchema });
 export const ReachabilityManyResponse = z.object({ reachability: z.array(ReachabilitySchema) });

@@ -178,15 +178,26 @@ export interface ChatRoute {
  * in detail, 0018 webchat_staff_read; the system sees all).
  */
 export async function chatRoutes(tx: Tx, contactId: string): Promise<ChatRoute[]> {
-  const r = await sql<{ point_id: string; address: string; hmac: Buffer; connection_id: string; status: string; open: boolean }>`
-    SELECT p.id AS point_id, p.address, p.address_hmac AS hmac, s.connection_id, c.status,
+  return (await chatRoutesFor(tx, [contactId])).get(contactId) ?? [];
+}
+
+/**
+ * chatRoutes for many contacts in one query (the reachability summaries of a whole feed page, comms/reachability.ts),
+ * in exactly chatRoutes' order, so a summary's default chat is the one a reply would go to.
+ */
+export async function chatRoutesFor(tx: Tx, contactIds: readonly string[]): Promise<Map<string, ChatRoute[]>> {
+  const out = new Map<string, ChatRoute[]>(contactIds.map((id) => [id, []]));
+  if (contactIds.length === 0) return out;
+  const r = await sql<{ contact_id: string; point_id: string; address: string; hmac: Buffer; connection_id: string; status: string; open: boolean }>`
+    SELECT p.contact_id, p.id AS point_id, p.address, p.address_hmac AS hmac, s.connection_id, c.status,
            (s.closed_at IS NULL AND s.last_seen_at > now() - interval '30 minutes') AS open
       FROM contact_points p
       JOIN webchat_sessions s ON s.tenant_id = p.tenant_id AND s.contact_point_id = p.id
       JOIN integration_connections c ON c.tenant_id = s.tenant_id AND c.id = s.connection_id
-     WHERE p.tenant_id = app.tenant_id() AND p.contact_id = ${contactId}::uuid AND p.kind = 'web_chat' AND p.removed_at IS NULL
-     ORDER BY open DESC, s.last_seen_at DESC, p.id`.execute(tx);
-  return r.rows.map((x) => ({ pointId: x.point_id, address: x.address, hmac: x.hmac.toString('hex'), connectionId: x.connection_id, connectionStatus: x.status, sessionOpen: x.open }));
+     WHERE p.tenant_id = app.tenant_id() AND p.contact_id = ANY (${[...contactIds]}::uuid[]) AND p.kind = 'web_chat' AND p.removed_at IS NULL
+     ORDER BY p.contact_id, open DESC, s.last_seen_at DESC, p.id`.execute(tx);
+  for (const x of r.rows) out.get(x.contact_id)?.push({ pointId: x.point_id, address: x.address, hmac: x.hmac.toString('hex'), connectionId: x.connection_id, connectionStatus: x.status, sessionOpen: x.open });
+  return out;
 }
 
 /** The session behind a chat identity (dispatch's CHANNEL_NOT_CONNECTED check, E77, R-INBOX-7). */
