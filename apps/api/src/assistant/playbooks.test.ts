@@ -1,7 +1,7 @@
 // Playbooks: approve rules, not every message (R-AST-3, R-AST-4, R-CONSENT-5, R-GATE-3, R-GATE-4,
 // R-AUDIT-5; E31, E32). Real Postgres (per-file database), the real server, fake providers.
 import { randomUUID } from 'node:crypto';
-import { type PlaybookKind, validatePlaybook } from '@realty/core/assistant';
+import { type PlaybookKind, validatePlaybook, validatePlaybookContent } from '@realty/core/assistant';
 import { withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -46,7 +46,8 @@ type PB = { playbook: { id: string; approvedVersionId: string | null; versions: 
 describe('approval (R-AST-4, R-AUDIT-5)', () => {
   it('R-AST-4: the built-in templates ship as drafts that validate cleanly', async () => {
     for (const t of BUILT_IN_TEMPLATES) {
-      const issues = validatePlaybook(t.steps, { kind: t.kind as PlaybookKind });
+      // module 26: trigger templates hold one content object (validated by the same core validator)
+      const issues = t.content ? validatePlaybookContent(t.content, { kind: t.kind as PlaybookKind }) : validatePlaybook(t.steps, { kind: t.kind as PlaybookKind });
       expect(issues, t.key).toEqual([]);
     }
     const c = await call<PB>(w.owner, 'POST', '/playbooks', { templateKey: 'new_lead_response' });
