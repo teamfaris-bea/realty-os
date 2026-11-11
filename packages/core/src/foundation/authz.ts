@@ -236,6 +236,8 @@ export const AUDIT_ACTIONS = [
   'integration.connect_refused', // api/integrations: the callback refused (E160 account not managed, live elsewhere, stale state)
   'integration.disconnected', // api/integrations: an Owner/Admin disconnected; credential revoked in the same tx (R-INT-5)
   'integration.changed', // api/integrations: rename or lead source of a connection
+  'integration.credential_saved', // mls/spark: an Owner/Admin saved or replaced the Spark key (linked by the system; never the token)
+  'integration.validated', // mls/spark: the validation probe's result code (never a response body)
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

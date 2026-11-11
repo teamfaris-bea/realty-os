@@ -21,7 +21,7 @@ import { AppError } from '../errors.js';
 import type { ConnectionKind, IntegrationAdapters, OAuthProviderName, OAuthToken } from '../providers/integrations/types.js';
 import { systemActor } from '../worker/systemActor.js';
 import { enqueueTyped } from '../worker/registry.js';
-import { type CapabilityView, PER_USER_SERVICES, SERVICES, capabilityViews, packSentence, serviceOf, serviceSentence, statusSentence, type PlatformPack } from './catalog.js';
+import { type CapabilityView, type MlsDeployment, PER_USER_SERVICES, SERVICES, capabilityViews, packSentence, serviceOf, serviceSentence, statusSentence, type PlatformPack } from './catalog.js';
 import { type OAuthState, STATE_TTL_MS, pkceChallengeOf, pkceVerifier, signState, verifyState } from './oauthState.js';
 import * as repo from './repos/connections.js';
 import { CONNECTABLE_STATUSES, type ConnectionRow, ConnectionTransitionError, transitionConnection } from './status.js';
@@ -101,7 +101,7 @@ export function connectionView(r: repo.ConnectionDbRow, packs: readonly Platform
   };
 }
 
-export async function listIntegrations(tx: Tx, adapters: IntegrationAdapters): Promise<IntegrationsView> {
+export async function listIntegrations(tx: Tx, adapters: IntegrationAdapters, mls?: MlsDeployment): Promise<IntegrationsView> {
   const packs = packsOf(await repo.listPlatformPacks(tx));
   const rows = await repo.listConnections(tx);
   return {
@@ -111,7 +111,7 @@ export async function listIntegrations(tx: Tx, adapters: IntegrationAdapters): P
       name: s.name,
       connect: s.connect,
       canConnect: s.connect === 'oauth' && adapters.oauth[s.oauthProvider!].configured,
-      sentence: serviceSentence(s, adapters),
+      sentence: serviceSentence(s, adapters, mls),
       connections: rows.filter((r) => r.kind === s.kind).map((r) => connectionView(r, packs)),
     })),
     platformPacks: packs.map((p) => ({ key: p.key, version: p.version, reviewed: p.reviewedByCounselAt !== null, sentence: packSentence(p) })),
@@ -361,14 +361,18 @@ export async function disconnect(tx: Tx, actor: UserActor, id: string, now: Inst
   if (row.status === 'disconnected') return row; // idempotent
   transitionConnection(toRow(row), { type: 'disconnect', at: new Date(now).toISOString() });
   await repo.markDisconnected(tx, id);
-  if (row.credential_id) {
+  if (row.credential_id && row.kind === 'mls_feed') {
+    // an API key (Spark MLS) has no grant to revoke at the provider: revoked AND purged in this transaction
+    await repo.revokeCredential(tx, row.credential_id);
+    await repo.purgeCredential(tx, row.credential_id);
+  } else if (row.credential_id) {
     await repo.revokeCredential(tx, row.credential_id);
     await enqueueTyped(tx, REVOKE_GRANT_JOB, { credentialId: row.credential_id }, { dedupeKey: `integration_revoke:${row.credential_id}` });
   }
   await audit(tx, actor, {
     action: 'integration.disconnected',
     entity: { type: 'integration_connection', id },
-    changes: redactDiff({ status: row.status }, { status: 'disconnected', credential_revoked: row.credential_id !== null }),
+    changes: redactDiff({ status: row.status }, { status: 'disconnected', credential_revoked: row.credential_id !== null, credential_purged: row.credential_id !== null && row.kind === 'mls_feed' }),
     reason: 'DISCONNECTED',
   });
   return (await repo.getConnection(tx, id))!;

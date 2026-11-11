@@ -9,7 +9,13 @@
 //    "not set up on this platform yet"; nothing claims to work when it does not.
 import type { Capabilities, ConnectionKind, ConnectionStatus, IntegrationAdapters, OAuthProviderName } from '../providers/integrations/types.js';
 
-export type ConnectMethod = 'oauth' | 'partner' | 'keyed' | 'later' | 'out_of_scope';
+export type ConnectMethod = 'oauth' | 'partner' | 'keyed' | 'api_key' | 'later' | 'out_of_scope';
+
+/** Nonsecret MLS deployment settings the sentence depends on (Config['mls'] shape). */
+export interface MlsDeployment {
+  provider: 'fake' | 'spark';
+  liveCalls: boolean;
+}
 
 export interface ServiceDef {
   kind: ConnectionKind;
@@ -50,7 +56,8 @@ export const SERVICES: readonly ServiceDef[] = [
   { kind: 'lead_email', name: 'Lead email inbox', connect: 'keyed', needsLeadSource: true, usedBy: 'lead intake' },
   { kind: 'zillow_feed', name: 'Zillow lead feed', connect: 'partner', needsLeadSource: true, usedBy: 'lead intake' },
   { kind: 'realtor_feed', name: 'realtor.com lead feed', connect: 'partner', needsLeadSource: true, usedBy: 'lead intake' },
-  { kind: 'mls_feed', name: 'MLS / IDX feed', connect: 'partner', needsLeadSource: false, usedBy: 'MLS search and alerts' },
+  // Spark RESO Web API, read-only, with the CRM's own API key (mls/spark; never the website's key)
+  { kind: 'mls_feed', name: 'MLS listings (Spark, read-only)', connect: 'api_key', needsLeadSource: false, usedBy: 'MLS search and alerts' },
   { kind: 'showing_service', name: 'Showing service', connect: 'partner', needsLeadSource: false, usedBy: 'seller updates' },
   { kind: 'ads_meta', name: 'Meta ads account', connect: 'later', oauthProvider: 'meta', needsLeadSource: false, usedBy: 'ads (Phase 3)' },
   { kind: 'ads_google', name: 'Google Ads account', connect: 'later', oauthProvider: 'google', needsLeadSource: false, usedBy: 'ads (Phase 3)' },
@@ -120,8 +127,15 @@ export function statusSentence(s: ConnectionStatus, reason: string | null, servi
   }
 }
 
-export function serviceSentence(service: ServiceDef, adapters: Pick<IntegrationAdapters, 'mode' | 'oauth' | 'leadFeeds' | 'mlsFeed' | 'showing'>): string {
+export function serviceSentence(service: ServiceDef, adapters: Pick<IntegrationAdapters, 'mode' | 'oauth' | 'leadFeeds' | 'mlsFeed' | 'showing'>, mls: MlsDeployment = { provider: 'fake', liveCalls: false }): string {
   switch (service.connect) {
+    case 'api_key':
+      if (mls.provider !== 'spark') {
+        if (adapters.mlsFeed.access === 'needs_partner_access') return `Not set up on this platform yet: this deployment has no Spark connection configured, so no MLS data is read.`;
+        return 'Demo data only (test adapter); no real MLS account is connected.';
+      }
+      if (!mls.liveCalls) return "Live MLS calls are turned off on this deployment. An Owner or Admin can save the CRM's own Spark key (never the website's); nothing is read until live calls are on and the key is validated.";
+      return "Read-only Spark connection with the CRM's own API key (never the website's). It goes live only after the key is validated.";
     case 'out_of_scope':
       return 'Not offered: the owner has taken this out of scope.';
     case 'later':

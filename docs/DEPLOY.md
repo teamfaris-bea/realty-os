@@ -165,6 +165,16 @@ Choosing a real vendor without its credentials fails in every environment. The f
 | `FUB_ALLOWED_HOSTS` | no | comma-separated lowercase host names (no scheme, port, path or wildcard); default `api.followupboss.com`. The API and worker refuse to start when either FUB setting is invalid, naming the key (SECURITY §2.9). |
 | `FUB_SYSTEM_NAME`, `FUB_SYSTEM_KEY` | if FUB requires them | registered-system headers (`X-System` / `X-System-Key`); both or neither |
 
+**Spark MLS (read-only)** (`MLS_PROVIDER=spark`; full procedure in §11). None of these holds the access token: the token is entered in the app and stored encrypted (§11).
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `MLS_PROVIDER` | no | `fake` (default) or `spark` |
+| `SPARK_API_BASE_URL` | no | default `https://sparkapi.com`. Must be https on the default port, with no credentials, path, query or fragment, and its host must be in `SPARK_ALLOWED_HOSTS`. |
+| `SPARK_ALLOWED_HOSTS` | no | comma-separated lowercase public host names (no scheme, port, path or wildcard); default `sparkapi.com` |
+| `SPARK_AUTH_SCHEME` | no | `Bearer` (default) or `OAuth`: the default scheme in the `Authorization` header (**VERIFY**, §11) |
+| `MLS_LIVE_CALLS` | no | `false` (default in every environment) or `true`. The kill switch: while `false`, the Spark adapter makes no network call at all. |
+
 ## 5. Telephony: Twilio
 
 **Accounts.** You hold one master account. The app creates a subaccount per tenant (its auth token is stored field-encrypted under the tenant key), which keeps each team's numbers, logs and opt-out lists separate. Numbers bought through the app get their webhooks configured automatically: SMS `…/api/webhooks/telephony/sms`, voice and status `…/api/webhooks/telephony/voice`.
@@ -344,3 +354,89 @@ A KMS-backed KEK (wrap and unwrap as KMS calls) is a drop-in for the same interf
 - [ ] Logs collected; metrics scraped; the alerts of `docs/OPERATIONS.md` §3 routed to a pager; `pnpm ops:synthetic` scheduled every 5 minutes with a dedicated check user (OPERATIONS §6).
 - [ ] Counsel items in ARCHITECTURE §19 reviewed for the launch states.
 - [ ] Phase 2, Gmail inbox sync (owner decision D2): ships dark. `platform:gmail` stays uncleared (no `reviewed_by_counsel_at`, no `rules.vendor_ready_at`) until counsel item C14 and Google's verification of the restricted `gmail.readonly` scope plus its security assessment (N19, **VERIFY** current requirements and renewal) have passed; the Google OAuth client requests that scope only. Until then no tenant can turn sync on (DB).
+- [ ] MLS: `MLS_LIVE_CALLS=false` unless every step of §11 "Before any live call" is done and signed off.
+
+## 11. Spark MLS (read-only)
+
+A read-only connector to FBS's Spark RESO Web API (`https://sparkapi.com/Reso/OData`), which shares Spark API keys. It uses a **server-to-server** key: its access token does not expire and is sent in the `Authorization` header. Per-agent login through OpenID Connect is **not** used.
+
+What exists in this lane: the configuration, the read-only adapter (`apps/api/src/providers/integrations/spark.ts`), the connect/validate service and routes (`apps/api/src/mls/spark/`), the Owner/Admin credential form and the validation probe (`/api/admin/integrations/mls/spark`). Syncing the feed into `listings` rows is module 24 (api/mls) and is **not built yet**. Records normalize into the existing RESO listing types, and the `core/listings` display rules (placeholder licence pack, `reviewed=false`) still decide what any audience may see. A connected feed does not make anything public by itself.
+
+**Licensing.** The owner has confirmed that the team's existing IDX licence permits this CRM. That confirmation is the owner's and has **not** been independently re-verified with the MLS; getting it in writing is step 1 below. The CRM must use its **own** Spark key. The team website's token must never be reused, copied into the app or requested from anyone. A separate key is our recommendation (independent revocation, a separate audit trail, separate rate limits); it is not a verified licensing requirement.
+
+### 11.1 Configuration
+
+| Variable | Default | Rule |
+|---|---|---|
+| `MLS_PROVIDER` | `fake` | `fake` or `spark` |
+| `SPARK_API_BASE_URL` | `https://sparkapi.com` | https, default port, no credentials, path, query or fragment; the host must be on `SPARK_ALLOWED_HOSTS` |
+| `SPARK_ALLOWED_HOSTS` | `sparkapi.com` | comma-separated lowercase public DNS names |
+| `SPARK_AUTH_SCHEME` | `Bearer` | `Bearer` or `OAuth`. Spark's docs show both as the `Authorization` scheme (**VERIFY**). It is the form's default; the scheme chosen when a key is submitted is stored with the key. |
+| `MLS_LIVE_CALLS` | `false` | `true` or `false`, in every environment |
+
+**Validation at start-up.** With `MLS_PROVIDER=spark`, the API and worker refuse to start, in every environment including production, when the base URL or the host list breaks a rule above. The error names the key, never its value. An unknown `MLS_PROVIDER`, `SPARK_AUTH_SCHEME` or `MLS_LIVE_CALLS` value is refused the same way.
+
+**No environment variable holds the token.** Do not add one, and do not put a token in `.env`, `.env.production`, the secret store, a ticket or a chat.
+
+**Replication endpoint (VERIFY).** Spark has a separate replication endpoint. Whether a full background sync must use it is not verified; ask Spark support before module 24 ships. If it must, change `SPARK_API_BASE_URL` and `SPARK_ALLOWED_HOSTS`. No code change is needed.
+
+### 11.2 Where the credential lives
+
+- **Destination:** `provider_credentials` (provider `mls`) in the team's tenant, under AES-256-GCM envelope encryption: the tenant field key, wrapped by the KEK. `KEK_BASE64` lives in the production deployment's secret store (§9). The AAD binds the ciphertext to (`provider_credentials`, `secret_enc`, row id), so it cannot be moved to another row. The chosen auth scheme is inside the encrypted payload. The nonsecret key label (a name you choose; never the token) is in `external_account_ref`.
+- **Written only** through the Owner/Admin form (`PUT /api/admin/integrations/mls/spark/credential`): re-auth required, CSRF token, database rate limit, audited. Agents, Team Leads and support get 404.
+- **Never** returned by any API, logged, put in a URL, or sent back to the browser after submission. It is redacted from errors, audit, metrics and error reports.
+- **Connection:** an `integration_connections` row of kind `mls_feed`, with `external_account_id = spark:<connection id>`. Its `credential_id` is written by the system actor only (R-INT-3).
+- **Replacing a key** purges the old credential in the same transaction, and the connection returns to `not_configured` until it is validated again.
+- **Disconnecting** (`POST /api/admin/integrations/connections/:id/disconnect`, re-auth) revokes **and** purges the credential in one transaction: status `purged`, `secret_enc` NULL.
+
+### 11.3 Validation
+
+`POST /api/admin/integrations/mls/spark/validate` (Owner/Admin, re-auth) sends **exactly one** request:
+
+```
+GET /Reso/OData/Property?$top=1&$select=ListingKey,ModificationTimestamp
+```
+
+| Result | Meaning | Next step |
+|---|---|---|
+| `connected` | the key works and can read Property | none; leave it until module 24 needs it |
+| `invalid_credentials` | Spark answered 401 | check the key and the auth scheme (re-enter the key with the other scheme only if Spark support confirms it) |
+| `not_licensed_or_role_insufficient` | Spark answered 403 | the key lacks the role or the licence for this data; go back to the owner and FBS |
+| `rate_limited` | Spark answered 429 | wait, then validate once more |
+| `unreachable` | 5xx, network error, timeout, 404, a refused redirect or an unreadable body | check egress to the allowed host and `SPARK_API_BASE_URL`; try later |
+| `live_calls_disabled` | `MLS_LIVE_CALLS=false`; **no request was made and the key was not decrypted** | expected until step 7 below |
+
+Only the result code is written to the connection row (`last_error_code`) and `audit_log` (`integration.validated`), never a response body. On a live connection a 401 moves it to `revoked`; 403, 429 and `unreachable` move it to `degraded`; a later `connected` restores it. The probe is never retried.
+
+With no saved key it returns 409 `MLS_CREDENTIAL_MISSING`. With `MLS_PROVIDER=fake`, saving a key is refused with 409 `MLS_PROVIDER_NOT_SPARK`. While live calls are off, the integration page starts with the sentence "Live MLS calls are turned off on this deployment".
+
+### 11.4 Adapter limits
+
+- `GET` only; any other method is refused inside the adapter.
+- Paths: `/Reso/OData/$metadata`, `/Reso/OData/Property` and `/Reso/OData/Media` only. https only, hosts from `SPARK_ALLOWED_HOSTS` only, default port only.
+- Redirects are refused, never followed. Each request has a timeout and a response size cap.
+- Paging follows `@odata.nextLink`, and each next link is re-checked against the same host and path allowlist.
+- Incremental changes use a `ModificationTimestamp` cursor, with ties broken by `ListingKey`.
+- 429 and 5xx are retried with exponential backoff and jitter, within a retry budget. `Retry-After` is honoured up to a cap.
+- Status mapping: 401 → `invalid_credentials`, 403 → `not_licensed_or_role_insufficient`, 404 → `not_found`, 429 → `rate_limited`, 5xx, network error or timeout → `unreachable`.
+
+### 11.5 Before any live call
+
+Roles: **owner** is the team's business owner; **operator** runs the deployment; **Owner/Admin** is a user with that role in the app.
+
+1. **Owner:** confirm in writing with the MLS that the licence covers this CRM's use of the data. File it outside this repository.
+2. **Owner:** obtain the CRM's **own** Spark key from FBS, a server-to-server key with the role the licence allows. Never the website's key.
+3. **Operator:** confirm `KEK_BASE64` (and `KEK_REF`) is in the production secret store and backed up separately from the data (§8, §9).
+4. **Operator:** set `MLS_PROVIDER=spark`, leave `MLS_LIVE_CALLS=false`, and deploy. Confirm the API and worker started (no config refusal) and the integration page says live calls are off.
+5. **Owner/Admin:** enter the key and a label in the app's form, after re-auth. The key goes from the key holder straight into the form, and nowhere else. Pressing Validate now must return `live_calls_disabled`.
+6. **Owner:** give explicit written approval to turn live calls on.
+7. **Operator:** set `MLS_LIVE_CALLS=true` and redeploy.
+8. **Owner/Admin:** press **Validate**. It sends one request.
+9. **Owner/Admin and operator:** check the result (§11.3). Only `connected` passes.
+10. **On any failure, or any doubt:** the operator sets `MLS_LIVE_CALLS=false` and redeploys before anyone investigates.
+11. **To stop for good or rotate:** an Owner/Admin disconnects the connection (revokes and purges the stored key) or enters a new key (purges the old one). The owner asks FBS to deactivate a key that is no longer used (**VERIFY** the process with FBS). Then the operator sets `MLS_LIVE_CALLS=false`, and `MLS_PROVIDER=fake` if the feed is retired.
+12. **VERIFY with Spark support** (owner or operator) before module 24 ships:
+    - the `Authorization` scheme for this key: `Bearer` or `OAuth`;
+    - whether a full background sync must use the replication endpoint (and its host);
+    - which fields are available for this MLS and this key's role;
+    - the rate limits for this key.

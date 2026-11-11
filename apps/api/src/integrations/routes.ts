@@ -70,7 +70,7 @@ async function register(app: FastifyInstance): Promise<void> {
   const manage = { config: { auth: 'integration.manage' as const }, preHandler: authorize('integration.manage', () => ({})) };
 
   r.get('/admin/integrations', { ...view, schema: { response: { 200: IntegrationsResponse } } }, async (req) =>
-    adminTx(req, (tx) => listIntegrations(tx, platformOf(req).providers.integrations)),
+    adminTx(req, (tx) => listIntegrations(tx, platformOf(req).providers.integrations, platformOf(req).config.mls)),
   );
 
   r.post(

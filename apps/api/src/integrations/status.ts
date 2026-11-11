@@ -8,6 +8,12 @@
 import type { Capabilities, ConnectionKind, ConnectionStatus } from '../providers/integrations/types.js';
 
 export const KEYED_KINDS: readonly ConnectionKind[] = ['web_chat_widget', 'lead_email'];
+/**
+ * External kinds connected with an API key instead of OAuth (Spark MLS, read-only). The key is saved by an
+ * Owner/Admin and linked by the system actor (`key_saved`); the connection goes live only when the system's
+ * validation probe proved the key works (`key_validated`), the API-key analogue of `oauth_proved`.
+ */
+export const API_KEY_KINDS: readonly ConnectionKind[] = ['mls_feed'];
 export const LIVE_STATUSES: readonly ConnectionStatus[] = ['connected', 'degraded'];
 /** Statuses that reserve the external account (0018 integration_connections_live_account). */
 export const RESERVING_STATUSES: readonly ConnectionStatus[] = ['pending_review', 'connected', 'degraded'];
@@ -35,6 +41,9 @@ export type ConnectionEvent =
   | { type: 'health_ok' }
   | { type: 'token_revoked'; code: string }
   | { type: 'keyed_enabled'; at: string }
+  | { type: 'key_saved'; externalAccountId: string; credentialId: string }
+  | { type: 'key_validated'; capabilities: Capabilities; at: string }
+  | { type: 'key_rejected'; code: string; revoke: boolean }
   | { type: 'disconnect'; at: string };
 
 export class ConnectionTransitionError extends Error {
@@ -103,6 +112,25 @@ export function transitionConnection(c: ConnectionRow, e: ConnectionEvent): Conn
       if (!keyed) throw bad('KIND_MISMATCH');
       if (c.status !== 'not_configured') throw bad();
       return { ...c, status: 'connected', statusReason: null, connectedAt: e.at };
+    case 'key_saved': {
+      // a new key replaces the old one and must be validated again before anything is read
+      if (!API_KEY_KINDS.includes(c.kind)) throw bad('KIND_MISMATCH');
+      if (![...CONNECTABLE_STATUSES, ...LIVE_STATUSES].includes(c.status)) throw bad();
+      if (c.externalAccountId !== null && c.externalAccountId !== e.externalAccountId) throw bad('CONNECTION_ACCOUNT_IMMUTABLE');
+      if (e.externalAccountId.length === 0 || e.credentialId.length === 0) throw bad();
+      return { ...c, status: 'not_configured', statusReason: 'KEY_NOT_VALIDATED', externalAccountId: e.externalAccountId, credentialId: e.credentialId, capabilities: {}, lastErrorCode: null };
+    }
+    case 'key_validated':
+      if (!API_KEY_KINDS.includes(c.kind)) throw bad('KIND_MISMATCH');
+      if (![...CONNECTABLE_STATUSES, ...LIVE_STATUSES].includes(c.status) || c.credentialId === null || c.externalAccountId === null) throw bad();
+      return { ...c, status: 'connected', statusReason: null, capabilities: { ...e.capabilities }, connectedAt: c.connectedAt ?? e.at, lastErrorCode: null };
+    case 'key_rejected':
+      // not live: nothing moves, only the result code is recorded (like proof_failed). Live: a rejected key
+      // (401) is revoked; anything else degrades the connection until a later validation succeeds.
+      if (!API_KEY_KINDS.includes(c.kind)) throw bad('KIND_MISMATCH');
+      if (!isLive(c.status)) return { ...c, lastErrorCode: code(e.code) };
+      if (e.revoke) return { ...c, status: 'revoked', statusReason: code(e.code), capabilities: {}, lastErrorCode: code(e.code) };
+      return { ...c, status: 'degraded', statusReason: code(e.code), lastErrorCode: code(e.code) };
     case 'disconnect':
       // capabilities stay as the adapter last reported them (only the system writes them); a connection
       // that is not live offers nothing anyway (R-INT-2).

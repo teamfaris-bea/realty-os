@@ -55,6 +55,7 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   { path: '/admin/numbers', roles: ADMINS, url: at('/admin/numbers') },
   { path: '/admin/erasure', roles: ADMINS, url: (ids) => `/admin/erasure?contact=${ids.contactId}` },
   { path: '/admin/system', roles: ADMINS, url: at('/admin/system') },
+  { path: '/admin/integrations/mls', roles: ADMINS, url: at('/admin/integrations/mls') },
   { path: '/settings/playbooks', roles: NOT_TC, url: at('/settings/playbooks') },
   { path: '/settings/playbooks/:playbookId', roles: NOT_TC, url: (i) => `/settings/playbooks/${i.playbookId}` },
   { path: '/settings/compliance', roles: ADMINS, url: at('/settings/compliance') },

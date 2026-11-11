@@ -148,6 +148,8 @@ export const ERROR_STATUS = {
   CONNECTION_NOT_CONNECTABLE: 409, // the connection's status does not allow a (re)connect or change
   CONNECTION_ACCOUNT_MISMATCH: 409, // a different external account is a new connection (R-INT-3)
   LEAD_SOURCE_REQUIRED: 422, // an inbound channel needs a lead source before it can go live
+  MLS_PROVIDER_NOT_SPARK: 409, // mls/spark: this deployment does not use the Spark adapter (MLS_PROVIDER=fake)
+  MLS_CREDENTIAL_MISSING: 409, // mls/spark: no active Spark key is saved for this tenant
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

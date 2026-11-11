@@ -31,6 +31,26 @@ describe('module 21 architecture', () => {
     expect(svc.slice(0, svc.indexOf('export async function oauthCallback'))).not.toContain('repo.applyProof(');
   });
 
+  it('R-INT-3: the API-key link and the key validation result are written only by the Spark MLS service, as the system actor', () => {
+    for (const fn of ['linkKeyCredential', 'applyKeyValidation', 'insertMlsCredential']) {
+      const callers = SOURCES.filter((f) => new RegExp(`\\brepo\\.${fn}\\(`).test(f.text)).map((f) => f.rel);
+      expect(callers, fn).toEqual(['mls/spark/service.ts']);
+    }
+    const svc = SOURCES.find((f) => f.rel === 'mls/spark/service.ts')!.text;
+    // every transaction of the save / validate path runs as the system actor of the session's own tenant
+    expect(svc.match(/withTenantTx\(\s*sys,/g)?.length).toBe(3);
+    expect(svc).toContain("systemActor(actor.tenantId, 'provider')");
+  });
+
+  it('R-INT-1: the Spark adapter is read-only: it builds no request with a method other than GET, and only the adapter calls the transport', () => {
+    const spark = SOURCES.find((f) => f.rel === 'providers/integrations/spark.ts')!.text;
+    expect(spark).toMatch(/if \(method !== 'GET'\) throw new SparkError\('METHOD_NOT_ALLOWED'\)/);
+    expect(new Set([...spark.matchAll(/method:\s*'([A-Z]+)'/g)].map((m) => m[1]))).toEqual(new Set(['GET']));
+    expect(spark).toContain("redirect: 'manual'");
+    const transport = SOURCES.filter((f) => /\bmlsTransport\b/.test(f.text)).map((f) => f.rel).sort();
+    expect(transport).toEqual(['mls/spark/service.ts', 'providers/integrations/types.ts']);
+  });
+
   it('R-GATE-15: no code outside the reserved paths calls sendDirectMessage or publishPost', () => {
     const allowed = new Set(['comms/dispatch.ts', 'marketing/publish.ts']);
     const offenders = SOURCES.filter((f) => !f.rel.startsWith('providers/') && !allowed.has(f.rel) && /\.(sendDirectMessage|publishPost)\b/.test(f.text)).map((f) => f.rel);

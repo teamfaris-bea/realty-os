@@ -122,6 +122,21 @@ export const ConfigSchema = z.object({
     /** FUB registered-system headers (X-System / X-System-Key), when the account requires them */
     system: z.object({ name: z.string().min(1), key: z.string().min(1) }).optional(),
   }),
+  /**
+   * Read-only MLS feed (Spark RESO Web API; docs/DEPLOY.md "Spark MLS (read-only)"). Nonsecret settings only:
+   * the access token is never configuration, it lives in provider_credentials (provider 'mls') of the tenant.
+   */
+  mls: z.object({
+    provider: z.enum(['fake', 'spark']),
+    /** kill switch: false (the default everywhere) means the Spark adapter makes no network call at all */
+    liveCalls: z.boolean(),
+    spark: z.object({
+      baseUrl: z.url({ protocol: /^https$/ }),
+      allowedHosts: z.array(z.string()).min(1),
+      /** VERIFY with Spark: its docs show both "Bearer" and "OAuth" as the Authorization scheme */
+      authScheme: z.enum(['Bearer', 'OAuth']),
+    }),
+  }),
   /** General per-session/IP request budget (in-memory, per process). Auth routes add DB-backed limits. */
   globalRateLimitPerMinute: z.coerce.number().int().min(10).default(600),
   logLevel: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
@@ -183,6 +198,42 @@ function fubSettings(env: NodeJS.ProcessEnv, missing: string[], invalid: string[
   if (name && !key) missing.push('FUB_SYSTEM_KEY');
   if (key && !name) missing.push('FUB_SYSTEM_NAME');
   return { provider, baseUrl, allowedHosts, ...(name && key ? { system: { name, key } } : {}) };
+}
+
+/** Spark's RESO Web API (the defaults of SPARK_API_BASE_URL / SPARK_ALLOWED_HOSTS; mls/spark/http.ts matches). */
+const SPARK_DEFAULT_BASE_URL = 'https://sparkapi.com';
+const SPARK_DEFAULT_HOSTS = ['sparkapi.com'];
+
+/**
+ * MLS_PROVIDER, MLS_LIVE_CALLS, SPARK_API_BASE_URL, SPARK_ALLOWED_HOSTS, SPARK_AUTH_SCHEME (SSRF guard, SECURITY
+ * "Spark MLS (read-only)"). With MLS_PROVIDER=spark the base URL must be https on the default port, without
+ * credentials, path, query or fragment, naming a public host on the allow-list (refused in every environment,
+ * production included). MLS_LIVE_CALLS defaults to false everywhere. No setting here is ever a credential.
+ */
+function mlsSettings(env: NodeJS.ProcessEnv, invalid: string[]) {
+  const provider = pick('MLS_PROVIDER', env.MLS_PROVIDER, ['fake', 'spark'] as const, 'fake');
+  const live = (env.MLS_LIVE_CALLS ?? '').trim().toLowerCase();
+  if (live !== '' && live !== 'true' && live !== 'false') invalid.push('MLS_LIVE_CALLS must be true or false');
+  const liveCalls = live === 'true';
+  const authScheme = pick('SPARK_AUTH_SCHEME', env.SPARK_AUTH_SCHEME, ['Bearer', 'OAuth'] as const, 'Bearer');
+  const hosts = [...new Set(list(env.SPARK_ALLOWED_HOSTS))];
+  if (hosts.some((h) => !isPublicDnsName(h))) invalid.push('SPARK_ALLOWED_HOSTS must list lowercase public host names only (no scheme, port, path or wildcard)');
+  const allowedHosts = hosts.length > 0 ? hosts : [...SPARK_DEFAULT_HOSTS];
+  const raw = (env.SPARK_API_BASE_URL ?? '').trim() || SPARK_DEFAULT_BASE_URL;
+  let u: URL | null;
+  try {
+    u = new URL(raw);
+  } catch {
+    u = null;
+  }
+  let baseUrl = SPARK_DEFAULT_BASE_URL;
+  const ok = u !== null && u.protocol === 'https:' && u.port === '' && u.username === '' && u.password === '' && !/[?#]/.test(raw) && (u.pathname === '/' || u.pathname === '') && isPublicDnsName(u.hostname);
+  if (!ok) {
+    if (provider === 'spark') invalid.push('SPARK_API_BASE_URL must be https on the default port, without credentials, path, query or fragment, naming a public host');
+  } else if (!allowedHosts.includes(u!.hostname)) {
+    if (provider === 'spark') invalid.push('SPARK_API_BASE_URL host must be listed in SPARK_ALLOWED_HOSTS');
+  } else baseUrl = u!.origin;
+  return { provider, liveCalls, spark: { baseUrl, allowedHosts, authScheme } };
 }
 
 /**
@@ -288,6 +339,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     invalid.push(`SMTP_VENDOR=${relay} needs ${relay} in EMAIL_INBOUND_FORMATS (or EMAIL_WEBHOOK_SECRET for a bridge to the generic format) in production`);
   }
   const fub = fubSettings(env, missing, invalid);
+  const mls = mlsSettings(env, invalid);
 
   if (prod) {
     if (!env.PUBLIC_BASE_URL) missing.push('PUBLIC_BASE_URL');
@@ -344,6 +396,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     storageDir: env.STORAGE_DIR || undefined,
     vapid,
     fub,
+    mls,
     globalRateLimitPerMinute: env.GLOBAL_RATE_LIMIT_PER_MINUTE || undefined,
     logLevel: env.LOG_LEVEL || undefined,
   });
@@ -380,5 +433,6 @@ export function redactConfig(c: Config): Record<string, unknown> {
     smtpVendor: c.smtp?.vendor,
     s3Bucket: c.s3?.bucket,
     s3Endpoint: c.s3?.endpoint,
+    mls: { provider: c.mls.provider, liveCalls: c.mls.liveCalls, sparkBaseUrl: c.mls.spark.baseUrl, sparkAuthScheme: c.mls.spark.authScheme },
   };
 }
