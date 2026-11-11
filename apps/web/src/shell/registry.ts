@@ -36,6 +36,8 @@ import { surface as templatesSurface } from '../surfaces/templates/index.js';
 import { surface as bulkSurface } from '../surfaces/bulk/index.js';
 import { surface as batchTextSurface } from '../surfaces/settings/batch-text/index.js';
 import { surface as leadEmailSurface } from '../surfaces/lead-email/index.js';
+import { surface as mailSettingsSurface } from '../surfaces/settings/mail/index.js';
+import { surface as adminMailSurface } from '../surfaces/admin/mail/index.js';
 
 export type { NavSection, PageDef, PageNav, SurfaceModule } from './types.js';
 
@@ -64,5 +66,7 @@ export const surfaces: SurfaceModule[] = [
   bulkSurface,
   batchTextSurface,
   leadEmailSurface,
+  mailSettingsSurface,
+  adminMailSurface,
   // registry: add new entries above this line
 ];
