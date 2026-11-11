@@ -447,7 +447,7 @@ What exists in this lane: the configuration, the read-only adapter (`apps/api/sr
 
 **No environment variable holds the token.** Do not add one, and do not put a token in `.env`, `.env.production`, the secret store, a ticket or a chat.
 
-**Replication endpoint (VERIFY).** Spark has a separate replication endpoint. Whether a full background sync must use it is not verified; ask Spark support before module 24 ships. If it must, change `SPARK_API_BASE_URL` and `SPARK_ALLOWED_HOSTS`. No code change is needed.
+**Replication endpoint (verified 2026-11-11).** The CRM's key is a replication key: the standard host refuses it with a 403 that names the replication endpoint (`replication_endpoint_required` in the app). Set `SPARK_API_BASE_URL=https://replication.sparkapi.com` and `SPARK_ALLOWED_HOSTS=replication.sparkapi.com`. No code change is needed; every `@odata.nextLink` must stay on an allowed host.
 
 ### 11.2 Where the credential lives
 
@@ -470,24 +470,29 @@ GET /Reso/OData/Property?$top=1&$select=ListingKey,ModificationTimestamp
 |---|---|---|
 | `connected` | the key works and can read Property | none; leave it until module 24 needs it |
 | `invalid_credentials` | Spark answered 401 | check the key and the auth scheme (re-enter the key with the other scheme only if Spark support confirms it) |
-| `not_licensed_or_role_insufficient` | Spark answered 403 | the key lacks the role or the licence for this data; go back to the owner and FBS |
+| `replication_endpoint_required` | Spark answered 403 naming its replication endpoint (a replication key on the standard host) | set the replication address (§11.1) and redeploy; the Owner sees "This key only works on Spark's replication endpoint. Set the replication address in the deployment settings." |
+| `not_licensed_or_role_insufficient` | Spark answered any other 403 | the key lacks the role or the licence for this data; go back to the owner and FBS |
 | `rate_limited` | Spark answered 429 | wait, then validate once more |
+| `busy` | Spark answered 503 ("took too long"); seen once in the live check, the next identical request succeeded | wait a minute and validate again ("Spark was busy. Try again in a minute."); the connection's status does not move |
 | `unreachable` | 5xx, network error, timeout, 404, a refused redirect or an unreadable body | check egress to the allowed host and `SPARK_API_BASE_URL`; try later |
 | `live_calls_disabled` | `MLS_LIVE_CALLS=false`; **no request was made and the key was not decrypted** | expected until step 7 below |
 
-Only the result code is written to the connection row (`last_error_code`) and `audit_log` (`integration.validated`), never a response body. On a live connection a 401 moves it to `revoked`; 403, 429 and `unreachable` move it to `degraded`; a later `connected` restores it. The probe is never retried.
+Only the result code is written to the connection row (`last_error_code`) and `audit_log` (`integration.validated`), never a response body. On a live connection a 401 moves it to `revoked`; 403, 429 and `unreachable` move it to `degraded`; `busy` records the code only; a later `connected` restores it. The probe is never retried.
 
 With no saved key it returns 409 `MLS_CREDENTIAL_MISSING`. With `MLS_PROVIDER=fake`, saving a key is refused with 409 `MLS_PROVIDER_NOT_SPARK`. While live calls are off, the integration page starts with the sentence "Live MLS calls are turned off on this deployment".
 
 ### 11.4 Adapter limits
 
 - `GET` only; any other method is refused inside the adapter.
-- Paths: `/Reso/OData/$metadata`, `/Reso/OData/Property` and `/Reso/OData/Media` only. https only, hosts from `SPARK_ALLOWED_HOSTS` only, default port only.
+- Paths: `/Reso/OData/$metadata` and `/Reso/OData/Property` only (there is no Media entity set: photos come from `$expand=Media` on Property). https only, hosts from `SPARK_ALLOWED_HOSTS` only, default port only.
+- No response header is read but `Content-Length` and `Retry-After`; the `X-Api-Key` header Spark echoes is never logged, stored, audited or returned.
+- Field-level `<Field>@Core.Permissions` annotations that do not grant Read remove the field; unknown fields and annotation keys are ignored. The size is read from `BuildingAreaTotal` (there is no `LivingArea`).
 - Redirects are refused, never followed. Each request has a timeout and a response size cap.
 - Paging follows `@odata.nextLink`, and each next link is re-checked against the same host and path allowlist.
 - Incremental changes use a `ModificationTimestamp` cursor, with ties broken by `ListingKey`.
 - 429 and 5xx are retried with exponential backoff and jitter, within a retry budget. `Retry-After` is honoured up to a cap.
-- Status mapping: 401 → `invalid_credentials`, 403 → `not_licensed_or_role_insufficient`, 404 → `not_found`, 429 → `rate_limited`, 5xx, network error or timeout → `unreachable`.
+- Status mapping: 401 → `invalid_credentials`, 403 naming the replication endpoint → `replication_endpoint_required`, other 403 → `not_licensed_or_role_insufficient`, 404 → `not_found`, 429 → `rate_limited`, 503 → `busy`, other 5xx, network error or timeout → `unreachable`.
+- A sync run reads at most 500 records in at most 20 pages of 100 (**VERIFY** the largest `$top` with `$expand`).
 
 ### 11.5 Before any live call
 
@@ -504,8 +509,17 @@ Roles: **owner** is the team's business owner; **operator** runs the deployment;
 9. **Owner/Admin and operator:** check the result (§11.3). Only `connected` passes.
 10. **On any failure, or any doubt:** the operator sets `MLS_LIVE_CALLS=false` and redeploys before anyone investigates.
 11. **To stop for good or rotate:** an Owner/Admin disconnects the connection (revokes and purges the stored key) or enters a new key (purges the old one). The owner asks FBS to deactivate a key that is no longer used (**VERIFY** the process with FBS). Then the operator sets `MLS_LIVE_CALLS=false`, and `MLS_PROVIDER=fake` if the feed is retired.
-12. **VERIFY with Spark support** (owner or operator) before module 24 ships:
+12. **VERIFY with Spark support** (owner or operator) before live sync is turned on:
     - the `Authorization` scheme for this key: `Bearer` or `OAuth`;
-    - whether a full background sync must use the replication endpoint (and its host);
-    - which fields are available for this MLS and this key's role;
+    - ~~whether a full background sync must use the replication endpoint~~ (answered: yes, §11.1);
+    - which `Core.Permissions` value withholds a field, and which fields the licence lets clients see;
+    - the largest `$top` with `$expand=Media`, and whether `$select` inside `$expand` is honoured;
+    - which field is the finished living area (`BuildingAreaTotal` is mapped);
     - the rate limits for this key.
+
+### 11.6 Feed sync and the licence pack (module 24)
+
+- **Sync.** The worker's `mls.sync` job (every 60 s per tenant) runs each live `mls_feed` connection whose `next_sync_at` is due: one claim, one read outside any transaction, one fenced write (the sync cursor must be unchanged). Records are upserted by MLS number; an older modification never overwrites a newer one (`MLS_STALE_UPDATE`). A full batch runs again at once; otherwise the next run is 15 minutes later (**VERIFY WITH MLS** the refresh cadence). A failed read degrades the connection with its code (a rejected key revokes it) and retries one interval later. With `MLS_LIVE_CALLS=false` the run records `LIVE_CALLS_DISABLED` and nothing leaves the process.
+- **Licence pack.** `PUT /api/admin/mls/connections/:id/license-pack` (Owner/Admin, re-auth) stores every value with the person's statement whether counsel reviewed it. Until **every** value is marked reviewed, and the pack has an attribution and a disclaimer, no MLS listing reaches a client (saved-search alerts). `GET /api/admin/mls` says, per connection, whether MLS data may reach clients and why not. Every value is **VERIFY WITH COUNSEL / MLS**.
+- **Staleness.** When the last successful sync is older than the pack's `max_staleness_hours` (a pack without one is always stale), MLS alerts pause, queued MLS alerts are canceled by the `mls.compliance_sweep` job (every 5 min), the connection is marked degraded (`MLS_FEED_STALE`), competing sets drop MLS rows, and the admin view says "MLS data as of …".
+- **Stop.** Setting `MLS_LIVE_CALLS=false` stops every read; disconnecting stops the sync and purges the key (§11.2).
