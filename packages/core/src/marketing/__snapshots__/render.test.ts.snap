@@ -1,0 +1,623 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`renderPiece: brokerage name on every kind (R-MKT-1) > R-MKT-1: flyer renders the brokerage legal name, licence, address and statement (snapshot) 1`] = `
+{
+  "blocks": [
+    {
+      "origin": "prose",
+      "prominence": "display",
+      "role": "headline",
+      "text": "Corner home near the park",
+    },
+    {
+      "origin": "bound",
+      "prominence": "heading",
+      "role": "price",
+      "text": "$450,000",
+    },
+    {
+      "origin": "bound",
+      "prominence": "body",
+      "role": "status",
+      "text": "For sale",
+    },
+    {
+      "origin": "bound",
+      "prominence": "heading",
+      "role": "address",
+      "text": "12 Oak St, Austin, TX 78701",
+    },
+    {
+      "origin": "bound",
+      "prominence": "body",
+      "role": "facts",
+      "text": "3 bd · 2.5 ba · 1,850 sq ft",
+    },
+    {
+      "origin": "prose",
+      "prominence": "body",
+      "role": "body",
+      "text": "Renovated kitchen, wide windows, shaded deck.",
+    },
+    {
+      "origin": "prose",
+      "prominence": "body",
+      "role": "highlights",
+      "text": "Renovated kitchen",
+    },
+    {
+      "origin": "bound",
+      "prominence": "body",
+      "role": "gallery",
+      "text": "",
+    },
+    {
+      "origin": "identity",
+      "prominence": "heading",
+      "role": "brokerage_name",
+      "text": "Lone Star Realty LLC",
+    },
+    {
+      "origin": "identity",
+      "prominence": "heading",
+      "role": "team_name",
+      "text": "The Smith Team",
+    },
+    {
+      "origin": "identity",
+      "prominence": "small",
+      "role": "license",
+      "text": "License #0123456",
+    },
+    {
+      "origin": "identity",
+      "prominence": "small",
+      "role": "brokerage_address",
+      "text": "100 Congress Ave, Austin, TX 78701",
+    },
+    {
+      "origin": "pack",
+      "prominence": "small",
+      "role": "equal_housing",
+      "text": "Equal Housing Opportunity.",
+    },
+  ],
+  "images": [
+    {
+      "objectId": "01900000-0000-7000-8000-0000000a0001",
+      "position": 1,
+    },
+    {
+      "objectId": "01900000-0000-7000-8000-0000000a0002",
+      "position": 2,
+    },
+  ],
+  "issues": [],
+  "kind": "flyer",
+  "ok": true,
+  "templateKey": "flyer.standard",
+  "text": "Corner home near the park
+$450,000
+For sale
+12 Oak St, Austin, TX 78701
+3 bd · 2.5 ba · 1,850 sq ft
+Renovated kitchen, wide windows, shaded deck.
+Renovated kitchen
+Lone Star Realty LLC
+The Smith Team
+License #0123456
+100 Congress Ave, Austin, TX 78701
+Equal Housing Opportunity.",
+}
+`;
+
+exports[`renderPiece: brokerage name on every kind (R-MKT-1) > R-MKT-1: gbp_post renders the brokerage legal name, licence, address and statement (snapshot) 1`] = `
+{
+  "blocks": [
+    {
+      "origin": "prose",
+      "prominence": "body",
+      "role": "body",
+      "text": "New listing: a light-filled corner home near the park.",
+    },
+    {
+      "origin": "bound",
+      "prominence": "body",
+      "role": "price",
+      "text": "$450,000",
+    },
+    {
+      "origin": "bound",
+      "prominence": "body",
+      "role": "status",
+      "text": "For sale",
+    },
+    {
+      "origin": "bound",
+      "prominence": "body",
+      "role": "address",
+      "text": "12 Oak St, Austin, TX 78701",
+    },
+    {
+      "origin": "bound",
+      "prominence": "body",
+      "role": "facts",
+      "text": "3 bd · 2.5 ba · 1,850 sq ft",
+    },
+    {
+      "origin": "identity",
+      "prominence": "body",
+      "role": "brokerage_name",
+      "text": "Lone Star Realty LLC",
+    },
+    {
+      "origin": "identity",
+      "prominence": "body",
+      "role": "team_name",
+      "text": "The Smith Team",
+    },
+    {
+      "origin": "identity",
+      "prominence": "body",
+      "role": "license",
+      "text": "License #0123456",
+    },
+    {
+      "origin": "identity",
+      "prominence": "body",
+      "role": "brokerage_address",
+      "text": "100 Congress Ave, Austin, TX 78701",
+    },
+    {
+      "origin": "pack",
+      "prominence": "body",
+      "role": "equal_housing",
+      "text": "Equal Housing Opportunity.",
+    },
+  ],
+  "images": [
+    {
+      "objectId": "01900000-0000-7000-8000-0000000a0001",
+      "position": 1,
+    },
+    {
+      "objectId": "01900000-0000-7000-8000-0000000a0002",
+      "position": 2,
+    },
+  ],
+  "issues": [],
+  "kind": "gbp_post",
+  "ok": true,
+  "templateKey": "gbp_post.standard",
+  "text": "New listing: a light-filled corner home near the park.
+$450,000
+For sale
+12 Oak St, Austin, TX 78701
+3 bd · 2.5 ba · 1,850 sq ft
+Lone Star Realty LLC
+The Smith Team
+License #0123456
+100 Congress Ave, Austin, TX 78701
+Equal Housing Opportunity.",
+}
+`;
+
+exports[`renderPiece: brokerage name on every kind (R-MKT-1) > R-MKT-1: marketplace_export renders the brokerage legal name, licence, address and statement (snapshot) 1`] = `
+{
+  "blocks": [
+    {
+      "origin": "prose",
+      "prominence": "heading",
+      "role": "title",
+      "text": "Corner home near the park",
+    },
+    {
+      "origin": "bound",
+      "prominence": "heading",
+      "role": "price",
+      "text": "$450,000",
+    },
+    {
+      "origin": "bound",
+      "prominence": "body",
+      "role": "status",
+      "text": "For sale",
+    },
+    {
+      "origin": "bound",
+      "prominence": "heading",
+      "role": "address",
+      "text": "12 Oak St, Austin, TX 78701",
+    },
+    {
+      "origin": "bound",
+      "prominence": "body",
+      "role": "facts",
+      "text": "3 bd · 2.5 ba · 1,850 sq ft",
+    },
+    {
+      "origin": "prose",
+      "prominence": "body",
+      "role": "body",
+      "text": "Renovated kitchen, wide windows and a shaded back deck.",
+    },
+    {
+      "origin": "identity",
+      "prominence": "body",
+      "role": "brokerage_name",
+      "text": "Lone Star Realty LLC",
+    },
+    {
+      "origin": "identity",
+      "prominence": "body",
+      "role": "team_name",
+      "text": "The Smith Team",
+    },
+    {
+      "origin": "identity",
+      "prominence": "body",
+      "role": "license",
+      "text": "License #0123456",
+    },
+    {
+      "origin": "identity",
+      "prominence": "body",
+      "role": "brokerage_address",
+      "text": "100 Congress Ave, Austin, TX 78701",
+    },
+    {
+      "origin": "pack",
+      "prominence": "body",
+      "role": "equal_housing",
+      "text": "Equal Housing Opportunity.",
+    },
+  ],
+  "images": [
+    {
+      "objectId": "01900000-0000-7000-8000-0000000a0001",
+      "position": 1,
+    },
+    {
+      "objectId": "01900000-0000-7000-8000-0000000a0002",
+      "position": 2,
+    },
+  ],
+  "issues": [],
+  "kind": "marketplace_export",
+  "ok": true,
+  "templateKey": "marketplace_export.standard",
+  "text": "Corner home near the park
+$450,000
+For sale
+12 Oak St, Austin, TX 78701
+3 bd · 2.5 ba · 1,850 sq ft
+Renovated kitchen, wide windows and a shaded back deck.
+Lone Star Realty LLC
+The Smith Team
+License #0123456
+100 Congress Ave, Austin, TX 78701
+Equal Housing Opportunity.",
+}
+`;
+
+exports[`renderPiece: brokerage name on every kind (R-MKT-1) > R-MKT-1: open_house_invite renders the brokerage legal name, licence, address and statement (snapshot) 1`] = `
+{
+  "blocks": [
+    {
+      "origin": "prose",
+      "prominence": "heading",
+      "role": "subject",
+      "text": "Open house at a light-filled corner home",
+    },
+    {
+      "origin": "bound",
+      "prominence": "heading",
+      "role": "open_house",
+      "text": "Open house: Sat, Nov 14, 1:00 PM – 3:00 PM CST",
+    },
+    {
+      "origin": "bound",
+      "prominence": "heading",
+      "role": "price",
+      "text": "$450,000",
+    },
+    {
+      "origin": "bound",
+      "prominence": "body",
+      "role": "status",
+      "text": "For sale",
+    },
+    {
+      "origin": "bound",
+      "prominence": "heading",
+      "role": "address",
+      "text": "12 Oak St, Austin, TX 78701",
+    },
+    {
+      "origin": "bound",
+      "prominence": "body",
+      "role": "facts",
+      "text": "3 bd · 2.5 ba · 1,850 sq ft",
+    },
+    {
+      "origin": "prose",
+      "prominence": "body",
+      "role": "body",
+      "text": "Come see the renovated kitchen and the shaded deck.",
+    },
+    {
+      "origin": "bound",
+      "prominence": "body",
+      "role": "gallery",
+      "text": "",
+    },
+    {
+      "origin": "identity",
+      "prominence": "body",
+      "role": "brokerage_name",
+      "text": "Lone Star Realty LLC",
+    },
+    {
+      "origin": "identity",
+      "prominence": "body",
+      "role": "team_name",
+      "text": "The Smith Team",
+    },
+    {
+      "origin": "identity",
+      "prominence": "small",
+      "role": "license",
+      "text": "License #0123456",
+    },
+    {
+      "origin": "identity",
+      "prominence": "small",
+      "role": "brokerage_address",
+      "text": "100 Congress Ave, Austin, TX 78701",
+    },
+    {
+      "origin": "pack",
+      "prominence": "small",
+      "role": "equal_housing",
+      "text": "Equal Housing Opportunity.",
+    },
+  ],
+  "images": [
+    {
+      "objectId": "01900000-0000-7000-8000-0000000a0001",
+      "position": 1,
+    },
+    {
+      "objectId": "01900000-0000-7000-8000-0000000a0002",
+      "position": 2,
+    },
+  ],
+  "issues": [],
+  "kind": "open_house_invite",
+  "ok": true,
+  "templateKey": "open_house_invite.standard",
+  "text": "Open house at a light-filled corner home
+Open house: Sat, Nov 14, 1:00 PM – 3:00 PM CST
+$450,000
+For sale
+12 Oak St, Austin, TX 78701
+3 bd · 2.5 ba · 1,850 sq ft
+Come see the renovated kitchen and the shaded deck.
+Lone Star Realty LLC
+The Smith Team
+License #0123456
+100 Congress Ave, Austin, TX 78701
+Equal Housing Opportunity.",
+}
+`;
+
+exports[`renderPiece: brokerage name on every kind (R-MKT-1) > R-MKT-1: social_post renders the brokerage legal name, licence, address and statement (snapshot) 1`] = `
+{
+  "blocks": [
+    {
+      "origin": "prose",
+      "prominence": "body",
+      "role": "caption",
+      "text": "Just listed: a light-filled corner home near the park.",
+    },
+    {
+      "origin": "bound",
+      "prominence": "body",
+      "role": "price",
+      "text": "$450,000",
+    },
+    {
+      "origin": "bound",
+      "prominence": "body",
+      "role": "status",
+      "text": "For sale",
+    },
+    {
+      "origin": "bound",
+      "prominence": "body",
+      "role": "address",
+      "text": "12 Oak St, Austin, TX 78701",
+    },
+    {
+      "origin": "bound",
+      "prominence": "body",
+      "role": "facts",
+      "text": "3 bd · 2.5 ba · 1,850 sq ft",
+    },
+    {
+      "origin": "prose",
+      "prominence": "body",
+      "role": "hashtags",
+      "text": "#JustListed #AustinHomes",
+    },
+    {
+      "origin": "identity",
+      "prominence": "body",
+      "role": "brokerage_name",
+      "text": "Lone Star Realty LLC",
+    },
+    {
+      "origin": "identity",
+      "prominence": "body",
+      "role": "team_name",
+      "text": "The Smith Team",
+    },
+    {
+      "origin": "identity",
+      "prominence": "body",
+      "role": "license",
+      "text": "License #0123456",
+    },
+    {
+      "origin": "identity",
+      "prominence": "body",
+      "role": "brokerage_address",
+      "text": "100 Congress Ave, Austin, TX 78701",
+    },
+    {
+      "origin": "pack",
+      "prominence": "body",
+      "role": "equal_housing",
+      "text": "Equal Housing Opportunity.",
+    },
+  ],
+  "images": [
+    {
+      "objectId": "01900000-0000-7000-8000-0000000a0001",
+      "position": 1,
+    },
+    {
+      "objectId": "01900000-0000-7000-8000-0000000a0002",
+      "position": 2,
+    },
+  ],
+  "issues": [],
+  "kind": "social_post",
+  "ok": true,
+  "templateKey": "social_post.standard",
+  "text": "Just listed: a light-filled corner home near the park.
+$450,000
+For sale
+12 Oak St, Austin, TX 78701
+3 bd · 2.5 ba · 1,850 sq ft
+#JustListed #AustinHomes
+Lone Star Realty LLC
+The Smith Team
+License #0123456
+100 Congress Ave, Austin, TX 78701
+Equal Housing Opportunity.",
+}
+`;
+
+exports[`renderPiece: brokerage name on every kind (R-MKT-1) > R-MKT-1: website_page renders the brokerage legal name, licence, address and statement (snapshot) 1`] = `
+{
+  "blocks": [
+    {
+      "origin": "prose",
+      "prominence": "display",
+      "role": "headline",
+      "text": "Light-filled corner home near the park",
+    },
+    {
+      "origin": "bound",
+      "prominence": "heading",
+      "role": "price",
+      "text": "$450,000",
+    },
+    {
+      "origin": "bound",
+      "prominence": "body",
+      "role": "status",
+      "text": "For sale",
+    },
+    {
+      "origin": "bound",
+      "prominence": "heading",
+      "role": "address",
+      "text": "12 Oak St, Austin, TX 78701",
+    },
+    {
+      "origin": "bound",
+      "prominence": "body",
+      "role": "facts",
+      "text": "3 bd · 2.5 ba · 1,850 sq ft",
+    },
+    {
+      "origin": "prose",
+      "prominence": "body",
+      "role": "body",
+      "text": "Wide windows, a renovated kitchen and a shaded back deck.",
+    },
+    {
+      "origin": "prose",
+      "prominence": "body",
+      "role": "highlights",
+      "text": "Renovated kitchen
+Shaded deck",
+    },
+    {
+      "origin": "bound",
+      "prominence": "body",
+      "role": "gallery",
+      "text": "",
+    },
+    {
+      "origin": "identity",
+      "prominence": "heading",
+      "role": "brokerage_name",
+      "text": "Lone Star Realty LLC",
+    },
+    {
+      "origin": "identity",
+      "prominence": "heading",
+      "role": "team_name",
+      "text": "The Smith Team",
+    },
+    {
+      "origin": "identity",
+      "prominence": "small",
+      "role": "license",
+      "text": "License #0123456",
+    },
+    {
+      "origin": "identity",
+      "prominence": "small",
+      "role": "brokerage_address",
+      "text": "100 Congress Ave, Austin, TX 78701",
+    },
+    {
+      "origin": "pack",
+      "prominence": "small",
+      "role": "equal_housing",
+      "text": "Equal Housing Opportunity.",
+    },
+  ],
+  "images": [
+    {
+      "objectId": "01900000-0000-7000-8000-0000000a0001",
+      "position": 1,
+    },
+    {
+      "objectId": "01900000-0000-7000-8000-0000000a0002",
+      "position": 2,
+    },
+  ],
+  "issues": [],
+  "kind": "website_page",
+  "ok": true,
+  "templateKey": "website_page.standard",
+  "text": "Light-filled corner home near the park
+$450,000
+For sale
+12 Oak St, Austin, TX 78701
+3 bd · 2.5 ba · 1,850 sq ft
+Wide windows, a renovated kitchen and a shaded back deck.
+Renovated kitchen
+Shaded deck
+Lone Star Realty LLC
+The Smith Team
+License #0123456
+100 Congress Ave, Austin, TX 78701
+Equal Housing Opportunity.",
+}
+`;
