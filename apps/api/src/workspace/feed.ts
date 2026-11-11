@@ -477,7 +477,7 @@ export function foreignActions(r: ForeignRow): { primaryAction: OneTapAction; al
       case 'weekly_plan':
         return { primaryAction: { kind: 'show_details', label: 'See the plan' }, alternatives: open };
       case 'coaching_fix':
-        return { primaryAction: { kind: 'show_details', label: 'See the tip' }, alternatives: open };
+        return { primaryAction: { kind: 'open_coaching_fix', label: 'See the tip' }, alternatives: open };
       case 'likely_to_move':
         return { primaryAction: { kind: 'open_contact', label: 'Open contact', contactId: (r.contact_id ?? key.contactId) as never }, alternatives: [] };
     }

@@ -146,6 +146,9 @@ export const ACTIONS = [
   'playbook.auto_enroll_stage', // parity module 67: the stage whose entry enrolls (team: Owner/Admin; an agent: own agent playbook)
   'lead_email_review.view', // module 22 lead-email slice: the "Needs review" list of held lead emails (Owner/Admin/Team Lead; support read-only)
   'lead_email_review.decide', // module 22 lead-email slice: accept a held lead email as a lead (same intake path) or discard it
+  'coaching.view', // module 36: the caller's own daily fix and its quotes (R-COACH-3, R-COACH-4; Call reviews row: own calls)
+  'coaching.team_view', // module 36: a team's current fixes (Owner/Admin; a Team Lead only while the Owner's tl_sees_call_scores is on, DB-enforced)
+  'coaching.settings', // module 36: call scoring on/off, Team Lead visibility, rubric items (Owner only; widening needs 🔒)
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -289,6 +292,7 @@ export const AUDIT_ACTIONS = [
   'webchat.widget_created', // module 22: an Owner/Admin created a website chat widget (its key is shown once)
   'webchat.widget_key_rotated', // module 22: the widget key was replaced; the old embed stops working at once
   'webchat.widget_origins_changed', // module 22: the websites a widget may run on changed
+  'coaching.settings_changed', // module 36: the Owner changed call scoring, Team Lead visibility or the rubric items (values only)
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -572,6 +576,14 @@ const MATRIX: Record<Action, ActionRule> = {
   'settings.batch_text': { roles: { owner: { scopes: ['all'], checks: ['attest_when_loosening'], reauth: 'when_loosening' }, admin: { scopes: ['all'], checks: ['not_loosening'] } } },
   // playbook.auto_enroll_stage (R-PAR-16): team ✅ | team ✅ | — | own agent playbook | — | —
   'playbook.auto_enroll_stage': { roles: { owner: { scopes: ['team_playbook'] }, admin: { scopes: ['team_playbook'] }, agent: { scopes: ['own'], checks: ['not_team_playbook'] } } },
+  // Module 36 (DATA_MODEL Part 2 matrix "Call reviews": ✅ | ✅ | T only if tl_sees_call_scores | own calls | own calls | — | —).
+  // coaching.view is the caller's own fix (every role that takes calls). coaching.team_view lets a Team Lead ask; what
+  // they then read is decided by call_scores RLS (only while the Owner's setting is on).
+  'coaching.view': { roles: { owner: OWN, admin: OWN, team_lead: OWN, agent: OWN, isa: OWN } },
+  'coaching.team_view': { roles: { owner: ALL, admin: ALL, team_lead: T } },
+  // Coaching settings: Owner only (the DB trigger refuses anyone else); turning anything on (scoring, Team Lead
+  // visibility) is widening and needs re-auth; turning it off does not.
+  'coaching.settings': { roles: { owner: { scopes: ['all'], reauth: 'when_loosening' } } },
 };
 
 const DENY_NOT_FOUND: CanResult = { ok: false, code: 'NOT_FOUND' };

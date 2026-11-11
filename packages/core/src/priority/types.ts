@@ -369,7 +369,9 @@ export type OneTapAction =
   /** the listing page (seller updates and marketing pieces belong to a listing) */
   | { kind: 'open_listing'; label: string; listingId: ListingId }
   /** opens the card's own details in place (what the owning module wrote on the card), no navigation */
-  | { kind: 'show_details'; label: string };
+  | { kind: 'show_details'; label: string }
+  /** the caller's daily coaching fix page (module 36/40: the coaching_fix card links to it) */
+  | { kind: 'open_coaching_fix'; label: string };
 
 export type OneTapKind = OneTapAction['kind'];
 
