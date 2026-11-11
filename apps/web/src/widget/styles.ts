@@ -26,7 +26,7 @@ input,textarea{min-height:44px;padding:8px 12px;border:1px solid var(--line);bor
 textarea{resize:vertical;min-height:72px}
 .hint{font-size:13px;font-weight:400;color:var(--muted)}
 .go{min-height:44px;padding:0 16px;border:0;border-radius:10px;background:var(--accent);color:var(--accent-ink);font-weight:600;cursor:pointer}
-.go[disabled]{opacity:.7;cursor:progress}
+.go[aria-disabled=true]{opacity:.7;cursor:progress}
 .err{margin:0;font-size:14px;font-weight:600;color:var(--danger)}
 .log{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
 .m{max-width:85%;display:flex;flex-direction:column;gap:2px}

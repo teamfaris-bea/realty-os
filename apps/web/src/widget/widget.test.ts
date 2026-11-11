@@ -49,7 +49,7 @@ async function startChat(m: ReturnType<typeof mount>, message = 'Is 12 Oak St st
   m.$<HTMLInputElement>('input[name=contact]')!.value = '(415) 555-0101';
   m.$<HTMLTextAreaElement>('textarea[name=message]')!.value = message;
   m.$<HTMLFormElement>('form')!.requestSubmit();
-  await vi.waitFor(() => expect(m.$('ol[role=log]')).not.toBeNull());
+  await vi.waitFor(() => expect(m.$('[role=log] ol')).not.toBeNull());
 }
 
 const logIds = (m: ReturnType<typeof mount>) => [...m.w.shadow.querySelectorAll('[data-message-id]')].map((e) => e.getAttribute('data-message-id'));

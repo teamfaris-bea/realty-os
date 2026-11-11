@@ -53,6 +53,19 @@ const timeOf = (iso: string) => {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 };
 
+// A button in flight stays focusable (a disabled button drops the keyboard focus to the page): aria-disabled
+// says it is busy and a second tap does nothing.
+const busy = (b: HTMLButtonElement) => b.getAttribute('aria-disabled') === 'true';
+function setBusy(b: HTMLButtonElement, label: string | null, idle = ''): void {
+  if (label === null) {
+    b.removeAttribute('aria-disabled');
+    b.textContent = idle;
+  } else {
+    b.setAttribute('aria-disabled', 'true');
+    b.textContent = label;
+  }
+}
+
 interface Saved {
   token: string;
 }
@@ -169,14 +182,13 @@ export class ChatWidget {
       err.textContent = need;
       return;
     }
-    go.disabled = true;
-    go.textContent = copy.starting;
+    if (busy(go)) return;
+    setBusy(go, copy.starting);
     err.textContent = '';
     const r = await this.deps.api.start(this.cfg.widgetKey, { name: n.slice(0, 120), ...c!, message: m.slice(0, 2000), disclosureId: this.cfg.disclosureId });
     if (!this.panel) return;
     if (!r.ok) {
-      go.disabled = false;
-      go.textContent = copy.start;
+      setBusy(go, null, copy.start);
       err.textContent = copy.failure[r.failure];
       return;
     }
@@ -189,8 +201,8 @@ export class ChatWidget {
 
   private showChat(initial: ChatMessage[]): void {
     this.seen.clear();
-    this.log = h('ol', { class: 'log', role: 'log', 'aria-label': copy.log, 'aria-live': 'polite' });
-    this.body(...this.disclosure(), this.log, h('p', { class: 'note' }, copy.openNote));
+    this.log = h('ol', { class: 'log' });
+    this.body(...this.disclosure(), h('div', { role: 'log', 'aria-label': copy.log, 'aria-live': 'polite' }, this.log), h('p', { class: 'note' }, copy.openNote));
     this.add(initial);
     this.footer();
     // a restored session starts from the beginning of its own messages
@@ -199,7 +211,10 @@ export class ChatWidget {
   }
 
   private footer(error: string | null = null): void {
-    this.panel?.querySelector('.foot')?.remove();
+    const old = this.panel?.querySelector('.foot');
+    // a visitor typing in the reply box keeps the keyboard in the footer when it changes (the chat ended)
+    const hadFocus = !!old && old.contains(this.root.activeElement);
+    old?.remove();
     if (!this.panel) return;
     if (this.ended) {
       const again = h('button', { type: 'button', class: 'go' }, copy.newChat);
@@ -208,6 +223,7 @@ export class ChatWidget {
         this.showStart();
       });
       this.panel.append(h('div', { class: 'foot' }, h('p', { class: 'note', role: 'status' }, copy.ended), again));
+      if (hadFocus) again.focus();
       return;
     }
     const field = h('textarea', { name: 'reply', maxlength: '2000', 'aria-label': copy.replyField, rows: '1' });
@@ -223,13 +239,11 @@ export class ChatWidget {
 
   private async send(field: HTMLTextAreaElement, go: HTMLButtonElement, err: HTMLElement): Promise<void> {
     const text = field.value.trim();
-    if (!text || !this.token || go.disabled) return;
-    go.disabled = true;
-    go.textContent = copy.sending;
+    if (!text || !this.token || busy(go)) return;
+    setBusy(go, copy.sending);
     err.textContent = '';
     const r = await this.deps.api.send(this.token, text.slice(0, 2000));
-    go.disabled = false;
-    go.textContent = copy.send;
+    setBusy(go, null, copy.send);
     if (r.ok) {
       field.value = '';
       this.add([r.data.message]);
