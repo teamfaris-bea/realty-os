@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.0.0",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
@@ -19,7 +21,9 @@
     "seed": "pnpm --filter @realty/api seed",
     "demo:totp": "pnpm --filter @realty/api demo:totp",
     "load:seed": "pnpm --filter @realty/api load:seed",
-    "ops:synthetic": "pnpm --filter @realty/api ops:synthetic"
+    "ops:synthetic": "pnpm --filter @realty/api ops:synthetic",
+    "load:bench": "pnpm --filter @realty/api load:bench",
+    "load:smoke": "pnpm --filter @realty/api load:smoke"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
@@ -34,6 +38,9 @@
     "vitest": "5.1.0"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["argon2", "esbuild"]
+    "onlyBuiltDependencies": [
+      "argon2",
+      "esbuild"
+    ]
   }
 }

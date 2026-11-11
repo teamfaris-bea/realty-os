@@ -23,7 +23,9 @@
     "start:worker": "node dist/worker/main.js",
     "load:seed": "tsx --env-file-if-exists=../../.env --conditions=@realty/source src/load/seed.ts",
     "start:synthetic": "node dist/observability/syntheticMain.js",
-    "ops:synthetic": "tsx --env-file-if-exists=../../.env --conditions=@realty/source src/observability/syntheticMain.ts"
+    "ops:synthetic": "tsx --env-file-if-exists=../../.env --conditions=@realty/source src/observability/syntheticMain.ts",
+    "load:bench": "tsx --env-file-if-exists=../../.env --conditions=@realty/source src/load/bench.ts",
+    "load:smoke": "tsx --env-file-if-exists=../../.env --conditions=@realty/source src/load/smoke.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "1.7.0",
