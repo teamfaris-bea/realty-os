@@ -7,6 +7,7 @@
 //   const agent = await h.invite(owner, 'agent');   // invited + accepted through the API
 //   const res = await agent.post('/api/push-subscriptions', {...});
 //   await h.close();
+import type { Registry } from '../observability/prometheus.js';
 import { createHash, randomBytes } from 'node:crypto';
 import type { Role, TenantId, UserActor, UserId } from '@realty/core/foundation';
 import { instant, uuidv7Generator } from '@realty/core/foundation';
@@ -150,7 +151,7 @@ export interface ApiHarness {
 
 const sha = (s: string) => createHash('sha256').update(Buffer.from(s, 'base64url')).digest();
 
-export async function createApiHarness(o: { routeModules?: readonly RouteModule[]; config?: Partial<Config>; logLevel?: Config['logLevel'] } = {}): Promise<ApiHarness> {
+export async function createApiHarness(o: { routeModules?: readonly RouteModule[]; config?: Partial<Config>; logLevel?: Config['logLevel']; metrics?: Registry } = {}): Promise<ApiHarness> {
   const testDb = await createTestDb();
   const database = createDatabase({ url: testDb.appUserUrl, max: 5, applicationName: 'api-test' });
   configureDatabase(database);
@@ -170,6 +171,7 @@ export async function createApiHarness(o: { routeModules?: readonly RouteModule[
     db: database,
     routeModules: o.routeModules ?? defaultModules,
     logStream: { write: (line) => void logs.push(line) },
+    ...(o.metrics ? { metrics: o.metrics } : {}),
   });
   await app.ready();
   let n = 0;

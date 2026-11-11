@@ -267,4 +267,10 @@ export interface IntegrationAdapters {
   social: SocialPublisher;
   showing: ShowingServiceProvider;
   renderer: DocumentRenderer;
+  /**
+   * Transport of the read-only Spark RESO adapter (spark.ts). Undefined ⇒ the global fetch. Tests install a
+   * mock Spark server here; nothing else may. The adapter itself enforces GET-only, allow-lists and the
+   * MLS_LIVE_CALLS kill switch whatever transport it is given.
+   */
+  mlsTransport?: (url: string, init: { method: 'GET'; headers: Record<string, string>; redirect: 'manual'; signal: AbortSignal }) => Promise<Response>;
 }

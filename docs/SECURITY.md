@@ -223,3 +223,57 @@ The first response and playbook steps **never call the model**. They render appr
 - **The web shows the server sentence, not the codes.** The web shows `ASSISTANT_OUTPUT_BLOCKED` with its generic error sentence until a surface lane adds copy. `payload.screen` is not yet exposed in the card schema, which was kept unchanged during the parallel lanes.
 - **Caching may not apply.** The static system prompt can be shorter than a model's minimum cacheable prefix. In that case it is simply not cached.
 - **Prefilled search criteria are attacker text.** Unchecked criteria are shown as text and never used until the agent ticks them.
+
+---
+
+## 5. Spark MLS (read-only)
+
+A read-only connector to FBS's Spark RESO Web API (lane `spark-prep`; adapter in `apps/api/src/providers/integrations/spark.ts`, service and routes in `apps/api/src/mls/spark/`, routes under `/api/admin/integrations/mls/spark`). The operator procedure is `docs/DEPLOY.md` §11. Feed sync into `listings` rows is module 24 (api/mls) and is not built; what any audience may see is still decided by the `core/listings` display rules (placeholder licence pack, `reviewed=false`).
+
+### 5.1 Threat model
+
+**Asset.** One server-to-server Spark access token per team. It does not expire, so a leaked token stays useful until it is deactivated at FBS.
+
+| Threat | How it could happen | Goal |
+|---|---|---|
+| Token exposure | logs, error bodies or reports, audit rows, metrics labels, API responses, the browser after submission, a URL, an environment file, a database dump | read MLS data as the team, exhaust its rate limit, breach the licence |
+| SSRF | an attacker-influenced base URL, a redirect, or an `@odata.nextLink` that points somewhere else | make the server send the token to, or fetch from, a host we did not choose |
+| Write attempts | a code path, a bug or a crafted next link that issues a non-GET request or reaches another resource | change MLS data, or touch resources the licence does not cover |
+| Cross-tenant access | a member of team A reading or using team B's credential or connection | use another team's licence and data |
+| Privilege misuse inside the tenant | an Agent, Team Lead or support user reaching the form or the probe | replace, read or exercise the key |
+| Reusing the website's key | someone pasting the team website's token into the CRM | one key shared by two systems: no independent revocation, audit or rate limit |
+
+### 5.2 Controls
+
+| Control | Where |
+|---|---|
+| **Encryption.** The token is stored only in `provider_credentials` (provider `mls`) of the tenant, under AES-256-GCM envelope encryption with the tenant field key, which the KEK wraps. The AAD binds the ciphertext to (`provider_credentials`, `secret_enc`, row id), so it cannot be replayed into another row. The chosen auth scheme is inside the encrypted payload; only a nonsecret label is in `external_account_ref`. | `apps/api/src/mls/spark/`, `crypto/` |
+| **KEK in the secret store.** `KEK_BASE64` lives in the production deployment's secret store, never in the repository or an image. No environment variable holds the Spark token. | DEPLOY §9, §11.1 |
+| **Who can write it.** Owner/Admin only (`integration.manage`), with re-auth (401 `REAUTH_REQUIRED`), the CSRF token, a database rate limit (429 `RATE_LIMITED`) and an audit row. Agents, Team Leads and support get 404 `NOT_FOUND`, never 403. The request body is strict: unknown fields are refused. | `/api/admin/integrations/mls/spark/credential` |
+| **Redaction.** The token never appears in logs, error bodies, audit rows, metrics, error reports or any API response. Responses carry `credentialSaved` and the label only. | the routes, logger and error serializer (§2.7) |
+| **The browser never receives it** after submission. | the GET view and the PUT response |
+| **GET only.** The adapter refuses every other method. | `apps/api/src/providers/integrations/spark.ts` |
+| **Path allowlist.** `/Reso/OData/$metadata`, `/Reso/OData/Property`, `/Reso/OData/Media` only. | same |
+| **Host allowlist.** https only, hosts from `SPARK_ALLOWED_HOSTS` (lowercase public DNS names), default port only. `SPARK_API_BASE_URL` comes from server config, never tenant input, and start-up refuses a bad one in every environment. | `config.ts`, the adapter |
+| **No redirects.** A redirect is refused, never followed, so the token never goes to a host that was not checked. | the adapter |
+| **Paging re-check.** Every `@odata.nextLink` is checked against the same host and path allowlist before it is fetched. | the adapter |
+| **Size and time caps.** Per-request timeout, response size cap; 429/5xx backoff with jitter inside a retry budget, `Retry-After` honoured up to a cap. | the adapter |
+| **Kill switch.** `MLS_LIVE_CALLS=false` (the default everywhere) means no network call at all, even with a stored key. The probe then returns `live_calls_disabled` without a request. | config, the adapter |
+| **Purge on disconnect or replace.** Disconnect revokes and purges in one transaction (`purged`, `secret_enc` NULL). A new key purges the old one in the same transaction and resets the connection to `not_configured`. | the routes |
+| **Tenant isolation.** `provider_credentials` and `integration_connections` are FORCE RLS tables; every read and write runs in the caller's tenant. The connection's `credential_id` is written by the system actor only (R-INT-3). | migrations, `@realty/db` |
+| **Own key.** The CRM uses its own Spark key, never the website's. This is a recommendation (independent revocation, audit, rate limits), not a verified licensing requirement. | DEPLOY §11 |
+
+Tests (mock Spark transport only; a network tripwire fails any real outbound call): `apps/api/src/providers/integrations/spark.test.ts` (GET-only, path/host allowlists, redirects, nextLink re-check, paging, cursor resume, backoff and budget, status mapping, size/time caps, kill switch), `apps/api/src/mls/spark/spark.api.test.ts` (roles, re-auth, CSRF, rate limit, cross-tenant RLS, every validation mapping, purge on replace and disconnect, and a canary token searched for in logs, error reports, audit rows, metrics, API responses, every database table and every snapshot file), `apps/api/src/mls/spark/config.test.ts`, `apps/api/src/integrations/keyStatus.test.ts`, `apps/api/src/integrations/architecture.test.ts`, and the web page's tests under `apps/web/src/surfaces/integrations/`.
+
+### 5.3 What remains
+
+| Item | Why it is open | Suggested action |
+|---|---|---|
+| **VERIFY** the `Authorization` scheme | Spark's docs show both `Bearer` and `OAuth` | Confirm with Spark support; set `SPARK_AUTH_SCHEME` |
+| **VERIFY** the replication endpoint | Whether a full background sync must use Spark's separate replication endpoint is unverified | Confirm with Spark support before module 24; change base URL and host list if so |
+| **VERIFY** field availability | Which fields this MLS exposes to this key's role is unknown | Check against `$metadata` with Spark support before module 24 maps fields |
+| **VERIFY** rate limits | Not known for this key | Confirm with Spark support; tune the retry budget |
+| **VERIFY** licence coverage | Owner-confirmed only; not independently re-verified with the MLS | Owner gets written confirmation from the MLS before any live call |
+| **VERIFY** key deactivation at FBS | How a leaked or retired key is deactivated at FBS is not documented here | Owner confirms the process with FBS; disconnecting in the app only purges our copy |
+| DNS rebinding on the allowed host | A public name that resolves to a private address is not re-checked at connect time (as for FUB, §3) | Worker and API egress policy that denies private ranges |
+| Feed sync not built | Module 24 (api/mls) | Review its writes into `listings` and the display rules when it lands |

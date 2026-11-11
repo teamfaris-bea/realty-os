@@ -90,6 +90,59 @@ export async function recordProofFailure(tx: Tx, id: string, code: string): Prom
   await sql`UPDATE integration_connections SET last_error_code = ${code} WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx);
 }
 
+// ---- API-key connections (Spark MLS; system actor only, called only by mls/spark/service.ts) -------------
+
+/** The newest Spark MLS connection of the tenant that is not disconnected, or null. */
+export async function getSparkConnection(tx: Tx, o: { forUpdate?: boolean } = {}): Promise<ConnectionDbRow | null> {
+  const lock = o.forUpdate ? sql`FOR UPDATE` : sql``;
+  return (
+    await sql<ConnectionDbRow>`SELECT ${COLS} FROM integration_connections
+      WHERE tenant_id = app.tenant_id() AND kind = 'mls_feed' AND status <> 'disconnected'
+        AND (external_account_id IS NULL OR external_account_id LIKE 'spark:%')
+      ORDER BY created_at DESC, id DESC LIMIT 1 ${lock}`.execute(tx)
+  ).rows[0] ?? null;
+}
+
+/** Serializes Spark key writes of one tenant (two concurrent saves must not create two connections). */
+export async function sparkLock(tx: Tx): Promise<void> {
+  await sql`SELECT pg_advisory_xact_lock(hashtextextended(app.tenant_id()::text || ':integrations:spark', 0))`.execute(tx);
+}
+
+export async function insertMlsCredential(tx: Tx, c: { id: string; secretEnc: Uint8Array; keyVersion: number; keyLabel: string; createdByUserId: string }): Promise<void> {
+  await sql`INSERT INTO provider_credentials (tenant_id, id, provider, secret_enc, key_version, external_account_ref, created_by_user_id)
+            VALUES (app.tenant_id(), ${c.id}, 'mls', ${Buffer.from(c.secretEnc)}, ${c.keyVersion}, ${c.keyLabel}, ${c.createdByUserId})`.execute(tx);
+}
+
+/** The nonsecret facts of a credential (never secret_enc). */
+export async function credentialFacts(tx: Tx, credentialId: string): Promise<{ provider: string; status: string; key_label: string | null } | null> {
+  return (
+    await sql<{ provider: string; status: string; key_label: string | null }>`
+      SELECT provider, status, external_account_ref AS key_label FROM provider_credentials WHERE tenant_id = app.tenant_id() AND id = ${credentialId}`.execute(tx)
+  ).rows[0] ?? null;
+}
+
+/** Links a newly saved key (status back to not_configured until validated). */
+export async function linkKeyCredential(tx: Tx, id: string, p: { externalAccountId: string; credentialId: string; statusReason: string; connectedByUserId: string }): Promise<void> {
+  await sql`UPDATE integration_connections SET
+              status = 'not_configured', status_reason = ${p.statusReason}, external_account_id = ${p.externalAccountId},
+              credential_id = ${p.credentialId}, capabilities = '{}'::jsonb, connected_by_user_id = ${p.connectedByUserId},
+              last_error_code = NULL
+             WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx);
+}
+
+/** Records a validation outcome (codes only, never a response body). */
+export async function applyKeyValidation(
+  tx: Tx,
+  id: string,
+  p: { status: ConnectionStatus; statusReason: string | null; capabilities: Capabilities; lastErrorCode: string | null; connected: boolean },
+): Promise<void> {
+  await sql`UPDATE integration_connections SET
+              status = ${p.status}, status_reason = ${p.statusReason}, capabilities = ${JSON.stringify(p.capabilities)}::jsonb,
+              last_error_code = ${p.lastErrorCode},
+              connected_at = CASE WHEN ${p.connected} THEN COALESCE(connected_at, now()) ELSE connected_at END
+             WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx);
+}
+
 // ---- disconnect (Owner/Admin, R-INT-5: credential revoked in the same transaction) --------------------
 
 export async function markDisconnected(tx: Tx, id: string): Promise<void> {
