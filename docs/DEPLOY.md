@@ -146,6 +146,8 @@ Choosing a real vendor without its credentials fails in every environment. The f
 | `EMAIL_DKIM_SELECTORS`, `EMAIL_SPF_INCLUDE` | no | used by the sending-domain check (§6) |
 | `ACCOUNT_EMAIL_FROM`, `ACCOUNT_EMAIL_FROM_NAME` | yes | sender of password-reset and invite emails |
 | `EMAIL_INBOUND_FORMATS` | no | any of `postmark`, `sendgrid`, `ses`, `mailgun` (comma-separated). Empty means only the generic signed format. `ses` and `mailgun` add event routes only (§6). |
+| `LEAD_EMAIL_INBOUND_DOMAIN` | no | the domain lead emails are received for (addresses `leads+<key>@<domain>`; §6.1). Empty in production: lead email cannot be turned on. Dev/test default `leads.realty-os.invalid` (reserved, never delivered). |
+| `LEAD_EMAIL_AUTHSERV_ID` | no | Postmark only: the provider's own Authentication-Results authserv-id (**VERIFY**). Empty: no Postmark DKIM verdict is believed, so every Postmark lead email waits in Needs review. |
 | `SES_SNS_TOPIC_ARNS` | with `ses` | the SNS topic ARNs whose notifications are accepted (comma-separated) |
 | `MAILGUN_WEBHOOK_SIGNING_KEY` | with `mailgun` | Mailgun's webhook signing key (HMAC-SHA256 over timestamp + token) |
 | `EMAIL_WEBHOOK_BASIC_USER`, `EMAIL_WEBHOOK_BASIC_PASSWORD` | with `postmark` or `sendgrid` | HTTP Basic credentials in the vendor webhook URLs (password ≥ 16 characters) |
@@ -295,6 +297,20 @@ Event effects:
 4. **Mapping.** A failure with severity permanent is a hard bounce, including Mailgun's own suppress-bounce, suppress-unsubscribe and suppress-complaint failures. A temporary failure is ignored. `complained`, `unsubscribed`, `delivered`, `opened` and `clicked` map one to one. `rejected` marks the message failed. Anything else is ignored.
 
 In production, `SMTP_VENDOR=ses` or `mailgun` without its event format is refused at startup, unless `EMAIL_WEBHOOK_SECRET` is set for a bridge to the generic format. Bounces, complaints and unsubscribes must reach the app.
+
+### 6.1 Lead email intake (OWNER ACTIONS; nothing is configured by the app or this repository)
+
+Portal lead notifications (Zillow, Realtor.com, a website form) can be forwarded to a lead source's inbound address `leads+<key>@<LEAD_EMAIL_INBOUND_DOMAIN>`. Until the steps below are done, lead email exists only with the fake provider in dev/test.
+
+1. **Choose a dedicated inbound subdomain** you control, e.g. `leads.<your-domain>`, used for nothing else. Set `LEAD_EMAIL_INBOUND_DOMAIN` to it.
+2. **DNS (owner):** add the MX record(s) your email provider gives for inbound parsing on that subdomain. Do not point the root domain's MX at it.
+3. **Provider inbound parse (owner, VERIFY each console step):**
+   - Postmark: an inbound stream for the subdomain, webhook `https://app.example.com/api/webhooks/lead-email/postmark/inbound` with the Basic credentials of `EMAIL_WEBHOOK_BASIC_USER`/`EMAIL_WEBHOOK_BASIC_PASSWORD` in the URL; add `postmark` to `EMAIL_INBOUND_FORMATS`; set `LEAD_EMAIL_AUTHSERV_ID` to the authserv-id Postmark writes in its own `Authentication-Results` header (**VERIFY** that Postmark adds DKIM results to inbound JSON at all; if not, every Postmark lead email is held for review).
+   - SendGrid Inbound Parse (default mode, not raw): host = the subdomain, URL `https://app.example.com/api/webhooks/lead-email/sendgrid/inbound` with Basic credentials; add `sendgrid` to `EMAIL_INBOUND_FORMATS`. The DKIM verdict is SendGrid's `dkim` field (**VERIFY** its format, e.g. `{@zillow.com : pass}`).
+   - Any other provider (SES, Mailgun inbound): a bridge that posts the generic signed format (`POST /api/webhooks/lead-email/inbound`, X-Realty-Signature with `EMAIL_WEBHOOK_SECRET`) carrying the provider's own DKIM verdict. Never derive the verdict from the message's headers.
+4. **Sender domains to confirm (owner, per portal):** which domain DKIM-signs each portal's lead notifications. The seed suggestions `zillow.com` and `realtor.com` are **VERIFY**: if a portal signs with its email vendor's domain, its emails are unaligned and wait in Needs review (safe, but slower) until you confirm and allowlist the right domain.
+5. **In the app:** an Owner/Admin turns on lead email per lead source (Routing → lead sources), copies the address into the portal's lead-forwarding setting, and checks the allowed sender domains. Send one test lead from each portal and confirm it either becomes a lead or appears in Needs review with a reason.
+6. **Body limits:** the proxy in front of the API must allow at least 5 MB on `/api/webhooks/lead-email/sendgrid/inbound` (1 MB elsewhere); larger deliveries are refused with 413.
 
 ## 7. Object storage
 

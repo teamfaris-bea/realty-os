@@ -252,6 +252,11 @@ export const ERROR_STATUS = {
   // ---- lead-handling follow-ups (erasure, address delete) ----
   PERSON_DO_NOT_CONTACT_UNCARRIED: 409, // D1, R-DATA-4: an erasure would drop a do-not-contact not yet on every address (nothing erased)
   ADDRESS_RESTORE_EXPIRED: 409, // module 57: the Undo of an address delete came after its window (add the address again)
+  // ---- module 22 lead-email intake (owner decision D3) ----
+  LEAD_EMAIL_NOT_PENDING: 409, // module 22 lead-email: the held email was already accepted or discarded (fresh state in details)
+  LEAD_EMAIL_NO_CONTACT_POINT: 422, // module 22 lead-email: accepting needs at least one valid phone or email (R-INBOX-9)
+  LEAD_EMAIL_DOMAIN_INVALID: 422, // module 22 lead-email: an allowlisted sender domain must be a registrable domain (no wildcard, no public suffix)
+  LEAD_EMAIL_NOT_CONFIGURED: 409, // module 22 lead-email: this deployment has no inbound lead-email domain (LEAD_EMAIL_INBOUND_DOMAIN)
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

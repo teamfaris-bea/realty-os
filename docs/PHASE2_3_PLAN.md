@@ -76,7 +76,8 @@ Phase 1 stays in force and is never weakened: FORCE RLS with composite `(tenant_
 | Id | Date | Decision | Overrides |
 |---|---|---|---|
 | D2 | 2026-11-11 | **Out:** Facebook Messenger and Instagram DMs as channels (no Meta messaging webhooks, no messaging-window rule, no Meta messaging permissions); Meta Lead Ads intake; Meta ads. **In:** posting to Facebook Pages and Instagram business accounts (module 29's single `publishPost` path, export fallback; the Meta connection is for content publishing only); Zillow and Realtor.com lead intake (partner feeds where access exists, DKIM-aligned lead-email parsing otherwise); MLS (RESO); calendars (Google + Microsoft, one-way push + live free/busy); Google Business Profile (posts, review monitoring, reply drafts always a tap); Google Ads only (within an Owner cap); **Gmail inbox sync** (new, read-only, modules 68/69, previously deferred in §3). **Unchanged:** website chat stays in the unified inbox; D1 stays; everything else as planned. Microsoft (Outlook/Exchange) mail sync is not requested. 0018's Meta DM/lead-ads/ads objects stay until one reviewed cleanup migration (§3). | this plan and VISION where they conflict |
-| D3 | 2026-11-11 | **Pulled forward:** lead-email intake (portal lead notification emails such as Zillow and Realtor.com, DKIM-aligned to allowlisted sender domains, through the existing intake, routing and first response), the lead-email slice of module 22. The rest of module 22 (web chat, the unified inbox) and every other wave 2 module stay on hold. | The wave 2 hold for this slice only |
+| D3 | 2026-11-11 | **Pulled forward:** only the lead-email intake slice of module 22 (lead source inbound address, DKIM-aligned trust rule, Zillow/Realtor.com/generic parsers, Needs review, the existing intake, routing and first response), because teams moving off FUB depend on it (migration `*_lead_email_intake.sql`, rules R-LEM-1…8). The rest of module 22 (web chat, the unified inbox UI, partner feeds `leads.feed_poll`, person-level DNC definers, `rfc_message_id_sha256`) stayed on hold until D4. | The wave 2 hold for this slice only |
+| D4 | 2026-11-11 | **Wave 2A started:** the owner gave the go-ahead to lift the hold for wave 2A (the rest of module 22, then 24, 26 and 37). Waves 2B–3D stay on hold until 2A lands. | The wave 2 hold, for wave 2A only |
 
 **Needed (defaults in force until decided).**
 
@@ -385,6 +386,7 @@ export function transitionConnection(c: ConnectionRow, e: ConnectionEvent): Conn
 - **Accept when:** the Integrations page can show every service with an honest sentence (including each platform pack's review state) and no UI offers a capability the adapter does not report.
 
 #### 22. `api/channels-inbox`
+> **2026-11-11 (D3):** the lead-email slice is built and pulled forward (`apps/api/src/leadEmail/**`; webhooks `/webhooks/lead-email/{inbound,postmark/inbound,sendgrid/inbound}` instead of the per-token URL below, since providers post every inbound email to one URL and the key travels in the recipient address). Everything else in this module stays on hold.
 ```ts
 // D2: no /webhooks/meta, no DM dispatch, no DM drafts or first response, no Meta Lead Ads
 // POST /webhooks/lead-email/:token (DKIM-aligned allowlisted sender ⇒ lead; else needs_review)

@@ -18,6 +18,7 @@ import { ADMIN_MESSAGES } from './lib/messages.js';
 import { LEAD_TYPES, type RuleForm, STRATEGIES, describeMatch, describeStrategy, emptyRuleForm, formOf, formProblems, membersBody, moved, ruleBody } from './lib/routing.js';
 import type { LeadSource, Member, MembersResponse, Pond, RoutingRule, Settings } from './lib/types.js';
 import { Check, ErrorLine, Pill, Section, SelectField, StatusLine } from './lib/ui.js';
+import { LeadSourcesSection } from '../lead-email/EmailIntake.js';
 
 const RULES_KEY = ['admin', 'routing-rules'] as const;
 const PONDS_KEY = ['admin', 'ponds'] as const;
@@ -51,6 +52,7 @@ export default function RoutingPage() {
       <StatusLine text={status} />
       {error ? <Notice tone="error">{messageFor(error, ADMIN_MESSAGES)}</Notice> : null}
       <Rules rules={(d.rules.data?.rules ?? []).filter((r) => !r.archived)} members={members} ponds={ponds} sources={sources} names={names} onDone={announce} loading={d.rules.isPending} />
+      <LeadSourcesSection sources={sources} loading={d.sources.isPending} />
       <Ponds ponds={ponds} members={members} onDone={announce} />
       <Timers onDone={announce} />
     </div>

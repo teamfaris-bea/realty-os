@@ -61,7 +61,7 @@ describe('web/lead-admin registration', () => {
   it('desktop groups them: Team (queue, scoreboard, playbooks) and Admin (members … imports)', () => {
     const nav = navFor(pagesFor(defaultPageTable(), 'owner'));
     const group = (s: string) => nav.sidebar.find((g) => g.section === s)?.items.map((i) => i.path) ?? [];
-    expect(group('team')).toEqual(['/team', '/team/scoreboard', '/settings/playbooks']);
+    expect(group('team')).toEqual(['/team', '/team/lead-email', '/team/scoreboard', '/settings/playbooks']);
     expect(group('admin')).toEqual(expect.arrayContaining(['/admin/members', '/admin/routing', '/admin/numbers', '/admin/erasure', '/settings/compliance', '/settings/batch-text', '/settings/team', '/imports', '/admin/integrations/mls', '/admin/system']));
     // parity module 61 adds the tag catalog, custom fields and stage labels to Admin
     expect(group('admin').filter((p) => ['/admin/tags', '/admin/fields', '/admin/stage-labels'].includes(p))).toEqual(['/admin/tags', '/admin/fields', '/admin/stage-labels']);

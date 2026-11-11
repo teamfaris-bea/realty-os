@@ -2384,5 +2384,10 @@ exports[`route table and schemas > every leads route declares its authorization 
   "HEAD /api/contacts/:id/reachability → contact.view_detail",
   "GET /api/contacts/:id/attachments → contact.view_detail",
   "HEAD /api/contacts/:id/attachments → contact.view_detail",
+  "GET /api/lead-sources/:id/lead-email → integration.view",
+  "HEAD /api/lead-sources/:id/lead-email → integration.view",
+  "POST /api/lead-sources/:id/lead-email → integration.manage",
+  "POST /api/lead-sources/:id/lead-email/rotate → integration.manage",
+  "PUT /api/lead-sources/:id/lead-email/sender-domains → integration.manage",
 ]
 `;

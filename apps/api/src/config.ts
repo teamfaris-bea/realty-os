@@ -132,6 +132,16 @@ export const ConfigSchema = z.object({
    * Read-only MLS feed (Spark RESO Web API; docs/DEPLOY.md "Spark MLS (read-only)"). Nonsecret settings only:
    * the access token is never configuration, it lives in provider_credentials (provider 'mls') of the tenant.
    */
+  /**
+   * Lead-email intake (module 22 slice; docs/DEPLOY.md "Lead email intake"). inboundDomain: the domain whose MX the
+   * email provider receives for (addresses leads+<key>@<inboundDomain>); null = not set up, nothing can be enabled.
+   * Dev/test default to a reserved `.invalid` domain (never a real one). authservId: the receiving provider's own
+   * Authentication-Results authserv-id; only that header (the topmost one) is believed for the Postmark format.
+   */
+  leadEmail: z.object({
+    inboundDomain: z.string().regex(/^(?=.{4,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{1,62}$/).nullable(),
+    authservId: z.string().regex(/^[A-Za-z0-9.-]{1,253}$/).nullable(),
+  }),
   mls: z.object({
     provider: z.enum(['fake', 'spark']),
     /** kill switch: false (the default everywhere) means the Spark adapter makes no network call at all */
@@ -402,6 +412,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     storageDir: env.STORAGE_DIR || undefined,
     vapid,
     fub,
+    leadEmail: {
+      inboundDomain: (env.LEAD_EMAIL_INBOUND_DOMAIN || (prod ? '' : 'leads.realty-os.invalid')).toLowerCase() || null,
+      authservId: env.LEAD_EMAIL_AUTHSERV_ID || null,
+    },
     mls,
     globalRateLimitPerMinute: env.GLOBAL_RATE_LIMIT_PER_MINUTE || undefined,
     databasePoolMax: env.DB_POOL_MAX || undefined,
@@ -437,6 +451,7 @@ export function redactConfig(c: Config): Record<string, unknown> {
     providers: c.providers,
     aiModel: c.aiModel,
     emailInboundFormats: c.emailInbound.formats,
+    leadEmailInboundDomain: c.leadEmail.inboundDomain,
     smtpVendor: c.smtp?.vendor,
     s3Bucket: c.s3?.bucket,
     s3Endpoint: c.s3?.endpoint,
