@@ -283,7 +283,8 @@ const OPT_OUT_TAG = /^(dnc|do[\s_-]*not[\s_-]*(contact|call)|opted[\s_-]*out|opt
 /** The stage a contact gets: the Admin's mapping, else the plain suggestion; null when nobody mapped the label. */
 export function mappedStage(label: string | null | undefined, o: ParityOptions): ContactStage | null {
   if (label === null || label === undefined) return 'new';
-  return o.stageMap[label] ?? suggestStage(label);
+  // own keys only: a source label such as "constructor" or "valueOf" is a label, not Object.prototype's member
+  return Object.hasOwn(o.stageMap, label) ? (o.stageMap[label] ?? null) : suggestStage(label);
 }
 
 /** The tag names a contact gets (the source's tags + the kept stage), deduped by name key, in order. */

@@ -111,6 +111,14 @@ describe('realty/portal-tx-separation (R-TEN-14, module 43)', () => {
       { code: "const m = { kind: 'client', body: 'x' }", options: [{ mode: 'staff' }] },
       { code: "if (actor.kind === 'client') {}", options: [{ mode: 'staff' }] },
       { code: "const c = await resolvePortalSession(token)", options: [{ mode: 'staff' }] },
+      // the client-mode allowlist is client-only: the worker keeps the queue, the follow-up job and the pool
+      {
+        code: "import { claimJobs, dueWork, finishJob, getDatabase, jobs, reapJobs, runOwnershipFollowup } from '@realty/db';\nawait dueWork(now, 10);\nawait runOwnershipFollowup(actor, payload)",
+        options: [{ mode: 'staff' }],
+      },
+      { code: "import * as db from '@realty/db';\nexport * from '@realty/db/testing';\nconst m = await import('@realty/db/migrate')", options: [{ mode: 'staff' }] },
+      // the barrel (packages/db/src/index.ts) re-exports withPortalTx for portal client code
+      { code: "export { withPortalTx, type ClientActor } from './portalTx.js';", options: [{ mode: 'staff' }] },
     ],
     invalid: [
       { code: "import { withPortalTx } from '@realty/db';", options: [{ mode: 'staff' }], errors: [{ messageId: 'staffUsesClient' }] },
@@ -127,6 +135,21 @@ describe('realty/portal-tx-separation (R-TEN-14, module 43)', () => {
       { code: "import { withPortalTx } from '@realty/db';\nawait withPortalTx(client, fn)", options: [{ mode: 'client' }] },
       { code: "import type { Tx } from '@realty/db';\nexport type T = Tx", options: [{ mode: 'client' }] },
       { code: "await requestPortalLogin(slug, address)", options: [{ mode: 'client' }] },
+      // the allowlist: the value exports of packages/db/src/portalTx.ts, under any local name
+      {
+        code:
+          'import {\n  withPortalTx, requestPortalLogin, consumePortalLogin, resolvePortalSession, endPortalSession, issuePortalDocumentStream,\n' +
+          "  redeemPortalDocumentStream, recordPortalAudit, newPortalToken, portalAddressHash, PortalNotClearedError,\n} from '@realty/db';",
+        options: [{ mode: 'client' }],
+      },
+      { code: "import { withPortalTx as asClient, type ClientActor } from '@realty/db';\nexport { resolvePortalSession } from '@realty/db';", options: [{ mode: 'client' }] },
+      // type-only imports and re-exports take no value
+      { code: "import type { ClaimedJob, Database, DueWork } from '@realty/db';\nexport type T = ClaimedJob | Database | DueWork", options: [{ mode: 'client' }] },
+      { code: "import { type Database, type Tx, withPortalTx } from '@realty/db';", options: [{ mode: 'client' }] },
+      { code: "import type * as Db from '@realty/db';\nexport type { Tx } from '@realty/db';\nexport { type Database } from '@realty/db';\nexport type * from '@realty/db';", options: [{ mode: 'client' }] },
+      { code: "type M = typeof import('@realty/db');", options: [{ mode: 'client' }] },
+      // other packages, including one whose name starts the same
+      { code: "import { parseId } from '@realty/core/foundation';\nimport { sql } from 'kysely';\nimport { x } from '@realty/db-fixtures';", options: [{ mode: 'client' }] },
     ],
     invalid: [
       { code: "import { withTenantTx } from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
@@ -145,6 +168,49 @@ describe('realty/portal-tx-separation (R-TEN-14, module 43)', () => {
       // the ownership engine's own-transaction entry points open withTenantTx for a staff actor
       { code: "import { applyOwnershipCommand } from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
       { code: 'await applyOwnershipCommandThen(actor, id, cmd, opts, readBack)', options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      // ... and the follow-up job's entry point opens withTenantTx for the system actor (tenant-wide)
+      { code: "import { runOwnershipFollowup } from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      { code: "await runOwnershipFollowup({ kind: 'system', tenantId }, payload)", options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      // the job queue's calls each open withNoContext (cross-tenant definers)
+      { code: "import { claimJobs } from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      { code: "await claimJobs(['default'], worker, 10)", options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      { code: "import { finishJob } from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      { code: 'await finishJob(id, worker, { ok: true })', options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      { code: "import { reapJobs } from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      { code: 'await reapJobs()', options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      { code: "import { dueWork as overdue } from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      { code: 'await dueWork(now, 10)', options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      { code: 'await deps.dueWork(now, 10)', options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      // the pool itself: a statement on it carries no context
+      { code: "import { getDatabase } from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      { code: "await getDatabase().kysely.selectFrom('contacts').selectAll().execute()", options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      { code: "import { createDatabase } from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      { code: 'const db = createDatabase({ connectionString })', options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      { code: "import { withPortalTx, getDatabase } from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      // a banned name re-exported (under any name, from any module) is still that helper
+      { code: "export { getDatabase } from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      { code: "export { withTenantTx as staffTx } from '../staff/tx.js';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientUsesStaff' }] },
+      // the allowlist: any other value from @realty/db (or a subpath) is not a portal client helper
+      { code: "import { jobs } from '@realty/db';\nawait jobs.claim(['default'], worker, 10)", options: [{ mode: 'client' }], errors: [{ messageId: 'clientDbImport' }] },
+      { code: "import { enqueueJob } from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientDbImport' }] },
+      { code: "import { setOwnershipCommand } from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientDbImport' }] },
+      { code: "import { applyOwnershipCommandInTx as apply } from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientDbImport' }] },
+      { code: "import { recordConsentEvent } from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientDbImport' }] },
+      { code: "import { insertAuditRow } from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientDbImport' }] },
+      { code: "import { withPortalTx, jobs, type Tx } from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientDbImport' }] },
+      { code: "import db from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientDbImport' }] },
+      { code: "import { createTestDb } from '@realty/db/testing';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientDbImport' }] },
+      // the list names the barrel's re-exports of portalTx.ts, not a same-named value from another entry point
+      { code: "import { withPortalTx } from '@realty/db/testing';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientDbImport' }] },
+      { code: "export { jobs as queue } from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientDbImport' }] },
+      // ... and the package cannot be taken whole, where no name check can see what is used
+      { code: "import * as db from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientDbWhole' }] },
+      { code: "export * from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientDbWhole' }] },
+      { code: "export * as db from '@realty/db';", options: [{ mode: 'client' }], errors: [{ messageId: 'clientDbWhole' }] },
+      { code: "const db = await import('@realty/db');", options: [{ mode: 'client' }], errors: [{ messageId: 'clientDbWhole' }] },
+      { code: 'const m = await import(`@realty/db/migrate`);', options: [{ mode: 'client' }], errors: [{ messageId: 'clientDbWhole' }] },
+      { code: "import db = require('@realty/db');", options: [{ mode: 'client' }], errors: [{ messageId: 'clientDbWhole' }] },
+      { code: "const db = require('@realty/db');", options: [{ mode: 'client' }], errors: [{ messageId: 'clientDbWhole' }] },
     ],
   });
 });

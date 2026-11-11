@@ -1,8 +1,11 @@
 // Architecture test: the repository's eslint.config.js applies each BUILD_PLAN rule to the right
 // paths (and not to the allowlisted ones). Lints virtual files at real repository paths.
 import { ESLint } from 'eslint';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import tseslint from 'typescript-eslint';
 import { describe, expect, it } from 'vitest';
+import { CLIENT_DB_EXPORTS } from '../src/rules/portal-tx-separation.js';
 
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const eslint = new ESLint({ cwd: repoRoot });
@@ -10,11 +13,46 @@ const eslint = new ESLint({ cwd: repoRoot });
 /**
  * @param {string} path repository-relative
  * @param {string} code
+ * @returns {Promise<import('eslint').Linter.LintMessage[]>}
+ */
+async function lintMessages(path, code) {
+  const [result] = await eslint.lintText(code, { filePath: `${repoRoot}${path}` });
+  return result?.messages ?? [];
+}
+
+/**
+ * @param {string} path repository-relative
+ * @param {string} code
  * @returns {Promise<string[]>} rule ids reported
  */
 async function lint(path, code) {
-  const [result] = await eslint.lintText(code, { filePath: `${repoRoot}${path}` });
-  return (result?.messages ?? []).map((m) => m.ruleId ?? `fatal:${m.message}`);
+  return (await lintMessages(path, code)).map((m) => m.ruleId ?? `fatal:${m.message}`);
+}
+
+/**
+ * The value names a repository TypeScript module exports (types left out), optionally only those it re-exports from
+ * `from`. A value `export *` cannot be listed this way and is skipped.
+ * @param {string} path repository-relative
+ * @param {string} [from]
+ * @returns {string[]} sorted
+ */
+function valueExports(path, from) {
+  // typescript-eslint types its parser loosely (one argument, an unknown AST); @typescript-eslint/parser takes options
+  const parser = /** @type {any} */ (tseslint.parser);
+  const { ast } = parser.parseForESLint(readFileSync(`${repoRoot}${path}`, 'utf8'), { sourceType: 'module', ecmaVersion: 2023 });
+  /** @param {any} n @returns {string} */
+  const nameOf = (n) => n.name ?? n.value;
+  /** @type {Set<string>} */
+  const names = new Set();
+  for (const n of /** @type {any[]} */ (ast.body)) {
+    if (n.type !== 'ExportNamedDeclaration' || n.exportKind === 'type') continue;
+    if (from !== undefined && n.source?.value !== from) continue;
+    const d = n.declaration;
+    if (d?.type === 'VariableDeclaration') for (const v of d.declarations) names.add(nameOf(v.id));
+    else if (d?.id) names.add(nameOf(d.id));
+    for (const s of n.specifiers) if (s.exportKind !== 'type') names.add(nameOf(s.exported));
+  }
+  return [...names].sort();
 }
 
 describe('eslint.config.js architecture wiring', () => {
@@ -90,6 +128,26 @@ describe('eslint.config.js architecture wiring', () => {
     expect(await lint('apps/api/src/portal/staff/preview.ts', forged)).toContain('realty/portal-tx-separation');
     expect(await lint('packages/db/src/consent.ts', forged)).toContain('realty/portal-tx-separation');
     expect(await lint('packages/db/test/portal_auth.test.ts', portalUse + staffUse.replace(/f =/, 'g ='))).toEqual([]);
+  });
+
+  it('R-TEN-14: portal client code takes from @realty/db only the value exports of portalTx.ts; every other export is refused there, not in the worker', async () => {
+    // the rule's allowlist is exactly what portalTx.ts exports, and the barrel re-exports exactly that under the same names
+    const allowed = [...CLIENT_DB_EXPORTS].sort();
+    expect(valueExports('packages/db/src/portalTx.ts')).toEqual(allowed);
+    expect(valueExports('packages/db/src/index.ts', './portalTx.js')).toEqual(allowed);
+    // every value @realty/db exports, one import per line, so the line of each report names the export it refused
+    const surface = valueExports('packages/db/src/index.ts');
+    expect(surface).toEqual(expect.arrayContaining(['runOwnershipFollowup', 'claimJobs', 'finishJob', 'reapJobs', 'dueWork', 'jobs', 'getDatabase', 'createDatabase']));
+    const code = `${surface.map((n) => `import { ${n} } from '@realty/db';`).join('\n')}\n`;
+    /** @param {string} path @returns {Promise<string[]>} */
+    const refused = async (path) =>
+      (await lintMessages(path, code)).filter((m) => m.ruleId === 'realty/portal-tx-separation').map((m) => surface[m.line - 1] ?? `line ${m.line}`).sort();
+    expect(await refused('apps/api/src/portal/client/probe.ts')).toEqual(surface.filter((n) => !CLIENT_DB_EXPORTS.includes(n)));
+    // staff code (here the worker, which runs the queue and the follow-up job) is refused withPortalTx only
+    expect(await refused('apps/api/src/worker/probe.ts')).toEqual(['withPortalTx']);
+    // a call through the queue or the follow-up job is refused in client code even without the import
+    const calls = 'export const f = async (now: never, actor: never, payload: never) => {\n  await dueWork(now, 10);\n  await runOwnershipFollowup(actor, payload);\n};\n';
+    expect((await lint('apps/api/src/portal/client/jobs.ts', calls)).filter((id) => id === 'realty/portal-tx-separation')).toHaveLength(2);
   });
 
   it('SET app.* without LOCAL is banned everywhere', async () => {

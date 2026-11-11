@@ -511,9 +511,9 @@ token rows match. This is the same class of timing signal as before, and it is n
 
 ### 6.6 Merge review fixes (migration `scale_review_fixes`)
 
-The review of this lane against main's FUB parity code confirmed ten findings. One migration and three code changes fix
-them; each change only narrows access, removes a wrong count, or adds a missing mark, and each is proved by a test that
-fails without it.
+The review of this lane against main's FUB parity code confirmed ten findings, and a review of those fixes confirmed one
+more (the second lint row). One migration and three code changes fix them. Each change only narrows access, removes a
+wrong count, or adds a missing mark, and each is proved by a test that fails without it.
 
 | finding | fix | proof |
 |---|---|---|
@@ -525,6 +525,7 @@ fails without it.
 | Every settings write forced every member's whole-book recompute | only a zone change marks `'!full'` | `load/feed_incremental.test.ts` |
 | A deleted contact point (import revert) marked nothing | `contact_points` DELETE trigger | `load/feed_incremental.test.ts` |
 | Portal client lint did not ban `withPreTenantThenTenant` (R-TEN-14) | banned in client mode, with `applyOwnershipCommand` / `applyOwnershipCommandThen` | `packages/eslint-plugin/test/rules.test.js`, `config.test.js` |
+| Re-review: the client lint still let client code call `runOwnershipFollowup` (`withTenantTx` as the system actor) and the queue's `claimJobs` / `finishJob` / `reapJobs` / `dueWork` (`withNoContext`), or take any other `@realty/db` value (R-TEN-14) | those and the pool (`getDatabase`, `createDatabase`) banned by name; from `@realty/db` client code takes only `portalTx.ts`'s value exports (an allowlist, so a helper added later is refused until listed); namespace imports, `export *`, `import()` and `require()` of it refused | `packages/eslint-plugin/test/rules.test.js`; `config.test.js` lints every value `@realty/db` exports in client code (only the `portalTx.ts` ones pass) and in the worker (only `withPortalTx` is refused) |
 | No test of token cleanup on erase, purge, merge, revert | §6.5 | `load/search_equivalence.test.ts` |
 | The rollup proof had no parity rows; its imported-rows check matched nothing | §6.3 | `scoreboard_rollup.test.ts` |
 
