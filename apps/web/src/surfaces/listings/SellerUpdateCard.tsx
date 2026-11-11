@@ -59,6 +59,8 @@ export interface SellerUpdateView {
   recipients: SellerUpdateRecipient[];
   preview: { channel: 'email' | 'sms'; subject: string; body: string };
   sentAt: string | null;
+  /** after the tap: each seller's message as it stands (null before) */
+  delivery: { contactId: string; name: string | null; channel: 'email' | 'sms'; status: string }[] | null;
 }
 
 interface SendResponse {
@@ -75,12 +77,17 @@ export const SELLER_UPDATE_MESSAGES: Readonly<Record<string, string>> = {
   SELLER_UPDATE_STALE: 'Something new was logged since this update was put together. Refresh it, check it, then send. Nothing was sent.',
   SELLER_UPDATE_RECIPIENTS_CHANGED: 'Who can receive this update changed since you opened it. Check the list again. Nothing was sent.',
   SELLER_UPDATE_NO_RECIPIENT: 'None of the sellers can receive this update. Nothing was sent.',
+  SELLER_UPDATE_CONFIRM_RECIPIENTS: 'Send this from the seller update card, where you can see who it reaches. Nothing was sent.',
   DRAFT_INVALIDATED: 'This listing has a different agent now, so this update was withdrawn. Nothing was sent.',
   ACTION_NOT_PENDING: 'This update was already handled.',
 };
 
 const RESULT_WORDS: Record<string, string> = {
   sent: 'Sent',
+  delivered: 'Delivered',
+  dispatching: 'Sending, not confirmed yet',
+  scheduled: 'Queued to send',
+  canceled: 'Not sent: canceled',
   queued: 'Queued to send',
   noop: 'Sent',
   dispatch_unknown: 'Sending, not confirmed yet',
@@ -172,8 +179,10 @@ function SectionBlock({ s, asOf, canEdit, onToggle, busy }: { s: SellerUpdateSec
   );
 }
 
+const NOT_OUT = new Set(['not_queued', 'failed', 'blocked', 'canceled']);
+
 /** The card for one update; `invalidate` are the queries that hold it (the listing's or the approval's). */
-export function SellerUpdateCard({ update, invalidate, headingLevel = 2 }: { update: SellerUpdateView; invalidate: QueryKey[]; headingLevel?: 2 | 3 }) {
+export function SellerUpdateCard({ update, invalidate, headingLevel = 2, onSent }: { update: SellerUpdateView; invalidate: QueryKey[]; headingLevel?: 2 | 3; onSent?: () => void }) {
   const H = headingLevel === 2 ? 'h2' : 'h3';
   const titleId = useId();
   const recId = useId();
@@ -182,10 +191,13 @@ export function SellerUpdateCard({ update, invalidate, headingLevel = 2 }: { upd
   const [savedText, setSavedText] = useState(update.recommendation);
   const [result, setResult] = useState<SendResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // the removed feedback as the agent last chose it (the server copy can lag behind a refetch)
+  const [excluded, setExcluded] = useState<string[]>(update.excludedFeedbackIds);
+  useEffect(() => setExcluded(update.excludedFeedbackIds), [update.excludedFeedbackIds]);
   const keys: QueryKey[] = [...invalidate, ['feed'], ['inbox']];
   const patch = useMutate<Record<string, unknown>>('PATCH', { invalidate: keys });
   const reassemble = useMutate<Record<string, unknown>>('POST', { invalidate: keys });
-  const send = useCommand<Record<string, unknown>, SendResponse>(`/seller-updates/${update.id}/send`, { invalidate: [...keys, ['timeline']] });
+  const send = useCommand<Record<string, unknown>, SendResponse>(`/seller-updates/${update.id}/send`, { invalidate: [...keys, ['timeline']], onSuccess: () => onSent?.() });
   useEffect(() => {
     // a fresh copy from the server (another tab, a refresh) wins only when the box holds what was saved
     if (text === savedText) {
@@ -199,6 +211,12 @@ export function SellerUpdateCard({ update, invalidate, headingLevel = 2 }: { upd
   const length = recommendationLength(text);
   const enough = length >= RECOMMENDATION_MIN;
   const sent = update.status === 'approved' || update.status === 'executed' || result !== null;
+  // per seller, what actually happened: the send's own answer first, else the messages as they stand now
+  const outcomes = result
+    ? result.recipients.map((x) => ({ contactId: x.contactId, name: update.recipients.find((r) => r.contactId === x.contactId)?.name ?? null, status: x.result }))
+    : (update.delivery ?? []).map((d) => ({ contactId: d.contactId, name: d.name, status: d.status }));
+  const anyOut = outcomes.some((o) => !NOT_OUT.has(o.status));
+  const retryable = outcomes.some((o) => o.status === 'not_queued');
   const blockedReason = !update.canSend ? null : update.stale ? 'Refresh the update first: new data was logged since it was put together.' : reachable.length === 0 ? 'None of the sellers can receive this update.' : !enough ? `Write your recommendation: ${RECOMMENDATION_MIN - length} more character${RECOMMENDATION_MIN - length === 1 ? '' : 's'} needed.` : null;
 
   const save = async () => {
@@ -207,18 +225,29 @@ export function SellerUpdateCard({ update, invalidate, headingLevel = 2 }: { upd
     if (r.ok) setSavedText(text);
   };
   const toggle = async (feedbackId: string, exclude: boolean) => {
-    const next = exclude ? [...new Set([...update.excludedFeedbackIds, feedbackId])] : update.excludedFeedbackIds.filter((x) => x !== feedbackId);
-    await patch.run(`/seller-updates/${update.id}`, { excludedFeedbackIds: next, ...(text.trim() !== savedText.trim() ? { recommendation: text } : {}) });
+    const prev = excluded;
+    const next = exclude ? [...new Set([...excluded, feedbackId])] : excluded.filter((x) => x !== feedbackId);
+    setExcluded(next);
+    const r = await patch.run(`/seller-updates/${update.id}`, { excludedFeedbackIds: next, ...(text.trim() !== savedText.trim() ? { recommendation: text } : {}) });
+    if (!r.ok) setExcluded(prev);
   };
   const doReassemble = async () => {
     setError(null);
-    await reassemble.run(`/seller-updates/${update.id}/reassemble`);
+    const r = await reassemble.run(`/seller-updates/${update.id}/reassemble`);
+    if (!r.ok) setError(messageFor(r, { ...AGENT_ERROR_MESSAGES, ...SELLER_UPDATE_MESSAGES }));
   };
   const doSend = async (e: FormEvent) => {
     e.preventDefault();
     if (blockedReason !== null) return;
     setError(null);
-    const r = await send.run({ recommendation: text.trim(), excludedFeedbackIds: update.excludedFeedbackIds, recipientIds: reachable.map((x) => x.contactId) });
+    const r = await send.run({ recommendation: text.trim(), excludedFeedbackIds: excluded, recipientIds: reachable.map((x) => x.contactId) });
+    if (r.ok) setResult(r.data);
+    else setError(messageFor(r, { ...AGENT_ERROR_MESSAGES, ...SELLER_UPDATE_MESSAGES }));
+  };
+
+  const retry = async () => {
+    setError(null);
+    const r = await send.run({ recipientIds: (update.delivery ?? []).map((d) => d.contactId) });
     if (r.ok) setResult(r.data);
     else setError(messageFor(r, { ...AGENT_ERROR_MESSAGES, ...SELLER_UPDATE_MESSAGES }));
   };
@@ -235,41 +264,43 @@ export function SellerUpdateCard({ update, invalidate, headingLevel = 2 }: { upd
       </div>
 
       {sent ? (
-        <Notice tone="ok" title={update.sentAt ? `Sent ${formatDateTime(update.sentAt)}` : 'Sent'}>
-          {result ? (
+        <Notice tone={anyOut ? 'ok' : 'warn'} title={anyOut ? `Sent${update.sentAt ? ` ${formatDateTime(update.sentAt)}` : ''}` : 'Not sent yet'}>
+          {outcomes.length > 0 ? (
             <ul>
-              {result.recipients.map((x) => (
+              {outcomes.map((x) => (
                 <li key={x.contactId}>
-                  {update.recipients.find((r) => r.contactId === x.contactId)?.name ?? 'Seller'}: {RESULT_WORDS[x.result] ?? x.result}
+                  {x.name ?? 'Seller'}: {RESULT_WORDS[x.status] ?? x.status}
                 </li>
               ))}
             </ul>
           ) : (
-            'This update went out with your recommendation.'
+            'Approved with your recommendation; the messages are being prepared.'
           )}
+          {retryable ? (
+            <Button variant="secondary" className="mt-2" pending={send.pending} pendingLabel="Sending" onClick={() => void retry()}>
+              Try sending again
+            </Button>
+          ) : null}
+          {error ? <p className="mt-1 text-danger">{error}</p> : null}
         </Notice>
       ) : null}
 
       {!sent && update.stale ? (
-        <Notice
-          tone="warn"
-          title="New data since this was put together"
-          action={
-            update.canSend ? (
-              <Button variant="secondary" pending={reassemble.pending} pendingLabel="Refreshing" onClick={() => void doReassemble()}>
-                Refresh the update
-              </Button>
-            ) : undefined
-          }
-        >
-          Showings, feedback, marketing or competing listings changed after {formatDateTime(update.assembledThrough)}. Refresh it before you send.
+        <Notice tone="warn" title="New data since this was put together">
+          <p>Showings, feedback, marketing or competing listings changed after {formatDateTime(update.assembledThrough)}. Refresh it before you send.</p>
+          {update.canSend ? (
+            <Button variant="secondary" className="mt-2" pending={reassemble.pending} pendingLabel="Refreshing" onClick={() => void doReassemble()}>
+              Refresh the update
+            </Button>
+          ) : null}
         </Notice>
       ) : null}
+      {!sent && update.stale && error ? <Notice tone="error">{error}</Notice> : null}
 
       {!sent ? <Recipients recipients={update.recipients} /> : null}
 
       {update.sections.map((s) => (
-        <SectionBlock key={s.kind} s={s} asOf={update.assembledThrough} canEdit={update.canSend && !sent} busy={patch.pending} onToggle={(id, ex) => void toggle(id, ex)} />
+        <SectionBlock key={s.kind} s={{ ...s, lines: s.lines.map((l) => (l.feedback ? { ...l, feedback: { ...l.feedback, excluded: excluded.includes(l.feedback.feedbackId) } } : l)) }} asOf={update.assembledThrough} canEdit={update.canSend && !sent} busy={patch.pending} onToggle={(id, ex) => void toggle(id, ex)} />
       ))}
 
       {update.canSend && !sent ? (
@@ -299,7 +330,7 @@ export function SellerUpdateCard({ update, invalidate, headingLevel = 2 }: { upd
           <Button type="submit" block disabled={blockedReason !== null} pending={send.pending} pendingLabel="Sending">
             {reachable.length === 1 ? `Send to ${reachable[0]!.name ?? 'the seller'}` : `Send to ${reachable.length} sellers`}
           </Button>
-          {error ? <Notice tone="error">{error}</Notice> : null}
+          {error && !update.stale ? <Notice tone="error">{error}</Notice> : null}
           {patch.error ? <Notice tone="error">{messageFor(patch.error, { ...AGENT_ERROR_MESSAGES, ...SELLER_UPDATE_MESSAGES })}</Notice> : null}
         </form>
       ) : null}

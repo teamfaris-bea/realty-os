@@ -27,7 +27,7 @@ export function makeSellerUpdateHandlers(depsFor: DepsFor = commsRuntime): JobHa
     async run(ctx) {
       const d = depsFor();
       const r = await reconcileSellerUpdates(ctx.tx, { envelope: d.envelope, ids: d.ids, tenantId: ctx.actor.tenantId }, ctx.now);
-      if (r.armed + r.disarmed + r.retired + r.drafted > 0) ctx.log.info('seller_updates.reconcile', { jobId: ctx.job.id.toString(), ...r });
+      if (r.armed + r.disarmed + r.retired + r.drafted + r.resumed > 0) ctx.log.info('seller_updates.reconcile', { jobId: ctx.job.id.toString(), ...r });
     },
   };
   return [reconcile] as unknown as JobHandler<unknown>[];

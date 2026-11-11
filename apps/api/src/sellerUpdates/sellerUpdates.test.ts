@@ -36,7 +36,15 @@ async function drafted(l: SellerListing, a: TestClient = agent()): Promise<Updat
   return r.body.update!;
 }
 
-const send = (a: TestClient, id: string, body: Record<string, unknown> = {}) => call<SendT>(a, 'POST', `/seller-updates/${id}/send`, { commandId: cmd(), ...body });
+/** Send as the card does: with the recipients the update shows as reachable now (unless the test names them). */
+async function send(a: TestClient, id: string, body: Record<string, unknown> = {}) {
+  let recipientIds = body['recipientIds'];
+  if (recipientIds === undefined) {
+    const v = await call<{ update: UpdateT }>(a, 'GET', `/seller-updates/${id}`);
+    recipientIds = v.status === 200 ? v.body.update.recipients.filter((r) => r.sendable).map((r) => r.contactId) : [];
+  }
+  return call<SendT>(a, 'POST', `/seller-updates/${id}/send`, { commandId: cmd(), ...body, recipientIds });
+}
 const sectionOf = (u: UpdateT, kind: string) => u.sections.find((s) => s.kind === kind)!;
 const outbound = async (contactId: string) => (await h.su.query("SELECT id, channel, status, status_reason, initiator, purpose, action_category, assistant_action_id, body, subject FROM messages WHERE contact_id = $1 AND direction = 'outbound' ORDER BY created_at", [contactId])).rows;
 
@@ -162,7 +170,7 @@ describe('E88 / R-SELL-3 / R-AST-17: the recommendation is required and is the a
     expect(await outbound(l.sellers[0]!.id)).toHaveLength(1);
   });
 
-  it('R-AST-17: the generic approve route takes the same branch (recommendation, watermark, listing agent)', async () => {
+  it('R-AST-17 / R-SELL-5: the generic approve route takes the same branch (recommendation, watermark) and never sends to recipients the agent was not shown', async () => {
     const l = await sellerListing(agent());
     const u = await drafted(l);
     expect((await call(agent(), 'POST', `/assistant/actions/${u.id}/approve`, { commandId: cmd() })).code).toBe('SELLER_UPDATE_NEEDS_RECOMMENDATION');
@@ -170,8 +178,13 @@ describe('E88 / R-SELL-3 / R-AST-17: the recommendation is required and is the a
     expect((await call(agent(), 'POST', `/assistant/actions/${u.id}/approve`, { commandId: cmd(), editedPayload: { recommendation: RECOMMENDATION } })).code).toBe('SELLER_UPDATE_STALE');
     const ra = await call(agent(), 'POST', `/seller-updates/${u.id}/reassemble`);
     expect(ra.status, JSON.stringify(ra.body)).toBe(200);
-    const ok = await call<{ result: string }>(agent(), 'POST', `/assistant/actions/${u.id}/approve`, { commandId: cmd(), editedPayload: { recommendation: RECOMMENDATION } });
-    expect(ok.body.result).toBe('sent');
+    // review fix: the generic route cannot show who it reaches, so it never sends (the seller card does)
+    expect((await call(agent(), 'POST', `/assistant/actions/${u.id}/approve`, { commandId: cmd(), editedPayload: { recommendation: RECOMMENDATION } })).code).toBe('SELLER_UPDATE_CONFIRM_RECIPIENTS');
+    expect((await draftsOf(h, l.listingId))[0]!.status).toBe('proposed');
+    expect(await outbound(l.sellers[0]!.id)).toHaveLength(0);
+    // and /send requires the recipients the agent saw
+    expect((await call(agent(), 'POST', `/seller-updates/${u.id}/send`, { commandId: cmd(), recommendation: RECOMMENDATION })).code).toBe('VALIDATION_FAILED');
+    expect((await send(agent(), u.id, { recommendation: RECOMMENDATION, recipientIds: [l.sellers[0]!.id] })).body.result).toBe('sent');
   });
 
   it('R-SELL-3: PATCH saves the agent’s recommendation on the unsent draft; Send uses it', async () => {
@@ -291,6 +304,50 @@ describe('R-SELL-5 / D1: each seller through dispatchOutbound; an opted-out sell
   });
 });
 
+describe('review fixes: a send that never got queued, sellers the agent cannot see', () => {
+  it('an approval whose messages were never queued (the process stopped after the tap) says "Not sent yet" and the reconcile pass queues them through dispatch', async () => {
+    const l = await sellerListing(agent());
+    const u = await drafted(l);
+    const seller = l.sellers[0]!.id;
+    // the approval transaction's rows exactly as step C writes them, with the queue step never run
+    await h.su.query("UPDATE assistant_actions SET status = 'approved', decided_by_user_id = $2, decided_at = now(), edited_payload = $3::jsonb WHERE id = $1",
+      [u.id, agent().userId, JSON.stringify({ recommendation: RECOMMENDATION, excludedFeedbackIds: [], recipients: [{ contactId: seller, channel: 'email' }], address: l.address })]);
+    const seq = (await h.su.query('SELECT ownership_period_seq AS p FROM contacts WHERE id = $1', [seller])).rows[0].p;
+    await h.su.query(
+      `INSERT INTO assistant_actions (tenant_id, id, contact_id, kind, action_category, autonomy, status, owner_user_id, explanation, payload, bound_ownership_seq, decided_by_user_id, decided_at, trigger_ref, dedupe_key, created_at)
+       VALUES ($1, $2, $3, 'message_draft', 'seller_update', 'requires_approval', 'approved', $4, 'Your seller update, sent on your tap.', $5::jsonb, $6, $4, now(), $7::jsonb, $8, now() - interval '5 minutes')`,
+      [w.tenantId, randomUUID(), seller, agent().userId, JSON.stringify({ sellerUpdateActionId: u.id, channel: 'email', subject: 'Weekly update', text: `Update\n\nMy recommendation\n${RECOMMENDATION}`, signature: null }), seq,
+       JSON.stringify({ kind: 'seller_update_send', actionId: u.id, listing_id: l.listingId }), `seller_update_send:${u.id}:${seller}`],
+    );
+    const before = (await call<{ update: UpdateT & { delivery: { status: string }[] } }>(agent(), 'GET', `/seller-updates/${u.id}`)).body.update;
+    expect(before.delivery).toEqual([expect.objectContaining({ contactId: seller, status: 'not_queued' })]);
+    const r = await reconcile(h, w.tenantId);
+    expect(r.resumed).toBe(1);
+    const m = await outbound(seller);
+    expect(m).toHaveLength(1);
+    expect(m[0]).toMatchObject({ initiator: 'assistant', purpose: 'informational', action_category: 'seller_update' });
+    expect(m[0]!.body).toContain(RECOMMENDATION);
+    // the worker's dispatch job sends it; a second pass queues nothing more
+    expect((await reconcile(h, w.tenantId)).resumed).toBe(0);
+    const after = (await call<{ update: UpdateT & { delivery: { status: string }[] } }>(agent(), 'GET', `/seller-updates/${u.id}`)).body.update;
+    expect(after.delivery![0]!.status).not.toBe('not_queued');
+  });
+
+  it('R-SELL-5: a seller the agent cannot see is listed as not visible (unnamed) before the tap and is never sent to', async () => {
+    const l = await sellerListing(agent());
+    const hidden = (await call<{ contact: { id: string } }>(agentB(), 'POST', '/contacts', { commandId: cmd(), firstName: 'Hidden', lastName: 'Coseller', phones: [], emails: [`hc-${randomUUID().slice(0, 6)}@example.test`] })).body.contact.id;
+    await h.su.query("INSERT INTO listing_contacts (tenant_id, listing_id, contact_id, role) VALUES ($1, $2, $3, 'co_seller')", [w.tenantId, l.listingId, hidden]);
+    const u = await drafted(l);
+    const row = u.recipients.find((r) => r.contactId === hidden)!;
+    expect(row).toMatchObject({ visible: false, sendable: false });
+    expect(row.whyNot).toMatch(/cannot see/);
+    expect(JSON.stringify(u)).not.toContain('Hidden');
+    const ok = await send(agent(), u.id, { recommendation: RECOMMENDATION });
+    expect(ok.body.recipients.map((x) => x.contactId)).toEqual([l.sellers[0]!.id]);
+    expect(await outbound(hidden)).toHaveLength(0);
+  });
+});
+
 describe('MLS figures only when the MLS data is eligible (R-MLS-2, R-MLS-3)', () => {
   let conn: string;
   beforeAll(async () => {
@@ -339,7 +396,7 @@ describe('who may send: only the listing’s own agent', () => {
     const l = await sellerListing(agent());
     const u = await drafted(l);
     for (const [m, p] of [['GET', ''], ['PATCH', ''], ['POST', '/reassemble'], ['POST', '/send']] as const) {
-      const r = await call(agentB(), m, `/seller-updates/${u.id}${p}`, m === 'GET' ? undefined : m === 'PATCH' ? { recommendation: RECOMMENDATION } : { commandId: cmd(), recommendation: RECOMMENDATION });
+      const r = await call(agentB(), m, `/seller-updates/${u.id}${p}`, m === 'GET' ? undefined : m === 'PATCH' ? { recommendation: RECOMMENDATION } : { commandId: cmd(), recommendation: RECOMMENDATION, recipientIds: [] });
       expect(r.status, `${m} ${p}`).toBe(404);
     }
     expect((await call(agentB(), 'POST', `/assistant/actions/${u.id}/approve`, { commandId: cmd(), editedPayload: { recommendation: RECOMMENDATION } })).status).toBe(404);
@@ -348,6 +405,12 @@ describe('who may send: only the listing’s own agent', () => {
     expect((await send(agent(), u.id, { recommendation: RECOMMENDATION })).code).toBe('DRAFT_INVALIDATED');
     expect((await draftsOf(h, l.listingId))[0]!.status).toBe('invalidated');
     expect(await outbound(l.sellers[0]!.id)).toHaveLength(0);
+    // review fix: the next pass drafts the same period for the new agent (the sellers do not miss the week)
+    await reconcile(h, w.tenantId);
+    const after = await draftsOf(h, l.listingId);
+    expect(after.map((x) => [x.status, x.owner_user_id])).toEqual([['invalidated', agent().userId], ['proposed', agentB().userId]]);
+    expect(after[1]!.trigger_ref['period_key']).toBe(after[0]!.trigger_ref['period_key']);
+    expect(after[1]!.dedupe_key).toBe(`seller_update:${l.listingId}:${after[1]!.trigger_ref['period_key'] as string}`);
   });
 });
 
@@ -358,7 +421,7 @@ describe('R-TEN-1: cross-tenant isolation of every route and the handler', () =>
     const x = other.agents[0]!;
     expect((await call(x, 'GET', `/listings/${l.listingId}/seller-update`)).status).toBe(404);
     for (const [m, p] of [['GET', ''], ['PATCH', ''], ['POST', '/reassemble'], ['POST', '/send']] as const) {
-      const r = await call(x, m, `/seller-updates/${u.id}${p}`, m === 'GET' ? undefined : m === 'PATCH' ? { recommendation: RECOMMENDATION } : { commandId: cmd(), recommendation: RECOMMENDATION });
+      const r = await call(x, m, `/seller-updates/${u.id}${p}`, m === 'GET' ? undefined : m === 'PATCH' ? { recommendation: RECOMMENDATION } : { commandId: cmd(), recommendation: RECOMMENDATION, recipientIds: [] });
       expect(r.status, `${m} ${p}`).toBe(404);
     }
     const before = await h.su.query('SELECT seller_update_next_due_at AS d FROM listings WHERE id = $1', [l.listingId]);

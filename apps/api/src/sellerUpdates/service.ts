@@ -41,7 +41,7 @@ import { tenantFacts } from '../comms/repos/gate.js';
 import { asSystem, asUser } from '../comms/runtime.js';
 import { AppError } from '../errors.js';
 import { senderSignature } from '../templates/repos/signature.js';
-import { assemble, fmtPeriod, listingHead, sellerText } from './assembly.js';
+import { assemble, fmtPeriod, listingHead, sellerContacts, sellerText } from './assembly.js';
 import { type RecipientView, recipientsOf } from './recipients.js';
 import { type AgentChoices, type SellerUpdatePayload, payloadOf, periodOf, replaceAssembly } from './store.js';
 
@@ -81,6 +81,15 @@ export interface SellerUpdateView {
   recipients: RecipientView[];
   preview: { channel: 'email' | 'sms'; subject: string; body: string };
   sentAt: string | null;
+  /** after the tap: each seller's message as it stands (sent, delivered, queued, blocked, failed, not_queued) */
+  delivery: DeliveryItem[] | null;
+}
+
+export interface DeliveryItem {
+  contactId: string;
+  name: string | null;
+  channel: 'email' | 'sms';
+  status: string;
 }
 
 export interface SendInput {
@@ -171,12 +180,28 @@ async function freshHash(deps: AssistantDeps, tenantId: string, payload: SellerU
   return asSystem(deps, tenantId, 'worker', async (tx, now) => (await assemble(tx, payload.listingId, periodOf(payload.period), now)).dataSha256);
 }
 
-async function viewOf(tx: Tx, actor: UserActor, a: A.ActionRow & { payload: Record<string, unknown> }, stale: boolean, now: Instant): Promise<SellerUpdateView> {
+/** What happened to each seller's message after the tap: the message's own status (null when none was queued). */
+async function deliveryOf(tx: Tx, a: A.ActionRow): Promise<DeliveryItem[] | null> {
+  if (a.status !== 'approved' && a.status !== 'executed') return null;
+  const e = a.editedPayload ?? {};
+  const recipients = Array.isArray(e['recipients']) ? (e['recipients'] as { contactId: string; channel: 'email' | 'sms' }[]) : [];
+  const ids = recipients.map((r) => r.contactId);
+  const msgs = await sql<{ contact_id: string; status: string; display_name: string | null }>`
+    SELECT c.id AS contact_id, m.status, c.display_name FROM contacts c
+      LEFT JOIN messages m ON m.tenant_id = c.tenant_id AND m.idempotency_key = ('seller-update:' || ${a.id} || ':' || c.id::text)
+     WHERE c.tenant_id = app.tenant_id() AND c.id = ANY (${ids}::uuid[])`.execute(tx);
+  return recipients.map((r) => {
+    const m = msgs.rows.find((x) => x.contact_id === r.contactId);
+    return { contactId: r.contactId, name: m?.display_name ?? null, channel: r.channel, status: m?.status ?? 'not_queued' };
+  });
+}
+
+async function viewOf(tx: Tx, actor: UserActor, a: A.ActionRow & { payload: Record<string, unknown> }, stale: boolean, now: Instant, allIds: readonly string[]): Promise<SellerUpdateView> {
   const payload = a.payload as unknown as SellerUpdatePayload;
   const head = await listingHead(tx, payload.listingId);
   if (!head) throw new AppError('NOT_FOUND');
   const choices = choicesOf(a);
-  const recipients = await recipientsOf(tx, payload.listingId, now);
+  const recipients = await recipientsOf(tx, payload.listingId, now, allIds);
   const period = periodOf(payload.period);
   const firstSendable = recipients.find((r) => r.sendable);
   const channel = firstSendable?.channel ?? payload.channel;
@@ -198,6 +223,7 @@ async function viewOf(tx: Tx, actor: UserActor, a: A.ActionRow & { payload: Reco
     recipients,
     preview: { channel, subject: text.subject, body: text.body },
     sentAt: sent?.rows[0]?.at ? sent.rows[0].at.toISOString() : null,
+    delivery: await deliveryOf(tx, a),
   };
 }
 
@@ -205,7 +231,8 @@ async function viewOf(tx: Tx, actor: UserActor, a: A.ActionRow & { payload: Reco
 export async function sellerUpdateView(actor: UserActor, actionId: string, deps: AssistantDeps): Promise<SellerUpdateView> {
   const payload = await asUser(deps, actor, async (tx) => (await ownDraft(tx, actor, actionId, { mine: false })).payload as unknown as SellerUpdatePayload);
   const stale = (await freshHash(deps, actor.tenantId, payload)) !== payload.dataSha256;
-  return asUser(deps, actor, async (tx, now) => viewOf(tx, actor, await ownDraft(tx, actor, actionId, { mine: false }), stale, now));
+  const allIds = await sellerIdsAsSystem(deps, actor, actionId);
+  return asUser(deps, actor, async (tx, now) => viewOf(tx, actor, await ownDraft(tx, actor, actionId, { mine: false }), stale, now, allIds));
 }
 
 /** GET /listings/:id/seller-update: the listing's current unsent update (else its last sent one), and the next due instant. */
@@ -274,20 +301,19 @@ export async function reassembleSellerUpdate(actor: UserActor, actionId: string,
   return sellerUpdateView(actor, actionId, deps);
 }
 
-interface Plan {
-  listingId: string;
-  address: string;
-  period: SellerUpdatePayload['period'];
-  sections: SellerUpdatePayload['sections'];
-  recommendation: string;
-  excluded: string[];
-  recipients: { contactId: string; channel: 'email' | 'sms' }[];
-}
-
 const childKey = (actionId: string, contactId: string) => `seller_update_send:${actionId}:${contactId}`;
 
+/** What one seller receives, fixed at the tap (the agent's words, signature or name): the resume pass re-reads it. */
+interface ChildPayload {
+  sellerUpdateActionId: string;
+  channel: 'email' | 'sms';
+  subject: string;
+  text: string;
+  signature: string | null;
+}
+
 /** The approved per-recipient send action (created once, in the agent's approval transaction). */
-async function sendActionFor(tx: Tx, deps: AssistantDeps, actor: UserActor, parentId: string, listingId: string, contactId: string): Promise<string> {
+async function sendActionFor(tx: Tx, deps: AssistantDeps, actor: UserActor, parentId: string, listingId: string, contactId: string, body: ChildPayload): Promise<string> {
   const prior = await A.actionByDedupeKey(tx, childKey(parentId, contactId));
   if (prior) return prior.id;
   const c = await sql<{ p: string | null }>`SELECT ownership_period_seq AS p FROM contacts WHERE tenant_id = app.tenant_id() AND id = ${contactId}`.execute(tx);
@@ -302,7 +328,7 @@ async function sendActionFor(tx: Tx, deps: AssistantDeps, actor: UserActor, pare
     status: 'approved',
     ownerUserId: actor.userId,
     explanation: 'Your seller update, sent on your tap.',
-    payload: { sellerUpdateActionId: parentId },
+    payload: body as unknown as Record<string, unknown>,
     pinnedInboundSeq: null,
     boundOwnershipSeq: c.rows[0]?.p == null ? null : Number(c.rows[0].p),
     aiRunId: null,
@@ -314,26 +340,51 @@ async function sendActionFor(tx: Tx, deps: AssistantDeps, actor: UserActor, pare
   return id;
 }
 
-function planOfApproved(a: A.ActionRow): Plan | null {
-  const e = a.editedPayload ?? {};
-  const p = a.payload as unknown as SellerUpdatePayload;
-  const rec = Array.isArray(e['recipients']) ? (e['recipients'] as { contactId: string; channel: 'email' | 'sms' }[]) : [];
-  if (typeof e['recommendation'] !== 'string') return null;
-  return { listingId: p.listingId, address: typeof e['address'] === 'string' ? (e['address'] as string) : '', period: p.period, sections: p.sections, recommendation: e['recommendation'] as string, excluded: (e['excludedFeedbackIds'] as string[] | undefined) ?? [], recipients: rec };
+/**
+ * Queues every approved per-seller send of `parentId` that has no message yet (idempotent by key), in the
+ * caller's SYSTEM transaction. Each queued message carries its comms.dispatch job, so the worker sends it even
+ * if this process stops right after; the reconcile pass calls this again for approvals that never got this far.
+ */
+export async function queueApprovedSends(tx: Tx, deps: Pick<AssistantDeps, 'ids'>, parentId: string, now: Instant): Promise<{ contactId: string; messageId: string | null; created: boolean }[]> {
+  const t = await tenantFacts(tx);
+  const identity = { brokerageLegalName: t.brokerageLegalName, postalAddress: t.postalAddress };
+  const children = await sql<{ id: string; contact_id: string; payload: ChildPayload }>`
+    SELECT id, contact_id, payload FROM assistant_actions
+     WHERE tenant_id = app.tenant_id() AND kind = 'message_draft' AND status IN ('approved','executed')
+       AND trigger_ref->>'kind' = 'seller_update_send' AND trigger_ref->>'actionId' = ${parentId}
+     ORDER BY contact_id`.execute(tx);
+  const out: { contactId: string; messageId: string | null; created: boolean }[] = [];
+  for (const c of children.rows) {
+    await lockContact(tx, c.contact_id as never);
+    const p = c.payload;
+    const body = renderHumanBody(p.text, { channel: p.channel, purpose: 'informational', identity, unsubscribe: null, signature: p.channel === 'email' ? p.signature : null });
+    const q = await queueOutboundInTx(tx, deps, {
+      contactId: c.contact_id,
+      channel: p.channel,
+      body,
+      ...(p.channel === 'email' ? { subject: p.subject } : {}),
+      initiator: 'assistant',
+      purpose: 'informational',
+      category: 'seller_update',
+      assistantActionId: c.id,
+      idempotencyKey: sendKey(parentId, c.contact_id),
+    }, now);
+    out.push({ contactId: c.contact_id, messageId: q.ok ? q.messageId : null, created: q.ok && q.created });
+  }
+  return out;
 }
 
 /** The seller-update branch of approve (POST /seller-updates/:id/send and POST /assistant/actions/:id/approve). */
 export async function sendSellerUpdate(actor: UserActor, actionId: string, input: SendInput, deps: AssistantDeps): Promise<SendResult> {
+  const allIds = await sellerIdsAsSystem(deps, actor, actionId);
   // A: validate as the agent
-  type Pre = { kind: 'replay'; plan: Plan; status: string } | { kind: 'go'; payload: SellerUpdatePayload; recommendation: string; excluded: string[]; recipients: RecipientView[]; address: string } | { kind: 'invalidated' };
+  type Pre = { kind: 'replay'; status: string } | { kind: 'go'; payload: SellerUpdatePayload; recommendation: string; excluded: string[]; recipients: RecipientView[]; address: string } | { kind: 'invalidated' };
   const pre: Pre = await asUser(deps, actor, async (tx, now) => {
     const a = await ownDraft(tx, actor, actionId);
     if (a.status === 'invalidated') return { kind: 'invalidated' };
     if (a.status !== 'proposed') {
-      if ((a.status === 'approved' || a.status === 'executed') && a.decidedByUserId === actor.userId) {
-        const plan = planOfApproved(a);
-        if (plan) return { kind: 'replay', plan, status: a.status };
-      }
+      // the same tap again, or "Try again" after a send that did not go out: finish what the approval fixed
+      if ((a.status === 'approved' || a.status === 'executed') && a.decidedByUserId === actor.userId) return { kind: 'replay', status: a.status };
       throw new AppError('ACTION_NOT_PENDING', { status: a.status });
     }
     const payload = a.payload as unknown as SellerUpdatePayload;
@@ -346,7 +397,7 @@ export async function sendSellerUpdate(actor: UserActor, actionId: string, input
     const ids = feedbackIdsOf(payload);
     const excluded = input.excludedFeedbackIds !== undefined ? [...new Set(input.excludedFeedbackIds)] : (choices.excludedFeedbackIds ?? []);
     if (excluded.some((x) => !ids.has(x))) throw new AppError('VALIDATION_FAILED');
-    const recipients = await recipientsOf(tx, payload.listingId, now);
+    const recipients = await recipientsOf(tx, payload.listingId, now, allIds);
     const sendable = recipients.filter((r) => r.sendable).map((r) => r.contactId).sort();
     if (input.recipientIds !== undefined) {
       const seen = [...new Set(input.recipientIds)].sort();
@@ -365,62 +416,40 @@ export async function sendSellerUpdate(actor: UserActor, actionId: string, input
     });
     throw new AppError('DRAFT_INVALIDATED');
   }
-  if (pre.kind === 'replay') return queueAndSend(actor, actionId, pre.plan, pre.status, deps);
+  if (pre.kind === 'replay') return queueAndSend(actor, actionId, pre.status, deps);
 
   // B: the data must still be what the agent read (R-SELL-4)
   if ((await freshHash(deps, actor.tenantId, pre.payload)) !== pre.payload.dataSha256) throw new AppError('SELLER_UPDATE_STALE', { assembledThrough: pre.payload.assembledThrough });
+  // R-SELL-5: the recipients are confirmed by the tap that saw them (the seller card sends them); a caller that
+  // did not show them (the generic approve route) is sent to the seller card
+  if (input.recipientIds === undefined) throw new AppError('SELLER_UPDATE_CONFIRM_RECIPIENTS');
 
-  // C: the agent's approval
+  // C: the agent's approval and, fixed with it, what each seller receives
   const recipients = pre.recipients.filter((r) => r.sendable && r.channel !== null).map((r) => ({ contactId: r.contactId, channel: r.channel as 'email' | 'sms' }));
-  const plan: Plan = { listingId: pre.payload.listingId, address: pre.address, period: pre.payload.period, sections: pre.payload.sections, recommendation: pre.recommendation, excluded: pre.excluded, recipients };
+  const period = periodOf(pre.payload.period);
   await asUser(deps, actor, async (tx, now) => {
     const a = await ownDraft(tx, actor, actionId, { lock: true });
     if (a.status !== 'proposed') throw new AppError('ACTION_NOT_PENDING', { status: a.status });
     if ((a.payload as unknown as SellerUpdatePayload).dataSha256 !== pre.payload.dataSha256) throw new AppError('SELLER_UPDATE_STALE', { assembledThrough: (a.payload as unknown as SellerUpdatePayload).assembledThrough });
-    const edited = { recommendation: plan.recommendation, excludedFeedbackIds: plan.excluded, recipients: plan.recipients, address: plan.address };
+    const signature = await senderSignature(tx);
+    const agentName = await displayName(tx);
+    const edited = { recommendation: pre.recommendation, excludedFeedbackIds: pre.excluded, recipients, address: pre.address };
     await A.setDecision(tx, a.id, { status: 'approved', decidedByUserId: actor.userId, now, editedPayload: edited });
     // one approved send per seller, bound like any approved draft to that contact's owner (the agent) and
     // ownership period, so dispatch's R-AST-7 check holds for each (the handback-reply pattern of drafts.ts)
-    for (const r of plan.recipients) await sendActionFor(tx, deps, actor, a.id, plan.listingId, r.contactId);
-    await audit(tx, actor, { action: 'draft.approved_with_edits', entity: { type: 'assistant_action', id: a.id }, changes: redactDiff({ recommendation: '', excluded_count: 0 }, { recommendation: plan.recommendation, excluded_count: plan.excluded.length }, { entity: 'message' }) });
+    for (const r of recipients) {
+      const sig = r.channel === 'email' ? signature : null;
+      const t = sellerText({ address: pre.address, period, sections: pre.payload.sections, excludedFeedbackIds: pre.excluded, recommendation: pre.recommendation, agentName: sig ? null : agentName });
+      await sendActionFor(tx, deps, actor, a.id, pre.payload.listingId, r.contactId, { sellerUpdateActionId: a.id, channel: r.channel, subject: t.subject, text: t.body, signature: sig });
+    }
+    await audit(tx, actor, { action: 'draft.approved_with_edits', entity: { type: 'assistant_action', id: a.id }, changes: redactDiff({ recommendation: '', excluded_count: 0 }, { recommendation: pre.recommendation, excluded_count: pre.excluded.length }, { entity: 'message' }) });
     await A.resolveFeedFor(tx, a.id, now);
   });
-  return queueAndSend(actor, actionId, plan, 'approved', deps);
+  return queueAndSend(actor, actionId, 'approved', deps);
 }
 
-async function queueAndSend(actor: UserActor, actionId: string, plan: Plan, status: string, deps: AssistantDeps): Promise<SendResult> {
-  const { signature, agentName } = await asUser(deps, actor, async (tx) => ({ signature: await senderSignature(tx), agentName: await displayName(tx) }));
-  const period = periodOf(plan.period);
-  type Q = { contactId: string; messageId: string | null };
-  const queued: Q[] = await asSystem(deps, actor.tenantId, 'assistant', async (tx, now) => {
-    const t = await tenantFacts(tx);
-    const identity = { brokerageLegalName: t.brokerageLegalName, postalAddress: t.postalAddress };
-    const out: Q[] = [];
-    for (const r of plan.recipients) {
-      await lockContact(tx, r.contactId as never);
-      const sig = r.channel === 'email' ? signature : null;
-      const text = sellerText({ address: plan.address, period, sections: plan.sections, excludedFeedbackIds: plan.excluded, recommendation: plan.recommendation, agentName: sig ? null : agentName });
-      const body = renderHumanBody(text.body, { channel: r.channel, purpose: 'informational', identity, unsubscribe: null, signature: sig });
-      const child = await A.actionByDedupeKey(tx, childKey(actionId, r.contactId));
-      if (!child) {
-        out.push({ contactId: r.contactId, messageId: null });
-        continue;
-      }
-      const q = await queueOutboundInTx(tx, deps, {
-        contactId: r.contactId,
-        channel: r.channel,
-        body,
-        ...(r.channel === 'email' ? { subject: text.subject } : {}),
-        initiator: 'assistant',
-        purpose: 'informational',
-        category: 'seller_update',
-        assistantActionId: child.id,
-        idempotencyKey: sendKey(actionId, r.contactId),
-      }, now);
-      out.push({ contactId: r.contactId, messageId: q.ok ? q.messageId : null });
-    }
-    return out;
-  });
+async function queueAndSend(actor: UserActor, actionId: string, status: string, deps: AssistantDeps): Promise<SendResult> {
+  const queued = await asSystem(deps, actor.tenantId, 'assistant', (tx, now) => queueApprovedSends(tx, deps, actionId, now));
   const outcomes: RecipientOutcome[] = [];
   for (const q of queued) {
     if (!q.messageId) {
@@ -436,3 +465,11 @@ async function queueAndSend(actor: UserActor, actionId: string, plan: Plan, stat
   return { actionId, status, result: best, messageId: first?.messageId ?? null, recipients: outcomes };
 }
 
+/** Every live seller contact id of the update's listing, read as the system (who the caller cannot see is listed, never named). */
+async function sellerIdsAsSystem(deps: AssistantDeps, actor: UserActor, actionId: string): Promise<string[]> {
+  return asSystem(deps, actor.tenantId, 'worker', async (tx) => {
+    const a = await A.actionById(tx, actionId);
+    const listingId = a && typeof a.triggerRef['listing_id'] === 'string' && a.ownerUserId === actor.userId ? (a.triggerRef['listing_id'] as string) : null; // others: only the sellers their RLS shows
+    return listingId ? (await sellerContacts(tx, listingId)).map((s) => s.contactId) : [];
+  });
+}

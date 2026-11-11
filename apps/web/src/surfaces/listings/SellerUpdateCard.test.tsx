@@ -56,6 +56,7 @@ function update(over: Partial<SellerUpdateView> = {}): SellerUpdateView {
     ],
     preview: { channel: 'email', subject: 'Weekly update: 12 Oak St', body: '…' },
     sentAt: null,
+    delivery: null,
     ...over,
   };
 }
@@ -153,6 +154,47 @@ describe('Seller update card (module 38)', () => {
     expect(within(c).queryByLabelText('Your recommendation (required)')).toBeNull();
     expect(within(c).getByText('Only the listing agent can send this update.')).toBeInTheDocument();
     expect(within(c).queryByRole('button', { name: 'Remove from update' })).toBeNull();
+  });
+
+  it('review fix: a removed feedback item stays removed in the Send even while the refetch of the update is still on its way', async () => {
+    let patched = false;
+    const fake = app(update({ recommendation: REC }), (f) =>
+      f
+        .on(`PATCH /seller-updates/${UPDATE}`, () => {
+          patched = true;
+          return { status: 200, body: { update: update({ recommendation: REC, excludedFeedbackIds: [FB1] }) } };
+        })
+        // the refetch after the PATCH never answers (a slow network): the card still holds the old server copy
+        .on(`GET /listings/${LISTING}/seller-update`, () => (patched ? new Promise(() => undefined) : { status: 200, body: { update: update({ recommendation: REC }), nextDueAt: null } }))
+        .on(`POST /seller-updates/${UPDATE}/send`, { status: 200, body: { actionId: UPDATE, status: 'approved', result: 'sent', messageId: 'm1', recipients: [{ contactId: SAM, messageId: 'm1', result: 'sent' }] } }),
+    );
+    const c = await card();
+    const item = within(c).getByText('“Morgan Quill said the place is a dump.”').closest('li')!;
+    await user().click(within(item).getByRole('button', { name: 'Remove from update' }));
+    expect(await within(item).findByText('Removed: the seller will not see this.')).toBeInTheDocument();
+    await user().click(within(c).getByRole('button', { name: 'Send to Sam Ortiz' }));
+    await waitFor(() => expect(fake.callsTo(`POST /seller-updates/${UPDATE}/send`)).toHaveLength(1));
+    expect(fake.callsTo(`POST /seller-updates/${UPDATE}/send`)[0]!.body).toMatchObject({ excludedFeedbackIds: [FB1] });
+  });
+
+  it('review fix: an approved update whose message never went out says "Not sent yet" (never "Sent") and offers to try again', async () => {
+    const fake = app(update({ status: 'approved', canSend: false, recommendation: REC, sentAt: iso(-60_000), delivery: [{ contactId: SAM, name: 'Sam Ortiz', channel: 'email', status: 'not_queued' }] }), (f) =>
+      f.on(`POST /seller-updates/${UPDATE}/send`, { status: 200, body: { actionId: UPDATE, status: 'approved', result: 'sent', messageId: 'm1', recipients: [{ contactId: SAM, messageId: 'm1', result: 'sent' }] } }),
+    );
+    const c = await card();
+    expect(within(c).getByText('Not sent yet')).toBeInTheDocument();
+    expect(within(c).queryByText(/^Sent /)).toBeNull();
+    expect(within(c).getByText('Sam Ortiz: Not sent: no address to send to')).toBeInTheDocument();
+    await user().click(within(c).getByRole('button', { name: 'Try sending again' }));
+    expect(await within(c).findByText('Sam Ortiz: Sent')).toBeInTheDocument();
+    expect(fake.callsTo(`POST /seller-updates/${UPDATE}/send`)[0]!.body).toMatchObject({ recipientIds: [SAM] });
+  });
+
+  it('review fix: a failed refresh says why instead of leaving the agent stuck', async () => {
+    app(update({ stale: true }), (f) => f.on(`POST /seller-updates/${UPDATE}/reassemble`, err(409, 'DRAFT_INVALIDATED')));
+    const c = await card();
+    await user().click(within(c).getByRole('button', { name: 'Refresh the update' }));
+    expect(await within(c).findByText('This listing has a different agent now, so this update was withdrawn. Nothing was sent.')).toBeInTheDocument();
   });
 
   it('has no axe violations', async () => {

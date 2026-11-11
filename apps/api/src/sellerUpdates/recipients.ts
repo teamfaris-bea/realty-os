@@ -68,9 +68,17 @@ export function whyNotSentence(r: Pick<RecipientView, 'visible' | 'ownedByYou' |
   return null;
 }
 
-/** The listing's recipients as the caller sees them now. */
-export async function recipientsOf(tx: Tx, listingId: string, now: Instant): Promise<RecipientView[]> {
-  const sellers = await sellerContacts(tx, listingId);
+/**
+ * The listing's recipients as the caller sees them now. `allIds` are every live seller id (read as the system by
+ * the caller): one the caller's RLS hides is listed as not visible, never named, so the agent knows before the
+ * tap that a seller will not receive the update.
+ */
+export async function recipientsOf(tx: Tx, listingId: string, now: Instant, allIds: readonly string[] = []): Promise<RecipientView[]> {
+  const shown = await sellerContacts(tx, listingId);
+  const seen = new Set(shown.map((s) => s.contactId));
+  const hidden = await sql<{ contact_id: string; role: 'seller' | 'co_seller' }>`
+    SELECT x.id AS contact_id, 'co_seller'::text AS role FROM unnest(${allIds.filter((id) => !seen.has(id))}::uuid[]) AS x(id)`.execute(tx);
+  const sellers = [...shown, ...hidden.rows.map((h) => ({ contactId: h.contact_id, role: h.role, displayName: '' }))];
   const reach = await reachabilityFor(tx, sellers.map((s) => s.contactId), now);
   const owned = new Set(
     (await sql<{ id: string }>`SELECT id FROM contacts WHERE tenant_id = app.tenant_id() AND id = ANY (${sellers.map((s) => s.contactId)}::uuid[]) AND owner_user_id = app.user_id()`.execute(tx)).rows.map((x) => x.id),
