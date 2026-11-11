@@ -436,7 +436,7 @@ interface PageResult {
 type Mode = 'live' | 'resync' | 'backfill';
 
 /** Steps 3-4 for one page, in ONE system transaction (the caller commits it before the cursor moves). */
-export async function processPage(tx: Tx, actor: SystemActor, deps: MailSyncDeps, link: LinkRow, rules: GmailPackRules, msgs: readonly (GmailMessage & { fetchedAt: number })[], removed: readonly GmailRef[], mode: Mode): Promise<PageResult> {
+export async function processPage(tx: Tx, actor: SystemActor, deps: MailSyncDeps, link: LinkRow, rules: GmailPackRules, msgs: readonly (GmailMessage & { fetchedAt: number })[], removed: readonly GmailRef[], _mode: Mode): Promise<PageResult> {
   const out: PageResult = { stored: 0, optOuts: 0, handbacks: 0 };
   // the link may have been revoked while this page was fetched (a disconnect, the switch off): nothing fetched after
   // that is processed, opt-outs included (they are recorded again from platform email or the next link)
