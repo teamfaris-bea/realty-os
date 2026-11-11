@@ -106,12 +106,13 @@ describe('roles', () => {
 });
 
 describe('navFor', () => {
-  it('keeps at most 4 phone tabs (by order, ties in registry order) and moves the overflow to More', () => {
-    const pages = [page('/e', tab(5)), page('/a', tab(1)), page('/b', tab(2)), page('/c', tab(2)), page('/d', tab(4)), page('/m', { phone: 'more', desktop: 'sidebar', icon: 'settings', order: 3 })];
+  it('keeps at most MAX_PHONE_TABS (5) phone tabs (by order, ties in registry order) and moves the overflow to More', () => {
+    const pages = [page('/e', tab(5)), page('/a', tab(1)), page('/b', tab(2)), page('/c', tab(2)), page('/d', tab(4)), page('/f', tab(6)), page('/m', { phone: 'more', desktop: 'sidebar', icon: 'settings', order: 3 })];
     const nav = navFor(pages);
-    expect(nav.tabs.map((t) => t.path)).toEqual(['/a', '/b', '/c', '/d']);
-    expect(nav.more.map((t) => t.path)).toEqual(['/m', '/e']);
-    expect(tapsTo(nav, '/e', 'phone')).toBe(2);
+    expect(MAX_PHONE_TABS).toBe(5);
+    expect(nav.tabs.map((t) => t.path)).toEqual(['/a', '/b', '/c', '/d', '/e']);
+    expect(nav.more.map((t) => t.path)).toEqual(['/m', '/f']);
+    expect(tapsTo(nav, '/f', 'phone')).toBe(2);
     expect(tapsTo(nav, '/a', 'phone')).toBe(1);
   });
 

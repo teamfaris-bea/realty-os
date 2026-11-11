@@ -157,3 +157,27 @@ describe('realty/no-prediction-import (R-PRED-4: predictions only become feed ca
     ],
   });
 });
+
+describe('realty/no-sql-raw (smart-list SQL is parameterised only, R-PAR-29)', () => {
+  tester.run('no-sql-raw', rules['no-sql-raw'], {
+    valid: [
+      'sql`SELECT 1 WHERE c.stage = ANY (${stages}::text[])`',
+      'sql.join(parts, sql` AND `)',
+      'sql.val(x)',
+      'other.raw(x)',
+      'const { join } = sql',
+    ],
+    invalid: [
+      { code: 'sql.raw(input)', errors: [{ messageId: 'banned' }] },
+      { code: 'sql`x ${sql.raw(col)}`', errors: [{ messageId: 'banned' }] },
+      { code: 'sql.lit(v)', errors: [{ messageId: 'banned' }] },
+      { code: 'sql.ref(column)', errors: [{ messageId: 'banned' }] },
+      { code: 'sql.id(name)', errors: [{ messageId: 'banned' }] },
+      { code: 'sql.table(t)', errors: [{ messageId: 'banned' }] },
+      { code: "sql['raw'](x)", errors: [{ messageId: 'banned' }] },
+      { code: 'sql[k](x)', errors: [{ messageId: 'banned' }] },
+      { code: 'const { raw } = sql', errors: [{ messageId: 'banned' }] },
+      { code: 'f(sql.raw)', errors: [{ messageId: 'banned' }] },
+    ],
+  });
+});

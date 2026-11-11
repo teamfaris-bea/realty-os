@@ -66,6 +66,12 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   { path: '/settings/team', roles: ADMINS, url: at('/settings/team') },
   { path: '/imports', roles: ADMINS, url: at('/imports') },
   { path: '/imports/:importId', roles: ADMINS, url: (i) => `/imports/${i.importId}` },
+  // parity module 61 (lane par-lists)
+  { path: '/people', roles: ALL, url: at('/people') },
+  { path: '/people/work/:contactId', roles: ALL, url: (i) => `/people/work/${i.contactId}` },
+  { path: '/admin/tags', roles: ADMINS, url: at('/admin/tags') },
+  { path: '/admin/fields', roles: ADMINS, url: at('/admin/fields') },
+  { path: '/admin/stage-labels', roles: ADMINS, url: at('/admin/stage-labels') },
 ];
 
 /** Screens outside the app frame (signed out). */

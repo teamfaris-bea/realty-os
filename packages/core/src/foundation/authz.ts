@@ -126,12 +126,17 @@ export const ACTIONS = [
   'system.jobs', // lane ops-observability: retry or cancel a failed job from the System page (audited)
   'integration.view', // api/integrations: the Integrations admin page (Phase 2, DATA_MODEL §8)
   'integration.manage', // api/integrations: create, rename, connect (OAuth start), disconnect (DATA_MODEL §8: ✅ 🔒 | ✅ 🔒)
-  'contact.edit', // parity 57 (DATA_MODEL §12): names, type, intent, stage, points, addresses, relationships
+  'contact.edit', // parity (DATA_MODEL §12): names, type, intent, stage, points, addresses, tags, custom values, relationships
   'note.write', // parity 57: write own notes (with mentions) on a contact whose detail the actor sees
   'note.delete', // parity 57: delete own note; tenant-wide roles any (audited)
   'activity.log', // parity 57: log an outside call/text/email (never a touch)
   'collaborator.manage', // parity 57: add/remove collaborators (existing RLS: tenant-wide, Team Leads, the contact owner)
   'settings.stage_labels', // parity 57: tenant display labels of the eight stages
+  'tag.create', // parity api/lists: create a tag by typing it (R-PAR-9)
+  'tag.manage', // parity api/lists: rename, merge, recolor, protect, delete a tag (R-PAR-9)
+  'custom_field.manage', // parity api/lists: define, edit, archive custom fields (R-PAR-17)
+  'smart_list.personal', // parity api/lists: own personal smart lists; run any visible list (R-PAR-27)
+  'smart_list.team_manage', // parity api/lists: create, edit, archive team lists (R-PAR-27)
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -250,6 +255,14 @@ export const AUDIT_ACTIONS = [
   'collaborator.removed', // parity 57: a collaborator removed
   'duplicate.dismissed', // api/duplicates: a member marked a duplicate suggestion "not the same person"
   'duplicate.restored', // api/duplicates: Undo of a dismiss
+  'tag.rename', // parity api/lists: a tag renamed or recolored (names are PII-classed in the diff)
+  'tag.merge', // parity api/lists: a tag merged into another (counts moved, lists rewritten)
+  'tag.delete', // parity api/lists: a tag deleted (link count)
+  'tag.protect', // parity api/lists: fair-housing protection set or lifted (lifting: Owner only)
+  'custom_field.created', // parity api/lists: a custom field defined
+  'custom_field.changed', // parity api/lists: label, options or position changed
+  'custom_field.archived', // parity api/lists: a custom field archived or restored
+  'smart_list.team_changed', // parity api/lists: a team list created, changed or archived
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -495,8 +508,6 @@ const MATRIX: Record<Action, ActionRule> = {
   'integration.view': { roles: { owner: ALL, admin: ALL } },
   'integration.manage': { roles: { owner: ALL_REAUTH, admin: ALL_REAUTH } },
   // FUB parity (DATA_MODEL §12 capability matrix; not §3 rows). Each module tests its own row.
-  // contact.edit: ✅ | ✅ | T | O | O | —
-  'contact.edit': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: O, isa: O } },
   // note.write: ✅ | ✅ | T + pond detail | O + D | O | D
   'note.write': { roles: { owner: ALL, admin: ALL, team_lead: { scopes: ['own', 'collab', 'team', 'pond'] }, agent: { scopes: ['own', 'collab', 'deal'] }, isa: O, tc: DEAL } },
   // note.delete: ✅ (any) | ✅ (any) | own | own | own | own  (own = the actor wrote the note)
@@ -507,6 +518,16 @@ const MATRIX: Record<Action, ActionRule> = {
   'collaborator.manage': { roles: { owner: ALL, admin: ALL, team_lead: ALL, agent: OWN } },
   // settings.stage_labels: ✅ | ✅ | — …
   'settings.stage_labels': { roles: { owner: ALL, admin: ALL } },
+  // FUB parity (DATA_MODEL §12). contact.edit: ✅ | ✅ | T | O | O | —
+  'contact.edit': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: O, isa: O }, system: ['import'] },
+  // tag.create (by typing): ✅ ✅ ✅ ✅ ✅ —; tag.manage: ✅ ✅ — — — —
+  'tag.create': { roles: { owner: ALL, admin: ALL, team_lead: ALL, agent: ALL, isa: ALL }, system: ['import'] },
+  'tag.manage': { roles: { owner: ALL, admin: ALL } },
+  // custom_field.manage: ✅ ✅ — — — — (imports define fields as the system)
+  'custom_field.manage': { roles: { owner: ALL, admin: ALL }, system: ['import'] },
+  // smart_list.personal: ✅ ✅ ✅ ✅ ✅ ✅ (D: a TC's runs return deal contacts only, by RLS); team_manage: ✅ ✅ ✅ — — —
+  'smart_list.personal': { roles: { owner: ALL, admin: ALL, team_lead: ALL, agent: ALL, isa: ALL, tc: ALL } },
+  'smart_list.team_manage': { roles: { owner: ALL, admin: ALL, team_lead: ALL } },
 };
 
 const DENY_NOT_FOUND: CanResult = { ok: false, code: 'NOT_FOUND' };

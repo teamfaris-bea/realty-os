@@ -30,6 +30,8 @@ import { surface as importsSurface } from '../surfaces/imports/index.js';
 import { surface as integrationsSurface } from '../surfaces/integrations/index.js';
 import { surface as peopleEditSurface } from '../surfaces/people-edit/index.js';
 import { surface as duplicatesSurface } from '../surfaces/duplicates/index.js';
+import { surface as peopleSurface } from '../surfaces/people/index.js';
+import { surface as adminParitySurface } from '../surfaces/admin/parity/index.js';
 
 export type { NavSection, PageDef, PageNav, SurfaceModule } from './types.js';
 
@@ -52,5 +54,7 @@ export const surfaces: SurfaceModule[] = [
   integrationsSurface,
   peopleEditSurface,
   duplicatesSurface,
+  peopleSurface,
+  adminParitySurface,
   // registry: add new entries above this line
 ];

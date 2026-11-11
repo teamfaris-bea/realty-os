@@ -48,9 +48,10 @@ describe('web/agent registration', () => {
     }
   });
 
-  it('an agent’s phone tab bar holds the daily jobs: Home, Approvals, Search, Tasks (Pond, Deals, Listings under More)', () => {
+  it('an agent’s phone tab bar holds the daily jobs: Home, People, Approvals, Search, Tasks (Pond, Deals, Listings under More)', () => {
     const nav = navFor(pagesFor(defaultPageTable(), 'agent'));
-    expect(nav.tabs.map((t) => t.label)).toEqual(['Home', 'Approvals', 'Search', 'Tasks']);
+    // PARITY_PLAN §5: the People tab (module 61) joins Home, Approvals, Search and Tasks
+    expect(nav.tabs.map((t) => t.label)).toEqual(['Home', 'People', 'Approvals', 'Search', 'Tasks']);
     expect(nav.more.map((t) => t.path)).toEqual(expect.arrayContaining(['/pond', '/deals', '/listings']));
   });
 

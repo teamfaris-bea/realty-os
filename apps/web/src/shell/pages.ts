@@ -5,8 +5,8 @@ import type { Role } from '@realty/core/foundation';
 import type { EvidenceRouteFn, EvidenceRoutes, EvidenceSourceType } from '../design/index.js';
 import type { NavSection, PageDef, PageNav, SurfaceModule } from './types.js';
 
-/** The bottom tab bar holds at most this many page tabs, plus the always-present More tab. */
-export const MAX_PHONE_TABS = 4;
+/** The bottom tab bar holds at most this many page tabs, plus the always-present More tab (PARITY_PLAN §5: People joins Home, Approvals, Search and Tasks). */
+export const MAX_PHONE_TABS = 5;
 
 export interface PageTable {
   pages: PageDef[];

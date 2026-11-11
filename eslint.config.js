@@ -88,6 +88,13 @@ export default tseslint.config(
     },
   },
 
+  // ---- R-PAR-29 (parity module 60): smart-list SQL only from fixed fragments and bound parameters
+  {
+    files: ['apps/api/src/lists/**/*.ts'],
+    ignores: TEST_FILES,
+    rules: { 'realty/no-sql-raw': 'error' },
+  },
+
   // ---- packages/core is pure: no db/api/web, no Node built-ins (type imports allowed)
   {
     files: ['packages/core/**/*.ts'],

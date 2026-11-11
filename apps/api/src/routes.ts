@@ -24,6 +24,7 @@ import { integrationsRoutes } from './integrations/routes.js';
 import { sparkMlsRoutes } from './mls/spark/routes.js';
 import { peopleRoutes } from './people/routes.js';
 import { duplicatesRoutes } from './duplicates/routes.js';
+import { listsRoutes } from './lists/routes.js';
 
 export interface RouteModule {
   name: string;
@@ -46,5 +47,6 @@ export const routeModules: RouteModule[] = [
   sparkMlsRoutes,
   peopleRoutes,
   duplicatesRoutes,
+  listsRoutes,
   // registry: add new entries above this line
 ];
