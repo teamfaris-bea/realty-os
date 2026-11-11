@@ -423,7 +423,17 @@ describe('R-PERM-1 generated can() matrix: one case per DATA_MODEL §3 cell', ()
     const exercised = new Set<Action>();
     for (const row of MATRIX) for (const role of ROLE_COLUMNS) for (const s of ROWS[row.capability]!(role, row.cells[role])) exercised.add(s.action);
     const notInMatrix = ACTIONS.filter((a) => !exercised.has(a));
-    expect(notInMatrix.sort()).toEqual(['data.export', 'number.release', 'support.revoke']);
+    expect(notInMatrix.sort()).toEqual(['data.export', 'number.release', 'support.revoke', 'system.jobs', 'system.view']);
+  });
+
+  it('system.view and system.jobs (System page, not a §3 row): Owner and Admin only, no re-auth; never support or the system', () => {
+    for (const a of ['system.view', 'system.jobs'] as Action[]) {
+      expect(can(user('owner'), a, {})).toEqual({ ok: true });
+      expect(can(user('admin'), a, {})).toEqual({ ok: true });
+      for (const role of ['team_lead', 'agent', 'isa', 'tc'] as Role[]) expect(can(user(role), a, {})).toEqual({ ok: false, code: 'NOT_FOUND' });
+      expect(can({ kind: 'support', userId: 'u' as never, tenantId: user('owner').tenantId, grantId: 'g' }, a, {})).toEqual({ ok: false, code: 'NOT_FOUND' });
+      expect(can({ kind: 'system', tenantId: user('owner').tenantId, via: 'worker' }, a, {})).toEqual({ ok: false, code: 'NOT_FOUND' });
+    }
   });
 });
 

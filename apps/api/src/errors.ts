@@ -138,6 +138,10 @@ export const ERROR_STATUS = {
   EXCEPTION_NOT_REASSIGNABLE: 409, // the item is not about a lead (an appointment or task without a contact): nothing to reassign
   CONTACT_ON_DEAL: 409, // lane rule-coverage (E59, R-DATA-4): erasure refused while the person is on a deal; details = deal ids/stages
   DEAL_STILL_OPEN: 409, // lane rule-coverage (E59): the primary contact of an open deal is changed on the deal, not removed
+  // ---- lane ops-observability (System page) ----
+  JOB_NOT_RETRYABLE: 409, // the job is neither dead nor waiting after a failure (it finished, runs now, or was cancelled)
+  JOB_ALREADY_QUEUED: 409, // a newer job for the same work is already queued or running: retrying this one would duplicate it
+  JOB_NOT_CANCELLABLE: 409, // only a waiting job can be cancelled; a running one finishes or is reaped
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 
