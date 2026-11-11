@@ -157,6 +157,9 @@ export const ApproveSearchBody = z.strictObject({
 });
 export const ListingSchema = z.object({
   id: Id,
+  // module 24 (additive): an MLS match is labelled, never presented as the team's own (R-MLS-4)
+  source: z.enum(['team', 'mls']),
+  listingBrokerageName: z.string().nullable(),
   addressLine1: z.string(),
   city: z.string(),
   postalCode: z.string(),

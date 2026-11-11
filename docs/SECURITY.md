@@ -286,7 +286,7 @@ The first response and playbook steps **never call the model**. They render appr
 
 ## 5. Spark MLS (read-only)
 
-A read-only connector to FBS's Spark RESO Web API (lane `spark-prep`; adapter in `apps/api/src/providers/integrations/spark.ts`, service and routes in `apps/api/src/mls/spark/`, routes under `/api/admin/integrations/mls/spark`). The operator procedure is `docs/DEPLOY.md` §11. Feed sync into `listings` rows is module 24 (api/mls) and is not built; what any audience may see is still decided by the `core/listings` display rules (placeholder licence pack, `reviewed=false`).
+A read-only connector to FBS's Spark RESO Web API (lane `spark-prep`; adapter in `apps/api/src/providers/integrations/spark.ts`, service and routes in `apps/api/src/mls/spark/`, routes under `/api/admin/integrations/mls/spark`). The operator procedure is `docs/DEPLOY.md` §11. Feed sync into `listings` rows is module 24 (api/mls: `apps/api/src/mls/{sync,eligibility,sweep,competing,admin}.ts`); what any audience may see is decided by the `core/listings` display rules and the connection's licence pack, which shows nothing to clients until every value is marked counsel-reviewed.
 
 ### 5.1 Threat model
 
@@ -311,7 +311,9 @@ A read-only connector to FBS's Spark RESO Web API (lane `spark-prep`; adapter in
 | **Redaction.** The token never appears in logs, error bodies, audit rows, metrics, error reports or any API response. Responses carry `credentialSaved` and the label only. | the routes, logger and error serializer (§2.7) |
 | **The browser never receives it** after submission. | the GET view and the PUT response |
 | **GET only.** The adapter refuses every other method. | `apps/api/src/providers/integrations/spark.ts` |
-| **Path allowlist.** `/Reso/OData/$metadata`, `/Reso/OData/Property`, `/Reso/OData/Media` only. | same |
+| **Path allowlist.** `/Reso/OData/$metadata` and `/Reso/OData/Property` only. The feed has no Media entity set; photos come from `$expand=Media` on Property. | same |
+| **Response headers are never read** but `Content-Length` and `Retry-After`. Spark echoes the key's identifier in an `X-Api-Key` response header; it is never logged, stored, audited or returned. The API logger also censors `authorization` and `x-api-key` request/response headers (pino `redact`), on top of serializers that emit no headers. | the adapter, `apps/api/src/server.ts` |
+| **Field-level permissions.** A record's `<Field>@Core.Permissions` annotation that does not grant Read removes the field before anything reads it (never displayed or sent); every annotation key and every field `$metadata` does not declare is ignored. | `sanitizeRecord` in the adapter |
 | **Host allowlist.** https only, hosts from `SPARK_ALLOWED_HOSTS` (lowercase public DNS names), default port only. `SPARK_API_BASE_URL` comes from server config, never tenant input, and start-up refuses a bad one in every environment. | `config.ts`, the adapter |
 | **No redirects.** A redirect is refused, never followed, so the token never goes to a host that was not checked. | the adapter |
 | **Paging re-check.** Every `@odata.nextLink` is checked against the same host and path allowlist before it is fetched. | the adapter |
@@ -329,13 +331,28 @@ Tests (mock Spark transport only; a network tripwire fails any real outbound cal
 | Item | Why it is open | Suggested action |
 |---|---|---|
 | **VERIFY** the `Authorization` scheme | Spark's docs show both `Bearer` and `OAuth` | Confirm with Spark support; set `SPARK_AUTH_SCHEME` |
-| **VERIFY** the replication endpoint | Whether a full background sync must use Spark's separate replication endpoint is unverified | Confirm with Spark support before module 24; change base URL and host list if so |
-| **VERIFY** field availability | Which fields this MLS exposes to this key's role is unknown | Check against `$metadata` with Spark support before module 24 maps fields |
+| ~~**VERIFY** the replication endpoint~~ | Answered by the live check (finding 1): this key works only on the replication host | Set the replication host in `SPARK_API_BASE_URL` / `SPARK_ALLOWED_HOSTS` (DEPLOY §11.1) |
+| **VERIFY** field availability | Partly answered (findings 4-6): the mapped standard fields are present except `LivingArea`; which fields each role may read is per-field (`Core.Permissions`) | Confirm with Spark support and the MLS which fields the licence lets clients see |
 | **VERIFY** rate limits | Not known for this key | Confirm with Spark support; tune the retry budget |
 | **VERIFY** licence coverage | Owner-confirmed only; not independently re-verified with the MLS | Owner gets written confirmation from the MLS before any live call |
 | **VERIFY** key deactivation at FBS | How a leaked or retired key is deactivated at FBS is not documented here | Owner confirms the process with FBS; disconnecting in the app only purges our copy |
 | DNS rebinding on the allowed host | A public name that resolves to a private address is not re-checked at connect time (as for FUB, §3) | Worker and API egress policy that denies private ranges |
-| Feed sync not built | Module 24 (api/mls) | Review its writes into `listings` and the display rules when it lands |
+| **VERIFY** `Core.Permissions` values | Which annotation value withholds a field; anything but an explicit Read withholds it here (strictest) | Confirm with Spark support and the MLS |
+| **VERIFY** `$expand=Media` paging | Whether `$select` inside `$expand` is honoured (off by default) and the largest `$top` with `$expand` (default 100, at most 20 pages per run) | Confirm with Spark support; tune `pageSize` / `expandSelect` |
+| **VERIFY** the living-area field | No `LivingArea` in this feed; the size is read from `BuildingAreaTotal`; which field is the finished living area is unconfirmed | Confirm with the MLS; change `SPARK_FIELD_MAPPING` |
+| **VERIFY** the sync interval | 15 minutes per connection (`SYNC_INTERVAL_MS`); the licence may require a refresh cadence | Confirm with the MLS; the pack's `max_staleness_hours` pauses client output when exceeded |
+| Feed sync review | Module 24 writes `listings` (source `mls`) as the system actor only (R-MLS-1, existing RLS) | Reviewed in this lane: no new definer, policy or grant; migration `*_mls_listing_indexes.sql` adds indexes only |
+
+**Live findings (read-only check, 2026-11-11).** With the CRM's own key, the orchestrator made five GET requests (the `$metadata` document twice, the one-record probe three times). What they showed, and how the code answers each point (the mock transport in `spark.testing.ts` reproduces every one; tests in `spark.test.ts`, `mls/spark/spark.api.test.ts` and `mls/sync.spark.test.ts`):
+1. The key is a **replication key**: the standard host answers 403 naming the replication host, the replication host serves it. The base URL is set to the replication host through `SPARK_API_BASE_URL` / `SPARK_ALLOWED_HOSTS` (DEPLOY §11.1); that 403 maps to its own result, `replication_endpoint_required`, with a plain-words Owner sentence; every nextLink must stay on an allowed host.
+2. The service has five entity sets (Property, Member, Office, OpenHouse, Lookup) and **no Media set**: photos are requested with `$expand=Media` on the Property page request, so no extra request per listing.
+3. Media carries the standard RESO media fields; `Order` is `Edm.Int64` (number or string accepted).
+4. Property declares about a thousand fields, a returned record carried hundreds more that `$metadata` does not declare, plus `<Field>@Core.Permissions` annotations: unknown keys are ignored, annotation keys never fail the parse, a withheld field is removed.
+5. There is **no `LivingArea`**; `BuildingAreaTotal` is populated and mapped; `AboveGradeFinishedArea` was present but empty (**VERIFY** the finished living area).
+6. `StandardStatus` is a string whose values come from the Lookup resource; the internet-display Y/N fields and `PhotosCount` are present; list-agent contact fields were empty.
+7. A transient **503** ("took too long") came back once and the same request then succeeded: it is `BUSY`, retried by the sync inside its budget, and the single validation probe reports `busy` ("Spark was busy. Try again in a minute."), not a bad key, without moving the connection's status.
+8. Every response carries an **`X-Api-Key`** header echoing the key's identifier (see the control above; a canary in the mock is searched for in logs, error reports, audit rows, every table and API responses).
+9. The one-record probe returns no `@odata.nextLink` and no `@odata.count`, and that is a success.
 
 ---
 

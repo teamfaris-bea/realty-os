@@ -132,6 +132,9 @@ export function buildServer(cfg: Config, deps: ServerDeps): FastifyInstance {
     logger: {
       level: cfg.logLevel,
       ...(deps.logStream ? { stream: deps.logStream } : {}),
+      // defense in depth (the req/res serializers below already emit no headers): credentials in request or
+      // response headers, including the X-Api-Key a provider echoes (Spark, docs/SECURITY.md §5.3), are censored
+      redact: { paths: ['req.headers.authorization', 'req.headers["x-api-key"]', 'res.headers.authorization', 'res.headers["x-api-key"]', 'headers.authorization', 'headers["x-api-key"]'], censor: '[redacted]' },
       // pino runs formatters.log BEFORE the serializers: req/res/err are left to the serializers below
       // (which emit only method, route pattern, status and masked error text); everything else is redacted.
       formatters: {

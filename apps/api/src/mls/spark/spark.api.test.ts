@@ -12,8 +12,8 @@ import { auditRows, call, freshReauth, inviteViaApi, staleReauth } from '../../a
 import { type ApiHarness, type TestClient, createApiHarness } from '../../auth/testHarness.js';
 import type { MemoryErrorReporter } from '../../observability/errors.js';
 import { Registry } from '../../observability/prometheus.js';
-import { CANARY_TOKEN, type MockSpark, type Tripwire, installNetworkTripwire, mockSpark } from '../../providers/integrations/spark.testing.js';
-import { LIVE_CALLS_OFF } from './service.js';
+import { BUSY_503, CANARY_KEY_ID, CANARY_TOKEN, type MockSpark, REPLICATION_403, type Tripwire, installNetworkTripwire, mockSpark } from '../../providers/integrations/spark.testing.js';
+import { LIVE_CALLS_OFF, RESULT_SENTENCE } from './service.js';
 
 let h: ApiHarness;
 let wire: Tripwire;
@@ -219,6 +219,8 @@ describe('validation probe and the MLS_LIVE_CALLS kill switch', () => {
     ['200', () => ({ status: 200, body: { value: [{ ListingKey: 'LK1', ModificationTimestamp: '2026-11-01T00:00:00Z' }] } }), 'connected', 'connected', null],
     ['429', () => ({ status: 429, headers: { 'retry-after': '1' } }), 'rate_limited', 'degraded', 'RATE_LIMITED'],
     ['403', () => ({ status: 403, body: { D: { Message: 'BODY-MARKER' } } }), 'not_licensed_or_role_insufficient', 'degraded', 'NOT_LICENSED_OR_ROLE_INSUFFICIENT'],
+    ['403 replication-only key (finding 1)', () => ({ status: 403, body: REPLICATION_403, headers: { 'x-api-key': CANARY_KEY_ID } }), 'replication_endpoint_required', 'degraded', 'REPLICATION_ENDPOINT_REQUIRED'],
+    ['503 busy (finding 7)', () => ({ status: 503, body: BUSY_503, headers: { 'x-api-key': CANARY_KEY_ID } }), 'busy', 'degraded', 'BUSY'],
     ['500', () => ({ status: 500 }), 'unreachable', 'degraded', 'UNREACHABLE'],
     ['network', () => Promise.reject(new Error(`ECONNRESET ${CANARY_TOKEN}`)), 'unreachable', 'degraded', 'UNREACHABLE'],
     ['302', () => ({ status: 302, headers: { location: 'https://evil.example/' } }), 'unreachable', 'degraded', 'REDIRECT_REFUSED'],
@@ -243,6 +245,8 @@ describe('validation probe and the MLS_LIVE_CALLS kill switch', () => {
       if (status === 'revoked') expect(row.capabilities).toEqual({});
       const a = (await auditRows(h, owner.tenantId!, 'integration.validated')).at(-1)!;
       expect(a.reason).toBe(code ?? 'CONNECTED');
+      if (code === 'REPLICATION_ENDPOINT_REQUIRED' || code === 'BUSY') expect(r.body.connection.statusSentence).toContain(RESULT_SENTENCE[code]!);
+      expect(JSON.stringify(r.body) + JSON.stringify(a)).not.toContain(CANARY_KEY_ID);
       expect(JSON.stringify(a)).not.toMatch(/BODY-MARKER|evil\.example|ECONNRESET|ListingKey/);
     });
   }
@@ -276,11 +280,14 @@ describe('canary token redaction everywhere (R-TEN-7, R-AUDIT-4)', () => {
     expect(spark.calls.length).toBeGreaterThan(0); // the mock did receive it, in the Authorization header only
     expect(h.logs.length).toBeGreaterThan(0);
     for (const line of h.logs) expect(line).not.toContain(CANARY_TOKEN);
+    for (const line of h.logs) expect(line).not.toContain(CANARY_KEY_ID); // finding 8: the X-Api-Key response header
     const reporter = h.app.platform.errorReporter as MemoryErrorReporter;
     expect(JSON.stringify(reporter.events)).not.toContain(CANARY_TOKEN);
     expect(await metrics.render()).not.toContain(CANARY_TOKEN);
     expect(bodies.length).toBeGreaterThan(20);
     for (const b of bodies) expect(b).not.toContain(CANARY_TOKEN);
+    for (const b of bodies) expect(b).not.toContain(CANARY_KEY_ID);
+    expect(JSON.stringify(reporter.events)).not.toContain(CANARY_KEY_ID);
     // every text-ish column of every table (audit_log, integration_connections, jobs, ...) and every bytea
     const tables = (await h.su.query<{ s: string; t: string }>("SELECT table_schema AS s, table_name AS t FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema') AND table_type = 'BASE TABLE'")).rows;
     expect(tables.length).toBeGreaterThan(20);
@@ -288,7 +295,7 @@ describe('canary token redaction everywhere (R-TEN-7, R-AUDIT-4)', () => {
     const hits: string[] = [];
     let scanned = 0;
     for (const { s: schema, t } of tables) {
-      const n = await h.su.query(`SELECT 1 FROM (SELECT r::text AS x FROM ${JSON.stringify(schema)}.${JSON.stringify(t)} r) q WHERE x LIKE $1 OR x LIKE $2 LIMIT 1`, [`%${CANARY_TOKEN}%`, `%${Buffer.from(CANARY_TOKEN).toString('hex')}%`]);
+      const n = await h.su.query(`SELECT 1 FROM (SELECT r::text AS x FROM ${JSON.stringify(schema)}.${JSON.stringify(t)} r) q WHERE x LIKE $1 OR x LIKE $2 OR x LIKE $3 LIMIT 1`, [`%${CANARY_TOKEN}%`, `%${Buffer.from(CANARY_TOKEN).toString('hex')}%`, `%${CANARY_KEY_ID}%`]);
       scanned += 1;
       if (n.rowCount) hits.push(`${schema}.${t}`);
     }

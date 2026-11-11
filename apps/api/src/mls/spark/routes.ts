@@ -17,7 +17,7 @@ import { enforceLimits } from '../../auth/rateLimit.js';
 import { authorize } from '../../rbac.js';
 import type { RouteModule } from '../../routes.js';
 import type { Platform } from '../../server.js';
-import { type SparkDeps, saveSparkCredential, sparkView, validateSpark } from './service.js';
+import { type SparkDeps, VALIDATION_RESULTS, saveSparkCredential, sparkView, validateSpark } from './service.js';
 
 /** printable ASCII, no spaces (it goes into one header line) */
 export const AccessToken = z.string().regex(/^[\x21-\x7e]{16,4096}$/);
@@ -37,7 +37,7 @@ const ConnectionView = z.object({
 export const SparkViewResponse = z.object({ provider: z.enum(['fake', 'spark']), liveCalls: z.boolean(), sentence: z.string(), authSchemeDefault: Scheme, connection: ConnectionView.nullable() });
 export const SaveBody = z.object({ accessToken: AccessToken, keyLabel: KeyLabel, authScheme: Scheme.optional() }).strict();
 export const ValidateResponse = z.object({
-  result: z.enum(['connected', 'invalid_credentials', 'not_licensed_or_role_insufficient', 'rate_limited', 'unreachable', 'live_calls_disabled']),
+  result: z.enum(VALIDATION_RESULTS as [string, ...string[]]),
   connection: ConnectionView,
 });
 
