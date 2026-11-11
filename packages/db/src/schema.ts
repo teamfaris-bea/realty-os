@@ -254,7 +254,6 @@ export interface BulkActionsTable {
   created_by_role: string;
   source: string;
   smart_list_id: string | null;
-  definition_sha256: Buffer | null;
   params: Generated<Json>;
   template_id: string | null;
   template_version: number | null;
@@ -467,7 +466,6 @@ export interface ContactFieldValuesTable {
   value_number: Numeric | null;
   value_date: string | null;
   value_options: string[] | null;
-  self_reported: Generated<boolean>;
   updated_by_kind: string;
   updated_by_user_id: string | null;
   import_batch_id: string | null;
@@ -539,7 +537,6 @@ export interface ContactTagsTable {
   tag_id: string;
   added_by_kind: string;
   added_by_user_id: string | null;
-  bulk_action_id: string | null;
   import_batch_id: string | null;
   created_at: Generated<Timestamp>;
 }
@@ -641,7 +638,6 @@ export interface CustomFieldDefsTable {
   field_type: string;
   options: Generated<Json>;
   annual: Generated<boolean>;
-  protected_proxy: Generated<boolean>;
   position: Generated<number>;
   origin: Generated<string>;
   created_by_user_id: string | null;
@@ -1340,8 +1336,6 @@ export interface MessagesTable {
   search_tsv: GeneratedAlways<string | null>;
   integration_connection_id: string | null;
   marketing_piece_id: string | null;
-  template_id: string | null;
-  template_version: number | null;
   bulk_action_id: string | null;
 }
 
@@ -1351,17 +1345,6 @@ export interface MfaRecoveryCodesTable {
   code_hash: Buffer;
   created_at: Generated<Timestamp>;
   used_at: Timestamp | null;
-}
-
-/** public.note_mentions (table) */
-export interface NoteMentionsTable {
-  tenant_id: string;
-  note_id: string;
-  user_id: string;
-  status: Generated<string>;
-  notification_id: string | null;
-  created_at: Generated<Timestamp>;
-  resolved_at: Timestamp | null;
 }
 
 /** public.notes (table) */
@@ -1900,8 +1883,6 @@ export interface SmartListsTable {
   definition: Json;
   definition_version: number;
   sort: Generated<string>;
-  ref_tag_ids: Generated<string[]>;
-  ref_field_ids: Generated<string[]>;
   position: Generated<number>;
   updated_by_user_id: string;
   archived_at: Timestamp | null;
@@ -2304,7 +2285,6 @@ export interface DB {
   message_templates: MessageTemplatesTable;
   messages: MessagesTable;
   mfa_recovery_codes: MfaRecoveryCodesTable;
-  note_mentions: NoteMentionsTable;
   notes: NotesTable;
   notification_deliveries: NotificationDeliveriesTable;
   notification_preferences: NotificationPreferencesTable;
@@ -2436,7 +2416,6 @@ export const TABLE_NAMES = [
   'message_templates',
   'messages',
   'mfa_recovery_codes',
-  'note_mentions',
   'notes',
   'notification_deliveries',
   'notification_preferences',

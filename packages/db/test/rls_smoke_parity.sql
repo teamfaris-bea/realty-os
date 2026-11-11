@@ -206,7 +206,6 @@ INSERT INTO lead_sources (tenant_id, id, name, kind) VALUES (:tB, :srcB, 'B Face
 \set fBud   '''a0000000-0000-7000-8000-0000000a9001'''
 \set fBeds  '''a0000000-0000-7000-8000-0000000a9002'''
 \set fBday  '''a0000000-0000-7000-8000-0000000a9003'''
-\set fMil   '''a0000000-0000-7000-8000-0000000a9004'''
 \set rel1   '''a0000000-0000-7000-8000-0000000aa001'''
 \set rel2   '''a0000000-0000-7000-8000-0000000aa002'''
 \set tplT   '''a0000000-0000-7000-8000-0000000ab001'''
@@ -289,30 +288,25 @@ SET LOCAL ROLE app_user;
 -- =============================================================================
 SELECT pg_temp.ctx(:tA, :agA1, 'user');
 INSERT INTO notes (tenant_id, id, contact_id, author_user_id, body) VALUES (:tA, :n1, :c1, :agA1, 'Pre-approved to 450k. @Tess please review.');
-INSERT INTO note_mentions (tenant_id, note_id, user_id) VALUES (:tA, :n1, :tlA), (:tA, :n1, :agA2);
-SELECT pg_temp.expect_error(format($q$INSERT INTO note_mentions (tenant_id, note_id, user_id) VALUES (%L, %L, %L)$q$, :tA, :n1, :agA1),
-  'R-PAR-3: a note does not mention its author', '%MENTION_SELF%');
-SELECT pg_temp.ok(pg_temp.rows_affected(format($q$UPDATE note_mentions SET status = 'notified', resolved_at = now() WHERE note_id = %L$q$, :n1)) = 0,
-  'R-PAR-2: only the system resolves a mention (the author cannot mark it notified: 0 rows)');
+-- the API checks each mention as the mentioned person (their own context, read-only) before notifying
 SELECT pg_temp.ctx(:tA, :agA2, 'user');
-SELECT pg_temp.ok(pg_temp.n(format('SELECT count(*) FROM notes WHERE id = %L', :n1)) = 0
-              AND pg_temp.n(format('SELECT count(*) FROM note_mentions WHERE note_id = %L', :n1)) = 0,
-  'R-PAR-2: a mentioned user who cannot see Alice reads neither the note nor its mention rows');
-SELECT pg_temp.expect_error(format($q$INSERT INTO note_mentions (tenant_id, note_id, user_id) VALUES (%L, %L, %L)$q$, :tA, :n1, :ownA),
-  'only the note''s author adds mentions', '%row-level security%');
-SELECT pg_temp.ctx(:tA, NULL, 'system');
-UPDATE note_mentions SET status = 'no_access', resolved_at = now() WHERE note_id = :n1 AND user_id = :agA2;
+SELECT pg_temp.ok(pg_temp.n(format('SELECT count(*) FROM contacts WHERE id = %L', :c1)) = 0
+              AND pg_temp.n(format('SELECT count(*) FROM notes WHERE id = %L', :n1)) = 0,
+  'R-PAR-2: checked as agent 2, Alice is not visible, so agent 2 is not notified and cannot read the note');
+SELECT pg_temp.ctx(:tA, :tlA, 'user');
+SELECT pg_temp.ok(pg_temp.n(format('SELECT count(*) FROM contacts WHERE id = %L', :c1)) = 1,
+  'R-PAR-2: checked as the Team Lead, Alice is visible, so the Team Lead is notified');
+SELECT pg_temp.ctx(:tA, :agA1, 'user');
 INSERT INTO notifications (tenant_id, id, user_id, kind, priority, title, subject_type, subject_id, dedupe_key)
 VALUES (:tA, gen_random_uuid(), :tlA, 'mention', 'normal', 'Ava mentioned you', 'note', :n1, 'mention:' || :n1);
-UPDATE note_mentions SET status = 'notified', resolved_at = now(),
-       notification_id = (SELECT id FROM notifications WHERE user_id = :tlA AND kind = 'mention')
- WHERE note_id = :n1 AND user_id = :tlA;
-SELECT pg_temp.ok((SELECT string_agg(status, ',' ORDER BY status) FROM note_mentions WHERE note_id = :n1) = 'no_access,notified',
-  'R-PAR-2: the system notifies the Team Lead (who sees Alice) and records no_access for agent 2');
+SELECT pg_temp.ok(pg_temp.n('SELECT count(*) FROM notifications WHERE kind = ''mention''') = 0,
+  'the author cannot read the notification it wrote for the Team Lead');
 SELECT pg_temp.ctx(:tA, :tlA, 'user');
 SELECT pg_temp.ok(pg_temp.n(format('SELECT count(*) FROM notes WHERE id = %L', :n1)) = 1
               AND (SELECT body IS NULL FROM notifications WHERE kind = 'mention'),
   'R-PAR-3: the mentioned Team Lead opens the note; the notification carries no note text');
+SELECT pg_temp.ctx(:tA, :agA2, 'user');
+SELECT pg_temp.ok(pg_temp.n('SELECT count(*) FROM notifications WHERE kind = ''mention''') = 0, 'nobody else reads the mention');
 SELECT pg_temp.ctx(:tA, :tcA, 'user');
 SELECT pg_temp.ok(pg_temp.n(format('SELECT count(*) FROM notes WHERE id = %L', :n1)) = 1, 'R-PAR-1: the TC on Alice''s deal reads her notes');
 SELECT pg_temp.ctx(:tA, :admA, 'user');
@@ -338,8 +332,9 @@ SELECT pg_temp.expect_error(format($q$INSERT INTO notes (tenant_id, id, contact_
 SELECT pg_temp.expect_error(format($q$INSERT INTO notes (tenant_id, id, contact_id, author_user_id, body, source, activity_kind, activity_at, activity_outcome)
   VALUES (%L, gen_random_uuid(), %L, %L, 'x', 'logged_activity', 'email', now(), 'connected')$q$, :tA, :c1, :agA1),
   'only a logged call has a call outcome', '%notes_logged_activity_shape%');
-SELECT pg_temp.expect_error(format($q$UPDATE notes SET activity_at = now() - interval '1 day' WHERE id = %L$q$, :n2),
-  'R-PAR-31: logged facts never change after save', '%NOTE_IMMUTABLE%');
+UPDATE notes SET activity_at = now() - interval '3 hours' WHERE id = :n2;
+SELECT pg_temp.expect_error(format($q$UPDATE notes SET activity_kind = 'email', activity_outcome = NULL WHERE id = %L$q$, :n2),
+  'R-PAR-31: the author corrects a logged time; the kind never changes', '%NOTE_IMMUTABLE%');
 SELECT pg_temp.ok((SELECT detail FROM contact_timeline WHERE item_id = :n2) = 'logged_activity:call'
               AND (SELECT occurred_at < now() - interval '1 hour' FROM contact_timeline WHERE item_id = :n2),
   'R-PAR-30: the timeline shows a logged call when it happened, labelled as logged');
@@ -372,6 +367,8 @@ SET LOCAL ROLE app_user;
 SELECT pg_temp.ctx(:tA, :agA1, 'user');
 SELECT pg_temp.expect_error(format($q$UPDATE contacts SET stage = 'nurture' WHERE id = %L$q$, :c6),
   'R-PAR-14: an agent cannot park an untouched routed lead in nurture', '%STAGE_NEEDS_CONTACT%');
+SELECT pg_temp.expect_error(format($q$UPDATE contacts SET stage = 'lost' WHERE id = %L$q$, :c6),
+  'R-PAR-14 S2: nor in lost (closing is the ownership command)', '%STAGE_NEEDS_CONTACT%');
 SELECT pg_temp.ctx(:tA, :tlA, 'user');
 UPDATE contacts SET stage = 'nurture' WHERE id = :c6;
 SELECT pg_temp.ok((SELECT stage FROM contacts WHERE id = :c6) = 'nurture', 'R-PAR-14: the Team Lead may (audited by the API)');
@@ -392,11 +389,10 @@ SELECT pg_temp.expect_error(format($q$INSERT INTO custom_field_defs (tenant_id, 
   VALUES (%L, gen_random_uuid(), 'budget', 'Budget', 'number', %L)$q$, :tA, :agA1),
   'R-PAR-17: an agent cannot define a custom field', '%row-level security%');
 SELECT pg_temp.ctx(:tA, :admA, 'user');
-INSERT INTO custom_field_defs (tenant_id, id, key, label, field_type, options, annual, protected_proxy, created_by_user_id) VALUES
-  (:tA, :fBud,  'budget', 'Budget', 'number', '[]', false, false, :admA),
-  (:tA, :fBeds, 'beds', 'Bedrooms wanted', 'single_select', '[{"id":"b2","label":"2"},{"id":"b3","label":"3"},{"id":"b4","label":"4+"}]', false, false, :admA),
-  (:tA, :fBday, 'birthday', 'Birthday', 'date', '[]', true, false, :admA),
-  (:tA, :fMil,  'service_branch', 'Service branch', 'text', '[]', false, true, :admA);
+INSERT INTO custom_field_defs (tenant_id, id, key, label, field_type, options, annual, created_by_user_id) VALUES
+  (:tA, :fBud,  'budget', 'Budget', 'number', '[]', false, :admA),
+  (:tA, :fBeds, 'beds', 'Bedrooms wanted', 'single_select', '[{"id":"b2","label":"2"},{"id":"b3","label":"3"},{"id":"b4","label":"4+"}]', false, :admA),
+  (:tA, :fBday, 'birthday', 'Birthday', 'date', '[]', true, :admA);
 SELECT pg_temp.expect_error(format($q$INSERT INTO custom_field_defs (tenant_id, id, key, label, field_type, created_by_user_id)
   VALUES (%L, gen_random_uuid(), 'military_status', 'Military status', 'text', %L)$q$, :tA, :admA),
   'R-PAR-18: a custom field cannot recreate a built-in protected attribute', '%custom_field_defs_key_check%');
@@ -409,7 +405,7 @@ SELECT pg_temp.expect_error(format($q$UPDATE custom_field_defs SET options = '[{
   'R-PAR-17: an option is archived, never removed', '%CUSTOM_FIELD_OPTION_REMOVED%');
 DO $$
 BEGIN
-  FOR i IN 1..46 LOOP
+  FOR i IN 1..47 LOOP
     INSERT INTO custom_field_defs (tenant_id, id, key, label, field_type, created_by_user_id)
     VALUES ('a0000000-0000-7000-8000-000000000001', gen_random_uuid(), 'extra_' || i, 'Extra ' || i, 'text',
             'a0000000-0000-7000-8000-0000000000ad');
@@ -418,7 +414,7 @@ END $$;
 SELECT pg_temp.expect_error(format($q$INSERT INTO custom_field_defs (tenant_id, id, key, label, field_type, created_by_user_id)
   VALUES (%L, gen_random_uuid(), 'one_too_many', 'One too many', 'text', %L)$q$, :tA, :admA),
   'R-PAR-17: a team has at most 50 live custom fields', '%CUSTOM_FIELD_LIMIT%');
-UPDATE custom_field_defs SET archived_at = now() WHERE key = 'extra_46';
+UPDATE custom_field_defs SET archived_at = now() WHERE key = 'extra_47';
 SELECT pg_temp.ctx(:tA, :agA1, 'user');
 INSERT INTO contact_field_values (tenant_id, contact_id, field_id, value_number, updated_by_kind, updated_by_user_id)
 VALUES (:tA, :c1, :fBud, 475000, 'user', :agA1);
@@ -436,12 +432,7 @@ SELECT pg_temp.expect_error(format($q$INSERT INTO contact_field_values (tenant_i
   VALUES (%L, %L, %L, '{b9}', 'user', %L)$q$, :tA, :c3, :fBeds, :agA1),
   'a select value is a live option', '%CUSTOM_VALUE_OPTION%');
 SELECT pg_temp.expect_error(format($q$INSERT INTO contact_field_values (tenant_id, contact_id, field_id, value_text, updated_by_kind, updated_by_user_id)
-  VALUES (%L, %L, %L, 'Army', 'user', %L)$q$, :tA, :c1, :fMil, :agA1),
-  'R-PAR-18: a protected field holds only what the person said (self-reported)', '%CUSTOM_VALUE_SELF_REPORTED%');
-INSERT INTO contact_field_values (tenant_id, contact_id, field_id, value_text, self_reported, updated_by_kind, updated_by_user_id)
-VALUES (:tA, :c1, :fMil, 'Army', true, 'user', :agA1);
-SELECT pg_temp.expect_error(format($q$INSERT INTO contact_field_values (tenant_id, contact_id, field_id, value_text, updated_by_kind, updated_by_user_id)
-  SELECT %L, %L, id, 'x', 'user', %L FROM custom_field_defs WHERE key = 'extra_46'$q$, :tA, :c1, :agA1),
+  SELECT %L, %L, id, 'x', 'user', %L FROM custom_field_defs WHERE key = 'extra_47'$q$, :tA, :c1, :agA1),
   'R-PAR-17: an archived field is read-only', '%CUSTOM_FIELD_ARCHIVED%');
 SELECT pg_temp.expect_error(format($q$INSERT INTO contact_field_values (tenant_id, contact_id, field_id, value_number, updated_by_kind, updated_by_user_id)
   VALUES (%L, %L, %L, 1, 'user', %L)$q$, :tA, :c2, :fBud, :agA1),
@@ -451,7 +442,7 @@ SELECT pg_temp.ok(pg_temp.n(format('SELECT count(*) FROM contact_field_values WH
               AND pg_temp.n('SELECT count(*) FROM custom_field_defs') = 50,
   'R-PAR-19: agent 2 reads the field definitions but none of Alice''s values');
 SELECT pg_temp.ctx(:tA, :tcA, 'user');
-SELECT pg_temp.ok(pg_temp.n('SELECT count(*) FROM contact_field_values') = 4, 'the TC reads Alice''s values through her deal');
+SELECT pg_temp.ok(pg_temp.n('SELECT count(*) FROM contact_field_values') = 3, 'the TC reads Alice''s values through her deal');
 SELECT pg_temp.expect_error(format($q$INSERT INTO contact_field_values (tenant_id, contact_id, field_id, value_number, updated_by_kind, updated_by_user_id)
   VALUES (%L, %L, %L, 1, 'user', %L)$q$, :tA, :c3, :fBud, :tcA),
   'a TC does not write custom values', '%row-level security%');
@@ -570,12 +561,21 @@ SELECT pg_temp.expect_error(format($q$INSERT INTO messages (tenant_id, id, conve
   %L, %L, 'sms', 'outbound', %L, '+15555559100', '+15555550602', 'Hi Finn', 'dispatching', 'human', %L, 'informational', now(), now())$q$,
   :tA, :cvA6, :c6, :num, :agA1),
   'R-PAR-12: removing the phone that texted STOP does not make Finn''s other phone textable', '%RECIPIENT_OPTED_OUT%');
+UPDATE contact_points SET status = 'wrong_number' WHERE id = 'a0000000-0000-7000-8000-0000000ae003';
 SELECT pg_temp.expect_error(format($q$UPDATE contact_points SET status = 'removed', removed_at = now(), removed_reason = 'wrong_number'
   WHERE id = %L$q$, 'a0000000-0000-7000-8000-0000000ae003'),
-  'R-PAR-12: only a point already marked wrong number is removed as one', '%REMOVED_REASON_WRONG_NUMBER%');
--- the STOP came from a wrong number: the call-outcome path marks it, then the agent removes it as such
-UPDATE contact_points SET status = 'wrong_number' WHERE id = 'a0000000-0000-7000-8000-0000000ae003';
+  'R-PAR-12 S1: marking a status is not proof: removing as a wrong number needs a recorded wrong-number report', '%REMOVED_REASON_WRONG_NUMBER%');
+-- the STOP came from a wrong number: the call-outcome path records the report (consent ledger), then removal as such works
+SELECT pg_temp.ctx(:tA, NULL, 'system');
+INSERT INTO consent_events (tenant_id, id, address_kind, address_hmac, address_hint, channel, purpose, event_type, consent_level,
+       source, occurred_at, actor_kind, contact_id, evidence_call_id)
+VALUES (:tA, 'a0000000-0000-7000-8000-0000000ae104', 'phone', digest('+15555550501', 'sha256'), '…0501', 'voice', 'all',
+        'revoke', 'none', 'wrong_number', now(), 'system', :c5, gen_random_uuid());
+SELECT pg_temp.ctx(:tA, :agA1, 'user');
 UPDATE contact_points SET status = 'removed', removed_at = now(), removed_reason = 'wrong_number' WHERE id = 'a0000000-0000-7000-8000-0000000ae003';
+SELECT pg_temp.expect_error(format($q$UPDATE contact_points SET status = 'active', removed_at = NULL, removed_reason = NULL WHERE id = %L$q$,
+  'a0000000-0000-7000-8000-0000000ae003'),
+  'R-PAR-12 S1: a confirmed wrong number is not restored (no restore-then-re-remove)', '%REMOVED_REASON_IMMUTABLE%');
 INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, from_address, to_address, body,
        status, initiator, initiated_by_user_id, purpose, dispatched_at, occurred_at)
 VALUES (:tA, gen_random_uuid(), 'a0000000-0000-7000-8000-00000000cc05', :c5, 'sms', 'outbound', :num, '+15555559100', '+15555550502',
@@ -621,7 +621,7 @@ SELECT pg_temp.expect_error(format($q$INSERT INTO bulk_actions (tenant_id, id, k
   'a bulk action is born a draft', '%BULK_LIFECYCLE%');
 SELECT pg_temp.ctx(:tA, :admA, 'user');
 SELECT pg_temp.expect_error(format($q$UPDATE bulk_actions SET status = 'confirmed', confirmed_at = now(), target_count = 2 WHERE id = %L$q$, :bk1),
-  'R-PAR-33: only its creator confirms a bulk action (not an Admin)', '%BULK_CONFIRM_CREATOR%');
+  'R-PAR-33: only its creator confirms a bulk action (not an Admin)', '%BULK_CREATOR_ONLY%');
 SELECT pg_temp.ctx(:tA, :agA2, 'user');
 SELECT pg_temp.ok(pg_temp.n(format('SELECT count(*) FROM bulk_actions WHERE id = %L', :bk1)) = 0, 'another agent does not see the action');
 SELECT pg_temp.ctx(:tA, :agA1, 'user');
@@ -634,10 +634,17 @@ SELECT pg_temp.expect_error(format($q$UPDATE bulk_actions SET status = 'draft' W
   'a confirmed action never goes back to draft', '%BULK_LIFECYCLE%');
 -- the runner acts as the creator, one item per transaction
 UPDATE bulk_actions SET status = 'running', started_at = now() WHERE id = :bk1;
-INSERT INTO contact_tags (tenant_id, contact_id, tag_id, added_by_kind, added_by_user_id, bulk_action_id)
-VALUES (:tA, :c5, :tgBuy, 'bulk', :agA1, :bk1);
+INSERT INTO contact_tags (tenant_id, contact_id, tag_id, added_by_kind, added_by_user_id)
+VALUES (:tA, :c5, :tgBuy, 'bulk', :agA1);
+SELECT pg_temp.expect_error(format($q$INSERT INTO contact_tags (tenant_id, contact_id, tag_id, added_by_kind, added_by_user_id)
+  VALUES (%L, %L, %L, 'bulk', %L)$q$, :tA, :c3, :tgVA, :agA1),
+  'R-PAR-8 S7: a protected (fair-housing proxy) tag is never applied in bulk', '%AUDIENCE_PROTECTED_PROXY%');
 UPDATE bulk_action_items SET status = 'done', processed_at = now() WHERE bulk_action_id = :bk1 AND contact_id = :c5;
 UPDATE bulk_action_items SET status = 'skipped', reason_code = 'ALREADY_TAGGED', processed_at = now() WHERE bulk_action_id = :bk1 AND contact_id = :c1;
+SELECT pg_temp.expect_error(format($q$UPDATE bulk_action_items SET status = 'pending', processed_at = NULL WHERE bulk_action_id = %L AND contact_id = %L$q$, :bk1, :c5),
+  'R-PAR-34 S3: a processed item is final (no re-send)', '%BULK_FROZEN%');
+SELECT pg_temp.expect_error(format($q$UPDATE bulk_action_items SET contact_id = %L WHERE bulk_action_id = %L AND contact_id = %L$q$, :c3, :bk1, :c5),
+  'R-PAR-34 S3: an item keeps its person', '%BULK_FROZEN%');
 UPDATE bulk_actions SET status = 'completed', finished_at = now(), counts = '{"done":1,"skipped":1}' WHERE id = :bk1;
 SELECT pg_temp.ctx(:tA, :tlA, 'user');
 SELECT pg_temp.ok(pg_temp.n(format('SELECT count(*) FROM bulk_action_items WHERE bulk_action_id = %L', :bk1)) = 2,
@@ -658,6 +665,13 @@ SELECT pg_temp.expect_error(format($q$INSERT INTO bulk_action_items (tenant_id, 
   'R-PAR-38: one bulk send per address (spouses sharing an email get one)', '%bulk_action_items_one_per_address%');
 SELECT pg_temp.expect_error(format($q$UPDATE bulk_actions SET status = 'confirmed', confirmed_at = now(), target_count = 1 WHERE id = %L$q$, :bkE),
   'a send is confirmed only with its frozen content', '%bulk_actions_check%');
+SELECT pg_temp.expect_error(format($q$UPDATE bulk_actions SET status = 'confirmed', confirmed_at = now(), target_count = 5,
+  subject_snapshot = 'A home', body_snapshot = 'Hi' WHERE id = %L$q$, :bkE),
+  'R-PAR-33 S4: the confirmed count is the frozen target (caps hold on the real number)', '%BULK_TARGET_COUNT%');
+SELECT pg_temp.ctx(:tA, :admA, 'user');
+SELECT pg_temp.expect_error(format($q$UPDATE bulk_actions SET body_snapshot = 'Words the agent never wrote' WHERE id = %L$q$, :bkE),
+  'R-PAR-33 S6: an Admin cannot rewrite an agent''s draft before the agent confirms', '%BULK_CREATOR_ONLY%');
+SELECT pg_temp.ctx(:tA, :agA1, 'user');
 UPDATE bulk_actions SET status = 'confirmed', confirmed_at = now(), target_count = 1,
        subject_snapshot = 'A home you might like', body_snapshot = 'Hi {{contact.first_name}}' WHERE id = :bkE;
 SELECT pg_temp.expect_error(format($q$INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, email_identity_id,
@@ -682,6 +696,8 @@ VALUES (:tA, gen_random_uuid(), :cvA, :c1, 'email', 'outbound', :eid, 'team@a-re
         'Hi Alice', 'sent', 'human', :agA1, 'marketing', now(), now(), :bkE);
 SELECT pg_temp.ok(NOT EXISTS (SELECT 1 FROM v_agent_activity_daily WHERE user_id = :agA1 AND touches > 0),
   'R-PAR-37: a sent bulk email is not a touch in the activity view');
+SELECT pg_temp.expect_error(format($q$UPDATE messages SET bulk_action_id = NULL WHERE bulk_action_id = %L$q$, :bkE),
+  'R-PAR-37 S5: a bulk message cannot be turned into a touch', '%BULK_MESSAGE_IMMUTABLE%');
 -- Alice unsubscribes; the next bulk email to her is refused by the database guard, whatever the app does
 SELECT pg_temp.ctx(:tA, NULL, 'system');
 INSERT INTO consent_events (tenant_id, id, address_kind, address_hmac, address_hint, channel, purpose, event_type, consent_level,
@@ -696,6 +712,12 @@ SELECT pg_temp.expect_error(format($q$INSERT INTO messages (tenant_id, id, conve
   VALUES (%L, gen_random_uuid(), %L, %L, 'email', 'outbound', %L, 'team@a-realty.test', 'alice@example.test', 'Another home', 'Hi Alice',
   'dispatching', 'human', %L, 'marketing', now(), now(), %L)$q$, :tA, :cvA, :c1, :eid, :agA1, :bkE),
   'R-PAR-36 D1: an unsubscribe blocks every remaining bulk email, with no override', '%RECIPIENT_OPTED_OUT%');
+UPDATE bulk_action_items SET status = 'done', processed_at = now() WHERE bulk_action_id = :bkE AND contact_id = :c1;
+SELECT pg_temp.expect_error(format($q$INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, email_identity_id,
+  from_address, to_address, subject, body, status, initiator, initiated_by_user_id, purpose, dispatched_at, occurred_at, bulk_action_id)
+  VALUES (%L, gen_random_uuid(), %L, %L, 'email', 'outbound', %L, 'team@a-realty.test', 'alice@example.test', 'Again', 'Hi Alice',
+  'queued', 'human', %L, 'marketing', now(), now(), %L)$q$, :tA, :cvA, :c1, :eid, :agA1, :bkE),
+  'R-PAR-36 S3: a person whose item is done is never sent the bulk message again', '%BULK_MESSAGE_INVALID%');
 
 -- batch text: off by default, only the Owner turns it on, small actions only
 INSERT INTO bulk_actions (tenant_id, id, kind, created_by_user_id, created_by_role, source, idempotency_key)
@@ -710,9 +732,9 @@ SELECT pg_temp.expect_error($q$UPDATE tenant_settings SET batch_text_enabled = t
 SELECT pg_temp.ctx(:tA, :ownA, 'user');
 UPDATE tenant_settings SET batch_text_enabled = true;
 SELECT pg_temp.ctx(:tA, :agA1, 'user');
-SELECT pg_temp.expect_error(format($q$UPDATE bulk_actions SET status = 'confirmed', confirmed_at = now(), target_count = 201,
-  body_snapshot = 'x' WHERE id = %L$q$, :bkT),
-  'R-PAR-40: a batch text reaches at most 200 people', '%bulk_actions_check%');
+SELECT pg_temp.ok((SELECT bool_or(pg_get_constraintdef(oid) LIKE '%target_count <= 200%') FROM pg_constraint
+                    WHERE conrelid = 'bulk_actions'::regclass),
+  'R-PAR-40: a batch text reaches at most 200 people (CHECK on the confirmed count, which is the real frozen count)');
 UPDATE bulk_actions SET status = 'confirmed', confirmed_at = now(), target_count = 1,
        body_snapshot = 'Open house Sat 1-3. Reply STOP to opt out.' WHERE id = :bkT;
 UPDATE bulk_actions SET status = 'running', started_at = now() WHERE id = :bkT;
@@ -732,7 +754,7 @@ SELECT pg_temp.ctx(:tB, :ownB, 'user');
 DO $$
 DECLARE t text; n bigint; bad text := '';
 BEGIN
-  FOREACH t IN ARRAY ARRAY['note_mentions','tags','contact_tags','contact_stage_events','custom_field_defs','contact_field_values',
+  FOREACH t IN ARRAY ARRAY['tags','contact_tags','contact_stage_events','custom_field_defs','contact_field_values',
      'contact_relationships','message_templates','smart_lists','bulk_actions','bulk_action_items'] LOOP
     EXECUTE format('SELECT count(*) FROM public.%I WHERE tenant_id = %L', t, 'a0000000-0000-7000-8000-000000000001') INTO n;
     IF n <> 0 THEN bad := bad || ' ' || t; END IF;
@@ -744,9 +766,9 @@ SELECT pg_temp.expect_error(format($q$INSERT INTO contact_tags (tenant_id, conta
   VALUES (%L, %L, %L, 'user', %L)$q$, :tA, :c1, :tgBuy, :ownB),
   'tenant B cannot tag a tenant A contact', '%row-level security%');
 SELECT pg_temp.ok((SELECT count(*) FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
-                    WHERE ns.nspname = 'public' AND c.relname IN ('note_mentions','tags','contact_tags','contact_stage_events',
+                    WHERE ns.nspname = 'public' AND c.relname IN ('tags','contact_tags','contact_stage_events',
                       'custom_field_defs','contact_field_values','contact_relationships','message_templates','smart_lists',
-                      'bulk_actions','bulk_action_items') AND c.relrowsecurity AND c.relforcerowsecurity) = 11,
+                      'bulk_actions','bulk_action_items') AND c.relrowsecurity AND c.relforcerowsecurity) = 10,
   'every parity table has FORCE row-level security');
 
 SELECT pg_temp.ok(true, 'ALL FUB PARITY RLS SMOKE CHECKS PASSED');

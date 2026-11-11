@@ -7,7 +7,7 @@
 -- merge. Nothing in code or tests names this file. 0001-0018 are not edited.
 --
 -- What it adds (DATA_MODEL §11): tags + contact_tags (the tag catalog and the one source of a contact's
--- tags), note_mentions and logged-activity columns on notes, contact_stage_events (append-only stage
+-- tags), logged-activity columns on notes, contact_stage_events (append-only stage
 -- history) and stage labels, custom_field_defs + contact_field_values, contact_relationships,
 -- message_templates and the email signature, smart_lists, bulk_actions + bulk_action_items and the Owner's
 -- batch-text switch, stage-entry enrollment on playbooks, list indexes, and two replaced views.
@@ -29,11 +29,12 @@
 -- -----------------------------------------------------------------------------
 -- 1. Contact points: an address never changes; removing a point never un-blocks the person (R-PAR-11, R-PAR-12)
 -- -----------------------------------------------------------------------------
--- Why a point was removed. 'wrong_number' is allowed only for a point already marked wrong_number (by the
--- call-outcome or wrong-number-reply paths, which also record the revoke): only such a point stops counting
--- for the contact's other phones. Points removed before this migration have no reason and keep counting.
+-- Why a point was removed: 'replaced' (replace number), 'old' (remove), or 'wrong_number'. 'wrong_number' is
+-- allowed only when the consent ledger already holds a wrong-number revoke for that address (written by the
+-- call-outcome or wrong-number-reply path): only such a point stops counting for the contact's other phones.
+-- A status edit alone proves nothing (review S1). Points removed before this migration keep counting.
 ALTER TABLE contact_points ADD COLUMN removed_reason text
-  CHECK (removed_reason IN ('typo','not_theirs','replaced','old','duplicate','wrong_number'));
+  CHECK (removed_reason IN ('replaced','old','wrong_number'));   -- set by the action, never asked for
 ALTER TABLE contact_points ADD CONSTRAINT contact_points_removed_reason_removed
   CHECK (removed_reason IS NULL OR removed_at IS NOT NULL);
 
@@ -45,12 +46,19 @@ BEGIN
       USING ERRCODE = 'check_violation';
   END IF;
   IF NEW.removed_reason = 'wrong_number' AND OLD.removed_reason IS DISTINCT FROM 'wrong_number'
-     AND OLD.status <> 'wrong_number' THEN
-    RAISE EXCEPTION 'REMOVED_REASON_WRONG_NUMBER: only a point already marked wrong number can be removed as one'
+     AND NOT EXISTS (SELECT 1 FROM public.consent_events e
+                      WHERE e.tenant_id = NEW.tenant_id AND e.address_hmac = NEW.address_hmac
+                        AND e.source = 'wrong_number' AND e.event_type = 'revoke') THEN
+    RAISE EXCEPTION 'REMOVED_REASON_WRONG_NUMBER: only an address with a recorded wrong-number report is removed as one'
       USING ERRCODE = 'check_violation';
   END IF;
   IF OLD.removed_reason IS NOT NULL AND NEW.removed_at IS NOT NULL AND NEW.removed_reason IS DISTINCT FROM OLD.removed_reason THEN
     RAISE EXCEPTION 'REMOVED_REASON_IMMUTABLE: a removal reason never changes' USING ERRCODE = 'check_violation';
+  END IF;
+  -- a point restored after a wrong-number removal never comes back as anything but a fresh removal (S1)
+  IF OLD.removed_reason = 'wrong_number' AND NEW.removed_at IS NULL THEN
+    RAISE EXCEPTION 'REMOVED_REASON_IMMUTABLE: a confirmed wrong number is not restored; add the number again'
+      USING ERRCODE = 'check_violation';
   END IF;
   RETURN NEW;
 END $$;
@@ -205,7 +213,7 @@ ALTER FUNCTION app.calls_dispatch_guard() OWNER TO app_definer;
 -- Realty OS. It is never a messages/calls row (those are the dispatch record), never a touch, and always
 -- shown as "Logged by <name>".
 ALTER TABLE notes ADD COLUMN edited_at          timestamptz;
-ALTER TABLE notes ADD COLUMN activity_kind      text CHECK (activity_kind IN ('call','text','email','meeting','other'));
+ALTER TABLE notes ADD COLUMN activity_kind      text CHECK (activity_kind IN ('call','text','email'));   -- meetings: appointments
 ALTER TABLE notes ADD COLUMN activity_direction text CHECK (activity_direction IN ('outbound','inbound'));
 ALTER TABLE notes ADD COLUMN activity_at        timestamptz;
 ALTER TABLE notes ADD COLUMN activity_outcome   text
@@ -223,10 +231,12 @@ ALTER TABLE notes ADD CONSTRAINT notes_activity_at_window CHECK (
 ALTER TABLE notes ADD CONSTRAINT notes_logged_activity_on_contact CHECK (source <> 'logged_activity' OR contact_id IS NOT NULL);
 
 -- Only the author edits a note (0001 lets tenant-wide roles update too: they may pin and unpin, not rewrite);
--- an imported note and a call summary keep their body. Logged-activity facts never change after save.
+-- an imported note and a call summary keep their body. The author may correct a logged activity's time and
+-- outcome (never a touch, so nothing hangs on it); its kind and parent never change.
 CREATE FUNCTION app.notes_edit_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-  IF NEW.body IS DISTINCT FROM OLD.body THEN
+  IF NEW.body IS DISTINCT FROM OLD.body OR NEW.activity_at IS DISTINCT FROM OLD.activity_at
+     OR NEW.activity_direction IS DISTINCT FROM OLD.activity_direction OR NEW.activity_outcome IS DISTINCT FROM OLD.activity_outcome THEN
     IF OLD.source IN ('import','call_summary') THEN
       RAISE EXCEPTION 'NOTE_READ_ONLY: imported notes and call summaries are not edited' USING ERRCODE = 'check_violation';
     END IF;
@@ -237,10 +247,8 @@ BEGIN
   END IF;
   IF NEW.source IS DISTINCT FROM OLD.source OR NEW.contact_id IS DISTINCT FROM OLD.contact_id
      OR NEW.deal_id IS DISTINCT FROM OLD.deal_id OR NEW.author_user_id IS DISTINCT FROM OLD.author_user_id
-     OR NEW.activity_kind IS DISTINCT FROM OLD.activity_kind OR NEW.activity_at IS DISTINCT FROM OLD.activity_at
-     OR NEW.activity_direction IS DISTINCT FROM OLD.activity_direction
-     OR NEW.activity_outcome IS DISTINCT FROM OLD.activity_outcome OR NEW.imported IS DISTINCT FROM OLD.imported THEN
-    RAISE EXCEPTION 'NOTE_IMMUTABLE: a note keeps its parent, author and logged facts' USING ERRCODE = 'check_violation';
+     OR NEW.activity_kind IS DISTINCT FROM OLD.activity_kind OR NEW.imported IS DISTINCT FROM OLD.imported THEN
+    RAISE EXCEPTION 'NOTE_IMMUTABLE: a note keeps its parent, author and kind' USING ERRCODE = 'check_violation';
   END IF;
   RETURN NEW;
 END $$;
@@ -253,38 +261,9 @@ CREATE POLICY notes_delete ON notes FOR DELETE USING (
       AND ((contact_id IS NOT NULL AND app.contact_detail_visible(tenant_id, contact_id))
            OR (contact_id IS NULL AND app.deal_visible(tenant_id, deal_id)))));
 
--- Who was @mentioned in a note, and what happened. The notification is decided by a job running AS the
--- mentioned user, under that user's own RLS (R-PAR-2): no definer evaluates another user's visibility.
-CREATE TABLE note_mentions (
-  tenant_id       uuid NOT NULL REFERENCES tenants(id),
-  note_id         uuid NOT NULL,
-  user_id         uuid NOT NULL,
-  status          text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','notified','no_access','inactive')),
-  notification_id uuid,
-  created_at      timestamptz NOT NULL DEFAULT now(),
-  resolved_at     timestamptz,
-  PRIMARY KEY (tenant_id, note_id, user_id),
-  FOREIGN KEY (tenant_id, note_id)         REFERENCES notes (tenant_id, id) ON DELETE CASCADE,
-  FOREIGN KEY (tenant_id, user_id)         REFERENCES memberships (tenant_id, user_id),
-  FOREIGN KEY (tenant_id, notification_id) REFERENCES notifications (tenant_id, id) ON DELETE SET NULL (notification_id),
-  CHECK ((status = 'pending') = (resolved_at IS NULL)),
-  CHECK (status = 'notified' OR notification_id IS NULL)
-);
-CREATE INDEX note_mentions_user_idx ON note_mentions (tenant_id, user_id, created_at DESC);
--- at most 10 people per note; a person never mentions themselves (R-PAR-3)
-CREATE FUNCTION app.note_mentions_guard() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
-  IF app.tenant_id() IS NOT NULL AND NEW.tenant_id IS DISTINCT FROM app.tenant_id() THEN RETURN NEW; END IF;   -- RLS rejects
-  IF EXISTS (SELECT 1 FROM public.notes n WHERE n.tenant_id = NEW.tenant_id AND n.id = NEW.note_id AND n.author_user_id = NEW.user_id) THEN
-    RAISE EXCEPTION 'MENTION_SELF: a note does not mention its own author' USING ERRCODE = 'check_violation';
-  END IF;
-  IF (SELECT count(*) FROM public.note_mentions m WHERE m.tenant_id = NEW.tenant_id AND m.note_id = NEW.note_id) >= 10 THEN
-    RAISE EXCEPTION 'TOO_MANY_MENTIONS: at most 10 people per note' USING ERRCODE = 'check_violation';
-  END IF;
-  RETURN NEW;
-END $$;
-CREATE TRIGGER note_mentions_guard BEFORE INSERT ON note_mentions FOR EACH ROW EXECUTE FUNCTION app.note_mentions_guard();
-
+-- Mentions have no table: the API checks each mentioned person's access AS that person (a read-only
+-- transaction in their own context) while saving the note, and writes a text-free 'mention' notification for
+-- those who can see the person (R-PAR-2, R-PAR-3). The notification row is the record.
 ALTER TABLE notifications DROP CONSTRAINT notifications_kind_check;
 ALTER TABLE notifications ADD CONSTRAINT notifications_kind_check CHECK (kind IN ('lead_offer','first_touch_due',
   'first_touch_escalation','handback','handback_hot','inbound_message','missed_call','pond_new','task_due','promise_due',
@@ -335,7 +314,6 @@ CREATE TABLE contact_tags (
   tag_id           uuid NOT NULL,
   added_by_kind    text NOT NULL CHECK (added_by_kind IN ('user','bulk','import','migrated')),   -- migrated: backfilled from contacts.tags
   added_by_user_id uuid,
-  bulk_action_id   uuid,
   import_batch_id  uuid,
   created_at       timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (tenant_id, contact_id, tag_id),
@@ -344,12 +322,17 @@ CREATE TABLE contact_tags (
   FOREIGN KEY (tenant_id, added_by_user_id) REFERENCES memberships (tenant_id, user_id),
   FOREIGN KEY (tenant_id, import_batch_id)  REFERENCES import_batches (tenant_id, id),
   CHECK ((added_by_kind IN ('user','bulk')) = (added_by_user_id IS NOT NULL)),
-  CHECK ((added_by_kind = 'import') = (import_batch_id IS NOT NULL)),
-  CHECK ((added_by_kind = 'bulk') = (bulk_action_id IS NOT NULL))
+  CHECK ((added_by_kind = 'import') = (import_batch_id IS NOT NULL))
 );
 CREATE INDEX contact_tags_tag_idx ON contact_tags (tenant_id, tag_id, contact_id);
 CREATE FUNCTION app.contact_tags_limit() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+  PERFORM pg_advisory_xact_lock(hashtextextended('ctags:' || NEW.contact_id::text, 0));
+  -- a protected (fair-housing proxy) tag is never applied in bulk (R-PAR-8, review S7)
+  IF NEW.added_by_kind = 'bulk' AND EXISTS (SELECT 1 FROM public.tags t
+       WHERE t.tenant_id = NEW.tenant_id AND t.id = NEW.tag_id AND t.protected_proxy) THEN
+    RAISE EXCEPTION 'AUDIENCE_PROTECTED_PROXY: a protected tag is applied one person at a time' USING ERRCODE = 'check_violation';
+  END IF;
   IF (SELECT count(*) FROM public.contact_tags x WHERE x.tenant_id = NEW.tenant_id AND x.contact_id = NEW.contact_id) >= 100 THEN
     RAISE EXCEPTION 'CONTACT_TAG_LIMIT: a person has at most 100 tags' USING ERRCODE = 'check_violation';
   END IF;
@@ -429,14 +412,15 @@ ALTER FUNCTION app.contacts_stage_history() OWNER TO app_definer;
 CREATE TRIGGER contacts_stage_history AFTER UPDATE OF stage ON contacts
   FOR EACH ROW WHEN (NEW.stage IS DISTINCT FROM OLD.stage) EXECUTE FUNCTION app.contacts_stage_history();
 
--- R-PAR-14: an Agent or ISA cannot park an untouched routed lead outside new/attempting (where the
--- inactivity release does not apply) without reaching them first; marking it lost stays possible.
+-- R-PAR-14: an Agent or ISA cannot park an untouched routed lead outside new/attempting (where the inactivity
+-- release does not apply) without reaching them first. 'lost' is a stage outside them too (review S2): giving
+-- up on such a lead is the Close ownership command, which ends the period instead of sheltering it.
 CREATE FUNCTION app.contacts_stage_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-  IF OLD.stage IN ('new','attempting') AND NEW.stage NOT IN ('new','attempting','lost')
+  IF NEW.stage NOT IN ('new','attempting')
      AND OLD.ownership_state = 'owned' AND OLD.first_touch_due_at IS NOT NULL AND OLD.first_touch_at IS NULL
      AND app.actor_kind() = 'user' AND app.my_role() IN ('agent','isa') THEN
-    RAISE EXCEPTION 'STAGE_NEEDS_CONTACT: reach this lead first, or mark it lost' USING ERRCODE = 'check_violation';
+    RAISE EXCEPTION 'STAGE_NEEDS_CONTACT: reach this lead first, or close it' USING ERRCODE = 'check_violation';
   END IF;
   RETURN NEW;
 END $$;
@@ -469,7 +453,6 @@ CREATE TABLE custom_field_defs (
   field_type         text NOT NULL CHECK (field_type IN ('text','number','date','single_select','multi_select')),
   options            jsonb NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(options) = 'array' AND jsonb_array_length(options) <= 100),
   annual             boolean NOT NULL DEFAULT false,      -- a date that comes round every year (birthday, home anniversary)
-  protected_proxy    boolean NOT NULL DEFAULT false,      -- fair-housing proxy (R-PAR-8): values self-reported, never an audience
   position           smallint NOT NULL DEFAULT 0,
   origin             text NOT NULL DEFAULT 'manual' CHECK (origin IN ('manual','fub_import','csv_import')),
   created_by_user_id uuid,
@@ -489,7 +472,7 @@ CREATE UNIQUE INDEX custom_field_defs_label_live ON custom_field_defs (tenant_id
 CREATE TRIGGER custom_field_defs_touch_updated_at BEFORE UPDATE ON custom_field_defs
   FOR EACH ROW EXECUTE FUNCTION app.touch_updated_at();
 -- at most 50 live fields; key and type never change; options are [{id, label, archived?}] with unique ids and
--- are never removed (archive one instead); protection only tightens unless the Owner lifts it
+-- are never removed (archive one instead). A name matching the fair-housing lexicon is refused by core (R-PAR-18).
 CREATE FUNCTION app.custom_field_defs_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE o jsonb; ids text[] := '{}';
 BEGIN
@@ -517,9 +500,6 @@ BEGIN
                 WHERE NOT EXISTS (SELECT 1 FROM jsonb_array_elements(NEW.options) y WHERE y->>'id' = x->>'id')) THEN
       RAISE EXCEPTION 'CUSTOM_FIELD_OPTION_REMOVED: archive an option instead of removing it' USING ERRCODE = 'check_violation';
     END IF;
-    IF OLD.protected_proxy AND NOT NEW.protected_proxy AND app.my_role() IS DISTINCT FROM 'owner' THEN
-      RAISE EXCEPTION 'CUSTOM_FIELD_PROTECTION_OWNER_ONLY: only the Owner lifts a field''s fair-housing protection' USING ERRCODE = 'check_violation';
-    END IF;
   END IF;
   RETURN NEW;
 END $$;
@@ -534,7 +514,6 @@ CREATE TABLE contact_field_values (
   value_number       numeric CHECK (value_number = value_number AND abs(value_number) < 1e15),
   value_date         date,
   value_options      text[] CHECK (cardinality(value_options) BETWEEN 1 AND 50),
-  self_reported      boolean NOT NULL DEFAULT false,
   updated_by_kind    text NOT NULL CHECK (updated_by_kind IN ('user','bulk','import')),
   updated_by_user_id uuid,
   import_batch_id    uuid,
@@ -556,8 +535,7 @@ CREATE INDEX contact_field_values_text_idx ON contact_field_values (tenant_id, f
 CREATE INDEX contact_field_values_opt_idx  ON contact_field_values USING gin (value_options) WHERE value_options IS NOT NULL;
 CREATE TRIGGER contact_field_values_touch_updated_at BEFORE UPDATE ON contact_field_values
   FOR EACH ROW EXECUTE FUNCTION app.touch_updated_at();
--- the value has the def's type; select values are live option ids; a protected field takes only what the
--- person said (self_reported); an archived field is read-only (R-PAR-17, R-PAR-18)
+-- the value has the def's type; select values are live option ids; an archived field is read-only (R-PAR-17)
 CREATE FUNCTION app.contact_field_values_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE d record;
 BEGIN
@@ -583,9 +561,6 @@ BEGIN
   END IF;
   IF NEW.value_options IS NOT NULL AND cardinality(NEW.value_options) <> (SELECT count(DISTINCT v) FROM unnest(NEW.value_options) v) THEN
     RAISE EXCEPTION 'CUSTOM_VALUE_OPTION: options repeat' USING ERRCODE = 'check_violation';
-  END IF;
-  IF d.protected_proxy AND NOT NEW.self_reported THEN
-    RAISE EXCEPTION 'CUSTOM_VALUE_SELF_REPORTED: a protected field holds only what the person told you' USING ERRCODE = 'check_violation';
   END IF;
   RETURN NEW;
 END $$;
@@ -673,13 +648,8 @@ CREATE TRIGGER message_templates_guard BEFORE UPDATE ON message_templates
 ALTER TABLE memberships ADD COLUMN email_signature text
   CHECK (length(email_signature) BETWEEN 1 AND 1000 AND email_signature !~ '[\x00-\x08\x0b\x0c\x0e-\x1f]');
 
--- provenance of a sent message (nullable; no behaviour hangs on it except the bulk guard below)
-ALTER TABLE messages ADD COLUMN template_id      uuid;
-ALTER TABLE messages ADD COLUMN template_version integer;
+-- the bulk action a message belongs to (never a touch, R-PAR-37); set at insert and never changed
 ALTER TABLE messages ADD COLUMN bulk_action_id   uuid;
-ALTER TABLE messages ADD CONSTRAINT messages_template_fk FOREIGN KEY (tenant_id, template_id)
-  REFERENCES message_templates (tenant_id, id);
-ALTER TABLE messages ADD CONSTRAINT messages_template_version CHECK ((template_id IS NULL) = (template_version IS NULL));
 ALTER TABLE messages ADD CONSTRAINT messages_bulk_human_marketing
   CHECK (bulk_action_id IS NULL OR (initiator = 'human' AND direction = 'outbound' AND purpose = 'marketing'
                                     AND channel IN ('sms','email')));
@@ -698,8 +668,6 @@ CREATE TABLE smart_lists (
   definition_version smallint NOT NULL CHECK (definition_version >= 1),
   sort               text NOT NULL DEFAULT 'last_activity_desc'
                      CHECK (sort IN ('last_activity_desc','created_desc','name_asc','next_task_asc','stage_entered_desc')),
-  ref_tag_ids        uuid[] NOT NULL DEFAULT '{}',       -- computed by core at save (protected-audience check, tag delete)
-  ref_field_ids      uuid[] NOT NULL DEFAULT '{}',
   position           smallint NOT NULL DEFAULT 0,
   updated_by_user_id uuid NOT NULL,
   archived_at        timestamptz,
@@ -746,7 +714,6 @@ CREATE TABLE bulk_actions (
   created_by_role     text NOT NULL CHECK (created_by_role IN ('owner','admin','team_lead','agent','isa','tc')),
   source              text NOT NULL CHECK (source IN ('selection','smart_list')),
   smart_list_id       uuid,
-  definition_sha256   bytea CHECK (octet_length(definition_sha256) = 32),
   params              jsonb NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(params) = 'object'),   -- ids and codes only
   template_id         uuid,
   template_version    integer,
@@ -769,7 +736,6 @@ CREATE TABLE bulk_actions (
   FOREIGN KEY (tenant_id, cancel_requested_by) REFERENCES memberships (tenant_id, user_id),
   FOREIGN KEY (tenant_id, smart_list_id)       REFERENCES smart_lists (tenant_id, id) ON DELETE SET NULL (smart_list_id),
   FOREIGN KEY (tenant_id, template_id)         REFERENCES message_templates (tenant_id, id),
-  CHECK ((source = 'smart_list') = (definition_sha256 IS NOT NULL)),
   CHECK (status = 'draft' OR (kind IN ('email','text')) = (body_snapshot IS NOT NULL)),
   CHECK (kind IN ('email','text') OR (template_id IS NULL AND body_snapshot IS NULL AND subject_snapshot IS NULL)),
   CHECK (kind <> 'email' OR status = 'draft' OR subject_snapshot IS NOT NULL),
@@ -819,8 +785,14 @@ BEGIN
   END IF;
   IF OLD.status <> 'draft' AND (NEW.body_snapshot IS DISTINCT FROM OLD.body_snapshot OR NEW.subject_snapshot IS DISTINCT FROM OLD.subject_snapshot
        OR NEW.template_id IS DISTINCT FROM OLD.template_id OR NEW.template_version IS DISTINCT FROM OLD.template_version
-       OR NEW.target_count IS DISTINCT FROM OLD.target_count OR NEW.definition_sha256 IS DISTINCT FROM OLD.definition_sha256) THEN
+       OR NEW.target_count IS DISTINCT FROM OLD.target_count) THEN
     RAISE EXCEPTION 'BULK_FROZEN: content and target are frozen at confirm' USING ERRCODE = 'check_violation';
+  END IF;
+  IF OLD.status = 'draft' AND (NEW.body_snapshot IS DISTINCT FROM OLD.body_snapshot OR NEW.subject_snapshot IS DISTINCT FROM OLD.subject_snapshot
+       OR NEW.template_id IS DISTINCT FROM OLD.template_id OR NEW.template_version IS DISTINCT FROM OLD.template_version
+       OR NEW.target_count IS DISTINCT FROM OLD.target_count)
+     AND NOT (app.actor_kind() = 'user' AND app.user_id() = NEW.created_by_user_id) THEN
+    RAISE EXCEPTION 'BULK_CREATOR_ONLY: only its creator writes a draft''s content (review S6)' USING ERRCODE = 'check_violation';
   END IF;
   IF NEW.status IS DISTINCT FROM OLD.status AND NOT (
        (OLD.status = 'draft'     AND NEW.status IN ('confirmed','canceled'))
@@ -835,6 +807,12 @@ BEGIN
     END IF;
     IF NEW.kind = 'text' AND NOT EXISTS (SELECT 1 FROM public.tenant_settings s WHERE s.tenant_id = NEW.tenant_id AND s.batch_text_enabled) THEN
       RAISE EXCEPTION 'BATCH_TEXT_DISABLED: the Owner has not turned batch texting on' USING ERRCODE = 'check_violation';
+    END IF;
+    -- the confirmed count is the frozen target, so every cap holds on the real number (review S4)
+    IF NEW.target_count IS DISTINCT FROM (SELECT count(*) FROM public.bulk_action_items i
+                                           WHERE i.tenant_id = NEW.tenant_id AND i.bulk_action_id = NEW.id)
+       OR NEW.target_count = 0 THEN
+      RAISE EXCEPTION 'BULK_TARGET_COUNT: the confirmed count must be the frozen target, and not empty' USING ERRCODE = 'check_violation';
     END IF;
   END IF;
   RETURN NEW;
@@ -868,8 +846,16 @@ BEGIN
                                        WHERE b.tenant_id = NEW.tenant_id AND b.id = NEW.bulk_action_id AND b.status = 'draft') THEN
     RAISE EXCEPTION 'BULK_FROZEN: people are added only before confirm' USING ERRCODE = 'check_violation';
   END IF;
-  IF TG_OP = 'UPDATE' AND (NEW.address_hmac IS DISTINCT FROM OLD.address_hmac AND OLD.address_hmac IS NOT NULL) THEN
-    RAISE EXCEPTION 'BULK_FROZEN: an item keeps its address' USING ERRCODE = 'check_violation';
+  IF TG_OP = 'INSERT' AND NEW.address_hmac IS NULL AND EXISTS (SELECT 1 FROM public.bulk_actions b
+       WHERE b.tenant_id = NEW.tenant_id AND b.id = NEW.bulk_action_id AND b.kind IN ('email','text')) THEN
+    RAISE EXCEPTION 'BULK_ITEM_ADDRESS: a send item names the one address it goes to' USING ERRCODE = 'check_violation';
+  END IF;
+  IF TG_OP = 'UPDATE' AND (NEW.address_hmac IS DISTINCT FROM OLD.address_hmac OR NEW.contact_id IS DISTINCT FROM OLD.contact_id
+                           OR NEW.bulk_action_id IS DISTINCT FROM OLD.bulk_action_id) THEN
+    RAISE EXCEPTION 'BULK_FROZEN: an item keeps its person and address' USING ERRCODE = 'check_violation';
+  END IF;
+  IF TG_OP = 'UPDATE' AND OLD.status <> 'pending' AND NEW.status IS DISTINCT FROM OLD.status THEN
+    RAISE EXCEPTION 'BULK_FROZEN: a processed item is final (no re-send)' USING ERRCODE = 'check_violation';
   END IF;
   RETURN NEW;
 END $$;
@@ -882,13 +868,23 @@ CREATE TRIGGER bulk_action_items_guard BEFORE INSERT OR UPDATE ON bulk_action_it
 CREATE FUNCTION app.messages_bulk_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE b record;
 BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    IF NEW.bulk_action_id IS DISTINCT FROM OLD.bulk_action_id THEN
+      RAISE EXCEPTION 'BULK_MESSAGE_IMMUTABLE: a message keeps its bulk action (a bulk send is never a touch)' USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+  END IF;
   IF NEW.bulk_action_id IS NULL THEN RETURN NEW; END IF;
-  IF TG_OP = 'UPDATE' AND NEW.bulk_action_id IS NOT DISTINCT FROM OLD.bulk_action_id THEN RETURN NEW; END IF;
   SELECT * INTO b FROM public.bulk_actions x WHERE x.tenant_id = NEW.tenant_id AND x.id = NEW.bulk_action_id;
   IF b.id IS NULL OR b.status <> 'running' OR b.kind NOT IN ('email','text')
      OR (b.kind = 'email') <> (NEW.channel = 'email') OR NEW.initiated_by_user_id IS DISTINCT FROM b.created_by_user_id
+     -- a pending item of this person, for exactly the address frozen in it (review S3)
      OR NOT EXISTS (SELECT 1 FROM public.bulk_action_items i
-                     WHERE i.tenant_id = NEW.tenant_id AND i.bulk_action_id = b.id AND i.contact_id = NEW.contact_id) THEN
+                     WHERE i.tenant_id = NEW.tenant_id AND i.bulk_action_id = b.id AND i.contact_id = NEW.contact_id
+                       AND i.status = 'pending'
+                       AND i.address_hmac IN (SELECT p.address_hmac FROM public.contact_points p
+                                               WHERE p.tenant_id = NEW.tenant_id AND p.contact_id = NEW.contact_id
+                                                 AND p.address = NEW.to_address)) THEN
     RAISE EXCEPTION 'BULK_MESSAGE_INVALID: a bulk message belongs to a running send of its creator, to a person in it'
       USING ERRCODE = 'check_violation';
   END IF;
@@ -897,11 +893,9 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
-CREATE TRIGGER messages_bulk_guard BEFORE INSERT OR UPDATE OF bulk_action_id ON messages
+CREATE TRIGGER messages_bulk_guard BEFORE INSERT OR UPDATE ON messages
   FOR EACH ROW EXECUTE FUNCTION app.messages_bulk_guard();
 ALTER TABLE messages ADD CONSTRAINT messages_bulk_action_fk FOREIGN KEY (tenant_id, bulk_action_id)
-  REFERENCES bulk_actions (tenant_id, id);
-ALTER TABLE contact_tags ADD CONSTRAINT contact_tags_bulk_action_fk FOREIGN KEY (tenant_id, bulk_action_id)
   REFERENCES bulk_actions (tenant_id, id);
 
 -- -----------------------------------------------------------------------------
@@ -973,7 +967,7 @@ CREATE OR REPLACE VIEW v_agent_activity_daily WITH (security_invoker = true) AS
 DO $$
 DECLARE t text;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['note_mentions','tags','contact_tags','contact_stage_events','custom_field_defs',
+  FOREACH t IN ARRAY ARRAY['tags','contact_tags','contact_stage_events','custom_field_defs',
      'contact_field_values','contact_relationships','message_templates','smart_lists','bulk_actions','bulk_action_items'] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('ALTER TABLE public.%I FORCE ROW LEVEL SECURITY', t);
@@ -985,18 +979,6 @@ BEGIN
     EXECUTE format($p$CREATE POLICY support_read_only_del ON public.%I AS RESTRICTIVE FOR DELETE USING ((SELECT app.actor_kind()) <> 'support')$p$, t);
   END LOOP;
 END $$;
-
--- note_mentions: whoever can read the note sees who it mentions (never "mentioned = me": a user who lost the
--- contact must not read the row). The author adds mentions as self; only the system resolves them.
-CREATE POLICY note_mentions_select ON note_mentions FOR SELECT USING (
-  EXISTS (SELECT 1 FROM notes n WHERE n.tenant_id = note_mentions.tenant_id AND n.id = note_mentions.note_id));
-CREATE POLICY note_mentions_insert ON note_mentions FOR INSERT WITH CHECK (
-  status = 'pending' AND (SELECT app.actor_kind()) = 'user'
-  AND EXISTS (SELECT 1 FROM notes n WHERE n.tenant_id = note_mentions.tenant_id AND n.id = note_mentions.note_id
-                AND n.author_user_id = (SELECT app.user_id())));
-CREATE POLICY note_mentions_resolve ON note_mentions FOR UPDATE
-  USING ((SELECT app.actor_kind()) = 'system' AND (SELECT app.is_tenant_wide()))
-  WITH CHECK ((SELECT app.actor_kind()) = 'system' AND (SELECT app.is_tenant_wide()));
 
 -- tags: the catalog is team metadata (members read); any member but a TC creates one by typing it; Owner/Admin
 -- rename, recolor, protect, merge and delete; the system writes import tags.
@@ -1123,7 +1105,7 @@ CREATE POLICY bulk_actions_update ON bulk_actions FOR UPDATE
 -- contacts whose detail they see; the creator (the runner acts as them) or the system records outcomes.
 CREATE POLICY bulk_action_items_select ON bulk_action_items FOR SELECT USING (
   EXISTS (SELECT 1 FROM bulk_actions b WHERE b.tenant_id = bulk_action_items.tenant_id AND b.id = bulk_action_items.bulk_action_id)
-  AND app.contact_visible(tenant_id, contact_id));
+  AND app.contact_detail_visible(tenant_id, contact_id));
 CREATE POLICY bulk_action_items_insert ON bulk_action_items FOR INSERT WITH CHECK (
   status = 'pending' AND (SELECT app.actor_kind()) = 'user' AND app.contact_detail_visible(tenant_id, contact_id)
   AND EXISTS (SELECT 1 FROM bulk_actions b WHERE b.tenant_id = bulk_action_items.tenant_id AND b.id = bulk_action_items.bulk_action_id
@@ -1142,7 +1124,7 @@ CREATE POLICY bulk_action_items_update ON bulk_action_items FOR UPDATE
 -- 12. Grants (least privilege, as 0001 §20 / 0018 §20)
 -- -----------------------------------------------------------------------------
 GRANT DELETE ON notes TO app_user;
-GRANT SELECT, INSERT, UPDATE ON note_mentions, custom_field_defs, message_templates, bulk_actions, bulk_action_items TO app_user;
+GRANT SELECT, INSERT, UPDATE ON custom_field_defs, message_templates, bulk_actions, bulk_action_items TO app_user;
 GRANT SELECT, INSERT, UPDATE, DELETE ON tags, contact_field_values, smart_lists TO app_user;
 GRANT SELECT, INSERT, DELETE ON contact_tags, contact_relationships TO app_user;
 GRANT SELECT ON contact_stage_events TO app_user;
@@ -1150,7 +1132,7 @@ GRANT SELECT, INSERT ON contact_stage_events TO app_definer;
 DO $$
 DECLARE t text;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['note_mentions','tags','contact_tags','contact_stage_events','custom_field_defs',
+  FOREACH t IN ARRAY ARRAY['tags','contact_tags','contact_stage_events','custom_field_defs',
      'contact_field_values','contact_relationships','message_templates','smart_lists','bulk_actions','bulk_action_items'] LOOP
     EXECUTE format('GRANT SELECT ON public.%I TO app_definer', t);
     EXECUTE format('GRANT SELECT, UPDATE, DELETE ON public.%I TO app_retention', t);

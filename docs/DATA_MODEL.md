@@ -1029,3 +1029,199 @@ Notation as §4. **smoke** here means `rls_smoke_p23.sql`.
 | E159 | A wet-signed contract is scanned to an image-only PDF | "No text found in this PDF; enter the dates by hand"; no proposals | R-DOC-2 |
 | E160 | A tenant tries to connect a Page it does not manage | The callback's proof fails; nothing is linked; the row stays unconfigured | R-INT-3 |
 | E161 | An Owner approves a shift; the job replays the approval the next day | The second planned row is refused (approval single-use) | R-ADS-2 |
+
+---
+
+# Part 3: FUB parity (migration `0019_fub_parity.sql`, renumbered at merge)
+
+Part 3 covers the everyday contact-management jobs agents do in Follow Up Boss that Realty OS lacked. The gap analysis is `docs/FUB_PARITY.md`, the build is `docs/PARITY_PLAN.md`, and the proof is `packages/db/test/rls_smoke_parity.sql`. It merges two independent drafts (`docs/parity/draft-a.md`, simplicity-first; `docs/parity/draft-b.md`, risk-first) after a security critic and a simplicity critic (ARCHITECTURE §20, "FUB parity design review").
+
+Parts 1 and 2 stay in force and nothing here weakens them:
+- D1 opt-outs are checked in `canContact` and both DB guards, with no override and no bulk exemption.
+- FORCE RLS with `(tenant_id, id)` keys.
+- Ownership changes only through `applyOwnershipCommand`.
+- Every send goes through `dispatchOutbound`.
+- The assistant acts on its own only inside approved playbooks.
+
+## 11. Parity tables
+
+### 11.1 New tables (11)
+
+| Table | Purpose | Key columns | Constraints / triggers | RLS (see §12) |
+|---|---|---|---|---|
+| `tags` | Tenant tag catalog | id, name (trimmed, 1–64), **name_key** (generated `lower(normalize(name, NFKC))`, UQ per tenant), color (12 palette tokens or NULL), protected_proxy, created_by_kind (`user/import`), created_by_user_id | ≤ 1,000 per tenant (advisory-locked count); lifting `protected_proxy` is Owner-only | read: members; create: members except TC, as self, or system (import); rename/recolor/protect: Owner/Admin/system; delete: Owner/Admin |
+| `contact_tags` | The one source of a person's tags | (tenant_id, contact_id, tag_id) PK, added_by_kind (`user/bulk/import/migrated`), added_by_user_id, bulk_action_id, import_batch_id | kind ⇔ provenance column; ≤ 100 per person; contact and tag cascade | read: **contact detail visible**; write: detail visible + as self + not TC, or system |
+| `note_mentions` | Who a note @mentions and what happened | (tenant_id, note_id, user_id) PK, status (`pending/notified/no_access/inactive`), notification_id, resolved_at | ≤ 10 per note; never the author; pending ⇔ unresolved | read: whoever can read the note; insert: the note's author as self, `pending`; resolve: system only |
+| `contact_stage_events` | Append-only stage history | id, contact_id, from_stage, to_stage, actor_kind, actor_user_id, occurred_at | written only by the definer trigger `app.contacts_stage_history` on `contacts.stage` change; UPDATE refused; cascades with the contact | read: contact detail visible; app_user cannot insert |
+| `custom_field_defs` | Tenant-defined typed fields | id, key (`^[a-z][a-z0-9_]{1,40}$`, UQ, immutable), label (UQ live, case-insensitive), field_type (`text/number/date/single_select/multi_select`, immutable), options `[{id,label,archived?}]` (≤ 100, ids unique, never removed), annual (date only), protected_proxy, position, origin (`manual/fub_import/csv_import`), archived_at | ≤ **50 live** per tenant (advisory-locked); key ∉ the built-in protected attribute keys (R-AST-12 list); lifting protection Owner-only | read: members; write: Owner/Admin, or system for import origins |
+| `contact_field_values` | One typed value per person per field | (tenant_id, contact_id, field_id) PK, exactly one of value_text (≤ 1,000) / value_number / value_date / value_options, self_reported, updated_by_kind (`user/bulk/import`), updated_by_user_id, import_batch_id | type matches the def; options are live ids, distinct, single select = 1; a protected field needs `self_reported`; archived field read-only | read: contact detail visible; write: as `contact_tags` |
+| `contact_relationships` | Links between people | id, contact_id, related_contact_id, kind (`spouse_partner/family/household/co_buyer/co_seller/referred_by/other`), label (`other` only), created_by_user_id | not self; one row per unordered pair and kind; `referred_by` directional | read/insert/delete: **both** people detail-visible (+ not TC to write); no update |
+| `message_templates` | Email and text templates | id, scope (`team/personal`), owner_user_id, channel (`sms/email`), name (UQ live per scope/owner/channel), subject (email only, no CR/LF), body (SMS ≤ 1,600, email ≤ 20,000), version, merge_fields (closed set, regex CHECK), updated_by_user_id, archived_at | scope/owner/channel immutable; content change ⇔ version + 1 | team: members read, Owner/Admin write; personal: the owner only (Owner/Admin do not read it); system reads all |
+| `smart_lists` | Saved filter definitions | id, scope, owner_user_id, name, definition jsonb (≤ 8 KB, core Zod v1), definition_version, sort (5 values), ref_tag_ids, ref_field_ids, position, archived_at | scope/owner immutable | team: members read, Owner/Admin/TL write; personal: the owner |
+| `bulk_actions` | One audited bulk job | id, kind (`tag/untag/stage/assign/enroll/email/text`), status (`draft → confirmed → running → completed/canceled/failed`), created_by_user_id + created_by_role (= the creator's role at insert), source (`selection/smart_list` + definition_sha256), params (ids/codes), template_id + version, subject/body snapshot (frozen), target_count, counts, idempotency_key (UQ), lifecycle instants, failure_code | born draft; only the creator, in the same role, confirms; kind/creator/params immutable; content and target frozen after draft; `assign` only Owner/Admin/TL; no TC; text ≤ 200 and confirmed only while the switch is on | read: creator, tenant-wide, creator's TL; write: creator as self, Owner/Admin (cancel), system |
+| `bulk_action_items` | One person in a bulk job | (tenant_id, bulk_action_id, contact_id) PK, status (`pending/done/skipped/blocked/failed/canceled`), reason_code, address_hmac (UQ per action), message_id, processed_at | added only while the action is a draft | read: a visible action **and** the person visible to the reader; insert: the creator, person detail-visible; update: creator or system |
+
+### 11.2 Changed tables
+
+| Table | Change |
+|---|---|
+| `contact_points` | + `removed_reason` (`typo/not_theirs/replaced/old/duplicate/wrong_number`; `wrong_number` only for a point already marked wrong number). Trigger `contact_points_immutable`: contact, kind, address and HMAC never change; a removal reason never changes. |
+| `messages_dispatch_guard`, `calls_dispatch_guard` (replaced) | The "any of the contact's phones" opt-out fan-out also reads **removed** points, unless removed as a confirmed wrong number (R-PAR-12). This only refuses more sends; the rest is verbatim from 0018. |
+| `notes` | + edited_at, activity_kind (`call/text/email/meeting/other`), activity_direction, activity_at, activity_outcome (calls only); `source` + `logged_activity`. Shape CHECKs; activity_at ≤ created_at + 5 min and ≥ created_at − 366 d. Trigger `notes_edit_guard`: only the author changes a body (imported notes and call summaries never); parent, author and logged facts never change. New `notes_delete` policy + DELETE grant. |
+| `notifications.kind` | + `mention`, `bulk_finished` |
+| `contacts` | `tags` retired: backfilled into `tags`/`contact_tags` (first spelling wins). The import lane drops the column (R-PAR-10). Triggers `contacts_stage_history` (definer) and `contacts_stage_guard` (R-PAR-14). Five list indexes on live contacts (stage, last activity, created, source) + `tasks_open_contact_due_idx`. |
+| `tenant_settings` | + `stage_labels` jsonb (keys ⊆ the eight stages, values 1–24 chars, trigger); + `batch_text_enabled` (default false; only the Owner turns it on, trigger) |
+| `playbooks` | + `auto_enroll_stage` (one active playbook per scope/owner/stage; not for `new_lead_response`) |
+| `playbook_enrollments.enrolled_by` | + `stage_change`, `bulk` (bulk ⇒ enrolled_by_user_id) |
+| `memberships` | + `email_signature` (plain text ≤ 1,000, no control characters; self-editable) |
+| `messages` | + template_id + template_version (provenance), bulk_action_id (FK); CHECK: a bulk message is human, outbound, marketing, SMS or email; trigger `messages_bulk_guard`: the action is running, of the message's channel, the sender is its creator, the person is in its frozen target, and a text needs the switch on |
+| views | `contact_timeline` adds stage events and shows a logged activity at the time it happened (`detail = 'logged_activity:<kind>'`); `v_agent_activity_daily` excludes bulk messages from touches. Same columns. |
+
+## 12. Parity RLS and capability matrix
+
+Every new table gets the following:
+- Layer 1: the RESTRICTIVE staff-only `tenant_isolation`, plus `support_read_only_{ins,upd,del}`.
+- FORCE RLS.
+- The `support_read_only` statement trigger.
+
+The role policies are in §11.1. Two rules carry the design:
+- **A person's child rows follow the person.** Tags, field values, stage history and notes are visible exactly when `app.contact_detail_visible` is true, so a pond or offer card never shows them.
+- **Shared things are definitions, not data.** A team list or team template is visible to members, but running it reads only the viewer's own contacts.
+
+| Capability (new `core.can()` action) | Owner | Admin | Team Lead | Agent | ISA | TC |
+|---|---|---|---|---|---|---|
+| `contact.edit` (names, type, intent, stage, points, addresses, tags, custom values, relationships) | ✅ | ✅ | T | O | O | — |
+| `note.write` (own notes; mentions) | ✅ | ✅ | T + pond detail | O + D | O | D |
+| `note.delete` (own; any for ✅) | ✅ | ✅ | own | own | own | own |
+| `activity.log` | ✅ | ✅ | T | O | O | — |
+| `tag.create` (by typing) | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| `tag.manage` (rename, merge, color, protect, delete) | ✅ | ✅ | — | — | — | — |
+| `custom_field.manage` | ✅ | ✅ | — | — | — | — |
+| `settings.stage_labels` | ✅ | ✅ | — | — | — | — |
+| `template.personal` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `template.team_manage` | ✅ | ✅ | — | — | — | — |
+| `smart_list.personal` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ (D) |
+| `smart_list.team_manage` | ✅ | ✅ | ✅ | — | — | — |
+| `bulk.run` (tag, untag, stage, enroll, email) | ✅ | ✅ | T | O | O | — |
+| `bulk.assign` | ✅ | ✅ | T (to team members) | — | — | — |
+| `bulk.text` (also needs the switch) | ✅ | ✅ | T | O | O | — |
+| `settings.batch_text` (turn on) | ✅ 🔒 | off only | — | — | — | — |
+| `playbook.auto_enroll_stage` | team ✅ | team ✅ | — | own agent playbook | — | — |
+| `collaborator.manage` (existing RLS) | ✅ | ✅ | ✅ | contact owner | — | — |
+
+## 13. FUB parity business rules
+
+### Notes, mentions, logged activity
+- **R-PAR-1** A note is readable by exactly whoever sees its person's detail (or its deal, for a deal-only note); there are no private notes. The UI says "Everyone who can see Jane can read this note." [DB, smoke]
+- **R-PAR-2** A mention notifies a user only if, at delivery, that user's **own** RLS shows the note's person (or deal). A job runs the check as that user, then the system resolves the mention row (`notified` / `no_access` / `inactive`) and writes the notification. A mention never grants access. A user who cannot see the person reads neither the note nor its mention rows. When the result is `no_access`, the author gets "Sam can't see Jane, so they weren't told" and a **Share** action (adds a collaborator under existing RLS, audited). [DB, smoke + api job test]
+- **R-PAR-3** A mention notification never contains note text. Its title holds at most the person's first name and initial (tenant `notification_detail`), and its dedupe key is `mention:{note}`. A note mentions at most 10 people and never its author. An edit notifies only newly added people. [DB + api snapshot test]
+- **R-PAR-4** Only the author edits a note's body, which sets `edited_at`. Imported notes and call summaries are never edited. The author deletes their own manual or logged note; a tenant-wide role deletes any note, audited as `note.delete`. Owner/Admin may pin or unpin. A deleted note's evidence refs read `source_available = false`. [DB, smoke]
+- **R-PAR-5** Notes, mentions and logged activities never count as a touch (R-OWN-14 unchanged). [core + view test]
+- **R-PAR-30** A person logs a call, text, email or meeting that happened outside Realty OS as a note with `source = 'logged_activity'` and its kind, direction, time and (calls) outcome. It is never a `messages` or `calls` row, and it is labelled "Logged by <name>" everywhere, at the time it happened. "Log a meeting" for a consult also offers the existing past-appointment + outcome flow. [DB, smoke]
+- **R-PAR-31** A logged activity's time is at most 5 minutes ahead of when it was entered and at most 366 days back. Its facts never change after save; a correction is a delete plus a new entry. [DB, smoke]
+- **R-PAR-32** A logged activity never satisfies or delays first-touch SLA, release or inactivity release, never clears an exception and never appears in touch counts. The Team Lead's exception card shows logged activities in the period as context. Logging "they asked not to be contacted" offers the one-tap person-level do-not-contact (the R-CHAN-3 path); it never only writes a note. [view + core + web]
+
+### Tags
+- **R-PAR-6** Tag names are unique per tenant, case- and width-insensitively (`name_key`), and stored trimmed. The first spelling is kept for display. A tenant has at most 1,000 tags and a person at most 100. [DB, smoke]
+- **R-PAR-7** A person's tags are visible exactly when their detail is. They are written by someone who sees that detail, as themselves, and who is not a TC (or by the system for imports). No tag changes whether anyone can be contacted. Adding a tag that reads like an opt-out (the importer's `TAG_DNC`/`TAG_OPT_OUT`/`TAG_UNSUB` patterns) prompts "Tags don't stop messages. Record 'do not contact' for Jane?", and removing such a tag never lifts anything. [DB, smoke + web]
+- **R-PAR-8** A tag or custom field whose name matches the fair-housing protected-proxy lexicon (core module 20) is `protected_proxy`; Owner/Admin may protect any. Protection is tighten-only: only the Owner lifts it. A protected tag or field works for viewing and one-to-one work. It never appears on a pond card, is never a merge field or an assistant input, and never defines the audience of a bulk email, text or enrollment (`AUDIENCE_PROTECTED_PROXY`, no override). **VERIFY WITH COUNSEL** (which proxies, per state). [DB, smoke + core]
+- **R-PAR-9** Members other than TCs create tags by typing them. Only Owner/Admin rename, recolor, protect, merge or delete. A rename is one row. A merge moves the source's links to the target in one transaction (ON CONFLICT DO NOTHING), rewrites smart lists that reference the source, takes the stricter protection, then deletes the source. All are audited (`tag.rename/merge/delete/protect`, names and counts). [DB, smoke + api]
+- **R-PAR-10** `contacts.tags` is retired. The migration backfills it into `tags` + `contact_tags` (`migrated`). New code never reads it. The import lane moves its writer to `contact_tags`, and its migration then empties and drops the column. [api + migration test]
+
+### People: add, edit, points
+- **R-PAR-11** A contact point's contact, kind, address and HMAC never change. "Editing" a phone or email means removing it (with a reason) and adding the new one. Consent, suppressions and opt-outs stay keyed by HMAC, so the old address keeps its opt-out and the new one starts with whatever its own HMAC carries. [DB, smoke]
+- **R-PAR-12** Removing a point never un-blocks the person. The "any of the person's phones" fan-out for SMS (and DMs) and the voice "any phone" check include removed points. The one exception is a point removed as a **confirmed wrong number**: it must have been marked `wrong_number` first, by the call-outcome or wrong-number-reply path, which records its own revoke. The UI explains any over-block: "Texting Jane is blocked because a number you removed (•••1234) opted out; she can text START from it." [DB guards, smoke + core]
+- **R-PAR-43** `PATCH /contacts/:id` edits names, contact type, intent, timezone, stage and the pond summary (owner/TL), using an optimistic `row_version` (`STALE_CONTACT`). It never edits ownership, attribution, merge or delete state, `do_not_contact_*` or `imported_fields`; the strict Zod body and the existing guards refuse them. Edits are audited as `contact.update`, with field names only for PII. [api]
+- **R-PAR-44** Manual create and adding a point dedup exactly as intake does (sorted per-HMAC locks, `find_contacts_by_address`). An exact match on create is `DUPLICATE_CONTACT` unless `confirmDistinct`. On add-point it is a warning plus a duplicate candidate. A match the caller cannot see reveals only its owner's display name (R-PERM-12). Create may set stage, tags, source (once, at birth) and an address. An Owner/Admin/TL "create for" is a create plus one `assign` command (two ledger events, no SLA). [api + concurrency test]
+- **R-PAR-45** A merge moves the loser's tags, field values (the survivor's value wins when both are set), relationships (self-pairs dropped, pairs deduped) and stage history to the survivor, inside the engine's merge transaction. Notes and mentions already move with the contact's rows per the existing merge (VERIFY in `merge.ts`; extend it if not). [db merge test]
+
+### Stages
+- **R-PAR-13** Stages are the fixed eight (engine meaning: R-OWN-23 inactivity applies to `new`/`attempting`). Owner/Admin may give any of them a display label of 1–24 characters (`tenant_settings.stage_labels`). Code, lists and imports use the keys. [DB, smoke]
+- **R-PAR-14** An Agent or ISA cannot move a routed lead with an unmet first-touch SLA (`first_touch_due_at` set, `first_touch_at` null) out of `new`/`attempting` to anything but `lost` (`STAGE_NEEDS_CONTACT`: "Reach them first, or mark it lost"). This stops a lead being parked where the inactivity release does not apply. A TL/Owner/Admin may do it, audited. Self-created contacts have no SLA and are unaffected. [DB, smoke]
+- **R-PAR-15** Every stage change appends a `contact_stage_events` row, written only by the definer trigger and attributed to the actor of the transaction. It is visible with the person's detail, never changes, and appears in the timeline. [DB, smoke]
+- **R-PAR-16** A playbook may name one stage whose entry enrolls the person (`auto_enroll_stage`; team playbooks are Owner/Admin, an agent's own playbook covers only their own contacts; one active playbook per scope/owner/stage). Enrollment happens only from an approved version, never when a live enrollment exists, and never for a person who cannot be reached. It goes through the existing enrollment path with `enrolled_by = 'stage_change'`, and a skipped enrollment is shown with its reason. A stage change by an import never auto-enrolls. [core + api]
+
+### Custom fields and important dates
+- **R-PAR-17** Custom fields are typed (text, number, date, single select, multi select). There are at most 50 live per tenant. Key and type never change. Options are archived, never removed, and an archived field is read-only. Only Owner/Admin (or an import, as the system) define them. [DB, smoke]
+- **R-PAR-18** A custom field cannot recreate a built-in protected attribute (the R-AST-12 key list). A protected field holds only what the person said (`self_reported`). Protected fields are excluded from assistant prompts, merge fields, bulk audiences, pond cards and default list columns (R-PAR-8). **VERIFY WITH COUNSEL.** [DB, smoke + core]
+- **R-PAR-19** A person's custom values are visible exactly when their detail is, and are written like tags (R-PAR-7). [DB, smoke]
+- **R-PAR-20** An `annual` date field (birthday, home anniversary) drives "coming up in N days" list clauses and reminder tasks. Core computes the next occurrence in the tenant's timezone, and 29 February falls on 28 February in non-leap years. It never sends anything by itself; a send needs a stage-entry or manually enrolled playbook. [core]
+
+### Relationships
+- **R-PAR-21** A relationship exists for a viewer only when they see both people's detail. There is no "hidden relationship" count, and nobody links a person they cannot see. [DB, smoke]
+- **R-PAR-22** A relationship grants no access, merges nothing, moves no opt-out and is never a merge-field source. FUB relationship contacts import as `imported_fields` text only: their phones and emails never become contact points. [api + import test]
+
+### Templates and signature
+- **R-PAR-23** Team templates are read by members and written by Owner/Admin. A personal template is its owner's alone (Owner/Admin do not read it). A TL copies a team template to personal to change it. [DB, smoke]
+- **R-PAR-24** Merge fields are a closed set: `contact.first_name/last_name/display_name`, `agent.first_name/last_name/phone/email` (the sender's own), `team.name`, `brokerage.name`, and `field.<key>` for live, unprotected custom fields. Fallbacks use `{{x|fallback}}`, with no logic. Rendering is a pure core function over a context built for **one** person under the sender's RLS, so a field the sender cannot see is absent. Output is plain text: values are inserted literally in one pass, control characters are stripped, and the subject has no CR/LF. A field with no value and no fallback refuses the send (`MERGE_FIELD_EMPTY`, never "Hi ,"); in bulk it skips that person. [DB CHECK, smoke + core property test]
+- **R-PAR-25** The send path adds brokerage identity and the marketing footer (render.ts, R-GATE-12); a template cannot remove them. The sender's plain-text `email_signature` is appended by the renderer, never parsed as markup. The composer's existing `scheduleAt` becomes a "Send later" picker (one-to-one only). [api]
+- **R-PAR-26** Every content change bumps a template's version. A bulk action freezes the version and the rendered source at confirm. Playbook steps never reference human templates, and a template never makes a send autonomous. [DB, smoke + architecture test]
+
+### Smart lists
+- **R-PAR-27** Lists are personal (owner only) or team (members read; Owner/Admin/TL write). Team lists carry no free-text clauses (no names, phones or emails typed into a shared definition). [DB, smoke + core]
+- **R-PAR-28** A list is a definition, never a stored result. Each run is under the viewer's own RLS and returns only people whose **detail** the viewer sees. Detail-only predicates (tags, fields, tasks, opt-out facets) are `EXISTS` subqueries on RLS-protected tables, so a pond card cannot be found by data its viewer cannot see. [DB, smoke + api per-role test]
+- **R-PAR-29** Definitions are validated by a core Zod schema (v1: AND of up to 20 clauses, plus at most one OR group of up to 10) and compiled only to whitelisted, parameterised Kysely fragments (lint rule + fuzz test; no `sql.raw` with input). Keyset pagination, 50 per page; counts are exact to 10,000, then "10,000+"; statement timeout 3 s (`LIST_TOO_SLOW`). Budget: first page p95 ≤ 400 ms, with count ≤ 800 ms, at 250k contacts / 1M tag links / 2M field values, for an Owner and for an Agent owning 2k, as a seeded CI perf test. [api perf test]
+
+### Bulk actions
+- **R-PAR-33** One person creates, previews and confirms a bulk action, as themselves and in their current role. The record holds that role, and only the creator in that same role confirms. The lifecycle is draft → confirmed → running → completed/failed, with cancel from any live state. Kind, creator, source and parameters never change. Create, confirm, cancel and complete are audited with counts (no PII). Job payloads hold only the action id. [DB, smoke + api]
+- **R-PAR-34** The target is frozen at confirm, from people whose detail the creator sees then; nothing is ever added after. The runner processes one item per transaction **as the creator**, rebuilt from the row while their membership is active, as `dispatchOutbound` rebuilds a human sender. RLS and `can()` therefore re-decide each item. An item no longer visible, merged or deleted is `skipped` with its reason. A suspended creator stops the run. [DB, smoke + api]
+- **R-PAR-35** Per kind:
+  - **tag/untag/stage**: as `contact.edit`, with R-PAR-14 per item.
+  - **assign**: Owner/Admin/TL (within their team) only, one ownership command per person with a derived command id (idempotent), R-OWN-18 checks, no SLA. Per-person notices are replaced by one summary per affected user.
+  - **enroll**: approved version only; `ALREADY_ENROLLED` and unreachable people are skipped.
+  - TCs run none.
+  [DB CHECK + core + api]
+- **R-PAR-36** Every bulk send is one `messages` row per person through `dispatchOutbound`. `canContact` and both DB opt-out guards apply to each message with no bulk exemption, so an unsubscribe or STOP that arrives mid-run blocks the remaining messages. A bulk message must belong to a running action of its channel, sent by its creator, to a person in its frozen target (`messages_bulk_guard`). A client reply between queue and dispatch cancels that item (`CLIENT_REPLIED`). [DB, smoke + api]
+- **R-PAR-37** A bulk message is never a touch. TX1 writes no touch when `bulk_action_id` is set, and `v_agent_activity_daily` excludes bulk messages. Speed-to-lead and the untouched-lead exception are unaffected. [DB view, smoke + dispatch test]
+- **R-PAR-38** One send per address per action: spouses sharing an email get one email, and the preview says "2 people share an address". [DB, smoke]
+- **R-PAR-39** A bulk email is always marketing: unsubscribe link, one-click headers, brokerage name and postal address. The preflight refuses the action without a verified sending domain and the brokerage postal address. **VERIFY WITH COUNSEL** (CAN-SPAM footer wording). [DB CHECK, smoke + api]
+- **R-PAR-40** Batch text (bulk SMS) is **off by default**. Only the Owner turns it on, after re-auth and a typed attestation recorded in `audit_log`. The settings page says plainly that D1 removed consent checks, and that some state laws (for example Florida's FTSA and Oklahoma's telephone solicitation act) regulate automated selection or dialing of marketing texts, require prior express written consent, and limit hours and frequency, none of which this product checks. Owner or Admin may turn it off. A batch text reaches at most 200 people, needs an approved sender registration whose use case covers marketing, and ends with "Reply STOP to opt out". The switch is re-read at every message, so turning it off stops a running batch. **VERIFY WITH COUNSEL before any tenant enables it** (counsel item C-PAR-1). [DB, smoke + api]
+- **R-PAR-41** A skipped or blocked bulk item writes the normal blocked-send `gate_decisions` row (for sends) but raises no `failed_send` exception (as R-MKT-8). The creator gets one `bulk_finished` notification with counts by reason ("Emailed 398 of 412: 9 unsubscribed, 5 no email"). [api]
+- **R-PAR-42** Cancel stops pending items and cancels queued, not-yet-dispatching messages. Done items stay done (no "unsend"), and undoing a tag or stage change is a new bulk action. [api]
+
+### Import
+- **R-PAR-46** The FUB/CSV import extension, inside the existing contacts stage:
+  - **Stages**: the dry run lists distinct FUB stage labels with counts, and an Admin maps each to one of the eight keys (`import_batches.options.stageMap`; changing it resets dry runs). The option `keepStageAsTag` adds the tag `FUB stage: <label>`.
+  - **Tags**: upserted into the catalog before contacts are written (first spelling wins; `TAG_LIMIT` reported).
+  - **Custom fields**: FUB custom fields map to new or existing typed definitions. A value that does not fit is an issue, and its raw text stays in `imported_fields`.
+  - **Existing contacts**: an import never overwrites a value an agent set (E41 fill-empty).
+  - **Revert**: removes exactly the batch's rows unless they were edited since.
+  - No FUB tag ever acts as anything but a tag, except the existing opt-out tag conversion.
+  [core + api e2e]
+
+## 14. FUB parity edge cases
+
+| # | Case | Handling | Rule |
+|---|---|---|---|
+| E162 | Agent @mentions an ISA whose collaborator window expired | Mention `no_access`; author sees "can't see Jane" with Share | R-PAR-2 |
+| E163 | Mentioned TL loses the lead (reassigned) after being notified | Opening the notification is a 404 "You no longer have access"; the notification carried no text | R-PAR-2, R-PAR-3 |
+| E164 | Author edits a note and adds a second mention | Only the new person is resolved and notified | R-PAR-3 |
+| E165 | Agent types "buyer" while "Buyer" exists | The existing tag is used; display stays "Buyer" | R-PAR-6 |
+| E166 | Admin merges "Hot" into "A-Lead" while an agent tags someone "Hot" | One transaction: the agent's insert waits or fails on the deleted tag and the UI retries with the target | R-PAR-9 |
+| E167 | Agent tags someone "DNC" | The tag is saved, and the app offers the real do-not-contact; nothing is blocked by the tag | R-PAR-7 |
+| E168 | Agent removes the mobile that texted STOP, then texts the work phone | Refused `RECIPIENT_OPTED_OUT`; the UI names the removed number | R-PAR-12 |
+| E169 | STOP came from a wrong number on the record | Mark wrong number (call outcome or reply), then remove as wrong number; the real phone becomes textable, and the wrong number itself stays blocked | R-PAR-12 |
+| E170 | Agent "fixes" a typo in a phone | Remove (typo) + add; the old number's history stays with the old HMAC | R-PAR-11 |
+| E171 | Agent moves an untouched routed lead from `new` to `nurture` | `STAGE_NEEDS_CONTACT`; `lost` is allowed | R-PAR-14 |
+| E172 | Stage changes to `active` and two playbooks would auto-enroll (team + agent) | The agent's own playbook wins for their contacts, else the team's; one live enrollment, never two | R-PAR-16 |
+| E173 | Two Admins add the 50th and 51st custom field at once | Advisory lock; the second gets `CUSTOM_FIELD_LIMIT` | R-PAR-17 |
+| E174 | Admin renames option "Pre-approved" to "Preapproved" | Values reference the option id; only the label changes | R-PAR-17 |
+| E175 | Field labelled "Military status" | Refused for the built-in key; a new label that matches the lexicon is created protected, and its values are self-reported only | R-PAR-18 |
+| E176 | Birthday on 29 February | "Coming up" uses 28 February in non-leap years | R-PAR-20 |
+| E177 | Agent sees Alice but not her husband (another agent's lead) | No relationship row is visible; no count | R-PAR-21 |
+| E178 | Erasing one spouse | Their relationship rows, tags, values and stage history cascade; the other spouse is untouched | R-PAR-21 |
+| E179 | A first name contains `{{agent.email}}` | Inserted literally (one pass) | R-PAR-24 |
+| E180 | Team template edited while a bulk email using it runs | The running action uses its frozen snapshot | R-PAR-26 |
+| E181 | Agent runs the TL's team list | Gets only their own people; the page says "Showing people you can see" | R-PAR-28 |
+| E182 | A pond card's tags would match a list filter | Not returned: lists return only detail-visible people | R-PAR-28 |
+| E183 | Agent bulk-emails 300; 20 are reassigned away mid-run | Those items `skipped NOT_VISIBLE`; the new owner's people are not emailed by the old agent | R-PAR-34 |
+| E184 | A selected person unsubscribes during the run | Their item is `blocked RECIPIENT_OPTED_OUT` by the DB guard, with no override | R-PAR-36 |
+| E185 | Owner turns batch text off mid-run | The next text item is refused `BATCH_TEXT_DISABLED`; the rest are skipped with that reason | R-PAR-40 |
+| E186 | The list grew between preview and confirm | Confirm refuses `BULK_TARGET_CHANGED` and shows the new preview | R-PAR-33, R-PAR-34 |
+| E187 | Bulk assign of 200 to an agent at capacity | The engine decides per item; rejections land in `ownership_command_rejections` and the item is `skipped` with the engine's code | R-PAR-35 |
+| E188 | Worker crash mid-chunk | The item's transaction rolls back and stays `pending`; messages already `dispatching` follow the stale-dispatch sweeper (never re-sent) | R-PAR-34 |
+| E189 | A list audience uses the protected tag "VA buyer" for a bulk email | Refused `AUDIENCE_PROTECTED_PROXY`; viewing the list still works | R-PAR-8 |
+| E190 | FUB import brings 1,400 distinct tags | The dry run reports `TAG_LIMIT`; the Admin merges or skips; the raw list stays in `imported_fields` | R-PAR-46 |
+| E191 | Two FUB stages map to `nurture` and the team wants them distinct | `keepStageAsTag` keeps each as a tag | R-PAR-46 |
+| E192 | A logged call is dated tomorrow | Refused (`notes_activity_at_window`) | R-PAR-31 |
+| E193 | Agent logs "they said stop" in free text only | Nothing is blocked; the sheet asks "Did they ask not to be contacted?" with the button | R-PAR-32 |
