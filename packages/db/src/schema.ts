@@ -207,6 +207,7 @@ export interface CallsTable {
   import_record_id: string | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+  ring_user_id: string | null;
 }
 
 /** public.compliance_policy_versions (table) */
@@ -926,6 +927,18 @@ export interface MessageMediaTable {
   tenant_id: string;
   message_id: string;
   object_id: string;
+  position: number | null;
+  provider_media_ref: string | null;
+}
+
+/** public.message_media_skipped (table) */
+export interface MessageMediaSkippedTable {
+  tenant_id: string;
+  message_id: string;
+  position: number;
+  reason: string;
+  declared_type: string | null;
+  created_at: Generated<Timestamp>;
 }
 
 /** public.message_status_events (table) */
@@ -1652,6 +1665,16 @@ export interface VSpeedToLeadTable {
   within_sla: boolean | null;
 }
 
+/** public.voice_settings (table) */
+export interface VoiceSettingsTable {
+  tenant_id: string;
+  ring_timeout_seconds: Generated<number>;
+  voicemail_greeting: string | null;
+  version: Generated<number>;
+  updated_by_user_id: string | null;
+  updated_at: Generated<Timestamp>;
+}
+
 /** public.webhook_events (table) */
 export interface WebhookEventsTable {
   id: string;
@@ -1721,6 +1744,7 @@ export interface DB {
   marketing_activity: MarketingActivityTable;
   memberships: MembershipsTable;
   message_media: MessageMediaTable;
+  message_media_skipped: MessageMediaSkippedTable;
   message_status_events: MessageStatusEventsTable;
   messages: MessagesTable;
   mfa_recovery_codes: MfaRecoveryCodesTable;
@@ -1766,6 +1790,7 @@ export interface DB {
   v_agent_activity_daily: VAgentActivityDailyTable;
   v_pipeline_momentum: VPipelineMomentumTable;
   v_speed_to_lead: VSpeedToLeadTable;
+  voice_settings: VoiceSettingsTable;
   webhook_events: WebhookEventsTable;
 }
 
@@ -1823,6 +1848,7 @@ export const TABLE_NAMES = [
   'marketing_activity',
   'memberships',
   'message_media',
+  'message_media_skipped',
   'message_status_events',
   'messages',
   'mfa_recovery_codes',
@@ -1865,6 +1891,7 @@ export const TABLE_NAMES = [
   'tenants',
   'transcripts',
   'users',
+  'voice_settings',
   'webhook_events',
 ] as const;
 

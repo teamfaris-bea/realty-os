@@ -65,6 +65,8 @@ Give the orchestrator a stop grace period of at least `SHUTDOWN_DRAIN_MS + SHUTD
 
 The nginx access log omits query strings, because reset, invite and unsubscribe tokens travel there.
 
+**Security headers.** The `web` image's nginx sends the web app's security headers (`webSecurityHeaders` in `apps/web/security-headers.ts`: the strict CSP with `frame-ancestors 'none'`, nosniff, Referrer-Policy, Permissions-Policy, COOP, CORP, X-Frame-Options) on every page, asset and SPA-fallback response, from the generated snippet `deploy/security-headers.conf`. `/api/` responses carry only the API's own headers. After changing the policy, run `node deploy/render-security-headers.mjs` and commit the snippet; `pnpm --filter @realty/web test` fails while it is stale or while any nginx location drifts from the policy (SECURITY §2.1). Add HSTS at the TLS-terminating edge.
+
 ## 3. Database and the release step
 
 Two **different** roles:
@@ -153,6 +155,14 @@ Choosing a real vendor without its credentials fails in every environment. The f
 | `S3_PREFIX` | no | key prefix inside the bucket |
 | `S3_SSE`, `S3_KMS_KEY_ID` | no | `none` (default), `AES256` or `aws:kms`. Objects are already envelope-encrypted by the app (per-object DEK), so SSE is defence in depth. |
 
+**Follow Up Boss import** (`FUB_PROVIDER=real` for API-key imports; **VERIFY** the adapter against a live account first)
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `FUB_BASE_URL` | no | default `https://api.followupboss.com/v1`. Must be https on the default port, with no credentials, query or fragment, and its host must be in `FUB_ALLOWED_HOSTS`. |
+| `FUB_ALLOWED_HOSTS` | no | comma-separated lowercase host names (no scheme, port, path or wildcard); default `api.followupboss.com`. The API and worker refuse to start when either FUB setting is invalid, naming the key (SECURITY §2.9). |
+| `FUB_SYSTEM_NAME`, `FUB_SYSTEM_KEY` | if FUB requires them | registered-system headers (`X-System` / `X-System-Key`); both or neither |
+
 ## 5. Telephony: Twilio
 
 **Accounts.** You hold one master account. The app creates a subaccount per tenant (its auth token is stored field-encrypted under the tenant key), which keeps each team's numbers, logs and opt-out lists separate. Numbers bought through the app get their webhooks configured automatically: SMS `…/api/webhooks/telephony/sms`, voice and status `…/api/webhooks/telephony/voice`.
@@ -229,6 +239,8 @@ The app's sending-domain check (`POST /api/sending-domains/:id/verify`) looks up
 |---|---|---|
 | Postmark | Inbound stream: inbound domain `in.<host>` (MX `inbound.postmarkapp.com`, **VERIFY**). Webhook `…/api/webhooks/email/postmark/inbound` | message-stream webhooks for Delivery, Bounce, Spam Complaint, Subscription Change, Open, Click, all to `…/api/webhooks/email/postmark/events` (Basic auth). Set `SMTP_VENDOR=postmark`. |
 | SendGrid | Inbound Parse: host `in.<host>`, MX `mx.sendgrid.net`. URL `…/api/webhooks/email/sendgrid/inbound` (Basic auth). Leave "POST the raw, full MIME message" **off**. | Event Webhook `…/api/webhooks/email/sendgrid/events` with **Signed Event Webhook** on; copy its public key into `SENDGRID_EVENT_PUBLIC_KEY`. The ECDSA signature and timestamp are checked within ±5 minutes. Set `SMTP_VENDOR=sendgrid`. |
+| Amazon SES | not parsed: use the generic format through a bridge (or another vendor's inbound) | SNS topic subscription `…/api/webhooks/email/ses/events` (SNS signature, no Basic auth). Set `SMTP_VENDOR=ses`, `SMTP_SES_CONFIGURATION_SET`, add `ses` to `EMAIL_INBOUND_FORMATS` and list the topic in `SES_SNS_TOPIC_ARNS`. Setup below. |
+| Mailgun | not parsed: use the generic format through a bridge | Webhooks `…/api/webhooks/email/mailgun/events` (HMAC signature, no Basic auth). Set `SMTP_VENDOR=mailgun`, add `mailgun` to `EMAIL_INBOUND_FORMATS`, and copy the webhook signing key into `MAILGUN_WEBHOOK_SIGNING_KEY`. Setup below. |
 | others | the generic signed JSON format (`/api/webhooks/email/inbound`, `X-Realty-Signature`) through a small bridge | `/api/webhooks/email/events`, same format |
 
 Event effects:
@@ -239,7 +251,23 @@ Event effects:
 - Soft bounces and unknown events change nothing.
 - Opens and clicks are behaviour **signals**, never facts.
 
-Amazon SES and Mailgun can send through SMTP here, but their event webhooks (SNS, Mailgun signatures) are not parsed yet. Bridge them to the generic format or use Postmark or SendGrid for events.
+**Amazon SES events (through Amazon SNS).** The vendor console steps are **VERIFY** against your AWS account.
+
+1. **SNS topic.** In SNS, create a Standard topic in the SES region, for example `realty-ses-events`. Put its ARN in `SES_SNS_TOPIC_ARNS` (comma-separated if you have several) and add `ses` to `EMAIL_INBOUND_FORMATS`. Deploy this first: the endpoint only accepts topics on that list.
+2. **Configuration set.** In SES, create the configuration set named in `SMTP_SES_CONFIGURATION_SET`. Add an event destination of type SNS that points at the topic, with the event types Bounces, Complaints, Deliveries, Rejects, Rendering failures, and optionally Opens, Clicks and Subscriptions. Every send carries `X-SES-CONFIGURATION-SET`, and our ref goes in the `realty_ref` message tag.
+3. **Original headers.** If a ref can contain characters that SES tags do not allow, it travels only in `X-Realty-Ref`. Turn on "include original headers" for the destination (**VERIFY** where the console shows it) so that SES events still carry the ref.
+4. **HTTPS subscription.** On the topic, create a subscription with protocol HTTPS and endpoint `https://app.example.com/api/webhooks/email/ses/events`. Leave raw message delivery **off**: the app needs the SNS envelope to check the signature. SNS posts a SubscriptionConfirmation; the app checks its signature and topic, then confirms it by GET to the `SubscribeURL`, but only when that URL is https on `sns.<region>.amazonaws.com`. The subscription should then show as Confirmed. If it does not, check the API log for `SNS_SUBSCRIPTION_CONFIRMED`, then use "Request confirmation" in the console.
+5. **Security.** Each message must carry a valid SNS signature (SignatureVersion 1 or 2). The signing certificate is fetched only from `https://sns.<region>.amazonaws.com(.cn)/….pem` and cached in memory. The `TopicArn` must be listed, because AWS signs the messages of anyone's topic. The SNS `Timestamp` may be at most **1 hour** old: SNS keeps the original timestamp when it retries, and retries can run for up to an hour. A replay inside that hour is a duplicate of the same SNS `MessageId`, so nothing happens twice. The API needs outbound HTTPS to `sns.<region>.amazonaws.com`.
+6. **Mapping.** A Permanent bounce is a hard bounce. Transient and Undetermined bounces are ignored. A complaint is a complaint. A Subscription event is an unsubscribe only when SES reports an opt-out (unsubscribe from all, or a topic set to OptOut). Reject and Rendering Failure mark the message failed. Send, DeliveryDelay and anything unknown are ignored.
+
+**Mailgun events.** The vendor console steps are **VERIFY** against your Mailgun account.
+
+1. Under Sending → Webhooks for the sending domain, copy the **HTTP webhook signing key** into `MAILGUN_WEBHOOK_SIGNING_KEY`, add `mailgun` to `EMAIL_INBOUND_FORMATS`, and deploy.
+2. Add `https://app.example.com/api/webhooks/email/mailgun/events` for Permanent Failure, Temporary Failure, Spam Complaints, Unsubscribes and Delivered, and optionally Opens and Clicks. These are JSON webhooks; the legacy form-encoded webhooks are not supported.
+3. Each delivery is checked as hex HMAC-SHA256(signing key, `timestamp + token`), in constant time, with the timestamp within ±5 minutes. Our ref travels in `X-Mailgun-Variables` and comes back as `user-variables.realty_ref`.
+4. **Mapping.** A failure with severity permanent is a hard bounce, including Mailgun's own suppress-bounce, suppress-unsubscribe and suppress-complaint failures. A temporary failure is ignored. `complained`, `unsubscribed`, `delivered`, `opened` and `clicked` map one to one. `rejected` marks the message failed. Anything else is ignored.
+
+In production, `SMTP_VENDOR=ses` or `mailgun` without its event format is refused at startup, unless `EMAIL_WEBHOOK_SECRET` is set for a bridge to the generic format. Bounces, complaints and unsubscribes must reach the app.
 
 ## 7. Object storage
 

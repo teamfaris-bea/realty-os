@@ -221,3 +221,23 @@ export const COMMS_REQUEST_SCHEMAS = {
   DomainBody,
   IdentityBody,
 };
+
+// ---- inbound calls: ring timeout and voicemail greeting (comms/voice.ts) -----------------------------
+
+export const VoiceSettingsSchema = z.object({
+  /** how long an inbound call rings the agent before voicemail (5–60 s) */
+  ringTimeoutSeconds: z.number().int(),
+  /** the team's own greeting, or null for the default */
+  voicemailGreeting: z.string().nullable(),
+  /** what callers hear when no greeting is set; a fixed recording notice always follows either one */
+  defaultGreeting: z.string(),
+  recordingNotice: z.string(),
+  /** 0 before the first save */
+  version: z.number().int(),
+});
+export const VoiceSettingsResponse = z.object({ settings: VoiceSettingsSchema });
+export const VoiceSettingsBody = z.strictObject({
+  version: z.number().int().min(0),
+  ringTimeoutSeconds: z.number().int().min(5).max(60),
+  voicemailGreeting: z.string().max(500).nullable(),
+});

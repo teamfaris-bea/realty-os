@@ -109,3 +109,89 @@ describe('production configuration', () => {
     for (const secret of ['twilio-master-token-secret', 'smtp-password-secret', 's3-secret-access-key', 'basic-password-secret-123', 'sk-ant-secret', 'AKIDEXAMPLE']) expect(s).not.toContain(secret);
   });
 });
+
+describe('FUB configuration (FUB_BASE_URL / FUB_ALLOWED_HOSTS, SECURITY §2.9)', () => {
+  it('defaults to the fake and to api.followupboss.com; valid overrides load (hosts trimmed, deduplicated)', () => {
+    expect(loadConfig(base()).fub).toEqual({ provider: 'fake', baseUrl: 'https://api.followupboss.com/v1', allowedHosts: ['api.followupboss.com'] });
+    const c = loadConfig(base({ FUB_PROVIDER: 'real', FUB_BASE_URL: 'https://fub.example.com/v1/', FUB_ALLOWED_HOSTS: ' api.followupboss.com, fub.example.com,fub.example.com ', FUB_SYSTEM_NAME: 'RealtyOS', FUB_SYSTEM_KEY: 'fub-system-key-secret' }));
+    expect(c.fub).toEqual({ provider: 'real', baseUrl: 'https://fub.example.com/v1', allowedHosts: ['api.followupboss.com', 'fub.example.com'], system: { name: 'RealtyOS', key: 'fub-system-key-secret' } });
+    expect(JSON.stringify(redactConfig(c))).not.toContain('fub-system-key-secret');
+    expect(() => loadConfig(base({ FUB_PROVIDER: 'live' }))).toThrow(/FUB_PROVIDER must be one of fake, real/);
+  });
+
+  it('refuses an allow-list entry that is not a lowercase public host name (scheme, port, path, wildcard, IP, internal), naming the key only', () => {
+    for (const bad of ['https://api.followupboss.com', 'api.followupboss.com:443', 'api.followupboss.com/v1', '*.followupboss.com', 'API.FollowUpBoss.com', '10.0.0.1', 'localhost', 'fub.internal', 'user@fub.example.com']) {
+      let msg = '';
+      try {
+        loadConfig(base({ FUB_ALLOWED_HOSTS: `api.followupboss.com,${bad}` }));
+      } catch (e) {
+        expect(e).toBeInstanceOf(ConfigError);
+        msg = (e as Error).message;
+      }
+      expect(msg, bad).toMatch(/FUB_ALLOWED_HOSTS must list lowercase public host names/);
+      expect(msg, bad).not.toContain(bad);
+    }
+  });
+
+  it('refuses a base URL whose host is not allowed, or that is not https on the default port without credentials, naming the key only', () => {
+    const cases: Record<string, RegExp> = {
+      'https://fub.example.com/v1': /FUB_BASE_URL host must be listed in FUB_ALLOWED_HOSTS/,
+      'https://169.254.169.254/latest': /FUB_BASE_URL must be https/,
+      'http://api.followupboss.com/v1': /FUB_BASE_URL must be https/,
+      'https://api.followupboss.com:8443/v1': /FUB_BASE_URL must be https/,
+      'https://user:pw-secret@api.followupboss.com/v1': /FUB_BASE_URL must be https/,
+      'https://api.followupboss.com/v1?x=1': /FUB_BASE_URL must be https/,
+      'not a url': /FUB_BASE_URL must be https/,
+    };
+    for (const [url, re] of Object.entries(cases)) {
+      let msg = '';
+      try {
+        loadConfig(base({ FUB_BASE_URL: url }));
+      } catch (e) {
+        expect(e).toBeInstanceOf(ConfigError);
+        msg = (e as Error).message;
+      }
+      expect(msg, url).toMatch(re);
+      expect(msg, url).not.toContain(url);
+      expect(msg).not.toContain('pw-secret');
+    }
+    expect(loadConfig(base({ FUB_BASE_URL: 'https://fub.example.com/v1', FUB_ALLOWED_HOSTS: 'fub.example.com' })).fub.baseUrl).toBe('https://fub.example.com/v1');
+  });
+
+  it('FUB_SYSTEM_NAME and FUB_SYSTEM_KEY go together', () => {
+    expect(() => loadConfig(base({ FUB_SYSTEM_NAME: 'RealtyOS' }))).toThrow(/missing FUB_SYSTEM_KEY/);
+    expect(() => loadConfig(base({ FUB_SYSTEM_KEY: 'k' }))).toThrow(/missing FUB_SYSTEM_NAME/);
+  });
+});
+
+describe('Amazon SES and Mailgun event formats (EMAIL_INBOUND_FORMATS=ses,mailgun)', () => {
+  const ARN = 'arn:aws:sns:us-east-1:123456789012:ses-events';
+  it('ses needs SES_SNS_TOPIC_ARNS (valid ARNs), mailgun needs MAILGUN_WEBHOOK_SIGNING_KEY; neither needs the Basic credentials', () => {
+    const noBasic = { EMAIL_WEBHOOK_BASIC_USER: undefined, EMAIL_WEBHOOK_BASIC_PASSWORD: undefined };
+    expect(() => loadConfig(prodEnv({ ...noBasic, EMAIL_INBOUND_FORMATS: 'ses,mailgun' }))).toThrow(/missing SES_SNS_TOPIC_ARNS, MAILGUN_WEBHOOK_SIGNING_KEY/);
+    expect(() => loadConfig(base({ EMAIL_INBOUND_FORMATS: 'ses', SES_SNS_TOPIC_ARNS: ' , ' }))).toThrow(/missing SES_SNS_TOPIC_ARNS/);
+    let msg = '';
+    try {
+      loadConfig(base({ EMAIL_INBOUND_FORMATS: 'ses', SES_SNS_TOPIC_ARNS: `${ARN},https://secret-looking.example/topic` }));
+    } catch (e) {
+      expect(e).toBeInstanceOf(ConfigError);
+      msg = (e as Error).message;
+    }
+    expect(msg).toMatch(/SES_SNS_TOPIC_ARNS must list SNS topic ARNs/);
+    expect(msg).not.toContain('secret-looking');
+    const c = loadConfig(prodEnv({ ...noBasic, EMAIL_INBOUND_FORMATS: 'ses,mailgun', SES_SNS_TOPIC_ARNS: `${ARN}, arn:aws-cn:sns:cn-north-1:123456789012:b`, MAILGUN_WEBHOOK_SIGNING_KEY: 'mailgun-signing-key-secret' }));
+    expect(c.emailInbound).toEqual({ formats: ['ses', 'mailgun'], sesSnsTopicArns: [ARN, 'arn:aws-cn:sns:cn-north-1:123456789012:b'], mailgunWebhookSigningKey: 'mailgun-signing-key-secret' });
+    expect(JSON.stringify(redactConfig(c))).not.toContain('mailgun-signing-key-secret');
+    // postmark/sendgrid alongside still need the Basic credentials
+    expect(() => loadConfig(prodEnv({ ...noBasic, EMAIL_INBOUND_FORMATS: 'postmark,ses', SES_SNS_TOPIC_ARNS: ARN }))).toThrow(/missing EMAIL_WEBHOOK_BASIC_USER, EMAIL_WEBHOOK_BASIC_PASSWORD/);
+  });
+
+  it('production: an SES or Mailgun relay without its event format (or a generic-format bridge) is refused, so bounces, complaints and unsubscribes always arrive', () => {
+    expect(() => loadConfig(prodEnv({ SMTP_VENDOR: 'ses' }))).toThrow(/SMTP_VENDOR=ses needs ses in EMAIL_INBOUND_FORMATS/);
+    expect(() => loadConfig(prodEnv({ SMTP_VENDOR: 'mailgun' }))).toThrow(/SMTP_VENDOR=mailgun needs mailgun in EMAIL_INBOUND_FORMATS/);
+    expect(loadConfig(prodEnv({ SMTP_VENDOR: 'ses', EMAIL_INBOUND_FORMATS: 'ses', SES_SNS_TOPIC_ARNS: ARN })).smtp?.vendor).toBe('ses');
+    expect(loadConfig(prodEnv({ SMTP_VENDOR: 'mailgun', EMAIL_WEBHOOK_SECRET: 'e'.repeat(32) })).smtp?.vendor).toBe('mailgun');
+    // development is not blocked (fakes and local relays)
+    expect(loadConfig(base({ EMAIL_PROVIDER: 'smtp', SMTP_HOST: 'localhost', ACCOUNT_EMAIL_FROM: 'a@b.test', SMTP_VENDOR: 'ses' })).smtp?.vendor).toBe('ses');
+  });
+});

@@ -51,7 +51,7 @@ export function reconcileHandler(depsFor: DepsFor = defaultDeps): StandaloneJobH
   };
 }
 
-export const RecordingCopyPayload = jobPayload({ callRef: z.string().regex(/^[A-Za-z0-9_-]{4,64}$/), recordingRef: z.string().regex(/^[A-Za-z0-9_-]{4,64}$/), durationS: z.number().int().min(0).max(86_400) });
+export const RecordingCopyPayload = jobPayload({ callRef: z.string().regex(/^[A-Za-z0-9_-]{4,64}$/), recordingRef: z.string().regex(/^[A-Za-z0-9_-]{4,64}$/), durationS: z.number().int().min(0).max(86_400), voicemail: z.boolean().optional() });
 export type RecordingCopyPayload = z.infer<typeof RecordingCopyPayload>;
 
 export function recordingCopyHandler(depsFor: DepsFor = defaultDeps): StandaloneJobHandler<RecordingCopyPayload> {
@@ -62,7 +62,7 @@ export function recordingCopyHandler(depsFor: DepsFor = defaultDeps): Standalone
     via: 'provider',
     schema: RecordingCopyPayload,
     async run(ctx, p) {
-      const r = await onRecordingReady({ tenantId: ctx.actor.tenantId, providerCallRef: p.callRef, recordingRef: p.recordingRef, durationS: p.durationS }, depsFor(ctx.providers), ctx.actor);
+      const r = await onRecordingReady({ tenantId: ctx.actor.tenantId, providerCallRef: p.callRef, recordingRef: p.recordingRef, durationS: p.durationS, ...(p.voicemail ? { voicemail: true } : {}) }, depsFor(ctx.providers), ctx.actor);
       ctx.log.info('recording', { kind: RECORDING_COPY_JOB.kind, jobId: ctx.job.id.toString(), code: r.kind === 'refused' ? r.reason : r.kind });
     },
   };
