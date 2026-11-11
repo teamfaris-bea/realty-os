@@ -383,9 +383,13 @@ Encrypt both and store them away from the host. Roles are cluster-wide, so a dum
      realty-api:<version> node apps/api/dist/crypto/rotateKekMain.js
    ```
 
-   It re-wraps every tenant key and re-encrypts the data under platform keys (users' MFA secrets and stored webhook payloads) in one transaction, then prints counts. The tenant data itself is untouched, because it sits under the tenant keys, which do not change. It is idempotent: rows already under the new KEK are skipped, so an interrupted run can simply be repeated. A wrong "previous" key aborts without changing anything.
-4. Start the API and worker with the new `KEK_BASE64` and `KEK_REF`. Check `/api/ready`, an MFA login and opening a recording.
+   With the compose stack, add `--network realty_default` so the container can reach the `postgres` host named in `MIGRATION_DATABASE_URL`. Without Docker, the same command is `node apps/api/dist/crypto/rotateKekMain.js` with those five variables set. `-e` overrides the env file's `KEK_BASE64` and `KEK_REF`, so the env file can still hold the old values while the command runs.
+
+   It re-wraps every tenant key and re-encrypts the data under platform keys (users' MFA secrets and stored webhook payloads) in one transaction, then prints counts (`kek rotation ok: 3 tenant keys re-wrapped, 1 MFA secrets and 4 webhook payloads re-encrypted, 0 already under the new KEK`). The tenant data itself is untouched, because it sits under the tenant keys, which do not change. It is idempotent: rows already under the new KEK are skipped, so an interrupted run can simply be repeated. A wrong "previous" key aborts without changing anything.
+4. Put the new `KEK_BASE64` and `KEK_REF` in the secret store and the env file, then start the API and worker. Check `/api/ready`, an MFA login and opening a stored object (a recording, or an import file's snapshot). **`/api/ready` does not detect a wrong KEK:** an API started with the old KEK after the rotation answers `ready`, while every MFA verification fails with 500 (`DecryptError` in the log). The MFA login is the check that matters.
 5. Keep the old KEK until the oldest backup that needs it has expired (PITR window plus backup retention), then destroy it.
+
+**Rehearsed (2026-11-11, seeded demo tenant):** a random "previous" key aborted with `a tenant key opens with neither KEK (tenant key field v1); nothing was changed` and left `tenant_keys` and the MFA ciphertexts byte-identical. A run killed with SIGKILL while it waited inside its transaction changed nothing either. The real run, through the documented `docker run` command, took 0.4 s including container start (3 tenant keys, 1 MFA secret, 4 webhook payloads). A re-run reported `8 already under the new KEK` and changed nothing. With the new KEK: ready, MFA sign-in, a contact and an import file's decryption by the worker all passed.
 
 A KMS-backed KEK (wrap and unwrap as KMS calls) is a drop-in for the same interface (`crypto/kek.ts`) but is not built yet. It needs a cloud account.
 
