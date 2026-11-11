@@ -28,6 +28,7 @@ import { conversationOf, tenantFacts } from '../comms/repos/gate.js';
 import { asSystem, asUser } from '../comms/runtime.js';
 import { AppError } from '../errors.js';
 import { senderSignature } from '../templates/repos/signature.js';
+import { isListingSellerUpdate, sendSellerUpdate } from '../sellerUpdates/service.js';
 import * as A from './repos/actions.js';
 import { contactCore } from './repos/context.js';
 import type { AssistantDeps } from './types.js';
@@ -98,6 +99,17 @@ const approvalKey = (actionId: string) => `assistant-approve:${actionId}`;
 
 /** POST /assistant/actions/:id/approve */
 export async function approveAction(actor: UserActor, actionId: string, input: ApproveInput, deps: AssistantDeps): Promise<ApproveResult> {
+  // Module 28's branch (PHASE2_3_PLAN §5.3): a listing-bound seller update is approved and sent by
+  // sellerUpdates/service.ts: the listing agent only, the recommendation, the assembled_through watermark
+  // (SELLER_UPDATE_STALE) and one informational message per reachable seller through dispatchOutbound.
+  const listingBound = await asUser(deps, actor, async (tx) => {
+    const a = await A.actionById(tx, actionId);
+    return a !== null && a.ownerUserId === actor.userId && isListingSellerUpdate(a);
+  });
+  if (listingBound) {
+    const r = await sendSellerUpdate(actor, actionId, { commandId: input.commandId, recommendation: input.editedPayload?.recommendation }, deps);
+    return { actionId: r.actionId, status: r.status, result: r.result, messageId: r.messageId, decision: null };
+  }
   type Out = { kind: 'done'; result: ApproveResult } | { kind: 'stale'; inboundSeq: number; pinned: number | null } | { kind: 'invalidated' } | { kind: 'send'; plan: Planned };
   const out: Out = await asUser(deps, actor, async (tx, now) => {
     const peek = await A.actionById(tx, actionId);
