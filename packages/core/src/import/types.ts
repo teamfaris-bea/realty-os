@@ -411,6 +411,15 @@ export interface Counts {
   duplicate: number;
 }
 
+/**
+ * Owner decision B7 (2026-11-11, E233): what a Follow Up Boss account holds that the import never brings over,
+ * counted from one-record pages (`_metadata.total`, never a record). Null: it could not be counted.
+ */
+export interface NotImportedCounts {
+  tasks: number | null;
+  appointments: number | null;
+}
+
 export interface CountDiff {
   key: keyof Counts;
   source: number;

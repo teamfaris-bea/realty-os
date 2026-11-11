@@ -366,11 +366,21 @@ describe('M1 M2 M5: a full staged FUB migration, category by category, then undo
     expect((await batchOf(w.admin, b.id)).status).toBe('committed');
   });
 
-  it('M1 gap: FUB tasks and appointments are neither imported nor mentioned to the Owner', async () => {
-    const bb = await batchOf(w.admin, b.id);
-    // what the importer did read: six collections; tasks and appointments were never requested
+  // Owner decision B7 (2026-11-11). Before it this test pinned the gap: FUB tasks and appointments were neither
+  // imported nor mentioned, so an Owner could switch over without knowing their open tasks stayed behind.
+  it('E233 M1: FUB tasks and appointments are counted (never read) and the Imports page and the final report say plainly they do not come over', async () => {
+    const bb = (await batchOf(w.admin, b.id)) as BatchView & { notImported: unknown };
+    // what the importer read: the six collections it imports; tasks and appointments were only counted
     expect(new Set(ih.fub.calls.filter((c) => c.op === 'list').map((c) => c.collection))).toEqual(new Set(['people', 'notes', 'textMessages', 'emails', 'calls', 'users']));
+    const counted = ih.fub.calls.filter((c) => c.collection === 'tasks' || c.collection === 'appointments');
+    expect(counted.length).toBeGreaterThan(0);
+    expect(counted.every((c) => c.op === 'count')).toBe(true);
+    const sentence = "Follow Up Boss has 1 task and 1 appointment. Realty OS doesn't bring tasks or appointments over: finish or note the open ones in Follow Up Boss before you switch.";
+    expect(bb.notImported).toEqual({ tasks: 1, appointments: 1, countedAt: 'snapshot', lines: [sentence] });
+    expect((await report(w, b.id)).notImported).toEqual({ tasks: 1, appointments: 1, lines: [sentence] });
+    // nothing about them changed what is imported: the connection test still lists only the imported categories
     expect(bb.connectionTest.join(' ')).not.toMatch(/task|appointment/i);
+    expect(bb.status).toBe('committed');
   });
 
   let touched: string;

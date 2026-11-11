@@ -432,3 +432,37 @@ describe('people brought in unassigned (owner decision B4)', () => {
     expect(within(people).queryByRole('button', { name: /Assign/ })).toBeNull();
   });
 });
+
+// Owner decision B7 (2026-11-11): Follow Up Boss tasks and appointments are counted, never imported, and the page
+// says so plainly: on the import page from "Count what's there" on, and in the final report.
+describe('tasks and appointments that do not come over (owner decision B7)', () => {
+  const sentence = "Follow Up Boss has 1,240 tasks and 85 appointments. Realty OS doesn't bring tasks or appointments over: finish or note the open ones in Follow Up Boss before you switch.";
+
+  it('E233 right after "Count what\'s there" the import page says plainly that tasks and appointments do not come over', async () => {
+    const created = batch([stage('contacts', 'pending')], { status: 'connection_test', snapshotSha256: null, snapshotAt: null, notImported: { tasks: 1240, appointments: 85, countedAt: 'connection_test', lines: [sentence] } } as Partial<ImportBatch>);
+    const fake = importFake(created)
+      .on('GET /imports', { status: 200, body: { batches: [] } })
+      .on('POST /imports', { status: 201, body: { batch: created } });
+    leadAdminApp(fake, '/imports', 'owner');
+    const u = userEvent.setup();
+    await u.type(await screen.findByLabelText('Follow Up Boss API key'), 'fub_secret_key_123');
+    await u.click(screen.getByRole('button', { name: "Count what's there" }));
+    const note = await screen.findByRole('region', { name: "What doesn't come over" });
+    expect(within(note).getByText(sentence)).toBeInTheDocument();
+    expect(screen.getByText('1,200 contacts in Follow Up Boss')).toBeInTheDocument();
+  });
+
+  it('E233 the final report says it too; a CSV import says nothing about tasks or appointments', async () => {
+    const b = batch([stage('contacts', 'verified', { counts: { ...counts, imported: 1150 } })], { notImported: { tasks: 1240, appointments: 85, countedAt: 'snapshot', lines: [sentence] } } as Partial<ImportBatch>);
+    const fake = importFake(b).on(`GET /imports/${BID}/report`, { status: 200, body: { source: 'Follow Up Boss', parity: null, notImported: { tasks: 1240, appointments: 85, lines: [sentence] }, categories: [] } });
+    const first = leadAdminApp(fake, `/imports/${BID}`, 'owner');
+    const report = await screen.findByRole('region', { name: 'Not brought over' });
+    expect(within(report).getByText(sentence)).toBeInTheDocument();
+    first.view.unmount();
+    const csv = batch([stage('contacts', 'pending')], { source: 'csv', fileLabel: 'old-crm.csv', csv: { headers: ['First Name'], mapping: [{ field: 'first_name' }] }, notImported: null } as Partial<ImportBatch>);
+    leadAdminApp(importFake(csv), `/imports/${BID}`, 'owner');
+    expect(await screen.findByText(/Working from the snapshot taken/)).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: "What doesn't come over" })).toBeNull();
+    expect(screen.queryByText(/tasks or appointments/)).toBeNull();
+  });
+});

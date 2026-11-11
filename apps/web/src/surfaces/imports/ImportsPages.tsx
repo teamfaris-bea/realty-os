@@ -22,7 +22,7 @@ import type { ImportBatch, ImportCounts, ImportRecord, ImportStage, MappingsResp
 import { ErrorLine, Pill, Section, Segmented, SelectField, StatusLine } from '../admin/lib/ui.js';
 import { BulkActionSheet, mayBulkAssign } from '../bulk/index.js';
 import { ParityMapping } from './ParityMapping.js';
-import { CATEGORY_LABEL, CATEGORY_NOTE, type DocumentedOutcome, PARITY_CATEGORY_LABEL, type ParityResponse, type ParityRowView, type UnassignedView, parityEditable, OUTCOME_LABEL, SKIP_WARNING, SOURCE_LABEL, STAGE_STATUS, blockingEarlier, canSkipStage, canUndoStage, consentNeedsDryRunToSkip, isRunning, nextStep, ordered, reconciles, recordSummary, spotChecksReady, toBase64 } from './lib.js';
+import { CATEGORY_LABEL, CATEGORY_NOTE, type DocumentedOutcome, type ImportBatchView, type NotImportedView, PARITY_CATEGORY_LABEL, type ParityResponse, type ParityRowView, type UnassignedView, parityEditable, OUTCOME_LABEL, SKIP_WARNING, SOURCE_LABEL, STAGE_STATUS, blockingEarlier, canSkipStage, canUndoStage, consentNeedsDryRunToSkip, isRunning, nextStep, ordered, reconciles, recordSummary, spotChecksReady, toBase64 } from './lib.js';
 
 const IMPORTS_KEY = ['imports'] as const;
 const POLL_MS = 2000;
@@ -150,7 +150,7 @@ function NewImport() {
 export function ImportPage() {
   const { importId = '' } = useParams();
   const [status, announce] = useAnnounce();
-  const q = useImportsQuery<{ batch: ImportBatch }>([...IMPORTS_KEY, importId], `/imports/${importId}`, { poll: (d) => (d ? isRunning(d.batch) : false) });
+  const q = useImportsQuery<{ batch: ImportBatchView }>([...IMPORTS_KEY, importId], `/imports/${importId}`, { poll: (d) => (d ? isRunning(d.batch) : false) });
   const b = q.data?.batch;
   const stages = b ? ordered(b.stages) : [];
   return (
@@ -196,7 +196,7 @@ function batchKey(id: string) {
   return [...IMPORTS_KEY, id];
 }
 
-function Overview({ batch, onDone }: { batch: ImportBatch; onDone(t: string): void }) {
+function Overview({ batch, onDone }: { batch: ImportBatchView; onDone(t: string): void }) {
   const snap = useAction<Record<string, never>, { batch: ImportBatch }>('POST', { invalidate: [batchKey(batch.id)] });
   return (
     <Section title={`${SOURCE_LABEL[batch.source]}${batch.fileLabel ? ` · ${batch.fileLabel}` : ''}`} description={`Started ${formatStamp(batch.createdAt)}`}>
@@ -207,6 +207,17 @@ function Overview({ batch, onDone }: { batch: ImportBatch; onDone(t: string): vo
             <li key={l}>{l}</li>
           ))}
         </ul>
+        {/* owner decision B7: tasks and appointments are counted and never imported, said plainly before anything else happens */}
+        {batch.notImported && batch.notImported.lines.length > 0 ? (
+          <section aria-label="What doesn't come over" className="flex flex-col gap-1">
+            <h4 className="text-[15px] font-semibold text-ink">What doesn't come over</h4>
+            {batch.notImported.lines.map((l) => (
+              <Notice key={l} tone="warn">
+                {l}
+              </Notice>
+            ))}
+          </section>
+        ) : null}
         {batch.snapshotError ? <Notice tone="error">The snapshot stopped: {batch.snapshotError}. Take it again.</Notice> : null}
         {batch.snapshotSha256 ? (
           <p className="text-[14px] text-ink-muted">Working from the snapshot taken {formatStamp(batch.snapshotAt)}. Changes made in the source after that need a new snapshot.</p>
@@ -652,6 +663,8 @@ export function parityImportedHeader(phase: string): string {
 type ReportView = Omit<ReportResponse, 'categories'> & {
   categories: (ReportResponse['categories'][number] & { unassigned?: UnassignedView | null })[];
   parity?: { phase: string; rows: ParityRowView[]; lines: string[] } | null;
+  /** owner decision B7: what Follow Up Boss holds that the import does not bring over */
+  notImported?: Omit<NotImportedView, 'countedAt'> | null;
 };
 
 function Report({ batch }: { batch: ImportBatch }) {
@@ -660,7 +673,8 @@ function Report({ batch }: { batch: ImportBatch }) {
   const lines = q.data.categories.flatMap((c) => c.lines.map((l) => ({ c: c.category, l })));
   const parity = q.data.parity ?? null;
   const unassigned = q.data.categories.find((c) => c.category === 'ownership')?.unassigned ?? null;
-  if (lines.length === 0 && !parity && !unassigned) return null;
+  const left = q.data.notImported?.lines ?? [];
+  if (lines.length === 0 && !parity && !unassigned && left.length === 0) return null;
   return (
     <Section title="Report">
       <Card>
@@ -710,6 +724,18 @@ function Report({ batch }: { batch: ImportBatch }) {
         </Card>
       ) : null}
       {unassigned ? <UnassignedPeople view={unassigned} onClosed={() => void q.refetch()} /> : null}
+      {left.length > 0 ? (
+        <section aria-label="Not brought over">
+          <Card className="flex flex-col gap-2">
+            <h3 className="text-[16px] font-semibold text-ink">Not brought over</h3>
+            {left.map((l) => (
+              <p key={l} className="text-[15px] text-ink">
+                {l}
+              </p>
+            ))}
+          </Card>
+        </section>
+      ) : null}
     </Section>
   );
 }

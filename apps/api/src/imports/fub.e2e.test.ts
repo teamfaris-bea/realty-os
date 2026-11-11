@@ -23,7 +23,9 @@ import {
 
 let ih: ImportsHarness;
 let w: ImportWorld;
-let b: BatchView;
+let b: BatchView & { notImported?: unknown };
+/** the fake's call count once the snapshot job finished: nothing may read FUB after it */
+let callsAfterSnapshot = 0;
 const q = async <T = Record<string, unknown>>(sql: string, args: unknown[] = []) => (await ih.h.su.query(sql, args)).rows as T[];
 
 beforeAll(async () => {
@@ -44,9 +46,11 @@ describe('golden FUB migration', () => {
     expect(b.sourceCounts).toMatchObject({ contacts: 7, ownership: 7, notes: 3, messages: 3, call_recordings: 2, consent: 7 });
     expect(b.connectionTest).toContain('7 contacts found in Follow Up Boss.');
     expect(b.connectionTest.at(-1)).toBe('Nothing is imported yet. Each step shows you exactly what would change before anything is written.');
-    // counts only: one one-record page per collection, no list or recording reads
+    // counts only: one one-record page per collection, no list or recording reads; tasks and appointments are
+    // counted the same way and never read (owner decision B7, E233)
     expect(ih.fub.calls.every((c) => c.op === 'count')).toBe(true);
-    expect(ih.fub.calls).toHaveLength(6);
+    expect(ih.fub.calls.map((c) => c.collection)).toEqual(['people', 'notes', 'textMessages', 'emails', 'calls', 'users', 'tasks', 'appointments']);
+    expect(b.notImported).toEqual({ tasks: 0, appointments: 0, countedAt: 'connection_test', lines: ["Follow Up Boss has no tasks or appointments. Realty OS doesn't bring tasks or appointments over."] });
     expect(await q('SELECT 1 FROM contacts WHERE tenant_id = $1', [w.tenantId])).toHaveLength(0);
     expect(await q('SELECT 1 FROM import_records r JOIN import_stages s ON s.tenant_id = r.tenant_id AND s.id = r.stage_id WHERE s.batch_id = $1', [b.id])).toHaveLength(0);
     // R-DATA-1: the key is stored encrypted, never in plaintext
@@ -69,6 +73,7 @@ describe('golden FUB migration', () => {
     expect(blobs.length).toBeGreaterThan(0);
     for (const x of blobs) expect(Buffer.from(x.bytes).toString('latin1')).not.toContain('Jane');
     expect(ih.fub.calls.filter((c) => c.op === 'recording')).toHaveLength(1);
+    callsAfterSnapshot = ih.fub.calls.length;
   });
 
   it('R-IMPORT-8: the ownership stage cannot be approved until every FUB agent is mapped', async () => {
@@ -231,8 +236,9 @@ describe('golden FUB migration', () => {
   });
 
   it('R-IMPORT-1: after the snapshot, no step read live FUB again', () => {
-    const afterSnapshot = ih.fub.calls.slice(6).filter((c) => c.op !== 'list' && c.op !== 'recording');
-    expect(afterSnapshot).toEqual([]);
+    // the snapshot job itself: one page per collection, the recording, and a count page each for tasks and appointments (E233)
+    expect(ih.fub.calls.slice(8, callsAfterSnapshot).filter((c) => c.op === 'count').map((c) => c.collection)).toEqual(['tasks', 'appointments']);
+    expect(ih.fub.calls.slice(callsAfterSnapshot)).toEqual([]);
     const lists = ih.fub.calls.filter((c) => c.op === 'list').length;
     expect(lists).toBe(6); // one page per collection, all during the snapshot job
   });

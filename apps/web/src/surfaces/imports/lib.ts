@@ -137,6 +137,19 @@ export function reconciles(c: NonNullable<ImportStage['counts']>): boolean {
   return c.source === (c.imported ?? c.willImport) + c.needsReview + c.rejected + c.duplicate;
 }
 
+// ---- owner decision B7 (2026-11-11): Follow Up Boss tasks and appointments are counted, never imported ----
+
+/** What Follow Up Boss holds that the import does not bring over, with the server's plain sentence (null for CSV). */
+export interface NotImportedView {
+  tasks: number | null;
+  appointments: number | null;
+  countedAt?: 'connection_test' | 'snapshot' | 'export_file' | null;
+  lines: string[];
+}
+
+/** A batch as GET /imports/:id returns it (owner decision B7 adds `notImported`). */
+export type ImportBatchView = ImportBatch & { notImported?: NotImportedView | null };
+
 // ---- owner decision B4 (2026-11-11): people the ownership commit brought in unassigned ---------------------
 
 /** GET /imports/:id/report, ownership: the people brought in unassigned; "Assign these people" selects exactly `contactIds`. */

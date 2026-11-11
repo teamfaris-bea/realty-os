@@ -5,7 +5,7 @@ Status: the authoritative design and build plan for FUB parity. The owner asked:
 | Document | What it holds |
 |---|---|
 | `docs/FUB_PARITY.md` | The gap analysis (what FUB does, what we have, the gap, ordered by frequency) |
-| `docs/DATA_MODEL.md` Part 3 (§11–§14) | Tables, RLS, the capability matrix, rules R-PAR-1…46, edge cases E162–E193 |
+| `docs/DATA_MODEL.md` Part 3 (§11–§14) | Tables, RLS, the capability matrix, rules R-PAR-1…46, edge cases E162–E193 and E230–E233 (the FUB migration owner decisions, §2.2) |
 | `packages/db/migrations/0021_fub_parity.sql` | The schema (a placeholder number: the orchestrator renumbers at merge; nothing in code or tests names the file) |
 | `packages/db/test/rls_smoke_parity.sql` | The proof (run by `rls_smoke_parity.test.ts`) |
 
@@ -100,6 +100,7 @@ Counsel items (**VERIFY WITH COUNSEL**):
 
 **Decided by the owner on 2026-11-11, FUB migration** (the owner accepted the recommended defaults for the gaps the FUB migration journeys lane found; DATA_MODEL Part 3 §14 E230–E233, ARCHITECTURE §13):
 - **B4: a member who can no longer hold leads when the ownership stage commits** (suspended between the ownership approval and the commit; also no longer an active member, or a role that holds no leads). Nothing is ever assigned to them. The people mapped to them come in unassigned, and each record says why in plain words, for example "Brought in unassigned: Blake Chen's account is suspended." The ownership stage verifies: a planned assignment brought in unassigned for this reason is a documented outcome, counted as not imported, never a recount mismatch. The later stages proceed. The Owner reassigns the people afterwards: the stage report lists them and offers "Assign these people", which opens the existing bulk Assign with exactly their ids selected (Owner and Admin; a Team Lead reaches no unassigned person, R-OWN-18; an agent cannot bulk-assign). The import still starts no offer, SLA job or routing. A member reactivated before the commit gets their people normally, and a suspension while the commit runs never lets an assignment to that member commit after it (E230–E232).
+- **B7: Follow Up Boss tasks and appointments** are not imported, and the import now says so instead of saying nothing. It counts them, read-only, at the connection test ("Count what's there") and again at the snapshot (one-record count pages, never a record; an export file's own lists are counted), and says plainly that they won't come over on the Imports page and in the final report: "Follow Up Boss has 1,240 tasks and 85 appointments. Realty OS doesn't bring tasks or appointments over: finish or note the open ones in Follow Up Boss before you switch." A count that cannot be read is said so; counting never blocks a stage. The fake FUB connector serves the counts; the real FUB endpoints (`tasks`, `appointments`) are marked VERIFY and stay configurable (`FUB_TASKS_PATH`, `FUB_APPOINTMENTS_PATH`) (E233).
 
 ### 2.3 Review (two critics; verdicts in ARCHITECTURE §20 "FUB parity design review")
 

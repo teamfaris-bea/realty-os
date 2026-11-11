@@ -12,6 +12,7 @@ import {
   dryRun,
   expectedAfterCommit,
   mapFub,
+  notImportedLines,
   optOutPreview,
   reconciles,
   reportLines,
@@ -152,6 +153,27 @@ describe('report rows and copy', () => {
     const allowed = new Set(['400', '380', '0', '20', '312', '41', '1']);
     for (const line of consent) for (const num of line.match(/\d[\d,]*/g) ?? []) expect(allowed.has(num.replace(/,/g, ''))).toBe(true);
     expect(reportLines('call_recordings', 'committed', counts(2, 2, 0, 0, 0), 'Follow Up Boss')[2]).toBe('Imported recordings are labelled "recording notice unknown" and are not transcribed.');
+  });
+
+  it('E233 R-IMPORT-1 owner decision B7: what Follow Up Boss has that the import never brings over, said plainly; every number is a count', () => {
+    const tail = "Realty OS doesn't bring tasks or appointments over: finish or note the open ones in Follow Up Boss before you switch.";
+    expect(notImportedLines({ tasks: 1240, appointments: 85 }, 'Follow Up Boss')).toEqual([`Follow Up Boss has 1,240 tasks and 85 appointments. ${tail}`]);
+    expect(notImportedLines({ tasks: 1, appointments: 1 }, 'Follow Up Boss')).toEqual([`Follow Up Boss has 1 task and 1 appointment. ${tail}`]);
+    expect(notImportedLines({ tasks: 0, appointments: 3 }, 'Follow Up Boss')).toEqual([`Follow Up Boss has 0 tasks and 3 appointments. ${tail}`]);
+    expect(notImportedLines({ tasks: 0, appointments: 0 }, 'Follow Up Boss')).toEqual(["Follow Up Boss has no tasks or appointments. Realty OS doesn't bring tasks or appointments over."]);
+    // a count it could not read is said so, never guessed, and the warning stays
+    expect(notImportedLines({ tasks: 12, appointments: null }, 'Follow Up Boss')).toEqual([`Follow Up Boss has 12 tasks; we could not count its appointments. ${tail}`]);
+    expect(notImportedLines({ tasks: null, appointments: 1 }, 'Follow Up Boss')).toEqual([`Follow Up Boss has 1 appointment; we could not count its tasks. ${tail}`]);
+    expect(notImportedLines({ tasks: null, appointments: null }, 'Follow Up Boss')).toEqual([`We could not count tasks or appointments in Follow Up Boss. ${tail}`]);
+    // a CSV file has neither: nothing is said
+    expect(notImportedLines({ tasks: null, appointments: null }, 'your file')).toEqual([]);
+    fc.assert(
+      fc.property(fc.option(fc.nat(100_000), { nil: null }), fc.option(fc.nat(100_000), { nil: null }), (tasks, appointments) => {
+        const nums = (notImportedLines({ tasks, appointments }, 'Follow Up Boss').join(' ').match(/\d[\d,]*/g) ?? []).map((x) => Number(x.replace(/,/g, '')));
+        for (const x of nums) expect([tasks, appointments]).toContain(x);
+      }),
+      { numRuns: 200 },
+    );
   });
 
   it('report copy never claims a count it was not given (property)', () => {

@@ -1,7 +1,7 @@
 // API shapes of api/imports and the plain sentences the review list and the report show (BUILD_PLAN
 // module 16; R-IMPORT-1 copy, R-IMPORT-5; product values: honest copy, every number is a count).
 // No confidence scores anywhere (R-AST-13); no tenant id in any shape (R-TEN-3).
-import { type Category, type ConsentSummary, type Counts, type DocumentedOutcomes, type NormalizedRecord, type ParityReportRow, type SourceName, batchReport, connectionTestLines, optOutPreview, parityCommittedReport, parityLines, parityReport, reportLines } from '@realty/core/import';
+import { type Category, type ConsentSummary, type Counts, type DocumentedOutcomes, type NormalizedRecord, type ParityReportRow, type SourceName, batchReport, connectionTestLines, notImportedLines, optOutPreview, parityCommittedReport, parityLines, parityReport, reportLines } from '@realty/core/import';
 import type { Channel } from '@realty/core/compliance';
 import { BULK_CAPS } from '@realty/core/parity/bulk';
 import type { BatchRow, MappingRow, StageRow } from './repos/batches.js';
@@ -169,6 +169,18 @@ export function stageView(s: StageRow) {
   };
 }
 
+/**
+ * Owner decision B7 (E233): what Follow Up Boss holds that the import never brings over (tasks, appointments),
+ * from the latest count (the connection test, the snapshot, or the export file), with the plain sentence. Null for
+ * a CSV file. A batch counted before B7 has no counts: said as "could not count", never guessed.
+ */
+export function notImportedView(b: BatchRow): { tasks: number | null; appointments: number | null; countedAt: 'connection_test' | 'snapshot' | 'export_file' | null; lines: string[] } | null {
+  if (b.source === 'csv') return null;
+  const c = b.options.notImported;
+  const counts = { tasks: c?.tasks ?? null, appointments: c?.appointments ?? null };
+  return { ...counts, countedAt: c?.countedAt ?? null, lines: notImportedLines(counts, sourceName(b)) };
+}
+
 export function batchView(b: BatchRow, stages: readonly StageRow[]) {
   return {
     id: b.id,
@@ -195,6 +207,7 @@ export function batchView(b: BatchRow, stages: readonly StageRow[]) {
       },
       sourceName(b),
     ).filter((l) => b.source !== 'csv' || !/^0 (notes|messages|calls) /.test(l)),
+    notImported: notImportedView(b),
   };
 }
 
@@ -363,9 +376,12 @@ export function reportView(b: BatchRow, stages: readonly StageRow[], extra: { un
       return { stage: s, counts, phase: reverted ? ('reverted' as const) : committed ? ('committed' as const) : ('dry_run' as const) };
     });
   const table = batchReport(rows.map((r) => ({ category: r.stage.category, counts: r.counts })));
+  const left = notImportedView(b);
   return {
     source: name,
     parity: parityReportView(b, stages),
+    // owner decision B7 (E233): the final report says what does not come over
+    notImported: left ? { tasks: left.tasks, appointments: left.appointments, lines: left.lines } : null,
     categories: table.map((t) => {
       const r = rows.find((x) => x.stage.category === t.category)!;
       return {

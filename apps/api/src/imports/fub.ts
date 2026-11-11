@@ -3,6 +3,8 @@
 //
 //   FubClient       what the import needs from FUB: one-record count pages (the connection test reads
 //                   COUNTS ONLY, R-IMPORT-1), paged reads for the snapshot, and a recording download.
+//                   Tasks and appointments are never imported and so never read: the client can only
+//                   count them (owner decision B7, 2026-11-11, E233; `list` takes imported collections only).
 //   FubConnector    builds a client for one API key (the key is decrypted from provider_credentials
 //                   only inside the job / request that needs it and never logged).
 //   FakeFub         the deterministic fake used by dev and every test: datasets keyed by API key, with
@@ -11,14 +13,18 @@
 //                   or `next` cursor paging). It is unit-tested against a local HTTP stand-in only; it
 //                   has NOT been run against the live FUB API from this environment (no account). The
 //                   endpoint names and the X-System headers follow FUB's public v1 API documentation:
-//                   VERIFY against a real account before the first production migration.
+//                   VERIFY against a real account before the first production migration. The tasks and
+//                   appointments endpoints (`tasks`, `appointments`) are VERIFY too and configurable
+//                   (FUB_TASKS_PATH, FUB_APPOINTMENTS_PATH: one plain path segment each).
 //
 // Nothing here writes to the database: the snapshot job stores what it reads (encrypted), and every
 // later step works on that snapshot, never on live FUB (R-IMPORT-1).
-import type { FubCollection } from '@realty/core/import';
+import { FUB_COUNT_ONLY_COLLECTIONS, type FubCollection, type FubCountOnlyCollection } from '@realty/core/import';
 import { isPublicPushEndpoint } from '../auth/devices.js';
 
 export const FUB_COLLECTIONS: readonly FubCollection[] = ['people', 'notes', 'textMessages', 'emails', 'calls', 'users'];
+/** Owner decision B7 (E233): counted at the connection test and the snapshot, never read, never imported. */
+export const FUB_COUNT_ONLY: readonly FubCountOnlyCollection[] = FUB_COUNT_ONLY_COLLECTIONS;
 
 export interface FubListPage {
   items: unknown[];
@@ -34,8 +40,8 @@ export interface FubRecording {
 }
 
 export interface FubClient {
-  /** The raw one-record page of a collection (`limit=1`): only `_metadata.total` is read from it (R-IMPORT-1). */
-  countPage(collection: FubCollection): Promise<unknown>;
+  /** The raw one-record page of a collection (`limit=1`): only `_metadata.total` is read from it (R-IMPORT-1, E233). */
+  countPage(collection: FubCollection | FubCountOnlyCollection): Promise<unknown>;
   /** One page of a collection, from the start (`cursor` null) or a cursor from the previous page. */
   list(collection: FubCollection, cursor: string | null, limit: number): Promise<FubListPage>;
   /** A call recording's bytes (the URL comes from the encrypted snapshot); null when FUB no longer has it. */
@@ -72,12 +78,18 @@ export async function readCollection(client: FubClient, collection: FubCollectio
 
 // ---- fake ---------------------------------------------------------------------------------------------
 
-export type FubDataset = Partial<Record<FubCollection, unknown[]>> & {
+export type FubDataset = Partial<Record<FubCollection | FubCountOnlyCollection, unknown[]>> & {
   /** recording URL → bytes */
   recordings?: Record<string, Uint8Array>;
-  /** collections the fake answers with an error (an account without that API scope) */
-  unavailable?: FubCollection[];
+  /** collections the fake answers with 404 (an account without that API scope) */
+  unavailable?: (FubCollection | FubCountOnlyCollection)[];
+  /** collections the fake answers with this HTTP status (401/403: FUB_UNAUTHORIZED, else FUB_UNAVAILABLE) */
+  failing?: Partial<Record<FubCollection | FubCountOnlyCollection, number>>;
 };
+
+function failure(status: number): FubAccessError {
+  return new FubAccessError(status === 401 || status === 403 ? 'FUB_UNAUTHORIZED' : 'FUB_UNAVAILABLE', status);
+}
 
 /**
  * Deterministic in-memory FUB. Each API key names one dataset; an unknown key is FUB_UNAUTHORIZED.
@@ -85,7 +97,7 @@ export type FubDataset = Partial<Record<FubCollection, unknown[]>> & {
  */
 export class FakeFub {
   private readonly data = new Map<string, FubDataset>();
-  readonly calls: { apiKeyTag: string; op: 'count' | 'list' | 'recording'; collection?: FubCollection }[] = [];
+  readonly calls: { apiKeyTag: string; op: 'count' | 'list' | 'recording'; collection?: FubCollection | FubCountOnlyCollection }[] = [];
 
   add(apiKey: string, dataset: FubDataset): this {
     this.data.set(apiKey, structuredClone(dataset));
@@ -111,6 +123,8 @@ export class FakeFub {
         this.calls.push({ apiKeyTag: tag, op: 'count', collection });
         const d = get();
         if (d.unavailable?.includes(collection)) throw new FubAccessError('FUB_UNAVAILABLE', 404);
+        const status = d.failing?.[collection];
+        if (status !== undefined) throw failure(status);
         const items = d[collection] ?? [];
         return { _metadata: { collection, offset: 0, limit: 1, total: items.length }, [collection]: items.slice(0, 1) };
       },
@@ -118,6 +132,8 @@ export class FakeFub {
         this.calls.push({ apiKeyTag: tag, op: 'list', collection });
         const d = get();
         if (d.unavailable?.includes(collection)) throw new FubAccessError('FUB_UNAVAILABLE', 404);
+        const status = d.failing?.[collection];
+        if (status !== undefined) throw failure(status);
         const items = d[collection] ?? [];
         const offset = cursor === null ? 0 : Number(cursor);
         const page = structuredClone(items.slice(offset, offset + limit));
@@ -142,6 +158,11 @@ export interface HttpFubOptions {
   allowedHosts?: readonly string[];
   /** FUB registered-system name and key (X-System / X-System-Key headers), when the account requires them */
   system?: { name: string; key: string };
+  /**
+   * Owner decision B7 (E233): the endpoints the count-only collections are counted at, below the base URL
+   * (FUB_TASKS_PATH, FUB_APPOINTMENTS_PATH; default `tasks`, `appointments`, VERIFY). One plain path segment each.
+   */
+  countOnlyPaths?: Partial<Record<FubCountOnlyCollection, string>>;
   fetch?: typeof fetch;
   /** per-request timeout, ms (default 30 s) */
   timeoutMs?: number;
@@ -154,6 +175,17 @@ export class FubConfigError extends Error {
 
 export const DEFAULT_FUB_BASE_URL = 'https://api.followupboss.com/v1';
 export const DEFAULT_FUB_ALLOWED_HOSTS: readonly string[] = ['api.followupboss.com'];
+/** VERIFY against a real account: FUB's public v1 API names these resources `tasks` and `appointments`. */
+export const DEFAULT_FUB_COUNT_ONLY_PATHS: Readonly<Record<FubCountOnlyCollection, string>> = { tasks: 'tasks', appointments: 'appointments' };
+/** A configured endpoint is one plain path segment (no slash, dot, query or encoding), so it stays on the checked base URL. */
+export const FUB_PATH_SEGMENT = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+
+/** The count-only endpoints the adapter uses (defaults filled in); FubConfigError for anything but one plain segment. */
+export function checkFubCountOnlyPaths(paths: Partial<Record<FubCountOnlyCollection, string>> = {}): Record<FubCountOnlyCollection, string> {
+  const out = { ...DEFAULT_FUB_COUNT_ONLY_PATHS, ...paths };
+  for (const [c, p] of Object.entries(out)) if (!FUB_PATH_SEGMENT.test(p)) throw new FubConfigError(`FUB ${c} path must be one plain path segment`);
+  return out;
+}
 
 const normHost = (h: string) => h.trim().toLowerCase().replace(/\.$/, '');
 
@@ -237,6 +269,8 @@ async function readCapped(res: Response, cap: number): Promise<Uint8Array> {
 /** The real FUB v1 adapter (see the header: VERIFY against a live account). */
 export function httpFubConnector(o: HttpFubOptions = {}): FubConnector {
   const base = checkFubBaseUrl(o.baseUrl ?? DEFAULT_FUB_BASE_URL, o.allowedHosts ?? DEFAULT_FUB_ALLOWED_HOSTS);
+  const countOnly = checkFubCountOnlyPaths(o.countOnlyPaths);
+  const pathOf = (c: FubCollection | FubCountOnlyCollection): string => (c === 'tasks' || c === 'appointments' ? countOnly[c] : c);
   const doFetch = o.fetch ?? fetch;
   return (apiKey) => {
     const headers: Record<string, string> = {
@@ -274,7 +308,7 @@ export function httpFubConnector(o: HttpFubOptions = {}): FubConnector {
       return body as Record<string, unknown>;
     };
     return {
-      countPage: (collection) => json(`${base}/${collection}?limit=1&offset=0`),
+      countPage: (collection) => json(`${base}/${pathOf(collection)}?limit=1&offset=0`),
       async list(collection, cursor, limit) {
         const q = new URLSearchParams({ limit: String(limit) });
         if (cursor === null) q.set('offset', '0');

@@ -198,6 +198,7 @@ Choosing a real vendor without its credentials fails in every environment. The f
 | `FUB_BASE_URL` | no | default `https://api.followupboss.com/v1`. Must be https on the default port, with no credentials, query or fragment, and its host must be in `FUB_ALLOWED_HOSTS`. |
 | `FUB_ALLOWED_HOSTS` | no | comma-separated lowercase host names (no scheme, port, path or wildcard); default `api.followupboss.com`. The API and worker refuse to start when either FUB setting is invalid, naming the key (SECURITY §2.9). |
 | `FUB_SYSTEM_NAME`, `FUB_SYSTEM_KEY` | if FUB requires them | registered-system headers (`X-System` / `X-System-Key`); both or neither |
+| `FUB_TASKS_PATH`, `FUB_APPOINTMENTS_PATH` | no | the endpoints FUB tasks and appointments are **counted** at (one-record count pages; they are never read or imported, owner decision B7); default `tasks` and `appointments` (**VERIFY** against a live account). One plain path segment each (letters, digits, `-`, `_`), below `FUB_BASE_URL`; anything else is refused at start-up. |
 
 **Spark MLS (read-only)** (`MLS_PROVIDER=spark`; full procedure in §11). None of these holds the access token: the token is entered in the app and stored encrypted (§11).
 

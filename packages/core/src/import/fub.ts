@@ -34,6 +34,7 @@ import type {
   NormalizedNote,
   NormalizedOwnership,
   NormalizedRecord,
+  NotImportedCounts,
   PointLabel,
   PointStatus,
   RecordOutcome,
@@ -559,6 +560,14 @@ export function userMappingGaps(people: readonly unknown[], mapping: UserMapping
 
 export type FubCollection = 'people' | 'notes' | 'textMessages' | 'emails' | 'calls' | 'users';
 
+/**
+ * Owner decision B7 (2026-11-11, E233): FUB collections the import COUNTS ONLY and never reads or imports
+ * (Realty OS does not bring tasks or appointments over). The endpoint names follow FUB's public v1 API and are
+ * VERIFY against a real account (the HTTP adapter's paths are configurable: FUB_TASKS_PATH, FUB_APPOINTMENTS_PATH).
+ */
+export type FubCountOnlyCollection = 'tasks' | 'appointments';
+export const FUB_COUNT_ONLY_COLLECTIONS: readonly FubCountOnlyCollection[] = ['tasks', 'appointments'];
+
 const Metadata = z.looseObject({ _metadata: z.looseObject({ total: z.number().int().nonnegative() }) });
 
 /**
@@ -596,4 +605,16 @@ export function fubConnectionCounts(pages: Partial<Record<FubCollection, unknown
       consent: collections.people,
     },
   };
+}
+
+/**
+ * E233: the count-only collections, the same way (`_metadata.total` of a one-record page; no record content is
+ * read). A count that could not be read is null, never guessed; it never blocks anything.
+ */
+export function fubNotImportedCounts(pages: Partial<Record<FubCountOnlyCollection, unknown>>): NotImportedCounts {
+  const total = (c: FubCountOnlyCollection): number | null => {
+    const p = Metadata.safeParse(pages[c]);
+    return p.success ? p.data._metadata.total : null;
+  };
+  return { tasks: total('tasks'), appointments: total('appointments') };
 }

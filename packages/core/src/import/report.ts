@@ -7,7 +7,7 @@
 //   one of the counts, and nothing is promised before the connection test (R-IMPORT-1).
 import { type Channel, sha256Hex } from '../compliance/index.js';
 import type { Instant, UserId } from '../foundation/index.js';
-import { CATEGORIES, type Category, type ConsentSummary, type CountDiff, type Counts, type ImportErrorCode, type StageCounts } from './types.js';
+import { CATEGORIES, type Category, type ConsentSummary, type CountDiff, type Counts, type ImportErrorCode, type NotImportedCounts, type StageCounts } from './types.js';
 
 const KEYS: readonly (keyof Counts)[] = ['source', 'imported', 'needs_review', 'rejected', 'duplicate'];
 
@@ -204,6 +204,22 @@ export function connectionTestLines(categories: Record<Category, number | null>,
   }
   lines.push('Nothing is imported yet. Each step shows you exactly what would change before anything is written.');
   return lines;
+}
+
+/**
+ * Owner decision B7 (2026-11-11, E233): what Follow Up Boss has that the import never brings over, said plainly
+ * on the Imports page (from the connection test and the snapshot) and in the final report. Every number is a
+ * count; one that could not be read is said so. A CSV file has neither, so nothing is said for it.
+ */
+export function notImportedLines(c: NotImportedCounts, source: SourceName): string[] {
+  if (source === 'your file') return [];
+  const tail = `Realty OS doesn't bring tasks or appointments over: finish or note the open ones in ${source} before you switch.`;
+  const { tasks, appointments } = c;
+  if (tasks === 0 && appointments === 0) return [`${source} has no tasks or appointments. Realty OS doesn't bring tasks or appointments over.`];
+  if (tasks !== null && appointments !== null) return [`${source} has ${plural(tasks, 'task', 'tasks')} and ${plural(appointments, 'appointment', 'appointments')}. ${tail}`];
+  if (tasks !== null) return [`${source} has ${plural(tasks, 'task', 'tasks')}; we could not count its appointments. ${tail}`];
+  if (appointments !== null) return [`${source} has ${plural(appointments, 'appointment', 'appointments')}; we could not count its tasks. ${tail}`];
+  return [`We could not count tasks or appointments in ${source}. ${tail}`];
 }
 
 const CHANNEL_WORD: Record<Channel, string> = { sms: 'texts', voice: 'calls', email: 'email', web_chat: 'website chat' };

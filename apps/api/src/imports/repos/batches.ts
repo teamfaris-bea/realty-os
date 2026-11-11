@@ -57,6 +57,17 @@ export interface BatchOptions {
   parityCreated?: { tagIds?: string[]; fieldIds?: string[] };
   /** PARITY 65: what the contacts commit wrote (tag links, values, stages set, kept) */
   parityCommitted?: Record<string, number>;
+  /**
+   * Owner decision B7 (E233): how many tasks and appointments Follow Up Boss holds (never imported), from the
+   * connection test, the latest snapshot, or the export file; null where a count could not be read.
+   */
+  notImported?: NotImportedOption;
+}
+
+export interface NotImportedOption {
+  tasks: number | null;
+  appointments: number | null;
+  countedAt: 'connection_test' | 'snapshot' | 'export_file';
 }
 
 export interface StageRow {
