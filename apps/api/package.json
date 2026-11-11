@@ -20,7 +20,10 @@
     "seed": "tsx --env-file-if-exists=../../.env --conditions=@realty/source src/seed/main.ts",
     "demo:totp": "tsx --env-file-if-exists=../../.env --conditions=@realty/source src/seed/totp.ts",
     "start": "node dist/main.js",
-    "start:worker": "node dist/worker/main.js"
+    "start:worker": "node dist/worker/main.js",
+    "load:seed": "tsx --env-file-if-exists=../../.env --conditions=@realty/source src/load/seed.ts",
+    "load:bench": "tsx --env-file-if-exists=../../.env --conditions=@realty/source src/load/bench.ts",
+    "load:smoke": "tsx --env-file-if-exists=../../.env --conditions=@realty/source src/load/smoke.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "1.7.0",

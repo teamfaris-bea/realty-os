@@ -1,0 +1,46 @@
+{
+  "db": "realty_load_final",
+  "at": "2026-11-11T01:13:55.658Z",
+  "machine": {
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "cores": 4,
+    "ramGb": 16,
+    "postgres": "PostgreSQL 16.15 (Ubuntu 16.15-0ubuntu0.24.04.1)"
+  },
+  "sizes": {
+    "contacts": 250000,
+    "contact_points": 454991,
+    "messages": 1957608,
+    "calls": 249141,
+    "notes": 146187,
+    "lead_ownership_events": 708198,
+    "exception_items": 11341,
+    "consent_state": 90775,
+    "deals": 3008
+  },
+  "results": [
+    {
+      "name": "dispatch: 500 immediate SMS sends, concurrency 8",
+      "budgetMs": 300,
+      "budgetSource": "lane rule applied to the tap (p95 < 300 ms); no doc budget",
+      "n": 500,
+      "p50": 223.6111820000001,
+      "p95": 283.6800889999995,
+      "max": 482.0541619999999,
+      "pass": true,
+      "note": "34.7 sends/s end to end"
+    }
+  ],
+  "checks": [
+    {
+      "name": "dispatch: every reachable send went out",
+      "ok": true,
+      "detail": "500/500 sent; other results: none"
+    },
+    {
+      "name": "D1: opted-out numbers are never sent to",
+      "ok": true,
+      "detail": "30/30 not sent (200 blocked:CONSENT_REVOKED); 0 outbound rows went out to them"
+    }
+  ]
+}

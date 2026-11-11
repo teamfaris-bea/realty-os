@@ -63,6 +63,7 @@ Other commands:
 | browser tests (phone and desktop) | `pnpm --filter @realty/web test:e2e` (starts Vite on 5173, so stop `dev:web` first) |
 | rule and edge-case coverage | `pnpm rule-coverage` |
 | apply new migrations to the dev DB | `pnpm db:migrate` |
+| load test at 250k contacts (see [docs/PERFORMANCE.md](docs/PERFORMANCE.md)) | `pnpm load:seed --contacts 250000`, then `pnpm load:bench`; CI-sized check: `pnpm load:smoke` |
 
 ## Demo logins
 

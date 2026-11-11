@@ -17,7 +17,10 @@
     "dev:worker": "pnpm --filter @realty/api dev:worker",
     "dev:web": "pnpm --filter @realty/web dev",
     "seed": "pnpm --filter @realty/api seed",
-    "demo:totp": "pnpm --filter @realty/api demo:totp"
+    "demo:totp": "pnpm --filter @realty/api demo:totp",
+    "load:seed": "pnpm --filter @realty/api load:seed",
+    "load:bench": "pnpm --filter @realty/api load:bench",
+    "load:smoke": "pnpm --filter @realty/api load:smoke"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

@@ -309,7 +309,7 @@ export async function queueRows(tx: Tx, f: QueueFilter): Promise<QueueRow[]> {
            c.offered_to_user_id AS contact_offered_to_user_id, c.ownership_seq AS contact_ownership_seq,
            c.ownership_period_seq AS contact_period_seq,
            ou.display_name AS owner_name,
-           COALESCE(e.owner_user_id = ANY (app.my_team_member_ids()), false) AS owner_in_my_team,
+           COALESCE(e.owner_user_id = ANY ((SELECT app.my_team_member_ids())::uuid[]), false) AS owner_in_my_team,
            le.action AS last_action, le.note AS last_note, le.actor_user_id AS last_actor_user_id,
            au.display_name AS last_actor_name, le.occurred_at AS last_at
       FROM exception_items e
@@ -330,6 +330,26 @@ export async function queueRows(tx: Tx, f: QueueFilter): Promise<QueueRow[]> {
               ELSE true END)
      ORDER BY (e.condition_cleared_at IS NULL) DESC, e.detected_at ASC, e.id ASC
      LIMIT ${f.limit}`.execute(tx);
+  return r.rows;
+}
+
+/**
+ * Live items by type for the queue header (scale-250k): the same rows queueRows returns for
+ * { ownerUserId, state: 'live' } (its contact/user joins are LEFT joins and never drop a row), counted
+ * without building each row's view, so a 10k-item tenant does not run 10k contact visibility checks.
+ */
+export async function liveCounts(tx: Tx, ownerUserId: string | undefined): Promise<{ item_type: ExceptionType; n: number }[]> {
+  const r = await sql<{ item_type: ExceptionType; n: number }>`
+    SELECT e.item_type, count(*)::int AS n
+      FROM exception_items e
+      LEFT JOIN LATERAL (
+        SELECT ev.action FROM exception_events ev
+         WHERE ev.tenant_id = e.tenant_id AND ev.exception_dedupe_key = e.dedupe_key
+         ORDER BY ev.occurred_at DESC, ev.id DESC LIMIT 1) le ON true
+     WHERE e.tenant_id = app.tenant_id()
+       AND (${ownerUserId ?? null}::uuid IS NULL OR e.owner_user_id = ${ownerUserId ?? null}::uuid)
+       AND (le.action IS NULL OR le.action NOT IN ('resolved','verified'))
+     GROUP BY e.item_type`.execute(tx);
   return r.rows;
 }
 
