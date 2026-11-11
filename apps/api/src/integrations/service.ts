@@ -86,8 +86,9 @@ export interface IntegrationsView {
   perUser: { key: string; name: string; sentence: string }[];
 }
 
-function packsOf(rows: Awaited<ReturnType<typeof repo.listPlatformPacks>>): PlatformPack[] {
-  return rows.map((p) => ({ key: p.key, version: p.version, reviewedByCounselAt: iso(p.reviewed_by_counsel_at) }));
+/** The published platform packs as the catalog reads them (the list and every connection view use this). */
+export async function loadPlatformPacks(tx: Tx): Promise<PlatformPack[]> {
+  return (await repo.listPlatformPacks(tx)).map((p) => ({ key: p.key, version: p.version, reviewedByCounselAt: iso(p.reviewed_by_counsel_at), vendorReadyAt: p.vendor_ready_at }));
 }
 
 export function connectionView(r: repo.ConnectionDbRow, packs: readonly PlatformPack[]): ConnectionView {
@@ -108,7 +109,7 @@ export function connectionView(r: repo.ConnectionDbRow, packs: readonly Platform
 }
 
 export async function listIntegrations(tx: Tx, adapters: IntegrationAdapters): Promise<IntegrationsView> {
-  const packs = packsOf(await repo.listPlatformPacks(tx));
+  const packs = await loadPlatformPacks(tx);
   const rows = await repo.listConnections(tx);
   return {
     adapterMode: adapters.mode,

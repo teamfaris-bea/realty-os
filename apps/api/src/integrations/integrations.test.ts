@@ -9,7 +9,7 @@ import { auditRows, call, freshReauth, inviteViaApi, staleReauth } from '../admi
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
 import { CONNECTION_KINDS } from '../providers/integrations/types.js';
 import { systemActor } from '../worker/systemActor.js';
-import { FORBIDDEN_SCOPES, GOOGLE_GBP_SCOPES, META_PUBLISH_SCOPES, OUT_OF_SCOPE_KINDS, SERVICES } from './catalog.js';
+import { FORBIDDEN_SCOPES, GOOGLE_GBP_SCOPES, META_PUBLISH_SCOPES, NEVER_CLEARED_PACKS, OUT_OF_SCOPE_KINDS, SERVICES, VENDOR_CHECKED_PACKS } from './catalog.js';
 import { makeIntegrationHandlers } from './handlers.js';
 import { type OAuthState, pkceChallengeOf, pkceVerifier, signState } from './oauthState.js';
 import { callback, connectFlow, connectionRow, leadSource, startFlow } from './testing.js';
@@ -53,7 +53,7 @@ afterAll(async () => {
 });
 
 describe('GET /admin/integrations: honest status for every service (R-INT-2, R-INT-6)', () => {
-  it('lists every kind with a sentence; partner feeds and later phases cannot be connected; D2 out-of-scope kinds say they are not offered; every platform pack says it awaits counsel', async () => {
+  it('lists every kind with a sentence; partner feeds and later phases cannot be connected; D2 out-of-scope kinds say they are not offered; every platform pack ships unreviewed and says it awaits counsel, except platform:meta, which says it is never cleared (D2)', async () => {
     const v = await list();
     expect(v.adapterMode).toBe('fake');
     expect(v.services.map((s) => s.kind).sort()).toEqual(
@@ -72,8 +72,8 @@ describe('GET /admin/integrations: honest status for every service (R-INT-2, R-I
       ['platform:avm', 'platform:coaching', 'platform:fair_housing', 'platform:gmail', 'platform:meta', 'platform:portal', 'platform:review_requests', 'platform:voice'],
     );
     for (const p of v.platformPacks) {
-      expect(p.reviewed).toBe(false);
-      expect(p.sentence).toMatch(/awaiting counsel review/);
+      expect(p.reviewed, p.key).toBe(false);
+      expect(p.sentence, p.key).toMatch(p.key === 'platform:meta' ? /: not offered \(owner decision D2\); nothing waits on this pack and it is never cleared / : / stays off: awaiting counsel review/);
     }
   });
 
@@ -83,13 +83,56 @@ describe('GET /admin/integrations: honest status for every service (R-INT-2, R-I
     expect(SERVICES.map((s) => s.kind).sort()).toEqual([...CONNECTION_KINDS].sort());
   });
 
-  it('R-INT-6: platform:gmail (D2) is listed unreviewed and says Gmail inbox sync awaits counsel review; platform:meta says nothing waits on it', async () => {
-    const packs = (await list()).platformPacks;
-    expect(packs.find((p) => p.key === 'platform:gmail')).toMatchObject({ reviewed: false });
-    expect(packs.find((p) => p.key === 'platform:gmail')!.sentence).toMatch(/^Gmail inbox sync stays off: awaiting counsel review \(pack \S+, not yet reviewed\)\.$/);
-    expect(packs.find((p) => p.key === 'platform:meta')!.sentence).toMatch(
-      /^Meta messaging \(out of scope, owner decision D2; nothing waits on this pack\) stays off: awaiting counsel review \(pack \S+, not yet reviewed\)\.$/,
-    );
+  it('R-INT-6: platform:gmail (D2) and platform:voice say "cleared" exactly when the database clears them: counsel review AND the vendor check (rules.vendor_ready_at)', async () => {
+    const pack = async (key: string) => (await list()).platformPacks.find((p) => p.key === key)!;
+    const dbCleared = async (key: string) => (await h.su.query<{ c: boolean }>('SELECT app.platform_cleared($1, true) AS c', [key])).rows[0]!.c;
+    expect(await pack('platform:gmail')).toMatchObject({ reviewed: false, sentence: expect.stringMatching(/^Gmail inbox sync stays off: awaiting counsel review and the vendor check \(pack \S+, not yet reviewed\)\.$/) });
+    const states = [
+      { reviewed: false, vendor: false, cleared: false, sentence: / stays off: awaiting counsel review and the vendor check \(pack \S+, not yet reviewed\)\.$/ },
+      { reviewed: false, vendor: true, cleared: false, sentence: / stays off: awaiting counsel review \(pack \S+, not yet reviewed\)\.$/ },
+      { reviewed: true, vendor: false, cleared: false, sentence: / stays off: counsel reviewed it on \d{4}-\d{2}-\d{2}; it also waits for the vendor check \(pack \S+\)\.$/ },
+      { reviewed: true, vendor: true, cleared: true, sentence: /: cleared by counsel on \d{4}-\d{2}-\d{2} \(pack \S+\)\.$/ },
+    ];
+    try {
+      for (const s of states) {
+        await h.su.query(
+          `UPDATE jurisdiction_packs SET reviewed_by_counsel_at = CASE WHEN $2::boolean THEN now() END,
+                  rules = CASE WHEN $3::boolean THEN rules || '{"vendor_ready_at": "2026-11-01T00:00:00Z"}' ELSE rules - 'vendor_ready_at' END
+            WHERE key = ANY($1::text[]) AND status = 'published'`,
+          [[...VENDOR_CHECKED_PACKS], s.reviewed, s.vendor],
+        );
+        for (const key of VENDOR_CHECKED_PACKS) {
+          const p = await pack(key);
+          const at = `${key} reviewed=${s.reviewed} vendor=${s.vendor}`;
+          expect(await dbCleared(key), at).toBe(s.cleared);
+          expect(p.reviewed, at).toBe(s.reviewed);
+          expect(p.sentence, at).toMatch(s.sentence);
+          expect(/cleared/.test(p.sentence), at).toBe(s.cleared); // never "cleared" while the database still refuses
+        }
+      }
+    } finally {
+      await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL, rules = rules - 'vendor_ready_at' WHERE key = ANY($1::text[]) AND status = 'published'", [[...VENDOR_CHECKED_PACKS]]);
+    }
+  });
+
+  it('the packs the API treats as vendor-checked are exactly those the database clears with app.platform_cleared(key, true) (0018 voice, 0025 Gmail)', async () => {
+    const calls = String.raw`platform_cleared\('(platform:[a-z_]+)',\s*true\)`;
+    const keys = (await h.su.query<{ key: string }>("SELECT DISTINCT m[1] AS key FROM pg_proc p CROSS JOIN LATERAL regexp_matches(p.prosrc, $1, 'g') AS m", [calls])).rows.map((r) => r.key);
+    expect(keys.sort()).toEqual([...VENDOR_CHECKED_PACKS].sort());
+  });
+
+  it('R-INT-6 D2: platform:meta is never cleared: the page says Meta messaging is not offered and never asks for its review, even if the pack were marked reviewed', async () => {
+    expect([...NEVER_CLEARED_PACKS]).toEqual(['platform:meta']);
+    const meta = async () => (await list()).platformPacks.find((p) => p.key === 'platform:meta')!;
+    expect(await meta()).toMatchObject({ reviewed: false, sentence: expect.stringMatching(/^Meta messaging: not offered \(owner decision D2\); nothing waits on this pack and it is never cleared \(pack \S+\)\.$/) });
+    await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = now() WHERE key = 'platform:meta' AND status = 'published'");
+    try {
+      const p = await meta();
+      expect(p.sentence).toMatch(/^Meta messaging: not offered \(owner decision D2\); the pack was marked reviewed on \d{4}-\d{2}-\d{2}, but Meta messaging stays out of scope \(pack \S+\)\.$/);
+      expect(p.sentence).not.toMatch(/awaiting|cleared by/);
+    } finally {
+      await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL WHERE key = 'platform:meta' AND status = 'published'");
+    }
   });
 
   it('DATA_MODEL §8: Owner and Admin read it; Team Lead and Agent get 404', async () => {
@@ -120,13 +163,16 @@ describe('connect through the provider callback (R-INT-3)', () => {
     // D2: a Page connection is publishing-only, so no inbound route exists for it (E228: nothing is received)
     expect(await resolve('facebook_page', 'page-100')).toEqual([]);
 
-    // capability offered only as reported; publishing waits for platform:fair_housing (R-INT-6)
-    const conn = (await list()).services.find((s) => s.kind === 'facebook_page')!.connections.find((c) => c.id === f.connectionId)!;
-    expect(conn.capabilities).toEqual([{ name: 'publish_posts', available: false, reason: 'Waits for counsel review of platform:fair_housing.' }]);
+    // capability offered only as reported; publishing waits for platform:fair_housing (R-INT-6), for a Page and
+    // for an Instagram business account alike
+    const ig = await connectFlow(h, owner, 'instagram_business', { externalAccountId: 'ig-100', displayName: 'Harbor Instagram' }, [{ id: 'ig-100' }]);
+    expect(ig.cb.result).toBe('CONNECTED');
+    const caps = async (kind: string, id: string) => (await list()).services.find((s) => s.kind === kind)!.connections.find((c) => c.id === id)!.capabilities;
+    const publishing = [['facebook_page', f.connectionId], ['instagram_business', ig.connectionId]] as const;
+    for (const [kind, id] of publishing) expect(await caps(kind, id), kind).toEqual([{ name: 'publish_posts', available: false, reason: 'Waits for counsel review of platform:fair_housing.' }]);
     await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = now() WHERE key = 'platform:fair_housing' AND status = 'published'");
     try {
-      const after = (await list()).services.find((s) => s.kind === 'facebook_page')!.connections.find((c) => c.id === f.connectionId)!;
-      expect(after.capabilities).toEqual([{ name: 'publish_posts', available: true, reason: null }]);
+      for (const [kind, id] of publishing) expect(await caps(kind, id), kind).toEqual([{ name: 'publish_posts', available: true, reason: null }]);
       expect((await list()).platformPacks.find((p) => p.key === 'platform:fair_housing')).toMatchObject({ reviewed: true });
     } finally {
       await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL WHERE key = 'platform:fair_housing' AND status = 'published'");
@@ -164,9 +210,17 @@ describe('connect through the provider callback (R-INT-3)', () => {
     // the catalog itself: no service, and no Meta publishing kind, can ever ask for a forbidden scope
     for (const s of SERVICES) for (const f of FORBIDDEN_SCOPES) expect(s.scopes ?? [], s.kind).not.toContain(f);
     for (const kind of ['facebook_page', 'instagram_business'] as const) for (const f of FORBIDDEN_SCOPES) expect(META_PUBLISH_SCOPES[kind], kind).not.toContain(f);
+    // FORBIDDEN_SCOPES lists the names we know (VERIFY); a messaging, Lead Ads or webhook permission under any other
+    // name is refused too: no Meta scope, in the catalog or in an authorize URL, matches the pattern
+    const notPublishing = /messag|leads_retrieval|manage_metadata/i;
+    for (const f of FORBIDDEN_SCOPES) expect(f).toMatch(notPublishing);
+    const metaScopes = [...Object.values(META_PUBLISH_SCOPES).flat(), ...SERVICES.filter((s) => s.oauthProvider === 'meta').flatMap((s) => s.scopes ?? []), ...scopes(fb.authorizeUrl), ...scopes(ig.authorizeUrl)];
+    expect(metaScopes.length).toBeGreaterThan(0);
+    expect(metaScopes.filter((s) => notPublishing.test(s))).toEqual([]);
   });
 
-  it('R-MKT-12 R-INT-3: a publishing kind never takes a lead source: the API refuses one on connect and on rename, and the 0025 CHECK refuses a direct write', async () => {
+  it('R-INT-3 D2: a publishing kind never takes a lead source: the API refuses one on connect and on rename, and the 0025 CHECK refuses a direct write', async () => {
+    // DATA_MODEL §6.3; 0025 CHECK integration_connections_publishing_no_source (E228, R-MKT-12)
     // D2: a publishing-only account is never an inbound channel, so its connect needs no lead source
     const fb = await startFlow(owner, 'facebook_page', { externalAccountId: 'page-nosrc' }, { reauth: h });
     expect(fb.status).toBe(201);
@@ -202,7 +256,7 @@ describe('connect through the provider callback (R-INT-3)', () => {
     }
   });
 
-  it('R-INT-2 R-INT-3: the four out-of-scope kinds (D2) cannot start OAuth, and a validly signed state for one completes no callback; a row made before D2 stays listed as not offered, offers no capability, and can still be disconnected', async () => {
+  it('R-INT-2 R-INT-3: the four out-of-scope kinds (D2) cannot start OAuth, and a validly signed state for one completes no callback; a live row made before D2 routes nothing, stays listed as not offered, offers no capability, and can still be disconnected', async () => {
     expect([...OUT_OF_SCOPE_KINDS].sort()).toEqual(['messenger_page', 'instagram_account', 'meta_lead_ads', 'ads_meta'].sort());
     for (const kind of OUT_OF_SCOPE_KINDS) {
       expect((await startFlow(owner, kind, { externalAccountId: `${kind}-x` }, { reauth: h })).code, kind).toBe('INTEGRATION_NOT_CONNECTABLE');
@@ -227,16 +281,30 @@ describe('connect through the provider callback (R-INT-3)', () => {
     // refused before any provider call: the authorization code was never exchanged, so it still works once
     await expect(meta.exchangeCode({ code, codeVerifier: verifier, redirectUri: 'unused' })).resolves.toMatchObject({ accessToken: expect.any(String) });
 
-    // what the pre-D2 callback (the system actor) could have done for publishing: linked it, publish_posts reported
-    const credentialId = randomUUID();
-    await withTenantTx(
-      systemActor(owner.tenantId!, 'provider'),
-      async (tx) => {
-        await sql`INSERT INTO provider_credentials (tenant_id, id, provider, secret_enc, key_version, external_account_ref) VALUES (app.tenant_id(), ${credentialId}, 'meta', ${Buffer.from([1])}, 1, 'legacy-page')`.execute(tx);
-        await sql`UPDATE integration_connections SET status = 'connected', connected_at = now(), external_account_id = 'legacy-page', credential_id = ${credentialId}, capabilities = '{"publish_posts": true}' WHERE id = ${legacy}`.execute(tx);
-      },
-      { db: h.database },
-    );
+    // what the pre-D2 callback (the system actor) could have done: linked the account and made it live (the Messenger
+    // row also with publish_posts reported, as when it carried publishing)
+    const goLive = async (id: string, account: string, capabilities: Record<string, boolean>) => {
+      const credential = randomUUID();
+      await withTenantTx(
+        systemActor(owner.tenantId!, 'provider'),
+        async (tx) => {
+          await sql`INSERT INTO provider_credentials (tenant_id, id, provider, secret_enc, key_version, external_account_ref) VALUES (app.tenant_id(), ${credential}, 'meta', ${Buffer.from([1])}, 1, ${account})`.execute(tx);
+          await sql`UPDATE integration_connections SET status = 'connected', connected_at = now(), external_account_id = ${account}, credential_id = ${credential}, capabilities = ${JSON.stringify(capabilities)}::jsonb WHERE id = ${id}`.execute(tx);
+        },
+        { db: h.database },
+      );
+      expect(await connectionRow(h, id)).toMatchObject({ status: 'connected', external_account_id: account, credential_id: credential });
+      return credential;
+    };
+    const credentialId = await goLive(legacy, 'legacy-page', { publish_posts: true });
+    // D2 (0024): a live pre-D2 row of an inbound Meta kind routes nothing; resolve_channel_account never returns these kinds
+    expect(await resolve('messenger_page', 'legacy-page')).toEqual([]);
+    for (const kind of ['instagram_account', 'meta_lead_ads']) {
+      const id = randomUUID();
+      await withTenantTx(owner.actor(), async (tx) => void (await sql`INSERT INTO integration_connections (tenant_id, id, kind, display_name, lead_source_id) VALUES (app.tenant_id(), ${id}, ${kind}, 'Old account', ${src})`.execute(tx)), { db: h.database });
+      await goLive(id, `${kind}-live`, {});
+      expect(await resolve(kind, `${kind}-live`), kind).toEqual([]);
+    }
     // still listed under its own kind, not offered, and it offers nothing even once counsel cleared publishing
     await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = now() WHERE key = 'platform:fair_housing' AND status = 'published'");
     try {

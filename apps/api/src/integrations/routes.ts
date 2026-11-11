@@ -16,8 +16,7 @@ import { CONNECTION_KINDS } from '../providers/integrations/types.js';
 import { authorize } from '../rbac.js';
 import type { RouteModule } from '../routes.js';
 import type { Platform } from '../server.js';
-import * as repo from './repos/connections.js';
-import { type IntegrationDeps, connectionView, disconnect, listIntegrations, oauthCallback, startConnect, updateConnection } from './service.js';
+import { type IntegrationDeps, connectionView, disconnect, listIntegrations, loadPlatformPacks, oauthCallback, startConnect, updateConnection } from './service.js';
 
 const Label = z.string().trim().min(1).max(120);
 const AccountId = z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/);
@@ -106,7 +105,7 @@ async function register(app: FastifyInstance): Promise<void> {
     async (req) =>
       adminTx(req, async (tx, _now, actor) => {
         const row = await updateConnection(tx, actor, req.params.id, req.body);
-        return { connection: connectionView(row, await packs(tx)) };
+        return { connection: connectionView(row, await loadPlatformPacks(tx)) };
       }),
   );
 
@@ -116,13 +115,9 @@ async function register(app: FastifyInstance): Promise<void> {
     async (req) =>
       adminTx(req, async (tx, now, actor) => {
         const row = await disconnect(tx, actor, req.params.id, now);
-        return { connection: connectionView(row, await packs(tx)) };
+        return { connection: connectionView(row, await loadPlatformPacks(tx)) };
       }),
   );
-}
-
-async function packs(tx: Parameters<typeof repo.listPlatformPacks>[0]) {
-  return (await repo.listPlatformPacks(tx)).map((p) => ({ key: p.key, version: p.version, reviewedByCounselAt: p.reviewed_by_counsel_at ? p.reviewed_by_counsel_at.toISOString() : null }));
 }
 
 export const integrationsRoutes: RouteModule = { name: 'integrations', register };

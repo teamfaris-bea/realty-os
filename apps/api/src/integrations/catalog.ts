@@ -30,8 +30,9 @@ export interface ServiceDef {
  * D2 (owner scope change): Meta is connected ONLY to publish to a Facebook Page (`facebook_page`) or an
  * Instagram business account (`instagram_business`). These are the publishing-only scopes we believe Meta
  * requires. VERIFY the exact names with Meta's current permission reference and app review. Messaging
- * (pages_messaging, instagram_manage_messages) and Lead Ads (leads_retrieval) scopes are never requested (a test
- * checks this).
+ * (pages_messaging, instagram_manage_messages, instagram_business_manage_messages) and Lead Ads (leads_retrieval)
+ * scopes are never requested: a test checks FORBIDDEN_SCOPES and refuses any Meta scope whose name mentions
+ * messaging, so a messaging permission under a new name fails too.
  */
 export const META_PUBLISH_SCOPES = {
   facebook_page: ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'],
@@ -39,8 +40,19 @@ export const META_PUBLISH_SCOPES = {
 } as const;
 /** Google Business Profile management scope. VERIFY. */
 export const GOOGLE_GBP_SCOPES = ['https://www.googleapis.com/auth/business.manage'] as const;
-/** Scopes that must never appear in any connect request (D2: no DMs, no Lead Ads retrieval). */
-export const FORBIDDEN_SCOPES = ['pages_messaging', 'instagram_manage_messages', 'leads_retrieval', 'pages_manage_metadata'] as const;
+/**
+ * Scopes that must never appear in any connect request (D2, R-MKT-12: no DMs, no messaging webhooks, no Lead Ads
+ * retrieval): the Facebook Login names, the messaging permission of the Instagram API with Instagram Login
+ * (instagram_business_manage_messages) and Messenger's pages_messaging_subscriptions. VERIFY current Meta names.
+ */
+export const FORBIDDEN_SCOPES = [
+  'pages_messaging',
+  'pages_messaging_subscriptions',
+  'instagram_manage_messages',
+  'instagram_business_manage_messages',
+  'leads_retrieval',
+  'pages_manage_metadata',
+] as const;
 
 export const SERVICES: readonly ServiceDef[] = [
   // D2 (0025): Meta is for content publishing only, through the publishing kinds `facebook_page` and
@@ -80,12 +92,26 @@ export interface PlatformPack {
   key: string;
   version: string;
   reviewedByCounselAt: string | null;
+  /** `rules->>'vendor_ready_at'`: the vendor check a VENDOR_CHECKED_PACKS pack also needs (null = not passed) */
+  vendorReadyAt: string | null;
 }
+
+/**
+ * The packs the database clears only once the vendor check passed too: `app.platform_cleared(key, true)` (0018
+ * voice, 0025 Gmail) needs `reviewed_by_counsel_at` AND `rules.vendor_ready_at` (R-INT-6). A test compares this
+ * list with the database's own calls.
+ */
+export const VENDOR_CHECKED_PACKS: readonly string[] = ['platform:voice', 'platform:gmail'];
+
+/**
+ * D2: packs that are never cleared. platform:meta gates only 0018's DM guard branch, which no product path writes,
+ * and its 0025 notes say "Do not clear", so the page never asks for its review.
+ */
+export const NEVER_CLEARED_PACKS: readonly string[] = ['platform:meta'];
 
 /** platform:* pack → what waits on it, in words (R-INT-6). */
 export const PACK_GATES: Record<string, string> = {
-  // D2: platform:meta gates only 0018's DM guard branch, which no product path writes (its 0025 notes say so)
-  'platform:meta': 'Meta messaging (out of scope, owner decision D2; nothing waits on this pack)',
+  'platform:meta': 'Meta messaging',
   'platform:fair_housing': 'Publishing marketing',
   'platform:avm': 'Home-value notes',
   'platform:review_requests': 'Review requests',
@@ -95,7 +121,10 @@ export const PACK_GATES: Record<string, string> = {
   'platform:gmail': 'Gmail inbox sync',
 };
 
-/** A capability that also waits on a platform clearance pack. */
+/**
+ * A capability that also waits on a platform clearance pack. These packs need counsel review only (none is in
+ * VENDOR_CHECKED_PACKS), as the 0025 publications guard's `app.platform_cleared('platform:fair_housing')` does.
+ */
 const CAPABILITY_PACK: Partial<Record<ConnectionKind, Record<string, string>>> = {
   facebook_page: { publish_posts: 'platform:fair_housing' },
   instagram_business: { publish_posts: 'platform:fair_housing' },
@@ -112,10 +141,23 @@ export const PER_USER_SERVICES = [
   { key: 'microsoft_calendar', name: 'Microsoft calendar', sentence: 'Each person connects their own calendar from their settings: appointments are pushed one way and free/busy is read live. Nobody else sees their calendar or token.' },
 ] as const;
 
+/**
+ * The pack's state in words, matching what the database clears (`app.platform_cleared`, R-INT-6): it says
+ * "cleared" only when the pack is, so a vendor-checked pack stays off until `rules.vendor_ready_at` is set even
+ * after counsel review, and a never-cleared pack (D2) never reads as awaiting review or as cleared.
+ */
 export function packSentence(p: PlatformPack): string {
   const what = PACK_GATES[p.key] ?? 'This capability';
-  if (p.reviewedByCounselAt) return `${what}: cleared by counsel on ${p.reviewedByCounselAt.slice(0, 10)} (pack ${p.version}).`;
-  return `${what} stays off: awaiting counsel review (pack ${p.version}, not yet reviewed).`;
+  const reviewedOn = p.reviewedByCounselAt === null ? null : p.reviewedByCounselAt.slice(0, 10);
+  if (NEVER_CLEARED_PACKS.includes(p.key)) {
+    return reviewedOn === null
+      ? `${what}: not offered (owner decision D2); nothing waits on this pack and it is never cleared (pack ${p.version}).`
+      : `${what}: not offered (owner decision D2); the pack was marked reviewed on ${reviewedOn}, but ${what} stays out of scope (pack ${p.version}).`;
+  }
+  const vendorPending = VENDOR_CHECKED_PACKS.includes(p.key) && p.vendorReadyAt === null;
+  if (reviewedOn === null) return `${what} stays off: awaiting counsel review${vendorPending ? ' and the vendor check' : ''} (pack ${p.version}, not yet reviewed).`;
+  if (vendorPending) return `${what} stays off: counsel reviewed it on ${reviewedOn}; it also waits for the vendor check (pack ${p.version}).`;
+  return `${what}: cleared by counsel on ${reviewedOn} (pack ${p.version}).`;
 }
 
 export function statusSentence(s: ConnectionStatus, reason: string | null, service: ServiceDef, at: { disconnectedAt: string | null }): string {
