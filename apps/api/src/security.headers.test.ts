@@ -55,6 +55,10 @@ describe('production secrets', () => {
     TELEPHONY_WEBHOOK_SECRET: randomBytes(24).toString('hex'),
     EMAIL_WEBHOOK_SECRET: randomBytes(24).toString('hex'),
     LEAD_WEBHOOK_SECRET: randomBytes(24).toString('hex'),
+    // these tests are about secrets: keep the fake providers (explicitly allowed) and a valid storage path,
+    // so the production-readiness provider checks (config.test.ts) do not mask what is under test here
+    ALLOW_FAKE_PROVIDERS: 'true',
+    STORAGE_DIR: '/var/lib/realty/storage',
     ...over,
   });
 
