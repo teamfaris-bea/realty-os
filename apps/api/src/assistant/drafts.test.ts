@@ -208,8 +208,15 @@ describe('seller updates (R-AST-17)', () => {
     const no = await call(w.agents[0]!, 'POST', `/assistant/actions/${id}/approve`, { commandId: randomUUID() });
     expect(no.code).toBe('SELLER_UPDATE_NEEDS_RECOMMENDATION');
     expect(h.providers.telephony.sms.length).toBe(sms);
-    const ok = await call<{ result: string; messageId: string }>(w.agents[0]!, 'POST', `/assistant/actions/${id}/approve`, { commandId: randomUUID(), editedPayload: { body: 'This week: 4 showings and 2 pieces of feedback. My take: we hold the price two more weeks.' } });
+    // R-SELL-3: one shape. A body edit is not a recommendation, and a too-short recommendation is refused
+    const bodyOnly = await call(w.agents[0]!, 'POST', `/assistant/actions/${id}/approve`, { commandId: randomUUID(), editedPayload: { body: 'This week: 4 showings and 2 pieces of feedback. My take: we hold the price.' } });
+    expect(bodyOnly.code).toBe('SELLER_UPDATE_NEEDS_RECOMMENDATION');
+    const short = await call(w.agents[0]!, 'POST', `/assistant/actions/${id}/approve`, { commandId: randomUUID(), editedPayload: { recommendation: 'Hold.' } });
+    expect(short.code).toBe('SELLER_UPDATE_NEEDS_RECOMMENDATION');
+    expect(h.providers.telephony.sms.length).toBe(sms);
+    const ok = await call<{ result: string; messageId: string }>(w.agents[0]!, 'POST', `/assistant/actions/${id}/approve`, { commandId: randomUUID(), editedPayload: { recommendation: 'My take: we hold the price two more weeks.' } });
     expect(ok.body.result).toBe('sent');
+    expect(h.providers.telephony.sms.at(-1)?.body).toContain('My take: we hold the price two more weeks.');
     expect(await decisionsFor(h, { messageId: ok.body.messageId })).toHaveLength(0);
     expect((await h.su.query<{ u: string | null; c: string }>('SELECT a.decided_by_user_id AS u, a.action_category AS c FROM messages m JOIN assistant_actions a ON a.tenant_id = m.tenant_id AND a.id = m.assistant_action_id WHERE m.id = $1', [ok.body.messageId])).rows[0]).toEqual({ u: w.agents[0]!.userId, c: 'seller_update' });
   });

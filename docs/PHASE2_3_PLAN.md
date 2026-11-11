@@ -1,0 +1,544 @@
+# Realty OS: Phase 2 and Phase 3 Plan (authoritative)
+
+Status: **authoritative design for Phases 2 and 3.** It merges two independent drafts, `docs/phase23/draft-a.md` (simplicity-first) and `docs/phase23/draft-b.md` (risk-first), and then applies a second adversarial review by a security critic and a simplicity critic (round 2, verdicts in `docs/ARCHITECTURE.md` §20). For each capability it takes the simpler design unless a draft or a critic showed a concrete hazard; every non-obvious choice is in §2. Scope comes from `docs/VISION.md`. Tables, RLS, rules (`R-*`) and edge cases (E71–E161) are in `docs/DATA_MODEL.md` Part 2 (§6–§10); the architecture is `docs/ARCHITECTURE.md` §21; the schema is `packages/db/migrations/0018_phase2_3_schema.sql`, proven by `packages/db/test/rls_smoke_p23.sql`.
+
+Phase 1 stays in force and is never weakened: FORCE RLS with composite `(tenant_id, id)` keys, append-only ledgers, ownership only through `applyOwnershipCommand`, every contact communication through `dispatchOutbound`/`dialOutbound` with `canContact` at send time, the assistant acting on its own only inside approved playbooks, money/contracts/new kinds of client message always a tap, an inbound reply pausing automation. **Owner decision D1 stands:** sending checks only opt-outs (STOP and other keywords, unsubscribe, agent-recorded do-not-contact, suppressions), with no override, in core and in the DB guards. Every new channel plugs into that same path and opt-out model. Legal points are marked **VERIFY WITH COUNSEL**, live in data, and ship with the strictest reasonable default; capabilities that wait on counsel or a vendor are gated on a platform clearance pack (R-INT-6), not on a feature flag.
+
+---
+
+## 1. Scope per phase
+
+| Capability (VISION) | Phase | What ships | What it removes from someone's day |
+|---|---|---|---|
+| Unified inbox beyond SMS/email/call | 2 | Messenger, Instagram and website chat as channels in the one thread per person (Meta DMs on once counsel clears `platform:meta`); Zillow/realtor.com/Meta Lead Ads leads through intake (email-parse first, DKIM-aligned senders only; partner feeds when access exists). A phone or email typed into chat is an unverified claim: nothing automated is sent to it and it never attaches the chat to an existing client | checking four apps for leads (agent, phone) |
+| MLS/IDX feed | 2 | RESO-shaped adapter, per-MLS licence pack, buyer-search matching against the whole MLS (through the Phase 1 saved-search alerts), competing listings | searching the MLS by hand for alerts and seller reports |
+| Behavior-aware nurture | 2 | trigger playbooks: price drop and back on market on a saved or matched home, home anniversary, monthly home value, confirmed deal date coming up. New matches stay Phase 1 saved-search alerts (one sender per fact). Rate moves are deferred until a licensed rate series and counsel review exist (N9, C7) | writing "price dropped" texts one by one |
+| Active seller updates (incl. the marketing "seller report") | 2 | weekly assembly of logged showings, feedback, marketing activity (published pieces, sent invites, logged activity) and competing listings when an MLS feed is connected; each section says where its data stands; the agent writes a recommendation and taps Send. No page-view counts (deferred, §3) | an hour per listing per week |
+| Transaction milestones | 2 | dates → milestones (template proposals, human confirmation), two exact risk predicates as exceptions, client/lender updates inside an approved playbook | the TC's spreadsheet and reminder texts |
+| Calendar sync | 2 | one-way push to Google/Microsoft (fenced by `sync_version`), live free/busy read | double entry |
+| Marketing built in | 2 | per listing: website page, social post copy, open-house email invite, flyer, Marketplace export; approve each version once (bound to its exact content and images); brokerage name on all of it; publishing to pages and channels we control once counsel clears `platform:fair_housing` | building the same marketing in five tools |
+| Post-closing home values | 2 | monthly AVM note per covered address (a trigger firing per address and month) inside the approved post-closing alerts; on once counsel clears `platform:avm` | remembering past clients |
+| Review requests | 2 | review step in the post-closing playbook (every client, no gating); on once counsel clears `platform:review_requests` | remembering to ask |
+| Owner view | 2 | dollars by source, cost per closing, velocity, a 90-day forecast range with its method and samples | spreadsheets at month end |
+| Goals and weekly plans | 2 | goals + Monday plan of 3–5 items with evidence | deciding where to start the week |
+| Call scoring + one fix a day | 2 | rubric items with transcript quotes on calls a person handled; one fix per day, private by default; on once counsel clears `platform:coaching` and the Owner turns it on | guessing what to improve |
+| Expanded admin | 2 | each feature module owns its admin API; one web admin module | — |
+| Client portal | 3 | a separate client principal: timeline, documents, showings, shared feedback, next steps, only on deals and listings the client is a party to | "what's next?" texts |
+| Deeper documents | 3 | versioned documents, scan gating, retention and legal hold, contract-date extraction from the PDF text layer as proposals | retyping contract dates |
+| Voice answering | 3 | answers missed/after-hours inbound calls, self-identifies, qualifies, books, live-transfers a hot caller to the contact's own agent when they pick up within the hold; **ships dark** until counsel and the vendor latency spike clear `platform:voice` and the Owner turns it on | missed calls at night |
+| 90-day prediction | 3 | transparent scorecard → bands with reasons and the model's back-test on feed cards; fair-housing exclusions by construction | guessing who in the sphere to call |
+| Ads within a cap | 3 | Owner cap versions, weekly proposals that move budget toward what produces appointments/closings, applied with one Owner/Admin tap (D-ADS) | manual budget shuffling |
+| Google Business Profile | 3 | posts as marketing pieces, review monitoring, reply drafts (always a tap) | — |
+| Advanced coaching reporting | 3 | weekly improving/slipping per rubric item, aggregates only for TLs | — |
+
+**VISION phase column:** unchanged. Four VISION phrases are narrowed or delayed rather than moved: "Marketplace post" is an export/copy kit (no general API we know of); "ad spend that shifts itself" ships as one-tap Owner/Admin approvals until the owner decides D-ADS (§2.2); "warm-transfers hot leads to the on-duty agent" transfers live only to the contact's own agent (an offer that waits 300 s, or until the next opening after hours, cannot hold a caller; everyone else gets a booking or a message plus a critical handback); the "rate change" trigger waits for a licensed rate series (N9) and counsel (C7).
+
+## 2. Decision record
+
+### 2.1 Per capability (A = draft A, B = draft B)
+
+| # | Topic | A | B | **Chosen** and why |
+|---|---|---|---|---|
+| P1 | Schema delivery | one design-first migration per phase | 18 pre-numbered per-module migrations | **One design-first migration for both phases (`0015`), then only definers/views/indexes per module** (A, made stricter). The client principal and the guard rewrite are the riskiest objects; they are reviewed once, before any module. Modules then cannot change table shapes, so parallel work does not collide. Round 2 used this: every schema gap the critics found was fixed in `0015` before any module started. |
+| P2 | Integration status | `channel_connections` (channels only) | `integration_connections` with honest status incl. `needs_partner_access` for every service | **B's single table** for every tenant connection. Round 2: only the provider callback (the system, after proving control) writes the routing key and live statuses; platform-procured vendors (AVM, public records, voice, scanner, extractor) are platform configuration, not rows. Per-user OAuth stays separate (`user_calendar_links`, self-only). |
+| P3 | Channel identity | per-channel points, HMAC of the address | same, address = `{platform}:{account}:{scoped id}` | **Same in both.** The address carries the Page/account id, so a reconnected Page keeps its opt-outs (E134). |
+| P4 | Dispatch guard | replace with a channel map; unknown raises | same, plus a marketing stub | **Explicit map, `CHANNEL_UNKNOWN`** (both found the 0014 `ELSE 'sms'` fallthrough). Round 2 adds the marketing check B proposed after all: an invite dispatches only from an approved invite version (the sender never approved a draft). |
+| P5 | Person-level opt-out | language / agent DNC fans out revokes to every existing point | `contacts.do_not_contact_at` checked by both guards | **B's column** plus A's fan-out for shared addresses. Round 2: a merge carries it to the survivor (definer trigger, chains included) and the guards also check merged duplicates. Clearing is possible only inside a reviewed definer (none exists yet: fail closed). |
+| P6 | DM opt-out scope | keyword ⇒ that channel on all points of the kind; language ⇒ everything | same (D3) | **Same.** Stricter than per-identity; only refuses more (R-CHAN-3/4). |
+| P7 | Messaging window | `CHANNEL_WINDOW_CLOSED` in core | `PLATFORM_WINDOW_CLOSED`, instant stored on the point | **B** (stored instant follows R-OWN-27); explicitly operational, not consent (D1 stands). |
+| P8 | Web chat | point per session, no table | `channel_sessions` + visitor definers | **B's session table.** Round 2: what a visitor types is a claim on the session, never a contact point and never an attachment to an existing contact; nothing automated is sent to it (no verification-code flow: a separate contact and a human merge remove the hazard without sending a code to someone else's number). |
+| P9 | Behavior triggers | trigger playbook; firing = step run with no enrollment | trigger steps inside the live enrollment + firings ledger | **A** (fewer tables; works for contacts with no nurture enrollment; the one-live-enrollment rule holds). Round 2: firings are woken by module 26's per-tenant reconcile handler and run by `executeTriggerRun(stepRunId)`, because Phase 1's sweeper and `executePlaybookStep` only know enrollments. B's digest-as-playbook-content is taken. |
+| P10 | Seller updates | `assistant_actions` only; recommendation required (API) | `seller_updates` + schedules tables, DB trigger on recommendation | **A's model + a DB CHECK**, one shape: an approved seller update carries `edited_payload.recommendation` (≥ 20 characters). The Phase 1 body-edit alternative is gone (it let a body-less draft through). |
+| P11 | Marketing | one `marketing_pieces` table | six tables | **A's one table** with B's guard_result CHECK, plus (round 2) `marketing_piece_assets` (images with composite FKs, frozen with the piece) and a database-computed content hash the guard result must name. Approval history is in `audit_log`; per-recipient invites are ordinary `messages`. |
+| P12 | Fair housing | ad wording check per piece | one guard pack used for copy, assistant output, voice and targeting | **B's single pack** (`core/fairhousing`, module 20): one lexicon, four uses; its review state is `platform:fair_housing`. |
+| P13 | Milestone updates | autonomous inside an approved `transaction_updates` trigger playbook | always a tap | **A**, bounded: only human-confirmed dates (round 2: the DB refuses a confirmed `manual` date or a move written by anyone but a person), dates as slots, bound to `due_version`, contract/money wording downgrades to a draft. |
+| P14 | Milestone risks | one new exception type | `deal_risk_items` + events tables | **A** (the exception queue already has per-occurrence keys, evidence, resolve/verify). Round 2 writes the two predicates down (R-ACC-6) and drops deal-level risks. |
+| P15 | AVM | `home_valuations` + monthly unique | + `avm_subscriptions` | **A**; round 2: a monthly trigger firing per covered address (`avm:{address}:{yyyy-mm}`) is the timer, because an enrollment step runs once. B's `display_allowed` and status columns are taken. |
+| P16 | Owner view | one cost table + views | same + cohort method | **Same**; round 2 defines the forecast exactly (R-OWNER-3) and serves velocity from Phase 1's `app.stage_dwell_norms()`. |
+| P17 | Calendar | one-way push + live free/busy | push/pull, busy blocks stored, exclusion constraint | **A** (no titles or busy blocks stored at all; no new extension). Double booking is prevented by a per-user advisory lock (E151); round 2 adds `appointments.sync_version` as the push fence. |
+| P18 | Call scoring | `call_scores` under recording scope (TL sees by default) | rubrics + scores + fixes tables, TL off by default | **A's one table + B's privacy default**; round 2 ties each review to a call a person handled and to that call's agent. |
+| P19 | Voice AI | calls columns + voice playbook | + `voice_sessions`, tool-call ledger, `on_duty_shifts` | **A's columns + B's tool-call ledger and "ships dark"**. B's shift roster stays cut; round 2 narrows the transfer to the contact's own agent within a short hold (R-VOICE-6), adds the args allowlist and requires disclosure before any tool request. |
+| P20 | Client portal | client accounts/sessions/grants/entries; projection published by the system | portal tables, staff publish copies, client inbox and uploads | **Projection of published copies, read-only client.** Three client-readable tables only. Round 2 binds them: a grant names a deal/listing the client is a party to (checked again on every read), an item copies only a source of its grant's own deal or listing, nothing moves, revocation and retraction are final, the login point is the client's own. |
+| P21 | Prediction | `property_records` + predictions | global feature registry + models + runs | **A's tables + B's withdrawal control**. Round 2: the features allowlist and the platform back-test live on `prediction_models`; withdrawal hides feed cards too. |
+| P22 | Ads | every shift a tap; cap [AO] | autonomous inside an approved rule; cap [AO] + allocation ledger with a DB cap trigger | **A's tap per shift + B's ledger and DB cap trigger.** Round 2 makes the trigger meaningful: the cap version in force, the exact approved amounts, single-use approvals, a tenant-wide total under a per-tenant lock, applied rows matching their plan, an Owner/Admin approver, and a budget mirror only the system writes. |
+| P23 | Documents | Phase 3 `documents` | Phase 2 `deal_documents` with scan gating | **One `documents` table (Phase 3) with B's RESTRICTIVE scan gating**; round 2 makes the scan, hold, retention and scope rules DB-enforced and makes erasure honor them. |
+| P24 | GBP | connection + post kind + reply drafts | + `gbp_reviews` | **B's reviews table** (replies need the review they answer); Q&A deferred. |
+| P25 | Expanded admin | per module + one web module | same | **Same.** |
+| P26 | Phase 3 order | voice first | portal first | **Portal + documents first** (no partner dependency, the most isolation-critical, immediately useful); voice is built next and stays dark until counsel and the vendor spike. |
+| P27 | Shared code (round 2) | — | — | **One owner per shared Phase 1 file**, named in §5.3: the feed and exception pipeline gets its own small module (18a); the playbook machinery belongs to modules 25/26; the channel paths to 22. Phase 2/3 feed cards are materialized by their owning module under its own key family (the Phase 1 extension point), so no module edits the scorer. |
+| P28 | Counsel and vendor gates (round 2) | — | — | **Platform clearance packs** (`jurisdiction_packs` keys `platform:*`, R-INT-6) replace "feature flags": the DB refuses Meta DMs, publishing, voice and call scoring until their pack is counsel-reviewed. |
+
+### 2.2 Owner decisions needed (defaults in force until decided)
+
+| Id | Question | Default shipped |
+|---|---|---|
+| D-ADS | May the system apply ad shifts inside the Owner's cap without a per-change tap? VISION says "shifts itself"; ARCHITECTURE §11 says money always needs a tap. | Every shift is a one-tap Owner/Admin approval (DB-enforced, single-use, exact amounts). Changing this needs an owner decision and an amendment to the money rule. |
+| D-VOICE | Is a bounded live voice session acceptable given "an inbound reply pauses automation and hands back"? Answer missed calls in business hours too, or after hours only? | Bounded: closed tool set, mandatory handback, inbound only, off by default; `missed_and_after_hours` when the Owner enables it. |
+| D-OPTOUT-LANG | Opt-out language on any channel blocks every channel for the person. | On (stricter than per-channel). From web chat it applies to the session's own contact. |
+| D-COACH | Team Leads see call reviews? | Off (`tl_sees_call_scores`, Owner-only). |
+| D-FEEDBACK | Buyer-agent feedback included in seller updates by default? | Included, each item removable; portal only when a person shares it. |
+| D-MLS-STORE | Per-tenant MLS copies (licences are per brokerage) or a shared cache with licence gating? | Per-tenant copies; benchmark RLS at volume before launch. |
+| Q2 (carried) | Can Team Leads approve team playbooks (now also `transaction_updates`, `voice_answering`)? | Owner/Admin only. |
+| Q11 (new) | A separate DB login role for the portal API (a compromised API can set any client GUC, like Phase 1 Q3)? | Same role; actor built only by the portal resolver (lint). |
+| Q12 (new) | An Owner-only data export (portability) before Phase 3 ends? ARCHITECTURE §18 had it in Phase 2. | Not built (it is the largest exfiltration path and needs its own security review). |
+
+### 2.3 Round 2 review changes (two critics; verdicts in ARCHITECTURE §20)
+
+| Finding | Change |
+|---|---|
+| S1 portal binding | Party check on grant and on read (`app.portal_party_ok`); grants and items immutable except revoke/retract once; item sources bound to the grant's deal/listing; login point = the client's own email/phone (composite FK); TC portal publishing dropped from the matrix. |
+| S2 connection routing key | Only the system (provider callback) links accounts and moves external kinds live; account id immutable; live ⇒ credential; routing on connected/degraded only. |
+| S3 anonymous intake | Chat claims never attach or receive automated messages; rate limits; lead email only from DKIM-aligned allowlisted domains, else `needs_review` with no autonomous first response. |
+| S4 merge | Do-not-contact follows the merge (trigger) and the guards check merged duplicates. |
+| S5, S11, S12 documents | Forced quarantine, system-only scan, Owner/Admin hold and retention, immutable scope; retained documents block erasure and purge; erasure shreds document objects; listing documents only for listing writers and listing-side deal members. |
+| S6 decisions | Decision guard on `assistant_actions` (a person, as themselves; role recorded; final; executed only after approval); Owner/Admin for ad money. |
+| S7, F14 ad cap | Cap trigger rewritten (version in force, exact amounts, single-use, tenant-wide total, lock, applied ⇔ planned). |
+| S8 voice re-enable | Only the Owner activates a voice-on policy; new guards run without a tenant context too. |
+| S9, S10 marketing | Invite and ad creative must be approved; content hash computed by the DB and bound to the guard result; assets in a table, frozen. |
+| S13, F9 prediction | Feed cards hidden on withdrawal; features allowlist; reasons cite model features; back-test on the model. |
+| S14 voice/coaching | Disclosure for every answered AI call; tool calls after disclosure, args allowlist; reviews only of human-handled calls, for that call's agent. |
+| S15 costs | System reads/writes only `ads_sync` rows; origin immutable. |
+| S16 dates | A confirmed `manual` date and any move of a confirmed date are a person's. |
+| F1 duplicate alerts | New matches stay Phase 1 saved-search alerts (module 24 is their sole Phase 2 editor); `new_match` trigger and `match_reason` removed. |
+| F2 timers | Per-tenant reconcile handlers per module (R-OWN-27); per-tenant indexes; `trigger.step` contract. |
+| F3 playbook machinery | Owners named (25, 26, 22); one `PlaybookContent` union; `inbound_channel` step channel. |
+| F4 deal dates | Module 31 is the only writer (Phase 1 routes call `confirmDate`); `completed` status removed; zone = tenant default, recorded in `basis`; reconcile repair. |
+| F5 feed pipeline | Module 18a owns it; `trigger_draft`, `calendar_conflict`, `milestone_risk` feed types removed; R-MKT-8 exclusion in `deriveExceptions`. |
+| F6 risks | R-ACC-6 predicates; deal-level risks dropped. |
+| F7 AVM/anniversary | Both are trigger firings; the post-closing template drops its home-value and anniversary steps (new version). |
+| F8 forecast | R-OWNER-3 definition and return type; velocity from `app.stage_dwell_norms()`; `planWeek` inputs and ranking restored. |
+| F10 counsel gates | Platform clearance packs; platform vendors out of `integration_connections`; capabilities system-only. |
+| F11 seller-update claims | Sections say where their data stands; page views deferred; marketing activity never from exports. |
+| F12 | One recommendation shape (DB and the Phase 1 approve route). |
+| F13 calendar | `sync_version` fence; lazy token refresh; external edits detected at the next push. |
+| F15 rate moves | Deferred (§3); `market_rates` removed from 0015. |
+| F16 voice transfer | Owner only, within the hold (R-VOICE-6). |
+| F17 equivalence test | One case table `packages/db/test/fixtures/opt_out_cases.json` drives the DB guard test now and the core gate test in module 19. |
+| F18 extraction | N17 (PDF text extractor); text layer only; E159. |
+| F19 two do-not-contacts | Closing with reason `do_not_contact` records the person-level opt-out (module 22). |
+| F20 §18 promises | Each has a decision in §3. |
+
+## 3. Cut, merged, deferred
+
+| Item | Decision | Why |
+|---|---|---|
+| Marketing "seller report" | **Merged** into seller updates (one assembly, two renderings) | one artifact, one approval |
+| Expanded admin as a module | **Merged** into each feature module + one web admin module | an admin module would block on everything |
+| Trigger firings table, client/lender sequences as enrollments | **Merged** into `playbook_step_runs` and trigger playbooks | reuses the step lattice, gate and failed-send exception; keeps one live enrollment; woken by reconcile handlers |
+| "New match" trigger | **Merged** into the Phase 1 saved-search alerts | one sender per fact; the Owner's `search_alert` switch keeps working |
+| Milestone risk tables, deal-level risks | **Merged** into the exception queue (`milestone_at_risk`); deal-level risks **cut** | the queue already does per-occurrence keys; "no lender contact" has no date to key on |
+| Feed types `trigger_draft`, `calendar_conflict`, `milestone_risk` | **Cut** | a converted firing is already an `assistant_draft`; free/busy is never stored; overdue dates already show as Phase 1 `deal_date` cards and in the TL queue |
+| SMS open-house blasts | **Cut** (email only) | Phase 1 cut bulk SMS for TCPA exposure; D1 makes that more important |
+| Facebook Marketplace posting | **Export/copy kit only** | no general listing API that we know of; the UI says so |
+| Social/GBP auto-posting by default | **Export first**; API publish only behind a connected, approved integration and `platform:fair_housing` | platform app review; honest status; counsel |
+| Two-way calendar sync, stored busy blocks | **Cut** (one-way push + live free/busy) | conflict resolution is its own product; privacy |
+| Gmail/Outlook inbox sync | **Deferred** | restricted OAuth scopes, security assessment |
+| Multi-turn autonomous text qualification (ARCHITECTURE §18 said Phase 2) | **Deferred indefinitely** | would break "a reply hands back"; voice answering covers the job inside a bounded exception |
+| Web-chat verification codes | **Not adopted** | a separate contact plus a human merge removes the impersonation hazard without sending a code to a typed (maybe someone else's) number |
+| Portal messaging and client uploads | **Cut** | keeps the client principal read-only; "Message your agent" deep-links to SMS/email |
+| E-signature | **Deferred** (link out) | vendor integration, not core work |
+| OCR / Phase 2 contract-date extraction | **Deferred**; Phase 3 extraction reads the PDF text layer only | manual entry of ~6 dates works; image-only scans say so (E159) |
+| ML prediction model | **Not built**; deterministic scorecard with reasons | explainable, testable, counsel-reviewable |
+| Life events and geography as prediction inputs or ad targets | **Cut** | protected-class proxies; regulated solicitation |
+| Custom audiences / lookalikes | **Cut** | opt-out leakage to ad platforms; housing ad rules |
+| Auto-applying ad shifts | **Not built** (D-ADS) | money always needs a tap |
+| Coaching leaderboards, numeric scores, tone/sentiment | **Cut** | small samples, honesty, employee monitoring and biometric risk |
+| Rate-move alerts | **Deferred** until N9 (licensed series) and C7 (counsel); `market_rates` removed from 0015 | no runtime writer, two external gates, and per-contact money drafts would add taps; when it lands: one feed card per agent per move, a draft only on tap |
+| Page-view counts in seller updates | **Deferred** | needs a bot/staff-filtered distinct-visit method and a write path from the public definer; until then updates list what was published and sent, never a view count |
+| Zillow/realtor.com native connectors, two-way messaging | **Deferred** until partner access; email-parse intake ships first | access unconfirmed |
+| On-duty shift roster | **Cut** | live transfer goes to the contact's own agent; everyone else is booked or leaves a message |
+| GBP Q&A | **Deferred** | we are not confident the API still exists |
+| Showing-service import | **Adapter + fake only** until partner access | manual logging works |
+| Brokerage hierarchy / cross-tenant reporting (ARCHITECTURE §18: Phase 3) | **Out of Phase 3** | cross-tenant reads are the largest isolation risk; needs its own design |
+| Connection quarantine between tenants (round 2 proposal) | **Not adopted** | the provider-callback proof already stops a tenant that does not control an account; a quarantine would only delay a legitimate move |
+| Custom fields, custom stages, custom pipelines (ARCHITECTURE §18) | **Deferred** (not in Phase 2-3) | config sprawl against "fewer concepts"; FUB custom fields stay read-only `imported_fields` |
+| Contact export (ARCHITECTURE §18: Phase 2, Owner-only) | **Deferred**, owner question Q12 | largest exfiltration path; needs its own review |
+| Unmerge (ARCHITECTURE §18: Phase 2) | **Deferred** | the merge payload keeps what an unmerge needs; support path meanwhile |
+| Hash-chained audit seals (ARCHITECTURE §18: Phase 2) | **Deferred** | `audit_log.seq` keeps gaps detectable; revisit with a compliance audit |
+| SSO/SAML, WebAuthn (ARCHITECTURE §18: Phase 2) | **Deferred** | TOTP for Owner/Admin covers both phases |
+| STIR/SHAKEN display, branded caller ID (ARCHITECTURE §18: Phase 2) | **Deferred** | needs carrier and registry programs; would be its own partner need |
+
+## 4. Schema: `0018_phase2_3_schema.sql`
+
+> **Migration numbering (orchestrator note, 2026-11-11).** This schema was designed as `0015` and renumbered to `0018_phase2_3_schema.sql` when it merged after the Phase 1 hardening lanes' `0016_rule_coverage.sql` and `0017_production_readiness.sql`. Older log entries in ARCHITECTURE §20 say `0015`. Module migrations named below as `0016`–`0021` are placeholders: each module lane writes the next free number on its branch, and the orchestrator renumbers at merge so migrations always apply in merge order. Every new table must get the `support_read_only` statement trigger from `0016_rule_coverage.sql` (an invariant test in `packages/db/test/rule_coverage_0016.test.ts` enforces it).
+
+Written before every feature module; reviewed adversarially twice (ARCHITECTURE §20, Phase 2-3 entries). It adds 18 tenant tables and 1 global table, widens the channel, kind and purpose enums, adds the person-level opt-out (merge-safe), replaces both dispatch guards and the two contact-retention definers, introduces the client principal on exactly three tables, binds approvals to people and content, and seeds the seven platform clearance packs unreviewed. Details: DATA_MODEL §6–§7.
+
+**Migration policy for Phase 2/3 modules.** Modules never change table shapes or RLS policies. A module that needs a definer, view or index writes it in its own migration with the number assigned below and lists it as a security-review item if it is a definer. Migrations land on the main branch in number order: the runner refuses a pending file that sorts before an applied one, so a lane that finishes before a lower-numbered lane waits for it to merge (lanes 22 and 29, for example, can finish in either order). If a module finds a real schema gap, it stops and asks; the fix is a new reviewed schema migration, never an edit of `0015` once it is applied.
+
+| No. | Module | Content |
+|---|---|---|
+| 0016 | 21 api/integrations | `app.resolve_channel_account` (pre-tenant; connected/degraded connections only) |
+| 0017 | 22 api/channels-inbox | `app.resolve_webchat_widget`, `app.webchat_session`, `app.webchat_poll`, `app.record_person_opt_out`, `app.reinstate_person_contact`, `app.undo_language_opt_out` |
+| 0018 | 29 api/marketing | `app.public_listing_page` (assets only through `marketing_piece_assets`) |
+| 0019 | 33 api/insights | `v_owner_source_dollars` (security_invoker); velocity is served by Phase 1's `app.stage_dwell_norms()` |
+| 0020 | 43 db/p3-portal-auth | `portal_sessions`, `portal_login_tokens` (pre-tenant, definer-only), `portal.request_login` (waits for `platform:portal`), `portal.consume_login`, `portal.resolve_session`, `portal.document_object` (re-checks item, grant, scope, sharing and scan), portal audit definer |
+| 0021 | 54 api/coaching-trends | `app.coaching_trends` (aggregate-only definer) |
+
+## 5. Modules (dependency order)
+
+Numbers continue from Phase 1 (1–17; `docs/BUILD_PLAN.md`), all built. "Depends on" lists Phase 2/3 modules only (these drive the build DAG); "Builds on" lists the Phase 1 modules whose code a module calls or extends. "Critical" = on a risk path (isolation, opt-out, autonomy, money, fair housing, documents). A critical module needs a security review of every definer it adds, property or mutation tests on its decision functions, an `adversarial.test.ts`, and counsel review of its VERIFY items before its platform pack is cleared in production (R-INT-6). Ground rules of BUILD_PLAN (pure core, real Postgres, Zod snapshots without confidence or tenant_id fields, the lint rules) apply to every module.
+
+### 5.1 Phase 2
+
+| # | Name | Path | Depends on | Builds on | Critical | Summary |
+|---|---|---|---|---|---|---|
+| 18 | db/p23-schema | `packages/db/migrations/0018_phase2_3_schema.sql`, `packages/db/src/schema.ts`, `packages/db/test/{rls_smoke_p23.sql,rls_smoke_p23.test.ts,isolationFixture.ts,dispatch_guard.test.ts,tenantTx.test.ts,fixtures/opt_out_cases.json}`; round 2 also aligned `apps/api/src/assistant/{drafts,schemas}.ts` and three Phase 1 api tests with the schema (one seller-update shape, voice guard without a tenant context, audit snapshot) | — | 7 | **yes** | **Done.** The Phase 2/3 schema, guards, client principal, platform packs, self-check, smoke proof (both review rounds) and the shared opt-out case table. |
+| 18a | api/feed-p23 | Phase 2 owner of `packages/core/src/priority/**`, `apps/api/src/workspace/{feed.ts,repos/feedInputs.ts}`, `apps/api/src/accountability/**`, `apps/web/src/surfaces/feed/**` | 18 | 5, 14, 15, 17 | no | The shared feed and exception pipeline: labels, one-tap actions and deep links for the five materialized card types; R-ACC-6 `milestone_at_risk`; the R-MKT-8 exclusion. |
+| 19 | core/compliance-v3 | `packages/core/src/compliance/**` | 18 | 2 | **yes** | `core-compliance/3.0.0`: new channels, person DNC, connection, platform-window and platform-clearance checks. |
+| 20 | core/fairhousing | `packages/core/src/fairhousing/**` | — | 1 | **yes** | One lexicon pack: copy check, assistant/voice guard, targeting validator. |
+| 21 | api/integrations | `apps/api/src/integrations/**`, provider additions in `apps/api/src/providers/**` (Phase 2 owner), `0016` | 18 | 8, 9 | **yes** | Adapter interfaces + fakes, connection status machine, OAuth callback (the only writer of routing keys), Integrations admin API. |
+| 22 | api/channels-inbox | `apps/api/src/channels/**`; **sole Phase 2 editor** of `apps/api/src/comms/{dispatch.ts,inbound.ts,compose.ts}`, `apps/api/src/assistant/{firstResponse.ts,drafts.ts}`, `apps/api/src/leads/**`; `0017` | 19, 21, 25 | 11, 12, 13 | **yes** | Meta webhooks, web chat, lead-email intake (DKIM), DM dispatch branches, DM/chat drafts and first response, person-level opt-out definers, close-as-do-not-contact. |
+| 23 | core/listings | `packages/core/src/listings/**` | — | 1, 4 | no | MLS normalization, licence pack, display rules per audience, competing set. |
+| 24 | api/mls | `apps/api/src/mls/**`; **sole Phase 2 editor** of `apps/api/src/assistant/searches.ts` | 21, 23 | 13, 14 | no | Feed sync, MLS rows into saved-search alerts, compliance sweep, staleness, MLS admin, competing endpoint. |
+| 25 | core/nurture | `packages/core/src/nurture/**`; Phase 2 owner of `packages/core/src/assistant/**` | 20, 23 | 4 | **yes** | Trigger detection, digest, fact recheck, anniversaries, AVM sendability; `PlaybookContent` (steps / triggers / voice), `inbound_channel`, fair-housing downgrade in the content guard. |
+| 26 | api/nurture | `apps/api/src/nurture/**`; **sole Phase 2 editor** of `apps/api/src/assistant/{playbooks,steps,templates}.ts` | 22, 24, 25 | 13 | **yes** | Trigger playbooks end to end (`executeTriggerRun`, reconcile handler), AVM refresh, built-in templates, review-request step. |
+| 27 | core/marketing | `packages/core/src/marketing/**` | 20, 23 | 4 | **yes** | Piece schemas, renderers with live facts, guard result, seller-update assembly. |
+| 28 | api/seller-updates | `apps/api/src/sellerUpdates/**`; one flagged edit: the seller-update branch of `apps/api/src/assistant/drafts.ts` (after 22) | 18a, 22, 24, 27 | 13, 14 | no | Weekly assembly, recommendation-required approval with the staleness check, send. |
+| 29 | api/marketing | `apps/api/src/marketing/**` (incl. `publish.ts`, the single `publishPost` path), `0018` | 18a, 21, 27 | — | **yes** | Pieces, assets, approval, public page, invites, flyer rendering, exports. |
+| 30 | core/transactions | `packages/core/src/transactions/**` | — | 1, 5 | **yes** | Milestone plans, `confirmDate` instants. |
+| 31 | api/transactions | `apps/api/src/transactions/**`; **sole Phase 2 editor** of the deal-date functions in `apps/api/src/workspace/deals.ts` | 18a, 26, 30 | 14, 15 | **yes** | Plan/confirm endpoints, the only deal-date writer, reminder reconcile firing `deal_date_upcoming`. |
+| 32 | core/insights | `packages/core/src/insights/**` | — | 1, 5 | no | Owner metrics, forecast, goal pace, weekly plan selection. |
+| 33 | api/insights | `apps/api/src/insights/**`, `0019` | 18a, 32 | 15 | **yes** (money visibility) | Owner view, source costs, goals, weekly plan job. |
+| 34 | api/calendar | `apps/api/src/calendar/**` | 21 | 14 | no | OAuth connect, one-way push, live free/busy, booking lock. |
+| 35 | core/coaching | `packages/core/src/coaching/**` | — | 4 | no | Rubric v1, verified scoring, daily fix, trend math. |
+| 36 | api/coaching | `apps/api/src/coaching/**` | 18a, 35 | 13 | **yes** (recording scope) | Call review job, daily fix job, Owner-only coaching settings. |
+| 37 | web/inbox | `apps/web/src/surfaces/{thread,compose}/**` (Phase 2 owner), `apps/web/src/widget/**` (separate bundle) | 22 | 17 | **yes** | Channel tags, channel-aware compose, honest window copy, chat widget. |
+| 38 | web/listing-marketing | `apps/web/src/surfaces/{listings,marketing}/**`, `apps/web/src/surfaces/approvals/**` (Phase 2 owner of approval card types) | 24, 28, 29 | 17 | no | Seller-update card, marketing tab, MLS badges and attribution. |
+| 39 | web/deals-milestones | `apps/web/src/surfaces/deals/**` | 31 | 17 | no | Milestone timeline with confirm chips, TC board, risk cards. |
+| 40 | web/insights | `apps/web/src/surfaces/{owner,goals,coaching}/**` | 33, 36 | 17 | no | Owner view, goals, weekly plan page, daily fix page. |
+| 41 | web/admin-p2 | `apps/web/src/surfaces/admin/{integrations,mls,marketing,transactions,coaching}/**`, `apps/web/src/surfaces/settings/calendar/**` | 21, 24, 29, 31, 34, 36 | 17 | no | Every Phase 2 admin page, counsel-review state stated. |
+
+### 5.2 Phase 3
+
+| # | Name | Path | Depends on | Builds on | Critical | Summary |
+|---|---|---|---|---|---|---|
+| 42 | api/documents | `apps/api/src/documents/**` (incl. `MalwareScanner` + `DocumentTextExtractor` adapters and fakes, registered in `providers/index.ts` by the additive protocol) | 21, 31 | — | **yes** | Upload, versions, scan gating, share to portal, contract-date proposals (text layer). |
+| 43 | db/p3-portal-auth | `0020`, `packages/db/src/portalTx.ts` (`withPortalTx`), `packages/db/test/portal_auth.test.ts` | 18 | 7 | **yes** | Portal sessions, login tokens, pre-tenant `portal.*` definers, client transaction helper. |
+| 44 | core/portal | `packages/core/src/portal/**` | 27, 30 | — | **yes** | What may be published, deterministic item rendering. |
+| 45 | api/portal | `apps/api/src/portal/**` (separate Fastify plugin, cookie, CSRF, rate limits) | 22, 31, 42, 43, 44 | — | **yes** | Magic-link login, client routes, staff invite/grant/publish/retract, `portal.sync`. |
+| 46 | web/portal | `apps/web/portal.html`, `apps/web/src/portal/**` (separate bundle) | 39, 45 | — | **yes** | Phone-first client timeline, documents, next steps; staff "What Jane sees" preview. |
+| 47 | core/voice | `packages/core/src/voice/**` | 19, 20, 25 | 4 | **yes** | Policy state machine, tool decisions, hot-lead rule, transfer target, turn guard. |
+| 48 | api/voice | `apps/api/src/voice/**` (incl. `VoiceAgentProvider` + fake), additive branch in `apps/api/src/comms/webhooks.ts`; one flagged edit: the `voice_answering` template in `apps/api/src/assistant/templates.ts` (after 26) | 26, 34, 47 | 12, 13 | **yes** | Takeover, tool callbacks, transfer, handback pipeline, Owner enablement. |
+| 49 | core/predict | `packages/core/src/predict/**` | 20 | 1 | **yes** | Feature type with exclusions, deterministic scorecard, back-test. |
+| 50 | api/predict | `apps/api/src/predict/**` (incl. `PublicRecordsProvider` + fake) | 18a, 21, 49 | — | **yes** | Property records refresh, nightly bands, feed cards. |
+| 51 | core/ads | `packages/core/src/ads/**` | 20, 32 | — | **yes** | Reallocation proposals under the cap, sample holds, overspend. |
+| 52 | api/ads | `apps/api/src/ads/**` (incl. `dispatch.ts`, the single `applyBudgetChange` path, and `AdsProvider` + fake) | 21, 29, 33, 51 | — | **yes** | Caps, proposals, approved apply, spend sync, hourly reconcile. |
+| 53 | api/gbp | `apps/api/src/gbp/**` (incl. `GbpProvider` + fake) | 21, 29 | — | no | GBP posts, review sync, reply drafts. |
+| 54 | api/coaching-trends | `apps/api/src/coaching/trends/**`, `0021` | 36 | — | no | Aggregate-only weekly trends. |
+| 55 | web/phase3-staff | `apps/web/src/surfaces/{voice,ads,documents,likely,gbp,coaching-trends}/**`; approval card types for ad shifts, review replies and contract extractions in `surfaces/approvals` (after 38) | 38, 42, 48, 50, 52, 53, 54 | 17 | no | Voice settings and handback cards, ads page, documents, likely-to-move list, GBP, trends. |
+
+### 5.3 Dependency graph, shared files and release waves
+
+```
+18 db/p23-schema (done) ─┬─► 18a api/feed-p23 ─► 28, 29, 31, 33, 36, 50 (their feed cards and exceptions)
+                         ├─► 19 core/compliance-v3 ─┐
+                         └─► 21 api/integrations ───┼─► 22 api/channels-inbox ─► 37 web/inbox
+20 core/fairhousing ─┬─► 25 core/nurture ───────────┘        └─► 26 api/nurture ─► 31 api/transactions ◄─ 30
+23 core/listings ────┴─► 24 api/mls ─► 26                     27 core/marketing ─► 28, 29 ─► 38
+32 core/insights ─► 33 api/insights      35 core/coaching ─► 36 api/coaching ─► 40 web/insights
+Phase 3: 42 ─► 45 api/portal ◄─ 43, 44 ─► 46 web/portal      25 ─► 47 core/voice ─► 48 api/voice ◄─ 26, 34
+         49 ─► 50 predict      51 ─► 52 ads      53 gbp      54 trends ─► 55 ◄─ 38
+```
+
+**Shared files (one owner each).** A file another module also needs is edited only by its owner, or by a later module that depends on that owner (one flagged edit):
+- `comms/dispatch.ts`, `comms/inbound.ts`, `comms/compose.ts`, `assistant/firstResponse.ts`, `assistant/drafts.ts`, `leads/**`: module 22 (modules 26, 28, 29, 31, 45 call `dispatchOutbound`; they never edit it). Module 28 then adds the seller-update branch of `drafts.ts`.
+- `comms/webhooks.ts`: module 48 (additive). `comms/dial.ts`: unchanged (no AI dial exists).
+- `packages/core/src/assistant/**`: module 25. `assistant/{playbooks,steps,templates}.ts`: module 26 (it ships the built-in templates: behavior alerts, after-closing alerts, a new post-closing version without the home-value and anniversary steps, `transaction_updates`); module 48 adds the `voice_answering` template. `assistant/searches.ts`: module 24.
+- `packages/core/src/priority/**`, `workspace/{feed.ts,repos/feedInputs.ts}`, `accountability/**`, `web surfaces/feed/**`: module 18a. Feature modules materialize their own cards under their own key families (`seller_update:{listing}:{period}`, `marketing:{piece}`, `weekly_plan:{user}:{week}`, `coaching_fix:{user}:{date}`, `likely:{contact}:{model}`); the scorer leaves foreign keys alone (Phase 1 extension point).
+- `workspace/deals.ts` (deal-date functions): module 31.
+- `web surfaces/approvals/**`: module 38; module 55 adds its card types after it.
+- `providers/index.ts`: module 21 in Phase 2; Phase 3 modules register their own adapters by the additive protocol (one import, one entry).
+- Registries (`routes.ts`, `worker/handlers/index.ts`, `errors.ts`, `foundation/authz.ts`, `shell/registry.ts`): the Phase 1 additive protocol (CONVENTIONS §3). Each reconcile handler is one line in `worker/handlers/index.ts`.
+- `packages/eslint-plugin/**` (scaffold-owned): one flagged additive edit each by module 22 (reserved names `sendDirectMessage`/`deliverChannelMessage`), 29 (`publishPost`/`postReviewReply`), 52 (`applyBudgetChange`), 43 (`withPortalTx`/`withTenantTx` separation), 37 and 46 (no staff-surface imports in `src/widget` or `src/portal`), and 49 (no import of `core/predict` or `core/coaching` from ownership, priority, ads or portal code).
+- `scripts/rule-coverage.mjs` gained `--phase=2-3` with 0015.
+
+| Wave | Modules | Why first |
+|---|---|---|
+| 2A | 18a, 19, 20, 21, 22, 23, 24, 25, 26, 37 | every lead in one thread, MLS-wide alerts, behavior triggers: the most daily phone work removed for every agent |
+| 2B | 27 (seller part), 28, 30, 31, 34, 38 (seller card), 39 | seller updates, milestones, calendar |
+| 2C | 27 (marketing part), 29, AVM in 26, 38 (marketing tab), 41 | marketing, home values, reviews, admin |
+| 2D | 32, 33, 35, 36, 40 | plans, coaching, owner view (high Owner value; no agent's daily work waits on it) |
+| 3A | 42, 43, 44, 45, 46 | documents + portal: no partner dependency; the most isolation-critical |
+| 3B | 47, 48 | voice: built and tested against fakes; dark until `platform:voice` is cleared |
+| 3C | 49, 50, 54 | prediction (models ship withdrawn until counsel review), coaching trends |
+| 3D | 51, 52, 53, 55 | ads, GBP, the Phase 3 staff surfaces |
+
+### 5.4 Module details
+
+Each module lists its interface, rules, tests and acceptance criteria, as BUILD_PLAN does. Paths are in §5.1/§5.2.
+
+#### 18a. `api/feed-p23`
+```ts
+// core/priority: FeedItemType + 'seller_update' | 'marketing_review' | 'weekly_plan' | 'coaching_fix' | 'likely_to_move' (materialized by their modules)
+// ExceptionType + 'milestone_at_risk'; ExceptionInputs + milestoneDates: { dealDateId, dealId, ownerUserId, dueAt, dueVersion, responsible, completedAt, status }[]
+// failed_send inputs exclude messages with marketing_piece_id (R-MKT-8)
+// api: foreignActions(row) maps the five card types to their deep links; accountability recompute loads milestone dates
+```
+- **Rules:** R-ACC-6, R-MKT-8 (exception side), R-PRED-5 (card read path). **Tests:** E156–E158 vectors in `exceptions.test.ts`; each card type renders a label and a primary action on phone and desktop; a `likely_to_move` card disappears when its model is withdrawn. **Accept when:** a module can add a card by writing one `priority_feed_items` row under its key family, with no edit to the scorer.
+
+#### 19. `core/compliance-v3`
+```ts
+export type Channel = 'sms'|'voice'|'email'|'messenger'|'instagram'|'web_chat';
+export const RULES_VERSION = 'core-compliance/3.0.0';
+export interface GateInput { /* Phase 1 fields */ personDoNotContact: boolean;   // includes a merged do-not-contact duplicate
+  connection: { status: 'connected'|'degraded'|'other' } | null;            // DM/chat sender identity
+  platformWindow: { openUntil: Instant | null } | null;                     // stored on the point at inbound
+  platformCleared: boolean }                                                // platform:meta for Messenger/Instagram
+export type ReasonCode = /* Phase 1 */ | 'PERSON_DO_NOT_CONTACT' | 'CHANNEL_NOT_CONNECTED' | 'PLATFORM_WINDOW_CLOSED' | 'PLATFORM_NOT_CLEARED' | 'FAIR_HOUSING_TERMS';
+export function optOutFanout(points: readonly PointFacts[], trigger: 'keyword'|'language'|'agent_dnc', channel: Channel): ConsentEventSpec[];
+export function classifyInbound(body: string, k: Keywords, channel: Channel): InboundClass;   // per-channel keywords, D-OPTOUT-LANG scope
+```
+- **Rules:** R-CHAN-1, R-CHAN-3, R-CHAN-4, R-CHAN-5, R-GATE-13 (core side), R-INBOX-6, R-INT-6 (DM side).
+- **Tests:** the Phase 1 gate table extended by every channel; property tests (determinism, monotonic denial) over the new inputs; adding a channel never relaxes a deny; `optOutFanout` vectors; an architecture test that the core `Channel` union, the `messages.channel` CHECK and the guard's map are equal; the equivalence test reads `packages/db/test/fixtures/opt_out_cases.json` (the cases `dispatch_guard.test.ts` runs against the DB guard) and asserts `canContact` denies every case the guard denies.
+- **Accept when:** Stryker ≥ 90 % on `gate.ts`; every new reason code has a test; the equivalence test passes.
+
+#### 20. `core/fairhousing`
+```ts
+export interface FairHousingPack { hard: Term[]; soft: Term[]; exemptions: Exemption[]; lexiconVersion: string; reviewedByCounselAt: string | null }   // review state = platform:fair_housing
+export function check(text: string, pack: FairHousingPack): { hard: Match[]; soft: Match[] };   // normalized, negation-aware
+export type TargetingSpec = { geo: 'radius_of_listing'; radiusMiles: number; ageMin?: never; zip?: never /* no protected fields */ };
+export function validateTargeting(spec: unknown): { ok: true; spec: TargetingSpec } | { ok: false; issues: string[] };
+```
+- **Rules:** R-FH-1 (core side), R-FH-2, R-FH-3, R-FH-4, R-FH-5.
+- **Tests:** fixture set with zero false negatives on the listed hard terms; "family room" not flagged, "great for young families" flagged; negation; compile-time test that `TargetingSpec` cannot express a protected attribute.
+- **Accept when:** used by modules 25, 27, 29, 47, 51 through one import; the pack ships marked unreviewed.
+
+#### 21. `api/integrations`
+```ts
+// GET /admin/integrations  POST /admin/integrations/:kind/connect (OAuth start, PKCE+state)  GET …/callback  POST …/:id/disconnect
+// the callback runs as the system actor (resolver result: the stored OAuth state) and is the ONLY writer of
+// external_account_id, credential_id, live statuses and capabilities (DB trigger); it first proves the token manages that account
+export interface MetaMessagingProvider { sendDirectMessage(i: DmSend): Promise<ProviderResult>; verifyWebhook(raw: Buffer, sig: string): boolean; parseWebhook(raw: Buffer): MetaEvent[]; listManagedAccounts(token: Token): Promise<string[]> }
+export interface LeadFeedProvider { poll(cursor: string|null): Promise<LeadFeedPage> }      // zillow, realtor: needs_partner_access
+export interface MlsFeed { changes(cursor: string|null, limit: number): Promise<MlsPage>; media(n: string): Promise<MediaRef[]>; describeLicense(): LicensePack }
+export interface AvmProvider { estimate(a: AddressFacts): Promise<{ available: false } | AvmEstimate> }     // platform configuration
+export interface CalendarProvider { pushEvent(e: CalendarEvent, fence: { syncVersion: number }): Promise<PushResult>; freeBusy(range: Range): Promise<Busy[]> }
+export interface SocialPublisher { publishPost(p: PublishRequest): Promise<PublishResult> }       // reserved name
+// + ShowingServiceProvider, DocumentRenderer (pdf)
+export function transitionConnection(c: ConnectionRow, e: ConnectionEvent): ConnectionRow;     // honest status machine
+```
+- **Rules:** R-INT-1…6, R-TEN-11 (`app.resolve_channel_account`).
+- **Tests:** every adapter has a deterministic fake that is the default; a real adapter refuses to start unconfigured; the status machine; the callback refuses an account the token does not manage (E160); disconnect revokes tokens in the same transaction; `resolve_channel_account` returns only connected/degraded connections (security-review item).
+- **Accept when:** the Integrations page can show every service with an honest sentence (including each platform pack's review state) and no UI offers a capability the adapter does not report.
+
+#### 22. `api/channels-inbox`
+```ts
+// POST /webhooks/meta (+ GET verify)  POST /webhooks/lead-email/:token (DKIM-aligned allowlisted sender ⇒ lead; else needs_review)
+// POST /public/chat/:widgetKey/start {name, phone|email, message, disclosureId}  POST /public/chat/session/:token/messages  GET …/poll?after=
+//   the typed phone/email is stored as webchat_sessions.claimed_*; the session gets a NEW contact with only its wc: identity
+// POST /contacts/:id/do-not-contact {evidence}   (records the person-level opt-out; lifting is the person's own action only)
+// leads: closing with reason do_not_contact calls app.record_person_opt_out in the same transaction (F19)
+export function ingestChannelInbound(actor: SystemActor, e: ChannelInboundEvent): Promise<IngestResult>;   // Phase 1 transaction, per channel; cancels the contacts' scheduled trigger runs
+// dispatch.ts: sendDirectMessage / deliverChannelMessage branches inside TX1 → provider → TX2; "outside window" ⇒ blocked PLATFORM_WINDOW_CLOSED
+// drafts.ts: approved drafts may use messenger/instagram/web_chat; firstResponse.ts: step channel inbound_channel
+```
+- **Rules:** R-INBOX-1…9, R-CHAN-2/3/4 (persistence), R-TEN-12, R-GATE-14 (DM, chat paths), R-GATE-15 (lint edit), R-NURT-5 (ingestion cancels trigger runs).
+- **Tests:** per-channel inbound pause + one handback; a blocked-send path test per new outbound path; Meta signature over the raw body; web-chat spam creates no contact (E137); a typed email matching a client never attaches and nothing automated goes to a typed phone (E138, E154); a visitor's "stop contacting me" marks only the session's own contact (E155); a forged lead email gets no autonomous reply (E153); person-level DNC set by an agent blocks every channel; language opt-out on Messenger blocks SMS (E74); unknown sender → intake (E71); disconnected Page ⇒ `CHANNEL_NOT_CONNECTED` (E134); adversarial tests on every public endpoint (rate limits per widget and per IP).
+- **Accept when:** a Messenger lead appears in the same thread and feed card as a text within 2 s with the fake; every new definer is reviewed; the architecture test proves `dispatch.ts` is the only caller of the two new reserved names.
+
+#### 23. `core/listings`
+```ts
+export function normalizeMlsListing(raw: ResoLike, mapping: FieldMapping): ListingFacts | Issue[];
+export function applyDisplayRules(l: ListingFacts, pack: LicensePack, audience: 'agent'|'client'|'public'): DisplayListing | null;   // client/public need the pack counsel-reviewed
+export function competingSet(subject: ListingFacts, candidates: readonly ListingFacts[], rule: CompetingRule): { listings: ListingFacts[]; why: CriterionMatch[] };
+export function feedStale(lastSyncedAt: Instant | null, now: Instant, pack: LicensePack): boolean;
+```
+- **Rules:** R-MLS-2, R-MLS-3, R-MLS-4 (core side). **Tests:** RESO fixtures; display rules per audience (never "allowed" by default); deterministic competing order; staleness. **Accept when:** 100 % branch coverage on display rules.
+
+#### 24. `api/mls`
+`mls.sync` (woken by its reconcile handler from `next_sync_at`, cursor fence, upsert by `(source, mls_number)` honoring the monotonic trigger), MLS rows fed into the Phase 1 `matchSavedSearches` (sole Phase 2 editor of `assistant/searches.ts`), `mls.compliance_sweep`, `GET /listings/:id/competing`, MLS admin and licence-pack editor (Owner/Admin, each value marked counsel-reviewed or not).
+- **Rules:** R-MLS-1…6, R-OWN-27. **Tests:** out-of-order modifications skipped (E141); own listing mirrored once (E81); display opt-out hides from client outputs (E86); feed down ⇒ alerts pause (E85); one alert per new match (no trigger duplicate); RLS volume benchmark at 500k MLS rows per tenant. **Accept when:** the Phase 1 saved-search alerts include MLS matches with attribution, the Owner's `search_alert` switch still stops them, and stale data is never sent.
+
+#### 25. `core/nurture` and 26. `api/nurture`
+```ts
+// core/assistant (owned by 25 in Phase 2): one content union, hashed by the existing contentSha256
+export type PlaybookContent = { kind: 'steps'; steps: PlaybookStep[] } | { kind: 'triggers'; triggers: TriggerStep[]; digestWindowMinutes: number } | { kind: 'voice'; voice: VoiceContent };
+// PlaybookStep.channel: 'sms' | 'email' | 'inbound_channel';  content guard: a hard or soft fair-housing match ⇒ draft (R-FH-2)
+export const TriggerStepSchema: z.ZodType<TriggerStep>;   // trigger price_drop|back_on_market|home_value|home_anniversary|deal_date_upcoming
+export function detectFirings(fact: Fact, candidates: readonly TriggerCandidate[]): Firing[];   // facts only, never signals
+export function digest(firings: readonly Firing[], windowMinutes: number): Batch[];
+export function recheckFact(f: Firing, current: FactState): { ok: true } | { ok: false; reason: SkipReason };
+export function avmSendable(e: AvmEstimate, prior: AvmEstimate | null, s: AvmSettings, cleared: boolean): { ok: true } | { ok: false; reason: 'NOT_CLEARED'|'UNAVAILABLE'|'NOT_DISPLAYABLE'|'RANGE_TOO_WIDE'|'JUMP_TOO_LARGE'|'STALE' };
+// api: triggers.reconcile (every 60 s per tenant) wakes scheduled runs ⇒ job trigger.step {stepRunId} ⇒ executeTriggerRun(stepRunId)
+//      (re-checks the fact, the approval, the owner and the pause); detection from MLS sync, team price changes (listing_price_history rows),
+//      daily anniversary scan (anniversary:{deal}:{yyyy}), avm.refresh (avm:{contact_address}:{yyyy-mm}); review_request step;
+//      templates: Behavior alerts (agent), After closing v2 (enrollment steps without home value / anniversary), After-closing alerts (trigger), transaction_updates (team)
+```
+- **Rules:** R-NURT-1…8, R-AVM-1…3, R-MKT-11, R-AST-20, R-FH-2, R-INBOX-4 (content side). **Tests:** E82–E84, E98, E99, E101; a paused conversation turns a firing into a draft and the DB guard refuses a forced send; agent-scoped trigger fires only while the owner owns the contact; one anniversary email per year (no duplicate from the post-closing template); review requests carry no sentiment condition and no incentive; `PLAYBOOK_INVALID` never fires for a valid trigger or voice content. **Accept when:** an agent approves the built-in "Behavior alerts" playbook once and the fake MLS price drop produces one digested, gated message with evidence.
+
+#### 27. `core/marketing`
+```ts
+export const PieceSchemas: Record<PieceKind, z.ZodType>;
+export function renderPiece(p: PieceVersion, facts: ListingFacts, identity: BrokerageIdentity, packs: Packs): Rendered;   // live facts
+export function guardResult(r: Rendered, identity: BrokerageIdentity, packs: Packs, fh: FairHousingPack, contentSha256: string): GuardResult;  // = marketing_pieces.guard_result
+export function assembleSellerUpdate(i: SellerUpdateInputs, period: Period): { sections: Section[]; claims: ClaimSpec[] };   // each section states where its data stands
+export function exportBundle(p: PieceVersion, facts: ListingFacts): { text: string; images: AssetRef[] };
+```
+- **Rules:** R-MKT-1/3/4/6/10 (core side), R-SELL-2, R-FH-1/2. **Tests:** no price numerals in model copy; brokerage name always rendered; "No showings logged in Realty OS this week" and "Competing listings unavailable: no MLS feed connected"; feedback verbatim; exports never counted as activity; snapshot of each kind. **Accept when:** `guardResult` is the only producer of the JSON the DB CHECK reads.
+
+#### 28. `api/seller-updates`
+Weekly assembly woken by its reconcile handler at `listings.seller_update_next_due_at` (stored), feed card (`seller_update:{listing}:{period}`), `PATCH` recommendation/exclusions, approve-and-send with the `assembled_through` watermark (the seller-update branch of `drafts.ts`: `SELLER_UPDATE_STALE`), `trigger_ref.listing_id` set on every draft (the portal binds to it).
+- **Rules:** R-SELL-1…5, R-AST-17. **Tests:** E87–E89; stale data ⇒ `SELLER_UPDATE_STALE`; opted-out seller shown before the tap. **Accept when:** a listing agent sends a weekly update in ≤ 3 taps on a phone, with a typed recommendation.
+
+#### 29. `api/marketing`
+`POST /listings/:id/marketing/generate`, `PATCH /marketing-pieces/:id` (draft; assets through `marketing_piece_assets`; the guard result is written with `app.marketing_content_sha256` of the current content), `POST /marketing-pieces/:id/{approve,publish,export,retract}`, `POST …/invite/send {recipientContactIds}`, public `GET /p/:tenantSlug/:pageSlug` through `app.public_listing_page`, flyer PDF via `DocumentRenderer` (new dependency `pdf-lib`, N16), feed card `marketing:{piece}`.
+- **Rules:** R-MKT-1…10, R-GATE-12, R-GATE-15 (`publishPost`), R-INT-6 (publish). **Tests:** E90–E94, E152; DB refuses approval with a hard term, a missing brokerage name or a stale guard result; invites are per-recipient gated emails from an approved version; retracted page 410; abuse/rate limits on the public page. **Accept when:** one listing produces every piece kind, each approved with one tap, and the UI never claims a post went live.
+
+#### 30. `core/transactions` and 31. `api/transactions`
+```ts
+export function planMilestones(anchor: { kind: 'acceptance'; date: LocalDate }, t: MilestoneTemplate, cal: BusinessCalendar): ProposedDate[];   // basis shown
+export function confirmDate(prev: DealDate | null, input: ConfirmInput, zone: IanaZone): { dueAt: Instant; reminderAt: Instant | null; dueVersion: number; basis: Basis };   // zone = tenant_settings.default_timezone, recorded in basis
+// POST /deals/:id/milestones/plan  POST /deal-dates/:id/confirm; the Phase 1 deal-screen date routes call confirmDate too
+// milestones.reconcile (every 5 min per tenant): repairs confirmed dates with no due_at; reminder_at due ⇒ deal_date_upcoming trigger run
+//   (trigger_key txn:{deal_date}:{due_version}:{step}) executed by module 26's executeTriggerRun
+```
+- **Rules:** R-TXN-1…6, R-OWN-27. **Tests:** E95–E97, E142, E143; only confirmed, uncompleted dates drive updates; a moved date cancels old firings and stales drafts; DST end-of-day; a date typed on the Phase 1 screen gets its stored instants within one reconcile pass. **Accept when:** a TC enters the acceptance date and confirms the proposed list in one screen; the TL queue shows an overdue confirmed milestone within 60 s (with module 18a).
+
+#### 32. `core/insights` and 33. `api/insights`
+```ts
+export function sourceDollars(deals, financials, costs, period): SourceRow[];   // denominators
+export function forecast(openDeals, stageEntries, now, minSample = 10): { low: number; high: number; horizonDays: 90; unit: 'closings'|'commission_cents';
+  method: string; samples: { stage: Stage; n: number; k: number }[]; excluded: { thinStages: Stage[]; noCommission: number; noSource: number } };   // R-OWNER-3
+export function goalPace(goal, scoreboard): Pace;
+export function planWeek(i: { goals; pace; slowDeals; openPromises; apptsWithoutOutcome; tasks }): PlanItem[];   // 3–5 items, deadline first, then gap to goal
+// GET /owner/sources|velocity (app.stage_dwell_norms)|forecast (Owner/Admin, human tx), PUT /lead-source-costs (re-auth for closed months), goals CRUD, insights.weekly_plan (hourly reconcile, per user and local Monday)
+```
+- **Rules:** R-OWNER-1…5, R-PLAN-1…3. **Tests:** E107–E111; no confidence fields (snapshot); the system actor cannot read financials or manual costs. **Accept when:** every owner-view number shows its denominator and method.
+
+#### 34. `api/calendar`
+OAuth connect (minimal scopes), `calendar.push` on appointment writes (fence: `appointments.sync_version` vs `external_pushed_version`; tokens refreshed lazily inside the push), `GET /me/busy` (live), booking under a per-user advisory lock.
+- **Rules:** R-CAL-1…4, R-INT-5. **Tests:** E102, E103, E151; two quick edits never land out of order; tokens encrypted; Owner/Admin read nothing. **Accept when:** an in-app appointment appears in the fake Google calendar, and an external edit is detected and detached at the next push.
+
+#### 35. `core/coaching` and 36. `api/coaching`
+```ts
+export const RUBRIC_V1: Rubric;   export function scoreFromClaims(claims, rubric): CallScore;   // verified quotes only
+export function dailyFix(scores, dismissed7d, localDate): Fix | null;   export function trend(scoresA, scoresB): TrendItem[];
+// api: call review job (human-handled calls only), daily fix reconcile (hourly, per user and local date; card coaching_fix:{user}:{date})
+```
+- **Rules:** R-COACH-1…6. **Tests:** E104–E106; lawful recording basis only; TL visibility only with the Owner setting (DB); scoring stays off until `platform:coaching` is cleared; no score/grade fields (snapshot). **Accept when:** an agent sees one fix a day with two tap-to-play quotes; nothing reaches routing (architecture test).
+
+#### 37–41. Web (Phase 2)
+- **37 web/inbox:** channel tag per bubble; compose defaults to the client's last open channel and says why another is offered; "Messenger replies are off until counsel review" where `platform:meta` is not cleared; chat widget bundle with brokerage name, disclosure and "the first reply may come from the team's assistant"; no fake typing. Rules: R-INBOX-4/6, genuineness. Playwright phone + desktop; widget size budget (≤ 30 kB gzip).
+- **38 web/listing-marketing:** seller-update card (recommendation box, remove per item), marketing tab (one card per piece, Approve, Copy, Download, "Exported: post it yourself"), approval card types. Rules: R-SELL-3, R-MKT-6. Accept: approve a piece in 1 tap from the approvals inbox.
+- **39 web/deals-milestones:** phone timeline with Confirm chips; desktop TC board; risk cards from the exception queue. Accept: confirm a proposed date in 1 tap.
+- **40 web/insights:** owner view (desktop-first table, phone cards), goals, the weekly plan and daily fix pages the feed cards link to (no grades).
+- **41 web/admin-p2:** integrations with status sentences and each platform pack's review state, MLS pack, marketing templates, milestone templates, coaching settings (Owner-only), each with "not reviewed by counsel" banners where true.
+
+#### 42. `api/documents`
+Upload (multipart → `stored_objects` purpose `document`; the row is quarantined by the DB whatever the request says; scan job), versions (`supersedes_id`), legal hold and retention (Owner/Admin, audited), share to portal (clean only), contract-date extraction (`contract_extraction`, proposals with page + char-range evidence; PDF text layer only through `DocumentTextExtractor`, dependency N17).
+- **Rules:** R-DOC-1…4, R-TXN-1. **Tests:** E130, E131, E159; RESTRICTIVE scan gating; malware fixture (EICAR); uploads stay quarantined when no scanner is configured; erasure refused while held. **Accept when:** a TC uploads a contract with a text layer and confirms extracted dates one by one; an image-only scan says "enter the dates by hand".
+
+#### 43. `db/p3-portal-auth`
+`portal_sessions` and `portal_login_tokens` (pre-tenant, definer-only), `portal.request_login(email_hash, tenant_slug, now)` (refuses until `platform:portal` is cleared), `portal.consume_login`, `portal.resolve_session`, `portal.document_object` (re-checks the item, its grant, the document's scope, sharing and scan), a portal audit definer; `withPortalTx(clientActor, fn)` sets only `app.tenant_id`, `app.principal_type='client'`, `app.portal_account_id`.
+- **Rules:** R-TEN-14, R-PORTAL-4, R-PORTAL-5, R-PORTAL-7. **Tests:** the session never yields a staff GUC; the login request is indistinguishable for unknown addresses; lint forbids `withTenantTx` in portal routes. **Accept when:** every definer is reviewed and the generated client sweep (E129) still passes.
+
+#### 44. `core/portal` and 45. `api/portal`
+```ts
+export function publishable(kind: PortalKind, source: SourceFacts): { ok: true } | { ok: false; reason: string };   // confirmed, clean, shared, of the grant's own deal/listing
+export function renderPortalItem(source: SourceFacts): PortalItemSpec;                                              // dates as slots
+// staff: POST /deals/:id/portal/invite {contactId} (a party of the deal), POST /portal-grants/:id/revoke, POST /portal-items (publish), POST /portal-items/:id/retract
+// client (/api/portal): GET /me, /timeline, /documents, POST /documents/:id/stream-token
+```
+- **Rules:** R-PORTAL-1…7. **Tests:** E125–E129, E147–E149; feedback never rule-published; staff cookie on portal routes 401. **Accept when:** an agent invites a buyer in one tap and the buyer sees only their deal on a phone.
+
+#### 46. `web/portal`
+Separate Vite entry; phone-first timeline, documents, next steps; "Message {agent}" opens SMS/email; lint bans staff-surface imports. Lighthouse mobile ≥ 90; axe clean.
+
+#### 47. `core/voice` and 48. `api/voice`
+```ts
+export function shouldAnswer(call: CallFacts, s: VoiceSettings, hours: BusinessCalendar, now: Instant): { takeoverAt: Instant } | null;   // the dial timeout at call start
+export function decideToolCall(state: VoiceState, req: ToolRequest, facts: VoiceFacts): { decision: 'allow'|'deny'; reason: string };   // args per R-VOICE-4 allowlist
+export function isHot(claims: readonly VerifiedClaim[], rule: HotRule): boolean;   // needs_review never counts
+export function transferTarget(contact: ContactFacts, now: Instant): { kind: 'owner'; userId: UserId; holdSeconds: number } | { kind: 'message'; handbackTo: 'owner' | 'intake_offer' };
+export function voiceTurnGuard(text: string): GuardResult;                          // money, contracts, fair housing, human claims
+```
+- **Rules:** R-VOICE-1…10, R-GATE-9, R-FH-3, R-INT-6 (voice). **Tests:** the scripted-caller suite (booking, hot transfer to the owner, owner no-answer, price question, "are you a robot", opt-out phrases, prompt injection, silence, hang-up mid-booking); E112–E119, E150; DB refuses an AI call without an approved playbook, the Owner's setting or `platform:voice`. **Accept when:** every session against the fake ends in exactly one handback; the real vendor path passes a latency spike before `platform:voice` is cleared.
+
+#### 49. `core/predict` and 50. `api/predict`
+```ts
+export type PredictionFeatures = { yearsInHome?: number; equityBand?: 'low'|'mid'|'high'; recentSaves?: number; statedTimelineDays?: number; pastClientYears?: number; recentPermit?: boolean };   // nothing else is expressible (DB allowlist mirrors it)
+export function score(f: PredictionFeatures, m: ScorecardModel): { band: Band; reasons: Reason[] };
+export function backtest(p, deals): { flagged: number; transacted: number };   // platform-run, stored on prediction_models
+```
+- **Rules:** R-PRED-1…6. **Tests:** E120–E122, E144; compile-time exclusion test; band without probability (snapshot); architecture test that prediction reaches no routing, ads, portal or message code. **Accept when:** models ship `withdrawn` until counsel review; cards show reasons and the model's back-test (flagged, transacted, window).
+
+#### 51. `core/ads` and 52. `api/ads`
+```ts
+export function proposeReallocation(c: Campaign[], spend: Spend[], outcomes: Outcomes, cap: Cap, rules: AllocRules): Proposal | { hold: string; counts: Counts };   // Σ tenant-wide ≤ ceiling (property test)
+export function overspend(hourly: HourlySpend[], cap: Cap): CampaignId[];
+// ads/dispatch.ts: planned ledger rows naming the approved (campaign, amount) pairs (DB cap trigger) → AdsProvider.applyBudgetChange (idempotency = event id) → applied/failed (must match the plan) → budget mirror sync (system)
+```
+- **Rules:** R-ADS-1…6, R-FH-4. **Tests:** E123, E124, E145, E146, E161; the DB refuses an unapproved, stale-cap, partial-overflow, replayed or over-ceiling plan; a property test over random campaign sets that the DB trigger and `proposeReallocation` agree; hourly reconcile pauses within 1 h on the simulated platform. **Accept when:** the Owner approves a proposal in one tap and the ledger shows planned → applied with reasons and denominators.
+
+#### 53. `api/gbp`, 54. `api/coaching-trends`, 55. `web/phase3-staff`
+- **53:** posts as `gbp_post` pieces (export unless connected), review sync, reply drafts (`review_reply_draft`, always a tap, privacy guard). Rules R-GBP-1/2; E132, E133.
+- **54:** `app.coaching_trends(user_ids, weeks)` aggregate-only definer; R-COACH-7.
+- **55:** voice settings (disclosure preview, test call against the fake, Owner attestation, the pack's review state), voice handback cards, ads page, documents, likely-to-move list (bands + reasons + back-test), GBP, trends. Accept: every number shows its denominator; no confidence anywhere.
+
+## 6. Exit criteria
+
+### Phase 2
+**Automatable (CI):**
+1. `0015`–`0019` apply on a clean PG16; `schema_invariants`, `isolation` (every new table), `rls_smoke.sql`, `rls_smoke_p23.sql` (every round-2 finding named in a passing check) and `dispatch_guard.test.ts` (the shared case table per channel: opt-out, keyword fan-out, person DNC incl. merges, unknown channel, `platform:meta`) are green. *(0015 part: done.)*
+2. `node scripts/rule-coverage.mjs --phase=2-3` reports every Phase 2 rule and edge case in DATA_MODEL §9/§10 linked to a passing test (Phase 3 ids listed as pending).
+3. Every new outbound path has a blocked-send path test (R-GATE-14); architecture tests prove the single callers of every reserved name.
+4. Every adapter has a deterministic fake that is the default; the Integrations page renders an honest status for each, and each platform pack's review state.
+5. Mutation ≥ 90 % on `gate.ts` (3.0.0), `fairhousing/check.ts` and `transactions/confirmDate`.
+6. Load: 500k MLS rows and 250k contacts per tenant; feed p95 < 150 ms, saved-search matching of a 1,000-row MLS delta < 60 s, inbound DM to feed card p95 < 2 s.
+7. Playwright on phone and desktop for every new agent job (reply on Messenger, send a seller update, approve a piece, confirm a date) with tap counts asserted.
+
+**Pending human:**
+- Counsel review recorded for VERIFY items §7 C1, C3–C9, C11–C13; until a capability's platform pack is cleared it stays off in production (the DB enforces it for Meta DMs, publishing and call scoring; core for home values and review requests; licence packs for MLS client display) and the UI says it is unreviewed.
+- Security review of every definer added in `0016`–`0019`, of the two replaced retention definers in `0015`, and of the public chat and page endpoints.
+- Usability sessions with 5 agents: inbox, seller update and marketing approval at least as fast as their current tools.
+- The owner's answers to D-OPTOUT-LANG, D-COACH, D-FEEDBACK, D-MLS-STORE, Q12 (defaults ship until then).
+
+### Phase 3
+**Automatable (CI):**
+1. `0020`–`0021` apply; the generated client sweep (E129) proves zero rows for a client principal on every table and view outside the allowlist; grant expiry, revocation and party removal take effect at once.
+2. Voice: the scripted-caller suite passes against the fake; the DB refuses AI outbound, AI calls without an approved playbook, while the Owner's setting is off, or while `platform:voice` is not cleared; every session ends in one handback.
+3. Prediction ships with every model `withdrawn`; the architecture test proves prediction output reaches no routing, ads, portal or message code.
+4. Ads: property test that no proposal exceeds the cap; the DB refuses unapproved, stale-cap, replayed and over-ceiling plans; reconcile pauses within 1 h on the simulated platform.
+5. `rule-coverage --phase=2-3` with no gaps.
+
+**Pending human:**
+- Security review of the portal auth surface (ASVS L2) and every `portal.*` definer.
+- Counsel sign-off on C2 (AI voice) and a real-vendor latency spike before `platform:voice` is cleared; counsel review of every prediction model before it is `approved`; C10 (portal) before `platform:portal` is cleared; housing-ad rules.
+- Owner decision D-ADS and D-VOICE (defaults ship until then).
+
+## 7. Needs from the owner
+
+| # | Need | Kind | Unblocks |
+|---|---|---|---|
+| N1 | Meta developer app, business verification, App Review for Messenger/Instagram messaging permissions (VERIFY current requirements) | partner approval | real DM sending/receiving (module 22); until then fake only, status `needs_partner_access` |
+| N2 | Meta App Review for Page/Instagram content publishing | partner approval | API posting of social pieces (module 29); export works without it |
+| N3 | Meta Lead Ads access (webhook lead retrieval) | partner approval | Meta lead-ad intake (module 22) |
+| N4 | Zillow and realtor.com CRM partner programs (not confirmed to exist/open) | partner approval | native lead feeds; DKIM-aligned email intake works without them |
+| N5 | MLS membership + data licence (IDX/VOW/back-office) and a RESO Web API vendor, per MLS | licence | MLS-wide matching, competing listings (modules 24, 26, 28); team listings only without it |
+| N6 | Per-MLS display rules entered in the licence pack, counsel-reviewed | counsel review | showing MLS listings to clients (alerts, seller updates, portal) |
+| N7 | Showing-service partner API (if any) | partner approval | automatic showings/feedback import; manual logging works |
+| N8 | AVM vendor contract (consumer display + caching terms), as platform configuration | account/licence | monthly home-value notes (module 26) |
+| N9 | Mortgage-rate series source with redistribution terms | licence | rate-move alerts (deferred until then, §3) |
+| N10 | Google OAuth app verification and Microsoft publisher verification for calendar scopes | partner approval | real calendar sync (module 34) |
+| N11 | Malware scanner (self-hosted ClamAV or vendor) configured in production | account/ops | any document or upload becoming readable (module 42); uploads stay quarantined otherwise |
+| N12 | Voice stack vendor(s) (telephony media streams, STT, LLM, TTS) and a latency spike | account | voice answering (module 48); `platform:voice` stays uncleared otherwise |
+| N13 | Public-records/property data vendor contract | licence | property-based prediction features (module 50); first-party features only otherwise |
+| N14 | Meta and Google ad accounts, developer token, app review | account/partner approval | ad proposals and applying approved shifts (module 52) |
+| N15 | Google Business Profile API access | partner approval | GBP posts and reviews (module 53) |
+| N16 | `pdf-lib` dependency approval | dependency | flyer PDFs (module 29) |
+| N17 | A PDF text extractor dependency (for example `pdfjs-dist`) or vendor approval | dependency | contract-date extraction (module 42); manual entry otherwise |
+| N18 | A platform back-test dataset the platform may use for each prediction model (licensed or consented) | licence | approving any prediction model (`prediction_models` requires a back-test) |
+| C1 | D1 under the new paths (DM replies, chat replies, invites, trigger alerts, home values, transaction updates) vs state mini-TCPA laws such as Florida's FTSA | counsel review | enabling those automated paths in production (with C12 for `platform:meta`) |
+| C2 | AI voice: state AI-disclosure laws, disclosure wording and timing; whether live AI transcription is recording/interception in all-party states; FCC treatment of AI voices (inbound only here) | counsel review | clearing `platform:voice` (then the Owner may enable voice answering) |
+| C3 | Fair housing: protected-class lists per jurisdiction (military status, source of income), the advertising lexicon, 55+ handling, housing ad rules | counsel review | clearing `platform:fair_housing` (publishing), ads, prediction |
+| C4 | Prediction features and models (each version), whether to run a disparate-impact audit | counsel review | any model leaving `withdrawn` |
+| C5 | Jurisdiction advertising packs (team-name rules such as South Carolina, brokerage name prominence, licence number) | counsel review | clearing `platform:fair_housing` for publishing |
+| C6 | AVM wording ("estimate, not an appraisal") and state rules on valuations by non-appraisers | counsel review | clearing `platform:avm` |
+| C7 | Mortgage-rate messages: TILA/Reg Z trigger terms | counsel review | rate-move alerts (deferred until then) |
+| C8 | Review requests: FTC consumer-review rule, platform gating and incentive policies | counsel review | clearing `platform:review_requests` |
+| C9 | Transactions: business-day/holiday conventions, sharing status with lenders and title, transaction-file retention by state | counsel review | milestone templates marked reviewed; document retention defaults |
+| C10 | Portal: client data access, privacy, document retention after grant expiry | counsel review | clearing `platform:portal` (portal launch) |
+| C11 | Employee monitoring for call reviews (agent notice; TL visibility) | counsel review | clearing `platform:coaching` (`call_scoring_enabled`), `tl_sees_call_scores` |
+| C12 | Meta data-deletion callbacks and DM retention; keyword lists per channel | counsel review | clearing `platform:meta` (DM sending), DM retention defaults, DM keyword packs |
+| C13 | Retention defaults for every new data class (DATA_MODEL R-DATA-6) | counsel review | retention settings marked reviewed |

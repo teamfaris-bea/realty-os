@@ -14,6 +14,54 @@ export type JsonValue = JsonPrimitive | JsonValue[] | { [k: string]: JsonValue }
 /** jsonb: selected as a parsed value; written as a JSON string (use `json(value)` from @realty/db). */
 export type Json = ColumnType<JsonValue, string, string>;
 
+/** public.ad_allocation_events (table) */
+export interface AdAllocationEventsTable {
+  tenant_id: string;
+  id: string;
+  run_id: string;
+  campaign_id: string;
+  event_kind: string;
+  cap_version_id: string;
+  assistant_action_id: string | null;
+  from_daily_cents: Int8;
+  to_daily_cents: Int8;
+  reason_code: string;
+  provider_ref: string | null;
+  occurred_at: Timestamp;
+}
+
+/** public.ad_budget_caps (table) */
+export interface AdBudgetCapsTable {
+  tenant_id: string;
+  id: string;
+  version_no: number;
+  monthly_cap_cents: Int8;
+  daily_ceiling_cents: Int8;
+  effective_from: Timestamp;
+  approved_by_user_id: string;
+  attestation: string;
+  created_at: Generated<Timestamp>;
+}
+
+/** public.ad_campaigns (table) */
+export interface AdCampaignsTable {
+  tenant_id: string;
+  id: string;
+  connection_id: string;
+  external_campaign_id: string;
+  name: string;
+  lead_source_id: string;
+  campaign_ref: string;
+  listing_id: string | null;
+  creative_piece_id: string | null;
+  special_category: Generated<string>;
+  targeting: Generated<Json>;
+  status: string;
+  daily_budget_cents: Int8;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
 /** public.agent_goals (table) */
 export interface AgentGoalsTable {
   tenant_id: string;
@@ -68,6 +116,12 @@ export interface AppointmentsTable {
   created_by_kind: string;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+  external_event_ref: string | null;
+  external_etag: string | null;
+  external_sync_status: Generated<string>;
+  external_detached_at: Timestamp | null;
+  sync_version: Generated<number>;
+  external_pushed_version: number | null;
 }
 
 /** public.assistant_actions (table) */
@@ -93,6 +147,7 @@ export interface AssistantActionsTable {
   dedupe_key: string | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+  decided_by_role: string | null;
 }
 
 /** public.assistant_claims (table) */
@@ -177,6 +232,20 @@ export interface BehaviorEventsTable {
   payload: Generated<Json>;
 }
 
+/** public.call_scores (table) */
+export interface CallScoresTable {
+  tenant_id: string;
+  call_id: string;
+  rubric_version: string;
+  agent_user_id: string;
+  contact_id: string;
+  items: Json;
+  met_count: number;
+  scored_count: number;
+  assistant_action_id: string | null;
+  created_at: Generated<Timestamp>;
+}
+
 /** public.calls (table) */
 export interface CallsTable {
   tenant_id: string;
@@ -207,6 +276,13 @@ export interface CallsTable {
   import_record_id: string | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+  ai_disclosed_at: Timestamp | null;
+  voice_playbook_version_id: string | null;
+  ai_takeover_at: Timestamp | null;
+  transferred_to_user_id: string | null;
+  transfer_outcome: string | null;
+  voice_outcome: string | null;
+  handback_action_id: string | null;
 }
 
 /** public.compliance_policy_versions (table) */
@@ -221,6 +297,8 @@ export interface CompliancePolicyVersionsTable {
   loosening_attestation: string | null;
   created_by_user_id: string | null;
   created_at: Generated<Timestamp>;
+  voice_answering_enabled: Generated<boolean>;
+  voice_answering_attestation: string | null;
 }
 
 /** public.consent_disclosures (table) */
@@ -357,6 +435,18 @@ export interface ContactPointsTable {
   updated_at: Generated<Timestamp>;
   removed_at: Timestamp | null;
   phone_suffix7: GeneratedAlways<string | null>;
+  platform_window_until: Timestamp | null;
+}
+
+/** public.contact_predictions (table) */
+export interface ContactPredictionsTable {
+  tenant_id: string;
+  contact_id: string;
+  model_version: string;
+  band: string;
+  reasons: Json;
+  inputs_sha256: string;
+  computed_on: string;
 }
 
 /** public.contact_timeline (view) */
@@ -426,6 +516,8 @@ export interface ContactsTable {
   search_tsv: GeneratedAlways<string | null>;
   search_name: GeneratedAlways<string | null>;
   search_last: GeneratedAlways<string | null>;
+  do_not_contact_at: Timestamp | null;
+  do_not_contact_event_id: string | null;
 }
 
 /** public.conversations (table) */
@@ -464,6 +556,16 @@ export interface DealDatesTable {
   completed_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+  source: Generated<string>;
+  status: Generated<string>;
+  confirmed_by_user_id: string | null;
+  confirmed_at: Timestamp | null;
+  responsible: string | null;
+  due_at: Timestamp | null;
+  reminder_at: Timestamp | null;
+  due_version: Generated<number>;
+  basis: Generated<Json>;
+  evidence_claim_id: string | null;
 }
 
 /** public.deal_financials (table) */
@@ -539,6 +641,27 @@ export interface DncChecksTable {
   provider: string;
   uploaded_by_user_id: string | null;
   created_at: Generated<Timestamp>;
+}
+
+/** public.documents (table) */
+export interface DocumentsTable {
+  tenant_id: string;
+  id: string;
+  deal_id: string | null;
+  listing_id: string | null;
+  contact_id: string | null;
+  object_id: string;
+  kind: string;
+  display_name: string;
+  version_no: Generated<number>;
+  supersedes_id: string | null;
+  shared_to_portal: Generated<boolean>;
+  scan_status: Generated<string>;
+  uploaded_by_user_id: string;
+  retention_until: Timestamp | null;
+  legal_hold: Generated<boolean>;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
 }
 
 /** public.email_identities (table) */
@@ -640,6 +763,21 @@ export interface GateDecisionsTable {
   evaluated_at: Timestamp;
 }
 
+/** public.gbp_reviews (table) */
+export interface GbpReviewsTable {
+  tenant_id: string;
+  id: string;
+  connection_id: string;
+  external_review_id: string;
+  rating: number | null;
+  body: string | null;
+  reviewer_display: string | null;
+  reviewed_at: Timestamp;
+  reply_status: Generated<string>;
+  reply_action_id: string | null;
+  created_at: Generated<Timestamp>;
+}
+
 /** public.home_valuations (table) */
 export interface HomeValuationsTable {
   tenant_id: string;
@@ -647,11 +785,15 @@ export interface HomeValuationsTable {
   contact_id: string;
   contact_address_id: string | null;
   provider: string;
-  value_cents: Int8;
+  value_cents: Int8 | null;
   low_cents: Int8 | null;
   high_cents: Int8 | null;
   valued_at: Timestamp;
   provider_ref: string | null;
+  status: Generated<string>;
+  as_of: string | null;
+  display_allowed: Generated<boolean>;
+  change_from_prior_bps: number | null;
 }
 
 /** public.import_batches (table) */
@@ -735,6 +877,33 @@ export interface ImportUserMappingsTable {
   target_pond_id: string | null;
 }
 
+/** public.integration_connections (table) */
+export interface IntegrationConnectionsTable {
+  tenant_id: string;
+  id: string;
+  kind: string;
+  status: Generated<string>;
+  status_reason: string | null;
+  display_name: string;
+  external_account_id: string | null;
+  credential_id: string | null;
+  lead_source_id: string | null;
+  capabilities: Generated<Json>;
+  license_pack: Generated<Json>;
+  allowed_origins: Generated<string[]>;
+  allowed_sender_domains: Generated<string[]>;
+  widget_key_hash: Buffer | null;
+  sync_cursor: string | null;
+  last_synced_at: Timestamp | null;
+  next_sync_at: Timestamp | null;
+  last_error_code: string | null;
+  connected_by_user_id: string | null;
+  connected_at: Timestamp | null;
+  disconnected_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
 /** public.invites (table) */
 export interface InvitesTable {
   tenant_id: string;
@@ -803,6 +972,8 @@ export interface LeadInquiriesTable {
   fingerprint: string;
   outcome: string;
   created_at: Generated<Timestamp>;
+  parse_status: Generated<string>;
+  parse_evidence: Generated<Json>;
 }
 
 /** public.lead_ownership_events (table) */
@@ -828,6 +999,20 @@ export interface LeadOwnershipEventsTable {
   command_id: string;
   payload: Generated<Json>;
   occurred_at: Timestamp;
+}
+
+/** public.lead_source_costs (table) */
+export interface LeadSourceCostsTable {
+  tenant_id: string;
+  id: string;
+  lead_source_id: string;
+  month: string;
+  amount_cents: Int8;
+  origin: string;
+  note: string | null;
+  entered_by_user_id: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
 }
 
 /** public.lead_sources (table) */
@@ -885,6 +1070,14 @@ export interface ListingsTable {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
   search_tsv: GeneratedAlways<string | null>;
+  mls_connection_id: string | null;
+  mls_modified_at: Timestamp | null;
+  listing_brokerage_name: string | null;
+  display_allowed: Generated<boolean>;
+  last_seen_in_feed_at: Timestamp | null;
+  off_market_at: Timestamp | null;
+  team_listing_id: string | null;
+  seller_update_next_due_at: Timestamp | null;
 }
 
 /** public.marketing_activity (table) */
@@ -898,6 +1091,40 @@ export interface MarketingActivityTable {
   metrics: Generated<Json>;
   created_by_user_id: string | null;
   created_at: Generated<Timestamp>;
+}
+
+/** public.marketing_piece_assets (table) */
+export interface MarketingPieceAssetsTable {
+  tenant_id: string;
+  piece_id: string;
+  position: number;
+  object_id: string;
+}
+
+/** public.marketing_pieces (table) */
+export interface MarketingPiecesTable {
+  tenant_id: string;
+  id: string;
+  listing_id: string;
+  kind: string;
+  version_no: number;
+  status: Generated<string>;
+  prose: Json;
+  bound_fields: Generated<string[]>;
+  template_key: string;
+  content_sha256: string;
+  guard_result: Json;
+  assistant_action_id: string | null;
+  public_slug: string | null;
+  open_house: Json | null;
+  approved_by_user_id: string | null;
+  approved_at: Timestamp | null;
+  published_at: Timestamp | null;
+  exported_at: Timestamp | null;
+  retracted_at: Timestamp | null;
+  created_by_user_id: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
 }
 
 /** public.memberships (table) */
@@ -979,6 +1206,8 @@ export interface MessagesTable {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
   search_tsv: GeneratedAlways<string | null>;
+  integration_connection_id: string | null;
+  marketing_piece_id: string | null;
 }
 
 /** public.mfa_recovery_codes (table) */
@@ -1129,7 +1358,7 @@ export interface PlaybookEnrollmentsTable {
 export interface PlaybookStepRunsTable {
   tenant_id: string;
   id: string;
-  enrollment_id: string;
+  enrollment_id: string | null;
   playbook_version_id: string;
   step_key: string;
   status: string;
@@ -1138,6 +1367,9 @@ export interface PlaybookStepRunsTable {
   message_id: string | null;
   assistant_action_id: string | null;
   updated_at: Generated<Timestamp>;
+  contact_id: string | null;
+  trigger_key: string | null;
+  trigger_ref: Json | null;
 }
 
 /** public.playbook_versions (table) */
@@ -1192,6 +1424,68 @@ export interface PondsTable {
   updated_at: Generated<Timestamp>;
 }
 
+/** public.portal_accounts (table) */
+export interface PortalAccountsTable {
+  tenant_id: string;
+  id: string;
+  contact_id: string;
+  login_point_id: string;
+  status: string;
+  invited_by_user_id: string;
+  activated_at: Timestamp | null;
+  disabled_at: Timestamp | null;
+  disabled_reason: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
+/** public.portal_grants (table) */
+export interface PortalGrantsTable {
+  tenant_id: string;
+  id: string;
+  portal_account_id: string;
+  deal_id: string | null;
+  listing_id: string | null;
+  granted_by_user_id: string;
+  granted_at: Timestamp;
+  expires_at: Timestamp | null;
+  revoked_at: Timestamp | null;
+  revoked_by_user_id: string | null;
+}
+
+/** public.portal_items (table) */
+export interface PortalItemsTable {
+  tenant_id: string;
+  id: string;
+  grant_id: string;
+  kind: string;
+  title: string;
+  body: string | null;
+  occurs_on: string | null;
+  document_id: string | null;
+  source_type: string;
+  source_id: string;
+  source_version: Generated<number>;
+  published_by_kind: string;
+  published_by_user_id: string | null;
+  published_at: Timestamp;
+  retracted_at: Timestamp | null;
+}
+
+/** public.prediction_models (table) */
+export interface PredictionModelsTable {
+  version: string;
+  status: string;
+  features: string[];
+  counsel_reviewed_at: Timestamp | null;
+  review_note: string | null;
+  backtest_flagged: number | null;
+  backtest_transacted: number | null;
+  backtest_window_days: number | null;
+  backtest_dataset: string | null;
+  created_at: Generated<Timestamp>;
+}
+
 /** public.priority_feed_items (table) */
 export interface PriorityFeedItemsTable {
   tenant_id: string;
@@ -1214,6 +1508,24 @@ export interface PriorityFeedItemsTable {
   updated_at: Generated<Timestamp>;
   resolved_at: Timestamp | null;
   resolved_by: string | null;
+}
+
+/** public.property_records (table) */
+export interface PropertyRecordsTable {
+  tenant_id: string;
+  id: string;
+  contact_id: string;
+  contact_address_id: string;
+  last_sale_date: string | null;
+  last_sale_price_cents: Int8 | null;
+  assessed_value_cents: Int8 | null;
+  mortgage_origination_date: string | null;
+  owner_occupied: boolean | null;
+  owner_name_match: boolean;
+  recent_permit: boolean | null;
+  provider_ref: string | null;
+  fetched_at: Timestamp;
+  retention_until: Timestamp;
 }
 
 /** public.provider_credentials (table) */
@@ -1567,6 +1879,17 @@ export interface TenantSettingsTable {
   ai_enabled: Generated<boolean>;
   version: Generated<number>;
   updated_at: Generated<Timestamp>;
+  seller_update_cadence_days: Generated<number>;
+  milestone_templates: Generated<Json>;
+  review_link_url: string | null;
+  brand_color: string | null;
+  avm_max_range_bps: Generated<number>;
+  call_scoring_enabled: Generated<boolean>;
+  tl_sees_call_scores: Generated<boolean>;
+  coaching_rubric_disabled: Generated<string[]>;
+  calendar_title_detail: Generated<string>;
+  voice_answer_after_seconds: Generated<number>;
+  voice_answer_when: Generated<string>;
 }
 
 /** public.tenants (table) */
@@ -1591,6 +1914,26 @@ export interface TranscriptsTable {
   segments_enc: Buffer | null;
   key_version: number | null;
   provider: string;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
+/** public.user_calendar_links (table) */
+export interface UserCalendarLinksTable {
+  tenant_id: string;
+  id: string;
+  user_id: string;
+  provider: string;
+  status: string;
+  scopes: Generated<string[]>;
+  access_enc: Buffer | null;
+  refresh_enc: Buffer | null;
+  key_version: number | null;
+  external_calendar_ref: string | null;
+  last_synced_at: Timestamp | null;
+  last_error_code: string | null;
+  revoked_at: Timestamp | null;
+  purge_after: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }
@@ -1652,6 +1995,37 @@ export interface VSpeedToLeadTable {
   within_sla: boolean | null;
 }
 
+/** public.voice_tool_calls (table) */
+export interface VoiceToolCallsTable {
+  tenant_id: string;
+  id: string;
+  call_id: string;
+  seq: number;
+  tool: string;
+  args: Generated<Json>;
+  decision: string;
+  reason_code: string;
+  occurred_at: Timestamp;
+}
+
+/** public.webchat_sessions (table) */
+export interface WebchatSessionsTable {
+  tenant_id: string;
+  id: string;
+  connection_id: string;
+  token_hash: Buffer;
+  origin: string;
+  ip_hash: Buffer | null;
+  started_at: Timestamp;
+  last_seen_at: Timestamp;
+  closed_at: Timestamp | null;
+  contact_id: string | null;
+  contact_point_id: string | null;
+  claimed_kind: string | null;
+  claimed_address: string | null;
+  purge_after: Timestamp | null;
+}
+
 /** public.webhook_events (table) */
 export interface WebhookEventsTable {
   id: string;
@@ -1668,6 +2042,9 @@ export interface WebhookEventsTable {
 
 /** Every table and view in schema public. */
 export interface DB {
+  ad_allocation_events: AdAllocationEventsTable;
+  ad_budget_caps: AdBudgetCapsTable;
+  ad_campaigns: AdCampaignsTable;
   agent_goals: AgentGoalsTable;
   ai_runs: AiRunsTable;
   appointments: AppointmentsTable;
@@ -1678,6 +2055,7 @@ export interface DB {
   auth_events: AuthEventsTable;
   auth_tokens: AuthTokensTable;
   behavior_events: BehaviorEventsTable;
+  call_scores: CallScoresTable;
   calls: CallsTable;
   compliance_policy_versions: CompliancePolicyVersionsTable;
   consent_disclosures: ConsentDisclosuresTable;
@@ -1688,6 +2066,7 @@ export interface DB {
   contact_collaborators: ContactCollaboratorsTable;
   contact_duplicate_candidates: ContactDuplicateCandidatesTable;
   contact_points: ContactPointsTable;
+  contact_predictions: ContactPredictionsTable;
   contact_timeline: ContactTimelineTable;
   contacts: ContactsTable;
   conversations: ConversationsTable;
@@ -1698,27 +2077,33 @@ export interface DB {
   deal_stage_history: DealStageHistoryTable;
   deals: DealsTable;
   dnc_checks: DncChecksTable;
+  documents: DocumentsTable;
   email_identities: EmailIdentitiesTable;
   evidence_refs: EvidenceRefsTable;
   exception_events: ExceptionEventsTable;
   exception_items: ExceptionItemsTable;
   external_refs: ExternalRefsTable;
   gate_decisions: GateDecisionsTable;
+  gbp_reviews: GbpReviewsTable;
   home_valuations: HomeValuationsTable;
   import_batches: ImportBatchesTable;
   import_records: ImportRecordsTable;
   import_stages: ImportStagesTable;
   import_user_mappings: ImportUserMappingsTable;
+  integration_connections: IntegrationConnectionsTable;
   invites: InvitesTable;
   jobs: JobsTable;
   jurisdiction_packs: JurisdictionPacksTable;
   lead_inquiries: LeadInquiriesTable;
   lead_ownership_events: LeadOwnershipEventsTable;
+  lead_source_costs: LeadSourceCostsTable;
   lead_sources: LeadSourcesTable;
   listing_contacts: ListingContactsTable;
   listing_price_history: ListingPriceHistoryTable;
   listings: ListingsTable;
   marketing_activity: MarketingActivityTable;
+  marketing_piece_assets: MarketingPieceAssetsTable;
+  marketing_pieces: MarketingPiecesTable;
   memberships: MembershipsTable;
   message_media: MessageMediaTable;
   message_status_events: MessageStatusEventsTable;
@@ -1737,7 +2122,12 @@ export interface DB {
   playbooks: PlaybooksTable;
   pond_members: PondMembersTable;
   ponds: PondsTable;
+  portal_accounts: PortalAccountsTable;
+  portal_grants: PortalGrantsTable;
+  portal_items: PortalItemsTable;
+  prediction_models: PredictionModelsTable;
   priority_feed_items: PriorityFeedItemsTable;
+  property_records: PropertyRecordsTable;
   provider_credentials: ProviderCredentialsTable;
   push_subscriptions: PushSubscriptionsTable;
   recording_stream_tokens: RecordingStreamTokensTable;
@@ -1762,15 +2152,21 @@ export interface DB {
   tenant_settings: TenantSettingsTable;
   tenants: TenantsTable;
   transcripts: TranscriptsTable;
+  user_calendar_links: UserCalendarLinksTable;
   users: UsersTable;
   v_agent_activity_daily: VAgentActivityDailyTable;
   v_pipeline_momentum: VPipelineMomentumTable;
   v_speed_to_lead: VSpeedToLeadTable;
+  voice_tool_calls: VoiceToolCallsTable;
+  webchat_sessions: WebchatSessionsTable;
   webhook_events: WebhookEventsTable;
 }
 
 /** Table names (base tables only), in alphabetical order. */
 export const TABLE_NAMES = [
+  'ad_allocation_events',
+  'ad_budget_caps',
+  'ad_campaigns',
   'agent_goals',
   'ai_runs',
   'appointments',
@@ -1781,6 +2177,7 @@ export const TABLE_NAMES = [
   'auth_events',
   'auth_tokens',
   'behavior_events',
+  'call_scores',
   'calls',
   'compliance_policy_versions',
   'consent_disclosures',
@@ -1791,6 +2188,7 @@ export const TABLE_NAMES = [
   'contact_collaborators',
   'contact_duplicate_candidates',
   'contact_points',
+  'contact_predictions',
   'contacts',
   'conversations',
   'deal_contacts',
@@ -1800,27 +2198,33 @@ export const TABLE_NAMES = [
   'deal_stage_history',
   'deals',
   'dnc_checks',
+  'documents',
   'email_identities',
   'evidence_refs',
   'exception_events',
   'exception_items',
   'external_refs',
   'gate_decisions',
+  'gbp_reviews',
   'home_valuations',
   'import_batches',
   'import_records',
   'import_stages',
   'import_user_mappings',
+  'integration_connections',
   'invites',
   'jobs',
   'jurisdiction_packs',
   'lead_inquiries',
   'lead_ownership_events',
+  'lead_source_costs',
   'lead_sources',
   'listing_contacts',
   'listing_price_history',
   'listings',
   'marketing_activity',
+  'marketing_piece_assets',
+  'marketing_pieces',
   'memberships',
   'message_media',
   'message_status_events',
@@ -1839,7 +2243,12 @@ export const TABLE_NAMES = [
   'playbooks',
   'pond_members',
   'ponds',
+  'portal_accounts',
+  'portal_grants',
+  'portal_items',
+  'prediction_models',
   'priority_feed_items',
+  'property_records',
   'provider_credentials',
   'push_subscriptions',
   'recording_stream_tokens',
@@ -1864,7 +2273,10 @@ export const TABLE_NAMES = [
   'tenant_settings',
   'tenants',
   'transcripts',
+  'user_calendar_links',
   'users',
+  'voice_tool_calls',
+  'webchat_sessions',
   'webhook_events',
 ] as const;
 
