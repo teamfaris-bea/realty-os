@@ -155,6 +155,9 @@ export async function createApiHarness(o: { routeModules?: readonly RouteModule[
   const database = createDatabase({ url: testDb.appUserUrl, max: 5, applicationName: 'api-test' });
   configureDatabase(database);
   const su = new pg.Pool({ connectionString: testDb.ownerUrl, max: 2 });
+  // An idle client can be terminated by the server (a test database dropped WITH (FORCE), a restart):
+  // without a listener pg re-throws it as an unhandled error. Queries in flight still reject normally.
+  su.on('error', () => {});
   const clock = { now: () => instant(Date.now()) };
   const ids = uuidv7Generator(clock, (n) => new Uint8Array(randomBytes(n)));
   const config = testConfig({ ...(o.logLevel ? { logLevel: o.logLevel } : {}), ...o.config });

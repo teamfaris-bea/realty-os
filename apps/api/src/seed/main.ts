@@ -97,6 +97,9 @@ async function main(): Promise<void> {
   if (!ownerUrl) throw new SeedError('MIGRATION_DATABASE_URL is not set (run pnpm db:setup first)');
   if (reset) await resetDatabase(ownerUrl);
   const su = new pg.Pool({ connectionString: ownerUrl, max: 2 });
+  // An idle client can be terminated by the server (a test database dropped WITH (FORCE), a restart):
+  // without a listener pg re-throws it as an unhandled error. Queries in flight still reject normally.
+  su.on('error', () => {});
   try {
     const exists = await su.query('SELECT 1 FROM tenants WHERE slug = $1', [DEMO_SLUG]);
     if (exists.rowCount) {

@@ -46,6 +46,9 @@ export async function createHarness(max = 6): Promise<Harness> {
   const db = await createTestDb();
   const app = createDatabase({ url: db.appUserUrl, max });
   const su = new pg.Pool({ connectionString: db.ownerUrl, max: 2 });
+  // An idle client can be terminated by the server (a test database dropped WITH (FORCE), a restart):
+  // without a listener pg re-throws it as an unhandled error. Queries in flight still reject normally.
+  su.on('error', () => {});
   return {
     db,
     app,
