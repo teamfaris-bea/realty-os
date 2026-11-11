@@ -747,3 +747,10 @@ Tenant connections (`integration_connections`, each with an honest status such a
 | Employee monitoring (call reviews) | private by default; human-handled calls only, attributed to that call's agent; TL access is an Owner setting; off until `platform:coaching`; no rankings |
 | Ads: platform overspend, attribution lag | DB cap ledger (cap version in force, exact approved amounts, single-use, tenant-wide total under a lock), hourly reconcile pause, sample holds, honest copy |
 | Parallel lanes landing module migrations out of order | the runner refuses a pending file that sorts before an applied one; lanes merge 0016–0021 in number order (PHASE2_3_PLAN §4) |
+
+### 21.7 Core content modules (lane p23-core-content: modules 20, 23, 25, 27, 49)
+Pure core only: no migration, no SECURITY DEFINER function and no I/O. Security-relevant choices for reviewers:
+- **Fair housing (20).** One pack `fh/1` (`DEFAULT_FAIR_HOUSING_PACK`, deeply frozen) drives the copy check, the assistant/voice guard and the targeting validator. Detection folds obfuscation (NFKC, invisible characters, look-alike letters, leetspeak, spelled-out letters). A bare negation never hides a term; only an equal-opportunity frame within 3 words downgrades a hard match to soft, which still blocks autonomy. Jurisdiction data can only add terms or escalate soft to hard; pack patterns are a closed word grammar, never regular expressions. Mutation score on `check.ts` 99.6 % (`pnpm exec stryker run src/fairhousing/testing/stryker.config.mjs` in `packages/core`). **VERIFY WITH COUNSEL (C3, C5)**: the lexicon itself.
+- **Content guard (25).** Any fair-housing match adds `FAIR_HOUSING` to `contentGuard` (so the step is a draft flagged "Check this"); the pack defaults to `fh/1` and cannot be switched off. `inbound_channel` steps validate only in `new_lead_response`; until module 22 lands, `buildStep` skips them visibly.
+- **Prediction (49).** `PredictionFeatures` cannot express anything but the six allowlisted features; `realty/no-prediction-import` keeps `core/predict` and `core/coaching` out of ownership, priority, ads, portal, comms and lead routing (R-PRED-4).
+
