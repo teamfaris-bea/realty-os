@@ -396,7 +396,8 @@ function StageCard({ batch, stage, stages, onDone }: { batch: ImportBatch; stage
             <Button variant="secondary" onClick={() => setReviewing((v) => !v)}>
               {reviewing ? 'Close review list' : 'Review records'}
             </Button>
-            <Button pending={approve.pending} disabled={!batch.snapshotSha256 || stage.blockers.length > 0} onClick={async () => (await approve.run(`${base}/approve`, { snapshotSha256: batch.snapshotSha256! })).ok && onDone(`${label}: approved`)}>
+            {/* the approval presents the digest of THIS dry run (what the reviewer saw), not the batch's snapshot file digest (E42) */}
+            <Button pending={approve.pending} disabled={!stage.dryRunSha256 || stage.blockers.length > 0} onClick={async () => (await approve.run(`${base}/approve`, { snapshotSha256: stage.dryRunSha256! })).ok && onDone(`${label}: approved`)}>
               Approve these {stage.counts ? stage.counts.willImport : ''} records
             </Button>
           </>
