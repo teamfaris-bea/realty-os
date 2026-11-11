@@ -8,7 +8,7 @@
 //      contacts (one texted STOP through the real inbound webhook), an inbound text and an assistant
 //      draft, a task, a consult awaiting its outcome, an overdue promise (api/accountability's fixture)
 //      and the exception recompute, a deal, a listing, a lead offer through the signed
-//      intake webhook, a nurture playbook, and a CSV import. The superuser is used only for the
+//      intake webhook, a nurture playbook, a website-chat widget, and a CSV import. The superuser is used only for the
 //      appointment and password-proof clock fixtures (no application path moves time), readable display names, and
 //      clearing the TOTP replay guard so one secret can sign in twice in a 30 s window;
 //   3. a Vite dev server for apps/web on a free port whose /api proxy points at that API.
@@ -107,6 +107,11 @@ const routes = {
       kind: 'nurture', scope: 'team', name: 'Sphere check-ins',
       steps: [{ stepKey: 'market_note', channel: 'email', delay: { anchor: 'enrollment', offsetSeconds: 3 * DAY }, purpose: 'marketing', category: 'nurture_step', intent: 'market_update', subject: 'A quick market note', template: 'Hi {{first_name}},\n\nHomes near you are still moving. Reply and I will send a short list.', personalization: 'none', slots: ['first_name'], maxLength: 2000, stopIf: ['appointment_booked', 'deal_opened'] }],
     }), 'playbook');
+    // module 22: the team's website chat (a lead source with its notice, and a widget allowed on any website), so the
+    // widget's stand-in page is swept with a real key against the real public chat routes
+    const chatSource = must(await call(w.owner, 'POST', '/lead-sources', { name: 'Website chat', kind: 'website', consentDisclosure: { text: 'By starting a chat, you agree that the team may reply here and keep a record of this conversation.', namesSeller: 'Harbor & Pine Team' } }), 'chat lead source');
+    await freshReauth(h, w.owner);
+    const chatWidget = must(await call(w.owner, 'POST', '/admin/web-chat/widgets', { displayName: 'Website chat', leadSourceId: chatSource.source.id, allowedOrigins: [] }), 'chat widget');
     const csv = 'First Name,Last Name,Email,Phone\nNora,Bell,nora.bell@example.test,4155550111\nLiam,Ford,liam.ford@example.test,4155550122\n';
     // module 66: two records of one person (same email; the second kept apart with confirmDistinct)
     const dupEmail = randomEmail();
@@ -116,7 +121,7 @@ const routes = {
     const imp = must(await call(w.owner, 'POST', '/imports', { source: 'csv', fileName: 'open-house.csv', fileBase64: Buffer.from(csv).toString('base64') }), 'import');
     for (const [role, c] of Object.entries(people)) if (c.totpSecret) secrets.set(c.email, c.totpSecret);
     const users = Object.fromEntries(Object.entries(people).map(([role, c]) => [role, { email: c.email, password: TEST_PASSWORD, mfa: Boolean(c.totpSecret) }]));
-    return { users, ids: { contactId: jane, optedOutContactId: owen, longThreadContactId: rosa, dealId: deal.deal.id, listingId: listing.listing.id, playbookId: pb.playbook.id, importId: imp.batch.id, duplicateId: dup } };
+    return { users, ids: { contactId: jane, optedOutContactId: owen, longThreadContactId: rosa, dealId: deal.deal.id, listingId: listing.listing.id, playbookId: pb.playbook.id, importId: imp.batch.id, duplicateId: dup, widgetKey: chatWidget.widgetKey } };
   },
   /** module 65: runs the queued import jobs (snapshot, dry run) once, as the worker would; fake FUB only */
   async '/drain-imports'() {
@@ -175,6 +180,8 @@ export interface SeedIds {
   playbookId: string;
   importId: string;
   duplicateId: string;
+  /** the team's website-chat widget key (module 22), for the widget's stand-in page */
+  widgetKey: string;
 }
 
 export interface World {

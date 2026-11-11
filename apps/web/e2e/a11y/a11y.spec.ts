@@ -13,7 +13,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import AxeBuilder from '@axe-core/playwright';
 import { type Page, expect, test } from 'playwright/test';
-import { ROLES, SIGNED_OUT_PAGES, SWEEP_PAGES } from './pages.js';
+import { ROLES, SIGNED_OUT_PAGES, SWEEP_PAGES, signedOutUrl } from './pages.js';
 import { type A11yStack, type World, startA11yStack } from './stack.js';
 import { obscuredFocus, phoneProblems } from './checks.js';
 import { settle, signIn as signInAs } from './session.js';
@@ -101,8 +101,10 @@ test('signed-out screens pass axe in light and dark, and hold up on a phone', as
   for (const p of SIGNED_OUT_PAGES) {
     for (const scheme of ['light', 'dark'] as const) {
       await page.emulateMedia({ colorScheme: scheme });
-      await page.goto(`${stack.webUrl}${p.url}`);
+      await page.goto(`${stack.webUrl}${signedOutUrl(p, world.ids.widgetKey)}`);
       await expect(page.getByRole('heading', { level: 1, name: p.h1 })).toBeVisible();
+      // the widget shows itself only once the server confirmed a chat to offer: make sure it is there to be checked
+      if (p.widget) await expect(p.widget === 'open' ? page.getByRole('dialog', { name: /./ }) : page.getByRole('button', { name: /^Chat with / })).toBeVisible();
       await page.waitForLoadState('networkidle');
       found.push(...(await axe(page)).map((v) => `${scheme} ${p.url}: ${v}`));
       if (isPhone(page) && scheme === 'light') found.push(...(await phoneProblems(page)).map((v) => `${p.url}: ${v}`));

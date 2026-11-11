@@ -1,65 +1,52 @@
-// Module 37: the website chat widget on the phone (iPhone 13, 390 × 844) and desktop (1440 × 900) projects,
-// on the stand-in brokerage page src/widget/preview.html served by the dev server (the config's webServer).
-// Module 22's public chat routes do not exist yet: every /api/public/chat/** request is answered by a fake of
-// the PHASE2_3_PLAN §5.4 interface (STUB(22)), which also records exactly what the widget sent.
-//   - the brokerage name, the disclosure and "The first reply may come from the team's assistant." are shown
-//     before the visitor can write; start sends the §5.4 body with the disclosure id;
-//   - the team's reply appears only once the server returns it; no typing indicator or presence ever;
-//   - an ended chat says so (E77); a rate-limited start says so (E137);
+// Module 37: the website chat widget against module 22's REAL public chat routes (stack.ts: the real API, a fresh
+// database, fakes for every provider), on the phone (iPhone 13, 390 × 844) and desktop (1440 × 900) projects. The
+// widget runs on a stand-in brokerage website (src/widget/preview.html on http://127.0.0.1:<port>) and calls the API
+// on another origin (http://localhost:<port>/api), so every call is a real cross-origin request answered by the
+// API's own CORS, with no cookie. Each test is its own website visitor (its own IP for the API's rate limits).
+//   - the team name, the team's notice and the server's assistant sentence are shown before the visitor writes; the
+//     chat starts; the agent replies from compose and the reply appears in the widget, signed by the team; the
+//     visitor answers and the agent's thread shows it (R-INBOX-5, R-GATE-14, R-INBOX-1);
+//   - no typing indicator or presence ever (genuineness);
+//   - a visitor gone 30 minutes: the widget says the chat ended and offers a new one (E77);
+//   - the team replaced its notice after the visitor opened the chat: the new notice is shown and the next tap
+//     starts the chat (WEBCHAT_DISCLOSURE_STALE);
+//   - the brokerage's own link to #realty-chat-open opens the chat in place;
+//   - on a website the widget may not run on, nothing is shown (the API answers 404 there);
+//   - a start beyond the per-IP limit is refused in words, keeping what was typed (E137);
 //   - axe-clean in light and dark at every step; on a phone the panel takes the whole screen with 44 px targets.
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import AxeBuilder from '@axe-core/playwright';
-import { type Page, type Route, expect, test } from 'playwright/test';
+import { type Page, expect, test } from 'playwright/test';
+import { CHAT_NOTICE, type InboxStack, type World, startInboxStack } from './stack.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SHOTS = resolve(here, '../../test-results/inbox');
-const PAGE = '/src/widget/preview.html';
-const KEY = 'wk_preview_0123456789abcdef';
-const DISCLOSURE_ID = '01900000-0000-7000-8000-0000000d15c1';
-const TOKEN = 'st_e2e_0123456789abcdef0123456789ab';
 const AXE_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice'];
 const PRESENCE = /typing|is writing|online|available now|active now|seen|read receipt|replies in/i;
 
-interface Fake22 {
-  starts: unknown[];
-  sends: unknown[];
-  polls: string[];
-  /** messages the "team" has sent; the fake returns them from the next poll */
-  team: { id: string; body: string }[];
-  ended: boolean;
-  limit: boolean;
-}
+test.describe.configure({ mode: 'serial' });
 
-async function fake22(page: Page): Promise<Fake22> {
-  const s: Fake22 = { starts: [], sends: [], polls: [], team: [], ended: false, limit: false };
-  const at = () => new Date().toISOString();
-  const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
-  await page.route('**/api/public/chat/**', async (route) => {
-    const req = route.request();
-    const url = new URL(req.url());
-    if (req.method() === 'POST' && url.pathname === `/api/public/chat/${KEY}/start`) {
-      s.starts.push(req.postDataJSON());
-      if (s.limit) return json(route, 429, { error: { code: 'RATE_LIMITED' } });
-      const b = req.postDataJSON() as { message: string };
-      return json(route, 201, { token: TOKEN, messages: [{ id: 'v1', from: 'visitor', body: b.message, at: at() }], cursor: 'c1' });
-    }
-    if (req.method() === 'POST' && url.pathname === `/api/public/chat/session/${TOKEN}/messages`) {
-      s.sends.push(req.postDataJSON());
-      if (s.ended) return json(route, 410, { error: { code: 'CHANNEL_NOT_CONNECTED' } });
-      const b = req.postDataJSON() as { body: string };
-      return json(route, 201, { message: { id: `v${s.sends.length + 1}`, from: 'visitor', body: b.body, at: at() } });
-    }
-    if (req.method() === 'GET' && url.pathname === `/api/public/chat/session/${TOKEN}/poll`) {
-      s.polls.push(url.searchParams.get('after') ?? '');
-      const out = s.team.splice(0).map((m) => ({ ...m, from: 'team', at: at() }));
-      return json(route, 200, { messages: out, cursor: `c${s.polls.length + 1}`, ended: s.ended });
-    }
-    return json(route, 404, { error: { code: 'NOT_FOUND' } });
-  });
-  return s;
-}
+let stack: InboxStack;
+let world: World;
+let ipSeq = 0;
+/** a new website visitor: their own IP for the API's per-IP limits */
+const newVisitor = () => {
+  ipSeq += 1;
+  const ip = `203.0.113.${ipSeq + 10}`;
+  stack.visitor(ip);
+  return ip;
+};
+
+test.beforeAll(async () => {
+  test.setTimeout(300_000);
+  stack = await startInboxStack();
+  world = await stack.fixture<World>('/world');
+});
+test.afterAll(async () => {
+  await stack?.stop();
+});
 
 const isPhone = (page: Page) => (page.viewportSize()?.width ?? 1440) < 768;
 
@@ -93,81 +80,165 @@ async function shot(page: Page, name: string, project: string) {
   await page.screenshot({ path: resolve(SHOTS, `widget-${name}-${project}.png`) });
 }
 
-test('R-INBOX-5: the widget shows the brokerage name, the disclosure and the assistant line before the visitor writes; a conversation shows only what the server returned', async ({ page }, info) => {
-  const s = await fake22(page);
-  await page.goto(PAGE);
-  const launch = page.getByRole('button', { name: 'Chat with Harbor Realty LLC' });
-  await expect(launch).toBeVisible();
+/** The visitor's session token, as the widget keeps it in its tab. */
+async function tokenOf(page: Page): Promise<string> {
+  const saved = await page.evaluate((k) => sessionStorage.getItem(k), `realty-chat:${world.widgetKey}`);
+  return (JSON.parse(saved ?? '{}') as { token: string }).token;
+}
+
+async function openWidget(page: Page) {
+  await page.goto(stack.widgetPage(world.widgetKey));
+  const launch = page.getByRole('button', { name: `Chat with ${world.teamName}` });
+  await expect(launch).toBeVisible({ timeout: 15_000 });
+  await launch.click();
+  const panel = page.getByRole('dialog', { name: world.teamName });
+  await expect(panel).toBeVisible();
+  return panel;
+}
+
+async function fillStart(panel: ReturnType<Page['getByRole']>, message: string, contact = 'pat@example.com') {
+  await panel.getByRole('textbox', { name: 'Your name' }).fill('Pat Lee');
+  await panel.getByRole('textbox', { name: 'Phone or email' }).fill(contact);
+  await panel.getByRole('textbox', { name: 'Message' }).fill(message);
+}
+
+test('R-INBOX-5 R-GATE-14: the notice comes first; the chat starts across origins; the agent replies from compose and the visitor sees it from the team; the visitor answers and the agent sees it', async ({ page }, info) => {
+  test.setTimeout(120_000);
+  newVisitor();
+  await page.goto(stack.widgetPage(world.widgetKey));
+  const launch = page.getByRole('button', { name: `Chat with ${world.teamName}` });
+  await expect(launch).toBeVisible({ timeout: 15_000 });
   expect(await axe(page)).toEqual([]);
   await shot(page, 'closed', info.project.name);
 
-  // tap 1: open
+  // tap 1: open. The team's notice and the server's assistant sentence come before any field.
   await launch.click();
-  const panel = page.getByRole('dialog', { name: 'Harbor Realty LLC' });
-  await expect(panel).toBeVisible();
-  await expect(panel.getByText('By starting a chat, you agree that Harbor Realty LLC may reply here and keep a record of this conversation.')).toBeVisible();
-  await expect(panel.getByText("The first reply may come from the team's assistant.")).toBeVisible();
+  const panel = page.getByRole('dialog', { name: world.teamName });
+  await expect(panel.getByText(CHAT_NOTICE)).toBeVisible();
+  await expect(panel.getByText(world.assistantNotice)).toBeVisible();
   await expect(panel.getByRole('textbox', { name: 'Your name' })).toBeFocused();
   if (isPhone(page)) {
-    const box = await panel.boundingBox();
-    expect(box).toMatchObject({ x: 0, y: 0, width: 390 });
+    expect(await panel.boundingBox()).toMatchObject({ x: 0, y: 0, width: 390 });
     expect(await smallTargets(page)).toEqual([]);
   }
   expect(await axe(page)).toEqual([]);
   await shot(page, 'start', info.project.name);
 
-  await panel.getByRole('textbox', { name: 'Your name' }).fill('Pat Lee');
-  await panel.getByRole('textbox', { name: 'Phone or email' }).fill('pat@example.com');
-  await panel.getByRole('textbox', { name: 'Message' }).fill('Is 12 Oak St still available?');
   // tap 2: Start chat
+  await fillStart(panel, 'Is 12 Oak St still available?');
   await panel.getByRole('button', { name: 'Start chat' }).click();
   const log = panel.getByRole('log', { name: 'Conversation' });
-  await expect(log.getByText('Is 12 Oak St still available?')).toBeVisible();
-  expect(s.starts).toEqual([{ name: 'Pat Lee', email: 'pat@example.com', message: 'Is 12 Oak St still available?', disclosureId: DISCLOSURE_ID }]);
+  await expect(log.locator('[data-from=visitor]')).toHaveText([/Is 12 Oak St still available\?/]);
   await expect(panel).not.toContainText(PRESENCE);
 
-  // the assistant's first reply appears only after the server has it (the next poll)
-  await page.waitForTimeout(3500);
-  await expect(log.locator('li')).toHaveCount(1);
-  await expect(panel).not.toContainText(PRESENCE);
-  s.team.push({ id: 't1', body: 'Hi Pat, this is the Harbor team assistant. Yes, it is. Ava will follow up shortly.' });
-  await expect(log.getByText(/this is the Harbor team assistant/)).toBeVisible({ timeout: 10_000 });
-  await expect(log.locator('li')).toHaveCount(2);
-  expect(s.polls[0]).toBe('c1');
+  // the lead reached the team: the agent accepts it and answers from the thread, in web chat (the only channel Pat has)
+  const lead = await stack.fixture<{ id: string }>('/accept-chat', { token: await tokenOf(page) });
+  const agent = await page.context().newPage();
+  await agent.goto(`${stack.webUrl}/login`);
+  await agent.getByLabel('Email').fill(world.email);
+  await agent.getByLabel('Password').fill(world.password);
+  await agent.getByRole('button', { name: 'Sign in' }).click();
+  await expect(agent.getByRole('heading', { level: 1, name: 'Home' })).toBeVisible();
+  await agent.goto(`${stack.webUrl}/contacts/${lead.id}/thread`);
+  const convo = agent.getByRole('list', { name: 'Conversation' });
+  await expect(convo.getByText('Is 12 Oak St still available?')).toBeVisible({ timeout: 15_000 });
+  await agent.getByRole('textbox', { name: 'Web chat message' }).fill('Hi Pat, yes it is. Would Saturday at 10 work?');
+  await agent.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(agent.getByTestId('toast').getByText('Sent to Pat.')).toBeVisible({ timeout: 15_000 });
 
-  await panel.getByRole('textbox', { name: 'Your reply' }).fill('Great, can I see it Saturday?');
+  // the reply appears in the widget once the server has it, signed by the team; nothing else was shown meanwhile
+  const team = log.locator('[data-from=team]');
+  await expect(team).toHaveText([/Hi Pat, yes it is\. Would Saturday at 10 work\?/], { timeout: 15_000 });
+  await expect(team.locator('.meta')).toHaveText(new RegExp(`^${world.teamName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} · `));
+  await expect(panel).not.toContainText(PRESENCE);
+
+  // the visitor answers; it shows once the server accepted it, and the agent's thread shows it, tagged Web chat
+  await panel.getByRole('textbox', { name: 'Your reply' }).fill('Saturday at 10 works!');
   await panel.getByRole('button', { name: 'Send' }).click();
-  await expect(log.getByText('Great, can I see it Saturday?')).toBeVisible();
-  expect(s.sends).toEqual([{ body: 'Great, can I see it Saturday?' }]);
-  await expect(panel).not.toContainText(PRESENCE);
+  await expect(log.locator('[data-from=visitor]')).toHaveText([/Is 12 Oak St still available\?/, /Saturday at 10 works!/]);
+  const answered = convo.locator('li', { hasText: 'Saturday at 10 works!' });
+  await expect(answered).toBeVisible({ timeout: 15_000 });
+  await expect(answered.locator('[data-channel-tag]')).toHaveText('Web chat');
+  await agent.close();
+
   if (isPhone(page)) expect(await smallTargets(page)).toEqual([]);
   expect(await axe(page)).toEqual([]);
   await shot(page, 'chat', info.project.name);
+});
 
-  // E77: the session ends; the widget says so and offers a new chat
-  s.ended = true;
+test('E77: when the visitor has been gone 30 minutes the widget says the chat ended, takes no more replies and offers a new chat; Escape returns focus to the chat button', async ({ page }, info) => {
+  newVisitor();
+  const panel = await openWidget(page);
+  await fillStart(panel, 'Do you have anything near the park?');
+  await panel.getByRole('button', { name: 'Start chat' }).click();
+  await expect(panel.getByRole('textbox', { name: 'Your reply' })).toBeVisible();
+  // the visitor's session has been idle 30 minutes (clock fixture): the next poll says the chat is over
+  await stack.fixture('/age-chat', { token: await tokenOf(page) });
   await expect(panel.getByText('This chat has ended.')).toBeVisible({ timeout: 10_000 });
   await expect(panel.getByRole('button', { name: 'Start a new chat' })).toBeVisible();
   await expect(panel.getByRole('textbox', { name: 'Your reply' })).toHaveCount(0);
   expect(await axe(page)).toEqual([]);
   await shot(page, 'ended', info.project.name);
-
-  // Escape closes and returns focus to the chat button
   await page.keyboard.press('Escape');
   await expect(panel).toHaveCount(0);
-  await expect(launch).toBeFocused();
+  await expect(page.getByRole('button', { name: `Chat with ${world.teamName}` })).toBeFocused();
 });
 
-test('E137: a rate-limited start says so in words and keeps what the visitor typed', async ({ page }) => {
-  const s = await fake22(page);
-  s.limit = true;
-  await page.goto(`${PAGE}#realty-chat-open`);
-  const panel = page.getByRole('dialog', { name: 'Harbor Realty LLC' });
-  await panel.getByRole('textbox', { name: 'Your name' }).fill('Pat Lee');
-  await panel.getByRole('textbox', { name: 'Phone or email' }).fill('(415) 555-0101');
-  await panel.getByRole('textbox', { name: 'Message' }).fill('Hello');
+test('WEBCHAT_DISCLOSURE_STALE: the team replaced its notice after the visitor opened the chat; the widget shows the new notice, keeps what was typed, and the next tap starts the chat', async ({ page }) => {
+  newVisitor();
+  const panel = await openWidget(page);
+  await fillStart(panel, 'Hello, I have a question about a listing.', '(415) 555-0101');
+  const replaced = `${CHAT_NOTICE} We updated this notice on ${new Date().toDateString()}.`;
+  await stack.fixture('/replace-notice', { text: replaced });
+  await panel.getByRole('button', { name: 'Start chat' }).click();
+  await expect(panel.getByRole('alert')).toHaveText('The notice above has just changed. Please read it, then tap Start chat again.');
+  await expect(panel.getByText(replaced)).toBeVisible();
+  await expect(panel.getByRole('textbox', { name: 'Message' })).toHaveValue('Hello, I have a question about a listing.');
+  await expect(panel.getByRole('textbox', { name: 'Phone or email' })).toHaveValue('(415) 555-0101');
+  await panel.getByRole('button', { name: 'Start chat' }).click();
+  await expect(panel.getByRole('log', { name: 'Conversation' }).locator('[data-from=visitor]')).toHaveText([/Hello, I have a question about a listing\./]);
+});
+
+test('a link on the brokerage\'s own page to #realty-chat-open opens the chat in place, without a reload', async ({ page }) => {
+  newVisitor();
+  await page.goto(stack.widgetPage(world.widgetKey));
+  await expect(page.getByRole('button', { name: `Chat with ${world.teamName}` })).toBeVisible({ timeout: 15_000 });
+  const marker = await page.evaluate(() => {
+    (window as { __samePage?: boolean }).__samePage = true;
+    const a = document.createElement('a');
+    a.href = '#realty-chat-open';
+    a.textContent = 'Chat with us';
+    document.querySelector('main')!.append(a);
+    return true;
+  });
+  expect(marker).toBe(true);
+  await page.getByRole('link', { name: 'Chat with us' }).click();
+  await expect(page.getByRole('dialog', { name: world.teamName })).toBeVisible();
+  expect(await page.evaluate(() => (window as { __samePage?: boolean }).__samePage)).toBe(true);
+});
+
+test('on a website the widget may not run on, nothing is shown: the API answers 404 there', async ({ page }) => {
+  newVisitor();
+  const refused: number[] = [];
+  page.on('response', (r) => {
+    if (r.url().includes(`/api/public/chat/${world.widgetKey}`)) refused.push(r.status());
+  });
+  await page.goto(stack.widgetPage(world.widgetKey, { site: stack.webUrl }));
+  await expect(page.getByRole('heading', { level: 1, name: 'Chat widget preview' })).toBeVisible();
+  await expect.poll(() => refused).toEqual([404]);
+  await expect(page.locator('[data-realty-chat]')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^Chat with/ })).toHaveCount(0);
+});
+
+test('E137: a start beyond the per-IP limit is refused in words, and what the visitor typed stays', async ({ page }) => {
+  const ip = newVisitor();
+  // this visitor's IP already started the most chats a minute allows (real starts on the public route)
+  const { starts } = await stack.fixture<{ starts: number }>('/exhaust-starts', { ip });
+  expect(starts).toBeGreaterThan(0);
+  const panel = await openWidget(page);
+  await fillStart(panel, 'Hello');
   await panel.getByRole('button', { name: 'Start chat' }).click();
   await expect(panel.getByRole('alert')).toHaveText('Too many messages right now. Please wait a minute and try again.');
   await expect(panel.getByRole('textbox', { name: 'Message' })).toHaveValue('Hello');
-  expect(s.starts).toEqual([{ name: 'Pat Lee', phone: '(415) 555-0101', message: 'Hello', disclosureId: DISCLOSURE_ID }]);
+  await expect(panel.getByRole('log', { name: 'Conversation' })).toHaveCount(0);
 });

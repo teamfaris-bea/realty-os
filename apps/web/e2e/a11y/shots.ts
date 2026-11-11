@@ -4,7 +4,7 @@
 // Run: pnpm --filter @realty/web exec tsx e2e/a11y/shots.ts [outDir]
 import { mkdirSync } from 'node:fs';
 import { chromium, type Browser, type Page } from 'playwright';
-import { type Role, SIGNED_OUT_PAGES, SWEEP_PAGES } from './pages.js';
+import { type Role, SIGNED_OUT_PAGES, SWEEP_PAGES, signedOutUrl } from './pages.js';
 import { type A11yStack, type World, startA11yStack } from './stack.js';
 
 const out = process.argv[2] ?? '/tmp/realty-shots/a11y';
@@ -47,9 +47,9 @@ try {
       const ctx = await browser.newContext({ ...opts, colorScheme: scheme });
       const page = await ctx.newPage();
       for (const p of SIGNED_OUT_PAGES) {
-        await page.goto(`${stack.webUrl}${p.url}`);
+        await page.goto(`${stack.webUrl}${signedOutUrl(p, world.ids.widgetKey)}`);
         await settle(page);
-        await page.screenshot({ path: `${out}/${name}${suffix}-signed-out-${slug(p.url.split('?')[0]!)}.png`, fullPage: true });
+        await page.screenshot({ path: `${out}/${name}${suffix}-signed-out-${slug(p.url.replace(/\?[^#]*/, ''))}.png`, fullPage: true });
       }
       await signIn(page, stack, world, 'owner');
       for (const p of SWEEP_PAGES) {

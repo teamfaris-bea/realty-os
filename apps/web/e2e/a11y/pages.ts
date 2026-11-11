@@ -82,13 +82,17 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
 ];
 
 /** Screens outside the app frame (signed out). */
-export const SIGNED_OUT_PAGES: readonly { url: string; h1: string }[] = [
+export const SIGNED_OUT_PAGES: readonly { url: string; h1: string; widget?: 'closed' | 'open' }[] = [
   { url: '/login', h1: 'Sign in' },
   { url: '/signup', h1: 'Create your team' },
   { url: '/forgot-password', h1: 'Reset your password' },
   { url: '/reset-password?token=x', h1: 'Choose a new password' },
   { url: '/invite/x', h1: 'Join your team' },
-  // module 37: the website chat widget (a separate bundle) on its stand-in brokerage page, closed and open
-  { url: '/src/widget/preview.html', h1: 'Chat widget preview' },
-  { url: '/src/widget/preview.html#realty-chat-open', h1: 'Chat widget preview' },
+  // module 37: the website chat widget (a separate bundle) on its stand-in brokerage page, closed and open, with the
+  // seeded widget's key (signedOutUrl fills it in), talking to module 22's real public chat routes
+  { url: '/src/widget/preview.html?key=:widgetKey', h1: 'Chat widget preview', widget: 'closed' },
+  { url: '/src/widget/preview.html?key=:widgetKey#realty-chat-open', h1: 'Chat widget preview', widget: 'open' },
 ];
+
+/** A signed-out page's address, with the seeded widget key where it names one. */
+export const signedOutUrl = (p: { url: string }, widgetKey: string): string => p.url.replace(':widgetKey', encodeURIComponent(widgetKey));
