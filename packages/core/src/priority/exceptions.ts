@@ -6,6 +6,7 @@
 //   overdue_promise  promise:{task}
 //   failed_send      send:{message}
 //   missing_outcome  appt:{appointment}
+//   milestone_at_risk milestone:{deal_date}:{due_version}   (R-ACC-6, module 18a)
 // `detectedAt` is the instant the condition started holding (a deadline, a status change), never
 // the time the recompute happened to run, so recomputing never moves it. A condition fixed after it
 // started holding ("fixed late") is still an item, with `conditionClearedAt` = the fix instant; the
@@ -14,25 +15,36 @@
 // Imported history never raises an exception (R-IMPORT-6), and only a human touch satisfies the
 // first-touch SLA (R-AST-15): `SlaFacts.firstTouchAt` is the ledger's first_touch_recorded, which
 // only a gate-allowed human outbound writes (R-OWN-14).
+//
+// R-MKT-8: an open-house invite recipient blocked at send time (an opt-out) is counted on the send itself
+// ("Sent 41 of 45; 4 opted out"), so a message carrying `marketingPieceId` never raises failed_send.
 import { REASON_CODES, type ReasonCode, canonicalJson, reasonSentence } from '../compliance/index.js';
 import { HOUR_MS, type Instant, MINUTE_MS, instant } from '../foundation/index.js';
 import { awaitsOutcome, taskDeadline } from './feed.js';
 import { clip } from './format.js';
-import { apptKey, promiseKey, sendKey, untouchedKey } from './keys.js';
+import { apptKey, milestoneKey, promiseKey, sendKey, untouchedKey } from './keys.js';
 import type {
   ApptFacts,
+  DealDateFacts,
   ExceptionDerivation,
   ExceptionEvidence,
   ExceptionInputs,
   ExceptionItemSpec,
   ExceptionSettings,
+  MilestoneDateFacts,
   OutboundStatusFacts,
   SlaFacts,
   TaskFacts,
 } from './types.js';
 
-/** exception_items.rule_version. Bump on any change to a definition below. */
-export const EXCEPTION_RULE_VERSION = 1;
+/**
+ * exception_items.rule_version. Bump on any change to a definition below.
+ * 2: milestone_at_risk (R-ACC-6) and the open-house invite exclusion of failed_send (R-MKT-8).
+ */
+export const EXCEPTION_RULE_VERSION = 2;
+
+/** R-ACC-6: a confirmed date due within this long with nobody responsible is at risk. */
+export const MILESTONE_UNASSIGNED_WINDOW_MS = 48 * HOUR_MS;
 
 /** R-ACC-2 / R-GATE-8 defaults. */
 export const DEFAULT_EXCEPTION_SETTINGS: Required<ExceptionSettings> = {
@@ -196,6 +208,8 @@ function failureExplanation(m: OutboundStatusFacts, s: Required<ExceptionSetting
 /** failed_send: blocked/failed/undelivered/bounced, unknown > 10 min, or dispatching > 20 min. */
 export function failedSend(m: OutboundStatusFacts, now: Instant, s: Required<ExceptionSettings>): DerivedException | null {
   if (m.imported || m.initiator === 'import') return null;
+  // R-MKT-8: an invite recipient's row (blocked by an opt-out) is counted on the send, not queued.
+  if (m.marketingPieceId !== undefined && m.marketingPieceId !== null) return { kind: 'clear', key: sendKey(m.messageId) };
   const key = sendKey(m.messageId);
   let detectedAt: Instant | null = null;
   if (TERMINAL_FAILURES.has(m.status)) detectedAt = m.statusAt;
@@ -271,6 +285,80 @@ export function missingOutcome(a: ApptFacts, now: Instant, s: Required<Exception
   };
 }
 
+const DATE_NAME: Record<DealDateFacts['kind'], string> = {
+  acceptance: 'Acceptance date',
+  inspection: 'Inspection deadline',
+  appraisal: 'Appraisal date',
+  financing: 'Financing deadline',
+  closing: 'Closing date',
+  possession: 'Possession date',
+  custom: 'Contract date',
+};
+
+/**
+ * milestone_at_risk (R-ACC-6, R-TXN-3): a CONFIRMED date with completed_at NULL that is overdue
+ * (`due_at < now`), or due within 48 h (`due_at - now ≤ 48 h`) with no responsible party. Stored fields
+ * only: a proposed or waived date, or one whose stored instant is missing, is never a risk. The evidence
+ * names which predicate holds (both, when an overdue date also has nobody responsible).
+ *
+ * detectedAt is when the condition started holding: `due_at - 48 h` while it is only unassigned,
+ * `due_at` once overdue with someone responsible. A date completed after its due instant is "fixed late"
+ * (conditionClearedAt = completed_at); completed in time, it clears. The key carries due_version, so after
+ * a confirmed date moves the old occurrence clears and the new one is judged on its own.
+ */
+export function milestoneAtRisk(d: MilestoneDateFacts, now: Instant): DerivedException | null {
+  const key = milestoneKey(d.dealDateId, d.dueVersion);
+  if (d.status !== 'confirmed' || d.dueAt === null) return { kind: 'clear', key };
+  const due = d.dueAt;
+  const name = DATE_NAME[d.kind ?? 'custom'];
+  const unassignedFrom = instant(due - MILESTONE_UNASSIGNED_WINDOW_MS);
+  const nobody = d.responsible === null;
+
+  if (d.completedAt !== null) {
+    // done: an item only when it was done after the date passed ("fixed late")
+    if (d.completedAt <= due) return { kind: 'clear', key };
+    const evidence: ExceptionEvidence[] = [
+      { sourceType: 'deal_date', sourceId: d.dealDateId, explanation: `${name} passed before it was marked done`, at: due, predicate: 'overdue' },
+      { sourceType: 'deal_date', sourceId: d.dealDateId, explanation: 'Marked done', at: d.completedAt },
+      { sourceType: 'deal', sourceId: d.dealId, explanation: 'The deal this date belongs to' },
+    ];
+    return { kind: 'item', spec: milestoneSpec(d, key, nobody ? unassignedFrom : due, evidence, d.completedAt) };
+  }
+
+  const overdue = due < now;
+  const unassigned = nobody && due - now <= MILESTONE_UNASSIGNED_WINDOW_MS;
+  if (!overdue && !unassigned) return { kind: 'clear', key };
+  const evidence: ExceptionEvidence[] = [];
+  if (overdue) evidence.push({ sourceType: 'deal_date', sourceId: d.dealDateId, explanation: `${name} has passed and is not marked done`, at: due, predicate: 'overdue' });
+  if (unassigned) {
+    evidence.push({
+      sourceType: 'deal_date',
+      sourceId: d.dealDateId,
+      explanation: overdue ? 'Nobody is named as responsible for it' : `${name} is due within 48 h and nobody is named as responsible for it`,
+      at: due,
+      predicate: 'unassigned',
+    });
+  }
+  evidence.push({ sourceType: 'deal', sourceId: d.dealId, explanation: 'The deal this date belongs to' });
+  return { kind: 'item', spec: milestoneSpec(d, key, unassigned ? unassignedFrom : due, evidence, null) };
+}
+
+function milestoneSpec(d: MilestoneDateFacts, key: string, detectedAt: Instant, evidence: ExceptionEvidence[], clearedAt: Instant | null): ExceptionItemSpec {
+  return {
+    itemType: 'milestone_at_risk',
+    subjectType: 'deal_date',
+    subjectId: d.dealDateId,
+    contactId: null,
+    ownerUserId: d.ownerUserId,
+    detectedAt,
+    dueAt: d.dueAt,
+    evidence,
+    conditionClearedAt: clearedAt,
+    ruleVersion: EXCEPTION_RULE_VERSION,
+    dedupeKey: key,
+  };
+}
+
 // ---- recompute ----------------------------------------------------------------------------------
 
 const SEP = '\u001f';
@@ -308,7 +396,7 @@ export function exceptionFingerprint(x: ExceptionItemSpec): string {
     x.conditionClearedAt === null ? 'open' : 'cleared',
     x.evidence.length,
   ];
-  for (const e of x.evidence) parts.push(e.sourceType, e.sourceId, e.explanation, e.at ?? '', locatorPrint(e.locator), e.snippet ?? '');
+  for (const e of x.evidence) parts.push(e.sourceType, e.sourceId, e.explanation, e.at ?? '', locatorPrint(e.locator), e.snippet ?? '', e.predicate ?? '');
   return parts.join(SEP);
 }
 
@@ -344,6 +432,7 @@ export function deriveExceptions(i: ExceptionInputs): ExceptionDerivation {
   for (const x of i.promiseTasks) take(overduePromise(x, i.now));
   for (const x of i.outbound) take(failedSend(x, i.now, s));
   for (const x of i.appointments) take(missingOutcome(x, i.now, s));
+  for (const x of i.milestoneDates ?? []) take(milestoneAtRisk(x, i.now));
   for (const k of items.keys()) clear.delete(k);
 
   const upserts: ExceptionItemSpec[] = [];

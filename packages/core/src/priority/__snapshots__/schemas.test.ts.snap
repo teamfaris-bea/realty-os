@@ -100,6 +100,13 @@ exports[`core/priority schemas > ExceptionEvidenceSchema has no confidence field
         },
       ],
     },
+    "predicate": {
+      "enum": [
+        "overdue",
+        "unassigned",
+      ],
+      "type": "string",
+    },
     "snippet": {
       "maxLength": 500,
       "minLength": 1,
@@ -113,6 +120,7 @@ exports[`core/priority schemas > ExceptionEvidenceSchema has no confidence field
       "enum": [
         "ownership_period",
         "message_status",
+        "deal_date",
         "call",
         "message",
         "email",
@@ -165,7 +173,7 @@ exports[`core/priority schemas > ExceptionItemSpecSchema has no confidence field
       ],
     },
     "dedupeKey": {
-      "pattern": "^(untouched|promise|send|appt):",
+      "pattern": "^(untouched|promise|send|appt|milestone):",
       "type": "string",
     },
     "detectedAt": {
@@ -284,6 +292,13 @@ exports[`core/priority schemas > ExceptionItemSpecSchema has no confidence field
               },
             ],
           },
+          "predicate": {
+            "enum": [
+              "overdue",
+              "unassigned",
+            ],
+            "type": "string",
+          },
           "snippet": {
             "maxLength": 500,
             "minLength": 1,
@@ -297,6 +312,7 @@ exports[`core/priority schemas > ExceptionItemSpecSchema has no confidence field
             "enum": [
               "ownership_period",
               "message_status",
+              "deal_date",
               "call",
               "message",
               "email",
@@ -327,6 +343,7 @@ exports[`core/priority schemas > ExceptionItemSpecSchema has no confidence field
         "overdue_promise",
         "failed_send",
         "missing_outcome",
+        "milestone_at_risk",
       ],
       "type": "string",
     },
@@ -356,6 +373,7 @@ exports[`core/priority schemas > ExceptionItemSpecSchema has no confidence field
         "task",
         "message",
         "appointment",
+        "deal_date",
       ],
       "type": "string",
     },
@@ -780,6 +798,45 @@ exports[`core/priority schemas > FeedItemSchema has no confidence fields and no 
             ],
             "type": "object",
           },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "open_listing",
+                "type": "string",
+              },
+              "label": {
+                "type": "string",
+              },
+              "listingId": {
+                "minLength": 1,
+                "type": "string",
+              },
+            },
+            "required": [
+              "kind",
+              "label",
+              "listingId",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "show_details",
+                "type": "string",
+              },
+              "label": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "kind",
+              "label",
+            ],
+            "type": "object",
+          },
         ],
       },
       "type": "array",
@@ -851,6 +908,11 @@ exports[`core/priority schemas > FeedItemSchema has no confidence fields and no 
         "pond_new",
         "saved_search_review",
         "missed_call",
+        "seller_update",
+        "marketing_review",
+        "weekly_plan",
+        "coaching_fix",
+        "likely_to_move",
       ],
       "type": "string",
     },
@@ -1248,6 +1310,45 @@ exports[`core/priority schemas > FeedItemSchema has no confidence fields and no 
             "kind",
             "label",
             "contactId",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "open_listing",
+              "type": "string",
+            },
+            "label": {
+              "type": "string",
+            },
+            "listingId": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "kind",
+            "label",
+            "listingId",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "show_details",
+              "type": "string",
+            },
+            "label": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "kind",
+            "label",
           ],
           "type": "object",
         },
@@ -1753,6 +1854,45 @@ exports[`core/priority schemas > OneTapActionSchema has no confidence fields and
         "kind",
         "label",
         "contactId",
+      ],
+      "type": "object",
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "open_listing",
+          "type": "string",
+        },
+        "label": {
+          "type": "string",
+        },
+        "listingId": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "kind",
+        "label",
+        "listingId",
+      ],
+      "type": "object",
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "show_details",
+          "type": "string",
+        },
+        "label": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "kind",
+        "label",
       ],
       "type": "object",
     },

@@ -17,6 +17,24 @@
 // address ...) are left alone and shown as they are. Refreshes of one user serialize on a transaction
 // advisory lock, so two tabs cannot insert the same card twice.
 //
+// Phase 2/3 cards (module 18a; PHASE2_3_PLAN §5.3): the owning module adds a card by writing ONE
+// priority_feed_items row under its key family (core/priority keys.ts):
+//   seller_update     seller_update:{listing}:{period}   module 28   → Open listing
+//   marketing_review  marketing:{piece}                  module 29   → Open listing (the piece's listing)
+//   weekly_plan       weekly_plan:{user}:{week}          module 33   → See the plan (the card's own lines)
+//   coaching_fix      coaching_fix:{user}:{date}         module 36   → See the tip (the card's own lines)
+//   likely_to_move    likely:{contact}:{model}           module 50   → Open contact
+// The scorer never produces those keys, so it never updates or closes them; foreignActions() gives each
+// its one-tap action from the ids in its key. Deep links go only to pages that exist today (the listing
+// and contact pages); the weekly plan and daily tip pages (module 40) do not exist yet, so those cards
+// open their own details in place instead of pointing at a page that is not there.
+//
+// R-PRED-5 (read path): a likely_to_move card is shown only while ITS model (the one in its key) is
+// approved and that model's prediction for the contact is still a likely/watch band. The RESTRICTIVE
+// policy likely_to_move_model_live (0018) already hides the card when no approved model predicts the
+// contact; this read is narrower (a card made with a withdrawn model stays hidden even if another
+// approved model also flags the contact).
+//
 // Visibility (R-PERM-4): feed rows are readable only while their contact is visible to the user (RLS
 // feed_select), and core keeps only inputs owned by the user, so after a reassignment the previous
 // owner's stale cards disappear at once, and the new owner's appear on their next refresh.
@@ -28,6 +46,7 @@ import {
   type FeedReason,
   type OneTapAction,
   compareFeedItems,
+  parseForeignFeedKey,
   reasonFromCode,
   scoreFeed,
 } from '@realty/core/priority';
@@ -219,9 +238,36 @@ function reasonsOf(stored: unknown): { code: string; label: string }[] {
 
 const strip = (r: FeedReason) => ({ code: r.code, label: r.label });
 
-/** Actions for a card another module wrote under its own key (no scorer item to take them from). */
-function foreignActions(r: StoredRow): { primaryAction: OneTapAction; alternatives: OneTapAction[] } {
+/** A stored row as foreignActions reads it: plus the listing of a marketing piece the caller can see. */
+export type ForeignRow = Pick<StoredRow, 'item_type' | 'contact_id' | 'subject_type' | 'subject_id' | 'assistant_action_id' | 'dedupe_key'> & {
+  /** marketing_review: marketing_pieces.listing_id of the piece in the key (null when not visible) */
+  piece_listing_id?: string | null;
+};
+
+/**
+ * Actions for a card another module wrote under its own key (no scorer item to take them from). The five
+ * Phase 2/3 card types get their label and one-tap action from the ids in their key family; any other
+ * foreign row (a call summary, a reply-address card ...) keeps the Phase 1 behaviour.
+ */
+export function foreignActions(r: ForeignRow): { primaryAction: OneTapAction; alternatives: OneTapAction[] } {
   const open: OneTapAction[] = r.contact_id ? [{ kind: 'open_contact', label: 'Open', contactId: r.contact_id as never }] : [];
+  const key = parseForeignFeedKey(r.dedupe_key);
+  if (key !== null && key.itemType === r.item_type) {
+    switch (key.itemType) {
+      case 'seller_update':
+        return { primaryAction: { kind: 'open_listing', label: 'Open listing', listingId: key.listingId }, alternatives: open };
+      case 'marketing_review':
+        return r.piece_listing_id
+          ? { primaryAction: { kind: 'open_listing', label: 'Open listing', listingId: r.piece_listing_id as never }, alternatives: open }
+          : { primaryAction: { kind: 'show_details', label: 'See details' }, alternatives: open };
+      case 'weekly_plan':
+        return { primaryAction: { kind: 'show_details', label: 'See the plan' }, alternatives: open };
+      case 'coaching_fix':
+        return { primaryAction: { kind: 'show_details', label: 'See the tip' }, alternatives: open };
+      case 'likely_to_move':
+        return { primaryAction: { kind: 'open_contact', label: 'Open contact', contactId: (r.contact_id ?? key.contactId) as never }, alternatives: [] };
+    }
+  }
   if (r.assistant_action_id) return { primaryAction: { kind: 'edit_draft', label: 'Review', actionId: r.assistant_action_id as never }, alternatives: open };
   if (r.subject_type === 'task') return { primaryAction: { kind: 'open_task', label: 'Open task', taskId: r.subject_id as never }, alternatives: open };
   if (open[0]) return { primaryAction: open[0], alternatives: [] };
@@ -232,13 +278,20 @@ function foreignActions(r: StoredRow): { primaryAction: OneTapAction; alternativ
 export async function getFeed(tx: Tx, actor: UserActor, deps: FeedDeps, now: Instant): Promise<FeedView> {
   const items = await refreshFeed(tx, actor, deps, now);
   const byKey = new Map(items.map((i) => [i.dedupeKey, i]));
-  const r = await sql<StoredRow & { contact_name: string | null }>`
+  const r = await sql<StoredRow & { contact_name: string | null; piece_listing_id: string | null }>`
     SELECT f.id, f.item_type, f.band, f.contact_id, f.subject_type, f.subject_id, f.assistant_action_id, f.due_at, f.score, f.reasons,
-           f.dedupe_key, f.created_at, c.display_name AS contact_name
+           f.dedupe_key, f.created_at, c.display_name AS contact_name, mp.listing_id AS piece_listing_id
       FROM priority_feed_items f
       LEFT JOIN contacts c ON c.tenant_id = f.tenant_id AND c.id = f.contact_id
+      LEFT JOIN marketing_pieces mp ON f.item_type = 'marketing_review' AND mp.tenant_id = f.tenant_id
+                                   AND mp.id::text = split_part(f.dedupe_key, ':', 2)
      WHERE f.tenant_id = app.tenant_id() AND f.user_id = ${actor.userId} AND f.state = 'open'
-       AND (f.contact_id IS NULL OR (c.id IS NOT NULL AND c.deleted_at IS NULL))`.execute(tx);
+       AND (f.contact_id IS NULL OR (c.id IS NOT NULL AND c.deleted_at IS NULL))
+       -- R-PRED-5: only while the card's own model is approved and still flags the contact (RLS: contact detail)
+       AND (f.item_type <> 'likely_to_move' OR EXISTS (
+             SELECT 1 FROM contact_predictions p JOIN prediction_models m ON m.version = p.model_version
+              WHERE p.tenant_id = f.tenant_id AND p.contact_id = f.contact_id AND p.model_version = split_part(f.dedupe_key, ':', 3)
+                AND p.band IN ('likely_90d','watch') AND m.status = 'approved'))`.execute(tx);
   const cards: { item: FeedItem; card: FeedCard }[] = [];
   for (const row of r.rows) {
     const computed = byKey.get(row.dedupe_key);

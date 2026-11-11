@@ -1620,6 +1620,47 @@ export interface PortalItemsTable {
   retracted_at: Timestamp | null;
 }
 
+/** public.portal_login_tokens (table) */
+export interface PortalLoginTokensTable {
+  tenant_id: string;
+  id: string;
+  token_hash: Buffer;
+  portal_account_id: string;
+  login_point_id: string;
+  created_at: Generated<Timestamp>;
+  expires_at: Timestamp;
+  used_at: Timestamp | null;
+  superseded_at: Timestamp | null;
+}
+
+/** public.portal_sessions (table) */
+export interface PortalSessionsTable {
+  tenant_id: string;
+  id: string;
+  token_hash: Buffer;
+  portal_account_id: string;
+  created_at: Generated<Timestamp>;
+  last_seen_at: Timestamp;
+  idle_expires_at: Timestamp;
+  absolute_expires_at: Timestamp;
+  revoked_at: Timestamp | null;
+  revoked_reason: string | null;
+  ip: string | null;
+  user_agent: string | null;
+}
+
+/** public.portal_stream_tokens (table) */
+export interface PortalStreamTokensTable {
+  tenant_id: string;
+  token_hash: Buffer;
+  portal_account_id: string;
+  portal_item_id: string;
+  document_id: string;
+  created_at: Generated<Timestamp>;
+  expires_at: Timestamp;
+  used_at: Timestamp | null;
+}
+
 /** public.prediction_models (table) */
 export interface PredictionModelsTable {
   version: string;
@@ -2325,6 +2366,9 @@ export interface DB {
   portal_accounts: PortalAccountsTable;
   portal_grants: PortalGrantsTable;
   portal_items: PortalItemsTable;
+  portal_login_tokens: PortalLoginTokensTable;
+  portal_sessions: PortalSessionsTable;
+  portal_stream_tokens: PortalStreamTokensTable;
   prediction_models: PredictionModelsTable;
   priority_feed_items: PriorityFeedItemsTable;
   property_records: PropertyRecordsTable;
@@ -2458,6 +2502,9 @@ export const TABLE_NAMES = [
   'portal_accounts',
   'portal_grants',
   'portal_items',
+  'portal_login_tokens',
+  'portal_sessions',
+  'portal_stream_tokens',
   'prediction_models',
   'priority_feed_items',
   'property_records',

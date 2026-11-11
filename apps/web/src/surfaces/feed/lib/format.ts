@@ -91,6 +91,12 @@ export const ITEM_LABEL: Record<string, string> = {
   pond_new: 'New in the pond',
   saved_search_review: 'Saved search to review',
   missed_call: 'Missed call',
+  // Phase 2/3 cards, written by their owning modules (core/priority FOREIGN_CARD_LABEL, module 18a)
+  seller_update: 'Seller update to review',
+  marketing_review: 'Marketing to review',
+  weekly_plan: 'Your plan this week',
+  coaching_fix: "Today's coaching tip",
+  likely_to_move: 'May be thinking of moving',
 };
 
 export function itemLabel(itemType: string): string {

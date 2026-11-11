@@ -3,6 +3,7 @@ import noProviderOutbound from './rules/no-provider-outbound.js';
 import noRelativeOutsidePackage from './rules/no-relative-outside-package.js';
 import noSessionGuc from './rules/no-session-guc.js';
 import noSystemActor from './rules/no-system-actor.js';
+import portalTxSeparation from './rules/portal-tx-separation.js';
 
 const plugin = {
   meta: { name: '@realty/eslint-plugin', version: '0.0.0' },
@@ -11,6 +12,7 @@ const plugin = {
     'no-relative-outside-package': noRelativeOutsidePackage,
     'no-session-guc': noSessionGuc,
     'no-system-actor': noSystemActor,
+    'portal-tx-separation': portalTxSeparation,
   },
 };
 

@@ -1,7 +1,8 @@
 // @realty/db — public interface of BUILD_PLAN module 7 (db/client).
 //
 // - schema.ts: the Kysely `DB` interface for every table and view (generated; drift-tested)
-// - tenantTx: withTenantTx(actor, fn) / withPreTenant(fn): the only ways to reach the database
+// - tenantTx: withTenantTx(actor, fn) / withPreTenant(fn): the only ways to reach the database as staff
+// - portalTx: resolvePortalSession / withPortalTx(client, fn): the only way to act as a portal client (module 43)
 // - ownership: applyOwnershipCommand / applyOwnershipCommandInTx / ownership.followup
 // - consent: recordConsentEvent (ledger + projection in one transaction)
 // - jobs: enqueue / claim / finish / cancel / reap / dueWork
@@ -59,3 +60,23 @@ export { type NewContactFields, projectionOf, eventOf, selectLedger } from './ow
 export { TenantNotReadyError } from './ownership/context.js';
 export { type AuditRowSpec, insertAuditRow } from './repos/audit.js';
 export { json } from './json.js';
+export {
+  type ClientActor,
+  type PortalAuditEntity,
+  type PortalDocumentObject,
+  type PortalLoginLink,
+  PortalNotClearedError,
+  type PortalSignIn,
+  type PortalStreamToken,
+  type PortalTxOptions,
+  consumePortalLogin,
+  endPortalSession,
+  issuePortalDocumentStream,
+  newPortalToken,
+  portalAddressHash,
+  recordPortalAudit,
+  redeemPortalDocumentStream,
+  requestPortalLogin,
+  resolvePortalSession,
+  withPortalTx,
+} from './portalTx.js';

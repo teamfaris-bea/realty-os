@@ -7,11 +7,16 @@
 //
 // Imported history never raises an exception (R-IMPORT-6): imported messages, import-created tasks and
 // appointments, and import ledger events are excluded here as well as in core.
+//
+// Module 18a: open-house invite rows (messages.marketing_piece_id) are not failed_send inputs (R-MKT-8:
+// blocked recipients are counted on the send); milestone dates (deal_dates with their Phase 2 columns,
+// joined to the deal owner) feed R-ACC-6 milestone_at_risk.
 import type {
   ApptFacts,
   ExceptionEvidence,
   ExceptionItemSpec,
   ExceptionType,
+  MilestoneDateFacts,
   OutboundStatusFacts,
   SlaFacts,
   TaskFacts,
@@ -85,7 +90,7 @@ export interface InputScope {
   /** tenant scope: conditions that started holding after this instant (older ones only via `extra`) */
   windowStart: Instant;
   /** subjects of stored open items, always re-read so a vanished or fixed condition clears */
-  extra: { periods: { contactId: string; seq: number }[]; taskIds: string[]; messageIds: string[]; appointmentIds: string[] };
+  extra: { periods: { contactId: string; seq: number }[]; taskIds: string[]; messageIds: string[]; appointmentIds: string[]; dealDateIds: string[] };
 }
 
 const PERIOD_END_TYPES = ['reassigned', 'released', 'auto_released', 'inactivity_released', 'sent_to_pond', 'closed', 'merged_away', 'claimed', 'assigned', 'offer_accepted'];
@@ -183,6 +188,7 @@ export async function outboundFacts(tx: Tx, s: InputScope): Promise<OutboundStat
       LEFT JOIN assistant_actions a ON a.tenant_id = m.tenant_id AND a.id = m.assistant_action_id
       LEFT JOIN contacts c ON c.tenant_id = m.tenant_id AND c.id = m.contact_id
      WHERE m.tenant_id = app.tenant_id() AND m.direction = 'outbound' AND NOT m.imported AND m.initiator <> 'import'
+       AND m.marketing_piece_id IS NULL   -- R-MKT-8: invite recipients are counted on the send, never queued
        AND (m.id = ANY (${s.extra.messageIds}::uuid[])
             OR (m.status = ANY (${FAILING}::text[])
                 AND (CASE WHEN ${s.contactId}::uuid IS NOT NULL THEN m.contact_id = ${s.contactId}::uuid
@@ -198,6 +204,38 @@ export async function outboundFacts(tx: Tx, s: InputScope): Promise<OutboundStat
     statusAt: ms(m.status_at),
     dispatchedAt: msOrNull(m.dispatched_at),
     statusReason: m.status_reason,
+    marketingPieceId: null,
+  }));
+}
+
+/**
+ * R-ACC-6 inputs: confirmed milestone dates of open deals, with the deal owner. Tenant scope reads the
+ * dates whose stored due instant is within 48 h ahead or passed inside the window (uncompleted, or done
+ * after it passed), plus every date of a stored open item so a completed, waived or moved date clears.
+ * A contact-scoped recompute reads none: these items have no contact, so it neither raises nor clears them.
+ */
+export async function milestoneFacts(tx: Tx, s: InputScope): Promise<MilestoneDateFacts[]> {
+  if (s.contactId !== null) return [];
+  const nowIso = iso(s.now);
+  const winIso = iso(s.windowStart);
+  const r = await sql<{ id: string; deal_id: string; owner_user_id: string; kind: NonNullable<MilestoneDateFacts['kind']>; status: MilestoneDateFacts['status']; due_at: Date | null; due_version: number; responsible: MilestoneDateFacts['responsible']; completed_at: Date | null }>`
+    SELECT dd.id, dd.deal_id, d.owner_user_id, dd.kind, dd.status, dd.due_at, dd.due_version, dd.responsible, dd.completed_at
+      FROM deal_dates dd JOIN deals d ON d.tenant_id = dd.tenant_id AND d.id = dd.deal_id
+     WHERE dd.tenant_id = app.tenant_id() AND d.stage NOT IN ('closed','lost')
+       AND (dd.id = ANY (${s.extra.dealDateIds}::uuid[])
+            OR (dd.status = 'confirmed' AND dd.due_at IS NOT NULL
+                AND dd.due_at <= ${nowIso}::timestamptz + interval '48 hours' AND dd.due_at > ${winIso}::timestamptz
+                AND (dd.completed_at IS NULL OR dd.completed_at > dd.due_at)))`.execute(tx);
+  return r.rows.map((x) => ({
+    dealDateId: x.id as never,
+    dealId: x.deal_id as never,
+    ownerUserId: x.owner_user_id as UserId,
+    dueAt: msOrNull(x.due_at),
+    dueVersion: Number(x.due_version),
+    responsible: x.responsible,
+    completedAt: msOrNull(x.completed_at),
+    status: x.status,
+    kind: x.kind,
   }));
 }
 

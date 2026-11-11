@@ -7,7 +7,9 @@
 //   review_handback                        the approvals inbox at that handback
 //   complete_task / complete_deal_date     mark done
 //   log_outcome                            the appointment outcome sheet
-//   open_* / review_search                 the page that holds it
+//   open_* / review_search                 the page that holds it (open_listing: the listing page)
+//   show_details                           opens the card's own details in place (Phase 2/3 cards whose
+//                                          page does not exist yet: the weekly plan, the daily tip)
 //
 // A `note` on an action is an optional hint shown under the button (core/priority no longer sets one:
 // the send-time check never asks for a confirmation). Text, Email, Call and Send are disabled before
@@ -35,6 +37,8 @@ export const ACTION_ICON: Partial<Record<OneTapAction['kind'], IconName>> = {
   complete_deal_date: 'check',
   log_outcome: 'checklist',
   review_handback: 'inbox',
+  open_listing: 'listing',
+  show_details: 'info',
 };
 
 export interface ActionButtonProps {
@@ -43,6 +47,8 @@ export interface ActionButtonProps {
   variant?: ButtonVariant;
   /** disables actions whose deadline has passed (an ended offer), with the reason said in the card */
   expired?: boolean;
+  /** show_details: the card's details panel (opened by the tap) */
+  details?: { open: boolean; controls: string; onOpen: () => void } | undefined;
   block?: boolean;
   className?: string;
 }
@@ -64,6 +70,8 @@ export function ActionButton(p: ActionButtonProps) {
       return <CallButton {...p} action={p.action} />;
     case 'log_outcome':
       return <OutcomeButton {...p} action={p.action} />;
+    case 'show_details':
+      return <DetailsButton {...p} action={p.action} />;
     default:
       return <NavButton {...p} />;
   }
@@ -175,6 +183,23 @@ function OutcomeButton({ action, card, variant = 'primary', block, className }: 
   );
 }
 
+function DetailsButton({ action, details, variant = 'primary', block, className }: ActionButtonProps & { action: Extract<OneTapAction, { kind: 'show_details' }> }) {
+  return (
+    <Button
+      variant={variant}
+      icon="info"
+      block={block}
+      className={className}
+      disabled={details === undefined}
+      aria-expanded={details?.open ?? false}
+      aria-controls={details?.controls}
+      onClick={() => details?.onOpen()}
+    >
+      {action.label}
+    </Button>
+  );
+}
+
 /** Where a navigation action goes (pure; unit-tested). */
 export function actionHref(a: OneTapAction, card?: Pick<FeedCard, 'contact'>): string | null {
   switch (a.kind) {
@@ -194,6 +219,8 @@ export function actionHref(a: OneTapAction, card?: Pick<FeedCard, 'contact'>): s
       return card?.contact ? `/contacts/${card.contact.id}?review=searches#searches` : '/approvals';
     case 'open_contact':
       return `/contacts/${a.contactId}`;
+    case 'open_listing':
+      return `/listings/${a.listingId}`;
     default:
       return null;
   }

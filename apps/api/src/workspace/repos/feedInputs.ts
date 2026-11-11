@@ -130,7 +130,8 @@ export async function loadFeedInputs(tx: Tx, actor: UserActor, envelope: Envelop
              s.default_timezone AS zone
         FROM deal_dates dd JOIN deals d ON d.tenant_id = dd.tenant_id AND d.id = dd.deal_id
         JOIN tenant_settings s ON s.tenant_id = d.tenant_id
-       WHERE dd.tenant_id = app.tenant_id() AND dd.completed_at IS NULL AND d.stage NOT IN ('closed','lost')
+       -- R-TXN-2 / E158: a proposed or waived date reminds nobody until a person confirms it
+       WHERE dd.tenant_id = app.tenant_id() AND dd.completed_at IS NULL AND dd.status = 'confirmed' AND d.stage NOT IN ('closed','lost')
          AND dd.due_on <= (${nowIso}::timestamptz AT TIME ZONE s.default_timezone)::date + 3
          AND (d.owner_user_id = ${userId} OR EXISTS (SELECT 1 FROM deal_members dm WHERE dm.tenant_id = d.tenant_id AND dm.deal_id = d.id AND dm.user_id = ${userId}))
        ORDER BY dd.due_on LIMIT ${CAP}`.execute(tx),

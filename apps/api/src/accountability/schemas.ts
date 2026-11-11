@@ -11,7 +11,7 @@ import { RANGE_KEYS } from './scoreboard.js';
 
 const uuid = z.uuid();
 const note = z.string().trim().min(1).max(500);
-const ExceptionTypeSchema = z.enum(EXCEPTION_TYPES as unknown as ['untouched_lead', 'overdue_promise', 'failed_send', 'missing_outcome']);
+const ExceptionTypeSchema = z.enum(EXCEPTION_TYPES as unknown as ['untouched_lead', 'overdue_promise', 'failed_send', 'missing_outcome', 'milestone_at_risk']);
 
 // ---- exceptions ---------------------------------------------------------------------------------------
 
@@ -30,7 +30,7 @@ export const ReopenBody = z.strictObject({ note: note.optional(), commandId: uui
 export const ReassignBody = z.strictObject({ toUserId: uuid, note: note.optional(), commandId: uuid, expectedSeq: z.number().int().min(1).optional() });
 
 const EvidenceLinkSchema = z.object({
-  kind: z.enum(['contact', 'message', 'call', 'task', 'appointment']),
+  kind: z.enum(['contact', 'message', 'call', 'task', 'appointment', 'deal']),
   id: uuid,
   contactId: uuid.nullable(),
   offsetMs: z.number().int().min(0).nullable(),
@@ -75,7 +75,13 @@ export const QueueResponse = z.object({
   items: z.array(ExceptionItemSchema),
   counts: z.object({
     live: z.number().int().min(0),
-    byType: z.object({ untouched_lead: z.number().int(), overdue_promise: z.number().int(), failed_send: z.number().int(), missing_outcome: z.number().int() }),
+    byType: z.object({
+      untouched_lead: z.number().int(),
+      overdue_promise: z.number().int(),
+      failed_send: z.number().int(),
+      missing_outcome: z.number().int(),
+      milestone_at_risk: z.number().int(),
+    }),
   }),
   generatedAt: z.string(),
 });
