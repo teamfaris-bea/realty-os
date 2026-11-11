@@ -71,7 +71,7 @@ export default function CoachingSettingsPage() {
           Call reviews are {v.scoringEnabled ? (v.pack.cleared ? 'on' : 'paused') : 'off'}
         </h2>
         <p className="text-[15px] text-ink">{v.scoringSentence}</p>
-        <p className="text-[14px] text-ink-muted">Only calls a person handled are reviewed, never AI-handled calls or imported recordings. Agents see one tip a day; there are no scores, grades or rankings.</p>
+        <p className="text-[14px] text-ink-muted">Only calls a person handled are reviewed, never calls the assistant answered or imported recordings. Agents see one tip a day; nobody is graded or ranked.</p>
         {v.scoringEnabled ? (
           <Button variant="danger" className="self-start" pending={pending === 'scoring'} pendingLabel="Turning off" onClick={() => void save('scoring', { ...current, scoringEnabled: false }, 'Call reviews are off. Today’s tips are gone.')}>
             Turn call reviews off

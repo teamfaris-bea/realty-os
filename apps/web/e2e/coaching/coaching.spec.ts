@@ -60,7 +60,7 @@ async function axeViolations(page: Page): Promise<string[]> {
 
 async function noGrades(page: Page) {
   // the settings page's one statement that there are none is the only place these words may appear
-  const text = ((await page.locator('main').textContent()) ?? '').replace('there are no scores, grades or rankings', '');
+  const text = ((await page.locator('main').textContent()) ?? '').replace('nobody is graded or ranked', '');
   expect(text).not.toMatch(/\bscores?\b|\bgrades?\b|\brank|\d+\s?%|leaderboard/i);
   if (isPhone(page)) expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 }
