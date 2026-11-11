@@ -10,6 +10,8 @@ import pg from 'pg';
 import { randomBytes } from 'node:crypto';
 import { recomputeExceptions } from '../accountability/exceptions.js';
 import { systemActor } from '../worker/systemActor.js';
+import type { EnvelopeService } from '../crypto/envelope.js';
+import { materializeTenant, membersWithFeedWork } from '../workspace/feedJob.js';
 
 export const MIGRATIONS_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../packages/db/migrations');
 
@@ -57,6 +59,28 @@ export async function recomputeAll(database: Database, tenantIds: readonly strin
     const t0 = performance.now();
     const r = await withTenantTx(systemActor(t as TenantId, 'worker'), (tx, now) => recomputeExceptions(tx, 'tenant', now, ids), { db: database });
     out.push({ tenantId: t, ms: performance.now() - t0, upserted: r.upserted });
+  }
+  return out;
+}
+
+/**
+ * Runs the feed materializer (the feed.materialize job, lane perf-misses) for every member with work in each
+ * tenant until none is left, as the worker would in the background: each member's feed is materialized in a
+ * transaction of its own, as that member.
+ */
+export async function materializeAll(database: Database, envelope: EnvelopeService, tenantIds: readonly string[]): Promise<{ tenantId: string; ms: number; members: number }[]> {
+  const clock = { now: () => instant(Date.now()) };
+  const ids = uuidv7Generator(clock, (n) => new Uint8Array(randomBytes(n)));
+  const out: { tenantId: string; ms: number; members: number }[] = [];
+  for (const t of tenantIds) {
+    const t0 = performance.now();
+    let members = 0;
+    for (;;) {
+      const work = await withTenantTx(systemActor(t as TenantId, 'worker'), (tx, now) => membersWithFeedWork(tx, now), { db: database });
+      if (work.length === 0) break;
+      members += (await materializeTenant(t, work, { db: database, envelope, ids }, Infinity)).length;
+    }
+    out.push({ tenantId: t, ms: performance.now() - t0, members });
   }
   return out;
 }

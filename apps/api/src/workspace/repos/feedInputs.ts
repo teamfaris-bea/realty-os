@@ -29,54 +29,126 @@ import type {
   TouchFacts,
 } from '@realty/core/priority';
 import type { PhoneEmailChannel as Channel } from '@realty/core/compliance'; // the feed's blocked-channel hint covers Phase 1 channels
-import type { ContactId, Instant, UserActor, UserId } from '@realty/core/foundation';
+import { type ContactId, type Instant, type UserActor, type UserId, localDateOf, localTime, resolveLocal } from '@realty/core/foundation';
+import { appointmentGroup, contactGroup, dealDateGroup, nextFeedChange, splitFeedInputs, taskGroup } from '@realty/core/priority';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 import { evidenceForClaims } from './evidence.js';
 
 const ms = (d: Date | string): Instant => new Date(d).getTime() as Instant;
+const HOUR = 3_600_000;
+const MIDNIGHT = localTime('00:00');
+const DAY = 86_400_000;
 const msOrNull = (d: Date | string | null): Instant | null => (d === null ? null : ms(d));
 
 /** How far back unanswered client messages are looked for (older ones live in the thread, not the feed). */
 export const INBOUND_WINDOW_DAYS = 14;
-/** Row caps per input (the feed shows the top 50; the caps keep one request bounded). */
-const CAP = 300;
+/** Unanswered messages / missed calls read per contact (a conversation's newest ones; one card per contact). */
+const PER_CONTACT_CAP = 300;
+/** Tasks enter the inputs this long before they are due (core shows them from 24 h). */
+export const TASK_INPUT_WINDOW_MS = 50 * HOUR;
+/** Appointments without an outcome stay in the inputs this long after they end. */
+export const APPT_INPUT_WINDOW_DAYS = 30;
+/** Contract dates enter the inputs this many local days ahead. */
+export const DEAL_DATE_INPUT_DAYS = 3;
+
+/**
+ * Which part of a book to read (the incremental feed, lane perf-misses): the inputs of these groups only
+ * (core/priority incremental.ts: a contact, or a task / appointment without a contact, or a deal date).
+ * Omitted: the whole book.
+ */
+export interface FeedScope {
+  contactIds: readonly string[];
+  taskIds: readonly string[];
+  appointmentIds: readonly string[];
+  dealDateIds: readonly string[];
+}
+
+export interface LoadedFeedInputs {
+  /** the inputs core.scoreFeed scores at `now` */
+  inputs: FeedInputs;
+  /**
+   * Per group: instants after which the inputs read here can differ only because time passed (a row leaves
+   * a look-back window, or a future row enters a look-ahead one), plus everything core.nextFeedChange
+   * names for the group's facts, including future facts not yet in `inputs`. Only instants > now.
+   */
+  nextChange: Map<string, number>;
+}
+
+/**
+ * The time windows of the inputs (the old SQL predicates on `now`, applied in one place so the stored feed
+ * can say when they move): an inactivity warning from its warn instant, a dated task from 50 h before it is
+ * due, an appointment once it ended, a contract date from 3 local days before its day. Rows that left a
+ * look-back window are never read (SQL), rows ahead of a look-ahead window are read and held back here.
+ */
+export function windowFeedInputs(i: FeedInputs): FeedInputs {
+  const now = i.now;
+  return {
+    ...i,
+    inactivityWarnings: (i.inactivityWarnings ?? []).filter((w) => w.warnAt <= now && w.releaseAt > now),
+    tasks: i.tasks.filter((t) => (t.dueAt !== null ? t.dueAt <= now + TASK_INPUT_WINDOW_MS : t.kind === 'promise' && t.needsReview)),
+    appointments: i.appointments.filter((a) => a.endsAt <= now),
+    dealDates: i.dealDates.filter((d) => d.dueOn <= addDays(localDateOf(now, d.zone), DEAL_DATE_INPUT_DAYS)),
+  };
+}
+
+function addDays(d: string, n: number): string {
+  return new Date(Date.parse(`${d}T00:00:00Z`) + n * DAY).toISOString().slice(0, 10);
+}
 
 export async function loadFeedInputs(tx: Tx, actor: UserActor, envelope: EnvelopeService, now: Instant): Promise<FeedInputs> {
+  return (await loadFeedInputsScoped(tx, actor, envelope, now)).inputs;
+}
+
+/** loadFeedInputs for a part of the book (or all of it), with the instants its inputs can change by time. */
+export async function loadFeedInputsScoped(tx: Tx, actor: UserActor, envelope: EnvelopeService, now: Instant, scope?: FeedScope): Promise<LoadedFeedInputs> {
   const userId = actor.userId as UserId;
   const nowIso = new Date(now).toISOString();
+  const C = scope ? [...scope.contactIds] : [];
+  const byContact = (col: string) => (scope ? sql`AND ${sql.ref(col)} = ANY (${C}::uuid[])` : sql``);
+  const tasksIn = scope ? sql`AND (contact_id = ANY (${C}::uuid[]) OR id = ANY (${[...scope.taskIds]}::uuid[]))` : sql``;
+  const apptsIn = scope ? sql`AND (contact_id = ANY (${C}::uuid[]) OR id = ANY (${[...scope.appointmentIds]}::uuid[]))` : sql``;
+  const datesIn = scope ? sql`AND dd.id = ANY (${[...scope.dealDateIds]}::uuid[])` : sql``;
+  const windows = new Map<string, number[]>();
+  const win = (group: string, t: number) => {
+    if (!(t > now)) return;
+    const l = windows.get(group);
+    if (l) l.push(t);
+    else windows.set(group, [t]);
+  };
 
   const [offers, slas, inactivity, reinquiries, inbound, missed, handbacks, drafts, tasks, dealDates, appts, searches] = await Promise.all([
     sql<{ id: string; offer_id: string; offered_to_user_id: string; offer_expires_at: Date; updated_at: Date; source: string | null }>`
       SELECT c.id, c.offer_id, c.offered_to_user_id, c.offer_expires_at, c.updated_at, ls.name AS source
         FROM contacts c LEFT JOIN lead_sources ls ON ls.tenant_id = c.tenant_id AND ls.id = c.original_lead_source_id
        WHERE c.tenant_id = app.tenant_id() AND c.ownership_state = 'offered' AND c.offered_to_user_id = ${userId}
-         AND c.deleted_at IS NULL AND c.offer_expires_at > ${nowIso}::timestamptz
-       ORDER BY c.offer_expires_at LIMIT ${CAP}`.execute(tx),
+         AND c.deleted_at IS NULL AND c.offer_expires_at > ${nowIso}::timestamptz ${byContact('c.id')}
+       ORDER BY c.offer_expires_at`.execute(tx),
     sql<{ id: string; owner_user_id: string; ownership_period_seq: string; owned_at: Date; first_touch_due_at: Date; release_due_at: Date | null }>`
       SELECT id, owner_user_id, ownership_period_seq, owned_at, first_touch_due_at, release_due_at FROM contacts
        WHERE tenant_id = app.tenant_id() AND ownership_state = 'owned' AND owner_user_id = ${userId} AND deleted_at IS NULL
-         AND first_touch_due_at IS NOT NULL AND first_touch_at IS NULL
-       ORDER BY first_touch_due_at LIMIT ${CAP}`.execute(tx),
+         AND first_touch_due_at IS NOT NULL AND first_touch_at IS NULL ${byContact('id')}
+       ORDER BY first_touch_due_at`.execute(tx),
     sql<{ id: string; ownership_period_seq: string; inactivity_warn_at: Date; inactivity_release_at: Date }>`
       SELECT id, ownership_period_seq, inactivity_warn_at, inactivity_release_at FROM contacts
        WHERE tenant_id = app.tenant_id() AND ownership_state = 'owned' AND owner_user_id = ${userId} AND deleted_at IS NULL
-         AND inactivity_warn_at <= ${nowIso}::timestamptz AND inactivity_release_at > ${nowIso}::timestamptz
-       ORDER BY inactivity_release_at LIMIT ${CAP}`.execute(tx),
+         -- warn_at <= now is applied by windowFeedInputs (a warning ahead of its instant is read and held back)
+         AND inactivity_warn_at IS NOT NULL AND inactivity_release_at > ${nowIso}::timestamptz ${byContact('id')}
+       ORDER BY inactivity_release_at`.execute(tx),
     sql<{ contact_id: string; inquiry_id: string; occurred_at: Date; deadline_at: Date | null; touched: boolean }>`
       SELECT e.contact_id, e.payload->>'inquiryId' AS inquiry_id, e.occurred_at, e.deadline_at,
              (c.last_human_touch_at IS NOT NULL AND c.last_human_touch_at > e.occurred_at) AS touched
         FROM contacts c JOIN lead_ownership_events e ON e.tenant_id = c.tenant_id AND e.contact_id = c.id
        WHERE c.tenant_id = app.tenant_id() AND c.ownership_state = 'owned' AND c.owner_user_id = ${userId} AND c.deleted_at IS NULL
          AND e.type = 'reinquiry' AND e.seq >= c.ownership_period_seq AND e.payload ? 'inquiryId'
-         AND e.occurred_at > ${nowIso}::timestamptz - interval '14 days'
-       ORDER BY e.occurred_at DESC LIMIT ${CAP}`.execute(tx),
+         AND e.occurred_at > ${nowIso}::timestamptz - interval '14 days' ${byContact('c.id')}
+       ORDER BY e.occurred_at DESC`.execute(tx),
     sql<{ id: string; channel: 'sms' | 'mms' | 'email'; contact_id: string; occurred_at: Date; is_auto_reply: boolean; opt_out_keyword: string | null }>`
       WITH mine AS MATERIALIZED (
         -- the agent's owned contacts with the instant after which a client message is still unanswered
         SELECT c.tenant_id, c.id, GREATEST(${nowIso}::timestamptz - make_interval(days => ${INBOUND_WINDOW_DAYS}), COALESCE(c.last_human_touch_at, '-infinity'::timestamptz)) AS since
           FROM contacts c
-         WHERE c.tenant_id = app.tenant_id() AND c.ownership_state = 'owned' AND c.owner_user_id = ${userId} AND c.deleted_at IS NULL)
+         WHERE c.tenant_id = app.tenant_id() AND c.ownership_state = 'owned' AND c.owner_user_id = ${userId} AND c.deleted_at IS NULL ${byContact('c.id')})
       SELECT m.id, m.channel, m.contact_id, m.occurred_at, m.is_auto_reply, m.opt_out_keyword
         FROM mine c
         -- Per-contact index range scan (scale-250k): (contact_id, occurred_at > since) is the index condition,
@@ -88,13 +160,13 @@ export async function loadFeedInputs(tx: Tx, actor: UserActor, envelope: Envelop
           SELECT m.id, m.channel, m.contact_id, m.occurred_at, m.is_auto_reply, m.opt_out_keyword FROM messages m
            WHERE m.tenant_id = c.tenant_id AND m.contact_id = c.id AND m.occurred_at > c.since
              AND m.direction = 'inbound' AND NOT m.imported
-           ORDER BY m.occurred_at DESC LIMIT ${CAP}) m
-       ORDER BY m.occurred_at DESC LIMIT ${CAP}`.execute(tx),
+           ORDER BY m.occurred_at DESC LIMIT ${PER_CONTACT_CAP}) m
+       ORDER BY m.occurred_at DESC`.execute(tx),
     sql<{ id: string; contact_id: string; started_at: Date }>`
       WITH mine AS MATERIALIZED (
         SELECT c.tenant_id, c.id, GREATEST(${nowIso}::timestamptz - make_interval(days => ${INBOUND_WINDOW_DAYS}), COALESCE(c.last_human_touch_at, '-infinity'::timestamptz)) AS since
           FROM contacts c
-         WHERE c.tenant_id = app.tenant_id() AND c.ownership_state = 'owned' AND c.owner_user_id = ${userId} AND c.deleted_at IS NULL)
+         WHERE c.tenant_id = app.tenant_id() AND c.ownership_state = 'owned' AND c.owner_user_id = ${userId} AND c.deleted_at IS NULL ${byContact('c.id')})
       SELECT k.id, k.contact_id, k.started_at
         FROM mine c
         -- per-contact index range scan, as for messages above
@@ -103,27 +175,27 @@ export async function loadFeedInputs(tx: Tx, actor: UserActor, envelope: Envelop
            WHERE k.tenant_id = c.tenant_id AND k.contact_id = c.id AND k.started_at > c.since
              AND k.direction = 'inbound' AND NOT k.imported AND k.answered_at IS NULL
              AND k.status IN ('no_answer','busy','voicemail','canceled','failed','completed')
-           ORDER BY k.started_at DESC LIMIT ${CAP}) k
-       ORDER BY k.started_at DESC LIMIT ${CAP}`.execute(tx),
+           ORDER BY k.started_at DESC LIMIT ${PER_CONTACT_CAP}) k
+       ORDER BY k.started_at DESC`.execute(tx),
     sql<{ id: string; contact_id: string; created_at: Date; payload: Record<string, unknown>; m_channel: 'sms' | 'mms' | 'email' | null; m_at: Date | null }>`
       SELECT a.id, a.contact_id, a.created_at, a.payload, m.channel AS m_channel, m.occurred_at AS m_at
         FROM assistant_actions a
         LEFT JOIN messages m ON m.tenant_id = a.tenant_id AND m.id = CASE WHEN a.payload->>'inboundMessageId' ~ '^[0-9a-f-]{36}$' THEN (a.payload->>'inboundMessageId')::uuid END
-       WHERE a.tenant_id = app.tenant_id() AND a.kind = 'handback' AND a.status = 'proposed' AND a.owner_user_id = ${userId} AND a.contact_id IS NOT NULL
-       ORDER BY a.created_at DESC LIMIT ${CAP}`.execute(tx),
+       WHERE a.tenant_id = app.tenant_id() AND a.kind = 'handback' AND a.status = 'proposed' AND a.owner_user_id = ${userId} AND a.contact_id IS NOT NULL ${byContact('a.contact_id')}
+       ORDER BY a.created_at DESC`.execute(tx),
     sql<{ id: string; contact_id: string; channel: string | null; action_category: string; explanation: string; created_at: Date; needs_review: boolean }>`
       SELECT a.id, a.contact_id, a.payload->>'channel' AS channel, a.action_category, a.explanation, a.created_at,
              EXISTS (SELECT 1 FROM assistant_claims cl WHERE cl.tenant_id = a.tenant_id AND cl.action_id = a.id
                        AND cl.needs_review AND cl.review_status = 'unreviewed') AS needs_review
         FROM assistant_actions a
-       WHERE a.tenant_id = app.tenant_id() AND a.kind = 'message_draft' AND a.status = 'proposed' AND a.owner_user_id = ${userId} AND a.contact_id IS NOT NULL
-       ORDER BY a.created_at DESC LIMIT ${CAP}`.execute(tx),
+       WHERE a.tenant_id = app.tenant_id() AND a.kind = 'message_draft' AND a.status = 'proposed' AND a.owner_user_id = ${userId} AND a.contact_id IS NOT NULL ${byContact('a.contact_id')}
+       ORDER BY a.created_at DESC`.execute(tx),
     sql<{ id: string; contact_id: string | null; deal_id: string | null; kind: TaskFacts['kind']; due_at: Date | null; due_all_day: boolean; due_tz: string | null; needs_review: boolean; created_by_kind: TaskFacts['createdByKind']; created_at: Date; source_claim_id: string | null }>`
       SELECT id, contact_id, deal_id, kind, due_at, due_all_day, due_tz, needs_review, created_by_kind, created_at, source_claim_id FROM tasks
+       -- due_at <= now + 50 h is applied by windowFeedInputs
        WHERE tenant_id = app.tenant_id() AND assignee_user_id = ${userId} AND status = 'open'
-         AND ((due_at IS NOT NULL AND due_at <= ${nowIso}::timestamptz + interval '50 hours')
-              OR (kind = 'promise' AND needs_review AND due_at IS NULL))
-       ORDER BY due_at NULLS LAST LIMIT ${CAP}`.execute(tx),
+         AND (due_at IS NOT NULL OR (kind = 'promise' AND needs_review AND due_at IS NULL)) ${tasksIn}
+       ORDER BY due_at NULLS LAST`.execute(tx),
     sql<{ id: string; deal_id: string; kind: DealDateFacts['kind']; label: string | null; due_on: string; completed_at: Date | null; created_at: Date; owner_user_id: string; members: string[]; zone: string }>`
       SELECT dd.id, dd.deal_id, dd.kind, dd.label, dd.due_on::text AS due_on, dd.completed_at, dd.created_at, d.owner_user_id,
              COALESCE((SELECT array_agg(dm.user_id::text) FROM deal_members dm WHERE dm.tenant_id = d.tenant_id AND dm.deal_id = d.id), '{}') AS members,
@@ -131,46 +203,49 @@ export async function loadFeedInputs(tx: Tx, actor: UserActor, envelope: Envelop
         FROM deal_dates dd JOIN deals d ON d.tenant_id = dd.tenant_id AND d.id = dd.deal_id
         JOIN tenant_settings s ON s.tenant_id = d.tenant_id
        -- R-TXN-2 / E158: a proposed or waived date reminds nobody until a person confirms it
-       WHERE dd.tenant_id = app.tenant_id() AND dd.completed_at IS NULL AND dd.status = 'confirmed' AND d.stage NOT IN ('closed','lost')
-         AND dd.due_on <= (${nowIso}::timestamptz AT TIME ZONE s.default_timezone)::date + 3
+       -- due_on <= local today + 3 is applied by windowFeedInputs
+       WHERE dd.tenant_id = app.tenant_id() AND dd.completed_at IS NULL AND dd.status = 'confirmed' AND d.stage NOT IN ('closed','lost') ${datesIn}
          AND (d.owner_user_id = ${userId} OR EXISTS (SELECT 1 FROM deal_members dm WHERE dm.tenant_id = d.tenant_id AND dm.deal_id = d.id AND dm.user_id = ${userId}))
-       ORDER BY dd.due_on LIMIT ${CAP}`.execute(tx),
+       ORDER BY dd.due_on`.execute(tx),
     sql<{ id: string; contact_id: string | null; kind: ApptFacts['kind']; starts_at: Date; ends_at: Date; status: ApptFacts['status']; created_by_kind: ApptFacts['createdByKind'] }>`
       SELECT id, contact_id, kind, starts_at, ends_at, status, created_by_kind FROM appointments
        WHERE tenant_id = app.tenant_id() AND user_id = ${userId} AND status IN ('scheduled','held') AND outcome_logged_at IS NULL
-         AND created_by_kind <> 'import' AND ends_at <= ${nowIso}::timestamptz AND ends_at > ${nowIso}::timestamptz - interval '30 days'
-       ORDER BY ends_at LIMIT ${CAP}`.execute(tx),
+         -- ends_at <= now is applied by windowFeedInputs
+         AND created_by_kind <> 'import' AND ends_at > ${nowIso}::timestamptz - make_interval(days => ${APPT_INPUT_WINDOW_DAYS}) ${apptsIn}
+       ORDER BY ends_at`.execute(tx),
     sql<{ id: string; contact_id: string; created_at: Date; unchecked: number }>`
       SELECT s.id, s.contact_id, s.created_at,
              (SELECT count(*)::int FROM jsonb_each_text(s.criterion_evidence) ce
                 JOIN assistant_claims cl ON cl.tenant_id = s.tenant_id AND ce.value ~ '^[0-9a-f-]{36}$' AND cl.id = ce.value::uuid
                WHERE cl.needs_review AND cl.review_status = 'unreviewed') AS unchecked
         FROM saved_searches s JOIN contacts c ON c.tenant_id = s.tenant_id AND c.id = s.contact_id
-       WHERE s.tenant_id = app.tenant_id() AND s.status = 'proposed' AND c.owner_user_id = ${userId} AND c.deleted_at IS NULL
-       ORDER BY s.created_at DESC LIMIT ${CAP}`.execute(tx),
+       WHERE s.tenant_id = app.tenant_id() AND s.status = 'proposed' AND c.owner_user_id = ${userId} AND c.deleted_at IS NULL ${byContact('s.contact_id')}
+       ORDER BY s.created_at DESC`.execute(tx),
   ]);
 
   // -- touches after the waiting messages (answered by a person?) -----------------------------------------
   const waitingContacts = [...new Set([...inbound.rows.map((m) => m.contact_id), ...missed.rows.map((c) => c.contact_id)])];
   const touches = new Map<string, TouchFacts[]>();
   if (waitingContacts.length > 0) {
-    const t = await sql<{ contact_id: string; kind: 'message' | 'call'; direction: 'outbound' | 'inbound_answered'; initiator: TouchFacts['initiator']; imported: boolean; gate_allowed: boolean; at: Date; by_user: string | null }>`
+    const t = await sql<{ contact_id: string; kind: 'message' | 'call'; direction: 'outbound' | 'inbound_answered'; initiator: TouchFacts['initiator']; imported: boolean; gate_allowed: boolean; at: Date; by_user: string | null; win_at: Date }>`
       SELECT m.contact_id, 'message' AS kind, 'outbound' AS direction,
              CASE WHEN m.initiator IN ('human','assistant','system','import') THEN m.initiator ELSE 'system' END AS initiator,
              m.imported, m.status NOT IN ('scheduled','queued','blocked','canceled') AS gate_allowed,
-             COALESCE(m.dispatched_at, m.occurred_at) AS at, m.initiated_by_user_id AS by_user
+             COALESCE(m.dispatched_at, m.occurred_at) AS at, m.initiated_by_user_id AS by_user, m.occurred_at AS win_at
         FROM messages m
        WHERE m.tenant_id = app.tenant_id() AND m.contact_id = ANY (${waitingContacts}::uuid[]) AND m.direction = 'outbound'
          AND m.occurred_at > ${nowIso}::timestamptz - make_interval(days => ${INBOUND_WINDOW_DAYS})
       UNION ALL
       SELECT k.contact_id, 'call', CASE WHEN k.direction = 'outbound' THEN 'outbound' ELSE 'inbound_answered' END,
              CASE WHEN k.initiator = 'client' THEN 'human' ELSE k.initiator END,
-             k.imported, (k.direction = 'inbound' OR NOT k.imported), COALESCE(k.answered_at, k.started_at), k.agent_user_id
+             k.imported, (k.direction = 'inbound' OR NOT k.imported), COALESCE(k.answered_at, k.started_at), k.agent_user_id, k.started_at
         FROM calls k
        WHERE k.tenant_id = app.tenant_id() AND k.contact_id = ANY (${waitingContacts}::uuid[])
          AND (k.direction = 'outbound' OR (k.answered_at IS NOT NULL AND k.handled_by = 'human'))
          AND k.started_at > ${nowIso}::timestamptz - make_interval(days => ${INBOUND_WINDOW_DAYS})`.execute(tx);
     for (const x of t.rows) {
+      win(contactGroup(x.contact_id), ms(x.win_at) + INBOUND_WINDOW_DAYS * DAY);
+      win(contactGroup(x.contact_id), ms(x.win_at) + INBOUND_WINDOW_DAYS * DAY + 1);
       const list = touches.get(x.contact_id) ?? [];
       list.push({ kind: x.kind, direction: x.direction, initiator: x.initiator, imported: x.imported, gateAllowed: x.gate_allowed, at: ms(x.at), byUserId: x.by_user as UserId | null });
       touches.set(x.contact_id, list);
@@ -298,7 +373,25 @@ export async function loadFeedInputs(tx: Tx, actor: UserActor, envelope: Envelop
   }));
   const searchesOut: SearchProposalFacts[] = searches.rows.map((s) => ({ savedSearchId: s.id as never, ownerUserId: userId, contactId: s.contact_id as ContactId, uncheckedCount: s.unchecked, createdAt: ms(s.created_at) }));
 
-  return {
+  // -- when time alone changes what was read (the windows above; core's own instants are added below) ---
+  const lookBack = (group: string, t: number, days: number) => {
+    // a row at instant t leaves `> now - days` once now >= t + days; +1 ms covers sub-millisecond DB instants
+    win(group, t + days * DAY);
+    win(group, t + days * DAY + 1);
+  };
+  for (const m of inboundOut) lookBack(contactGroup(m.contactId), m.at, INBOUND_WINDOW_DAYS);
+  for (const r of reinquiriesOut) lookBack(contactGroup(r.contactId), r.at, INBOUND_WINDOW_DAYS);
+  for (const a of apptsOut) lookBack(a.contactId !== null ? contactGroup(a.contactId) : appointmentGroup(a.appointmentId), a.endsAt, APPT_INPUT_WINDOW_DAYS);
+  for (const w of inactivityOut) win(contactGroup(w.contactId), w.warnAt);
+  for (const t of tasksOut) if (t.dueAt !== null) win(t.contactId !== null ? contactGroup(t.contactId) : taskGroup(t.taskId), t.dueAt - TASK_INPUT_WINDOW_MS);
+  for (const d of dealDatesOut) {
+    // the first instant whose local date is due_on - 3 (an hour earlier too: a DST gap at local midnight)
+    const start = resolveLocal(addDays(d.dueOn, -DEAL_DATE_INPUT_DAYS) as never, MIDNIGHT, d.zone, 'earlier');
+    win(dealDateGroup(d.dealDateId), start - HOUR);
+    win(dealDateGroup(d.dealDateId), start);
+  }
+
+  const raw: FeedInputs = {
     now,
     userId,
     offers: offersOut,
@@ -315,6 +408,16 @@ export async function loadFeedInputs(tx: Tx, actor: UserActor, envelope: Envelop
     pondLeads: [],
     searchProposals: searchesOut,
   };
+  const nextChange = new Map<string, number>();
+  const note = (g: string, t: number | null) => {
+    if (t === null || !(t > now)) return;
+    const prev = nextChange.get(g);
+    if (prev === undefined || t < prev) nextChange.set(g, t);
+  };
+  for (const [g, list] of windows) for (const t of list) note(g, t);
+  // core's instants over every fact read, including future ones still held back by the windows
+  for (const [g, gi] of splitFeedInputs(raw)) note(g, nextFeedChange(gi));
+  return { inputs: windowFeedInputs(raw), nextChange };
 }
 
 const SUPPRESSION_SENTENCE: Record<string, string> = {

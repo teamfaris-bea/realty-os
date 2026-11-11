@@ -223,3 +223,51 @@ The first response and playbook steps **never call the model**. They render appr
 - **The web shows the server sentence, not the codes.** The web shows `ASSISTANT_OUTPUT_BLOCKED` with its generic error sentence until a surface lane adds copy. `payload.screen` is not yet exposed in the card schema, which was kept unchanged during the parallel lanes.
 - **Caching may not apply.** The static system prompt can be shorter than a model's minimum cacheable prefix. In that case it is simply not cached.
 - **Prefilled search criteria are attacker text.** Unchecked criteria are shown as text and never used until the agent ticks them.
+
+## 5. Performance lane: security review items (lane `perf-misses`)
+
+Every change of this lane that touches who-sees-what, a definer, or a policy is listed here with its proof. None
+marks anything LEAKPROOF, none adds `USING (true)`, and none gives a role BYPASSRLS.
+
+### 5.1 Incremental Priority Feed (migration `feed_incremental`)
+
+**What changed.** GET /feed reads stored cards instead of recomputing the book (docs/PERFORMANCE.md §7.1).
+
+- **No existing policy changes.** `priority_feed_items` keeps `feed_select` (own cards, contact visible) and
+  `feed_insert` / `feed_update`. The new columns `sort_at` and `card` hold the card's order instant, its reason
+  template and its one-tap actions: what the API already returned for the card, never more.
+- **No definer.** The marking triggers are `SECURITY INVOKER`. The migration's self-check fails if a `app.feed_*`
+  function is a definer.
+- **The materializer acts as the member.** Both GET /feed and the background `feed.materialize` job read the inputs
+  in a transaction whose GUCs are the member's own (`withTenantTx` with a user actor, as the worker already does
+  for a human sender in `comms/runtime.ts senderActor`). The job never reads feed inputs with the system's
+  tenant-wide view, so a member's stored cards can never hold more than that member could see.
+- **A card is written only while its contact is visible to the member.** Tasks, appointments and assistant actions
+  can name a contact the member cannot see; such a card is skipped (it would be hidden by `feed_select` anyway).
+  The Phase 1 refresh tried to write it and failed, which broke that member's GET /feed (found by the
+  equivalence test below).
+- **New tables.** Both have FORCE RLS, the tenant `RESTRICTIVE` policy, the support-read-only policies and the
+  `support_read_only` statement trigger.
+  - `feed_dirty` (marks: tenant, user, group key, instant). Any member's or the system's write may INSERT a mark
+    for any member of the same tenant, because one person's write can change another person's feed. Only the
+    mark's own user and the system can SELECT or DELETE marks. A forged mark only causes an extra re-score of
+    the member's own data under the member's own RLS.
+  - `feed_groups` (per member and group: the next change instant and the count of open visible cards). The
+    member's own (`user_id = app.user_id()`); the system may read it to find due work.
+  - Neither holds PII: user ids, group keys (contact, task, appointment or deal-date ids the member already saw),
+    instants and counts.
+- **Trigger lookups run under the writer's RLS.** The contact-owner lookup in a marking trigger is invoker, so it
+  cannot learn anything the writer may not see. A mark it cannot derive is repaired by the hourly reconcile.
+- **Read-path plan pin.** GET sets `enable_sort = off` transaction-locally around its two ordered reads. This is a
+  planner choice only and does not change what RLS admits.
+
+**Equivalence proof.**
+- `apps/api/src/load/feed_incremental.test.ts`: random event sequences on a generated tenant, with every trigger and
+  guard on. The events are client messages, missed calls, replies, tasks, appointments, drafts, handbacks, claims,
+  contract dates, opt-outs, the member's own taps and time jumps (also exactly to a stored change instant and
+  1 ms before it). After every event, for three agents, the TC and a team lead, the incremental feed equals a
+  full recompute: same view, and no stored card or change instant differs.
+- `packages/core/src/priority/incremental.test.ts`: property tests of the three facts the design relies on (groups
+  are independent; templated wording renders to the plain wording; between change instants only wording moves).
+- The Phase 1 feed tests (`workspace/feed.test.ts`, `feed.foreign.test.ts`, R-PERM-4 reassignment included) pass
+  unchanged.

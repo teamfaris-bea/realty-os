@@ -844,6 +844,24 @@ export interface ExternalRefsTable {
   created_at: Generated<Timestamp>;
 }
 
+/** public.feed_dirty (table) */
+export interface FeedDirtyTable {
+  tenant_id: string;
+  id: GeneratedAlways<Int8>;
+  user_id: string;
+  group_key: string;
+  marked_at: Generated<Timestamp>;
+}
+
+/** public.feed_groups (table) */
+export interface FeedGroupsTable {
+  tenant_id: string;
+  user_id: string;
+  group_key: string;
+  check_at: Timestamp | null;
+  n_open: Generated<number>;
+}
+
 /** public.gate_decisions (table) */
 export interface GateDecisionsTable {
   tenant_id: string;
@@ -1697,6 +1715,8 @@ export interface PriorityFeedItemsTable {
   updated_at: Generated<Timestamp>;
   resolved_at: Timestamp | null;
   resolved_by: string | null;
+  sort_at: Timestamp;
+  card: Json | null;
 }
 
 /** public.property_records (table) */
@@ -2322,6 +2342,8 @@ export interface DB {
   exception_events: ExceptionEventsTable;
   exception_items: ExceptionItemsTable;
   external_refs: ExternalRefsTable;
+  feed_dirty: FeedDirtyTable;
+  feed_groups: FeedGroupsTable;
   gate_decisions: GateDecisionsTable;
   gbp_reviews: GbpReviewsTable;
   home_valuations: HomeValuationsTable;
@@ -2458,6 +2480,8 @@ export const TABLE_NAMES = [
   'exception_events',
   'exception_items',
   'external_refs',
+  'feed_dirty',
+  'feed_groups',
   'gate_decisions',
   'gbp_reviews',
   'home_valuations',

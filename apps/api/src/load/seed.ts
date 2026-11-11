@@ -4,7 +4,8 @@
 import { createDatabase } from '@realty/db';
 import { hashPassword } from '../auth/password.js';
 import { localKek } from '../crypto/kek.js';
-import { recomputeAll, loadUrls, recreateDatabase } from './db.js';
+import { EnvelopeService } from '../crypto/envelope.js';
+import { materializeAll, recomputeAll, loadUrls, recreateDatabase } from './db.js';
 import { LOAD_PASSWORD, defaultSpec, generateLoad, loadUuid } from './generate.js';
 
 export function argValue(args: readonly string[], name: string): string | undefined {
@@ -29,7 +30,10 @@ export async function seedLoad(o: { db: string; contacts: number; log: (s: strin
   try {
     const rec = await recomputeAll(database, spec.tenants.map((t) => loadUuid(t.slug, 'tenant')));
     for (const r of rec) o.log(`exception recompute ${r.tenantId}: ${r.upserted} items in ${r.ms.toFixed(0)} ms`);
-    return { spec, gen, recompute: rec, urls };
+    // the feed.materialize job catching up after the bulk load (every member's first materialization)
+    const feed = await materializeAll(database, new EnvelopeService(kekFromEnv()), spec.tenants.map((t) => loadUuid(t.slug, 'tenant')));
+    for (const r of feed) o.log(`feed materialized ${r.tenantId}: ${r.members} members in ${r.ms.toFixed(0)} ms`);
+    return { spec, gen, recompute: rec, feed, urls };
   } finally {
     await database.close();
   }

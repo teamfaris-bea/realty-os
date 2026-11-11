@@ -231,6 +231,27 @@ export async function benchReads(b: LoadBench, a: Actors): Promise<void> {
     }
   }
 
+  // 1b. priority feed under activity (lane perf-misses): before each timed call three client messages arrive in
+  //     the agent's book (copies of existing inbound texts, written as the owner role: every trigger runs), so the
+  //     GET itself re-scores the dirty groups, as if the background feed.materialize job had not run yet
+  {
+    const cols = (await b.q<{ c: string }>(`SELECT string_agg(quote_ident(attname), ', ' ORDER BY attnum) AS c FROM pg_attribute
+       WHERE attrelid = 'messages'::regclass AND attnum > 0 AND NOT attisdropped AND attgenerated = ''`, []))[0]!.c;
+    const sources = (await b.q<{ id: string }>(`SELECT m.id FROM messages m JOIN contacts c ON c.tenant_id = m.tenant_id AND c.id = m.contact_id
+       WHERE m.tenant_id = $1 AND c.owner_user_id = $2 AND c.ownership_state = 'owned' AND m.direction = 'inbound' AND NOT m.imported
+       ORDER BY hashtext(m.id::text) LIMIT 300`, [T, a.busy.userId])).map((r) => r.id);
+    let k = 0;
+    await b.measure('feed: GET /feed after 3 new client messages (busiest agent)', BUDGET.feed, async () => {
+      for (let j = 0; j < 3; j++) {
+        const src = sources[k++ % Math.max(1, sources.length)];
+        if (src) await b.q(`INSERT INTO messages (${cols}) SELECT ${cols.split(', ').map((c) => `(r).${c}`).join(', ')}
+            FROM (SELECT jsonb_populate_record(m, jsonb_build_object('id', gen_random_uuid(), 'occurred_at', now(), 'created_at', now(),
+                  'provider_message_ref', NULL, 'idempotency_key', NULL)) AS r FROM messages m WHERE m.id = $1) x`, [src]);
+      }
+      return (await b.req(a.busy, 'GET', '/feed')).ms;
+    });
+  }
+
   // 2. search: names, phone digits, email prefixes, no match — as the busiest agent (RLS-narrowed) and the admin
   const own = await b.q<{ first_name: string; last_name: string; phone: string | null; email: string | null }>(
     `SELECT c.first_name, c.last_name,
