@@ -288,3 +288,73 @@ describe('E228 no messaging webhook exists', () => {
     expect(meta.rows[0].capabilities).toEqual({ publish_posts: true });
   });
 });
+
+describe('review fixes (publishing)', () => {
+  it('R-MKT-12 R-MKT-6: a social post the agent exported first is still publishable (it stays approved; exported_at records the hand-over)', async () => {
+    const p = await approvedPost();
+    const ex = await call<{ piece: PieceBody }>(w.agent, 'POST', `/marketing-pieces/${p.id}/export`, {});
+    expect(ex.body.piece).toMatchObject({ status: 'approved', statusLabel: 'Exported: post it yourself' });
+    expect(ex.body.piece.publishOptions.find((o) => o.connectionId === page.connectionId)).toMatchObject({ kind: 'publish' });
+    expect((await publish(p.id, page.connectionId)).body.publication).toMatchObject({ status: 'published', posted: true });
+  });
+
+  it('R-MKT-12: two posts of one piece the provider cannot delete each keep their own "remove it yourself" reason on the one card', async () => {
+    const p = await approvedPost();
+    await publish(p.id, page.connectionId);
+    await publish(p.id, insta.connectionId);
+    social().deletion = { facebook_page: 'unsupported', instagram_business: 'unsupported', gbp_location: 'supported' };
+    const r = await call<{ piece: PieceBody; removeYourself: number }>(w.agent, 'POST', `/marketing-pieces/${p.id}/retract`, {});
+    expect(r.body.removeYourself).toBe(2);
+    expect(r.body.piece.publications.every((x) => /yourself/.test(x.label))).toBe(true);
+    const reasons = (await h.su.query("SELECT reasons FROM priority_feed_items WHERE dedupe_key = $1 AND state = 'open'", [`marketing:${p.id}`])).rows[0].reasons as { code: string }[];
+    expect(reasons.map((x) => x.code).sort()).toEqual(r.body.piece.publications.map((x) => `REMOVE_POST_YOURSELF:${x.id}`).sort());
+    // and the reconcile pass does not ask the provider again for either
+    const n = social().deletions.length;
+    await call(w.agent, 'PATCH', `/listings/${r.body.piece.listingId}`, { status: 'sold' });
+    await reconcileMarketing(jobCtx(), publishDepsOf(h.app.platform));
+    expect(social().deletions.length).toBe(n);
+  });
+
+  it('R-MKT-12: a retraction request is audited as requested; "retracted" is audited only after the provider confirmed', async () => {
+    const p = await approvedPost();
+    const pub = (await publish(p.id, insta.connectionId)).body.publication!;
+    social().deletion.instagram_business = 'unsupported';
+    await call(w.agent, 'POST', `/marketing-pieces/${p.id}/retract`, {});
+    const acts = (await h.su.query("SELECT action FROM audit_log WHERE entity_id = $1 AND action LIKE 'marketing.retract%' ORDER BY occurred_at", [pub.id])).rows.map((r) => r.action);
+    expect(acts).toEqual(['marketing.retract_requested']);
+  });
+
+  it('R-MKT-12: concurrent retractions of one post delete it once and raise no "remove it yourself" card for a post that is gone', async () => {
+    const p = await approvedPost();
+    const pub = (await publish(p.id, page.connectionId)).body.publication!;
+    const deps = publishDepsOf(h.app.platform);
+    const { retractPublication } = await import('./publish.js');
+    const out = await Promise.all([retractPublication(deps, w.tenantId, pub.id, null), retractPublication(deps, w.tenantId, pub.id, null)]);
+    expect(out.map((o) => o.outcome).filter((o) => o === 'retracted')).toHaveLength(1);
+    expect(out.map((o) => o.outcome)).not.toContain('remove_yourself');
+  });
+
+  it('R-MKT-12 E227: a post the provider confirmed is recorded even if platform:fair_housing became uncleared between TX1 and TX2', async () => {
+    const p = await approvedPost();
+    social().beforePublish = () => clearFairHousing(h, false);
+    try {
+      const r = await publish(p.id, page.connectionId);
+      expect(r.body.publication).toMatchObject({ status: 'published', posted: true });
+    } finally {
+      social().beforePublish = null;
+      await clearFairHousing(h);
+    }
+  });
+
+  it('E227: an unknown publication the provider cannot resolve goes to the back of the reconcile queue', async () => {
+    const p = await approvedPost();
+    social().nextOutcome = 'timeout';
+    const pub = (await publish(p.id, page.connectionId)).body.publication!;
+    social().lookup = 'unsupported';
+    const before = (await h.su.query('SELECT updated_at FROM marketing_publications WHERE id = $1', [pub.id])).rows[0].updated_at as Date;
+    await reconcileMarketing(jobCtx(), publishDepsOf(h.app.platform));
+    const after = (await h.su.query('SELECT updated_at, status FROM marketing_publications WHERE id = $1', [pub.id])).rows[0];
+    expect(after.status).toBe('unknown');
+    expect((after.updated_at as Date).getTime()).toBeGreaterThan(before.getTime());
+  });
+});

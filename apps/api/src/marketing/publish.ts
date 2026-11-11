@@ -76,7 +76,7 @@ export async function publishPost(deps: PublishDeps, actor: UserActor, pieceId: 
       const p = await repo.pieceById(tx, pieceId, { forUpdate: true });
       if (!p) throw new AppError('NOT_FOUND');
       if (p.kind !== 'social_post') throw new AppError(p.kind === 'gbp_post' ? 'PUBLISH_TARGET_INVALID' : 'MARKETING_NOT_PUBLISHABLE');
-      if (p.status !== 'approved' && p.status !== 'published' && p.status !== 'exported') throw new AppError(p.status === 'draft' ? 'MARKETING_APPROVE_FIRST' : 'MARKETING_NOT_LIVE', { status: p.status });
+      if (p.status !== 'approved' && p.status !== 'published') throw new AppError(p.status === 'draft' ? 'MARKETING_APPROVE_FIRST' : 'MARKETING_NOT_LIVE', { status: p.status });
       const t = await repo.targetById(tx, connectionId);
       if (!t) throw new AppError('NOT_FOUND');
       if (t.kind !== 'facebook_page' && t.kind !== 'instagram_business') throw new AppError('PUBLISH_TARGET_INVALID');
@@ -166,9 +166,17 @@ async function recordOutcome(deps: Pick<PublishDeps, 'db'>, tenantId: string, pu
     if (o.status === 'published') {
       await sql`UPDATE marketing_publications SET status = 'published', external_post_id = ${o.externalPostId}, published_at = ${toIso(now)}::timestamptz, error_code = NULL
                  WHERE tenant_id = app.tenant_id() AND id = ${publicationId}`.execute(tx);
-      // R-MKT-12: a piece is 'published' once at least one of its publications is provider-confirmed
-      await sql`UPDATE marketing_pieces SET status = 'published', published_at = COALESCE(published_at, ${toIso(now)}::timestamptz)
-                 WHERE tenant_id = app.tenant_id() AND id = ${cur.piece_id} AND status IN ('approved','exported')`.execute(tx);
+      // R-MKT-12: a piece is 'published' once at least one of its publications is provider-confirmed. In a savepoint: if
+      // the piece cannot move now (platform:fair_housing became uncleared after TX1), the provider's confirmed post is
+      // still recorded; never rolled back to 'publishing'
+      await sql`SAVEPOINT piece_status`.execute(tx);
+      try {
+        await sql`UPDATE marketing_pieces SET status = 'published', published_at = COALESCE(published_at, ${toIso(now)}::timestamptz)
+                   WHERE tenant_id = app.tenant_id() AND id = ${cur.piece_id} AND status = 'approved'`.execute(tx);
+        await sql`RELEASE SAVEPOINT piece_status`.execute(tx);
+      } catch {
+        await sql`ROLLBACK TO SAVEPOINT piece_status`.execute(tx);
+      }
     } else if (o.status === 'failed') {
       await sql`UPDATE marketing_publications SET status = 'failed', error_code = ${o.errorCode} WHERE tenant_id = app.tenant_id() AND id = ${publicationId}`.execute(tx);
     } else if (cur.status === 'publishing') {
@@ -192,7 +200,9 @@ export async function reconcilePublications(deps: PublishDeps, tenantId: string)
         FROM marketing_publications p
         JOIN integration_connections c ON c.tenant_id = p.tenant_id AND c.id = p.connection_id
         JOIN marketing_pieces mp ON mp.tenant_id = p.tenant_id AND mp.id = p.piece_id
-       WHERE p.tenant_id = app.tenant_id() AND p.status = 'unknown' ORDER BY p.requested_at LIMIT 50`.execute(tx);
+       WHERE p.tenant_id = app.tenant_id() AND p.status = 'unknown'
+         AND c.kind IN ('facebook_page','instagram_business') AND c.external_account_id IS NOT NULL AND c.credential_id IS NOT NULL
+       ORDER BY p.updated_at, p.id LIMIT 50`.execute(tx);
     return { rows: r.rows, now };
   });
   const out = { looked: 0, published: 0, failed: 0 };
@@ -207,7 +217,11 @@ export async function reconcilePublications(deps: PublishDeps, tenantId: string)
     } catch (e) {
       decided = reconcileFromLookup({ ok: false, error: e }, rows.now - r.requested_at.getTime());
     }
-    if (decided.status === 'unknown') continue;
+    if (decided.status === 'unknown') {
+      // still unknown: to the back of the queue, so rows that cannot be resolved never starve newer ones
+      await asSystem(deps, tenantId, (tx) => sql`UPDATE marketing_publications SET updated_at = now() WHERE tenant_id = app.tenant_id() AND id = ${r.id} AND status = 'unknown'`.execute(tx));
+      continue;
+    }
     await recordOutcome(deps, tenantId, r.id, decided);
     if (decided.status === 'published') out.published += 1;
     else out.failed += 1;
@@ -229,14 +243,17 @@ export async function retractPublication(deps: PublishDeps, tenantId: string, pu
         if (!pub) throw new AppError('NOT_FOUND');
         const ok = await sql<{ ok: boolean }>`SELECT app.listing_writable(mp.tenant_id, mp.listing_id) AS ok FROM marketing_pieces mp WHERE mp.tenant_id = app.tenant_id() AND mp.id = ${pub.piece_id}`.execute(tx);
         if (ok.rows[0]?.ok !== true) throw new AppError('NOT_FOUND');
-        await audit(tx, requestedBy, { action: 'marketing.retracted', entity: { type: 'marketing_publication', id: publicationId }, changes: redactSnapshot({ piece_id: pub.piece_id }), reason: 'RETRACT_REQUESTED' });
+        await audit(tx, requestedBy, { action: 'marketing.retract_requested', entity: { type: 'marketing_publication', id: publicationId }, changes: redactSnapshot({ piece_id: pub.piece_id }), reason: 'RETRACT_REQUESTED' });
       },
       { db: deps.db },
     );
   }
   const pub = await asSystem(deps, tenantId, async (tx) => {
     const p = await repo.publicationById(tx, publicationId);
-    if (!p || p.status !== 'published' || !p.external_post_id) return null;
+    if (!p) return null;
+    // 'unknown' may be live but has no post id to delete: the agent removes it themselves (R-MKT-9, R-MKT-4)
+    if (p.status === 'unknown') return { p, c: null, token: null };
+    if (p.status !== 'published' || !p.external_post_id) return null;
     const c = await repo.targetById(tx, p.connection_id);
     const token = c?.credential_id ? await tokenFor(deps, tx, tenantId, c.credential_id).catch(() => null) : null;
     return { p, c, token };
@@ -254,10 +271,14 @@ export async function retractPublication(deps: PublishDeps, tenantId: string, pu
   return asSystem(deps, tenantId, async (tx, now) => {
     const sys = systemActor(tenantId, 'provider');
     if (decided.kind === 'retracted') {
-      await sql`UPDATE marketing_publications SET status = 'retracted', retracted_at = ${toIso(now)}::timestamptz WHERE tenant_id = app.tenant_id() AND id = ${publicationId} AND status = 'published'`.execute(tx);
+      const done = await sql`UPDATE marketing_publications SET status = 'retracted', retracted_at = ${toIso(now)}::timestamptz WHERE tenant_id = app.tenant_id() AND id = ${publicationId} AND status = 'published'`.execute(tx);
+      if (Number(done.numAffectedRows ?? 0) === 0) return { outcome: 'not_live' as const };
       await audit(tx, sys, { action: 'marketing.retracted', entity: { type: 'marketing_publication', id: publicationId }, changes: redactSnapshot({ piece_id: pub.p.piece_id }), reason: 'PROVIDER_CONFIRMED_DELETION' });
       return { outcome: 'retracted' as const };
     }
+    // a concurrent retraction may have confirmed the deletion meanwhile: no card for a post that is gone
+    const still = await repo.publicationById(tx, publicationId, { forUpdate: true });
+    if (!still || (still.status !== 'published' && still.status !== 'unknown')) return { outcome: 'not_live' as const };
     await raiseRemoveYourselfCard(tx, deps, { pieceId: pub.p.piece_id, publicationId, targetKind: pub.p.connection_kind, targetName: pub.p.connection_name });
     return { outcome: 'remove_yourself' as const };
   });
@@ -265,7 +286,7 @@ export async function retractPublication(deps: PublishDeps, tenantId: string, pu
 
 /** Every live publication of a piece, retracted (or a card raised). Used by retract routes and the reconcile handler. */
 export async function retractAllOf(deps: PublishDeps, tenantId: string, pieceId: string, requestedBy: UserActor | null): Promise<{ retracted: number; removeYourself: number }> {
-  const ids = await asSystem(deps, tenantId, async (tx) => (await sql<{ id: string }>`SELECT id FROM marketing_publications WHERE tenant_id = app.tenant_id() AND piece_id = ${pieceId} AND status = 'published' ORDER BY requested_at`.execute(tx)).rows.map((r) => r.id));
+  const ids = await asSystem(deps, tenantId, async (tx) => (await sql<{ id: string }>`SELECT id FROM marketing_publications WHERE tenant_id = app.tenant_id() AND piece_id = ${pieceId} AND status IN ('published','unknown') ORDER BY requested_at`.execute(tx)).rows.map((r) => r.id));
   const out = { retracted: 0, removeYourself: 0 };
   for (const id of ids) {
     const r = await retractPublication(deps, tenantId, id, requestedBy);

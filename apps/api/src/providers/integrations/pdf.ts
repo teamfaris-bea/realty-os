@@ -77,7 +77,9 @@ export class PdfLibRenderer implements DocumentRenderer {
       const png = bytes[0] === 0x89 && bytes[1] === 0x50;
       const jpg = bytes[0] === 0xff && bytes[1] === 0xd8;
       if (!png && !jpg) continue;
-      const img = png ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
+      // an image that only looks like a PNG/JPEG (magic bytes) but does not parse is skipped, never a failed download
+      const img = await (png ? doc.embedPng(bytes) : doc.embedJpg(bytes)).catch(() => null);
+      if (!img) continue;
       const scale = Math.min(width / img.width, 220 / img.height, 1);
       const h = img.height * scale;
       if (y - h < MARGIN) {

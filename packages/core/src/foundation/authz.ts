@@ -294,6 +294,7 @@ export const AUDIT_ACTIONS = [
   'marketing.publish_requested', // module 29: a person tapped Publish to a Facebook Page / Instagram account (TX1)
   'marketing.publication_recorded', // module 29: the system recorded the provider's outcome of a publication (TX2, reconcile)
   'marketing.exported', // module 29: a piece was handed to the agent (export; never a claim that it was posted)
+  'marketing.retract_requested', // module 29: a person asked to take an external post down (TX1; recorded before any provider call)
   'marketing.retracted', // module 29: a page taken down, or an external post deleted after the provider confirmed it
   'marketing.invites_sent', // module 29: open-house invites sent as per-recipient gated emails (counts only)
   // registry: add new entries above this line

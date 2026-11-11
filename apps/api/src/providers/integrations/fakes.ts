@@ -242,7 +242,10 @@ export class FakeSocialPublisher implements SocialPublisher {
   rejectCode = 'POST_REJECTED';
   lookup: 'supported' | 'unsupported' = 'supported';
   deletion: Record<PublishRequest['target'], 'supported' | 'unsupported'> = { facebook_page: 'supported', instagram_business: 'supported', gbp_location: 'supported' };
+  /** tests: runs inside the provider call, before the post is made (e.g. a pack change between TX1 and TX2) */
+  beforePublish: (() => Promise<void>) | null = null;
   async publishPost(p: PublishRequest): Promise<PublishResult> {
+    if (this.beforePublish) await this.beforePublish();
     this.published.push({ ...p, imageUrls: [...p.imageUrls] });
     const outcome = this.nextOutcome;
     this.nextOutcome = 'published';

@@ -32,10 +32,15 @@ import * as repo from './repo.js';
 const TENANT_SLUG_RE = /^[a-z0-9][a-z0-9-]{1,40}$/;
 const PAGE_SLUG_RE = /^[a-z0-9][a-z0-9-]{2,80}$/;
 
-export const PAGE_LIMITS = (ip: string, page: string): Limit[] => [
+// Per IP only: a per-page budget shared by everyone would let one client take a listing page offline for all visitors.
+// Photos have their own, larger budget (a page shows up to 50), so viewing images never uses up the page budget.
+export const PAGE_LIMITS = (ip: string): Limit[] => [
   { kind: 'listing_page_ip', parts: [ip], max: 120, windowSeconds: 60 },
   { kind: 'listing_page_ip_hour', parts: [ip], max: 2000, windowSeconds: 3600 },
-  { kind: 'listing_page_slug', parts: [page], max: 1200, windowSeconds: 60 },
+];
+export const PHOTO_LIMITS = (ip: string): Limit[] => [
+  { kind: 'listing_photo_ip', parts: [ip], max: 1200, windowSeconds: 60 },
+  { kind: 'listing_photo_ip_hour', parts: [ip], max: 20000, windowSeconds: 3600 },
 ];
 export const ASSET_LIMITS = (ip: string): Limit[] => [{ kind: 'marketing_asset_ip', parts: [ip], max: 600, windowSeconds: 60 }];
 
@@ -193,7 +198,7 @@ export function registerPublicListingPages(app: FastifyInstance): void {
     const { tenantSlug, pageSlug } = req.params as { tenantSlug: string; pageSlug: string };
     const p = app.platform;
     if (!TENANT_SLUG_RE.test(tenantSlug) || !PAGE_SLUG_RE.test(pageSlug)) return send(reply, 404, htmlDoc('Not found', '<p class="body">This page does not exist.</p>'), 0);
-    if (!(await limit(p, PAGE_LIMITS(req.ip, `${tenantSlug}/${pageSlug}`)))) return send(reply.header('retry-after', '60'), 429, htmlDoc('Too many requests', '<p class="body">Too many requests. Try again in a minute.</p>'), 0);
+    if (!(await limit(p, PAGE_LIMITS(req.ip)))) return send(reply.header('retry-after', '60'), 429, htmlDoc('Too many requests', '<p class="body">Too many requests. Try again in a minute.</p>'), 0);
     const row = await preTenant(p.db, (tx) => lookupPage(tx, tenantSlug, pageSlug));
     if (!row) return send(reply, 404, htmlDoc('Not found', '<p class="body">This page does not exist.</p>'), 0);
     if (row.state === 'gone') return send(reply, 410, htmlDoc('No longer available', `<p class="heading">${esc(row.notice ?? 'This page is no longer available.')}</p>`), 60);
@@ -207,7 +212,7 @@ export function registerPublicListingPages(app: FastifyInstance): void {
     const p = app.platform;
     const pos = /^[1-9][0-9]?$/.test(position) ? Number(position) : NaN;
     if (!TENANT_SLUG_RE.test(tenantSlug) || !PAGE_SLUG_RE.test(pageSlug) || !(pos >= 1 && pos <= 50)) return reply.code(404).header('cache-control', 'no-store').send();
-    if (!(await limit(p, PAGE_LIMITS(req.ip, `${tenantSlug}/${pageSlug}`)))) return reply.code(429).header('retry-after', '60').send();
+    if (!(await limit(p, PHOTO_LIMITS(req.ip)))) return reply.code(429).header('retry-after', '60').send();
     const row = await preTenant(p.db, (tx) => lookupPage(tx, tenantSlug, pageSlug));
     const objectId = row?.state === 'live' ? row.asset_object_ids?.[pos - 1] : undefined;
     if (!row || !objectId) return reply.code(row?.state === 'gone' ? 410 : 404).header('cache-control', 'no-store').send();

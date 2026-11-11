@@ -17,7 +17,19 @@ const KIND_WORD: Record<string, string> = {
   gbp_post: 'Business Profile post',
 };
 
-async function upsertCard(tx: Tx, ids: IdGenerator, c: { userId: string; pieceId: string; score: number; reasons: { code: string; text: string }[] }): Promise<void> {
+async function upsertCard(tx: Tx, ids: IdGenerator, c: { userId: string; pieceId: string; score: number; reasons: { code: string; text: string }[]; merge?: boolean }): Promise<void> {
+  if (c.merge) {
+    // remove-it-yourself reasons accumulate (one per post the system could not take down); the review reason goes
+    await sql`
+      INSERT INTO priority_feed_items (tenant_id, id, user_id, item_type, band, contact_id, subject_type, subject_id, score, reasons, dedupe_key)
+      VALUES (app.tenant_id(), ${ids.next<'FeedItemId'>()}, ${c.userId}, 'marketing_review', 'scored', NULL, 'marketing_piece', ${c.pieceId},
+              ${c.score}, ${JSON.stringify(c.reasons)}::jsonb, ${`marketing:${c.pieceId}`})
+      ON CONFLICT (tenant_id, user_id, dedupe_key) WHERE state IN ('open','snoozed') DO UPDATE SET
+        reasons = (SELECT jsonb_agg(x) FROM (SELECT DISTINCT ON (x->>'code') x FROM jsonb_array_elements(priority_feed_items.reasons || EXCLUDED.reasons) x
+                    WHERE x->>'code' LIKE 'REMOVE_POST_YOURSELF:%' ORDER BY x->>'code') y),
+        score = GREATEST(priority_feed_items.score, EXCLUDED.score), updated_at = now()`.execute(tx);
+    return;
+  }
   await sql`
     INSERT INTO priority_feed_items (tenant_id, id, user_id, item_type, band, contact_id, subject_type, subject_id, score, reasons, dedupe_key)
     VALUES (app.tenant_id(), ${ids.next<'FeedItemId'>()}, ${c.userId}, 'marketing_review', 'scored', NULL, 'marketing_piece', ${c.pieceId},
@@ -68,6 +80,7 @@ export async function raiseRemoveYourselfCard(tx: Tx, deps: { ids: IdGenerator }
     pieceId: c.pieceId,
     score: 70,
     reasons: [{ code, text: `Remove the post from your ${word} "${c.targetName}" yourself: we could not take it down from here` }],
+    merge: true,
   });
 }
 

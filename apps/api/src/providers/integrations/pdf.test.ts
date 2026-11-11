@@ -25,3 +25,11 @@ describe('PdfLibRenderer', () => {
     expect(out.bytes.length).toBeGreaterThan(100);
   });
 });
+
+describe('PdfLibRenderer images', () => {
+  it('an upload that only looks like a PNG (magic bytes) but does not parse is skipped, never a failed download', async () => {
+    const fake = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4, 5]);
+    const out = await new PdfLibRenderer().renderPdf({ templateKey: 't', fields: { '00:body:body': 'x' }, imageCount: 1, images: [fake] });
+    expect(Buffer.from(out.bytes.subarray(0, 5)).toString('ascii')).toBe('%PDF-');
+  });
+});

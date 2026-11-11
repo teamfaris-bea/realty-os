@@ -9,6 +9,7 @@
 import { type ReactNode, useEffect, useId, useState } from 'react';
 import { Button, Card, CheckThis, Notice } from '../../design/index.js';
 import { EXPORTED_POST_IT_YOURSELF, errorText, kindLabel, publicationWords, statusWords, useApprovePiece, useExportPiece, usePieceCommand } from './lib.js';
+import { OpenHouseTime } from './OpenHouseTime.js';
 import type { ExportView, PieceView, PublicationView } from './types.js';
 
 const PROMINENCE: Record<string, string> = {
@@ -200,6 +201,7 @@ export function PieceCard({ piece, publishingCleared, headingLevel = 2, extra }:
       {extra}
       <PiecePreview piece={piece} label={`${kindLabel(piece.kind)}, version ${piece.versionNo}`} />
       <GuardNotes piece={piece} />
+      {piece.kind === 'open_house_invite' && piece.status === 'draft' ? <OpenHouseTime piece={piece} /> : null}
       {piece.earlierPostNotice ? <Notice tone="info">{piece.earlierPostNotice}</Notice> : null}
       <PublicationList publications={piece.publications} />
       {piece.kind === 'website_page' && piece.status === 'published' && piece.publicPath ? (

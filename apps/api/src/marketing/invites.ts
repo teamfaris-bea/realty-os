@@ -16,6 +16,7 @@ import { audit, redactSnapshot } from '../audit.js';
 import { composeHumanMessage } from '../comms/compose.js';
 import type { CommsDeps } from '../comms/types.js';
 import { AppError } from '../errors.js';
+import { assertLivePasses } from './pieces.js';
 import * as repo from './repo.js';
 
 export const MAX_INVITE_RECIPIENTS = 1000;
@@ -31,7 +32,8 @@ export interface InviteSendResult {
   blocked: number;
   noEmail: number;
   text: string;
-  recipients: { contactId: string; outcome: 'sent' | 'opted_out' | 'blocked' | 'no_email'; messageId: string | null }[];
+  alreadyInvited: number;
+  recipients: { contactId: string; outcome: 'sent' | 'opted_out' | 'blocked' | 'no_email' | 'already_invited'; messageId: string | null }[];
 }
 
 function isOptOut(reasons: readonly string[] | undefined, statusReason: string | null | undefined): boolean {
@@ -57,11 +59,15 @@ export async function sendInvites(deps: CommsDeps, actor: UserActor, pieceId: st
       const advertising = await repo.advertisingPacks(tx, identity.jurisdictions);
       const r = renderPiece(repo.versionOf(p, assets), facts, identity, { advertising });
       if (!r.ok) throw new AppError('MARKETING_GUARD_FAILED');
+      await assertLivePasses(tx, p);
       const subject = String((p.prose as { subject?: unknown }).subject ?? 'Open house').slice(0, 300);
       // which recipients have an email the caller can see (RLS: only contacts they may see; others count as no email)
       const withEmail = await sql<{ contact_id: string }>`SELECT DISTINCT cp.contact_id FROM contact_points cp
          WHERE cp.tenant_id = app.tenant_id() AND cp.contact_id = ANY (${unique}::uuid[]) AND cp.kind = 'email' AND cp.removed_at IS NULL`.execute(tx);
-      return { subject, body: r.text, withEmail: new Set(withEmail.rows.map((x) => x.contact_id)) };
+      // one invite per recipient and version, whoever on the team sends it (the send path's idempotency key is per sender)
+      const already = await sql<{ contact_id: string }>`SELECT DISTINCT contact_id FROM messages WHERE tenant_id = app.tenant_id() AND marketing_piece_id = ${pieceId}
+         AND contact_id = ANY (${unique}::uuid[]) AND status NOT IN ('canceled','blocked','failed','undelivered','bounced')`.execute(tx);
+      return { subject, body: r.text, withEmail: new Set(withEmail.rows.map((x) => x.contact_id)), already: new Set(already.rows.map((x) => x.contact_id)) };
     },
     { db: deps.db },
   );
@@ -70,6 +76,10 @@ export async function sendInvites(deps: CommsDeps, actor: UserActor, pieceId: st
   const queue = [...unique];
   const worker = async () => {
     for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
+      if (prep.already.has(id)) {
+        recipients.push({ contactId: id, outcome: 'already_invited', messageId: null });
+        continue;
+      }
       if (!prep.withEmail.has(id)) {
         recipients.push({ contactId: id, outcome: 'no_email', messageId: null });
         continue;
@@ -82,17 +92,19 @@ export async function sendInvites(deps: CommsDeps, actor: UserActor, pieceId: st
         else recipients.push({ contactId: id, outcome: 'blocked', messageId: out.message?.id ?? null });
       } catch (e) {
         if (e instanceof AppError && (e.code === 'NOT_FOUND' || e.code === 'CONTACT_POINT_MISSING')) recipients.push({ contactId: id, outcome: 'no_email', messageId: null });
-        else if (e instanceof AppError && e.code === 'MARKETING_PIECE_NOT_APPROVED') throw e;
+        else if ((e instanceof AppError && e.code === 'MARKETING_PIECE_NOT_APPROVED') || (e instanceof Error && e.message.startsWith('MARKETING_PIECE_NOT_APPROVED'))) throw new AppError('MARKETING_PIECE_NOT_APPROVED');
         else recipients.push({ contactId: id, outcome: 'blocked', messageId: null });
       }
     }
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, unique.length) }, worker));
-  const counted = recipients.filter((r) => r.outcome !== 'no_email').map((r) => ({ outcome: r.outcome as 'sent' | 'opted_out' | 'blocked' }));
+  const alreadyInvited = recipients.filter((r) => r.outcome === 'already_invited').length;
+  const counted = recipients.filter((r) => r.outcome !== 'no_email' && r.outcome !== 'already_invited').map((r) => ({ outcome: r.outcome as 'sent' | 'opted_out' | 'blocked' }));
   const s = inviteSendSummary(counted);
   const noEmail = recipients.filter((r) => r.outcome === 'no_email').length;
   // core's words ("Sent 41 of 45; 4 opted out"), with recipients that have no email address counted in the total too
-  const text = noEmail > 0 ? `${s.text.replace(/^Sent (\d+) of \d+/, `Sent $1 of ${s.total + noEmail}`)}; ${noEmail} without an email address` : s.text;
+  let text = noEmail > 0 ? `${s.text.replace(/^Sent (\d+) of \d+/, `Sent $1 of ${s.total + noEmail}`)}; ${noEmail} without an email address` : s.text;
+  if (alreadyInvited > 0) text = `${text}; ${alreadyInvited} already invited earlier`;
   await withTenantTx(actor, (tx) => audit(tx, actor, { action: 'marketing.invites_sent', entity: { type: 'marketing_piece', id: pieceId }, changes: redactSnapshot({ sent: s.sent, total: s.total, opted_out: s.optedOut, blocked: s.blocked, no_email: noEmail }), reason: 'SENT' }), { db: deps.db });
-  return { sent: s.sent, total: s.total + noEmail, optedOut: s.optedOut, blocked: s.blocked, noEmail, text, recipients };
+  return { sent: s.sent, total: s.total + noEmail, optedOut: s.optedOut, blocked: s.blocked, noEmail, alreadyInvited, text, recipients };
 }

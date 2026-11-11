@@ -117,7 +117,8 @@ export async function fairHousingPack(tx: Tx, jurisdictions: readonly string[]):
     SELECT rules, reviewed_by_counsel_at FROM jurisdiction_packs WHERE key = 'platform:fair_housing' AND status = 'published'`.execute(tx);
   const base = p.rows[0];
   if (!base) throw new AppError('FAIR_HOUSING_PACK_UNAVAILABLE');
-  const keys = [...new Set(jurisdictions)];
+  // every pack that governs the jurisdictions: the country pack too for a state ('US' for 'US-SC'), as the advertising packs
+  const keys = [...new Set(jurisdictions.flatMap((j) => (j.includes('-') ? [j.split('-')[0]!, j] : [j])))];
   const adds = await sql<{ rules: Record<string, unknown> }>`SELECT rules FROM jurisdiction_packs WHERE status = 'published' AND key = ANY (${keys}::text[]) ORDER BY key`.execute(tx);
   const r = fairHousingPackFrom({ rules: base.rules, reviewedByCounselAt: base.reviewed_by_counsel_at?.toISOString() ?? null }, adds.rows.map((x) => x.rules['fair_housing']).filter((x) => x !== undefined));
   if (!r.ok) throw new AppError('FAIR_HOUSING_PACK_UNAVAILABLE');

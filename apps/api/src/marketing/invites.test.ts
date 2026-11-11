@@ -52,8 +52,8 @@ describe('R-MKT-8 invites are per-recipient gated emails from an approved versio
     expect(h.providers.email.sent.some((m) => m.to === people[2]!.email)).toBe(false);
     expect((await h.su.query("SELECT count(*)::int AS n FROM exception_items WHERE tenant_id = $1 AND item_type = 'failed_send'", [w.tenantId])).rows[0].n).toBe(0);
     // the same recipient is never sent the same version twice
-    const again = await call<Sent>(w.agent, 'POST', `/marketing-pieces/${inv.id}/invite/send`, { recipientContactIds: [people[0]!.id] });
-    expect(again.body.sent).toBe(1);
+    const again = await call<Sent & { alreadyInvited: number }>(w.agent, 'POST', `/marketing-pieces/${inv.id}/invite/send`, { recipientContactIds: [people[0]!.id] });
+    expect(again.body).toMatchObject({ sent: 0, alreadyInvited: 1 });
     expect((await h.su.query('SELECT count(*)::int AS n FROM messages WHERE marketing_piece_id = $1 AND contact_id = $2', [inv.id, people[0]!.id])).rows[0].n).toBe(1);
   });
 
@@ -88,4 +88,16 @@ describe('R-MKT-8 invites are per-recipient gated emails from an approved versio
     for (const x of r.body.recipients) expect(x.outcome === 'opted_out').toBe(optedOut.has(x.contactId));
     expect((await h.su.query("SELECT count(*)::int AS n FROM exception_items WHERE tenant_id = $1 AND item_type = 'failed_send'", [w.tenantId])).rows[0].n).toBe(before);
   }, 300_000);
+});
+
+describe('review fixes (invites)', () => {
+  it('R-MKT-8: the same version is never sent twice to a recipient, whoever on the team sends it ("1 already invited earlier")', async () => {
+    const inv = await approvedInvite();
+    const c = await ownedContact(w.agent, { consent: false });
+    expect((await call<Sent>(w.agent, 'POST', `/marketing-pieces/${inv.id}/invite/send`, { recipientContactIds: [c.id] })).body.sent).toBe(1);
+    const again = await call<Sent & { alreadyInvited: number }>(w.owner, 'POST', `/marketing-pieces/${inv.id}/invite/send`, { recipientContactIds: [c.id] });
+    expect(again.body).toMatchObject({ sent: 0, alreadyInvited: 1 });
+    expect(again.body.text).toMatch(/1 already invited earlier/);
+    expect((await h.su.query('SELECT count(*)::int AS n FROM messages WHERE marketing_piece_id = $1 AND contact_id = $2', [inv.id, c.id])).rows[0].n).toBe(1);
+  });
 });

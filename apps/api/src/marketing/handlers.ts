@@ -20,7 +20,7 @@ import { commsRuntime } from '../comms/runtime.js';
 import { audit, redactSnapshot } from '../audit.js';
 import { jobPayload } from '../worker/payload.js';
 import type { JobHandler, StandaloneJobContext, StandaloneJobHandler } from '../worker/types.js';
-import { removeYourselfRaised, syncReviewCards } from './cards.js';
+import { syncReviewCards } from './cards.js';
 import { type PublishDeps, reconcilePublications, retractPublication } from './publish.js';
 import * as repo from './repo.js';
 
@@ -52,20 +52,28 @@ export async function reconcileMarketing(ctx: StandaloneJobContext, deps: Publis
   const pubs = await reconcilePublications(deps, tenantId);
   const out: ReconcileSummary = { ...pubs, invitesCanceled: 0, retracted: 0, removeYourself: 0, pagesTakenDown: 0 };
 
-  // 2 + 3: what must come down, decided in one system transaction
+  // 2 + 3: what must come down. Separate transactions, so an unavailable pack (3) never undoes the invite cancellations (2).
+  const canceled = await ctx.withTx((tx) => cancelOffMarketInvites(tx));
+  let down = { failingPieceIds: [] as string[], pagesTakenDown: 0 };
+  try {
+    down = await ctx.withTx((tx) => takeDownFailingPages(tx, deps.ids, ctx.actor));
+  } catch (e) {
+    ctx.log.warn('marketing.reconcile live re-check failed', { code: e instanceof Error ? e.message.slice(0, 60) : 'unknown' });
+  }
   const work = await ctx.withTx(async (tx) => {
-    const canceled = await cancelOffMarketInvites(tx);
-    const down = await takeDownFailingPages(tx, deps.ids, ctx.actor);
-    const posts = await sql<{ id: string; piece_id: string }>`
-      SELECT p.id, p.piece_id FROM marketing_publications p
+    // live or possibly-live posts ('unknown' may be up) of off-market listings and failing versions that were not yet
+    // retracted or handed to the agent as "remove it yourself" (filtered before the limit, so older ones never block)
+    const posts = await sql<{ id: string }>`
+      SELECT p.id FROM marketing_publications p
         JOIN marketing_pieces mp ON mp.tenant_id = p.tenant_id AND mp.id = p.piece_id
         JOIN listings l ON l.tenant_id = mp.tenant_id AND l.id = mp.listing_id
-       WHERE p.tenant_id = app.tenant_id() AND p.status = 'published'
+       WHERE p.tenant_id = app.tenant_id() AND p.status IN ('published','unknown')
          AND (l.status IN ('sold','withdrawn','expired') OR mp.id = ANY (${down.failingPieceIds}::uuid[]))
+         AND NOT EXISTS (SELECT 1 FROM priority_feed_items f, jsonb_array_elements(f.reasons) x
+                          WHERE f.tenant_id = p.tenant_id AND f.dedupe_key = 'marketing:' || p.piece_id::text
+                            AND x->>'code' = 'REMOVE_POST_YOURSELF:' || p.id::text)
        ORDER BY p.requested_at LIMIT 50`.execute(tx);
-    const todo: string[] = [];
-    for (const r of posts.rows) if (!(await removeYourselfRaised(tx, r.piece_id, r.id))) todo.push(r.id);
-    return { canceled, pagesTakenDown: down.pagesTakenDown, todo };
+    return { canceled, pagesTakenDown: down.pagesTakenDown, todo: posts.rows.map((r) => r.id) };
   });
   out.invitesCanceled = work.canceled;
   out.pagesTakenDown = work.pagesTakenDown;

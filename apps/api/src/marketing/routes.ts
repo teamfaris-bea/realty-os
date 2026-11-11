@@ -141,8 +141,9 @@ export const InviteResponse = z.object({
   optedOut: z.number(),
   blocked: z.number(),
   noEmail: z.number(),
+  alreadyInvited: z.number(),
   text: z.string(),
-  recipients: z.array(z.object({ contactId: z.uuid(), outcome: z.enum(['sent', 'opted_out', 'blocked', 'no_email']), messageId: z.uuid().nullable() })),
+  recipients: z.array(z.object({ contactId: z.uuid(), outcome: z.enum(['sent', 'opted_out', 'blocked', 'no_email', 'already_invited']), messageId: z.uuid().nullable() })),
 });
 export const AssetResponse = z.object({ objectId: z.uuid() });
 

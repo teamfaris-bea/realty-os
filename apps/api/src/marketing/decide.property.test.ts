@@ -160,3 +160,4 @@ describe('VERIFY assumptions are configuration with strict defaults', () => {
     expect(assumptionsFrom({ MARKETING_INSTAGRAM_REQUIRES_IMAGE: 'nope', MARKETING_IMAGE_URL_TTL_MINUTES: '-1', MARKETING_UNKNOWN_GIVE_UP_HOURS: 'x' })).toEqual({ instagramRequiresImage: true, imageUrlTtlMs: 3_600_000, unknownGiveUpMs: 86_400_000 });
   });
 });
+

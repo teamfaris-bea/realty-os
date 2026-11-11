@@ -10,7 +10,7 @@ import type { EnvelopeService } from '../crypto/envelope.js';
 import { AppError } from '../errors.js';
 import type { DocumentRenderer, RenderedPdf } from '../providers/integrations/types.js';
 import type { ObjectStorage } from '../providers/types.js';
-import { assetObject } from './pieces.js';
+import { assertLivePasses, assetObject } from './pieces.js';
 import * as repo from './repo.js';
 
 export async function flyerPdf(tx: Tx, d: { renderer: DocumentRenderer; envelope: EnvelopeService; storage: ObjectStorage; tenantId: string }, pieceId: string): Promise<RenderedPdf> {
@@ -18,6 +18,7 @@ export async function flyerPdf(tx: Tx, d: { renderer: DocumentRenderer; envelope
   if (!p) throw new AppError('NOT_FOUND');
   if (p.kind !== 'flyer') throw new AppError('MARKETING_NOT_FLYER');
   if (!['approved', 'exported', 'published'].includes(p.status)) throw new AppError(p.status === 'draft' ? 'MARKETING_APPROVE_FIRST' : 'MARKETING_NOT_LIVE');
+  await assertLivePasses(tx, p);
   const [assets, facts, identity] = await Promise.all([repo.assetsOf(tx, pieceId), repo.listingFacts(tx, p.listing_id), repo.identityOf(tx)]);
   if (!facts) throw new AppError('NOT_FOUND');
   const advertising = await repo.advertisingPacks(tx, identity.jurisdictions);

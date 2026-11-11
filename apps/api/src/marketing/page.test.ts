@@ -246,3 +246,93 @@ describe('R-MKT-1 the DB refuses approval', () => {
     expect([r.status, r.code]).toEqual([422, 'MARKETING_TEAM_LISTING_ONLY']);
   });
 });
+
+describe('review fixes (pages, exports, limits)', () => {
+  it('R-MKT-4: export, the flyer PDF and putting a page live re-check the live rendering: with the licence number gone each is refused', async () => {
+    const l = await teamListing(w.agent, {});
+    const pieces = await generateAll(w.agent, l, { kinds: ['flyer', 'website_page'] });
+    for (const p of Object.values(pieces)) expect((await approve(w.agent, p)).status).toBe(200);
+    await suFixture(h, [{ text: 'UPDATE tenant_settings SET brokerage_license_number = NULL WHERE tenant_id = $1', values: [w.tenantId] }]);
+    try {
+      expect((await call(w.agent, 'POST', `/marketing-pieces/${pieces.flyer!.id}/export`, {})).code).toBe('MARKETING_GUARD_FAILED');
+      expect((await w.agent.request('GET', `/api/marketing-pieces/${pieces.flyer!.id}/flyer.pdf`)).statusCode).toBe(422);
+      expect((await call(w.agent, 'POST', `/marketing-pieces/${pieces.website_page!.id}/publish`, {})).code).toBe('MARKETING_GUARD_FAILED');
+    } finally {
+      await suFixture(h, [{ text: "UPDATE tenant_settings SET brokerage_license_number = 'BRK-0042' WHERE tenant_id = $1", values: [w.tenantId] }]);
+    }
+  });
+
+  it('R-MKT-2 R-INT-6: approving a new page version while publishing is not cleared keeps the live page (and its address); putting the new version live later takes it over', async () => {
+    const lp = await livePage();
+    const v2 = (await call<{ piece: PieceBody }>(w.agent, 'PATCH', `/marketing-pieces/${lp.piece.id}`, { prose: { headline: 'Room to breathe', body: 'A bright home. Contact the team.', highlights: [] } })).body.piece;
+    await clearFairHousing(h, false);
+    try {
+      expect((await approve(w.agent, v2)).status).toBe(200);
+      expect((await getPiece(w.agent, lp.piece.id)).status).toBe('published');
+    } finally {
+      await clearFairHousing(h);
+    }
+    expect((await publicPage(h, lp.path)).body).toContain(String(lp.piece.prose['headline']));
+    const pub = await call<{ piece: PieceBody }>(w.agent, 'POST', `/marketing-pieces/${v2.id}/publish`, {});
+    expect(pub.body.piece.publicPath).toBe(lp.path);
+    expect((await publicPage(h, lp.path)).body).toContain('Room to breathe');
+    expect((await getPiece(w.agent, lp.piece.id)).status).toBe('superseded');
+  });
+
+  it('R-MKT-7: photos have their own budget (viewing a page with many photos never uses up the page budget), and there is no per-page budget one client can use up for everyone', async () => {
+    const lp = await livePage({ image: true });
+    const ip = '198.18.1.10';
+    for (let i = 0; i < 150; i++) await publicPage(h, `${lp.path}/photos/1`, ip);
+    expect((await publicPage(h, lp.path, ip)).statusCode).toBe(200);
+    for (let i = 0; i < 125; i++) await publicPage(h, lp.path, '198.18.1.11');
+    expect((await publicPage(h, lp.path, '198.18.1.12')).statusCode).toBe(200);
+  });
+
+  it('R-MKT-2: duplicate images in a change of an approved version are a 422, not a 500', async () => {
+    const l = await teamListing(w.agent, {});
+    const p = (await generateAll(w.agent, l, { kinds: ['flyer'] })).flyer!;
+    expect((await approve(w.agent, p)).status).toBe(200);
+    const up = await uploadImage(w.agent, l, PNG_1X1);
+    const r = await call(w.agent, 'PATCH', `/marketing-pieces/${p.id}`, { assetObjectIds: [up.objectId, up.objectId] });
+    expect([r.status, r.code]).toEqual([422, 'VALIDATION_FAILED']);
+  });
+
+  it('R-MKT-9: an "unknown" post (it may be up) of a listing that sold raises the remove-it-yourself card', async () => {
+    const page = await connectAccount(h, w.owner, 'facebook_page');
+    const l = await teamListing(w.agent, {});
+    const p = (await generateAll(w.agent, l, { kinds: ['social_post'] })).social_post!;
+    expect((await approve(w.agent, p)).status).toBe(200);
+    h.providers.integrations.social.nextOutcome = 'timeout';
+    h.providers.integrations.social.lookup = 'unsupported';
+    try {
+      const pub = (await call<{ publication: { id: string; status: string } }>(w.agent, 'POST', `/marketing-pieces/${p.id}/publish`, { connectionId: page.connectionId })).body.publication;
+      expect(pub.status).toBe('unknown');
+      expect((await call(w.agent, 'PATCH', `/listings/${l}`, { status: 'sold' })).status).toBe(200);
+      const s = await reconcileMarketing(jobCtx(), publishDepsOf(h.app.platform));
+      expect(s.removeYourself).toBeGreaterThanOrEqual(1);
+      const card = (await h.su.query("SELECT reasons FROM priority_feed_items WHERE dedupe_key = $1 AND state = 'open'", [`marketing:${p.id}`])).rows[0];
+      expect(JSON.stringify(card.reasons)).toContain(`REMOVE_POST_YOURSELF:${pub.id}`);
+      expect((await h.su.query('SELECT status FROM marketing_publications WHERE id = $1', [pub.id])).rows[0].status).toBe('unknown');
+    } finally {
+      h.providers.integrations.social.lookup = 'supported';
+    }
+  });
+});
+
+describe('review fixes (fair-housing pack)', () => {
+  it('R-FH-1: a team operating in a state also gets the country pack\'s fair-housing additions (as the advertising packs and the send gate do)', async () => {
+    const term = { id: 'us.test_phrase', label: 'test phrase', class: 'race', patterns: ['zorblax quarter'] };
+    await h.su.query("UPDATE jurisdiction_packs SET rules = rules || jsonb_build_object('fair_housing', jsonb_build_object('hard', jsonb_build_array($1::jsonb))) WHERE key = 'US' AND status = 'published'", [JSON.stringify(term)]);
+    const prev = (await h.su.query('SELECT operating_jurisdictions FROM tenant_settings WHERE tenant_id = $1', [w.tenantId])).rows[0].operating_jurisdictions;
+    await suFixture(h, [{ text: "UPDATE tenant_settings SET operating_jurisdictions = '{US-SC}' WHERE tenant_id = $1", values: [w.tenantId] }]);
+    try {
+      const l = await teamListing(w.agent, {});
+      const p = (await generateAll(w.agent, l, { kinds: ['social_post'] })).social_post!;
+      const r = await call<{ piece: PieceBody }>(w.agent, 'PATCH', `/marketing-pieces/${p.id}`, { prose: { caption: 'Right by the zorblax quarter.', hashtags: [] } });
+      expect(r.body.piece.guard.approvable).toBe(false);
+    } finally {
+      await suFixture(h, [{ text: 'UPDATE tenant_settings SET operating_jurisdictions = $2 WHERE tenant_id = $1', values: [w.tenantId, prev] }]);
+      await h.su.query("UPDATE jurisdiction_packs SET rules = rules - 'fair_housing' WHERE key = 'US' AND status = 'published'");
+    }
+  });
+});

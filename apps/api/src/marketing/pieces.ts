@@ -25,6 +25,7 @@ import {
   type Rendered,
   guardReasons,
   guardResult,
+  liveRecheck,
   needsFairHousingCheck,
   renderPiece,
   deliveryLabel,
@@ -99,6 +100,17 @@ export async function computeGuard(tx: Tx, pieceId: string): Promise<{ guard: Gu
   const packs = { advertising };
   const rendered = renderPiece(repo.versionOf(piece, assets), facts, identity, packs);
   return { guard: guardResult(rendered, identity, packs, fh, sha), sha, rendered, piece };
+}
+
+/**
+ * R-MKT-4: a frozen approval stands only while the live rendering (current facts, identity and packs) still passes.
+ * Everything that sends a version out (export, flyer, page, invites, publishPost) calls this first.
+ */
+export async function assertLivePasses(tx: Tx, p: repo.PieceRow): Promise<void> {
+  const [assets, facts, identity] = await Promise.all([repo.assetsOf(tx, p.id), repo.listingFacts(tx, p.listing_id), repo.identityOf(tx)]);
+  if (!facts) throw new AppError('NOT_FOUND');
+  const [advertising, fh] = await Promise.all([repo.advertisingPacks(tx, identity.jurisdictions), repo.fairHousingPack(tx, identity.jurisdictions)]);
+  if (liveRecheck(repo.versionOf(p, assets), facts, identity, { advertising }, fh, p.content_sha256).action !== 'keep') throw new AppError('MARKETING_GUARD_FAILED');
 }
 
 async function writeGuard(tx: Tx, pieceId: string): Promise<void> {
@@ -181,6 +193,9 @@ export async function patchPiece(tx: Tx, actor: UserActor, pieceId: string, inpu
   if (p.status === 'retracted' && p.kind === 'website_page') {
     // a taken-down page needs a new version too (R-MKT-4), with a new slug when it goes live again
   }
+  if (input.assetObjectIds !== undefined && new Set(input.assetObjectIds).size !== input.assetObjectIds.length) {
+    throw new AppError('VALIDATION_FAILED', { issues: [{ path: '/assetObjectIds', code: 'duplicate' }] });
+  }
   if (p.status !== 'draft') {
     // R-MKT-2: approved copy is frozen; the change is a new draft version, the old one stays as it is
     await repo.lockListingKind(tx, p.listing_id, p.kind);
@@ -243,12 +258,15 @@ export async function approvePiece(tx: Tx, actor: UserActor, pieceId: string, se
     SELECT id, status, public_slug FROM marketing_pieces WHERE tenant_id = app.tenant_id() AND listing_id = ${p.listing_id} AND kind = ${p.kind}
        AND id <> ${pieceId} AND status IN ('approved','published','exported','draft') FOR UPDATE`.execute(tx);
   let liveSlug: string | null = null;
+  const cleared = p.kind === 'website_page' ? await repo.platformCleared(tx, 'platform:fair_housing') : false;
   for (const o of older.rows) {
+    // a live page that cannot move to the new version now (publishing not cleared) stays live until it can
+    if (p.kind === 'website_page' && o.status === 'published' && !cleared) continue;
     if (o.status === 'published' && o.public_slug) liveSlug = o.public_slug;
     await sql`UPDATE marketing_pieces SET status = 'superseded', public_slug = NULL WHERE tenant_id = app.tenant_id() AND id = ${o.id}`.execute(tx);
   }
   // a live page moves to the new version at once (the old page stayed live until now)
-  if (p.kind === 'website_page' && liveSlug && (await repo.platformCleared(tx, 'platform:fair_housing'))) {
+  if (p.kind === 'website_page' && liveSlug && cleared) {
     await sql`UPDATE marketing_pieces SET status = 'published', public_slug = ${liveSlug}, published_at = ${toIso(now)}::timestamptz WHERE tenant_id = app.tenant_id() AND id = ${pieceId}`.execute(tx);
     await audit(tx, actor, { action: 'marketing.page_published', entity: { type: 'marketing_piece', id: pieceId }, changes: redactSnapshot({ version_no: p.version_no }), reason: 'NEW_VERSION' });
   }
@@ -265,7 +283,16 @@ export async function publishPage(tx: Tx, actor: UserActor, pieceId: string, now
   const listing = await repo.listingRow(tx, p.listing_id);
   if (!listing) throw new AppError('NOT_FOUND');
   if (['sold', 'withdrawn', 'expired'].includes(listing.status)) throw new AppError('LISTING_OFF_MARKET');
-  const slug = pageSlug(listing.address_line1, listing.city, p.id.replace(/-/g, '').slice(0, 8));
+  await assertLivePasses(tx, p);
+  // an older version still live (kept while publishing was not cleared) hands its page over: same address, superseded
+  const older = await sql<{ id: string; public_slug: string | null }>`SELECT id, public_slug FROM marketing_pieces WHERE tenant_id = app.tenant_id()
+      AND listing_id = ${p.listing_id} AND kind = 'website_page' AND id <> ${pieceId} AND status = 'published' FOR UPDATE`.execute(tx);
+  let kept: string | null = null;
+  for (const o of older.rows) {
+    kept ??= o.public_slug;
+    await sql`UPDATE marketing_pieces SET status = 'superseded', public_slug = NULL WHERE tenant_id = app.tenant_id() AND id = ${o.id}`.execute(tx);
+  }
+  const slug = kept ?? pageSlug(listing.address_line1, listing.city, p.id.replace(/-/g, '').slice(0, 8));
   if (!PAGE_SLUG_RE.test(slug)) throw new Error('page slug does not match the CHECK');
   try {
     await sql`UPDATE marketing_pieces SET status = 'published', public_slug = ${slug}, published_at = ${toIso(now)}::timestamptz WHERE tenant_id = app.tenant_id() AND id = ${pieceId}`.execute(tx);
@@ -301,12 +328,15 @@ export async function exportPiece(tx: Tx, actor: UserActor, pieceId: string, now
   if (p.status === 'draft') throw new AppError('MARKETING_APPROVE_FIRST');
   if (p.status === 'retracted' || p.status === 'superseded') throw new AppError('MARKETING_NOT_LIVE', { status: p.status });
   if (p.kind === 'open_house_invite') throw new AppError('MARKETING_NOT_EXPORTABLE');
+  await assertLivePasses(tx, p);
   const [assets, facts, identity] = await Promise.all([repo.assetsOf(tx, pieceId), repo.listingFacts(tx, p.listing_id), repo.identityOf(tx)]);
   if (!facts) throw new AppError('NOT_FOUND');
   const advertising = await repo.advertisingPacks(tx, identity.jurisdictions);
   const b = exportBundle(repo.versionOf(p, assets), facts, identity, { advertising });
   if (!b.ok) throw new AppError('MARKETING_TEAM_LISTING_ONLY');
-  await sql`UPDATE marketing_pieces SET exported_at = ${toIso(now)}::timestamptz, status = CASE WHEN status = 'approved' THEN 'exported' ELSE status END
+  // a social post stays 'approved' (exported_at says it was handed over): publications are made only from an
+  // approved/published version (0025 guard), so exporting first must not shut publishing off
+  await sql`UPDATE marketing_pieces SET exported_at = ${toIso(now)}::timestamptz, status = CASE WHEN status = 'approved' AND kind <> 'social_post' THEN 'exported' ELSE status END
              WHERE tenant_id = app.tenant_id() AND id = ${pieceId}`.execute(tx);
   await audit(tx, actor, { action: 'marketing.exported', entity: { type: 'marketing_piece', id: pieceId }, changes: redactSnapshot({ kind: p.kind, version_no: p.version_no }), reason: 'EXPORTED' });
   const label = b.flags.length > 0 ? `${EXPORTED_POST_IT_YOURSELF}. May be out of date: the listing is no longer for sale.` : EXPORTED_POST_IT_YOURSELF;
