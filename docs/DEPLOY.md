@@ -33,10 +33,10 @@ docker build --target web -t realty-web:<version> .
 | Endpoint | Meaning | Use it for |
 |---|---|---|
 | `GET /api/health` | the process answers (no database) | liveness / restart |
-| `GET /api/ready` | the database answers **as an RLS-bound role** and the process is not draining | readiness / load-balancer target health |
+| `GET /api/ready` | the database answers **as an RLS-bound role** and the process is not draining (503 otherwise); storage writable and provider configuration loadable (200 `degraded` otherwise, see `docs/OPERATIONS.md` §4.2) | readiness / load-balancer target health |
 | worker `GET :$WORKER_HEALTH_PORT/health` | the worker loops run; 503 once stopping | container health check (optional) |
 
-The bodies say only `ok`, `ready`, `draining` or `unavailable`. They carry no versions, ids or errors, and the endpoints are exempt from the rate limit.
+The bodies say only `ok`, `ready`, `degraded`, `draining` or `unavailable`, plus `checks` (`database`, `storage`, `providers`: `ok` or `failed`) on readiness. They carry no versions, ids or errors, and the endpoints are exempt from the rate limit. Metrics (`METRICS_PORT`, its own port and a bearer token), error reporting, alerts, runbooks and the synthetic check are in `docs/OPERATIONS.md`.
 
 **Graceful stop.** On SIGTERM or SIGINT:
 
@@ -300,5 +300,5 @@ A KMS-backed KEK (wrap and unwrap as KMS calls) is a drop-in for the same interf
 - [ ] Email: SPF, DKIM and DMARC aligned for the platform and team domains; a test marketing email unsubscribed with the mail client's own button; a reply lands in the thread; a hard bounce to a test address shows as a suppression.
 - [ ] Storage: private bucket; a recording plays back.
 - [ ] Backups configured, and one restore drill done and timed.
-- [ ] Logs collected; alerts on dead realtime jobs, sweeper lateness, unrouted inbound and webhook signature failures (ARCHITECTURE §15).
+- [ ] Logs collected; metrics scraped; the alerts of `docs/OPERATIONS.md` §3 routed to a pager; `pnpm ops:synthetic` scheduled every 5 minutes with a dedicated check user (OPERATIONS §6).
 - [ ] Counsel items in ARCHITECTURE §19 reviewed for the launch states.
