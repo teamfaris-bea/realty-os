@@ -1715,7 +1715,7 @@ export interface PriorityFeedItemsTable {
   updated_at: Generated<Timestamp>;
   resolved_at: Timestamp | null;
   resolved_by: string | null;
-  sort_at: Timestamp;
+  sort_at: Generated<Timestamp>;
   card: Json | null;
 }
 

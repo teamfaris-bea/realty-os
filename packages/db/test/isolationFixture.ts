@@ -123,6 +123,9 @@ const OVERRIDES: Record<string, Record<string, string>> = {
   contact_stage_events: { actor_kind: "'system'" },
   contact_relationships: { kind: "'spouse_partner'" },
   message_templates: { scope: "'team'", channel: "'sms'" },
+  // incremental feed (lane perf-misses)
+  feed_dirty: { group_key: "'c:' || gen_random_uuid()" },
+  feed_groups: { group_key: "'c:' || gen_random_uuid()" },
   smart_lists: { scope: "'team'" },
 };
 

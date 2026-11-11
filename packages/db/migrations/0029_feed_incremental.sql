@@ -39,11 +39,13 @@ ALTER TABLE priority_feed_items
   ADD COLUMN card    jsonb CHECK (card IS NULL OR (jsonb_typeof(card) = 'object' AND jsonb_typeof(card->'reasons') = 'array'
                                                    AND jsonb_typeof(card->'primaryAction') = 'object' AND jsonb_typeof(card->'alternatives') = 'array'));
 UPDATE priority_feed_items SET sort_at = date_trunc('milliseconds', created_at);
-ALTER TABLE priority_feed_items ALTER COLUMN sort_at SET NOT NULL;
+-- (the default covers writers that bypass triggers, e.g. superuser fixtures in replica mode)
+ALTER TABLE priority_feed_items ALTER COLUMN sort_at SET NOT NULL, ALTER COLUMN sort_at SET DEFAULT now();
 
+-- other modules' rows (no materialized card) order by their creation instant, to the millisecond
 CREATE FUNCTION app.feed_item_sort_default() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-  IF NEW.sort_at IS NULL THEN NEW.sort_at := date_trunc('milliseconds', NEW.created_at); END IF;
+  IF NEW.card IS NULL THEN NEW.sort_at := date_trunc('milliseconds', NEW.created_at); END IF;
   RETURN NEW;
 END $$;
 CREATE TRIGGER feed_item_sort_default BEFORE INSERT ON priority_feed_items FOR EACH ROW EXECUTE FUNCTION app.feed_item_sort_default();

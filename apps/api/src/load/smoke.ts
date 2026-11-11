@@ -18,7 +18,20 @@ export const LOOSE_FACTOR = 4;
  * holds them to a regression ceiling instead, so CI catches them getting worse without pretending
  * they pass. Remove an entry once the operation meets LOOSE_FACTOR × budget.
  */
-export const KNOWN_MISS_CEILING_MS: readonly { match: RegExp; ceilingMs: number }[] = [{ match: /^feed: /, ceilingMs: 5_000 }];
+export const KNOWN_MISS_CEILING_MS: readonly { match: RegExp; ceilingMs: number }[] = [];
+
+/**
+ * Paths lane perf-misses brought under budget at 250k (docs/PERFORMANCE.md §4): the smoke (20k contacts) holds
+ * each to its own budget, not LOOSE_FACTOR × budget, so a regression of the fix fails CI.
+ */
+export const FIXED_PATH_CEILING_MS: readonly { match: RegExp; ceilingMs: number }[] = [
+  { match: /^feed: /, ceilingMs: 150 },
+  { match: /^search (name|phone|email): /, ceilingMs: 300 },
+  { match: /^thread as the TC/, ceilingMs: 300 },
+  { match: /^team scoreboard: /, ceilingMs: 300 },
+  { match: /^accept: /, ceilingMs: 300 },
+  { match: /^claim: 44 agents|^claim: \d+ agents each claim/, ceilingMs: 300 },
+];
 
 async function main(): Promise<number> {
   const args = process.argv.slice(2);
@@ -31,7 +44,8 @@ async function main(): Promise<number> {
     log(`seeded ${contacts} contacts in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
     const r = await runBench({ db, iterations: 15, sends: 150, importRows: 5_000, contested: 10, racers: 5, log });
     console.log(`\n${markdownTable(r)}\n`);
-    const limitOf = (name: string, budget: number) => KNOWN_MISS_CEILING_MS.find((k) => k.match.test(name))?.ceilingMs ?? budget * LOOSE_FACTOR;
+    const limitOf = (name: string, budget: number) =>
+      FIXED_PATH_CEILING_MS.find((k) => k.match.test(name))?.ceilingMs ?? KNOWN_MISS_CEILING_MS.find((k) => k.match.test(name))?.ceilingMs ?? budget * LOOSE_FACTOR;
     const slow = r.results.filter((m) => m.budgetMs !== null && m.n > 0 && m.p95 > limitOf(m.name, m.budgetMs));
     const failed = r.checks.filter((c) => !c.ok);
     for (const m of slow) console.error(`TOO SLOW: ${m.name} p95 ${m.p95.toFixed(0)} ms > ${limitOf(m.name, m.budgetMs!)} ms`);

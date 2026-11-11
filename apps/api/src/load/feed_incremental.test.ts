@@ -178,7 +178,7 @@ async function apply(e: { kind: number; pick: number; size: number; user: number
       const a = await one<{ id: string }>(`SELECT id FROM appointments WHERE tenant_id = $1 AND user_id = $2 ORDER BY md5(id::text || $3) LIMIT 1`, [T, u.userId, String(off)]);
       if (!a) return 'skip';
       if (rnd(3) === 0) await su.query(`UPDATE appointments SET outcome_logged_at = $2, outcome_logged_by_user_id = $4 WHERE tenant_id = $1 AND id = $3`, [T, iso(now), a.id, u.userId]);
-      else await su.query(`UPDATE appointments SET starts_at = $2::timestamptz - interval '1 hour', ends_at = $2, status = 'scheduled', outcome_logged_at = NULL WHERE tenant_id = $1 AND id = $3`, [T, iso(now + (rnd(5) - 3) * HOUR), a.id]);
+      else await su.query(`UPDATE appointments SET starts_at = $2::timestamptz - interval '1 hour', ends_at = $2, status = 'scheduled', outcome = NULL, outcome_logged_at = NULL, outcome_logged_by_user_id = NULL WHERE tenant_id = $1 AND id = $3`, [T, iso(now + (rnd(5) - 3) * HOUR), a.id]);
       return 'appointment';
     }
     case 7: {
@@ -281,6 +281,12 @@ beforeAll(async () => {
         SELECT $1, gen_random_uuid(), $2, k, (now() AT TIME ZONE 'America/New_York')::date + $4::int + o, 'confirmed', 'manual', $3, now()
           FROM (VALUES ('inspection', 0), ('closing', 6)) v(k, o)`, [T, d.id, d.owner, (i % 7) - 3]);
     });
+  }
+  // assistant proposals (the generator makes none): drafts (half with a detail to check) and handbacks per agent
+  for (const [i, u] of users.slice(0, 3).entries()) {
+    for (let j = 0; j < 6; j++) {
+      await apply({ kind: 13, pick: 1_000 * i + j, size: j, user: i }); // event 13: the assistant proposes
+    }
   }
   // the worker caught up after the bulk load
   await materializeAll(app, deps.envelope, [T]);
