@@ -245,6 +245,10 @@ export const ERROR_STATUS = {
   SMS_MARKETING_NOT_REGISTERED: 409, // R-PAR-40: batch text needs an approved registration that covers marketing
   TEMPLATE_CHANNEL_MISMATCH: 422, // an email action needs an email template (and a text action a text one)
   LEAD_SOURCE_NOT_ALLOWED: 422, // D2: a publishing-only connection (facebook_page, instagram_business) never carries a lead source (0025 CHECK)
+  // ---- parity module 67: api/stage-automation ----
+  AUTO_ENROLL_STAGE_TAKEN: 409, // R-PAR-16: another active playbook of the same scope/owner already starts on this stage
+  AUTO_ENROLL_NOT_ALLOWED: 422, // R-PAR-16: a new-lead-response playbook never starts on a stage
+  PLAYBOOK_RETIRED: 409, // a retired playbook cannot be given a stage
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

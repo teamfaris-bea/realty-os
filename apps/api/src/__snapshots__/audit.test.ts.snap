@@ -26,7 +26,6 @@ exports[`R-AUDIT-4 redacted diffs > R-AUDIT-4: generated field classification â€
     "attempts",
     "attestation",
     "attributes",
-    "auto_enroll_stage",
     "auto_pause_after_misses",
     "automation_pause_reason",
     "autonomy",

@@ -7,9 +7,28 @@ import { Button, Dialog, Notice } from '../../design/index.js';
 import { type Details, STAGE_KEYS, stageLabelOf } from './api.js';
 import { usePersonAction, useToast } from './hooks.js';
 
+// Parity module 67 (flagged edit): what the stage entry started, or why it did not, in plain words.
+export type StageAutomation = { started: string } | { skipped: string; plan: string } | null | undefined;
+const SKIP_WORDS: Record<string, string> = {
+  already_in_a_plan: "they're already in a plan",
+  plan_not_approved: "it isn't approved yet",
+  cannot_be_reached: "they can't be messaged",
+  not_visible: 'you can no longer see this person',
+  stage_changed_again: 'the stage changed again',
+  person_removed: 'this person was removed',
+  not_a_person_change: 'only a stage change made by a person starts it',
+};
+
+/** The sentence after "Stage: Active." on the toast; '' when no plan is set for that stage. */
+export function automationText(a: StageAutomation): string {
+  if (!a) return '';
+  if ('started' in a) return `Started ${a.started}`;
+  return `${a.plan} didn't start: ${SKIP_WORDS[a.skipped] ?? 'it could not start'}`;
+}
+
 export function StagePill({ contactId, name, details, onCall, onText }: { contactId: string; name: string; details: Details; onCall: () => void; onText: () => void }) {
   const [open, setOpen] = useState(false);
-  const act = usePersonAction<{ stage: { stage: string; label: string }; previousStage: string }>(contactId);
+  const act = usePersonAction<{ stage: { stage: string; label: string }; previousStage: string; automation?: StageAutomation }>(contactId);
   const toast = useToast();
   const lockedId = useId();
   const labels = details.stageLabels;
@@ -22,9 +41,13 @@ export function StagePill({ contactId, name, details, onCall, onText }: { contac
     setOpen(false);
     const prev = r.data.previousStage;
     if (prev === to) return;
+    const plan = automationText(r.data.automation);
+    const a = r.data.automation;
+    // Undo moves the stage back; a plan that started keeps running (stop it from the plan itself), and says so
+    const still = a && 'started' in a ? `. ${a.started} is still running` : '';
     toast({
-      text: `Stage: ${r.data.stage.label}`,
-      undo: () => void act.run('POST', `/contacts/${contactId}/stage`, { stage: prev }).then((u) => u.ok && toast({ text: `Stage back to ${stageLabelOf(prev, labels)}` })),
+      text: plan ? `Stage: ${r.data.stage.label}. ${plan}` : `Stage: ${r.data.stage.label}`,
+      undo: () => void act.run('POST', `/contacts/${contactId}/stage`, { stage: prev }).then((u) => u.ok && toast({ text: `Stage back to ${stageLabelOf(prev, labels)}${still}` })),
     });
   };
 

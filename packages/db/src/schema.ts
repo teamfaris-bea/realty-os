@@ -2001,6 +2001,19 @@ export interface SmartListsTable {
   updated_at: Generated<Timestamp>;
 }
 
+/** public.stage_automation_decisions (table) */
+export interface StageAutomationDecisionsTable {
+  tenant_id: string;
+  stage_event_id: string;
+  contact_id: string;
+  to_stage: string;
+  outcome: string;
+  reason: string | null;
+  playbook_id: string | null;
+  enrollment_id: string | null;
+  decided_at: Generated<Timestamp>;
+}
+
 /** public.stored_objects (table) */
 export interface StoredObjectsTable {
   tenant_id: string;
@@ -2478,6 +2491,7 @@ export interface DB {
   showing_feedback: ShowingFeedbackTable;
   showings: ShowingsTable;
   smart_lists: SmartListsTable;
+  stage_automation_decisions: StageAutomationDecisionsTable;
   stored_objects: StoredObjectsTable;
   support_access_grants: SupportAccessGrantsTable;
   suppressions: SuppressionsTable;
@@ -2619,6 +2633,7 @@ export const TABLE_NAMES = [
   'showing_feedback',
   'showings',
   'smart_lists',
+  'stage_automation_decisions',
   'stored_objects',
   'support_access_grants',
   'suppressions',

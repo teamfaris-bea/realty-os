@@ -2,6 +2,7 @@
 // other key is a 422). Response schemas are snapshot-tested: no confidence* fields, no tenant id fields.
 import { ACTIVITY_DIRECTIONS, ACTIVITY_KINDS, CALL_OUTCOMES, POINT_LABELS, STAGES } from '@realty/core/parity/people';
 import { z } from 'zod';
+import { AutomationOutcomeSchema } from '../stageAutomation/index.js';
 
 const Id = z.uuid();
 const Iso = z.string();
@@ -99,7 +100,8 @@ export const CollaboratorView = z.object({ userId: Id, displayName: z.string().n
 export const CollaboratorsResponse = z.object({ collaborators: z.array(CollaboratorView) });
 
 export const StageInfo = z.object({ stage: z.string(), label: z.string(), locked: z.array(z.string()), lockedReason: z.string().nullable() });
-export const StageResponse = z.object({ stage: StageInfo, previousStage: z.string(), rowVersion: z.number().int() });
+// parity module 67 (flagged edit): what the stage entry started, or why not (null: no plan for this stage)
+export const StageResponse = z.object({ stage: StageInfo, previousStage: z.string(), rowVersion: z.number().int(), automation: AutomationOutcomeSchema });
 export const StageLabelsResponse = z.object({ labels: z.record(z.string(), z.string()), stages: z.array(z.object({ key: z.string(), label: z.string() })) });
 
 export const RelationshipView = z.object({ id: Id, kind: z.string(), label: z.string().nullable(), direction: z.enum(['outgoing', 'incoming']), other: z.object({ id: Id, displayName: z.string() }), createdAt: Iso });

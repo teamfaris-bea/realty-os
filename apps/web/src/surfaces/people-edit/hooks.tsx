@@ -86,7 +86,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             {toast.undo ? (
               <button
                 type="button"
-                className="min-h-tap min-w-tap rounded-lg px-2 font-semibold text-surface underline"
+                className="min-h-tap min-w-tap shrink-0 whitespace-nowrap rounded-lg px-2 font-semibold text-surface underline"
                 onClick={() => {
                   const u = toast.undo;
                   setToast(null);

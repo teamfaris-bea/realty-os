@@ -54,6 +54,7 @@ const PLAIN_EXACT = new Set([
   'kind',
   'type',
   'stage',
+  'auto_enroll_stage', // parity module 67: one of the eight stage keys (no PII)
   'intent',
   'purpose',
   'channel',
