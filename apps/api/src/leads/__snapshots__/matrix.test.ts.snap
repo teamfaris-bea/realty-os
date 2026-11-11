@@ -1584,6 +1584,80 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: leads response schemas have
     ],
     "type": "object",
   },
+  "MyPondsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "capacityCap": {
+        "maximum": 9007199254740991,
+        "minimum": -9007199254740991,
+        "type": "integer",
+      },
+      "claimsToday": {
+        "maximum": 9007199254740991,
+        "minimum": -9007199254740991,
+        "type": "integer",
+      },
+      "ponds": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "blockedBy": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "CLAIM_LIMIT_REACHED",
+                    "CAPACITY_REACHED",
+                  ],
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "claimsPerDay": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer",
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "isDefault": {
+              "type": "boolean",
+            },
+            "name": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "name",
+            "isDefault",
+            "claimsPerDay",
+            "blockedBy",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "uncontactedOwned": {
+        "maximum": 9007199254740991,
+        "minimum": -9007199254740991,
+        "type": "integer",
+      },
+    },
+    "required": [
+      "ponds",
+      "claimsToday",
+      "uncontactedOwned",
+      "capacityCap",
+    ],
+    "type": "object",
+  },
   "OwnershipResultResponse": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
@@ -2013,6 +2087,9 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: leads response schemas have
                         "null",
                       ],
                     },
+                    "addressRemoved": {
+                      "type": "boolean",
+                    },
                     "at": {
                       "type": [
                         "string",
@@ -2182,6 +2259,7 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: leads response schemas have
                     "suppressionReason",
                     "addressHint",
                     "otherAddress",
+                    "addressRemoved",
                     "evidence",
                   ],
                   "type": "object",
@@ -2299,6 +2377,8 @@ exports[`route table and schemas > every leads route declares its authorization 
   "POST /api/leads/:contactId/delete → contact.view_detail",
   "GET /api/ponds/:id/cards → contact.view",
   "HEAD /api/ponds/:id/cards → contact.view",
+  "GET /api/me/ponds → self",
+  "HEAD /api/me/ponds → self",
   "POST /api/members/:userId/deactivate → member.remove",
   "GET /api/contacts/:id/reachability → contact.view_detail",
   "HEAD /api/contacts/:id/reachability → contact.view_detail",

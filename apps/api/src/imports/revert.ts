@@ -47,6 +47,8 @@ export interface RevertReport {
   manual: { recordId: string; sourceRef: string; reason: string }[];
   /** PARITY 65: what the contacts revert removed of the parity rows (R-PAR-46 "removes exactly the batch's rows") */
   parity?: { tagLinks: number; values: number; tags: number; fields: number };
+  /** `removed` by table (people, phone numbers and emails, notes ...), so the report can say what it removed */
+  removedByTable?: Record<string, number>;
   done?: boolean;
 }
 
@@ -170,6 +172,7 @@ async function revertChunk(deps: ImportDeps, tenantId: string, stageId: string):
         manual: [...(prev.manual ?? [])],
       };
       if (prev.parity) report.parity = { ...prev.parity };
+      report.removedByTable = { ...(prev.removedByTable ?? {}) };
       const recs = await rrepo.importedRecordsAfter(tx, stage.id, report.afterId, CHUNK);
       if (recs.length === 0) {
         // PARITY 65: catalog tags and fields this batch created that nobody uses any more go too
@@ -254,7 +257,9 @@ async function revertChunk(deps: ImportDeps, tenantId: string, stageId: string):
         if (mine.some((x) => x.table === 'calls' && removed.has(x.id))) for (const x of mine) if (x.table === 'recordings') removed.add(x.id);
         const left = mine.filter((x) => !removed.has(x.id) && !keptSet.has(x.id));
         // a compensated assignment is undone, not removed: the ledger row stays as history
-        report.removed += mine.filter((x) => removed.has(x.id) && x.table !== 'lead_ownership_events').length;
+        const gone = mine.filter((x) => removed.has(x.id) && x.table !== 'lead_ownership_events');
+        report.removed += gone.length;
+        for (const x of gone) report.removedByTable![x.table] = (report.removedByTable![x.table] ?? 0) + 1;
         if (left.length === 0) {
           revertedRecords.push(r.id);
           continue;

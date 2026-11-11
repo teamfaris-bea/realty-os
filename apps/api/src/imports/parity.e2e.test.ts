@@ -335,7 +335,10 @@ describe('R-PAR-46 R-IMPORT-10 revert', () => {
     const defs = await q<{ key: string; archived: boolean }>(`SELECT key, archived_at IS NOT NULL AS archived FROM custom_field_defs WHERE tenant_id = $1 ORDER BY key`, [w.tenantId]);
     expect(defs.find((d) => d.key === 'fub_lead_score')!.archived).toBe(false);
     const rep = await call<{ parity: { phase: string; lines: string[] } }>(w.admin, 'GET', `/imports/${b.id}/report`);
-    expect(rep.body.parity!.lines.join(' ')).toMatch(/Revert removed \d+ tag links?/);
+    expect(rep.body.parity!.lines.join(' ')).toMatch(/The undo removed \d+ tag links?/);
+    // after the undo the report says what the import had written, in the past, never that it is there now
+    expect(rep.body.parity!.lines[0]).toMatch(/^Before the undo, the import had set \d+ stages?, added \d+ tags? and written \d+ custom values?\.$/);
+    expect(rep.body.parity!.lines.join(' ')).not.toMatch(/^Tags: \d+ added/);
   }, 60_000);
 
   it('R-IMPORT-9: re-running the same FUB import writes no second tag link or value (idempotent through the catalog and external refs)', async () => {

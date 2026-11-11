@@ -1,30 +1,34 @@
 // Pond cards (BUILD_PLAN module 17; R-PERM-6, R-OWN-16): leads waiting in a pond, as masked cards
 // only (first name + last initial, intent, source, age, the PII-free summary), each with one-tap
 // Claim. A claim race is settled by the server: the loser sees "Someone else claimed this lead just
-// now" and the card disappears on the refetch (E1).
+// now" (in the agent toast and the live region, so it outlives the card) and the card disappears on the
+// refetch (E1).
 //
-// Which ponds: Owner/Admin list every pond (GET /ponds). Other roles have no "my ponds" endpoint in
-// Phase 1, so their ponds are the ones the feed names in its "new in the pond" claim actions; the
-// page says so plainly instead of implying it lists everything (reported as an API gap).
+// Which ponds (journey bug: agents never saw a pond lead): Owner/Admin list every pond (GET /ponds) and
+// assign rather than claim. Everyone else gets exactly the ponds they may claim from (GET /me/ponds: an
+// eligible role, the pond open to all or naming them, claims allowed), with the leads they may claim there
+// (a lead they released or lost recently is left out by the server: the claim cooldown). When their own
+// totals block a claim (today's claims against the pond's daily limit, or new leads they have not reached
+// against the cap) the pond says so, with its numbers, instead of listing leads they cannot take.
 import { useQuery } from '@tanstack/react-query';
 import { useId } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, EmptyState, Notice } from '../../design/index.js';
 import { type ApiError, messageFor, useApi, useSession } from '../../shell/index.js';
 import { ActionButton } from '../feed/ActionButton.js';
-import { useFeed } from '../feed/FeedPage.js';
 import { AgentSheetsProvider } from '../feed/lib/AgentSheets.js';
 import { intentLabel, relativeTime } from '../feed/lib/format.js';
 import { useNow } from '../feed/lib/hooks.js';
 import { AGENT_ERROR_MESSAGES } from '../feed/lib/messages.js';
-import type { ContactCardView, FeedResponse, PondCardsResponse } from '../feed/lib/types.js';
+import type { ContactCardView, MyPondsResponse, PondCardsResponse } from '../feed/lib/types.js';
 
-/** Pond ids named by the feed's claim actions (pure; unit-tested). */
-export function pondIdsFromFeed(feed: FeedResponse | undefined): string[] {
-  if (!feed) return [];
-  const ids = new Set<string>();
-  for (const c of [...feed.pinned, ...feed.scored]) for (const a of [c.primaryAction, ...c.alternatives]) if (a.kind === 'claim') ids.add(a.pondId);
-  return [...ids];
+type MyPond = MyPondsResponse['ponds'][number];
+
+/** Why the member cannot claim from a pond right now, with the numbers it rests on (null: they can). */
+export function blockedSentence(p: MyPond, me: Pick<MyPondsResponse, 'claimsToday' | 'uncontactedOwned' | 'capacityCap'>): string | null {
+  if (p.blockedBy === 'CLAIM_LIMIT_REACHED') return `You've claimed ${me.claimsToday} of the ${p.claimsPerDay} leads this pond allows a day. You can claim from it again tomorrow.`;
+  if (p.blockedBy === 'CAPACITY_REACHED') return `${me.uncontactedOwned} of your leads are still waiting for a first call, text or email (the most is ${me.capacityCap}). Reach one of them before claiming more.`;
+  return null;
 }
 
 export default function PondPage() {
@@ -45,33 +49,51 @@ function Ponds() {
     queryFn: ({ signal }) => api.get<{ ponds: { id: string; name: string }[] }>('/ponds', { signal }),
     enabled: tenantWide,
   });
-  const feed = useFeed();
-  const ids = tenantWide ? (all.data?.ponds.map((p) => p.id) ?? []) : pondIdsFromFeed(feed.data);
-  const loading = tenantWide ? all.isPending : feed.isPending;
-  if (loading) return <p className="py-10 text-center text-[15px] text-ink-muted">Loading</p>;
-  if (tenantWide && all.isError) return <Notice tone="error">{messageFor(all.error, AGENT_ERROR_MESSAGES)}</Notice>;
+  const mine = useQuery<MyPondsResponse, ApiError>({
+    queryKey: ['pond', 'mine'],
+    queryFn: ({ signal }) => api.get<MyPondsResponse>('/me/ponds', { signal }),
+    enabled: !tenantWide,
+    refetchInterval: 30_000,
+  });
+  const q = tenantWide ? all : mine;
+  if (q.isPending) return <p className="py-10 text-center text-[15px] text-ink-muted">Loading</p>;
+  if (q.isError) return <Notice tone="error">{messageFor(q.error, AGENT_ERROR_MESSAGES)}</Notice>;
+  const ponds = tenantWide
+    ? (all.data?.ponds ?? []).map((p) => ({ id: p.id, name: p.name, blocked: null as string | null }))
+    : (mine.data?.ponds ?? []).map((p) => ({ id: p.id, name: p.name, blocked: blockedSentence(p, mine.data!) }));
   return (
     <div className="flex flex-col gap-6">
-      {!tenantWide ? <p className="text-[15px] text-ink-muted">Ponds with new leads you can claim, from your feed.</p> : null}
-      {ids.length === 0 ? (
+      {!tenantWide ? <p className="text-[15px] text-ink-muted">Leads waiting in the ponds you can claim from. The first to claim one gets it.</p> : null}
+      {ponds.length === 0 ? (
         <EmptyState icon="pond" title="No pond leads to claim right now">
           When a lead lands in a pond you can claim from, it shows up in your feed and here.
         </EmptyState>
       ) : (
-        ids.map((id) => <PondSection key={id} pondId={id} />)
+        ponds.map((p) => <PondSection key={p.id} pondId={p.id} name={p.name} blocked={p.blocked} />)
       )}
     </div>
   );
 }
 
-function PondSection({ pondId }: { pondId: string }) {
+function PondSection({ pondId, name, blocked }: { pondId: string; name: string; blocked: string | null }) {
   const api = useApi();
   const hid = useId();
   const q = useQuery<PondCardsResponse, ApiError>({
     queryKey: ['pond', pondId],
     queryFn: ({ signal }) => api.get<PondCardsResponse>(`/ponds/${pondId}/cards?limit=50`, { signal }),
     refetchInterval: 30_000,
+    enabled: blocked === null,
   });
+  if (blocked !== null) {
+    return (
+      <section aria-labelledby={hid} className="flex flex-col gap-3">
+        <h2 id={hid} className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted">
+          {name}
+        </h2>
+        <Notice tone="info">{blocked}</Notice>
+      </section>
+    );
+  }
   if (q.isPending) return <p className="text-[15px] text-ink-muted">Loading</p>;
   if (q.isError) return <Notice tone="error">{messageFor(q.error, AGENT_ERROR_MESSAGES)}</Notice>;
   const { pond, cards } = q.data;
@@ -81,7 +103,7 @@ function PondSection({ pondId }: { pondId: string }) {
         {pond.name} · {cards.length === 1 ? '1 lead' : `${cards.length} leads`}
         {q.data.nextCursor ? ' (more not shown)' : ''}
       </h2>
-      {cards.length === 0 ? <p className="text-[15px] text-ink-muted">Empty.</p> : null}
+      {cards.length === 0 ? <p className="text-[15px] text-ink-muted">{pond.claimable ? 'No leads to claim here right now.' : 'Empty.'}</p> : null}
       <ul className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
         {cards.map((c) => (
           <li key={c.id}>

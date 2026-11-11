@@ -23,8 +23,12 @@ export function relationshipView(r: repo.RelationshipRow, viewedFrom: string) {
   };
 }
 
+/**
+ * A live point. `wrongNumberReported`: the consent ledger holds a wrong-number report for the address (a call
+ * outcome or a reply), so POST /contacts/:id/points/:pointId/remove accepts reason wrong_number (R-PAR-12).
+ */
 export function pointView(p: repo.PointRow) {
-  return { id: p.id, kind: p.kind, address: p.address, label: p.label, status: p.status, isPrimary: p.is_primary };
+  return { id: p.id, kind: p.kind, address: p.address, label: p.label, status: p.status, isPrimary: p.is_primary, wrongNumberReported: p.wrong_number_reported };
 }
 
 /** R-PAR-12: a removed point shows only its tail and whether it still blocks the person's other phones. */

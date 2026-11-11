@@ -53,6 +53,9 @@ describe('GET /feed', () => {
     const task = f.scored.find((c) => c.itemType === 'task_due' && c.subjectId === taskId);
     expect(task).toBeDefined();
     expect([task!.primaryAction.kind, ...task!.alternatives.map((a) => a.kind)]).toContain('complete_task');
+    // the card says the task itself (journey copy bug: it named only the person and when it was due)
+    expect(task!.task).toEqual({ id: taskId, title: 'Send the comps' });
+    expect(f.all.filter((c) => c.subjectId !== taskId).every((c) => c.task === null)).toBe(true);
     const outcome = f.scored.find((c) => c.itemType === 'appointment_outcome' && c.subjectId === appt.body.appointment.id);
     expect(outcome?.primaryAction).toMatchObject({ kind: 'log_outcome', appointmentId: appt.body.appointment.id });
     expect(outcome!.reasons.map((x) => x.code)).toEqual(['OUTCOME_MISSING', 'OUTCOME_OVER_2H']);

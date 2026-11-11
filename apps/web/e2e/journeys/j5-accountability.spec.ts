@@ -10,9 +10,10 @@
 //      first_touch_breached; the exception scan (enqueued exactly as maintenance does, run on the real
 //      worker) raises the untouched-lead item for that period;
 //   3. the Team Lead sees the "Untouched lead" card on the Needs attention queue, with the logged call shown as
-//      context, reassigns it to the other agent (2 taps) — the ownership engine moves the lead (ledger
-//      reassigned EXCEPTION_REASSIGN, an exception event citing that command) — and then verifies it: the
-//      live counts go from 1 to 0 and the item moves to Handled.
+//      context (R-PAR-32: "Logged by …", never a touch) under the agent's ownership period, reassigns it to the
+//      other agent (2 taps) — the ownership engine moves the lead (ledger reassigned EXCEPTION_REASSIGN, an
+//      exception event citing that command), and the card then labels its facts as the earlier owner's period —
+//      and then verifies it: the live counts go from 1 to 0 and the item moves to Handled, context kept.
 import { randomUUID } from 'node:crypto';
 import { expect, test } from 'playwright/test';
 import { isPhone, pollSends, pollSql, shot, signIn, tap } from './helpers.js';
@@ -127,7 +128,9 @@ test('J5: a lead whose agent only logged an outside call and sent a bulk email m
   const card = page.locator('article').filter({ has: page.getByRole('heading', { level: 2, name: `Untouched lead · ${name}` }) });
   await expect(card).toBeVisible();
   await expect(card.getByRole('list', { name: 'Evidence' })).toContainText('No human call, text or email by the first-contact deadline');
-  // R-PAR-32 also wants the logged call on this card as context: not built, see the fixme below
+  // R-PAR-32: the agent's logged outside call is on the card as context, in their ownership period (never a touch)
+  await expect(card.getByText("Member agent's ownership period", { exact: true })).toBeVisible();
+  await expect(card.getByRole('list', { name: 'Evidence' })).toContainText(/Logged by Member agent: outgoing call, talked \(context only; not a first contact\)/);
   await shot(page, info, 'j5', '2-queue');
 
   const reassignTaps = { taps: 0 };
@@ -144,8 +147,11 @@ test('J5: a lead whose agent only logged an outside call and sent a bulk email m
   expect(led).toMatchObject({ type: 'reassigned', reason_code: 'EXCEPTION_REASSIGN', actor_user_id: w.lead!.userId });
   const events = await stack.sql<{ action: string; ownership_command_id: string }>('SELECT action, ownership_command_id FROM exception_events WHERE exception_dedupe_key = $1', [key]);
   expect(events).toEqual([{ action: 'reassigned', ownership_command_id: led.command_id }]);
-  // the missed period stays with the agent who missed it; the item stays live until verified
+  // the missed period stays with the agent who missed it; the item stays live until verified, and its facts are now
+  // labelled as the earlier owner's period (none of the new owner's period is mixed in)
   await expect(card.getByText(/^Reassigned by /)).toBeVisible({ timeout: 15_000 });
+  await expect(card.getByText("Member agent's earlier ownership period (the lead has moved on since)", { exact: true })).toBeVisible();
+  await expect(card.getByRole('list', { name: 'Evidence' })).toContainText(/Logged by Member agent: outgoing call, talked/);
   await shot(page, info, 'j5', '4-reassigned');
 
   await tap(page, card.getByRole('button', { name: 'Verify' }));
@@ -163,16 +169,12 @@ test('J5: a lead whose agent only logged an outside call and sent a bulk email m
   await pollSends(stack, (s) => s.emails.filter((m) => m.to === email).length, (n) => n === 1);
 });
 
-// BUG (Medium, open): R-PAR-32 says "The Team Lead's exception card shows logged activities in the period as
-// context". Nothing reads them: apps/api/src/accountability/** and core's exception derivation never look at
-// notes with source = 'logged_activity', so the untouched-lead card's evidence is only "No human call, text or
-// email by the first-contact deadline" and "Lead became theirs". The TL cannot see that the agent says they
-// called from their own phone. Repro: the journey above (the agent logs a Talked call before the deadline;
-// GET /api/team/exceptions as the Team Lead has no evidence row for the note). Needs the evidence model
-// (core + accountability view + TeamPage), so it is not a small fix. Remove the fixme when built.
-test.fixme('J5 R-PAR-32: the untouched-lead card shows the agent\'s logged outside call as context', async ({ page }) => {
+test("J5 R-PAR-32: once handled, the untouched-lead card keeps the agent's logged outside call as context", async ({ page }) => {
   await signIn(page, stack, w.lead!);
   await page.goto(`${stack.webUrl}/team`);
+  await tap(page, page.getByRole('radio', { name: 'Handled' }));
   const card = page.locator('article').filter({ has: page.getByRole('heading', { level: 2, name: /^Untouched lead · Nadia / }) }).first();
+  await expect(card.getByText('Verified', { exact: true })).toBeVisible({ timeout: 15_000 });
   await expect(card.getByRole('list', { name: 'Evidence' })).toContainText(/Logged by /);
+  await expect(card.getByText(/earlier ownership period \(the lead has moved on since\)$/)).toBeVisible();
 });

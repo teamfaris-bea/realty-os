@@ -53,6 +53,12 @@ export interface ReasonView {
   addressHint: string | null;
   /** recorded on another phone of the contact (a STOP from their work phone blocks every phone) */
   otherAddress: boolean;
+  /**
+   * that other phone has since been removed from the person (R-PAR-12: its opt-out still blocks them), so the
+   * words can say "(removed number)" instead of naming a number the page no longer lists. Only the live
+   * summary knows it; a blocked message's reason (the facts at the moment of the decision) never claims it.
+   */
+  addressRemoved: boolean;
   evidence: { consentEventId: string | null; inboundMessageId: string | null; callId: string | null; suppressionId: string | null };
 }
 
@@ -106,11 +112,13 @@ function sourceOf(e: rr.RevokeEventFacts): ReasonSource {
 }
 
 function emptyReason(code: ReachabilityReason, purposes: Purpose[]): ReasonView {
-  return { code, source: 'contact_point', purposes, at: null, keyword: null, recordedBy: null, importBatchId: null, suppressionReason: null, addressHint: null, otherAddress: false, evidence: { consentEventId: null, inboundMessageId: null, callId: null, suppressionId: null } };
+  return { code, source: 'contact_point', purposes, at: null, keyword: null, recordedBy: null, importBatchId: null, suppressionReason: null, addressHint: null, otherAddress: false, addressRemoved: false, evidence: { consentEventId: null, inboundMessageId: null, callId: null, suppressionId: null } };
 }
 
-export function revokeReason(e: rr.RevokeEventFacts | undefined, row: ConsentStateRow, pointHmac: string, purposes: Purpose[]): ReasonView {
-  const base = { ...emptyReason('CONSENT_REVOKED', purposes), otherAddress: row.addressHmac !== pointHmac, evidence: { consentEventId: row.basisEventId, inboundMessageId: null, callId: null, suppressionId: null } };
+/** `removed`: the HMACs of the person's removed phones that are not live on it (the live summary only). */
+export function revokeReason(e: rr.RevokeEventFacts | undefined, row: ConsentStateRow, pointHmac: string, purposes: Purpose[], removed: ReadonlySet<string> = new Set()): ReasonView {
+  const otherAddress = row.addressHmac !== pointHmac;
+  const base = { ...emptyReason('CONSENT_REVOKED', purposes), otherAddress, addressRemoved: otherAddress && removed.has(row.addressHmac), evidence: { consentEventId: row.basisEventId, inboundMessageId: null, callId: null, suppressionId: null } };
   if (!e) return { ...base, source: 'other' }; // the ledger row is not visible to this caller: say only that they opted out
   return {
     ...base,
@@ -136,14 +144,14 @@ function bestRow(rows: readonly ConsentStateRow[], pointHmac: string, events: Re
   return [...rows].sort((a, b) => Number(b.addressHmac === pointHmac) - Number(a.addressHmac === pointHmac) || t(b) - t(a))[0]!;
 }
 
-function reasonsFor(blocks: Record<Purpose, ReachBlock[]>, point: ReachPoint, events: ReadonlyMap<string, rr.RevokeEventFacts>, sups: ReadonlyMap<string, rr.SuppressionFacts>): ReasonView[] {
+function reasonsFor(blocks: Record<Purpose, ReachBlock[]>, point: ReachPoint, events: ReadonlyMap<string, rr.RevokeEventFacts>, sups: ReadonlyMap<string, rr.SuppressionFacts>, removed: ReadonlySet<string>): ReasonView[] {
   const byKey = new Map<string, ReasonView>();
   for (const purpose of ['informational', 'marketing'] as const) {
     for (const b of blocks[purpose]) {
       let v: ReasonView;
       if (b.reason === 'CONSENT_REVOKED') {
         const row = bestRow(b.revokedRows, point.addressHmac, events);
-        v = revokeReason(row.basisEventId ? events.get(row.basisEventId) : undefined, row, point.addressHmac, [purpose]);
+        v = revokeReason(row.basisEventId ? events.get(row.basisEventId) : undefined, row, point.addressHmac, [purpose], removed);
       } else if (b.reason === 'SUPPRESSED') {
         const s = [...b.suppressions].sort((x, y) => (sups.get(y.id)?.createdAt.getTime() ?? 0) - (sups.get(x.id)?.createdAt.getTime() ?? 0))[0]!;
         v = suppressionReason(sups.get(s.id), s, [purpose]);
@@ -192,6 +200,8 @@ export async function reachabilityFor(tx: Tx, contactIds: readonly string[], now
     const own = new Set(pts.map((p) => p.hmac));
     const removedPhoneHmacs = removed.get(contactId) ?? [];
     const keys = new Set([...own, ...removedPhoneHmacs]);
+    // a removed phone whose number is not also live on the person: its opt-out is said as a removed number's
+    const removedOnly = new Set(removedPhoneHmacs.filter((x) => !own.has(x)));
     const input = {
       points: pts.map((p): ReachPoint => ({ id: p.id, kind: p.kind, addressHmac: p.hmac, status: p.status, lineType: p.lineType })),
       removedPhoneHmacs,
@@ -203,7 +213,7 @@ export async function reachabilityFor(tx: Tx, contactIds: readonly string[], now
       const points = input.points.filter((p) => p.kind === kind).map((p): PointReachView => {
         const blocks = { informational: pointBlocks(input, p, ch, 'informational'), marketing: pointBlocks(input, p, ch, 'marketing') };
         const address = pts.find((x) => x.id === p.id)!.address;
-        return { pointId: p.id, addressHint: hint(address), blocked: blocks[purposeNow].length > 0, reasons: reasonsFor(blocks, p, events, supById) };
+        return { pointId: p.id, addressHint: hint(address), blocked: blocks[purposeNow].length > 0, reasons: reasonsFor(blocks, p, events, supById, removedOnly) };
       });
       const def = defaultPoint(pts, ch);
       const dp = def ? (points.find((p) => p.pointId === def.id) ?? null) : null;

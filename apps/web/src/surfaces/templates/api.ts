@@ -1,4 +1,6 @@
 // Templates API shapes (parity module 63 routes) and query keys for the web (module 64).
+import { parseMergeTokens } from '@realty/core/parity/templates';
+
 export type TemplateChannel = 'sms' | 'email';
 
 export interface TemplateView {
@@ -46,6 +48,24 @@ export function fieldWords(f: string): string {
   const known = MERGE_FIELD_HELP.find((x) => x.field === f);
   if (known) return known.label.charAt(0).toLowerCase() + known.label.slice(1);
   return f.startsWith('field.') ? f.slice(6).replace(/_/g, ' ') : f;
+}
+
+/**
+ * A template's text with each merge field said in words, for showing it before it is filled in for each
+ * person (the bulk count sheet, the template picker, a bulk action's page; journey copy bug: those showed the
+ * raw "{{contact.first_name}}"): "Hi {{contact.first_name|there}}," → "Hi [their first name, or “there”],".
+ * Parsed with core's own merge-token parser (R-PAR-24); a text that does not parse is shown as it is.
+ */
+export function readableMergeFields(text: string): string {
+  const p = parseMergeTokens(text);
+  if (!p.ok) return text;
+  let out = '';
+  let at = 0;
+  for (const t of p.tokens) {
+    out += `${text.slice(at, t.start)}[${fieldWords(t.field)}${t.fallback ? `, or “${t.fallback}”` : ''}]`;
+    at = t.end;
+  }
+  return out + text.slice(at);
 }
 
 export const TEMPLATE_ERROR_MESSAGES: Record<string, string> = {

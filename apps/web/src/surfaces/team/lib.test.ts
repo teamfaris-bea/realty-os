@@ -1,7 +1,7 @@
 // Pure helpers of the Team surface.
 import { describe, expect, it } from 'vitest';
 import { evidenceText } from '../../design/index.js';
-import { exceptionEvidenceView, normLine } from './lib.js';
+import { exceptionEvidenceView, normLine, periodLabel } from './lib.js';
 
 describe('exceptionEvidenceView', () => {
   it('keeps source, place and explanation; carries no score', () => {
@@ -22,6 +22,23 @@ describe('exceptionEvidenceView', () => {
 
   it('maps an unknown source type to a note rather than inventing a route', () => {
     expect(exceptionEvidenceView({ sourceType: 'mystery', sourceId: 'x', explanation: 'e', at: null, locator: null, snippet: null, needsReview: false, link: null }).sourceType).toBe('note');
+  });
+});
+
+describe('periodLabel and the period lines (one ownership period per card)', () => {
+  const owner = { userId: 'u1', name: 'Ava Agent' };
+  it('labels an untouched lead\'s facts as its owner\'s period, and as the earlier period once the lead moved on; other types have none', () => {
+    expect(periodLabel({ itemType: 'untouched_lead', owner, period: { current: true } })).toBe("Ava Agent's ownership period");
+    expect(periodLabel({ itemType: 'untouched_lead', owner, period: { current: false } })).toBe("Ava Agent's earlier ownership period (the lead has moved on since)");
+    expect(periodLabel({ itemType: 'untouched_lead', owner: { userId: 'u2', name: null }, period: { current: false } })).toBe("A former member's earlier ownership period (the lead has moved on since)");
+    expect(periodLabel({ itemType: 'overdue_promise', owner, period: null })).toBeNull();
+  });
+  it('names the period\'s owner in its lines and leaves the period end to the label; other lines are unchanged', () => {
+    const line = (explanation: string, o?: string) => exceptionEvidenceView({ sourceType: 'ownership_period', sourceId: 'p1', explanation, at: null, locator: null, snippet: null, needsReview: false, link: null }, o ? { owner: o } : {}).explanation;
+    expect(line('Lead became theirs', 'Ava Agent')).toBe("Lead became Ava Agent's");
+    expect(line('No human call, text or email by the first-contact deadline; the lead later left this agent', 'Ava Agent')).toBe('No human call, text or email by the first-contact deadline');
+    expect(line('First human contact', 'Ava Agent')).toBe('First human contact');
+    expect(line('Lead became theirs')).toBe('Lead became theirs');
   });
 });
 

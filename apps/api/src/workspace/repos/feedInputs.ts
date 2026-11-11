@@ -9,6 +9,13 @@
 //
 // `blockedChannels` is a display hint built from contact points, suppressions and consent revocations;
 // every send is re-checked by canContact at send time (R-GATE-1), so the hint can only demote a card.
+//
+// Pond leads (R-OWN-16, R-PERM-6): a lead that entered, within the last 24 h, a pond the member may claim from
+// (app.my_pond_ids(): an eligible role, the pond open to all or naming them, not archived, and claims allowed at
+// all), unless the member is in claim cooldown on it. app.my_pond_leads reads the entry event and the member's
+// own cooldown for them (a pond card's viewer cannot read the lead's ledger). A lead an import put in a pond is
+// not new and gets no card. The member's running totals (claims today, uncontacted leads) are applied when the
+// feed is read (feed.ts readFeed), never stored, because they change with the member's other leads and the day.
 import type { EnvelopeService } from '../../crypto/envelope.js';
 import type {
   ApptFacts,
@@ -21,6 +28,7 @@ import type {
   InactivityFacts,
   InboundFacts,
   OfferFacts,
+  PondLeadFacts,
   ReinquiryFacts,
   SearchProposalFacts,
   SlaFacts,
@@ -30,7 +38,7 @@ import type {
 } from '@realty/core/priority';
 import type { PhoneEmailChannel as Channel } from '@realty/core/compliance'; // the feed's blocked-channel hint covers Phase 1 channels
 import { type ContactId, type Instant, type UserActor, type UserId, localDateOf, localTime, resolveLocal } from '@realty/core/foundation';
-import { appointmentGroup, contactGroup, dealDateGroup, nextFeedChange, splitFeedInputs, taskGroup } from '@realty/core/priority';
+import { POND_NEW_WINDOW_MS, appointmentGroup, contactGroup, dealDateGroup, nextFeedChange, splitFeedInputs, taskGroup } from '@realty/core/priority';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 import { evidenceForClaims } from './evidence.js';
@@ -73,6 +81,15 @@ export interface LoadedFeedInputs {
    * names for the group's facts, including future facts not yet in `inputs`. Only instants > now.
    */
   nextChange: Map<string, number>;
+}
+
+interface PondLeadRow {
+  contact_id: string;
+  pond_id: string;
+  entered_seq: string;
+  entered_at: Date;
+  entered_by_import: boolean;
+  cooldown_until: Date | null;
 }
 
 /**
@@ -222,6 +239,27 @@ export async function loadFeedInputsScoped(tx: Tx, actor: UserActor, envelope: E
        WHERE s.tenant_id = app.tenant_id() AND s.status = 'proposed' AND c.owner_user_id = ${userId} AND c.deleted_at IS NULL ${byContact('s.contact_id')}
        ORDER BY s.created_at DESC`.execute(tx),
   ]);
+
+  // -- pond leads the member may claim (R-OWN-16): entered a claimable pond within the card's window -----
+  // The same window bounds the full and the scoped read (an entry older than the window can give no card).
+  const pondSince = new Date(now - POND_NEW_WINDOW_MS).toISOString();
+  const pond = scope && C.length === 0
+    ? { rows: [] as PondLeadRow[] }
+    : await sql<PondLeadRow>`
+        SELECT contact_id, pond_id, entered_seq::text AS entered_seq, entered_at, entered_by_import, cooldown_until
+          FROM app.my_pond_leads(${pondSince}::timestamptz, ${scope ? C : null}::uuid[])
+         ORDER BY entered_at DESC, contact_id`.execute(tx);
+  const pondOut: PondLeadFacts[] = [];
+  for (const p of pond.rows) {
+    // imported into a pond: not new, no card (the Pond page lists it)
+    if (p.entered_by_import) continue;
+    if (p.cooldown_until !== null && ms(p.cooldown_until) >= now) {
+      // R-OWN-16: no card while the member's own claim cooldown on the lead runs; it may appear when it ends
+      win(contactGroup(p.contact_id), ms(p.cooldown_until) + 1);
+      continue;
+    }
+    pondOut.push({ contactId: p.contact_id as ContactId, pondId: p.pond_id as never, enteredSeq: Number(p.entered_seq), enteredAt: ms(p.entered_at), userIds: [userId] });
+  }
 
   // -- touches after the waiting messages (answered by a person?) -----------------------------------------
   // R-PAR-37: a bulk email or batch text is marketing, never a touch and never a reply, so it never answers a
@@ -408,7 +446,7 @@ export async function loadFeedInputsScoped(tx: Tx, actor: UserActor, envelope: E
     blockedChannels: await gateSummaries(tx, [...contactIds]),
     reinquiries: reinquiriesOut,
     inactivityWarnings: inactivityOut,
-    pondLeads: [],
+    pondLeads: pondOut,
     searchProposals: searchesOut,
   };
   const nextChange = new Map<string, number>();

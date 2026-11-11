@@ -11,8 +11,9 @@
 //      sheet's Remove + Add phone; desktop: the inline field, which replaces it): the STOP still blocks
 //      every path, and the page says why ("…a number you removed (…) opted out…");
 //   3. R-PAR-12's one exception: a number proven a wrong number by its own "wrong number" reply, then
-//      removed as a confirmed wrong number, does not block the person's other phone (that text is sent,
-//      exactly once).
+//      removed as a confirmed wrong number on the person's page (the edit sheet offers "Remove as a wrong
+//      number" only on that number, and says why it is not offered on the others), does not block the
+//      person's other phone (that text is sent, exactly once).
 import { randomUUID } from 'node:crypto';
 import { type Page, expect, test } from 'playwright/test';
 import { drainUntil, isPhone, last4, pollSql, shot, signIn, tap } from './helpers.js';
@@ -230,6 +231,9 @@ test('J3.2 R-PAR-12: the agent removes the STOP phone and adds a new one; the ST
   await shot(page, info, 'j3', '4-removed-phone-still-blocked');
   const caption = await page.getByRole('button', { name: 'Text', exact: true }).evaluate((el) => el.getAttribute('aria-describedby') ? document.getElementById(el.getAttribute('aria-describedby')!.split(' ')[0]!)?.textContent ?? '' : '');
   expect(caption).toMatch(/Texted STOP/);
+  // the caption names the removed number's STOP as the removed number's, and the masked number never breaks
+  // across lines (non-breaking hyphens): "Texted STOP from •••‑•••‑7385 (removed number) on Nov 11"
+  expect(caption).toContain(`Texted STOP from •••\u2011•••\u2011${last4(p1)} (removed number)`);
 
   // every path is still blocked: one-to-one, template, bulk text, and the plan (Stage → Active does not enroll)
   await apiAttemptsBlocked(rae.id);
@@ -258,14 +262,34 @@ test('J3.3 R-PAR-12 exception: a number proven a wrong number and removed as one
   expect((await stack.api(AGENT, 'POST', `/contacts/${wes.id}/points`, { kind: 'phone', address: real, label: 'mobile' })).status).toBe(201);
   const before = await stack.api<{ reachability: { channels: { sms: { blocked: boolean } } } }>(AGENT, 'GET', `/contacts/${wes.id}/reachability`);
   expect(before.body.reachability.channels.sms.blocked).toBe(true);
-  // removed as a confirmed wrong number (the API's ledger-proven reason: the web app has no control for it, see the lane report)
-  const rm = await stack.api(AGENT, 'POST', `/contacts/${wes.id}/points/${pt!.id}/remove`, { reason: 'wrong_number' });
-  expect(rm.status, JSON.stringify(rm.body)).toBe(200);
+
+  // on screen: the agent removes it as a confirmed wrong number. The edit sheet offers that only on the number
+  // the ledger holds the wrong-number report for (module 57's remove route accepts nothing else) and says why it
+  // is not offered on Wes's real number.
+  await signIn(page, stack, w.agents[0]!);
+  await contactPage(page, wes.id, wes.name);
+  await page.waitForLoadState('networkidle');
+  await expect(page.getByRole('button', { name: 'Text', exact: true })).toBeDisabled();
+  const details = page.getByRole('region', { name: 'Details' });
+  await tap(page, details.getByRole('button', { name: `Edit details of ${wes.name}` }));
+  const sheet = page.getByRole('dialog', { name: `Edit ${wes.name}` });
+  const rowOf = (e164: string) => sheet.getByRole('group', { name: `Phone (${e164.slice(2, 5)}) ${e164.slice(5, 8)}-${e164.slice(8)}`, exact: true });
+  await expect(sheet.getByRole('button', { name: 'Remove as a wrong number' })).toHaveCount(1);
+  await expect(rowOf(real).getByRole('button', { name: 'Remove as a wrong number' })).toHaveCount(0);
+  await expect(rowOf(real).getByText('nobody has reported this number as a wrong number yet', { exact: false })).toBeVisible();
+  await shot(page, info, 'j3', '5a-remove-as-wrong-number-offered');
+  await tap(page, rowOf(wrong).getByRole('button', { name: 'Remove as a wrong number' }));
+  await expect(page.getByTestId('people-toast').getByText('Number removed as a wrong number')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId('people-toast').getByRole('button', { name: 'Undo' })).toHaveCount(0);
+  await tap(page, sheet.getByRole('button', { name: 'Cancel' }));
+  await expect(sheet).toHaveCount(0);
+  const [gone] = await pollSql<{ status: string; removed_reason: string | null }>(stack, 'SELECT status, removed_reason FROM contact_points WHERE id = $1', [pt!.id], (r) => r[0]?.removed_reason === 'wrong_number');
+  expect(gone).toMatchObject({ status: 'removed', removed_reason: 'wrong_number' });
   const after = await stack.api<{ reachability: { channels: { sms: { blocked: boolean } } } }>(AGENT, 'GET', `/contacts/${wes.id}/reachability`);
   expect(after.body.reachability.channels.sms.blocked).toBe(false);
 
-  await signIn(page, stack, w.agents[0]!);
-  await contactPage(page, wes.id, wes.name);
+  await page.reload();
+  await expect(page.getByRole('heading', { level: 1, name: wes.name })).toBeVisible({ timeout: 15_000 });
   await page.waitForLoadState('networkidle');
   await expect(page.getByRole('button', { name: 'Text', exact: true })).toBeEnabled();
   await expect(page.getByText(/a number you removed/)).toHaveCount(0);

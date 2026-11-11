@@ -1,13 +1,18 @@
-// Details (PARITY_PLAN §5): phones and emails with labels, addresses, relationships, collaborators, and a
-// pencil to edit. "Edit / replace a phone": phone Details ✎ → field → Save = 3 taps; desktop inline → ↵ = 1.
+// Details (PARITY_PLAN §5): phones and emails with labels, addresses, custom fields (the Details slot of
+// contact/sections.ts), relationships, collaborators, and a pencil to edit. "Edit / replace a phone": phone Details ✎ → field → Save = 3 taps; desktop inline → ↵ = 1.
 // A number is never edited in place: changing it replaces it (the old one is removed and keeps its opt-out
 // history, R-PAR-11). If a number you removed opted out, texting stays blocked and this says why (R-PAR-12).
+// R-PAR-12's one exception, removing a point as a confirmed wrong number, is offered exactly where module 57's
+// remove route accepts it: on a point whose wrong-number report is on the consent ledger (a call from the app
+// marked "Wrong number", or a reply saying so). Anywhere else the sheet says why it is not offered. Such a removal
+// has no Undo: a confirmed wrong number is never added back (WRONG_NUMBER_FINAL).
 import { useQuery } from '@tanstack/react-query';
 import { type FormEvent, useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Dialog, Notice, TextField } from '../../design/index.js';
 import { type ApiError, useApi } from '../../shell/index.js';
 import { formatPhone, intentLabel } from '../feed/lib/format.js';
+import { DetailsSlots } from '../contact/slots.js';
 import type { ContactFullView } from '../feed/lib/types.js';
 import { type Details, type PointDetail, RELATIONSHIP_LABEL, firstNameOf, pointsKey, useCandidates } from './api.js';
 import { selectClass, useIsDesktop, usePersonAction, useToast } from './hooks.js';
@@ -68,6 +73,13 @@ interface PointEdit {
   originalLabel: string;
 }
 
+/** Why "Remove as a wrong number" is not offered for a saved point (R-PAR-12: the ledger needs the report first). */
+export function wrongNumberNotOffered(kind: 'phone' | 'email'): string {
+  return kind === 'phone'
+    ? '“Remove as a wrong number” isn’t offered: nobody has reported this number as a wrong number yet (a call from the app marked “Wrong number”, or a reply saying so).'
+    : '“Remove as a wrong address” isn’t offered: nobody has reported this email as reaching the wrong person yet (a reply saying so).';
+}
+
 /** Phone: one sheet to edit names, numbers, emails, intent and type; Save sends only what changed. */
 function EditSheet({ contact, details, points, onClose }: { contact: ContactFullView; details: Details; points: PointDetail[]; onClose: () => void }) {
   const [first, setFirst] = useState(contact.firstName ?? '');
@@ -75,6 +87,9 @@ function EditSheet({ contact, details, points, onClose }: { contact: ContactFull
   const [intent, setIntent] = useState(contact.intent ?? '');
   const [type, setType] = useState(contact.contactType);
   const [rows, setRows] = useState<PointEdit[]>(() => points.map((p) => ({ id: p.id, kind: p.kind, original: show(p), value: show(p), label: p.label, originalLabel: p.label })));
+  // read from the live points (not the sheet's first snapshot): the saved points whose wrong-number report is
+  // on the ledger, where the remove route accepts reason wrong_number
+  const reported = new Set(points.filter((p) => p.wrongNumberReported === true).map((p) => p.id));
   const [problem, setProblem] = useState<string | null>(null);
   const act = usePersonAction(contact.id);
   const toast = useToast();
@@ -118,12 +133,15 @@ function EditSheet({ contact, details, points, onClose }: { contact: ContactFull
     onClose();
   };
 
-  const remove = async (row: PointEdit) => {
+  const remove = async (row: PointEdit, reason: 'old' | 'wrong_number' = 'old') => {
     if (!row.id) return setRows((rs) => rs.filter((r) => r !== row));
-    const r = await act.run('POST', `/contacts/${contact.id}/points/${row.id}/remove`, { reason: 'old' });
+    const r = await act.run('POST', `/contacts/${contact.id}/points/${row.id}/remove`, { reason });
     if (!r.ok) return setProblem(r.message);
     setRows((rs) => rs.filter((x) => x !== row));
-    toast({ text: `${row.kind === 'phone' ? 'Number' : 'Email'} removed`, undo: () => void act.run('POST', `/contacts/${contact.id}/points`, { kind: row.kind, address: row.original, label: row.originalLabel }) });
+    const what = row.kind === 'phone' ? 'Number' : 'Email';
+    // a confirmed wrong number is never added back (WRONG_NUMBER_FINAL): no Undo for it
+    if (reason === 'wrong_number') toast({ text: `${what} removed as a wrong ${row.kind === 'phone' ? 'number' : 'address'}` });
+    else toast({ text: `${what} removed`, undo: () => void act.run('POST', `/contacts/${contact.id}/points`, { kind: row.kind, address: row.original, label: row.originalLabel }) });
   };
 
   return (
@@ -145,7 +163,7 @@ function EditSheet({ contact, details, points, onClose }: { contact: ContactFull
         <TextField label="First name" value={first} onChange={(e) => setFirst(e.target.value)} autoComplete="off" />
         <TextField label="Last name" value={last} onChange={(e) => setLast(e.target.value)} autoComplete="off" />
         {rows.map((row, i) => (
-          <div key={row.id ?? `new-${i}`} className="flex flex-col gap-2 rounded-xl border border-line p-3">
+          <div key={row.id ?? `new-${i}`} role="group" aria-label={row.id ? `${row.kind === 'phone' ? 'Phone' : 'Email'} ${row.original}` : `New ${row.kind}`} className="flex flex-col gap-2 rounded-xl border border-line p-3">
             <TextField
               label={`${row.kind === 'phone' ? 'Phone' : 'Email'} (${row.label})`}
               value={row.value}
@@ -168,7 +186,13 @@ function EditSheet({ contact, details, points, onClose }: { contact: ContactFull
               <Button variant="quiet" onClick={() => void remove(row)}>
                 Remove
               </Button>
+              {row.id && reported.has(row.id) ? (
+                <Button variant="quiet" onClick={() => void remove(row, 'wrong_number')}>
+                  {row.kind === 'phone' ? 'Remove as a wrong number' : 'Remove as a wrong address'}
+                </Button>
+              ) : null}
             </div>
+            {row.id && !reported.has(row.id) ? <p className="text-[13px] leading-snug text-ink-muted">{wrongNumberNotOffered(row.kind)}</p> : null}
           </div>
         ))}
         <div className="flex gap-2">
@@ -335,6 +359,9 @@ export function DetailsSection({ contact, details }: { contact: ContactFullView;
           ))}
         </ul>
       ) : null}
+
+      {/* sections other modules register for the Details slot (contact/sections.ts): custom fields */}
+      <DetailsSlots contact={contact} />
 
       <div className="flex flex-col gap-1">
         <h3 className="text-[15px] font-semibold text-ink">Relationships</h3>

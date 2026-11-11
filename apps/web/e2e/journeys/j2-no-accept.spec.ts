@@ -7,10 +7,12 @@
 //     refused); the ledger holds every step;
 //   - a pond claim race between two agents ends with exactly one owner: two simultaneous API claims give
 //     one 200 and one 409 with a precise code (recorded as a rejection), and in the browser the agent who
-//     taps Claim a moment too late reads "Someone else claimed this lead just now." and the card goes away.
+//     taps Claim a moment too late reads "Someone else claimed this lead just now." and the card goes away;
+//   - a pond lead reaches the agents who may claim it: a "New in the pond" card on Home (first name and last
+//     initial, one-tap Claim) and the lead on the Pond page; never the agent who released it (claim cooldown).
 import { randomUUID } from 'node:crypto';
 import { expect, test } from 'playwright/test';
-import { feedCard, isPhone, pollSql, shot, signIn, tap } from './helpers.js';
+import { feedCard, isPhone, pollSql, shot, signIn, tap, toast } from './helpers.js';
 import { type JourneyStack, type WorldInfo, startJourneyStack } from './stack.js';
 
 test.describe.configure({ mode: 'serial' });
@@ -120,7 +122,7 @@ test('J2: a pond claim race between two agents ends with exactly one owner; the 
   const racy = await pondLead(`Rae ${tag}race`);
   const racers = w.agents.filter((a) => a.userId !== racy.releasedBy);
   expect(racers).toHaveLength(2);
-  // evidence for the open pond bug below: the lead is in the pond, yet a racer's Pond page is empty
+  // the lead is in the pond: a racer's Pond page offers it
   await signIn(page, stack, racers[0]!);
   await page.goto(`${stack.webUrl}/pond`);
   await expect(page.getByRole('heading', { level: 1, name: 'Pond' })).toBeVisible();
@@ -139,22 +141,25 @@ test('J2: a pond claim race between two agents ends with exactly one owner; the 
   await pollSql(stack, 'SELECT code, actor_user_id FROM ownership_command_rejections WHERE contact_id = $1', [racy.id], (r: { actor_user_id: string }[]) => r.some((x) => x.actor_user_id === loser.userId));
 });
 
-// BUG (High, open): an agent or Team Lead never sees a pond lead in the web app, so nobody can claim from a
-// pond on phone or desktop. The Pond page lists, for non-Owner/Admin roles, only the ponds named by the
-// feed's "pond_new" Claim actions (PondPage.pondIdsFromFeed), and the feed never has one:
-// apps/api/src/workspace/repos/feedInputs.ts builds FeedInputs with `pondLeads: []` (core/priority/feed.ts
-// would emit pond_new cards from it). Owner/Admin see the pond cards but may not claim ("You can't claim
-// from this pond"). Repro: a lead released to the default pond (state in_pond); sign in as another agent of
-// the routing rule; Home has no "New in the pond" card and /pond says "No pond leads to claim right now",
-// while POST /api/leads/:id/claim as that agent succeeds. Not a small fix: pond entry has to refresh every
-// eligible member's incremental feed (0034). Remove the fixme when the feed carries pond leads.
-test.fixme('J2: on screen, the agent who taps Claim a moment too late reads why and the pond card goes away', async ({ page }, info) => {
+test('J2: a pond lead reaches the agents who may claim it (Home and Pond); the agent who taps Claim a moment too late reads why and the pond card goes away', async ({ page }, info) => {
   test.setTimeout(180_000);
   const tag = info.project.name === 'phone' ? 'Phone' : 'Desk';
   // 2. on screen: one agent has the pond card open, the other claims first, the late tap is told why
   const lead = await pondLead(`Sol ${tag}pond`);
   const [slow, fast] = w.agents.filter((a) => a.userId !== lead.releasedBy);
   await signIn(page, stack, slow!);
+  // Home: the "New in the pond" card, masked like the Pond page (R-PERM-6), with one-tap Claim
+  const home = feedCard(page, `Sol ${tag[0]}.`);
+  await expect(home.getByText('New in the pond', { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(home.getByText(/^New in the pond .+; first to claim gets it$/)).toBeVisible();
+  await expect(home.getByRole('button', { name: 'Claim' })).toBeVisible();
+  expect(await page.locator('main').textContent()).not.toContain(`Sol ${tag}pond`);
+  await shot(page, info, 'j2', '3-home-pond-card');
+  // the agent who released it is in claim cooldown: it reaches neither their feed nor their Pond page
+  const releaserFeed = await stack.api<{ pinned: { contact: { id: string } | null; itemType: string }[]; scored: { contact: { id: string } | null; itemType: string }[] }>(clientOf(lead.releasedBy), 'GET', '/feed');
+  expect([...releaserFeed.body.pinned, ...releaserFeed.body.scored].filter((c) => c.itemType === 'pond_new' && c.contact?.id === lead.id)).toEqual([]);
+  const releaserPond = await stack.api<{ cards: { id: string }[] }>(clientOf(lead.releasedBy), 'GET', `/ponds/${w.defaultPondId}/cards`);
+  expect(releaserPond.body.cards.map((c) => c.id)).not.toContain(lead.id);
   await page.goto(`${stack.webUrl}/pond`);
   await expect(page.getByRole('heading', { level: 1, name: 'Pond' })).toBeVisible();
   const card = page.locator('article').filter({ hasText: `Sol ${tag[0]}.` }).first();
@@ -162,8 +167,12 @@ test.fixme('J2: on screen, the agent who taps Claim a moment too late reads why 
   await shot(page, info, 'j2', '3-pond');
   expect((await stack.api(clientOf(fast!.userId), 'POST', `/leads/${lead.id}/claim`, { commandId: randomUUID(), pondId: w.defaultPondId })).status).toBe(200);
   await tap(page, card.getByRole('button', { name: 'Claim' }));
-  await expect(page.getByText('Someone else claimed this lead just now.')).toBeVisible({ timeout: 15_000 });
+  // seen in the agent toast and heard through the live region, where it outlives the card the refresh removes
+  // (the reason used to live inside the card and could vanish with it before anyone read it)
+  await expect(toast(page).getByText('Someone else claimed this lead just now.', { exact: true })).toBeVisible({ timeout: 15_000 });
   await shot(page, info, 'j2', '4-claim-lost');
+  await expect(page.locator('article').filter({ hasText: `Sol ${tag[0]}.` })).toHaveCount(0, { timeout: 15_000 });
+  await expect(page.getByTestId('announcer')).toHaveText('Someone else claimed this lead just now.');
   // nothing reveals who won (R-PERM-7), and the lead is the winner's
   expect(await page.locator('main').textContent()).not.toContain('Member agent claimed');
   expect(await state(lead.id)).toMatchObject({ ownership_state: 'owned', owner_user_id: fast!.userId });

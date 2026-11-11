@@ -22,11 +22,28 @@ export const TYPES: readonly ExceptionType[] = ['untouched_lead', 'overdue_promi
 const SOURCE_TYPES = new Set<EvidenceSourceType>(['call', 'message', 'email', 'note', 'listing', 'import', 'behavior_event', 'deal', 'task', 'appointment', 'ownership_period', 'message_status']);
 
 /**
+ * An untouched lead's facts belong to one ownership period: its owner's. Once the lead moved on (reassigned,
+ * released), the card labels them as that owner's earlier period, so nothing reads as the new owner's.
+ */
+export function periodLabel(item: Pick<ExceptionItem, 'itemType' | 'owner' | 'period'>): string | null {
+  if (item.itemType !== 'untouched_lead' || !item.period) return null;
+  const who = item.owner?.name ?? (item.owner ? 'A former member' : 'No owner');
+  return item.period.current ? `${who}'s ownership period` : `${who}'s earlier ownership period (the lead has moved on since)`;
+}
+
+/** The server's period lines, said about the period's owner (the period label already says when it ended). */
+const PERIOD_LINE: Record<string, (owner: string) => string> = {
+  'Lead became theirs': (o) => `Lead became ${o}'s`,
+  'No human call, text or email by the first-contact deadline; the lead later left this agent': () => 'No human call, text or email by the first-contact deadline',
+};
+
+/**
  * Exception evidence (source + locator + snippet + short explanation, PII-free unless quoted) as the
  * design system's EvidenceRefView. The instant the evidence refers to is part of the explanation, so
  * "First touch was due · Nov 10, 2:14 PM" reads on its own. No score of any kind is carried over.
+ * `owner`: an untouched lead's period owner, named in its period lines.
  */
-export function exceptionEvidenceView(e: ExceptionEvidence): EvidenceRefView {
+export function exceptionEvidenceView(e: ExceptionEvidence, o: { owner?: string | null } = {}): EvidenceRefView {
   const sourceType = (SOURCE_TYPES.has(e.sourceType as EvidenceSourceType) ? e.sourceType : 'note') as EvidenceSourceType;
   const loc = (e.locator ?? {}) as { kind?: unknown; startMs?: unknown; endMs?: unknown; name?: unknown };
   const offset = e.link?.offsetMs ?? null;
@@ -42,7 +59,8 @@ export function exceptionEvidenceView(e: ExceptionEvidence): EvidenceRefView {
   // an explanation that only restates the quote (the server labels quoted evidence with its quote line)
   // would show the same words twice; the quote line already says where it is from
   const restates = snippet ? e.explanation.includes(snippet) : false;
-  const explanation = restates ? null : e.at ? `${e.explanation} · ${formatStamp(e.at)}` : e.explanation;
+  const said = e.sourceType === 'ownership_period' && o.owner ? (PERIOD_LINE[e.explanation]?.(o.owner) ?? e.explanation) : e.explanation;
+  const explanation = restates ? null : e.at ? `${said} · ${formatStamp(e.at)}` : said;
   return {
     sourceType,
     sourceId: e.link?.id ?? e.sourceId,

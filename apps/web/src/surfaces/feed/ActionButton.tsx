@@ -11,6 +11,11 @@
 //   show_details                           opens the card's own details in place (Phase 2/3 cards whose
 //                                          page does not exist yet: the weekly plan, the daily tip)
 //
+// An ownership command that fails is said through the app's announcer (the agent toast and the polite live
+// region), not inside the card: the refresh the answer triggers usually takes the card away (someone else
+// claimed the lead, the offer ended), and the reason must outlive it (journey J2: the late claimer's "Someone
+// else claimed this lead just now." vanished with the pond card).
+//
 // A `note` on an action is an optional hint shown under the button (core/priority no longer sets one:
 // the send-time check never asks for a confirmation). Text, Email, Call and Send are disabled before
 // the tap when the contact cannot be reached on that channel, with the exact reason under the button
@@ -104,12 +109,13 @@ function OwnershipButton({ action, card, variant = 'primary', expired, block, cl
   const who = card?.contact?.name ?? 'This lead';
   const run = async () => {
     const r = await cmd.run(body);
-    if (!r.ok) return;
+    // the refresh this answer triggers usually removes the card: say why where it outlives the card
+    if (!r.ok) return announce(r.message);
     if (action.kind === 'decline_offer') announce('Declined. The lead goes to the next agent.');
     else announce(`${who} is yours now.`);
   };
   return (
-    <Wrap error={cmd.error?.message} block={block}>
+    <Wrap block={block}>
       <Button variant={variant} icon={ACTION_ICON[action.kind]} pending={cmd.pending} disabled={expired} block={block} className={className} onClick={() => void run()}>
         {action.label}
       </Button>

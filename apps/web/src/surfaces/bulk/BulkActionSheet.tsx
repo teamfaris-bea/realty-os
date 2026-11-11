@@ -16,7 +16,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Dialog, Notice } from '../../design/index.js';
 import { type ApiError, messageFor, useApi, useCommand } from '../../shell/index.js';
-import type { TemplateView } from '../templates/api.js';
+import { type TemplateView, readableMergeFields } from '../templates/api.js';
 import { BULK_ERROR_MESSAGES, BULK_KEY, type BulkActionView, type BulkKind, KIND_WORDS, reasonWords } from './api.js';
 
 export const STAGE_CHOICES: readonly { key: string; label: string }[] = [
@@ -141,7 +141,7 @@ export function BulkActionSheet({ kind, contactIds = [], selection, selectedText
               <li key={t.id}>
                 <button type="button" disabled={create.pending} onClick={() => void build({ templateId: t.id, label: t.name })} className="flex min-h-tap w-full flex-col items-start rounded-xl border border-line bg-surface px-3.5 py-2 text-left active:bg-surface-2 disabled:opacity-60">
                   <span className="text-[17px] font-medium text-ink">{t.name}</span>
-                  <span className="line-clamp-2 text-[14px] text-ink-muted [overflow-wrap:anywhere]">{t.subject ? `${t.subject} · ` : ''}{t.body}</span>
+                  <span className="line-clamp-2 text-[14px] text-ink-muted [overflow-wrap:anywhere]">{t.subject ? `${readableMergeFields(t.subject)} · ` : ''}{readableMergeFields(t.body)}</span>
                 </button>
               </li>
             ))}
@@ -180,8 +180,9 @@ export function BulkActionSheet({ kind, contactIds = [], selection, selectedText
           {draft.sharedAddresses > 0 ? <p className="text-[14px] text-ink-muted">{draft.sharedAddresses + 1} people share an address, so they get one {words.noun} between them.</p> : null}
           {draft.body ? (
             <section aria-label="Message" className="flex flex-col gap-1 rounded-xl border border-line px-3.5 py-3">
-              {draft.subject ? <p className="text-[15px] font-semibold text-ink [overflow-wrap:anywhere]">{draft.subject}</p> : null}
-              <p className="whitespace-pre-wrap text-[15px] text-ink [overflow-wrap:anywhere]">{draft.body}</p>
+              {/* merge fields in words: each person's own values are filled in when it goes out */}
+              {draft.subject ? <p className="text-[15px] font-semibold text-ink [overflow-wrap:anywhere]">{readableMergeFields(draft.subject)}</p> : null}
+              <p className="whitespace-pre-wrap text-[15px] text-ink [overflow-wrap:anywhere]">{readableMergeFields(draft.body)}</p>
               <p className="text-[14px] text-ink-muted">
                 {kind === 'email'
                   ? 'Sent as marketing: your signature, the brokerage name and postal address, and an unsubscribe link are added. People who opt out before it reaches them are skipped.'

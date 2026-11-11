@@ -461,3 +461,39 @@ export async function taskClaims(tx: Tx, taskIds: readonly string[]): Promise<Ma
   for (const t of r.rows) out.set(t.id, t.source_claim_id);
   return out;
 }
+
+export interface LoggedActivityRow {
+  dedupe_key: string;
+  id: string;
+  kind: 'call' | 'text' | 'email';
+  direction: 'outbound' | 'inbound' | null;
+  outcome: string | null;
+  at: Date;
+  author_name: string | null;
+}
+
+/**
+ * R-PAR-32: the activities people logged (notes with source logged_activity, R-PAR-30) inside each untouched
+ * lead's ownership period, from its start event to the event that ended it (or now), read under the VIEWER's
+ * RLS: the period's ledger rows and the notes are visible only to whoever may see them. Context only: nothing
+ * here feeds the derivation, so a logged activity never satisfies, delays or clears the first touch.
+ */
+export async function loggedActivitiesInPeriods(tx: Tx, periods: readonly { key: string; contactId: string; seq: number }[]): Promise<LoggedActivityRow[]> {
+  if (periods.length === 0) return [];
+  const r = await sql<LoggedActivityRow>`
+    SELECT x.k AS dedupe_key, n.id, n.activity_kind AS kind, n.activity_direction AS direction, n.activity_outcome AS outcome,
+           n.activity_at AS at, u.display_name AS author_name
+      FROM unnest(${periods.map((p) => p.key)}::text[], ${periods.map((p) => p.contactId)}::uuid[], ${periods.map((p) => p.seq)}::bigint[]) AS x(k, contact_id, seq)
+      JOIN lead_ownership_events s ON s.tenant_id = app.tenant_id() AND s.contact_id = x.contact_id AND s.seq = x.seq
+      LEFT JOIN LATERAL (
+        SELECT e.occurred_at FROM lead_ownership_events e
+         WHERE e.tenant_id = s.tenant_id AND e.contact_id = s.contact_id AND e.seq > s.seq AND e.type = ANY (${PERIOD_END_TYPES}::text[])
+         ORDER BY e.seq LIMIT 1) pe ON true
+      -- a logged time has minute precision (the log sheet's time field): an activity logged in the minute the period
+      -- began belongs to it
+      JOIN notes n ON n.tenant_id = s.tenant_id AND n.contact_id = s.contact_id AND n.source = 'logged_activity'
+                  AND n.activity_at >= date_trunc('minute', s.occurred_at) AND (pe.occurred_at IS NULL OR n.activity_at < pe.occurred_at)
+      LEFT JOIN users u ON u.id = n.author_user_id
+     ORDER BY x.k, n.activity_at, n.id`.execute(tx);
+  return r.rows;
+}

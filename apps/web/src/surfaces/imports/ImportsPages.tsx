@@ -324,7 +324,21 @@ function UserMappings({ batch, onDone }: { batch: ImportBatch; onDone(t: string)
   );
 }
 
-function Counts({ counts }: { counts: NonNullable<ImportStage['counts']> }) {
+/** After an undo the import's count is history: say what the undo did, and what it left for a person. */
+export function importedLine(counts: NonNullable<ImportStage['counts']>, stage: Pick<ImportStage, 'status' | 'revert'>): string | null {
+  if (counts.imported === null) return null;
+  if (stage.status === 'reverted') {
+    const left = typeof stage.revert?.needsDecision === 'number' ? stage.revert.needsDecision : 0;
+    const removed = Math.max(0, counts.imported - left);
+    return left === 0
+      ? `Undone: the ${counts.imported} of ${counts.source} that had been imported were removed.`
+      : `Undone: ${removed} of the ${counts.imported} imported were removed; ${left} changed since the import and wait for your decision.`;
+  }
+  if (stage.status === 'reverting') return `Undoing the ${counts.imported} of ${counts.source} that were imported…`;
+  return `${counts.imported} of ${counts.source} imported`;
+}
+
+function Counts({ counts, stage }: { counts: NonNullable<ImportStage['counts']>; stage: Pick<ImportStage, 'status' | 'revert'> }) {
   const cells: [string, number][] = [
     ['In the source', counts.source],
     ['Will import', counts.willImport],
@@ -342,11 +356,7 @@ function Counts({ counts }: { counts: NonNullable<ImportStage['counts']> }) {
           </div>
         ))}
       </dl>
-      {counts.imported !== null ? (
-        <p className="text-[15px] tabular-nums text-ink">
-          {counts.imported} of {counts.source} imported
-        </p>
-      ) : null}
+      {counts.imported !== null ? <p className="text-[15px] tabular-nums text-ink">{importedLine(counts, stage)}</p> : null}
       {!reconciles(counts) ? <p className="text-[14px] text-warn">These counts don't add up to the source total. Run the dry run again before approving.</p> : null}
     </div>
   );
@@ -376,7 +386,7 @@ function StageCard({ batch, stage, stages, onDone }: { batch: ImportBatch; stage
         <Pill tone={stage.status === 'verified' ? 'ok' : stage.status === 'failed' ? 'danger' : stage.status === 'committed' || stage.status === 'dry_run_ready' ? 'warn' : 'neutral'}>{STAGE_STATUS[stage.status] ?? stage.status}</Pill>
       </div>
       {CATEGORY_NOTE[stage.category] ? <p className="text-[15px] text-ink">{CATEGORY_NOTE[stage.category]}</p> : null}
-      {stage.counts ? <Counts counts={stage.counts} /> : null}
+      {stage.counts ? <Counts counts={stage.counts} stage={stage} /> : null}
       {canSkip && SKIP_WARNING[stage.category] ? <p className="text-[14px] text-ink-muted">{SKIP_WARNING[stage.category]}</p> : null}
       {stage.blockers.map((x, i) => (
         <Notice key={`${x.code}:${i}`} tone="warn">
@@ -615,6 +625,11 @@ function Verify({ batch, stage, onDone }: { batch: ImportBatch; stage: ImportSta
   );
 }
 
+/** The parity table's second count: what a dry run would import, what the import wrote, or what it wrote before an undo. */
+export function parityImportedHeader(phase: string): string {
+  return phase === 'dry_run' ? 'Will import' : phase === 'reverted' ? 'Imported, then undone' : 'Imported';
+}
+
 function Report({ batch }: { batch: ImportBatch }) {
   const q = useImportsQuery<ReportResponse & { parity?: { phase: string; rows: ParityRowView[]; lines: string[] } | null }>([...batchKey(batch.id), 'report', batch.stages.map((s) => s.status).join()], `/imports/${batch.id}/report`);
   if (!q.data) return null;
@@ -637,12 +652,12 @@ function Report({ batch }: { batch: ImportBatch }) {
           <h3 className="text-[16px] font-semibold text-ink">Stages, tags and custom fields</h3>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-[15px] text-ink">
-              <caption className="sr-only">Stages, tags and custom fields: in the source, {parity.phase === 'dry_run' ? 'will import' : 'imported'}, needs review, not imported, already here</caption>
+              <caption className="sr-only">Stages, tags and custom fields: in the source, {parityImportedHeader(parity.phase).toLowerCase()}, needs review, not imported, already here</caption>
               <thead>
                 <tr className="text-[13px] text-ink-muted">
                   <th scope="col" className="py-1 pr-3 font-medium">What</th>
                   <th scope="col" className="py-1 pr-3 font-medium">In the source</th>
-                  <th scope="col" className="py-1 pr-3 font-medium">{parity.phase === 'dry_run' ? 'Will import' : 'Imported'}</th>
+                  <th scope="col" className="py-1 pr-3 font-medium">{parityImportedHeader(parity.phase)}</th>
                   <th scope="col" className="py-1 pr-3 font-medium">Needs review</th>
                   <th scope="col" className="py-1 pr-3 font-medium">Not imported</th>
                   <th scope="col" className="py-1 font-medium">Already here</th>

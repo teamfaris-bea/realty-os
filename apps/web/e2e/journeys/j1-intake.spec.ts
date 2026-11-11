@@ -87,7 +87,8 @@ test('J1: a webhook lead is offered, accepted on this device, answered within it
   const waiting = feedCard(page, name);
   await expect(waiting).toBeVisible({ timeout: 15_000 });
   await expect(waiting.getByText('Waiting for your reply', { exact: true })).toBeVisible();
-  await expect(waiting.getByText(/^Texted .+; no reply yet$/)).toBeVisible();
+  // the reason says the client wrote (not "Texted …", which read as if the agent had texted)
+  await expect(waiting.getByText(/^They texted .+ ago; no reply yet$/)).toBeVisible();
   await shot(page, info, 'j1', '3-client-replied');
 
   // 5. the agent answers from the card

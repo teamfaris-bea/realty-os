@@ -259,6 +259,52 @@ export async function memberTarget(tx: Tx, userId: string): Promise<{ role: stri
   return r.rows[0] ?? null;
 }
 
+export interface ClaimablePondRow {
+  id: string;
+  name: string;
+  is_default: boolean;
+  open_to_all: boolean;
+  eligible_roles: string[];
+  claims_per_day: number;
+  claim_cooldown_hours: number;
+  reinquiry: 'reroute' | 'stay';
+  is_member: boolean;
+}
+
+/** The ponds the caller may claim from (app.my_pond_ids()) that allow claims at all (R-OWN-16). */
+export async function myClaimablePonds(tx: Tx): Promise<ClaimablePondRow[]> {
+  const r = await sql<ClaimablePondRow>`
+    SELECT p.id, p.name, p.is_default, p.open_to_all, p.eligible_roles, p.claims_per_day, p.claim_cooldown_hours, p.reinquiry,
+           EXISTS (SELECT 1 FROM pond_members pm WHERE pm.tenant_id = p.tenant_id AND pm.pond_id = p.id AND pm.user_id = app.user_id()) AS is_member
+      FROM ponds p
+     WHERE p.tenant_id = app.tenant_id() AND p.id = ANY (app.my_pond_ids()) AND p.claims_per_day > 0
+     ORDER BY p.is_default DESC, p.name, p.id`.execute(tx);
+  return r.rows;
+}
+
+/** The caller's own claim totals as a claim reads them (app.claim_stats): claims since `dayStartIso`, uncontacted owned leads. */
+export async function myClaimTotals(tx: Tx, userId: string, dayStartIso: string, nowIso: string): Promise<{ claimsToday: number; uncontactedOwned: number } | null> {
+  const r = await sql<{ claims_today: number; uncontacted_owned: number }>`
+    SELECT claims_today, uncontacted_owned FROM app.claim_stats(${userId}::uuid, NULL::uuid, ${dayStartIso}::timestamptz, ${nowIso}::timestamptz)`.execute(tx);
+  const s = r.rows[0];
+  return s ? { claimsToday: s.claims_today, uncontactedOwned: s.uncontacted_owned } : null;
+}
+
+/** The tenant's zone and uncontacted-lead capacity cap (the claim rules' settings). */
+export async function claimSettings(tx: Tx): Promise<{ zone: string; cap: number } | null> {
+  const r = await sql<{ zone: string; cap: number }>`
+    SELECT default_timezone AS zone, uncontacted_capacity_cap AS cap FROM tenant_settings WHERE tenant_id = app.tenant_id()`.execute(tx);
+  return r.rows[0] ?? null;
+}
+
+/** For the caller: which of `contactIds` are pond leads they may claim, with the end of their own claim cooldown on each (app.my_pond_leads). */
+export async function myPondLeadCooldowns(tx: Tx, contactIds: readonly string[]): Promise<Map<string, Date | null>> {
+  if (contactIds.length === 0) return new Map();
+  const r = await sql<{ contact_id: string; cooldown_until: Date | null }>`
+    SELECT contact_id, cooldown_until FROM app.my_pond_leads(NULL, ${[...contactIds]}::uuid[])`.execute(tx);
+  return new Map(r.rows.map((x) => [x.contact_id, x.cooldown_until]));
+}
+
 /** Whether the caller may claim from the pond (app.my_pond_ids(); Team Leads see every pond). */
 export async function pondAccess(tx: Tx, pondId: string): Promise<{ id: string; name: string; claimable: boolean; tenant_wide: boolean; team_lead: boolean } | null> {
   const r = await sql<{ id: string; name: string; claimable: boolean; tenant_wide: boolean; team_lead: boolean }>`

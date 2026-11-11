@@ -106,13 +106,19 @@ describe('R-PAR-12: the send-time gate reads the dispatch guards’ opt-out fan-
 
   it('R-PAR-12 E169: a STOP on a phone removed as a confirmed wrong number does not block the person’s other phone (the guards’ one exception), and the wrong number keeps its opt-outs', async () => {
     const c = await ownedContact(agent);
+    const reported = async () =>
+      Object.fromEntries((await call<{ points: { address: string; wrongNumberReported: boolean }[] }>(agent, 'GET', `/contacts/${c.id}/points`)).body.points.map((p) => [p.address, p.wrongNumberReported]));
     expect((await inboundSms(h, c.phone, w.mainNumber, 'STOP')).statusCode).toBe(200);
+    // a STOP is not a wrong-number report: the person's page does not offer "wrong number" for it yet
+    expect(await reported()).toEqual({ [c.phone]: false, [c.email]: false });
     // the ledger proves it a wrong number (the wrong-number reply path), then it is removed as one
     expect((await inboundSms(h, c.phone, w.mainNumber, 'Wrong number, sorry')).statusCode).toBe(200);
     const wrong = await pointOf(c.id, c.phone);
     expect(wrong.status).toBe('wrong_number');
     const work = randomPhone();
     await addPhone(c.id, work);
+    // the page offers "wrong number" exactly where the remove route accepts it: on the reported number only
+    expect(await reported()).toEqual({ [c.phone]: true, [work]: false, [c.email]: false });
     await removePoint(c.id, wrong.id, 'wrong_number');
     expect((await pointOf(c.id, c.phone)).removed_reason).toBe('wrong_number');
 
@@ -170,7 +176,7 @@ describe('R-PAR-12 with R-CONSENT-10 outbound-4: START lifts what its own STOP r
     (await h.su.query<{ status: string }>("SELECT status FROM consent_state WHERE tenant_id = $1 AND channel = 'sms' AND address_hmac = decode($2, 'hex') ORDER BY purpose", [w.tenantId, hmac])).rows.map((x) => x.status);
   const resubscribes = async (hmac: string) =>
     (await h.su.query<{ n: number }>("SELECT count(*)::int AS n FROM consent_events WHERE tenant_id = $1 AND address_hmac = decode($2, 'hex') AND event_type = 'resubscribe'", [w.tenantId, hmac])).rows[0]!.n;
-  type Reach = { channels: { sms: { blocked: boolean; reasons: { code: string; source: string; otherAddress: boolean; addressHint: string | null }[] } } };
+  type Reach = { channels: { sms: { blocked: boolean; reasons: { code: string; source: string; otherAddress: boolean; addressRemoved: boolean; addressHint: string | null }[] } } };
   const reach = async (id: string) => (await call<{ reachability: Reach }>(agent, 'GET', `/contacts/${id}/reachability`)).body.reachability.channels.sms;
 
   for (const how of ['old', 'replaced'] as const) {
@@ -208,7 +214,7 @@ describe('R-PAR-12 with R-CONSENT-10 outbound-4: START lifts what its own STOP r
     const r = await sendText(agent, p.id, 'Welcome back');
     expect(r.body).toMatchObject({ result: 'blocked', decision: { outcome: 'deny', reasons: ['CONSENT_REVOKED'] } });
     expect(smsTo(p.a)).toEqual([]);
-    expect(await reach(p.id)).toMatchObject({ blocked: true, reasons: [expect.objectContaining({ code: 'CONSENT_REVOKED', source: 'keyword', otherAddress: true, addressHint: `•••-•••-${p.b.slice(-4)}` })] });
+    expect(await reach(p.id)).toMatchObject({ blocked: true, reasons: [expect.objectContaining({ code: 'CONSENT_REVOKED', source: 'keyword', otherAddress: true, addressRemoved: true, addressHint: `•••-•••-${p.b.slice(-4)}` })] });
   });
 
   it('R-PAR-12 outbound-4: B’s copy also came from its own later STOP: A’s START does not lift B', async () => {

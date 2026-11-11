@@ -247,7 +247,7 @@ export function compareFeedItems(a: FeedItem, b: FeedItem): number {
 
 export interface ScoreFeedOptions {
   /**
-   * 'text' (default): labels carry relative times as words ("Texted 3 h ago"). 'template': every relative
+   * 'text' (default): labels carry relative times as words ("They texted 3 h ago"). 'template': every relative
    * time is a token that renderFeedItem(item, at) turns into the same words for the instant `at`. The
    * incremental feed (lane perf-misses) stores templated cards and renders them when read, so a stored
    * card's wording is exactly what scoreFeed would say at read time (renderFeedItem(scoreFeed(i,
@@ -437,7 +437,8 @@ export function scoreFeed(i: FeedInputs, opts: ScoreFeedOptions = {}): FeedItem[
     const first = msgs[0] as InboundFacts;
     const latest = msgs[msgs.length - 1] as InboundFacts;
     const missed = latest.kind === 'missed_call';
-    const what = missed ? `Missed call ${f.ago(latest.at)}` : `${latest.channel === 'email' ? 'Emailed' : 'Texted'} ${f.ago(latest.at)}; no reply yet`;
+    // the client wrote (never "Texted …", which reads as if the agent had texted): "They texted 20 min ago; no reply yet"
+    const what = missed ? `Missed call ${f.ago(latest.at)}` : `They ${latest.channel === 'email' ? 'emailed' : 'texted'} ${f.ago(latest.at)}; no reply yet`;
     const reasons: FeedReason[] = [missed ? reason('MISSED_CALL', what) : reason('CLIENT_WAITING', what)];
     if (msgs.length > 1) reasons.push(reason('MORE_WAITING', `${msgs.length} messages or calls waiting`));
     reasons.push(...waitingReasons(now, first.at));

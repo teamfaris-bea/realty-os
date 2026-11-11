@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { FakeFetch, err, renderApp, sessionFixture, tableWith } from '../../shell/testing/fakeApi.js';
 import { surface as batchTextSurface } from '../settings/batch-text/index.js';
+import { readableMergeFields } from '../templates/api.js';
 import type { BulkActionView } from './api.js';
 import { surface as bulkSurface } from './index.js';
 
@@ -59,6 +60,11 @@ describe('R-PAR-33 R-PAR-38 R-PAR-41 the bulk confirm sheet', () => {
     expect(within(left).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['9 opted out', '4 have no address for this', '1 share an address with someone already included (one message per address)']);
     expect(within(sheet).getByText('2 people share an address, so they get one email between them.')).toBeInTheDocument();
     expect(within(sheet).getByText(/an unsubscribe link are added/)).toBeInTheDocument();
+    // the message is shown with its merge fields in words, never the raw {{…}} (journey copy bug)
+    const msg = within(sheet).getByRole('region', { name: 'Message' });
+    expect(within(msg).getByText('New homes for [their first name]')).toBeInTheDocument();
+    expect(within(msg).getByText('Hi [their first name], three new listings this week.')).toBeInTheDocument();
+    expect(msg.textContent).not.toContain('{{');
     expect(within(sheet).getByText('Nobody who opted out can be included. Bulk messages don\'t count as touches on a lead.')).toBeInTheDocument();
     expect(within(sheet).queryByRole('checkbox')).toBeNull(); // nothing to pre-tick
     const body = fake.callsTo('POST /bulk-actions')[0]!.body as Record<string, unknown>;
@@ -95,11 +101,31 @@ describe('R-PAR-33 R-PAR-38 R-PAR-41 the bulk confirm sheet', () => {
       .on(`POST /bulk-actions/${ACTION}/cancel`, { status: 200, body: { action: { ...running, status: 'canceled', counts: { ...running.counts, canceled: 277, pending: 0 } } } });
     app(fake, `/bulk/${ACTION}`);
     expect(await screen.findByRole('heading', { name: 'Emailed 120 of 412' })).toBeInTheDocument();
+    expect(screen.getByText('Hi [their first name], three new listings this week.')).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain('{{contact.first_name}}');
     expect(screen.getByText(/277 still to go/)).toBeInTheDocument();
     expect(within(screen.getByRole('list', { name: 'Why people were left out' })).getAllByRole('listitem')[0]!.textContent).toBe('10 opted out');
     await userEvent.setup().click(screen.getByRole('button', { name: 'Cancel the rest' }));
     expect(await screen.findByText('Canceled')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Cancel the rest' })).toBeNull();
+  });
+});
+
+describe('merge fields in words (the bulk sheet, the template picker, a bulk action page)', () => {
+  it('says each merge field in words, with its fallback; text that does not parse is shown as it is', () => {
+    expect(readableMergeFields('Hi {{contact.first_name}}, from {{ agent.first_name }} at {{brokerage.name}}')).toBe('Hi [their first name], from [your first name] at [brokerage name]');
+    expect(readableMergeFields('Hi {{contact.first_name|there}}!')).toBe('Hi [their first name, or “there”]!');
+    expect(readableMergeFields('Your {{field.closing_date}} is close')).toBe('Your [closing date] is close');
+    expect(readableMergeFields('No fields {here}')).toBe('No fields {here}');
+    expect(readableMergeFields('Broken {{contact.first_name')).toBe('Broken {{contact.first_name');
+  });
+
+  it('the template picker shows each template with its merge fields in words', async () => {
+    const fake = new FakeFetch().on('GET /templates?channel=email', { status: 200, body: { templates: [{ ...templates.body.templates[0]!, subject: 'For {{contact.first_name}}', body: 'Hi {{contact.first_name|there}}, new homes.' }] } });
+    app(fake, `/bulk/new?kind=email&contacts=${C.join(',')}`);
+    const pick = await screen.findByRole('button', { name: /New listings/ });
+    expect(pick).toHaveTextContent('For [their first name] · Hi [their first name, or “there”], new homes.');
+    expect(pick.textContent).not.toContain('{{');
   });
 });
 

@@ -90,6 +90,10 @@ test('J9: a bulk email to a smart list leaves out the unsubscribed member with t
   await expect(left.locator('[data-reason="RECIPIENT_OPTED_OUT"]')).toHaveText('1 opted out');
   await expect(sheet.getByRole('checkbox')).toHaveCount(0);
   await expect(sheet.getByText("Bulk messages don't count as touches on a lead.")).toBeVisible();
+  // the message is shown with its merge field in words, never the raw {{contact.first_name}}
+  const msg = sheet.getByRole('region', { name: 'Message' });
+  await expect(msg.getByText('Hi [their first name], three new listings this week.')).toBeVisible();
+  await expect(msg).not.toContainText('{{');
   await shot(page, info, 'j9', '1-count-sheet');
   await tap(page, sheet.getByRole('button', { name: 'Email 2 people' }), c);
   expect(c.taps).toBe(isPhone(page) ? 6 : 5); // PARITY_PLAN §5 bulk email: 6 on a phone, 5 on desktop

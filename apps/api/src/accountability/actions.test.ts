@@ -22,6 +22,7 @@ import {
   queue,
   recompute,
   setPeriodDeadlines,
+  type ItemT,
 } from './testing.js';
 
 let h: ApiHarness;
@@ -116,6 +117,53 @@ describe('verify', () => {
     expect((await act(lead2.owner, lead2.key, 'resolve', { note: 'Done' })).status).toBe(200);
     expect((await act(w.teamLead!, lead2.key, 'verify', {})).status).toBe(200);
     expect((await act(w.owner, lead2.key, 'verify', {})).code).toBe('EXCEPTION_STATE_CONFLICT');
+  });
+});
+
+describe('R-PAR-32 logged activities as context', () => {
+  const logged = (i: ItemT) => i.evidence.filter((e) => e.sourceType === 'note');
+
+  it('R-PAR-32: the untouched-lead card shows what the agent logged in that period as context ("Logged by …", at the time it happened); it never clears, delays or satisfies the miss', async () => {
+    const lead = await acceptedLead(h, w);
+    const before = await call(lead.owner, 'POST', `/contacts/${lead.contactId}/activities`, { kind: 'call', direction: 'outbound', at: new Date(Date.now() - 3 * 3_600_000).toISOString(), outcome: 'no_answer' });
+    expect(before.status, JSON.stringify(before.body)).toBe(201);
+    // logged as the log sheet does: to the minute, here the minute the lead became theirs (seconds before the accept)
+    const ownedAt = (await h.su.query<{ owned_at: Date }>('SELECT owned_at FROM contacts WHERE id = $1', [lead.contactId])).rows[0]!.owned_at.getTime();
+    const minute = new Date(Math.floor(ownedAt / 60_000) * 60_000).toISOString();
+    const inPeriod = await call<{ note: { id: string } }>(lead.owner, 'POST', `/contacts/${lead.contactId}/activities`, { kind: 'call', direction: 'outbound', at: minute, outcome: 'connected', body: 'Called from my cell' });
+    expect(inPeriod.status, JSON.stringify(inPeriod.body)).toBe(201);
+    await setPeriodDeadlines(h, lead.contactId, -60_000, 86_400_000);
+    await recompute(h, w.tenantId, { contactId: lead.contactId });
+    const key = `untouched:${lead.contactId}:${lead.periodSeq}`;
+    const item = (await queue(w.teamLead!)).items.find((i) => i.dedupeKey === key)!;
+    expect(item).toBeDefined();
+    // only the activity inside the period, said as context with who logged it and when it happened
+    expect(logged(item)).toEqual([
+      expect.objectContaining({ sourceId: inPeriod.body.note.id, explanation: expect.stringMatching(/^Logged by .+: outgoing call, talked \(context only; not a first contact\)$/), link: expect.objectContaining({ kind: 'contact', id: lead.contactId }) }),
+    ]);
+    expect(logged(item)[0]!.at).not.toBeNull();
+    // never a touch: the item is open, nothing cleared it, the ledger has no first touch, and the stored item has no note
+    expect(item).toMatchObject({ live: true, conditionClearedAt: null, period: { current: true } });
+    expect((await ledger(h, lead.contactId)).map((e) => e.type)).not.toContain('first_touch_recorded');
+    expect(JSON.stringify((await itemRow(h, key))!.evidence)).not.toContain(inPeriod.body.note.id);
+    // the agent sees the same context on their own item
+    expect(logged((await queue(lead.owner)).items.find((i) => i.dedupeKey === key)!)).toHaveLength(1);
+  });
+
+  it('R-PAR-32 R-PERM-7: after a reassignment the card says the period is no longer current; the Team Lead keeps the context, the agent who lost the lead sees none of its notes', async () => {
+    const lead = await missedLead();
+    expect((await call(lead.owner, 'POST', `/contacts/${lead.contactId}/activities`, { kind: 'text', direction: 'outbound', at: new Date().toISOString() })).status).toBe(201);
+    await recompute(h, w.tenantId, { contactId: lead.contactId });
+    expect(logged((await queue(w.teamLead!)).items.find((i) => i.dedupeKey === lead.key)!)).toHaveLength(1);
+    expect((await act(w.teamLead!, lead.key, 'reassign', { toUserId: lead.other.userId, commandId: randomUUID() })).status).toBe(200);
+    // a text the new owner logs belongs to their period, not the missed one
+    expect((await call(lead.other, 'POST', `/contacts/${lead.contactId}/activities`, { kind: 'email', direction: 'outbound', at: new Date(Date.now() + 1_000).toISOString() })).status).toBe(201);
+    const tl = (await queue(w.teamLead!)).items.find((i) => i.dedupeKey === lead.key)!;
+    expect(tl.period).toEqual({ current: false });
+    expect(logged(tl).map((e) => e.explanation)).toEqual([expect.stringMatching(/^Logged by .+: outgoing text \(context only; not a first contact\)$/)]);
+    const own = (await queue(lead.owner)).items.find((i) => i.dedupeKey === lead.key)!;
+    expect(own.period).toEqual({ current: false });
+    expect(logged(own)).toEqual([]);
   });
 });
 

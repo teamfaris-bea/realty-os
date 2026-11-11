@@ -113,7 +113,9 @@ describe('R-IMPORT-10: revert', () => {
     const rep = await call<{ categories: { category: string; phase: string; lines: string[] }[] }>(w.admin, 'GET', `/imports/${b.id}/report`);
     const c = rep.body.categories.find((x) => x.category === 'contacts')!;
     expect(c.phase).toBe('reverted');
-    expect(c.lines[0]).toMatch(/^Reverted\. .* 1 record was changed since the import and left for your decision\.$/);
+    // it says what it removed (people and their rows by kind, never a bare row count) and what it left
+    expect(c.lines[0]).toMatch(/^Undone\. The undo removed what this import added: \d+ people(, | and ).+; 1 record was changed since the import and left for your decision\.$/);
+    expect(c.lines[0]).not.toMatch(/rows? removed/);
     expect(c.lines.join(' ')).toMatch(/opt-outs and do-not-contact flags stay in place/);
     expect(rep.body.categories.find((x) => x.category === 'consent')!.lines.join(' ')).toMatch(/imported permissions were withdrawn/);
   });

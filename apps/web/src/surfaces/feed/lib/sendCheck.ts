@@ -20,8 +20,12 @@ export interface SendCheckInput {
   enabled?: boolean;
 }
 
-/** The preview decision for this text, or null while unknown (no text yet, loading, no permission). */
-export function useSendCheck({ contactId, channel, body = '', subject = '', enabled = true }: SendCheckInput): { decision: DecisionView | null; body: string } {
+/**
+ * The preview decision for this text, or null while unknown (no text yet, loading, no permission), and the
+ * text exactly as it would go out (`final`: the server's rendering, with what the send adds to the typed words,
+ * such as the brokerage line on a marketing text or an email's signature and footer), or null while unknown.
+ */
+export function useSendCheck({ contactId, channel, body = '', subject = '', enabled = true }: SendCheckInput): { decision: DecisionView | null; body: string; final: string | null } {
   const api = useApi();
   const text = body.trim();
   const subj = channel === 'email' ? subject.trim() : '';
@@ -32,5 +36,6 @@ export function useSendCheck({ contactId, channel, body = '', subject = '', enab
     staleTime: 30_000,
     retry: false,
   });
-  return { decision: text.length > 0 ? (q.data?.decision ?? null) : null, body: text };
+  const final = text.length > 0 && q.data?.body ? q.data.body : null;
+  return { decision: text.length > 0 ? (q.data?.decision ?? null) : null, body: text, final };
 }

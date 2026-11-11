@@ -26,6 +26,12 @@
 // transcript quote appears only to someone allowed to read that transcript (R-PERM-8). No confidence
 // anywhere (R-AST-13).
 //
+// R-PAR-32: an untouched-lead card also shows, as context, the activities people logged in that ownership
+// period (R-PAR-30 notes: "Logged by <name>", at the time it happened), read at read time under the viewer's
+// rights. They are never inputs of the derivation: a logged call never satisfies, delays or clears the first
+// touch. The view also says whether the item's period is still the lead's current one (`period.current`), so a
+// card whose lead has moved on labels its facts as the earlier owner's period.
+//
 // Module 18a (Phase 2): milestone_at_risk (R-ACC-6, R-TXN-3) is the fifth definition: a confirmed deal date
 // overdue, or due within 48 h with nobody responsible, keyed milestone:{deal_date}:{due_version} and owned by
 // the deal owner (no contact; its evidence links to the deal). Open-house invite rows never raise
@@ -181,6 +187,12 @@ export interface ExceptionView {
   /** in the live queue: the latest human event is neither resolved nor verified */
   live: boolean;
   evidence: EvidenceItemView[];
+  /**
+   * untouched_lead only: whether the item's ownership period is still the lead's current one (the same owner, the
+   * same period); false once the lead moved on (reassigned, released, gone from the viewer's sight). Null for
+   * other types.
+   */
+  period: { current: boolean } | null;
   contactOwnershipSeq: number | null;
   latestEvent: ExceptionEventView | null;
   /** what the viewer may do now (one tap each) */
@@ -230,6 +242,21 @@ function reassignStale(row: repo.QueueRow): boolean {
   return period !== undefined && holder !== null && row.contact_period_seq !== null && Number(period) !== Number(row.contact_period_seq);
 }
 
+/** An untouched lead's period is still current while the same owner holds the lead in that same period. */
+function periodOf(row: repo.QueueRow): { current: boolean } | null {
+  if (row.item_type !== 'untouched_lead') return null;
+  const seq = KEY_RE.exec(row.dedupe_key)?.[2];
+  if (seq === undefined) return null;
+  const current =
+    row.contact_visible &&
+    row.contact_ownership_state === 'owned' &&
+    row.contact_owner_user_id !== null &&
+    row.contact_owner_user_id === row.owner_user_id &&
+    row.contact_period_seq !== null &&
+    Number(row.contact_period_seq) === Number(seq);
+  return { current };
+}
+
 function viewOf(row: repo.QueueRow, actor: UserActor, now: Instant, claimEvidence: EvidenceItemView[]): ExceptionView {
   const live = isLive(row);
   const evidence: EvidenceItemView[] = (row.evidence as ExceptionEvidence[]).map((e) => ({
@@ -257,6 +284,7 @@ function viewOf(row: repo.QueueRow, actor: UserActor, now: Instant, claimEvidenc
     conditionClearedAt: isoOrNull(row.condition_cleared_at),
     live,
     evidence,
+    period: periodOf(row),
     contactOwnershipSeq: row.contact_visible && row.contact_ownership_seq !== null ? Number(row.contact_ownership_seq) : null,
     latestEvent:
       row.last_action === null
@@ -299,6 +327,56 @@ async function claimEvidenceFor(tx: Tx, actor: UserActor, envelope: EnvelopeServ
   return out;
 }
 
+const ACTIVITY_KIND: Record<repo.LoggedActivityRow['kind'], string> = { call: 'call', text: 'text', email: 'email' };
+const ACTIVITY_DIRECTION: Record<string, string> = { outbound: 'outgoing', inbound: 'incoming' };
+const ACTIVITY_OUTCOME: Record<string, string> = { connected: 'talked', left_voicemail: 'left a voicemail', no_answer: 'no answer', wrong_number: 'wrong number', other: 'other outcome' };
+
+/** "Logged by Ava Agent: outgoing call, talked (context only; not a first contact)" (R-PAR-30 / R-PAR-32). */
+export function loggedActivityLine(a: Pick<repo.LoggedActivityRow, 'kind' | 'direction' | 'outcome' | 'author_name'>): string {
+  const what = [a.direction ? ACTIVITY_DIRECTION[a.direction] : null, ACTIVITY_KIND[a.kind]].filter(Boolean).join(' ');
+  const outcome = a.outcome ? `, ${ACTIVITY_OUTCOME[a.outcome] ?? 'other outcome'}` : '';
+  return `Logged by ${a.author_name ?? 'a former member'}: ${what}${outcome} (context only; not a first contact)`;
+}
+
+/**
+ * R-PAR-32: the logged activities of each untouched lead's period, as context, read under the viewer's rights
+ * (a viewer who no longer sees the lead or its notes gets none). Never an input of the derivation.
+ */
+async function loggedActivityContextFor(tx: Tx, rows: readonly repo.QueueRow[]): Promise<Map<string, EvidenceItemView[]>> {
+  const out = new Map<string, EvidenceItemView[]>();
+  const periods = rows.flatMap((r) => {
+    if (r.item_type !== 'untouched_lead' || r.contact_id === null || !r.contact_detail_visible) return [];
+    const m = KEY_RE.exec(r.dedupe_key);
+    return m?.[1] && m[2] ? [{ key: r.dedupe_key, contactId: m[1], seq: Number(m[2]) }] : [];
+  });
+  if (periods.length === 0) return out;
+  const byKey = new Map(rows.map((r) => [r.dedupe_key, r] as const));
+  for (const a of await repo.loggedActivitiesInPeriods(tx, periods)) {
+    const row = byKey.get(a.dedupe_key)!;
+    const list = out.get(a.dedupe_key) ?? [];
+    list.push({
+      sourceType: 'note',
+      sourceId: a.id,
+      explanation: loggedActivityLine(a),
+      at: iso(a.at),
+      locator: null,
+      snippet: null,
+      needsReview: false,
+      link: row.contact_id ? { kind: 'contact', id: row.contact_id, contactId: row.contact_id, offsetMs: null } : null,
+    });
+    out.set(a.dedupe_key, list);
+  }
+  return out;
+}
+
+/** Read-time evidence of the rows: promise quotes and logged-activity context, each under the viewer's rights. */
+async function readTimeEvidenceFor(tx: Tx, actor: UserActor, envelope: EnvelopeService, rows: readonly repo.QueueRow[]): Promise<Map<string, EvidenceItemView[]>> {
+  const [claims, activities] = await Promise.all([claimEvidenceFor(tx, actor, envelope, rows), loggedActivityContextFor(tx, rows)]);
+  const out = new Map<string, EvidenceItemView[]>();
+  for (const m of [claims, activities]) for (const [k, list] of m) out.set(k, [...(out.get(k) ?? []), ...list]);
+  return out;
+}
+
 export interface ListFilter {
   type?: ExceptionType | undefined;
   owner?: string | undefined;
@@ -318,7 +396,7 @@ export interface QueueView {
 export async function listExceptions(tx: Tx, actor: UserActor, envelope: EnvelopeService, f: ListFilter, now: Instant): Promise<QueueView> {
   const ownerUserId = f.owner === 'me' ? actor.userId : f.owner;
   const rows = await repo.queueRows(tx, { type: f.type, ownerUserId, state: f.state ?? 'live', limit: Math.min(f.limit ?? QUEUE_LIMIT, QUEUE_LIMIT) });
-  const claimEv = await claimEvidenceFor(tx, actor, envelope, rows);
+  const claimEv = await readTimeEvidenceFor(tx, actor, envelope, rows);
   const byType: Record<ExceptionType, number> = { untouched_lead: 0, overdue_promise: 0, failed_send: 0, missing_outcome: 0, milestone_at_risk: 0 };
   let live: number;
   if (f.type === undefined && (f.state ?? 'live') === 'live' && rows.length < QUEUE_LIMIT) {
@@ -340,7 +418,7 @@ export async function listExceptions(tx: Tx, actor: UserActor, envelope: Envelop
 export async function getException(tx: Tx, actor: UserActor, envelope: EnvelopeService, dedupeKey: string, now: Instant): Promise<{ item: ExceptionView; events: ExceptionEventView[] }> {
   const row = (await repo.queueRows(tx, { dedupeKey, state: 'all', limit: 1 }))[0];
   if (!row) throw new AppError('NOT_FOUND');
-  const claimEv = await claimEvidenceFor(tx, actor, envelope, [row]);
+  const claimEv = await readTimeEvidenceFor(tx, actor, envelope, [row]);
   const events = (await repo.eventsOf(tx, dedupeKey)).map((e) => ({ action: e.action, note: e.note, actor: { userId: e.actor_user_id, name: e.actor_name }, at: iso(e.occurred_at) }));
   return { item: viewOf(row, actor, now, claimEv.get(dedupeKey) ?? []), events };
 }

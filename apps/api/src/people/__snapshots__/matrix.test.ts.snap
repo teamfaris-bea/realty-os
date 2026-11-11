@@ -1188,6 +1188,9 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: api/people response schemas
           "status": {
             "type": "string",
           },
+          "wrongNumberReported": {
+            "type": "boolean",
+          },
         },
         "required": [
           "id",
@@ -1196,6 +1199,7 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: api/people response schemas
           "label",
           "status",
           "isPrimary",
+          "wrongNumberReported",
         ],
         "type": "object",
       },
@@ -1251,6 +1255,9 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: api/people response schemas
             "status": {
               "type": "string",
             },
+            "wrongNumberReported": {
+              "type": "boolean",
+            },
           },
           "required": [
             "id",
@@ -1259,6 +1266,7 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: api/people response schemas
             "label",
             "status",
             "isPrimary",
+            "wrongNumberReported",
           ],
           "type": "object",
         },

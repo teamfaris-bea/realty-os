@@ -5,9 +5,10 @@
 //   key → "Count what's there" → snapshot → map stages and custom fields → contacts dry run, whose
 //   reconciliation adds up (In the source = Will import + Needs review + Rejected + Possible duplicates,
 //   the same numbers the API returns) → approve exactly that dry run → import → the person's page shows the
-//   mapped stage, the imported tags and the typed custom fields → Undo the whole import → the page says it
-//   was undone and the database holds nothing the import wrote (contacts, tags, field values), while the
-//   contact that existed before the import is untouched.
+//   mapped stage, the imported tags and the typed custom fields (in the person's Details section, PARITY_PLAN
+//   §5) → Undo the whole import → the page says it was undone (and stops saying what it imported) and the
+//   database holds nothing the import wrote (contacts, tags, field values), while the contact that existed
+//   before the import is untouched.
 // The FUB dataset has a malformed person (rejected) and a person whose phone matches a contact the team
 // already has (a possible duplicate), so the reconciliation is not trivially "all imported".
 import { expect, test } from 'playwright/test';
@@ -162,9 +163,17 @@ test('J6: a FUB import dry-runs with counts that add up, commits stages, tags an
   await expect(page.getByRole('button', { name: /^Stage: Active\./ })).toBeVisible();
   const tags = page.getByRole('region', { name: 'Tags' });
   for (const t of ['Buyer', 'Relocating', 'FUB stage: Hot Prospect']) await expect(tags.getByRole('button', { name: `Tag ${t}, show everyone with it` })).toBeVisible();
+  // the typed custom field values, in the person's Details section (PARITY_PLAN §5), each in its field's own
+  // terms; the Owner may edit the person (contact.edit), so the values are editable
+  const details = page.getByRole('region', { name: 'Details' });
+  const field = (label: RegExp) => details.locator('dl > div').filter({ has: page.locator('dt', { hasText: label }) }).locator('dd');
+  await expect(field(/^Lead score$/i)).toHaveText('87', { timeout: 15_000 });
+  await expect(field(/^Closing date$/i)).toHaveText('Dec 15, 2026');
+  await expect(field(/^Timeline$/i)).toHaveText('0-3 months');
+  await expect(field(/^Interests$/i)).toHaveText('Pool, Garage');
+  await expect(details.getByRole('button', { name: `Edit fields of Ana ${surname}` })).toBeVisible();
   await shot(page, info, 'j6', '4-person');
-  // the typed values, through the person's own read API with the Owner's browser session (the person's
-  // page does not show custom field values: see the fixme below)
+  // the same typed values, through the person's own read API with the Owner's browser session
   const fieldsRes = await (await browserApi(page, stack)).get(`/contacts/${ana}/fields`);
   expect(fieldsRes.status()).toBe(200);
   const vals = ((await fieldsRes.json()) as { values: { fieldId: string; number: number | null; date: string | null; optionIds: string[] | null; updatedByKind: string }[] }).values;
@@ -185,6 +194,12 @@ test('J6: a FUB import dry-runs with counts that add up, commits stages, tags an
   }, { timeout: 30_000 }).toBe('reverted');
   await page.reload();
   await expect(page.getByText('This import was undone.')).toBeVisible({ timeout: 15_000 });
+  // every place says what is true after the undo: the card, the report line (what it removed), the parity table
+  await expect(contacts.getByText(`Undone: the ${after.imported} of ${after.source} that had been imported were removed.`)).toBeVisible();
+  await expect(contacts.getByText(`${after.imported} of ${after.source} imported`, { exact: true })).toHaveCount(0);
+  await expect(page.getByText(new RegExp(`The undo removed what this import added: ${after.imported} people and ${after.imported} phone numbers or emails; nothing was left for your decision\\.`))).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Imported, then undone' })).toBeVisible();
+  await expect(page.getByText(/^Before the undo, the import had set \d+ stages?, added \d+ tags? and written \d+ custom values?\.$/)).toBeVisible();
   await shot(page, info, 'j6', '5-undone');
   const left = await stack.sql<{ contacts: number; tags: number; values: number }>(
     `SELECT (SELECT count(*)::int FROM contacts WHERE import_batch_id = $1 AND deleted_at IS NULL) AS contacts,
@@ -207,19 +222,4 @@ test('J6: a FUB import dry-runs with counts that add up, commits stages, tags an
   await page.goto(`${stack.webUrl}/people`);
   await expect(page.getByText('Bennett Existing').first()).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText(surname)).toHaveCount(0);
-});
-
-// BUG (product gap, not small): PARITY_PLAN §5 puts custom fields in the person's Details section, and
-// GET /contacts/:id/fields serves them, but no web surface renders a person's custom field values. Repro:
-// run J6 to the commit, open /contacts/<Ana>: Details lists only phones/emails, relationships and
-// collaborators; "Lead score 87", "Closing date Dec 15, 2026", "Timeline 0-3 months", "Interests Pool,
-// Garage" appear nowhere on the page (the values exist: the API check in the test above passes).
-test.fixme("J6: the person's Details section shows the imported custom field values", async ({ page }) => {
-  await signIn(page, stack, w.owner);
-  const [ana] = await stack.sql<{ id: string }>("SELECT id FROM contacts WHERE first_name = 'Ana' AND import_batch_id IS NOT NULL ORDER BY created_at DESC LIMIT 1");
-  await page.goto(`${stack.webUrl}/contacts/${ana!.id}`);
-  const details = page.getByRole('region', { name: 'Details' });
-  await expect(details.getByText(/Lead score/i)).toBeVisible();
-  await expect(details.getByText('87')).toBeVisible();
-  await expect(details.getByText('0-3 months')).toBeVisible();
 });
