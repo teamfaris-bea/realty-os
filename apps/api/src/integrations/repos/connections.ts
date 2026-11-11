@@ -55,10 +55,12 @@ export async function activeRole(tx: Tx, userId: string): Promise<string | null>
   return (await sql<{ role: string }>`SELECT role FROM memberships WHERE tenant_id = app.tenant_id() AND user_id = ${userId} AND status = 'active'`.execute(tx)).rows[0]?.role ?? null;
 }
 
-export async function listPlatformPacks(tx: Tx): Promise<{ key: string; version: string; reviewed_by_counsel_at: Date | null }[]> {
+/** Published platform packs with what `app.platform_cleared` reads: counsel review and, for the vendor check, `rules.vendor_ready_at`. */
+export async function listPlatformPacks(tx: Tx): Promise<{ key: string; version: string; reviewed_by_counsel_at: Date | null; vendor_ready_at: string | null }[]> {
   return (
-    await sql<{ key: string; version: string; reviewed_by_counsel_at: Date | null }>`
-      SELECT key, version, reviewed_by_counsel_at FROM jurisdiction_packs WHERE key LIKE 'platform:%' AND status = 'published' ORDER BY key`.execute(tx)
+    await sql<{ key: string; version: string; reviewed_by_counsel_at: Date | null; vendor_ready_at: string | null }>`
+      SELECT key, version, reviewed_by_counsel_at, (rules->>'vendor_ready_at') AS vendor_ready_at
+        FROM jurisdiction_packs WHERE key LIKE 'platform:%' AND status = 'published' ORDER BY key`.execute(tx)
   ).rows;
 }
 

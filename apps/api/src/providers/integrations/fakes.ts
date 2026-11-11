@@ -1,6 +1,6 @@
 // Deterministic fakes for every Phase 2-3 adapter (R-INT-1). No clock, no randomness, no network:
 // the same calls in the same order give the same results. Tests drive the "provider side" through the
-// helpers (`FakeOAuth.issueCode`, `FakeMeta.signedWebhook`), never through real vendors.
+// helpers (`FakeOAuth.issueCode`), never through real vendors. D2: there is no Meta webhook to fake.
 import { createHash } from 'node:crypto';
 import { ProviderError } from '../types.js';
 import type {
@@ -41,13 +41,13 @@ export const pkceChallenge = (verifier: string): string => b64url(createHash('sh
 
 /**
  * What the fake platform reports per kind (the real adapter must report from the vendor instead).
- * D2: a Facebook Page / Instagram account connection is for content publishing only; nothing here
- * receives or sends messages, and Meta Lead Ads is out of scope.
+ * D2: a Facebook Page (`facebook_page`) or Instagram business account (`instagram_business`) connection is for
+ * content publishing only; nothing here receives or sends messages, and the out-of-scope kinds (Messenger,
+ * Instagram DMs, Meta Lead Ads, Meta ads) report nothing.
  */
 export const FAKE_CAPABILITIES: Partial<Record<ConnectionKind, Capabilities>> = {
-  messenger_page: { publish_posts: true },
-  instagram_account: { publish_posts: true },
-  ads_meta: { read_spend: true, change_budget: true },
+  facebook_page: { publish_posts: true },
+  instagram_business: { publish_posts: true },
   ads_google: { read_spend: true, change_budget: true },
   gbp_location: { publish_posts: true, read_reviews: true, reply_reviews: true },
 };

@@ -143,7 +143,7 @@ export const ERROR_STATUS = {
   JOB_ALREADY_QUEUED: 409, // a newer job for the same work is already queued or running: retrying this one would duplicate it
   JOB_NOT_CANCELLABLE: 409, // only a waiting job can be cancelled; a running one finishes or is reaped
   // ---- api/integrations (module 21) ----
-  INTEGRATION_NOT_CONNECTABLE: 409, // this kind is not connected by OAuth (partner, keyed, or a later phase)
+  INTEGRATION_NOT_CONNECTABLE: 409, // this kind is not connected by OAuth (partner, keyed, a later phase, or out of scope by owner decision D2)
   INTEGRATION_NOT_CONFIGURED: 409, // no platform app is configured for this provider on this deployment
   CONNECTION_NOT_CONNECTABLE: 409, // the connection's status does not allow a (re)connect or change
   CONNECTION_ACCOUNT_MISMATCH: 409, // a different external account is a new connection (R-INT-3)
@@ -244,6 +244,7 @@ export const ERROR_STATUS = {
   BROKERAGE_IDENTITY_MISSING: 409,
   SMS_MARKETING_NOT_REGISTERED: 409, // R-PAR-40: batch text needs an approved registration that covers marketing
   TEMPLATE_CHANNEL_MISMATCH: 422, // an email action needs an email template (and a text action a text one)
+  LEAD_SOURCE_NOT_ALLOWED: 422, // D2: a publishing-only connection (facebook_page, instagram_business) never carries a lead source (0025 CHECK)
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

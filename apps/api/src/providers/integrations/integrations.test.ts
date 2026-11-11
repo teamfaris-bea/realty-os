@@ -5,6 +5,7 @@ import { testConfig } from '../../auth/testHarness.js';
 import { createFakeProviders, createProviders } from '../index.js';
 import {
   CONNECTION_KINDS,
+  FAKE_CAPABILITIES,
   IntegrationConfigError,
   PlatformOAuth,
   createFakeIntegrations,
@@ -28,9 +29,10 @@ describe('R-INT-1 fakes are the default and deterministic', () => {
       const code = a.oauth.meta.issueCode({ codeChallenge: pkceChallenge('v'.repeat(43)), accounts: [{ id: 'page-1', name: 'Harbor' }] });
       const tok = await a.oauth.meta.exchangeCode({ code, codeVerifier: 'v'.repeat(43), redirectUri: 'https://x.test/cb' });
       return {
-        url: a.oauth.meta.authorizeUrl({ kind: 'messenger_page', state: 's', codeChallenge: 'c', redirectUri: 'https://x.test/cb', scopes: ['pages_manage_posts'] }),
+        url: a.oauth.meta.authorizeUrl({ kind: 'facebook_page', state: 's', codeChallenge: 'c', redirectUri: 'https://x.test/cb', scopes: ['pages_manage_posts'] }),
         tok,
-        accounts: await a.oauth.meta.listManagedAccounts(tok, 'messenger_page'),
+        accounts: await a.oauth.meta.listManagedAccounts(tok, 'facebook_page'),
+        igAccounts: await a.oauth.meta.listManagedAccounts(tok, 'instagram_business'),
         mls: await a.mlsFeed.changes(null, 1),
         mls2: await a.mlsFeed.changes((await a.mlsFeed.changes(null, 1)).cursor, 5),
         media: await a.mlsFeed.media('FAKE-MLS-1001'),
@@ -48,6 +50,7 @@ describe('R-INT-1 fakes are the default and deterministic', () => {
     const one = await run();
     expect(JSON.stringify(await run())).toBe(JSON.stringify(one));
     expect(one.accounts[0]!.capabilities).toEqual({ publish_posts: true }); // D2: a Page connection publishes, never messages
+    expect(one.igAccounts[0]!.capabilities).toEqual({ publish_posts: true }); // D2: so does an Instagram business account
     expect(one.gbp[0]!.capabilities).toEqual({ publish_posts: true, read_reviews: true, reply_reviews: true });
     expect(one.calStale).toEqual({ kind: 'stale', syncVersion: 3 }); // sync_version fence
     expect(one.avmNone).toEqual({ available: false });
@@ -67,6 +70,16 @@ describe('R-INT-1 fakes are the default and deterministic', () => {
     const a = createFakeIntegrations() as unknown as Record<string, unknown>;
     expect(Object.keys(a).sort()).toEqual(['avm', 'calendar', 'leadFeeds', 'mlsFeed', 'mode', 'oauth', 'renderer', 'showing', 'social']);
     expect(Object.keys(a.oauth as object).sort()).toEqual(['google', 'meta', 'microsoft']);
+  });
+
+  it('D2: the fake platform reports capabilities for the publishing kinds and nothing for the out-of-scope Meta kinds', async () => {
+    expect(Object.keys(FAKE_CAPABILITIES).sort()).toEqual(['ads_google', 'facebook_page', 'gbp_location', 'instagram_business']);
+    const a = createFakeIntegrations();
+    const code = a.oauth.meta.issueCode({ codeChallenge: pkceChallenge('m'.repeat(43)), accounts: [{ id: 'page-1' }] });
+    const tok = await a.oauth.meta.exchangeCode({ code, codeVerifier: 'm'.repeat(43), redirectUri: 'r' });
+    for (const kind of ['messenger_page', 'instagram_account', 'meta_lead_ads', 'ads_meta'] as const) {
+      expect((await a.oauth.meta.listManagedAccounts(tok, kind))[0]!.capabilities, kind).toEqual({});
+    }
   });
 });
 
@@ -104,6 +117,6 @@ describe('R-INT-1 real adapters refuse to start unconfigured', () => {
     expect(await u.avm.estimate({ line1: 'a', city: 'b', region: 'SC', postalCode: '29401' })).toEqual({ available: false });
     expect(selectIntegrations({ env: 'production', allowFakeProviders: true }).mode).toBe('fake');
     expect(createUnconfiguredIntegrations().mode).toBe('unconfigured');
-    expect(CONNECTION_KINDS).toHaveLength(12);
+    expect(CONNECTION_KINDS).toHaveLength(14); // 0018's twelve plus 0025's facebook_page and instagram_business (D2)
   });
 });
