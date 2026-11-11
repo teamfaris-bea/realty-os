@@ -213,10 +213,9 @@ async function recordFailure(deps: MlsDeps, tenantId: TenantId, connectionId: st
       if (!row || (row.status !== 'connected' && row.status !== 'degraded')) return;
       const before = rowOf(row);
       const next = code === 'INVALID_CREDENTIALS' ? transitionConnection(before, { type: 'key_rejected', code, revoke: true }) : row.status === 'degraded' ? { ...before, statusReason: code, lastErrorCode: code } : transitionConnection(before, { type: 'health_degraded', code });
-      await sql`
-        UPDATE integration_connections SET status = ${next.status}, status_reason = ${next.statusReason}, last_error_code = ${code},
-               capabilities = ${JSON.stringify(next.capabilities)}::jsonb, next_sync_at = ${iso(now + SYNC_INTERVAL_MS)}::timestamptz
-         WHERE tenant_id = app.tenant_id() AND id = ${connectionId}`.execute(tx);
+      // status, reason, code and capabilities through module 21's one writer (R-INT-3); then only the timer
+      await connections.applyKeyValidation(tx, connectionId, { status: next.status, statusReason: next.statusReason, capabilities: next.capabilities, lastErrorCode: code, connected: false });
+      await sql`UPDATE integration_connections SET next_sync_at = ${iso(now + SYNC_INTERVAL_MS)}::timestamptz WHERE tenant_id = app.tenant_id() AND id = ${connectionId}`.execute(tx);
       if (next.status !== row.status) {
         await audit(tx, sys, { action: 'integration.changed', entity: { type: 'integration_connection', id: connectionId }, changes: redactDiff({ status: row.status }, { status: next.status }), reason: code });
       }
