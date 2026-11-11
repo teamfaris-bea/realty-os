@@ -126,6 +126,12 @@ export const ACTIONS = [
   'system.jobs', // lane ops-observability: retry or cancel a failed job from the System page (audited)
   'integration.view', // api/integrations: the Integrations admin page (Phase 2, DATA_MODEL §8)
   'integration.manage', // api/integrations: create, rename, connect (OAuth start), disconnect (DATA_MODEL §8: ✅ 🔒 | ✅ 🔒)
+  'contact.edit', // parity 57 (DATA_MODEL §12): names, type, intent, stage, points, addresses, relationships
+  'note.write', // parity 57: write own notes (with mentions) on a contact whose detail the actor sees
+  'note.delete', // parity 57: delete own note; tenant-wide roles any (audited)
+  'activity.log', // parity 57: log an outside call/text/email (never a touch)
+  'collaborator.manage', // parity 57: add/remove collaborators (existing RLS: tenant-wide, Team Leads, the contact owner)
+  'settings.stage_labels', // parity 57: tenant display labels of the eight stages
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -236,6 +242,10 @@ export const AUDIT_ACTIONS = [
   'integration.connect_refused', // api/integrations: the callback refused (E160 account not managed, live elsewhere, stale state)
   'integration.disconnected', // api/integrations: an Owner/Admin disconnected; credential revoked in the same tx (R-INT-5)
   'integration.changed', // api/integrations: rename or lead source of a connection
+  'contact.update', // parity 57: PATCH /contacts/:id (field names only for PII, R-PAR-43)
+  'note.delete', // parity 57: a note deleted (R-PAR-4)
+  'collaborator.added', // parity 57: a collaborator added (incl. mention "Share", R-PAR-2)
+  'collaborator.removed', // parity 57: a collaborator removed
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -480,6 +490,19 @@ const MATRIX: Record<Action, ActionRule> = {
   // Linking an external account is never an Action: only the provider callback does it, as the system.
   'integration.view': { roles: { owner: ALL, admin: ALL } },
   'integration.manage': { roles: { owner: ALL_REAUTH, admin: ALL_REAUTH } },
+  // FUB parity (DATA_MODEL §12 capability matrix; not §3 rows). Each module tests its own row.
+  // contact.edit: ✅ | ✅ | T | O | O | —
+  'contact.edit': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: O, isa: O } },
+  // note.write: ✅ | ✅ | T + pond detail | O + D | O | D
+  'note.write': { roles: { owner: ALL, admin: ALL, team_lead: { scopes: ['own', 'collab', 'team', 'pond'] }, agent: { scopes: ['own', 'collab', 'deal'] }, isa: O, tc: DEAL } },
+  // note.delete: ✅ (any) | ✅ (any) | own | own | own | own  (own = the actor wrote the note)
+  'note.delete': { roles: { owner: ALL, admin: ALL, team_lead: OWN, agent: OWN, isa: OWN, tc: OWN } },
+  // activity.log: ✅ | ✅ | T | O | O | —
+  'activity.log': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: O, isa: O } },
+  // collaborator.manage (existing RLS): ✅ | ✅ | ✅ | contact owner | — | —
+  'collaborator.manage': { roles: { owner: ALL, admin: ALL, team_lead: ALL, agent: OWN } },
+  // settings.stage_labels: ✅ | ✅ | — …
+  'settings.stage_labels': { roles: { owner: ALL, admin: ALL } },
 };
 
 const DENY_NOT_FOUND: CanResult = { ok: false, code: 'NOT_FOUND' };

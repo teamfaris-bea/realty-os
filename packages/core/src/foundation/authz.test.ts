@@ -425,6 +425,8 @@ describe('R-PERM-1 generated can() matrix: one case per DATA_MODEL §3 cell', ()
     const notInMatrix = ACTIONS.filter((a) => !exercised.has(a));
     // Phase 2-3 actions are DATA_MODEL §8 rows (not §3); each module tests its own row.
     const PHASE_2_3: Action[] = ['integration.view', 'integration.manage'];
+    // FUB parity actions are DATA_MODEL §12 rows; module 57 tests its own (apps/api/src/people/matrix.test.ts).
+    PHASE_2_3.push('contact.edit', 'note.write', 'note.delete', 'activity.log', 'collaborator.manage', 'settings.stage_labels');
     expect(notInMatrix.filter((a) => !PHASE_2_3.includes(a)).sort()).toEqual(['data.export', 'number.release', 'support.revoke', 'system.jobs', 'system.view']);
   });
 
