@@ -303,3 +303,44 @@ test('the filter builder passes axe at every step (fields, values, the filter li
   }
   expect(found).toEqual([]);
 });
+
+/** Each control of the bulk bar: its label and the top of its row. */
+async function barRows(page: Page): Promise<{ label: string; top: number; right: number }[]> {
+  return page.getByRole('region', { name: 'Bulk actions' }).evaluate((el) =>
+    [...el.querySelectorAll('p, button')].map((b) => {
+      const r = b.getBoundingClientRect();
+      return { label: (b.textContent ?? '').trim(), top: Math.round(r.top), right: Math.round(r.right) };
+    }),
+  );
+}
+
+test('the bulk bar fits on one row at 1440 px for an agent and a Team Lead (Clear never wraps); on a phone it stays one sideways-scrolling row above the tab bar', async ({ page }) => {
+  for (const who of [world.agent, world.lead]) {
+    await page.context().clearCookies();
+    await signIn(page, who);
+    await page.goto(`${stack.webUrl}/people`);
+    await page.getByRole('checkbox', { name: /^Select Alice/ }).first().check();
+    const bar = page.getByRole('region', { name: 'Bulk actions' });
+    await expect(bar.getByRole('button', { name: 'Clear' })).toBeAttached();
+    const rows = await barRows(page);
+    const labels = rows.map((r) => r.label);
+    expect(labels).toEqual(expect.arrayContaining(['Tag', 'Start plan', 'Remove tag', 'Change stage', 'Email', 'Clear']));
+    if (who === world.lead) expect(labels).toContain('Assign');
+    const box = (await bar.boundingBox())!;
+    if (isPhone(page)) {
+      // one row (it scrolls sideways), wholly inside the window, above the tab bar
+      expect(new Set(rows.map((r) => r.top)).size).toBeLessThanOrEqual(2); // the count text centres a few px lower
+      expect(Math.max(...rows.map((r) => r.top)) - Math.min(...rows.map((r) => r.top))).toBeLessThan(20);
+      const tabs = (await page.getByRole('navigation', { name: 'Main tabs' }).boundingBox())!;
+      expect(Math.round(box.y + box.height)).toBeLessThanOrEqual(Math.round(tabs.y) + 1);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+    } else {
+      // every control on the same row, inside the bar, the bar inside the window
+      const buttons = rows.filter((r) => r.label !== '' && !/selected$/.test(r.label));
+      expect(Math.max(...buttons.map((r) => r.top)) - Math.min(...buttons.map((r) => r.top)), JSON.stringify(rows)).toBe(0);
+      expect(Math.max(...rows.map((r) => r.right))).toBeLessThanOrEqual(Math.round(box.x + box.width));
+      expect(box.x + box.width).toBeLessThanOrEqual(1440);
+      await expect(bar).toBeInViewport();
+    }
+  }
+});

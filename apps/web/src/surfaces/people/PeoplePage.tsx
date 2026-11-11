@@ -21,7 +21,8 @@
 // 10,000 and then says "10,000+"; a list that uses a protected tag says so before any send, and a bulk
 // email, text or plan from it is refused at once (and by the server, which reads the list itself).
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Button, EmptyState, Icon, Notice, TextField, Dialog } from '../../design/index.js';
 import { messageFor, useSession } from '../../shell/index.js';
@@ -162,8 +163,10 @@ function People() {
   const qc = useQueryClient();
   const api = useApiClient();
   const sheets = useAgentSheets();
+  const [barSlot, setBarSlot] = useState<HTMLDivElement | null>(null);
 
   return (
+    <div className="flex flex-col">
     <div className="flex flex-col gap-4 md:flex-row md:items-start md:gap-6">
       <ListNav lists={lists.data?.lists ?? []} source={base} onOpen={open} />
       <div className="flex min-w-0 flex-1 flex-col gap-3">
@@ -194,6 +197,7 @@ function People() {
           onTag={(t) => open(tagSource(t))}
           onClearFilter={() => open(EVERYONE)}
           saveable={source.kind === 'definition'}
+          barSlot={barSlot}
           emptyText={loosenText([...(baseDef && catalogs.ready ? [...(baseDef.all ?? []), ...(baseDef.any ?? [])].map((c) => clauseLabel(c, catalogs.value)) : []), ...(q.trim() ? [`Name contains “${q.trim()}”`] : [])])}
         />
       </div>
@@ -227,6 +231,11 @@ function People() {
             : {})}
         />
       ) : null}
+    </div>
+      {/* the bulk bar's place on desktop: under BOTH columns (the lists and the results), so at 1440 px every
+          action of every role fits on one row (the results column alone is ~700 px); it stays at the bottom of
+          the window while the page scrolls. On a phone the bar is fixed above the tab bar (no layout change). */}
+      <div ref={setBarSlot} className="z-40 md:sticky md:bottom-4" />
     </div>
   );
 }
@@ -400,6 +409,8 @@ function Rows(p: {
   onClearFilter: () => void;
   saveable: boolean;
   emptyText: string;
+  /** where the bulk bar renders (the page-wide slot); null: in place */
+  barSlot?: HTMLElement | null;
 }) {
   const q = usePeople(p.source);
   const count = usePeopleCount(p.source);
@@ -498,12 +509,12 @@ function Rows(p: {
         </Button>
       ) : null}
 
-      {anySelected ? (
-        <div role="region" aria-label="Bulk actions" className="fixed inset-x-0 bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))] z-40 border-t border-line bg-surface px-4 py-2 md:sticky md:bottom-4 md:rounded-2xl md:border md:shadow-lg">
+      {anySelected ? portalTo(p.barSlot ?? null, (
+        <div role="region" aria-label="Bulk actions" className="fixed inset-x-0 bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))] z-40 border-t border-line bg-surface px-4 py-2 md:static md:mt-3 md:rounded-2xl md:border md:shadow-lg">
           {/* phone: one row that scrolls sideways; desktop: it wraps, so no action hides behind a scroll.
               Assign (§5 bulk assign: 6 taps on a phone) and Start plan come right after Tag, so a phone shows
               them without a swipe (the e2e asserts it); the rest follow and may sit behind the scroll there */}
-          <div className="flex items-center gap-2 overflow-x-auto md:flex-wrap md:overflow-x-visible">
+          <div className="flex items-center gap-2 overflow-x-auto md:flex-wrap md:gap-y-2 md:overflow-x-visible">
             <p className="shrink-0 pr-2 text-[15px] font-semibold text-ink">{p.allSelected && count.data?.capped ? `${count.data.count.toLocaleString('en-US')}+` : selCount.toLocaleString('en-US')} selected</p>
             <Button variant="primary" className="shrink-0 whitespace-nowrap" onClick={() => setTagFor('tag')}>
               {BULK_LABEL.tag}
@@ -539,7 +550,7 @@ function Rows(p: {
             </Button>
           </div>
         </div>
-      ) : null}
+      )) : null}
 
       {tagFor ? (
         <TagPicker
@@ -659,4 +670,9 @@ function SaveListSheet({ source, onClose, role }: { source: Extract<Source, { ki
       </div>
     </Dialog>
   );
+}
+
+/** The bulk bar into the page-wide slot when there is one, else in place. */
+function portalTo(target: HTMLElement | null, node: ReactNode): ReactNode {
+  return target ? createPortal(node, target) : node;
 }
