@@ -93,6 +93,11 @@ Counsel items (**VERIFY WITH COUNSEL**):
 - **C-PAR-2**: the CAN-SPAM footer wording for bulk email.
 - **C-PAR-3**: the protected-proxy lexicon for tags and custom field names (military status, source of income, familial status and others, per state).
 
+**Decided by the owner on 2026-11-11** (the owner accepted the recommended defaults):
+- Bulk tag keeps the preview and confirm step (R-PAR-33, R-PAR-34); the §5 targets are 6 taps on a phone and 5 on desktop.
+- Stage automation (module 67) as built: bulk stage changes and PATCH also start plans through the worker scan; Undo of a stage change puts the stage back but does not stop a plan that started (the toast says so); a stage event left undecided for more than 1 hour is never decided; when an agent's own plan for the stage is not approved, the team plan does not start in its place; annual reminders are created 7 days ahead, and contacts with no owner get none.
+- Owner smart-list counts and first pages may use a semantically identical policy rewrite, provided row-by-row equivalence tests for every role prove identical rows and docs/SECURITY.md §6 documents it.
+
 ### 2.3 Review (two critics; verdicts in ARCHITECTURE §20 "FUB parity design review")
 
 Applied changes are listed there, each with the finding that caused it.
@@ -349,7 +354,7 @@ Taps are counted from the person's page (or the People tab where stated); typing
 | Log an outside call | Log (Call preselected) → outcome → Save = **3** | **3** | ~4 / ~3 |
 | Open a smart list | People → list = **2** | **1** | ~2 / ~1 |
 | Next person in a list | Next = **1** | J / → = **1** | ~2 |
-| Bulk tag 30 | People → list → Select all → Tag → tag = **5** (count sheet confirms inline) | **4** | ~6 / ~5 |
+| Bulk tag 30 | People → list → Select all → Tag → tag → Confirm = **6** (the preview and confirm that R-PAR-33/34 require; owner decision 2026-11-11) | **5** | ~6 / ~5 |
 | Bulk email | People → list → Select all → Email → template → Confirm = **6** (skips shown on the confirm sheet) | **5** | ~7 / ~6 |
 | Bulk assign (Owner/Admin/TL) | desktop-first; phone same as tag + target = **6** | **5** | ~5 |
 | Resolve a duplicate | Duplicates → pair → Merge = **3** | **3** | ~4 |

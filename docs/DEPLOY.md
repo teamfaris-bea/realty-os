@@ -113,6 +113,9 @@ Choosing a real vendor without its credentials fails in every environment. The f
 | `API_HOST` / `API_PORT` | no | the image defaults to `0.0.0.0:3001` |
 | `LOG_LEVEL` | no | `info` |
 | `DB_POOL_MAX` | no | connections in each API process's pool (default 10). Keep the sum over all API instances at about 2–3 per database vCPU, plus the workers' `--concurrency + 4` each, under `max_connections`. More connections than the database has cores only moves the queue into Postgres (docs/PERFORMANCE.md, accept/claim pool study). |
+
+> **Owner decision (2026-11-11), production sizing:** if accept and claim cannot meet their 300 ms p95 budget with the database and the API sharing 4 cores (docs/PERFORMANCE.md), production runs the database on its own host with at least 4 cores, separate from the API instances, keeping `DB_POOL_MAX=10` per API instance.
+
 | `SHUTDOWN_DRAIN_MS` / `SHUTDOWN_TIMEOUT_MS` | no | 5000 / 30000 |
 | `WORKER_HEALTH_PORT` | no | worker liveness port |
 
