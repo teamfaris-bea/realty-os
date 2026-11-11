@@ -10,7 +10,13 @@
 //     5 accepted: INSERT lead_ownership_events (seq = head + 1 …)   rejected: INSERT ownership_command_rejections
 //     6 UPDATE contacts SET … WHERE ownership_seq = expected        (the DB guard re-checks ledger/head)
 //     7 effects: inline (rows the actor may write) + ONE ownership.followup job for cross-user effects
+//   (applyOwnershipCommandThen: the caller's read-back, after app.ownership_command is cleared)
 //   COMMIT  (serialization_failure / deadlock ⇒ retry ≤ 3 with the same command_id)
+//
+// Round trips (lane perf-misses, claim contention): the idempotency checks are one EXISTS each for a new
+// command (the stored outcome is read only when there is one), app.ownership_command is set once with
+// the transaction's GUCs, and the API's response projection is read in this transaction instead of a
+// second one, so a tap holds one pooled connection for the command instead of two.
 import { randomFillSync } from 'node:crypto';
 import { sha256Hex } from '@realty/core/compliance';
 import type { Actor, ContactId, IdGenerator, Instant, UserId } from '@realty/core/foundation';
@@ -139,7 +145,16 @@ async function updateContactColumns(tx: Tx, id: ContactId, fx: ContactColumnEffe
      WHERE tenant_id = app.tenant_id() AND id = ${id} AND ownership_state = 'owned'`.execute(tx);
 }
 
+/** Whether this command id has a stored outcome (one round trip; same rows as storedOutcome reads). */
+async function hasStoredOutcome(tx: Tx, commandId: string): Promise<boolean> {
+  const r = await sql<{ found: boolean }>`
+    SELECT EXISTS (SELECT 1 FROM ownership_command_rejections WHERE tenant_id = app.tenant_id() AND command_id = ${commandId})
+        OR EXISTS (SELECT 1 FROM app.ownership_command_events(${commandId}::uuid)) AS found`.execute(tx);
+  return r.rows[0]?.found === true;
+}
+
 async function storedOutcome(tx: Tx, commandId: string): Promise<StoredOutcome | null> {
+  if (!(await hasStoredOutcome(tx, commandId))) return null;
   const rej = await selectRejection(tx, commandId);
   if (rej) return { ok: false, code: rej.code, rejection: rej };
   const events = await selectCommandEvents(tx, commandId);
@@ -344,9 +359,14 @@ async function runEffects(
 }
 
 /** Every step of an ownership command inside an existing transaction (dispatch TX1 touch, dial, merge, follow-up). */
-export async function applyOwnershipCommandInTx(tx: Tx, actor: Actor, contactId: ContactId, cmd: OwnershipCommand, opts: OwnershipCommandOptions): Promise<OwnershipCommandResult> {
+export function applyOwnershipCommandInTx(tx: Tx, actor: Actor, contactId: ContactId, cmd: OwnershipCommand, opts: OwnershipCommandOptions): Promise<OwnershipCommandResult> {
+  return applyInTx(tx, actor, contactId, cmd, opts, false);
+}
+
+/** `commandSet`: the transaction was opened with app.ownership_command = opts.commandId (applyOwnershipCommand). */
+async function applyInTx(tx: Tx, actor: Actor, contactId: ContactId, cmd: OwnershipCommand, opts: OwnershipCommandOptions, commandSet: boolean): Promise<OwnershipCommandResult> {
   const ids = opts.ids ?? defaultIds();
-  await setOwnershipCommand(tx, opts.commandId);
+  if (!commandSet) await setOwnershipCommand(tx, opts.commandId);
   const stored = await storedOutcome(tx, opts.commandId);
   if (stored) return { replayed: true, outcome: stored, projection: await currentProjection(tx, cmd.kind === 'merge' ? cmd.survivorId : contactId) };
   if (cmd.kind === 'merge') return applyMerge(tx, actor, cmd, { ...opts, ids });
@@ -377,15 +397,46 @@ export async function applyOwnershipCommandInTx(tx: Tx, actor: Actor, contactId:
 }
 
 /** applyOwnershipCommand in its own transaction (retried ≤ 3 times on serialization failure / deadlock). */
-export function applyOwnershipCommand(actor: Actor, contactId: ContactId | null, cmd: OwnershipCommand, opts: OwnershipCommandOptions): Promise<OwnershipCommandResult> {
+export async function applyOwnershipCommand(actor: Actor, contactId: ContactId | null, cmd: OwnershipCommand, opts: OwnershipCommandOptions): Promise<OwnershipCommandResult> {
+  return (await inOwnTx(actor, contactId, cmd, opts, null)).result;
+}
+
+/**
+ * applyOwnershipCommand, then `readBack` in the SAME transaction, after every write of the command and
+ * with app.ownership_command cleared: what it reads is exactly what a fresh transaction of the actor
+ * would read once this one commits (plain RLS, no visibility granted by the command itself; R-PERM-7),
+ * without a second pooled connection. A retry re-runs both.
+ */
+export function applyOwnershipCommandThen<T>(
+  actor: Actor,
+  contactId: ContactId | null,
+  cmd: OwnershipCommand,
+  opts: OwnershipCommandOptions,
+  readBack: (tx: Tx, result: OwnershipCommandResult) => Promise<T>,
+): Promise<{ result: OwnershipCommandResult; after: T }> {
+  return inOwnTx(actor, contactId, cmd, opts, readBack) as Promise<{ result: OwnershipCommandResult; after: T }>;
+}
+
+function inOwnTx<T>(
+  actor: Actor,
+  contactId: ContactId | null,
+  cmd: OwnershipCommand,
+  opts: OwnershipCommandOptions,
+  readBack: ((tx: Tx, result: OwnershipCommandResult) => Promise<T>) | null,
+): Promise<{ result: OwnershipCommandResult; after: T | undefined }> {
   const id = contactId ?? (cmd.kind === 'merge' ? cmd.survivorId : null);
   if (id === null) throw new TypeError('contactId is required (merge: the survivor id)');
   const ids = opts.ids ?? defaultIds();
-  return withTenantTx(actor, (tx) => applyOwnershipCommandInTx(tx, actor, id, cmd, { ...opts, ids }), {
-    ownershipCommand: opts.commandId,
-    retries: 3,
-    ...(opts.db ? { db: opts.db } : {}),
-  });
+  return withTenantTx(
+    actor,
+    async (tx) => {
+      const result = await applyInTx(tx, actor, id, cmd, { ...opts, ids }, true);
+      if (!readBack) return { result, after: undefined };
+      await setOwnershipCommand(tx, null);
+      return { result, after: await readBack(tx, result) };
+    },
+    { ownershipCommand: opts.commandId, retries: 3, ...(opts.db ? { db: opts.db } : {}) },
+  );
 }
 
 // ---- merge (R-OWN-24, E69) ---------------------------------------------------------------------------

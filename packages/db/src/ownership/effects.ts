@@ -11,7 +11,7 @@ import type { Actor, ContactId, IdGenerator, Instant, UserId } from '@realty/cor
 import { toIso } from '@realty/core/foundation';
 import type { Effect, NotificationSpec, OwnershipProjection, PeopleFacts } from '@realty/core/ownership';
 import { sql } from 'kysely';
-import { cancel, enqueue } from '../jobs.js';
+import { type JobSpec, cancel, enqueue, enqueueAll } from '../jobs.js';
 import { insertAuditRow } from '../repos/audit.js';
 import { insertUnlessDuplicate } from '../savepoint.js';
 import type { JsonValue } from '../schema.js';
@@ -191,12 +191,22 @@ function auditChanges(c: EffectContext): { [k: string]: JsonValue } {
  */
 export async function applyEffects(tx: Tx, c: EffectContext, effects: readonly Effect[]): Promise<string[]> {
   const fanout: string[] = [];
+  // Timer enqueues are buffered and written in one round trip (enqueueAll: same rows, same outcome, job
+  // ids in effect order). The buffer is flushed before anything else that touches jobs (a cancel, a
+  // routing follow-up) and at the end, so the jobs table sees the same sequence of changes as before;
+  // the other effects write other tables, which no job insert reads.
+  const timers: JobSpec[] = [];
+  const flush = async () => {
+    if (timers.length === 0) return;
+    await enqueueAll(tx, timers.splice(0));
+  };
   for (const e of effects) {
     switch (e.kind) {
       case 'enqueueTimer':
-        await enqueue(tx, { queue: 'realtime', kind: e.jobKind, runAt: e.runAt, dedupeKey: e.dedupeKey, payload: { ...e.fence } });
+        timers.push({ queue: 'realtime', kind: e.jobKind, runAt: e.runAt, dedupeKey: e.dedupeKey, payload: { ...e.fence } });
         break;
       case 'cancelTimers':
+        await flush();
         await cancel(tx, e.dedupeKeys);
         break;
       case 'notify': {
@@ -254,6 +264,7 @@ export async function applyEffects(tx: Tx, c: EffectContext, effects: readonly E
                  removed_at = NULL`.execute(tx);
         break;
       case 'route':
+        await flush();
         // Only reachable for a system actor without a routing snapshot: route in the follow-up job.
         await enqueueFollowup(tx, { commandId: c.ids.next<'CommandId'>(), contactId: c.contactId, effects: [e], fanoutNotificationIds: [] }, c.ids);
         break;
@@ -274,6 +285,7 @@ export async function applyEffects(tx: Tx, c: EffectContext, effects: readonly E
         break; // written with the projection
     }
   }
+  await flush();
   return fanout;
 }
 

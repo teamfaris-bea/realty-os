@@ -26,6 +26,7 @@ import { NIL_UUID, actorOf, leadsTx, mapLeadsDbError, platformOf } from './commo
 import { factsOf } from './contacts.js';
 import { rejectionError, runOwnershipCommand } from './ownership.js';
 import * as repo from './repos/contacts.js';
+import { commandContact, narrowFactsOf } from './repos/ownership.js';
 import { type CommandVerb, CommandBodies, OwnershipResultResponse } from './schemas.js';
 
 const ACTION: Record<CommandVerb, Action> = {
@@ -56,7 +57,16 @@ const VERB_RELATION: Record<CommandVerb, ResourceFacts> = {
 };
 
 /** What the facts read saw (the handler reuses it to fill defaults such as the claimed pond). */
-const seen = new WeakMap<FastifyRequest, repo.ContactRow | null>();
+type SeenRow = Pick<repo.ContactRow, 'pond_id' | 'ownership_state'>;
+const seen = new WeakMap<FastifyRequest, SeenRow | null>();
+
+/**
+ * Verbs authorized by the offer / pond / own scopes only (core MATRIX: lead.accept, lead.decline OFFER;
+ * lead.claim POND; lead.release OWN). Their facts come from the narrow read (repos/ownership.ts): the same
+ * row visibility and the same relation expressions as getContact, without evaluating the relations and the
+ * detail visibility no rule of theirs reads (lane perf-misses: ~20 ms of Postgres CPU per tap at 250k).
+ */
+const NARROW: ReadonlySet<CommandVerb> = new Set(['accept', 'decline', 'claim', 'release']);
 
 type Body = { commandId: string; expectedSeq?: number; toUserId?: string; loserId?: string };
 
@@ -64,8 +74,10 @@ async function commandFacts(req: FastifyRequest, verb: CommandVerb): Promise<Res
   const id = (req.params as { contactId: string }).contactId;
   const body = req.body as Body;
   return leadsTx(req, async (tx) => {
-    const row = await repo.getContact(tx, id);
+    const narrow = NARROW.has(verb);
+    const row = narrow ? await commandContact(tx, id) : await repo.getContact(tx, id);
     seen.set(req, row);
+    const factsOfRow = (r: NonNullable<typeof row>): ResourceFacts => (narrow ? narrowFactsOf(r as NonNullable<Awaited<ReturnType<typeof commandContact>>>) : factsOf(r as repo.ContactRow));
     const target = async (): Promise<ResourceFacts> => {
       if (verb !== 'reassign' && verb !== 'handoff') return {};
       const t = body.toUserId ? await repo.memberTarget(tx, body.toUserId) : null;
@@ -79,19 +91,19 @@ async function commandFacts(req: FastifyRequest, verb: CommandVerb): Promise<Res
     const record = await repo.commandRecord(tx, body.commandId);
     if (!repo.isNewCommand(record)) {
       if (!repo.commandContacts(record).has(id)) throw new AppError('COMMAND_ID_REUSED');
-      return { ...(row ? factsOf(row) : {}), ...VERB_RELATION[verb], ...(await target()) };
+      return { ...(row ? factsOfRow(row) : {}), ...VERB_RELATION[verb], ...(await target()) };
     }
     if (!row) {
       // E1 / R-OWN-5: the command still reaches the engine when the caller had legitimate sight
       if (!(await repo.ownershipHead(tx, id))) return null;
       return verb === 'claim' || verb === 'accept' || verb === 'decline' || verb === 'release' ? { ...VERB_RELATION[verb] } : null;
     }
-    const facts = factsOf(row);
+    const facts = factsOfRow(row);
     // R-OWN-7: a second accept by the current owner is answered ALREADY_OWNER by the engine
     if (verb === 'accept' && row.rel_own) return { ...facts, offer: true };
     if (verb === 'reassign' || verb === 'handoff') return { ...facts, ...(await target()) };
     if (verb === 'close' || verb === 'reopen' || verb === 'merge' || verb === 'delete') {
-      if (!row.detail_visible) return null;
+      if (!(row as repo.ContactRow).detail_visible) return null;
       if (verb === 'merge') {
         const loser = body.loserId ? await repo.getContact(tx, body.loserId) : null;
         if (!loser || !loser.detail_visible) return null;
@@ -101,7 +113,7 @@ async function commandFacts(req: FastifyRequest, verb: CommandVerb): Promise<Res
   });
 }
 
-function commandOf(verb: CommandVerb, contactId: string, b: Record<string, unknown>, row: repo.ContactRow | null): OwnershipCommand {
+function commandOf(verb: CommandVerb, contactId: string, b: Record<string, unknown>, row: SeenRow | null): OwnershipCommand {
   switch (verb) {
     case 'accept':
       return { kind: 'accept', offerId: b.offerId as string };

@@ -1,4 +1,4 @@
-// pnpm load:bench [--db realty_load] [--iterations 40] [--explain] [--out file.json]
+// pnpm load:bench [--db realty_load] [--iterations 40] [--explain] [--out file.json] [--pool 20] [--offers 200] [--profile]
 // Measures p50/p95 of the phone-critical reads and the concurrent writes on a database seeded by
 // load:seed, through the REAL server (buildServer + app.inject): session cookie resolution, the route's
 // authorization, withTenantTx (SET LOCAL tenant/user/actor exactly as production), the repositories,
@@ -28,6 +28,7 @@ import { silentLogger } from '../worker/observability.js';
 import { HandlerRegistry } from '../worker/registry.js';
 import { loadUrls } from './db.js';
 import { loadUuid } from './generate.js';
+import { type Phases, type Sample, describePhases, instrumentPool, runProfiled, sampled } from './profile.js';
 import { argValue } from './seed.js';
 
 export interface Measurement {
@@ -72,6 +73,8 @@ export class LoadBench {
   readonly checks: { name: string; ok: boolean; detail: string }[] = [];
   /** only operations whose name matches run (--only) */
   only: RegExp | null = null;
+  /** --profile: per-request pool wait / connection hold, backend wait sampling (profile.ts) */
+  profile = false;
   private constructor(
     readonly app: FastifyInstance,
     readonly database: Database,
@@ -85,6 +88,7 @@ export class LoadBench {
   static async open(o: { db: string; iterations: number; log: (s: string) => void; poolMax?: number }): Promise<LoadBench> {
     const urls = loadUrls(o.db);
     const database = createDatabase({ url: urls.appUserUrl, max: o.poolMax ?? 20, applicationName: 'load-bench' });
+    instrumentPool(database.pool);
     const su = new pg.Pool({ connectionString: urls.ownerUrl, max: 2 });
     const config = testConfig({ logLevel: 'error' }, { KEK_BASE64: process.env.KEK_BASE64, ...(process.env.KEK_REF ? { KEK_REF: process.env.KEK_REF } : {}) });
     const clock = { now: () => instant(Date.now()) };
@@ -108,7 +112,35 @@ export class LoadBench {
     return { label, userId, role, cookie: s.token, csrf: csrfTokenFor(this.sessionSecret, s.sessionId) };
   }
 
-  async req<T = Record<string, unknown>>(s: Session, method: string, url: string, body?: unknown): Promise<{ status: number; body: T; ms: number }> {
+  async req<T = Record<string, unknown>>(s: Session, method: string, url: string, body?: unknown): Promise<{ status: number; body: T; ms: number; phases?: Phases }> {
+    if (!this.profile) return this.req0<T>(s, method, url, body);
+    const { result, phases } = await runProfiled(() => this.req0<T>(s, method, url, body));
+    return { ...result, phases };
+  }
+
+  /** Runs one concurrent batch; with --profile also samples the backends and logs the phase breakdown. */
+  async batch<R extends { ms: number; phases?: Phases }>(name: string, fn: () => Promise<R[]>): Promise<R[]> {
+    if (!this.profile) return fn();
+    const { result, sample } = await sampled(this.su, 'load-bench', fn);
+    this.samples.push({ name, rows: result.map((r) => ({ ms: r.ms, phases: r.phases! })), sample });
+    return result;
+  }
+
+  readonly samples: { name: string; rows: { ms: number; phases: Phases }[]; sample: Sample }[] = [];
+
+  /** Logs the merged breakdown of every batch whose name starts with `prefix`. */
+  logProfile(prefix: string): void {
+    const xs = this.samples.filter((x) => x.name.startsWith(prefix));
+    if (xs.length === 0) return;
+    const waits = new Map<string, number>();
+    for (const x of xs) for (const [k, n] of x.sample.waits) waits.set(k, (waits.get(k) ?? 0) + n);
+    const sum = (f: (s: Sample) => number) => xs.reduce((a, x) => a + f(x.sample), 0);
+    const wallMs = sum((s) => s.wallMs);
+    const merged: Sample = { dbCpuMs: sum((s) => s.dbCpuMs), waits, samples: sum((s) => s.samples), machineCpuBusy: sum((s) => s.machineCpuBusy * s.wallMs) / wallMs, nodeCpuMs: sum((s) => s.nodeCpuMs), wallMs };
+    this.log(describePhases(prefix, xs.flatMap((x) => x.rows), merged));
+  }
+
+  private async req0<T>(s: Session, method: string, url: string, body?: unknown): Promise<{ status: number; body: T; ms: number }> {
     const headers: Record<string, string> = { 'user-agent': 'load-bench', cookie: `__Host-sid=${s.cookie}` };
     if (method !== 'GET') {
       headers.origin = ORIGIN;
@@ -354,22 +386,26 @@ export async function benchReads(b: LoadBench, a: Actors): Promise<void> {
 }
 
 /** 8. accept and claim under concurrency: correctness (exactly one winner) and latency. */
-export async function benchOwnership(b: LoadBench, a: Actors, o: { contested: number; racers: number }): Promise<void> {
+export async function benchOwnership(b: LoadBench, a: Actors, o: { contested: number; racers: number; offers?: number }): Promise<void> {
   const T = b.tenantId;
   // accept: every live offer accepted by its offeree, all at once
   const offers = await b.q<{ id: string; offer_id: string; offered_to_user_id: string; ownership_seq: string }>(
-    `SELECT id, offer_id, offered_to_user_id, ownership_seq::text FROM contacts WHERE tenant_id = $1 AND ownership_state = 'offered' ORDER BY id LIMIT 200`, [T]);
+    `SELECT id, offer_id, offered_to_user_id, ownership_seq::text FROM contacts WHERE tenant_id = $1 AND ownership_state = 'offered' ORDER BY id LIMIT $2`, [T, o.offers ?? 200]);
   const sessionOf = new Map(a.agents.map((x) => [x.userId, x.s]));
   // every agent works through their own offers one tap at a time; all agents at once
   const byAgent = new Map<string, typeof offers>();
   for (const c of offers) byAgent.set(c.offered_to_user_id, [...(byAgent.get(c.offered_to_user_id) ?? []), c]);
-  const acc: { status: number; ms: number; body: { error?: { code: string } } }[] = [];
-  await Promise.all([...byAgent].map(async ([agent, mine]) => {
-    for (const c of mine) acc.push(await b.req<{ error?: { code: string } }>(sessionOf.get(agent)!, 'POST', `/leads/${c.id}/accept`, { commandId: randomUUID(), offerId: c.offer_id, expectedSeq: Number(c.ownership_seq) }));
-  }));
+  const acc: { status: number; ms: number; body: { error?: { code: string } }; phases?: Phases }[] = [];
+  await b.batch('accept', async () => {
+    await Promise.all([...byAgent].map(async ([agent, mine]) => {
+      for (const c of mine) acc.push(await b.req<{ error?: { code: string } }>(sessionOf.get(agent)!, 'POST', `/leads/${c.id}/accept`, { commandId: randomUUID(), offerId: c.offer_id, expectedSeq: Number(c.ownership_seq) }));
+    }));
+    return acc;
+  });
   const accOk = acc.filter((r) => r.status === 200).length;
   if (offers.length === 0) b.log('accept: no live offers left (the bench consumes them; re-seed for a fresh run)');
   else b.record(`accept: ${offers.length} live offers, ${byAgent.size} agents accepting at once`, BUDGET.write, acc.map((r) => r.ms));
+  b.logProfile('accept');
   b.check('accept: every live offer accepted by its offeree', accOk === offers.length, `${accOk}/${offers.length} accepted; others: ${[...new Set(acc.filter((r) => r.status !== 200).map((r) => `${r.status} ${r.body.error?.code}`))].join(', ') || 'none'}`);
 
   // contested claims: `racers` agents tap Claim on the same pond lead at the same moment (E1)
@@ -386,12 +422,13 @@ export async function benchOwnership(b: LoadBench, a: Actors, o: { contested: nu
   let exactlyOne = 0;
   const loserCodes = new Map<string, number>();
   for (const lead of leads.slice(0, o.contested)) {
-    const rs = await Promise.all(racers.map((r) => b.req<{ error?: { code: string } }>(r.s, 'POST', `/leads/${lead.id}/claim`, { commandId: randomUUID(), pondId: pond })));
+    const rs = await b.batch('claim race', () => Promise.all(racers.map((r) => b.req<{ error?: { code: string } }>(r.s, 'POST', `/leads/${lead.id}/claim`, { commandId: randomUUID(), pondId: pond }))));
     times.push(...rs.map((r) => r.ms));
     if (rs.filter((r) => r.status === 200).length === 1) exactlyOne += 1;
     for (const r of rs.filter((x) => x.status !== 200)) loserCodes.set(`${r.status} ${r.body.error?.code}`, (loserCodes.get(`${r.status} ${r.body.error?.code}`) ?? 0) + 1);
   }
   b.record(`claim: ${o.contested} pond leads, ${racers.length} agents racing on each (all requests)`, BUDGET.write, times);
+  b.logProfile('claim race');
   b.check('claim race (E1): exactly one winner per lead', exactlyOne === o.contested, `${exactlyOne}/${o.contested}; losers: ${[...loserCodes].map(([k, v]) => `${k} ×${v}`).join(', ')}`);
   // a loser is told why with a 409: the race (LEAD_ALREADY_CLAIMED / LEAD_STATE_CHANGED) or, for an agent
   // who already holds the tenant's cap of uncontacted leads, CAPACITY_REACHED; never a 2xx or a 5xx
@@ -402,9 +439,10 @@ export async function benchOwnership(b: LoadBench, a: Actors, o: { contested: nu
   const claimers = a.agents.filter((x) => (backlog.get(x.userId) ?? 0) + o.contested < 50);
   const rest = leads.slice(o.contested, o.contested + claimers.length);
   const t0 = performance.now();
-  const un = await Promise.all(rest.map((lead, i) => b.req(claimers[i]!.s, 'POST', `/leads/${lead.id}/claim`, { commandId: randomUUID(), pondId: pond })));
+  const un = await b.batch('claim uncontested', () => Promise.all(rest.map((lead, i) => b.req(claimers[i]!.s, 'POST', `/leads/${lead.id}/claim`, { commandId: randomUUID(), pondId: pond }))));
   const wall = performance.now() - t0;
   b.record(`claim: ${rest.length} agents each claim a different lead at once`, BUDGET.write, un.map((r) => r.ms), `wall ${wall.toFixed(0)} ms`);
+  b.logProfile('claim uncontested');
   b.check('uncontested claims all succeed', un.every((r) => r.status === 200), `${un.filter((r) => r.status === 200).length}/${un.length}`);
 }
 
@@ -525,9 +563,10 @@ export async function machineInfo(su: pg.Pool) {
   };
 }
 
-export async function runBench(o: { db: string; iterations: number; log: (s: string) => void; sends: number; importRows: number; contested: number; racers: number; skip?: Set<string>; only?: string }): Promise<BenchResult> {
+export async function runBench(o: { db: string; iterations: number; log: (s: string) => void; sends: number; importRows: number; contested: number; racers: number; skip?: Set<string>; only?: string; poolMax?: number; profile?: boolean; offers?: number }): Promise<BenchResult> {
   const b = await LoadBench.open(o);
   if (o.only) b.only = new RegExp(o.only);
+  b.profile = o.profile === true;
   try {
     const sizes: Record<string, number> = {};
     for (const t of ['contacts', 'contact_points', 'messages', 'calls', 'notes', 'lead_ownership_events', 'exception_items', 'consent_state', 'deals']) {
@@ -536,7 +575,7 @@ export async function runBench(o: { db: string; iterations: number; log: (s: str
     o.log(`large tenant: ${JSON.stringify(sizes)}`);
     const a = await actors(b);
     if (!o.skip?.has('reads')) await benchReads(b, a);
-    if (!o.skip?.has('ownership')) await benchOwnership(b, a, { contested: o.contested, racers: o.racers });
+    if (!o.skip?.has('ownership')) await benchOwnership(b, a, { contested: o.contested, racers: o.racers, ...(o.offers !== undefined ? { offers: o.offers } : {}) });
     if (!o.skip?.has('dispatch')) await benchDispatch(b, a, { sends: o.sends, concurrency: 8 });
     if (!o.skip?.has('import')) await benchImportDryRun(b, a, o.importRows);
     return { db: o.db, at: new Date().toISOString(), machine: await machineInfo(b.su), sizes, results: b.results, checks: b.checks };
@@ -564,6 +603,11 @@ if (isMain) {
     racers: Number(argValue(args, 'racers') ?? 10),
     skip: new Set((argValue(args, 'skip') ?? '').split(',').filter(Boolean)),
     ...(argValue(args, 'only') ? { only: argValue(args, 'only')! } : {}),
+    // --pool N: the bench's API pool size (default 20); --offers N: live offers accepted (default 200);
+    // --profile: pool wait / connection hold per request and backend wait sampling (profile.ts)
+    ...(argValue(args, 'pool') ? { poolMax: Number(argValue(args, 'pool')) } : {}),
+    ...(argValue(args, 'offers') ? { offers: Number(argValue(args, 'offers')) } : {}),
+    profile: args.includes('--profile'),
     log: (s: string) => console.log(s),
   };
   const explain = args.includes('--explain');

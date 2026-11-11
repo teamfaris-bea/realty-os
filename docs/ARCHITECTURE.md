@@ -146,8 +146,18 @@ BEGIN; withTenantTx context; set_config('app.ownership_command', command_id, tru
     previous owner's drafts, pausing agent enrollments, collaborator rows) and any routing go to ONE job,
     ownership.followup (realtime, dedupe followup:{command_id}), which applies them as the system actor
     under the same locks. For a system actor the same effects run inline.
+    The timer jobs of one command are inserted in one multi-row INSERT (same rows and outcome as one by one).
+  8 API taps only (applyOwnershipCommandThen): set_config('app.ownership_command', '', true), then the
+    response projection is read under the caller's plain RLS, i.e. what a fresh transaction would see after
+    COMMIT (null after a decline or a reassign away, R-PERM-7), without a second pooled connection.
 COMMIT   (serialization_failure / deadlock ⇒ retry ≤ 3 with the same command_id)
 ```
+
+Step 0 is one `EXISTS` per check for a new command; the stored outcome is read only when there is one. A tap
+uses three pooled connections in all: session resolution (one transaction since lane perf-misses: the
+pre-tenant `auth.resolve_session`, then the actor's GUCs replace every pre-tenant GUC), the route's
+authorization facts, and the command. Accept / decline / claim / release read their facts with a narrow
+row read (the offer, pond and own relations their MATRIX rows use), not the full contact view.
 
 - **Routing never runs under a user actor.** An agent's RLS cannot see or lock other candidates' routing inputs: their memberships `FOR SHARE`, their push subscriptions, their `app.claim_stats`, and `routing_rotation_state` (smoke-tested). A user-actor router would therefore decide on an empty or partial candidate set, falsely send the lead to the pond (`NO_ELIGIBLE_AGENT`), or silently fail to persist the round-robin cursor. So:
   - A **decline** commits only `offer_declined` → `unassigned` with `route_due_at = now`, and enqueues `ownership.followup`. The follow-up routes as the system actor. The sweeper re-issues routing for any `route_due_at` older than 15 s.
