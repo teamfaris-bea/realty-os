@@ -2,10 +2,14 @@
 //
 // - The box defaults to the client's last OPEN channel: the channel of their latest message (text, email or
 //   web chat), unless that channel cannot be used now. A channel cannot be used when the reachability
-//   summary says it is blocked (an opt-out or suppression, D1: STOP on any of their phones, including a
-//   removed one, R-PAR-12; an unsubscribe; an agent-recorded or person-level do-not-contact) or, for web
-//   chat, when a send already came back CHANNEL_NOT_CONNECTED (the chat ended, E77, or the widget was
-//   disconnected, R-INBOX-7).
+//   summary says it is blocked: for texts and email an opt-out or suppression (D1: STOP on any of their phones,
+//   including a removed one, R-PAR-12; an unsubscribe; an agent-recorded or person-level do-not-contact); for web
+//   chat its own entry (module 22, channels.web_chat): the chat ended (the visitor has been gone 30 minutes, E77),
+//   the website chat was turned off (R-INBOX-7), or an opt-out. Web chat is also closed when a send in this box just
+//   came back CHANNEL_NOT_CONNECTED (it ended between the summary and the tap).
+// - Web chat is an option only when the contact has a chat to reply to, as the summary says; while the summary is
+//   unknown (loading, failed, or an API without the entry) the thread's own web-chat messages decide, and the
+//   send-time check decides the rest, as always.
 // - Opened to write on a named channel (a Text or Email tap, or an assistant draft), the box keeps it unless
 //   it cannot be used. The agent's own tap always wins among the usable ones.
 // - A channel that cannot be used is never offered: it is shown, disabled, with the reason in the exact
@@ -13,7 +17,7 @@
 // - Whenever the box is not on the channel the client wrote on last, `why` says why in plain words.
 //
 // D2: there is no Messenger or Instagram channel and no messaging-window rule anywhere here.
-import type { ChannelState } from '../../reasons/index.js';
+import { type ChannelState, type Reachability, reachSentence } from '../../reasons/index.js';
 import type { ComposeChannel } from './channelApi.js';
 
 export interface ChannelOption {
@@ -26,15 +30,22 @@ export interface ChannelOption {
   reason: string | null;
 }
 
+/** Web chat as the reachability summary tells it (webChatState). */
+export interface WebChatState extends ChannelState {
+  /** the contact has a website chat to reply to */
+  offered: boolean;
+  /** completes "Writing by text: …" when the box left web chat because of it */
+  left: string;
+}
+
 export interface ChoiceInput {
   firstName: string;
   canText: boolean;
   canEmail: boolean;
-  /** the client has written by web chat (there is a web-chat message in the thread) */
-  hasWebChat: boolean;
   sms: ChannelState;
   email: ChannelState;
-  /** a web-chat send came back CHANNEL_NOT_CONNECTED in this box */
+  webChat: WebChatState;
+  /** a web-chat send in this box came back CHANNEL_NOT_CONNECTED */
   webChatEnded: boolean;
   /** the channel of the client's latest message, or null when they never wrote */
   lastInbound: ComposeChannel | null;
@@ -62,14 +73,31 @@ const BY: Record<ComposeChannel, string> = {
   email: 'by email',
   web_chat: 'in web chat',
 };
-const BLOCKED: Record<ComposeChannel, string> = {
-  sms: 'texting is blocked',
-  email: 'email is blocked',
-  web_chat: 'the web chat has ended',
-};
 
-export const WEB_CHAT_ENDED =
-  'The chat has ended: they left the page or the widget was disconnected';
+/** A send in this box came back CHANNEL_NOT_CONNECTED: one of the two happened, and the summary will say which. */
+export const WEB_CHAT_ENDED = 'The chat has ended: they left the page or the widget was disconnected';
+/** channels.web_chat.session.open is false: the visitor has been gone 30 minutes (E77) */
+export const CHAT_SESSION_ENDED = 'The chat has ended: they left the page';
+/** channels.web_chat.session.widgetConnected is false (R-INBOX-7) */
+export const CHAT_TURNED_OFF = 'The website chat was turned off';
+const ENDED_LEFT = 'the web chat has ended';
+
+/**
+ * Web chat from the reachability summary (module 22's channels.web_chat). `seenInThread`: the thread shows web-chat
+ * messages; it decides only while the summary is unknown.
+ */
+export function webChatState(r: Reachability | null, seenInThread: boolean): WebChatState {
+  const wc = r?.channels.web_chat;
+  const open = (offered: boolean): WebChatState => ({ offered, blocked: false, sentence: null, note: null, left: ENDED_LEFT });
+  if (!wc) return open(seenInThread);
+  if (!wc.hasAddress || !wc.session) return open(false);
+  const optOut = wc.reasons[0];
+  if (optOut) return { offered: true, blocked: true, sentence: reachSentence(optOut, 'web_chat'), note: null, left: 'web chat is blocked' };
+  if (!wc.session.widgetConnected) return { offered: true, blocked: true, sentence: CHAT_TURNED_OFF, note: null, left: 'the website chat was turned off' };
+  if (!wc.session.open) return { offered: true, blocked: true, sentence: CHAT_SESSION_ENDED, note: null, left: ENDED_LEFT };
+  if (wc.blocked) return { offered: true, blocked: true, sentence: "This chat can't take a reply right now", note: null, left: 'web chat is blocked' };
+  return open(true);
+}
 
 /** The channel of an inbound timeline message ("sms:inbound" → sms); null for anything compose cannot answer on. */
 export function composeChannelOf(detail: string | null): ComposeChannel | null {
@@ -96,13 +124,20 @@ export function chooseChannel(i: ChoiceInput): Choice {
       open: !i.email.blocked,
       reason: i.email.blocked ? i.email.sentence : null,
     });
-  if (i.hasWebChat)
+  if (i.webChat.offered) {
+    const closed = i.webChatEnded || i.webChat.blocked;
     options.push({
       channel: 'web_chat',
       label: CHANNEL_LABEL.web_chat,
-      open: !i.webChatEnded,
-      reason: i.webChatEnded ? WEB_CHAT_ENDED : null,
+      open: !closed,
+      reason: i.webChatEnded ? WEB_CHAT_ENDED : i.webChat.blocked ? i.webChat.sentence : null,
     });
+  }
+  const blockedWhy: Record<ComposeChannel, string> = {
+    sms: 'texting is blocked',
+    email: 'email is blocked',
+    web_chat: i.webChatEnded ? ENDED_LEFT : i.webChat.left,
+  };
   const open = (c: ComposeChannel | null): c is ComposeChannel =>
     c !== null && options.some((o) => o.channel === c && o.open);
 
@@ -126,7 +161,7 @@ export function chooseChannel(i: ChoiceInput): Choice {
     ) ?? null;
   let why: string | null = null;
   if (meant !== null && meant !== channel) {
-    why = `Writing ${BY[channel]}: ${BLOCKED[meant]}.`;
+    why = `Writing ${BY[channel]}: ${blockedWhy[meant]}.`;
   } else if (i.lastInbound !== null && channel === i.lastInbound) {
     why = `Replying ${BY[channel]}, where ${i.firstName} wrote last.`;
   } else if (

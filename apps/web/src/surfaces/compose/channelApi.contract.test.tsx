@@ -1,50 +1,47 @@
-// Contract test of the compose surface's STUB(22) client (channelApi.ts) against a fake of the PHASE2_3_PLAN
-// §5.4 (22) interface: the web-chat branch of POST /contacts/:id/messages (dispatch.ts deliverChannelMessage)
-// and an approved draft moved to web chat (drafts.ts: approved drafts may use web_chat). The fake accepts
-// exactly the request shapes the client must send and answers with the shapes module 22 is specified to return
-// (the Phase 1 ComposeResponse / ApproveResponse, plus CHANNEL_NOT_CONNECTED for an ended chat or a
-// disconnected widget, E77 / R-INBOX-7). When module 22 lands the orchestrator points this file at the real
-// route; a shape change then fails here first.
-import { act, renderHook } from '@testing-library/react';
+// Contract test of the compose surface's web-chat client (channelApi.ts), the box's preview (feed/lib/sendCheck.ts)
+// and the reachability summary's web_chat entry against module 22's real routes, as the API itself describes them:
+// the JSON Schemas apps/api/src/channels/webContract.ts generates from the routes' own Zod schemas (webContract.json;
+// its drift test keeps it equal to what the API validates and serializes). Every request the client sends is checked
+// against the route's request schema (a request the API would refuse is answered 422 and recorded), and the fake may
+// only answer with responses the route's response schema accepts, so a future API change breaks this test.
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { describe, expect, it } from 'vitest';
+import type { Reachability } from '../../reasons/index.js';
 import { ApiClient } from '../../shell/index.js';
 import { ShellProvider } from '../../shell/context.js';
-import { FakeFetch, err, tableWith } from '../../shell/testing/fakeApi.js';
-import { CHANNEL_NOT_CONNECTED, useWebChatApprove, useWebChatSend } from './channelApi.js';
-import channelApiSource from './channelApi.ts?raw';
+import { type Call, FakeFetch, type Reply, tableWith } from '../../shell/testing/fakeApi.js';
+import { apiError, contract, requestViolations, responseViolations, violations } from '../../test/contract.js';
+import { useSendCheck } from '../feed/lib/sendCheck.js';
+import { CHANNEL_NOT_CONNECTED, type WebChatOutcome, useWebChatApprove, useWebChatSend } from './channelApi.js';
+import { webChatState } from './channelChoice.js';
 
 const CONTACT = '01900000-0000-7000-8000-00000000c001';
 const DRAFT = '01900000-0000-7000-8000-00000000a001';
-const DECISION = { id: null, outcome: 'allow', reasons: [], explanation: 'Allowed', phase: 'send' };
+const MESSAGE = '01900000-0000-7000-8000-0000000e5501';
+const DECISION_ID = '01900000-0000-7000-8000-0000000d0001';
+const POINT = '01900000-0000-7000-8000-00000000ac01';
 
-/** §5.4 (22) request shapes, checked field for field (strict: no extra field, as the API's z.strictObject). */
-function isWebChatCompose(b: unknown): boolean {
-  const o = b as Record<string, unknown>;
-  return Object.keys(o).sort().join(',') === 'body,channel,idempotencyKey' && o.channel === 'web_chat' && typeof o.body === 'string' && (o.body as string).length >= 1 && (o.body as string).length <= 10_000 && /^[A-Za-z0-9_:.-]{8,100}$/.test(String(o.idempotencyKey));
-}
-function isWebChatApprove(b: unknown): boolean {
-  const o = b as Record<string, unknown>;
-  const p = o.editedPayload as Record<string, unknown> | undefined;
-  const keys = Object.keys(o).filter((k) => k !== 'commandId' && k !== 'reviewedInboundSeq');
-  return keys.join(',') === 'editedPayload' && !!p && Object.keys(p).sort().join(',') === 'body,channel' && p.channel === 'web_chat' && typeof p.body === 'string' && (o.reviewedInboundSeq === undefined || Number.isInteger(o.reviewedInboundSeq));
-}
+const allow = { id: null, outcome: 'allow', reasons: [], explanation: 'Allowed', phase: 'send' };
+const message = (status: string, statusReason: string | null, body: string) => ({ id: MESSAGE, channel: 'web_chat', status, statusReason, purpose: 'informational', body, subject: null, scheduledFor: null, dispatchedAt: status === 'sent' ? '2026-11-11T17:00:31.000Z' : null });
 
-/** A fake module 22: refuses anything but the §5.4 shapes with 400, and an ended chat with CHANNEL_NOT_CONNECTED. */
-function module22(state: { ended: boolean; asDecision?: boolean }) {
-  return new FakeFetch()
-    .on(`POST /contacts/${CONTACT}/messages`, (c) => {
-      if (!isWebChatCompose(c.body)) return err(400, 'VALIDATION_FAILED');
-      if (state.ended && state.asDecision) return { status: 200, body: { message: null, decision: { ...DECISION, outcome: 'deny', reasons: [CHANNEL_NOT_CONNECTED], explanation: 'The chat has ended' }, result: 'blocked' } };
-      if (state.ended) return err(409, CHANNEL_NOT_CONNECTED);
-      return { status: 201, body: { message: { id: '01900000-0000-7000-8000-0000000e5501', channel: 'web_chat', status: 'sent', statusReason: null, purpose: 'informational', body: (c.body as { body: string }).body, subject: null, scheduledFor: null, dispatchedAt: new Date().toISOString() }, decision: DECISION, result: 'sent' } };
-    })
-    .on(`POST /assistant/actions/${DRAFT}/approve`, (c) => {
-      if (!isWebChatApprove(c.body)) return err(400, 'VALIDATION_FAILED');
-      if (state.ended) return err(409, CHANNEL_NOT_CONNECTED);
-      return { status: 200, body: { actionId: DRAFT, status: 'executed', result: 'sent', messageId: '01900000-0000-7000-8000-0000000e5502', decision: DECISION } };
-    });
+/** A FakeFetch route that plays the API by its contract (request checked, response required to be one the API sends). */
+function byContract(fake: FakeFetch, route: string, path: string, reply: (c: Call, n: number) => Reply, problems: string[]) {
+  return fake.on(`${route.split(' ')[0]} ${path}`, (c, n) => {
+    const query = Object.fromEntries(new URL(c.path, 'http://x').searchParams);
+    const bad = requestViolations(route, c.body, query);
+    if (bad.length > 0) {
+      problems.push(...bad.map((b) => `${route} ${b}`));
+      return apiError('VALIDATION_FAILED');
+    }
+    const r = reply(c, n);
+    if (r !== 'network-error' && r.status === 200) {
+      const wrong = responseViolations(route, r.body);
+      if (wrong.length > 0) throw new Error(`the fake answered ${route} with a body the API never sends: ${wrong.join('; ')}`);
+    }
+    return r;
+  });
 }
 
 function wrapper(fake: FakeFetch) {
@@ -59,47 +56,94 @@ function wrapper(fake: FakeFetch) {
   );
 }
 
-describe('STUB(22) compose/channelApi.ts against the §5.4 (22) interface', () => {
-  it('R-INBOX-1: a web-chat reply is POST /contacts/:id/messages {channel: "web_chat", body, idempotencyKey} and the sent message comes back', async () => {
-    const fake = module22({ ended: false });
+describe('compose web chat against the real module 22 routes (webContract.json)', () => {
+  it('R-INBOX-1 R-GATE-14: a reply in web chat is the API\'s ComposeBody on channel web_chat (one idempotency key per tap, no scheduleAt), and its ComposeResponse comes back', async () => {
+    const problems: string[] = [];
+    const fake = byContract(new FakeFetch(), 'POST /contacts/:id/messages', `/contacts/${CONTACT}/messages`, (c) => ({ status: 200, body: { message: message('sent', null, (c.body as { body: string }).body), decision: allow, result: 'sent' } }), problems);
     const { result } = renderHook(() => useWebChatSend(CONTACT), { wrapper: wrapper(fake) });
-    let out: Awaited<ReturnType<typeof result.current.send>> | null = null;
+    let out: WebChatOutcome | null = null;
     await act(async () => {
       out = await result.current.send('Yes, 10 to 12');
     });
-    expect(out).toMatchObject({ kind: 'done', response: { result: 'sent', message: { channel: 'web_chat' } } });
-    expect(fake.callsTo(`POST /contacts/${CONTACT}/messages`)).toHaveLength(1);
+    expect(out).toMatchObject({ kind: 'done', response: { result: 'sent', message: { channel: 'web_chat', status: 'sent' } } });
+    const [call] = fake.callsTo(`POST /contacts/${CONTACT}/messages`);
+    expect(Object.keys(call!.body as object).sort()).toEqual(['body', 'channel', 'idempotencyKey']);
+    expect(call!.body).toMatchObject({ channel: 'web_chat', body: 'Yes, 10 to 12' });
+    expect(problems).toEqual([]);
+    // the API refuses a scheduled chat reply (422), and the client has no way to send one
+    expect(requestViolations('POST /contacts/:id/messages', { channel: 'web_chat', body: 'x', idempotencyKey: 'k-12345678', scheduleAt: 'tomorrow' }, {})).not.toEqual([]);
   });
 
-  it('E77 R-INBOX-7: an ended chat or a disconnected widget is "chat_ended" whether module 22 answers 409 CHANNEL_NOT_CONNECTED or a blocked decision', async () => {
-    for (const asDecision of [false, true]) {
-      const fake = module22({ ended: true, asDecision });
-      const { result } = renderHook(() => useWebChatSend(CONTACT), { wrapper: wrapper(fake) });
-      let out: unknown = null;
-      await act(async () => {
-        out = await result.current.send('Hello?');
-      });
-      expect(out).toEqual({ kind: 'chat_ended' });
-    }
-  });
-
-  it('an approved draft moved to web chat is POST /assistant/actions/:id/approve {editedPayload: {channel: "web_chat", body}}', async () => {
-    const fake = module22({ ended: false });
-    const { result } = renderHook(() => useWebChatApprove(CONTACT, DRAFT), { wrapper: wrapper(fake) });
-    let out: { ok: boolean } | null = null;
+  it('E77 R-INBOX-7: the send-time check refuses a reply to a chat that ended or whose widget is off with a blocked decision naming CHANNEL_NOT_CONNECTED, and the outcome says the chat ended', async () => {
+    const problems: string[] = [];
+    const blocked = { message: message('blocked', CHANNEL_NOT_CONNECTED, 'Are you still there?'), decision: { id: DECISION_ID, outcome: 'deny', reasons: [CHANNEL_NOT_CONNECTED], explanation: 'The chat has ended.', phase: 'send' }, result: 'blocked' };
+    const fake = byContract(new FakeFetch(), 'POST /contacts/:id/messages', `/contacts/${CONTACT}/messages`, () => ({ status: 200, body: blocked }), problems);
+    const { result } = renderHook(() => useWebChatSend(CONTACT), { wrapper: wrapper(fake) });
+    let out: WebChatOutcome | null = null;
     await act(async () => {
-      out = await result.current.approve('Yes, 10 to 12', 7);
+      out = await result.current.send('Are you still there?');
     });
-    expect(out).toMatchObject({ ok: true, data: { result: 'sent' } });
-    expect(fake.callsTo(`POST /assistant/actions/${DRAFT}/approve`)[0]!.body).toMatchObject({ editedPayload: { channel: 'web_chat', body: 'Yes, 10 to 12' }, reviewedInboundSeq: 7 });
+    expect(out).toEqual({ kind: 'chat_ended' });
+    expect(problems).toEqual([]);
   });
 
-  it('every call to a module 22 route that does not exist yet is marked STUB(22) with its method and route', () => {
-    const src = channelApiSource;
-    const marks = [...src.matchAll(/\/\/ STUB\(22\): (GET|POST) (\S+)/g)].map((m) => `${m[1]} ${m[2]}`);
-    expect(marks).toEqual(['POST /contacts/:id/messages', 'POST /assistant/actions/:id/approve']);
-    // and each marked line sits directly above the call it marks
-    expect(src).toMatch(/\/\/ STUB\(22\): POST \/contacts\/:id\/messages\n\s+const cmd = useCommand/);
-    expect(src).toMatch(/\/\/ STUB\(22\): POST \/assistant\/actions\/:id\/approve\n\s+const cmd = useCommand/);
+  it('a draft answered in web chat is the API\'s ApproveBody {commandId, editedPayload: {channel: web_chat, body}, reviewedInboundSeq}; a chat draft sent as drafted carries no editedPayload', async () => {
+    const problems: string[] = [];
+    const fake = byContract(new FakeFetch(), 'POST /assistant/actions/:id/approve', `/assistant/actions/${DRAFT}/approve`, () => ({ status: 200, body: { actionId: DRAFT, status: 'executed', result: 'sent', messageId: MESSAGE, decision: allow } }), problems);
+    const { result } = renderHook(() => useWebChatApprove(CONTACT, DRAFT), { wrapper: wrapper(fake) });
+    let edited: WebChatOutcome | null = null;
+    let asDrafted: WebChatOutcome | null = null;
+    await act(async () => {
+      edited = await result.current.approve('Yes, 10 to 12', 7, true);
+    });
+    await act(async () => {
+      asDrafted = await result.current.approve('Happy to help with Elm!', null, false);
+    });
+    expect(edited).toMatchObject({ kind: 'done', response: { result: 'sent', message: { id: MESSAGE, channel: 'web_chat' } } });
+    expect(asDrafted).toMatchObject({ kind: 'done' });
+    const [a, b] = fake.callsTo(`POST /assistant/actions/${DRAFT}/approve`);
+    expect(a!.body).toMatchObject({ editedPayload: { channel: 'web_chat', body: 'Yes, 10 to 12' }, reviewedInboundSeq: 7, commandId: expect.any(String) });
+    expect(b!.body).not.toHaveProperty('editedPayload');
+    expect(problems).toEqual([]);
+  });
+
+  it('module 22: the box previews a chat reply on the API\'s PreviewBody (channel web_chat, the real text) and reads its decision and final text', async () => {
+    const problems: string[] = [];
+    const fake = byContract(new FakeFetch(), 'POST /contacts/:id/messages/preview', `/contacts/${CONTACT}/messages/preview`, (c) => ({ status: 200, body: { decision: { id: null, outcome: 'deny', reasons: ['PAYMENT_INSTRUCTIONS'], explanation: 'Wire instructions are never sent.', phase: 'preview' }, body: (c.body as { body: string }).body } }), problems);
+    const { result } = renderHook(() => useSendCheck({ contactId: CONTACT, channel: 'web_chat', body: 'Wire the deposit to account 1234' }), { wrapper: wrapper(fake) });
+    await waitFor(() => expect(result.current.decision).toMatchObject({ outcome: 'deny', reasons: ['PAYMENT_INSTRUCTIONS'] }));
+    expect(result.current.final).toBe('Wire the deposit to account 1234');
+    expect(fake.callsTo(`POST /contacts/${CONTACT}/messages/preview`)[0]!.body).toEqual({ channel: 'web_chat', body: 'Wire the deposit to account 1234' });
+    expect(problems).toEqual([]);
+  });
+
+  it('no chat to reply to (CONTACT_POINT_MISSING, the API\'s 422) is said in words, never as a code', async () => {
+    expect(contract.errors.CONTACT_POINT_MISSING).toBe(422);
+    const fake = new FakeFetch().on(`POST /contacts/${CONTACT}/messages`, apiError('CONTACT_POINT_MISSING'));
+    const { result } = renderHook(() => useWebChatSend(CONTACT), { wrapper: wrapper(fake) });
+    let out: WebChatOutcome | null = null;
+    await act(async () => {
+      out = await result.current.send('Hello');
+    });
+    expect(out).toEqual({ kind: 'error', code: 'CONTACT_POINT_MISSING', message: "There's no website chat with them to reply to.", details: null });
+  });
+
+  it('module 22: the reachability summary\'s web_chat entry, exactly as the API sends it, is read as open, ended, turned off or opted out', () => {
+    const none = { hasAddress: false, defaultPointId: null, blocked: false, reasons: [], points: [] };
+    const summary = (web_chat: NonNullable<Reachability['channels']['web_chat']>): { reachability: Reachability } => ({ reachability: { contactId: CONTACT, purposeNow: 'informational', channels: { sms: none, voice: none, email: none, web_chat } } });
+    const point = (blocked: boolean, reasons: Reachability['channels']['sms']['reasons'] = []) => [{ pointId: POINT, addressHint: 'Website chat', blocked, reasons }];
+    const optOut = { code: 'CONSENT_REVOKED' as const, source: 'opt_out_language' as const, purposes: ['informational' as const, 'marketing' as const], at: '2026-11-10T15:00:00.000Z', keyword: null, recordedBy: null, importBatchId: null, suppressionReason: null, addressHint: 'web chat', otherAddress: false, addressRemoved: false, evidence: { consentEventId: '01900000-0000-7000-8000-0000000ce001', inboundMessageId: '01900000-0000-7000-8000-0000000e5599', callId: null, suppressionId: null } };
+    const cases = [
+      { s: summary({ hasAddress: true, defaultPointId: POINT, blocked: false, reasons: [], points: point(false), session: { open: true, widgetConnected: true } }), want: { offered: true, blocked: false } },
+      { s: summary({ hasAddress: true, defaultPointId: POINT, blocked: true, reasons: [], points: point(false), session: { open: false, widgetConnected: true } }), want: { offered: true, blocked: true, sentence: 'The chat has ended: they left the page' } },
+      { s: summary({ hasAddress: true, defaultPointId: POINT, blocked: true, reasons: [], points: point(false), session: { open: true, widgetConnected: false } }), want: { offered: true, blocked: true, sentence: 'The website chat was turned off' } },
+      { s: summary({ hasAddress: true, defaultPointId: POINT, blocked: true, reasons: [optOut], points: point(true, [optOut]), session: { open: true, widgetConnected: true } }), want: { offered: true, blocked: true, sentence: 'Asked in the chat to stop being contacted on Nov 10' } },
+      { s: summary({ ...none, session: null }), want: { offered: false, blocked: false } },
+    ];
+    for (const c of cases) {
+      // the fixture is what the API sends (its response schema accepts it, every field present)
+      expect(violations(contract.routes['GET /contacts/:id/reachability']!.response, c.s)).toEqual([]);
+      expect(webChatState(c.s.reachability, true)).toMatchObject(c.want);
+    }
   });
 });

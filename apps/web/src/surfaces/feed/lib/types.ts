@@ -195,7 +195,8 @@ export interface DecisionView {
 
 export interface MessageView {
   id: string;
-  channel: 'sms' | 'mms' | 'email';
+  /** 'web_chat' (module 22): a reply in the contact's website chat */
+  channel: 'sms' | 'mms' | 'email' | 'web_chat';
   status: string;
   statusReason: string | null;
   purpose: 'marketing' | 'informational' | null;

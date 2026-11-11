@@ -1,41 +1,51 @@
-// chooseChannel (module 37): exhaustive over every combination of addresses, blocks, an ended chat, the
-// client's last channel, the channel the box was opened for and the agent's tap (3 × 2^5 × 4^3 = 6,144
-// cases). The properties are the rules, so a mutation of the decision fails here:
+// chooseChannel (module 37): exhaustive over every combination of addresses, blocks, the web chat as the
+// reachability summary tells it (none, open, ended, turned off, opted out), a send that just came back
+// CHANNEL_NOT_CONNECTED, the client's last channel, the channel the box was opened for and the agent's tap
+// (2^4 × 5 × 2 × 4^3 = 10,240 cases). The properties are the rules, so a mutation of the decision fails here:
 //   D1 / R-PAR-12  a blocked (or ended) channel is never chosen and every one carries its reason;
 //                  no channel at all only when nothing is open
+//   module 22/37   web chat is offered only while the summary says there is a chat; it is closed, with the
+//                  summary's reason, when the chat ended, the widget was turned off or the person opted out
 //   module 37      with nothing asked for, the box is on the client's last open channel; a usable tap wins
 //                  next, then the channel it was opened for; whenever the box is not where the client wrote
 //                  last (and that channel is an option), it says why
 //   D2             no option is ever Messenger or Instagram
 import { describe, expect, it } from 'vitest';
-import type { ChannelState } from '../../reasons/index.js';
+import type { ChannelState, ChatReach, Reachability, ReachReason } from '../../reasons/index.js';
 import type { ComposeChannel } from './channelApi.js';
-import { type ChoiceInput, WEB_CHAT_ENDED, chooseChannel, composeChannelOf } from './channelChoice.js';
+import { CHAT_SESSION_ENDED, CHAT_TURNED_OFF, type ChoiceInput, WEB_CHAT_ENDED, type WebChatState, chooseChannel, composeChannelOf, webChatState } from './channelChoice.js';
 
 const OPEN: ChannelState = { blocked: false, sentence: null, note: null };
 const STOPPED: ChannelState = { blocked: true, sentence: 'Texted STOP on Nov 10', note: null };
 const UNSUB: ChannelState = { blocked: true, sentence: 'Unsubscribed from email on Nov 10', note: null };
+const CHATS: WebChatState[] = [
+  { offered: false, blocked: false, sentence: null, note: null, left: 'the web chat has ended' },
+  { offered: true, blocked: false, sentence: null, note: null, left: 'the web chat has ended' },
+  { offered: true, blocked: true, sentence: CHAT_SESSION_ENDED, note: null, left: 'the web chat has ended' },
+  { offered: true, blocked: true, sentence: CHAT_TURNED_OFF, note: null, left: 'the website chat was turned off' },
+  { offered: true, blocked: true, sentence: 'Asked in the chat to stop being contacted on Nov 10', note: null, left: 'web chat is blocked' },
+];
 const CH: (ComposeChannel | null)[] = [null, 'sms', 'email', 'web_chat'];
 const bools = [false, true];
 
 function* cases(): Generator<ChoiceInput> {
   for (const canText of bools)
     for (const canEmail of bools)
-      for (const hasWebChat of bools)
+      for (const webChat of CHATS)
         for (const smsBlocked of bools)
           for (const emailBlocked of bools)
-            for (const webChatEnded of [false, true, false])
+            for (const webChatEnded of bools)
               for (const lastInbound of CH)
                 for (const requested of CH)
                   for (const picked of CH)
-                    yield { firstName: 'Jane', canText, canEmail, hasWebChat, sms: smsBlocked ? STOPPED : OPEN, email: emailBlocked ? UNSUB : OPEN, webChatEnded, lastInbound, requested, picked };
+                    yield { firstName: 'Jane', canText, canEmail, webChat, sms: smsBlocked ? STOPPED : OPEN, email: emailBlocked ? UNSUB : OPEN, webChatEnded, lastInbound, requested, picked };
 }
 
-const isOpen = (i: ChoiceInput, c: ComposeChannel) => (c === 'sms' ? i.canText && !i.sms.blocked : c === 'email' ? i.canEmail && !i.email.blocked : i.hasWebChat && !i.webChatEnded);
-const isOption = (i: ChoiceInput, c: ComposeChannel) => (c === 'sms' ? i.canText : c === 'email' ? i.canEmail : i.hasWebChat);
+const isOpen = (i: ChoiceInput, c: ComposeChannel) => (c === 'sms' ? i.canText && !i.sms.blocked : c === 'email' ? i.canEmail && !i.email.blocked : i.webChat.offered && !i.webChat.blocked && !i.webChatEnded);
+const isOption = (i: ChoiceInput, c: ComposeChannel) => (c === 'sms' ? i.canText : c === 'email' ? i.canEmail : i.webChat.offered);
 
 describe('chooseChannel (module 37, D1, R-PAR-12)', () => {
-  it('D1 R-PAR-12: never chooses a channel the person cannot be reached on; every blocked option carries its reason; null only when nothing is open', () => {
+  it('D1 R-PAR-12 R-INBOX-7: never chooses a channel the person cannot be reached on; every blocked option carries its reason; null only when nothing is open', () => {
     let n = 0;
     for (const i of cases()) {
       n += 1;
@@ -44,12 +54,12 @@ describe('chooseChannel (module 37, D1, R-PAR-12)', () => {
       expect(c.channel === null, JSON.stringify(i)).toBe(!(['sms', 'email', 'web_chat'] as const).some((x) => isOpen(i, x)));
       for (const o of c.options) {
         expect(o.open).toBe(isOpen(i, o.channel));
-        if (!o.open) expect(o.reason).toBe(o.channel === 'sms' ? STOPPED.sentence : o.channel === 'email' ? UNSUB.sentence : WEB_CHAT_ENDED);
+        if (!o.open) expect(o.reason).toBe(o.channel === 'sms' ? STOPPED.sentence : o.channel === 'email' ? UNSUB.sentence : i.webChatEnded ? WEB_CHAT_ENDED : i.webChat.sentence);
         else expect(o.reason).toBeNull();
       }
       expect(c.options.map((o) => o.channel)).toEqual((['sms', 'email', 'web_chat'] as const).filter((x) => isOption(i, x)));
     }
-    expect(n).toBe(6144);
+    expect(n).toBe(10_240);
   });
 
   it('module 37: precedence is the agent\'s usable tap, then the channel the box was opened for, then the client\'s last open channel', () => {
@@ -61,7 +71,7 @@ describe('chooseChannel (module 37, D1, R-PAR-12)', () => {
     }
   });
 
-  it('module 37: whenever the box is not on the channel the client wrote on last, it says why', () => {
+  it('module 37: whenever the box is not on the channel the client wrote on last, it says why, naming a channel that really is closed', () => {
     for (const i of cases()) {
       const c = chooseChannel(i);
       if (c.channel === null) {
@@ -70,11 +80,13 @@ describe('chooseChannel (module 37, D1, R-PAR-12)', () => {
       }
       if (i.lastInbound !== null && isOption(i, i.lastInbound) && c.channel !== i.lastInbound) expect(c.why, JSON.stringify(i)).not.toBeNull();
       if (i.lastInbound !== null && c.channel === i.lastInbound && i.picked === null && i.requested === null) expect(c.why).toBe(`Replying ${c.channel === 'sms' ? 'by text' : c.channel === 'email' ? 'by email' : 'in web chat'}, where Jane wrote last.`);
-      // a reason given for leaving a channel names a channel that really is closed
-      const left = /: (texting is blocked|email is blocked|the web chat has ended)\.$/.exec(c.why ?? '')?.[1];
+      const left = /: (texting is blocked|email is blocked|the web chat has ended|the website chat was turned off|web chat is blocked)\.$/.exec(c.why ?? '')?.[1];
       if (left === 'texting is blocked') expect(isOpen(i, 'sms')).toBe(false);
       if (left === 'email is blocked') expect(isOpen(i, 'email')).toBe(false);
-      if (left === 'the web chat has ended') expect(isOpen(i, 'web_chat')).toBe(false);
+      if (left !== undefined && left.includes('chat')) {
+        expect(isOpen(i, 'web_chat')).toBe(false);
+        expect(left).toBe(i.webChatEnded ? 'the web chat has ended' : i.webChat.left);
+      }
     }
   });
 
@@ -89,5 +101,30 @@ describe('chooseChannel (module 37, D1, R-PAR-12)', () => {
     expect(composeChannelOf('web_chat:inbound')).toBe('web_chat');
     expect(composeChannelOf('mms:inbound')).toBe('sms');
     expect(composeChannelOf(null)).toBeNull();
+  });
+});
+
+describe('webChatState: the web chat as channels.web_chat tells it (module 22)', () => {
+  const POINT = '01900000-0000-7000-8000-00000000ac01';
+  const chat = (over: Partial<ChatReach> = {}): Reachability => {
+    const none = { hasAddress: false, defaultPointId: null, blocked: false, reasons: [], points: [] };
+    return { contactId: '01900000-0000-7000-8000-00000000c001', purposeNow: 'informational', channels: { sms: none, voice: none, email: none, web_chat: { hasAddress: true, defaultPointId: POINT, blocked: false, reasons: [], points: [], session: { open: true, widgetConnected: true }, ...over } } };
+  };
+  const optOut: ReachReason = { code: 'CONSENT_REVOKED', source: 'opt_out_language', purposes: ['informational', 'marketing'], at: '2026-11-10T15:00:00.000Z', keyword: null, recordedBy: null, importBatchId: null, suppressionReason: null, addressHint: 'web chat', otherAddress: false, evidence: { consentEventId: null, inboundMessageId: null, callId: null, suppressionId: null } };
+
+  it('an open chat is offered; an ended chat, a widget turned off and an opt-out are offered closed, each with its own words', () => {
+    expect(webChatState(chat(), false)).toMatchObject({ offered: true, blocked: false, sentence: null });
+    expect(webChatState(chat({ blocked: true, session: { open: false, widgetConnected: true } }), true)).toMatchObject({ offered: true, blocked: true, sentence: 'The chat has ended: they left the page', left: 'the web chat has ended' });
+    expect(webChatState(chat({ blocked: true, session: { open: true, widgetConnected: false } }), true)).toMatchObject({ offered: true, blocked: true, sentence: 'The website chat was turned off', left: 'the website chat was turned off' });
+    expect(webChatState(chat({ blocked: true, reasons: [optOut], session: { open: false, widgetConnected: false } }), true)).toMatchObject({ offered: true, blocked: true, sentence: 'Asked in the chat to stop being contacted on Nov 10', left: 'web chat is blocked' });
+  });
+
+  it('no chat to reply to is no option, whatever the thread shows; while the summary is unknown the thread decides and nothing is blocked', () => {
+    expect(webChatState(chat({ hasAddress: false, defaultPointId: null, session: null }), true)).toMatchObject({ offered: false, blocked: false });
+    expect(webChatState(null, true)).toMatchObject({ offered: true, blocked: false });
+    expect(webChatState(null, false)).toMatchObject({ offered: false, blocked: false });
+    const older = chat();
+    delete older.channels.web_chat;
+    expect(webChatState(older, true)).toMatchObject({ offered: true, blocked: false });
   });
 });

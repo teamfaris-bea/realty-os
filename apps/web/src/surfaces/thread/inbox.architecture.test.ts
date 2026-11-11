@@ -4,7 +4,8 @@
 //                string they ship (comments may explain the decision; tests may name what they forbid)
 //   genuineness  the widget's code renders no typing indicator and no presence
 //   separate bundle  the widget imports nothing outside src/widget (also the lint rule realty/isolated-bundle)
-//   module 22    the widget's routes are real; the staff app's web-chat sends stay in compose/channelApi.ts
+//   module 22    the routes are real: no STUB(22) or VERIFY(22) marker is left, and every web-chat call stays in one
+//                typed client per surface (compose/channelApi.ts for the staff app, widget/api.ts for the widget)
 import { describe, expect, it } from 'vitest';
 
 const SOURCES = {
@@ -58,10 +59,9 @@ describe('module 37 architecture', () => {
     expect(found).toEqual([]);
   });
 
-  it('the widget calls module 22\'s real public routes (no STUB(22) or VERIFY(22) marker left in it); the staff app\'s web-chat sends are still in compose/channelApi.ts alone', () => {
-    const marked = shipped.filter(([, src]) => /STUB\(22\)/.test(code(src)) || /\/\/ STUB\(22\)/.test(src)).map(([p]) => p);
-    expect(marked.sort()).toEqual(['compose/channelApi.ts']);
-    expect(shipped.filter(([p, src]) => p.startsWith('widget/') && /(STUB|VERIFY)\(22\)/.test(src))).toEqual([]);
+  it('module 22 is real: no STUB(22) or VERIFY(22) marker is left, and every web-chat call lives in the one typed client of its surface (compose/channelApi.ts, widget/api.ts)', () => {
+    const marked = shipped.filter(([, src]) => /(STUB|VERIFY|FIXTURE)\(22\)/.test(src)).map(([p]) => p);
+    expect(marked).toEqual([]);
     // nothing else calls a public chat route or posts a web-chat message
     for (const [p, src] of shipped) {
       if (p === 'compose/channelApi.ts' || p === 'widget/api.ts') continue;

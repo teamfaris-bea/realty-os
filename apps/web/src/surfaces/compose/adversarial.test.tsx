@@ -8,7 +8,7 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import { FakeFetch, IDS, agentApp, decision, draftAction, err, fullContact, iso, reachability, stopReason, timelineItem } from '../feed/lib/testing.js';
+import { FakeFetch, IDS, agentApp, chatEndedReply, decision, draftAction, fullContact, iso, reachability, stopReason, timelineItem } from '../feed/lib/testing.js';
 
 const user = () => userEvent.setup();
 const removedStop = stopReason({ otherAddress: true, addressHint: '•••-•••-0199', addressRemoved: true });
@@ -25,7 +25,7 @@ const sends = (f: FakeFetch) => f.calls.filter((c) => c.method === 'POST' && (/\
 
 describe('module 37 adversarial', () => {
   it('R-PAR-12 D1: a STOP from a removed phone: clicking the disabled Text option, pressing Enter and tapping Send never send a text', async () => {
-    const f = fake().on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: reachability(IDS.jane, { sms: [removedStop] }) } }).on(`POST /contacts/${IDS.jane}/messages`, err(409, 'CHANNEL_NOT_CONNECTED'));
+    const f = fake().on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: reachability(IDS.jane, { sms: [removedStop] }) } }).on(`POST /contacts/${IDS.jane}/messages`, chatEndedReply('Hello'));
     agentApp(f, `/contacts/${IDS.jane}/thread?compose=sms`);
     const text = await screen.findByRole('radio', { name: 'Text' });
     await waitFor(() => expect(text).toBeDisabled());
@@ -62,7 +62,7 @@ describe('module 37 adversarial', () => {
   });
 
   it('autonomy: a thread with a live web chat sends nothing until the agent taps Send, and an empty box never sends', async () => {
-    const f = fake().on(`POST /contacts/${IDS.jane}/messages`, { status: 201, body: { message: null, decision: decision({}), result: 'sent' } });
+    const f = fake().on(`POST /contacts/${IDS.jane}/messages`, { status: 200, body: { message: null, decision: decision({}), result: 'sent' } });
     agentApp(f, `/contacts/${IDS.jane}/thread?compose=draft`);
     const chat = await screen.findByRole('radio', { name: 'Web chat' });
     await waitFor(() => expect(chat).toBeChecked());
@@ -74,7 +74,7 @@ describe('module 37 adversarial', () => {
   });
 
   it('tenancy: the web-chat reply goes to the contact the thread is for, by its id in the route, and carries no other contact or address', async () => {
-    const f = fake().on(`POST /contacts/${IDS.jane}/messages`, { status: 201, body: { message: null, decision: decision({}), result: 'sent' } });
+    const f = fake().on(`POST /contacts/${IDS.jane}/messages`, { status: 200, body: { message: null, decision: decision({}), result: 'sent' } });
     agentApp(f, `/contacts/${IDS.jane}/thread`);
     await waitFor(() => expect(screen.getByRole('radio', { name: 'Web chat' })).toBeChecked());
     await user().type(screen.getByRole('textbox', { name: 'Web chat message' }), 'Hi');

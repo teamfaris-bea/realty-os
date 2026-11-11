@@ -13,7 +13,8 @@ import type { DecisionView, PreviewResponse } from './types.js';
 
 export interface SendCheckInput {
   contactId: string;
-  channel: 'sms' | 'email';
+  /** 'web_chat' (module 22): a reply in the contact's website chat, previewed like a text */
+  channel: 'sms' | 'email' | 'web_chat';
   /** the real text (typed, or the assistant's draft); empty → nothing is checked */
   body?: string;
   subject?: string;

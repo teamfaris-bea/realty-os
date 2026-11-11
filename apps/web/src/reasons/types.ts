@@ -33,8 +33,18 @@ export interface ChannelReach {
   points: { pointId: string; addressHint: string; blocked: boolean; reasons: ReachReason[] }[];
 }
 
+/**
+ * channels.web_chat (module 22): the website chat a reply goes to. `session` is what the send-time check reads for a
+ * chat reply: still open (the visitor was seen in the last 30 minutes) and its widget connected; either false and a
+ * reply is refused (CHANNEL_NOT_CONNECTED), so `blocked` is true too. null: the contact never wrote in website chat.
+ */
+export interface ChatReach extends ChannelReach {
+  session: { open: boolean; widgetConnected: boolean } | null;
+}
+
 export interface Reachability {
   contactId: string;
   purposeNow: ReachPurpose;
-  channels: Record<ReachChannel, ChannelReach>;
+  /** web_chat is absent only from an API older than module 22 (then the thread's own messages decide) */
+  channels: Record<ReachChannel, ChannelReach> & { web_chat?: ChatReach };
 }

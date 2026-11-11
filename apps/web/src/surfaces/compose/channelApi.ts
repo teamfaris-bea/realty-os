@@ -1,13 +1,15 @@
-// The compose surface's typed client for the module 22 channel routes that do not exist yet
-// (PHASE2_3_PLAN §5.4, 22 api/channels-inbox). Every call to such a route goes through this file and is
-// marked `// STUB(22): <METHOD> <route>`; the orchestrator wires the real route when module 22 lands, and
-// channelApi.contract.test.ts pins the shapes against a fake of the §5.4 interface.
+// The compose surface's typed client for an agent's reply in website chat (module 22: apps/api comms/compose.ts,
+// its chat branch, and assistant/drafts.ts). Every web-chat send of the staff app goes through this file:
 //
-// Module 22 adds web chat to the one send path (dispatch.ts deliverChannelMessage, D1): an agent's reply to
-// a chat visitor is an ordinary one-to-one message on POST /contacts/:id/messages with channel 'web_chat'
-// (today's ComposeBody accepts sms | email only, so the real API answers 400 until then). The send-time
-// check decides, exactly as for a text: a chat that has ended (the visitor left, E77) or a widget that was
-// disconnected (R-INBOX-7) is CHANNEL_NOT_CONNECTED and nothing is sent; an opt-out blocks it like any other.
+//   POST /contacts/:id/messages          {channel: 'web_chat', body, idempotencyKey}   a reply; never scheduled
+//   POST /assistant/actions/:id/approve  {commandId, editedPayload?: {channel: 'web_chat', body}, reviewedInboundSeq?}
+//
+// (the box's preview is POST /contacts/:id/messages/preview {channel: 'web_chat', body}, feed/lib/sendCheck.ts).
+// A chat reply is an ordinary one-to-one message on the one send path (dispatch.ts deliverChannelMessage, D1), so
+// the send-time check decides exactly as for a text: a chat whose session ended (the visitor has been gone 30
+// minutes, E77) or whose widget was turned off (R-INBOX-7) comes back blocked with CHANNEL_NOT_CONNECTED and nothing
+// is sent; an opt-out blocks it like any other. channelApi.contract.test.tsx checks every request and response here
+// against the API's own schemas (apps/api/src/channels/webContract.json).
 //
 // What is NOT here, on purpose (D2): no Messenger or Instagram channel, and no messaging-window input.
 import { type CommandResult, useCommand } from '../../shell/index.js';
@@ -17,51 +19,50 @@ import type { ApproveResponse, ComposeResponse } from '../feed/lib/types.js';
 /** The channels compose can write on. Web chat is a reply where the client wrote last (R-INBOX-4 is the assistant's side). */
 export type ComposeChannel = 'sms' | 'email' | 'web_chat';
 
-/** POST /contacts/:id/messages, web-chat branch (§5.4 22: dispatch.ts deliverChannelMessage). */
+/** POST /contacts/:id/messages, web-chat branch (no subject, no scheduleAt: a chat reply goes now or not at all). */
 export interface WebChatSendBody {
   channel: 'web_chat';
   body: string;
 }
 
-/** The code module 22 gives a send to an ended chat session or a disconnected widget (E77, R-INBOX-7). */
+/** The gate reason of a chat reply refused because the session ended or the widget is off (E77, R-INBOX-7). */
 export const CHANNEL_NOT_CONNECTED = 'CHANNEL_NOT_CONNECTED';
 
-/** The outcome of one web-chat send, normalized: the API may refuse with an error code or answer with a blocked decision. */
+/** The outcome of one web-chat send or approval, normalized for the box. */
 export type WebChatOutcome =
   | { kind: 'done'; response: ComposeResponse }
   | { kind: 'chat_ended' }
-  | { kind: 'error'; message: string };
+  | { kind: 'error'; code: string; message: string; details: Record<string, unknown> | null };
 
-/** True when the response says the chat session is no longer there (either way module 22 may say it). */
-export function isChatEnded(r: CommandResult<ComposeResponse>): boolean {
-  if (!r.ok) return r.code === CHANNEL_NOT_CONNECTED;
-  return (
-    r.data.result === 'blocked' &&
-    (r.data.decision?.reasons.includes(CHANNEL_NOT_CONNECTED) ?? false)
-  );
+/** True when the send-time check refused the reply because the chat is no longer there. */
+export function isChatEnded(r: { result: string; decision: { reasons: string[] } | null }): boolean {
+  return r.result === 'blocked' && (r.decision?.reasons.includes(CHANNEL_NOT_CONNECTED) ?? false);
 }
 
-export function webChatOutcome(
-  r: CommandResult<ComposeResponse>,
-): WebChatOutcome {
-  if (isChatEnded(r)) return { kind: 'chat_ended' };
-  if (!r.ok) return { kind: 'error', message: r.message };
-  return { kind: 'done', response: r.data };
+const NO_CHAT = "There's no website chat with them to reply to.";
+
+function failure(r: Extract<CommandResult<unknown>, { ok: false }>): WebChatOutcome {
+  return { kind: 'error', code: r.code, message: r.code === 'CONTACT_POINT_MISSING' ? NO_CHAT : r.message, details: r.details };
 }
 
-/**
- * A reply in web chat: one idempotency key per tap (retries reuse it), the same invalidations as a text.
- * STUB(22): POST /contacts/:id/messages {channel: 'web_chat', body, idempotencyKey}
- */
+export function webChatOutcome(r: CommandResult<ComposeResponse>): WebChatOutcome {
+  if (!r.ok) return failure(r);
+  return isChatEnded(r.data) ? { kind: 'chat_ended' } : { kind: 'done', response: r.data };
+}
+
+/** An approval's response in the box's terms (the message it queued, on web chat). */
+export function approvalOutcome(r: CommandResult<ApproveResponse>, body: string): WebChatOutcome {
+  if (!r.ok) return failure(r);
+  if (isChatEnded(r.data)) return { kind: 'chat_ended' };
+  const message = r.data.messageId ? { id: r.data.messageId, channel: 'web_chat' as const, status: r.data.status, statusReason: null, purpose: null, body, subject: null, scheduledFor: null, dispatchedAt: null } : null;
+  return { kind: 'done', response: { result: r.data.result, decision: r.data.decision, message } };
+}
+
+const keys = (contactId: string) => [['feed'], ['inbox'], ['timeline', contactId], [...REACHABILITY_KEY]];
+
+/** A reply in web chat: one idempotency key per tap (retries reuse it), the same invalidations as a text. */
 export function useWebChatSend(contactId: string) {
-  // STUB(22): POST /contacts/:id/messages
-  const cmd = useCommand<WebChatSendBody, ComposeResponse>(
-    `/contacts/${contactId}/messages`,
-    {
-      idKey: 'idempotencyKey',
-      invalidate: [['feed'], ['timeline', contactId], [...REACHABILITY_KEY]],
-    },
-  );
+  const cmd = useCommand<WebChatSendBody, ComposeResponse>(`/contacts/${contactId}/messages`, { idKey: 'idempotencyKey', invalidate: keys(contactId) });
   return {
     pending: cmd.pending,
     async send(body: string): Promise<WebChatOutcome> {
@@ -70,39 +71,24 @@ export function useWebChatSend(contactId: string) {
   };
 }
 
-/** POST /assistant/actions/:id/approve with the draft moved to web chat (§5.4 22: "drafts.ts: approved drafts may use web_chat"). */
+/** POST /assistant/actions/:id/approve with the draft answered in web chat (drafts.ts: approved drafts may use web_chat). */
 export interface WebChatApproveBody {
-  editedPayload: { channel: 'web_chat'; body: string };
+  editedPayload?: { channel: 'web_chat'; body: string };
   reviewedInboundSeq?: number;
 }
 
 /**
- * Approving an assistant draft as a web-chat reply (the person is the sender, path 4). Normalized like a send.
- * STUB(22): POST /assistant/actions/:id/approve {editedPayload: {channel: 'web_chat', body}}
+ * Approving an assistant draft as a web-chat reply (the person is the sender, path 4), one commandId per tap. `edited`:
+ * the agent changed the text or moved the draft to the chat, so the approval carries the chat text; a chat draft sent
+ * as drafted is approved as is.
  */
 export function useWebChatApprove(contactId: string, draftId: string | null) {
-  // STUB(22): POST /assistant/actions/:id/approve
-  const cmd = useCommand<WebChatApproveBody, ApproveResponse>(
-    `/assistant/actions/${draftId ?? 'none'}/approve`,
-    {
-      invalidate: [
-        ['feed'],
-        ['inbox'],
-        ['timeline', contactId],
-        [...REACHABILITY_KEY],
-      ],
-    },
-  );
+  const cmd = useCommand<WebChatApproveBody, ApproveResponse>(`/assistant/actions/${draftId ?? 'none'}/approve`, { invalidate: keys(contactId) });
   return {
     pending: cmd.pending,
-    async approve(
-      body: string,
-      reviewedInboundSeq: number | null,
-    ): Promise<CommandResult<ApproveResponse>> {
-      return cmd.run({
-        editedPayload: { channel: 'web_chat', body },
-        ...(reviewedInboundSeq !== null ? { reviewedInboundSeq } : {}),
-      });
+    async approve(body: string, reviewedInboundSeq: number | null, edited: boolean): Promise<WebChatOutcome> {
+      const r = await cmd.run({ ...(edited ? { editedPayload: { channel: 'web_chat' as const, body } } : {}), ...(reviewedInboundSeq !== null ? { reviewedInboundSeq } : {}) });
+      return approvalOutcome(r, body);
     },
   };
 }

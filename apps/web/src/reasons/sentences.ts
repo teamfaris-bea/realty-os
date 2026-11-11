@@ -7,6 +7,9 @@
 //   messageStatus   what happened to an outbound message          "Not sent: texted STOP on Nov 10"
 import type { ReachChannel, ReachReason } from './types.js';
 
+/** The channels a reason can be said for: texts, calls, email, and (module 22) the website chat. */
+export type SayChannel = ReachChannel | 'web_chat';
+
 /** "Nov 10", or "Nov 10, 2025" outside the current year, in the viewer's zone. */
 export function shortDate(iso: string, now: Date = new Date()): string {
   const d = new Date(iso);
@@ -15,8 +18,8 @@ export function shortDate(iso: string, now: Date = new Date()): string {
   return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) }).format(d);
 }
 
-const NOUN: Record<ReachChannel, string> = { sms: 'texts', voice: 'calls', email: 'email' };
-const VERB: Record<ReachChannel, string> = { sms: 'texted', voice: 'called', email: 'emailed' };
+const NOUN: Record<SayChannel, string> = { sms: 'texts', voice: 'calls', email: 'email', web_chat: 'chat messages' };
+const VERB: Record<SayChannel, string> = { sms: 'texted', voice: 'called', email: 'emailed', web_chat: 'contacted' };
 
 const on = (iso: string | null, now?: Date) => (iso ? ` on ${shortDate(iso, now)}` : '');
 
@@ -39,8 +42,11 @@ function recorded(r: ReachReason, now?: Date): string {
   return on(r.at, now);
 }
 
-function optOutSentence(r: ReachReason, ch: ReachChannel, now?: Date): string {
+function optOutSentence(r: ReachReason, ch: SayChannel, now?: Date): string {
   const noun = marketingOnly(r) ? `marketing ${NOUN[ch]}` : NOUN[ch];
+  // module 22: website chat has no keyword protocol (a STOP there is opt-out language) and no carrier
+  if (ch === 'web_chat' && (r.source === 'keyword' || r.source === 'opt_out_language')) return `Asked in the chat to stop being contacted${on(r.at, now)}`;
+  if (ch === 'web_chat' && r.source === 'provider_report') return `Opted out of ${noun}${on(r.at, now)}`;
   switch (r.source) {
     case 'keyword':
       return `Texted ${r.keyword ?? 'STOP'}${fromOther(r)}${on(r.at, now)}`;
@@ -62,7 +68,7 @@ function optOutSentence(r: ReachReason, ch: ReachChannel, now?: Date): string {
   }
 }
 
-const SUPPRESSION: Record<string, (r: ReachReason, ch: ReachChannel, now?: Date) => string> = {
+const SUPPRESSION: Record<string, (r: ReachReason, ch: SayChannel, now?: Date) => string> = {
   hard_bounce: (r, _c, now) => `Email to this address bounced${on(r.at, now)}`,
   spam_complaint: (r, _c, now) => `Marked an email as spam${on(r.at, now)}`,
   undeliverable: (r, _c, now) => `Messages can't be delivered here${r.at ? ` (since ${shortDate(r.at, now)})` : ''}`,
@@ -75,16 +81,16 @@ const SUPPRESSION: Record<string, (r: ReachReason, ch: ReachChannel, now?: Date)
 };
 
 /** Why `ch` is blocked, in one sentence ("Texted STOP on Nov 10"). */
-export function reachSentence(r: ReachReason, ch: ReachChannel, now?: Date): string {
+export function reachSentence(r: ReachReason, ch: SayChannel, now?: Date): string {
   switch (r.code) {
     case 'CONSENT_REVOKED':
       return optOutSentence(r, ch, now);
     case 'SUPPRESSED':
-      return (SUPPRESSION[r.suppressionReason ?? ''] ?? ((x: ReachReason, c: ReachChannel) => `Blocked for ${NOUN[c]}${on(x.at, now)}`))(r, ch, now);
+      return (SUPPRESSION[r.suppressionReason ?? ''] ?? ((x: ReachReason, c: SayChannel) => `Blocked for ${NOUN[c]}${on(x.at, now)}`))(r, ch, now);
     case 'WRONG_NUMBER':
       return 'Marked as a wrong number';
     case 'CONTACT_POINT_INVALID':
-      return ch === 'email' ? "This email address isn't working" : "This number isn't working";
+      return ch === 'email' ? "This email address isn't working" : ch === 'web_chat' ? "This chat can't take replies" : "This number isn't working";
     case 'LANDLINE_NO_SMS':
       return "This number is a landline and can't get texts";
   }
@@ -278,7 +284,7 @@ export function isHeld(m: Pick<MessageStatusFacts, 'status' | 'statusReason'>): 
 
 /** What happened to an outbound message, in plain words, when it did not simply go out; null for sent/delivered. */
 export function messageStatus(m: MessageStatusFacts, contactFirstName: string, now?: Date): StatusLine | null {
-  const ch: ReachChannel = m.channel === 'email' ? 'email' : 'sms';
+  const ch: SayChannel = m.channel === 'email' ? 'email' : m.channel === 'web_chat' ? 'web_chat' : 'sms';
   const reason = m.statusReason ?? '';
   if (isHeld(m)) return { text: `Held because ${contactFirstName || 'they'} replied`, tone: 'held' };
   switch (m.status) {
@@ -290,8 +296,10 @@ export function messageStatus(m: MessageStatusFacts, contactFirstName: string, n
     }
     case 'failed':
     case 'undelivered': {
-      const rejected = ch === 'email' ? 'the email service rejected it' : 'the carrier rejected it';
-      const why = providerCodeSentence(m.providerErrorCode) ?? (reason === 'PROVIDER_REJECTED' ? rejected : FAILED[reason]?.replace('phone service', ch === 'email' ? 'email service' : 'phone service')) ?? (ch === 'email' ? 'the email provider rejected it' : 'the carrier rejected it');
+      // module 22: a chat reply is delivered by the website chat, not a carrier
+      const service = ch === 'email' ? 'email service' : ch === 'web_chat' ? 'website chat' : 'phone service';
+      const rejected = ch === 'email' ? 'the email service rejected it' : ch === 'web_chat' ? "the website chat couldn't deliver it" : 'the carrier rejected it';
+      const why = providerCodeSentence(m.providerErrorCode) ?? (reason === 'PROVIDER_REJECTED' ? rejected : FAILED[reason]?.replace('phone service', service)) ?? (ch === 'email' ? 'the email provider rejected it' : rejected);
       return { text: `Not delivered: ${why}`, tone: 'failed' };
     }
     case 'bounced':

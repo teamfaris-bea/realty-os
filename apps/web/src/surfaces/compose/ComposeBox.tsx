@@ -23,8 +23,11 @@
 // - Phase 2 (module 37): the box defaults to the client's last open channel (text, email or web chat) and
 //   says in one line why it is on another (channelChoice.ts). A channel the person cannot be reached on is
 //   never offered: its option is disabled and shows the reachability summary's reason instead of hiding the
-//   block (D1, including a STOP from a removed phone, R-PAR-12). Web-chat replies go through channelApi.ts
-//   (STUB(22) until module 22 lands); a reply to a chat that has ended is not sent and says so (E77).
+//   block (D1, including a STOP from a removed phone, R-PAR-12). Web chat is offered while the reachability
+//   summary's web_chat entry says the chat is open (module 22), and otherwise shown with its reason (the chat
+//   ended, E77; the website chat was turned off, R-INBOX-7; an opt-out). Web-chat replies and approvals go through
+//   channelApi.ts on the one send path, previewed like a text (never scheduled); a reply to a chat that ended
+//   between the summary and the tap is not sent and says so.
 //   D2: no Messenger or Instagram compose and no messaging-window copy.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
@@ -33,7 +36,7 @@ import { REACHABILITY_KEY, ReasonCaption, channelState, useReachability } from '
 import { type ApiError, useApi, useCommand } from '../../shell/index.js';
 import { SendOutcome, sendOutcomeText, useAgentSheets } from '../feed/lib/AgentSheets.js';
 import { type ComposeChannel, useWebChatApprove, useWebChatSend } from './channelApi.js';
-import { chooseChannel } from './channelChoice.js';
+import { chooseChannel, webChatState } from './channelChoice.js';
 import { firstName } from '../feed/lib/format.js';
 import { useSendCheck } from '../feed/lib/sendCheck.js';
 import type { ActionView, ApproveResponse, ComposeResponse } from '../feed/lib/types.js';
@@ -135,9 +138,10 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
     firstName: firstName(contact.name),
     canText: contact.canText,
     canEmail: contact.canEmail,
-    hasWebChat: contact.canWebChat ?? false,
     sms: channelState(reach, 'sms'),
     email: channelState(reach, 'email'),
+    // module 22: channels.web_chat says whether the chat can be answered; the thread decides only while it is unknown
+    webChat: webChatState(reach, contact.canWebChat ?? false),
     webChatEnded,
     lastInbound: lastInboundChannel,
     requested: initialChannel ?? null,
@@ -163,8 +167,8 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
   const previewBody = useDebounced(body.trim(), 500);
   const previewSubject = useDebounced(subject.trim(), 500);
   const blockedNow = isChat ? { blocked: choice.channel === null, sentence: choice.options.find((o) => o.channel === 'web_chat')?.reason ?? null, note: null } : channelState(reach, channel);
-  // web chat has no preview route yet (module 22): the send-time check decides, as it always does
-  const preview = useSendCheck({ contactId: contact.id, channel: channel === 'email' ? 'email' : 'sms', body: previewBody, subject: previewSubject, enabled: !isChat && (channel === 'sms' ? contact.canText : contact.canEmail) && !blockedNow.blocked });
+  // the same preview for every channel, web chat included (module 22): what the send would decide for this text
+  const preview = useSendCheck({ contactId: contact.id, channel, body: previewBody, subject: previewSubject, enabled: (channel === 'sms' ? contact.canText : channel === 'email' ? contact.canEmail : choiceInput.webChat.offered) && !blockedNow.blocked });
 
   const human = useCommand<Record<string, unknown>, ComposeResponse>(`/contacts/${contact.id}/messages`, { idKey: 'idempotencyKey', invalidate: [['feed'], ['timeline', contact.id], [...REACHABILITY_KEY]] });
   const approve = useCommand<Record<string, unknown>, ApproveResponse>(`/assistant/actions/${draftId ?? 'none'}/approve`, { invalidate: [['feed'], ['inbox'], ['timeline', contact.id], [...REACHABILITY_KEY]] });
@@ -194,24 +198,35 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
     }
   };
 
+  /** A draft the server would not send as approved (R-AST-6, R-AST-7): the text stays and the box says what to do. */
+  const draftRefused = (code: string, message: string, details: Record<string, unknown> | null): boolean => {
+    if (code === 'DRAFT_STALE') {
+      const seq = details?.inboundSeq;
+      if (typeof seq === 'number') setSeenSeq(seq);
+      void qc.invalidateQueries({ queryKey: ['timeline', contact.id] });
+      setNotice({ tone: 'warn', text: `${firstName(contact.name)} replied since this was drafted. Read the new message above, then send if it still fits.` });
+      return true;
+    }
+    if (code === 'DRAFT_INVALIDATED' || code === 'ACTION_NOT_PENDING') {
+      setDraftId(null);
+      setNotice({ tone: 'warn', text: `${message} Your text is still here; Send sends it as your own message.` });
+      return true;
+    }
+    return false;
+  };
+
   const send = async () => {
     setNotice(null);
     setOutcome(null);
     const text = body.trim();
     if (!text || blockedNow.blocked) return;
     if (isChat) {
-      if (draft) {
-        const r = await chatApprove.approve(text, seenSeq);
-        if (!r.ok && r.code === 'CHANNEL_NOT_CONNECTED') return chatEnded();
-        if (r.ok && r.data.result === 'blocked' && (r.data.decision?.reasons.includes('CHANNEL_NOT_CONNECTED') ?? false)) return chatEnded();
-        if (r.ok) afterSend({ result: r.data.result, decision: r.data.decision, message: null });
-        else setNotice({ tone: 'error', text: r.message });
-        return;
-      }
-      const o = await chat.send(text);
+      // a reply in web chat, or the draft approved as one (never scheduled)
+      const o = draft ? await chatApprove.approve(text, seenSeq, edited) : await chat.send(text);
       if (o.kind === 'chat_ended') return chatEnded();
-      if (o.kind === 'done') afterSend(o.response);
-      else setNotice({ tone: 'error', text: o.message });
+      if (o.kind === 'done') return afterSend(o.response);
+      if (draft && draftRefused(o.code, o.message, o.details)) return;
+      setNotice({ tone: 'error', text: o.message });
       return;
     }
     if (draft) {
@@ -223,18 +238,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
         afterSend({ result: r.data.result, decision: r.data.decision, message: r.data.messageId ? { id: r.data.messageId, channel, status: r.data.status, statusReason: null, purpose: null, body: text, subject: null, scheduledFor: null, dispatchedAt: null } : null });
         return;
       }
-      if (r.code === 'DRAFT_STALE') {
-        const seq = r.details?.inboundSeq;
-        if (typeof seq === 'number') setSeenSeq(seq);
-        void qc.invalidateQueries({ queryKey: ['timeline', contact.id] });
-        setNotice({ tone: 'warn', text: `${firstName(contact.name)} replied since this was drafted. Read the new message above, then send if it still fits.` });
-        return;
-      }
-      if (r.code === 'DRAFT_INVALIDATED' || r.code === 'ACTION_NOT_PENDING') {
-        setDraftId(null);
-        setNotice({ tone: 'warn', text: `${r.message} Your text is still here; Send sends it as your own message.` });
-        return;
-      }
+      if (draftRefused(r.code, r.message, r.details)) return;
       setNotice({ tone: 'error', text: r.message });
       return;
     }

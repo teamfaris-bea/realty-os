@@ -14,7 +14,7 @@ import { surface as searchSurface } from '../../search/index.js';
 import { surface as tasksSurface } from '../../tasks/index.js';
 import { surface as threadSurface } from '../../thread/index.js';
 import { surface as feedSurface } from '../index.js';
-import type { ChannelReach, ReachReason, Reachability } from '../../../reasons/index.js';
+import type { ChannelReach, ChatReach, ReachReason, Reachability } from '../../../reasons/index.js';
 import type { ActionView, ContactCardView, ContactFullView, DecisionView, FeedCard, FeedResponse, TimelineItem } from './types.js';
 
 export const AGENT_SURFACES = [feedSurface, approvalsSurface, searchSurface, tasksSurface, pondSurface, dealsSurface, listingsSurface, contactSurface, threadSurface, composeSurface];
@@ -211,9 +211,38 @@ function channelReach(reasons: ReachReason[] = []): ChannelReach {
   return { hasAddress: true, defaultPointId: '01900000-0000-7000-8000-0000000p0001', blocked: reasons.length > 0, reasons, points: [{ pointId: '01900000-0000-7000-8000-0000000p0001', addressHint: '•••-•••-0101', blocked: reasons.length > 0, reasons }] };
 }
 
-/** A summary: pass the reasons that block each channel (none = reachable). */
-export function reachability(contactId: string = IDS.jane, blocks: Partial<Record<'sms' | 'voice' | 'email', ReachReason[]>> = {}): Reachability {
-  return { contactId, purposeNow: 'informational', channels: { sms: channelReach(blocks.sms), voice: channelReach(blocks.voice), email: channelReach(blocks.email) } };
+/**
+ * The website chat as channels.web_chat says it (module 22): open, the visitor gone 30 minutes, the widget turned
+ * off, opted out (reasons), or no chat at all.
+ */
+export type WebChatFixture = 'open' | 'ended' | 'off' | 'none' | { reasons: ReachReason[] };
+
+function chatReach(f: WebChatFixture): ChatReach {
+  if (f === 'none') return { hasAddress: false, defaultPointId: null, blocked: false, reasons: [], points: [], session: null };
+  const reasons = typeof f === 'object' ? f.reasons : [];
+  const session = { open: f !== 'ended', widgetConnected: f !== 'off' };
+  const blocked = reasons.length > 0 || !session.open || !session.widgetConnected;
+  return { hasAddress: true, defaultPointId: '01900000-0000-7000-8000-00000000ac01', blocked, reasons, points: [{ pointId: '01900000-0000-7000-8000-00000000ac01', addressHint: 'Website chat', blocked: reasons.length > 0, reasons }], session };
+}
+
+/**
+ * A summary: pass the reasons that block each channel (none = reachable), and the website chat when the test is
+ * about it (left out, the summary is an API's without the entry and the thread decides).
+ */
+export function reachability(contactId: string = IDS.jane, blocks: Partial<Record<'sms' | 'voice' | 'email', ReachReason[]>> = {}, webChat?: WebChatFixture): Reachability {
+  return { contactId, purposeNow: 'informational', channels: { sms: channelReach(blocks.sms), voice: channelReach(blocks.voice), email: channelReach(blocks.email), ...(webChat ? { web_chat: chatReach(webChat) } : {}) } };
+}
+
+/** The reply's answer when the send-time check refused it because the chat ended or its widget is off (E77, R-INBOX-7). */
+export function chatEndedReply(body = 'Are you still there?') {
+  return {
+    status: 200,
+    body: {
+      message: { id: IDS.message, channel: 'web_chat', status: 'blocked', statusReason: 'CHANNEL_NOT_CONNECTED', purpose: 'informational', body, subject: null, scheduledFor: null, dispatchedAt: null },
+      decision: decision({ outcome: 'deny', reasons: ['CHANNEL_NOT_CONNECTED'], explanation: 'The chat has ended, so this was not sent.' }),
+      result: 'blocked',
+    },
+  };
 }
 
 /**
