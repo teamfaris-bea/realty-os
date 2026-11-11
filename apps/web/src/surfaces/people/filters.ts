@@ -217,13 +217,16 @@ export function buildClause(field: FilterField, op: string, v: DraftValue): { ok
     case 'intent':
     case 'contact_type':
       if (v.choices.length === 0) return need('Pick at least one.');
+      if (v.choices.length > 50) return need('Pick at most 50.');
       return { ok: true, clause: { kind: field, [op === 'not_in' ? 'not_in' : 'in']: v.choices } };
     case 'tag':
       if (v.choices.length === 0) return need('Pick at least one tag.');
+      if (v.choices.length > 20) return need('Pick at most 20 tags.');
       return { ok: true, clause: { kind: 'tag', op, tagIds: v.choices } };
     case 'owner':
       if (op === 'me' || op === 'none') return { ok: true, clause: { kind: 'owner', is: op } };
       if (v.choices.length === 0) return need('Pick at least one person.');
+      if (v.choices.length > 50) return need('Pick at most 50 people.');
       return { ok: true, clause: { kind: 'owner', [op === 'not_in' ? 'not_in' : 'in']: v.choices } };
     case 'last_activity':
       if (op === 'never') return { ok: true, clause: { kind: 'last_activity', op: 'never' } };
@@ -255,6 +258,7 @@ export function buildClause(field: FilterField, op: string, v: DraftValue): { ok
       }
       if (op === 'date_within_last_days' || op === 'date_within_next_days') return days() === null ? need(`Type a number of days from 1 to ${MAX_DAYS}.`) : { ok: true, clause: { kind: 'field', fieldId, op, days: days() } };
       if (v.choices.length === 0) return need('Pick at least one choice.');
+      if (v.choices.length > 50) return need('Pick at most 50 choices.');
       return { ok: true, clause: { kind: 'field', fieldId, op, optionIds: v.choices } };
     }
   }

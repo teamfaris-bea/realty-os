@@ -10,7 +10,7 @@
 //   exclude a source      People → Filter → Source → is not → choose → Show = 6 · 5
 //   tags has none of      People → Filter → Tags → has none of → choose → Show = 6 · 5
 //   each further filter   + "Add another" → field → (operator) → choose: 3-4 more
-import { useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Button, Dialog, Notice, TextField } from '../../design/index.js';
 import { messageFor } from '../../shell/index.js';
 import { type Clause, type Definition, countText, useDefinitionCount } from './api.js';
@@ -80,7 +80,29 @@ export function FilterBuilder(p: FilterBuilderProps) {
   const count = useDefinitionCount(draft);
   const textInTeam = p.teamList && [...next.all, ...next.any].some(isFreeTextClause);
   const tooMany = draft.all!.length > MAX_ALL || (draft.any?.length ?? 0) > MAX_ANY;
-  const showLabel = count.isSuccess ? `Show ${countText(count.data)}` : count.isError ? 'Show people' : 'Show people';
+  // the number on the button is always the count of exactly this draft; while it is being counted it says so
+  const showLabel = count.isSuccess && !count.isStale ? `Show ${countText(count.data)}` : 'Show people';
+  const statusText = count.isError ? 'Count unavailable' : count.isSuccess && !count.isStale ? `${countText(count.data)} match` : 'Counting…';
+  const step = !editing ? 'list' : !editing.field ? 'field' : 'value';
+  const body = useRef<HTMLDivElement>(null);
+  const firstStep = useRef(true);
+  useEffect(() => {
+    // the Dialog focuses its first control when it opens; each later step does the same, so focus never falls
+    // to <body> when the control that was tapped goes away (review: keyboard and screen-reader users)
+    if (firstStep.current) {
+      firstStep.current = false;
+      return;
+    }
+    const panel = body.current?.closest<HTMLElement>('[role="dialog"]');
+    const target = panel?.querySelector<HTMLElement>('button:not([disabled]), input:not([disabled]), [href]') ?? panel;
+    target?.focus();
+  }, [step, editing?.field]);
+  // the live count, spoken (the page's own count sits behind the inert sheet)
+  const live = (
+    <p role="status" aria-live="polite" className="sr-only">
+      {statusText}
+    </p>
+  );
 
   const commit = (): { all: Clause[]; any: Clause[] } => {
     const n = withPending();
@@ -133,10 +155,15 @@ export function FilterBuilder(p: FilterBuilderProps) {
                 {p.onSaveList.label}
               </Button>
             ) : null}
+            <Button block variant="quiet" onClick={p.onClose}>
+              Close
+            </Button>
           </div>
         }
       >
-        <div className="flex flex-col gap-4">
+        <div ref={body} className="flex flex-col gap-4">
+          {live}
+          {all.length + any.length === 0 ? <p className="text-[15px] text-ink-muted">No filters yet: everyone you can see is shown.</p> : null}
           <Rows group="all" heading={any.length > 0 || more ? 'Match all of' : null} clauses={all} catalogs={p.catalogs} onEdit={startEdit} onRemove={remove} />
           <Button variant="secondary" onClick={() => startAdd('all')} disabled={all.length >= MAX_ALL}>
             Add filter
@@ -179,6 +206,7 @@ export function FilterBuilder(p: FilterBuilderProps) {
   if (!editing.field) {
     return (
       <Dialog title={title} placement="side" onClose={p.onClose} footer={<Button variant="secondary" block icon="back" onClick={() => setEditing(null)}>Back to filters</Button>}>
+        <div ref={body}>{live}</div>
         <ul aria-label="Fields" className="flex flex-col divide-y divide-line rounded-2xl border border-line">
           {specs.map((s) => {
             const textOnly = p.teamList && p.onSaveList !== undefined && s.operators.every((o) => o.freeText);
@@ -229,10 +257,11 @@ export function FilterBuilder(p: FilterBuilderProps) {
         </div>
       }
     >
-      <div className="flex flex-col gap-4">
+      <div ref={body} className="flex flex-col gap-4">
+        {live}
         <Operators spec={spec!} op={editing.op} onPick={(op) => setEditing({ ...editing, op, value: { ...editing.value } })} />
         {opSpec ? <ValueInput field={editing.field} op={opSpec} value={editing.value} catalogs={p.catalogs} onChange={(value) => setEditing({ ...editing, value })} /> : null}
-        {pending && !pending.ok && opSpec?.value !== 'choices' ? <p className="text-[14px] text-ink-muted">{pending.message}</p> : null}
+        {pending && !pending.ok && !(opSpec?.value === 'choices' && editing.value.choices.length === 0) ? <p className="text-[14px] text-ink-muted">{pending.message}</p> : null}
         {opSpec?.freeText && p.teamList && p.onSaveList ? <Notice tone="info">{TEAM_TEXT_REFUSAL}</Notice> : null}
         {countLine}
       </div>
@@ -241,7 +270,7 @@ export function FilterBuilder(p: FilterBuilderProps) {
 }
 
 function Rows({ group, heading, clauses, catalogs, onEdit, onRemove }: { group: Group; heading: string | null; clauses: Clause[]; catalogs: Catalogs; onEdit: (g: Group, i: number) => void; onRemove: (g: Group, i: number) => void }) {
-  if (clauses.length === 0) return group === 'all' ? <p className="text-[15px] text-ink-muted">No filters yet: everyone you can see is shown.</p> : null;
+  if (clauses.length === 0) return null;
   return (
     <div className="flex flex-col gap-2">
       {heading ? <h3 className="text-[15px] font-semibold text-ink">{heading}</h3> : null}

@@ -225,4 +225,71 @@ describe('the filter builder (lane people-filters)', () => {
     expect((within(dlg).getByRole('button', { name: /^Show / }) as HTMLButtonElement).disabled).toBe(false);
     expect(tl.callsTo(`PATCH /smart-lists/${L_TEAM}`)).toHaveLength(0);
   });
+
+  it('review: focus moves into each new step of the builder (never to <body>)', async () => {
+    const fake = world();
+    renderApp({ fake, path: '/people', table: tableWith(peopleSurface) });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Filter' }));
+    await user.click(within(await screen.findByRole('dialog', { name: 'Add a filter' })).getByRole('button', { name: 'Source' }));
+    await screen.findByRole('dialog', { name: 'Source' });
+    await waitFor(() => expect(screen.getByRole('dialog').contains(document.activeElement)).toBe(true));
+    await user.click(within(screen.getByRole('dialog')).getByRole('checkbox', { name: 'Zillow' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Back' }));
+    await screen.findByRole('dialog', { name: 'Add a filter' });
+    await waitFor(() => expect(screen.getByRole('dialog').contains(document.activeElement)).toBe(true));
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
+  it('review: the live count is spoken (a status inside the sheet), and the button never shows an older count while the new one loads', async () => {
+    let release: (() => void) | null = null;
+    const fake = world().on('POST /people/count', (c) =>
+      JSON.stringify(c.body).includes('not_in') ? new Promise((ok) => (release = () => ok({ status: 200, body: { count: 7, capped: false } }))) : { status: 200, body: { count: 12, capped: false } },
+    );
+    renderApp({ fake, path: '/people', table: tableWith(peopleSurface) });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Filter' }));
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Source' }));
+    await within(screen.getByRole('dialog')).findByRole('button', { name: 'Show 12 people' });
+    expect(within(screen.getByRole('dialog')).getByRole('status').textContent).toBe('12 people match');
+    await user.click(within(screen.getByRole('dialog')).getByText('is not'));
+    await user.click(within(screen.getByRole('dialog')).getByRole('checkbox', { name: 'Zillow' }));
+    // the count of the new draft is not back yet: no number is claimed
+    await within(screen.getByRole('dialog')).findByRole('button', { name: 'Show people' });
+    expect(within(screen.getByRole('dialog')).getByRole('status').textContent).toBe('Counting…');
+    await waitFor(() => expect(release).not.toBeNull());
+    release!();
+    await within(screen.getByRole('dialog')).findByRole('button', { name: 'Show 7 people' });
+    expect(within(screen.getByRole('dialog')).getByRole('status').textContent).toBe('7 people match');
+  });
+
+  it('review: typing a name counts once after the typing stops, not once per keystroke', async () => {
+    const fake = world();
+    renderApp({ fake, path: '/people', table: tableWith(peopleSurface) });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Filter' }));
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Name' }));
+    await user.type(within(screen.getByRole('dialog')).getByLabelText('Name contains'), 'johnson');
+    await waitFor(() => expect(fake.callsTo('POST /people/count').some((c) => JSON.stringify(c.body).includes('johnson'))).toBe(true));
+    const partial = fake.callsTo('POST /people/count').filter((c) => /"contains":"j[a-z]*"/.test(JSON.stringify(c.body)) && !JSON.stringify(c.body).includes('johnson'));
+    expect(partial).toHaveLength(0);
+  });
+
+  it('review: with only "any of" filters the sheet does not say "No filters yet"; the sheet has a Close button', async () => {
+    const fake = world();
+    const def = { v: 1 as const, all: [], any: [{ kind: 'source', in: [Z] }, { kind: 'tag', op: 'any', tagIds: [DNC] }] };
+    renderApp({ fake, path: `/people?f=${encodeURIComponent(encodeDefinition(def))}&filter=open`, table: tableWith(peopleSurface) });
+    const dlg = await screen.findByRole('dialog', { name: 'Filters' });
+    expect(within(dlg).getByRole('list', { name: 'Any of' })).toBeTruthy();
+    expect(within(dlg).queryByText(/No filters yet/)).toBeNull();
+    const user = userEvent.setup();
+    await user.click(within(dlg).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('review: more tags than a list may hold is refused in plain words before any request', () => {
+    const many = Array.from({ length: 21 }, (_, i) => `01900000-0000-7000-8000-${String(i).padStart(12, '0')}`);
+    expect(buildClause('tag', 'any', { ...EMPTY_VALUE, choices: many })).toEqual({ ok: false, message: 'Pick at most 20 tags.' });
+    expect(buildClause('source', 'not_in', { ...EMPTY_VALUE, choices: [...many, ...many, ...many] })).toEqual({ ok: false, message: 'Pick at most 50.' });
+  });
 });

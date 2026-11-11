@@ -216,6 +216,9 @@ function People() {
                     await qc.invalidateQueries({ queryKey: [...LISTS_KEY] });
                     await qc.invalidateQueries({ queryKey: ['people'] });
                     sheets.announce(`Saved "${editableList.name}"`);
+                    // the list now holds other people: a hand-picked or "all" selection of the old filters is dropped
+                    setSelected(new Set());
+                    setAllSelected(false);
                     setBuilder(false);
                     return null;
                   },
