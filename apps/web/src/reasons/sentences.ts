@@ -119,7 +119,97 @@ const CARRIER: Record<string, string> = {
   '30006': "the number can't get texts (likely a landline)",
   '30007': 'the carrier filtered it',
   '30008': 'the carrier rejected it',
+  // Twilio REST and status-callback codes the Twilio adapter reports (VERIFY against Twilio's error dictionary)
+  '21211': "the number isn't a valid phone number",
+  '21408': "texting that country isn't turned on for this account",
+  '21606': "the sending number can't send texts",
+  '21612': "the carrier can't deliver texts from this number to theirs",
+  '21614': "the number isn't a mobile number",
+  '21617': 'the text was too long',
+  '30001': 'too many texts were waiting to go out',
+  '30002': 'the phone account is suspended',
+  '30004': 'the recipient or their carrier blocked it',
+  '30010': 'it cost more than the allowed maximum',
+  '30022': 'the daily texting limit for this number was reached',
+  '30023': 'the daily texting limit for this number was reached',
+  '30032': "the toll-free sending number isn't verified yet",
+  '30034': "the sending number isn't registered for texting yet",
+  // the Twilio adapter's own codes
+  TWILIO_AUTH: "the phone service didn't accept our credentials",
+  TWILIO_FROM_INVALID: "the sending number isn't a valid phone number",
+  TWILIO_TO_INVALID: "the number isn't a valid phone number",
+  TWILIO_TIMEOUT: "the phone service didn't answer in time",
+  TWILIO_NETWORK: "the phone service couldn't be reached",
+  TWILIO_BAD_RESPONSE: 'the phone service sent an unexpected answer',
+  TWILIO_HTTP_429: 'the phone service was busy',
 };
+
+/** Email codes: the SMTP adapter's codes and SMTP reply codes (SMTP_<3 digits>). */
+const EMAIL_CODES: Record<string, string> = {
+  SMTP_AUTH: "the email service didn't accept our credentials",
+  SMTP_AUTH_INCOMPLETE: "sending email isn't fully set up",
+  SMTP_AUTH_PLAINTEXT: "sending email isn't set up securely",
+  SMTP_AUTH_UNSUPPORTED: "the email service doesn't support our sign-in method",
+  SMTP_STARTTLS_UNAVAILABLE: "the email service doesn't offer a secure connection",
+  SMTP_HELO_INVALID: "sending email isn't set up correctly",
+  SMTP_CONNECTION: "the email service couldn't be reached",
+  SMTP_PROTOCOL: 'the email service sent an unexpected answer',
+  SMTP_TIMEOUT: "the email service didn't answer in time",
+  EMAIL_LINK_INVALID: 'a link in it was not allowed',
+  SMTP_421: 'the email service was busy',
+  SMTP_450: 'their mailbox was unavailable',
+  SMTP_451: 'the email service had a temporary problem',
+  SMTP_452: 'the email service was out of room',
+  SMTP_550: "the address doesn't exist or refused it",
+  SMTP_551: "the address doesn't exist",
+  SMTP_552: 'their mailbox is full or the email was too large',
+  SMTP_553: "the address isn't valid",
+  SMTP_554: 'their mail server refused it',
+};
+
+/** Amazon SES bounce subtypes (ses:Bounce:<type>/<subtype>). VERIFY against the SES notification reference. */
+const SES_BOUNCE: Record<string, string> = {
+  NoEmail: "the address doesn't exist",
+  Suppressed: "the address is on Amazon SES's suppression list after earlier bounces",
+  OnAccountSuppressionList: "the address is on the account's suppression list",
+  MailboxFull: 'their mailbox is full',
+  MessageTooLarge: 'the email was too large',
+  ContentRejected: 'their mail server refused the content',
+  AttachmentRejected: 'their mail server refused an attachment',
+  General: 'the email bounced',
+  Undetermined: 'the email bounced',
+};
+
+/** Mailgun failure reasons (mailgun:failed:<severity>/<reason>[/<smtp>]). VERIFY against Mailgun's event docs. */
+const MAILGUN_REASON: Record<string, string> = {
+  bounce: 'the email bounced',
+  'suppress-bounce': 'the address bounced before, so Mailgun did not try again',
+  'suppress-unsubscribe': 'they had unsubscribed at Mailgun earlier',
+  'suppress-complaint': 'they had marked an earlier email as spam',
+  espblock: 'their email provider blocked it',
+  old: "it couldn't be delivered in time",
+  generic: 'their mail server refused it',
+};
+
+/** The sentence for a provider error code, or null when the code is not one we can name. */
+export function providerCodeSentence(code: string | null | undefined): string | null {
+  if (!code) return null;
+  if (CARRIER[code]) return CARRIER[code]!;
+  if (EMAIL_CODES[code]) return EMAIL_CODES[code]!;
+  const ses = /^ses:(Bounce|Complaint|Reject|RenderingFailure)(?::([^/]*)(?:\/(.*))?)?$/.exec(code);
+  if (ses) {
+    if (ses[1] === 'Complaint') return 'they marked it as spam';
+    if (ses[1] === 'Reject') return 'the email service refused to send it';
+    if (ses[1] === 'RenderingFailure') return "the email couldn't be put together";
+    return SES_BOUNCE[ses[3] ?? ''] ?? 'the email bounced';
+  }
+  const mg = /^mailgun:(failed|rejected)(?:[:/]([^/]*)(?:\/([^/]*))?)?/.exec(code);
+  if (mg) {
+    if (mg[1] === 'rejected') return 'the email service refused to send it';
+    return MAILGUN_REASON[mg[3] ?? ''] ?? 'the email bounced';
+  }
+  return null;
+}
 
 const FAILED: Record<string, string> = {
   PROVIDER_OPTED_OUT: 'they had opted out with the carrier',
@@ -174,11 +264,11 @@ export function messageStatus(m: MessageStatusFacts, contactFirstName: string, n
     case 'failed':
     case 'undelivered': {
       const rejected = ch === 'email' ? 'the email service rejected it' : 'the carrier rejected it';
-      const why = CARRIER[m.providerErrorCode ?? ''] ?? (reason === 'PROVIDER_REJECTED' ? rejected : FAILED[reason]?.replace('phone service', ch === 'email' ? 'email service' : 'phone service')) ?? (ch === 'email' ? 'the email provider rejected it' : 'the carrier rejected it');
+      const why = providerCodeSentence(m.providerErrorCode) ?? (reason === 'PROVIDER_REJECTED' ? rejected : FAILED[reason]?.replace('phone service', ch === 'email' ? 'email service' : 'phone service')) ?? (ch === 'email' ? 'the email provider rejected it' : 'the carrier rejected it');
       return { text: `Not delivered: ${why}`, tone: 'failed' };
     }
     case 'bounced':
-      return { text: 'Not delivered: the email bounced', tone: 'failed' };
+      return { text: `Not delivered: ${providerCodeSentence(m.providerErrorCode) ?? 'the email bounced'}`, tone: 'failed' };
     case 'canceled':
       return { text: CANCELED[reason] ?? 'Canceled, not sent', tone: 'failed' };
     case 'scheduled':
