@@ -89,14 +89,49 @@ export const EMAIL_MAX = 254;
 /** Widget keys are `wk_` + 40 hex (contract webChat.widgetKey); the API never looks up any other shape. */
 export const WIDGET_KEY = /^wk_[0-9a-f]{40}$/;
 
+const FORMAT = /\p{Cf}/u;
+const SYMBOL = /\p{So}/u;
+const ZWJ = '‍';
+
+/** What may sit between an emoji and its joiner: the two presentation selectors and the five skin tones. */
+function isEmojiTail(c: string): boolean {
+  const cp = c.codePointAt(0)!;
+  return cp === 0xfe0e || cp === 0xfe0f || (cp >= 0x1f3fb && cp <= 0x1f3ff);
+}
+
 /**
- * Text as the API accepts it: format characters dropped, control characters a space (a message keeps its newlines
- * and tabs), trimmed and capped at `max` UTF-16 units without splitting a character in two.
+ * Whether the zero-width joiner at `i` joins two emoji (a family, a profession, a rainbow flag), where it is part of
+ * the emoji. This is the API's rule (contract webChat message pattern): U+200D only right after an emoji (its tail
+ * aside) and right before another one. Written as a loop, not a lookbehind, so older Safari can still parse the bundle.
+ */
+function joinsEmoji(ch: readonly string[], i: number): boolean {
+  let j = i - 1;
+  while (j >= 0 && isEmojiTail(ch[j]!)) j--;
+  return j >= 0 && SYMBOL.test(ch[j]!) && i + 1 < ch.length && SYMBOL.test(ch[i + 1]!);
+}
+
+/** Format characters dropped; a message keeps the joiners inside its emoji. */
+function dropFormat(s: string, keepEmojiJoiners: boolean): string {
+  if (!keepEmojiJoiners) return s.replace(/\p{Cf}/gu, '');
+  const ch = Array.from(s);
+  let out = '';
+  for (let i = 0; i < ch.length; i++) {
+    const c = ch[i]!;
+    if (!FORMAT.test(c) || (c === ZWJ && joinsEmoji(ch, i))) out += c;
+  }
+  return out;
+}
+
+/**
+ * Text as the API accepts it: format characters dropped (a message keeps the joiners inside its emoji, so a family
+ * stays one emoji), control characters a space (a message keeps its newlines and tabs), trimmed and capped at `max`
+ * UTF-16 units without splitting a character in two or leaving a joiner whose second emoji was cut off.
  */
 export function clean(s: string, max: number, multiline = false): string {
-  const kept = s.replace(/\p{Cf}/gu, '').replace(/\p{Cc}/gu, (c) => (multiline && (c === '\n' || c === '\t') ? c : multiline && c === '\r' ? '' : ' '));
-  const cut = kept.trim().slice(0, max);
-  return (/[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut).trim();
+  const kept = dropFormat(s, multiline).replace(/\p{Cc}/gu, (c) => (multiline && (c === '\n' || c === '\t') ? c : multiline && c === '\r' ? '' : ' '));
+  let cut = kept.trim().slice(0, max);
+  while (/[\uD800-\uDBFF]$/.test(cut) || cut.endsWith(ZWJ)) cut = cut.slice(0, -1);
+  return cut.trim();
 }
 
 /** A UUID (v4) for clientMessageId: one per typed message, reused when that same message is sent again. */

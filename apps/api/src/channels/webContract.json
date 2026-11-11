@@ -84,7 +84,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 2000,
-            "pattern": "^(?:[^\\p{Cc}\\p{Cf}]|[\\n\\t])*$"
+            "pattern": "^(?:[^\\p{Cc}\\p{Cf}]|[\\n\\t]|(?<=\\p{So}(?:\\uFE0E|\\uFE0F|[\\u{1F3FB}-\\u{1F3FF}])*)\\u200D(?=\\p{So}))*$"
           },
           "disclosureId": {
             "type": "string",
@@ -131,7 +131,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 2000,
-            "pattern": "^(?:[^\\p{Cc}\\p{Cf}]|[\\n\\t])*$"
+            "pattern": "^(?:[^\\p{Cc}\\p{Cf}]|[\\n\\t]|(?<=\\p{So}(?:\\uFE0E|\\uFE0F|[\\u{1F3FB}-\\u{1F3FF}])*)\\u200D(?=\\p{So}))*$"
           },
           "clientMessageId": {
             "type": "string",

@@ -33,8 +33,14 @@ export function webChatDeps(p: Platform): WebChatDeps {
 }
 
 // No control characters except newline and tab in a message; none at all in a name (header / log injection).
+// No format characters either (bidi overrides, zero-width spaces, tag characters), with one exception in a message:
+// the zero-width joiner between two emoji (after an emoji, its presentation selector or skin tone aside, and before
+// another), which is part of the emoji (a family, a profession, a rainbow flag). The widget's clean() keeps exactly
+// these. Keyword and opt-out matching strip format characters anyway (core compliance normalizeKeyword).
+// Built from a plain string with doubled backslashes: a regex literal's \u escapes reach .source (and so the web
+// contract generated from it) as the invisible characters themselves; this way the contract spells them as escapes.
 const NO_CONTROL = /^[^\p{Cc}\p{Cf}]*$/u;
-const MESSAGE_TEXT = /^(?:[^\p{Cc}\p{Cf}]|[\n\t])*$/u;
+const MESSAGE_TEXT = new RegExp('^(?:[^\\p{Cc}\\p{Cf}]|[\\n\\t]|(?<=\\p{So}(?:\\uFE0E|\\uFE0F|[\\u{1F3FB}-\\u{1F3FF}])*)\\u200D(?=\\p{So}))*$', 'u');
 const Name = z.string().trim().min(1).max(NAME_MAX).regex(NO_CONTROL);
 const Message = z.string().trim().min(1).max(MESSAGE_MAX).regex(MESSAGE_TEXT);
 const WidgetParams = z.strictObject({ widgetToken: z.string().min(1).max(200) });
