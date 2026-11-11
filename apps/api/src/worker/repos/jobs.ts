@@ -133,6 +133,23 @@ export function auditSeqStats(db: Database): Promise<AuditSeqStats> {
   }, { db });
 }
 
+export interface OptOutCarryDue {
+  tenantId: TenantId;
+  contactId: string;
+}
+
+/**
+ * app.retention_optout_carry_due(now, limit) (migration 0037): soft-deleted people past purge_after whose
+ * do-not-contact is not on every one of their addresses yet; the sweep skips them until it is (no context; ids only).
+ */
+export function optOutCarryDue(db: Database, now: Instant, limit = 500): Promise<OptOutCarryDue[]> {
+  return withPreTenant(async (tx) => {
+    const r = await sql<{ tenant_id: string; contact_id: string }>`
+      SELECT tenant_id, contact_id FROM app.retention_optout_carry_due(${toIso(now)}::timestamptz, ${limit}::integer)`.execute(tx);
+    return r.rows.map((x) => ({ tenantId: x.tenant_id as TenantId, contactId: x.contact_id }));
+  }, { db });
+}
+
 /** app.retention_sweep(now): the retention defaults of R-DATA-3 (owned by app_retention; no context). */
 export function retentionSweep(db: Database, now: Instant): Promise<Record<string, number>> {
   return withPreTenant(async (tx) => {

@@ -185,6 +185,24 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: api/people response schemas
     ],
     "type": "object",
   },
+  "AddressDeleteResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "ok": {
+        "const": true,
+        "type": "boolean",
+      },
+      "restoreToken": {
+        "type": "string",
+      },
+    },
+    "required": [
+      "ok",
+      "restoreToken",
+    ],
+    "type": "object",
+  },
   "AddressResponse": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
@@ -1614,6 +1632,8 @@ exports[`route table and schemas > every api/people route declares its authoriza
   "PATCH /api/contacts/:id/points/:pointId → contact.edit",
   "POST /api/contacts/:id/addresses → contact.edit",
   "PATCH /api/contacts/:id/addresses/:addressId → contact.edit",
+  "DELETE /api/contacts/:id/addresses/:addressId → contact.edit",
+  "POST /api/contacts/:id/addresses/:addressId/restore → contact.edit",
   "GET /api/contacts/:id/collaborators → contact.view_detail",
   "HEAD /api/contacts/:id/collaborators → contact.view_detail",
   "POST /api/contacts/:id/collaborators → collaborator.manage",

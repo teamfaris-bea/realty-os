@@ -12,9 +12,10 @@
 //                the assistant autonomy); nothing is written to gate_decisions;
 //                human owner/collaborator ⇒ the touch in THIS transaction (R-OWN-14, E66)
 //        deny  ⇒ INSERT gate_decisions (the blocked-send evidence) + 'blocked' with the reason
-//        guard refuses an allowed send (RECIPIENT_OPTED_OUT / RECIPIENT_NOT_A_CONTACT_POINT; canContact
-//                reads the guard's own fan-out, so this is defence in depth) ⇒ TX1 rolls back whole and
-//                runs again in a NEW transaction with the guard's code as a deny: recorded as above,
+//        guard refuses an allowed send about its recipient (RECIPIENT_OPTED_OUT, PERSON_DO_NOT_CONTACT,
+//                RECIPIENT_SUPPRESSED, RECIPIENT_NOT_A_CONTACT_POINT: gateInput.ts GUARD_DENY_REASONS;
+//                canContact reads the guard's own facts, so this is defence in depth) ⇒ TX1 rolls back whole
+//                and runs again in a NEW transaction with the guard's code as a deny: recorded as above,
 //                answered as blocked, never sent, never retried, never a 500
 //   provider.send(idempotencyKey = message.id)        (never inside a transaction)
 //   TX2  'sent' + provider ref | 'failed' | timeout ⇒ 'dispatch_unknown' + comms.reconcile (never resent)

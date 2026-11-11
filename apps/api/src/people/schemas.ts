@@ -95,6 +95,9 @@ export const PointsResponse = z.object({ points: z.array(PointDetail), removed: 
 export const AddressView = z.object({ id: Id, kind: z.string(), line1: z.string().nullable(), line2: z.string().nullable(), city: z.string().nullable(), region: z.string().nullable(), postalCode: z.string().nullable(), country: z.string() });
 export const AddressResponse = z.object({ address: AddressView });
 export const OkResponse = z.object({ ok: z.literal(true) });
+/** restoreToken: the deleted row, sealed for the Undo of this delete only (people/addressRestore.ts); opaque to the client. */
+export const AddressDeleteResponse = z.object({ ok: z.literal(true), restoreToken: z.string() });
+export const RestoreAddressBody = z.strictObject({ restoreToken: z.string().min(16).max(16_384) });
 
 export const CollaboratorView = z.object({ userId: Id, displayName: z.string().nullable(), role: z.string(), expiresAt: Iso.nullable() });
 export const CollaboratorsResponse = z.object({ collaborators: z.array(CollaboratorView) });
@@ -154,6 +157,7 @@ export const PEOPLE_RESPONSE_SCHEMAS = {
   PointsResponse,
   AddressResponse,
   OkResponse,
+  AddressDeleteResponse,
   CollaboratorsResponse,
   StageResponse,
   StageLabelsResponse,

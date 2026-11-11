@@ -249,6 +249,9 @@ export const ERROR_STATUS = {
   AUTO_ENROLL_STAGE_TAKEN: 409, // R-PAR-16: another active playbook of the same scope/owner already starts on this stage
   AUTO_ENROLL_NOT_ALLOWED: 422, // R-PAR-16: a new-lead-response playbook never starts on a stage
   PLAYBOOK_RETIRED: 409, // a retired playbook cannot be given a stage
+  // ---- lead-handling follow-ups (erasure, address delete) ----
+  PERSON_DO_NOT_CONTACT_UNCARRIED: 409, // D1, R-DATA-4: an erasure would drop a do-not-contact not yet on every address (nothing erased)
+  ADDRESS_RESTORE_EXPIRED: 409, // module 57: the Undo of an address delete came after its window (add the address again)
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 
