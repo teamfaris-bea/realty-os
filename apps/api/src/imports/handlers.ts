@@ -26,14 +26,15 @@ export type BatchPayload = { batchId: string };
 export type StagePayload = { stageId: string };
 
 /**
- * FUB_PROVIDER=real uses the HTTP adapter (VERIFY against a live account); anything else the fake.
+ * FUB_PROVIDER=real uses the HTTP adapter (VERIFY against a live account, incl. the tasks and appointments count
+ * endpoints, FUB_TASKS_PATH / FUB_APPOINTMENTS_PATH); anything else the fake.
  * The settings come from the process Config only (config.ts `fub`, never tenant input or process.env here):
  * FUB_BASE_URL must name a host in FUB_ALLOWED_HOSTS (default api.followupboss.com). loadConfig checks that
  * at startup and the adapter re-checks it when built (FubConfigError).
  */
 export function defaultFubConnector(fub: Config['fub']): FubConnector {
   if (fub.provider === 'real') {
-    return httpFubConnector({ baseUrl: fub.baseUrl, allowedHosts: fub.allowedHosts, ...(fub.system ? { system: fub.system } : {}) });
+    return httpFubConnector({ baseUrl: fub.baseUrl, allowedHosts: fub.allowedHosts, ...(fub.system ? { system: fub.system } : {}), ...(fub.countOnlyPaths ? { countOnlyPaths: fub.countOnlyPaths } : {}) });
   }
   return new FakeFub().connector;
 }

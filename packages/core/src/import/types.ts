@@ -411,6 +411,23 @@ export interface Counts {
   duplicate: number;
 }
 
+/**
+ * Owner decision B7 (2026-11-11, E233): what a Follow Up Boss account holds that the import never brings over,
+ * counted from one-record pages (`_metadata.total`, never a record). Null: it could not be counted.
+ */
+export interface NotImportedCounts {
+  tasks: number | null;
+  appointments: number | null;
+  /**
+   * Review F4: a count the latest counting could not read again, kept from an earlier step (the step named). It is
+   * said with when it was taken, never as what Follow Up Boss holds now.
+   */
+  kept?: Partial<Record<'tasks' | 'appointments', NotImportedStep>>;
+}
+
+/** The step a Follow Up Boss task or appointment count was taken at, when a later one could not count it again. */
+export type NotImportedStep = 'connection_test' | 'snapshot';
+
 export interface CountDiff {
   key: keyof Counts;
   source: number;

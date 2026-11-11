@@ -96,6 +96,7 @@ export const RevertBody = z.strictObject({ category: CategoryParam.optional() })
 // ---- responses ----------------------------------------------------------------------------------
 
 const Issue = z.object({ code: z.string(), severity: z.string(), field: z.string().nullable(), sentence: z.string() });
+const NotImportedStep = z.enum(['connection_test', 'snapshot']);
 const StageCounts = z.object({ source: z.number(), willImport: z.number(), imported: z.number().nullable(), needsReview: z.number(), rejected: z.number(), duplicate: z.number() }).nullable();
 const Stage = z.object({
   id: z.string(),
@@ -128,6 +129,17 @@ export const Batch = z.object({
   revertedAt: z.string().nullable(),
   stages: z.array(Stage),
   connectionTest: z.array(z.string()),
+  /** owner decision B7 (E233): Follow Up Boss tasks and appointments, counted (never read), and that they don't come over; null for CSV */
+  notImported: z
+    .object({
+      tasks: z.number().nullable(),
+      appointments: z.number().nullable(),
+      countedAt: z.enum(['connection_test', 'snapshot', 'export_file']).nullable(),
+      /** review F4: a count the latest counting could not read again, kept from an earlier step (the step that counted it) */
+      keptFrom: z.object({ tasks: NotImportedStep.optional(), appointments: NotImportedStep.optional() }).optional(),
+      lines: z.array(z.string()),
+    })
+    .nullable(),
 });
 export const BatchResponse = z.object({ batch: Batch });
 export const BatchListResponse = z.object({ batches: z.array(Batch) });
@@ -157,7 +169,12 @@ export const RecordResponse = z.object({ record: ImportRecord });
 const Counts = z.object({ source: z.number(), imported: z.number(), needs_review: z.number(), rejected: z.number(), duplicate: z.number() });
 export const ApproveResponse = z.object({ batch: Batch, expected: Counts });
 export const VerificationResponse = z.object({
+  /** what the approval expected, with the documented commit outcomes applied (owner decision B4, E230) */
   expected: Counts,
+  /** what the approval expected */
+  approved: Counts,
+  /** commit outcomes the approved plan could not predict, documented on their records (a count and a sentence) */
+  documented: z.array(z.object({ code: z.string(), count: z.number(), sentence: z.string() })),
   db: Counts,
   matches: z.boolean(),
   diffs: z.array(z.object({ key: z.string(), source: z.number(), db: z.number() })),
@@ -177,10 +194,33 @@ export const ReportResponse = z.object({
       duplicate: z.number(),
       reconciles: z.boolean(),
       lines: z.array(z.string()),
+      /** ownership (owner decision B4, E231): the people the commit brought in unassigned; "Assign these people" selects `contactIds` */
+      unassigned: z
+        .object({
+          total: z.number(),
+          stillUnassigned: z.number(),
+          contactIds: z.array(z.string()),
+          /** where they are now, in words (review B4-R1) */
+          summary: z.array(z.string()),
+          people: z.array(
+            z.object({
+              contactId: z.string(),
+              name: z.string(),
+              sentence: z.string(),
+              stillUnassigned: z.boolean(),
+              /** review B4-R1: where the person is now; only `owned` has an owner, only `unassigned` is selected */
+              now: z.enum(['unassigned', 'owned', 'offered', 'in_pond', 'closed', 'deleted', 'merged']),
+              nowSentence: z.string().nullable(),
+            }),
+          ),
+        })
+        .nullable(),
     }),
   ),
   /** PARITY 65 (R-PAR-46): stages, tags and custom fields: source vs imported vs needs review vs rejected */
   parity: z.object({ phase: z.enum(['dry_run', 'committed', 'reverted']), rows: z.array(ParityRow), lines: z.array(z.string()) }).nullable(),
+  /** owner decision B7 (E233): what Follow Up Boss holds that the import does not bring over; null for CSV */
+  notImported: z.object({ tasks: z.number().nullable(), appointments: z.number().nullable(), lines: z.array(z.string()) }).nullable(),
 });
 export const CreatedResponse = z.object({ batch: Batch });
 

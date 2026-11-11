@@ -4,11 +4,16 @@
 //   createImport   FUB API: decrypts nothing, reads COUNTS ONLY (one-record pages) and stores the key
 //                  encrypted (provider_credentials, AAD bound to the row). CSV / FUB export file: the
 //                  bytes are stored encrypted (per-object DEK) and only counted. Nothing is promised
-//                  before this step and nothing is imported by it (R-IMPORT-1).
+//                  before this step and nothing is imported by it (R-IMPORT-1). FUB tasks and
+//                  appointments are counted too, never read (owner decision B7, E233): a count that
+//                  fails is null and never fails the test.
 //   takeSnapshot   (job) FUB API: reads every collection once, copies recordings into encrypted storage,
 //                  and stores the whole snapshot encrypted with its sha256. Every later step reads the
 //                  snapshot, never live FUB (R-IMPORT-1, R-IMPORT-4). Files: the uploaded bytes are the
 //                  snapshot. A new snapshot (a delta, E42) resets every stage that has not committed.
+//                  Tasks and appointments are counted again (count pages only, E233); a failed count
+//                  keeps the earlier one with the step that counted it, said so (review F4), and never
+//                  fails the snapshot.
 //   abandon        purges the FUB key at once (R-IMPORT-11) and drops the snapshot objects.
 import { createHash } from 'node:crypto';
 import type { TenantId, UserActor } from '@realty/core/foundation';
@@ -22,7 +27,9 @@ import {
   type NormalizedRecord,
   type RecordOutcome,
   type UserMapping,
+  type FubCountOnlyCollection,
   fubConnectionCounts,
+  fubNotImportedCounts,
   mapFub,
 } from '@realty/core/import';
 import type { PondId, UserId } from '@realty/core/foundation';
@@ -31,7 +38,7 @@ import { getObject, putObject } from '../crypto/objects.js';
 import { AppError } from '../errors.js';
 import { systemActor } from '../worker/systemActor.js';
 import { CSV_CATEGORIES, type StageSource, fileLabelOf, inspectCsv, uploadTypeProblem } from './csv.js';
-import { FUB_COLLECTIONS, FubAccessError, readCollection } from './fub.js';
+import { FUB_COLLECTIONS, FUB_COUNT_ONLY, type FubClient, FubAccessError, readCollection } from './fub.js';
 import * as repo from './repos/batches.js';
 import type { ImportDeps } from './types.js';
 
@@ -78,6 +85,53 @@ export function parseFubExport(bytes: Uint8Array): FubSnapshot | null {
   return any ? { version: 1, collections } : null;
 }
 
+/**
+ * Owner decision B7 (E233): the tasks and appointments FUB holds, from one-record count pages only. Read-only and
+ * never blocking: any failure (no scope, an error, a bad page) is a count we could not read (null).
+ */
+async function countNotImported(client: FubClient): Promise<{ tasks: number | null; appointments: number | null }> {
+  const pages: Partial<Record<FubCountOnlyCollection, unknown>> = {};
+  for (const c of FUB_COUNT_ONLY) {
+    try {
+      pages[c] = await client.countPage(c);
+    } catch {
+      // not countable now: said so, never a reason to stop
+    }
+  }
+  return fubNotImportedCounts(pages);
+}
+
+/**
+ * E233 at the snapshot: what this snapshot counted, and, for a count it could not read, the earlier one with the step
+ * that counted it (review F4: kept, never relabelled as this snapshot's). A count never read stays null.
+ */
+function recounted(fresh: { tasks: number | null; appointments: number | null }, was: repo.NotImportedOption | undefined): repo.NotImportedOption {
+  const keptFrom: NonNullable<repo.NotImportedOption['keptFrom']> = {};
+  const count = (k: FubCountOnlyCollection): number | null => {
+    if (fresh[k] !== null) return fresh[k];
+    if (!was || was[k] === null) return null;
+    // a live FUB batch is counted only at its connection test and at its snapshots
+    keptFrom[k] = was.keptFrom?.[k] ?? (was.countedAt === 'connection_test' ? 'connection_test' : 'snapshot');
+    return was[k];
+  };
+  const tasks = count('tasks');
+  const appointments = count('appointments');
+  return { tasks, appointments, countedAt: 'snapshot', ...(Object.keys(keptFrom).length > 0 ? { keptFrom } : {}) };
+}
+
+/** E233: tasks and appointments in a FUB export file (top level or under `collections`), counted, never read. */
+function exportNotImported(bytes: Uint8Array): repo.NotImportedOption {
+  let v: unknown;
+  try {
+    v = JSON.parse(Buffer.from(bytes).toString('utf8'));
+  } catch {
+    v = null;
+  }
+  const root = (v !== null && typeof v === 'object' && !Array.isArray(v) ? ((v as { collections?: unknown }).collections ?? v) : {}) as Record<string, unknown>;
+  const n = (c: FubCountOnlyCollection) => (Array.isArray(root[c]) ? (root[c] as unknown[]).length : null);
+  return { tasks: n('tasks'), appointments: n('appointments'), countedAt: 'export_file' };
+}
+
 function exportCounts(s: FubSnapshot): Record<Category, number | null> {
   const n = (c: FubCollection) => s.collections[c]?.length ?? 0;
   return { contacts: n('people'), ownership: n('people'), notes: n('notes'), messages: n('textMessages') + n('emails'), call_recordings: n('calls'), consent: n('people') };
@@ -108,6 +162,7 @@ export async function createImport(deps: ImportDeps, actor: UserActor, input: Cr
     }
     if (pages.people === undefined) throw new AppError('PROVIDER_UNAVAILABLE');
     const counts = fubConnectionCounts(pages).categories;
+    const notImported: repo.NotImportedOption = { ...(await countNotImported(client)), countedAt: 'connection_test' };
     await withTenantTx(
       actor,
       async (tx) => {
@@ -115,7 +170,7 @@ export async function createImport(deps: ImportDeps, actor: UserActor, input: Cr
         const env = deps.envelope.inTx(tx, actor.tenantId);
         const enc = await env.encrypt(actor.tenantId, credAad(credId), new TextEncoder().encode(input.apiKey));
         await repo.insertCredential(tx, credId, enc, 1);
-        await repo.insertBatch(tx, { id: batchId, source: 'fub_api', sourceCounts: counts, credentialId: credId, fileObjectId: null, options: {} });
+        await repo.insertBatch(tx, { id: batchId, source: 'fub_api', sourceCounts: counts, credentialId: credId, fileObjectId: null, options: { notImported } });
         await repo.insertStages(tx, batchId, CATEGORIES, () => deps.ids.next<'ImportStageId'>());
       },
       { db: deps.db },
@@ -150,7 +205,7 @@ export async function createImport(deps: ImportDeps, actor: UserActor, input: Cr
     actor,
     async (tx) => {
       const fileId = await storeFile(deps, tx, actor.tenantId, bytes, 'application/json');
-      await repo.insertBatch(tx, { id: batchId, source: 'fub_export', sourceCounts: counts, credentialId: null, fileObjectId: fileId, options: { fileLabel } });
+      await repo.insertBatch(tx, { id: batchId, source: 'fub_export', sourceCounts: counts, credentialId: null, fileObjectId: fileId, options: { fileLabel, notImported: exportNotImported(bytes) } });
       await repo.insertStages(tx, batchId, CATEGORIES, () => deps.ids.next<'ImportStageId'>());
     },
     { db: deps.db },
@@ -247,6 +302,9 @@ export async function takeSnapshot(deps: ImportDeps, tenantId: string, batchId: 
       }, { db: deps.db });
       return 'done';
     }
+    // E233: the tasks and appointments FUB holds now, counted again (never read). A count that fails keeps the earlier
+    // one with the step that counted it (review F4), so it is never taken for this snapshot's or said as what FUB holds now.
+    options.notImported = recounted(await countNotImported(client), batch.options.notImported);
     // Recordings are copied now, into encrypted storage, so no later step needs live FUB (R-IMPORT-1).
     const recordings: Record<string, string> = {};
     for (const raw of snap.collections.calls ?? []) {

@@ -14,14 +14,15 @@ import { useQuery } from '@tanstack/react-query';
 import { type FormEvent, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Button, Card, EmptyState, Notice, TextField } from '../../design/index.js';
-import { type ApiError, messageFor, useApi, useWithReauth } from '../../shell/index.js';
+import { type ApiError, messageFor, useApi, useSession, useWithReauth } from '../../shell/index.js';
 import { formatStamp, plural } from '../admin/lib/format.js';
 import { useAction, useAnnounce } from '../admin/lib/hooks.js';
 import { ADMIN_MESSAGES } from '../admin/lib/messages.js';
-import type { ImportBatch, ImportRecord, ImportStage, MappingsResponse, MembersResponse, Pond, ReportResponse, VerificationResponse } from '../admin/lib/types.js';
+import type { ImportBatch, ImportCounts, ImportRecord, ImportStage, MappingsResponse, MembersResponse, Pond, ReportResponse, VerificationResponse } from '../admin/lib/types.js';
 import { ErrorLine, Pill, Section, Segmented, SelectField, StatusLine } from '../admin/lib/ui.js';
+import { BulkActionSheet, mayBulkAssign } from '../bulk/index.js';
 import { ParityMapping } from './ParityMapping.js';
-import { CATEGORY_LABEL, CATEGORY_NOTE, PARITY_CATEGORY_LABEL, type ParityResponse, type ParityRowView, parityEditable, OUTCOME_LABEL, SKIP_WARNING, SOURCE_LABEL, STAGE_STATUS, blockingEarlier, canSkipStage, canUndoStage, consentNeedsDryRunToSkip, isRunning, nextStep, ordered, reconciles, recordSummary, spotChecksReady, toBase64 } from './lib.js';
+import { CATEGORY_LABEL, CATEGORY_NOTE, type DocumentedOutcome, type ImportBatchView, type NotImportedView, PARITY_CATEGORY_LABEL, type ParityResponse, type ParityRowView, type UnassignedView, parityEditable, OUTCOME_LABEL, SKIP_WARNING, SOURCE_LABEL, STAGE_STATUS, blockingEarlier, canSkipStage, canUndoStage, consentNeedsDryRunToSkip, isRunning, nextStep, ordered, reconciles, recordSummary, reportSaysNotImported, spotChecksReady, toBase64 } from './lib.js';
 
 const IMPORTS_KEY = ['imports'] as const;
 const POLL_MS = 2000;
@@ -149,7 +150,7 @@ function NewImport() {
 export function ImportPage() {
   const { importId = '' } = useParams();
   const [status, announce] = useAnnounce();
-  const q = useImportsQuery<{ batch: ImportBatch }>([...IMPORTS_KEY, importId], `/imports/${importId}`, { poll: (d) => (d ? isRunning(d.batch) : false) });
+  const q = useImportsQuery<{ batch: ImportBatchView }>([...IMPORTS_KEY, importId], `/imports/${importId}`, { poll: (d) => (d ? isRunning(d.batch) : false) });
   const b = q.data?.batch;
   const stages = b ? ordered(b.stages) : [];
   return (
@@ -195,7 +196,7 @@ function batchKey(id: string) {
   return [...IMPORTS_KEY, id];
 }
 
-function Overview({ batch, onDone }: { batch: ImportBatch; onDone(t: string): void }) {
+function Overview({ batch, onDone }: { batch: ImportBatchView; onDone(t: string): void }) {
   const snap = useAction<Record<string, never>, { batch: ImportBatch }>('POST', { invalidate: [batchKey(batch.id)] });
   return (
     <Section title={`${SOURCE_LABEL[batch.source]}${batch.fileLabel ? ` · ${batch.fileLabel}` : ''}`} description={`Started ${formatStamp(batch.createdAt)}`}>
@@ -206,6 +207,17 @@ function Overview({ batch, onDone }: { batch: ImportBatch; onDone(t: string): vo
             <li key={l}>{l}</li>
           ))}
         </ul>
+        {/* owner decision B7: tasks and appointments are counted and never imported, said plainly before anything else happens */}
+        {batch.notImported && batch.notImported.lines.length > 0 ? (
+          <section aria-label="What doesn't come over" className="flex flex-col gap-1">
+            <h4 className="text-[15px] font-semibold text-ink">What doesn't come over</h4>
+            {batch.notImported.lines.map((l) => (
+              <Notice key={l} tone="warn">
+                {l}
+              </Notice>
+            ))}
+          </section>
+        ) : null}
         {batch.snapshotError ? <Notice tone="error">The snapshot stopped: {batch.snapshotError}. Take it again.</Notice> : null}
         {batch.snapshotSha256 ? (
           <p className="text-[14px] text-ink-muted">Working from the snapshot taken {formatStamp(batch.snapshotAt)}. Changes made in the source after that need a new snapshot.</p>
@@ -546,10 +558,13 @@ function RecordRow({ batch, record }: { batch: ImportBatch; record: ImportRecord
 
 function Verify({ batch, stage, onDone }: { batch: ImportBatch; stage: ImportStage; onDone(t: string): void }) {
   const base = `/imports/${batch.id}/stages/${stage.category}`;
-  const q = useImportsQuery<VerificationResponse>([...batchKey(batch.id), 'verification', stage.category], `${base}/verification`);
+  const q = useImportsQuery<VerificationResponse & { approved?: ImportCounts; documented?: DocumentedOutcome[] }>([...batchKey(batch.id), 'verification', stage.category], `${base}/verification`);
   const [marks, setMarks] = useState<Map<string, boolean>>(new Map());
   const a = useAction<{ spotChecks: { sourceRef: string; matches: boolean }[] }, { batch: ImportBatch }>('POST', { invalidate: [batchKey(batch.id), [...IMPORTS_KEY]] });
   const v = q.data;
+  // owner decision B4: outcomes the commit documented (people brought in unassigned) change what is expected; both are shown
+  const documented = v?.documented ?? [];
+  const approved = documented.length > 0 ? (v?.approved ?? null) : null;
   const ready = v ? spotChecksReady(v.sample, marks) : false;
   const anyMismatch = [...marks.values()].some((m) => !m);
   return (
@@ -567,6 +582,11 @@ function Verify({ batch, stage, onDone }: { batch: ImportBatch; stage: ImportSta
                   <th scope="col" className="py-1 pr-3 font-semibold">
                     Count
                   </th>
+                  {approved ? (
+                    <th scope="col" className="py-1 pr-3 font-semibold">
+                      Approved
+                    </th>
+                  ) : null}
                   <th scope="col" className="py-1 pr-3 font-semibold">
                     Expected
                   </th>
@@ -581,6 +601,7 @@ function Verify({ batch, stage, onDone }: { batch: ImportBatch; stage: ImportSta
                     <th scope="row" className="py-1 pr-3 font-normal text-ink">
                       {k === 'source' ? 'In the source' : (OUTCOME_LABEL[k] ?? k)}
                     </th>
+                    {approved ? <td className="py-1 pr-3 text-ink-muted">{approved[k]}</td> : null}
                     <td className="py-1 pr-3 text-ink">{v.expected[k]}</td>
                     <td className={`py-1 ${v.expected[k] === v.db[k] ? 'text-ink' : 'font-semibold text-danger'}`}>{v.db[k]}</td>
                   </tr>
@@ -588,6 +609,11 @@ function Verify({ batch, stage, onDone }: { batch: ImportBatch; stage: ImportSta
               </tbody>
             </table>
           </div>
+          {documented.map((d) => (
+            <Notice key={d.code} tone="info">
+              {d.sentence}
+            </Notice>
+          ))}
           {v.matches ? <Notice tone="ok">The recount matches.</Notice> : <Notice tone="error">The recount does not match, so this can't be verified. Undo this category and check the source.</Notice>}
           {v.sample.length > 0 ? <p className="text-[15px] text-ink">Compare {plural(v.sample.length, 'record')} side by side and mark each one.</p> : null}
           <ul className="flex flex-col gap-2">
@@ -634,23 +660,36 @@ export function parityImportedHeader(phase: string): string {
   return phase === 'dry_run' ? 'Will import' : phase === 'reverted' ? 'Imported, then undone' : 'Imported';
 }
 
+type ReportView = Omit<ReportResponse, 'categories'> & {
+  categories: (ReportResponse['categories'][number] & { unassigned?: UnassignedView | null })[];
+  parity?: { phase: string; rows: ParityRowView[]; lines: string[] } | null;
+  /** owner decision B7: what Follow Up Boss holds that the import does not bring over */
+  notImported?: Omit<NotImportedView, 'countedAt'> | null;
+};
+
 function Report({ batch }: { batch: ImportBatch }) {
-  const q = useImportsQuery<ReportResponse & { parity?: { phase: string; rows: ParityRowView[]; lines: string[] } | null }>([...batchKey(batch.id), 'report', batch.stages.map((s) => s.status).join()], `/imports/${batch.id}/report`);
+  const q = useImportsQuery<ReportView>([...batchKey(batch.id), 'report', batch.stages.map((s) => s.status).join()], `/imports/${batch.id}/report`);
   if (!q.data) return null;
   const lines = q.data.categories.flatMap((c) => c.lines.map((l) => ({ c: c.category, l })));
   const parity = q.data.parity ?? null;
-  if (lines.length === 0 && !parity) return null;
+  const unassigned = q.data.categories.find((c) => c.category === 'ownership')?.unassigned ?? null;
+  // owner decision B7: the final report says what doesn't come over once something was imported; until then the
+  // "What doesn't come over" notice above is the one place it is said (review F3: no report of that sentence alone)
+  const left = reportSaysNotImported(batch.stages) ? (q.data.notImported?.lines ?? []) : [];
+  if (lines.length === 0 && !parity && !unassigned && left.length === 0) return null;
   return (
     <Section title="Report">
-      <Card>
-        <ul className="flex flex-col gap-1 text-[15px] text-ink">
-          {lines.map(({ c, l }, i) => (
-            <li key={`${c}:${i}`}>
-              <span className="font-semibold">{CATEGORY_LABEL[c]}:</span> {l}
-            </li>
-          ))}
-        </ul>
-      </Card>
+      {lines.length > 0 ? (
+        <Card>
+          <ul className="flex flex-col gap-1 text-[15px] text-ink">
+            {lines.map(({ c, l }, i) => (
+              <li key={`${c}:${i}`}>
+                <span className="font-semibold">{CATEGORY_LABEL[c]}:</span> {l}
+              </li>
+            ))}
+          </ul>
+        </Card>
+      ) : null}
       {parity ? (
         <Card className="flex flex-col gap-2">
           <h3 className="text-[16px] font-semibold text-ink">Stages, tags and custom fields</h3>
@@ -688,7 +727,80 @@ function Report({ batch }: { batch: ImportBatch }) {
           </ul>
         </Card>
       ) : null}
+      {unassigned ? <UnassignedPeople view={unassigned} onClosed={() => void q.refetch()} /> : null}
+      {left.length > 0 ? (
+        <section aria-label="Not brought over">
+          <Card className="flex flex-col gap-2">
+            <h3 className="text-[16px] font-semibold text-ink">Not brought over</h3>
+            {left.map((l) => (
+              <p key={l} className="text-[15px] text-ink">
+                {l}
+              </p>
+            ))}
+          </Card>
+        </section>
+      ) : null}
     </Section>
+  );
+}
+
+/**
+ * Owner decision B4 (2026-11-11): the people the ownership commit brought in unassigned, because the member they were
+ * matched to could no longer hold leads, each with the reason. "Assign these people" opens the existing bulk Assign
+ * (parity module 64's sheet) with exactly the ones still unassigned selected by id; the server decides each person
+ * again, and the sheet only offers members who can hold leads. What is true of each person now, and the summary, are
+ * the server's words (review B4-R1: "has an owner" only of someone owned; closed, deleted, merged away, in a pond or
+ * on offer are said so). A deleted person is named, not linked: their contact is gone from the book.
+ */
+function UnassignedPeople({ view, onClosed }: { view: UnassignedView; onClosed(): void }) {
+  const { session } = useSession();
+  const [open, setOpen] = useState(false);
+  const still = view.stillUnassigned;
+  const selected = view.contactIds.length;
+  return (
+    <section aria-label="People who came in unassigned">
+      <Card className="flex flex-col gap-2">
+        <h3 className="text-[16px] font-semibold text-ink">People who came in unassigned</h3>
+        <ul className="flex flex-col gap-1 text-[15px] text-ink">
+          {view.people.map((p) => (
+            <li key={p.contactId}>
+              {p.now === 'deleted' ? (
+                <span className="font-semibold">{p.name}</span>
+              ) : (
+                <Link to={`/contacts/${p.contactId}`} className="font-semibold text-accent underline">
+                  {p.name}
+                </Link>
+              )}{' '}
+              {p.sentence}
+              {p.nowSentence ? <span className="text-ink-muted"> {p.nowSentence}</span> : null}
+            </li>
+          ))}
+        </ul>
+        {view.total > view.people.length ? <p className="text-[14px] text-ink-muted">And {plural(view.total - view.people.length, 'more person', 'more people')}.</p> : null}
+        {view.summary.map((l) => (
+          <p key={l} className="text-[15px] text-ink">
+            {l}
+          </p>
+        ))}
+        {still > selected ? <p className="text-[14px] text-ink-muted">The first {selected} are selected; assign the rest after.</p> : null}
+        {selected > 0 && mayBulkAssign(session?.tenant?.role) ? (
+          <div>
+            <Button onClick={() => setOpen(true)}>{selected === 1 ? 'Assign this person' : 'Assign these people'}</Button>
+          </div>
+        ) : null}
+      </Card>
+      {open ? (
+        <BulkActionSheet
+          kind="assign"
+          contactIds={view.contactIds}
+          selectedText={plural(selected, 'person', 'people')}
+          onClose={() => {
+            setOpen(false);
+            onClosed();
+          }}
+        />
+      ) : null}
+    </section>
   );
 }
 

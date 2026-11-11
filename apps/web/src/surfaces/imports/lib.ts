@@ -128,9 +128,60 @@ export function isRunning(b: ImportBatch): boolean {
   return RUNNING_BATCH.has(b.status) || b.stages.some((s) => RUNNING_STAGE.has(s.status));
 }
 
-/** Does source = will import + needs review + rejected + duplicate? (said, never hidden) */
+/**
+ * Does source = will import + needs review + rejected + duplicate? (said, never hidden) After the commit the other
+ * three are the recount's, so it is checked against what was imported: a record the commit documented as not
+ * imported (a person brought in unassigned, owner decision B4) is in the rejected count, not a gap.
+ */
 export function reconciles(c: NonNullable<ImportStage['counts']>): boolean {
-  return c.source === c.willImport + c.needsReview + c.rejected + c.duplicate;
+  return c.source === (c.imported ?? c.willImport) + c.needsReview + c.rejected + c.duplicate;
+}
+
+// ---- owner decision B7 (2026-11-11): Follow Up Boss tasks and appointments are counted, never imported ----
+
+/** What Follow Up Boss holds that the import does not bring over, with the server's plain sentence (null for CSV). */
+export interface NotImportedView {
+  tasks: number | null;
+  appointments: number | null;
+  countedAt?: 'connection_test' | 'snapshot' | 'export_file' | null;
+  /** review F4: a count the latest counting could not read again, kept from an earlier step (the sentence says when) */
+  keptFrom?: Partial<Record<'tasks' | 'appointments', 'connection_test' | 'snapshot'>>;
+  lines: string[];
+}
+
+/**
+ * The final report says what does not come over once something has been imported (review F3). Before that, the
+ * import page's "What doesn't come over" notice is the one place it is said, so it is never repeated beside an empty
+ * or dry-run-only report.
+ */
+export function reportSaysNotImported(stages: readonly { status: string }[]): boolean {
+  return stages.some((s) => ['committed', 'verified', 'reverting', 'reverted'].includes(s.status));
+}
+
+/** A batch as GET /imports/:id returns it (owner decision B7 adds `notImported`). */
+export type ImportBatchView = ImportBatch & { notImported?: NotImportedView | null };
+
+// ---- owner decision B4 (2026-11-11): people the ownership commit brought in unassigned ---------------------
+
+/** Where a person brought in unassigned is now (review B4-R1): only `owned` has an owner, only `unassigned` is selected. */
+export type UnassignedNow = 'unassigned' | 'owned' | 'offered' | 'in_pond' | 'closed' | 'deleted' | 'merged';
+
+/** GET /imports/:id/report, ownership: the people brought in unassigned; "Assign these people" selects exactly `contactIds`. */
+export interface UnassignedView {
+  total: number;
+  stillUnassigned: number;
+  /** the people still unassigned, at most the bulk Assign cap (2,000) */
+  contactIds: string[];
+  /** where they are now, in the server's words (every number a count) */
+  summary: string[];
+  people: { contactId: string; name: string; sentence: string; stillUnassigned: boolean; now: UnassignedNow; nowSentence: string | null }[];
+}
+
+/** The verification with what the approval expected and the outcomes the commit documented (each with a sentence). */
+export interface DocumentedOutcome {
+  code: string;
+  count: number;
+  sentence: string;
 }
 
 /** Bytes → base64 in chunks (no stack overflow on large files). */

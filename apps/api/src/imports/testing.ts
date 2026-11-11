@@ -234,7 +234,12 @@ export async function commitStage(ih: ImportsHarness, c: TestClient, batchId: st
 }
 
 export interface Verification {
+  /** what the approval expected, adjusted by the documented commit outcomes (E230) */
   expected: Record<string, number>;
+  /** what the approval expected */
+  approved: Record<string, number>;
+  /** commit outcomes the reviewed plan could not predict, each documented on its records (E230) */
+  documented: { code: string; count: number; sentence: string }[];
   db: Record<string, number>;
   matches: boolean;
   diffs: unknown[];

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fubConnectionCounts, connectionTestLines, htmlToText, mapFub, userMappingGaps, type Category, type RecordOutcome, type NormalizedRecord } from './index.js';
+import { FUB_COUNT_ONLY_COLLECTIONS, fubConnectionCounts, fubNotImportedCounts, connectionTestLines, htmlToText, mapFub, notImportedLines, userMappingGaps, type Category, type RecordOutcome, type NormalizedRecord } from './index.js';
 import { AGENT_A, AGENT_B, FUB_EXPORT, POND, USERS } from './testing/fixtures.js';
 
 const people = FUB_EXPORT.people as readonly unknown[];
@@ -188,5 +188,16 @@ describe('R-IMPORT-1 connection test reads counts only and promises nothing', ()
     ]);
     // Counts only: no record content reaches the result.
     expect(JSON.stringify(r)).not.toContain('ignored');
+  });
+
+  it('E233 owner decision B7: FUB tasks and appointments are counted the same way (one-record pages), never read; an unreadable count is null', () => {
+    expect(FUB_COUNT_ONLY_COLLECTIONS).toEqual(['tasks', 'appointments']);
+    const c = fubNotImportedCounts({ tasks: { _metadata: { total: 1240 }, tasks: [{ id: 1, name: 'ignored' }] }, appointments: { error: 'forbidden' } });
+    expect(c).toEqual({ tasks: 1240, appointments: null });
+    expect(JSON.stringify(c)).not.toContain('ignored');
+    expect(fubNotImportedCounts({})).toEqual({ tasks: null, appointments: null });
+    expect(notImportedLines(fubNotImportedCounts({ tasks: { _metadata: { total: 1240 } }, appointments: { _metadata: { total: 85 } } }), 'Follow Up Boss')).toEqual([
+      "Follow Up Boss has 1,240 tasks and 85 appointments. Realty OS doesn't bring tasks or appointments over: finish or note the open ones in Follow Up Boss before you switch.",
+    ]);
   });
 });

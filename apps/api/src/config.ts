@@ -166,6 +166,8 @@ export const ConfigSchema = z.object({
     allowedHosts: z.array(z.string()).min(1),
     /** FUB registered-system headers (X-System / X-System-Key), when the account requires them */
     system: z.object({ name: z.string().min(1), key: z.string().min(1) }).optional(),
+    /** owner decision B7: the endpoints FUB tasks and appointments are counted at (VERIFY; default tasks, appointments) */
+    countOnlyPaths: z.object({ tasks: z.string().optional(), appointments: z.string().optional() }).optional(),
   }),
   /**
    * Read-only MLS feed (Spark RESO Web API; docs/DEPLOY.md "Spark MLS (read-only)"). Nonsecret settings only:
@@ -224,9 +226,11 @@ const DNS_NAME = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0
 /** the same internal-name rule as push endpoints (auth/devices.ts INTERNAL_SUFFIX) */
 const INTERNAL_HOST = /(^|\.)(localhost|local|internal|intranet|corp|lan|home|home\.arpa)$/;
 const isPublicDnsName = (h: string) => DNS_NAME.test(h) && !/\.[0-9]+$/.test(h) && !INTERNAL_HOST.test(h);
+/** One plain path segment below FUB_BASE_URL: the same rule as imports/fub.ts FUB_PATH_SEGMENT (config does not import the adapter). */
+const FUB_PATH_SEGMENT = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 
 /**
- * FUB_PROVIDER, FUB_BASE_URL, FUB_ALLOWED_HOSTS, FUB_SYSTEM_NAME/KEY (SSRF guard, SECURITY §2.9), checked at
+ * FUB_PROVIDER, FUB_BASE_URL, FUB_ALLOWED_HOSTS, FUB_SYSTEM_NAME/KEY, FUB_TASKS_PATH, FUB_APPOINTMENTS_PATH (SSRF guard, SECURITY §2.9), checked at
  * startup: every allow-list entry is a lowercase public host name; the base URL is https on the default port,
  * without credentials, query or fragment, and its host is on the list. Problems are pushed by key, never value.
  * The adapter re-checks the same rule when it is built (imports/fub.ts checkFubBaseUrl).
@@ -252,7 +256,16 @@ function fubSettings(env: NodeJS.ProcessEnv, missing: string[], invalid: string[
   const key = env.FUB_SYSTEM_KEY?.trim();
   if (name && !key) missing.push('FUB_SYSTEM_KEY');
   if (key && !name) missing.push('FUB_SYSTEM_NAME');
-  return { provider, baseUrl, allowedHosts, ...(name && key ? { system: { name, key } } : {}) };
+  // owner decision B7 (E233): where FUB tasks and appointments are COUNTED (never read). VERIFY the names against a
+  // real account; each is one plain path segment below FUB_BASE_URL, so it can never leave the checked host
+  const countOnlyPaths: { tasks?: string; appointments?: string } = {};
+  for (const [k, field] of [['FUB_TASKS_PATH', 'tasks'], ['FUB_APPOINTMENTS_PATH', 'appointments']] as const) {
+    const v = (env[k] ?? '').trim();
+    if (v === '') continue;
+    if (!FUB_PATH_SEGMENT.test(v)) invalid.push(`${k} must be one plain path segment (letters, digits, - and _)`);
+    else countOnlyPaths[field] = v;
+  }
+  return { provider, baseUrl, allowedHosts, ...(name && key ? { system: { name, key } } : {}), ...(Object.keys(countOnlyPaths).length > 0 ? { countOnlyPaths } : {}) };
 }
 
 /** Spark's RESO Web API (the defaults of SPARK_API_BASE_URL / SPARK_ALLOWED_HOSTS; mls/spark/http.ts matches). */

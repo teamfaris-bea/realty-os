@@ -29,12 +29,15 @@ export {
   FubCallSchema,
   type FubPerson,
   type FubCollection,
+  type FubCountOnlyCollection,
+  FUB_COUNT_ONLY_COLLECTIONS,
   MAX_BODY,
   mapFub,
   fubSourceRef,
   htmlToText,
   userMappingGaps,
   fubConnectionCounts,
+  fubNotImportedCounts,
 } from './fub.js';
 export {
   IMPORTED_REVOKE_PURPOSE,
@@ -82,12 +85,16 @@ export {
   spotCheckSample,
   type SpotCheck,
   type StageVerification,
+  type DocumentedOutcomes,
+  NO_DOCUMENTED,
+  expectedAfterCommit,
   buildVerification,
   type ReportRow,
   batchReport,
   type SourceName,
   reportLines,
   connectionTestLines,
+  notImportedLines,
   optOutPreview,
 } from './report.js';
 export { type TextEncoding, decodeText, csvSafeCell, looksLikeFormula, nameKey, addressHint } from './text.js';

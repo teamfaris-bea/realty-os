@@ -7,7 +7,7 @@
 //   one of the counts, and nothing is promised before the connection test (R-IMPORT-1).
 import { type Channel, sha256Hex } from '../compliance/index.js';
 import type { Instant, UserId } from '../foundation/index.js';
-import { CATEGORIES, type Category, type ConsentSummary, type CountDiff, type Counts, type ImportErrorCode, type StageCounts } from './types.js';
+import { CATEGORIES, type Category, type ConsentSummary, type CountDiff, type Counts, type ImportErrorCode, type NotImportedCounts, type NotImportedStep, type StageCounts } from './types.js';
 
 const KEYS: readonly (keyof Counts)[] = ['source', 'imported', 'needs_review', 'rejected', 'duplicate'];
 
@@ -49,27 +49,56 @@ export interface SpotCheck {
   matches: boolean;
 }
 
+/**
+ * Owner decision B4 (2026-11-11, E230): outcomes of a commit that the approved plan could not predict, each
+ * documented on its records with the reason. Today there is one: a planned assignment the ownership commit
+ * brought in unassigned because its member could no longer hold leads at that moment. The owner decided it for a
+ * member suspended since the approval; the implementation treats the engine's other refusals the same way (no
+ * longer an active member, a role that holds none). Nothing is assigned to them; the record counts as not imported.
+ */
+export interface DocumentedOutcomes {
+  /** planned assignments the ownership commit brought in unassigned (api/imports OWNER_UNAVAILABLE) */
+  unassigned: number;
+}
+
+export const NO_DOCUMENTED: DocumentedOutcomes = { unassigned: 0 };
+
+/**
+ * The counts the approval expected, with the documented commit outcomes applied: each one moves exactly one
+ * record from imported to rejected. Never clamped, so a documented count larger than the planned imports can
+ * never match a real recount, and it never hides any other difference (R-IMPORT-5 stays exact).
+ */
+export function expectedAfterCommit(approved: Counts, d: DocumentedOutcomes): Counts {
+  return { ...approved, imported: approved.imported - d.unassigned, rejected: approved.rejected + d.unassigned };
+}
+
 /** The `import_stages.verification` document. */
 export interface StageVerification {
   verifiedByUserId: UserId;
   verifiedAt: Instant;
-  recount: { expected: Counts; db: Counts };
+  /** `approved`: what the approval expected; `expected`: that with the documented outcomes applied (E230) */
+  recount: { approved: Counts; expected: Counts; db: Counts };
+  documented: DocumentedOutcomes;
   spotChecks: SpotCheck[];
 }
 
 /**
  * R-IMPORT-5: a stage can be marked verified only when the recount matches and every sampled record
- * was checked and matched. Returns the verification document to store with the verifier.
+ * was checked and matched. Returns the verification document to store with the verifier. `expected` is what
+ * the approval expected; the documented commit outcomes (E230) are applied to it before the recount.
  */
 export function buildVerification(i: {
   expected: Counts;
+  documented?: DocumentedOutcomes;
   db: Counts;
   sample: readonly string[];
   spotChecks: readonly SpotCheck[];
   verifierUserId: UserId;
   at: Instant;
 }): { ok: true; verification: StageVerification } | { ok: false; code: Extract<ImportErrorCode, 'RECOUNT_MISMATCH' | 'SPOT_CHECKS_INCOMPLETE' | 'SPOT_CHECK_FAILED'>; diffs?: CountDiff[]; sourceRefs?: string[] } {
-  const recount = verificationReport(i.expected, i.db);
+  const documented = i.documented ?? NO_DOCUMENTED;
+  const expected = expectedAfterCommit(i.expected, documented);
+  const recount = verificationReport(expected, i.db);
   if (!recount.matches) return { ok: false, code: 'RECOUNT_MISMATCH', diffs: recount.diffs };
   const required = Math.min(SPOT_CHECKS, i.db.imported);
   const checked = new Map(i.spotChecks.map((s) => [s.sourceRef, s]));
@@ -82,7 +111,8 @@ export function buildVerification(i: {
     verification: {
       verifiedByUserId: i.verifierUserId,
       verifiedAt: i.at,
-      recount: { expected: i.expected, db: i.db },
+      recount: { approved: i.expected, expected, db: i.db },
+      documented,
       spotChecks: i.sample.map((r) => checked.get(r) as SpotCheck),
     },
   };
@@ -175,6 +205,39 @@ export function connectionTestLines(categories: Record<Category, number | null>,
   }
   lines.push('Nothing is imported yet. Each step shows you exactly what would change before anything is written.');
   return lines;
+}
+
+const COUNTED_AT: Record<NotImportedStep, string> = { connection_test: 'at the connection test', snapshot: 'at an earlier snapshot' };
+
+/**
+ * Owner decision B7 (2026-11-11, E233): what Follow Up Boss has that the import never brings over, said plainly
+ * on the Imports page (from the connection test and the snapshot) and in the final report. Every number is a
+ * count; one that could not be read is said so. A CSV file has neither, so nothing is said for it.
+ *
+ * Review F4: a count the latest counting could not read again keeps the number an earlier step counted, and is said
+ * with that step ("we could not count its tasks again (it had 3 tasks at the connection test)"): only a count taken
+ * just now is said as what the source has.
+ */
+export function notImportedLines(c: NotImportedCounts, source: SourceName): string[] {
+  if (source === 'your file') return [];
+  const tail = `Realty OS doesn't bring tasks or appointments over: finish or note the open ones in ${source} before you switch.`;
+  const keptTasks = c.tasks !== null ? c.kept?.tasks : undefined;
+  const keptAppointments = c.appointments !== null ? c.kept?.appointments : undefined;
+  // what the latest counting read; a kept count is only ever said with when it was taken (below)
+  const tasks = keptTasks ? null : c.tasks;
+  const appointments = keptAppointments ? null : c.appointments;
+  const t = (x: number) => plural(x, 'task', 'tasks');
+  const a = (x: number) => plural(x, 'appointment', 'appointments');
+  let earlier = '';
+  if (keptTasks && keptAppointments && keptTasks === keptAppointments) earlier = ` (${COUNTED_AT[keptTasks]} it had ${t(c.tasks as number)} and ${a(c.appointments as number)})`;
+  else if (keptTasks && keptAppointments) earlier = ` (it had ${t(c.tasks as number)} ${COUNTED_AT[keptTasks]} and ${a(c.appointments as number)} ${COUNTED_AT[keptAppointments]})`;
+  else if (keptTasks) earlier = ` (it had ${t(c.tasks as number)} ${COUNTED_AT[keptTasks]})`;
+  else if (keptAppointments) earlier = ` (it had ${a(c.appointments as number)} ${COUNTED_AT[keptAppointments]})`;
+  if (tasks === 0 && appointments === 0) return [`${source} has no tasks or appointments. Realty OS doesn't bring tasks or appointments over.`];
+  if (tasks !== null && appointments !== null) return [`${source} has ${t(tasks)} and ${a(appointments)}. ${tail}`];
+  if (tasks !== null) return [`${source} has ${t(tasks)}; we could not count its appointments${keptAppointments ? ' again' : ''}${earlier}. ${tail}`];
+  if (appointments !== null) return [`${source} has ${a(appointments)}; we could not count its tasks${keptTasks ? ' again' : ''}${earlier}. ${tail}`];
+  return [`We could not count tasks or appointments in ${source}${keptTasks && keptAppointments ? ' again' : ''}${earlier}. ${tail}`];
 }
 
 const CHANNEL_WORD: Record<Channel, string> = { sms: 'texts', voice: 'calls', email: 'email', web_chat: 'website chat' };
