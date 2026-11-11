@@ -10,5 +10,5 @@ export default {
   thresholds: { high: 95, low: 90, break: 90 },
   reporters: ['clear-text', 'progress'],
   coverageAnalysis: 'perTest',
-  tempDirName: '.stryker-tmp/fairhousing',
+  tempDirName: '.stryker-tmp',
 };
