@@ -72,21 +72,38 @@ export async function loadFeedInputs(tx: Tx, actor: UserActor, envelope: Envelop
          AND e.occurred_at > ${nowIso}::timestamptz - interval '14 days'
        ORDER BY e.occurred_at DESC LIMIT ${CAP}`.execute(tx),
     sql<{ id: string; channel: 'sms' | 'mms' | 'email'; contact_id: string; occurred_at: Date; is_auto_reply: boolean; opt_out_keyword: string | null }>`
+      WITH mine AS MATERIALIZED (
+        -- the agent's owned contacts with the instant after which a client message is still unanswered
+        SELECT c.tenant_id, c.id, GREATEST(${nowIso}::timestamptz - make_interval(days => ${INBOUND_WINDOW_DAYS}), COALESCE(c.last_human_touch_at, '-infinity'::timestamptz)) AS since
+          FROM contacts c
+         WHERE c.tenant_id = app.tenant_id() AND c.ownership_state = 'owned' AND c.owner_user_id = ${userId} AND c.deleted_at IS NULL)
       SELECT m.id, m.channel, m.contact_id, m.occurred_at, m.is_auto_reply, m.opt_out_keyword
-        FROM contacts c JOIN messages m ON m.tenant_id = c.tenant_id AND m.contact_id = c.id
-       WHERE c.tenant_id = app.tenant_id() AND c.ownership_state = 'owned' AND c.owner_user_id = ${userId} AND c.deleted_at IS NULL
-         AND m.direction = 'inbound' AND NOT m.imported
-         AND m.occurred_at > ${nowIso}::timestamptz - make_interval(days => ${INBOUND_WINDOW_DAYS})
-         AND m.occurred_at > COALESCE(c.last_human_touch_at, '-infinity'::timestamptz)
+        FROM mine c
+        -- Per-contact index range scan (scale-250k): (contact_id, occurred_at > since) is the index condition,
+        -- so only this agent's messages after the last touch reach the messages RLS check. A tenant-wide scan
+        -- of the window ran the per-row visibility check on every other agent's message too (about 1.5 ms each
+        -- for a contact the caller cannot see). \`since\` is a plain column here: the planner keeps an
+        -- expression over GREATEST/COALESCE out of an index condition under RLS (not leakproof).
+        CROSS JOIN LATERAL (
+          SELECT m.id, m.channel, m.contact_id, m.occurred_at, m.is_auto_reply, m.opt_out_keyword FROM messages m
+           WHERE m.tenant_id = c.tenant_id AND m.contact_id = c.id AND m.occurred_at > c.since
+             AND m.direction = 'inbound' AND NOT m.imported
+           ORDER BY m.occurred_at DESC LIMIT ${CAP}) m
        ORDER BY m.occurred_at DESC LIMIT ${CAP}`.execute(tx),
     sql<{ id: string; contact_id: string; started_at: Date }>`
+      WITH mine AS MATERIALIZED (
+        SELECT c.tenant_id, c.id, GREATEST(${nowIso}::timestamptz - make_interval(days => ${INBOUND_WINDOW_DAYS}), COALESCE(c.last_human_touch_at, '-infinity'::timestamptz)) AS since
+          FROM contacts c
+         WHERE c.tenant_id = app.tenant_id() AND c.ownership_state = 'owned' AND c.owner_user_id = ${userId} AND c.deleted_at IS NULL)
       SELECT k.id, k.contact_id, k.started_at
-        FROM contacts c JOIN calls k ON k.tenant_id = c.tenant_id AND k.contact_id = c.id
-       WHERE c.tenant_id = app.tenant_id() AND c.ownership_state = 'owned' AND c.owner_user_id = ${userId} AND c.deleted_at IS NULL
-         AND k.direction = 'inbound' AND NOT k.imported AND k.answered_at IS NULL
-         AND k.status IN ('no_answer','busy','voicemail','canceled','failed','completed')
-         AND k.started_at > ${nowIso}::timestamptz - make_interval(days => ${INBOUND_WINDOW_DAYS})
-         AND k.started_at > COALESCE(c.last_human_touch_at, '-infinity'::timestamptz)
+        FROM mine c
+        -- per-contact index range scan, as for messages above
+        CROSS JOIN LATERAL (
+          SELECT k.id, k.contact_id, k.started_at FROM calls k
+           WHERE k.tenant_id = c.tenant_id AND k.contact_id = c.id AND k.started_at > c.since
+             AND k.direction = 'inbound' AND NOT k.imported AND k.answered_at IS NULL
+             AND k.status IN ('no_answer','busy','voicemail','canceled','failed','completed')
+           ORDER BY k.started_at DESC LIMIT ${CAP}) k
        ORDER BY k.started_at DESC LIMIT ${CAP}`.execute(tx),
     sql<{ id: string; contact_id: string; created_at: Date; payload: Record<string, unknown>; m_channel: 'sms' | 'mms' | 'email' | null; m_at: Date | null }>`
       SELECT a.id, a.contact_id, a.created_at, a.payload, m.channel AS m_channel, m.occurred_at AS m_at

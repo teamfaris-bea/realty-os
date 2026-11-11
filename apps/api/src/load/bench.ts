@@ -70,6 +70,8 @@ const ORIGIN = 'http://localhost:5173';
 export class LoadBench {
   readonly results: Measurement[] = [];
   readonly checks: { name: string; ok: boolean; detail: string }[] = [];
+  /** only operations whose name matches run (--only) */
+  only: RegExp | null = null;
   private constructor(
     readonly app: FastifyInstance,
     readonly database: Database,
@@ -128,6 +130,7 @@ export class LoadBench {
   /** Sequential timings of `fn` (after `warmup` untimed calls); every call must succeed. */
   async measure(name: string, budget: [number | null, string], fn: (i: number) => Promise<number>, o: { n?: number; warmup?: number; note?: string } = {}): Promise<Measurement> {
     const n = o.n ?? this.iterations;
+    if (this.only && !this.only.test(name)) return { name, budgetMs: null, budgetSource: 'skipped', n: 0, p50: NaN, p95: NaN, max: NaN, pass: null };
     for (let i = 0; i < (o.warmup ?? 2); i++) await fn(-1 - i);
     const times: number[] = [];
     for (let i = 0; i < n; i++) times.push(await fn(i));
@@ -135,6 +138,7 @@ export class LoadBench {
   }
 
   record(name: string, [budgetMs, budgetSource]: [number | null, string], times: number[], note?: string): Measurement {
+    if ((this.only && !this.only.test(name)) || times.length === 0) return { name, budgetMs, budgetSource, n: 0, p50: NaN, p95: NaN, max: NaN, pass: null };
     const m: Measurement = { name, budgetMs, budgetSource, n: times.length, p50: pct(times, 0.5), p95: pct(times, 0.95), max: Math.max(...times), pass: budgetMs === null ? null : pct(times, 0.95) < budgetMs, ...(note ? { note } : {}) };
     this.results.push(m);
     this.log(`${m.pass === false ? 'MISS' : m.pass ? 'ok  ' : '    '} ${name}: p50 ${m.p50.toFixed(1)} ms, p95 ${m.p95.toFixed(1)} ms, max ${m.max.toFixed(1)} ms (n=${m.n}${budgetMs !== null ? `, budget ${budgetMs} ms` : ''})${note ? ` — ${note}` : ''}`);
@@ -449,7 +453,7 @@ export async function withAutoExplain<T>(adminUrl: string, db: string, minMs: nu
   const start = statSync(logFile).size;
   try {
     await admin.query(`ALTER DATABASE ${db} SET session_preload_libraries = 'auto_explain'`);
-    for (const [k, v] of Object.entries({ log_min_duration: `${minMs}ms`, log_analyze: 'on', log_buffers: 'on', log_nested_statements: 'on', log_timing: 'on', log_format: 'text' })) {
+    for (const [k, v] of Object.entries({ log_min_duration: `${minMs}ms`, log_analyze: 'on', log_buffers: 'on', log_nested_statements: 'off', log_timing: 'off', log_format: 'text' })) {
       await admin.query(`ALTER DATABASE ${db} SET auto_explain.${k} = '${v}'`);
     }
     const result = await fn();
@@ -475,8 +479,9 @@ export async function machineInfo(su: pg.Pool) {
   };
 }
 
-export async function runBench(o: { db: string; iterations: number; log: (s: string) => void; sends: number; importRows: number; contested: number; racers: number; skip?: Set<string> }): Promise<BenchResult> {
+export async function runBench(o: { db: string; iterations: number; log: (s: string) => void; sends: number; importRows: number; contested: number; racers: number; skip?: Set<string>; only?: string }): Promise<BenchResult> {
   const b = await LoadBench.open(o);
+  if (o.only) b.only = new RegExp(o.only);
   try {
     const sizes: Record<string, number> = {};
     for (const t of ['contacts', 'contact_points', 'messages', 'calls', 'notes', 'lead_ownership_events', 'exception_items', 'consent_state', 'deals']) {
@@ -512,6 +517,7 @@ if (isMain) {
     contested: Number(argValue(args, 'contested') ?? 20),
     racers: Number(argValue(args, 'racers') ?? 10),
     skip: new Set((argValue(args, 'skip') ?? '').split(',').filter(Boolean)),
+    ...(argValue(args, 'only') ? { only: argValue(args, 'only')! } : {}),
     log: (s: string) => console.log(s),
   };
   const explain = args.includes('--explain');

@@ -145,30 +145,33 @@ export async function refreshFeed(tx: Tx, actor: UserActor, deps: FeedDeps, now:
   }));
   const input = JSON.stringify(rows);
   const nowIso = iso(now);
-  const recordset = sql`jsonb_to_recordset(${input}::jsonb) AS x(id uuid, dedupe_key text, item_type text, band text, contact_id uuid, subject_type text,
-                          subject_id uuid, assistant_action_id uuid, due_at timestamptz, score int, score_version int, reasons jsonb)`;
+  // The computed cards, parsed once per statement (scale-250k): as a bare function scan the planner put the
+  // recordset on the inner side of a nested loop and re-parsed the whole JSON for every stored card.
+  const withX = sql`WITH x AS MATERIALIZED (
+      SELECT * FROM jsonb_to_recordset(${input}::jsonb) AS r(id uuid, dedupe_key text, item_type text, band text, contact_id uuid, subject_type text,
+                          subject_id uuid, assistant_action_id uuid, due_at timestamptz, score int, score_version int, reasons jsonb))`;
 
   // 1. live rows (open / snoozed) of computed keys: refresh content; a snooze that ran out reopens
-  await sql`
+  await sql`${withX}
     UPDATE priority_feed_items f SET item_type = x.item_type, band = x.band, contact_id = x.contact_id, subject_type = x.subject_type,
            subject_id = x.subject_id, assistant_action_id = x.assistant_action_id, due_at = x.due_at, score = x.score,
            score_version = x.score_version, reasons = x.reasons,
            state = CASE WHEN f.state = 'snoozed' AND f.snoozed_until <= ${nowIso}::timestamptz THEN 'open' ELSE f.state END,
            snoozed_until = CASE WHEN f.state = 'snoozed' AND f.snoozed_until <= ${nowIso}::timestamptz THEN NULL ELSE f.snoozed_until END,
            updated_at = now()
-      FROM ${recordset}
+      FROM x
      WHERE f.tenant_id = app.tenant_id() AND f.user_id = ${userId} AND f.dedupe_key = x.dedupe_key AND f.state IN ('open','snoozed')
        AND (f.item_type, f.band, f.contact_id, f.subject_id, f.assistant_action_id, f.due_at, f.score, f.reasons, f.state)
            IS DISTINCT FROM (x.item_type, x.band, x.contact_id, x.subject_id, x.assistant_action_id, x.due_at, x.score, x.reasons,
                              CASE WHEN f.state = 'snoozed' AND f.snoozed_until <= ${nowIso}::timestamptz THEN 'open' ELSE f.state END)`.execute(tx);
 
   // 2. occurrences the recompute closed earlier and that are due again: reopen the latest such row
-  await sql`
+  await sql`${withX}
     UPDATE priority_feed_items f SET state = 'open', resolved_at = NULL, resolved_by = NULL, snoozed_until = NULL,
            item_type = x.item_type, band = x.band, contact_id = x.contact_id, subject_type = x.subject_type, subject_id = x.subject_id,
            assistant_action_id = x.assistant_action_id, due_at = x.due_at, score = x.score, score_version = x.score_version,
            reasons = x.reasons, updated_at = now()
-      FROM ${recordset}
+      FROM x
      WHERE f.tenant_id = app.tenant_id() AND f.user_id = ${userId} AND f.dedupe_key = x.dedupe_key
        AND f.id = (SELECT g.id FROM priority_feed_items g
                     WHERE g.tenant_id = f.tenant_id AND g.user_id = f.user_id AND g.dedupe_key = x.dedupe_key AND g.resolved_by = 'condition'
@@ -177,12 +180,12 @@ export async function refreshFeed(tx: Tx, actor: UserActor, deps: FeedDeps, now:
                          AND (o.state IN ('open','snoozed') OR (o.state IN ('done','dismissed') AND o.resolved_by IS DISTINCT FROM 'condition')))`.execute(tx);
 
   // 3. new occurrences: insert (never over a final close of the same key)
-  await sql`
+  await sql`${withX}
     INSERT INTO priority_feed_items (tenant_id, id, user_id, item_type, band, contact_id, subject_type, subject_id, assistant_action_id, due_at,
                                      score, score_version, reasons, dedupe_key)
     SELECT app.tenant_id(), x.id, ${userId}, x.item_type, x.band, x.contact_id, x.subject_type, x.subject_id, x.assistant_action_id,
            x.due_at, x.score, x.score_version, x.reasons, x.dedupe_key
-      FROM ${recordset}
+      FROM x
      WHERE NOT EXISTS (SELECT 1 FROM priority_feed_items o WHERE o.tenant_id = app.tenant_id() AND o.user_id = ${userId} AND o.dedupe_key = x.dedupe_key)
     ON CONFLICT (tenant_id, user_id, dedupe_key) WHERE state IN ('open','snoozed') DO NOTHING`.execute(tx);
 

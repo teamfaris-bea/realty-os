@@ -310,11 +310,19 @@ export async function listExceptions(tx: Tx, actor: UserActor, envelope: Envelop
   const rows = await repo.queueRows(tx, { type: f.type, ownerUserId, state: f.state ?? 'live', limit: Math.min(f.limit ?? QUEUE_LIMIT, QUEUE_LIMIT) });
   const claimEv = await claimEvidenceFor(tx, actor, envelope, rows);
   const byType: Record<ExceptionType, number> = { untouched_lead: 0, overdue_promise: 0, failed_send: 0, missing_outcome: 0 };
-  const all = f.type === undefined && (f.state ?? 'live') === 'live' && rows.length < QUEUE_LIMIT ? rows : await repo.queueRows(tx, { ownerUserId, state: 'live', limit: 10_000 });
-  for (const r of all) byType[r.item_type] += 1;
+  let live: number;
+  if (f.type === undefined && (f.state ?? 'live') === 'live' && rows.length < QUEUE_LIMIT) {
+    for (const r of rows) byType[r.item_type] += 1;
+    live = rows.length;
+  } else {
+    // counted, not loaded (scale-250k). The 10,000-row read this replaces also capped the counts at
+    // 10,000 items; a count now always covers every live item the viewer can see.
+    for (const c of await repo.liveCounts(tx, ownerUserId)) byType[c.item_type] = c.n;
+    live = Object.values(byType).reduce((a, b) => a + b, 0);
+  }
   return {
     items: rows.map((r) => viewOf(r, actor, now, claimEv.get(r.dedupe_key) ?? [])),
-    counts: { live: all.length, byType },
+    counts: { live, byType },
     generatedAt: iso(now),
   };
 }
