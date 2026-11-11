@@ -1,7 +1,9 @@
 // applyOwnershipCommand end-to-end through app_user (RLS) on a real per-test database.
 import type { ContactId } from '@realty/core/foundation';
 import { fold } from '@realty/core/ownership';
+import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { loadPeople } from '../src/ownership/context.js';
 import { applyOwnershipCommand } from '../src/ownership/apply.js';
 import { selectLedger } from '../src/ownership/rows.js';
 import { withTenantTx } from '../src/tenantTx.js';
@@ -87,3 +89,47 @@ describe('ownership command path', () => {
     expect(js.find((j) => j.dedupe_key === `ownership.offer_expiry:${contactId}:${c.offer_id}`)?.status).toBe('cancelled');
   });
 });
+
+describe('loadPeople (one statement since lane perf-misses)', () => {
+  it('returns exactly what the former two statements returned, for every actor (admins sorted; team leads of each member sorted)', async () => {
+    const legacy = async (tx: Parameters<Parameters<typeof withTenantTx>[1]>[0]) => {
+      const admins = await sql<{ user_id: string }>`
+        SELECT user_id FROM memberships WHERE tenant_id = app.tenant_id() AND role IN ('owner', 'admin') AND status = 'active'
+         ORDER BY user_id`.execute(tx);
+      const leads = await sql<{ member: string; lead: string }>`
+        SELECT DISTINCT tm.user_id AS member, l.user_id AS lead
+          FROM team_members tm
+          JOIN team_members l ON l.tenant_id = tm.tenant_id AND l.team_id = tm.team_id AND l.is_lead
+          JOIN memberships m ON m.tenant_id = l.tenant_id AND m.user_id = l.user_id AND m.status = 'active'
+         WHERE tm.tenant_id = app.tenant_id()
+         ORDER BY 1, 2`.execute(tx);
+      const teamLeadsOf: Record<string, string[]> = {};
+      for (const row of leads.rows) (teamLeadsOf[row.member] ??= []).push(row.lead);
+      return { admins: admins.rows.map((a) => a.user_id), teamLeadsOf };
+    };
+    for (const actor of [w.owner.actor, w.tl!.actor, ...w.agents.map((m) => m.actor), w.system()]) {
+      const [now, before] = await withTenantTx(actor, async (tx) => [await loadPeople(tx), await legacy(tx)] as const, { db: h.app });
+      expect(now).toEqual(before);
+    }
+    const mine = await withTenantTx(w.owner.actor, (tx) => loadPeople(tx), { db: h.app });
+    expect(mine.admins).toContain(w.owner.id);
+    expect(Object.keys(mine.teamLeadsOf).length).toBeGreaterThan(0);
+  });
+});
+
+describe('timer enqueues of one command (batched since lane perf-misses)', () => {
+  it('a claim writes its timers as jobs in the order of the decision\'s enqueueTimer effects, with their run_at, payload and dedupe keys; the audit mirror and ledger row are written once', async () => {
+    const wd = await createWorld(h.app, { agents: 1 });
+    const { contactId } = await intakeLead(h.app, wd);
+    const before = new Set((await jobsFor(h.su, wd.tenantId)).map((j) => j.id));
+    const r = await cmd(h.app, wd.agents[0]!.actor, contactId, { kind: 'claim', pondId: wd.pondId });
+    if (!r.outcome.ok || r.replayed) throw new Error('claim refused');
+    const timers = r.outcome.effects.filter((e) => e.kind === 'enqueueTimer');
+    expect(timers.length).toBeGreaterThanOrEqual(2);
+    const jobs = (await jobsFor(h.su, wd.tenantId)).filter((j) => !before.has(j.id) && j.kind !== 'ownership.followup');
+    expect(jobs.map((j) => [j.kind, j.dedupe_key, j.run_at.getTime(), j.payload])).toEqual(timers.map((t) => [t.jobKind, t.dedupeKey, t.runAt, { ...t.fence }]));
+    expect((await ledger(h.su, contactId)).map((e) => e.type)).toEqual(['created', 'sent_to_pond', 'claimed']);
+    expect(await suRows(h.su, `SELECT action FROM audit_log WHERE entity_id = $1`, [contactId])).toEqual([{ action: 'ownership.claim' }]);
+  });
+});
+

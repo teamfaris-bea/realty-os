@@ -13,7 +13,7 @@
 import { randomInt } from 'node:crypto';
 import type { IdGenerator, Instant, Role, TenantId, UserActor, UserId } from '@realty/core/foundation';
 import { instantFromDate, isRole } from '@realty/core/foundation';
-import { type Database, type Tx, withPreTenant, withTenantTx } from '@realty/db';
+import { type Database, type Tx, withPreTenant, withPreTenantThenTenant, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { AppError } from '../errors.js';
 import { newOpaqueToken, opaqueTokenHash } from './tokens.js';
@@ -69,20 +69,10 @@ export function actorFor(s: { userId: UserId; tenantId: TenantId; role: Role; se
 }
 
 /** Resolves a cookie token to its session and the caller's MFA/settings state, or null. */
-export async function resolveSession(db: Database, token: string | undefined): Promise<AuthState | null> {
-  const hash = opaqueTokenHash(token);
-  if (!hash) return null;
-  const found = await withPreTenant(
-    async (tx, now) => {
-      const r = await sql<ResolveRow>`SELECT * FROM auth.resolve_session(${Buffer.from(hash)}, ${new Date(now)}::timestamptz)`.execute(tx);
-      return { row: r.rows[0], now };
-    },
-    { db },
-  );
-  const row = found.row;
-  if (!row) return null;
+function baseOf(row: ResolveRow): ResolvedSession | null {
   const role = row.role !== null && isRole(row.role) ? row.role : null;
-  const base: ResolvedSession = {
+  if (row.tenant_id !== null && role === null) return null;
+  return {
     sessionId: row.session_id,
     userId: row.user_id as UserId,
     tenantId: row.tenant_id as TenantId | null,
@@ -92,38 +82,56 @@ export async function resolveSession(db: Database, token: string | undefined): P
     idleExpiresAt: instantFromDate(row.idle_expires_at),
     lastSeenAt: instantFromDate(row.last_seen_at),
   };
-  if (base.tenantId !== null && role === null) return null;
-  const slide = async (tx: Tx, now: Instant, idleHours: number) => {
-    if (now - base.lastSeenAt < SLIDE_EVERY_MS) return;
-    await sql`UPDATE sessions SET last_seen_at = ${new Date(now)}::timestamptz,
-                     idle_expires_at = LEAST(${new Date(now)}::timestamptz + make_interval(hours => ${idleHours}), absolute_expires_at)
-               WHERE id = ${base.sessionId}::uuid AND revoked_at IS NULL`.execute(tx);
-  };
-  if (base.tenantId !== null && role !== null) {
-    const actor = actorFor({ userId: base.userId, tenantId: base.tenantId, role, sessionId: base.sessionId });
-    return withTenantTx(
-      actor,
-      async (tx, now) => {
-        const r = await sql<{ mfa_enabled: boolean; required: boolean; idle: number }>`
-          SELECT u.mfa_enabled_at IS NOT NULL AS mfa_enabled,
-                 ${role}::text = ANY (ts.mfa_required_roles) AS required,
-                 ts.session_idle_hours AS idle
-            FROM users u CROSS JOIN tenant_settings ts
-           WHERE u.id = app.user_id() AND ts.tenant_id = app.tenant_id()`.execute(tx);
-        const s = r.rows[0];
-        if (!s) return null;
-        await slide(tx, now, s.idle);
-        return { ...base, now, mfaEnabled: s.mfa_enabled, mfaRequiredForRole: s.required };
-      },
-      { db },
-    );
-  }
+}
+
+async function slide(tx: Tx, base: ResolvedSession, now: Instant, idleHours: number): Promise<void> {
+  if (now - base.lastSeenAt < SLIDE_EVERY_MS) return;
+  await sql`UPDATE sessions SET last_seen_at = ${new Date(now)}::timestamptz,
+                   idle_expires_at = LEAST(${new Date(now)}::timestamptz + make_interval(hours => ${idleHours}), absolute_expires_at)
+             WHERE id = ${base.sessionId}::uuid AND revoked_at IS NULL`.execute(tx);
+}
+
+/**
+ * The presented session, or null. A session with an active tenant (every request of the app) is
+ * resolved in ONE transaction (withPreTenantThenTenant, lane perf-misses): auth.resolve_session without
+ * tenant context, then the tenant step (MFA state, idle window, slide) under the actor that the session
+ * row names, exactly as the former second transaction did.
+ */
+export async function resolveSession(db: Database, token: string | undefined): Promise<AuthState | null> {
+  const hash = opaqueTokenHash(token);
+  if (!hash) return null;
+  const { pre, result } = await withPreTenantThenTenant(
+    async (tx, now) => {
+      const r = await sql<ResolveRow>`SELECT * FROM auth.resolve_session(${Buffer.from(hash)}, ${new Date(now)}::timestamptz)`.execute(tx);
+      const row = r.rows[0];
+      return { base: row ? baseOf(row) : null };
+    },
+    ({ base }) =>
+      base && base.tenantId !== null && base.role !== null ? actorFor({ userId: base.userId, tenantId: base.tenantId, role: base.role, sessionId: base.sessionId }) : null,
+    async (tx, now, { base }): Promise<AuthState | null> => {
+      const b = base!;
+      const r = await sql<{ mfa_enabled: boolean; required: boolean; idle: number }>`
+        SELECT u.mfa_enabled_at IS NOT NULL AS mfa_enabled,
+               ${b.role}::text = ANY (ts.mfa_required_roles) AS required,
+               ts.session_idle_hours AS idle
+          FROM users u CROSS JOIN tenant_settings ts
+         WHERE u.id = app.user_id() AND ts.tenant_id = app.tenant_id()`.execute(tx);
+      const s = r.rows[0];
+      if (!s) return null;
+      await slide(tx, b, now, s.idle);
+      return { ...b, now, mfaEnabled: s.mfa_enabled, mfaRequiredForRole: s.required };
+    },
+    { db },
+  );
+  const base = pre.base;
+  if (!base) return null;
+  if (base.tenantId !== null) return result;
   return withPreTenant(
     async (tx, now) => {
       const r = await sql<{ mfa_enabled: boolean }>`SELECT mfa_enabled_at IS NOT NULL AS mfa_enabled FROM users WHERE id = app.user_id()`.execute(tx);
       const s = r.rows[0];
       if (!s) return null;
-      await slide(tx, now, DEFAULT_IDLE_HOURS);
+      await slide(tx, base, now, DEFAULT_IDLE_HOURS);
       return { ...base, now, mfaEnabled: s.mfa_enabled, mfaRequiredForRole: false };
     },
     { db, userId: base.userId },

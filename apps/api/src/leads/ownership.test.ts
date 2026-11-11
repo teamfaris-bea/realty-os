@@ -1,7 +1,9 @@
 // api/leads ownership commands end to end (BUILD_PLAN module 11): accept / decline / claim / release
 // through the API, with the timers and the follow-up run by a real worker. Edge cases E1–E5.
 import { randomUUID } from 'node:crypto';
+import { withTenantTx } from '@realty/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { actorFor } from '../auth/sessions.js';
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
 import {
   type LeadsWorld,
@@ -16,6 +18,8 @@ import {
   rejections,
   setOfferExpiry,
 } from './testing.js';
+import { getContact } from './repos/contacts.js';
+import { projectionFromRow } from './views.js';
 
 let h: ApiHarness;
 let w: LeadsWorld;
@@ -294,5 +298,61 @@ describe('E4: Admin reassigns while the agent accepts', () => {
     ]);
     expect([x.status, y.status].sort()).toEqual([200, 409]);
     expect(Number((await contactState(h, three.contactId)).ownership_seq)).toBe(Number(three.st.ownership_seq) + (y.status === 200 ? 2 : 1));
+  });
+});
+
+// Lane perf-misses (claim contention): the response projection is read in the command's own
+// transaction, after its writes, with app.ownership_command cleared. It must equal what a FRESH
+// transaction of the caller reads after the commit (the previous implementation), for every outcome:
+// still visible (accept, claim, stale UI), changed or gone at commit (decline, release, reassign away),
+// rejected without sight (late accept).
+describe('response projection read-back (R-PERM-7)', () => {
+  async function fresh(c: TestClient, contactId: string) {
+    const actor = actorFor({ userId: c.userId!, tenantId: c.tenantId!, role: c.role!, sessionId: randomUUID() });
+    const row = await withTenantTx(actor, (tx) => getContact(tx, contactId), { db: h.database });
+    return row ? projectionFromRow(row) : null;
+  }
+  type Res = { status: number; body: { result?: { projection: unknown }; error?: { details?: { projection?: unknown } } } };
+  const shown = (r: Res) => (r.status === 200 ? r.body.result!.projection : (r.body.error?.details?.projection ?? null));
+  const same = async (c: TestClient, contactId: string, r: Res) => expect(JSON.parse(JSON.stringify(shown(r)))).toEqual(JSON.parse(JSON.stringify(await fresh(c, contactId))));
+
+  it('equals a fresh read of the caller after the commit: accept, a second accept (ALREADY_OWNER), a stale reassign, a reassign away, a late accept, a decline, claim, release and a stale claim', async () => {
+    const wd = await roomyWorld();
+    const a = await offered(wd);
+    const acc = (await command(a.offeree, a.contactId, 'accept', { offerId: a.st.offer_id })) as Res;
+    expect(acc.status).toBe(200);
+    await same(a.offeree, a.contactId, acc);
+    const again = (await command(a.offeree, a.contactId, 'accept', { offerId: a.st.offer_id })) as Res;
+    expect(again.status).toBe(409);
+    await same(a.offeree, a.contactId, again);
+    const stale = (await command(wd.owner, a.contactId, 'reassign', { toUserId: otherAgent(wd, a.offeree.userId).userId, expectedSeq: Number(a.st.ownership_seq) })) as Res;
+    expect(stale.status).toBe(409);
+    await same(wd.owner, a.contactId, stale);
+    const away = (await command(wd.owner, a.contactId, 'reassign', { toUserId: otherAgent(wd, a.offeree.userId).userId })) as Res;
+    expect(away.status).toBe(200);
+    await same(wd.owner, a.contactId, away);
+    const late = (await command(a.offeree, a.contactId, 'accept', { offerId: a.st.offer_id })) as Res;
+    expect(late.status).toBe(409);
+    await same(a.offeree, a.contactId, late);
+    expect(shown(late)).toBeNull();
+
+    const d = await offered(wd);
+    const dec = (await command(d.offeree, d.contactId, 'decline', { offerId: d.st.offer_id, reason: 'busy' })) as Res;
+    expect(dec.status).toBe(200);
+    expect(shown(dec)).toBeNull();
+    await same(d.offeree, d.contactId, dec);
+
+    const p = await leadsWorld(h, { agents: 2, rule: false });
+    const lead = (await intake(h, p)).contactId;
+    const agent = p.agents[0]!;
+    const cl = (await command(agent, lead, 'claim')) as Res;
+    expect(cl.status).toBe(200);
+    await same(agent, lead, cl);
+    const rel = (await command(agent, lead, 'release', { reason: 'not_a_fit' })) as Res;
+    expect(rel.status).toBe(200);
+    await same(agent, lead, rel);
+    const staleClaim = (await command(p.agents[1]!, lead, 'claim', { expectedSeq: 1 })) as Res;
+    expect(staleClaim.status).toBe(409);
+    await same(p.agents[1]!, lead, staleClaim);
   });
 });

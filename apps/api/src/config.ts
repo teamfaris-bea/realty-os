@@ -66,6 +66,12 @@ const S3Schema = z.object({
 export const ConfigSchema = z.object({
   env: z.enum(['development', 'test', 'production']).default('development'),
   databaseUrl: z.string().min(1, 'DATABASE_URL is required'),
+  /**
+   * Connections in the API process's app_user pool (DB_POOL_MAX; docs/DEPLOY.md). Default 10: the pg
+   * default the API always ran with, and the best of 10/20/30/45 for 45+ simultaneous taps against a
+   * 4-core database (docs/PERFORMANCE.md, accept/claim): a larger pool only moves the queue into Postgres.
+   */
+  databasePoolMax: z.coerce.number().int().min(2).max(200).default(10),
   apiPort: z.coerce.number().int().min(1).max(65535).default(3001),
   apiHost: z.string().default('127.0.0.1'),
   /** CSRF Origin allowlist and CORS origins (WEB_ORIGIN, comma-separated). */
@@ -345,6 +351,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     vapid,
     fub,
     globalRateLimitPerMinute: env.GLOBAL_RATE_LIMIT_PER_MINUTE || undefined,
+    databasePoolMax: env.DB_POOL_MAX || undefined,
     logLevel: env.LOG_LEVEL || undefined,
   });
   if (!parsed.success) {
