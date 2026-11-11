@@ -713,7 +713,7 @@ turns a 500 into a stable 4xx, and each is proved by a `secreview.*` test that f
 | Renaming a tag to a fair-housing proxy name ("VA buyer") left it unprotected and bulk-appliable (R-PAR-8) | medium | `PATCH /tags/:id` classifies the new name (tighten-only, audited `tag.protect`) | `people/secreview.tagrename.test.ts` |
 | A bulk untag removed a tag that became protected after confirm (core refuses it at draft) | low | the runner re-reads `protected_proxy` before the removal (`TAG_PROTECTED`) | `bulk/secreview.protectedlate.test.ts` |
 | The stage-change response named another agent's private playbook to a collaborator who cannot read it (R-PERM-12) | low | the plan name is shown only if the changer's own RLS shows the playbook, else "the owner's plan" | `stageAutomation/secreview.planname.test.ts` |
-| Owner/Admin could add notes, points, relationships and edits to a merged-away loser (stranded rows, R-PAR-45) | low | api/people writes require a live contact (`liveDetailFacts`); reads unchanged | `people/secreview.live.test.ts` |
+| Owner/Admin could add notes, points, relationships and edits to a merged-away loser (stranded rows, R-PAR-45) | low | api/people writes require a live contact (`liveDetailFacts`): edits, stage, points, addresses, relationships, notes and logged activity are 404 on a merged-away record; reads unchanged. **One exception, by design:** `POST /contacts/:id/do-not-contact` still accepts a merged-away record from whoever still sees its detail and holds `contact.edit` on it: the Owner, Admins and the loser's collaborators (a merge moves neither collaborators nor deals, so they keep sight of the loser and not, unless they had it, of the survivor). The TC and other members of the loser's deals see it but have no `contact.edit`; its former owner and their Team Lead no longer see it; all of them get 404 (batch 5 review F3). Recording an opt-out only tightens and strands nothing: the definer trigger `app.contacts_dnc_follow_merge` (0018) copies the do-not-contact and its ledger event onto the survivor's own row, along merge chains (R-CHAN-2, E140), and the revokes are keyed by the HMACs the merge copied onto the survivor. A collaborator's request therefore reaches a survivor they cannot see; that is the same effect as recording it on the loser before the merge, which the trigger carries anyway, and it reveals nothing about the survivor. Refusing it (as the first version of this fix did) left the people who still see a merged duplicate unable to record that duplicate's request. | `people/secreview.live.test.ts` (the refused writes for Owner and Admin, the do-not-contact blocking the survivor on every channel and purpose in canContact and the dispatch guards, a collaborator's 200 carried to a survivor they cannot see, and the 404s of the TC on the loser's deal, the former owner and their Team Lead), `comms/guardEquivalence.test.ts` (E140) |
 | Impossible ISO dates in a list definition (a team list saved by a TL) made every run a 500 | low | core `IsoDate` requires a real calendar date (year ≥ 1000) | `lists/secreview.inputs.test.ts` |
 | Forged list cursors (keys `Date.parse` accepts but Postgres does not, NUL in a name key) and forged notes cursors were 500s | low | strict timestamp/uuid shapes in both decoders (`LIST_CURSOR_INVALID`, `VALIDATION_FAILED`) | `lists/secreview.inputs.test.ts`, `people/secreview.nul.test.ts` |
 | A definition under core's 8 KB `JSON.stringify` limit failed the jsonb `octet_length` CHECK (500) | low | core measures the jsonb text; the CHECK maps to `LIST_DEFINITION_TOO_LARGE` | `lists/secreview.size.test.ts` |
@@ -801,3 +801,32 @@ test that failed before the fix.
   before a bulk stage of a protected list into a plan's stage (the server skips the plan and records why).
 - An existing stack with one env file must move the four owner variables into `.env.owner` before upgrading
   (DEPLOY §1): the new API and worker refuse to start until it does, and name the variables.
+
+## 8. Batch 5 interaction review: merged-away records (migration `merged_person_opt_outs`)
+
+The review of the batch 5 fixes probed merges against owner rule D1 with the real server, Postgres and the fake
+providers. Each fix only refuses more, and each is proved by a test that failed before it.
+
+| finding | severity | fix | proof |
+|---|---|---|---|
+| A survivor's opt-outs recorded before a merge did not block sends addressed to the merged-away record: the survivor's person-level do-not-contact, or a STOP from a phone only the survivor had, reached neither canContact nor the dispatch guards for that record (they checked the recipient, the records merged INTO it and the recipient's own phones). The Owner, an Admin or a collaborator of the loser could text or call the person, and a direct enrollment's plan texts and an automatic saved-search alert went out (F1, pre-existing) | high | Both guards (`app.messages_dispatch_guard`, `app.calls_dispatch_guard`) and core canContact's inputs (`comms/repos/gate.ts`) judge a recipient by its whole person, `app.contact_person_ids`: the root survivor reached through `merged_into_contact_id` and every record merged into it, along chains. And nothing new is addressed to a merged-away record: a text, email, compose preview and call are 409 `CONTACT_MERGED` before anything is created (`details.mergedInto` only for a caller who sees the survivor), no assistant or system message is queued to one, its saved searches send no alert | `comms/guardEquivalence.test.ts` (the merged-away record and the survivor's copies of its addresses get the same verdict in both layers, directly and along a chain), `packages/db/test/fixtures/opt_out_cases.json` (the `merged-into` rows, run against the guards, canContact and bulk preflight), `comms/merged.recipient.test.ts` (every send path; a message that raced onto the record is blocked at dispatch) |
+| A direct enrollment of a merged-away record was accepted (201): a second live plan for one person, stranded on the loser; the step runner kept it running and a closed deal of the loser enrolled it with no human involved (F2) | medium | `enrollContact` refuses it (409 `CONTACT_MERGED`, `details.reason = person_removed`, the stage entry's skip reason), the runner stops one live anyway (`stop_reason = merged`), the post-closing path skips it | `assistant/enroll.reach.test.ts` |
+
+Security review items of the migration (CONVENTIONS §4):
+- **New function `app.contact_person_ids(uuid, uuid) RETURNS uuid[]`**: plain SQL, not a definer, `STABLE`, pinned
+  `search_path`, explicit tenant filter, schema-qualified tables, writes nothing; `CYCLE` clauses end both walks even
+  on corrupt data. EXECUTE is revoked from PUBLIC and granted to `app_user`, for which it runs under the caller's RLS
+  and returns only records the caller can select, and to `app_definer`, as which the guards run it (they already read
+  every contact and point of the tenant). A caller who does not see every record of the person (a collaborator of the
+  loser does not see the survivor) gets a smaller set from canContact, but never reaches the gate for a merged-away
+  record (the API refuses it), and the guard, which sees every record, still refuses: the refusal is mapped to a
+  blocked send (`gateInput.ts` `GUARD_DENY_REASONS`).
+- **`app.messages_dispatch_guard()` and `app.calls_dispatch_guard()` replaced** (SECURITY DEFINER, owner
+  `app_definer`, pinned `search_path`, bindings unchanged), verbatim from 0021 except the lines marked F1: the
+  do-not-contact check and the phone fan-out read the recipient's whole person. A larger set of records only refuses
+  more sends. For a record nobody merged anything into or away the person is the record itself, and for a survivor
+  nothing changes (the merge copied the losers' points and carried their do-not-contact onto it).
+- **Not changed, for the owner:** a merge still moves no saved search, deal or appointment. A merged-away record's
+  saved search now stays `active` but never alerts; moving it to the survivor, or pausing it at the merge, is a product
+  decision. The contact page's reachability summary for a merged-away record (seen only by tenant-wide roles and the
+  loser's collaborators) still describes that record's own points, though every send from it is refused.

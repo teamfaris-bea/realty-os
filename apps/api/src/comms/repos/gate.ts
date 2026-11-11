@@ -147,26 +147,35 @@ export async function contactPoints(tx: Tx, contactId: string): Promise<PointRow
 }
 
 /**
+ * The records of the contact's person (migration 0041 app.contact_person_ids, F1): the root survivor reached by
+ * following merged_into_contact_id up from the contact, and every record merged into that root. The dispatch guards
+ * judge a recipient by exactly this set, so a merged-away record gets the whole person's verdict. Read under the
+ * caller's RLS (the guards read it as their definer); one evaluation per statement.
+ */
+const personIds = (contactId: string) => sql`(SELECT app.contact_person_ids(app.tenant_id(), ${contactId}::uuid))::uuid[]`;
+
+/**
  * The phones whose opt-out blocks texting or calling the contact (R-CONSENT-7, outbound-3, R-PAR-12):
- * every phone of the contact, live or removed, except one removed as a confirmed wrong number. The WHERE
- * clause is the `others` set of app.messages_dispatch_guard and app.calls_dispatch_guard (migration 0021),
- *   kind = 'phone' AND (removed_at IS NULL OR removed_reason IS DISTINCT FROM 'wrong_number')
+ * every phone of the person (F1: every record of it, personIds), live or removed, except one removed as a
+ * confirmed wrong number. The WHERE clause is the `others` set of app.messages_dispatch_guard and
+ * app.calls_dispatch_guard (migration 0041),
+ *   contact_id = ANY (person) AND kind = 'phone' AND (removed_at IS NULL OR removed_reason IS DISTINCT FROM 'wrong_number')
  * so canContact sees every opt-out the guards see and refuses the send first, with its reason. Only the
  * fan-out reads removed phones: what a send goes to or a call dials still comes from contactPoints.
  */
 export async function optOutFanoutPhoneHmacs(tx: Tx, contactId: string): Promise<string[]> {
   const r = await sql<{ h: Buffer }>`
     SELECT DISTINCT address_hmac AS h FROM contact_points
-     WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND kind = 'phone'
+     WHERE tenant_id = app.tenant_id() AND contact_id = ANY (${personIds(contactId)}) AND kind = 'phone'
        AND (removed_at IS NULL OR removed_reason IS DISTINCT FROM 'wrong_number')
      ORDER BY address_hmac`.execute(tx);
   return r.rows.map((x) => Buffer.from(x.h).toString('hex'));
 }
 
 /**
- * The removed half of optOutFanoutPhoneHmacs, with each address for the hint: the contact's phones removed
+ * The removed half of optOutFanoutPhoneHmacs, with each address for the hint: the person's phones removed
  * other than as a confirmed wrong number,
- *   kind = 'phone' AND removed_at IS NOT NULL AND removed_reason IS DISTINCT FROM 'wrong_number'
+ *   contact_id = ANY (person) AND kind = 'phone' AND removed_at IS NOT NULL AND removed_reason IS DISTINCT FROM 'wrong_number'
  * They still block texting the person (R-PAR-12), so a START must be able to lift the keyword revoke its
  * own STOP left on one of them (R-CONSENT-10, outbound-4; see keywordRevokedBy), or the person could never
  * be texted again after a remove or replace. Only the START lift reads these: never a send target.
@@ -174,7 +183,7 @@ export async function optOutFanoutPhoneHmacs(tx: Tx, contactId: string): Promise
 export async function removedFanoutPhones(tx: Tx, contactId: string): Promise<{ hmac: string; address: string }[]> {
   const r = await sql<{ h: Buffer; address: string }>`
     SELECT DISTINCT ON (address_hmac) address_hmac AS h, address FROM contact_points
-     WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND kind = 'phone'
+     WHERE tenant_id = app.tenant_id() AND contact_id = ANY (${personIds(contactId)}) AND kind = 'phone'
        AND removed_at IS NOT NULL AND removed_reason IS DISTINCT FROM 'wrong_number'
      ORDER BY address_hmac, id`.execute(tx);
   return r.rows.map((x) => ({ hmac: Buffer.from(x.h).toString('hex'), address: x.address }));
@@ -225,14 +234,15 @@ export async function keywordSenderHmacs(tx: Tx, conversationId: string, now: In
 }
 
 /**
- * core-compliance/3.0.0 (R-CHAN-2): whether the contact, or a duplicate merged into it, carries the
- * person-level do-not-contact. Read under the caller's RLS; the DB guard re-checks as a definer.
+ * core-compliance/3.0.0 (R-CHAN-2): whether any record of the contact's person (F1, personIds: the contact, the
+ * record it was merged into, and every duplicate merged into either, along merge chains) carries the person-level
+ * do-not-contact. Read under the caller's RLS; the DB guard re-checks the same set as a definer (migration 0041).
  */
 export async function personDoNotContact(tx: Tx, contactId: string): Promise<boolean> {
   const r = await sql<{ dnc: boolean }>`
     SELECT EXISTS (SELECT 1 FROM contacts c
                     WHERE c.tenant_id = app.tenant_id() AND c.do_not_contact_at IS NOT NULL
-                      AND (c.id = ${contactId} OR c.merged_into_contact_id = ${contactId})) AS dnc`.execute(tx);
+                      AND c.id = ANY (${personIds(contactId)})) AS dnc`.execute(tx);
   return r.rows[0]?.dnc === true;
 }
 

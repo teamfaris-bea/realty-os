@@ -73,7 +73,7 @@ export const ERROR_STATUS = {
   ALREADY_OWNER: 409, // R-OWN-7: a second accept by the current owner
   LEAD_STATE_CHANGED: 409, // stale UI or lost race: the fresh projection is in details
   MERGE_OWNER_REQUIRED: 409, // R-OWN-24: different owners, choose one (preselected in details)
-  CONTACT_MERGED: 409, // the contact was merged away (mergedInto in details when visible)
+  CONTACT_MERGED: 409, // the contact was merged away (mergedInto in details when visible); also an enrollment of a merged-away record (F2, details.reason person_removed)
   DUPLICATE_CONTACT: 409, // R-OWN-25 / R-PERM-12: an exact phone/email match exists (owner name only)
   INQUIRY_EMPTY: 422, // intake: no name, no valid phone and no valid email
   DEACTIVATION_NOT_ALLOWED: 409, // the member cannot be deactivated (self, invited, already removed)
@@ -120,6 +120,7 @@ export const ERROR_STATUS = {
   PLAYBOOK_OWNER_MISMATCH: 409, // an agent playbook only runs for contacts its agent owns
   ALREADY_ENROLLED: 409, // R-AST-8: the contact is already in this playbook
   ENROLLMENT_REPLACE_NEEDS_CONFIRMATION: 409, // R-AST-8: another live enrollment would be stopped (details.currentPlaybookId)
+  CANNOT_BE_REACHED: 409, // B9 R-PAR-16 D1: they can't be messaged: every channel this plan messages on is opted out (or do-not-contact) or has no address, so it could never send; nothing was enrolled (details.reason = stage automation's skip reason cannot_be_reached, details.playbookId)
   ENROLLMENT_NOT_LIVE: 409, // the enrollment already ended
   ENROLLMENT_NOT_RESUMABLE: 409, // opt-out, wrong number or revoked approval pauses are not resumed here (details.pauseReason)
   SAVED_SEARCH_INVALID: 422, // the reviewed criteria are empty or invalid

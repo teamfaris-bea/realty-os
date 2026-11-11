@@ -265,29 +265,43 @@ function planContact(rec: NormalizedContact, inIssues: Issue[], existing: Existi
 
 // ---- later stages -----------------------------------------------------------------------------------
 
-type ParentResolution =
+type ParentResolution = (
   | { kind: 'linked'; contact: ExistingContact }
-  | { kind: 'pending'; plan: 'create' | 'attach' }
+  | { kind: 'pending'; plan: 'create' | 'attach'; personRef: string }
   | { kind: 'undecided' }
   | { kind: 'rejected' }
-  | { kind: 'missing' };
+  | { kind: 'missing' }
+) & {
+  /** B6: the record's person was skipped as a duplicate, and this is what the skip points at */
+  viaDuplicate?: true;
+};
 
-function resolveParent(personRef: string, existing: ExistingIndex): ParentResolution {
+function linkedOrMissing(existing: ExistingIndex, contactId: string): ParentResolution {
+  const c = live(existing, contactId);
+  return c === null || isGone(c) ? { kind: 'missing' } : { kind: 'linked', contact: c };
+}
+
+function resolveParent(personRef: string, existing: ExistingIndex, depth = 0): ParentResolution {
   const linked = existing.externalRefs.get(refKey('contact', personRef));
-  if (linked !== undefined) {
-    const c = live(existing, linked);
-    return c === null || isGone(c) ? { kind: 'missing' } : { kind: 'linked', contact: c };
-  }
+  if (linked !== undefined) return linkedOrMissing(existing, linked);
   const plan = existing.contactsStage.get(personRef);
-  if (plan === 'create' || plan === 'attach') return { kind: 'pending', plan };
+  if (typeof plan === 'object') {
+    // B6 (R-IMPORT-4): a person skipped as a duplicate is the person its skip points at, exactly as the commit
+    // finds it. The earlier row is never an in-file duplicate itself (a duplicate claims no key), so this is at
+    // most two steps: duplicate → earlier row → the existing contact that row matched.
+    if (depth >= 2) return { kind: 'missing', viaDuplicate: true };
+    const to = 'contactId' in plan.sameAs ? linkedOrMissing(existing, plan.sameAs.contactId) : resolveParent(plan.sameAs.pendingPersonRef, existing, depth + 1);
+    return { ...to, viaDuplicate: true };
+  }
+  if (plan === 'create' || plan === 'attach') return { kind: 'pending', plan, personRef };
   if (plan === 'needs_review') return { kind: 'undecided' };
   if (plan === 'rejected') return { kind: 'rejected' };
   return { kind: 'missing' };
 }
 
-function parentRef(p: ParentResolution, personRef: string): ContactRef | null {
+function parentRef(p: ParentResolution): ContactRef | null {
   if (p.kind === 'linked') return { contactId: p.contact.contactId };
-  if (p.kind === 'pending') return { pendingPersonRef: personRef };
+  if (p.kind === 'pending') return { pendingPersonRef: p.personRef };
   return null;
 }
 
@@ -309,14 +323,18 @@ function planOwnership(rec: Extract<NormalizedRecord, { category: 'ownership' }>
   const issues = [...inIssues];
   const base = { sourceRef: rec.sourceRef, normalized: rec, staysOptedOut: [] as Channel[] };
   const p = resolveParent(rec.personRef, existing);
+  // R-IMPORT-7 / R-OWN-21 / E41: an import never changes the owner of a contact it did not create,
+  // and a re-run never re-assigns one it did. A person skipped as a duplicate (B6) is the earlier row's
+  // person or a contact already here: that record decides the owner, never the duplicate's assignment.
+  if (p.viaDuplicate) {
+    return { ...base, outcome: 'duplicate', action: { kind: 'skip', existingId: rec.personRef }, issues: [...issues, { code: 'OWNER_KEPT', severity: 'info' }], matchContactId: null };
+  }
   const pi = parentIssue(p);
   if (pi) {
     issues.push(pi);
     const outcome = settle(issues, 'will_import');
     return { ...base, outcome, action: outcome === 'rejected' ? null : { kind: 'assign', contact: { pendingPersonRef: rec.personRef }, target: rec.target }, issues, matchContactId: null };
   }
-  // R-IMPORT-7 / R-OWN-21 / E41: an import never changes the owner of a contact it did not create,
-  // and a re-run never re-assigns one it did.
   if (p.kind === 'pending' && p.plan === 'attach') {
     return { ...base, outcome: 'duplicate', action: { kind: 'skip', existingId: rec.personRef }, issues: [...issues, { code: 'OWNER_KEPT', severity: 'info' }], matchContactId: null };
   }
@@ -335,7 +353,7 @@ function planOwnership(rec: Extract<NormalizedRecord, { category: 'ownership' }>
   return {
     ...base,
     outcome: settle(issues, 'will_import'),
-    action: { kind: 'assign', contact: parentRef(p, rec.personRef) as ContactRef, target: rec.target },
+    action: { kind: 'assign', contact: parentRef(p) as ContactRef, target: rec.target },
     issues,
     matchContactId: p.kind === 'linked' ? p.contact.contactId : null,
   };
@@ -351,13 +369,15 @@ function planHistory(rec: Extract<NormalizedRecord, { category: 'notes' | 'messa
     return { ...base, outcome: 'duplicate', action: { kind: 'skip', existingId: done }, issues: [...issues, { code: 'ALREADY_IMPORTED', severity: 'info' }], matchContactId: null };
   }
   const p = resolveParent(rec.personRef, existing);
+  // B6 (R-IMPORT-4): the record goes on the contact its skipped-duplicate person is the same as, and says so
+  if (p.viaDuplicate) issues.push({ code: 'PARENT_DUPLICATE', severity: 'info' });
   const pi = parentIssue(p);
   if (pi) issues.push(pi);
   const outcome = settle(issues, 'will_import');
   return {
     ...base,
     outcome,
-    action: outcome === 'rejected' ? null : { kind: 'insert_history', contact: parentRef(p, rec.personRef) ?? { pendingPersonRef: rec.personRef } },
+    action: outcome === 'rejected' ? null : { kind: 'insert_history', contact: parentRef(p) ?? { pendingPersonRef: rec.personRef } },
     issues,
     matchContactId: p.kind === 'linked' ? p.contact.contactId : null,
   };
@@ -396,9 +416,10 @@ function planConsent(rec: Extract<NormalizedRecord, { category: 'consent' }>, in
   if (fresh.addresses.length === 0) {
     return { ...base, outcome: 'duplicate', action: { kind: 'skip', existingId: rec.personRef }, issues: [...issues, { code: 'ALREADY_IMPORTED', severity: 'info' }], matchContactId: null };
   }
-  // Consent is keyed by address, not contact (R-CONSENT-1): a missing contact never blocks an opt-out.
+  // Consent is keyed by address, not contact (R-CONSENT-1): a missing contact never blocks an opt-out. A
+  // skipped duplicate's consent names the contact that person is the same as (B6), for context only.
   const p = resolveParent(rec.personRef, existing);
-  const contact = parentRef(p, rec.personRef);
+  const contact = parentRef(p);
   const outcome = settle(issues, 'will_import');
   return {
     ...base,
@@ -491,9 +512,40 @@ export function dryRun(category: Category, records: readonly RecordOutcome<Norma
   };
 }
 
+/**
+ * B6 (R-IMPORT-4): the person a contacts record skipped as a duplicate is the same as, for the later stages: the
+ * earlier row's person for an in-file duplicate (the skip's `existingId` is that row's source ref), else the
+ * existing contact it matched (`existingId` is a contact id: nothing new to fill, or already imported). Null for
+ * any other record, and for an earlier row that is not in the stage. The API's contactsStageMap and
+ * contactsStagePlan both use it, so the dry run and the commit agree.
+ */
+export function skippedDuplicateOf(r: { action: PlanAction | null; issues: readonly Issue[] }, personRefOfSource: (sourceRef: string) => string | undefined): ContactRef | null {
+  if (r.action?.kind !== 'skip') return null;
+  if (r.issues.some((i) => i.code === 'IN_FILE_DUPLICATE')) {
+    const ref = personRefOfSource(r.action.existingId);
+    return ref === undefined ? null : { pendingPersonRef: ref };
+  }
+  return { contactId: r.action.existingId as ContactId };
+}
+
+/**
+ * Adds the skipped duplicates to a contacts-stage plan. A duplicate never replaces the plan of a person a record
+ * of its own decides (a second row with the same id is that person), and never points at itself.
+ */
+export function addSkippedDuplicates(out: Map<string, ContactsStagePlan>, skips: readonly { personRef: string; sameAs: ContactRef | null }[]): void {
+  for (const s of skips) {
+    if (s.sameAs === null || out.has(s.personRef)) continue;
+    if ('pendingPersonRef' in s.sameAs && s.sameAs.pendingPersonRef === s.personRef) continue;
+    out.set(s.personRef, { sameAs: s.sameAs });
+  }
+}
+
 /** The contacts-stage plan by person ref, for later stages dry-run before the contacts commit. */
 export function contactsStagePlan(dry: StageDryRun): Map<string, ContactsStagePlan> {
   const out = new Map<string, ContactsStagePlan>();
+  const refOf = new Map<string, string>();
+  const skips: { personRef: string; sameAs: ContactRef | null }[] = [];
+  for (const r of dry.records) if (r.normalized?.category === 'contacts') refOf.set(r.sourceRef, personRefOf(r.normalized));
   for (const r of dry.records) {
     if (r.normalized === null) {
       // A record rejected before normalization has no external id; FUB refs carry the person id.
@@ -506,8 +558,10 @@ export function contactsStagePlan(dry: StageDryRun): Map<string, ContactsStagePl
     if (r.outcome === 'rejected') out.set(ref, 'rejected');
     else if (r.outcome === 'needs_review') out.set(ref, 'needs_review');
     else if (r.action?.kind === 'create_contact') out.set(ref, 'create');
+    else if (r.action?.kind === 'skip') skips.push({ personRef: ref, sameAs: skippedDuplicateOf(r, (s) => refOf.get(s)) });
     else out.set(ref, 'attach');
   }
+  addSkippedDuplicates(out, skips);
   return out;
 }
 

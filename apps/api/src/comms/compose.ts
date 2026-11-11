@@ -7,6 +7,7 @@
 // - previewHumanMessage: the compose-time preview ("Won't send: opted out of texts"); never stored.
 // - queueOutboundInTx: for assistant/system senders (api/assistant playbook steps, first response, search
 //   alerts; comms' own opt-out confirmation / HELP reply), in the caller's system transaction.
+// None of them addresses a merged-away record (F1, merged.ts): the person lives on the survivor.
 import { type Channel, type NumberFacts, chooseSender, classifyHumanPurpose } from '@realty/core/compliance';
 import type { ContactId, IdGenerator, Instant, TenantId, UserActor } from '@realty/core/foundation';
 import { at, toIso } from '@realty/core/foundation';
@@ -18,7 +19,8 @@ import { enqueueTyped } from '../worker/registry.js';
 import { dispatchOutbound } from './dispatch.js';
 import { decisionView, evaluateGate, insertBlockedDecision, resolvedPolicy, verdictOf } from './gateInput.js';
 import { renderHumanBody, unsubscribeUrl } from './render.js';
-import { contactFacts, dealOrAppointmentContext, detailVisibleContact } from './repos/contacts.js';
+import { refuseMergedAway } from './merged.js';
+import { contactFacts, dealOrAppointmentContext, detailVisibleContact, mergedAway } from './repos/contacts.js';
 import * as g from './repos/gate.js';
 import * as msgs from './repos/messages.js';
 import { asUser } from './runtime.js';
@@ -135,7 +137,9 @@ function humanIntent(contactId: string, d: Draft, channel: Channel, body: string
 /** POST /contacts/:id/messages/preview: what the gate would say now (nothing is sent, created or stored). */
 export async function previewHumanMessage(actor: UserActor, contactId: string, input: Omit<ComposeInput, 'idempotencyKey' | 'scheduleAt'>, deps: CommsDeps): Promise<{ decision: DecisionView; body: string }> {
   return asUser(deps, actor, async (tx, now) => {
-    if (!(await detailVisibleContact(tx, contactId))) throw new AppError('NOT_FOUND');
+    const c = await detailVisibleContact(tx, contactId);
+    if (!c) throw new AppError('NOT_FOUND');
+    await refuseMergedAway(tx, c);
     const d = await draftFor(tx, deps, contactId, actor.userId, input.channel, input.toPointId, now);
     const { tenant } = await resolvedPolicy(tx);
     const body = renderHumanBody(input.body, { channel: input.channel, purpose: d.purpose, identity: { brokerageLegalName: tenant.brokerageLegalName, postalAddress: tenant.postalAddress }, unsubscribe: d.purpose === 'marketing' ? '(unsubscribe link)' : null, signature: input.channel === 'email' ? await senderSignature(tx) : null });
@@ -155,7 +159,10 @@ export async function composeHumanMessage(actor: UserActor, contactId: string, i
       if (prior.contactId !== contactId) throw new AppError('NOT_FOUND');
       return { kind: 'existing', m: prior };
     }
-    if (!(await detailVisibleContact(tx, contactId))) throw new AppError('NOT_FOUND');
+    const c = await detailVisibleContact(tx, contactId);
+    if (!c) throw new AppError('NOT_FOUND');
+    // F1: a merged-away record is never a send target (the person lives on the survivor); nothing is created
+    await refuseMergedAway(tx, c);
     if (input.channel === 'email' && !(input.subject ?? '').trim()) throw new AppError('SUBJECT_REQUIRED');
     let scheduledFor: Instant | null = null;
     if (input.scheduleAt) {
@@ -282,15 +289,17 @@ export interface QueueSpec {
   firstResponse?: boolean;
 }
 
-export type QueueResult = { ok: true; messageId: string; created: boolean } | { ok: false; code: 'CONTACT_POINT_MISSING' | 'SENDER_UNAVAILABLE' };
+export type QueueResult = { ok: true; messageId: string; created: boolean } | { ok: false; code: 'CONTACT_POINT_MISSING' | 'SENDER_UNAVAILABLE' | 'CONTACT_MERGED' };
 
 /**
  * Queues an assistant/system message in the caller's (system) transaction and enqueues its comms.dispatch
- * job. Nothing is sent here: the send-time gate decides when the job runs. Idempotent by key.
+ * job. Nothing is sent here: the send-time gate decides when the job runs. Idempotent by key. Never to a
+ * merged-away record (F1: CONTACT_MERGED, nothing created).
  */
 export async function queueOutboundInTx(tx: Tx, deps: Pick<CommsDeps, 'ids'>, spec: QueueSpec, now: Instant): Promise<QueueResult> {
   const prior = await msgs.messageByIdempotencyKey(tx, spec.idempotencyKey);
   if (prior) return { ok: true, messageId: prior.id, created: false };
+  if (await mergedAway(tx, spec.contactId)) return { ok: false, code: 'CONTACT_MERGED' };
   let d: Draft;
   try {
     d = await draftFor(tx, deps as CommsDeps, spec.contactId, null, spec.channel, spec.toPointId, now, { purpose: spec.purpose, firstResponse: spec.firstResponse === true, phoneNumberId: spec.phoneNumberId ?? null });

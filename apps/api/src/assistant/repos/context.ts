@@ -22,12 +22,17 @@ export interface ContactCore {
   ownershipState: string;
   periodSeq: number | null;
   deleted: boolean;
+  /**
+   * Merged away into another record (merged_into_contact_id set): never a send or enrollment target (F1, F2). A stage
+   * entry skips it as person_removed (stageAutomation/decide.ts), and the merge stops its enrollment (R-OWN-24).
+   */
+  merged: boolean;
 }
 
 export async function contactCore(tx: Tx, contactId: string): Promise<ContactCore | null> {
-  const r = await sql<{ id: string; first_name: string | null; last_name: string | null; display_name: string; stage: string; timezone: string | null; default_timezone: string; owner_user_id: string | null; ownership_state: string; ownership_period_seq: string | null; deleted: boolean }>`
+  const r = await sql<{ id: string; first_name: string | null; last_name: string | null; display_name: string; stage: string; timezone: string | null; default_timezone: string; owner_user_id: string | null; ownership_state: string; ownership_period_seq: string | null; deleted: boolean; merged: boolean }>`
     SELECT c.id, c.first_name, c.last_name, c.display_name, c.stage, c.timezone, s.default_timezone, c.owner_user_id, c.ownership_state,
-           c.ownership_period_seq, c.deleted_at IS NOT NULL AS deleted
+           c.ownership_period_seq, c.deleted_at IS NOT NULL AS deleted, c.merged_into_contact_id IS NOT NULL AS merged
       FROM contacts c JOIN tenant_settings s ON s.tenant_id = c.tenant_id
      WHERE c.tenant_id = app.tenant_id() AND c.id = ${contactId}`.execute(tx);
   const c = r.rows[0];
@@ -44,6 +49,7 @@ export async function contactCore(tx: Tx, contactId: string): Promise<ContactCor
     ownershipState: c.ownership_state,
     periodSeq: c.ownership_period_seq === null ? null : Number(c.ownership_period_seq),
     deleted: c.deleted,
+    merged: c.merged,
   };
 }
 

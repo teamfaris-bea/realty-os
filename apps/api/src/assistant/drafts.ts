@@ -259,7 +259,7 @@ async function queueAndSend(actor: UserActor, actionId: string, plan: Planned, d
     return { kind: 'queued', messageId: r.messageId };
   });
   if (q.kind === 'stale') throw new AppError('DRAFT_STALE', { inboundSeq: q.inboundSeq, pinnedInboundSeq: plan.pinnedInboundSeq });
-  if (q.kind === 'not_queued') throw new AppError(q.code === 'CONTACT_POINT_MISSING' ? 'CONTACT_POINT_MISSING' : 'SENDER_UNAVAILABLE');
+  if (q.kind === 'not_queued') throw new AppError(q.code === 'CONTACT_POINT_MISSING' || q.code === 'CONTACT_MERGED' ? q.code : 'SENDER_UNAVAILABLE');
   const d = await dispatchOutbound(q.messageId, deps, { tenantId: actor.tenantId });
   const status = await asUser(deps, actor, async (tx) => (await A.actionById(tx, actionId))?.status ?? 'approved');
   const result: ApproveResult['result'] = d.kind === 'not_due' ? 'queued' : d.kind === 'needs_retap' ? 'blocked' : d.kind;

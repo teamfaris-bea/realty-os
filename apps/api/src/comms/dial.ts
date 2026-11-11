@@ -23,6 +23,7 @@ import { sql } from 'kysely';
 import { AppError } from '../errors.js';
 import { ProviderError } from '../providers/types.js';
 import { type GuardDenyReason, decisionView, evaluateGate, guardOptOutRefusal, insertBlockedDecision, resolvedPolicy, verdictOf } from './gateInput.js';
+import { refuseMergedAway } from './merged.js';
 import { contactFacts, dealOrAppointmentContext, detailVisibleContact } from './repos/contacts.js';
 import { telephonyAccount } from './repos/credentials.js';
 import * as g from './repos/gate.js';
@@ -41,7 +42,10 @@ export async function startCall(actor: UserActor, contactId: string, input: { to
   // guardDeny: the calls guard's refusal of a call this gate allowed, as a deny reason of the second run
   const attempt = (guardDeny: readonly GuardDenyReason[]): Promise<Out> => asUser(deps, actor, async (tx, txNow) => {
     void txNow;
-    if (!(await detailVisibleContact(tx, contactId))) throw new AppError('NOT_FOUND');
+    const c = await detailVisibleContact(tx, contactId);
+    if (!c) throw new AppError('NOT_FOUND');
+    // F1: a merged-away record is never dialed (the person lives on the survivor); nothing is created
+    await refuseMergedAway(tx, c);
     await lockContact(tx, contactId as ContactId);
     const now = (await sql<{ now: Date }>`SELECT clock_timestamp() AS now`.execute(tx)).rows[0]!.now.getTime() as Instant;
     const facts = await contactFacts(tx, contactId);
