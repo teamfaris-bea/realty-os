@@ -664,6 +664,25 @@ Reproduce: `pnpm load:seed --contacts 250000`, then
 `pnpm --filter @realty/api exec tsx --env-file-if-exists=../../.env --conditions=@realty/source src/lists/perf/seedLists.ts`
 and `… src/lists/perf/listsBench.ts --n 20 --explain off`.
 
+**Lane `people-filters` (exclusions, E194-E197)** measured the new shapes on a fresh 250k seed plus the list
+workload (`listsBench.ts --n 20 --explain off`, same machine, nothing else running): **86 of 86 within budget**,
+the 14 earlier lists included. p95 in ms, first page / count:
+
+| list (new shapes) | Owner page | Owner count | Agent page | Agent count |
+|---|---:|---:|---:|---:|
+| stage is not: closed, lost (a popular-stage exclusion) | 15.7 | 22.8 | 18.3 | 10.6 |
+| source is not Zillow | 13.2 | 20.0 | 21.0 | 10.6 |
+| tag none of (2 tags) + stage is active, nurture | 12.8 | 74.3 | 20.8 | 18.1 |
+| three filters (stage not, source not, tag none) | 15.9 | 62.4 | 22.7 | 21.4 |
+| owner is not (five agents) | 13.1 | 21.0 | 17.0 | 10.8 |
+| intent is not buyer | 16.4 | 22.3 | 19.0 | 13.1 |
+| stage is not: all but under contract (selective) | 140.2 | 84.6 | 18.4 | 9.9 |
+
+The exclusions add no index and no migration: `<> ALL` / `IS NULL OR <> ALL` filter the same sort-index (Owner) or
+book (agent) walk as the positive forms, and a broad exclusion fills a page or reaches the 10,001 count cap early.
+The slowest is the selective exclusion's Owner first page (140 ms: it walks the activity index past the excluded
+stages). The builder's live count is debounced (300 ms) so typing does not multiply count statements.
+
 ## 8. Reproducing
 
 ```sh

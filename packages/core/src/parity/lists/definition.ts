@@ -40,15 +40,31 @@ const OptionId = z.string().regex(/^[a-z0-9_]{1,40}$/);
 // eslint-disable-next-line no-control-regex -- free text never carries control characters
 const FreeText = z.string().trim().min(1).max(FREE_TEXT_MAX).regex(/^[^\u0000-\u001f\u007f-\u009f]*$/u);
 
-const StageClause = z.strictObject({ kind: z.literal('stage'), in: z.array(z.enum(LIST_STAGES)).min(1).max(8) });
+// Exclusions ("is not", lane people-filters, E194-E197) are NEW union members with a `not_in` key, so every
+// saved v1 definition (`in`, `is`) still parses unchanged. NULL semantics are explicit and plain: "is not X"
+// keeps the people with no value (no source, no owner, no intent), because they are not X (E195-E197).
+const StageClause = z.union([
+  z.strictObject({ kind: z.literal('stage'), in: z.array(z.enum(LIST_STAGES)).min(1).max(8) }),
+  z.strictObject({ kind: z.literal('stage'), not_in: z.array(z.enum(LIST_STAGES)).min(1).max(8) }),
+]);
 const TagClause = z.strictObject({ kind: z.literal('tag'), op: z.enum(['any', 'all', 'none']), tagIds: Ids(20) });
-const SourceClause = z.strictObject({ kind: z.literal('source'), in: Ids(50) });
+const SourceClause = z.union([
+  z.strictObject({ kind: z.literal('source'), in: Ids(50) }),
+  z.strictObject({ kind: z.literal('source'), not_in: Ids(50) }),
+]);
 const OwnerClause = z.union([
   z.strictObject({ kind: z.literal('owner'), is: z.enum(['me', 'none']) }),
   z.strictObject({ kind: z.literal('owner'), in: Ids(50) }),
+  z.strictObject({ kind: z.literal('owner'), not_in: Ids(50) }),
 ]);
-const IntentClause = z.strictObject({ kind: z.literal('intent'), in: z.array(z.enum(LIST_INTENTS)).min(1).max(6) });
-const ContactTypeClause = z.strictObject({ kind: z.literal('contact_type'), in: z.array(z.enum(LIST_CONTACT_TYPES)).min(1).max(5) });
+const IntentClause = z.union([
+  z.strictObject({ kind: z.literal('intent'), in: z.array(z.enum(LIST_INTENTS)).min(1).max(6) }),
+  z.strictObject({ kind: z.literal('intent'), not_in: z.array(z.enum(LIST_INTENTS)).min(1).max(6) }),
+]);
+const ContactTypeClause = z.union([
+  z.strictObject({ kind: z.literal('contact_type'), in: z.array(z.enum(LIST_CONTACT_TYPES)).min(1).max(5) }),
+  z.strictObject({ kind: z.literal('contact_type'), not_in: z.array(z.enum(LIST_CONTACT_TYPES)).min(1).max(5) }),
+]);
 const ActivityClause = z.union([
   z.strictObject({ kind: z.literal('last_activity'), op: z.enum(['within_days', 'older_than_days']), days: Days }),
   z.strictObject({ kind: z.literal('last_activity'), op: z.literal('never') }),

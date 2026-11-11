@@ -36,6 +36,14 @@ export function benchDefinitions(slug: string): { name: string; definition: unkn
     { name: 'OR group (tag or stage)', definition: { v: 1, any: [{ kind: 'tag', op: 'any', tagIds: [tag(50)] }, { kind: 'stage', in: ['under_contract'] }] } },
     { name: 'everyone by name', definition: { v: 1 }, sort: 'name_asc' },
     { name: 'everyone by next task', definition: { v: 1 }, sort: 'next_task_asc' },
+    // lane people-filters: the exclusion shapes (E194-E197)
+    { name: 'stage is not: closed, lost', definition: { v: 1, all: [{ kind: 'stage', not_in: ['closed', 'lost'] }] } },
+    { name: 'source is not Zillow', definition: { v: 1, all: [{ kind: 'source', not_in: [loadUuid(slug, 'source:0')] }] } },
+    { name: 'tag none of + stage is', definition: { v: 1, all: [{ kind: 'tag', op: 'none', tagIds: [tag(5), tag(10)] }, { kind: 'stage', in: ['active', 'nurture'] }] } },
+    { name: 'three filters (stage not, source not, tag none)', definition: { v: 1, all: [{ kind: 'stage', not_in: ['lost'] }, { kind: 'source', not_in: [loadUuid(slug, 'source:2')] }, { kind: 'tag', op: 'none', tagIds: [tag(5)] }] } },
+    { name: 'owner is not (five agents)', definition: { v: 1, all: [{ kind: 'owner', not_in: [1, 2, 3, 4, 5].map((i) => loadUuid(slug, `user:agent:${i}`)) }] } },
+    { name: 'intent is not buyer', definition: { v: 1, all: [{ kind: 'intent', not_in: ['buyer'] }] } },
+    { name: 'stage is not: all but under contract (selective)', definition: { v: 1, all: [{ kind: 'stage', not_in: ['new', 'attempting', 'connected', 'nurture', 'active', 'closed', 'lost'] }] } },
   ];
 }
 

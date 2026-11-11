@@ -365,6 +365,13 @@ Taps are counted from the person's page (or the People tab where stated); typing
 | Log an outside call | Log (Call preselected) → outcome → Save = **3** | **3** | ~4 / ~3 |
 | Open a smart list | People → list = **2** | **1** | ~2 / ~1 |
 | Next person in a list | Next = **1** | J / → = **1** | ~2 |
+| Filter by stage | People → Filter → Stage → choose → Show = **5** | Filter → Stage → choose → Show = **4** | ~5 / ~4 |
+| Exclude a source ("is not") | People → Filter → Source → is not → choose → Show = **6** | **5** | ~6 / ~5 |
+| Tags has none of | People → Filter → Tags → has none of → choose → Show = **6** | **5** | ~6 / ~5 |
+| Each further filter | Add another → field → (operator) → choose = **+3–4** | same | similar |
+| Save a filter as a list | Save as list → Save = **2** (+ the name) | **2** | ~3 |
+| Edit a saved list's filters | People → list → Edit filters → filter → value → Done → Save changes = **7** | **6** | ~6 / ~5 |
+| Search by name in a list | type in the box (+0) | same | similar |
 | Bulk tag 30 | People → list → Select all → Tag → tag → Confirm = **6** (the preview and confirm that R-PAR-33/34 require; owner decision 2026-11-11) | **5** | ~6 / ~5 |
 | Bulk email | People → list → Select all → Email → template → Confirm = **6** (skips shown on the confirm sheet) | **5** | ~7 / ~6 |
 | Bulk assign (Owner/Admin/TL) | desktop-first; phone same as tag + target = **6** | **5** | ~5 |
@@ -376,6 +383,8 @@ Honest UI rules:
 - The batch-text page states the counsel note.
 - No bulk option exists to include opted-out people: there is nothing to pre-tick.
 - Lists say "Showing people you can see".
+- Filters (lane people-filters): every active filter is a removable chip; an empty result names the filters to
+  loosen; "Show N people" is the live count of what will be shown; typed text never goes into a team list.
 
 ## 6. Exit criteria
 

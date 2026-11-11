@@ -11,11 +11,18 @@
 // row that scrolls sideways, so Assign and Start plan come right after Tag: at 390 px Assign (and an
 // agent's Start plan) is in view without a swipe; Remove tag, Stage, Email and Clear may need one.
 //
+// Filters (lane people-filters): "Filter" opens the builder (FilterBuilder.tsx: a bottom sheet on a phone, a
+// side panel on desktop); active filters show as removable chips with "Clear all" above the results; the name
+// box narrows by name (a personal / unsaved filter only: R-PAR-27). An unsaved filter lives in the URL
+// (?f=<definition>&q=<name>), so Back, reload and "Next person" keep it; ?filter=open opens the builder (the
+// Search page's "Filter people" link). The selection of "Select all" is the definition itself (bulk accepts it).
+//
 // Honest UI: the page always says "Showing people you can see" (R-PAR-28, E181); a count is exact to
 // 10,000 and then says "10,000+"; a list that uses a protected tag says so before any send, and a bulk
 // email, text or plan from it is refused at once (and by the server, which reads the list itself).
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect, useId, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Button, EmptyState, Icon, Notice, TextField, Dialog } from '../../design/index.js';
 import { messageFor, useSession } from '../../shell/index.js';
@@ -23,6 +30,8 @@ import { relativeTime } from '../feed/lib/format.js';
 import { useMutate, useNow } from '../feed/lib/hooks.js';
 import { AgentSheetsProvider, useAgentSheets } from '../feed/lib/AgentSheets.js';
 import {
+  type Clause,
+  type Definition,
   EVERYONE,
   LEAD_STAGE_LABEL,
   LISTS_KEY,
@@ -38,7 +47,13 @@ import {
   useSmartLists,
   usePeople,
   usePeopleCount,
+  useFields,
+  useFilterOptions,
+  useStageLabels,
+  useTags,
 } from './api.js';
+import { FilterBuilder } from './FilterBuilder.js';
+import { type Catalogs, TEAM_TEXT_REFUSAL, clauseLabel, decodeDefinition, encodeDefinition, hasFreeText, isEmptyDefinition, loosenText, withNameSearch } from './filters.js';
 import { mayBulkAssign, mayBulkEnroll } from '../bulk/index.js';
 import { BULK_LABEL, BulkConfirmSheet, type BulkKind, type BulkRequest } from './bulkSlot.js';
 import { LISTS_ERROR_MESSAGES } from './messages.js';
@@ -53,43 +68,123 @@ export default function PeoplePage() {
   );
 }
 
-/** The source named by the URL: ?list=<id>, ?tag=<id>&name=<name>, or everyone. */
+/** The source named by the URL: ?list=<id>, ?f=<definition>, ?tag=<id>&name=<name>, or everyone. */
 export function sourceFromParams(p: URLSearchParams): Source {
   const list = p.get('list');
   if (list) return { kind: 'list', listId: list };
+  const f = decodeDefinition(p.get('f'));
+  if (f && !isEmptyDefinition(f)) return { kind: 'definition', definition: f, label: 'Filtered people' };
   const tag = p.get('tag');
   if (tag) return tagSource({ id: tag, name: p.get('name') ?? 'tag' });
   return EVERYONE;
 }
 
+/** The definition behind a source (a saved list's own, once the lists have loaded). */
+export function definitionOfSource(s: Source, lists: readonly SmartListView[] | undefined): Definition | null {
+  if (s.kind === 'all') return { v: 1, all: [] };
+  if (s.kind === 'definition') return s.definition;
+  const l = lists?.find((x) => x.id === s.listId);
+  return l ? { v: 1, all: l.definition.all ?? [], ...(l.definition.any && l.definition.any.length > 0 ? { any: l.definition.any } : {}) } : null;
+}
+
+/**
+ * What the page runs: the URL's source, narrowed by the name box. A name search turns any source into an
+ * unsaved definition (the list's own filters plus "name contains"), never a change to a saved list.
+ */
+export function effectiveSource(base: Source, q: string, lists: readonly SmartListView[] | undefined, title: string): Source {
+  if (q.trim() === '') return base;
+  const d = definitionOfSource(base, lists);
+  if (!d) return base; // a saved list still loading: show it unnarrowed for that moment
+  return { kind: 'definition', definition: withNameSearch(d, q), label: title };
+}
+
+export const SEARCH_DEBOUNCE_MS = 300;
+
 function People() {
   const [params, setParams] = useSearchParams();
-  const source = useMemo(() => sourceFromParams(params), [params]);
+  const base = useMemo(() => sourceFromParams(params), [params]);
+  const q = params.get('q') ?? '';
   const lists = useSmartLists();
   const { session } = useSession();
   const role = session?.tenant?.role;
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [allSelected, setAllSelected] = useState(false);
+  const builderOpen = params.get('filter') === 'open';
+  const activeList = base.kind === 'list' ? lists.data?.lists.find((l) => l.id === base.listId) : undefined;
+  const title = base.kind === 'all' ? 'Everyone' : base.kind === 'list' ? (activeList?.name ?? 'List') : base.label;
+  const source = useMemo(() => effectiveSource(base, q, lists.data?.lists, title), [base, q, lists.data, title]);
+  const catalogs = useCatalogs(session?.user.id ?? null);
   useEffect(() => {
     setSelected(new Set());
     setAllSelected(false);
   }, [sourceKey(source)]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const open = (s: Source) => {
-    if (s.kind === 'all') setParams({});
-    else if (s.kind === 'list') setParams({ list: s.listId });
-    else {
-      const t = (s.definition.all?.[0] as { tagIds?: string[] } | undefined)?.tagIds?.[0];
-      if (t) setParams({ tag: t, name: s.label.replace(/^Tag: /, '') });
+  /**
+   * URL params for a source, keeping the name search and the open builder of the LATEST URL unless told
+   * otherwise. Every update is computed from the previous params (a functional update), so closing the builder
+   * just after typing a name can never write back an older name.
+   */
+  const paramsFor = (s: Source, prev: URLSearchParams, o: { q?: string; filter?: boolean } = {}): Record<string, string> => {
+    const out: Record<string, string> = {};
+    if (s.kind === 'list') out['list'] = s.listId;
+    else if (s.kind === 'definition') {
+      const t = (s.definition.all?.length === 1 && !s.definition.any ? (s.definition.all[0] as { kind?: string; op?: string; tagIds?: string[] }) : null);
+      if (t?.kind === 'tag' && t.op === 'any' && t.tagIds?.length === 1 && s.label.startsWith('Tag: ')) {
+        out['tag'] = t.tagIds[0]!;
+        out['name'] = s.label.replace(/^Tag: /, '');
+      } else out['f'] = encodeDefinition(s.definition);
     }
+    const nq = o.q ?? prev.get('q') ?? '';
+    if (nq.trim() !== '') out['q'] = nq;
+    if (o.filter ?? prev.get('filter') === 'open') out['filter'] = 'open';
+    return out;
   };
-  const activeList = source.kind === 'list' ? lists.data?.lists.find((l) => l.id === source.listId) : undefined;
-  const title = source.kind === 'all' ? 'Everyone' : source.kind === 'list' ? (activeList?.name ?? 'List') : source.label;
+  const go = (fn: (prev: URLSearchParams) => Record<string, string>, replace = false) => setParams((prev) => fn(prev), { replace });
+  const open = (s: Source) => go((prev) => paramsFor(s, prev, { q: '', filter: false }));
+  const applyFilters = (d: Definition) => go((prev) => paramsFor(isEmptyDefinition(d) ? EVERYONE : { kind: 'definition', definition: d, label: 'Filtered people' }, prev, { filter: false }));
+  const setBuilder = (on: boolean) => go((prev) => paramsFor(sourceFromParams(prev), prev, { filter: on }), true);
+  const setQuery = (text: string) => go((prev) => paramsFor(sourceFromParams(prev), prev, { q: text }), true);
+
+  // the base definition's clauses as chips (a saved list's own filters too; removing one makes an unsaved copy)
+  const baseDef = definitionOfSource(base, lists.data?.lists);
+  const removeClause = (group: 'all' | 'any', i: number) => {
+    if (!baseDef) return;
+    const all = group === 'all' ? (baseDef.all ?? []).filter((_, j) => j !== i) : [...(baseDef.all ?? [])];
+    let any = group === 'any' ? (baseDef.any ?? []).filter((_, j) => j !== i) : [...(baseDef.any ?? [])];
+    // an OR group of one is just one more required filter
+    if (any.length === 1) {
+      all.push(any[0]!);
+      any = [];
+    }
+    applyFilters({ v: 1, all, ...(any.length > 0 ? { any } : {}) });
+  };
+  const canManageTeam = role === 'owner' || role === 'admin' || role === 'team_lead';
+  const editableList = activeList && (activeList.scope === 'personal' ? activeList.mine : canManageTeam) ? activeList : undefined;
+  const qc = useQueryClient();
+  const api = useApiClient();
+  const sheets = useAgentSheets();
+  const [barSlot, setBarSlot] = useState<HTMLDivElement | null>(null);
 
   return (
+    <div className="flex flex-col">
     <div className="flex flex-col gap-4 md:flex-row md:items-start md:gap-6">
-      <ListNav lists={lists.data?.lists ?? []} source={source} onOpen={open} />
+      <ListNav lists={lists.data?.lists ?? []} source={base} onOpen={open} />
       <div className="flex min-w-0 flex-1 flex-col gap-3">
+        <FilterBar
+          q={q}
+          onQ={setQuery}
+          filterCount={baseDef ? (baseDef.all?.length ?? 0) + (baseDef.any?.length ?? 0) : 0}
+          onFilter={() => setBuilder(true)}
+          editLabel={base.kind === 'list' ? 'Edit filters' : 'Filter'}
+        />
+        {baseDef && catalogs.ready && !isEmptyDefinition(baseDef) ? (
+          <Chips
+            def={baseDef}
+            catalogs={catalogs.value}
+            onRemove={removeClause}
+            onClear={() => setParams({})}
+          />
+        ) : null}
         <Rows
           key={sourceKey(source)}
           source={source}
@@ -102,8 +197,165 @@ function People() {
           onTag={(t) => open(tagSource(t))}
           onClearFilter={() => open(EVERYONE)}
           saveable={source.kind === 'definition'}
+          barSlot={barSlot}
+          emptyText={loosenText([...(baseDef && catalogs.ready ? [...(baseDef.all ?? []), ...(baseDef.any ?? [])].map((c) => clauseLabel(c, catalogs.value)) : []), ...(q.trim() ? [`Name contains “${q.trim()}”`] : [])])}
         />
       </div>
+      {builderOpen && catalogs.ready && (base.kind !== 'list' || activeList) ? (
+        <FilterBuilder
+          key={sourceKey(base)}
+          initial={baseDef ?? { v: 1, all: [] }}
+          catalogs={catalogs.value}
+          teamList={editableList?.scope === 'team'}
+          startAdding={base.kind === 'all'}
+          onClose={() => setBuilder(false)}
+          onApply={(d) => applyFilters(d)}
+          {...(editableList
+            ? {
+                onSaveList: {
+                  label: `Save changes to “${editableList.name}”`,
+                  run: async (d: Definition) => {
+                    const r = await api.patch(`/smart-lists/${editableList.id}`, { definition: d });
+                    if (!r.ok) return r.message;
+                    await qc.invalidateQueries({ queryKey: [...LISTS_KEY] });
+                    await qc.invalidateQueries({ queryKey: ['people'] });
+                    sheets.announce(`Saved "${editableList.name}"`);
+                    // the list now holds other people: a hand-picked or "all" selection of the old filters is dropped
+                    setSelected(new Set());
+                    setAllSelected(false);
+                    setBuilder(false);
+                    return null;
+                  },
+                },
+              }
+            : {})}
+        />
+      ) : null}
+    </div>
+      {/* the bulk bar's place on desktop: under BOTH columns (the lists and the results), so at 1440 px every
+          action of every role fits on one row (the results column alone is ~700 px); it stays at the bottom of
+          the window while the page scrolls. On a phone the bar is fixed above the tab bar (no layout change). */}
+      <div ref={setBarSlot} className="z-40 md:sticky md:bottom-4" />
+    </div>
+  );
+}
+
+/** The builder's catalogs: stage labels, sources and members, tags, custom fields (all member-readable). */
+function useCatalogs(meId: string | null): { ready: boolean; value: Catalogs } {
+  const stages = useStageLabels();
+  const options = useFilterOptions();
+  const tags = useTags();
+  const fields = useFields();
+  const value = useMemo<Catalogs>(
+    () => ({
+      stageLabel: (k: string) => stages.data?.stages.find((s) => s.key === k)?.label ?? LEAD_STAGE_LABEL[k] ?? k,
+      sources: options.data?.sources ?? [],
+      members: options.data?.members ?? [],
+      tags: tags.data?.tags ?? [],
+      fields: fields.data?.fields ?? [],
+      meId,
+    }),
+    [stages.data, options.data, tags.data, fields.data, meId],
+  );
+  // a catalog that failed still lets the builder open (its choices are just empty; the label falls back)
+  const settled = (x: { isPending: boolean }) => !x.isPending;
+  return { ready: settled(stages) && settled(options) && settled(tags) && settled(fields), value };
+}
+
+/** PATCH for "Save changes" with the plain sentence of a refusal (the builder shows it). */
+function useApiClient() {
+  const save = useMutate<{ definition: unknown }, unknown>('PATCH', { invalidate: [[...LISTS_KEY]] });
+  return {
+    async patch(path: string, body: { definition: unknown }): Promise<{ ok: true } | { ok: false; message: string }> {
+      const r = await save.run(path, body);
+      return r.ok ? { ok: true } : { ok: false, message: messageFor(r.code, LISTS_ERROR_MESSAGES) };
+    },
+  };
+}
+
+// ---- the search box and the Filter button --------------------------------------------------------
+
+function FilterBar({ q, onQ, filterCount, onFilter, editLabel }: { q: string; onQ: (q: string) => void; filterCount: number; onFilter: () => void; editLabel: string }) {
+  const id = useId();
+  const [text, setText] = useState(q);
+  const last = useRef(q);
+  useEffect(() => {
+    // the URL changed from elsewhere (a list opened, Clear all): show it
+    if (q !== last.current) {
+      last.current = q;
+      setText(q);
+    }
+  }, [q]);
+  useEffect(() => {
+    if (text === last.current) return;
+    const t = setTimeout(() => {
+      last.current = text;
+      onQ(text);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [text]); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <div className="flex items-end gap-2">
+      <form role="search" className="relative min-w-0 flex-1" onSubmit={(e) => e.preventDefault()}>
+        <label htmlFor={`${id}-q`} className="sr-only">
+          Search people by name
+        </label>
+        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted">
+          <Icon name="search" size={20} />
+        </span>
+        <input
+          id={`${id}-q`}
+          type="search"
+          enterKeyHint="search"
+          autoComplete="off"
+          autoCorrect="off"
+          spellCheck={false}
+          maxLength={60}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="Search by name"
+          className="min-h-tap w-full rounded-xl border border-line bg-surface pl-10 pr-3.5 text-[17px] text-ink placeholder:text-ink-muted"
+        />
+      </form>
+      {/* the name is the visible words (WCAG 2.5.3): "Filter, 2 active" with the comma and "active" for screen readers only */}
+      <Button variant="secondary" className="shrink-0" onClick={onFilter}>
+        {editLabel}
+        {filterCount > 0 ? (
+          <>
+            <span className="sr-only">, </span>
+            <span className="ml-1 rounded-full bg-accent px-2 text-[14px] text-accent-ink">{filterCount}</span>
+            <span className="sr-only"> active</span>
+          </>
+        ) : null}
+      </Button>
+    </div>
+  );
+}
+
+function Chips({ def, catalogs, onRemove, onClear }: { def: Definition; catalogs: Catalogs; onRemove: (g: 'all' | 'any', i: number) => void; onClear: () => void }) {
+  const chip = (g: 'all' | 'any', c: Clause, i: number) => {
+    const label = clauseLabel(c, catalogs);
+    return (
+      <li key={`${g}${i}`}>
+        <button type="button" onClick={() => onRemove(g, i)} className="inline-flex min-h-tap items-center gap-2 rounded-full bg-accent-soft px-3 text-[14px] font-medium text-ink" aria-label={`Remove filter ${label}`}>
+          {label}
+          <span aria-hidden="true">✕</span>
+        </button>
+      </li>
+    );
+  };
+  return (
+    <div className="flex flex-col gap-1">
+      <ul aria-label="Active filters" className="flex flex-wrap items-center gap-2">
+        {(def.all ?? []).map((c, i) => chip('all', c, i))}
+        {(def.any ?? []).length > 0 ? <li className="text-[14px] font-medium text-ink-muted">and any of:</li> : null}
+        {(def.any ?? []).map((c, i) => chip('any', c, i))}
+        <li>
+          <Button variant="quiet" onClick={onClear}>
+            Clear all
+          </Button>
+        </li>
+      </ul>
     </div>
   );
 }
@@ -156,6 +408,9 @@ function Rows(p: {
   onTag: (t: { id: string; name: string }) => void;
   onClearFilter: () => void;
   saveable: boolean;
+  emptyText: string;
+  /** where the bulk bar renders (the page-wide slot); null: in place */
+  barSlot?: HTMLElement | null;
 }) {
   const q = usePeople(p.source);
   const count = usePeopleCount(p.source);
@@ -223,8 +478,8 @@ function Rows(p: {
       {q.isPending ? <p className="py-10 text-center text-[15px] text-ink-muted">Loading</p> : null}
       {q.isError ? <Notice tone="error">{messageFor(q.error, LISTS_ERROR_MESSAGES)}</Notice> : null}
       {q.isSuccess && people.length === 0 ? (
-        <EmptyState icon="people" title="Nobody here yet">
-          No one you can see matches this list.
+        <EmptyState icon="people" title={p.source.kind === 'all' ? 'Nobody here yet' : 'No one matches'}>
+          {p.emptyText}
         </EmptyState>
       ) : null}
 
@@ -243,7 +498,7 @@ function Rows(p: {
         </label>
       ) : null}
 
-      <ul aria-label="People" className="flex flex-col divide-y divide-line rounded-2xl border border-line bg-surface">
+      <ul aria-label="People" className={`flex flex-col divide-y divide-line rounded-2xl border border-line bg-surface ${people.length === 0 ? 'hidden' : ''}`}>
         {people.map((x) => (
           <PersonRow key={x.id} person={x} checked={p.allSelected || p.selected.has(x.id)} onToggle={canBulk ? () => toggle(x.id) : null} onOpen={() => openPerson(x.id)} onTag={p.onTag} />
         ))}
@@ -254,12 +509,12 @@ function Rows(p: {
         </Button>
       ) : null}
 
-      {anySelected ? (
-        <div role="region" aria-label="Bulk actions" className="fixed inset-x-0 bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))] z-40 border-t border-line bg-surface px-4 py-2 md:sticky md:bottom-4 md:rounded-2xl md:border md:shadow-lg">
+      {anySelected ? portalTo(p.barSlot ?? null, (
+        <div role="region" aria-label="Bulk actions" className="fixed inset-x-0 bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))] z-40 border-t border-line bg-surface px-4 py-2 md:static md:mt-3 md:rounded-2xl md:border md:shadow-lg">
           {/* phone: one row that scrolls sideways; desktop: it wraps, so no action hides behind a scroll.
               Assign (§5 bulk assign: 6 taps on a phone) and Start plan come right after Tag, so a phone shows
               them without a swipe (the e2e asserts it); the rest follow and may sit behind the scroll there */}
-          <div className="flex items-center gap-2 overflow-x-auto md:flex-wrap md:overflow-x-visible">
+          <div className="flex items-center gap-2 overflow-x-auto md:flex-wrap md:gap-y-2 md:overflow-x-visible">
             <p className="shrink-0 pr-2 text-[15px] font-semibold text-ink">{p.allSelected && count.data?.capped ? `${count.data.count.toLocaleString('en-US')}+` : selCount.toLocaleString('en-US')} selected</p>
             <Button variant="primary" className="shrink-0 whitespace-nowrap" onClick={() => setTagFor('tag')}>
               {BULK_LABEL.tag}
@@ -295,7 +550,7 @@ function Rows(p: {
             </Button>
           </div>
         </div>
-      ) : null}
+      )) : null}
 
       {tagFor ? (
         <TagPicker
@@ -367,20 +622,22 @@ function PersonRow({ person, checked, onToggle, onOpen, onTag }: { person: Perso
 // ---- save an unsaved filter as a list ----------------------------------------------------------------
 
 function SaveListSheet({ source, onClose, role }: { source: Extract<Source, { kind: 'definition' }>; onClose: () => void; role: string | null }) {
-  const [name, setName] = useState(source.label);
+  const [name, setName] = useState(source.label === 'Filtered people' ? '' : source.label);
   const [scope, setScope] = useState<'personal' | 'team'>('personal');
   const qc = useQueryClient();
   const sheets = useAgentSheets();
   const [, setParams] = useSearchParams();
   const save = useMutate<{ scope: string; name: string; definition: unknown }, { list: { id: string } }>('POST', { invalidate: [[...LISTS_KEY]] });
   const team = role === 'owner' || role === 'admin' || role === 'team_lead';
+  // R-PAR-27: typed text (a name search, a text field value) never goes into a team list; said before the tap
+  const textInTeam = scope === 'team' && hasFreeText(source.definition);
   return (
     <Dialog
       title="Save as list"
       onClose={onClose}
       footer={
         <Button
-          disabled={save.pending || name.trim() === ''}
+          disabled={save.pending || name.trim() === '' || textInTeam}
           onClick={async () => {
             const r = await save.run('/smart-lists', { scope, name: name.trim(), definition: source.definition });
             if (r.ok) {
@@ -408,8 +665,14 @@ function SaveListSheet({ source, onClose, role }: { source: Extract<Source, { ki
             ))}
           </fieldset>
         ) : null}
+        {textInTeam ? <Notice tone="error">{TEAM_TEXT_REFUSAL}</Notice> : null}
         {save.error ? <Notice tone="error">{messageFor(save.error.code, LISTS_ERROR_MESSAGES)}</Notice> : null}
       </div>
     </Dialog>
   );
+}
+
+/** The bulk bar into the page-wide slot when there is one, else in place. */
+function portalTo(target: HTMLElement | null, node: ReactNode): ReactNode {
+  return target ? createPortal(node, target) : node;
 }

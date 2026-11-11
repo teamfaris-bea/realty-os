@@ -22,9 +22,11 @@ export interface DialogProps {
   dismissible?: boolean;
   /** what gets focus on open (default: the first control) */
   initialFocus?: RefObject<HTMLElement | null>;
+  /** desktop only: 'side' is a full-height panel on the right (a filter builder beside the results); a phone always gets the bottom sheet */
+  placement?: 'center' | 'side';
 }
 
-export function Dialog({ title, description, onClose, children, footer, dismissible = true, initialFocus }: DialogProps) {
+export function Dialog({ title, description, onClose, children, footer, dismissible = true, initialFocus, placement = 'center' }: DialogProps) {
   const id = useId();
   const panel = useRef<HTMLDivElement>(null);
   const host = useRef<HTMLDivElement | null>(null);
@@ -85,7 +87,7 @@ export function Dialog({ title, description, onClose, children, footer, dismissi
 
   if (!host.current) return null;
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-end justify-center md:items-center md:p-6">
+    <div className={`fixed inset-0 z-50 flex items-end justify-center ${placement === 'side' ? 'md:items-stretch md:justify-end' : 'md:items-center md:p-6'}`}>
       <div data-testid="dialog-backdrop" className="absolute inset-0 bg-black/40" aria-hidden="true" onClick={() => (dismissible ? close.current() : undefined)} />
       <div
         ref={panel}
@@ -94,7 +96,7 @@ export function Dialog({ title, description, onClose, children, footer, dismissi
         aria-labelledby={`${id}-t`}
         aria-describedby={description ? `${id}-d` : undefined}
         tabIndex={-1}
-        className="pb-safe relative flex max-h-[90dvh] w-full flex-col rounded-t-2xl bg-surface shadow-xl outline-none md:max-w-lg md:rounded-2xl"
+        className={`pb-safe relative flex max-h-[90dvh] w-full flex-col rounded-t-2xl bg-surface shadow-xl outline-none ${placement === 'side' ? 'md:h-full md:max-h-none md:max-w-md md:rounded-none md:border-l md:border-line' : 'md:max-w-lg md:rounded-2xl'}`}
       >
         <div className="px-5 pt-5">
           <h2 id={`${id}-t`} className="text-[20px] font-semibold text-ink">

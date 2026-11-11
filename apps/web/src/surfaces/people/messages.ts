@@ -29,7 +29,8 @@ export const LISTS_ERROR_MESSAGES: Record<string, string> = {
   CUSTOM_VALUE_RANGE: 'That number is out of range.',
   LIST_DEFINITION_INVALID: "This list's filters are not valid. Change them and try again.",
   LIST_DEFINITION_TOO_LARGE: 'This list has too many filters.',
-  LIST_FREE_TEXT_IN_TEAM_LIST: 'Team lists cannot hold typed names or text. Save it as a personal list instead.',
+  // the owner's words (lane people-filters); filters.ts TEAM_TEXT_REFUSAL says the same before the tap
+  LIST_FREE_TEXT_IN_TEAM_LIST: "Team lists can't include typed text. Remove the name search or save it as your own list.",
   LIST_FIELD_UNKNOWN: 'A field in this list no longer exists.',
   LIST_FIELD_OP_INVALID: "A filter doesn't fit its field.",
   LIST_TAG_UNKNOWN: 'A tag in this list no longer exists.',

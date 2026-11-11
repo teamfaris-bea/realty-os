@@ -1,6 +1,7 @@
 // api/lists client types and React Query hooks (PARITY_PLAN module 61). Types mirror
 // apps/api/src/lists/schemas.ts (apps/web imports no api code).
 import { type QueryKey, useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
 import { type ApiError, useApi } from '../../shell/index.js';
 
 export type TagColor = 'gray' | 'red' | 'orange' | 'amber' | 'green' | 'teal' | 'blue' | 'indigo' | 'purple' | 'pink' | 'brown' | 'slate';
@@ -141,6 +142,53 @@ export function useFields(o: { archived?: boolean } = {}) {
     queryKey: [...FIELDS_KEY, o.archived === true],
     queryFn: ({ signal }) => api.get(`/custom-fields${o.archived ? '?archived=1' : ''}`, { signal }),
   });
+}
+
+// ---- the filter builder's catalogs (lane people-filters) ---------------------------------------------
+
+export interface FilterOptions {
+  sources: { id: string; name: string; active: boolean }[];
+  members: { userId: string; name: string; role: string; active: boolean }[];
+}
+export const FILTER_OPTIONS_KEY = ['lists', 'filter-options'] as const;
+/** module 57's stage labels key (admin/parity/StageLabelsPage.tsx), so a rename there refreshes the builder */
+export const STAGE_LABELS_KEY = ['settings', 'stage-labels'] as const;
+
+export function useFilterOptions(enabled = true) {
+  const api = useApi();
+  return useQuery<FilterOptions, ApiError>({ queryKey: FILTER_OPTIONS_KEY, queryFn: ({ signal }) => api.get('/people/filter-options', { signal }), enabled, staleTime: 60_000 });
+}
+
+export function useStageLabels() {
+  const api = useApi();
+  return useQuery<{ labels: Record<string, string>; stages: { key: string; label: string }[] }, ApiError>({ queryKey: STAGE_LABELS_KEY, queryFn: ({ signal }) => api.get('/stage-labels', { signal }), staleTime: 60_000 });
+}
+
+/** How long the builder waits after the last change before it counts (review: one count per keystroke at 250k). */
+export const COUNT_DEBOUNCE_MS = 300;
+
+/**
+ * A live count of a definition the builder holds (not yet applied), counted once the definition has stopped
+ * changing for COUNT_DEBOUNCE_MS. `isStale` is true while the shown number is not the count of `def` (still
+ * waiting, or an earlier count shown as a placeholder), so the button never claims an old number as current.
+ */
+export function useDefinitionCount(def: Definition | null) {
+  const api = useApi();
+  const key = def === null ? null : JSON.stringify(def);
+  const [settled, setSettled] = useState(key);
+  useEffect(() => {
+    const t = setTimeout(() => setSettled(key), COUNT_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [key]);
+  const q = useQuery<{ count: number; capped: boolean }, ApiError>({
+    queryKey: [...PEOPLE_KEY, 'count', `def:${settled}`],
+    queryFn: ({ signal }) => api.post('/people/count', { definition: JSON.parse(settled!) as Definition }, { signal }),
+    enabled: settled !== null,
+    retry: false,
+    staleTime: 30_000,
+    placeholderData: (prev) => prev,
+  });
+  return { ...q, isStale: settled !== key || q.isPlaceholderData || q.isFetching };
 }
 
 export function useContactTags(contactId: string) {

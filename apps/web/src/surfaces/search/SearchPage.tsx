@@ -69,6 +69,11 @@ export default function SearchPage() {
           className="min-h-[48px] w-full rounded-xl border border-line bg-surface pl-10 pr-3.5 text-[17px] text-ink placeholder:text-ink-muted"
         />
       </form>
+      {/* lane people-filters: the one way from Search to the People filter builder (stage, source, tags, exclusions) */}
+      <Link to="/people?filter=open" className="inline-flex min-h-tap items-center gap-2 self-start text-[15px] font-semibold text-accent hover:underline">
+        <Icon name="people" size={20} />
+        Filter people
+      </Link>
       {res.isError && q.length >= MIN_QUERY ? <Notice tone="error">{messageFor(res.error, AGENT_ERROR_MESSAGES)}</Notice> : null}
       {text.trim().length > 0 && text.trim().length < MIN_QUERY ? <p className="text-[15px] text-ink-muted">Type at least {MIN_QUERY} characters.</p> : null}
       {data && total === 0 && data.incomplete.length === 0 ? <p className="text-[15px] text-ink-muted">No matches for “{q}”.</p> : null}

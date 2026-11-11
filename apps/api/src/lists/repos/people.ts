@@ -65,6 +65,17 @@ export function predicateSql(n: ListPredicate): Frag {
       return sql`c.owner_user_id = ANY (${n.userIds}::uuid[])`;
     case 'owner_none':
       return sql`c.owner_user_id IS NULL`;
+    // exclusions (E194-E197): stage and contact_type are NOT NULL; a NULL intent, source or owner is "not X"
+    case 'stage_not_in':
+      return sql`c.stage <> ALL (${n.stages}::text[])`;
+    case 'contact_type_not_in':
+      return sql`c.contact_type <> ALL (${n.types}::text[])`;
+    case 'intent_not_in':
+      return sql`(c.intent IS NULL OR c.intent <> ALL (${n.intents}::text[]))`;
+    case 'source_not_in':
+      return sql`(c.original_lead_source_id IS NULL OR c.original_lead_source_id <> ALL (${n.sourceIds}::uuid[]))`;
+    case 'owner_not_in':
+      return sql`(c.owner_user_id IS NULL OR c.owner_user_id <> ALL (${n.userIds}::uuid[]))`;
     case 'tag_any':
       return tagExists(n.tagIds);
     case 'tag_none':
