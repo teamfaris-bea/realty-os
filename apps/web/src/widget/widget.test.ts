@@ -122,6 +122,8 @@ describe('chat widget (module 37)', () => {
     await startChat(m);
     expect(f.api.start).toHaveBeenCalledWith(KEY, { name: 'Pat Lee', phone: '(415) 555-0101', message: 'Is 12 Oak St still available?', disclosureId: D1 });
     expect(log(m)).toEqual([['visitor', 'Is 12 Oak St still available?']]);
+    // the start form is gone: the keyboard is in the reply box, not lost on the page
+    expect(m.w.shadow.activeElement).toBe(m.$('textarea[name=reply]'));
     expect(m.$('[data-from=visitor] .meta')!.textContent).toMatch(/^You · /);
     f.polls.push({ ok: true, data: { messages: [reply('r1', 'assistant', 'Hi Pat, this is the team assistant. Ava will follow up.'), reply('r2', 'team', 'Hi Pat, Ava here. Yes it is!')], cursor: 'c2', open: true } });
     await m.tick();

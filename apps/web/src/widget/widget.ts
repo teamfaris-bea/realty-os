@@ -286,6 +286,8 @@ export class ChatWidget {
     this.items = [];
     this.add(first ? [...earlier, first] : earlier);
     this.footer();
+    // the keyboard goes where the visitor acts next (the start form it was in is gone): the reply box, or a new chat
+    this.panel?.querySelector<HTMLElement>('.foot textarea, .foot button')?.focus();
     if (!this.ended) this.schedule(0);
   }
 
