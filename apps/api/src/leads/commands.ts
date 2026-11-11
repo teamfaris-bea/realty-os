@@ -168,7 +168,7 @@ export async function registerCommandRoutes(app: FastifyInstance): Promise<void>
         let res: Awaited<ReturnType<typeof runOwnershipCommand>>;
         // F19 / R-CHAN-3 (module 22): closing a lead as do-not-contact records the person-level opt-out in the
         // close's own transaction (every channel of every point revoked, contacts.do_not_contact_at set)
-        const afterApplied =
+        const beforeApply =
           cmd.kind === 'close' && cmd.reason === 'do_not_contact'
             ? async (tx: Tx) => {
                 const now = await dbNow(tx);
@@ -179,7 +179,7 @@ export async function registerCommandRoutes(app: FastifyInstance): Promise<void>
               }
             : undefined;
         try {
-          res = await runOwnershipCommand(actor, req.params.contactId as ContactId, cmd, b.commandId, b.expectedSeq, { db: p.db, ids: p.ids, ...(afterApplied ? { afterApplied } : {}) });
+          res = await runOwnershipCommand(actor, req.params.contactId as ContactId, cmd, b.commandId, b.expectedSeq, { db: p.db, ids: p.ids, ...(beforeApply ? { beforeApply } : {}) });
         } catch (e) {
           const mapped = mapLeadsDbError(e);
           if (mapped) throw mapped;
