@@ -50,6 +50,8 @@ export function verifyMailState(secret: Uint8Array, token: string, now: number):
   if (!m) return { ok: false, code: 'STATE_INVALID' };
   const expected = Buffer.from(mac(secret, 'mail-oauth-state', m[1]!), 'base64url');
   const got = Buffer.from(m[2]!, 'base64url');
+  // canonical encoding only: a different last character that decodes to the same bytes is still a different state
+  if (got.toString('base64url') !== m[2]) return { ok: false, code: 'STATE_INVALID' };
   if (got.length !== expected.length || !timingSafeEqual(got, expected)) return { ok: false, code: 'STATE_INVALID' };
   let j: Record<string, unknown>;
   try {
