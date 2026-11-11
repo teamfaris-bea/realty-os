@@ -5,6 +5,8 @@
 //   1. app.reap_stuck_jobs()            expired leases → pending (or dead when attempts are exhausted)
 //   2. dead-job scan (app.dead_jobs_after) every newly dead job raises a platform alert (P1 on realtime)
 //   3. app.retention_sweep(now)         hourly; R-DATA-3 defaults (VERIFY WITH COUNSEL), counts tracked
+//   3b app.purge_webhook_events()       hourly with retention: webhook ids past their replay window
+//                                       (windows per provider in migration 0018; real DB clock), counts tracked
 //   4. audit seq gap check              daily; global audit_log.seq gaps counted and tracked (R-AUDIT-8)
 //   5. periodic per-tenant jobs         every 5 min: keep one live job per tenant per periodic kind
 //                                       (ownership.drift_check, consent.drift_check, storage.blob_delete),
@@ -15,7 +17,7 @@ import { DAY_MS, HOUR_MS, MINUTE_MS, instant } from '@realty/core/foundation';
 import { type Database, getDatabase, reapJobs, withTenantTx } from '@realty/db';
 import { type AlertSink, type Logger, type Metrics, MemoryMetrics, jsonLogger, logAlertSink } from './observability.js';
 import { type HandlerRegistry, enqueueTyped, registry as defaultRegistry } from './registry.js';
-import { type AuditSeqStats, type DeadCursor, auditSeqStats, dbClock, deadCursorAt, deadJobs, retentionSweep, tenantIds } from './repos/jobs.js';
+import { type AuditSeqStats, type DeadCursor, auditSeqStats, dbClock, deadCursorAt, deadJobs, purgeWebhookEvents, retentionSweep, tenantIds } from './repos/jobs.js';
 import { systemActor } from './systemActor.js';
 import type { JobHandler } from './types.js';
 import { abortableSleep } from './sleep.js';
@@ -41,6 +43,8 @@ export interface MaintenanceReport {
   reaped: number | null;
   deadAlerted: number | null;
   retention: Record<string, number> | null;
+  /** webhook ids purged per provider (null when the step did not run or failed) */
+  webhookIdsPurged: Record<string, number> | null;
   audit: AuditSeqStats | null;
   periodicEnqueued: number | null;
   failedSteps: string[];
@@ -152,7 +156,7 @@ export function createMaintenance(o: MaintenanceOptions = {}): Maintenance {
 
   async function runOnce(at?: Instant): Promise<MaintenanceReport> {
     const now = at ?? (await dbClock(db));
-    const report: MaintenanceReport = { at: now, reaped: null, deadAlerted: null, retention: null, audit: null, periodicEnqueued: null, failedSteps: [] };
+    const report: MaintenanceReport = { at: now, reaped: null, deadAlerted: null, retention: null, webhookIdsPurged: null, audit: null, periodicEnqueued: null, failedSteps: [] };
 
     report.reaped = await step('reap', report, async () => {
       const n = await reapJobs({ db });
@@ -170,7 +174,13 @@ export function createMaintenance(o: MaintenanceOptions = {}): Maintenance {
         log.info('retention sweep', { result: r });
         return r;
       });
-      if (report.retention) lastRetention = now;
+      report.webhookIdsPurged = await step('webhook_purge', report, async () => {
+        const r = await purgeWebhookEvents(db);
+        for (const [k, v] of Object.entries(r)) metrics.gauge('webhook_ids_purged_last', v, { provider: k });
+        log.info('webhook id purge', { result: r });
+        return r;
+      });
+      if (report.retention && report.webhookIdsPurged) lastRetention = now;
     }
 
     if (now - lastAudit >= auditEvery) {

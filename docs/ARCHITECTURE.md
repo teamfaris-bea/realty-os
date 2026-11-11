@@ -747,3 +747,12 @@ Tenant connections (`integration_connections`, each with an honest status such a
 | Employee monitoring (call reviews) | private by default; human-handled calls only, attributed to that call's agent; TL access is an Owner setting; off until `platform:coaching`; no rankings |
 | Ads: platform overspend, attribution lag | DB cap ledger (cap version in force, exact approved amounts, single-use, tenant-wide total under a lock), hourly reconcile pause, sample holds, honest copy |
 | Parallel lanes landing module migrations out of order | the runner refuses a pending file that sorts before an applied one; lanes merge 0016–0021 in number order (PHASE2_3_PLAN §4) |
+
+### Real-provider gaps (lane migration `0019_telephony_email_gaps.sql`)
+
+| Id | Gap | Resolution |
+| T1 | A real inbound call got empty TwiML and hung up. | `comms/voice.ts`: ring the owner (else the on-duty routing target, peeked, never advanced) from the team number; announcement first when the policy announces; a press-1 whisper; unanswered ⇒ missed call + voicemail with a fixed recording notice, copied encrypted and transcribed. The plan is stored on the call (`calls.ring_user_id`, `recording_decision.planned`), so a retried fetch gets the same TwiML. `agent_user_id` is set only on accept (recording scope R-PERM-8). |
+| T2 | MMS media were counted, never stored. | `comms/media.ts`: fetch by SID only, type allowlist + magic bytes, 10 × 5 MB, per-object DEK, provider copy deleted, refusals recorded (`message_media_skipped`); download with nosniff and a sandbox CSP. |
+| T3 | SES and Mailgun events were not parsed. | SNS signature (v1/v2, cert host rule, topic allowlist, 1 h window) and Mailgun HMAC (±5 min) feed the same `handleEvent` as Postmark/SendGrid. |
+| T4 | `webhook_events` grew forever. | `app.purge_webhook_events()` (definer, real clock, no arguments): telephony 400 d, email 35 d, lead 2 d, rejected 30 d; downstream unique keys keep deduplicating after. |
+

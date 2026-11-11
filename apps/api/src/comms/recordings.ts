@@ -32,6 +32,8 @@ export interface RecordingReady {
   providerCallRef: string;
   recordingRef: string;
   durationS?: number;
+  /** a voicemail the caller left (comms/voice.ts): kept when the call went to voicemail and the notice played */
+  voicemail?: boolean;
 }
 
 export const TRANSCRIBE_JOB = { kind: 'comms.transcribe', queue: 'default' as const, dedupeKey: (id: string) => `comms.transcribe:${id}` };
@@ -44,13 +46,24 @@ interface CallRow {
   contact_id: string;
   agent_user_id: string | null;
   recording_mode: string;
-  recording_decision: { announce?: boolean };
+  recording_decision: { announce?: boolean; voicemailNoticeAt?: string };
   recording_announced_at: Date | null;
+  handled_by: string;
+  direction: string;
+}
+
+/**
+ * A voicemail may be kept when the call really went to voicemail (handled_by, set when the voicemail
+ * TwiML was served) and the greeting with its fixed recording notice was played to the caller.
+ * VERIFY WITH COUNSEL that the notice is enough in every launch state.
+ */
+export function mayKeepVoicemail(c: Pick<CallRow, 'handled_by' | 'direction' | 'recording_decision'>): boolean {
+  return c.direction === 'inbound' && c.handled_by === 'voicemail' && typeof c.recording_decision.voicemailNoticeAt === 'string';
 }
 
 async function callByRef(tx: Tx, ref: string): Promise<CallRow | null> {
   const r = await sql<CallRow>`
-    SELECT id, contact_id, agent_user_id, recording_mode, recording_decision, recording_announced_at FROM calls
+    SELECT id, contact_id, agent_user_id, recording_mode, recording_decision, recording_announced_at, handled_by, direction FROM calls
      WHERE tenant_id = app.tenant_id() AND provider_call_ref = ${ref}`.execute(tx);
   return r.rows[0] ?? null;
 }
@@ -62,7 +75,7 @@ export async function onRecordingReady(e: RecordingReady, deps: CommsDeps, actor
     if (!call) return { kind: 'refused', reason: 'CALL_UNKNOWN' } as const;
     const dup = await sql<{ id: string }>`SELECT id FROM recordings WHERE tenant_id = app.tenant_id() AND provider_recording_ref = ${e.recordingRef}`.execute(tx);
     if (dup.rows[0]) return { kind: 'duplicate', recordingId: dup.rows[0].id } as const;
-    if (!mayKeepRecording(call)) return { kind: 'refused', reason: 'RECORDING_NOT_PERMITTED' } as const;
+    if (e.voicemail ? !mayKeepVoicemail(call) : !mayKeepRecording(call)) return { kind: 'refused', reason: 'RECORDING_NOT_PERMITTED' } as const;
     return { kind: 'ok', call } as const;
   }, { db: deps.db });
   if (pre.kind === 'refused' && pre.reason === 'CALL_UNKNOWN') return pre;
@@ -107,7 +120,7 @@ export async function onRecordingReady(e: RecordingReady, deps: CommsDeps, actor
         provider_recording_ref)
       VALUES (app.tenant_id(), ${recordingId}, ${call.id}, ${call.contact_id}, ${call.agent_user_id}, ${objectId},
               ${e.durationS ?? Math.round(audio.durationMs / 1000)}, 'provider',
-              ${call.recording_mode === 'one_party_no_announcement' ? 'one_party_policy' : 'announced_all_parties'}, 'stored', ${toIso(retain)}::timestamptz,
+              ${!e.voicemail && call.recording_mode === 'one_party_no_announcement' ? 'one_party_policy' : 'announced_all_parties'}, 'stored', ${toIso(retain)}::timestamptz,
               ${e.recordingRef})`.execute(tx);
     await enqueueJob(tx, { queue: TRANSCRIBE_JOB.queue, kind: TRANSCRIBE_JOB.kind, payload: { recordingId }, dedupeKey: TRANSCRIBE_JOB.dedupeKey(recordingId) });
     return { kind: 'stored', recordingId } as const;

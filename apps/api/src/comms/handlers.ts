@@ -3,6 +3,7 @@
 //   comms.reconcile       (standalone) provider lookup of a dispatch_unknown message (R-GATE-8)
 //   comms.recording_copy  (standalone) copy + encrypt a provider recording (onRecordingReady)
 //   comms.transcribe      (standalone) transcription, stored encrypted
+//   comms.media_copy      (standalone) inbound MMS media → checked, encrypted storage (comms/media.ts)
 // Standalone: dispatch must commit between its steps and never hold a transaction across a provider
 // call (ARCHITECTURE §9). Each run is idempotent across a crash: TX1 only claims scheduled/queued
 // messages, so a re-run never re-sends (E7); the reconcile and copy steps check state under lock.
@@ -12,6 +13,7 @@ import type { JobHandler, StandaloneJobHandler } from '../worker/types.js';
 import { z } from 'zod';
 import { dispatchOutbound, reconcileOutbound } from './dispatch.js';
 import { RECORDING_COPY_JOB, TRANSCRIBE_JOB, onRecordingReady, transcribeRecording } from './recordings.js';
+import { MEDIA_COPY_JOB, copyInboundMedia } from './media.js';
 import { commsRuntime } from './runtime.js';
 import type { CommsDeps } from './types.js';
 import type { Providers } from '../providers/index.js';
@@ -51,7 +53,7 @@ export function reconcileHandler(depsFor: DepsFor = defaultDeps): StandaloneJobH
   };
 }
 
-export const RecordingCopyPayload = jobPayload({ callRef: z.string().regex(/^[A-Za-z0-9_-]{4,64}$/), recordingRef: z.string().regex(/^[A-Za-z0-9_-]{4,64}$/), durationS: z.number().int().min(0).max(86_400) });
+export const RecordingCopyPayload = jobPayload({ callRef: z.string().regex(/^[A-Za-z0-9_-]{4,64}$/), recordingRef: z.string().regex(/^[A-Za-z0-9_-]{4,64}$/), durationS: z.number().int().min(0).max(86_400), voicemail: z.boolean().optional() });
 export type RecordingCopyPayload = z.infer<typeof RecordingCopyPayload>;
 
 export function recordingCopyHandler(depsFor: DepsFor = defaultDeps): StandaloneJobHandler<RecordingCopyPayload> {
@@ -62,7 +64,7 @@ export function recordingCopyHandler(depsFor: DepsFor = defaultDeps): Standalone
     via: 'provider',
     schema: RecordingCopyPayload,
     async run(ctx, p) {
-      const r = await onRecordingReady({ tenantId: ctx.actor.tenantId, providerCallRef: p.callRef, recordingRef: p.recordingRef, durationS: p.durationS }, depsFor(ctx.providers), ctx.actor);
+      const r = await onRecordingReady({ tenantId: ctx.actor.tenantId, providerCallRef: p.callRef, recordingRef: p.recordingRef, durationS: p.durationS, ...(p.voicemail ? { voicemail: true } : {}) }, depsFor(ctx.providers), ctx.actor);
       ctx.log.info('recording', { kind: RECORDING_COPY_JOB.kind, jobId: ctx.job.id.toString(), code: r.kind === 'refused' ? r.reason : r.kind });
     },
   };
@@ -83,9 +85,28 @@ export function transcribeHandler(depsFor: DepsFor = defaultDeps): StandaloneJob
   };
 }
 
+export const MediaCopyPayload = jobPayload({
+  messageId: zId,
+  items: z.array(z.object({ position: z.number().int().min(0).max(99), ref: z.string().regex(/^ME[0-9a-f]{32}$/).nullable(), declaredType: z.string().max(100).nullable() })).max(100),
+});
+
+export function mediaCopyHandler(depsFor: DepsFor = defaultDeps): StandaloneJobHandler<z.infer<typeof MediaCopyPayload>> {
+  return {
+    kind: MEDIA_COPY_JOB.kind as `${string}.${string}`,
+    queue: MEDIA_COPY_JOB.queue,
+    mode: 'standalone',
+    via: 'provider',
+    schema: MediaCopyPayload,
+    async run(ctx, p) {
+      const r = await copyInboundMedia(ctx.actor, p.messageId, p.items, depsFor(ctx.providers));
+      ctx.log.info('mms media', { kind: MEDIA_COPY_JOB.kind, jobId: ctx.job.id.toString(), code: `stored:${r.stored},skipped:${r.skipped}` });
+    },
+  };
+}
+
 /** Everything api/comms registers with the worker (CONVENTIONS §3). */
 export function makeCommsHandlers(depsFor: DepsFor = defaultDeps): JobHandler<unknown>[] {
-  return [dispatchHandler(depsFor), reconcileHandler(depsFor), recordingCopyHandler(depsFor), transcribeHandler(depsFor)] as unknown as JobHandler<unknown>[];
+  return [dispatchHandler(depsFor), reconcileHandler(depsFor), recordingCopyHandler(depsFor), transcribeHandler(depsFor), mediaCopyHandler(depsFor)] as unknown as JobHandler<unknown>[];
 }
 
 export const commsHandlers: JobHandler<unknown>[] = makeCommsHandlers();

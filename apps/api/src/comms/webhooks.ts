@@ -6,17 +6,26 @@
 //   2 idempotency: app.record_webhook_event(provider, provider_event_id) (payload platform-encrypted)
 //   3 the work, in the tenant, as the system actor (via 'provider')
 //
-//   POST /webhooks/telephony/sms        inbound SMS/MMS            → ingestInbound
+//   POST /webhooks/telephony/sms        inbound SMS/MMS            → ingestInbound (+ comms.media_copy job for MMS media)
 //   POST /webhooks/telephony/status     outbound SMS status        → applyMessageStatus (?m={message id})
 //   POST /webhooks/telephony/voice      inbound calls + outbound call status (announcement result)
 //   POST /webhooks/telephony/recording  a recording is ready       → comms.recording_copy job
 //   POST /webhooks/telephony/answer     Twilio <Number url>: the client answered a click-to-call; plays the
 //                                       recording announcement and records that it played (?c= signed call ref)
+//   POST /webhooks/telephony/voice/screen       inbound call: the agent leg's whisper ("press 1 to answer")
+//   POST /webhooks/telephony/voice/accept       inbound call: the agent pressed a key (accepts on 1)
+//   POST /webhooks/telephony/voice/dial-result  inbound call: the Dial ended; unanswered ⇒ missed + voicemail
+//   POST /webhooks/telephony/voice/voicemail-done  inbound call: the caller finished the message
+//                                       (all four carry ?c= a signed call ref; see comms/voice.ts. They answer
+//                                       TwiML from the stored call state, so a retried fetch gets the same answer)
 //   POST /webhooks/email/inbound        a reply to r+{token}@in…   → ingestInbound
 //   POST /webhooks/email/events         delivered/bounced/complained/opened/clicked/unsubscribed (X-Realty-Ref echo)
 //   POST /webhooks/email/postmark/{inbound,events}   the same, in Postmark's formats (Basic auth)
 //   POST /webhooks/email/sendgrid/inbound            SendGrid Inbound Parse (multipart, Basic auth)
 //   POST /webhooks/email/sendgrid/events             SendGrid Event Webhook (ECDSA signature)
+//   POST /webhooks/email/ses/events                  Amazon SES events via an SNS HTTPS subscription (SNS signature,
+//                                                    allowed TopicArn; also confirms the subscription)
+//   POST /webhooks/email/mailgun/events              Mailgun webhooks (HMAC-SHA256 signature)
 // With TELEPHONY_PROVIDER=twilio the guard also resolved the tenant from the signing subaccount
 // (req.webhookTenantId); a number that resolves to a different tenant is treated as unrouted.
 import { createHash } from 'node:crypto';
@@ -32,10 +41,15 @@ import { AppError } from '../errors.js';
 import { systemActor } from '../worker/systemActor.js';
 import { announcementTwiml } from '../providers/twilio/telephony.js';
 import { type NormalizedEmailEvent, type NormalizedInbound, parsePostmarkEvent, parsePostmarkInbound, parseSendgridEvents, parseSendgridInbound } from '../providers/email/inbound.js';
+import { parseMailgunEvent } from '../providers/email/mailgun.js';
+import { asSnsMessage, parseSesNotification, snsVerifier } from '../providers/email/ses.js';
 import { unsubscribeMessageRecipient } from './consent.js';
 import { RECORDING_ANNOUNCEMENT, applyCallStatus } from './dial.js';
 import { ingestInbound, isMissedCallStatus, recordMissedInboundCall } from './inbound.js';
 import { RECORDING_COPY_JOB } from './recordings.js';
+import { MEDIA_COPY_JOB, mediaItemsOf } from './media.js';
+import { BRIDGE_TWIML, ringTwiml, sayAndHangupTwiml, screenTwiml, voicemailTwiml } from '../providers/twilio/voiceTwiml.js';
+import { type InboundCallPlan, SIGNED_REF_PURPOSE, VOICEMAIL_DONE, VOICEMAIL_MAX_S, VOICEMAIL_NOTICE, acceptInboundCall, finishInboundCall, inboundDialResult, inboundUrls, planInboundCall, screenFor, voicemailLeft } from './voice.js';
 import { tokenFromRecipient, verifySignedRef } from './render.js';
 import { depsFromPlatform } from './runtime.js';
 import { type MappedStatus, applyMessageStatus, mapTelephonyStatus } from './status.js';
@@ -124,9 +138,18 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
     if (!b.MessageSid || !b.From || !b.To) throw new AppError('VALIDATION_FAILED');
     const p = req.server.platform;
     const tenantId = await telephonyTenant(req, b.To);
-    await run(req, 'telephony', `sms:${b.MessageSid}`, tenantId, { sid: b.MessageSid }, () =>
-      ingestInbound(systemActor(tenantId!, 'provider'), { kind: 'sms', providerRef: b.MessageSid!, from: b.From!, to: b.To!, body: b.Body ?? '', mediaCount: Number(b.NumMedia ?? '0') || 0 }, depsFromPlatform(p)),
-    );
+    const media = mediaItemsOf(b);
+    await run(req, 'telephony', `sms:${b.MessageSid}`, tenantId, { sid: b.MessageSid }, async () => {
+      const actor = systemActor(tenantId!, 'provider');
+      const out = await ingestInbound(actor, { kind: 'sms', providerRef: b.MessageSid!, from: b.From!, to: b.To!, body: b.Body ?? '', mediaCount: media.length }, depsFromPlatform(p));
+      // MMS media are copied into encrypted storage by a job (never inside the webhook request)
+      if (out.kind === 'stored' && out.messageId && media.length > 0) {
+        await withTenantTx(actor, async (tx) => {
+          await enqueueJob(tx, { queue: MEDIA_COPY_JOB.queue, kind: MEDIA_COPY_JOB.kind, payload: { messageId: out.messageId, items: media.slice(0, 100).map((m) => ({ position: m.position, ref: m.ref, declaredType: m.declaredType })) }, dedupeKey: MEDIA_COPY_JOB.dedupeKey(out.messageId!) });
+        }, { db: p.db });
+      }
+      return out;
+    });
     reply.header('content-type', 'text/xml');
     return twiml;
   });
@@ -159,6 +182,17 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
     await run(req, 'telephony', ref, tenantId, { sid: b.CallSid, status }, async () => {
       const actor = systemActor(tenantId!, 'provider');
       const deps = depsFromPlatform(p);
+      if (inbound && status === 'completed') {
+        // the final status of an inbound call: one that was never answered is missed (the caller hung up
+        // while it rang); an answered one completes; voicemail stays voicemail
+        const at = occurred(b.Timestamp, now);
+        const id = await finishInboundCall(actor, b.CallSid!, durationOf(b.CallDuration), at, deps);
+        if (id) {
+          await applyCallStatus(actor, { providerCallRef: b.CallSid!, status: 'completed', ...(durationOf(b.CallDuration) !== null ? { durationS: durationOf(b.CallDuration)! } : {}), occurredAt: at }, deps);
+          await recordMissedInboundCall(actor, id, deps);
+          return id;
+        }
+      }
       if (inbound && (status === 'ringing' || status === 'no_answer' || status === 'busy' || status === 'voicemail' || status === 'completed')) {
         const known = await applyCallStatus(actor, { providerCallRef: b.CallSid!, status: status as 'ringing', occurredAt: occurred(b.Timestamp, now) }, deps);
         if (known) {
@@ -171,20 +205,85 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
       return applyCallStatus(actor, { providerCallRef: callRef, status: status as 'ringing', ...(announcement ? { announcement } : {}), ...(durationOf(b.CallDuration) !== null ? { durationS: durationOf(b.CallDuration)! } : {}), occurredAt: occurred(b.Timestamp, now) }, deps);
     });
     reply.header('content-type', 'text/xml');
+    // the provider's first request for a new inbound call asks what to do with it (a retried fetch is a
+    // duplicate event but gets the same answer: the plan is stored on the call)
+    if (inbound && status === 'ringing' && tenantId) return inboundCallTwiml(req, tenantId, b.CallSid);
     return twiml;
   });
 
-  r.post('/webhooks/telephony/recording', { ...tel, schema: { body: Form } }, async (req) => {
-    const b = req.body;
-    // Twilio's recording callback carries no From; its tenant comes from the signing subaccount
-    if (!b.CallSid || !b.RecordingSid || (!b.From && !req.webhookTenantId)) throw new AppError('VALIDATION_FAILED');
+  /** TwiML for an inbound call's plan: ring the agent, or voicemail (which also records the missed call). */
+  async function inboundCallTwiml(req: FastifyRequest, tenantId: string, callSid: string): Promise<string> {
+    const deps = depsFromPlatform(req.server.platform);
+    const actor = systemActor(tenantId, 'provider');
+    let plan: InboundCallPlan = await planInboundCall(actor, callSid, deps);
+    // a caller we could not identify (blocked or invalid caller ID) has no call row and no contact
+    if (plan.kind === 'hangup') return sayAndHangupTwiml('Sorry, we could not take this call. Please call again without blocking your number.');
+    if (plan.kind === 'voicemail') plan = await inboundDialResult(actor, plan.callId, deps);
+    const u = inboundUrls(deps, tenantId, plan.kind === 'hangup' ? '' : plan.callId);
+    if (plan.kind === 'voicemail') return voicemailTwiml({ greeting: plan.greeting, notice: VOICEMAIL_NOTICE, maxLengthS: VOICEMAIL_MAX_S, doneUrl: u.voicemailDone, recordingStatusCallbackUrl: u.voicemailRecording });
+    if (plan.kind === 'hangup') return sayAndHangupTwiml(null);
+    return ringTwiml({ announcement: plan.announcement, callerId: plan.callerId, agentPhone: plan.agentPhone, timeoutS: plan.timeoutS, record: plan.record, screenUrl: u.screen, actionUrl: u.dialResult, recordingStatusCallbackUrl: u.callRecording });
+  }
+
+  /** The call a signed inbound-call ref names, cross-checked against the signing subaccount (null: unrouted). */
+  function inboundRef(req: FastifyRequest, c: string): { tenantId: string | null; callId: string } {
+    const ref = verifySignedRef(req.server.platform.config.sessionSecret, SIGNED_REF_PURPOSE, c);
+    if (!ref) throw new AppError('VALIDATION_FAILED');
+    return { tenantId: req.webhookTenantId === undefined || req.webhookTenantId === ref.tenantId ? ref.tenantId : null, callId: ref.id };
+  }
+  const CallRefQuery = z.object({ c: z.string().max(100) });
+
+  r.post('/webhooks/telephony/voice/screen', { ...tel, schema: { body: Form, querystring: CallRefQuery } }, async (req, reply) => {
+    const { tenantId, callId } = inboundRef(req, req.query.c);
+    reply.header('content-type', 'text/xml');
+    if (!tenantId) return sayAndHangupTwiml(null);
+    const deps = depsFromPlatform(req.server.platform);
+    const prompt = await screenFor(systemActor(tenantId, 'provider'), callId, deps);
+    return prompt ? screenTwiml({ prompt, acceptUrl: inboundUrls(deps, tenantId, callId).accept }) : sayAndHangupTwiml(null);
+  });
+
+  r.post('/webhooks/telephony/voice/accept', { ...tel, schema: { body: Form, querystring: CallRefQuery } }, async (req, reply) => {
+    const { tenantId, callId } = inboundRef(req, req.query.c);
+    reply.header('content-type', 'text/xml');
+    if (!tenantId || (req.body.Digits ?? '').trim() !== '1') return sayAndHangupTwiml(null);
     const p = req.server.platform;
-    const tenantId = await telephonyTenant(req, b.From);
-    await run(req, 'telephony', `recording:${b.RecordingSid}`, tenantId, { call: b.CallSid, recording: b.RecordingSid }, () =>
-      withTenantTx(systemActor(tenantId!, 'provider'), async (tx) => {
-        await enqueueJob(tx, { queue: RECORDING_COPY_JOB.queue, kind: RECORDING_COPY_JOB.kind, payload: { callRef: b.CallSid!, recordingRef: b.RecordingSid!, durationS: Math.min(durationOf(b.RecordingDuration) ?? 0, 86_400) }, dedupeKey: RECORDING_COPY_JOB.dedupeKey(b.RecordingSid!) });
-      }, { db: p.db }),
-    );
+    const accepted = await acceptInboundCall(systemActor(tenantId, 'provider'), callId, p.clock.now(), depsFromPlatform(p));
+    return accepted ? BRIDGE_TWIML : sayAndHangupTwiml('This call has ended.');
+  });
+
+  r.post('/webhooks/telephony/voice/dial-result', { ...tel, schema: { body: Form, querystring: CallRefQuery } }, async (req, reply) => {
+    const { tenantId, callId } = inboundRef(req, req.query.c);
+    reply.header('content-type', 'text/xml');
+    if (!tenantId) return sayAndHangupTwiml(null);
+    const deps = depsFromPlatform(req.server.platform);
+    const plan = await inboundDialResult(systemActor(tenantId, 'provider'), callId, deps);
+    if (plan.kind !== 'voicemail') return sayAndHangupTwiml(null);
+    const u = inboundUrls(deps, tenantId, callId);
+    return voicemailTwiml({ greeting: plan.greeting, notice: VOICEMAIL_NOTICE, maxLengthS: VOICEMAIL_MAX_S, doneUrl: u.voicemailDone, recordingStatusCallbackUrl: u.voicemailRecording });
+  });
+
+  r.post('/webhooks/telephony/voice/voicemail-done', { ...tel, schema: { body: Form, querystring: CallRefQuery } }, async (req, reply) => {
+    inboundRef(req, req.query.c);
+    reply.header('content-type', 'text/xml');
+    return sayAndHangupTwiml(VOICEMAIL_DONE);
+  });
+
+  r.post('/webhooks/telephony/recording', { ...tel, schema: { body: Form, querystring: z.object({ vm: z.string().max(100).optional() }) } }, async (req) => {
+    const b = req.body;
+    // a voicemail recording carries our signed call ref (?vm=); the server state still decides (voice.ts)
+    const vm = req.query.vm ? inboundRef(req, req.query.vm) : null;
+    // Twilio's recording callback carries no From; its tenant comes from the signing subaccount (or our ref)
+    if (!b.CallSid || !b.RecordingSid || (!b.From && !req.webhookTenantId && !vm)) throw new AppError('VALIDATION_FAILED');
+    const p = req.server.platform;
+    const tenantId = vm && !b.From ? vm.tenantId : await telephonyTenant(req, b.From);
+    await run(req, 'telephony', `recording:${b.RecordingSid}`, tenantId, { call: b.CallSid, recording: b.RecordingSid }, async () => {
+      const actor = systemActor(tenantId!, 'provider');
+      const voicemail = vm !== null && vm.tenantId === tenantId;
+      if (voicemail) await voicemailLeft(actor, vm.callId, depsFromPlatform(p));
+      await withTenantTx(actor, async (tx) => {
+        await enqueueJob(tx, { queue: RECORDING_COPY_JOB.queue, kind: RECORDING_COPY_JOB.kind, payload: { callRef: b.CallSid!, recordingRef: b.RecordingSid!, durationS: Math.min(durationOf(b.RecordingDuration) ?? 0, 86_400), ...(voicemail ? { voicemail: true } : {}) }, dedupeKey: RECORDING_COPY_JOB.dedupeKey(b.RecordingSid!) });
+      }, { db: p.db });
+    });
     return { ok: true };
   });
 
@@ -246,7 +345,7 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
     await run(req, 'email', `event:${e.eventId}`, ref?.tenantId ?? null, { eventId: e.eventId, type: e.type }, async () => {
       // an unsubscribe at the provider is the person's opt-out, like our own link (D1)
       if (e.type === 'unsubscribed') return unsubscribeMessageRecipient(ref!.tenantId, ref!.id, 'provider_unsubscribe', depsFromPlatform(p));
-      return applyMessageStatus(systemActor(ref!.tenantId, 'provider'), { providerEventRef: `email:${e.eventId}`, message: { id: ref!.id }, providerStatus: e.type, mapped: e.type as MappedStatus, occurredAt: e.occurredAt ? at(e.occurredAt) : p.clock.now() }, depsFromPlatform(p));
+      return applyMessageStatus(systemActor(ref!.tenantId, 'provider'), { providerEventRef: `email:${e.eventId}`, message: { id: ref!.id }, providerStatus: e.type, mapped: e.type as MappedStatus, errorCode: e.code ? e.code.slice(0, 100) : null, occurredAt: e.occurredAt ? at(e.occurredAt) : p.clock.now() }, depsFromPlatform(p));
     });
   }
 
@@ -309,6 +408,52 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
       const n = parseSendgridInbound(req.body);
       if (!n) throw new AppError('VALIDATION_FAILED');
       return handleInbound(req, n);
+    });
+  });
+
+  // ---- Amazon SES (via SNS) and Mailgun events: the same handleEvent, so suppressions and opt-outs are identical ----
+  const eventsVendor = (format: 'ses' | 'mailgun', webhookAuth: 'sns' | 'mailgun_hmac') => ({
+    config: { auth: 'webhook' as const, webhookProvider: 'email' as const, webhookAuth },
+    preHandler: async (req: FastifyRequest) => {
+      if (!req.server.platform.config.emailInbound.formats.includes(format)) throw new AppError('NOT_FOUND');
+    },
+  });
+  r.post('/webhooks/email/mailgun/events', { ...eventsVendor('mailgun', 'mailgun_hmac'), schema: { body: Json } }, async (req) => {
+    const e = parseMailgunEvent(req.body);
+    if (!e) throw new AppError('VALIDATION_FAILED');
+    await handleEvent(req, e);
+    return { ok: true };
+  });
+  // SNS posts its JSON as text/plain: parsed (raw body kept) only inside this scope
+  await app.register(async (scope) => {
+    scope.removeContentTypeParser('text/plain');
+    scope.addContentTypeParser('text/plain', { parseAs: 'string' }, (req, body, done) => {
+      const s = body as string;
+      req.rawBody = s;
+      try {
+        done(null, JSON.parse(s, (k, v: unknown) => (k === '__proto__' || k === 'constructor' || k === 'prototype' ? undefined : v)));
+      } catch {
+        done(Object.assign(new Error('invalid body'), { statusCode: 400, code: 'REALTY_INVALID_BODY' }), undefined);
+      }
+    });
+    scope.withTypeProvider<ZodTypeProvider>().post('/webhooks/email/ses/events', { ...eventsVendor('ses', 'sns'), schema: { body: Json } }, async (req) => {
+      // the guard verified the signature, the topic and the timestamp
+      const m = asSnsMessage(req.body);
+      if (!m) throw new AppError('VALIDATION_FAILED');
+      const topics = req.server.platform.config.emailInbound.sesSnsTopicArns;
+      if (m.Type === 'SubscriptionConfirmation') {
+        if (!(await snsVerifier.confirmSubscription(m, topics))) throw new AppError('PROVIDER_UNAVAILABLE');
+        req.log.info({ code: 'SNS_SUBSCRIPTION_CONFIRMED' }, 'SES event topic subscription confirmed');
+        return { ok: true };
+      }
+      if (m.Type === 'UnsubscribeConfirmation') {
+        req.log.warn({ code: 'SNS_UNSUBSCRIBED' }, 'SES event topic unsubscribed this endpoint (platform alert)');
+        return { ok: true };
+      }
+      const e = parseSesNotification(m);
+      if (!e) throw new AppError('VALIDATION_FAILED');
+      await handleEvent(req, e);
+      return { ok: true };
     });
   });
 }

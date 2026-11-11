@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { channelState } from './useReachability.js';
-import { isHeld, messageStatus, reachSentence, shortDate } from './sentences.js';
+import { isHeld, messageStatus, providerCodeSentence, reachSentence, shortDate } from './sentences.js';
 import type { ChannelReach, ReachReason, Reachability } from './types.js';
 
 const NOW = new Date('2026-11-12T18:00:00');
@@ -103,5 +103,31 @@ describe('channelState', () => {
   });
   it('unknown (loading or failed) disables nothing', () => {
     expect(channelState(null, 'sms').blocked).toBe(false);
+  });
+});
+
+describe('provider codes from the real adapters (Twilio, SMTP, SES, Mailgun)', () => {
+  it.each<[string, string, string]>([
+    ['sms', '30034', "Not delivered: the sending number isn't registered for texting yet"],
+    ['sms', '21614', "Not delivered: the number isn't a mobile number"],
+    ['sms', 'TWILIO_AUTH', "Not delivered: the phone service didn't accept our credentials"],
+    ['email', 'SMTP_552', 'Not delivered: their mailbox is full or the email was too large'],
+    ['email', 'SMTP_CONNECTION', "Not delivered: the email service couldn't be reached"],
+    ['email', 'mailgun:rejected:unverified', 'Not delivered: the email service refused to send it'],
+    ['email', 'ses:RenderingFailure', "Not delivered: the email couldn't be put together"],
+  ])('%s %s', (channel, code, text) => {
+    expect(messageStatus({ status: 'failed', statusReason: 'PROVIDER_REJECTED', providerErrorCode: code, channel }, 'Jane')?.text).toBe(text);
+  });
+
+  it('names SES bounce subtypes and Mailgun failure reasons on a bounced email; unknown codes keep the generic sentence', () => {
+    const bounced = (code: string | null) => messageStatus({ status: 'bounced', providerErrorCode: code, channel: 'email' }, 'Jane')?.text;
+    expect(bounced('ses:Bounce:Permanent/NoEmail')).toBe("Not delivered: the address doesn't exist");
+    expect(bounced('ses:Bounce:Permanent/SomethingNew')).toBe('Not delivered: the email bounced');
+    expect(bounced('mailgun:failed:permanent/suppress-bounce/605')).toBe('Not delivered: the address bounced before, so Mailgun did not try again');
+    expect(bounced('mailgun:failed:permanent/bounce/550')).toBe('Not delivered: the email bounced');
+    expect(bounced(null)).toBe('Not delivered: the email bounced');
+    expect(providerCodeSentence('ses:Complaint:abuse')).toBe('they marked it as spam');
+    expect(providerCodeSentence('99999')).toBeNull();
+    expect(messageStatus({ status: 'failed', providerErrorCode: '99999', channel: 'sms' }, 'Jane')?.text).toBe('Not delivered: the carrier rejected it');
   });
 });

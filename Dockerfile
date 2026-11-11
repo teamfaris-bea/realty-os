@@ -67,6 +67,8 @@ CMD ["node", "apps/api/dist/main.js"]
 # ---- static web app ----
 FROM nginx:1.27-alpine AS web
 COPY deploy/nginx.conf /etc/nginx/templates/default.conf.template
+# generated from apps/web/security-headers.ts (node deploy/render-security-headers.mjs); included by nginx.conf
+COPY deploy/security-headers.conf /etc/nginx/snippets/security-headers.conf
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html
 ENV API_UPSTREAM=api:3001
 EXPOSE 8080

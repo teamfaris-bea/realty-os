@@ -1,6 +1,7 @@
 // Browser security policy for the web app, defined once. vite.config.ts applies it to `vite preview`
 // (the production build) and injects the CSP as a <meta> tag into the built index.html; the
-// deployable static server should send `webSecurityHeaders` on every response it serves.
+// deployable static server (deploy/nginx.conf) sends `webSecurityHeaders` on every response it serves,
+// through deploy/security-headers.conf, which is generated from `nginxSecurityHeadersConf()` below.
 //
 // The policy is strict: no 'unsafe-inline' and no 'unsafe-eval' anywhere. The production bundle has
 // no inline script or style (Vite emits external files; React `style` props are set through the
@@ -50,6 +51,27 @@ export const webSecurityHeaders: Readonly<Record<string, string>> = {
   // legacy clickjacking guard for browsers without frame-ancestors
   'X-Frame-Options': 'DENY',
 };
+
+/**
+ * The nginx `add_header` lines that send `webSecurityHeaders` (with `always`, so error pages carry them
+ * too). deploy/security-headers.conf is exactly this text, written by `node deploy/render-security-headers.mjs`;
+ * src/security-headers.nginx.test.ts fails when that file or deploy/nginx.conf drifts from this policy.
+ */
+export function nginxSecurityHeadersConf(): string {
+  const lines = Object.entries(webSecurityHeaders).map(([name, value]) => {
+    // a value is written inside "…": refuse anything nginx would interpret (quotes, escapes, variables)
+    if (!/^[A-Za-z0-9-]+$/.test(name) || /["\\$\r\n{}]/.test(value)) throw new Error(`${name} cannot be written as an nginx header`);
+    return `add_header ${name} "${value}" always;`;
+  });
+  return [
+    '# GENERATED from apps/web/security-headers.ts (webSecurityHeaders) by `node deploy/render-security-headers.mjs`.',
+    '# Do not edit: apps/web/src/security-headers.nginx.test.ts fails when this file drifts from that policy.',
+    '# Included by every content location of deploy/nginx.conf (nginx drops inherited add_header lines in a',
+    '# location that sets its own, so each location includes this file instead of relying on inheritance).',
+    ...lines,
+    '',
+  ].join('\n');
+}
 
 /** The <meta> tag the build injects at the top of <head>, before any script or stylesheet. */
 export function cspMetaTag(): string {

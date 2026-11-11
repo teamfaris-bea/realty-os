@@ -8,6 +8,7 @@
 import { createHash } from 'node:crypto';
 import {
   type CallRequest,
+  type MediaRef,
   ProviderError,
   type ProviderMessageStatus,
   type SmsRequest,
@@ -16,6 +17,9 @@ import {
 } from '../types.js';
 
 const ref = (prefix: string, s: string) => prefix + createHash('sha256').update(s).digest('hex').slice(0, 30);
+
+/** A valid 1×1 PNG (the fake's default MMS media). */
+export const FAKE_PNG = new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64'));
 
 export type FakeFailure = 'timeout' | 'rejected' | 'unavailable' | 'timeout_after_submit';
 
@@ -136,6 +140,20 @@ export class FakeTelephony implements TelephonyProvider {
     const bytes = new Uint8Array(1024);
     for (let i = 0; i < bytes.length; i++) bytes[i] = seed[i % seed.length]!;
     return { bytes, contentType: 'audio/wav', durationMs: 60_000 };
+  }
+
+  /** inbound MMS media the fake serves (tests set it); unknown refs get a tiny PNG */
+  readonly media = new Map<string, { bytes: Uint8Array; contentType: string } | 'missing'>();
+  readonly deletedMedia: string[] = [];
+  async fetchMedia(account: TelephonyAccount, ref: MediaRef) {
+    void account;
+    const m = this.media.get(ref.mediaRef);
+    if (m === 'missing') throw new ProviderError('rejected', '20404');
+    return m ?? { bytes: FAKE_PNG, contentType: 'image/png' };
+  }
+  async deleteMedia(account: TelephonyAccount, ref: MediaRef) {
+    void account;
+    if (!this.deletedMedia.includes(ref.mediaRef)) this.deletedMedia.push(ref.mediaRef);
   }
 
   /** recording refs whose provider copy was deleted (after our encrypted copy, or because it may not be kept) */

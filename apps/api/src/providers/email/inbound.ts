@@ -31,6 +31,8 @@ export interface NormalizedEmailEvent {
   ref: string | null;
   type: NormalizedEventType;
   occurredAt: string | null;
+  /** the vendor's own reason, vendor-prefixed (e.g. `ses:Bounce:Permanent/NoEmail`, `mailgun:failed:permanent/bounce/550`), or null */
+  code?: string | null;
 }
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');

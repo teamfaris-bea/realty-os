@@ -25,6 +25,8 @@ const bool = z
   .transform((v) => v === 'true' || v === '1');
 
 const providerKind = z.enum(['fake', 'real']).default('fake');
+/** an SNS topic ARN (aws, aws-cn, aws-us-gov partitions) */
+const SNS_TOPIC_ARN = /^arn:aws(-cn|-us-gov)?:sns:[a-z0-9-]+:\d{12}:[A-Za-z0-9_-]{1,256}$/;
 
 const TwilioSchema = z.object({
   accountSid: z.string().regex(/^AC[0-9a-f]{32}$/, 'TWILIO_ACCOUNT_SID must look like AC + 32 hex'),
@@ -94,11 +96,15 @@ export const ConfigSchema = z.object({
   s3: S3Schema.optional(),
   /** which inbound-email webhook formats are accepted besides the generic signed one */
   emailInbound: z.object({
-    formats: z.array(z.enum(['postmark', 'sendgrid'])),
+    formats: z.array(z.enum(['postmark', 'sendgrid', 'ses', 'mailgun'])),
     /** HTTP Basic credentials embedded in the vendor webhook URL (Postmark; SendGrid Inbound Parse) */
     basicAuth: z.object({ username: z.string().min(1), password: z.string().min(16) }).optional(),
     /** SendGrid Event Webhook ECDSA public key (base64 DER, from the SendGrid console) */
     sendgridEventPublicKey: z.string().optional(),
+    /** 'ses': the SNS topics whose (AWS-signed) notifications are accepted (SES_SNS_TOPIC_ARNS) */
+    sesSnsTopicArns: z.array(z.string().regex(SNS_TOPIC_ARN)).optional(),
+    /** 'mailgun': the HTTP webhook signing key (MAILGUN_WEBHOOK_SIGNING_KEY, from the Mailgun console) */
+    mailgunWebhookSigningKey: z.string().min(1).optional(),
   }),
   /** api: how long /ready reports 503 before the server stops accepting (load balancer drain) */
   shutdownDrainMs: z.coerce.number().int().min(0).max(120_000).default(5_000),
@@ -108,6 +114,14 @@ export const ConfigSchema = z.object({
   aiModel: z.string().default('claude-opus-5-5'),
   storageDir: z.string().default('.storage'),
   vapid: z.object({ publicKey: z.string(), privateKey: z.string(), subject: z.string() }).optional(),
+  /** Follow Up Boss import adapter (SECURITY §2.9): server config only, never tenant input; checked in `fubSettings` */
+  fub: z.object({
+    provider: providerKind,
+    baseUrl: z.url({ protocol: /^https$/ }),
+    allowedHosts: z.array(z.string()).min(1),
+    /** FUB registered-system headers (X-System / X-System-Key), when the account requires them */
+    system: z.object({ name: z.string().min(1), key: z.string().min(1) }).optional(),
+  }),
   /** General per-session/IP request budget (in-memory, per process). Auth routes add DB-backed limits. */
   globalRateLimitPerMinute: z.coerce.number().int().min(10).default(600),
   logLevel: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
@@ -130,6 +144,45 @@ function pick<T extends string>(name: string, v: string | undefined, allowed: re
   if (x === '') return dflt;
   if ((allowed as readonly string[]).includes(x)) return x as T;
   throw new ConfigError(`${name} must be one of ${allowed.join(', ')}`);
+}
+
+/** FUB's own API (the defaults of FUB_BASE_URL / FUB_ALLOWED_HOSTS; imports/fub.ts DEFAULT_FUB_* match). */
+const FUB_DEFAULT_BASE_URL = 'https://api.followupboss.com/v1';
+const FUB_DEFAULT_HOSTS = ['api.followupboss.com'];
+/** a lowercase dotted DNS name: no scheme, port, path, credentials or wildcard */
+const DNS_NAME = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+/** the same internal-name rule as push endpoints (auth/devices.ts INTERNAL_SUFFIX) */
+const INTERNAL_HOST = /(^|\.)(localhost|local|internal|intranet|corp|lan|home|home\.arpa)$/;
+const isPublicDnsName = (h: string) => DNS_NAME.test(h) && !/\.[0-9]+$/.test(h) && !INTERNAL_HOST.test(h);
+
+/**
+ * FUB_PROVIDER, FUB_BASE_URL, FUB_ALLOWED_HOSTS, FUB_SYSTEM_NAME/KEY (SSRF guard, SECURITY §2.9), checked at
+ * startup: every allow-list entry is a lowercase public host name; the base URL is https on the default port,
+ * without credentials, query or fragment, and its host is on the list. Problems are pushed by key, never value.
+ * The adapter re-checks the same rule when it is built (imports/fub.ts checkFubBaseUrl).
+ */
+function fubSettings(env: NodeJS.ProcessEnv, missing: string[], invalid: string[]) {
+  const provider = pick('FUB_PROVIDER', env.FUB_PROVIDER, ['fake', 'real'] as const, 'fake');
+  const hosts = [...new Set(list(env.FUB_ALLOWED_HOSTS))];
+  if (hosts.some((h) => !isPublicDnsName(h))) invalid.push('FUB_ALLOWED_HOSTS must list lowercase public host names only (no scheme, port, path or wildcard)');
+  const allowedHosts = hosts.length > 0 ? hosts : [...FUB_DEFAULT_HOSTS];
+  const raw = (env.FUB_BASE_URL ?? '').trim() || FUB_DEFAULT_BASE_URL;
+  let u: URL | null;
+  try {
+    u = new URL(raw);
+  } catch {
+    u = null;
+  }
+  let baseUrl = FUB_DEFAULT_BASE_URL;
+  if (!u || u.protocol !== 'https:' || u.port !== '' || u.username !== '' || u.password !== '' || /[?#]/.test(raw) || !isPublicDnsName(u.hostname)) {
+    invalid.push('FUB_BASE_URL must be https on the default port, without credentials, query or fragment, naming a public host');
+  } else if (!allowedHosts.includes(u.hostname)) invalid.push('FUB_BASE_URL host must be listed in FUB_ALLOWED_HOSTS');
+  else baseUrl = u.href.replace(/\/+$/, '');
+  const name = env.FUB_SYSTEM_NAME?.trim();
+  const key = env.FUB_SYSTEM_KEY?.trim();
+  if (name && !key) missing.push('FUB_SYSTEM_KEY');
+  if (key && !name) missing.push('FUB_SYSTEM_NAME');
+  return { provider, baseUrl, allowedHosts, ...(name && key ? { system: { name, key } } : {}) };
 }
 
 /**
@@ -167,7 +220,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     push: env.PUSH_PROVIDER === 'webpush' || env.PUSH_PROVIDER === 'real' ? ('real' as const) : ('fake' as const),
   };
   const allowFakeProviders = bool.parse(env.ALLOW_FAKE_PROVIDERS || undefined);
-  const formats = list(env.EMAIL_INBOUND_FORMATS).map((f) => pick('EMAIL_INBOUND_FORMATS', f, ['postmark', 'sendgrid'] as const, 'postmark'));
+  const formats = list(env.EMAIL_INBOUND_FORMATS).map((f) => pick('EMAIL_INBOUND_FORMATS', f, ['postmark', 'sendgrid', 'ses', 'mailgun'] as const, 'postmark'));
 
   const wh = (key: string, label: string, requiredInProd: boolean): string => {
     const v = env[key];
@@ -222,8 +275,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         }
       : undefined;
   const basicAuth =
-    formats.length > 0 ? { username: need('EMAIL_WEBHOOK_BASIC_USER') ?? '', password: need('EMAIL_WEBHOOK_BASIC_PASSWORD') ?? '' } : undefined;
+    formats.includes('postmark') || formats.includes('sendgrid') ? { username: need('EMAIL_WEBHOOK_BASIC_USER') ?? '', password: need('EMAIL_WEBHOOK_BASIC_PASSWORD') ?? '' } : undefined;
   const sendgridEventPublicKey = formats.includes('sendgrid') ? need('SENDGRID_EVENT_PUBLIC_KEY') : undefined;
+  const sesSnsTopicArns = formats.includes('ses') ? list(env.SES_SNS_TOPIC_ARNS) : undefined;
+  if (sesSnsTopicArns?.length === 0) missing.push('SES_SNS_TOPIC_ARNS');
+  if (sesSnsTopicArns?.some((a) => !SNS_TOPIC_ARN.test(a))) invalid.push('SES_SNS_TOPIC_ARNS must list SNS topic ARNs (arn:aws:sns:<region>:<account id>:<topic>)');
+  const mailgunWebhookSigningKey = formats.includes('mailgun') ? need('MAILGUN_WEBHOOK_SIGNING_KEY') : undefined;
+  // bounces, complaints and unsubscribes must reach the app: an SES or Mailgun relay needs its event format
+  // (or the generic signed format through a bridge, which needs its own EMAIL_WEBHOOK_SECRET)
+  const relay = smtp?.vendor;
+  if (prod && (relay === 'ses' || relay === 'mailgun') && !formats.includes(relay) && !env.EMAIL_WEBHOOK_SECRET) {
+    invalid.push(`SMTP_VENDOR=${relay} needs ${relay} in EMAIL_INBOUND_FORMATS (or EMAIL_WEBHOOK_SECRET for a bridge to the generic format) in production`);
+  }
+  const fub = fubSettings(env, missing, invalid);
 
   if (prod) {
     if (!env.PUBLIC_BASE_URL) missing.push('PUBLIC_BASE_URL');
@@ -272,13 +336,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     twilio,
     smtp,
     s3,
-    emailInbound: { formats, ...(basicAuth ? { basicAuth } : {}), ...(sendgridEventPublicKey ? { sendgridEventPublicKey } : {}) },
+    emailInbound: { formats, ...(basicAuth ? { basicAuth } : {}), ...(sendgridEventPublicKey ? { sendgridEventPublicKey } : {}), ...(sesSnsTopicArns ? { sesSnsTopicArns } : {}), ...(mailgunWebhookSigningKey ? { mailgunWebhookSigningKey } : {}) },
     shutdownDrainMs: env.SHUTDOWN_DRAIN_MS || undefined,
     shutdownTimeoutMs: env.SHUTDOWN_TIMEOUT_MS || undefined,
     anthropicApiKey: env.ANTHROPIC_API_KEY || undefined,
     aiModel: env.AI_MODEL || undefined,
     storageDir: env.STORAGE_DIR || undefined,
     vapid,
+    fub,
     globalRateLimitPerMinute: env.GLOBAL_RATE_LIMIT_PER_MINUTE || undefined,
     logLevel: env.LOG_LEVEL || undefined,
   });

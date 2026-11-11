@@ -221,3 +221,35 @@ export const COMMS_REQUEST_SCHEMAS = {
   DomainBody,
   IdentityBody,
 };
+
+// ---- inbound calls: ring timeout and voicemail greeting (comms/voice.ts) -----------------------------
+
+export const VoiceSettingsSchema = z.object({
+  /** how long an inbound call rings the agent before voicemail (5–60 s) */
+  ringTimeoutSeconds: z.number().int(),
+  /** the team's own greeting, or null for the default */
+  voicemailGreeting: z.string().nullable(),
+  /** what callers hear when no greeting is set; a fixed recording notice always follows either one */
+  defaultGreeting: z.string(),
+  recordingNotice: z.string(),
+  /** 0 before the first save */
+  version: z.number().int(),
+});
+export const VoiceSettingsResponse = z.object({ settings: VoiceSettingsSchema });
+export const VoiceSettingsBody = z.strictObject({
+  version: z.number().int().min(0),
+  ringTimeoutSeconds: z.number().int().min(5).max(60),
+  voicemailGreeting: z.string().max(500).nullable(),
+});
+
+// ---- thread attachments: inbound MMS media and voicemails (comms/media.ts) ---------------------------
+
+export const AttachmentsResponse = z.object({
+  messages: z.array(z.object({
+    messageId: z.uuid(),
+    media: z.array(z.object({ position: z.number().int(), contentType: z.string(), byteSize: z.number().int(), inline: z.boolean(), url: z.string() })),
+    /** media the platform did not keep, with why (TYPE_NOT_ALLOWED, TOO_LARGE, TOO_MANY, CONTENT_MISMATCH, FETCH_FAILED) */
+    skipped: z.array(z.object({ position: z.number().int(), reason: z.string() })),
+  })),
+  voicemails: z.array(z.object({ callId: z.uuid(), recordingId: z.uuid(), durationS: z.number().int().nullable(), transcriptReady: z.boolean() })),
+});
