@@ -2415,6 +2415,18 @@ export interface VAgentActivityDailyTable {
   agreements_signed: Int8 | null;
 }
 
+/** public.v_owner_source_dollars (view) */
+export interface VOwnerSourceDollarsTable {
+  tenant_id: string | null;
+  deal_id: string | null;
+  deal_name: string | null;
+  owner_user_id: string | null;
+  lead_source_id: string | null;
+  closed_at: Timestamp | null;
+  gross_commission_cents: Int8 | null;
+  commission_status: string | null;
+}
+
 /** public.v_pipeline_momentum (view) */
 export interface VPipelineMomentumTable {
   tenant_id: string | null;
@@ -2642,6 +2654,7 @@ export interface DB {
   user_mail_links: UserMailLinksTable;
   users: UsersTable;
   v_agent_activity_daily: VAgentActivityDailyTable;
+  v_owner_source_dollars: VOwnerSourceDollarsTable;
   v_pipeline_momentum: VPipelineMomentumTable;
   v_speed_to_lead: VSpeedToLeadTable;
   voice_settings: VoiceSettingsTable;
@@ -2804,6 +2817,7 @@ export const TABLE_NAMES = [
 export const VIEW_NAMES = [
   'contact_timeline',
   'v_agent_activity_daily',
+  'v_owner_source_dollars',
   'v_pipeline_momentum',
   'v_speed_to_lead',
 ] as const;

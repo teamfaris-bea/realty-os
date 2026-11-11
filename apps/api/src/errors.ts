@@ -260,6 +260,11 @@ export const ERROR_STATUS = {
   CHANNEL_NOT_CONNECTED: 409, // module 22: the web-chat widget is not connected (disconnected, revoked or never switched on; R-INBOX-7)
   WEBCHAT_DISCLOSURE_STALE: 409, // module 22: the chat must start after the visitor saw the widget's current disclosure (R-INBOX-5)
   WEBCHAT_SESSION_CLOSED: 410, // module 22: the chat session ended (idle 30 min or closed, E77); start a new chat
+  // ---- module 33 api/insights ----
+  COST_MONTH_IN_FUTURE: 422, // a lead-source cost for a month that has not started yet in the tenant's zone
+  GOAL_PERIOD_START_INVALID: 422, // a goal period must start on a Monday / the 1st / a quarter's or year's first day (details.periodKind)
+  GOAL_EXISTS: 409, // the member already has a goal for this period and metric (details.goalId)
+  PLAN_ALREADY_ACCEPTED: 409, // the weekly plan was already accepted (its tasks exist)
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

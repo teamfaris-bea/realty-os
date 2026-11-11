@@ -146,7 +146,7 @@ describe('R-PERM-13 re-authentication on sensitive actions', () => {
     // the Phase 1 list: imports, role/member changes, erasure, export, number release, support grant,
     // brokerage identity, compliance loosening
     expect(new Set(sensitive.map(([, a]) => a))).toEqual(
-      new Set(['import.run', 'number.release', 'settings.compliance', 'settings.identity', 'member.invite', 'member.role', 'member.suspend', 'member.remove', 'contact.erase', 'data.export', 'support.grant', 'integration.manage', 'settings.batch_text']),
+      new Set(['import.run', 'number.release', 'settings.compliance', 'settings.identity', 'member.invite', 'member.role', 'member.suspend', 'member.remove', 'contact.erase', 'data.export', 'support.grant', 'integration.manage', 'settings.batch_text', 'source_cost.edit']), // module 33: a closed month's cost (absent closedPeriod = closed)
     );
     for (const role of new Set(sensitive.map(([r]) => r))) {
       await h.su.query("UPDATE sessions SET reauthenticated_at = now() - interval '16 minutes' WHERE user_id = $1 AND revoked_at IS NULL", [users[role].userId]);
@@ -217,6 +217,11 @@ describe('route table', () => {
         "POST /api/me/alert-phone/verify → self",
         "GET /api/me/ponds → self",
         "HEAD /api/me/ponds → self",
+        "GET /api/me/weekly-plans/current → self",
+        "HEAD /api/me/weekly-plans/current → self",
+        "GET /api/me/weekly-plans/:week → self",
+        "HEAD /api/me/weekly-plans/:week → self",
+        "POST /api/me/weekly-plans/:week/accept → self",
       ]
     `);
   });

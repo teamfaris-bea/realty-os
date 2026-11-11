@@ -31,6 +31,7 @@ import { stageAutomationRoutes } from './stageAutomation/routes.js';
 import { leadEmailRoutes } from './leadEmail/routes.js';
 import { mlsRoutes } from './mls/routes.js';
 import { channelRoutes } from './channels/routes.js';
+import { insightsRoutes } from './insights/routes.js';
 
 export interface RouteModule {
   name: string;
@@ -60,5 +61,6 @@ export const routeModules: RouteModule[] = [
   leadEmailRoutes,
   mlsRoutes,
   channelRoutes,
+  insightsRoutes,
   // registry: add new entries above this line
 ];

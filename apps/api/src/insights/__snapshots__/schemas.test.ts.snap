@@ -1,0 +1,1199 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`R-OWNER-4 R-AST-13 R-TEN-3 response schemas > R-OWNER-4 R-AST-13 R-TEN-3: no insights response has a confidence, probability or score field, and none carries a tenant id (snapshot) 1`] = `
+{
+  "CostsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "costs": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "amountCents": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
+            "enteredByUserId": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "leadSourceId": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "month": {
+              "pattern": "^\\d{4}-(0[1-9]|1[0-2])$",
+              "type": "string",
+            },
+            "note": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "origin": {
+              "enum": [
+                "manual",
+                "ads_sync",
+              ],
+              "type": "string",
+            },
+            "updatedAt": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "leadSourceId",
+            "month",
+            "amountCents",
+            "origin",
+            "note",
+            "enteredByUserId",
+            "updatedAt",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "sources": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "active": {
+              "type": "boolean",
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "name": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "name",
+            "active",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "sources",
+      "costs",
+    ],
+    "type": "object",
+  },
+  "ForecastResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "asOf": {
+        "type": "string",
+      },
+      "closings": {
+        "additionalProperties": false,
+        "properties": {
+          "countedDeals": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "excluded": {
+            "additionalProperties": false,
+            "properties": {
+              "noCommission": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+              "noSource": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+              "thinStageDeals": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+              "thinStages": {
+                "items": {
+                  "type": "string",
+                },
+                "type": "array",
+              },
+            },
+            "required": [
+              "thinStages",
+              "thinStageDeals",
+              "noCommission",
+              "noSource",
+            ],
+            "type": "object",
+          },
+          "expected": {
+            "minimum": 0,
+            "type": "number",
+          },
+          "high": {
+            "minimum": 0,
+            "type": "number",
+          },
+          "horizonDays": {
+            "const": 90,
+            "type": "number",
+          },
+          "low": {
+            "minimum": 0,
+            "type": "number",
+          },
+          "method": {
+            "type": "string",
+          },
+          "notEnoughHistory": {
+            "type": "boolean",
+          },
+          "rangeWords": {
+            "type": "string",
+          },
+          "samples": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "k": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+                "n": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+                "stage": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "stage",
+                "n",
+                "k",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "unit": {
+            "enum": [
+              "closings",
+              "commission_cents",
+            ],
+            "type": "string",
+          },
+        },
+        "required": [
+          "unit",
+          "horizonDays",
+          "low",
+          "expected",
+          "high",
+          "rangeWords",
+          "method",
+          "countedDeals",
+          "notEnoughHistory",
+          "samples",
+          "excluded",
+        ],
+        "type": "object",
+      },
+      "commission": {
+        "additionalProperties": false,
+        "properties": {
+          "countedDeals": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "excluded": {
+            "additionalProperties": false,
+            "properties": {
+              "noCommission": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+              "noSource": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+              "thinStageDeals": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+              "thinStages": {
+                "items": {
+                  "type": "string",
+                },
+                "type": "array",
+              },
+            },
+            "required": [
+              "thinStages",
+              "thinStageDeals",
+              "noCommission",
+              "noSource",
+            ],
+            "type": "object",
+          },
+          "expected": {
+            "minimum": 0,
+            "type": "number",
+          },
+          "high": {
+            "minimum": 0,
+            "type": "number",
+          },
+          "horizonDays": {
+            "const": 90,
+            "type": "number",
+          },
+          "low": {
+            "minimum": 0,
+            "type": "number",
+          },
+          "method": {
+            "type": "string",
+          },
+          "notEnoughHistory": {
+            "type": "boolean",
+          },
+          "rangeWords": {
+            "type": "string",
+          },
+          "samples": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "k": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+                "n": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+                "stage": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "stage",
+                "n",
+                "k",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "unit": {
+            "enum": [
+              "closings",
+              "commission_cents",
+            ],
+            "type": "string",
+          },
+        },
+        "required": [
+          "unit",
+          "horizonDays",
+          "low",
+          "expected",
+          "high",
+          "rangeWords",
+          "method",
+          "countedDeals",
+          "notEnoughHistory",
+          "samples",
+          "excluded",
+        ],
+        "type": "object",
+      },
+      "minSample": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer",
+      },
+      "openDeals": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer",
+      },
+    },
+    "required": [
+      "asOf",
+      "minSample",
+      "openDeals",
+      "closings",
+      "commission",
+    ],
+    "type": "object",
+  },
+  "GoalResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "goal": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "metric": {
+            "enum": [
+              "appointments_set",
+              "appointments_held",
+              "agreements_signed",
+              "closings",
+              "touches",
+            ],
+            "type": "string",
+          },
+          "pace": {
+            "additionalProperties": false,
+            "properties": {
+              "actual": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+              "behindBy": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+              "daysLeft": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+              "expectedByNow": {
+                "minimum": 0,
+                "type": "number",
+              },
+              "method": {
+                "type": "string",
+              },
+              "remaining": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+              "status": {
+                "enum": [
+                  "ahead",
+                  "on_track",
+                  "behind",
+                  "done",
+                ],
+                "type": "string",
+              },
+              "words": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "actual",
+              "expectedByNow",
+              "behindBy",
+              "remaining",
+              "daysLeft",
+              "status",
+              "words",
+              "method",
+            ],
+            "type": "object",
+          },
+          "periodEndExclusive": {
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "type": "string",
+          },
+          "periodKind": {
+            "enum": [
+              "week",
+              "month",
+              "quarter",
+              "year",
+            ],
+            "type": "string",
+          },
+          "periodStart": {
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "type": "string",
+          },
+          "target": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "userId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+          "userId",
+          "periodKind",
+          "periodStart",
+          "periodEndExclusive",
+          "metric",
+          "target",
+          "pace",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "goal",
+    ],
+    "type": "object",
+  },
+  "GoalsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "goals": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "metric": {
+              "enum": [
+                "appointments_set",
+                "appointments_held",
+                "agreements_signed",
+                "closings",
+                "touches",
+              ],
+              "type": "string",
+            },
+            "pace": {
+              "additionalProperties": false,
+              "properties": {
+                "actual": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+                "behindBy": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+                "daysLeft": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+                "expectedByNow": {
+                  "minimum": 0,
+                  "type": "number",
+                },
+                "method": {
+                  "type": "string",
+                },
+                "remaining": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+                "status": {
+                  "enum": [
+                    "ahead",
+                    "on_track",
+                    "behind",
+                    "done",
+                  ],
+                  "type": "string",
+                },
+                "words": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "actual",
+                "expectedByNow",
+                "behindBy",
+                "remaining",
+                "daysLeft",
+                "status",
+                "words",
+                "method",
+              ],
+              "type": "object",
+            },
+            "periodEndExclusive": {
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "type": "string",
+            },
+            "periodKind": {
+              "enum": [
+                "week",
+                "month",
+                "quarter",
+                "year",
+              ],
+              "type": "string",
+            },
+            "periodStart": {
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "type": "string",
+            },
+            "target": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
+            "userId": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "userId",
+            "periodKind",
+            "periodStart",
+            "periodEndExclusive",
+            "metric",
+            "target",
+            "pace",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "members": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "canManage": {
+              "type": "boolean",
+            },
+            "name": {
+              "type": "string",
+            },
+            "role": {
+              "type": "string",
+            },
+            "userId": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+          },
+          "required": [
+            "userId",
+            "name",
+            "role",
+            "canManage",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "zone": {
+        "type": "string",
+      },
+    },
+    "required": [
+      "zone",
+      "members",
+      "goals",
+    ],
+    "type": "object",
+  },
+  "PlanResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "accepted": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "at": {
+                "type": "string",
+              },
+              "taskIds": {
+                "items": {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                "type": "array",
+              },
+            },
+            "required": [
+              "at",
+              "taskIds",
+            ],
+            "type": "object",
+          },
+          {
+            "type": "null",
+          },
+        ],
+      },
+      "basis": {
+        "enum": [
+          "goals_and_pipeline",
+          "pipeline_only",
+        ],
+        "type": "string",
+      },
+      "builtAt": {
+        "type": "string",
+      },
+      "droppedSinceBuilt": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer",
+      },
+      "exists": {
+        "type": "boolean",
+      },
+      "items": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "accepted": {
+              "type": "boolean",
+            },
+            "index": {
+              "maximum": 4,
+              "minimum": 0,
+              "type": "integer",
+            },
+            "item": {
+              "additionalProperties": false,
+              "properties": {
+                "contactId": {
+                  "anyOf": [
+                    {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "deadline": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "dealId": {
+                  "anyOf": [
+                    {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "evidence": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "reason": {
+                        "type": "string",
+                      },
+                      "sourceId": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      "sourceType": {
+                        "enum": [
+                          "task",
+                          "appointment",
+                          "deal",
+                        ],
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "sourceType",
+                      "sourceId",
+                      "reason",
+                    ],
+                    "type": "object",
+                  },
+                  "type": "array",
+                },
+                "gap": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+                "kind": {
+                  "enum": [
+                    "keep_promise",
+                    "do_task",
+                    "log_outcome",
+                    "move_deal",
+                  ],
+                  "type": "string",
+                },
+                "metric": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "appointments_set",
+                        "appointments_held",
+                        "agreements_signed",
+                        "closings",
+                        "touches",
+                      ],
+                      "type": "string",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "title": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "kind",
+                "title",
+                "contactId",
+                "dealId",
+                "deadline",
+                "metric",
+                "gap",
+                "evidence",
+              ],
+              "type": "object",
+            },
+          },
+          "required": [
+            "index",
+            "accepted",
+            "item",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "note": {
+        "type": "string",
+      },
+      "week": {
+        "pattern": "^\\d{4}-W(0[1-9]|[1-4]\\d|5[0-3])$",
+        "type": "string",
+      },
+    },
+    "required": [
+      "week",
+      "exists",
+    ],
+    "type": "object",
+  },
+  "PutCostResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "cost": {
+        "additionalProperties": false,
+        "properties": {
+          "amountCents": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "closedMonth": {
+            "type": "boolean",
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "month": {
+            "pattern": "^\\d{4}-(0[1-9]|1[0-2])$",
+            "type": "string",
+          },
+          "previousCents": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+        },
+        "required": [
+          "id",
+          "month",
+          "closedMonth",
+          "previousCents",
+          "amountCents",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "cost",
+    ],
+    "type": "object",
+  },
+  "SourcesResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "closedInPeriod": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer",
+      },
+      "excluded": {
+        "additionalProperties": false,
+        "properties": {
+          "missingCommission": {
+            "additionalProperties": false,
+            "properties": {
+              "count": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+              "deals": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "dealId": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                    "name": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "dealId",
+                    "name",
+                  ],
+                  "type": "object",
+                },
+                "type": "array",
+              },
+            },
+            "required": [
+              "count",
+              "deals",
+            ],
+            "type": "object",
+          },
+          "noSource": {
+            "additionalProperties": false,
+            "properties": {
+              "count": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+              "deals": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "dealId": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                    "name": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "dealId",
+                    "name",
+                  ],
+                  "type": "object",
+                },
+                "type": "array",
+              },
+            },
+            "required": [
+              "count",
+              "deals",
+            ],
+            "type": "object",
+          },
+        },
+        "required": [
+          "missingCommission",
+          "noSource",
+        ],
+        "type": "object",
+      },
+      "method": {
+        "type": "string",
+      },
+      "period": {
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "pattern": "^\\d{4}-(0[1-9]|1[0-2])$",
+            "type": "string",
+          },
+          "to": {
+            "pattern": "^\\d{4}-(0[1-9]|1[0-2])$",
+            "type": "string",
+          },
+          "zone": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "from",
+          "to",
+          "zone",
+        ],
+        "type": "object",
+      },
+      "rows": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "closings": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
+            "commissionCents": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
+            "commissionWords": {
+              "type": "string",
+            },
+            "costAdsSyncCents": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
+            "costCents": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
+            "costManualCents": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
+            "costPerClosingCents": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "costPerClosingWords": {
+              "type": "string",
+            },
+            "costRows": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
+            "costWords": {
+              "type": "string",
+            },
+            "dealsWithCommission": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
+            "leadSourceId": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "leadSourceName": {
+              "type": "string",
+            },
+            "missingCommission": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
+          },
+          "required": [
+            "leadSourceId",
+            "leadSourceName",
+            "closings",
+            "dealsWithCommission",
+            "missingCommission",
+            "commissionCents",
+            "commissionWords",
+            "costCents",
+            "costManualCents",
+            "costAdsSyncCents",
+            "costRows",
+            "costWords",
+            "costPerClosingCents",
+            "costPerClosingWords",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "period",
+      "method",
+      "closedInPeriod",
+      "rows",
+      "excluded",
+    ],
+    "type": "object",
+  },
+  "VelocityResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "excluded": {
+        "additionalProperties": false,
+        "properties": {
+          "thinStages": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "sampleSize": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+                "stage": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "stage",
+                "sampleSize",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+        },
+        "required": [
+          "thinStages",
+        ],
+        "type": "object",
+      },
+      "method": {
+        "type": "string",
+      },
+      "minSample": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer",
+      },
+      "rows": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "medianDays": {
+              "minimum": 0,
+              "type": "number",
+            },
+            "sampleSize": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
+            "stage": {
+              "type": "string",
+            },
+            "words": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "stage",
+            "medianDays",
+            "sampleSize",
+            "words",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "method",
+      "minSample",
+      "rows",
+      "excluded",
+    ],
+    "type": "object",
+  },
+}
+`;
