@@ -298,7 +298,6 @@ export interface NewContactFields {
   originalCampaignRef?: string | null;
   originalAdRef?: string | null;
   originalSourceDetail?: Record<string, string | number | boolean | null>;
-  tags?: string[];
   importBatchId?: string | null;
 }
 
@@ -308,7 +307,7 @@ export async function insertContact(tx: Tx, id: ContactId, c: NewContactFields, 
   await sql`
     INSERT INTO contacts (tenant_id, id, first_name, last_name, display_name, contact_type, intent, stage, timezone,
       timezone_source, pond_summary, original_lead_source_id, original_campaign_ref, original_ad_ref, original_source_detail,
-      tags, import_batch_id, created_by_user_id,
+      import_batch_id, created_by_user_id,
       ownership_state, owner_user_id, pond_id, offer_id, offered_to_user_id, offer_expires_at, offer_round, routing_rule_id,
       owned_at, first_touch_due_at, first_touch_at, first_touch_breached_at, release_due_at, ownership_period_seq,
       route_due_at, closed_reason, ownership_seq, ownership_command_id, ownership_actor_user_id,
@@ -316,7 +315,7 @@ export async function insertContact(tx: Tx, id: ContactId, c: NewContactFields, 
     VALUES (app.tenant_id(), ${id}, ${c.firstName ?? null}, ${c.lastName ?? null}, ${c.displayName}, ${c.contactType ?? 'lead'},
       ${c.intent ?? null}, ${c.stage ?? 'new'}, ${c.timezone ?? null}, ${c.timezoneSource ?? null}, ${c.pondSummary ?? null},
       ${c.originalLeadSourceId ?? null}, ${c.originalCampaignRef ?? null}, ${c.originalAdRef ?? null},
-      ${JSON.stringify(c.originalSourceDetail ?? {})}::jsonb, ${c.tags ?? []}::text[], ${c.importBatchId ?? null}, ${createdBy},
+      ${JSON.stringify(c.originalSourceDetail ?? {})}::jsonb, ${c.importBatchId ?? null}, ${createdBy},
       ${v.ownership_state}, ${v.owner_user_id}, ${v.pond_id}, ${v.offer_id}, ${v.offered_to_user_id},
       ${v.offer_expires_at}::timestamptz, ${v.offer_round}, ${v.routing_rule_id}, ${v.owned_at}::timestamptz,
       ${v.first_touch_due_at}::timestamptz, ${v.first_touch_at}::timestamptz, ${v.first_touch_breached_at}::timestamptz,

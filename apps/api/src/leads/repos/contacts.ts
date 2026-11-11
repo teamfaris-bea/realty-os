@@ -60,7 +60,11 @@ const CONTACT_SELECT = sql`
          c.offer_id, c.offered_to_user_id, c.offer_expires_at, c.offer_round, c.owned_at, c.first_touch_due_at,
          c.first_touch_at, c.first_touch_breached_at, c.release_due_at, c.route_due_at, c.closed_reason,
          c.ownership_seq, c.pond_summary, c.original_lead_source_id, s.name AS source_name, s.kind AS source_kind,
-         c.original_campaign_ref, c.original_ad_ref, c.original_source_detail, c.tags, c.created_at,
+         c.original_campaign_ref, c.original_ad_ref, c.original_source_detail,
+         -- R-PAR-10 (module 65 moved this reader; module 60 owns it): tags come from contact_tags, whose RLS
+         -- shows them only with the person's detail, so a pond or offer card gets none
+         ARRAY(SELECT t.name FROM contact_tags ct JOIN tags t ON t.tenant_id = ct.tenant_id AND t.id = ct.tag_id
+                WHERE ct.tenant_id = c.tenant_id AND ct.contact_id = c.id ORDER BY t.name) AS tags, c.created_at,
          c.last_human_touch_at, c.merged_into_contact_id, c.created_at::text AS created_at_text,
          COALESCE(c.owner_user_id = app.user_id(), false) AS rel_own,
          COALESCE(c.offered_to_user_id = app.user_id(), false) AS rel_offer,

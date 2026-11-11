@@ -46,6 +46,7 @@ import * as brepo from './repos/batches.js';
 import * as existing from './repos/existing.js';
 import * as rrepo from './repos/records.js';
 import * as vrepo from './repos/verify.js';
+import { summarize } from './parity.js';
 import { FUB_KEY_PURGE_DAYS, type ImportDeps, SOURCE_SYSTEM } from './types.js';
 
 export const DRY_RUN_JOB = { kind: 'imports.dry_run' as const, queue: 'bulk' as const };
@@ -225,10 +226,18 @@ export async function runDryRun(deps: ImportDeps, tenantId: string, stageId: str
         }
         await rrepo.upsertRecords(tx, stage.id, rows);
         await rrepo.markStale(tx, stage.id, new Set(dry.records.map((r) => r.sourceRef)));
+        // PARITY 65 (R-PAR-46): the contacts dry run also plans stages, tags and custom fields; a stage label
+        // nobody mapped, a catalog over 1,000 tags or more than 50 live fields blocks the approval
+        const parityBlockers: { code: string; severity: string }[] = [];
+        if (stage.category === 'contacts') {
+          const summary = await summarize(tx, batch, src.outcomes.flatMap((o) => (o.record && o.record.category === 'contacts' ? [o.record] : [])));
+          await brepo.setBatchOptions(tx, batch.id, { ...batch.options, paritySummary: summary });
+          for (const code of summary.blockers) parityBlockers.push({ code, severity: 'error' });
+        }
         await brepo.setDryRunResult(tx, stage.id, {
           counts: dry.counts,
           sha256: dry.snapshotSha256,
-          blockers: dry.blockers,
+          blockers: [...dry.blockers, ...parityBlockers],
           consentSummary: dry.consentSummary as Record<string, number> | null,
         });
         return 'done' as const;

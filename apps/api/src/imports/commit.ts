@@ -38,7 +38,14 @@ import {
   type NormalizedOwnership,
   type NormalizedRecord,
   type PlanAction,
+  classifyProtected,
   computeFill,
+  contactTagNames,
+  fieldKeyFrom,
+  mappedStage,
+  type ParityOptions,
+  type ResolvedField,
+  typedFieldValue,
   importedConsentKey,
   importedOptOuts,
   mapImportedConsent,
@@ -56,6 +63,8 @@ import { AppError } from '../errors.js';
 import { systemActor } from '../worker/systemActor.js';
 import * as brepo from './repos/batches.js';
 import * as existing from './repos/existing.js';
+import * as prepo from './repos/parity.js';
+import { parityOptionsOf, sourceKindOf } from './parity.js';
 import * as rrepo from './repos/records.js';
 import * as w from './repos/writes.js';
 import { type ContactOptOuts, hmacIndex, loadBatchAndStage } from './stages.js';
@@ -119,6 +128,14 @@ interface Ctx {
   keyOf: (kind: AddressKind, n: string) => string;
   members: Set<string>;
   settings: { recordingRetentionDays: number; transcribeImported: boolean };
+  /** PARITY 65: the contacts stage's stage map / tag / field plan, and the resolved field definitions */
+  parity: { options: ParityOptions; fields: Map<string, ResolvedField> };
+}
+
+/** PARITY 65: what one contact record wrote of the parity plan (merged into the batch only when the record commits). */
+interface ParityApplied {
+  tagIds: string[];
+  counts: Record<string, number>;
 }
 
 interface Applied {
@@ -127,6 +144,7 @@ interface Applied {
   /** nothing new to write after all (e.g. the owner was kept): counted as duplicate */
   duplicate?: boolean;
   extraIssues?: { code: string; severity: 'info' }[];
+  parity?: ParityApplied;
 }
 
 let sp = 0;
@@ -242,9 +260,88 @@ async function applyOptOuts(c: Ctx, rec: rrepo.RecordRow, n: NormalizedContact, 
   return created;
 }
 
+/**
+ * PARITY 65 (R-PAR-46): the definitions this contacts commit writes values into: existing fields as mapped,
+ * and new typed fields created once per chunk, OUTSIDE the per-record savepoints (a rejected record never
+ * takes a definition with it). A protected-looking field is never created (R-PAR-18).
+ */
+async function resolveFields(tx: Tx, batch: brepo.BatchRow, options: ParityOptions, ids: ImportDeps['ids']): Promise<{ fields: Map<string, ResolvedField>; createdIds: string[] }> {
+  const fields = new Map<string, ResolvedField>();
+  const createdIds: string[] = [];
+  if (Object.keys(options.fields).length === 0) return { fields, createdIds };
+  const defs = await prepo.fieldDefs(tx);
+  const summary = batch.options.paritySummary;
+  for (const [sourceKey, a] of Object.entries(options.fields)) {
+    if (a.action === 'skip') continue;
+    if (a.action === 'existing') {
+      const d = defs.find((x) => x.id === a.fieldId && !x.archived);
+      if (d) fields.set(sourceKey, { sourceKey, fieldId: d.id, key: d.key, type: d.field_type, options: d.options });
+      continue;
+    }
+    if (classifyProtected(a.label) || classifyProtected(sourceKey)) continue;
+    const key = fieldKeyFrom(sourceKey, sourceKindOf(batch));
+    if (key === null) continue;
+    const have = defs.find((x) => x.key === key);
+    if (have) {
+      if (!have.archived && have.field_type === a.type) fields.set(sourceKey, { sourceKey, fieldId: have.id, key, type: have.field_type, options: have.options });
+      continue;
+    }
+    const opts = a.type === 'single_select' || a.type === 'multi_select' ? (summary?.fields.find((f) => f.sourceKey === sourceKey)?.options ?? []) : [];
+    const id = ids.next<'CustomFieldId'>();
+    const label = defs.some((x) => !x.archived && x.label.toLowerCase() === a.label.toLowerCase()) ? `${a.label} (imported)`.slice(0, 60) : a.label;
+    const made = await prepo.guarded(tx, () => prepo.createFieldDef(tx, { id, key, label, type: a.type, options: opts, origin: batch.source === 'csv' ? 'csv_import' : 'fub_import' }));
+    if (!made.ok) continue;
+    createdIds.push(id);
+    fields.set(sourceKey, { sourceKey, fieldId: id, key, type: a.type, options: opts });
+  }
+  return { fields, createdIds };
+}
+
+/**
+ * PARITY 65 (R-PAR-46, R-PAR-10): the person's tags go into the catalog and contact_tags (never
+ * contacts.tags); custom values are written only where the person has none (E41 fill-empty); a value that
+ * does not fit stays as raw text in imported_fields. Tags never change whether anyone can be contacted:
+ * a DNC-looking tag's opt-out comes from the consent rules (applyOptOuts), not from the tag.
+ */
+async function applyParity(c: Ctx, contactId: string, n: NormalizedContact, isNew: boolean): Promise<ParityApplied> {
+  const counts: Record<string, number> = { tagLinks: 0, tagLinksExisting: 0, tagsSkipped: 0, values: 0, valuesKept: 0, valuesMisfit: 0, stagesSet: 0, stagesKept: 0 };
+  const tagIds: string[] = [];
+  for (const t of contactTagNames(n, c.parity.options, sourceKindOf(c.batch))) {
+    const up = await prepo.guarded(c.tx, () => prepo.upsertTag(c.tx, c.deps.ids.next<'TagId'>(), t.name, classifyProtected(t.name)));
+    if (!up.ok || !up.value) {
+      counts.tagsSkipped! += 1;
+      continue;
+    }
+    if (up.value.created) tagIds.push(up.value.id);
+    const linked = await prepo.guarded(c.tx, () => prepo.linkTag(c.tx, contactId, up.value!.id, c.batch.id));
+    if (linked.ok && linked.value) counts.tagLinks! += 1;
+    else if (linked.ok) counts.tagLinksExisting! += 1;
+    else counts.tagsSkipped! += 1;
+  }
+  for (const [sourceKey, raw] of Object.entries(n.customFields ?? {})) {
+    const f = c.parity.fields.get(sourceKey);
+    if (!f) continue;
+    const v = typedFieldValue(f.type, f.options, raw);
+    if (!v.ok) {
+      counts.valuesMisfit! += 1;
+      continue;
+    }
+    const wrote = await prepo.guarded(c.tx, () => prepo.setValueIfEmpty(c.tx, contactId, f.fieldId, v.value, c.batch.id));
+    if (wrote.ok && wrote.value) counts.values! += 1;
+    else if (wrote.ok) counts.valuesKept! += 1;
+    else counts.valuesMisfit! += 1;
+  }
+  if (n.stageLabel) counts[isNew ? 'stagesSet' : 'stagesKept']! += 1;
+  return { tagIds, counts };
+}
+
 async function applyContact(c: Ctx, rec: rrepo.RecordRow, n: NormalizedContact, plan: PlanAction & { mergeIntoContactId?: string }): Promise<Applied> {
   const personRef = personRefOf(n);
   if (plan.kind === 'create_contact' && rec.review_decision !== 'merge') {
+    // R-PAR-46: a source stage becomes the Admin's mapped stage; a label nobody mapped never becomes `new`
+    // silently (the approval is blocked, so this only trips on a stale plan)
+    const stage = mappedStage(n.stageLabel, c.parity.options);
+    if (stage === null) throw new RecordError('STAGE_UNMAPPED');
     const contactId = c.deps.ids.next<'ContactId'>();
     const r = await applyOwnershipCommandInTx(c.tx, c.actor, contactId, { kind: 'import_assign', target: 'unassigned' }, {
       commandId: derivedCommandId('import.contact', rec.id),
@@ -255,8 +352,7 @@ async function applyContact(c: Ctx, rec: rrepo.RecordRow, n: NormalizedContact, 
         lastName: n.lastName,
         contactType: n.contactType,
         intent: n.intent,
-        stage: n.stage,
-        tags: n.tags,
+        stage,
         importBatchId: c.batch.id,
         originalSourceDetail: n.leadSourceLabel ? { import_source: n.leadSourceLabel.slice(0, 120), import_system: c.system } : { import_system: c.system },
       },
@@ -265,13 +361,14 @@ async function applyContact(c: Ctx, rec: rrepo.RecordRow, n: NormalizedContact, 
     if (!r.outcome.ok) throw new RecordError(r.outcome.code);
     const id = r.replayed ? ((r.outcome.events[0]?.contactId as string | undefined) ?? contactId) : contactId;
     await w.setImportedFields(c.tx, id, n.importedFields);
+    const parity = await applyParity(c, id, n, true);
     const created: rrepo.CreatedRow[] = [{ table: 'contacts', id, action: 'create', fp: await w.contactFingerprint(c.tx, id), seq: 1 }];
     created.push(...(await addPoints(c, id, n.phones, n.emails)));
     created.push(...(await addAddresses(c, id, n.addresses)));
     await addDuplicates(c, id, n, plan.duplicateCandidates);
     created.push(...(await applyOptOuts(c, rec, n, id)));
     await w.insertExternalRef(c.tx, { system: c.system, entityType: 'contact', externalId: personRef, entityId: id, batchId: c.batch.id });
-    return { target: { table: 'contacts', id }, created };
+    return { target: { table: 'contacts', id }, created, parity };
   }
   const targetId = rec.review_decision === 'merge' ? plan.mergeIntoContactId : 'contactId' in plan ? (plan as { contactId: string }).contactId : undefined;
   if (!targetId) throw new RecordError('RECORD_MALFORMED');
@@ -282,7 +379,9 @@ async function applyContact(c: Ctx, rec: rrepo.RecordRow, n: NormalizedContact, 
   if (!ex) throw new RecordError('MATCH_GONE');
   // E41: only where empty, recomputed against the contact as it is now; ownership is never touched.
   const fill = computeFill(n, ex);
-  await w.fillContact(c.tx, live.id, { ...(fill.firstName !== undefined ? { firstName: fill.firstName } : {}), ...(fill.lastName !== undefined ? { lastName: fill.lastName } : {}), ...(fill.intent !== undefined ? { intent: fill.intent } : {}), addTags: fill.addTags, addImportedFields: fill.addImportedFields });
+  await w.fillContact(c.tx, live.id, { ...(fill.firstName !== undefined ? { firstName: fill.firstName } : {}), ...(fill.lastName !== undefined ? { lastName: fill.lastName } : {}), ...(fill.intent !== undefined ? { intent: fill.intent } : {}), addImportedFields: fill.addImportedFields });
+  // E41: tags are added (never removed), values only where empty, the existing stage is kept
+  const parity = await applyParity(c, live.id, n, false);
   const action = plan.kind === 'update_contact' ? 'update' : 'attach';
   const created: rrepo.CreatedRow[] = [{ table: 'contacts', id: live.id, action, fp: await w.contactFingerprint(c.tx, live.id), seq: live.seq }];
   created.push(...(await addPoints(c, live.id, fill.addPhones, fill.addEmails)));
@@ -290,7 +389,7 @@ async function applyContact(c: Ctx, rec: rrepo.RecordRow, n: NormalizedContact, 
   await addDuplicates(c, live.id, n, plan.kind === 'attach_contact' ? plan.duplicateCandidates : []);
   created.push(...(await applyOptOuts(c, rec, n, live.id)));
   await w.insertExternalRef(c.tx, { system: c.system, entityType: 'contact', externalId: personRef, entityId: live.id, batchId: c.batch.id });
-  return { target: { table: 'contacts', id: live.id }, created };
+  return { target: { table: 'contacts', id: live.id }, created, parity };
 }
 
 async function applyOwnership(c: Ctx, rec: rrepo.RecordRow, n: NormalizedOwnership, plan: Extract<PlanAction, { kind: 'assign' }>): Promise<Applied> {
@@ -494,16 +593,28 @@ export async function runCommit(deps: ImportDeps, tenantId: string, stageId: str
           keyOf: await hmacIndex(deps, tx, actor.tenantId, new Map(), addressesOfRecords(recs)),
           members: await w.memberIds(tx),
           settings: await brepo.importSettings(tx),
+          parity: { options: parityOptionsOf(batch), fields: new Map() },
         };
+        const parityTotals: { tagIds: string[]; fieldIds: string[]; counts: Record<string, number> } = { tagIds: [], fieldIds: [], counts: {} };
+        if (stage.category === 'contacts') {
+          const r = await resolveFields(tx, batch, ctx.parity.options, deps.ids);
+          ctx.parity.fields = r.fields;
+          parityTotals.fieldIds.push(...r.createdIds);
+        }
         for (const rec of recs) {
           try {
             const a = await inSavepoint(tx, () => applyRecord(ctx, rec));
             await rrepo.markImported(tx, rec.id, a.target, a.created, a.duplicate ? 'duplicate' : 'imported');
             await addIssues(tx, rec.id, a.extraIssues ?? []);
+            if (a.parity) {
+              parityTotals.tagIds.push(...a.parity.tagIds);
+              for (const [k, v] of Object.entries(a.parity.counts)) parityTotals.counts[k] = (parityTotals.counts[k] ?? 0) + v;
+            }
           } catch (e) {
             await rrepo.markCommitFailed(tx, rec.id, pgCode(e));
           }
         }
+        if (stage.category === 'contacts') await prepo.recordParity(tx, batch.id, parityTotals);
         return 'more';
       },
       { db: deps.db, retries: 2 },

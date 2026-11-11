@@ -396,6 +396,11 @@ exports[`golden FUB export: every category normalizes to the pinned output > con
       "category": "contacts",
       "contactType": "lead",
       "createdAt": 1677679200000,
+      "customFields": {
+        "customBirthday": "1980-05-01",
+        "customFavoriteNeighborhoods": "Downtown, Riverside",
+        "customPreApproved": "true",
+      },
       "displayName": "Jane Doe",
       "emails": [
         {
@@ -429,6 +434,7 @@ exports[`golden FUB export: every category normalizes to the pinned output > con
       ],
       "sourceRef": "fub:people/1001",
       "stage": "active",
+      "stageLabel": "Hot Prospect",
       "tags": [
         "Buyer",
         "Pre-approved",
@@ -471,6 +477,7 @@ exports[`golden FUB export: every category normalizes to the pinned output > con
       ],
       "sourceRef": "fub:people/1002",
       "stage": "nurture",
+      "stageLabel": "Nurture",
       "tags": [],
     },
     "sourceRef": "fub:people/1002",
@@ -510,6 +517,7 @@ exports[`golden FUB export: every category normalizes to the pinned output > con
       ],
       "sourceRef": "fub:people/1003",
       "stage": "nurture",
+      "stageLabel": "Sphere",
       "tags": [
         "DNC",
         "Past Open House",
@@ -551,6 +559,7 @@ exports[`golden FUB export: every category normalizes to the pinned output > con
       "phones": [],
       "sourceRef": "fub:people/1004",
       "stage": "new",
+      "stageLabel": "Waiting On Lender",
       "tags": [],
     },
     "sourceRef": "fub:people/1004",
@@ -583,6 +592,7 @@ exports[`golden FUB export: every category normalizes to the pinned output > con
       ],
       "sourceRef": "fub:people/1005",
       "stage": "new",
+      "stageLabel": "Lead",
       "tags": [],
     },
     "sourceRef": "fub:people/1005",

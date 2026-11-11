@@ -49,6 +49,48 @@ export const RecordsQuery = z.strictObject({
 export const ReviewBody = z.strictObject({ decision: z.enum(['import', 'merge', 'reject']), mergeIntoContactId: z.uuid().optional() });
 export const ApproveBody = z.strictObject({ snapshotSha256: z.string().regex(/^[0-9a-f]{64}$/) });
 export const VerifyBody = z.strictObject({ spotChecks: z.array(z.strictObject({ sourceRef: z.string().min(1).max(300), matches: z.boolean() })).max(100) });
+const Stage8 = z.enum(['new', 'attempting', 'connected', 'nurture', 'active', 'under_contract', 'closed', 'lost']);
+const FieldTypeEnum = z.enum(['text', 'number', 'date', 'single_select', 'multi_select']);
+const SourceKey = z.string().trim().min(1).max(200);
+const FieldActionBody = z.discriminatedUnion('action', [
+  z.strictObject({ action: z.literal('skip') }),
+  z.strictObject({ action: z.literal('create'), type: FieldTypeEnum, label: z.string().trim().min(1).max(60).refine((v) => ![...v].some((ch) => (ch.codePointAt(0) ?? 0) < 0x20 || ch.codePointAt(0) === 0x7f), 'control_character') }),
+  z.strictObject({ action: z.literal('existing'), fieldId: z.uuid() }),
+]);
+/** PUT /imports/:id/parity (R-PAR-46): labels and keys only, never contact data. */
+export const ParityBody = z.strictObject({
+  stageMap: z.record(z.string().trim().min(1).max(200), Stage8).refine((m) => Object.keys(m).length <= 500, 'too_many'),
+  keepStageAsTag: z.boolean(),
+  fields: z.record(SourceKey, FieldActionBody).refine((m) => Object.keys(m).length <= 200, 'too_many'),
+});
+const ParityRow = z.object({ category: z.enum(['stages', 'tags', 'custom_fields']), source: z.number(), imported: z.number(), needsReview: z.number(), rejected: z.number(), duplicate: z.number() });
+const FieldActionView = z.union([
+  z.object({ action: z.literal('skip') }),
+  z.object({ action: z.literal('create'), type: FieldTypeEnum, label: z.string() }),
+  z.object({ action: z.literal('existing'), fieldId: z.string() }),
+]);
+export const ParityResponse = z.object({
+  options: z.object({ stageMap: z.record(z.string(), Stage8), keepStageAsTag: z.boolean(), fields: z.record(z.string(), FieldActionView) }),
+  stages: z.array(z.object({ label: z.string(), people: z.number(), suggested: Stage8.nullable(), mapped: Stage8.nullable() })),
+  tags: z.object({ distinct: z.number(), existing: z.number(), toCreate: z.number(), overLimit: z.number(), sourceLinks: z.number(), links: z.number(), protectedNew: z.number(), optOutTagged: z.number(), overLimitNames: z.array(z.string()) }),
+  fields: z.array(
+    z.object({
+      sourceKey: z.string(),
+      label: z.string(),
+      people: z.number(),
+      suggestedType: FieldTypeEnum,
+      protected: z.boolean(),
+      action: FieldActionView,
+      fit: z.number(),
+      misfit: z.number(),
+      options: z.array(z.object({ id: z.string(), label: z.string() })),
+    }),
+  ),
+  existingFields: z.array(z.object({ id: z.string(), key: z.string(), label: z.string(), type: FieldTypeEnum })),
+  blockers: z.array(z.string()),
+  lines: z.array(z.string()),
+  report: z.array(ParityRow),
+});
 export const RevertBody = z.strictObject({ category: CategoryParam.optional() });
 
 // ---- responses ----------------------------------------------------------------------------------
@@ -137,6 +179,8 @@ export const ReportResponse = z.object({
       lines: z.array(z.string()),
     }),
   ),
+  /** PARITY 65 (R-PAR-46): stages, tags and custom fields: source vs imported vs needs review vs rejected */
+  parity: z.object({ phase: z.enum(['dry_run', 'committed', 'reverted']), rows: z.array(ParityRow), lines: z.array(z.string()) }).nullable(),
 });
 export const CreatedResponse = z.object({ batch: Batch });
 
@@ -151,6 +195,7 @@ export const IMPORTS_RESPONSE_SCHEMAS = {
   VerificationResponse,
   ReportResponse,
   CreatedResponse,
+  ParityResponse,
 };
 
-export const IMPORTS_REQUEST_SCHEMAS = { CreateImportBody, MappingsBody, CsvMappingBody, RecordsQuery, ReviewBody, ApproveBody, VerifyBody, RevertBody };
+export const IMPORTS_REQUEST_SCHEMAS = { CreateImportBody, MappingsBody, CsvMappingBody, RecordsQuery, ReviewBody, ApproveBody, VerifyBody, RevertBody, ParityBody };

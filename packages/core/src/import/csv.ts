@@ -351,6 +351,12 @@ const INTENT_WORDS: Record<string, Intent> = {
   investor: 'investor',
 };
 
+/** PARITY 65: the stage a label plainly names (the same vocabulary as mapStage), or null when it names none. */
+export function suggestStage(label: string | null): ContactStage | null {
+  if (label === null) return null;
+  return STAGE_WORDS[headerKey(label)]?.stage ?? null;
+}
+
 /** Maps a source stage label; unknown labels keep the default and are flagged. */
 export function mapStage(label: string | null, issues: Issue[], field = 'stage'): { stage: ContactStage; type?: ContactType } {
   if (label === null) return { stage: 'new' };
@@ -548,6 +554,7 @@ export function normalizeCsvRow(
   const emails: { raw: string; label: PointLabel; field: string }[] = [];
   const tagRaw: string[] = [];
   const importedFields: Record<string, string> = Object.create(null) as Record<string, string>;
+  const customFields: Record<string, string> = Object.create(null) as Record<string, string>;
   const consentCells: { field: ContactField; value: string }[] = [];
 
   if (row.length > m.length && row.slice(m.length).some((c) => c.trim() !== '')) issues.push({ code: 'EXTRA_CELLS', severity: 'info' });
@@ -557,6 +564,7 @@ export function normalizeCsvRow(
     if (target.field === 'ignore' || value.trim() === '') return;
     if (target.field === 'custom') {
       putImportedField(importedFields, target.key, value, issues);
+      if (!Object.hasOwn(customFields, target.key)) customFields[target.key] = value.trim();
       return;
     }
     const f = target.field;
@@ -650,6 +658,8 @@ export function normalizeCsvRow(
     importedFields: { ...importedFields },
     leadSourceLabel,
     createdAt: null,
+    ...(stageLabel !== null ? { stageLabel } : {}),
+    ...(Object.keys(customFields).length > 0 ? { customFields: { ...customFields } } : {}),
     ...(consent ? { consent: { fields: consent, issues: consentIssues } } : {}),
   };
   return finish(at.sourceRef, record, issues);

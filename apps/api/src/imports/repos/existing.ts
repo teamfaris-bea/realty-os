@@ -42,7 +42,10 @@ export async function loadContacts(tx: Tx, only?: readonly string[]): Promise<Ex
     has_address: boolean;
   }>`
     SELECT c.id, c.created_at, c.ownership_state, c.closed_reason, c.owner_user_id, c.merged_into_contact_id, c.import_batch_id,
-           c.display_name, c.first_name, c.last_name, c.intent, c.tags,
+           c.display_name, c.first_name, c.last_name, c.intent,
+           -- R-PAR-10: tags come from the catalog (the old array column is retired)
+           ARRAY(SELECT t.name FROM contact_tags ct JOIN tags t ON t.tenant_id = ct.tenant_id AND t.id = ct.tag_id
+                  WHERE ct.tenant_id = c.tenant_id AND ct.contact_id = c.id ORDER BY t.name) AS tags,
            (SELECT array_agg(k) FROM jsonb_object_keys(c.imported_fields) k) AS keys,
            EXISTS (SELECT 1 FROM contact_addresses a WHERE a.tenant_id = c.tenant_id AND a.contact_id = c.id) AS has_address
       FROM contacts c WHERE c.tenant_id = app.tenant_id() ${filter}`.execute(tx);

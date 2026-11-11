@@ -9,6 +9,9 @@
 //   - the loser's open handbacks and drafts move to the survivor; handbacks go to the surviving
 //     owner (or the Team Lead / an Admin when unowned); drafts bound to the loser's period are
 //     invalidated.
+// Parity module 66 (R-PAR-45): the loser's points (copied, so every opt-out keeps blocking the merged
+// person), tags, custom values, relationships, notes and stage history move in the merge transaction
+// itself, by the definer trigger app.contacts_merge_children on contacts.merged_into_contact_id.
 // Runs as a tenant-wide actor (system / Owner / Admin): inline in the merge transaction, or in the
 // merge's ownership.followup for a Team Lead.
 import type { ContactId, IdGenerator, Instant, UserId } from '@realty/core/foundation';

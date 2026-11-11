@@ -1,6 +1,7 @@
 // Queries for import batches, stages, user mappings, the FUB credential and snapshot objects
 // (BUILD_PLAN module 16). Every query runs inside the caller's withTenantTx: RLS (Owner/Admin/system,
 // 0001 Layer 2 (b)) decides what is visible; tenant_id always comes from app.tenant_id().
+import type { ParityOptions, ParitySummary } from '@realty/core/import';
 import { type Category, CATEGORIES, categorySeq } from '@realty/core/import';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
@@ -48,6 +49,14 @@ export interface BatchOptions {
   recordings?: Record<string, string>;
   /** the snapshot job's last failure code (no PII) */
   snapshotError?: string | null;
+  /** PARITY 65 (R-PAR-46): the Admin's stage map, keep-stage-as-tag switch and custom field mapping */
+  parity?: ParityOptions;
+  /** PARITY 65: the contacts dry run's parity summary (stage labels, tag and field plan; no contact PII) */
+  paritySummary?: ParitySummary;
+  /** PARITY 65: catalog rows this batch created (revert removes the unused ones) */
+  parityCreated?: { tagIds?: string[]; fieldIds?: string[] };
+  /** PARITY 65: what the contacts commit wrote (tag links, values, stages set, kept) */
+  parityCommitted?: Record<string, number>;
 }
 
 export interface StageRow {

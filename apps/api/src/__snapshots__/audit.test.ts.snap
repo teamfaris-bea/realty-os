@@ -235,7 +235,6 @@ exports[`R-AUDIT-4 redacted diffs > R-AUDIT-4: generated field classification â€
     "subject_type",
     "sync_cursor",
     "system",
-    "tags",
     "target",
     "target_ref",
     "target_table",

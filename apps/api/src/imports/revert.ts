@@ -22,6 +22,7 @@ import { audit } from '../audit.js';
 import { AppError } from '../errors.js';
 import { systemActor } from '../worker/systemActor.js';
 import * as brepo from './repos/batches.js';
+import * as prepo from './repos/parity.js';
 import * as rrepo from './repos/records.js';
 import * as rv from './repos/revert.js';
 import { FUB_KEY_PURGE_DAYS, type ImportDeps } from './types.js';
@@ -44,6 +45,8 @@ export interface RevertReport {
   keptReasons: Record<string, number>;
   /** the first records left for a human (ids + reason codes; the review list shows them all) */
   manual: { recordId: string; sourceRef: string; reason: string }[];
+  /** PARITY 65: what the contacts revert removed of the parity rows (R-PAR-46 "removes exactly the batch's rows") */
+  parity?: { tagLinks: number; values: number; tags: number; fields: number };
   done?: boolean;
 }
 
@@ -166,8 +169,17 @@ async function revertChunk(deps: ImportDeps, tenantId: string, stageId: string):
         keptReasons: { ...(prev.keptReasons ?? {}) },
         manual: [...(prev.manual ?? [])],
       };
+      if (prev.parity) report.parity = { ...prev.parity };
       const recs = await rrepo.importedRecordsAfter(tx, stage.id, report.afterId, CHUNK);
       if (recs.length === 0) {
+        // PARITY 65: catalog tags and fields this batch created that nobody uses any more go too
+        if (stage.category === 'contacts') {
+          const batch = await brepo.getBatch(tx, stage.batch_id);
+          const p = report.parity ?? { tagLinks: 0, values: 0, tags: 0, fields: 0 };
+          p.tags += await prepo.removeUnusedCreatedTags(tx, stage.batch_id);
+          p.fields += await prepo.archiveUnusedCreatedFields(tx, batch?.options.parityCreated?.fieldIds ?? []);
+          report.parity = p;
+        }
         await brepo.setRevertReport(tx, stage.id, { ...report, done: true });
         return false;
       }
@@ -185,6 +197,17 @@ async function revertChunk(deps: ImportDeps, tenantId: string, stageId: string):
         for (const id of await rv.touchedRows(tx, t, ids, since)) touched.add(id);
       }
       const plan = planRevert(stage.category, rows, touched, { ids: deps.ids, now });
+      // PARITY 65 (R-PAR-46): the batch's tag links and imported values leave every contact nobody touched
+      // since (a touched contact keeps them with the rest of its import, for a human decision); a value
+      // someone edited carries their provenance, so it never matches the batch
+      if (stage.category === 'contacts') {
+        const untouched = [...new Set(rows.filter((x) => x.table === 'contacts' && !touched.has(x.id)).map((x) => x.id))];
+        const r = await prepo.removeBatchRows(tx, stage.batch_id, untouched);
+        const p = report.parity ?? { tagLinks: 0, values: 0, tags: 0, fields: 0 };
+        p.tagLinks += r.tagLinks;
+        p.values += r.values;
+        report.parity = p;
+      }
       const deleteSet = new Set(plan.delete);
       const removed = new Set<string>();
       // history and points through the definer (only rows this stage wrote)

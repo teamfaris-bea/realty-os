@@ -170,6 +170,8 @@ export const ERROR_STATUS = {
   ACTIVITY_OUT_OF_WINDOW: 422, // R-PAR-31 (the DB CHECK notes_activity_at_window)
   OUTCOME_CALLS_ONLY: 422, // R-PAR-30
   NO_ADDRESS_TO_REVOKE: 409, // do-not-contact on a person with no phone or email
+  CUSTOM_FIELD_PROTECTED: 422, // api/import-parity (R-PAR-18): a field name reads like a protected fair-housing attribute
+  DUPLICATE_ALREADY_DECIDED: 409, // api/duplicates: the pair was already merged, dismissed or restored (status in details)
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

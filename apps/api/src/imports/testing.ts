@@ -199,7 +199,23 @@ export async function mapAgents(c: TestClient, batchId: string, w: ImportWorld, 
   if (r.status !== 200) throw new Error(`mapping: ${r.status} ${JSON.stringify(r.body)}`);
 }
 
+/**
+ * PARITY 65 (R-PAR-46): the Admin maps every source stage label the plain vocabulary cannot place. Tests that
+ * are not about stages map them to `new` explicitly (the behaviour before the stage map); a stage label is
+ * never silently `new` any more, so the contacts approval is blocked until this is done.
+ */
+export async function mapUnmappedStages(c: TestClient, batchId: string, to = 'new', extra: Record<string, unknown> = {}): Promise<void> {
+  const g = await call<{ options: { stageMap: Record<string, string>; keepStageAsTag: boolean; fields: Record<string, unknown> }; stages: { label: string; mapped: string | null }[] }>(c, 'GET', `/imports/${batchId}/parity`);
+  if (g.status !== 200) throw new Error(`parity: ${g.status} ${JSON.stringify(g.body)}`);
+  const missing = g.body.stages.filter((s) => s.mapped === null);
+  if (missing.length === 0 && Object.keys(extra).length === 0) return;
+  const stageMap = { ...g.body.options.stageMap, ...Object.fromEntries(missing.map((s) => [s.label, to])) };
+  const r = await call(c, 'PUT', `/imports/${batchId}/parity`, { ...g.body.options, stageMap, ...extra });
+  if (r.status !== 200) throw new Error(`parity: ${r.status} ${JSON.stringify(r.body)}`);
+}
+
 export async function dryRunStage(ih: ImportsHarness, c: TestClient, batchId: string, cat: Category): Promise<StageView> {
+  if (cat === 'contacts') await mapUnmappedStages(c, batchId);
   const r = await call(c, 'POST', `/imports/${batchId}/stages/${cat}/dry-run`);
   if (r.status !== 202) throw new Error(`dry-run ${cat}: ${r.status} ${JSON.stringify(r.body)}`);
   await ih.drain();

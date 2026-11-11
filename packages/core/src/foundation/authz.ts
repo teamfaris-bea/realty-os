@@ -248,6 +248,8 @@ export const AUDIT_ACTIONS = [
   'note.delete', // parity 57: a note deleted (R-PAR-4)
   'collaborator.added', // parity 57: a collaborator added (incl. mention "Share", R-PAR-2)
   'collaborator.removed', // parity 57: a collaborator removed
+  'duplicate.dismissed', // api/duplicates: a member marked a duplicate suggestion "not the same person"
+  'duplicate.restored', // api/duplicates: Undo of a dismiss
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
