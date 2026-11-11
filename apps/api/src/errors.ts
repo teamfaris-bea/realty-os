@@ -143,7 +143,7 @@ export const ERROR_STATUS = {
   JOB_ALREADY_QUEUED: 409, // a newer job for the same work is already queued or running: retrying this one would duplicate it
   JOB_NOT_CANCELLABLE: 409, // only a waiting job can be cancelled; a running one finishes or is reaped
   // ---- api/integrations (module 21) ----
-  INTEGRATION_NOT_CONNECTABLE: 409, // this kind is not connected by OAuth (partner, keyed, or a later phase)
+  INTEGRATION_NOT_CONNECTABLE: 409, // this kind is not connected by OAuth (partner, keyed, a later phase, or out of scope by owner decision D2)
   INTEGRATION_NOT_CONFIGURED: 409, // no platform app is configured for this provider on this deployment
   CONNECTION_NOT_CONNECTABLE: 409, // the connection's status does not allow a (re)connect or change
   CONNECTION_ACCOUNT_MISMATCH: 409, // a different external account is a new connection (R-INT-3)
@@ -172,6 +172,7 @@ export const ERROR_STATUS = {
   NO_ADDRESS_TO_REVOKE: 409, // do-not-contact on a person with no phone or email
   CUSTOM_FIELD_PROTECTED: 422, // api/import-parity (R-PAR-18): a field name reads like a protected fair-housing attribute
   DUPLICATE_ALREADY_DECIDED: 409, // api/duplicates: the pair was already merged, dismissed or restored (status in details)
+  LEAD_SOURCE_NOT_ALLOWED: 422, // D2: a publishing-only connection (facebook_page, instagram_business) never carries a lead source (0025 CHECK)
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

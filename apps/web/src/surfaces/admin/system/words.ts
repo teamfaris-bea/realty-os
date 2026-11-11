@@ -20,17 +20,21 @@ export function stuckStatusWords(status: string): string {
   return status === 'dispatching' ? 'Sending, not confirmed yet' : 'Not known yet whether it left';
 }
 
+// Owner decision D2: Facebook and Instagram connections are for publishing posts only. The Messenger, Instagram
+// direct message, Meta lead ads and Meta ads kinds are not offered; a row made before D2 says so.
 const CONNECTION_KINDS: Record<string, string> = {
-  messenger_page: 'Facebook Messenger page',
-  instagram_account: 'Instagram account',
+  facebook_page: 'Facebook Page (publishing)',
+  instagram_business: 'Instagram business account (publishing)',
+  messenger_page: 'Facebook Messenger (not offered)',
+  instagram_account: 'Instagram direct messages (not offered)',
   web_chat_widget: 'Website chat',
   lead_email: 'Lead email inbox',
   zillow_feed: 'Zillow leads',
   realtor_feed: 'Realtor.com leads',
-  meta_lead_ads: 'Meta lead ads',
+  meta_lead_ads: 'Meta lead ads (not offered)',
   mls_feed: 'MLS feed',
   showing_service: 'Showing service',
-  ads_meta: 'Meta ads',
+  ads_meta: 'Meta ads (not offered)',
   ads_google: 'Google ads',
   gbp_location: 'Google Business Profile',
 };
