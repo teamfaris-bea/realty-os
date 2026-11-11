@@ -61,7 +61,8 @@ describe('Email intake on Lead routing', () => {
     const dialog = await screen.findByRole('dialog', { name: "Confirm it's you" });
     await u.type(within(dialog).getByLabelText('Password'), 'correct horse');
     await u.click(within(dialog).getByRole('button', { name: 'Confirm' }));
-    expect(await box.findByLabelText('Inbound address for Portal')).toHaveValue(ADDRESS);
+    // the confirmed session re-renders the page: look the section up again
+    expect(await (await intake()).findByLabelText('Inbound address for Portal')).toHaveValue(ADDRESS);
     const calls = fake.callsTo(`POST /lead-sources/${SRC}/lead-email`);
     expect(calls).toHaveLength(2);
     expect(calls[0]!.body).toEqual({ allowedSenderDomains: ['zillow.com', 'homes.example.test'] });
