@@ -312,7 +312,7 @@ database on the same host. This VM is about 1.4× slower than §1's: the same "b
 The agent "features + timeline" first page that §Smart lists lists at 406 ms reads 65 / 87 ms before and 50 / 72 ms
 after: the scale-lane review's `contact_detail_row` policies (§7.2) had already closed it.
 
-**What changed** (security review: docs/SECURITY.md §7).
+**What changed** (security review: docs/SECURITY.md §6.7).
 
 | change | where | effect (measured at 250k) |
 |---|---|---|
@@ -358,6 +358,21 @@ Postgres):
   this per-tap cost. At the 19-24 ms an uncontended core spends per accept, it is 6-8 vCPUs.
 - Per-tap CPU is the other lever (prepared statements, above; fewer statements per tap). Each millisecond saved is
   about 12 ms of p50 at 47 taps on 4 cores.
+
+**Owner's chosen remedy: a separate database host with ≥ 4 cores (estimate, not measured).** The API leaves the
+database's cores, so the floor uses Postgres CPU per tap only. Two bounds: the per-tap CPU measured under this
+concurrency on the shared host (it includes contention with the API process, so it is pessimistic), and the cost of one
+uncontended tap (pg_stat_statements execution + planning, about 19 ms per accept and 20 ms per claim, plus about 3-5 ms
+of parse and protocol: 22-24 ms; optimistic).
+
+| batch | 4 dedicated DB cores, pessimistic | 4 dedicated DB cores, optimistic | budget met? |
+|---|---:|---:|---|
+| claim, 44 at once (p95 ≈ the batch wall) | 44 × 31.1 / 4 = 342 ms | 44 × 22 / 4 = 242 ms | likely, not certain |
+| accept, 47 at once (p50; p95 ≈ 2 × p50 here) | 47 × 34.4 / 4 = 404 ms → p95 ≈ 800 ms | 47 × 24 / 4 = 282 ms → p95 ≈ 560 ms | **no** |
+
+On 4 dedicated cores the claim batch probably meets 300 ms, but accept does not: its p95 needs p50 ≤ about 150 ms, i.e.
+47 × 24 / 150 ≈ 7.5 → **8 dedicated database cores** at the optimistic cost (about 11-12 at the pessimistic one), or a
+lower CPU per tap. These are arithmetic estimates from this lane's measurements; they need a run on that topology.
 
 ## 5. What was slow, and why
 
