@@ -7,9 +7,9 @@
 //   POST /lead-sources/:id/lead-email                  turn the address on                                  integration.manage 🔒
 //   POST /lead-sources/:id/lead-email/rotate           a new address; the old one stops working             integration.manage 🔒
 //   PUT  /lead-sources/:id/lead-email/sender-domains   the DKIM sender allowlist                            integration.manage 🔒
-//   GET  /lead-email/reviews?status=                   Needs review (held) or decided                       lead_email.review_view (Owner/Admin/TL; support)
-//   POST /lead-email/reviews/:id/accept                accept as a lead (same intake; audited)              lead_email.review_decide
-//   POST /lead-email/reviews/:id/discard               discard (content purged; audited)                    lead_email.review_decide
+//   GET  /lead-email/reviews?status=                   Needs review (held) or decided                       lead_email_review.view (Owner/Admin/TL; support)
+//   POST /lead-email/reviews/:id/accept                accept as a lead (same intake; audited)              lead_email_review.decide
+//   POST /lead-email/reviews/:id/discard               discard (content purged; audited)                    lead_email_review.decide
 //
 // Webhooks: the guard verified the provider's signature first; the body is capped (bodyLimit) before parsing;
 // attachments are dropped unread; nothing in the email is fetched. The tenant comes ONLY from the inbox key in the
@@ -156,8 +156,8 @@ async function register(app: FastifyInstance): Promise<void> {
   );
 
   // ---- Needs review (Owner/Admin/Team Lead) ----
-  const reviewView = { config: { auth: 'lead_email.review_view' as const }, preHandler: authorize('lead_email.review_view', () => ({})) };
-  const decide = { config: { auth: 'lead_email.review_decide' as const }, preHandler: authorize('lead_email.review_decide', () => ({})) };
+  const reviewView = { config: { auth: 'lead_email_review.view' as const }, preHandler: authorize('lead_email_review.view', () => ({})) };
+  const decide = { config: { auth: 'lead_email_review.decide' as const }, preHandler: authorize('lead_email_review.decide', () => ({})) };
   r.get(
     '/lead-email/reviews',
     { ...reviewView, schema: { querystring: z.object({ status: z.enum(['needs_review', 'decided']).default('needs_review') }).strict(), response: { 200: ReviewsResponse } } },

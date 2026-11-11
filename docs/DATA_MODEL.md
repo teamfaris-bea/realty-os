@@ -787,7 +787,7 @@ No full-text column on `mail_messages`: Phase 1 search does not index synced mai
 |---|---|---|---|---|---|---|---|
 | Create, rename, disconnect integrations; widget origins, lead-email sender domains, MLS licence pack | ✅ 🔒 | ✅ 🔒 | — | — | — | — | — |
 | See a lead source's inbound lead-email address (`integration.view`); turn it on, rotate it, set sender domains (`integration.manage`) | ✅ / ✅ 🔒 | ✅ / ✅ 🔒 | — | — | — | — | — |
-| Lead email Needs review: view (`lead_email.review_view`; Support read-only) / accept or discard (`lead_email.review_decide`) | ✅ | ✅ | ✅ (tenant-wide) | — | — | — | — |
+| Lead email Needs review: view (`lead_email_review.view`; Support read-only) / accept or discard (`lead_email_review.decide`) | ✅ | ✅ | ✅ (tenant-wide) | — | — | — | — |
 | Link an external account / mark it connected | the provider callback only (system, after proving control) |
 | Own calendar link | self | self | self | self | self | self | — |
 | Own Gmail link (connect, disconnect, remove a thread, import again) (D2) | self | self | self | self | self | self | — |

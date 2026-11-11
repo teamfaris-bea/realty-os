@@ -144,8 +144,8 @@ export const ACTIONS = [
   'bulk.text', // parity module 63: batch text, per person; also needs the Owner's switch (R-PAR-40)
   'settings.batch_text', // parity module 63: the batch-text switch (Owner on 🔒 + attestation; Admin off only)
   'playbook.auto_enroll_stage', // parity module 67: the stage whose entry enrolls (team: Owner/Admin; an agent: own agent playbook)
-  'lead_email.review_view', // module 22 lead-email slice: the "Needs review" list of held lead emails (Owner/Admin/Team Lead; support read-only)
-  'lead_email.review_decide', // module 22 lead-email slice: accept a held lead email as a lead (same intake path) or discard it
+  'lead_email_review.view', // module 22 lead-email slice: the "Needs review" list of held lead emails (Owner/Admin/Team Lead; support read-only)
+  'lead_email_review.decide', // module 22 lead-email slice: accept a held lead email as a lead (same intake path) or discard it
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -532,8 +532,8 @@ const MATRIX: Record<Action, ActionRule> = {
   'integration.manage': { roles: { owner: ALL_REAUTH, admin: ALL_REAUTH } },
   // Module 22 lead-email slice (DATA_MODEL §8 lead-email row, R-LEM-6): the held-email list. Team Leads triage it too;
   // support reads it (read-only) and never decides. The system never "decides" (it holds or creates on arrival).
-  'lead_email.review_view': { roles: { owner: ALL, admin: ALL, team_lead: ALL }, support: true },
-  'lead_email.review_decide': { roles: { owner: ALL, admin: ALL, team_lead: ALL } },
+  'lead_email_review.view': { roles: { owner: ALL, admin: ALL, team_lead: ALL }, support: true },
+  'lead_email_review.decide': { roles: { owner: ALL, admin: ALL, team_lead: ALL } },
   // FUB parity (DATA_MODEL §12 capability matrix; not §3 rows). Each module tests its own row.
   // note.write: ✅ | ✅ | T + pond detail | O + D | O | D
   'note.write': { roles: { owner: ALL, admin: ALL, team_lead: { scopes: ['own', 'collab', 'team', 'pond'] }, agent: { scopes: ['own', 'collab', 'deal'] }, isa: O, tc: DEAL } },

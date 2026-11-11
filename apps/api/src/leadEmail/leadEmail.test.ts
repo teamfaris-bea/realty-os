@@ -236,8 +236,8 @@ describe('R-PERM-1 lead_email.review_* route × role matrix (DATA_MODEL §8 lead
       const held = (await messageRows(h, w.tenantId)).at(-1)!.id;
       got[`${role} decide`] = ok((await call(c, 'POST', `/lead-email/reviews/${held}/discard`)).status);
       const actor = { kind: 'user' as const, userId: c.userId!, tenantId: c.tenantId!, role, sessionId: 'x' };
-      want[`${role} view`] = can(actor, 'lead_email.review_view', {}).ok ? 'allowed' : 'NOT_FOUND';
-      want[`${role} decide`] = can(actor, 'lead_email.review_decide', {}).ok ? 'allowed' : 'NOT_FOUND';
+      want[`${role} view`] = can(actor, 'lead_email_review.view', {}).ok ? 'allowed' : 'NOT_FOUND';
+      want[`${role} decide`] = can(actor, 'lead_email_review.decide', {}).ok ? 'allowed' : 'NOT_FOUND';
     }
     expect(got).toEqual(want);
     expect(want).toMatchObject({ 'owner view': 'allowed', 'team_lead decide': 'allowed', 'agent view': 'NOT_FOUND', 'tc decide': 'NOT_FOUND' });
