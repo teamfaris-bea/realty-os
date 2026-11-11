@@ -532,3 +532,58 @@ wrong count, or adds a missing mark, and each is proved by a test that fails wit
 **Left as found.** `mail_messages_select` (D2) has the same per-row shape as the five parity policies; it has no read
 route yet, and the pending D2 review migration both reorders it and pins its text in its smoke test, so it is not
 rewritten here.
+
+## 7. Parity security review (lane `parity-security-review`)
+
+An adversarial review of FUB parity modules 56-67 (people edit and points, notes and mentions, stages, tags, custom
+fields, relationships, smart lists, templates, bulk actions and batch text, import parity, duplicates and merge, stage
+automation) and their migrations (0021, 0027-0029, 0035, 0036). Six reviewers worked one area each, against the code
+and a live database through the real HTTP routes with sessions of each role; an independent skeptic then tried to
+refute every finding. Only reproduced findings are listed. No migration was needed. Each fix only narrows access or
+turns a 500 into a stable 4xx, and each is proved by a `secreview.*` test that failed before the fix.
+
+### 7.1 Confirmed and fixed
+
+| finding | severity | fix | proof |
+|---|---|---|---|
+| An import opt-out tag with an invisible, control or full-width character ("D​NC", "ＤＮＣ") landed in the catalog as "DNC" but recorded no opt-out, so the person stayed textable (R-PAR-46, R-CONSENT-3) | medium | `core/import/fub.ts` tests each tag as written and as the catalog folds it (`optOutTagForms`); the dry-run count agrees | `imports/secreview.optouttag.test.ts` |
+| A tag protected after a bulk draft (or merged into a protected one) still let Confirm send to that audience (R-PAR-8, E189) | medium | the draft records every tag its audience was built from; confirm re-reads their protection and the saved list's plan for email, text and enroll | `bulk/secreview.protectedlate.test.ts` |
+| A batch text left `queued` by a crash was sent on replay after the Owner turned batch text off (R-PAR-40, E185) | medium | the runner re-reads the switch before the replay path and cancels the queued message (item `skipped BATCH_TEXT_DISABLED`) | `bulk/secreview.switchreplay.test.ts` |
+| Renaming a tag to a fair-housing proxy name ("VA buyer") left it unprotected and bulk-appliable (R-PAR-8) | medium | `PATCH /tags/:id` classifies the new name (tighten-only, audited `tag.protect`) | `people/secreview.tagrename.test.ts` |
+| A bulk untag removed a tag that became protected after confirm (core refuses it at draft) | low | the runner re-reads `protected_proxy` before the removal (`TAG_PROTECTED`) | `bulk/secreview.protectedlate.test.ts` |
+| The stage-change response named another agent's private playbook to a collaborator who cannot read it (R-PERM-12) | low | the plan name is shown only if the changer's own RLS shows the playbook, else "the owner's plan" | `stageAutomation/secreview.planname.test.ts` |
+| Owner/Admin could add notes, points, relationships and edits to a merged-away loser (stranded rows, R-PAR-45) | low | api/people writes require a live contact (`liveDetailFacts`); reads unchanged | `people/secreview.live.test.ts` |
+| Impossible ISO dates in a list definition (a team list saved by a TL) made every run a 500 | low | core `IsoDate` requires a real calendar date (year ≥ 1000) | `lists/secreview.inputs.test.ts` |
+| Forged list cursors (keys `Date.parse` accepts but Postgres does not, NUL in a name key) and forged notes cursors were 500s | low | strict timestamp/uuid shapes in both decoders (`LIST_CURSOR_INVALID`, `VALIDATION_FAILED`) | `lists/secreview.inputs.test.ts`, `people/secreview.nul.test.ts` |
+| A definition under core's 8 KB `JSON.stringify` limit failed the jsonb `octet_length` CHECK (500) | low | core measures the jsonb text; the CHECK maps to `LIST_DEFINITION_TOO_LARGE` | `lists/secreview.size.test.ts` |
+| U+0000 in any JSON body reached Postgres (500) | low | the JSON body parser refuses NUL (422) | `people/secreview.nul.test.ts` |
+| Control and bidi-override characters accepted in contact names, relationship labels and stage labels, and carried into mention titles | low | refused in those schemas; `mentionTitle` strips them from any stored name | `people/secreview.bidi.test.ts` |
+| Merge values made only of invisible characters rendered "Hi ," (R-PAR-24); U+061C survived; template subjects accepted C1 controls, U+2028/9 and bidi overrides | low | more invisible characters stripped in `cleanValue`; stricter subject check | `core/parity/templates/secreview.unicode.test.ts` |
+
+### 7.2 Checked with no finding
+
+Cross-tenant ids through every parity route, list definition, bulk selection, template, mention, import mapping and
+duplicate pair (404 or match nothing); the list compiler (no `sql.raw`/`sql.ref` with input, sort enum, bound cursor
+values, `EXISTS` detail predicates, counts under the viewer's RLS); personal lists and templates of other users;
+mention visibility (checked as the mentioned user) and text-free titles; note edit/delete rules; removed and
+wrong-number points (R-PAR-12); bulk double confirm/run, caps, creator-only drafts, role change, suspended creator,
+reassigned people, TC and team limits, one send per address, bulk messages never touches; FUB payload prototype keys,
+assignment to other tenants' or inactive users, revert scope; duplicate pairs and merge visibility, opt-outs carried
+by the merge; stage automation (approved versions only, owner's own plan only, imports never enroll, one live
+enrollment, annual reminders); a role sweep over 29 mutating parity routes for TL, other agents, ISA and TC
+(`secreview.roles.test.ts`: no 500, every 2xx matches `can()`); support has no HTTP actor and is refused by the
+restrictive policies.
+
+### 7.3 Left for the owner
+
+- **Bulk draft snapshots show a personal template's text tenant-wide.** `bulk_actions` (DATA_MODEL) is readable by the
+  creator, tenant-wide roles and the creator's TL, and holds the frozen subject/body, so an agent's personal template
+  wording is visible to Owner/Admin/TL once a draft exists, though R-PAR-23 keeps the template itself private. This
+  is the documented design; whether drafts should hide the snapshot from others is a product decision.
+- **A template edited or archived after a bulk draft is still sent as frozen.** The code freezes at draft (E180,
+  E186); R-PAR-26 says "at confirm". A warning at confirm when a newer version exists would close the gap.
+- **Defence in depth not added:** `dispatchOutbound` and `messages_bulk_guard` (UPDATE) do not themselves re-read the
+  batch-text switch; the runner does. A bulk audience built from an unsaved definition whose tag is later merged into
+  a protected one is caught only through the recorded tag ids of the draft, not the rewritten definition.
+- **Not reachable through the API:** an Admin or the creator could write `bulk_actions.counts` directly in the DB
+  (`counts.selected` feeds the confirm-time email budget); freezing it after the draft would need a migration.

@@ -64,6 +64,17 @@ export function detailFacts(req: FastifyRequest, id: (req: FastifyRequest) => st
   });
 }
 
+/**
+ * As detailFacts, for a write: the contact must also be live. A merged-away loser (still visible to tenant-wide
+ * roles) takes no new notes, points, links or edits, which would be stranded on it (security review, R-PAR-45).
+ */
+export function liveDetailFacts(req: FastifyRequest, id: (req: FastifyRequest) => string = idOf): Promise<ResourceFacts | null> {
+  return peopleTx(req, async (tx) => {
+    const row = await leads.getContact(tx, id(req));
+    return row && row.detail_visible && row.merged_into_contact_id === null ? factsOf(row) : null;
+  });
+}
+
 /** Whether the role sees every contact of the tenant (Owner/Admin). */
 export function tenantWide(actor: UserActor): boolean {
   return actor.role === 'owner' || actor.role === 'admin';
