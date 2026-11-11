@@ -1,24 +1,20 @@
 // Real Phase 2-3 adapters: they REFUSE TO START without their configuration (R-INT-1), and every vendor
 // call they cannot make honestly yet throws `ProviderError('not_configured', …)` instead of pretending.
 //
-// What is real today: the Meta webhook signature check (HMAC-SHA256 of the raw body with the platform
-// app secret, `X-Hub-Signature-256: sha256=<hex>`). VERIFY it against the current Meta documentation
-// when the platform app exists. Everything else needs a partner account or a vendor contract that the
-// owner has not obtained yet (PHASE2_3_PLAN §7): Meta app review (messaging, Lead Ads), Zillow and
+// Nothing vendor-specific is implemented yet: every service needs a partner account or a vendor contract
+// the owner has not obtained (PHASE2_3_PLAN §7): a Meta app for Page/Instagram publishing (D2: no
+// messaging), a Google app (Calendar, Business Profile), a Microsoft app (Calendar), Zillow and
 // realtor.com partner feeds, an MLS licence, the showing service, an AVM licence, a PDF renderer choice.
 // Until then `createRealIntegrations` is not wired by createProviders; production uses
 // `createUnconfiguredIntegrations` (honest "not set up on this platform yet") unless an explicit staging
 // demo allows the fakes.
 import { ProviderError } from '../types.js';
-import { parseMetaWebhook, verifyHubSignature } from './fakes.js';
 import type {
   AvmProvider,
   CalendarProvider,
   DocumentRenderer,
   IntegrationAdapters,
   LeadFeedProvider,
-  MetaEvent,
-  MetaMessagingProvider,
   MlsFeed,
   OAuthConnector,
   OAuthProviderName,
@@ -32,26 +28,7 @@ export class IntegrationConfigError extends Error {
 
 const notYet = (what: string) => new ProviderError('not_configured', `VERIFY_${what}`);
 
-/** Graph-shaped Meta adapter. Construction needs the platform app id and secret. */
-export class MetaGraphMessaging implements MetaMessagingProvider {
-  constructor(private readonly cfg: { appId: string; appSecret: string }) {
-    if (!cfg.appId || !cfg.appSecret || cfg.appSecret.length < 16) throw new IntegrationConfigError('Meta messaging needs META_APP_ID and META_APP_SECRET');
-  }
-  async sendDirectMessage(): Promise<never> {
-    throw notYet('META_SEND_API');
-  }
-  verifyWebhook(raw: Buffer, signatureHeader: string): boolean {
-    return verifyHubSignature(this.cfg.appSecret, raw, signatureHeader);
-  }
-  parseWebhook(raw: Buffer): MetaEvent[] {
-    return parseMetaWebhook(raw);
-  }
-  async listManagedAccounts(): Promise<never> {
-    throw notYet('META_ACCOUNTS_API');
-  }
-}
-
-/** OAuth 2.0 + PKCE connector skeleton for a platform app (Meta, Google). */
+/** OAuth 2.0 + PKCE connector skeleton for a platform app (Meta publishing, Google, Microsoft). */
 export class PlatformOAuth implements OAuthConnector {
   readonly configured = true;
   constructor(
@@ -62,7 +39,7 @@ export class PlatformOAuth implements OAuthConnector {
     const u = new URL(cfg.authorizeEndpoint);
     if (u.protocol !== 'https:') throw new IntegrationConfigError(`${provider} OAuth authorize endpoint must be https`);
   }
-  authorizeUrl(i: { state: string; codeChallenge: string; redirectUri: string }): string {
+  authorizeUrl(i: { state: string; codeChallenge: string; redirectUri: string; scopes: readonly string[] }): string {
     const u = new URL(this.cfg.authorizeEndpoint);
     u.searchParams.set('response_type', 'code');
     u.searchParams.set('client_id', this.cfg.clientId);
@@ -70,6 +47,7 @@ export class PlatformOAuth implements OAuthConnector {
     u.searchParams.set('code_challenge', i.codeChallenge);
     u.searchParams.set('code_challenge_method', 'S256');
     u.searchParams.set('redirect_uri', i.redirectUri);
+    u.searchParams.set('scope', i.scopes.join(' '));
     return u.toString();
   }
   async exchangeCode(): Promise<never> {
@@ -154,17 +132,7 @@ class UnconfiguredOAuth implements OAuthConnector {
 export function createUnconfiguredIntegrations(): IntegrationAdapters {
   return {
     mode: 'unconfigured',
-    oauth: { meta: new UnconfiguredOAuth('meta'), google: new UnconfiguredOAuth('google') },
-    meta: {
-      sendDirectMessage: async () => {
-        throw new ProviderError('not_configured', 'META_NOT_CONFIGURED');
-      },
-      verifyWebhook: () => false,
-      parseWebhook: () => [],
-      listManagedAccounts: async () => {
-        throw new ProviderError('not_configured', 'META_NOT_CONFIGURED');
-      },
-    },
+    oauth: { meta: new UnconfiguredOAuth('meta'), google: new UnconfiguredOAuth('google'), microsoft: new UnconfiguredOAuth('microsoft') },
     leadFeeds: { zillow: new PartnerLeadFeed('zillow'), realtor: new PartnerLeadFeed('realtor') },
     mlsFeed: new UnlicensedMls(),
     avm: unavailable.avm,
@@ -178,7 +146,7 @@ export function createUnconfiguredIntegrations(): IntegrationAdapters {
 /**
  * The real bag, for when partner apps exist. Refuses to start without its configuration (R-INT-1):
  * META_APP_ID / META_APP_SECRET / META_OAUTH_AUTHORIZE_URL, GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET /
- * GOOGLE_OAUTH_AUTHORIZE_URL. Not wired by createProviders yet (no partner access; VERIFY every endpoint).
+ * GOOGLE_OAUTH_AUTHORIZE_URL, MICROSOFT_CLIENT_ID / MICROSOFT_CLIENT_SECRET / MICROSOFT_OAUTH_AUTHORIZE_URL. Not wired by createProviders yet (no partner access; VERIFY every endpoint).
  */
 export function createRealIntegrations(env: NodeJS.ProcessEnv): IntegrationAdapters {
   const need = (k: string): string => {
@@ -193,7 +161,7 @@ export function createRealIntegrations(env: NodeJS.ProcessEnv): IntegrationAdapt
     oauth: {
       meta: new PlatformOAuth('meta', { clientId: need('META_APP_ID'), clientSecret: need('META_APP_SECRET'), authorizeEndpoint: need('META_OAUTH_AUTHORIZE_URL') }),
       google: new PlatformOAuth('google', { clientId: need('GOOGLE_CLIENT_ID'), clientSecret: need('GOOGLE_CLIENT_SECRET'), authorizeEndpoint: need('GOOGLE_OAUTH_AUTHORIZE_URL') }),
+      microsoft: new PlatformOAuth('microsoft', { clientId: need('MICROSOFT_CLIENT_ID'), clientSecret: need('MICROSOFT_CLIENT_SECRET'), authorizeEndpoint: need('MICROSOFT_OAUTH_AUTHORIZE_URL') }),
     },
-    meta: new MetaGraphMessaging({ appId: need('META_APP_ID'), appSecret: need('META_APP_SECRET') }),
   };
 }

@@ -9,7 +9,7 @@
 //    "not set up on this platform yet"; nothing claims to work when it does not.
 import type { Capabilities, ConnectionKind, ConnectionStatus, IntegrationAdapters, OAuthProviderName } from '../providers/integrations/types.js';
 
-export type ConnectMethod = 'oauth' | 'partner' | 'keyed' | 'later';
+export type ConnectMethod = 'oauth' | 'partner' | 'keyed' | 'later' | 'out_of_scope';
 
 export interface ServiceDef {
   kind: ConnectionKind;
@@ -20,12 +20,32 @@ export interface ServiceDef {
   needsLeadSource: boolean;
   /** which module turns this connection into product work */
   usedBy: string;
+  /** OAuth scopes requested (least privilege). VERIFY every scope name against the vendor's current docs. */
+  scopes?: readonly string[];
 }
 
+/**
+ * D2 (owner scope change): Meta is connected ONLY to publish to a Facebook Page or an Instagram account.
+ * These are the publishing-only scopes we believe Meta requires. VERIFY the exact names with Meta's current
+ * permission reference and app review. Messaging (pages_messaging, instagram_manage_messages) and Lead Ads
+ * (leads_retrieval) scopes are never requested (a test checks this).
+ */
+export const META_PUBLISH_SCOPES = {
+  facebook_page: ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'],
+  instagram_account: ['instagram_basic', 'instagram_content_publish', 'pages_show_list'],
+} as const;
+/** Google Business Profile management scope. VERIFY. */
+export const GOOGLE_GBP_SCOPES = ['https://www.googleapis.com/auth/business.manage'] as const;
+/** Scopes that must never appear in any connect request (D2: no DMs, no Lead Ads retrieval). */
+export const FORBIDDEN_SCOPES = ['pages_messaging', 'instagram_manage_messages', 'leads_retrieval', 'pages_manage_metadata'] as const;
+
 export const SERVICES: readonly ServiceDef[] = [
-  { kind: 'messenger_page', name: 'Facebook Page (Messenger)', connect: 'oauth', oauthProvider: 'meta', needsLeadSource: true, usedBy: 'the unified inbox' },
-  { kind: 'instagram_account', name: 'Instagram account (DMs)', connect: 'oauth', oauthProvider: 'meta', needsLeadSource: true, usedBy: 'the unified inbox' },
-  { kind: 'meta_lead_ads', name: 'Meta Lead Ads', connect: 'oauth', oauthProvider: 'meta', needsLeadSource: true, usedBy: 'lead intake' },
+  // D2: the 0018 kinds `messenger_page` / `instagram_account` are the only Meta account kinds the schema
+  // has, so the PUBLISHING connection uses them (0018 is not edited). They never carry messages. 0018's
+  // CHECK still requires a lead source on these kinds once connected, so the API asks for one.
+  { kind: 'messenger_page', name: 'Facebook Page (publishing)', connect: 'oauth', oauthProvider: 'meta', needsLeadSource: true, usedBy: 'marketing publishing', scopes: META_PUBLISH_SCOPES.facebook_page },
+  { kind: 'instagram_account', name: 'Instagram account (publishing)', connect: 'oauth', oauthProvider: 'meta', needsLeadSource: true, usedBy: 'marketing publishing', scopes: META_PUBLISH_SCOPES.instagram_account },
+  { kind: 'meta_lead_ads', name: 'Meta Lead Ads', connect: 'out_of_scope', needsLeadSource: true, usedBy: 'nothing (out of scope)' },
   { kind: 'web_chat_widget', name: 'Website chat', connect: 'keyed', needsLeadSource: true, usedBy: 'the unified inbox' },
   { kind: 'lead_email', name: 'Lead email inbox', connect: 'keyed', needsLeadSource: true, usedBy: 'lead intake' },
   { kind: 'zillow_feed', name: 'Zillow lead feed', connect: 'partner', needsLeadSource: true, usedBy: 'lead intake' },
@@ -34,7 +54,7 @@ export const SERVICES: readonly ServiceDef[] = [
   { kind: 'showing_service', name: 'Showing service', connect: 'partner', needsLeadSource: false, usedBy: 'seller updates' },
   { kind: 'ads_meta', name: 'Meta ads account', connect: 'later', oauthProvider: 'meta', needsLeadSource: false, usedBy: 'ads (Phase 3)' },
   { kind: 'ads_google', name: 'Google Ads account', connect: 'later', oauthProvider: 'google', needsLeadSource: false, usedBy: 'ads (Phase 3)' },
-  { kind: 'gbp_location', name: 'Google Business Profile', connect: 'later', oauthProvider: 'google', needsLeadSource: false, usedBy: 'Google Business Profile (Phase 3)' },
+  { kind: 'gbp_location', name: 'Google Business Profile', connect: 'oauth', oauthProvider: 'google', needsLeadSource: false, usedBy: 'Google Business Profile', scopes: GOOGLE_GBP_SCOPES },
 ];
 
 export function serviceOf(kind: string): ServiceDef | undefined {
@@ -49,7 +69,7 @@ export interface PlatformPack {
 
 /** platform:* pack → what waits on it, in words (R-INT-6). */
 export const PACK_GATES: Record<string, string> = {
-  'platform:meta': 'Sending on Messenger and Instagram',
+  'platform:meta': 'Meta capabilities that wait on counsel (no Meta messaging is built, owner decision D2)',
   'platform:fair_housing': 'Publishing marketing',
   'platform:avm': 'Home-value notes',
   'platform:review_requests': 'Review requests',
@@ -60,10 +80,20 @@ export const PACK_GATES: Record<string, string> = {
 
 /** A capability that also waits on a platform clearance pack. */
 const CAPABILITY_PACK: Partial<Record<ConnectionKind, Record<string, string>>> = {
-  messenger_page: { send_messages: 'platform:meta' },
-  instagram_account: { send_messages: 'platform:meta' },
+  messenger_page: { publish_posts: 'platform:fair_housing' },
+  instagram_account: { publish_posts: 'platform:fair_housing' },
   gbp_location: { publish_posts: 'platform:fair_housing' },
 };
+
+/**
+ * Per-person connections (user_calendar_links: self and system only; Owners/Admins never see tokens). The
+ * Integrations page names them so nobody looks for them there; each person connects in their own settings
+ * (module 34 builds that flow on `Providers.integrations.oauth.google/microsoft` and `calendar.*`).
+ */
+export const PER_USER_SERVICES = [
+  { key: 'google_calendar', name: 'Google Calendar', sentence: 'Each person connects their own calendar from their settings: appointments are pushed one way and free/busy is read live. Nobody else sees their calendar or token.' },
+  { key: 'microsoft_calendar', name: 'Microsoft calendar', sentence: 'Each person connects their own calendar from their settings: appointments are pushed one way and free/busy is read live. Nobody else sees their calendar or token.' },
+] as const;
 
 export function packSentence(p: PlatformPack): string {
   const what = PACK_GATES[p.key] ?? 'This capability';
@@ -92,6 +122,8 @@ export function statusSentence(s: ConnectionStatus, reason: string | null, servi
 
 export function serviceSentence(service: ServiceDef, adapters: Pick<IntegrationAdapters, 'mode' | 'oauth' | 'leadFeeds' | 'mlsFeed' | 'showing'>): string {
   switch (service.connect) {
+    case 'out_of_scope':
+      return 'Not offered: the owner has taken this out of scope.';
     case 'later':
       return `Arrives with ${service.usedBy}; it cannot be connected yet.`;
     case 'keyed':
@@ -111,7 +143,8 @@ export function serviceSentence(service: ServiceDef, adapters: Pick<IntegrationA
     case 'oauth': {
       const c = adapters.oauth[service.oauthProvider!];
       if (!c.configured) return 'Not set up on this platform yet: no platform app is configured, so it cannot be connected.';
-      return adapters.mode === 'fake' ? 'Test adapter: connects to a simulated account only.' : `Connect with your ${service.oauthProvider === 'meta' ? 'Meta' : 'Google'} login; we check that you manage the account first.`;
+      const who = service.oauthProvider === 'meta' ? 'Meta' : service.oauthProvider === 'google' ? 'Google' : 'Microsoft';
+      return adapters.mode === 'fake' ? 'Test adapter: connects to a simulated account only.' : `Connect with your ${who} login; we check that you manage the account first.`;
     }
   }
 }

@@ -18,10 +18,10 @@ import { audit, redactDiff, redactSnapshot } from '../audit.js';
 import { ciphertextKeyVersion } from '../crypto/primitives.js';
 import type { EnvelopeService } from '../crypto/envelope.js';
 import { AppError } from '../errors.js';
-import type { ConnectionKind, IntegrationAdapters, OAuthToken } from '../providers/integrations/types.js';
+import type { ConnectionKind, IntegrationAdapters, OAuthProviderName, OAuthToken } from '../providers/integrations/types.js';
 import { systemActor } from '../worker/systemActor.js';
 import { enqueueTyped } from '../worker/registry.js';
-import { type CapabilityView, SERVICES, capabilityViews, packSentence, serviceOf, serviceSentence, statusSentence, type PlatformPack } from './catalog.js';
+import { type CapabilityView, PER_USER_SERVICES, SERVICES, capabilityViews, packSentence, serviceOf, serviceSentence, statusSentence, type PlatformPack } from './catalog.js';
 import { type OAuthState, STATE_TTL_MS, pkceChallengeOf, pkceVerifier, signState, verifyState } from './oauthState.js';
 import * as repo from './repos/connections.js';
 import { CONNECTABLE_STATUSES, type ConnectionRow, ConnectionTransitionError, transitionConnection } from './status.js';
@@ -77,6 +77,7 @@ export interface IntegrationsView {
   adapterMode: 'fake' | 'unconfigured' | 'real';
   services: { kind: ConnectionKind; name: string; connect: string; canConnect: boolean; sentence: string; connections: ConnectionView[] }[];
   platformPacks: { key: string; version: string; reviewed: boolean; sentence: string }[];
+  perUser: { key: string; name: string; sentence: string }[];
 }
 
 function packsOf(rows: Awaited<ReturnType<typeof repo.listPlatformPacks>>): PlatformPack[] {
@@ -114,6 +115,7 @@ export async function listIntegrations(tx: Tx, adapters: IntegrationAdapters): P
       connections: rows.filter((r) => r.kind === s.kind).map((r) => connectionView(r, packs)),
     })),
     platformPacks: packs.map((p) => ({ key: p.key, version: p.version, reviewed: p.reviewedByCounselAt !== null, sentence: packSentence(p) })),
+    perUser: PER_USER_SERVICES.map((x) => ({ ...x })),
   };
 }
 
@@ -171,7 +173,7 @@ export async function startConnect(deps: IntegrationDeps, tx: Tx, actor: UserAct
     nonce: randomBytes(16).toString('base64url'),
   };
   const token = signState(deps.secret, state);
-  const authorizeUrl = connector.authorizeUrl({ kind: s.kind, state: token, codeChallenge: pkceChallengeOf(pkceVerifier(deps.secret, state)), redirectUri: redirectUri(deps.publicBaseUrl, s.kind) });
+  const authorizeUrl = connector.authorizeUrl({ kind: s.kind, state: token, codeChallenge: pkceChallengeOf(pkceVerifier(deps.secret, state)), redirectUri: redirectUri(deps.publicBaseUrl, s.kind), scopes: s.scopes ?? [] });
   await audit(tx, actor, { action: 'integration.connect_started', entity: { type: 'integration_connection', id: row.id }, changes: redactSnapshot({ kind: s.kind, external_account_id: input.externalAccountId }) });
   return { connectionId: row.id, authorizeUrl, expiresAt: new Date(expiresAt).toISOString() };
 }
@@ -232,7 +234,7 @@ async function refuse(deps: IntegrationDeps, st: OAuthState, outcome: CallbackOu
   );
 }
 
-async function revokeQuietly(deps: IntegrationDeps, provider: 'meta' | 'google', token: OAuthToken): Promise<void> {
+async function revokeQuietly(deps: IntegrationDeps, provider: OAuthProviderName, token: OAuthToken): Promise<void> {
   try {
     await deps.adapters.oauth[provider].revoke(token);
   } catch {
@@ -253,6 +255,8 @@ export async function oauthCallback(deps: IntegrationDeps, kindParam: string, q:
   const s = serviceOf(st.kind);
   if (!s || s.connect !== 'oauth') return landing(deps, 'STATE_INVALID', null);
   const provider = s.oauthProvider!;
+  // tenant connections are Meta (publishing) or Google (Business Profile); Microsoft is per-user calendar only
+  if (provider !== 'meta' && provider !== 'google') return landing(deps, 'STATE_INVALID', null);
   const actor = systemActor(st.tenantId, 'provider');
 
   const pre = await withTenantTx(actor, (tx) => precheck(tx, st, false), { db: deps.db, retries: 2 });

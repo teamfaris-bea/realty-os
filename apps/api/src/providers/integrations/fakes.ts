@@ -1,7 +1,7 @@
 // Deterministic fakes for every Phase 2-3 adapter (R-INT-1). No clock, no randomness, no network:
 // the same calls in the same order give the same results. Tests drive the "provider side" through the
 // helpers (`FakeOAuth.issueCode`, `FakeMeta.signedWebhook`), never through real vendors.
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { ProviderError } from '../types.js';
 import type {
   AddressFacts,
@@ -13,7 +13,6 @@ import type {
   CalendarProvider,
   Capabilities,
   ConnectionKind,
-  DmSend,
   DocumentRenderer,
   FeedLead,
   IntegrationAdapters,
@@ -22,14 +21,11 @@ import type {
   LicensePack,
   ManagedAccount,
   MediaRef,
-  MetaEvent,
-  MetaMessagingProvider,
   MlsFeed,
   MlsPage,
   OAuthConnector,
   OAuthProviderName,
   OAuthToken,
-  ProviderResult,
   PublishRequest,
   PublishResult,
   PushResult,
@@ -43,11 +39,14 @@ import type {
 const b64url = (b: Buffer) => b.toString('base64url');
 export const pkceChallenge = (verifier: string): string => b64url(createHash('sha256').update(verifier, 'ascii').digest());
 
-/** What the fake platform reports per kind (the real adapter must report from the vendor instead). */
+/**
+ * What the fake platform reports per kind (the real adapter must report from the vendor instead).
+ * D2: a Facebook Page / Instagram account connection is for content publishing only; nothing here
+ * receives or sends messages, and Meta Lead Ads is out of scope.
+ */
 export const FAKE_CAPABILITIES: Partial<Record<ConnectionKind, Capabilities>> = {
-  messenger_page: { receive_messages: true, send_messages: true },
-  instagram_account: { receive_messages: true, send_messages: true },
-  meta_lead_ads: { receive_leads: true },
+  messenger_page: { publish_posts: true },
+  instagram_account: { publish_posts: true },
   ads_meta: { read_spend: true, change_budget: true },
   ads_google: { read_spend: true, change_budget: true },
   gbp_location: { publish_posts: true, read_reviews: true, reply_reviews: true },
@@ -78,7 +77,7 @@ export class FakeOAuth implements OAuthConnector {
 
   constructor(readonly provider: OAuthProviderName) {}
 
-  authorizeUrl(i: { kind: ConnectionKind; state: string; codeChallenge: string; redirectUri: string }): string {
+  authorizeUrl(i: { kind: ConnectionKind; state: string; codeChallenge: string; redirectUri: string; scopes: readonly string[] }): string {
     const u = new URL(`https://oauth.fake.invalid/${this.provider}/authorize`);
     u.searchParams.set('response_type', 'code');
     u.searchParams.set('kind', i.kind);
@@ -86,6 +85,7 @@ export class FakeOAuth implements OAuthConnector {
     u.searchParams.set('code_challenge', i.codeChallenge);
     u.searchParams.set('code_challenge_method', 'S256');
     u.searchParams.set('redirect_uri', i.redirectUri);
+    u.searchParams.set('scope', i.scopes.join(' '));
     return u.toString();
   }
 
@@ -127,83 +127,6 @@ export class FakeOAuth implements OAuthConnector {
   managedBy(accessToken: string): string[] {
     return (this.#tokens.get(accessToken) ?? []).map((a) => a.id);
   }
-}
-
-export const FAKE_META_APP_SECRET = 'fake-meta-app-secret';
-
-export class FakeMeta implements MetaMessagingProvider {
-  readonly outbox: DmSend[] = [];
-  constructor(private readonly oauth: FakeOAuth) {}
-
-  async sendDirectMessage(i: DmSend): Promise<ProviderResult> {
-    const prior = this.outbox.findIndex((m) => m.idempotencyKey === i.idempotencyKey);
-    if (prior >= 0) return { providerRef: `fake-mid-${prior + 1}`, status: 'sent' };
-    this.outbox.push({ ...i });
-    return { providerRef: `fake-mid-${this.outbox.length}`, status: 'sent' };
-  }
-
-  /** The header a real Meta delivery would carry for `raw` (test helper). */
-  static sign(raw: Buffer): string {
-    return `sha256=${createHmac('sha256', FAKE_META_APP_SECRET).update(raw).digest('hex')}`;
-  }
-
-  verifyWebhook(raw: Buffer, signatureHeader: string): boolean {
-    return verifyHubSignature(FAKE_META_APP_SECRET, raw, signatureHeader);
-  }
-
-  parseWebhook(raw: Buffer): MetaEvent[] {
-    return parseMetaWebhook(raw);
-  }
-
-  async listManagedAccounts(token: OAuthToken): Promise<string[]> {
-    return (await this.oauth.listManagedAccounts(token, 'messenger_page')).map((a) => a.externalAccountId);
-  }
-}
-
-/** X-Hub-Signature-256 check, constant time. Shared by the fake and the real adapter. */
-export function verifyHubSignature(appSecret: string, raw: Buffer, header: string): boolean {
-  const m = /^sha256=([0-9a-f]{64})$/.exec(header.trim());
-  if (!m) return false;
-  const expected = createHmac('sha256', appSecret).update(raw).digest();
-  const got = Buffer.from(m[1]!, 'hex');
-  return got.length === expected.length && timingSafeEqual(got, expected);
-}
-
-/** Meta-shaped webhook body → events. VERIFY against the current Graph webhook reference. */
-export function parseMetaWebhook(raw: Buffer): MetaEvent[] {
-  let body: unknown;
-  try {
-    body = JSON.parse(raw.toString('utf8'));
-  } catch {
-    return [];
-  }
-  const b = body as { object?: unknown; entry?: unknown };
-  const platform = b.object === 'instagram' ? 'instagram' : b.object === 'page' ? 'messenger' : null;
-  if (!platform || !Array.isArray(b.entry)) return [];
-  const out: MetaEvent[] = [];
-  for (const e of b.entry as { id?: unknown; messaging?: unknown; changes?: unknown }[]) {
-    const accountId = typeof e?.id === 'string' ? e.id : null;
-    if (!accountId) {
-      out.push({ kind: 'unsupported', externalAccountId: null });
-      continue;
-    }
-    for (const m of Array.isArray(e.messaging) ? (e.messaging as Record<string, unknown>[]) : []) {
-      const sender = (m.sender as { id?: unknown } | undefined)?.id;
-      const msg = m.message as { mid?: unknown; text?: unknown; is_echo?: unknown } | undefined;
-      const ts = typeof m.timestamp === 'number' ? m.timestamp : null;
-      if (typeof sender === 'string' && msg && typeof msg.mid === 'string' && typeof msg.text === 'string' && msg.is_echo !== true && ts !== null) {
-        out.push({ kind: 'message', platform, externalAccountId: accountId, senderScopedId: sender, providerMessageId: msg.mid, text: msg.text, at: new Date(ts).toISOString() });
-      } else out.push({ kind: 'unsupported', externalAccountId: accountId });
-    }
-    for (const c of Array.isArray(e.changes) ? (e.changes as { field?: unknown; value?: Record<string, unknown> }[]) : []) {
-      const v = c.value ?? {};
-      if (c.field === 'leadgen' && typeof v.leadgen_id === 'string') {
-        const t = typeof v.created_time === 'number' ? new Date(v.created_time * 1000).toISOString() : new Date(0).toISOString();
-        out.push({ kind: 'leadgen', externalAccountId: accountId, leadgenId: v.leadgen_id, formId: typeof v.form_id === 'string' ? v.form_id : null, at: t });
-      } else out.push({ kind: 'unsupported', externalAccountId: accountId });
-    }
-  }
-  return out;
 }
 
 export class FakeLeadFeed implements LeadFeedProvider {
@@ -328,8 +251,7 @@ export class FakeRenderer implements DocumentRenderer {
 
 export interface FakeIntegrationAdapters extends IntegrationAdapters {
   readonly mode: 'fake';
-  oauth: { meta: FakeOAuth; google: FakeOAuth };
-  meta: FakeMeta;
+  oauth: { meta: FakeOAuth; google: FakeOAuth; microsoft: FakeOAuth };
   leadFeeds: { zillow: FakeLeadFeed; realtor: FakeLeadFeed };
   mlsFeed: FakeResoMls;
   avm: FakeAvmP2;
@@ -340,11 +262,9 @@ export interface FakeIntegrationAdapters extends IntegrationAdapters {
 }
 
 export function createFakeIntegrations(): FakeIntegrationAdapters {
-  const meta = new FakeOAuth('meta');
   return {
     mode: 'fake',
-    oauth: { meta, google: new FakeOAuth('google') },
-    meta: new FakeMeta(meta),
+    oauth: { meta: new FakeOAuth('meta'), google: new FakeOAuth('google'), microsoft: new FakeOAuth('microsoft') },
     leadFeeds: { zillow: new FakeLeadFeed('zillow'), realtor: new FakeLeadFeed('realtor') },
     mlsFeed: new FakeResoMls(),
     avm: new FakeAvmP2(),

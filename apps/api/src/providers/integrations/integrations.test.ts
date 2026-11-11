@@ -5,9 +5,7 @@ import { testConfig } from '../../auth/testHarness.js';
 import { createFakeProviders, createProviders } from '../index.js';
 import {
   CONNECTION_KINDS,
-  FakeMeta,
   IntegrationConfigError,
-  MetaGraphMessaging,
   PlatformOAuth,
   createFakeIntegrations,
   createRealIntegrations,
@@ -30,7 +28,7 @@ describe('R-INT-1 fakes are the default and deterministic', () => {
       const code = a.oauth.meta.issueCode({ codeChallenge: pkceChallenge('v'.repeat(43)), accounts: [{ id: 'page-1', name: 'Harbor' }] });
       const tok = await a.oauth.meta.exchangeCode({ code, codeVerifier: 'v'.repeat(43), redirectUri: 'https://x.test/cb' });
       return {
-        url: a.oauth.meta.authorizeUrl({ kind: 'messenger_page', state: 's', codeChallenge: 'c', redirectUri: 'https://x.test/cb' }),
+        url: a.oauth.meta.authorizeUrl({ kind: 'messenger_page', state: 's', codeChallenge: 'c', redirectUri: 'https://x.test/cb', scopes: ['pages_manage_posts'] }),
         tok,
         accounts: await a.oauth.meta.listManagedAccounts(tok, 'messenger_page'),
         mls: await a.mlsFeed.changes(null, 1),
@@ -40,8 +38,7 @@ describe('R-INT-1 fakes are the default and deterministic', () => {
         avm: await a.avm.estimate({ line1: '12 Harbor Way', city: 'Charleston', region: 'SC', postalCode: '29401' }),
         avmNone: await a.avm.estimate({ line1: '1 X', city: 'Y', region: 'SC', postalCode: '29410' }),
         pdf: await a.renderer.renderPdf({ templateKey: 'flyer/v1', fields: { b: '2', a: '1' }, imageCount: 2 }),
-        dm: await a.meta.sendDirectMessage({ platform: 'messenger', externalAccountId: 'page-1', accessToken: 't', recipientScopedId: 'psid', body: 'hi', idempotencyKey: 'm1' }),
-        dmAgain: await a.meta.sendDirectMessage({ platform: 'messenger', externalAccountId: 'page-1', accessToken: 't', recipientScopedId: 'psid', body: 'hi', idempotencyKey: 'm1' }),
+        gbp: await a.oauth.google.listManagedAccounts(await a.oauth.google.exchangeCode({ code: a.oauth.google.issueCode({ codeChallenge: pkceChallenge('g'.repeat(43)), accounts: [{ id: 'loc-1' }] }), codeVerifier: 'g'.repeat(43), redirectUri: 'r' }), 'gbp_location'),
         cal: await a.calendar.google.pushEvent({ provider: 'google', accessToken: 't', calendarRef: 'primary' }, { appointmentId: 'ap1', startsAt: 'a', endsAt: 'b', title: 'Showing', externalEventRef: null, externalEtag: null }, { syncVersion: 3 }),
         calStale: await a.calendar.google.pushEvent({ provider: 'google', accessToken: 't', calendarRef: 'primary' }, { appointmentId: 'ap1', startsAt: 'a', endsAt: 'b', title: 'Showing', externalEventRef: null, externalEtag: null }, { syncVersion: 2 }),
         leads: await a.leadFeeds.zillow.poll({ externalAccountId: 'z', accessToken: 't', cursor: null }),
@@ -50,7 +47,8 @@ describe('R-INT-1 fakes are the default and deterministic', () => {
     };
     const one = await run();
     expect(JSON.stringify(await run())).toBe(JSON.stringify(one));
-    expect(one.dmAgain).toEqual(one.dm); // idempotent on messages.id
+    expect(one.accounts[0]!.capabilities).toEqual({ publish_posts: true }); // D2: a Page connection publishes, never messages
+    expect(one.gbp[0]!.capabilities).toEqual({ publish_posts: true, read_reviews: true, reply_reviews: true });
     expect(one.calStale).toEqual({ kind: 'stale', syncVersion: 3 }); // sync_version fence
     expect(one.avmNone).toEqual({ available: false });
     expect(one.license.rules.displayToPublic).toBe(false); // strictest default until a licence pack is entered
@@ -65,22 +63,15 @@ describe('R-INT-1 fakes are the default and deterministic', () => {
     await expect(a.oauth.meta.exchangeCode({ code, codeVerifier: 'right'.padEnd(43, 'x'), redirectUri: 'r' })).rejects.toMatchObject({ providerCode: 'INVALID_GRANT' });
   });
 
-  it('Meta webhook signature is over the RAW body (a re-serialized body fails)', () => {
-    const a = createFakeIntegrations();
-    const raw = Buffer.from('{"object":"page","entry":[{"id":"page-1","messaging":[{"sender":{"id":"psid-9"},"message":{"mid":"m.1","text":"Hi"},"timestamp":1762862400000}]}]}');
-    const sig = FakeMeta.sign(raw);
-    expect(a.meta.verifyWebhook(raw, sig)).toBe(true);
-    expect(a.meta.verifyWebhook(Buffer.from(JSON.stringify(JSON.parse(raw.toString()), null, 1)), sig)).toBe(false);
-    expect(a.meta.verifyWebhook(raw, 'sha256=' + '0'.repeat(64))).toBe(false);
-    expect(a.meta.verifyWebhook(raw, 'sha1=abc')).toBe(false);
-    expect(a.meta.parseWebhook(raw)).toEqual([{ kind: 'message', platform: 'messenger', externalAccountId: 'page-1', senderScopedId: 'psid-9', providerMessageId: 'm.1', text: 'Hi', at: '2025-11-11T12:00:00.000Z' }]);
-    expect(a.meta.parseWebhook(Buffer.from('not json'))).toEqual([]);
+  it('D2: there is no Meta messaging adapter, DM webhook parser or Lead Ads retrieval in the bag', () => {
+    const a = createFakeIntegrations() as unknown as Record<string, unknown>;
+    expect(Object.keys(a).sort()).toEqual(['avm', 'calendar', 'leadFeeds', 'mlsFeed', 'mode', 'oauth', 'renderer', 'showing', 'social']);
+    expect(Object.keys(a.oauth as object).sort()).toEqual(['google', 'meta', 'microsoft']);
   });
 });
 
 describe('R-INT-1 real adapters refuse to start unconfigured', () => {
   it('Meta and OAuth adapters need their platform app configuration', () => {
-    expect(() => new MetaGraphMessaging({ appId: '', appSecret: '' })).toThrow(IntegrationConfigError);
     expect(() => new PlatformOAuth('meta', { clientId: 'x', clientSecret: '', authorizeEndpoint: 'https://a.test' })).toThrow(IntegrationConfigError);
     expect(() => new PlatformOAuth('google', { clientId: 'x', clientSecret: 'y', authorizeEndpoint: 'http://plain.test' })).toThrow(IntegrationConfigError);
     expect(() => createRealIntegrations({})).toThrow(IntegrationConfigError);
@@ -94,6 +85,9 @@ describe('R-INT-1 real adapters refuse to start unconfigured', () => {
       GOOGLE_CLIENT_ID: 'g',
       GOOGLE_CLIENT_SECRET: 'h',
       GOOGLE_OAUTH_AUTHORIZE_URL: 'https://google.example.test/o/oauth2/auth',
+      MICROSOFT_CLIENT_ID: 'm',
+      MICROSOFT_CLIENT_SECRET: 'n',
+      MICROSOFT_OAUTH_AUTHORIZE_URL: 'https://login.example.test/oauth2/v2.0/authorize',
     });
     expect(r.mode).toBe('real');
     await expect(r.oauth.meta.exchangeCode({ code: 'c', codeVerifier: 'v', redirectUri: 'r' })).rejects.toMatchObject({ kind: 'not_configured' });
@@ -106,7 +100,7 @@ describe('R-INT-1 real adapters refuse to start unconfigured', () => {
     expect(u.mode).toBe('unconfigured');
     expect(u.oauth.meta.configured).toBe(false);
     expect(u.mlsFeed.access).toBe('needs_partner_access');
-    expect(u.meta.verifyWebhook(Buffer.from('{}'), 'sha256=' + '0'.repeat(64))).toBe(false);
+    expect(u.oauth.microsoft.configured).toBe(false);
     expect(await u.avm.estimate({ line1: 'a', city: 'b', region: 'SC', postalCode: '29401' })).toEqual({ available: false });
     expect(selectIntegrations({ env: 'production', allowFakeProviders: true }).mode).toBe('fake');
     expect(createUnconfiguredIntegrations().mode).toBe('unconfigured');

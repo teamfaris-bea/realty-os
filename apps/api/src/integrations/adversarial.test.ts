@@ -23,7 +23,7 @@ beforeAll(async () => {
   ownerB = await h.signup();
   srcA = await leadSource(h, ownerA.tenantId!);
   srcB = await leadSource(h, ownerB.tenantId!);
-  const f = await connectFlow(h, ownerA, 'messenger_page', { externalAccountId: 'adv-page-a', leadSourceId: srcA }, [{ id: 'adv-page-a' }]);
+  const f = await connectFlow(h, ownerA, 'gbp_location', { externalAccountId: 'adv-loc-a' }, [{ id: 'adv-loc-a' }]);
   if (f.cb.result !== 'CONNECTED') throw new Error('fixture connect failed');
   connA = f.connectionId;
 }, 180_000);
@@ -38,7 +38,7 @@ describe('tenant isolation', () => {
     expect(v.services.flatMap((s) => s.connections).map((c) => c.id)).not.toContain(connA);
     expect((await call(ownerB, 'PATCH', `/admin/integrations/connections/${connA}`, { displayName: 'mine now' })).status).toBe(404);
     expect((await call(ownerB, 'POST', `/admin/integrations/connections/${connA}/disconnect`)).status).toBe(404);
-    expect((await startFlow(ownerB, 'messenger_page', { connectionId: connA, externalAccountId: 'adv-page-a', leadSourceId: srcB }, { reauth: h })).status).toBe(404);
+    expect((await startFlow(ownerB, 'gbp_location', { connectionId: connA, externalAccountId: 'adv-loc-a' }, { reauth: h })).status).toBe(404);
     expect((await connectionRow(h, connA))!.status).toBe('connected');
   });
 
@@ -52,7 +52,7 @@ describe('tenant isolation', () => {
   it('app_user without a tenant context sees no connection rows; only the definer resolves, and only to ids', async () => {
     const rows = await withPreTenant(async (tx) => (await sql`SELECT id FROM integration_connections`.execute(tx)).rows, { db: h.database });
     expect(rows).toEqual([]);
-    const r = await withPreTenant(async (tx) => (await sql<Record<string, unknown>>`SELECT * FROM app.resolve_channel_account('messenger_page', 'adv-page-a')`.execute(tx)).rows, { db: h.database });
+    const r = await withPreTenant(async (tx) => (await sql<Record<string, unknown>>`SELECT * FROM app.resolve_channel_account('gbp_location', 'adv-loc-a')`.execute(tx)).rows, { db: h.database });
     expect(r).toEqual([{ tenant_id: ownerA.tenantId, connection_id: connA }]);
     expect(Object.keys(r[0]!).sort()).toEqual(['connection_id', 'tenant_id']); // minimal columns, no credential, no payload
   });
@@ -100,15 +100,15 @@ describe('OAuth callback attacks', () => {
     expect((await callback(h, 'messenger_page', { code })).result).toBe('STATE_INVALID');
     expect((await callback(h, 'messenger_page', { state: 'x'.repeat(30) + '.' + 'y'.repeat(43), code })).result).toBe('STATE_INVALID');
     expect(await connectionRow(h, f.connectionId)).toMatchObject({ status: 'not_configured', external_account_id: null });
-    expect(await connectionRow(h, connA)).toMatchObject({ status: 'connected', external_account_id: 'adv-page-a' });
+    expect(await connectionRow(h, connA)).toMatchObject({ status: 'connected', external_account_id: 'adv-loc-a' });
   });
 
   it('state replay: once a state has been used (success or refusal), it is STATE_STALE; no second credential is stored', async () => {
-    const f = await connectFlow(h, ownerB, 'meta_lead_ads', { externalAccountId: 'adv-leads', leadSourceId: srcB }, [{ id: 'adv-leads' }]);
+    const f = await connectFlow(h, ownerB, 'gbp_location', { externalAccountId: 'adv-loc-replay' }, [{ id: 'adv-loc-replay' }]);
     expect(f.cb.result).toBe('CONNECTED');
     const n = await credCount(ownerB.tenantId!);
-    const code2 = h.providers.integrations.oauth.meta.issueCode({ codeChallenge: f.challenge, accounts: [{ id: 'adv-leads' }] });
-    expect((await callback(h, 'meta_lead_ads', { state: f.state, code: code2 })).result).toBe('STATE_STALE');
+    const code2 = h.providers.integrations.oauth.google.issueCode({ codeChallenge: f.challenge, accounts: [{ id: 'adv-loc-replay' }] });
+    expect((await callback(h, 'gbp_location', { state: f.state, code: code2 })).result).toBe('STATE_STALE');
     expect(await credCount(ownerB.tenantId!)).toBe(n);
   });
 

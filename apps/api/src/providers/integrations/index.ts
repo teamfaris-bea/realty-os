@@ -10,7 +10,7 @@ import type { IntegrationAdapters } from './types.js';
 
 export * from './types.js';
 export * from './fakes.js';
-export { IntegrationConfigError, MetaGraphMessaging, PartnerLeadFeed, PlatformOAuth, createRealIntegrations, createUnconfiguredIntegrations } from './real.js';
+export { IntegrationConfigError, PartnerLeadFeed, PlatformOAuth, createRealIntegrations, createUnconfiguredIntegrations } from './real.js';
 
 export function selectIntegrations(config: Pick<Config, 'env' | 'allowFakeProviders'>): IntegrationAdapters {
   if (config.env === 'production' && !config.allowFakeProviders) return createUnconfiguredIntegrations();

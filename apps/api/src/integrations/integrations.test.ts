@@ -54,8 +54,12 @@ describe('GET /admin/integrations: honest status for every service (R-INT-2, R-I
       ['ads_google', 'ads_meta', 'gbp_location', 'instagram_account', 'lead_email', 'meta_lead_ads', 'messenger_page', 'mls_feed', 'realtor_feed', 'showing_service', 'web_chat_widget', 'zillow_feed'].sort(),
     );
     for (const s of v.services) expect(s.sentence.length).toBeGreaterThan(10);
-    expect(v.services.filter((s) => s.canConnect).map((s) => s.kind).sort()).toEqual(['instagram_account', 'messenger_page', 'meta_lead_ads']);
+    expect(v.services.filter((s) => s.canConnect).map((s) => s.kind).sort()).toEqual(['gbp_location', 'instagram_account', 'messenger_page']);
     expect(v.services.find((s) => s.kind === 'ads_meta')!.sentence).toMatch(/cannot be connected yet/);
+    // D2: Meta Lead Ads (and any Meta messaging) is out of scope; the Page/Instagram rows are publishing-only
+    expect(v.services.find((s) => s.kind === 'meta_lead_ads')).toMatchObject({ canConnect: false, sentence: 'Not offered: the owner has taken this out of scope.' });
+    expect(v.services.find((s) => s.kind === 'zillow_feed')!.sentence).toMatch(/^Needs partner access|Demo data only/);
+    expect((v as unknown as { perUser: { key: string }[] }).perUser.map((x) => x.key)).toEqual(['google_calendar', 'microsoft_calendar']);
     expect(v.platformPacks.map((p) => p.key)).toEqual(
       ['platform:avm', 'platform:coaching', 'platform:fair_housing', 'platform:meta', 'platform:portal', 'platform:review_requests', 'platform:voice'],
     );
@@ -84,27 +88,25 @@ describe('connect through the provider callback (R-INT-3)', () => {
     expect(f.cb).toMatchObject({ status: 303, result: 'CONNECTED', connection: f.connectionId });
     expect(f.cb.location.startsWith(`${h.config.webOrigins[0]}/admin/integrations?`)).toBe(true);
     const row = (await connectionRow(h, f.connectionId))!;
-    expect(row).toMatchObject({ status: 'connected', external_account_id: 'page-100', capabilities: { receive_messages: true, send_messages: true } });
+    expect(row).toMatchObject({ status: 'connected', external_account_id: 'page-100', capabilities: { publish_posts: true } });
     const cred = (await h.su.query('SELECT provider, status, external_account_ref, secret_enc FROM provider_credentials WHERE id = $1', [row.credential_id])).rows[0];
     expect(cred).toMatchObject({ provider: 'meta', status: 'active', external_account_ref: 'page-100' });
     expect(Buffer.from(cred.secret_enc).toString('utf8')).not.toContain('fake-token'); // encrypted, never plaintext
     const a = (await auditRows(h, owner.tenantId!, 'integration.connected'))[0]!;
     expect(a).toMatchObject({ actor_user_id: null, reason: 'PROVIDER_CALLBACK_PROVED_CONTROL' });
-    expect(await resolve('messenger_page', 'page-100')).toEqual([{ tenant_id: owner.tenantId, connection_id: f.connectionId }]);
+    // D2: a Page connection is publishing-only, so no inbound route exists for it
+    expect(await resolve('messenger_page', 'page-100')).toEqual([]);
 
-    // capability offered only as reported; sending waits for platform:meta (R-INT-6)
+    // capability offered only as reported; publishing waits for platform:fair_housing (R-INT-6)
     const conn = (await list()).services.find((s) => s.kind === 'messenger_page')!.connections.find((c) => c.id === f.connectionId)!;
-    expect(conn.capabilities).toEqual([
-      { name: 'receive_messages', available: true, reason: null },
-      { name: 'send_messages', available: false, reason: 'Waits for counsel review of platform:meta.' },
-    ]);
-    await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = now() WHERE key = 'platform:meta' AND status = 'published'");
+    expect(conn.capabilities).toEqual([{ name: 'publish_posts', available: false, reason: 'Waits for counsel review of platform:fair_housing.' }]);
+    await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = now() WHERE key = 'platform:fair_housing' AND status = 'published'");
     try {
       const after = (await list()).services.find((s) => s.kind === 'messenger_page')!.connections.find((c) => c.id === f.connectionId)!;
-      expect(after.capabilities.find((c) => c.name === 'send_messages')).toEqual({ name: 'send_messages', available: true, reason: null });
-      expect((await list()).platformPacks.find((p) => p.key === 'platform:meta')).toMatchObject({ reviewed: true });
+      expect(after.capabilities).toEqual([{ name: 'publish_posts', available: true, reason: null }]);
+      expect((await list()).platformPacks.find((p) => p.key === 'platform:fair_housing')).toMatchObject({ reviewed: true });
     } finally {
-      await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL WHERE key = 'platform:meta' AND status = 'published'");
+      await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL WHERE key = 'platform:fair_housing' AND status = 'published'");
     }
   });
 
@@ -127,51 +129,62 @@ describe('connect through the provider callback (R-INT-3)', () => {
     expect(conn.capabilities.every((c) => !c.available)).toBe(true);
   });
 
+  it('D2: the Meta connect asks for publishing scopes only (never messaging or Lead Ads); Google Business Profile asks for its management scope', async () => {
+    const { FORBIDDEN_SCOPES, META_PUBLISH_SCOPES, GOOGLE_GBP_SCOPES } = await import('./catalog.js');
+    const fb = await startFlow(owner, 'messenger_page', { externalAccountId: 'page-scope', leadSourceId: src }, { reauth: h });
+    const ig = await startFlow(owner, 'instagram_account', { externalAccountId: 'ig-scope', leadSourceId: src }, { reauth: h });
+    const gb = await startFlow(owner, 'gbp_location', { externalAccountId: 'loc-scope' }, { reauth: h });
+    const scopes = (u: string) => new URL(u).searchParams.get('scope')!.split(' ');
+    expect(scopes(fb.authorizeUrl)).toEqual([...META_PUBLISH_SCOPES.facebook_page]);
+    expect(scopes(ig.authorizeUrl)).toEqual([...META_PUBLISH_SCOPES.instagram_account]);
+    expect(scopes(gb.authorizeUrl)).toEqual([...GOOGLE_GBP_SCOPES]);
+    for (const u of [fb, ig, gb]) for (const f of FORBIDDEN_SCOPES) expect(scopes(u.authorizeUrl)).not.toContain(f);
+  });
+
   it('an inbound channel needs a lead source before it can go live (0018 CHECK, checked first by the API)', async () => {
     expect((await startFlow(owner, 'messenger_page', { externalAccountId: 'page-nosrc' }, { reauth: h })).code).toBe('LEAD_SOURCE_REQUIRED');
   });
 
   it('partner and later kinds are not connectable; unknown kinds too', async () => {
-    for (const kind of ['zillow_feed', 'mls_feed', 'web_chat_widget', 'ads_meta', 'bogus']) {
+    for (const kind of ['zillow_feed', 'mls_feed', 'web_chat_widget', 'ads_meta', 'meta_lead_ads', 'bogus']) {
       expect((await startFlow(owner, kind, { externalAccountId: 'x' }, { reauth: h })).code).toBe('INTEGRATION_NOT_CONNECTABLE');
     }
   });
 
   it('the user cancelling at the provider links nothing and burns the state', async () => {
-    const f = await startFlow(owner, 'meta_lead_ads', { externalAccountId: 'page-lead', leadSourceId: src }, { reauth: h });
-    expect((await callback(h, 'meta_lead_ads', { state: f.state, error: 'access_denied' })).result).toBe('CANCELLED');
+    const f = await startFlow(owner, 'gbp_location', { externalAccountId: 'loc-cancel' }, { reauth: h });
+    expect((await callback(h, 'gbp_location', { state: f.state, error: 'access_denied' })).result).toBe('CANCELLED');
     expect((await connectionRow(h, f.connectionId))!.status).toBe('not_configured');
-    const code = h.providers.integrations.oauth.meta.issueCode({ codeChallenge: f.challenge, accounts: [{ id: 'page-lead' }] });
-    expect((await callback(h, 'meta_lead_ads', { state: f.state, code })).result).toBe('STATE_STALE');
+    const code = h.providers.integrations.oauth.google.issueCode({ codeChallenge: f.challenge, accounts: [{ id: 'loc-cancel' }] });
+    expect((await callback(h, 'gbp_location', { state: f.state, code })).result).toBe('STATE_STALE');
   });
 
   it('a provider outage at the exchange is reported honestly and links nothing', async () => {
-    const f = await startFlow(owner, 'meta_lead_ads', { externalAccountId: 'page-outage', leadSourceId: src }, { reauth: h });
+    const f = await startFlow(owner, 'gbp_location', { externalAccountId: 'loc-outage' }, { reauth: h });
     const { ProviderError } = await import('../providers/types.js');
-    h.providers.integrations.oauth.meta.failNextExchange = new ProviderError('unavailable');
-    const code = h.providers.integrations.oauth.meta.issueCode({ codeChallenge: f.challenge, accounts: [{ id: 'page-outage' }] });
-    expect((await callback(h, 'meta_lead_ads', { state: f.state, code })).result).toBe('PROVIDER_REFUSED');
+    h.providers.integrations.oauth.google.failNextExchange = new ProviderError('unavailable');
+    const code = h.providers.integrations.oauth.google.issueCode({ codeChallenge: f.challenge, accounts: [{ id: 'loc-outage' }] });
+    expect((await callback(h, 'gbp_location', { state: f.state, code })).result).toBe('PROVIDER_REFUSED');
     expect((await connectionRow(h, f.connectionId))!.status).toBe('not_configured');
   });
 });
 
 describe('one external account is live in one tenant (R-INT-3, E135)', () => {
-  it('E135: tenant B cannot take a Page live in tenant A; once A disconnects, B connects it through the callback', async () => {
-    const a = await connectFlow(h, owner, 'messenger_page', { externalAccountId: 'page-shared', leadSourceId: src }, [{ id: 'page-shared' }]);
+  it('E135: tenant B cannot take an account live in tenant A; once A disconnects, B connects it through the callback', async () => {
+    const a = await connectFlow(h, owner, 'gbp_location', { externalAccountId: 'loc-shared' }, [{ id: 'loc-shared' }]);
     expect(a.cb.result).toBe('CONNECTED');
     const ownerB = await h.signup();
-    const srcB = await leadSource(h, ownerB.tenantId!);
-    const b = await connectFlow(h, ownerB, 'messenger_page', { externalAccountId: 'page-shared', leadSourceId: srcB }, [{ id: 'page-shared' }]);
+    const b = await connectFlow(h, ownerB, 'gbp_location', { externalAccountId: 'loc-shared' }, [{ id: 'loc-shared' }]);
     expect(b.cb.result).toBe('ACCOUNT_LIVE_ELSEWHERE');
     expect(await connectionRow(h, b.connectionId)).toMatchObject({ status: 'not_configured', external_account_id: null, last_error_code: 'ACCOUNT_LIVE_ELSEWHERE' });
-    expect(await resolve('messenger_page', 'page-shared')).toEqual([{ tenant_id: owner.tenantId, connection_id: a.connectionId }]);
+    expect(await resolve('gbp_location', 'loc-shared')).toEqual([{ tenant_id: owner.tenantId, connection_id: a.connectionId }]);
 
     await freshReauth(h, owner);
     expect((await call(owner, 'POST', `/admin/integrations/connections/${a.connectionId}/disconnect`)).status).toBe(200);
-    expect(await resolve('messenger_page', 'page-shared')).toEqual([]); // E134: CHANNEL_NOT_CONNECTED meanwhile
-    const b2 = await connectFlow(h, ownerB, 'messenger_page', { connectionId: b.connectionId, externalAccountId: 'page-shared' }, [{ id: 'page-shared' }]);
+    expect(await resolve('gbp_location', 'loc-shared')).toEqual([]); // E134: nothing routes meanwhile
+    const b2 = await connectFlow(h, ownerB, 'gbp_location', { connectionId: b.connectionId, externalAccountId: 'loc-shared' }, [{ id: 'loc-shared' }]);
     expect(b2.cb.result).toBe('CONNECTED');
-    expect(await resolve('messenger_page', 'page-shared')).toEqual([{ tenant_id: ownerB.tenantId, connection_id: b.connectionId }]);
+    expect(await resolve('gbp_location', 'loc-shared')).toEqual([{ tenant_id: ownerB.tenantId, connection_id: b.connectionId }]);
   });
 });
 
@@ -215,7 +228,7 @@ describe('disconnect revokes the credential in the same transaction (R-INT-5)', 
   });
 
   it('rename is audited; status, account and capabilities are not accepted from people (strict body)', async () => {
-    const f = await startFlow(owner, 'meta_lead_ads', { externalAccountId: 'page-r', leadSourceId: src }, { reauth: h });
+    const f = await startFlow(owner, 'gbp_location', { externalAccountId: 'loc-r' }, { reauth: h });
     const r = await call<{ connection: { displayName: string } }>(owner, 'PATCH', `/admin/integrations/connections/${f.connectionId}`, { displayName: 'Lead forms' });
     expect(r.status).toBe(200);
     expect(r.body.connection.displayName).toBe('Lead forms');
@@ -228,21 +241,21 @@ describe('disconnect revokes the credential in the same transaction (R-INT-5)', 
 
 describe('app.resolve_channel_account (R-TEN-11, E136)', () => {
   it('E136: only connected/degraded connections route; every other status, keyed kinds and unknown accounts resolve to nothing', async () => {
-    const f = await connectFlow(h, owner, 'messenger_page', { externalAccountId: 'page-route', leadSourceId: src }, [{ id: 'page-route' }]);
-    expect(await resolve('messenger_page', 'page-route')).toHaveLength(1);
+    const f = await connectFlow(h, owner, 'gbp_location', { externalAccountId: 'loc-route' }, [{ id: 'loc-route' }]);
+    expect(await resolve('gbp_location', 'loc-route')).toHaveLength(1);
     await asSystemStatus(f.connectionId, 'degraded');
-    expect(await resolve('messenger_page', 'page-route')).toHaveLength(1);
+    expect(await resolve('gbp_location', 'loc-route')).toHaveLength(1);
     await asSystemStatus(f.connectionId, 'revoked');
-    expect(await resolve('messenger_page', 'page-route')).toEqual([]);
-    expect(await resolve('instagram_account', 'page-route')).toEqual([]); // kind is part of the key
-    expect(await resolve('messenger_page', 'nobody')).toEqual([]);
-    expect(await resolve('web_chat_widget', 'page-route')).toEqual([]);
+    expect(await resolve('gbp_location', 'loc-route')).toEqual([]);
+    expect(await resolve('ads_google', 'loc-route')).toEqual([]); // kind is part of the key
+    expect(await resolve('gbp_location', 'nobody')).toEqual([]);
+    expect(await resolve('web_chat_widget', 'loc-route')).toEqual([]);
     // a suspended tenant routes nothing
     await asSystemStatus(f.connectionId, 'connected');
     const st = (await h.su.query('SELECT status FROM tenants WHERE id = $1', [owner.tenantId])).rows[0].status;
     await h.su.query("UPDATE tenants SET status = 'suspended' WHERE id = $1", [owner.tenantId]);
     try {
-      expect(await resolve('messenger_page', 'page-route')).toEqual([]);
+      expect(await resolve('gbp_location', 'loc-route')).toEqual([]);
     } finally {
       await h.su.query('UPDATE tenants SET status = $2 WHERE id = $1', [owner.tenantId, st]);
     }

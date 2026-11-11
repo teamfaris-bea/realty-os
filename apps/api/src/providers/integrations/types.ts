@@ -3,10 +3,14 @@
 // start without its configuration (real.ts). Adapters never receive tenant context: every call takes
 // explicit account ids and the credentials the caller decrypted as the system actor.
 //
-// Reserved outbound names (R-GATE-15, ARCHITECTURE §21.2): `MetaMessagingProvider.sendDirectMessage` is
-// callable only from apps/api/src/comms/dispatch.ts and `SocialPublisher.publishPost` only from
-// apps/api/src/marketing/publish.ts (the lint rule is extended by modules 22 and 29). Nothing in this
-// module calls them. No interface has a method that places an AI outbound call.
+// Owner scope change D2 (overrides PHASE2_3_PLAN): Facebook Messenger and Instagram direct messages are OUT
+// of scope, and so is Meta Lead Ads retrieval. There is no Meta messaging adapter, no DM webhook parser, no
+// messaging window and no messaging scope here. A Meta connection exists ONLY for Facebook Page / Instagram
+// content publishing (SocialPublisher).
+//
+// Reserved outbound name (R-GATE-15, ARCHITECTURE §21.2): `SocialPublisher.publishPost` is callable only
+// from apps/api/src/marketing/publish.ts (module 29 extends the lint rule). Nothing in this module calls it.
+// No interface has a method that sends to a person or places an AI outbound call.
 //
 // Names that clash with the Phase 1 bag (providers/types.ts `MlsFeed`, `AvmProvider`) are the Phase 2
 // shapes and live only inside `Providers.integrations`, so the Phase 1 fakes keep working unchanged.
@@ -46,7 +50,7 @@ export interface ProviderResult {
 
 // ---- OAuth (Meta, Google): the only way an external account gets linked (R-INT-3) ---------------
 
-export type OAuthProviderName = 'meta' | 'google';
+export type OAuthProviderName = 'meta' | 'google' | 'microsoft';
 
 export interface OAuthToken {
   accessToken: string;
@@ -70,42 +74,14 @@ export interface OAuthConnector {
   /** false: no platform app is configured; the UI says "not set up on this platform yet" */
   readonly configured: boolean;
   /** Authorization URL with PKCE (S256) and the signed state. */
-  authorizeUrl(i: { kind: ConnectionKind; state: string; codeChallenge: string; redirectUri: string }): string;
+  /** `scopes` come from the catalog (publishing-only for Meta, D2); the adapter never widens them */
+  authorizeUrl(i: { kind: ConnectionKind; state: string; codeChallenge: string; redirectUri: string; scopes: readonly string[] }): string;
   /** Code → token. The code is single-use at the provider; the verifier proves this server started the flow. */
   exchangeCode(i: { code: string; codeVerifier: string; redirectUri: string }): Promise<OAuthToken>;
   /** The accounts this token manages for `kind`: the callback's proof of control (E160). */
   listManagedAccounts(token: OAuthToken, kind: ConnectionKind): Promise<ManagedAccount[]>;
   /** Best effort revocation at the provider (R-INT-5). */
   revoke(token: OAuthToken): Promise<void>;
-}
-
-// ---- Meta messaging (Messenger, Instagram) -------------------------------------------------------
-
-export interface DmSend {
-  platform: 'messenger' | 'instagram';
-  /** Page id or IG account id (the connection's external_account_id) */
-  externalAccountId: string;
-  /** decrypted page token (system actor only) */
-  accessToken: string;
-  /** PSID / IGSID of the recipient */
-  recipientScopedId: string;
-  body: string;
-  /** messages.id */
-  idempotencyKey: string;
-}
-
-export type MetaEvent =
-  | { kind: 'message'; platform: 'messenger' | 'instagram'; externalAccountId: string; senderScopedId: string; providerMessageId: string; text: string; at: string }
-  | { kind: 'leadgen'; externalAccountId: string; leadgenId: string; formId: string | null; at: string }
-  | { kind: 'unsupported'; externalAccountId: string | null };
-
-export interface MetaMessagingProvider {
-  /** RESERVED (R-GATE-15): only comms/dispatch.ts calls it. */
-  sendDirectMessage(i: DmSend): Promise<ProviderResult>;
-  /** X-Hub-Signature-256 over the RAW body with the platform app secret (VERIFY current Meta docs). */
-  verifyWebhook(raw: Buffer, signatureHeader: string): boolean;
-  parseWebhook(raw: Buffer): MetaEvent[];
-  listManagedAccounts(token: OAuthToken): Promise<string[]>;
 }
 
 // ---- Partner lead feeds (Zillow, realtor.com): needs_partner_access until access exists ---------
@@ -237,6 +213,8 @@ export interface CalendarProvider {
 export interface PublishRequest {
   externalAccountId: string;
   accessToken: string;
+  /** 'facebook_page' | 'instagram_account' | 'gbp_location' */
+  target: 'facebook_page' | 'instagram_account' | 'gbp_location';
   pieceId: string;
   contentSha256: string;
   text: string;
@@ -282,7 +260,6 @@ export interface IntegrationAdapters {
   /** fake: deterministic fakes (dev, tests, an explicit staging demo); unconfigured: production with no partner app */
   readonly mode: 'fake' | 'unconfigured' | 'real';
   oauth: Record<OAuthProviderName, OAuthConnector>;
-  meta: MetaMessagingProvider;
   leadFeeds: { zillow: LeadFeedProvider; realtor: LeadFeedProvider };
   mlsFeed: MlsFeed;
   avm: AvmProvider;

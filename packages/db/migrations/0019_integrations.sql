@@ -2,14 +2,16 @@
 --
 -- One pre-tenant definer: app.resolve_channel_account(kind, external_account_id).
 --
--- Every new webhook (Meta Messenger / Instagram / Lead Ads, partner lead feeds, MLS, showing service,
--- ads, GBP) resolves its tenant ONLY through this function. It returns (tenant_id, connection_id) for a
+-- Every new webhook of an external account (partner lead feeds, MLS, showing service, ads, GBP) resolves its tenant ONLY through this function. It returns (tenant_id, connection_id) for a
 -- connection that is `connected` or `degraded` in an active tenant, and nothing otherwise:
 --   * a `pending_review` row reserves the account (the global live-account index) but routes nothing;
 --   * `not_configured`, `needs_partner_access`, `revoked`, `disconnected` route nothing (E136: the
 --     caller records the event as unrouted and raises a platform alert);
 --   * web-chat widgets and lead inboxes have no external account and are NOT resolved here (their
---     server-generated keys have their own resolvers, module 22).
+--     server-generated keys have their own resolvers, module 22);
+--   * owner scope change D2: Messenger / Instagram DMs and Meta Lead Ads are out of scope, so no inbound
+--     route exists for messenger_page, instagram_account or meta_lead_ads (those rows, if any, are
+--     publishing-only connections) and the resolver never returns them.
 -- The routing key (kind, external_account_id) is written only by the provider callback after the adapter
 -- proved the token manages that account (integration_connections_guard, 0018), and it is live in at
 -- most one tenant (integration_connections_live_account), so at most one row can match.
@@ -25,8 +27,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public AS $$
   SELECT c.tenant_id, c.id
     FROM public.integration_connections c
     JOIN public.tenants t ON t.id = c.tenant_id AND t.status = 'active'
-   WHERE p_kind IN ('messenger_page','instagram_account','meta_lead_ads','zillow_feed','realtor_feed','mls_feed',
-                    'showing_service','ads_meta','ads_google','gbp_location')
+   WHERE p_kind IN ('zillow_feed','realtor_feed','mls_feed','showing_service','ads_meta','ads_google','gbp_location')
      AND c.kind = p_kind
      AND c.external_account_id = p_external_account_id
      AND c.status IN ('connected','degraded')

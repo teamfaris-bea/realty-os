@@ -42,6 +42,7 @@ export const IntegrationsResponse = z.object({
     z.object({ kind: z.enum(CONNECTION_KINDS), name: z.string(), connect: z.string(), canConnect: z.boolean(), sentence: z.string(), connections: z.array(ConnectionResponse) }),
   ),
   platformPacks: z.array(z.object({ key: z.string(), version: z.string(), reviewed: z.boolean(), sentence: z.string() })),
+  perUser: z.array(z.object({ key: z.string(), name: z.string(), sentence: z.string() })),
 });
 export const ConnectStartResponse = z.object({ connectionId: z.uuid(), authorizeUrl: z.string(), expiresAt: z.string() });
 
