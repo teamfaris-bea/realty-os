@@ -14,7 +14,7 @@ describe('Gmail connect disclosure', () => {
         "Who can read it: anyone who may see that client's timeline in Realty OS, including Team Leads, Admins and the Owner.",
         'What Google will show: Google will show that Realty OS can read your email. Realty OS checks the sender and recipients of each new message and copies only mail with your clients.',
         'Nothing is sent to an AI model. Synced mail is never used to write messages.',
-        'You stay in control: remove any thread from Realty OS, stop syncing an address, or disconnect at any time. Disconnecting removes your copies from Realty OS.',
+        "You stay in control: remove any thread from Realty OS, stop syncing an address, or disconnect at any time. Disconnecting removes your copies from Realty OS within a few minutes; backup copies expire on their own schedule.",
       ],
     });
   });

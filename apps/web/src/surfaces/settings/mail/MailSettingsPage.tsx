@@ -259,7 +259,7 @@ function SyncPoints({ q, pending, onConfirm, onStop }: { q: { data?: SyncPointsR
         <Section title="New clients you can sync" description={COPY.onlyConfirmed}>
           <ul className="flex flex-col divide-y divide-line">
             {suggestions.map((s) => (
-              <li key={s.pointId} className="flex flex-wrap items-center gap-3 py-2">
+              <li key={s.pointId} data-point-row className="flex flex-col items-start gap-1 py-2 sm:flex-row sm:items-center sm:gap-3">
                 <PointName name={s.contactName} address={s.address} />
                 <Button variant="secondary" aria-label={`Sync ${s.address}`} pending={pending === `sync:${s.pointId}`} pendingLabel="Syncing" disabled={busy && pending !== `sync:${s.pointId}`} onClick={() => onConfirm([s.pointId])}>
                   Sync
@@ -279,7 +279,7 @@ function SyncPoints({ q, pending, onConfirm, onStop }: { q: { data?: SyncPointsR
         <Section title="Clients you sync" description={COPY.onlyConfirmed}>
           <ul className="flex flex-col divide-y divide-line">
             {confirmed.map((c) => (
-              <li key={c.pointId} className="flex flex-wrap items-center gap-3 py-2">
+              <li key={c.pointId} data-point-row className="flex flex-col items-start gap-1 py-2 sm:flex-row sm:items-center sm:gap-3">
                 <PointName name={c.contactName} address={c.address} />
                 <Button variant="quiet" pending={pending === `stop:${c.pointId}`} pendingLabel="Stopping" disabled={busy && pending !== `stop:${c.pointId}`} onClick={() => onStop(c.pointId, c.address)}>
                   Stop syncing this address
@@ -334,9 +334,11 @@ function BulkConfirm({ suggestions, pending, busy, onConfirm }: { suggestions: S
 
 function PointName({ name, address }: { name: string; address: string }) {
   return (
-    <span className="flex min-w-0 flex-1 flex-col">
-      <span className="text-[16px] font-medium text-ink [overflow-wrap:anywhere]">{name}</span>
-      <span className="text-[14px] text-ink-muted [overflow-wrap:anywhere]">{address}</span>
+    // a real basis: on a phone the row stacks (button under the name), so the address gets the full width and
+    // breaks only when it is longer than the line (break-words, never mid-word while it still fits)
+    <span data-point-name className="flex w-full min-w-0 flex-col sm:w-auto sm:grow sm:basis-[12rem]">
+      <span className="text-[16px] font-medium text-ink break-words">{name}</span>
+      <span className="text-[14px] text-ink-muted break-words">{address}</span>
     </span>
   );
 }

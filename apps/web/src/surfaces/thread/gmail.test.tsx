@@ -7,7 +7,7 @@ import userEvent from '@testing-library/user-event';
 import axe from 'axe-core';
 import { describe, expect, it } from 'vitest';
 import { FakeFetch, IDS, agentApp, decision, err, fullContact, iso, timelineItem } from '../feed/lib/testing.js';
-import { GMAIL_TAG, type MailMessageView, NO_TEXT, REMOVE_THREAD, REMOVE_THREAD_CONSEQUENCE, THREAD_CAPPED, mergeByTime, participantsWords } from './gmail.js';
+import { GMAIL_TAG, type MailMessageView, NO_TEXT, OLDER_GMAIL, REMOVE_THREAD, REMOVE_THREAD_CONSEQUENCE, THREAD_CAPPED, THREAD_REMOVED, coverageLines, mergeByTime, participantsWords } from './gmail.js';
 
 const mid = (n: number) => `01900000-0000-7000-8000-0000000a${String(7000 + n).padStart(4, '0')}`;
 
@@ -33,7 +33,7 @@ function mail(over: Partial<MailMessageView> = {}): MailMessageView {
 
 const MAIL_PATH = `GET /contacts/${IDS.jane}/mail-messages?limit=100`;
 
-function fake(items: MailMessageView[], coverage = [{ address: 'jane@example.test', since: '2026-10-12T00:00:00.000Z' }]) {
+function fake(items: MailMessageView[], coverage = [{ address: 'jane@example.test', since: '2026-10-12T00:00:00.000Z' }], nextBefore: string | null = null) {
   return new FakeFetch()
     .on(`GET /contacts/${IDS.jane}`, { status: 200, body: { contact: fullContact() } })
     .on(`GET /contacts/${IDS.jane}/timeline?limit=100`, {
@@ -47,7 +47,7 @@ function fake(items: MailMessageView[], coverage = [{ address: 'jane@example.tes
       },
     })
     .on(`POST /contacts/${IDS.jane}/messages/preview`, { status: 200, body: { decision: decision({ id: null, phase: 'preview' }), body: '' } })
-    .on(MAIL_PATH, { status: 200, body: { items, coverage, nextBefore: null } });
+    .on(MAIL_PATH, { status: 200, body: { items, coverage, nextBefore } });
 }
 
 async function convo() {
@@ -136,6 +136,10 @@ describe('synced Gmail in the thread', () => {
     await userEvent.click(within(sheet).getByRole('button', { name: 'Remove thread' }));
     await waitFor(() => expect(within(list).queryByText('We would like to go in at 950.')).toBeNull());
     expect(within(list).getByText('Other thread')).toBeVisible();
+    // the opener left with the entry: focus lands on the conversation, not <body>, and the removal is announced
+    await waitFor(() => expect(document.activeElement).toBe(list));
+    expect((await screen.findAllByText(THREAD_REMOVED)).length).toBeGreaterThan(0);
+    expect(screen.getByTestId('announcer')).toHaveTextContent(THREAD_REMOVED);
     expect(f.callsTo('POST /me/mail-threads/thr-1/exclude')).toHaveLength(1);
   });
 
@@ -166,5 +170,30 @@ describe('synced Gmail in the thread', () => {
     expect(list.querySelector('[data-gmail-entry]')).toBeNull();
     expect(screen.queryByText(/Showing Gmail with/)).toBeNull();
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('with more pages (nextBefore), "since" is the oldest copy shown and older Gmail is said to stay in Gmail', async () => {
+    const shownOldest = '2026-11-01T12:00:00.000Z';
+    agentApp(fake([mail({ internalAt: shownOldest })], [{ address: 'jane@example.test', since: '2026-08-01T00:00:00.000Z' }], shownOldest), `/contacts/${IDS.jane}/thread`);
+    await convo();
+    expect(await screen.findByText('Showing Gmail with jane@example.test since Nov 1, 2026; other mail stays in Gmail.')).toBeVisible();
+    expect(screen.getByText(OLDER_GMAIL)).toBeVisible();
+    expect(screen.queryByText(/since Aug 1, 2026/)).toBeNull();
+  });
+});
+
+describe('coverageLines', () => {
+  const cov = [{ address: 'jane@example.test', since: '2026-08-01T00:00:00.000Z' }];
+  it('uses the API date when every copy is shown', () => {
+    expect(coverageLines({ coverage: cov, items: [mail({ internalAt: '2026-11-01T00:00:00.000Z' })], nextBefore: null })).toEqual({ lines: cov, older: false });
+  });
+  it('never claims earlier than the oldest copy shown while more pages exist, and never earlier than the API date', () => {
+    expect(coverageLines({ coverage: cov, items: [mail({ internalAt: '2026-11-02T00:00:00.000Z' }), mail({ internalAt: '2026-11-01T00:00:00.000Z' })], nextBefore: '2026-11-01T00:00:00.000Z' })).toEqual({
+      lines: [{ address: 'jane@example.test', since: '2026-11-01T00:00:00.000Z' }],
+      older: true,
+    });
+    const late = [{ address: 'jane@example.test', since: '2026-11-05T00:00:00.000Z' }];
+    expect(coverageLines({ coverage: late, items: [mail({ internalAt: '2026-11-01T00:00:00.000Z' })], nextBefore: 'x' }).lines).toEqual(late);
+    expect(coverageLines(undefined)).toEqual({ lines: [], older: false });
   });
 });

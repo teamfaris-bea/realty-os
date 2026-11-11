@@ -10,8 +10,14 @@
 //   - a client's email delivered to the mailbox appears in that client's thread after one mail.sync pass, tagged
 //     "Gmail (read-only)", with no reply button; personal mail (no client on it) is never copied;
 //   - the agent removes that thread in 2 taps, and disconnects in 2 taps.
+import { mkdirSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { type Locator, type Page, expect, test } from 'playwright/test';
+
 import { type MailStack, type MailWorld, startMailStack } from './stack.js';
+
+const SHOTS = resolve(dirname(fileURLToPath(import.meta.url)), '../../test-results/mail-sync');
 
 test.describe.configure({ mode: 'serial' });
 
@@ -154,6 +160,18 @@ test('a later client is confirmed in 1 tap; "Stop syncing this address" removes 
   await signIn(page, w.agent);
   await page.goto(`${stack.webUrl}/settings/mail`);
   const fresh = page.getByRole('region', { name: 'New clients you can sync' });
+  await expect(fresh.getByText(lee.email)).toBeVisible();
+  // phone layout (UX review): name blocks get the row's width and an address sits on one line, never broken mid-word
+  for (const name of await page.locator('[data-point-name]').all()) {
+    const box = (await name.boundingBox())!;
+    expect(box.width).toBeGreaterThanOrEqual(isPhone(page) ? 250 : 192);
+    expect(box.height).toBeLessThan(80); // two lines (name, address), no stretched block
+    const address = name.locator('span').nth(1);
+    const lh = await address.evaluate((e) => parseFloat(getComputedStyle(e).lineHeight) || 20);
+    expect((await address.boundingBox())!.height).toBeLessThan(lh * 1.5);
+  }
+  mkdirSync(SHOTS, { recursive: true });
+  await page.screenshot({ path: resolve(SHOTS, `client-rows-${test.info().project.name}.png`), fullPage: true });
   await t.tap(fresh.getByRole('button', { name: `Sync ${lee.email}` }));
   await expect(page.getByText('Syncing Gmail with 1 client.')).toBeVisible();
   expect(t.count).toBe(1);
@@ -191,6 +209,8 @@ test("a client's email shows in the thread tagged Gmail (read-only); personal ma
   await expect(sheet.getByText("This can't be undone: its copies leave Realty OS and later messages in it are never copied.")).toBeVisible();
   await t.tap(sheet.getByRole('button', { name: 'Remove thread' }));
   await expect(convo.locator('[data-gmail-entry]')).toHaveCount(0);
+  await expect(convo).toBeFocused();
+  await expect(page.getByTestId('announcer')).toHaveText('Thread removed from Realty OS');
   expect(t.count).toBe(2);
 });
 

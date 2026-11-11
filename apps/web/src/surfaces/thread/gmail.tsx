@@ -11,10 +11,11 @@
 // platform email, or Gmail itself). Only the mailbox owner sees "Remove this thread from Realty OS".
 // When the route is not there (or answers an error), the thread shows no Gmail and nothing else changes.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Button, Dialog } from '../../design/index.js';
 import { type ApiError, useApi } from '../../shell/index.js';
 import { formatDateTime } from '../feed/lib/format.js';
+import { useAgentSheets } from '../feed/lib/AgentSheets.js';
 import { useMutate } from '../feed/lib/hooks.js';
 import type { TimelineItem } from '../feed/lib/types.js';
 
@@ -54,6 +55,8 @@ export const REMOVE_THREAD = 'Remove this thread from Realty OS';
 export const REMOVE_THREAD_CONSEQUENCE = "This can't be undone: its copies leave Realty OS and later messages in it are never copied.";
 export const NO_TEXT = 'No text to show; open it in Gmail.';
 export const THREAD_CAPPED = 'Older messages stay in Gmail.';
+export const THREAD_REMOVED = 'Thread removed from Realty OS';
+export const OLDER_GMAIL = 'Older Gmail stays in Gmail.';
 
 /** The synced Gmail copies of one contact (newest first, as the API sends them). Disabled with enabled=false. */
 export function useSyncedMail(contactId: string, enabled = true) {
@@ -99,16 +102,38 @@ export function participantsWords(m: Pick<MailMessageView, 'sender' | 'contactRo
   return `From ${from} to ${contactName}${ROLE_SUFFIX[m.contactRole]}${others(m.otherRecipientCount)}`;
 }
 
+/**
+ * What the coverage line may claim: the API's `since` is the oldest copy overall, but the thread shows only the
+ * first page (limit=100). While more pages exist (nextBefore), "since" is the oldest copy SHOWN (never earlier
+ * than the API's own date) and the line adds that older Gmail stays in Gmail.
+ */
+export function coverageLines(data: Pick<MailMessagesResponse, 'coverage' | 'items' | 'nextBefore'> | undefined): { lines: { address: string; since: string }[]; older: boolean } {
+  if (!data || data.coverage.length === 0) return { lines: [], older: false };
+  const older = data.nextBefore !== null;
+  if (!older) return { lines: data.coverage, older };
+  const shown = data.items.map((m) => Date.parse(m.internalAt)).filter((n) => !Number.isNaN(n));
+  const oldestShown = shown.length > 0 ? Math.min(...shown) : null;
+  return {
+    lines: data.coverage.map((c) => {
+      const since = Date.parse(c.since);
+      return oldestShown !== null && (Number.isNaN(since) || oldestShown > since) ? { address: c.address, since: new Date(oldestShown).toISOString() } : c;
+    }),
+    older,
+  };
+}
+
 /** "Showing Gmail with {address} since {date}; other mail stays in Gmail." per confirmed address. */
-export function MailCoverage({ coverage }: { coverage: readonly { address: string; since: string }[] }) {
-  if (coverage.length === 0) return null;
+export function MailCoverage({ data }: { data: Pick<MailMessagesResponse, 'coverage' | 'items' | 'nextBefore'> | undefined }) {
+  const { lines, older } = coverageLines(data);
+  if (lines.length === 0) return null;
   return (
-    <ul className="flex flex-col gap-0.5" aria-label="Gmail in this conversation">
-      {coverage.map((c) => (
-        <li key={`${c.address}:${c.since}`} className="text-[13px] text-ink-muted [overflow-wrap:anywhere]">
+    <ul className="flex flex-col gap-0.5" aria-label="Synced Gmail">
+      {lines.map((c) => (
+        <li key={`${c.address}:${c.since}`} className="text-[13px] text-ink-muted break-words">
           Showing Gmail with {c.address} since {formatSince(c.since)}; other mail stays in Gmail.
         </li>
       ))}
+      {older ? <li className="text-[13px] text-ink-muted">{OLDER_GMAIL}</li> : null}
     </ul>
   );
 }
@@ -158,19 +183,29 @@ export function GmailEntry({ item, contact }: { item: MailMessageView; contact: 
 /** The mailbox owner's "Remove this thread from Realty OS" → confirm (2 taps). Final while the link lives. */
 function RemoveThread({ threadId, contactId }: { threadId: string; contactId: string }) {
   const qc = useQueryClient();
+  const { announce } = useAgentSheets();
   const [open, setOpen] = useState(false);
+  const opener = useRef<HTMLButtonElement>(null);
   const exclude = useMutate<Record<string, never>, { excluded: true }>('POST', { invalidate: [mailMessagesKey(contactId)] });
   const remove = async () => {
     const r = await exclude.run(`/me/mail-threads/${encodeURIComponent(threadId)}/exclude`, {});
     if (r.ok) {
+      // the entry (the dialog's opener) unmounts with the thread: focus goes to the conversation list, not <body>
+      const list = opener.current?.closest<HTMLElement>('ol[aria-label="Conversation"]') ?? null;
       setOpen(false);
       // drop the thread at once; the refetch the mutation started confirms it
       qc.setQueryData<MailMessagesResponse>(mailMessagesKey(contactId), (old) => (old ? { ...old, items: old.items.filter((m) => m.threadId !== threadId) } : old));
+      announce(THREAD_REMOVED);
+      setTimeout(() => {
+        if (!list || !list.isConnected) return;
+        if (!list.hasAttribute('tabindex')) list.setAttribute('tabindex', '-1');
+        list.focus();
+      }, 0);
     }
   };
   return (
     <>
-      <Button variant="quiet" className="text-[14px]" onClick={() => setOpen(true)}>
+      <Button ref={opener} variant="quiet" className="text-[14px]" onClick={() => setOpen(true)}>
         {REMOVE_THREAD}
       </Button>
       {open ? (

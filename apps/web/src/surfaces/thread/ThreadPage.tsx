@@ -107,7 +107,7 @@ function Thread() {
   return (
     <div className="mx-auto flex w-full max-w-2xl md:mx-0 flex-col gap-3">
       <ThreadHeader contact={full} />
-      <MailCoverage coverage={mail.data?.coverage ?? []} />
+      <MailCoverage data={mail.data} />
       {t.isError ? <Notice tone="error">{messageFor(t.error, AGENT_ERROR_MESSAGES)}</Notice> : null}
       {t.data && items.length === 0 && !mail.data?.items.length ? <p className="py-6 text-center text-[15px] text-ink-muted">No messages or calls yet.</p> : null}
       <Messages items={items} mail={mail.data?.items ?? []} contact={{ id: full.id, name: full.displayName }} />

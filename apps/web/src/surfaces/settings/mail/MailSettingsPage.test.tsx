@@ -310,3 +310,27 @@ describe('Settings → Gmail: connected', () => {
     }
   });
 });
+
+describe('Settings → Gmail: client rows on a phone', () => {
+  it('rows stack on a phone (button under the name) and the name block has a real basis; addresses never break mid-word while they fit', async () => {
+    mount(
+      new FakeFetch()
+        .on('GET /me/mail-link', { status: 200, body: view({ link: link() }) })
+        .on('GET /me/mail-sync-points', { status: 200, body: { confirmed: [{ ...suggestions[0]!, confirmedAt: '2026-11-10T15:01:00.000Z' }], suggestions: [suggestions[1]!] } }),
+    );
+    await screen.findByRole('region', { name: 'Clients you sync' });
+    const rows = [...document.querySelectorAll('[data-point-row]')];
+    expect(rows).toHaveLength(2);
+    for (const r of rows) {
+      expect(r.className).toMatch(/(^| )flex-col( |$)/);
+      expect(r.className).toContain('sm:flex-row');
+      const name = r.querySelector('[data-point-name]')!;
+      // full width when stacked; the basis applies only in a row (in a column a basis would set the HEIGHT)
+      expect(name.className).toMatch(/(^| )w-full( |$)/);
+      expect(name.className).toContain('sm:basis-[12rem]');
+      expect(name.className).not.toMatch(/(^| )basis-/);
+      expect(name.innerHTML).not.toContain('overflow-wrap:anywhere');
+    }
+  });
+});
+
