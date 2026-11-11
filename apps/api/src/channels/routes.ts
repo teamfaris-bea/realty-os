@@ -48,6 +48,8 @@ export const StartBody = z.strictObject({
   disclosureId: z.uuid(),
 });
 export const MessageBody = z.strictObject({ message: Message, clientMessageId: z.uuid().optional() });
+/** the cursor a previous poll returned, passed back unchanged */
+export const PollQuery = z.strictObject({ after: z.string().max(80).optional() });
 
 export const ConfigResponse = z.object({ teamName: z.string(), disclosure: z.object({ id: z.uuid(), text: z.string() }).nullable(), assistantNotice: z.string() });
 export const StartResponse = z.object({ sessionToken: z.string(), status: z.literal('open') });
@@ -84,7 +86,7 @@ async function register(app: FastifyInstance): Promise<void> {
   );
   r.get(
     '/public/chat/session/:token/poll',
-    { config: pub, schema: { params: SessionParams, querystring: z.strictObject({ after: z.string().max(80).optional() }), response: { 200: PollResponse } } },
+    { config: pub, schema: { params: SessionParams, querystring: PollQuery, response: { 200: PollResponse } } },
     async (req) => pollSession(webChatDeps(platformOf(req)), req.params.token, req.ip, req.query.after),
   );
 

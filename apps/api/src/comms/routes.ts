@@ -149,7 +149,7 @@ async function register(app: FastifyInstance): Promise<void> {
     }, { db: req.server.platform.db }),
   );
   // the feed's cards at once (up to 50): contacts the caller does not see in detail are simply absent
-  r.get('/reachability', { config: { auth: 'self' }, schema: { querystring: z.strictObject({ contactIds: z.string().max(50 * 37).transform((s) => s.split(',').filter(Boolean)).pipe(z.array(z.uuid()).min(1).max(50)) }), response: { 200: S.ReachabilityManyResponse } } }, async (req) =>
+  r.get('/reachability', { config: { auth: 'self' }, schema: { querystring: S.ReachabilityManyQuery, response: { 200: S.ReachabilityManyResponse } } }, async (req) =>
     withTenantTx(actorOf(req), async (tx, now) => ({ reachability: [...(await reachabilityFor(tx, req.query.contactIds, now)).values()] }), { db: req.server.platform.db }),
   );
 

@@ -90,6 +90,8 @@ const ReachabilitySchema = z.object({
 });
 export const ReachabilityResponse = z.object({ reachability: ReachabilitySchema });
 export const ReachabilityManyResponse = z.object({ reachability: z.array(ReachabilitySchema) });
+/** GET /reachability?contactIds=a,b,…: up to 50 contact ids, comma-separated (the feed's cards at once) */
+export const ReachabilityManyQuery = z.strictObject({ contactIds: z.string().max(50 * 37).transform((s) => s.split(',').filter(Boolean)).pipe(z.array(z.uuid()).min(1).max(50)) });
 
 export const CallBody = z.strictObject({ toPointId: z.uuid().optional() });
 export const CallResponse = z.object({

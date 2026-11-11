@@ -1,0 +1,1489 @@
+{
+  "$comment": "GENERATED from the API Zod schemas by apps/api/src/channels/webContract.ts (--write). Do not edit: apps/api/src/channels/webContract.test.ts fails when this file drifts.",
+  "routes": {
+    "GET /public/chat/:widgetToken": {
+      "inputKeys": [
+        "widgetToken"
+      ],
+      "body": null,
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "teamName": {
+            "type": "string"
+          },
+          "disclosure": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "text"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "assistantNotice": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "teamName",
+          "disclosure",
+          "assistantNotice"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "POST /public/chat/:widgetToken/start": {
+      "inputKeys": [
+        "disclosureId",
+        "email",
+        "message",
+        "name",
+        "phone",
+        "widgetToken"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "pattern": "^[^\\p{Cc}\\p{Cf}]*$"
+          },
+          "phone": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 40,
+            "pattern": "^[^\\p{Cc}\\p{Cf}]*$"
+          },
+          "email": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 254,
+            "pattern": "^[^\\p{Cc}\\p{Cf}]*$"
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "pattern": "^(?:[^\\p{Cc}\\p{Cf}]|[\\n\\t])*$"
+          },
+          "disclosureId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        },
+        "required": [
+          "name",
+          "message",
+          "disclosureId"
+        ],
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "sessionToken": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "const": "open"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "status"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "POST /public/chat/session/:token/messages": {
+      "inputKeys": [
+        "clientMessageId",
+        "message",
+        "token"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "pattern": "^(?:[^\\p{Cc}\\p{Cf}]|[\\n\\t])*$"
+          },
+          "clientMessageId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "accepted": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "required": [
+          "accepted"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "GET /public/chat/session/:token/poll": {
+      "inputKeys": [
+        "after",
+        "token"
+      ],
+      "body": null,
+      "query": {
+        "type": "object",
+        "properties": {
+          "after": {
+            "type": "string",
+            "maxLength": 80
+          }
+        },
+        "additionalProperties": false
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "body": {
+                  "type": "string"
+                },
+                "sentAt": {
+                  "type": "string"
+                },
+                "from": {
+                  "type": "string",
+                  "enum": [
+                    "team",
+                    "assistant"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "body",
+                "sentAt",
+                "from"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "open": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "messages",
+          "cursor",
+          "open"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "POST /contacts/:id/messages": {
+      "inputKeys": [
+        "body",
+        "channel",
+        "id",
+        "idempotencyKey",
+        "scheduleAt",
+        "subject",
+        "toPointId"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {
+          "channel": {
+            "type": "string",
+            "enum": [
+              "sms",
+              "email",
+              "web_chat"
+            ]
+          },
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 10000
+          },
+          "subject": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "scheduleAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_:.-]{8,100}$"
+          },
+          "toPointId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        },
+        "required": [
+          "channel",
+          "body",
+          "idempotencyKey"
+        ],
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "channel": {
+                    "type": "string",
+                    "enum": [
+                      "sms",
+                      "mms",
+                      "email",
+                      "web_chat"
+                    ]
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "statusReason": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "purpose": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "marketing",
+                          "informational"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "body": {
+                    "type": "string"
+                  },
+                  "subject": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "scheduledFor": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "dispatchedAt": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "channel",
+                  "status",
+                  "statusReason",
+                  "purpose",
+                  "body",
+                  "subject",
+                  "scheduledFor",
+                  "dispatchedAt"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "outcome": {
+                    "type": "string",
+                    "enum": [
+                      "allow",
+                      "deny"
+                    ]
+                  },
+                  "reasons": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "explanation": {
+                    "type": "string"
+                  },
+                  "phase": {
+                    "type": "string",
+                    "enum": [
+                      "preview",
+                      "send"
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "outcome",
+                  "reasons",
+                  "explanation",
+                  "phase"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "result": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "message",
+          "decision",
+          "result"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "POST /contacts/:id/messages/preview": {
+      "inputKeys": [
+        "body",
+        "channel",
+        "id",
+        "subject",
+        "toPointId"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {
+          "channel": {
+            "type": "string",
+            "enum": [
+              "sms",
+              "email",
+              "web_chat"
+            ]
+          },
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 10000
+          },
+          "subject": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "toPointId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        },
+        "required": [
+          "channel",
+          "body"
+        ],
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "decision": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "outcome": {
+                "type": "string",
+                "enum": [
+                  "allow",
+                  "deny"
+                ]
+              },
+              "reasons": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "explanation": {
+                "type": "string"
+              },
+              "phase": {
+                "type": "string",
+                "enum": [
+                  "preview",
+                  "send"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "outcome",
+              "reasons",
+              "explanation",
+              "phase"
+            ],
+            "additionalProperties": false
+          },
+          "body": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision",
+          "body"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "POST /assistant/actions/:id/approve": {
+      "inputKeys": [
+        "commandId",
+        "editedPayload",
+        "editedPayload.body",
+        "editedPayload.channel",
+        "editedPayload.recommendation",
+        "editedPayload.subject",
+        "id",
+        "reviewedInboundSeq"
+      ],
+      "body": {
+        "type": "object",
+        "properties": {
+          "commandId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "editedPayload": {
+            "type": "object",
+            "properties": {
+              "channel": {
+                "type": "string",
+                "enum": [
+                  "sms",
+                  "email",
+                  "web_chat"
+                ]
+              },
+              "subject": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              "body": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 10000
+              },
+              "recommendation": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              }
+            },
+            "additionalProperties": false
+          },
+          "reviewedInboundSeq": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "commandId"
+        ],
+        "additionalProperties": false
+      },
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "actionId": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "status": {
+            "type": "string"
+          },
+          "result": {
+            "type": "string"
+          },
+          "messageId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/__schema0"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "outcome": {
+                    "type": "string"
+                  },
+                  "reasons": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "explanation": {
+                    "type": "string"
+                  },
+                  "phase": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "outcome",
+                  "reasons",
+                  "explanation",
+                  "phase"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "actionId",
+          "status",
+          "result",
+          "messageId",
+          "decision"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        }
+      }
+    },
+    "GET /contacts/:id/reachability": {
+      "inputKeys": [
+        "id"
+      ],
+      "body": null,
+      "query": null,
+      "response": {
+        "type": "object",
+        "properties": {
+          "reachability": {
+            "type": "object",
+            "properties": {
+              "contactId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "purposeNow": {
+                "type": "string",
+                "enum": [
+                  "marketing",
+                  "informational"
+                ]
+              },
+              "channels": {
+                "type": "object",
+                "properties": {
+                  "sms": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "voice": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "email": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "web_chat": {
+                    "type": "object",
+                    "properties": {
+                      "hasAddress": {
+                        "$ref": "#/$defs/__schema1"
+                      },
+                      "defaultPointId": {
+                        "$ref": "#/$defs/__schema2"
+                      },
+                      "blocked": {
+                        "$ref": "#/$defs/__schema3"
+                      },
+                      "reasons": {
+                        "$ref": "#/$defs/__schema4"
+                      },
+                      "points": {
+                        "$ref": "#/$defs/__schema6"
+                      },
+                      "session": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "open": {
+                                "type": "boolean"
+                              },
+                              "widgetConnected": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "open",
+                              "widgetConnected"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "hasAddress",
+                      "defaultPointId",
+                      "blocked",
+                      "reasons",
+                      "points",
+                      "session"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "sms",
+                  "voice",
+                  "email",
+                  "web_chat"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "contactId",
+              "purposeNow",
+              "channels"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "reachability"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "object",
+            "properties": {
+              "hasAddress": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "defaultPointId": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "blocked": {
+                "$ref": "#/$defs/__schema3"
+              },
+              "reasons": {
+                "$ref": "#/$defs/__schema4"
+              },
+              "points": {
+                "$ref": "#/$defs/__schema6"
+              }
+            },
+            "required": [
+              "hasAddress",
+              "defaultPointId",
+              "blocked",
+              "reasons",
+              "points"
+            ],
+            "additionalProperties": false
+          },
+          "__schema1": {
+            "type": "boolean"
+          },
+          "__schema2": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "__schema3": {
+            "type": "boolean"
+          },
+          "__schema4": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/__schema5"
+            }
+          },
+          "__schema5": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "CONSENT_REVOKED",
+                  "SUPPRESSED",
+                  "WRONG_NUMBER",
+                  "CONTACT_POINT_INVALID",
+                  "LANDLINE_NO_SMS"
+                ]
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "keyword",
+                  "opt_out_language",
+                  "unsubscribe",
+                  "agent_recorded",
+                  "call_outcome",
+                  "wrong_number",
+                  "provider_report",
+                  "imported",
+                  "suppression",
+                  "contact_point",
+                  "other"
+                ]
+              },
+              "purposes": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "marketing",
+                    "informational"
+                  ]
+                }
+              },
+              "at": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "keyword": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "recordedBy": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "userId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "displayName": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "userId",
+                      "displayName"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "importBatchId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "suppressionReason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "addressHint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "otherAddress": {
+                "type": "boolean"
+              },
+              "addressRemoved": {
+                "type": "boolean"
+              },
+              "evidence": {
+                "type": "object",
+                "properties": {
+                  "consentEventId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "inboundMessageId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "callId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "suppressionId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "consentEventId",
+                  "inboundMessageId",
+                  "callId",
+                  "suppressionId"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "code",
+              "source",
+              "purposes",
+              "at",
+              "keyword",
+              "recordedBy",
+              "importBatchId",
+              "suppressionReason",
+              "addressHint",
+              "otherAddress",
+              "addressRemoved",
+              "evidence"
+            ],
+            "additionalProperties": false
+          },
+          "__schema6": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "pointId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "addressHint": {
+                  "type": "string"
+                },
+                "blocked": {
+                  "type": "boolean"
+                },
+                "reasons": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/__schema5"
+                  }
+                }
+              },
+              "required": [
+                "pointId",
+                "addressHint",
+                "blocked",
+                "reasons"
+              ],
+              "additionalProperties": false
+            }
+          }
+        }
+      }
+    },
+    "GET /reachability": {
+      "inputKeys": [
+        "contactIds"
+      ],
+      "body": null,
+      "query": {
+        "type": "object",
+        "properties": {
+          "contactIds": {
+            "type": "string",
+            "maxLength": 1850
+          }
+        },
+        "required": [
+          "contactIds"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "reachability": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "contactId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "purposeNow": {
+                  "type": "string",
+                  "enum": [
+                    "marketing",
+                    "informational"
+                  ]
+                },
+                "channels": {
+                  "type": "object",
+                  "properties": {
+                    "sms": {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    "voice": {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    "email": {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    "web_chat": {
+                      "type": "object",
+                      "properties": {
+                        "hasAddress": {
+                          "$ref": "#/$defs/__schema1"
+                        },
+                        "defaultPointId": {
+                          "$ref": "#/$defs/__schema2"
+                        },
+                        "blocked": {
+                          "$ref": "#/$defs/__schema3"
+                        },
+                        "reasons": {
+                          "$ref": "#/$defs/__schema4"
+                        },
+                        "points": {
+                          "$ref": "#/$defs/__schema6"
+                        },
+                        "session": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "open": {
+                                  "type": "boolean"
+                                },
+                                "widgetConnected": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "open",
+                                "widgetConnected"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "hasAddress",
+                        "defaultPointId",
+                        "blocked",
+                        "reasons",
+                        "points",
+                        "session"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "sms",
+                    "voice",
+                    "email",
+                    "web_chat"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "contactId",
+                "purposeNow",
+                "channels"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "reachability"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "object",
+            "properties": {
+              "hasAddress": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "defaultPointId": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "blocked": {
+                "$ref": "#/$defs/__schema3"
+              },
+              "reasons": {
+                "$ref": "#/$defs/__schema4"
+              },
+              "points": {
+                "$ref": "#/$defs/__schema6"
+              }
+            },
+            "required": [
+              "hasAddress",
+              "defaultPointId",
+              "blocked",
+              "reasons",
+              "points"
+            ],
+            "additionalProperties": false
+          },
+          "__schema1": {
+            "type": "boolean"
+          },
+          "__schema2": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "__schema3": {
+            "type": "boolean"
+          },
+          "__schema4": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/__schema5"
+            }
+          },
+          "__schema5": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "CONSENT_REVOKED",
+                  "SUPPRESSED",
+                  "WRONG_NUMBER",
+                  "CONTACT_POINT_INVALID",
+                  "LANDLINE_NO_SMS"
+                ]
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "keyword",
+                  "opt_out_language",
+                  "unsubscribe",
+                  "agent_recorded",
+                  "call_outcome",
+                  "wrong_number",
+                  "provider_report",
+                  "imported",
+                  "suppression",
+                  "contact_point",
+                  "other"
+                ]
+              },
+              "purposes": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "marketing",
+                    "informational"
+                  ]
+                }
+              },
+              "at": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "keyword": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "recordedBy": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "userId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "displayName": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "userId",
+                      "displayName"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "importBatchId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "suppressionReason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "addressHint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "otherAddress": {
+                "type": "boolean"
+              },
+              "addressRemoved": {
+                "type": "boolean"
+              },
+              "evidence": {
+                "type": "object",
+                "properties": {
+                  "consentEventId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "inboundMessageId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "callId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "suppressionId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "consentEventId",
+                  "inboundMessageId",
+                  "callId",
+                  "suppressionId"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "code",
+              "source",
+              "purposes",
+              "at",
+              "keyword",
+              "recordedBy",
+              "importBatchId",
+              "suppressionReason",
+              "addressHint",
+              "otherAddress",
+              "addressRemoved",
+              "evidence"
+            ],
+            "additionalProperties": false
+          },
+          "__schema6": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "pointId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "addressHint": {
+                  "type": "string"
+                },
+                "blocked": {
+                  "type": "boolean"
+                },
+                "reasons": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/__schema5"
+                  }
+                }
+              },
+              "required": [
+                "pointId",
+                "addressHint",
+                "blocked",
+                "reasons"
+              ],
+              "additionalProperties": false
+            }
+          }
+        }
+      }
+    }
+  },
+  "errors": {
+    "NOT_FOUND": 404,
+    "VALIDATION_FAILED": 422,
+    "PAYLOAD_TOO_LARGE": 413,
+    "RATE_LIMITED": 429,
+    "CHANNEL_NOT_CONNECTED": 409,
+    "WEBCHAT_DISCLOSURE_STALE": 409,
+    "WEBCHAT_SESSION_CLOSED": 410,
+    "CONTACT_POINT_MISSING": 422,
+    "DRAFT_STALE": 409,
+    "DRAFT_INVALIDATED": 409
+  },
+  "webChat": {
+    "widgetKey": "^wk_[0-9a-f]{40}$",
+    "sessionToken": "^[A-Za-z0-9_-]{43}$",
+    "nameMax": 120,
+    "messageMax": 2000
+  }
+}
