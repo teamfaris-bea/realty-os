@@ -8,6 +8,7 @@ import type { ContactId, IanaZone, TenantId } from '@realty/core/foundation';
 import { ianaZone, instantFromDate } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
+import { redactNames } from '@realty/core/assistant';
 import type { EnvelopeService } from '../../crypto/envelope.js';
 
 export interface ContactCore {
@@ -165,10 +166,14 @@ export async function contactBundle(tx: Tx, c: ContactCore, o: { calls?: readonl
 /** The requesting agent's own most recent sent messages (tone only; core scrubs them). */
 export async function voiceSamples(tx: Tx, userId: string | null): Promise<string[]> {
   if (!userId) return [];
-  const r = await sql<{ body: string }>`
-    SELECT body FROM messages WHERE tenant_id = app.tenant_id() AND direction = 'outbound' AND initiator = 'human' AND initiated_by_user_id = ${userId}
-       AND NOT imported AND status IN ('sent','delivered') ORDER BY occurred_at DESC LIMIT 20`.execute(tx);
-  return r.rows.map((x) => x.body);
+  // Samples are other conversations: the recipient's own name is replaced, so the prompt about one
+  // contact never names another (R-AST-14; core.scrubSample drops their numbers, emails and links).
+  const r = await sql<{ body: string; first_name: string | null; last_name: string | null }>`
+    SELECT m.body, c.first_name, c.last_name
+      FROM messages m LEFT JOIN contacts c ON c.tenant_id = m.tenant_id AND c.id = m.contact_id
+     WHERE m.tenant_id = app.tenant_id() AND m.direction = 'outbound' AND m.initiator = 'human' AND m.initiated_by_user_id = ${userId}
+       AND NOT m.imported AND m.status IN ('sent','delivered') ORDER BY m.occurred_at DESC LIMIT 20`.execute(tx);
+  return r.rows.map((x) => redactNames(x.body, [x.first_name, x.last_name]));
 }
 
 export async function firstNameOf(tx: Tx, userId: string | null): Promise<string | null> {

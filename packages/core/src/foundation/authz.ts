@@ -223,6 +223,8 @@ export const AUDIT_ACTIONS = [
   'message.held_send', // api/comms: the sender tapped Send anyway on a message held because the client replied (E27); dispatch still checks it
   'message.held_cancel', // api/comms: the sender canceled a scheduled or held message
   'deal.contact_removed', // lane rule-coverage: the Owner removed a person from a deal before erasure (E59)
+  'assistant.output_blocked', // lane prompt-injection: a model output was discarded (wiring details, oversized, not the contract); codes only
+  'assistant.output_flagged', // lane prompt-injection: a model draft needs a check (human claim, unsourced link/phone/email, hidden characters); codes only
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

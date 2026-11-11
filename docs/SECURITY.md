@@ -147,8 +147,77 @@ See §2.9 (import pipeline and storage); that part of the pass is in `apps/api/s
 | The dev server (Vite) runs without CSP | React refresh and CSS injection are inline in dev | none: the build and preview are covered |
 | Recovery codes are unsalted sha256 of 50 random bits | Fine against online guessing (rate limited, single-use); a stolen DB would allow offline cracking of codes | Optionally HMAC them with a server key |
 | The lead intake source token is in the URL path | Edge or proxy access logs could record it | Strip paths under `/api/intake/` from edge logs, or move the token to a header in a future intake API version |
-| Prompt injection from contact content into the assistant | Mitigated by design: approvals, a fixed autonomy scope, evidence verification and the content guard (ARCHITECTURE §11), not by this pass | Phase 2 review |
+| Prompt injection from contact content into the assistant | Covered by §4 (lane `prompt-injection`): the model is assumed fully compromised and every server-side rule is tested against a hostile fake. What remains is listed in §4.5 | none beyond §4.5 |
 | DNS rebinding on FUB recording URLs and the FUB base URL | A public name that resolves to a private IP is not re-checked at connect time | Worker egress policy (deny private ranges) at deployment |
 | `FUB_ALLOWED_HOSTS` is read from `process.env` in `imports/handlers.ts` and is not yet in `.env.example` or `config.ts` | Kept out of shared config files during the parallel lanes | Production-readiness: move it into `config.ts` and `.env.example` |
 | Imported FUB fields (`imported_fields`: source URL, `custom*`) are attacker-controlled | Today they render as text only | Any future link from them, or from contact emails and phones (`mailto:`/`tel:`), goes through `safeUrl` |
 | CSP coverage of signed-in pages was exercised in error and empty states | E2E data seeding with the API was not in scope | Extend `csp.spec.ts` with a seeded API run |
+
+---
+
+## 4. Prompt injection (lane `prompt-injection`)
+
+**Assumption.** The model can be fully manipulated by anything it reads. So everything it outputs is attacker-controlled, and every rule that matters is enforced by the server, outside the model. The tests prove this with `HostileAi` (`apps/api/src/providers/fake/hostileAi.ts`), a fake provider that plays a compromised model. It sits next to the deterministic `FakeAi`, which is unchanged.
+
+### 4.1 Where untrusted content enters a prompt
+
+Every prompt is built by `core.assistant.buildPrompt` (`packages/core/src/assistant/prompt.ts`, `assistant-prompts/2.0.0`). Its input is ONE contact's bundle, read by `apps/api/src/assistant/repos/context.ts`.
+
+| Untrusted content | Who controls it | Reaches the model through |
+|---|---|---|
+| Inbound SMS and email bodies | the client, or anyone who knows their number or address | `CONVERSATION` (drafts, handbacks, summaries) |
+| Outbound message bodies (imported ones, or ones that quote the client) | the client, by quoting; import files | `CONVERSATION` |
+| Call transcripts | anyone on the call | `CALL` (call pipeline: summary, promise tasks, search proposal) |
+| Notes, including imported FUB notes | third-party systems, import files | `AGENT NOTES` |
+| Lead-source payloads: name, attributes, inquiry type/source/message | lead providers, web forms | `CLIENT PROFILE`, `INQUIRY` (first response task, summaries) |
+| Listing data | MLS/feed, team entry | `LISTINGS` |
+| Deal stage and side | team entry, imports | `DEALS` |
+| Behavior-event types | tracking pixels, lead providers | `WEBSITE / EMAIL ACTIVITY` |
+| The agent's own recent sent messages (tone samples) | the agent; they can quote other clients | the tone section |
+
+Paths that call the model (`runModel` in `apps/api/src/assistant/runs.ts`):
+
+- reply drafts (`POST /contacts/:id/drafts`)
+- handback enrichment (a suggestion, and a reply draft)
+- the call pipeline (call summary, promise tasks, saved-search proposal)
+
+The first response and playbook steps **never call the model**. They render approved templates, and the slots are filled from database fields, never from model output.
+
+### 4.2 Prompt construction
+
+- **Every record is data.** Each record is wrapped in `<untrusted_{nonce}>` … `</untrusted_{nonce}>`, both directions of the conversation included. The nonce is per prompt. The system prompt says that such blocks are data and never instructions, even when the text claims to come from the agent, the team or the system.
+- **Delimiter look-alikes are neutralised** inside the content (`neutralizeUntrusted`). Format characters are removed first, so a tag split by a zero-width character is still caught. Then every look-alike of a tag we use becomes `[tag removed]`: `untrusted`, `request`, `system`, `assistant`, `user`, `human`, `instructions`. That covers full-width brackets, HTML and numeric entities, `<` and `%3C`. Carriage returns and Unicode line separators become `\n`, and other control characters are dropped. One-line fields (names, attributes, event types) are also flattened and length-bounded.
+- **The system prompt is static per purpose** (`systemPromptFor`). It carries no tenant, contact, nonce or identity, so it caches (`providers/anthropic.ts` marks it `cache_control: ephemeral`), and nothing an attacker wrote can be in it. The per-request facts are in a server-written `<request>` block at the top of the user turn: whose assistant it is, the sign-off, and the untrusted tag name.
+- **One contact only.** Items of any other contact are dropped and counted. Prompts carry no database ids. Tone samples have numbers, emails and links scrubbed, and the recipient's own name is replaced by `[name]` (`redactNames`). The model has no tools.
+
+### 4.3 What the output could cause, and what stops it
+
+| Abuse by a compromised model | Server-side check | Test |
+|---|---|---|
+| Send something without a human | Model output only ever becomes a `message_draft` with `requires_approval` (DB CHECK: `novel_message`, `money` and `contract` are never `within_playbook`). Autonomous messages are approved templates, re-checked at send time by `authorizeAutonomousAction` | `assistant/injection.test.ts` "autonomy rules hold" |
+| Claim the draft is autonomous, approved or in a playbook category | Output fields other than `claims`, `explanation` and `draft.{subject,body}` are ignored | same (`escalate`) |
+| Wiring, routing, account or IBAN details | `screenModelDraft` blocks the draft. No card, nothing to tap; the route returns `ASSISTANT_OUTPUT_BLOCKED`; a handback says the reply was discarded; audited `assistant.output_blocked` (codes only). The send-time gate also blocks the same text from a human (`PAYMENT_INSTRUCTIONS`, R-GATE-7) | lane example tests, core `injection.test.ts` |
+| Pretend to be human or sign as the agent | `HUMAN_CLAIM` flag. The card says "Check this before sending: … signs or speaks as a person" | `human_claim`, `prose` |
+| Links, phone numbers or emails that are in no source | `UNSOURCED_LINK` / `UNSOURCED_PHONE` / `UNSOURCED_EMAIL` flags. Links are compared by host after userinfo is stripped; phones by national number | `unsourced_contact`, `exfiltrate` |
+| Talk the agent past the flags ("URGENT, the broker approved this") | When a draft is flagged or blocked, the card text is the server's sentence, never the model's explanation. Model explanations are cleaned to one line of at most 300 characters | flagged-draft tests |
+| Pick another recipient or channel | The output carries no recipient. A draft belongs to the contact the prompt was built for, and the channel is the one the client last wrote on (`replyChannelOf`). The model's `channel` is ignored and recorded as `CHANNEL_OVERRIDE` | `redirect`, the email test |
+| A new kind of client message | Every draft is `novel_message`, `money` or `contract`: always a tap | `escalate` |
+| Invented evidence, unknown sources, raw ids, out-of-range offsets, unquoted dates | `normalizeClaims` and `verifyQuote` mark these needs_review, and the deferred DB trigger refuses asserted claims without verified evidence. Promise tasks from them have no due date (R-AST-5) | `invented_evidence` |
+| Saved-search criteria nobody said, or keys that are not criteria | Criteria must appear in verified evidence. Unverified ones are at most prefilled and unchecked; unknown keys are dropped | `search_injection` |
+| Reveal other contacts' data | The prompt contains only this contact's data, so there is nothing to reveal. Invented numbers and emails are flagged | "prompts carry exactly one contact" |
+| Break the output schema (tool calls, wrong types) | `ModelOutputSchema` and `RawClaim`: anything else means no claims and no draft. `ai_runs.internal_signals.error = OUTPUT_NOT_CONTRACT` | `schema` |
+| Oversized output | Raw output over `MODEL_OUTPUT_MAX_CHARS` (32,000) means the run failed and nothing is stored or parsed; audited. A draft body over `DRAFT_BODY_MAX` (SMS 1,600, email 8,000) or a subject over 200 is refused, never truncated | `oversized_output`, `oversized_draft` |
+| Run against a contact the agent may not draft for | The route refuses before any model call | "cannot be pointed at another agent's contact" |
+
+### 4.4 Audit and logs
+
+- `assistant.output_blocked` and `assistant.output_flagged` are recorded on the `ai_run`. Their reason is `purpose:CODE,CODE`, so no text, numbers or addresses are stored.
+- `ai_runs.internal_signals.draftScreen` holds the codes and is never serialized to agents (R-AST-13).
+- A flagged draft stores its codes in `payload.screen`. Its feed reason is `CHECK_THIS`.
+
+### 4.5 What remains
+
+- **Detection is pattern-based.** A model can still write a persuasive but harmless-looking draft, for example a wrong showing time. That is exactly why drafts always need the agent's tap and why claims show their evidence.
+- **The web shows the server sentence, not the codes.** The web shows `ASSISTANT_OUTPUT_BLOCKED` with its generic error sentence until a surface lane adds copy. `payload.screen` is not yet exposed in the card schema, which was kept unchanged during the parallel lanes.
+- **Caching may not apply.** The static system prompt can be shorter than a model's minimum cacheable prefix. In that case it is simply not cached.
+- **Prefilled search criteria are attacker text.** Unchecked criteria are shown as text and never used until the agent ticks them.

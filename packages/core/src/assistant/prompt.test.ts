@@ -40,8 +40,11 @@ describe('buildPrompt (R-AST-14)', () => {
   it('R-AST-14 contains one contact, their deals and listings, the tenant identity, no tools and no ids at all', () => {
     const p = build();
     expect(p.tools).toEqual([]);
-    expect(p.system).toContain('Smith Team assistant');
-    expect(p.system).toContain('Acme Realty LLC');
+    // the identity is in the server-written <request> block, not in the (static, cacheable) system prompt
+    const request = /^<request>\n([\s\S]*?)\n<\/request>/.exec(p.user)![1]!;
+    expect(request).toContain('Smith Team assistant');
+    expect(request).toContain('Acme Realty LLC');
+    expect(p.system).not.toContain('Smith Team');
     expect(p.user).toContain('CLIENT: Jane Doe');
     expect(p.user).toContain('12 Oak Lane, Austin — active, $439,000, 3 bd, 2.5 ba');
     expect(p.user).toContain('stage: active, side: buy');
@@ -85,7 +88,8 @@ describe('buildPrompt (R-AST-14)', () => {
     const p = build(b);
     const nonce = /<untrusted_([0-9a-f]{12})>/.exec(p.user)?.[1];
     expect(nonce).toBeDefined();
-    expect(p.system).toContain(`<untrusted_${nonce}>`);
+    expect(p.system).not.toContain(nonce!); // the system prompt is static; the tag name is in <request>
+    expect(p.user).toContain(`untrusted_tag: untrusted_${nonce}`);
     expect(p.user).toContain('[tag removed]');
     expect(p.user).not.toContain('</untrusted_000000000000>');
     const opens = p.user.split(`<untrusted_${nonce}>`).length - 1;
@@ -98,15 +102,22 @@ describe('buildPrompt (R-AST-14)', () => {
     expect(build(bundle()).user).not.toContain(`<untrusted_${nonce}>`); // the nonce changes with content
   });
 
-  it('R-AST-14 inbound texts, the inquiry message and transcripts are untrusted; agent notes and outbound texts are not', () => {
+  it('R-AST-14 every record is untrusted data: inbound and outbound texts, the inquiry, transcripts, notes, deals, listings and activity', () => {
     const p = build();
     const nonce = /<untrusted_([0-9a-f]{12})>/.exec(p.user)![1];
     const blocks = [...p.user.matchAll(new RegExp(`<untrusted_${nonce}>\\n([\\s\\S]*?)\\n</untrusted_${nonce}>`, 'g'))].map((m) => m[1]!);
     expect(blocks.some((x) => x.includes('Is 12 Oak Lane still available?'))).toBe(true);
     expect(blocks.some((x) => x.includes('Can we see it Saturday?'))).toBe(true);
     expect(blocks.some((x) => x.includes('call me Thursday around four'))).toBe(true);
-    expect(blocks.some((x) => x.includes('Pre-approved for 460k.'))).toBe(false);
-    expect(blocks.some((x) => x.includes('Sure! What time works?'))).toBe(false);
+    expect(blocks.some((x) => x.includes('Pre-approved for 460k.'))).toBe(true);
+    expect(blocks.some((x) => x.includes('Sure! What time works?'))).toBe(true);
+    expect(blocks.some((x) => x.includes('12 Oak Lane, Austin'))).toBe(true);
+    expect(blocks.some((x) => x.includes('stage: active, side: buy'))).toBe(true);
+    expect(blocks.some((x) => x.includes('email_opened'))).toBe(true);
+    expect(blocks.some((x) => x.includes('buy via Website'))).toBe(true);
+    // outside the blocks there is only server-written structure: headers, handles, times
+    const outside = p.user.replace(new RegExp(`<untrusted_${nonce}>\\n[\\s\\S]*?\\n</untrusted_${nonce}>`, 'g'), '');
+    for (const word of ['Jane', 'Oak', 'Saturday', 'Pre-approved', 'Website', 'email_opened']) expect(outside, word).not.toContain(word);
   });
 
   it('R-AST-14 keeps at most the 20 most recent voice samples and scrubs their contact details', () => {
@@ -141,7 +152,7 @@ describe('buildPrompt (R-AST-14)', () => {
   });
 
   it('opens are labelled as signals, not facts', () => {
-    expect(build().user).toMatch(/email_opened \(signal, may not mean they looked\)/);
+    expect(build().user).toMatch(/ACTIVITY [^\n]* \(signal, may not mean they looked\):\n<untrusted_[0-9a-f]+>\nemail_opened\n/);
   });
 
   // R-AST-13: the prompt never asks for a confidence value.
@@ -202,13 +213,13 @@ describe('buildPrompt with a sparse or unusual bundle', () => {
     expect(p.user).toContain('CLIENT PROFILE (their time zone: America/Los_Angeles):');
     expect(p.user).toContain('CLIENT: the client');
     expect(p.user).not.toContain('INQUIRY');
-    expect(p.user).toMatch(/assistant \(email\):\nFollowing up by email\./);
+    expect(p.user).toMatch(/assistant \(email\):\n<untrusted_[0-9a-f]+>\nFollowing up by email\./);
     expect(p.user.indexOf('Earlier text')).toBeLessThan(p.user.indexOf('Following up'));
     expect(p.user.indexOf('earlier note')).toBeLessThan(p.user.indexOf('later note'));
     expect(p.user).toContain('speaker: hello');
     expect(p.user).toContain('stage: under_contract, closing: Tue Dec 15');
     expect(p.user).toContain('3 Pine, Austin — coming_soon, price n/a');
-    expect(p.user).toContain('listing_saved (fact)');
+    expect(p.user).toMatch(/\(fact\):\n<untrusted_[0-9a-f]+>\nlisting_saved\n/);
     expect(p.inputRefs.listingIds).toEqual(['00000000-0000-7000-8000-00000000b002']); // referenced by their own event
     expect(p.sources.find((s) => s.sourceType === 'email')).toBeDefined();
     const noDeals = build({ ...sparse, deals: [{ ...sparse.deals[0]!, closingAt: null }], contact: { ...sparse.contact, inquiry: { type: 'sell', sourceName: 'Zillow', message: null, receivedAt: T, vaLoanIndicated: false } } });
