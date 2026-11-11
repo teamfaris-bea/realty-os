@@ -18,7 +18,11 @@ export const LOOSE_FACTOR = 4;
  * holds them to a regression ceiling instead, so CI catches them getting worse without pretending
  * they pass. Remove an entry once the operation meets LOOSE_FACTOR × budget.
  */
-export const KNOWN_MISS_CEILING_MS: readonly { match: RegExp; ceilingMs: number }[] = [];
+export const KNOWN_MISS_CEILING_MS: readonly { match: RegExp; ceilingMs: number }[] = [
+  // accept / claim with 40+ simultaneous taps: CPU-bound on a 4-core box (docs/PERFORMANCE.md §7); 250k p95 637 / 382 ms
+  { match: /^accept: /, ceilingMs: 900 },
+  { match: /^claim: \d+ agents each claim/, ceilingMs: 600 },
+];
 
 /**
  * Paths lane perf-misses brought under budget at 250k (docs/PERFORMANCE.md §4): the smoke (20k contacts) holds
@@ -29,8 +33,6 @@ export const FIXED_PATH_CEILING_MS: readonly { match: RegExp; ceilingMs: number 
   { match: /^search (name|phone|email): /, ceilingMs: 300 },
   { match: /^thread as the TC/, ceilingMs: 300 },
   { match: /^team scoreboard: /, ceilingMs: 300 },
-  { match: /^accept: /, ceilingMs: 300 },
-  { match: /^claim: 44 agents|^claim: \d+ agents each claim/, ceilingMs: 300 },
 ];
 
 async function main(): Promise<number> {

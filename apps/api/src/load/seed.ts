@@ -2,6 +2,7 @@
 // Recreates the load database, migrates it, bulk-loads the synthetic data (generate.ts), runs the real
 // exception recompute once per tenant (so the exception queue has its derived rows), and ANALYZEs.
 import { createDatabase } from '@realty/db';
+import pg from 'pg';
 import { hashPassword } from '../auth/password.js';
 import { localKek } from '../crypto/kek.js';
 import { EnvelopeService } from '../crypto/envelope.js';
@@ -36,6 +37,14 @@ export async function seedLoad(o: { db: string; contacts: number; log: (s: strin
     // the scoreboard.rollup job's backfill (0027): every closed day of the window rolled up
     const roll = await rollupAll(database, spec.tenants.map((t) => loadUuid(t.slug, 'tenant')));
     for (const r of roll) o.log(`scoreboard rollup ${r.tenantId}: ${r.days} days in ${r.ms.toFixed(0)} ms`);
+    // statistics for the rows the jobs just wrote (the bulk load's ANALYZE ran before them)
+    const su = new pg.Client({ connectionString: urls.ownerUrl });
+    await su.connect();
+    try {
+      await su.query('ANALYZE priority_feed_items, feed_groups, feed_dirty, exception_items, scoreboard_activity_daily, scoreboard_speed_daily, scoreboard_rollup_days');
+    } finally {
+      await su.end();
+    }
     return { spec, gen, recompute: rec, feed, roll, urls };
   } finally {
     await database.close();
