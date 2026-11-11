@@ -108,6 +108,29 @@ describe('Thread', () => {
     expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages`)).toEqual([]);
   });
 
+  it('D1: blocked on both text and email, the box writes on the channel it was opened on and says why that one is blocked; Send stays disabled', async () => {
+    const unsubscribed = stopReason({ source: 'unsubscribe', keyword: null, addressHint: 'j•••@example.test' });
+    const both = () =>
+      threadFake().on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: reachability(IDS.jane, { sms: [stopReason()], email: [unsubscribed] }) } });
+    // opened from Email: the email box, with the unsubscribe as its reason (never only the texting reason)
+    const fake = both();
+    const { view } = agentApp(fake, `/contacts/${IDS.jane}/thread?compose=email`);
+    await user().type(await screen.findByRole('textbox', { name: 'Email message' }), 'Saturday?');
+    expect(screen.getByRole('radio', { name: 'Email' })).toBeChecked();
+    expect(screen.getByRole('radio', { name: 'Email' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send' })).toHaveAccessibleDescription(/^Unsubscribed from email/);
+    expect(screen.getByRole('radio', { name: 'Text' })).toHaveAccessibleDescription('Text not offered: Texted STOP on Nov 10');
+    expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages/preview`)).toEqual([]);
+    expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages`)).toEqual([]);
+    view.unmount();
+    // opened from Text: the text box, with the STOP as its reason
+    agentApp(both(), `/contacts/${IDS.jane}/thread?compose=sms`);
+    await user().type(await screen.findByRole('textbox', { name: 'Text message' }), 'Saturday?');
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send' })).toHaveAccessibleDescription('Texted STOP on Nov 10');
+  });
+
   it('an allowed send shows no badge, no consent question and no quiet-hours wait', async () => {
     agentApp(threadFake(), `/contacts/${IDS.jane}/thread?compose=sms`);
     await screen.findByRole('textbox', { name: 'Text message' });
