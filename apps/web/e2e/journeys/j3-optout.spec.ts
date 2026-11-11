@@ -136,16 +136,20 @@ test('J3.1 after STOP, a one-to-one text, a template text, a bulk text and a pla
   await expect(page.getByRole('button', { name: 'Text', exact: true })).toBeDisabled();
   await shot(page, info, 'j3', '1-stopped-contact');
   await page.goto(`${stack.webUrl}/contacts/${owen.id}/thread?compose=sms`);
-  const box = page.getByRole('textbox', { name: 'Text message' });
-  await box.fill('Still interested in the condo?');
-  const send = page.getByRole('button', { name: 'Send', exact: true });
-  await expect(send).toBeDisabled();
-  await expect(send).toHaveAccessibleDescription(sentence);
-  // the template text: Templates → template fills the box; Send stays disabled
+  // module 37: the box never offers Text: the option is disabled with the exact sentence, and there is no text box
+  const textOption = page.getByRole('radio', { name: 'Text' });
+  await expect(textOption).toBeDisabled({ timeout: 15_000 });
+  await expect(textOption).toHaveAccessibleDescription(`Text not offered: ${sentence}`);
+  await expect(page.getByRole('textbox', { name: 'Text message' })).toHaveCount(0);
+  await expect(page.getByTestId('channel-why')).toHaveText('Writing by email: texting is blocked.');
+  // the template text: the box's Templates offers only email templates, so the text template cannot be put in a text
   await tap(page, page.getByRole('button', { name: 'Templates' }));
-  await tap(page, page.getByRole('dialog', { name: 'Text templates' }).getByRole('button', { name: /Showing follow-up/ }));
-  await expect(box).toHaveValue('Hi Owen, how was the showing today?');
-  await expect(send).toBeDisabled();
+  const picker = page.getByRole('dialog', { name: 'Email templates' });
+  await expect(picker).toBeVisible();
+  await expect(picker.getByRole('button', { name: /Showing follow-up/ })).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Text templates' })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(textOption).toBeDisabled();
   await expect(page.getByRole('button', { name: /anyway/i })).toHaveCount(0);
   await shot(page, info, 'j3', '2-template-blocked');
 

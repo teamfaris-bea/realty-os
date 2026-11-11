@@ -155,8 +155,10 @@ test('an agent’s day: every benchmark job within its tap target', async ({ pag
   await expect(page.getByText(/^Texted STOP on /)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole('button', { name: 'Text', exact: true })).toBeDisabled();
   await page.goto(`${stack.webUrl}/contacts/${omar.id}/thread?compose=sms`);
-  await page.getByRole('textbox', { name: 'Text message' }).fill('Still interested?');
-  await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
+  // module 37: the box never offers Text; it shows why and writes by email
+  await expect(page.getByRole('radio', { name: 'Text' })).toBeDisabled({ timeout: 15_000 });
+  await expect(page.getByRole('radio', { name: 'Text' })).toHaveAccessibleDescription(/^Text not offered: Texted STOP on /);
+  await expect(page.getByRole('textbox', { name: 'Text message' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /anyway/ })).toHaveCount(0);
 
   // find a contact: Search (1 tap) then type-ahead

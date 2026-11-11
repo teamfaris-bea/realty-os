@@ -56,11 +56,15 @@ test('R-CONSENT-7: Owen texted STOP: Text is disabled with the exact sentence; E
 
   await page.goto(`${stack.webUrl}/contacts/${owen.id}/thread?compose=sms`);
   await expect(page.getByText(`Not sent: texted STOP on ${today()}`)).toBeVisible({ timeout: 15_000 });
-  await page.getByRole('textbox', { name: 'Text message' }).fill('One more thing');
-  await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
+  // module 37: the box never offers Text (disabled, with the exact sentence) and writes by email, saying why
+  const textOption = page.getByRole('radio', { name: 'Text' });
+  await expect(textOption).toBeDisabled({ timeout: 15_000 });
+  await expect(textOption).toHaveAccessibleDescription(`Text not offered: ${sentence}`);
+  await expect(page.getByRole('radio', { name: 'Email' })).toBeChecked();
+  await expect(page.getByTestId('channel-why')).toHaveText('Writing by email: texting is blocked.');
+  await expect(page.getByRole('textbox', { name: 'Text message' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /anyway/ })).toHaveCount(0);
   // email is still open from the same box
-  await page.getByRole('radio', { name: 'Email' }).click();
   await page.getByRole('textbox', { name: 'Email message' }).fill('One more thing');
   await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
 });
