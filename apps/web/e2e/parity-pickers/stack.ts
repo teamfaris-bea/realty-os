@@ -112,6 +112,10 @@ const routes = {
   async '/stage'(b) {
     return { stage: (await h.su.query('SELECT auto_enroll_stage FROM playbooks WHERE id = $1', [b.playbookId])).rows[0].auto_enroll_stage };
   },
+  // the notices a bulk action left (its results, and an assign's one summary per affected user)
+  async '/notices'(b) {
+    return { rows: (await h.su.query('SELECT user_id, kind, title FROM notifications WHERE subject_id = $1 ORDER BY kind, user_id', [b.subjectId])).rows };
+  },
 };
 const ctl = http.createServer(async (req, res) => {
   try {
@@ -135,7 +139,7 @@ process.stdin.resume();
 })().catch((e) => { console.error(e); process.exit(1); });
 `;
 
-export type FixturePath = '/world' | '/totp' | '/run' | '/reassign' | '/owners' | '/enrollments' | '/stage';
+export type FixturePath = '/world' | '/totp' | '/run' | '/reassign' | '/owners' | '/enrollments' | '/stage' | '/notices';
 
 export type Who = 'owner' | 'admin' | 'team_lead' | 'ana' | 'bo' | 'tc';
 

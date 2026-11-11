@@ -109,6 +109,35 @@ describe('R-PAR-35 assign through the ownership engine', () => {
     expect(ev.rows[0].n).toBe(3);
   });
 
+  it('R-PAR-35 whoever runs a bulk assign gets no summary of it, only the results: not when they take the people themself, not for their own people that move (the confirm sheet says so); every other owner gets one', async () => {
+    const [a0, a1] = [w.agents[0]!, w.agents[1]!];
+    const tl = w.teamLead!;
+    const notices = async (actionId: string) => (await h.su.query('SELECT user_id, kind, title FROM notifications WHERE subject_id = $1 ORDER BY kind, user_id', [actionId])).rows;
+    // a Team Lead takes two of a0's people themself: a0 hears once, the Team Lead only gets the results
+    const two = [await ownedContact(a0), await ownedContact(a0)];
+    const self = await draft(tl, { kind: 'assign', selection: { contactIds: two.map((c) => c.id) }, toUserId: tl.userId });
+    expect(self.body.action).toMatchObject({ targetCount: 2 });
+    await confirm(tl, self.body.action.id);
+    expect(await run(self.body.action.id)).toEqual({ kind: 'finished', status: 'completed' });
+    for (const c of two) expect((await h.su.query('SELECT owner_user_id FROM contacts WHERE id = $1', [c.id])).rows[0].owner_user_id).toBe(tl.userId);
+    expect(await notices(self.body.action.id)).toEqual([
+      { user_id: tl.userId, kind: 'bulk_finished', title: 'Assigned 2 of 2' },
+      { user_id: a0.userId, kind: 'reassigned_away', title: '2 of your leads were reassigned' },
+    ]);
+    // the Owner moves one of their own people and one of a0's to a1: a1 and a0 hear once each, the Owner only gets the results
+    const ownerLead = await ownedContact(w.owner);
+    const a0Lead = await ownedContact(a0);
+    const mixed = await draft(w.owner, { kind: 'assign', selection: { contactIds: [ownerLead.id, a0Lead.id] }, toUserId: a1.userId });
+    expect(mixed.body.action).toMatchObject({ targetCount: 2 });
+    await confirm(w.owner, mixed.body.action.id);
+    expect(await run(mixed.body.action.id)).toEqual({ kind: 'finished', status: 'completed' });
+    expect(await notices(mixed.body.action.id)).toEqual([
+      { user_id: w.owner.userId, kind: 'bulk_finished', title: 'Assigned 2 of 2' },
+      { user_id: a0.userId, kind: 'reassigned_away', title: '1 of your leads was reassigned' },
+      { user_id: a1.userId, kind: 'reassigned_to_you', title: '2 leads were assigned to you' },
+    ]);
+  });
+
   it('R-PAR-35 E187 the engine decides per item: an ineligible target (a TC) is refused, a lead outside the TL\'s team is skipped', async () => {
     const tc = w.others[0]!;
     const c = await ownedContact(w.agents[0]!);

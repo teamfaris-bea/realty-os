@@ -90,13 +90,44 @@ describe('R-PAR-35 bulk assign: the person picker', () => {
     expect(within(sheet).getByText(/of 3 selected will be assigned to Sam Lee\./)).toBeInTheDocument();
     const left = within(sheet).getByRole('region', { name: 'Left out (1)' });
     expect(within(left).getByRole('listitem').textContent).toBe('1 are already theirs');
-    expect(within(sheet).getByText(/Sam Lee and each current owner get one notice for the whole group/)).toBeInTheDocument();
+    // the runner sends no summary to whoever runs it (apps/api/src/bulk/run.ts), even when they own some of the people
+    expect(within(sheet).getByText('Each one moves to Sam Lee under the same rules as assigning one lead. Sam Lee and each current owner other than you get one notice for the whole group, not one per lead.')).toBeInTheDocument();
     expect(fake.callsTo('POST /bulk-actions')[0]!.body).toMatchObject({ kind: 'assign', selection: { contactIds: C }, toUserId: SAM });
     expect(fake.callsTo(`POST /bulk-actions/${ACTION}/confirm`)).toHaveLength(0); // nothing starts before Confirm
     await u.click(within(sheet).getByRole('button', { name: 'Assign 2 people' }));
     taps += 1;
     await waitFor(() => expect(fake.callsTo(`POST /bulk-actions/${ACTION}/confirm`)).toHaveLength(1));
     expect(taps).toBe(2);
+  });
+
+  it('R-PAR-35 assigning to yourself says "you" and promises you no notice (the runner sends its creator no summary); the other current owners still get one each', async () => {
+    const fake = new FakeFetch()
+      .on('GET /members', members)
+      .on('POST /bulk-actions', { status: 201, body: { action: draft() } });
+    app(fake, `/bulk/new?kind=assign&contacts=${C.join(',')}`, 'owner');
+    const picker = await screen.findByRole('region', { name: 'Assign to' });
+    await userEvent.setup().click(await within(picker).findByRole('button', { name: 'Ava Agent (you)' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Assign 2 of 3?' });
+    expect(fake.callsTo('POST /bulk-actions')[0]!.body).toMatchObject({ kind: 'assign', toUserId: ME });
+    expect(within(sheet).getByText('Assign to you')).toBeInTheDocument();
+    expect(within(sheet).getByText(/of 3 selected will be assigned to you\./)).toBeInTheDocument();
+    expect(within(sheet).getByText('Each one moves to you under the same rules as assigning one lead. Each current owner gets one notice for the whole group, not one per lead.')).toBeInTheDocument();
+    expect(within(sheet).queryByText(/Ava Agent/)).toBeNull();
+  });
+
+  it('R-PAR-35 a person passed in by the caller (/bulk/new?to=…) is worded the same way: "you" for the viewer, "the new owner" for anyone else', async () => {
+    const self = new FakeFetch().on('POST /bulk-actions', { status: 201, body: { action: draft() } });
+    const first = app(self, `/bulk/new?kind=assign&contacts=${C.join(',')}&to=${ME}`, 'team_lead');
+    const mine = await screen.findByRole('dialog', { name: 'Assign 2 of 3?' });
+    expect(self.callsTo('POST /bulk-actions')[0]!.body).toMatchObject({ kind: 'assign', toUserId: ME });
+    expect(within(mine).getByText(/of 3 selected will be assigned to you\./)).toBeInTheDocument();
+    expect(within(mine).getByText('Each one moves to you under the same rules as assigning one lead. Each current owner gets one notice for the whole group, not one per lead.')).toBeInTheDocument();
+    first.view.unmount();
+    const other = new FakeFetch().on('POST /bulk-actions', { status: 201, body: { action: draft() } });
+    app(other, `/bulk/new?kind=assign&contacts=${C.join(',')}&to=${SAM}`, 'team_lead');
+    const theirs = await screen.findByRole('dialog', { name: 'Assign 2 of 3?' });
+    expect(within(theirs).getByText(/of 3 selected will get this assignment\./)).toBeInTheDocument();
+    expect(within(theirs).getByText('Each one moves to the new owner under the same rules as assigning one lead. The new owner and each current owner other than you get one notice for the whole group, not one per lead.')).toBeInTheDocument();
   });
 
   it('a Team Lead picks only from themself and their team (the server lists them), never from every member', async () => {

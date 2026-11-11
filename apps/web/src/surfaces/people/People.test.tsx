@@ -238,13 +238,13 @@ describe('People page (module 61)', () => {
     expect(fake.callsTo('POST /bulk-actions')[1]!.body).toMatchObject({ kind: 'email', selection: { contactIds: [id(1)] }, audienceSource: { definition: { v: 1, all: [{ kind: 'tag', op: 'any', tagIds: [T_BUYER] }] } } });
   });
 
-  it('R-PAR-35 DATA_MODEL §12: the bulk bar offers Start plan to every role that runs bulk work, and Assign only to Owner, Admin and Team Lead', async () => {
+  it('R-PAR-35 DATA_MODEL §12: the bulk bar offers Start plan to every role that runs bulk work, and Assign only to Owner, Admin and Team Lead, both right after Tag (a phone shows them without a swipe)', async () => {
     const want = { owner: true, admin: true, team_lead: true, agent: false, isa: false } as const;
     for (const [role, assigns] of Object.entries(want) as [keyof typeof want, boolean][]) {
       const { view } = app(base(), '/people', role);
       await userEvent.setup().click(await screen.findByRole('checkbox', { name: 'Select Person 1' }));
       const bar = await screen.findByRole('region', { name: 'Bulk actions' });
-      expect(within(bar).getAllByRole('button').map((b) => b.textContent), role).toEqual(['Tag', 'Remove tag', 'Change stage', 'Email', 'Start plan', ...(assigns ? ['Assign'] : []), 'Clear']);
+      expect(within(bar).getAllByRole('button').map((b) => b.textContent), role).toEqual(['Tag', ...(assigns ? ['Assign'] : []), 'Start plan', 'Remove tag', 'Change stage', 'Email', 'Clear']);
       view.unmount();
     }
   });

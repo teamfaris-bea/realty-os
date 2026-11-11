@@ -1,13 +1,15 @@
 // The People page (PARITY_PLAN §5, module 61): everyone the viewer can see, or a saved smart list,
 // or an unsaved filter (a tapped tag chip). Phone: list chips across the top (People → list = 2
 // taps); desktop: lists in a left column (1 click). Rows have checkboxes; selecting shows the bulk
-// bar (Tag, Remove tag, Stage, Email, Start plan, and Assign for Owner/Admin/Team Lead), which opens
+// bar (Tag, Assign for Owner/Admin/Team Lead, Start plan, Remove tag, Stage, Email), which opens
 // module 64's bulk sheet with the selection (the checked people, or the whole list after "Select all").
 // Bulk tag 30 from a list: People → list → Select all → Tag → tag = 5 taps to the count sheet with the
 // frozen target, then Confirm in the sheet: 6 to start, one over PARITY_PLAN §5's 5 (an owner decision;
 // ARCHITECTURE, parity gaps). Bulk assign: People → list → Select all → Assign → person → Confirm = 6 on
 // a phone, 5 on desktop (§5); the sheet lists only the people the viewer may assign to. Start plan:
-// the same shape, the sheet listing only approved plans the viewer may start.
+// the same shape, the sheet listing only approved plans the viewer may start. On a phone the bar is one
+// row that scrolls sideways, so Assign and Start plan come right after Tag: at 390 px Assign (and an
+// agent's Start plan) is in view without a swipe; Remove tag, Stage, Email and Clear may need one.
 //
 // Honest UI: the page always says "Showing people you can see" (R-PAR-28, E181); a count is exact to
 // 10,000 and then says "10,000+"; a list that uses a protected tag says so before any send, and a bulk
@@ -254,12 +256,25 @@ function Rows(p: {
 
       {anySelected ? (
         <div role="region" aria-label="Bulk actions" className="fixed inset-x-0 bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))] z-40 border-t border-line bg-surface px-4 py-2 md:sticky md:bottom-4 md:rounded-2xl md:border md:shadow-lg">
-          {/* phone: one row that scrolls sideways; desktop: it wraps, so no action hides behind a scroll */}
+          {/* phone: one row that scrolls sideways; desktop: it wraps, so no action hides behind a scroll.
+              Assign (§5 bulk assign: 6 taps on a phone) and Start plan come right after Tag, so a phone shows
+              them without a swipe (the e2e asserts it); the rest follow and may sit behind the scroll there */}
           <div className="flex items-center gap-2 overflow-x-auto md:flex-wrap md:overflow-x-visible">
             <p className="shrink-0 pr-2 text-[15px] font-semibold text-ink">{p.allSelected && count.data?.capped ? `${count.data.count.toLocaleString('en-US')}+` : selCount.toLocaleString('en-US')} selected</p>
             <Button variant="primary" className="shrink-0 whitespace-nowrap" onClick={() => setTagFor('tag')}>
               {BULK_LABEL.tag}
             </Button>
+            {/* Assign and Start plan: module 64's sheet asks for the person or the plan (only what this viewer may pick) */}
+            {canAssign ? (
+              <Button variant="secondary" className="shrink-0 whitespace-nowrap" onClick={() => ask('assign')}>
+                {BULK_LABEL.assign}
+              </Button>
+            ) : null}
+            {canEnroll ? (
+              <Button variant="secondary" className="shrink-0 whitespace-nowrap" onClick={() => ask('enroll')}>
+                {BULK_LABEL.enroll}
+              </Button>
+            ) : null}
             <Button variant="secondary" className="shrink-0 whitespace-nowrap" onClick={() => setTagFor('untag')}>
               {BULK_LABEL.untag}
             </Button>
@@ -269,17 +284,6 @@ function Rows(p: {
             <Button variant="secondary" className="shrink-0 whitespace-nowrap" onClick={() => ask('email')}>
               {BULK_LABEL.email}
             </Button>
-            {/* Start plan and Assign: module 64's sheet asks for the plan or the person (only what this viewer may pick) */}
-            {canEnroll ? (
-              <Button variant="secondary" className="shrink-0 whitespace-nowrap" onClick={() => ask('enroll')}>
-                {BULK_LABEL.enroll}
-              </Button>
-            ) : null}
-            {canAssign ? (
-              <Button variant="secondary" className="shrink-0 whitespace-nowrap" onClick={() => ask('assign')}>
-                {BULK_LABEL.assign}
-              </Button>
-            ) : null}
             <Button
               variant="quiet"
               onClick={() => {

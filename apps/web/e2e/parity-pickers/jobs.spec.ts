@@ -1,11 +1,14 @@
 // The People bar's Assign and Start plan, and the stage-to-plan setting, against the REAL API (stack.ts), on
 // the phone (iPhone 13, 390×844) and desktop (1440×900) projects. Taps are counted from the People tab as
-// PARITY_PLAN §5 counts them:
+// PARITY_PLAN §5 counts them, and a counted tap never hides a swipe: its target must already be wholly in
+// view (tap() below), because Playwright's tap() and click() scroll a hidden target into view by themselves
+// (the phone's one-row bulk bar scrolls sideways):
 //   bulk assign (Team Lead): phone People → list → Select all → Assign → person → Confirm = 6 · desktop 5
-//     (§5 "Bulk assign (Owner/Admin/TL)": 6 / 5); the run moves everyone through the ownership engine
-//   bulk Start plan (agent): the same shape, 6 · 5 (§5 has no row for it; FUB's bulk action plan VERIFY),
-//     with who is left out and why (already in a plan, can't be reached, not yours) shown before Confirm,
-//     and the run enrolling from the approved version with enrolled_by "bulk"
+//     (§5 "Bulk assign (Owner/Admin/TL)": 6 / 5), with no swipe; the run moves everyone through the
+//     ownership engine
+//   bulk Start plan (agent): the same shape, 6 · 5, with no swipe (§5 has no row for it; FUB's bulk action
+//     plan VERIFY), with who is left out and why (already in a plan, can't be reached, not yours) shown
+//     before Confirm, and the run enrolling from the approved version with enrolled_by "bulk"
 //   the stage-to-plan setting: saved, shown after a reload, a taken stage refused in plain words
 // Then axe-core (contrast included) in light and dark on the new sheets and the setting, 44 px targets.
 // Screenshots when PICKERS_SHOTS_DIR is set.
@@ -35,7 +38,13 @@ test.afterAll(async () => {
 
 const isPhone = (page: Page) => (page.viewportSize()?.width ?? 1440) < 768;
 
+/**
+ * One counted tap. The target must be wholly in view first: IntersectionObserver (toBeInViewport) counts
+ * clipping by a scrolled container such as the bulk bar, so a target behind the bar's edge fails here instead
+ * of being scrolled into view by Playwright, a swipe the count would not see.
+ */
 async function tap(page: Page, target: Locator, counter: { taps: number }) {
+  await expect(target, 'a counted tap needs its target in view without a swipe or scroll').toBeInViewport({ ratio: 1 });
   if (isPhone(page)) await target.tap();
   else await target.click();
   counter.taps += 1;
@@ -99,9 +108,14 @@ test('bulk assign (Team Lead): People → list → Select all → Assign → per
   await tap(page, page.getByRole('checkbox', { name: /Select all/ }), c);
   const bar = page.getByRole('region', { name: 'Bulk actions' });
   await expect(bar.getByText('6 selected')).toBeVisible();
-  await expect(bar.getByRole('button', { name: 'Start plan' })).toBeVisible();
-  if (!isPhone(page)) {
-    // desktop: every action is in view (the bar wraps); on a phone the one-row bar scrolls sideways
+  // Assign and Start plan come right after Tag, so a phone shows them without a swipe; the rest follow
+  await expect(bar.getByRole('button')).toHaveText(['Tag', 'Assign', 'Start plan', 'Remove tag', 'Change stage', 'Email', 'Clear']);
+  if (isPhone(page)) {
+    // the one-row bar scrolls sideways: Assign is wholly in view (tap() checks it); Start plan, third for a Team
+    // Lead, shows most of itself at the bar's edge, tappable without a swipe; the rest may sit behind the scroll
+    await expect(bar.getByRole('button', { name: 'Start plan' })).toBeInViewport({ ratio: 0.5 });
+  } else {
+    // desktop: every action is in view (the bar wraps)
     const clipped = await bar.evaluate((el) => {
       const box = el.getBoundingClientRect();
       return [...el.querySelectorAll('button')].filter((b) => b.getBoundingClientRect().right > box.right + 1).map((b) => b.textContent);
@@ -116,7 +130,7 @@ test('bulk assign (Team Lead): People → list → Select all → Assign → per
   await tap(page, picker.getByRole('button', { name: 'Bo Park' }), c);
   const sheet = page.getByRole('dialog', { name: 'Assign 6 of 6?' });
   await expect(sheet.getByText('6 of 6 selected will be assigned to Bo Park.')).toBeVisible();
-  await expect(sheet.getByText(/Bo Park and each current owner get one notice for the whole group/)).toBeVisible();
+  await expect(sheet.getByText('Each one moves to Bo Park under the same rules as assigning one lead. Bo Park and each current owner other than you get one notice for the whole group, not one per lead.')).toBeVisible();
   await shot(page, 'assign-confirm');
   await tap(page, sheet.getByRole('button', { name: 'Assign 6 people' }), c);
   await expect(page.getByText(/Started: 6 people/)).toBeVisible();
@@ -126,6 +140,13 @@ test('bulk assign (Team Lead): People → list → Select all → Assign → per
   expect((await stack.fixture<{ result: unknown }>('/run', { actionId: id })).result).toEqual({ kind: 'finished', status: 'completed' });
   const owners = (await stack.fixture<{ rows: { owner_user_id: string }[] }>('/owners', { ids: world.ids.assign })).rows;
   expect(owners.map((o) => o.owner_user_id)).toEqual(world.ids.assign.map(() => world.users.bo.userId));
+  // what the sheet said: one notice each to Bo and to Ana (their current owner), none to the Team Lead who ran it
+  const { users } = world;
+  expect((await stack.fixture<{ rows: unknown[] }>('/notices', { subjectId: id })).rows).toEqual([
+    { user_id: users.team_lead.userId, kind: 'bulk_finished', title: 'Assigned 6 of 6' },
+    { user_id: users.ana.userId, kind: 'reassigned_away', title: '6 of your leads were reassigned' },
+    { user_id: users.bo.userId, kind: 'reassigned_to_you', title: '6 leads were assigned to you' },
+  ]);
 });
 
 test('the Owner\'s person picker: every active member who can hold leads (never the TC), the Owner included', async ({ page }) => {

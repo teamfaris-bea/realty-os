@@ -13,8 +13,9 @@
 //      an address, already in a plan, can't be reached, not yours, …). There is nothing to pre-tick and no
 //      way to include someone who opted out.
 //   3. Confirm                                                      1 tap
-// From the People bulk bar: Email → template → Confirm (PARITY_PLAN §5: bulk email 6 taps on a phone);
-// Assign → person → Confirm (§5 bulk assign: 6 on a phone, 5 on desktop); Start plan → plan → Confirm.
+// From the People bulk bar: Email → template → Confirm (PARITY_PLAN §5: bulk email 6 taps on a phone, where
+// Email also takes a sideways swipe on the one-row bar, ARCHITECTURE "The phone bulk bar"); Assign → person →
+// Confirm (§5 bulk assign: 6 on a phone with no swipe, 5 on desktop); Start plan → plan → Confirm.
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useId, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -74,8 +75,19 @@ interface Choice {
 
 const CHOICE_BUTTON = 'flex min-h-tap w-full flex-col items-start justify-center rounded-xl border border-line bg-surface px-3.5 py-2 text-left active:bg-surface-2 disabled:opacity-60';
 
+/**
+ * Who hears about a bulk assign, as module 63's runner does it (R-PAR-35, apps/api/src/bulk/run.ts finish): one
+ * summary notice to the new owner and one to each current owner whose people move, but never to the person
+ * who runs it, whether they assign to themself or own some of the people (they get the results notice).
+ */
+function assignNoticeText(toYou: boolean, name: string | undefined): string {
+  if (toYou) return 'Each one moves to you under the same rules as assigning one lead. Each current owner gets one notice for the whole group, not one per lead.';
+  return `Each one moves to ${name ?? 'the new owner'} under the same rules as assigning one lead. ${name ?? 'The new owner'} and each current owner other than you get one notice for the whole group, not one per lead.`;
+}
+
 export function BulkActionSheet({ kind, contactIds = [], selection, selectedText, audienceSource, audienceTagIds, params = {}, paramLabel, onClose, onConfirmed }: BulkActionSheetProps) {
   const api = useApi();
+  const { session } = useSession();
   const id = useId();
   const send = kind === 'email' || kind === 'text';
   const needsChoice = (send && !params.templateId) || (kind === 'stage' && !params.stage) || (kind === 'assign' && !params.toUserId) || (kind === 'enroll' && !params.playbookId);
@@ -130,7 +142,10 @@ export function BulkActionSheet({ kind, contactIds = [], selection, selectedText
   }, []);
 
   const skipped = draft ? Object.entries(draft.preflight).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]) : [];
-  const outcome = kind === 'assign' && choice?.name ? `will be assigned to ${choice.name}` : kind === 'enroll' && choice?.name ? `will start “${choice.name}”` : `will get this ${words.noun}`;
+  // assign: is the new owner the viewer (picked as "(you)", or passed in by the caller)? Then the runner sends them no summary
+  const assignee = choice?.toUserId ?? params.toUserId;
+  const toYou = kind === 'assign' && assignee !== undefined && assignee === session?.user.id;
+  const outcome = toYou ? 'will be assigned to you' : kind === 'assign' && choice?.name ? `will be assigned to ${choice.name}` : kind === 'enroll' && choice?.name ? `will start “${choice.name}”` : `will get this ${words.noun}`;
   return (
     <Dialog
       title={title}
@@ -181,7 +196,7 @@ export function BulkActionSheet({ kind, contactIds = [], selection, selectedText
           ))}
         </section>
       ) : null}
-      {!draft && needsChoice && kind === 'assign' ? <AssignChoices disabled={create.pending} onPick={(t) => void build({ toUserId: t.userId, label: `Assign to ${t.name}`, name: t.name })} /> : null}
+      {!draft && needsChoice && kind === 'assign' ? <AssignChoices disabled={create.pending} onPick={(t) => void build({ toUserId: t.userId, label: t.you ? 'Assign to you' : `Assign to ${t.name}`, name: t.name })} /> : null}
       {!draft && needsChoice && kind === 'enroll' ? <PlanChoices disabled={create.pending} onPick={(p) => void build({ playbookId: p.id, label: `Start “${p.name}”`, name: p.name, personalPlan: p.scope === 'agent' })} /> : null}
       {create.pending ? <p className="text-[15px] text-ink-muted">Checking each person</p> : null}
       {draft && !confirmed ? (
@@ -216,9 +231,7 @@ export function BulkActionSheet({ kind, contactIds = [], selection, selectedText
             </section>
           ) : null}
           {kind === 'assign' ? (
-            <p className="text-[14px] text-ink-muted">
-              {`Each one moves to ${choice?.name ?? 'the new owner'} under the same rules as assigning one lead. ${choice?.name ?? 'The new owner'} and each current owner get one notice for the whole group, not one per lead.`}
-            </p>
+            <p className="text-[14px] text-ink-muted">{assignNoticeText(toYou, choice?.name)}</p>
           ) : kind === 'enroll' ? (
             <p className="text-[14px] text-ink-muted">The plan sends its approved messages on its own, signed as the assistant, and stops when someone replies. Anyone who opts out before a message goes out is skipped.</p>
           ) : (
