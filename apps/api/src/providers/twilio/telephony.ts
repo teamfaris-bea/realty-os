@@ -18,7 +18,7 @@
 //
 // Recordings: fetched as WAV with the subaccount credentials, then deleted at Twilio once our encrypted
 // copy is stored (deleteRecording). Line type: Lookup v2 line_type_intelligence.
-import { ProviderError, type CallRequest, type CarrierLookup, type LineType, type ProviderMessageStatus, type SmsRequest, type SubmitHint, type TelephonyAccount, type TelephonyProvider } from '../types.js';
+import { ProviderError, type CallRequest, type CarrierLookup, type LineType, type MediaRef, type ProviderMessageStatus, type SmsRequest, type SubmitHint, type TelephonyAccount, type TelephonyProvider } from '../types.js';
 import { TwilioHttp, type TwilioCreds, type TwilioHttpOptions, assertSid, isSid } from './http.js';
 
 export interface TwilioOptions extends TwilioHttpOptions {
@@ -249,6 +249,24 @@ export class TwilioTelephony implements TelephonyProvider {
   async deleteRecording(account: TelephonyAccount, recordingRef: string) {
     const c = this.creds(account);
     await this.http.request(c, 'DELETE', this.acct(c.sid, `Recordings/${assertSid('RE', recordingRef)}.json`), { allow404: true });
+  }
+
+  /**
+   * Inbound MMS media: GET …/Messages/{MM…}/Media/{ME…} with the subaccount credentials (Twilio answers with
+   * a redirect to its media store; fetch follows it and drops the Authorization header across origins).
+   * The SIDs are validated, so no URL from the webhook body is ever fetched (no SSRF).
+   */
+  async fetchMedia(account: TelephonyAccount, ref: MediaRef) {
+    const c = this.creds(account);
+    const path = `Messages/${assertSid('SM', ref.messageRef)}/Media/${assertSid('ME', ref.mediaRef)}`;
+    const r = await this.http.request(c, 'GET', this.acct(c.sid, path), { binary: true, allow404: true });
+    if (!r) throw new ProviderError('rejected', 'MEDIA_NOT_FOUND');
+    return { bytes: r.bytes ?? new Uint8Array(), contentType: (r.contentType ?? 'application/octet-stream').split(';')[0]!.trim().toLowerCase() };
+  }
+
+  async deleteMedia(account: TelephonyAccount, ref: MediaRef) {
+    const c = this.creds(account);
+    await this.http.request(c, 'DELETE', this.acct(c.sid, `Messages/${assertSid('SM', ref.messageRef)}/Media/${assertSid('ME', ref.mediaRef)}.json`), { allow404: true });
   }
 
   async deliverVerificationCode(r: { to: string; code: string }) {

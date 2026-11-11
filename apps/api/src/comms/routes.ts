@@ -14,6 +14,8 @@
 //   POST /recordings/:id/stream-token      60 s single-use token                   recording.play
 //   GET  /recordings/:id/stream?token=     audited playback                        recording.play
 //   GET  /recordings/:id/transcript        audited transcript view                 transcript.view
+//   GET  /contacts/:id/attachments         MMS media + voicemails of the thread    contact.view_detail
+//   GET  /messages/:id/media/:position     one stored MMS item (safe download)     contact.view_detail
 //   GET/POST /numbers, POST /numbers/:id/release (🔒), PATCH /numbers/:id/registration
 //   POST /sender-registrations, POST /sender-registrations/:id/refresh
 //   POST /sending-domains, POST /sending-domains/:id/verify, POST /email-identities      settings.numbers
@@ -44,6 +46,7 @@ import { systemActor } from '../worker/systemActor.js';
 import * as S from './schemas.js';
 import { registerWebhookRoutes } from './webhooks.js';
 import { VOICEMAIL_NOTICE, getVoiceSettings, updateVoiceSettings } from './voice.js';
+import { contactAttachments, messageContact, readMedia } from './media.js';
 
 const IdParams = z.object({ id: z.uuid() });
 
@@ -195,6 +198,28 @@ async function register(app: FastifyInstance): Promise<void> {
   r.get('/recordings/:id/transcript', { config: { auth: 'transcript.view' }, preHandler: authorize('transcript.view', recFacts), schema: { params: IdParams, response: { 200: S.TranscriptResponse } } }, async (req) =>
     viewTranscript(actorOf(req), req.params.id, deps()),
   );
+
+  // ---- inbound MMS media and voicemails ----
+  const viewFacts = (req: FastifyRequest) => factsTx(req, (tx) => contactFacts(tx, idOf(req)));
+  r.get('/contacts/:id/attachments', { config: { auth: 'contact.view_detail' }, preHandler: authorize('contact.view_detail', viewFacts), schema: { params: IdParams, response: { 200: S.AttachmentsResponse } } }, async (req) =>
+    contactAttachments(actorOf(req), req.params.id, deps()),
+  );
+  const mediaFacts = (req: FastifyRequest) => factsTx(req, async (tx) => {
+    const contactId = await messageContact(tx, idOf(req));
+    return contactId ? contactFacts(tx, contactId) : null;
+  });
+  r.get('/messages/:id/media/:position', { config: { auth: 'contact.view_detail' }, preHandler: authorize('contact.view_detail', mediaFacts), schema: { params: z.object({ id: z.uuid(), position: z.coerce.number().int().min(0).max(99) }) } }, async (req, reply) => {
+    const m = await readMedia(actorOf(req), req.params.id, req.params.position, deps());
+    // never rendered as a document: no sniffing, a sandboxing CSP, and a download unless it is a raster image
+    reply
+      .header('content-type', m.contentType)
+      .header('x-content-type-options', 'nosniff')
+      .header('content-security-policy', "default-src 'none'; sandbox")
+      .header('cross-origin-resource-policy', 'same-origin')
+      .header('cache-control', 'private, no-store')
+      .header('content-disposition', `${m.inline ? 'inline' : 'attachment'}; filename="${m.filename}"`);
+    return reply.send(Buffer.from(m.bytes));
+  });
 
   // ---- numbers, registrations, domains, identities (Owner/Admin) ----
   const admin = { config: { auth: 'settings.numbers' as const }, preHandler: authorize('settings.numbers', () => ({})) };

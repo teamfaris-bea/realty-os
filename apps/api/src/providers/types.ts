@@ -63,6 +63,12 @@ export interface SubmitHint {
   dispatchedAt: number;
 }
 
+/** An inbound MMS media item at the provider: the message and the media SIDs (validated before use). */
+export interface MediaRef {
+  messageRef: string;
+  mediaRef: string;
+}
+
 export interface TelephonyProvider {
   createSubaccount(tenantId: string, friendlyName: string): Promise<{ accountRef: string; secret: string }>;
   sendSms(r: SmsRequest): Promise<{ providerRef: string; status: ProviderMessageStatus }>;
@@ -76,6 +82,13 @@ export interface TelephonyProvider {
   fetchRecording(account: TelephonyAccount, recordingRef: string): Promise<{ bytes: Uint8Array; contentType: string; durationMs: number }>;
   /** Deletes the provider's copy of a recording once ours is stored encrypted, or when it may not be kept. */
   deleteRecording?(account: TelephonyAccount, recordingRef: string): Promise<void>;
+  /**
+   * One media item of an inbound MMS (Twilio: Messages/{MM…}/Media/{ME…}), fetched with the tenant's own
+   * credentials. The caller checks size and type and stores it encrypted; it never trusts the declared type.
+   */
+  fetchMedia(account: TelephonyAccount, ref: MediaRef): Promise<{ bytes: Uint8Array; contentType: string }>;
+  /** Deletes the provider's copy of an MMS media item once ours is stored (or refused). */
+  deleteMedia?(account: TelephonyAccount, ref: MediaRef): Promise<void>;
   /** Account-security SMS to a USER's own phone (alert-phone verification, E54). Not a contact message. */
   deliverVerificationCode(r: { to: string; code: string }): Promise<{ providerRef: string }>;
 }

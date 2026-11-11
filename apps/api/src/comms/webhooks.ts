@@ -6,7 +6,7 @@
 //   2 idempotency: app.record_webhook_event(provider, provider_event_id) (payload platform-encrypted)
 //   3 the work, in the tenant, as the system actor (via 'provider')
 //
-//   POST /webhooks/telephony/sms        inbound SMS/MMS            → ingestInbound
+//   POST /webhooks/telephony/sms        inbound SMS/MMS            → ingestInbound (+ comms.media_copy job for MMS media)
 //   POST /webhooks/telephony/status     outbound SMS status        → applyMessageStatus (?m={message id})
 //   POST /webhooks/telephony/voice      inbound calls + outbound call status (announcement result)
 //   POST /webhooks/telephony/recording  a recording is ready       → comms.recording_copy job
@@ -47,6 +47,7 @@ import { unsubscribeMessageRecipient } from './consent.js';
 import { RECORDING_ANNOUNCEMENT, applyCallStatus } from './dial.js';
 import { ingestInbound, isMissedCallStatus, recordMissedInboundCall } from './inbound.js';
 import { RECORDING_COPY_JOB } from './recordings.js';
+import { MEDIA_COPY_JOB, mediaItemsOf } from './media.js';
 import { BRIDGE_TWIML, ringTwiml, sayAndHangupTwiml, screenTwiml, voicemailTwiml } from '../providers/twilio/voiceTwiml.js';
 import { type InboundCallPlan, SIGNED_REF_PURPOSE, VOICEMAIL_DONE, VOICEMAIL_MAX_S, VOICEMAIL_NOTICE, acceptInboundCall, finishInboundCall, inboundDialResult, inboundUrls, planInboundCall, screenFor, voicemailLeft } from './voice.js';
 import { tokenFromRecipient, verifySignedRef } from './render.js';
@@ -137,9 +138,18 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
     if (!b.MessageSid || !b.From || !b.To) throw new AppError('VALIDATION_FAILED');
     const p = req.server.platform;
     const tenantId = await telephonyTenant(req, b.To);
-    await run(req, 'telephony', `sms:${b.MessageSid}`, tenantId, { sid: b.MessageSid }, () =>
-      ingestInbound(systemActor(tenantId!, 'provider'), { kind: 'sms', providerRef: b.MessageSid!, from: b.From!, to: b.To!, body: b.Body ?? '', mediaCount: Number(b.NumMedia ?? '0') || 0 }, depsFromPlatform(p)),
-    );
+    const media = mediaItemsOf(b);
+    await run(req, 'telephony', `sms:${b.MessageSid}`, tenantId, { sid: b.MessageSid }, async () => {
+      const actor = systemActor(tenantId!, 'provider');
+      const out = await ingestInbound(actor, { kind: 'sms', providerRef: b.MessageSid!, from: b.From!, to: b.To!, body: b.Body ?? '', mediaCount: media.length }, depsFromPlatform(p));
+      // MMS media are copied into encrypted storage by a job (never inside the webhook request)
+      if (out.kind === 'stored' && out.messageId && media.length > 0) {
+        await withTenantTx(actor, async (tx) => {
+          await enqueueJob(tx, { queue: MEDIA_COPY_JOB.queue, kind: MEDIA_COPY_JOB.kind, payload: { messageId: out.messageId, items: media.slice(0, 100).map((m) => ({ position: m.position, ref: m.ref, declaredType: m.declaredType })) }, dedupeKey: MEDIA_COPY_JOB.dedupeKey(out.messageId!) });
+        }, { db: p.db });
+      }
+      return out;
+    });
     reply.header('content-type', 'text/xml');
     return twiml;
   });

@@ -241,3 +241,15 @@ export const VoiceSettingsBody = z.strictObject({
   ringTimeoutSeconds: z.number().int().min(5).max(60),
   voicemailGreeting: z.string().max(500).nullable(),
 });
+
+// ---- thread attachments: inbound MMS media and voicemails (comms/media.ts) ---------------------------
+
+export const AttachmentsResponse = z.object({
+  messages: z.array(z.object({
+    messageId: z.uuid(),
+    media: z.array(z.object({ position: z.number().int(), contentType: z.string(), byteSize: z.number().int(), inline: z.boolean(), url: z.string() })),
+    /** media the platform did not keep, with why (TYPE_NOT_ALLOWED, TOO_LARGE, TOO_MANY, CONTENT_MISMATCH, FETCH_FAILED) */
+    skipped: z.array(z.object({ position: z.number().int(), reason: z.string() })),
+  })),
+  voicemails: z.array(z.object({ callId: z.uuid(), recordingId: z.uuid(), durationS: z.number().int().nullable(), transcriptReady: z.boolean() })),
+});

@@ -21,6 +21,7 @@ import { REACHABILITY_KEY, ReasonCaption, isHeld, messageStatus, useChannelState
 import { type ApiError, messageFor, useApi, usePageTitle, useSession } from '../../shell/index.js';
 import { useInbox } from '../approvals/ApprovalsPage.js';
 import { ComposeBox } from '../compose/ComposeBox.js';
+import { RowAttachments } from './Attachments.js';
 import { useContact } from '../contact/useContact.js';
 import { AgentSheetsProvider, sendOutcomeText, useAgentSheets } from '../feed/lib/AgentSheets.js';
 import { firstName, formatDateTime } from '../feed/lib/format.js';
@@ -162,6 +163,7 @@ export function MessageRow({ item, contact }: { item: TimelineItem; contact?: { 
         {direction === 'inbound' ? 'Call from them' : `Call${item.actor?.displayName ? ` by ${item.actor.displayName}` : ''}`}
         {item.preview ? ` · ${CALL_OUTCOME_LABEL[item.preview] ?? item.preview.replace(/_/g, ' ')}` : ''} · {formatDateTime(item.occurredAt)}
         {imported ? ' · Imported' : ''}
+        {contact ? <RowAttachments contactId={contact.id} item={item} /> : null}
       </li>
     );
   }
@@ -180,6 +182,7 @@ export function MessageRow({ item, contact }: { item: TimelineItem; contact?: { 
       </p>
       {st ? <p className={`px-1 text-[13px] font-medium ${st.failed ? 'text-danger' : st.held ? 'text-warn' : 'text-ink-muted'}`}>{st.text}</p> : null}
       {st?.held && contact ? <HeldActions item={item} contact={contact} /> : null}
+      {contact && !outbound ? <RowAttachments contactId={contact.id} item={item} /> : null}
     </li>
   );
 }

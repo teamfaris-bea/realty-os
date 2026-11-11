@@ -30,6 +30,7 @@ const SID_RE: Record<string, RegExp> = {
   CA: /^CA[0-9a-f]{32}$/,
   PN: /^PN[0-9a-f]{32}$/,
   RE: /^RE[0-9a-f]{32}$/,
+  ME: /^ME[0-9a-f]{32}$/,
   SM: /^(SM|MM)[0-9a-f]{32}$/,
   MG: /^MG[0-9a-f]{32}$/,
   QE: /^QE[0-9a-f]{32}$/,
