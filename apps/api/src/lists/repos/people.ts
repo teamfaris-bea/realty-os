@@ -92,33 +92,86 @@ export function predicateSql(n: ListPredicate): Frag {
     case 'name_like':
       return sql`lower(c.display_name) LIKE ${n.pattern} ESCAPE '\\'`;
     case 'field_set':
-      return valueExists(n.fieldId, null);
+    case 'field_text_eq':
+    case 'field_text_like':
+    case 'field_num':
+    case 'field_date_between':
+    case 'field_md_in':
+    case 'field_opt_any':
+    case 'field_opt_all':
+      return valueExists(n.fieldId, valueCond(n));
     case 'field_empty':
       return sql`NOT ${valueExists(n.fieldId, null)}`;
+    case 'field_opt_none':
+      return sql`NOT ${valueExists(n.fieldId, sql`v.value_options && ${n.optionIds}::text[]`)}`;
+  }
+}
+
+type PositiveField = Extract<ListPredicate, { p: 'field_set' | 'field_text_eq' | 'field_text_like' | 'field_num' | 'field_date_between' | 'field_md_in' | 'field_opt_any' | 'field_opt_all' }>;
+
+/** The value condition of a positive field predicate (null: any value row). One text for the probe and the driver. */
+function valueCond(n: PositiveField): Frag | null {
+  switch (n.p) {
+    case 'field_set':
+      return null;
     case 'field_text_eq':
-      return valueExists(n.fieldId, sql`lower(v.value_text) = ${n.text}`);
+      return sql`lower(v.value_text) = ${n.text}`;
     case 'field_text_like':
-      return valueExists(n.fieldId, sql`lower(v.value_text) LIKE ${n.pattern} ESCAPE '\\'`);
+      return sql`lower(v.value_text) LIKE ${n.pattern} ESCAPE '\\'`;
     case 'field_num':
-      return valueExists(n.fieldId, sql`v.value_number ${CMP[n.cmp]} ${String(n.value)}::numeric`);
+      return sql`v.value_number ${CMP[n.cmp]} ${String(n.value)}::numeric`;
     case 'field_date_between': {
       const parts: Frag[] = [sql`v.value_date IS NOT NULL`];
       if (n.from !== null) parts.push(sql`v.value_date >= ${n.from}::date`);
       if (n.to !== null) parts.push(sql`v.value_date <= ${n.to}::date`);
-      return valueExists(n.fieldId, sql.join(parts, sql` AND `));
+      return sql.join(parts, sql` AND `);
     }
     case 'field_md_in': {
       // the expression of contact_field_values_md_idx
       const md = sql`(EXTRACT(MONTH FROM v.value_date) * 100 + EXTRACT(DAY FROM v.value_date))`;
       const ranges = n.ranges.map(([a, b]) => sql`${md} BETWEEN ${a}::numeric AND ${b}::numeric`);
-      return valueExists(n.fieldId, sql`v.value_date IS NOT NULL AND (${ranges.length === 0 ? sql`FALSE` : sql.join(ranges, sql` OR `)})`);
+      return sql`v.value_date IS NOT NULL AND (${ranges.length === 0 ? sql`FALSE` : sql.join(ranges, sql` OR `)})`;
     }
     case 'field_opt_any':
-      return valueExists(n.fieldId, sql`v.value_options && ${n.optionIds}::text[]`);
+      return sql`v.value_options && ${n.optionIds}::text[]`;
     case 'field_opt_all':
-      return valueExists(n.fieldId, sql`v.value_options @> ${n.optionIds}::text[]`);
-    case 'field_opt_none':
-      return sql`NOT ${valueExists(n.fieldId, sql`v.value_options && ${n.optionIds}::text[]`)}`;
+      return sql`v.value_options @> ${n.optionIds}::text[]`;
+  }
+}
+
+/**
+ * Value-driven runs (lane perf-misses-2). For a viewer without the 'book' hint (Owner, Admin, Team Lead) a
+ * broad list used to walk every person of the tenant and probe each one. When the plan's top level requires
+ * a tag or a field value, the people it can hold are exactly the contacts of the matching detail rows, so
+ *   c.id IN (SELECT contact_id FROM <detail rows the caller sees that match>)
+ * is IMPLIED by the WHERE (the probe below asks for the same visible row with the same condition, read
+ * under the same RLS). Adding it changes no result, only lets the planner start from the tag or value index.
+ * Proven in lists/value_driven.test.ts against the plain WHERE for every role and the system actor.
+ */
+export function driverSql(n: ListPredicate): Frag | null {
+  switch (n.p) {
+    case 'tag_any':
+    case 'tag_all':
+      return sql`c.id IN (SELECT ct.contact_id FROM contact_tags ct WHERE ct.tenant_id = app.tenant_id() AND ct.tag_id = ANY (${n.tagIds}::uuid[]))`;
+    case 'field_set':
+    case 'field_text_eq':
+    case 'field_text_like':
+    case 'field_num':
+    case 'field_date_between':
+    case 'field_md_in':
+    case 'field_opt_any':
+    case 'field_opt_all': {
+      const cond = valueCond(n);
+      return sql`c.id IN (SELECT v.contact_id FROM contact_field_values v WHERE v.tenant_id = app.tenant_id() AND v.field_id = ${n.fieldId}::uuid${cond === null ? sql`` : sql` AND ${cond}`})`;
+    }
+    case 'and':
+      for (const x of n.of) {
+        const d = driverSql(x);
+        if (d !== null) return d;
+      }
+      return null;
+    default:
+      return null;
   }
 }
 
@@ -181,6 +234,13 @@ export function scopeHintFor(role: string | null): ScopeHint {
 
 /** The WHERE of a list run (shared by page, count and selection). */
 export function whereSql(plan: ListPlan, hint: ScopeHint = null): Frag {
+  // 'book' viewers start from their own book; everyone else from the list's tag or value index when it has one
+  const driver = hint === 'book' ? null : driverSql(plan.where);
+  return sql`${LIVE} AND ${DETAIL_VISIBLE}${hint === 'book' ? sql` AND ${BOOK}` : sql``}${driver === null ? sql`` : sql` AND ${driver}`} AND ${predicateSql(plan.where)}`;
+}
+
+/** The WHERE without the value-driven clause (the equivalence tests' reference). */
+export function plainWhereSql(plan: ListPlan, hint: ScopeHint = null): Frag {
   return sql`${LIVE} AND ${DETAIL_VISIBLE}${hint === 'book' ? sql` AND ${BOOK}` : sql``} AND ${predicateSql(plan.where)}`;
 }
 
