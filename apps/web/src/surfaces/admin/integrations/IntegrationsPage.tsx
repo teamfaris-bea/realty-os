@@ -14,7 +14,7 @@ import { useSearchParams } from 'react-router-dom';
 import { Button, ButtonLink, Card, Dialog, Notice } from '../../../design/index.js';
 import { type ApiError, messageFor, useApi } from '../../../shell/index.js';
 import { Pill, StatusLine } from '../lib/ui.js';
-import { useRequest } from './request.js';
+import { keepFocus, useRequest } from './request.js';
 import { type Connection, type Integrations, type PlatformPack, type Service, NEVER_CLEARED_PACKS, offered, pickIntegrations, stillThere } from './types.js';
 import { ERROR_MESSAGES, adapterModeWords, callbackResultWords, capabilityName, capabilityReason, manageLink, packName, plainSentence, statusLabel } from './words.js';
 
@@ -42,6 +42,7 @@ export default function IntegrationsPage() {
     void qc.invalidateQueries({ queryKey: INTEGRATIONS_KEY });
     setStatus(r.ok ? `${c.displayName} is disconnected. Its access was revoked.` : null);
     if (!r.ok) setError(r.message);
+    keepFocus();
   };
 
   const services = d?.services.filter(offered) ?? [];
@@ -137,7 +138,8 @@ function ServiceCard({ service }: { service: Service }) {
         <h3 id={hid} className="text-[17px] font-semibold text-ink">
           {service.name}
         </h3>
-        <p className="text-[15px] text-ink">{service.connect === 'keyed' && link ? 'It has no outside account to connect; it is set up on its own page (below).' : plainSentence(service.sentence)}</p>
+        <p className="text-[15px] text-ink">{service.connect === 'keyed' && link ? 'It has no outside account to connect; it is set up on its own page (below).' : plainSentence(service.sentence)}
+          {service.connect === 'oauth' ? ' Connecting is not available from this page yet.' : ''}</p>
       </div>
       {shown.length > 0 ? (
         <ul className="flex flex-col gap-3 border-t border-line pt-3" aria-label={`${service.name} connections`}>

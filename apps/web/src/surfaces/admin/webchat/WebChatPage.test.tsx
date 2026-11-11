@@ -108,6 +108,31 @@ describe('Website chat page', () => {
     expect(within(card).getByText(/Shown once, when the widget was added or its key last changed\. To get it again, make a new key\./)).toBeInTheDocument();
   });
 
+  it('a live widget whose lead source has no consent disclosure is shown as not working, not "Live"', async () => {
+    mount(api({ widgets: [widget()], disclosure: false }), WEBCHAT_PATH);
+    const card = (await screen.findByRole('heading', { level: 3, name: 'Website chat' })).closest('li')!;
+    expect(await within(card).findByText('Not working')).toBeInTheDocument();
+    expect(within(card).getByText(/The chat window never opens: this widget's lead source has no consent disclosure/)).toBeInTheDocument();
+    expect(within(card).queryByText('Live')).toBeNull();
+    expect(within(card).queryByText(/New chats become leads/)).toBeNull();
+  });
+
+  it('while the lead sources load or fail, a widget does not claim its source is unknown', async () => {
+    mount(api({ widgets: [widget()] }).on('GET /lead-sources', err(500, 'INTERNAL_ERROR')), WEBCHAT_PATH);
+    const card = (await screen.findByRole('heading', { level: 3, name: 'Website chat' })).closest('li')!;
+    expect(await within(card).findByText("Couldn't load the lead sources")).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain('Unknown lead source');
+  });
+
+  it('the one-time panel takes focus when it appears, so it is not missed', async () => {
+    mount(api(), WEBCHAT_PATH);
+    await screen.findByText('No chat widgets yet.');
+    await userEvent.click(screen.getByRole('button', { name: 'Add widget' }));
+    await confirmPassword();
+    const h = await screen.findByRole('heading', { level: 2, name: 'Website chat is added' });
+    await waitFor(() => expect(document.activeElement).toBe(h));
+  });
+
   it('a reload of the page never brings the key back', async () => {
     mount(api({ widgets: [widget()] }), WEBCHAT_PATH);
     await screen.findByRole('heading', { level: 3, name: 'Website chat' });
@@ -172,10 +197,10 @@ describe('Website chat page', () => {
     expect(within(after).queryByRole('button')).toBeNull();
   });
 
-  it('with no active lead source it says a widget needs one and links to Lead routing', async () => {
+  it('with no active lead source it says a widget needs one, and does not send the person to a page that cannot add one', async () => {
     mount(api().on('GET /lead-sources', { status: 200, body: { sources: [] } }), WEBCHAT_PATH);
-    expect(await screen.findByText('A widget needs a lead source, and there is no active one yet.')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Add a lead source on Lead routing' })).toHaveAttribute('href', '/admin/routing');
+    expect(await screen.findByText(/A widget needs an active lead source, and there is none yet\. Lead sources can't be added in the app yet/)).toBeInTheDocument();
+    expect(within(screen.getByRole('main')).queryByRole('link', { name: /Lead routing/ })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add widget' })).toBeNull();
   });
 

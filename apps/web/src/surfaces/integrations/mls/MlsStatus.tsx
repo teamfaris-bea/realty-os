@@ -65,7 +65,7 @@ function ConnectionBlock({ c, several }: { c: MlsConnection; several: boolean })
           <Fact label="Next sync">{c.nextSyncAt ? stamp(c.nextSyncAt) : live ? 'Not scheduled' : 'None: not connected'}</Fact>
           <Fact label="MLS data">{c.mlsDataAsOf}</Fact>
         </dl>
-        {c.feedStale ? <Notice tone="warn">The MLS data is older than the licence pack allows, so MLS listings are paused for clients until the next sync.</Notice> : null}
+        {c.feedStale ? <Notice tone="warn">{staleWords(c)}</Notice> : null}
         <Notice tone={c.clientDisplay ? 'ok' : 'warn'} title={c.clientDisplay ? 'MLS data may reach clients' : 'MLS data does not reach clients'}>
           {c.clientDisplaySentence}
         </Notice>
@@ -112,6 +112,8 @@ function PackEditor({ c, several, editable }: { c: MlsConnection; several: boole
     const n = h === '' ? null : Number(h);
     if (n !== null && (!Number.isFinite(n) || n <= 0 || n > 8760)) {
       setHoursError('Enter a number of hours above 0 and at most 8,760, or leave it empty.');
+      // said next to the Save button too: the field may be far above it
+      setError('Nothing was saved: the longest time the MLS data may be out of date needs fixing (at the top of the licence pack).');
       return;
     }
     setHoursError(null);
@@ -135,7 +137,11 @@ function PackEditor({ c, several, editable }: { c: MlsConnection; several: boole
 
   const markRow = (k: PackKey) => (
     <Check
-      label="Counsel reviewed this value"
+      label={
+        <>
+          Counsel reviewed this value <span className="sr-only">({KEY_WORDS[k].label})</span>
+        </>
+      }
       hint={changed.has(k) && !marks[k] ? 'Changed: mark it again once counsel has reviewed the new value.' : undefined}
       checked={marks[k]}
       disabled={!editable}
@@ -239,6 +245,13 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
       <dd className="text-[16px] text-ink">{children}</dd>
     </div>
   );
+}
+
+/** Why the MLS data counts as out of date, by cause (core feedStale: never synced, no limit set, or over the limit). */
+function staleWords(c: MlsConnection): string {
+  if (c.lastSyncedAt === null) return 'No MLS data has been received yet, so MLS listings do not reach clients.';
+  if (c.licensePack.values.max_staleness_hours === null) return 'The licence pack sets no limit on how old MLS data may be, so the data always counts as out of date and MLS listings are paused for clients. Set the limit below.';
+  return 'The MLS data is older than the licence pack allows, so MLS listings are paused for clients until a sync brings it up to date.';
 }
 
 function stamp(iso: string): string {

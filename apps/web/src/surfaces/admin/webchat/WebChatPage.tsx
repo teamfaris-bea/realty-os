@@ -13,10 +13,10 @@
 // storage, the URL or a log). "Done" or leaving the page drops it; nothing can show it again (the server keeps
 // only its hash), so the page says to rotate the key to get new embed code.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { type FormEvent, type ReactNode, useId, useState } from 'react';
-import { Button, ButtonLink, Card, Dialog, Notice, TextField } from '../../../design/index.js';
+import { type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { Button, Card, Dialog, Notice, TextField } from '../../../design/index.js';
 import { type ApiError, messageFor, useApi } from '../../../shell/index.js';
-import { useRequest } from '../integrations/request.js';
+import { keepFocus, useRequest } from '../integrations/request.js';
 import { Pill, SelectField, StatusLine, TextArea } from '../lib/ui.js';
 import { type Embed, type LeadSource, type Widget, pickEmbed, pickKeyed, pickSources, pickWidgets } from './types.js';
 import { ERROR_MESSAGES, STATUS_LABEL, embedSnippet, isLive, parseWebsites, websitesWords } from './words.js';
@@ -75,6 +75,7 @@ export default function WebChatPage() {
     const r = await req.run<unknown>('rotate', 'POST', `/admin/web-chat/widgets/${encodeURIComponent(w.id)}/rotate`);
     setStatus(null);
     refresh();
+    keepFocus();
     if (!r.ok) return setError(r.message);
     const k = pickKeyed(r.data);
     if (!k.key) return setError(messageFor('BAD_RESPONSE'));
@@ -88,6 +89,7 @@ export default function WebChatPage() {
     const r = await req.run('disconnect', 'POST', `/admin/integrations/connections/${encodeURIComponent(w.id)}/disconnect`);
     setStatus(null);
     refresh();
+    keepFocus();
     if (fresh?.widget.id === w.id) setFresh(null);
     if (r.ok) setStatus(`${w.displayName} is disconnected. The chat window on your website now says chat is unavailable.`);
     else setError(r.message);
@@ -106,7 +108,8 @@ export default function WebChatPage() {
   };
 
   const activeSources = sources.data?.filter((s) => s.active) ?? [];
-  const sourceName = (id: string | null) => sources.data?.find((s) => s.id === id)?.name ?? 'Unknown lead source';
+  const sourceName = (id: string | null) =>
+    sources.isPending ? 'Loading' : sources.isError ? "Couldn't load the lead sources" : (sources.data?.find((s) => s.id === id)?.name ?? 'A lead source that no longer exists');
 
   return (
     <div className="flex w-full min-w-0 max-w-3xl flex-col gap-8">
@@ -119,12 +122,7 @@ export default function WebChatPage() {
         {sources.isError ? <Notice tone="error">{messageFor(sources.error, ERROR_MESSAGES)}</Notice> : null}
         {sources.data && activeSources.length === 0 ? (
           <div className="flex flex-col gap-2">
-            <p className="text-[16px] text-ink">A widget needs a lead source, and there is no active one yet.</p>
-            <div>
-              <ButtonLink variant="secondary" to="/admin/routing">
-                Add a lead source on Lead routing
-              </ButtonLink>
-            </div>
+            <p className="text-[16px] text-ink">A widget needs an active lead source, and there is none yet. Lead sources can't be added in the app yet: ask whoever runs your deployment to add one with a consent disclosure.</p>
           </div>
         ) : null}
         {activeSources.length > 0 ? <CreateForm sources={activeSources} pending={req.pending === 'create'} busy={req.pending !== null} onCreate={create} /> : null}
@@ -251,8 +249,16 @@ function WebsitesBox({ value, onChange, error }: { value: string; onChange(v: st
 
 function WidgetCard({ w, source, busy, savingWebsites, onRotate, onDisconnect, onSaveWebsites }: { w: Widget; source: string; busy: boolean; savingWebsites: boolean; onRotate(): void; onDisconnect(): void; onSaveWebsites(o: string[]): Promise<boolean> }) {
   const hid = useId();
+  const api = useApi();
   const live = isLive(w.status);
-  const s = STATUS_LABEL[w.status] ?? { label: 'State unknown', tone: 'warn' as const };
+  // a live widget whose lead source has no consent disclosure can never open a chat (widget/config.ts): say so
+  const embed = useQuery<Embed, ApiError>({
+    queryKey: ['admin', 'web-chat', 'embed', w.id],
+    enabled: live,
+    queryFn: async ({ signal }) => pickEmbed(await api.get<unknown>(`/admin/web-chat/widgets/${encodeURIComponent(w.id)}/embed`, { signal })),
+  });
+  const noDisclosure = live && embed.data !== undefined && embed.data.disclosure === null;
+  const s = noDisclosure ? { label: 'Not working', tone: 'warn' as const } : (STATUS_LABEL[w.status] ?? { label: 'State unknown', tone: 'warn' as const });
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState('');
   const [siteError, setSiteError] = useState<string | null>(null);
@@ -278,7 +284,7 @@ function WidgetCard({ w, source, busy, savingWebsites, onRotate, onDisconnect, o
         </h3>
         <Pill tone={s.tone}>{s.label}</Pill>
       </div>
-      <p className="text-[15px] text-ink">{w.sentence}</p>
+      <p className="text-[15px] text-ink">{noDisclosure ? "The chat window never opens: this widget's lead source has no consent disclosure, which the chat must show first. Nothing reaches your website through it." : w.sentence}</p>
       <dl className="flex flex-col gap-2">
         <Fact label="Lead source">{source}</Fact>
         <Fact label="Allowed websites">{websitesWords(w.allowedOrigins)}</Fact>
@@ -324,6 +330,9 @@ function KeyOnce({ fresh, onDone }: { fresh: Fresh; onDone(): void }) {
   const [copied, setCopied] = useState<string | null>(null);
   const keyId = useId();
   const snipId = useId();
+  const heading = useRef<HTMLHeadingElement>(null);
+  // the one-time panel appears at the top of the page: take focus there so it is read out and not missed
+  useEffect(() => heading.current?.focus(), [fresh]);
   const e = embed.data;
   const snippet = e?.disclosure ? embedSnippet(window.location.origin, fresh.key, { ...e, disclosure: e.disclosure }) : null;
 
@@ -338,7 +347,7 @@ function KeyOnce({ fresh, onDone }: { fresh: Fresh; onDone(): void }) {
 
   return (
     <section aria-labelledby={`${keyId}-h`} className="flex flex-col gap-3 rounded-2xl border-2 border-accent bg-surface p-4">
-      <h2 id={`${keyId}-h`} className="text-[20px] font-semibold text-ink">
+      <h2 id={`${keyId}-h`} ref={heading} tabIndex={-1} className="text-[20px] font-semibold text-ink outline-none">
         {fresh.why === 'created' ? `${fresh.widget.displayName} is added` : `New key for ${fresh.widget.displayName}`}
       </h2>
       <Notice tone="warn" title="Shown only this once">
@@ -355,7 +364,7 @@ function KeyOnce({ fresh, onDone }: { fresh: Fresh; onDone(): void }) {
       {embed.isError ? <Notice tone="error">{`${messageFor(embed.error, ERROR_MESSAGES)} The key above works, but the embed code could not be built. Copy the key, or make a new key to try again.`}</Notice> : null}
       {e && !e.disclosure ? (
         <Notice tone="warn" title="The chat window won't appear yet">
-          This widget's lead source has no consent disclosure, and the chat window never opens without one. Use a lead source that has a consent disclosure (set when the lead source is created on Lead routing), then add a widget for it.
+          This widget's lead source has no consent disclosure, and the chat window never opens without one. A consent disclosure is set when a lead source is created, which the app can't do yet: ask whoever runs your deployment for a lead source with one, then add a widget for it.
         </Notice>
       ) : null}
       {snippet ? (

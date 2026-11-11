@@ -59,7 +59,8 @@ function mls(o: { marked?: readonly PackKey[]; status?: string; clientDisplay?: 
 const spark = { status: 200, body: { provider: 'fake', liveCalls: false, sentence: 'Live MLS calls are turned off on this deployment.', authSchemeDefault: 'Bearer', connection: null } };
 const fakeWith = (body: unknown) => new FakeFetch().on('GET /admin/mls', { status: 200, body }).on('GET /admin/integrations/mls/spark', spark);
 const editor = async () => (await screen.findByRole('heading', { level: 2, name: 'Licence pack' })).closest('section')!;
-const markBox = (s: HTMLElement, i: number) => within(s).getAllByRole('checkbox', { name: 'Counsel reviewed this value' })[i]!;
+const MARK = /^Counsel reviewed this value \(/;
+const markBox = (s: HTMLElement, i: number) => within(s).getAllByRole('checkbox', { name: MARK })[i]!;
 
 describe('MLS page: sync and licence pack', () => {
   it('says the connection state, last and next sync, "MLS data as of" and why MLS data does not reach clients', async () => {
@@ -78,7 +79,23 @@ describe('MLS page: sync and licence pack', () => {
 
   it('when the data is too old, it says MLS listings are paused for clients', async () => {
     mount(fakeWith(mls({ feedStale: true })), PATH);
-    expect(await screen.findByText(/older than the licence pack allows, so MLS listings are paused for clients/)).toBeInTheDocument();
+    expect(await screen.findByText(/older than the licence pack allows, so MLS listings are paused for clients until a sync brings it up to date/)).toBeInTheDocument();
+  });
+
+  it('stale data is explained by its real cause: never synced, or no limit set', async () => {
+    const never = mls({ feedStale: true });
+    never.connections[0]!.lastSyncedAt = null as unknown as string;
+    mount(fakeWith(never), PATH);
+    expect(await screen.findByText('No MLS data has been received yet, so MLS listings do not reach clients.')).toBeInTheDocument();
+    expect(screen.queryByText(/until a sync brings it up to date/)).toBeNull();
+  });
+
+  it('stale data with no limit in the pack says the limit is missing, not that a sync will fix it', async () => {
+    const noLimit = mls({ feedStale: true });
+    noLimit.connections[0]!.licensePack = pack([], { max_staleness_hours: null });
+    mount(fakeWith(noLimit), PATH);
+    expect(await screen.findByText(/sets no limit on how old MLS data may be/)).toBeInTheDocument();
+    expect(screen.queryByText(/until a sync brings it up to date/)).toBeNull();
   });
 
   it('with no MLS connection, it says no MLS data is read or reaches clients', async () => {
@@ -94,7 +111,10 @@ describe('MLS page: sync and licence pack', () => {
     expect(within(s).getByText(/MLS data cannot reach clients until every value is marked as reviewed by counsel\. 7 of 9 values are not marked yet\./)).toBeInTheDocument();
     expect(within(s).getAllByText('Not reviewed by counsel', { selector: 'span' })).toHaveLength(7);
     expect(within(s).getAllByText('Reviewed by counsel', { selector: 'span' })).toHaveLength(2);
-    expect(within(s).getAllByRole('checkbox', { name: 'Counsel reviewed this value' })).toHaveLength(PACK_KEYS.length);
+    expect(within(s).getAllByRole('checkbox', { name: MARK })).toHaveLength(PACK_KEYS.length);
+    // each mark names the value it marks
+    expect(within(s).getByRole('checkbox', { name: 'Counsel reviewed this value (Attribution)' })).toBeChecked();
+    expect(within(s).getByRole('checkbox', { name: 'Counsel reviewed this value (Disclaimer)' })).toBeChecked();
     expect(within(s).getByLabelText('Attribution')).toHaveValue('Listing data courtesy of the Test MLS.');
   });
 
@@ -158,6 +178,8 @@ describe('MLS page: sync and licence pack', () => {
     await userEvent.type(hours, '-3');
     await userEvent.click(within(s).getByRole('button', { name: 'Save licence pack' }));
     expect(await within(s).findByText(/Enter a number of hours above 0/)).toBeInTheDocument();
+    // also said next to the Save button, where the person is
+    expect(within(s).getByRole('alert')).toHaveTextContent(/Nothing was saved: the longest time the MLS data may be out of date needs fixing/);
     expect(fake.callsTo(PUT)).toHaveLength(0);
   });
 

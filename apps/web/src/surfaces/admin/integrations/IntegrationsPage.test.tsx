@@ -18,7 +18,11 @@ describe('Integrations page', () => {
     for (const name of ['Facebook Page (publishing)', 'Instagram business account (publishing)', 'Google Ads account', 'Google Business Profile', 'Zillow lead feed', 'realtor.com lead feed', 'Lead email inbox', 'Website chat', 'MLS listings (Spark, read-only)']) {
       expect(screen.getByRole('heading', { level: 3, name })).toBeInTheDocument();
     }
-    expect(screen.getByText(/uses test adapters: every connection here is simulated/)).toBeInTheDocument();
+    // the banner does not call the MLS connection simulated: the MLS card says what it does
+    expect(screen.getByText(/test adapters for Meta, Google, Zillow, realtor\.com and the showing service/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/every connection here is simulated/);
+    // there is no connect control here, and the page says so for the services that connect with a login
+    expect(screen.getAllByText(/Connecting is not available from this page yet\./)).toHaveLength(3);
     expect(screen.getAllByText(/Needs partner access: Zillow lead feed has not granted/)).toHaveLength(1);
     expect(screen.getByText('Arrives with ads (Phase 3); it cannot be connected yet.')).toBeInTheDocument();
     // keyed services point at their own page, not at "inbox settings"
@@ -109,11 +113,19 @@ describe('Integrations page', () => {
     expect(await screen.findByText('Old Messenger page is disconnected. Its access was revoked.')).toBeInTheDocument();
     expect(fake.callsTo(`POST /admin/integrations/connections/${ID.messenger}/disconnect`)).toHaveLength(2);
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'No longer offered' })).toBeNull());
+    // focus is kept on the page (the heading), not dropped to <body>
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('heading', { level: 1, name: 'Integrations' })));
   });
 
   it('the provider callback result is said in words, an unknown one too', async () => {
     mount(new FakeFetch().on('GET /admin/integrations', { status: 200, body: integrations() }), `${PAGE_PATH}?result=ACCOUNT_NOT_MANAGED`);
     expect(await screen.findByText("The login you used doesn't manage that account, so nothing was connected.")).toBeInTheDocument();
+  });
+
+  it('a failed callback does not tell the person to start again from a page that has no connect control', async () => {
+    mount(new FakeFetch().on('GET /admin/integrations', { status: 200, body: integrations() }), `${PAGE_PATH}?result=STATE_EXPIRED`);
+    expect(await screen.findByText('That sign-in took too long and expired, so nothing was connected.')).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/Start again/);
   });
 
   it('an unknown callback result is not shown raw', async () => {

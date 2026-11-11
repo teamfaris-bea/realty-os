@@ -70,7 +70,7 @@ export function statusLabel(c: Pick<Connection, 'status'>): { label: string; ton
 
 export function adapterModeWords(m: AdapterMode): { tone: 'info' | 'warn'; text: string } | null {
   if (m === 'fake')
-    return { tone: 'warn', text: 'This deployment uses test adapters: every connection here is simulated, and nothing on this page reaches a real Meta, Google, Zillow or realtor.com account.' };
+    return { tone: 'warn', text: 'This deployment uses test adapters for Meta, Google, Zillow, realtor.com and the showing service: those connections are simulated and reach no real account. The MLS card says what the MLS connection does.' };
   if (m === 'unconfigured') return { tone: 'warn', text: 'No platform apps are set up on this deployment yet, so services that need an outside login cannot be connected.' };
   return null;
 }
@@ -88,9 +88,9 @@ const RESULTS: Record<string, { tone: 'ok' | 'warn' | 'error'; text: string }> =
   CONNECTED: { tone: 'ok', text: 'Connected. We checked that you manage the account.' },
   PENDING_REVIEW: { tone: 'warn', text: 'The account is reserved for your team, but the platform is still reviewing the connection. Nothing is sent or received yet.' },
   CANCELLED: { tone: 'warn', text: 'The connection was cancelled at the provider. Nothing was connected.' },
-  STATE_INVALID: { tone: 'error', text: "That sign-in link wasn't valid, so nothing was connected. Start again from this page." },
-  STATE_EXPIRED: { tone: 'error', text: 'That sign-in took too long and expired, so nothing was connected. Start again from this page.' },
-  STATE_STALE: { tone: 'error', text: 'The connection changed while you were signing in, so nothing was connected. Start again from this page.' },
+  STATE_INVALID: { tone: 'error', text: "That sign-in link wasn't valid, so nothing was connected." },
+  STATE_EXPIRED: { tone: 'error', text: 'That sign-in took too long and expired, so nothing was connected.' },
+  STATE_STALE: { tone: 'error', text: 'The connection changed while you were signing in, so nothing was connected.' },
   NOT_CONNECTABLE: { tone: 'error', text: "This connection can't be connected in its current state. Nothing was changed." },
   STARTER_NOT_AUTHORIZED: { tone: 'error', text: 'Only an Owner or Admin can finish a connection. Nothing was connected.' },
   PROVIDER_REFUSED: { tone: 'error', text: 'The provider refused the sign-in. Nothing was connected.' },

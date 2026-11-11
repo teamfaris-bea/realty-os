@@ -38,3 +38,14 @@ export function useRequest(messages: Readonly<Record<string, string>>) {
   );
   return { run, pending };
 }
+
+/**
+ * After a dialog closes on a button that is then disabled or removed, focus would fall to <body>; put it on the
+ * page heading instead (the shell's h1 takes focus), so keyboard and screen-reader users keep their place.
+ */
+export function keepFocus(): void {
+  setTimeout(() => {
+    const a = document.activeElement;
+    if (!a || a === document.body) document.querySelector<HTMLElement>('h1[tabindex="-1"]')?.focus();
+  }, 0);
+}
