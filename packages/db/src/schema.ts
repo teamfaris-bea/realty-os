@@ -1101,7 +1101,15 @@ export interface MailMessagesTable {
   internal_at: Timestamp;
   origin: string;
   created_at: Generated<Timestamp>;
-  search_tsv: GeneratedAlways<string | null>;
+}
+
+/** public.mail_sync_points (table) */
+export interface MailSyncPointsTable {
+  tenant_id: string;
+  link_id: string;
+  contact_point_id: string;
+  contact_id: string;
+  confirmed_at: Generated<Timestamp>;
 }
 
 /** public.mail_thread_exclusions (table) */
@@ -1997,6 +2005,7 @@ export interface UserMailLinksTable {
   user_id: string;
   provider: string;
   mailbox_address: string;
+  mailbox_address_hmac: Buffer;
   scopes: string[];
   disclosure_sha256: string;
   status: string;
@@ -2181,6 +2190,7 @@ export interface DB {
   listing_price_history: ListingPriceHistoryTable;
   listings: ListingsTable;
   mail_messages: MailMessagesTable;
+  mail_sync_points: MailSyncPointsTable;
   mail_thread_exclusions: MailThreadExclusionsTable;
   marketing_activity: MarketingActivityTable;
   marketing_piece_assets: MarketingPieceAssetsTable;
@@ -2306,6 +2316,7 @@ export const TABLE_NAMES = [
   'listing_price_history',
   'listings',
   'mail_messages',
+  'mail_sync_points',
   'mail_thread_exclusions',
   'marketing_activity',
   'marketing_piece_assets',

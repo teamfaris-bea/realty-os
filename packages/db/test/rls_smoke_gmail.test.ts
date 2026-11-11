@@ -16,6 +16,9 @@ const DB_RULES = [
   'R-GMAIL-11', 'R-GMAIL-12', 'R-GMAIL-13', 'R-GMAIL-14', 'R-MKT-12',
 ];
 
+/** Every security-review finding on the D2 migration that changed the schema (S-D2-7 and S-D2-8 a-c were docs-only). */
+const REVIEW_FINDINGS = ['S-D2-1', 'S-D2-2', 'S-D2-3', 'S-D2-4', 'S-D2-5', 'S-D2-6', 'S-D2-8'];
+
 describe('rls_smoke_gmail.sql (D2: Meta publishing only, Gmail inbox sync)', () => {
   let db: TestDb;
   let notices: string[] = [];
@@ -27,15 +30,21 @@ describe('rls_smoke_gmail.sql (D2: Meta publishing only, Gmail inbox sync)', () 
     await db?.drop();
   });
 
-  it('passes every D2 smoke check: R-GMAIL-1 R-GMAIL-2 R-GMAIL-3 R-GMAIL-4 R-GMAIL-5 R-GMAIL-6 R-GMAIL-7 R-GMAIL-8 R-GMAIL-9 R-GMAIL-11 R-GMAIL-12 R-GMAIL-13 R-GMAIL-14 R-MKT-12 R-DATA-7 R-TEN-1 R-TEN-2 E162 E165 E169 E170 E171 E172 E173 E176 E177 E181 E182 E183 E184 E185 E186 E188 E189', () => {
+  it('passes every D2 smoke check: R-GMAIL-1 R-GMAIL-2 R-GMAIL-3 R-GMAIL-4 R-GMAIL-5 R-GMAIL-6 R-GMAIL-7 R-GMAIL-8 R-GMAIL-9 R-GMAIL-11 R-GMAIL-12 R-GMAIL-13 R-GMAIL-14 R-MKT-12 R-DATA-7 R-TEN-1 R-TEN-2 S-D2-1 S-D2-2 S-D2-3 S-D2-4 S-D2-5 S-D2-6 S-D2-8 E162 E164 E165 E169 E170 E171 E172 E173 E176 E177 E181 E182 E183 E184 E185 E186 E188 E189 E190', () => {
     expect(notices.filter((n) => n.startsWith('FAIL'))).toEqual([]);
     const passes = notices.filter((n) => n.startsWith('PASS'));
-    expect(passes.length).toBeGreaterThanOrEqual(149);
+    expect(passes.length).toBeGreaterThanOrEqual(187);
     expect(passes.at(-1)).toBe('PASS  ALL D2 GMAIL RLS SMOKE CHECKS PASSED');
   });
 
   it('proves every database-enforced D2 rule in at least one passing check', () => {
     for (const id of DB_RULES) {
+      expect(notices.some((n) => n.startsWith('PASS') && new RegExp(`\\b${id}\\b(?!-?\\d)`).test(n)), id).toBe(true);
+    }
+  });
+
+  it('proves every schema fix of the D2 security review in at least one passing check', () => {
+    for (const id of REVIEW_FINDINGS) {
       expect(notices.some((n) => n.startsWith('PASS') && new RegExp(`\\b${id}\\b(?!-?\\d)`).test(n)), id).toBe(true);
     }
   });

@@ -1,6 +1,7 @@
 -- =============================================================================
 -- RLS / integrity smoke test for the D2 migration (owner decision D2: Meta publishing only, Gmail inbox sync):
--- marketing_publications (R-MKT-12), user_mail_links, mail_thread_exclusions, mail_messages (R-GMAIL-1..14).
+-- marketing_publications (R-MKT-12), user_mail_links, mail_thread_exclusions, mail_sync_points, mail_messages
+-- (R-GMAIL-1..14), and the security-review fixes S-D2-1..S-D2-6 and S-D2-8 (named in the check text).
 -- Same shape as rls_smoke_p23.sql: ONE transaction, rolled back; every application step runs as app_user;
 -- a failed expectation raises 'FAIL ...'. Platform maintenance steps (counsel clearing a platform pack, the
 -- vendor check) run as the owner role between RESET ROLE and SET LOCAL ROLE.
@@ -67,7 +68,7 @@ BEGIN
   VALUES (p_tenant, p_contact, p_name, 'owned', p_owner, now(), 1, 1, p_cmd, p_owner, p_owner);
   PERFORM pg_temp.cmd(NULL);
 END $$;
--- the system's synced copy of one Gmail message for one contact point (the columns module 56 writes)
+-- the system's synced copy of one Gmail message for one contact point (the columns module 68 writes)
 CREATE FUNCTION pg_temp.copy_sql(p_id uuid, p_link uuid, p_contact uuid, p_point uuid, p_address text, p_msg text, p_thread text,
                                  p_internal text DEFAULT 'now()', p_rfc text DEFAULT NULL, p_attachments text DEFAULT '[]')
 RETURNS text LANGUAGE sql AS $$
@@ -85,9 +86,15 @@ BEGIN EXECUTE pg_temp.copy_sql(p_id, p_link, p_contact, p_point, p_address, p_ms
 CREATE FUNCTION pg_temp.link_sql(p_id uuid, p_user uuid, p_address text,
                                  p_scopes text DEFAULT 'ARRAY[''https://www.googleapis.com/auth/gmail.readonly'']',
                                  p_token text DEFAULT '''\x01''::bytea') RETURNS text LANGUAGE sql AS $$
-  SELECT format($q$INSERT INTO user_mail_links (tenant_id, id, user_id, provider, mailbox_address, scopes, disclosure_sha256, status,
-    refresh_enc, key_version, connected_at) VALUES (app.tenant_id(), %L, %L, 'gmail', %L, %s, repeat('cd', 32), 'connected', %s, 1, now())$q$,
-    p_id, p_user, p_address, p_scopes, p_token)
+  SELECT format($q$INSERT INTO user_mail_links (tenant_id, id, user_id, provider, mailbox_address, mailbox_address_hmac, scopes,
+    disclosure_sha256, status, refresh_enc, key_version, connected_at) VALUES (app.tenant_id(), %L, %L, 'gmail', %L,
+    digest(lower(%L), 'sha256'), %s, repeat('cd', 32), 'connected', %s, 1, now())$q$,
+    p_id, p_user, p_address, p_address, p_scopes, p_token)
+$$;
+-- the mailbox owner's confirmation that one client address syncs (S-D2-1)
+CREATE FUNCTION pg_temp.point_sql(p_link uuid, p_point uuid, p_contact uuid) RETURNS text LANGUAGE sql AS $$
+  SELECT format($q$INSERT INTO mail_sync_points (tenant_id, link_id, contact_point_id, contact_id) VALUES (app.tenant_id(), %L, %L, %L)$q$,
+                p_link, p_point, p_contact)
 $$;
 -- visible copies in the current context
 CREATE FUNCTION pg_temp.copies(p_link uuid DEFAULT NULL, p_contact uuid DEFAULT NULL) RETURNS bigint LANGUAGE sql AS $$
@@ -119,6 +126,12 @@ $$;
 \set p4     '''a0000000-0000-7000-8000-00000000f401'''
 \set p5     '''a0000000-0000-7000-8000-00000000f501'''
 \set pB     '''b0000000-0000-7000-8000-00000000f101'''
+\set pX     '''a0000000-0000-7000-8000-00000000f9a1'''
+\set pM     '''a0000000-0000-7000-8000-00000000f9a2'''
+\set pBen   '''a0000000-0000-7000-8000-00000000f9a3'''
+\set pW2    '''a0000000-0000-7000-8000-00000000f9a4'''
+\set m8     '''a0000000-0000-7000-8000-000000007108'''
+\set m9     '''a0000000-0000-7000-8000-000000007109'''
 \set lk1    '''a0000000-0000-7000-8000-0000000071a1'''
 \set lk2    '''a0000000-0000-7000-8000-0000000071a2'''
 \set lkB    '''b0000000-0000-7000-8000-0000000071b0'''
@@ -314,6 +327,78 @@ SELECT pg_temp.expect_error(format($q$UPDATE user_mail_links SET scopes = ARRAY[
 UPDATE user_mail_links SET backfill_requested_at = now() - interval '1 year' WHERE id = :lk1;
 SELECT pg_temp.ok((SELECT backfill_requested_at = now() FROM user_mail_links WHERE id = :lk1),
                   'R-GMAIL-8: the mailbox owner asks to import again (a request stamped with the database clock)');
+SELECT pg_temp.ok((SELECT octet_length(mailbox_address_hmac) = 32 FROM user_mail_links WHERE id = :lk1),
+                  'S-D2-1: a link carries the HMAC of its mailbox address (written by the callback)');
+SELECT pg_temp.expect_error(format($q$UPDATE user_mail_links SET mailbox_address_hmac = digest('other@gmail.test', 'sha256') WHERE id = %L$q$, :lk1),
+  'S-D2-1: a link keeps its mailbox HMAC', '%MAIL_LINK_IMMUTABLE%');
+SELECT pg_temp.ctx(:tA, NULL, 'system');
+SELECT pg_temp.expect_error(format($q$UPDATE user_mail_links SET mailbox_address_hmac = digest('other@gmail.test', 'sha256') WHERE id = %L$q$, :lk1),
+  'S-D2-1: not even the system rewrites a mailbox HMAC', '%MAIL_LINK_IMMUTABLE%');
+
+-- =============================================================================
+-- 2b. Which client addresses sync: the mailbox owner confirms each one (S-D2-1, E164)
+-- =============================================================================
+SELECT pg_temp.ctx(:tA, NULL, 'system');
+SELECT pg_temp.expect_error(pg_temp.copy_sql(gen_random_uuid(), :lk1, :c1, :p1, 'alice@example.test', 'g0', 't0'),
+  'S-D2-1 R-GMAIL-5: nothing syncs for a client address the mailbox owner did not confirm', '%MAIL_POINT_NOT_CONFIRMED%');
+SELECT pg_temp.expect_error(pg_temp.point_sql(:lk1, :p1, :c1),
+  'S-D2-1: the system cannot confirm an address for the mailbox owner', '%MAIL_POINT_OWNER_ONLY%');
+SELECT pg_temp.ctx(:tA, :agA2, 'user');
+SELECT pg_temp.expect_error(pg_temp.point_sql(:lk1, :p1, :c1),
+  'S-D2-1: another agent cannot confirm an address on agent 1''s link', '%MAIL_POINT_OWNER_ONLY%');
+SELECT pg_temp.ctx(:tA, :tlA, 'user');
+SELECT pg_temp.expect_error(pg_temp.point_sql(:lk1, :p1, :c1),
+  'S-D2-1: neither can the Team Lead', '%MAIL_POINT_OWNER_ONLY%');
+SELECT pg_temp.ctx(:tA, :agA1, 'user');
+SELECT pg_temp.expect_error(pg_temp.point_sql(:lk1, :p2, :c2),
+  'S-D2-1: the mailbox owner confirms only addresses of contacts they own, collaborate on or share a deal with', '%MAIL_CONTACT_NOT_RELATED%');
+SELECT pg_temp.expect_error(pg_temp.point_sql(:lk1, :p3, :c1),
+  'S-D2-1: a confirmation names the contact''s own current email point', '%MAIL_ADDRESS_NOT_A_CONTACT_POINT%');
+-- "Sync Gmail with these clients?": one bulk confirm at connect (a forged confirmation time is replaced)
+INSERT INTO mail_sync_points (tenant_id, link_id, contact_point_id, contact_id, confirmed_at) VALUES
+  (:tA, :lk1, :p1, :c1, now() - interval '1 year'), (:tA, :lk1, :p3, :c3, now()), (:tA, :lk1, :p4, :c4, now()),
+  (:tA, :lk1, :p5, :c5, now());
+SELECT pg_temp.ok((SELECT count(*) FROM mail_sync_points WHERE link_id = :lk1 AND confirmed_at = now()) = 4,
+                  'S-D2-1 S-D2-6: the mailbox owner confirms their clients'' addresses in one step; the confirmation time is the database clock');
+SELECT pg_temp.expect_error(format($q$UPDATE mail_sync_points SET confirmed_at = now() - interval '1 day' WHERE link_id = %L$q$, :lk1),
+  'S-D2-1: a confirmation is never edited', '%permission denied%');
+DO $$
+DECLARE who uuid; n bigint;
+BEGIN
+  FOREACH who IN ARRAY ARRAY['a0000000-0000-7000-8000-0000000000a0','a0000000-0000-7000-8000-0000000000ad',
+                             'a0000000-0000-7000-8000-0000000000a3','a0000000-0000-7000-8000-0000000000a2']::uuid[] LOOP
+    PERFORM pg_temp.ctx('a0000000-0000-7000-8000-000000000001', who, 'user');
+    SELECT count(*) INTO n FROM mail_sync_points;
+    IF n <> 0 THEN RAISE EXCEPTION 'FAIL  % sees agent 1''s confirmed addresses', who; END IF;
+  END LOOP;
+  RAISE NOTICE 'PASS  S-D2-1: the Owner, the Admin, the Team Lead and another agent see no confirmed addresses';
+END $$;
+SELECT pg_temp.ctx(:tA, :agA2, 'user');
+SELECT pg_temp.ok(pg_temp.rows_affected(pg_temp.point_sql(:lk2, :p2, :c2)) = 1, 'S-D2-1: agent 2 confirms Carol''s address on their own link');
+-- the attack: a peer adds a stranger's address (agent 1's spouse) to their own contact and makes agent 1 a collaborator
+INSERT INTO contact_points (tenant_id, id, contact_id, kind, address, address_hmac)
+VALUES (:tA, :pX, :c2, 'email', 'spouse-of-ava@family.test', digest('spouse-of-ava@family.test', 'sha256'));
+INSERT INTO contact_collaborators (tenant_id, contact_id, user_id, role, added_by_user_id) VALUES (:tA, :c2, :agA1, 'co_agent', :agA2);
+SELECT pg_temp.ctx(:tA, NULL, 'system');
+SELECT pg_temp.expect_error(pg_temp.copy_sql(gen_random_uuid(), :lk1, :c2, :pX, 'spouse-of-ava@family.test', 'gS1', 'tS1'),
+  'S-D2-1 E164: a peer who adds a stranger''s address to a contact and makes the agent a collaborator cannot make the sync capture the agent''s personal mail',
+  '%MAIL_POINT_NOT_CONFIRMED%');
+SELECT pg_temp.ctx(:tA, :agA2, 'user');
+UPDATE contact_collaborators SET removed_at = now() WHERE tenant_id = :tA AND contact_id = :c2 AND user_id = :agA1;
+-- the attack: a TL adds agent 1's own mailbox address to agent 1's contact
+SELECT pg_temp.ctx(:tA, :tlA, 'user');
+INSERT INTO contact_points (tenant_id, id, contact_id, kind, address, address_hmac)
+VALUES (:tA, :pM, :c3, 'email', 'ava@gmail.test', digest('ava@gmail.test', 'sha256'));
+SELECT pg_temp.ctx(:tA, :agA1, 'user');
+SELECT pg_temp.expect_error(pg_temp.point_sql(:lk1, :pM, :c3),
+  'S-D2-1 E164: the agent''s own mailbox is never a client address, even when a TL adds it to a contact', '%MAIL_ADDRESS_IS_A_MAILBOX%');
+INSERT INTO contact_points (tenant_id, id, contact_id, kind, address, address_hmac)
+VALUES (:tA, :pBen, :c1, 'email', 'ben@gmail.test', digest('ben@gmail.test', 'sha256'));
+SELECT pg_temp.expect_error(pg_temp.point_sql(:lk1, :pBen, :c1),
+  'S-D2-1: nor is a teammate''s linked mailbox', '%MAIL_ADDRESS_IS_A_MAILBOX%');
+SELECT pg_temp.ctx(:tA, NULL, 'system');
+SELECT pg_temp.expect_error(pg_temp.copy_sql(gen_random_uuid(), :lk1, :c3, :pM, 'ava@gmail.test', 'gS2', 'tS2'),
+  'S-D2-1 E164: the sync refuses a copy filed under a live mailbox address of the tenant', '%MAIL_ADDRESS_IS_A_MAILBOX%');
 
 -- =============================================================================
 -- 3. What is stored (R-GMAIL-5, -8, -11, -12, -14)
@@ -416,15 +501,15 @@ SELECT pg_temp.ok(pg_temp.copies(NULL, :c1) = 0, 'R-GMAIL-6: and nothing once th
 -- a support actor under the Owner's grant (R-PERM-11) sees the tenant, but no synced mail (E181)
 SELECT pg_temp.ctx(:tA, :supU, 'support');
 SELECT pg_temp.ok((SELECT count(*) FROM contacts) > 0 AND pg_temp.copies() = 0 AND (SELECT count(*) FROM user_mail_links) = 0
-                  AND (SELECT count(*) FROM mail_thread_exclusions) = 0,
-                  'R-GMAIL-6 E181: a support actor reads no synced mail, link or exclusion, even under an Owner''s support grant');
+                  AND (SELECT count(*) FROM mail_thread_exclusions) = 0 AND (SELECT count(*) FROM mail_sync_points) = 0,
+                  'R-GMAIL-6 E181: a support actor reads no synced mail, link, exclusion or confirmed address, even under an Owner''s support grant');
 SELECT pg_temp.expect_error(pg_temp.copy_sql(gen_random_uuid(), :lk1, :c1, :p1, 'alice@example.test', 'g-sup', 't-sup'),
   'R-PERM-11: a support actor writes no synced mail', '%SUPPORT_READ_ONLY%');
 -- a client principal (Layer 1 is staff-only, E182)
 SELECT pg_temp.client(:tA, 'a0000000-0000-7000-8000-0000000c1a01');
 SELECT pg_temp.ok(pg_temp.copies() + (SELECT count(*) FROM user_mail_links) + (SELECT count(*) FROM mail_thread_exclusions)
-                  + (SELECT count(*) FROM marketing_publications) = 0,
-                  'R-GMAIL-6 E182: a client principal reads no synced mail, link, exclusion or publication');
+                  + (SELECT count(*) FROM mail_sync_points) + (SELECT count(*) FROM marketing_publications) = 0,
+                  'R-GMAIL-6 E182: a client principal reads no synced mail, link, exclusion, confirmed address or publication');
 -- reassignment (E177): the new owner reads the earlier copies; the former owner's new mail is no longer stored
 SELECT pg_temp.ctx(:tA, NULL, 'system');
 SELECT pg_temp.copy(:m5, :lk1, :c3, :p3, 'dora@example.test', 'g5', 't5');
@@ -442,12 +527,37 @@ SELECT pg_temp.ok(pg_temp.rows_affected(format(
   'the Owner reassigns Dora from agent 1 to agent 2');
 SELECT pg_temp.cmd(NULL);
 SELECT pg_temp.ctx(:tA, :agA2, 'user');
-SELECT pg_temp.ok(pg_temp.copies(NULL, :c3) = 1, 'R-GMAIL-6 E177: the new owner reads agent 1''s earlier mail with Dora, like the timeline');
+SELECT pg_temp.ok(pg_temp.copies(NULL, :c3) = 1,
+                  'R-GMAIL-6 E177 S-D2-2: the new owner reads agent 1''s earlier mail with Dora, like the timeline (losing the relation hides nothing)');
 SELECT pg_temp.ctx(:tA, :agA1, 'user');
 SELECT pg_temp.ok(pg_temp.copies(NULL, :c3) = 1, 'R-GMAIL-6: the mailbox owner still reads their own copy');
 SELECT pg_temp.ctx(:tA, NULL, 'system');
 SELECT pg_temp.expect_error(pg_temp.copy_sql(gen_random_uuid(), :lk1, :c3, :p3, 'dora@example.test', 'g6', 't5'),
   'R-GMAIL-5 E177: agent 1''s new mail with a contact they no longer relate to is not stored', '%MAIL_CONTACT_NOT_RELATED%');
+-- copies outlive neither their contact point nor the mailbox owner's confirmation (S-D2-2)
+SELECT pg_temp.ctx(:tA, :agA1, 'user');
+INSERT INTO contact_points (tenant_id, id, contact_id, kind, address, address_hmac)
+VALUES (:tA, :pW2, :c1, 'email', 'alice.home@example.test', digest('alice.home@example.test', 'sha256'));
+INSERT INTO mail_sync_points (tenant_id, link_id, contact_point_id, contact_id) VALUES (:tA, :lk1, :p1w, :c1), (:tA, :lk1, :pW2, :c1);
+SELECT pg_temp.ctx(:tA, NULL, 'system');
+SELECT pg_temp.copy(:m8, :lk1, :c1, :p1w, 'alice.work@example.test', 'gw1', 'tw1');
+SELECT pg_temp.copy(:m9, :lk1, :c1, :pW2, 'alice.home@example.test', 'gw2', 'tw2');
+SELECT pg_temp.ctx(:tA, :tlA, 'user');
+SELECT pg_temp.ok((SELECT count(*) FROM mail_messages WHERE id IN (:m8, :m9)) = 2, 'S-D2-2: the Team Lead reads copies under both confirmed addresses');
+SELECT pg_temp.ctx(:tA, :agA1, 'user');
+SELECT pg_temp.ok(pg_temp.rows_affected(format($q$DELETE FROM mail_sync_points WHERE link_id = %L AND contact_point_id = %L$q$, :lk1, :p1w)) = 1,
+                  'S-D2-1: the mailbox owner stops syncing an address (deletes the confirmation)');
+SELECT pg_temp.ok((SELECT count(*) FROM mail_messages WHERE id = :m8) = 0,
+                  'S-D2-2: copies under a withdrawn confirmation are hidden at once from the mailbox owner');
+UPDATE contact_points SET status = 'removed', removed_at = now() WHERE tenant_id = :tA AND id = :pW2;
+SELECT pg_temp.ctx(:tA, :tlA, 'user');
+SELECT pg_temp.ok((SELECT count(*) FROM mail_messages WHERE id IN (:m8, :m9)) = 0,
+                  'S-D2-2: copies under a removed contact point or a withdrawn confirmation are hidden at once from the timeline');
+SELECT pg_temp.ctx(:tA, NULL, 'system');
+SELECT pg_temp.expect_error(pg_temp.copy_sql(gen_random_uuid(), :lk1, :c1, :p1w, 'alice.work@example.test', 'gw3', 'tw3'),
+  'S-D2-2: nothing new syncs for an address whose confirmation was withdrawn', '%MAIL_POINT_NOT_CONFIRMED%');
+SELECT pg_temp.ok(pg_temp.rows_affected(format($q$DELETE FROM mail_messages WHERE id IN (%L, %L)$q$, :m8, :m9)) = 2,
+                  'S-D2-2: the system still sees them, and the reconcile pass deletes copies whose point was removed or whose confirmation was withdrawn');
 
 -- =============================================================================
 -- 5. Private threads (R-GMAIL-7)
@@ -459,7 +569,14 @@ SELECT pg_temp.ctx(:tA, :ownA, 'user');
 SELECT pg_temp.expect_error(format($q$INSERT INTO mail_thread_exclusions (tenant_id, link_id, gmail_thread_id) VALUES (%L, %L, 't1')$q$, :tA, :lk1),
   'R-GMAIL-7: the Owner cannot remove (or reveal) an agent''s thread', '%row-level security%');
 SELECT pg_temp.ctx(:tA, :agA1, 'user');
-INSERT INTO mail_thread_exclusions (tenant_id, link_id, gmail_thread_id) VALUES (:tA, :lk1, 't1');
+INSERT INTO mail_thread_exclusions (tenant_id, link_id, gmail_thread_id, excluded_at) VALUES (:tA, :lk1, 't1', now() - interval '5 years');
+SELECT pg_temp.ok((SELECT excluded_at = now() FROM mail_thread_exclusions WHERE link_id = :lk1 AND gmail_thread_id = 't1'),
+                  'S-D2-6: the exclusion time is the database clock, never the caller''s');
+SELECT pg_temp.ok(app.mail_link_live(:tA, :lk1), 'S-D2-4: the mailbox owner''s own link reads as live');
+SELECT pg_temp.ctx(:tA, :agA2, 'user');
+SELECT pg_temp.ok(NOT app.mail_link_live(:tA, :lk1) AND NOT app.mail_copy_live(:tA, gen_random_uuid()),
+                  'S-D2-4: another agent learns nothing about agent 1''s link (the link check reads under their own RLS; the copy check needs a copy)');
+SELECT pg_temp.ctx(:tA, :agA1, 'user');
 SELECT pg_temp.ok(pg_temp.copies(NULL, :c1) = 1, 'R-GMAIL-7 E173: the removed thread''s copies are hidden at once from the mailbox owner');
 SELECT pg_temp.ctx(:tA, :ownA, 'user');
 SELECT pg_temp.ok(pg_temp.copies(NULL, :c1) = 1, 'R-GMAIL-7: and from everyone else');
@@ -525,6 +642,35 @@ SELECT pg_temp.expect_error(format($q$INSERT INTO consent_events (tenant_id, id,
   digest('erin@example.test', 'sha256'), 'e@', 'email', 'all', 'revoke', 'none', 'inbound_keyword', now(), %L, 'system',
   '{"kind": "synced_gmail"}')$q$, :tA, :c5),
   'R-GMAIL-9: an opt-out from synced mail names the copy it came from', '%consent_events_synced_gmail%');
+-- S-D2-3, E190: an opt-out in a Gmail message that was not stored (here: in the excluded thread t1) is still recorded,
+-- citing the message by reference (sha256 hex of link id + Gmail message id)
+INSERT INTO consent_events (tenant_id, id, address_kind, address_hmac, address_hint, channel, purpose, event_type, consent_level,
+       source, occurred_at, contact_id, actor_kind, evidence)
+VALUES (:tA, 'a0000000-0000-7000-8000-00000000ce72', 'email', digest('alice@example.test', 'sha256'), 'a•••@example.test', 'email', 'all',
+        'revoke', 'none', 'inbound_keyword', now(), :c1, 'system',
+        jsonb_build_object('kind', 'synced_gmail', 'gmail_message_ref', encode(digest(:lk1 || ':gX1', 'sha256'), 'hex'), 'matched', 'UNSUBSCRIBE'));
+SELECT pg_temp.ok((SELECT evidence->>'gmail_message_ref' ~ '^[0-9a-f]{64}$' FROM consent_events WHERE id = 'a0000000-0000-7000-8000-00000000ce72'),
+                  'S-D2-3 R-GMAIL-9 E190: an unsubscribe in a Gmail thread the agent excluded is recorded (citing the message by reference); nothing is stored');
+SELECT pg_temp.expect_error(format($q$INSERT INTO consent_events (tenant_id, id, address_kind, address_hmac, address_hint, channel,
+  purpose, event_type, consent_level, source, occurred_at, contact_id, actor_kind, evidence_message_id, evidence) VALUES (%L, gen_random_uuid(),
+  'email', digest('erin@example.test', 'sha256'), 'e@', 'email', 'informational', 'grant', 'express', 'inbound_first_contact', now(), %L,
+  'system', %L, jsonb_build_object('mail_message_id', %L))$q$, :tA, :c5, :m7, :m7),
+  'S-D2-5: an unlabelled grant that cites a synced copy is refused (the CHECK keys on the citation, not the label)', '%consent_events_synced_gmail%');
+SELECT pg_temp.expect_error(format($q$INSERT INTO consent_events (tenant_id, id, address_kind, address_hmac, address_hint, channel,
+  purpose, event_type, consent_level, source, occurred_at, contact_id, actor_kind, evidence) VALUES (%L, gen_random_uuid(), 'email',
+  digest('erin@example.test', 'sha256'), 'e@', 'email', 'all', 'revoke', 'none', 'inbound_keyword', now(), %L, 'system',
+  jsonb_build_object('gmail_message_ref', repeat('ab', 32)))$q$, :tA, :c5),
+  'S-D2-5: a Gmail message reference must come with the synced_gmail label', '%consent_events_synced_gmail%');
+SELECT pg_temp.expect_error(format($q$INSERT INTO consent_events (tenant_id, id, address_kind, address_hmac, address_hint, channel,
+  purpose, event_type, consent_level, source, occurred_at, contact_id, actor_kind, evidence) VALUES (%L, gen_random_uuid(), 'email',
+  digest('erin@example.test', 'sha256'), 'e@', 'email', 'all', 'revoke', 'none', 'inbound_keyword', now(), %L, 'system',
+  jsonb_build_object('kind', 'synced_gmail', 'gmail_message_ref', 'not-a-hash'))$q$, :tA, :c5),
+  'S-D2-3 S-D2-5: a Gmail message reference is a SHA-256 hex digest', '%consent_events_synced_gmail%');
+SELECT pg_temp.expect_error(format($q$INSERT INTO consent_events (tenant_id, id, address_kind, address_hmac, address_hint, channel,
+  purpose, event_type, consent_level, source, occurred_at, contact_id, actor_kind, evidence) VALUES (%L, gen_random_uuid(), 'email',
+  digest('erin@example.test', 'sha256'), 'e@', 'email', 'all', 'revoke', 'none', 'inbound_keyword', now(), %L, 'system',
+  jsonb_build_object('kind', 'synced_gmail', 'gmail_message_ref', repeat('ab', 32), 'mail_message_id', %L))$q$, :tA, :c5, :m7),
+  'S-D2-5: an event cites either the stored copy or the message reference, not both', '%consent_events_synced_gmail%');
 -- erasure (R-DATA-7, E185): the contact goes, and so do its copies
 SELECT pg_temp.ctx(:tA, :ownA, 'user');
 SELECT app.erase_contact(:c5, gen_random_uuid(), 'privacy request');
@@ -570,6 +716,10 @@ SELECT pg_temp.expect_error(pg_temp.copy_sql(gen_random_uuid(), :lk2, :c2, :p2, 
   'R-GMAIL-13: nothing is stored for an inactive member''s link', '%MAIL_SYNC_OFF%');
 -- disconnect (R-GMAIL-4, -13)
 SELECT pg_temp.ctx(:tA, :agA1, 'user');
+SELECT pg_temp.expect_error(format($q$UPDATE user_mail_links SET status = 'revoked', revoke_reason = 'USER_DISCONNECTED', refresh_enc = NULL,
+  purge_after = now() + interval '30 days', history_id = '1', last_error_code = 'FORGED_BY_USER', next_sync_at = now(),
+  backfill_done_at = '2000-01-01', key_version = 999 WHERE id = %L$q$, :lk1),
+  'S-D2-6: a person''s disconnect cannot also rewrite the system''s sync state', '%MAIL_LINK_SYSTEM_ONLY%');
 SELECT pg_temp.expect_error(format($q$UPDATE user_mail_links SET status = 'revoked', revoked_at = now(), revoke_reason = 'PROVIDER_REVOKED',
   refresh_enc = NULL, purge_after = now() + interval '30 days' WHERE id = %L$q$, :lk1),
   'R-GMAIL-13: a person disconnects only as USER_DISCONNECTED', '%MAIL_LINK_SYSTEM_ONLY%');
@@ -597,7 +747,7 @@ SELECT pg_temp.expect_error(pg_temp.copy_sql(gen_random_uuid(), :lk1, :c1, :p1, 
 -- a new link for the same mailbox is allowed once the old one is revoked
 SELECT pg_temp.ok(pg_temp.rows_affected(pg_temp.link_sql(gen_random_uuid(), :agA1, 'ava@gmail.test')) = 1,
                   'R-GMAIL-2: after a disconnect the agent may connect the same mailbox again (a new link)');
--- purge (module 56's reconcile pass, system actor)
+-- purge (module 68's reconcile pass, system actor)
 SELECT pg_temp.ok(pg_temp.rows_affected(format($q$DELETE FROM user_mail_links WHERE id = %L$q$, :lk2)) = 0,
                   'R-GMAIL-13: a live link is never purged');
 SELECT pg_temp.ok(pg_temp.rows_affected(format($q$DELETE FROM mail_messages WHERE link_id = %L$q$, :lk1)) = 3,
@@ -735,6 +885,8 @@ SELECT pg_temp.expect_error(format($q$UPDATE marketing_publications SET status =
 -- =============================================================================
 -- 9. Tenant isolation of every new table (R-TEN-1), from tenant B's Owner and system
 -- =============================================================================
+SELECT pg_temp.ctx(:tB, :ownB, 'user');
+SELECT pg_temp.ok(pg_temp.rows_affected(pg_temp.point_sql(:lkB, :pB, :cB)) = 1, 'tenant B''s Owner confirms Bob''s address');
 SELECT pg_temp.ctx(:tB, NULL, 'system');
 SELECT pg_temp.copy(:mB, :lkB, :cB, :pB, 'bob@example.test', 'b1', 'bt1');
 SELECT pg_temp.ctx(:tA, NULL, 'system');
@@ -748,7 +900,7 @@ BEGIN
   FOREACH c IN ARRAY ctxs LOOP
     IF c = 'owner' THEN PERFORM pg_temp.ctx('b0000000-0000-7000-8000-000000000001', 'b0000000-0000-7000-8000-0000000000b0', 'user');
     ELSE PERFORM pg_temp.ctx('b0000000-0000-7000-8000-000000000001', NULL, 'system'); END IF;
-    FOREACH t IN ARRAY ARRAY['marketing_publications','user_mail_links','mail_thread_exclusions','mail_messages'] LOOP
+    FOREACH t IN ARRAY ARRAY['marketing_publications','user_mail_links','mail_thread_exclusions','mail_sync_points','mail_messages'] LOOP
       EXECUTE format('SELECT count(*) FROM public.%I WHERE tenant_id = %L', t, 'a0000000-0000-7000-8000-000000000001') INTO n;
       IF n <> 0 THEN bad := bad || ' ' || c || ':' || t; END IF;
       EXECUTE format('SELECT count(*) FROM public.%I WHERE tenant_id <> %L', t, 'b0000000-0000-7000-8000-000000000001') INTO n;
@@ -759,12 +911,15 @@ BEGIN
   RAISE NOTICE 'PASS  R-TEN-1 R-GMAIL-6 R-MKT-12: cross-tenant denial: tenant B''s Owner and system read 0 tenant A rows from every D2 table';
 END $$;
 SELECT pg_temp.ctx(:tB, NULL, 'system');
-SELECT pg_temp.expect_error(format($q$INSERT INTO user_mail_links (tenant_id, id, user_id, provider, mailbox_address, scopes, disclosure_sha256,
-  status, refresh_enc, key_version, connected_at) VALUES (%L, gen_random_uuid(), %L, 'gmail', 'x@gmail.test',
-  ARRAY['https://www.googleapis.com/auth/gmail.readonly'], repeat('cd', 32), 'connected', '\x01', 1, now())$q$, :tA, :agA1),
+SELECT pg_temp.expect_error(format($q$INSERT INTO user_mail_links (tenant_id, id, user_id, provider, mailbox_address, mailbox_address_hmac,
+  scopes, disclosure_sha256, status, refresh_enc, key_version, connected_at) VALUES (%L, gen_random_uuid(), %L, 'gmail', 'x@gmail.test',
+  digest('x@gmail.test', 'sha256'), ARRAY['https://www.googleapis.com/auth/gmail.readonly'], repeat('cd', 32), 'connected', '\x01', 1, now())$q$,
+  :tA, :agA1),
   'R-TEN-1: tenant B cannot link a mailbox into tenant A', '%row-level security%');
 SELECT pg_temp.expect_error(format($q$INSERT INTO mail_thread_exclusions (tenant_id, link_id, gmail_thread_id) VALUES (%L, %L, 'x')$q$, :tA, :lk2),
   'R-TEN-1: tenant B cannot exclude a tenant A thread', '%row-level security%');
+SELECT pg_temp.expect_error(format($q$INSERT INTO mail_sync_points (tenant_id, link_id, contact_point_id, contact_id) VALUES (%L, %L, %L, %L)$q$,
+  :tA, :lk2, :p2, :c2), 'R-TEN-1: tenant B cannot confirm an address on a tenant A link', '%row-level security%');
 SELECT pg_temp.expect_error(format($q$INSERT INTO mail_messages (tenant_id, id, link_id, contact_id, contact_point_id, contact_address_hmac,
   gmail_message_id, gmail_thread_id, sender, contact_role, body, internal_at, origin) VALUES (%L, gen_random_uuid(), %L, %L, %L,
   digest('carol@example.test', 'sha256'), 'x', 'x', 'contact', 'from', 'x', now(), 'live')$q$, :tA, :lk2, :c2, :p2),
@@ -775,9 +930,29 @@ SELECT pg_temp.expect_error(format($q$INSERT INTO marketing_publications (tenant
   'R-TEN-1: tenant B cannot publish tenant A''s piece', '%row-level security%');
 SELECT pg_temp.ctx(NULL, NULL, NULL);
 SELECT pg_temp.ok((SELECT count(*) FROM marketing_publications) + (SELECT count(*) FROM user_mail_links)
-                  + (SELECT count(*) FROM mail_thread_exclusions) + (SELECT count(*) FROM mail_messages) = 0
-                  AND NOT app.mail_sync_live(:tA, :lk2, NULL),
-                  'R-TEN-2: with no tenant context every D2 table reads empty and app.mail_sync_live is false');
+                  + (SELECT count(*) FROM mail_thread_exclusions) + (SELECT count(*) FROM mail_sync_points)
+                  + (SELECT count(*) FROM mail_messages) = 0
+                  AND NOT app.mail_link_live(:tA, :lk2) AND NOT app.mail_copy_live(:tB, :mB),
+                  'R-TEN-2: with no tenant context every D2 table reads empty and app.mail_link_live / app.mail_copy_live are false');
+SELECT pg_temp.expect_error(format($q$INSERT INTO mail_sync_points (tenant_id, link_id, contact_point_id, contact_id) VALUES (%L, %L, %L, %L)$q$,
+  :tB, :lkB, :pB, :cB), 'R-TEN-2 S-D2-4: with no tenant context the definer guard reads nothing and RLS refuses the confirmation', '%row-level security%');
+
+-- =============================================================================
+-- 10. Definers and dropped objects (S-D2-4, S-D2-8)
+-- =============================================================================
+SELECT pg_temp.ok(to_regprocedure('app.mail_sync_live(uuid,uuid,text)') IS NULL
+                  AND (SELECT prosecdef FROM pg_proc WHERE oid = 'app.mail_copy_live(uuid,uuid)'::regprocedure)
+                  AND NOT (SELECT prosecdef FROM pg_proc WHERE oid = 'app.mail_link_live(uuid,uuid)'::regprocedure)
+                  AND NOT (SELECT prosecdef FROM pg_proc WHERE oid = 'app.mail_contact_related(uuid,uuid,uuid)'::regprocedure),
+                  'S-D2-4: no definer answers for a link or a thread by id; app.mail_copy_live takes only a copy''s identity and the link check is an invoker function');
+SELECT pg_temp.ok((SELECT bool_and(pg_get_userbyid(proowner) = 'app_definer' AND proconfig @> ARRAY['search_path=pg_catalog, public'])
+                     FROM pg_proc WHERE oid IN ('app.mail_copy_live(uuid,uuid)'::regprocedure, 'app.mail_sync_points_guard()'::regprocedure))
+                  AND NOT has_function_privilege('app_user', 'app.mail_sync_points_guard()', 'EXECUTE')
+                  AND NOT has_function_privilege('public', 'app.mail_copy_live(uuid,uuid)', 'EXECUTE'),
+                  'S-D2-4: both new definers are owned by app_definer with a pinned search_path; the definer trigger is executable by nobody');
+SELECT pg_temp.ok(NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'mail_messages' AND column_name = 'search_tsv')
+                  AND to_regclass('public.mail_messages_tsv_idx') IS NULL,
+                  'S-D2-8: mail_messages has no full-text column or index (synced mail is not searched in v1)');
 
 SELECT pg_temp.ok(true, 'ALL D2 GMAIL RLS SMOKE CHECKS PASSED');
 ROLLBACK;
