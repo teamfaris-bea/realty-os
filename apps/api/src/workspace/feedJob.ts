@@ -1,7 +1,7 @@
 // feed.materialize (lane perf-misses): keeps every member's materialized Priority Feed current in the
 // background, so GET /feed usually finds nothing to re-score (workspace/feed.ts header).
 //
-//   feed.materialize   default   standalone   { scope: 'tenant' }   periodic: every 15 s per tenant
+//   feed.materialize   default   standalone   { scope: 'tenant' }   periodic per tenant (registered every 60 s; each run wakes the next 15 s later)
 //
 // One run finds the members of its tenant with work (dirty marks, a group whose next change instant has come,
 // a reconcile that is due, or no materialized state yet) and, for each, runs materializeFeed in a transaction
@@ -20,7 +20,10 @@ import type { JobHandler, StandaloneJobHandler } from '../worker/types.js';
 import { type FeedDeps, type MaterializeResult, RECONCILE_KEY, materializeFeed } from './feed.js';
 
 export const FEED_MATERIALIZE_KIND = 'feed.materialize' as const;
-export const FEED_MATERIALIZE_EVERY_MS = 15_000;
+/** The registered period (the registry's minimum); each run wakes the next one sooner (RERUN_MS). */
+export const FEED_MATERIALIZE_EVERY_MS = 60_000;
+/** Each run reschedules itself this soon, so marks are picked up within about 15 s. */
+export const RERUN_MS = 15_000;
 /** A run starts no new member after this long (the rest wait for the next run). */
 export const RUN_BUDGET_MS = 10_000;
 
@@ -80,7 +83,7 @@ export function makeFeedHandlers(depsFor: () => FeedJobDeps = () => {
       const done = await materializeTenant(ctx.actor.tenantId, members, depsFor());
       ctx.log.debug('feed.materialize', { jobId: ctx.job.id.toString(), code: `${done.length}/${members.length}` });
       // keeps itself alive every 15 s (the periodic dedupe key stays with this job); sooner if work was left
-      return { retryAt: instant(ctx.now + (done.length < members.length ? 1_000 : FEED_MATERIALIZE_EVERY_MS)) as Instant };
+      return { retryAt: instant(ctx.now + (done.length < members.length ? 1_000 : RERUN_MS)) as Instant };
     },
   };
   return [materialize as unknown as JobHandler<unknown>];
