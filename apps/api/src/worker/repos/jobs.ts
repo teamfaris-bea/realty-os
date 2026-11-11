@@ -140,3 +140,14 @@ export function retentionSweep(db: Database, now: Instant): Promise<Record<strin
     return r.rows[0]!.r;
   }, { db });
 }
+
+/**
+ * Deletes webhook ids past their replay window (app.purge_webhook_events, migration 0018). The windows
+ * live in SQL and use the database's real clock: nothing here can shorten them.
+ */
+export function purgeWebhookEvents(db: Database): Promise<Record<string, number>> {
+  return withPreTenant(async (tx) => {
+    const r = await sql<{ r: Record<string, number> }>`SELECT app.purge_webhook_events() AS r`.execute(tx);
+    return r.rows[0]!.r;
+  }, { db });
+}
