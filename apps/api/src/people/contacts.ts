@@ -8,6 +8,7 @@
 //   PUT   /stage-labels                  Owner/Admin                                      settings.stage_labels
 //   POST  /contacts/:id/do-not-contact   person-level do-not-contact (R-CHAN-3 path): revokes every channel on
 //                                        every point and sets the person-level flag; tighten-only  contact.edit
+//                                        (also on a merged-away record the caller sees: it follows the merge, E140)
 //
 // Ownership, attribution, merge/delete state, do_not_contact_* and imported_fields are never patched
 // (core validateContactPatch refuses them; the contacts_guard and opt-out guard back it up). A stage
@@ -64,6 +65,14 @@ async function staleOrMissing(tx: Tx, id: string): Promise<never> {
 
 const readAuth = (req: FastifyRequest) => detailFacts(req);
 const editAuth = (req: FastifyRequest) => liveDetailFacts(req);
+// The one api/people write a merged-away record takes: the person-level do-not-contact, from whoever still sees the
+// record's detail and holds contact.edit on it (the Owner, an Admin, a collaborator of the loser: a merge moves no
+// collaborator; a TC on the loser's deal sees it but has no contact.edit). Recording an opt-out only tightens, and
+// nothing is stranded on the loser: the definer trigger app.contacts_dnc_follow_merge (migration 0018) copies the
+// loser's do-not-contact and its ledger event onto the survivor's own row, along merge chains (R-CHAN-2 E140), even
+// when the caller cannot see the survivor, and the revokes are keyed by the HMACs of the addresses the merge copied
+// onto the survivor. Whoever cannot see the record gets 404 as before (R-PERM-5).
+const optOutAuth = (req: FastifyRequest) => detailFacts(req);
 
 export async function registerContactEditRoutes(app: FastifyInstance): Promise<void> {
   const r = app.withTypeProvider<ZodTypeProvider>();
@@ -198,7 +207,7 @@ export async function registerContactEditRoutes(app: FastifyInstance): Promise<v
 
   r.post(
     '/contacts/:id/do-not-contact',
-    { config: { auth: 'contact.edit' }, preHandler: authorize('contact.edit', editAuth), schema: { params: S.IdParams, body: S.DoNotContactBody, response: { 200: S.DoNotContactResponse } } },
+    { config: { auth: 'contact.edit' }, preHandler: authorize('contact.edit', optOutAuth), schema: { params: S.IdParams, body: S.DoNotContactBody, response: { 200: S.DoNotContactResponse } } },
     async (req) => recordDoNotContact(req, req.params.id, req.body.reason),
   );
 }

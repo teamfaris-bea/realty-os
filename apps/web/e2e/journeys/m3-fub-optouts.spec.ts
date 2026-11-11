@@ -335,7 +335,7 @@ async function bulkEnroll(page: Page, ch: Ch, out: Person[], info: Parameters<ty
   if (st!.state === 'active' || st!.state === 'paused') await must(stack.api(AGENT, 'POST', `/enrollments/${enr!.id}/stop`));
 }
 
-/** Stage → Active (the text plan's auto-enroll stage) never enrolls an opted-out person; a direct enroll never sends. */
+/** Stage → Active (the text plan's auto-enroll stage) never enrolls an opted-out person; nor does a direct enroll (B9). */
 async function planRefuses() {
   for (const p of optedOut()) {
     const [cur] = await stack.sql<{ stage: string }>('SELECT stage FROM contacts WHERE id = $1', [p.id]);
@@ -346,22 +346,14 @@ async function planRefuses() {
     await stack.jobs({ tenantId: w.tenantId });
     expect(await stack.sql("SELECT state FROM playbook_enrollments WHERE contact_id = $1 AND state IN ('active','paused')", [p.id]), `${p.first}: Stage → Active does not enroll (${JSON.stringify(st.body.automation)})`).toEqual([]);
   }
-  // A direct enroll at the API (no screen offers it for one person). Unlike Stage → Active and bulk Enroll it
-  // is accepted (201) for a person no channel can reach; D1 is still met at send time: the plan's text is
-  // refused by the gate with the opt-out reason and the step is skipped, so nothing is queued or sent.
+  // A direct enroll at the API (no screen offers it for one person) is refused like Stage → Active and bulk Enroll
+  // (B9): the same rule decides (api stageAutomation/reach.ts), with the stage entry's skip reason, and nothing is
+  // enrolled, so no step can be queued or sent. Before B9 it was accepted (201) and only the send-time gate held.
   const p = people.olly;
-  const en = await stack.api<{ enrollment: { id: string } }>(AGENT, 'POST', `/contacts/${p.id}/enrollments`, { playbookId: plans.sms });
-  expect(en.status, JSON.stringify(en.body)).toBe(201);
-  const enrId = en.body.enrollment.id;
-  const runsOf = () => stack.sql<{ status: string; message_id: string | null }>('SELECT status, message_id FROM playbook_step_runs WHERE enrollment_id = $1', [enrId]);
-  await drainUntil(stack, async () => (await runsOf()).some((r) => r.status !== 'scheduled'), { kinds: ['playbook.step', 'comms.dispatch'], timeout: 20_000 });
-  const runs = await runsOf();
-  expect(runs).toHaveLength(1);
-  expect(runs[0]!.status).toBe('skipped_ineligible');
-  const [m] = await stack.sql<{ status: string; status_reason: string }>('SELECT status, status_reason FROM messages WHERE id = $1', [runs[0]!.message_id]);
-  expect(m).toEqual({ status: 'blocked', status_reason: 'CONSENT_REVOKED' });
-  const [e] = await stack.sql<{ state: string }>('SELECT state FROM playbook_enrollments WHERE id = $1', [enrId]);
-  if (e!.state === 'active' || e!.state === 'paused') await must(stack.api(AGENT, 'POST', `/enrollments/${enrId}/stop`));
+  const en = await stack.api<{ error: { code: string; details?: Record<string, unknown> } }>(AGENT, 'POST', `/contacts/${p.id}/enrollments`, { playbookId: plans.sms });
+  expect(en.status, JSON.stringify(en.body)).toBe(409);
+  expect(en.body.error).toMatchObject({ code: 'CANNOT_BE_REACHED', details: { reason: 'cannot_be_reached', playbookId: plans.sms } });
+  expect(await stack.sql('SELECT id FROM playbook_enrollments WHERE contact_id = $1 AND playbook_id = $2', [p.id, plans.sms]), `${p.first}: a direct enroll writes no enrollment`).toEqual([]);
 }
 
 async function everyPathBlocked(page: Page, info: Parameters<typeof shot>[1], phase: string) {

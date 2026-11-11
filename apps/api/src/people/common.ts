@@ -66,7 +66,10 @@ export function detailFacts(req: FastifyRequest, id: (req: FastifyRequest) => st
 
 /**
  * As detailFacts, for a write: the contact must also be live. A merged-away loser (still visible to tenant-wide
- * roles) takes no new notes, points, links or edits, which would be stranded on it (security review, R-PAR-45).
+ * roles, its collaborators and the members of its deals: a merge moves none of them) takes no new notes, points,
+ * links or edits, which would be stranded on it (security review, R-PAR-45). The one exception is a write that only
+ * records an opt-out, the person-level do-not-contact (contacts.ts optOutAuth): it only tightens, and the DB carries
+ * it to the survivor (app.contacts_dnc_follow_merge, E140).
  */
 export function liveDetailFacts(req: FastifyRequest, id: (req: FastifyRequest) => string = idOf): Promise<ResourceFacts | null> {
   return peopleTx(req, async (tx) => {

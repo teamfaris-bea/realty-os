@@ -18,6 +18,7 @@ export const AGENT_ERROR_MESSAGES: Record<string, string> = {
   COMMAND_ID_REUSED: 'That tap was already used for something else. Try again.',
   // messages and calls (api/comms)
   CONTACT_POINT_MISSING: "There's no phone number or email for this on file.",
+  CONTACT_MERGED: "This record was merged into another one, so nothing was done here. Open the person's current record to text, call or enroll them.",
   SUBJECT_REQUIRED: 'An email needs a subject.',
   SCHEDULE_IN_PAST: 'Pick a time in the future.',
   MESSAGE_NOT_SENDABLE: "This message can't be sent any more. Write a new one.",

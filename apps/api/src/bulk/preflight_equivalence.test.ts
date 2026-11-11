@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 const H1 = '1'.repeat(64);
 const H2 = '2'.repeat(64);
 const H3 = '3'.repeat(64);
+const H4 = '4'.repeat(64);
 const NOW = instant(Date.parse('2026-11-10T15:00:00Z'));
 const US = parseJurisdictionPack({
   key: 'US',
@@ -46,6 +47,8 @@ interface OptOutCase {
   suppression: { channel: SuppressionRow['channel']; reason: SuppressionRow['reason'] } | null;
   personDoNotContact: boolean;
   mergedDuplicateDoNotContact: boolean;
+  mergedIntoDoNotContact: boolean;
+  survivorPhoneRevoked: RevokeFact[];
 }
 const table = JSON.parse(readFileSync(new URL('../../../../packages/db/test/fixtures/opt_out_cases.json', import.meta.url), 'utf8')) as { defaults: Omit<OptOutCase, 'id' | 'why' | 'channel' | 'expect'>; cases: (Partial<OptOutCase> & Pick<OptOutCase, 'id' | 'why' | 'channel' | 'expect'>)[] };
 const cases: OptOutCase[] = table.cases.map((c) => ({ ...table.defaults, ...c }));
@@ -63,7 +66,7 @@ function gate(c: OptOutCase): GateInput {
     purpose: 'marketing',
     initiator: 'human',
     category: 'none',
-    consent: [...c.recipientRevoked.flatMap((r) => rows(H1, r)), ...c.otherPointRevoked.flatMap((r) => rows(H2, r)), ...c.otherKindRevoked.flatMap((r) => rows(H3, r))],
+    consent: [...c.recipientRevoked.flatMap((r) => rows(H1, r)), ...c.otherPointRevoked.flatMap((r) => rows(H2, r)), ...c.otherKindRevoked.flatMap((r) => rows(H3, r)), ...c.survivorPhoneRevoked.flatMap((r) => rows(H4, r))],
     suppressions: c.suppression ? [{ ...c.suppression, liftedAt: null }] : [],
     contactPoint: { status: 'active', lineType: 'mobile' },
     automationPausedAt: null,
@@ -71,15 +74,15 @@ function gate(c: OptOutCase): GateInput {
     tenant: { suspended: false, brokerageNamePresent: true, postalAddressPresent: true },
     rendered: { containsBrokerageName: true, containsOptOutHint: true, paymentInstructions: false },
     policy: POLICY,
-    personDoNotContact: c.personDoNotContact || c.mergedDuplicateDoNotContact,
+    personDoNotContact: c.personDoNotContact || c.mergedDuplicateDoNotContact || c.mergedIntoDoNotContact,
     connection: null,
   };
 }
 
 /** Whether the case's blocking fact applies to a marketing send too (a purpose-specific informational revoke does not). */
 function blocksMarketing(c: OptOutCase): boolean {
-  if (c.purpose === 'marketing' || c.personDoNotContact || c.mergedDuplicateDoNotContact || c.suppression) return true;
-  return [...c.recipientRevoked, ...c.otherPointRevoked].some((r) => r.purpose !== 'informational');
+  if (c.purpose === 'marketing' || c.personDoNotContact || c.mergedDuplicateDoNotContact || c.mergedIntoDoNotContact || c.suppression) return true;
+  return [...c.recipientRevoked, ...c.otherPointRevoked, ...c.survivorPhoneRevoked].some((r) => r.purpose !== 'informational');
 }
 
 const actor = { kind: 'user' as const, userId: 'u' as UserId, tenantId: 't' as TenantId, role: 'agent' as const, sessionId: 's' };

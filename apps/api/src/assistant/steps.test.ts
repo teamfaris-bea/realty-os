@@ -78,9 +78,13 @@ describe('autonomous playbook sends (R-GATE-4, R-GATE-3, R-AST-11)', () => {
   it('R-GATE-10 R-CONSENT-10: the assistant never texts a number the person asked not to be texted (agent-recorded do-not-contact): blocked at send time, logged, nothing reaches the provider, the step is skipped visibly', async () => {
     const c = await ownedContact(w.agents[0]!, { consent: false });
     const pid = (await h.su.query<{ id: string }>("SELECT id FROM contact_points WHERE contact_id = $1 AND kind = 'phone'", [c.id])).rows[0]!.id;
-    expect((await call(w.agents[0]!, 'POST', `/contacts/${c.id}/consent`, { kind: 'revoke', pointId: pid, channel: 'sms', purpose: 'all', evidence: { note: 'asked us not to text' } })).status).toBe(200);
     const appt = await appointment(h, w, c.id, w.agents[0]!.userId!);
+    // enrolled while the number is open, asked not to be texted before the step runs: a person already opted out on
+    // every channel the plan uses is refused at enrollment (B9, enroll.reach.test.ts), so the send-time block is
+    // proved for an opt-out that arrives after the enrollment
     const e = await enroll(0, c.id, { playbookId: confirm.playbookId, anchor: { kind: 'appointment', id: appt } });
+    expect(e.status).toBe(201);
+    expect((await call(w.agents[0]!, 'POST', `/contacts/${c.id}/consent`, { kind: 'revoke', pointId: pid, channel: 'sms', purpose: 'all', evidence: { note: 'asked us not to text' } })).status).toBe(200);
     const before = h.providers.telephony.sms.length;
     await runJobs(h, w.tenantId, ['playbook.step', 'comms.dispatch']);
     const [m] = await messagesOf(h, c.id);

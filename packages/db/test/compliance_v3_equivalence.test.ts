@@ -30,6 +30,7 @@ import {
 const H1 = '1'.repeat(64);
 const H2 = '2'.repeat(64);
 const H3 = '3'.repeat(64);
+const H4 = '4'.repeat(64);
 const NOW = instant(Date.parse('2026-11-10T15:00:00Z'));
 const US = parseJurisdictionPack({
   key: 'US',
@@ -95,6 +96,8 @@ interface OptOutCase {
   suppression: { channel: SuppressionRow['channel']; reason: SuppressionRow['reason'] } | null;
   personDoNotContact: boolean;
   mergedDuplicateDoNotContact: boolean;
+  mergedIntoDoNotContact: boolean;
+  survivorPhoneRevoked: RevokeFact[];
   keywordWithin24h: boolean;
   platformCleared: boolean | null;
 }
@@ -134,10 +137,12 @@ function rows(addressHmac: string, r: RevokeFact): ConsentStateRow[] {
 /** The gate input for one case, as the dispatch path would build it (channel mapped like the guard's map). */
 function caseInput(c: OptOutCase): GateInput {
   const ch: Channel = c.channel === 'voice' ? 'voice' : gateChannelForMessage(c.channel);
+  // F1: a phone only the survivor had is another of the person's phones (the fan-out reads every record of the person)
   const consent = [
     ...c.recipientRevoked.flatMap((r) => rows(H1, r)),
     ...c.otherPointRevoked.flatMap((r) => rows(H2, r)),
     ...c.otherKindRevoked.flatMap((r) => rows(H3, r)),
+    ...c.survivorPhoneRevoked.flatMap((r) => rows(H4, r)),
   ];
   return gateInput({
     recipient: { kind: 'contact', addressHmac: H1, channel: ch },
@@ -149,7 +154,7 @@ function caseInput(c: OptOutCase): GateInput {
     ...(c.keywordWithin24h ? { keywordSenders: [H1] } : {}),
     sender: ch === 'email' ? { kind: 'email', registration: 'ready', domainVerified: true } : isPlatformChannel(ch) ? null : { kind: 'phone', registration: 'ready' },
     ...(ch === 'voice' ? { rendered: undefined } : {}),
-    personDoNotContact: c.personDoNotContact || c.mergedDuplicateDoNotContact,
+    personDoNotContact: c.personDoNotContact || c.mergedDuplicateDoNotContact || c.mergedIntoDoNotContact,
     connection: { status: 'connected' },
   });
 }

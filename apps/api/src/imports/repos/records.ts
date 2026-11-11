@@ -30,7 +30,11 @@ export interface CreatedRow {
   contactId?: string;
   /** contacts: fingerprint of the editable fields the import left (a later edit changes it: "touched") */
   fp?: string;
-  /** contacts: the ownership ledger head when the import wrote it (later non-import events: "touched") */
+  /**
+   * contacts, and history rows (notes, messages, calls, recordings): the contact's ownership ledger head when the
+   * import wrote it (later non-import events: "touched"). A history row's is the baseline only for a contact this
+   * batch's contacts stage did not write (B6 review R1).
+   */
   seq?: number;
   /** contacts: create | attach | update */
   action?: 'create' | 'attach' | 'update';
@@ -140,6 +144,28 @@ export async function nextCommitChunk(tx: Tx, stageId: string, limit: number): P
              OR (dry_run_outcome = 'needs_review' AND review_decision IN ('import','merge')))
       ORDER BY id LIMIT ${limit}`.execute(tx)
   ).rows;
+}
+
+/**
+ * B6 review R2 (E40, R-CONSENT-3): the contacts-stage records skipped as duplicates whose plan carries opt-outs, not
+ * carried yet (the OPT_OUTS_CARRIED issue marks one done), in snapshot (id) order. The contacts commit applies them
+ * after every record its plan applies, so the contact each skip points at exists by then.
+ */
+export async function nextSkippedOptOutChunk(tx: Tx, stageId: string, limit: number): Promise<RecordRow[]> {
+  return (
+    await sql<RecordRow>`SELECT ${COLS} FROM import_records
+      WHERE tenant_id = app.tenant_id() AND stage_id = ${stageId} AND outcome = 'duplicate' AND dry_run_outcome = 'duplicate'
+        AND plan->>'kind' = 'skip' AND plan ? 'optOuts'
+        AND NOT (issues @> '[{"code":"OPT_OUTS_CARRIED"}]'::jsonb)
+      ORDER BY id LIMIT ${limit}`.execute(tx)
+  ).rows;
+}
+
+/** A skipped duplicate's opt-outs were recorded: the rows written (none when the ledger had them all) and the marker. */
+export async function markOptOutsCarried(tx: Tx, id: string, created: readonly CreatedRow[]): Promise<void> {
+  await sql`UPDATE import_records SET created_rows = ${JSON.stringify(created)}::jsonb,
+              issues = issues || '[{"code":"OPT_OUTS_CARRIED","severity":"info"}]'::jsonb
+             WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx);
 }
 
 export async function markImported(tx: Tx, id: string, target: { table: string; id: string } | null, created: readonly CreatedRow[], outcome: 'imported' | 'duplicate' = 'imported'): Promise<void> {

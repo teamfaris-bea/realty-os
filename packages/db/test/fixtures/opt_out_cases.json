@@ -10,7 +10,11 @@
     "contact; otherKindRevoked are revokes on a point of another kind of the same contact (for example its phone when the",
     "recipient is a Messenger identity). suppression is an active (unlifted) suppression on the recipient address. personDoNotContact is the contact's own",
     "person-level do-not-contact (its evidence is a revoke on a different address); mergedDuplicateDoNotContact is a duplicate",
-    "carrying one that was merged into the recipient contact. keywordWithin24h is an inbound opt-out keyword from the recipient",
+    "carrying one that was merged into the recipient contact. mergedIntoDoNotContact and survivorPhoneRevoked look the other way",
+    "(F1): the recipient record was itself merged away into a survivor that carries a person-level do-not-contact, or whose own phone",
+    "(one the recipient record never had) carries these revokes, all recorded before the merge, so the recipient's own row and",
+    "points carry nothing; a merged-away record is the whole person, so the guards judge it by every record of the person.",
+    "keywordWithin24h is an inbound opt-out keyword from the recipient",
     "address on the same thread and channel in the last 24 h. platformCleared is the platform:meta clearance (null: not applicable).",
     "D1 stands: nothing here checks consent level, the DNC registry, quiet hours or caps; only opt-outs block, with no override."
   ],
@@ -25,6 +29,8 @@
     "suppression": null,
     "personDoNotContact": false,
     "mergedDuplicateDoNotContact": false,
+    "mergedIntoDoNotContact": false,
+    "survivorPhoneRevoked": [],
     "keywordWithin24h": false,
     "platformCleared": null
   },
@@ -37,6 +43,8 @@
     { "id": "sms-suppressed", "channel": "sms", "why": "an active suppression for every channel", "suppression": { "channel": "all", "reason": "internal_dnc" }, "expect": "RECIPIENT_SUPPRESSED" },
     { "id": "sms-person-dnc", "channel": "sms", "why": "the person asked not to be contacted (no revoke on this number)", "personDoNotContact": true, "expect": "PERSON_DO_NOT_CONTACT" },
     { "id": "sms-merged-dnc", "channel": "sms", "why": "a do-not-contact duplicate was merged into the recipient", "mergedDuplicateDoNotContact": true, "expect": "PERSON_DO_NOT_CONTACT" },
+    { "id": "sms-merged-into-dnc", "channel": "sms", "why": "the recipient was merged away into a survivor that asked not to be contacted", "mergedIntoDoNotContact": true, "expect": "PERSON_DO_NOT_CONTACT" },
+    { "id": "sms-merged-into-stop", "channel": "sms", "why": "the recipient was merged away into a survivor whose own phone texted STOP", "survivorPhoneRevoked": [{ "channel": "sms", "purpose": "all" }], "expect": "RECIPIENT_OPTED_OUT" },
     { "id": "sms-stop-confirmation", "channel": "sms", "why": "the system STOP confirmation within 24 h of the keyword", "initiator": "system", "actionCategory": "opt_out_confirmation", "recipientRevoked": [{ "channel": "sms", "purpose": "all" }], "keywordWithin24h": true, "expect": "allow" },
     { "id": "sms-confirmation-no-keyword", "channel": "sms", "why": "a confirmation with no keyword on the thread is an ordinary send", "initiator": "system", "actionCategory": "opt_out_confirmation", "recipientRevoked": [{ "channel": "sms", "purpose": "all" }], "expect": "RECIPIENT_OPTED_OUT" },
     { "id": "sms-confirmation-marketing", "channel": "sms", "why": "the exemption covers only an informational reply", "initiator": "system", "actionCategory": "opt_out_confirmation", "purpose": "marketing", "recipientRevoked": [{ "channel": "sms", "purpose": "all" }], "keywordWithin24h": true, "expect": "RECIPIENT_OPTED_OUT" },
@@ -51,6 +59,8 @@
     { "id": "email-person-dnc", "channel": "email", "why": "person-level do-not-contact", "personDoNotContact": true, "expect": "PERSON_DO_NOT_CONTACT" },
     { "id": "email-sms-stop-only", "channel": "email", "why": "a text STOP on the contact's phone does not unsubscribe email", "otherKindRevoked": [{ "kind": "phone", "channel": "sms", "purpose": "all" }], "expect": "allow" },
     { "id": "email-merged-dnc", "channel": "email", "why": "a do-not-contact duplicate was merged into the recipient", "mergedDuplicateDoNotContact": true, "expect": "PERSON_DO_NOT_CONTACT" },
+    { "id": "email-merged-into-dnc", "channel": "email", "why": "the recipient was merged away into a survivor that asked not to be contacted", "mergedIntoDoNotContact": true, "expect": "PERSON_DO_NOT_CONTACT" },
+    { "id": "email-merged-into-stop", "channel": "email", "why": "a text STOP on the survivor's own phone does not unsubscribe the merged-away recipient's email", "survivorPhoneRevoked": [{ "channel": "sms", "purpose": "all" }], "expect": "allow" },
 
     { "id": "messenger-not-cleared", "channel": "messenger", "why": "Meta DMs wait for counsel review of platform:meta", "platformCleared": false, "expect": "PLATFORM_NOT_CLEARED" },
     { "id": "messenger-clean", "channel": "messenger", "why": "a human DM once platform:meta is cleared", "platformCleared": true, "expect": "allow" },
@@ -79,6 +89,9 @@
     { "id": "voice-suppressed", "channel": "voice", "why": "an internal do-not-call suppression", "suppression": { "channel": "voice", "reason": "internal_dnc" }, "expect": "RECIPIENT_SUPPRESSED" },
     { "id": "voice-person-dnc", "channel": "voice", "why": "person-level do-not-contact", "personDoNotContact": true, "expect": "PERSON_DO_NOT_CONTACT" },
     { "id": "voice-merged-dnc", "channel": "voice", "why": "a do-not-contact duplicate was merged into the recipient", "mergedDuplicateDoNotContact": true, "expect": "PERSON_DO_NOT_CONTACT" },
+    { "id": "voice-merged-into-dnc", "channel": "voice", "why": "the recipient was merged away into a survivor that asked not to be contacted", "mergedIntoDoNotContact": true, "expect": "PERSON_DO_NOT_CONTACT" },
+    { "id": "voice-merged-into-do-not-call", "channel": "voice", "why": "the recipient was merged away into a survivor whose own phone asked not to be called", "survivorPhoneRevoked": [{ "channel": "voice", "purpose": "all" }], "expect": "RECIPIENT_OPTED_OUT" },
+    { "id": "voice-merged-into-stop", "channel": "voice", "why": "a text STOP on the survivor's own phone is the SMS channel, not calls", "survivorPhoneRevoked": [{ "channel": "sms", "purpose": "all" }], "expect": "allow" },
 
     { "id": "unknown-channel", "channel": "fax", "why": "a channel the opt-out map does not know fails closed", "expect": "CHANNEL_UNKNOWN" }
   ]

@@ -64,6 +64,8 @@ export type IssueCode =
   | 'PARENT_NOT_FOUND'
   | 'PARENT_REJECTED'
   | 'PARENT_NOT_LINKED'
+  /** info: the record's person was skipped as a duplicate; it goes on the contact that person is the same as (B6) */
+  | 'PARENT_DUPLICATE'
   | 'USER_UNMAPPED'
   | 'IN_FILE_DUPLICATE'
   | 'ALREADY_IMPORTED'
@@ -288,8 +290,14 @@ export interface ExistingContact {
   hasAddress: boolean;
 }
 
-/** How this batch's contacts stage plans to handle a person: create, attach to an existing contact, undecided, or not at all. */
-export type ContactsStagePlan = 'create' | 'attach' | 'needs_review' | 'rejected';
+/**
+ * How this batch's contacts stage plans to handle a person: create, attach to an existing contact, undecided, or
+ * not at all; or, for a person whose record is skipped as a duplicate (it is never committed and gets no
+ * external_ref), the person it is the same as: the earlier row of this import (`pendingPersonRef`, an in-file
+ * duplicate) or the existing contact it matched with nothing new to fill (`contactId`). Later stages put that
+ * person's history there (B6, R-IMPORT-4).
+ */
+export type ContactsStagePlan = 'create' | 'attach' | 'needs_review' | 'rejected' | { sameAs: ContactRef };
 
 /** Everything the dry run needs to know about the tenant's current data. Build with `buildExistingIndex`. */
 export interface ExistingIndex {
@@ -304,7 +312,8 @@ export interface ExistingIndex {
   externalRefs: ReadonlyMap<string, string>;
   /**
    * This batch's contacts-stage plan for person refs that are NOT committed yet (later stages may be
-   * dry-run before the contacts stage commits, R-IMPORT-3). Committed refs are in `externalRefs`.
+   * dry-run before the contacts stage commits, R-IMPORT-3), and the skipped duplicates (never committed).
+   * Committed refs are in `externalRefs`.
    */
   contactsStage: ReadonlyMap<string, ContactsStagePlan>;
   /** Address key → channels that are revoked or suppressed now (E39 preview). */
