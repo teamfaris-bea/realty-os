@@ -615,3 +615,13 @@ Found while proving the last uncovered rules end to end; each is tested as `app_
 | G3 | R-AUDIT-6 | `loe_select` used `sees_all_detail()`, so every Team Lead read the whole tenant's ownership ledger. | The Team Lead branch reads events involving a member of a team they lead, contacts such a member owns now, and their own collaborator/deal contacts. |
 | G4 | R-AUDIT-9 | `app.retention_sweep(p_now)` accepts any `p_now`, and audit rows could be inserted back-dated, so young rows could be swept. | `audit_log_retention_floor` keeps any row younger than `app.audit_retention()` (7 years, **VERIFY WITH COUNSEL**) by the real clock; non-superusers cannot insert a back-dated audit row. |
 | G5 | E59 / R-DATA-4 | Erasure is refused for a contact on a deal, but `deals.primary_contact_id` was NOT NULL, so the Owner could never remove the person from a closed single-contact deal. | `primary_contact_id` may become NULL only by an Owner on a closed or lost deal (`deals_primary_contact_guard`); the deal stays as the transaction record. API: `GET /contacts/:id/erasure`, `POST /contacts/:id/erase`, `POST /contacts/:id/deals/:dealId/remove` (audited `deal.contact_removed`). **VERIFY WITH COUNSEL**: what a transaction record must keep (the deal name may still mention the person). |
+
+### Real-provider gaps (lane migration `0018_telephony_email_gaps.sql`)
+
+| Id | Gap | Resolution |
+|---|---|---|
+| T1 | A real inbound call got empty TwiML and hung up. | `comms/voice.ts`: ring the owner (else the on-duty routing target, peeked, never advanced) from the team number; announcement first when the policy announces; a press-1 whisper; unanswered ⇒ missed call + voicemail with a fixed recording notice, copied encrypted and transcribed. The plan is stored on the call (`calls.ring_user_id`, `recording_decision.planned`), so a retried fetch gets the same TwiML. `agent_user_id` is set only on accept (recording scope R-PERM-8). |
+| T2 | MMS media were counted, never stored. | `comms/media.ts`: fetch by SID only, type allowlist + magic bytes, 10 × 5 MB, per-object DEK, provider copy deleted, refusals recorded (`message_media_skipped`); download with nosniff and a sandbox CSP. |
+| T3 | SES and Mailgun events were not parsed. | SNS signature (v1/v2, cert host rule, topic allowlist, 1 h window) and Mailgun HMAC (±5 min) feed the same `handleEvent` as Postmark/SendGrid. |
+| T4 | `webhook_events` grew forever. | `app.purge_webhook_events()` (definer, real clock, no arguments): telephony 400 d, email 35 d, lead 2 d, rejected 30 d; downstream unique keys keep deduplicating after. |
+

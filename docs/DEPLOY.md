@@ -141,8 +141,10 @@ Choosing a real vendor without its credentials fails in every environment. The f
 | `SMTP_POSTMARK_MESSAGE_STREAM`, `SMTP_SES_CONFIGURATION_SET` | no | vendor routing |
 | `EMAIL_DKIM_SELECTORS`, `EMAIL_SPF_INCLUDE` | no | used by the sending-domain check (§6) |
 | `ACCOUNT_EMAIL_FROM`, `ACCOUNT_EMAIL_FROM_NAME` | yes | sender of password-reset and invite emails |
-| `EMAIL_INBOUND_FORMATS` | no | `postmark` and/or `sendgrid`. Empty means only the generic signed format. |
-| `EMAIL_WEBHOOK_BASIC_USER`, `EMAIL_WEBHOOK_BASIC_PASSWORD` | with a vendor format | HTTP Basic credentials in the vendor webhook URLs (password ≥ 16 characters) |
+| `EMAIL_INBOUND_FORMATS` | no | any of `postmark`, `sendgrid`, `ses`, `mailgun` (comma-separated). Empty means only the generic signed format. `ses` and `mailgun` add event routes only (§6). |
+| `SES_SNS_TOPIC_ARNS` | with `ses` | the SNS topic ARNs whose notifications are accepted (comma-separated) |
+| `MAILGUN_WEBHOOK_SIGNING_KEY` | with `mailgun` | Mailgun's webhook signing key (HMAC-SHA256 over timestamp + token) |
+| `EMAIL_WEBHOOK_BASIC_USER`, `EMAIL_WEBHOOK_BASIC_PASSWORD` | with `postmark` or `sendgrid` | HTTP Basic credentials in the vendor webhook URLs (password ≥ 16 characters) |
 | `SENDGRID_EVENT_PUBLIC_KEY` | with `sendgrid` | Event Webhook verification key |
 | `EMAIL_WEBHOOK_SECRET` | when no vendor format | the generic `X-Realty-Signature` format |
 
@@ -201,6 +203,17 @@ The scheme is tested against Twilio's published example.
 5. **Toll-free:** submit a Toll-Free Verification instead and use its `HH…` SID as the reference.
 
 Unregistered or unapproved senders are blocked by the send gate (R-CONSENT-17).
+
+**Inbound calls.** A number bought through the app sends its calls to `…/api/webhooks/telephony/voice` (`comms/voice.ts`):
+
+1. The call rings the contact's owner on their verified phone, with the **team number as caller ID**. For an unknown caller, an unowned contact or an owner without a verified phone, it rings the team's on-duty target: the next member of the first enabled catch-all routing rule who is active, accepting leads and has a verified phone. The rotation cursor is only read, never advanced.
+2. When the recording policy announces, the caller hears the announcement first, and the agent hears it in the whisper. The agent must **press 1** to take the call, so the agent's own phone voicemail never takes a client call.
+3. Nobody accepts within the ring timeout (Owner/Admin: **Phone and email → Incoming calls**, 5–60 s, default 20)? The call is a missed call (feed item and notification for whoever handles the contact). The caller hears the team's greeting, a fixed recording notice and a beep. The voicemail is copied into encrypted storage, deleted at Twilio, transcribed, and shown in the conversation (play and transcript are audited).
+4. A blocked caller ID hears a short reason and the call ends: there is no number to attach a contact to.
+
+**VERIFY on a live call:** that an agent's carrier voicemail answering the agent leg is never reported as an accept, that a Dial recording's callback carries the parent call SID, and the voicemail notice wording per state (**VERIFY WITH COUNSEL**).
+
+**MMS.** Inbound media are fetched by SID with the subaccount credentials (the media URL in the webhook is never fetched). Kept: at most 10 items of at most 5 MB, of allowed types (JPEG, PNG, GIF, WebP, HEIC/HEIF, MP4, 3GPP, QuickTime, AMR, MP3, M4A, PDF, vCard) whose bytes match the type. Each item is encrypted with its own DEK and deleted at Twilio. Anything else is not stored; the conversation says which attachment was not saved, and why.
 
 **Opt-outs.** Twilio's own STOP handling stays on. A send to a recipient who texted STOP fails at Twilio with error 21610, which the app records as a provider opt-out (R-CONSENT-12), on top of its own keyword handling (D1).
 
