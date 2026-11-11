@@ -143,6 +143,38 @@ export function useFields(o: { archived?: boolean } = {}) {
   });
 }
 
+// ---- the filter builder's catalogs (lane people-filters) ---------------------------------------------
+
+export interface FilterOptions {
+  sources: { id: string; name: string; active: boolean }[];
+  members: { userId: string; name: string; role: string; active: boolean }[];
+}
+export const FILTER_OPTIONS_KEY = ['lists', 'filter-options'] as const;
+/** module 57's stage labels key (admin/parity/StageLabelsPage.tsx), so a rename there refreshes the builder */
+export const STAGE_LABELS_KEY = ['settings', 'stage-labels'] as const;
+
+export function useFilterOptions(enabled = true) {
+  const api = useApi();
+  return useQuery<FilterOptions, ApiError>({ queryKey: FILTER_OPTIONS_KEY, queryFn: ({ signal }) => api.get('/people/filter-options', { signal }), enabled, staleTime: 60_000 });
+}
+
+export function useStageLabels() {
+  const api = useApi();
+  return useQuery<{ labels: Record<string, string>; stages: { key: string; label: string }[] }, ApiError>({ queryKey: STAGE_LABELS_KEY, queryFn: ({ signal }) => api.get('/stage-labels', { signal }), staleTime: 60_000 });
+}
+
+/** A live count of a definition the builder holds (not yet applied). */
+export function useDefinitionCount(def: Definition | null) {
+  const api = useApi();
+  return useQuery<{ count: number; capped: boolean }, ApiError>({
+    queryKey: [...PEOPLE_KEY, 'count', `def:${JSON.stringify(def)}`],
+    queryFn: ({ signal }) => api.post('/people/count', { definition: def }, { signal }),
+    enabled: def !== null,
+    retry: false,
+    placeholderData: (prev) => prev,
+  });
+}
+
 export function useContactTags(contactId: string) {
   const api = useApi();
   return useQuery<{ tags: ContactTagView[] }, ApiError>({ queryKey: ['lists', 'contact-tags', contactId], queryFn: ({ signal }) => api.get(`/contacts/${contactId}/tags`, { signal }) });
