@@ -11,6 +11,8 @@
 // replacement (core.planEnroll); the system never replaces silently. Pause / stop / resume are human
 // actions on the enrollment; resume is human-only (DB guard) and audited. A human never enrolls a person
 // the plan cannot reach (B9): the stage entry's rule, through the same function (stageAutomation/reach.ts).
+// Nothing ever enrolls a merged-away record (F2: the stage entry's person_removed): not the direct route, not
+// the post-closing path, and the step runner stops one that is live anyway.
 import { type PlaybookStep, PlaybookStepSchema, migrateEnrollment, planEnroll, planNextStep, type StopCondition } from '@realty/core/assistant';
 import type { ContactId, Instant, SystemActor, UserActor } from '@realty/core/foundation';
 import { plusMs } from '@realty/core/foundation';
@@ -18,6 +20,7 @@ import { type Tx, lockContact, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { audit } from '../audit.js';
 import { resumeAutomation } from '../comms/repos/automation.js';
+import { visibleSurvivorOf } from '../comms/repos/contacts.js';
 import { asSystem, asUser } from '../comms/runtime.js';
 import { AppError } from '../errors.js';
 import { reachableForVersion } from '../stageAutomation/reach.js';
@@ -119,6 +122,12 @@ export async function executePlaybookStepInTx(tx: Tx, deps: AssistantDeps, tenan
   if (!contact || contact.deleted) {
     await P.endEnrollment(tx, e.id, 'stopped', 'contact_removed', now);
     return { kind: 'stopped', reason: 'contact_removed' };
+  }
+  if (contact.merged) {
+    // F2 (R-OWN-24): the person was merged away; the merge stops the loser's enrollment, and one that is live anyway
+    // (a race the merge could not see) stops here the same way, before any step is built for the loser
+    await P.endEnrollment(tx, e.id, 'stopped', 'merged', now);
+    return { kind: 'stopped', reason: 'merged' };
   }
   if (playbook.scope === 'agent' && playbook.ownerUserId !== contact.ownerUserId) {
     // an agent playbook speaks for its agent only (R-AST-8 owner_change; dispatch would refuse it anyway)
@@ -234,6 +243,13 @@ export async function enrollContact(actor: UserActor, contactId: string, input: 
     await lockContact(tx, contactId as ContactId);
     const c = await contactCore(tx, contactId);
     if (!c || c.deleted) throw new AppError('NOT_FOUND');
+    // F2 (R-OWN-24, R-PAR-16): a merged-away record is never enrolled, as a stage entry skips it (decide.ts
+    // person_removed) and the merge stops its own enrollment: one live plan per person, on the record they live on.
+    // Refused before anything is read or written; the survivor is named only to whoever sees it.
+    if (c.merged) {
+      const survivor = await visibleSurvivorOf(tx, contactId);
+      throw new AppError('CONTACT_MERGED', { reason: 'person_removed', ...(survivor ? { mergedInto: survivor } : {}) });
+    }
     const pb = await P.playbookById(tx, input.playbookId);
     if (!pb || pb.status !== 'active') throw new AppError('NOT_FOUND');
     const v = await P.approvedVersionOf(tx, pb.id);
@@ -348,7 +364,8 @@ export async function enrollOnDealClosedInTx(tx: Tx, deps: AssistantDeps, dealId
   for (const contactId of contactIds) {
     await lockContact(tx, contactId as ContactId);
     const c = await contactCore(tx, contactId);
-    if (!c || c.deleted) continue;
+    // F2: a merged-away record keeps its deals (a merge moves none) but is never enrolled (decide.ts person_removed)
+    if (!c || c.deleted || c.merged) continue;
     const pb = await P.playbookForContact(tx, 'post_closing', c.ownerUserId);
     if (!pb || (pb.scope === 'agent' && pb.ownerUserId !== c.ownerUserId)) continue;
     const v = await P.approvedVersionOf(tx, pb.id);

@@ -50,3 +50,21 @@ export async function dealOrAppointmentContext(tx: Tx, contactId: string): Promi
                     AND a.status NOT IN ('canceled') AND a.starts_at > now() - interval '7 days') AS x`.execute(tx);
   return r.rows[0]?.x ?? false;
 }
+
+/**
+ * The surviving record of a merged-away contact, followed along merge chains to the record the person lives on
+ * now, when the caller's RLS shows that record's detail; null when it does not (R-PERM-5: a CONTACT_MERGED refusal
+ * names the survivor only to whoever sees it, F1/F2).
+ */
+export async function visibleSurvivorOf(tx: Tx, contactId: string): Promise<string | null> {
+  const r = await sql<{ id: string }>`
+    WITH RECURSIVE up(id, next, depth) AS (
+      SELECT c.id, c.merged_into_contact_id, 0 FROM contacts c WHERE c.tenant_id = app.tenant_id() AND c.id = ${contactId}
+      UNION ALL
+      SELECT c.id, c.merged_into_contact_id, up.depth + 1 FROM up JOIN contacts c ON c.tenant_id = app.tenant_id() AND c.id = up.next
+       WHERE up.depth < 16
+    )
+    SELECT up.id FROM up JOIN contacts c ON c.tenant_id = app.tenant_id() AND c.id = up.id
+     WHERE up.depth > 0 AND up.next IS NULL AND c.deleted_at IS NULL AND app.contact_detail_visible(c.tenant_id, c.id)`.execute(tx);
+  return r.rows[0]?.id ?? null;
+}

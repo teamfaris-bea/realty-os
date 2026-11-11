@@ -4,20 +4,26 @@
 // cannot_be_reached; bulk enroll skips them too). The direct route used to accept them: the sends stayed blocked
 // at send time, but the plan showed as live although it could never send. It now applies the same rule through the
 // same function (stageAutomation reachableForVersion: core canContact on the gate input dispatch builds, opt-outs
-// only, the removed phones' STOPs included) and refuses with the stage-automation skip reason. Real Postgres, the
-// real server, fake providers only.
+// only, the removed phones' STOPs included) and refuses with the stage-automation skip reason. A merged-away record is
+// refused too (F2, the skip reason person_removed), and no other path enrolls one. Real Postgres, the real server, fake
+// providers only.
 import { randomUUID } from 'node:crypto';
 import { contentSha256 } from '@realty/core/assistant';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
-import { type CommsWorld, call, commsWorld, inboundSms, randomEmail, randomPhone } from '../comms/testing.js';
-import { leadsWorld } from '../leads/testing.js';
+import { type CommsWorld, call, commsWorld, freshReauth, inboundSms, randomEmail, randomPhone } from '../comms/testing.js';
+import { command, leadsWorld } from '../leads/testing.js';
+import { decideStageEntry } from '../stageAutomation/decide.js';
 import { changeStage, decisionsOf, enrollmentsOf, newContact, setStage } from '../stageAutomation/testing.js';
-import { smsStep } from './testing.js';
+import { systemActor } from '../worker/systemActor.js';
+import { enrollOnDealClosed } from './enrollments.js';
+import { depsOf, runJobs, smsStep, stepNow } from './testing.js';
 
 let h: ApiHarness;
 let w: CommsWorld;
 let agent: TestClient;
+let agent2: TestClient;
+let admin: TestClient;
 const plan = {} as Record<'text' | 'email' | 'both', { id: string; name: string; stage: string }>;
 
 const textStep = (key: string) => smsStep({ key, category: 'nurture_step', intent: 'check_in', purpose: 'marketing', template: 'Hi {{first_name}}, checking in on your plans this year.', slots: ['first_name'] });
@@ -37,8 +43,10 @@ async function teamPlan(name: string, steps: Record<string, unknown>[], stage: s
 
 beforeAll(async () => {
   h = await createApiHarness();
-  w = await commsWorld(h, { agents: 1, rule: false });
+  w = await commsWorld(h, { agents: 2, rule: false, others: ['admin'] });
   agent = w.agents[0]!;
+  agent2 = w.agents[1]!;
+  admin = w.others[0]!;
   plan.text = await teamPlan('Text check-in', [textStep('text_check_in')], 'active');
   plan.email = await teamPlan('Email check-in', [emailStep('email_check_in')], 'nurture');
   plan.both = await teamPlan('Text and email check-in', [textStep('text_check_in'), emailStep('email_check_in')], 'connected');
@@ -203,5 +211,89 @@ describe('B9 R-PAR-16 D1: a direct enrollment of a person who cannot be reached'
     const back = await call(other.agents[0]!, 'POST', `/contacts/${mine}/enrollments`, { playbookId: plan.text.id });
     expect([back.status, back.code]).toEqual([404, 'NOT_FOUND']);
     expect([await enrollmentsOf(h, theirs.body.contact.id), await enrollmentsOf(h, mine)]).toEqual([[], []]);
+  });
+});
+
+// F2 (B9 review): a merged-away record is never enrolled. A stage entry skips it (decide.ts person_removed: deleted or
+// merged away), the merge stops the loser's own enrollment (R-OWN-24: one live enrollment per person), and the people
+// writes refuse it (people/common.ts liveDetailFacts). The direct route used to enroll it (201): a second live plan for
+// one person, stranded on the loser and texting the loser's phone, and the loser's own opt-out state was all its
+// reachability check saw (F1).
+describe('F2 R-OWN-24 R-PAR-16: a merged-away record is never enrolled, by any path', () => {
+  /** The agent's S and L (L with a collaborator, agent2, added before the merge); S in the text plan; the Owner merges L into S. */
+  async function mergedPair(o: { enrollLoser?: boolean } = {}): Promise<{ s: string; l: string; sEnrollment: string; lEnrollment: string | null }> {
+    const s = await newContact(agent, { phones: [randomPhone()], emails: [randomEmail()] });
+    const l = await newContact(agent, { phones: [randomPhone()], emails: [randomEmail()], firstName: 'Jean' });
+    expect((await call(agent, 'POST', `/contacts/${l}/collaborators`, { userId: agent2.userId, role: 'co_agent' })).status).toBe(200);
+    const e = await enroll(s, plan.text.id);
+    expect(e.status, JSON.stringify(e.body)).toBe(201);
+    const le = o.enrollLoser ? await enroll(l, plan.text.id) : null;
+    if (le) expect(le.status, JSON.stringify(le.body)).toBe(201);
+    await freshReauth(h, w.owner);
+    const m = await command(w.owner, s, 'merge', { loserId: l });
+    expect(m.status, JSON.stringify(m.body)).toBe(200);
+    // after the merge: the former owner no longer sees L; the Owner, an Admin and L's collaborator still do
+    expect((await call(agent, 'GET', `/contacts/${l}`)).status).toBe(404);
+    for (const [who, c] of [['owner', w.owner], ['admin', admin], ['collaborator', agent2]] as const) expect((await call(c, 'GET', `/contacts/${l}`)).status, who).toBe(200);
+    return { s, l, sEnrollment: e.body.enrollment.id, lEnrollment: le ? le.body.enrollment.id : null };
+  }
+  const messagesTo = async (contactId: string) => Number((await h.su.query<{ n: string }>("SELECT count(*) AS n FROM messages WHERE contact_id = $1 AND direction = 'outbound'", [contactId])).rows[0]!.n);
+
+  it('F2 decide.ts person_removed: the Owner, an Admin and a collaborator of the loser are refused (409 CONTACT_MERGED, reason person_removed), as a stage entry skips it; the former owner gets 404; no enrollment row, nothing queued, the survivor’s own plan untouched', async () => {
+    const { s, l, sEnrollment } = await mergedPair();
+    const sBefore = await enrollmentsOf(h, s);
+    const got: Record<string, unknown> = {};
+    for (const [who, c] of [['owner', w.owner], ['admin', admin], ['collaborator', agent2]] as const) {
+      const r = await call<{ error: { code: string; details?: Record<string, unknown> } }>(c, 'POST', `/contacts/${l}/enrollments`, { playbookId: plan.text.id });
+      got[who] = [r.status, r.body.error?.code, r.body.error?.details?.reason];
+      // the survivor is named only to whoever sees it (R-PERM-5): the collaborator of the loser does not
+      expect(r.body.error?.details?.mergedInto ?? null, who).toBe(who === 'collaborator' ? null : s);
+    }
+    expect(got).toEqual({ owner: [409, 'CONTACT_MERGED', 'person_removed'], admin: [409, 'CONTACT_MERGED', 'person_removed'], collaborator: [409, 'CONTACT_MERGED', 'person_removed'] });
+    const former = await enroll(l, plan.text.id);
+    expect([former.status, former.code]).toEqual([404, 'NOT_FOUND']);
+    // decide.ts says the same of this person: person_removed
+    expect(decideStageEntry({ actorKind: 'user', toStage: 'active', contact: { exists: true, deleted: false, merged: true, stage: 'active', ownerUserId: null }, changerSeesDetail: true, candidates: [{ id: plan.text.id, name: plan.text.name, scope: 'team', ownerUserId: null, approvedVersionId: randomUUID() }], liveEnrollment: false, reachable: true })).toMatchObject({ kind: 'skip', reason: 'person_removed' });
+    // nothing was written: the loser has only the enrollment the merge stopped (none here), the survivor keeps its own
+    expect(await enrollmentsOf(h, l)).toEqual([]);
+    expect(await enrollmentsOf(h, s)).toEqual(sBefore);
+    expect(sBefore.map((e) => [e.id, e.state])).toEqual([[sEnrollment, 'active']]);
+    expect(await messagesTo(l)).toBe(0);
+  });
+
+  it('F2: the step runner stops an enrollment whose person was merged away (stop_reason merged, as the merge itself stops one) and sends nothing to the loser', async () => {
+    const { l, lEnrollment } = await mergedPair({ enrollLoser: true });
+    const id = lEnrollment!;
+    // R-OWN-24: the merge stopped the loser's own enrollment
+    expect((await h.su.query('SELECT state, stop_reason FROM playbook_enrollments WHERE id = $1', [id])).rows[0]).toEqual({ state: 'stopped', stop_reason: 'merged' });
+    // a live enrollment on the loser after the merge anyway (a race the merge's stop cannot see, or one written before
+    // this fix): a superuser fixture, since no application path writes it now
+    await h.su.query("UPDATE playbook_enrollments SET state = 'active', stop_reason = NULL, ended_at = NULL WHERE id = $1", [id]);
+    const phones = (await h.su.query<{ address: string }>("SELECT address FROM contact_points WHERE contact_id = $1 AND kind = 'phone'", [l])).rows.map((p) => p.address);
+    const toLoser = () => h.providers.telephony.sms.filter((m) => phones.includes(m.to)).length;
+    const sms = toLoser();
+    await stepNow(h, w.tenantId, id);
+    await runJobs(h, w.tenantId, ['playbook.step', 'comms.dispatch']);
+    expect((await h.su.query('SELECT state, stop_reason FROM playbook_enrollments WHERE id = $1', [id])).rows[0]).toEqual({ state: 'stopped', stop_reason: 'merged' });
+    expect(await messagesTo(l)).toBe(0);
+    expect(toLoser()).toBe(sms);
+  });
+
+  it('F2 A4: a deal of the merged-away record closing never enrolls that record in the post-closing plan (the system path skips it as a stage entry would)', async () => {
+    const pc = await call<{ playbook: { id: string; versions: { id: string; contentSha256: string }[] } }>(w.owner, 'POST', '/playbooks', { templateKey: 'post_closing', scope: 'team' });
+    expect(pc.status, JSON.stringify(pc.body)).toBe(201);
+    const v = pc.body.playbook.versions[0]!;
+    expect((await call(w.owner, 'POST', `/playbook-versions/${v.id}/approve`, { attestation: 'I approve the team after-closing notes.', contentSha256: v.contentSha256 })).status).toBe(200);
+    const { l } = await mergedPair();
+    // a merge moves no deal: the loser's deal closes after the merge
+    const dealId = randomUUID();
+    await h.su.query(`INSERT INTO deals (tenant_id, id, name, side, stage, stage_entered_at, primary_contact_id, owner_user_id, closed_at) VALUES ($1,$2,'Close','buy','closed',now(),$3,$4,now())`, [w.tenantId, dealId, l, agent.userId]);
+    expect(await enrollOnDealClosed(systemActor(w.tenantId, 'assistant'), dealId, depsOf(h))).toEqual([]);
+    expect(await enrollmentsOf(h, l)).toEqual([]);
+    // control: the same plan does enroll a live person whose deal closes
+    const live = await newContact(agent);
+    const deal2 = randomUUID();
+    await h.su.query(`INSERT INTO deals (tenant_id, id, name, side, stage, stage_entered_at, primary_contact_id, owner_user_id, closed_at) VALUES ($1,$2,'Close','buy','closed',now(),$3,$4,now())`, [w.tenantId, deal2, live, agent.userId]);
+    expect(await enrollOnDealClosed(systemActor(w.tenantId, 'assistant'), deal2, depsOf(h))).toHaveLength(1);
   });
 });

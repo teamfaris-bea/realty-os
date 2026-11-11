@@ -73,7 +73,7 @@ export const ERROR_STATUS = {
   ALREADY_OWNER: 409, // R-OWN-7: a second accept by the current owner
   LEAD_STATE_CHANGED: 409, // stale UI or lost race: the fresh projection is in details
   MERGE_OWNER_REQUIRED: 409, // R-OWN-24: different owners, choose one (preselected in details)
-  CONTACT_MERGED: 409, // the contact was merged away (mergedInto in details when visible)
+  CONTACT_MERGED: 409, // the contact was merged away (mergedInto in details when visible); also an enrollment of a merged-away record (F2, details.reason person_removed)
   DUPLICATE_CONTACT: 409, // R-OWN-25 / R-PERM-12: an exact phone/email match exists (owner name only)
   INQUIRY_EMPTY: 422, // intake: no name, no valid phone and no valid email
   DEACTIVATION_NOT_ALLOWED: 409, // the member cannot be deactivated (self, invited, already removed)
