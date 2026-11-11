@@ -572,7 +572,10 @@ assignment to other tenants' or inactive users, revert scope; duplicate pairs an
 by the merge; stage automation (approved versions only, owner's own plan only, imports never enroll, one live
 enrollment, annual reminders); a role sweep over 29 mutating parity routes for TL, other agents, ISA and TC
 (`secreview.roles.test.ts`: no 500, every 2xx matches `can()`); support has no HTTP actor and is refused by the
-restrictive policies.
+restrictive policies. Import revert and a person-level do-not-contact (candidate from the orchestrator): not
+reproduced; the do-not-contact's own consent event makes the contact touched, so revert keeps the person, their
+points and the flag, and an imported DNC stays as an address-keyed `import_dnc` suppression
+(`imports/secreview.revertdnc.test.ts` guards it).
 
 ### 7.3 Left for the owner
 
