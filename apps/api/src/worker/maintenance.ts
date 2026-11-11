@@ -176,7 +176,7 @@ export function createMaintenance(o: MaintenanceOptions = {}): Maintenance {
       });
       report.webhookIdsPurged = await step('webhook_purge', report, async () => {
         const r = await purgeWebhookEvents(db);
-        for (const [k, v] of Object.entries(r)) metrics.gauge('webhook_ids_purged_last', v, { provider: k });
+        for (const [k, v] of Object.entries(r)) metrics.gauge('webhook_ids_purged_last', v, { kind: k });
         log.info('webhook id purge', { result: r });
         return r;
       });

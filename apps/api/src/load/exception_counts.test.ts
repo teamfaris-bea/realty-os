@@ -50,7 +50,7 @@ describe('exception queue counts', () => {
       for (const owner of [undefined, 'me'] as const) {
         await withTenantTx(actor, async (tx, now) => {
           const rows = await repo.queueRows(tx, { ownerUserId: owner === 'me' ? v.userId : undefined, state: 'live', limit: 100_000 });
-          const expected: Record<string, number> = { untouched_lead: 0, overdue_promise: 0, failed_send: 0, missing_outcome: 0 };
+          const expected: Record<string, number> = { untouched_lead: 0, overdue_promise: 0, failed_send: 0, missing_outcome: 0, milestone_at_risk: 0 };
           for (const r of rows) expected[r.item_type]! += 1;
           // a type filter forces the counted path even for small queues
           const view = await listExceptions(tx, actor, env, { type: 'failed_send', ...(owner ? { owner } : {}) }, now);

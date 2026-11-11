@@ -95,6 +95,7 @@ const WORKER_FAMILIES: Record<string, { name: string; help: string; type: 'count
   audit_seq_missing: { name: 'realty_audit_seq_missing', help: 'Gaps in the global audit sequence (rolled-back transactions; tracked, growth logged).', type: 'gauge' },
   audit_seq_rows: { name: 'realty_audit_seq_rows', help: 'Rows checked by the audit sequence check.', type: 'gauge' },
   retention_last: { name: 'realty_retention_last_items', help: 'Items removed by the last retention sweep, by item.', type: 'gauge' },
+  webhook_ids_purged_last: { name: 'realty_webhook_ids_purged_last', help: 'Webhook replay-protection ids purged by the last maintenance pass, by kind (lead, email, telephony, rejected).', type: 'gauge' },
 };
 
 const LABEL_RENAME: Record<string, string> = { workKind: 'work_kind' };
