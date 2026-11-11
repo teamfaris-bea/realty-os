@@ -42,4 +42,24 @@ describe('worker entrypoint', () => {
     });
     expect(code).toBe(0);
   }, 50_000);
+
+  it('refuses to start on a superuser login (deploy rehearsal: only the API refused one), printing one JSON line that names DATABASE_URL only', async () => {
+    const main = join(dirname(fileURLToPath(import.meta.url)), 'main.ts');
+    const child = spawn(process.execPath, ['--import', 'tsx', '--conditions=@realty/source', main, '--concurrency', '1'], {
+      env: { ...process.env, DATABASE_URL: db.ownerUrl, LOG_LEVEL: 'info', NODE_ENV: 'test' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (b: Buffer) => (out += b.toString()));
+    child.stderr.on('data', (b: Buffer) => (err += b.toString()));
+    const timer = setTimeout(() => child.kill('SIGKILL'), 30_000);
+    const code = await new Promise<number | null>((resolve) => child.once('exit', (c) => resolve(c)));
+    clearTimeout(timer);
+    expect(code).toBe(1);
+    expect(out).not.toContain('starting worker');
+    const line = JSON.parse(err.trim().split('\n').at(-1) ?? '{}') as Record<string, unknown>;
+    expect(line).toMatchObject({ level: 'fatal', msg: 'worker failed to start', type: 'ConfigError', detail: 'DATABASE_URL must be the RLS-bound app role (not superuser, no BYPASSRLS)' });
+    expect(err).not.toContain(new URL(db.ownerUrl).password || '\u0000');
+  }, 40_000);
 });

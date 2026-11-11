@@ -49,6 +49,7 @@ describe('production secrets', () => {
     NODE_ENV: 'production',
     DATABASE_URL: 'postgres://x',
     KEK_BASE64: key(),
+    KEK_REF: 'prod-kek:v1',
     SESSION_SECRET_BASE64: key(),
     WEB_ORIGIN: 'https://app.example.test',
     PUBLIC_BASE_URL: 'https://app.example.test',
