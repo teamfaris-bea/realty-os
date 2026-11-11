@@ -97,6 +97,32 @@ export function nextStep(stage: ImportStage, batch: Pick<ImportBatch, 'snapshotS
   }
 }
 
+const REVERTIBLE = new Set(['committed', 'verified']);
+const SKIPPABLE = new Set(['pending', 'dry_run_ready', 'failed']);
+const CSV_CONSENT_TARGETS = new Set(['consent_sms', 'consent_email', 'consent_voice', 'opted_out', 'unsubscribed', 'do_not_contact']);
+
+/**
+ * Consent can be skipped only after its dry run has shown which opt-outs would be lost (E40), unless the
+ * contacts are skipped too or a CSV maps no consent column: the server's consentSkipBlocker, mirrored so
+ * the page never offers a skip the server refuses.
+ */
+export function consentNeedsDryRunToSkip(stage: ImportStage, stages: readonly ImportStage[], batch: Pick<ImportBatch, 'source' | 'csv'>): boolean {
+  if (stage.category !== 'consent') return false;
+  if (stages.find((s) => s.category === 'contacts')?.status === 'skipped') return false;
+  if (batch.source === 'csv' && !(batch.csv?.mapping ?? []).some((t) => CSV_CONSENT_TARGETS.has(String((t as { field?: unknown } | null)?.field ?? '')))) return false;
+  return !['dry_run_ready', 'approved'].includes(stage.status);
+}
+
+/** "Skip this category" is offered: a stage not imported yet, and (consent) its dry run done where needed. */
+export function canSkipStage(stage: ImportStage, stages: readonly ImportStage[], batch: Pick<ImportBatch, 'source' | 'csv' | 'status'>): boolean {
+  return SKIPPABLE.has(stage.status) && batch.status !== 'reverted' && !consentNeedsDryRunToSkip(stage, stages, batch);
+}
+
+/** "Undo this category" is offered: imported, and no later category is still imported (undo runs latest first, IMPORT_REVERT_ORDER). */
+export function canUndoStage(stage: ImportStage, stages: readonly ImportStage[], batch: Pick<ImportBatch, 'status'>): boolean {
+  return REVERTIBLE.has(stage.status) && batch.status !== 'reverted' && !stages.some((s) => s.seq > stage.seq && REVERTIBLE.has(s.status));
+}
+
 /** Whether the page should poll: something is running on the server. */
 export function isRunning(b: ImportBatch): boolean {
   return RUNNING_BATCH.has(b.status) || b.stages.some((s) => RUNNING_STAGE.has(s.status));

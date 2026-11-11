@@ -85,7 +85,14 @@ export async function loadContacts(tx: Tx, only?: readonly string[]): Promise<Ex
 
 export async function loadExternalRefs(tx: Tx, system: 'fub' | 'csv'): Promise<{ entityType: ExternalEntityType; externalId: string; entityId: string }[]> {
   const r = await sql<{ entity_type: ExternalEntityType; external_id: string; entity_id: string }>`
-    SELECT entity_type, external_id, entity_id FROM external_refs WHERE tenant_id = app.tenant_id() AND system = ${system}`.execute(tx);
+    SELECT r.entity_type, r.external_id, r.entity_id FROM external_refs r
+     WHERE r.tenant_id = app.tenant_id() AND r.system = ${system}
+       -- a history row an undo removed is no longer "already imported" (R-IMPORT-10 then R-IMPORT-9: undo, then import again);
+       -- contact refs stay even when the contact is deleted (the plan says MATCH_DELETED_CONTACT, E39)
+       AND (r.entity_type NOT IN ('note', 'message', 'call')
+            OR (r.entity_type = 'note' AND EXISTS (SELECT 1 FROM notes n WHERE n.tenant_id = r.tenant_id AND n.id = r.entity_id))
+            OR (r.entity_type = 'message' AND EXISTS (SELECT 1 FROM messages m WHERE m.tenant_id = r.tenant_id AND m.id = r.entity_id))
+            OR (r.entity_type = 'call' AND EXISTS (SELECT 1 FROM calls c WHERE c.tenant_id = r.tenant_id AND c.id = r.entity_id)))`.execute(tx);
   return r.rows.map((x) => ({ entityType: x.entity_type, externalId: x.external_id, entityId: x.entity_id }));
 }
 

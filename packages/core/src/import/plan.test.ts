@@ -385,6 +385,18 @@ describe('revert (R-IMPORT-10, E43)', () => {
     expect([own.delete, own.kept, own.manual, own.unassign]).toEqual([[], [], ['e2'], [{ eventId: 'e1', contactId: 'c1' }]]);
   });
 
+  it("R-IMPORT-10: a call's note (written by the calls stage as a notes row) goes with the call; a touched contact keeps both", () => {
+    const rows = [
+      { table: 'calls', id: 'k1', contactId: 'c1' },
+      { table: 'notes', id: 'kn1', contactId: 'c1' },
+      { table: 'calls', id: 'k2', contactId: 'c2' },
+      { table: 'notes', id: 'kn2', contactId: 'c2' },
+    ] as const;
+    const plan = planRevert('call_recordings', rows, new Set(['c2']), ids());
+    expect([plan.delete, plan.manual]).toEqual([['k1', 'kn1'], ['k2', 'kn2']]);
+    expect(plan.reasons).toEqual({ k2: 'TOUCHED', kn2: 'TOUCHED' });
+  });
+
   it('R-IMPORT-10 stages revert in reverse commit order', () => {
     expect(revertOrder(['contacts', 'consent', 'notes', 'ownership', 'call_recordings', 'messages'])).toEqual(['consent', 'call_recordings', 'messages', 'notes', 'ownership', 'contacts']);
   });

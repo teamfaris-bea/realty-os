@@ -97,7 +97,11 @@ export async function insertDuplicate(tx: Tx, id: string, a: string, b: string, 
 export async function insertExternalRef(tx: Tx, r: { system: 'fub' | 'csv'; entityType: string; externalId: string; entityId: string; batchId: string }): Promise<void> {
   await sql`INSERT INTO external_refs (tenant_id, system, entity_type, external_id, entity_id, import_batch_id)
             VALUES (app.tenant_id(), ${r.system}, ${r.entityType}, ${r.externalId}, ${r.entityId}, ${r.batchId})
-            ON CONFLICT (tenant_id, system, entity_type, external_id) DO NOTHING`.execute(tx);
+            ON CONFLICT (tenant_id, system, entity_type, external_id) DO UPDATE
+              -- the commit writes a ref only for an entity it just created, which the plan does only when the old
+              -- ref's entity is gone (undone or deleted): the new entity takes the ref over (R-IMPORT-9 after R-IMPORT-10)
+              SET entity_id = EXCLUDED.entity_id, import_batch_id = EXCLUDED.import_batch_id
+              WHERE external_refs.entity_id IS DISTINCT FROM EXCLUDED.entity_id`.execute(tx);
 }
 
 export async function externalRef(tx: Tx, system: 'fub' | 'csv', entityType: string, externalId: string): Promise<string | null> {

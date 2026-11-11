@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { FakeFetch, err, leadAdminApp } from '../admin/lib/testing.js';
 import type { ImportBatch, ImportCategory, ImportStage } from '../admin/lib/types.js';
 import { importedLine, parityImportedHeader } from './ImportsPages.js';
-import { blockingEarlier, nextStep, ordered, reconciles, recordSummary, spotChecksReady, toBase64 } from './lib.js';
+import { blockingEarlier, canSkipStage, canUndoStage, consentNeedsDryRunToSkip, nextStep, ordered, reconciles, recordSummary, spotChecksReady, toBase64 } from './lib.js';
 
 const SNAP = 'b'.repeat(64);
 const BID = '01900000-0000-7000-8000-0000000b0001';
@@ -84,6 +84,28 @@ describe('import helpers', () => {
     expect(recordSummary({ personRef: 'p:9', preview: 'Called about 12 Oak' })).toBe('“Called about 12 Oak”');
     expect(recordSummary(null)).toBe('No details');
     expect(toBase64(new TextEncoder().encode('name,phone\n'))).toBe(btoa('name,phone\n'));
+  });
+
+  it('offers Skip and per-category Undo only where the server would accept them (M7)', () => {
+    // consent: the server refuses a skip before its dry run (consent_dry_run_required) unless contacts are skipped
+    // or a CSV maps no consent column (stages.ts consentSkipBlocker)
+    const fub = { source: 'fub_api' as const, csv: null, status: 'dry_run' };
+    const pending = [stage('contacts', 'verified'), stage('consent', 'pending')];
+    expect(consentNeedsDryRunToSkip(pending[1]!, pending, fub)).toBe(true);
+    expect(canSkipStage(pending[1]!, pending, fub)).toBe(false);
+    const ready = [stage('contacts', 'verified'), stage('consent', 'dry_run_ready')];
+    expect(canSkipStage(ready[1]!, ready, fub)).toBe(true);
+    const noContacts = [stage('contacts', 'skipped'), stage('consent', 'pending')];
+    expect(canSkipStage(noContacts[1]!, noContacts, fub)).toBe(true);
+    const csvNoConsent = { source: 'csv' as const, csv: { headers: ['Name'], mapping: [{ field: 'full_name' }] }, status: 'dry_run' };
+    expect(canSkipStage(pending[1]!, pending, csvNoConsent)).toBe(true);
+    const csvConsent = { ...csvNoConsent, csv: { headers: ['Name', 'DNC'], mapping: [{ field: 'full_name' }, { field: 'do_not_contact' }] } };
+    expect(canSkipStage(pending[1]!, pending, csvConsent)).toBe(false);
+    expect(canSkipStage(stage('notes', 'pending'), pending, fub)).toBe(true);
+    // undo runs latest category first (IMPORT_REVERT_ORDER): only the last imported category offers it
+    const st = [stage('contacts', 'verified'), stage('ownership', 'verified'), stage('notes', 'committed'), stage('messages', 'skipped')];
+    expect(st.filter((x) => canUndoStage(x, st, fub)).map((x) => x.category)).toEqual(['notes']);
+    expect(canUndoStage(st[2]!, st, { status: 'reverted' })).toBe(false);
   });
 });
 
@@ -275,5 +297,38 @@ describe('Imports', () => {
     await u.click(screen.getByRole('button', { name: 'Save matches' }));
     expect(await screen.findByText('Everyone is matched')).toBeInTheDocument();
     expect(fake.callsTo(`PUT /imports/${BID}/user-mappings`)[0]!.body).toEqual({ mappings: [{ sourceRef: 'fub:user:5', kind: 'user', target: { kind: 'user', userId: '01900000-0000-7000-8000-0000000000a1' } }] });
+  });
+
+  it('consent before its dry run offers no Skip (the server refuses it) and says to run the dry run first (M7)', async () => {
+    const b = batch([stage('contacts', 'verified'), stage('consent', 'pending')]);
+    leadAdminApp(importFake(b), `/imports/${BID}`, 'owner');
+    const card = (await screen.findByRole('heading', { name: '6. Opt-outs and consent history' })).closest('article')!;
+    expect(within(card).getByRole('button', { name: 'Run dry run' })).toBeInTheDocument();
+    expect(within(card).queryByRole('button', { name: 'Skip this category' })).toBeNull();
+    expect(within(card).getByText('To skip it, run its dry run first, so you can see which opt-outs would not carry over.')).toBeInTheDocument();
+  });
+
+  it('only the last imported category offers "Undo this category" (undo runs latest first) (M7)', async () => {
+    const b = batch([stage('contacts', 'verified'), stage('ownership', 'verified'), stage('notes', 'verified')]);
+    leadAdminApp(importFake(b), `/imports/${BID}`, 'owner');
+    const notes = (await screen.findByRole('heading', { name: '3. Notes' })).closest('article')!;
+    expect(within(notes).getByRole('button', { name: 'Undo this category' })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Undo this category' })).toHaveLength(1);
+  });
+
+  it('the tables that scroll sideways on a phone sit in a named, keyboard-focusable region (axe scrollable-region-focusable) (M7)', async () => {
+    const b = batch([stage('contacts', 'committed', { counts: { ...counts, imported: 1150 } })]);
+    const c = { source: 1200, imported: 1150, needs_review: 30, rejected: 5, duplicate: 15 };
+    const parity = { phase: 'committed', rows: [{ category: 'stages', source: 3, imported: 3, needsReview: 0, rejected: 0, duplicate: 0 }], lines: [] };
+    const fake = importFake(b)
+      .on(`GET /imports/${BID}/stages/contacts/verification`, { status: 200, body: { expected: c, db: c, matches: true, diffs: [], sample: [] } })
+      .on(`GET /imports/${BID}/report`, { status: 200, body: { source: 'Follow Up Boss', categories: [], parity } });
+    leadAdminApp(fake, `/imports/${BID}`, 'owner');
+    const recount = await screen.findByRole('region', { name: 'Recount of contacts' });
+    expect(recount).toHaveAttribute('tabindex', '0');
+    expect(within(recount).getByRole('table')).toBeInTheDocument();
+    const report = await screen.findByRole('region', { name: 'Counts for stages, tags and fields' });
+    expect(report).toHaveAttribute('tabindex', '0');
+    expect(within(report).getByRole('table')).toBeInTheDocument();
   });
 });
