@@ -156,38 +156,40 @@ export const FRAME_WINDOW = 3;
 
 // ---- the check ----------------------------------------------------------------------------------
 
+/**
+ * Invisible characters are read two ways: dropped ("fa\u200Bmilies" is "families") and as word
+ * breaks ("adults\u00ADonly" is "adults only"). A match in either reading counts.
+ */
 export function check(text: string, pack: FairHousingPack): CheckResult {
-  const tokens = tokenize(text);
   const c = compilePack(pack);
-
-  const spansOf = (effect: Exemption['effect']): [number, number][] =>
-    c.exemptions.filter((e) => e.exemption.effect === effect).flatMap((e) => e.patterns.flatMap((p) => findSpans(tokens, p)));
-  const notARef = spansOf('not_a_reference');
-  const frames = spansOf('anti_discrimination');
-  const exempt = (last: number): boolean => notARef.some(([a, b]) => last >= a && last <= b);
-  // inside the frame, or at most FRAME_WINDOW tokens after its end, in the frame's sentence
-  const negated = (first: number): boolean =>
-    frames.some(([a, b]) => first >= a && first <= b + FRAME_WINDOW && (tokens[b] as Token).sentence === (tokens[first] as Token).sentence);
-
-  const raw: (Match & { firstTok: number; lastTok: number })[] = [];
-  for (const ct of c.terms) {
-    for (const p of ct.patterns) {
-      for (const [a, b] of findSpans(tokens, p)) {
-        if (exempt(b)) continue;
-        const start = (tokens[a] as Token).start;
-        const end = (tokens[b] as Token).end;
-        const neg = negated(a);
-        const severity = ct.severity === 'hard' && !neg ? 'hard' : 'soft';
-        if (raw.some((m) => m.termId === ct.term.id && m.start === start && m.end === end)) continue;
-        raw.push({ termId: ct.term.id, label: ct.term.label, class: ct.term.class, severity, start, end, text: text.slice(start, end), negated: neg, firstTok: a, lastTok: b });
+  const raw: Match[] = [];
+  for (const tokens of [tokenize(text), tokenize(text, { invisibleBreaks: true })]) {
+    const spansOf = (effect: Exemption['effect']): [number, number][] =>
+      c.exemptions.filter((e) => e.exemption.effect === effect).flatMap((e) => e.patterns.flatMap((p) => findSpans(tokens, p)));
+    const notARef = spansOf('not_a_reference');
+    const frames = spansOf('anti_discrimination');
+    const exempt = (last: number): boolean => notARef.some(([a, b]) => last >= a && last <= b);
+    // inside the frame, or at most FRAME_WINDOW tokens after its end, in the frame's sentence
+    const negated = (first: number): boolean =>
+      frames.some(([a, b]) => first >= a && first <= b + FRAME_WINDOW && (tokens[b] as Token).sentence === (tokens[first] as Token).sentence);
+    for (const ct of c.terms) {
+      for (const p of ct.patterns) {
+        for (const [a, b] of findSpans(tokens, p)) {
+          if (exempt(b)) continue;
+          const start = (tokens[a] as Token).start;
+          const end = (tokens[b] as Token).end;
+          const neg = negated(a);
+          const severity = ct.severity === 'hard' && !neg ? 'hard' : 'soft';
+          if (raw.some((m) => m.termId === ct.term.id && m.start === start && m.end === end)) continue;
+          raw.push({ termId: ct.term.id, label: ct.term.label, class: ct.term.class, severity, start, end, text: text.slice(start, end), negated: neg });
+        }
       }
     }
   }
   // a soft match inside a hard match's span adds nothing
-  const kept = raw.filter((m) => m.severity === 'hard' || !raw.some((h) => h.severity === 'hard' && h.firstTok <= m.firstTok && m.lastTok <= h.lastTok));
+  const kept = raw.filter((m) => m.severity === 'hard' || !raw.some((h) => h.severity === 'hard' && h.start <= m.start && m.end <= h.end));
   kept.sort((x, y) => x.start - y.start || y.end - x.end || x.termId.localeCompare(y.termId));
-  const strip = ({ firstTok: _f, lastTok: _l, ...m }: Match & { firstTok: number; lastTok: number }): Match => m;
-  return { hard: kept.filter((m) => m.severity === 'hard').map(strip), soft: kept.filter((m) => m.severity === 'soft').map(strip) };
+  return { hard: kept.filter((m) => m.severity === 'hard'), soft: kept.filter((m) => m.severity === 'soft') };
 }
 
 /** True when the text has any hard or soft match (assistant output with one is never autonomous, R-FH-2). */

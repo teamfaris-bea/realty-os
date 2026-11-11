@@ -17,9 +17,10 @@
 import { check, fairHousingReviewState, type FairHousingPack, type Match } from '../fairhousing/index.js';
 import { numeralIssues } from './numerals.js';
 import { resolveAdvertisingRules } from './packs.js';
-import { foldName } from './render.js';
+import { foldName, renderPiece } from './render.js';
 import { parseGuardResult } from './schemas.js';
-import type { Block, BrokerageIdentity, GuardResult, GuardTermHit, NumeralIssue, PackRuleFailure, Packs, Prominence, Rendered } from './types.js';
+import type { ListingFacts } from '../listings/index.js';
+import type { Block, BrokerageIdentity, PieceVersion, GuardResult, GuardTermHit, NumeralIssue, PackRuleFailure, Packs, Prominence, Rendered } from './types.js';
 import { PROMINENCE } from './types.js';
 
 export const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
@@ -43,12 +44,30 @@ function maxRankOf(blocks: readonly Block[], name: string): number {
   return best;
 }
 
-/** Hashtags read as words too ("#PerfectForYoungFamilies" ⇒ "Perfect For Young Families"). */
-function hashtagWords(blocks: readonly Block[]): string {
-  return blocks
-    .filter((b) => b.role === 'hashtags')
-    .map((b) => b.text.replace(/#/g, ' ').replace(/(\p{Ll})(\p{Lu})/gu, '$1 $2').replace(/_/g, ' '))
-    .join('\n');
+/**
+ * Extra readings of the copy for the fair-housing check, so wording cannot hide in layout:
+ * - hashtags as words: "#PerfectForYoungFamilies" ⇒ "Perfect For Young Families", and spelled out
+ *   letter by letter ("#adultsonly" ⇒ "a d u l t s o n l y", which the lexicon matches as one run);
+ * - all prose blocks run together on one line, so a phrase split across a headline and the body
+ *   ("Perfect for young" / "families …") is still read as one sentence;
+ * - invisible characters also read as word breaks ("adults\u00ADonly" ⇒ "adults only").
+ */
+function extraReadings(blocks: readonly Block[]): string[] {
+  const out: string[] = [];
+  for (const b of blocks) {
+    if (b.role !== 'hashtags') continue;
+    for (const tag of b.text.split(/\s+/u)) {
+      const word = tag.replace(/^#/u, '');
+      if (word === '') continue;
+      out.push(word.replace(/(\p{Ll})(\p{Lu})/gu, '$1 $2').replace(/_/g, ' '));
+      out.push([...word.replace(/[_\p{N}]/gu, '')].join(' '));
+    }
+  }
+  // invisible characters as word breaks ("adults\u00ADonly"): the lexicon drops them inside words
+  for (const b of blocks) if (/\p{Default_Ignorable_Code_Point}/u.test(b.text)) out.push(b.text.replace(/\p{Default_Ignorable_Code_Point}+/gu, ' '));
+  const prose = blocks.filter((b) => b.origin === 'prose').map((b) => b.text.replace(/\s+/gu, ' ').replace(/[.!?;:]+$/u, ''));
+  if (prose.length > 1) out.push(prose.join(' '));
+  return out;
 }
 
 function hits(ms: readonly Match[]): GuardTermHit[] {
@@ -88,11 +107,10 @@ export function guardResult(r: Rendered, identity: BrokerageIdentity, packs: Pac
   }
 
   // fair housing over everything a reader sees (R-FH-1), hashtags also as words
-  const main = check(r.text, fh);
-  const tags = hashtagWords(r.blocks);
-  const extra = tags === '' ? { hard: [], soft: [] } : check(tags, fh);
-  const hard = dedupe([...hits(main.hard), ...hits(extra.hard)]);
-  const soft = dedupe([...hits(main.soft), ...hits(extra.soft)]);
+  const readings = [check(r.text, fh), ...extraReadings(r.blocks).map((t) => check(t, fh))];
+  const hard = dedupe(readings.flatMap((x) => hits(x.hard)));
+  const hardIds = new Set(hard.map((h) => `${h.term_id}\u0000${h.text.toLowerCase()}`));
+  const soft = dedupe(readings.flatMap((x) => hits(x.soft))).filter((x) => !hardIds.has(`${x.term_id}\u0000${x.text.toLowerCase()}`));
 
   // R-MKT-1: the legal name is rendered
   const legal = foldName(identity.brokerageLegalName);
@@ -187,3 +205,25 @@ export function guardReasons(gr: GuardResult, contentSha256: string): string[] {
 export function needsFairHousingCheck(gr: GuardResult): boolean {
   return gr.hard.length > 0 || gr.soft.length > 0;
 }
+
+/**
+ * R-MKT-4: after a brokerage identity or pack change, re-render a live (approved/published) version
+ * and re-run the guard over its unchanged content hash. A version that no longer passes is
+ * unpublished from pages we control (within 1 h, module 29's job) and needs a new version; the
+ * frozen guard_result of the old version is never rewritten.
+ */
+export function liveRecheck(
+  p: PieceVersion,
+  facts: ListingFacts,
+  identity: BrokerageIdentity,
+  packs: Packs,
+  fh: FairHousingPack,
+  contentSha256: string,
+): { action: 'keep' | 'unpublish'; guard: GuardResult; reasons: string[] } {
+  const g = guardResult(renderPiece(p, facts, identity, packs), identity, packs, fh, contentSha256);
+  const reasons = guardReasons(g, contentSha256);
+  return { action: reasons.length === 0 ? 'keep' : 'unpublish', guard: g, reasons };
+}
+
+/** R-AST-19: the assistant kind of a marketing draft; its autonomy is fixed by the DB CHECK. */
+export const MARKETING_DRAFT_ACTION = Object.freeze({ kind: 'marketing_draft', autonomy: 'requires_approval' } as const);

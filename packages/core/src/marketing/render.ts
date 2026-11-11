@@ -63,7 +63,15 @@ const identity = (brokerage: Prominence, team: Prominence, fine: Prominence): Te
 
 const factsSlots = (p: Prominence, headline: Prominence): TemplateSlot[] => [s('price', headline), s('status', p), s('address', headline), s('facts', p)];
 
-export const TEMPLATES: Readonly<Record<string, Template>> = Object.freeze({
+const deepFreeze = <T>(o: T): T => {
+  if (typeof o === 'object' && o !== null && !Object.isFrozen(o)) {
+    Object.freeze(o);
+    for (const v of Object.values(o)) deepFreeze(v);
+  }
+  return o;
+};
+
+export const TEMPLATES: Readonly<Record<string, Template>> = deepFreeze({
   'website_page.standard': {
     key: 'website_page.standard',
     kind: 'website_page',

@@ -6,6 +6,8 @@ import {
   guardReasons,
   guardResult,
   guardResultMatches,
+  liveRecheck,
+  MARKETING_DRAFT_ACTION,
   needsFairHousingCheck,
   parseGuardResult,
   renderPiece,
@@ -191,5 +193,26 @@ describe('E93: fair housing (R-FH-1, R-FH-2)', () => {
   it('R-FH-1: a hashtag spelled in CamelCase is read as words', () => {
     const g = guard(withProse('social_post', { hashtags: ['#PerfectForYoungFamilies'] }));
     expect(g.hard_count).toBeGreaterThan(0);
+  });
+});
+
+describe('R-MKT-4: identity or pack changes re-render live pieces', () => {
+  it('R-MKT-4: a pack change that the live flyer no longer passes ⇒ unpublish, with the reason', () => {
+    const p = piece('flyer', { templateKey: 'flyer.team_forward' });
+    expect(liveRecheck(p, teamListing(), IDENTITY, LENIENT, FH, SHA).action).toBe('keep');
+    const after = liveRecheck(p, teamListing(), IDENTITY, STRICT, FH, SHA);
+    expect(after.action).toBe('unpublish');
+    expect(after.reasons.join(' ')).toMatch(/at least as prominent/);
+  });
+
+  it('R-MKT-4: an identity change re-renders the new name; removing the licence number unpublishes', () => {
+    const p = piece('website_page');
+    const renamed = liveRecheck(p, teamListing(), { ...IDENTITY, brokerageLegalName: 'Lone Star Homes LLC' }, STRICT, FH, SHA);
+    expect(renamed.action).toBe('keep');
+    expect(liveRecheck(p, teamListing(), { ...IDENTITY, licenseNumber: null }, STRICT, FH, SHA).action).toBe('unpublish');
+  });
+
+  it('R-AST-19: a marketing draft always needs approval', () => {
+    expect(MARKETING_DRAFT_ACTION).toEqual({ kind: 'marketing_draft', autonomy: 'requires_approval' });
   });
 });

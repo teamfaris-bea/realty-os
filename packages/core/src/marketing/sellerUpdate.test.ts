@@ -273,3 +273,22 @@ describe('assembleSellerUpdate: honesty (R-SELL-2, R-SELL-3, R-AST-13)', () => {
     expect(section(r, 'showings').lines[0]?.text).toBe('No showings logged in Realty OS since your last update');
   });
 });
+
+describe('assembleSellerUpdate: where the data stands (R-SELL-2)', () => {
+  it('R-SELL-2: with a showing service connected, the showings statement says so', () => {
+    expect(section(assembleSellerUpdate(base({ showingServiceConnected: true }), PERIOD), 'showings').statement).toBe('Showings from your showing service and those logged in Realty OS.');
+  });
+
+  it('R-SELL-2 R-MLS-2: listings the licence keeps from clients are not shown, and that is said', () => {
+    const sold = mlsListing({ id: lid(903), status: 'pending', listPriceCents: 44_500_000 });
+    const pack = { ...PACK, audiences: { ...PACK.audiences, client: { ...PACK.audiences.client, statuses: ['active' as const] } } };
+    const r = assembleSellerUpdate(base({ mls: { connected: true, lastSyncedAt: at('2026-11-09T05:00:00Z'), pack, candidates: [sold], rule: DEFAULT_COMPETING_RULE } }), PERIOD);
+    const s = section(r, 'competing');
+    expect(s.state).toBe('none_logged');
+    expect(s.lines.map((l) => l.text)).toEqual([
+      'No competing listings to show from the MLS data',
+      'Some competing listings are not shown: the MLS licence does not allow showing them to clients.',
+    ]);
+    expect(r.claims[s.claimOrdinals[0]!]).toMatchObject({ count: 0, evidence: [] });
+  });
+});

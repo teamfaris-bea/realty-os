@@ -52,7 +52,7 @@ function finishText(raw: string): string {
 }
 
 /** Split text into folded word tokens with original offsets and sentence numbers. */
-export function tokenize(original: string): Token[] {
+export function tokenize(original: string, opts: { invisibleBreaks?: boolean } = {}): Token[] {
   const raw: Token[] = [];
   let cur: { text: string; start: number; end: number } | null = null;
   let sentence = 0;
@@ -69,7 +69,11 @@ export function tokenize(original: string): Token[] {
     const at = i;
     i += ch.length;
     const folded = foldChar(ch);
-    if (folded === '') continue; // invisible: neither a word character nor a separator
+    if (folded === '') {
+      // invisible: dropped by default; with `invisibleBreaks` it ends the word (not the sentence)
+      if (opts.invisibleBreaks === true) flush();
+      continue;
+    }
     if (APOSTROPHES.has(ch) && cur !== null) continue; // inside a word ("children's")
     let isWord = true;
     for (const c of folded) if (!(WORD_CHAR_RE.test(c) || c === '@' || c === '$' || c === '+')) isWord = false;

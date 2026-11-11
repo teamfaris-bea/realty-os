@@ -5,7 +5,8 @@
 //   numeralIssues(text) → { shape, text }[]
 //
 // Detection runs on folded text: NFKC (full-width "４５０k" and styled digits become ASCII), invisible
-// characters dropped ("4​50k"), digits of any script (\p{Nd}, e.g. Arabic-Indic) treated as
+// characters dropped ("4\u200B50k"), Arabic thousands/decimal separators read as "," and ".",
+// digits of any script (\p{Nd}, e.g. Arabic-Indic) treated as
 // digits, a letter O between digits read as zero ("45Ok"), and single digits separated by spaces or
 // dots run together ("4 5 0 k").
 //
@@ -35,7 +36,7 @@ export interface NumeralHit {
 
 /** Fold text for numeral detection (see the header). */
 export function foldNumerals(raw: string): string {
-  let t = raw.normalize('NFKC').replace(/\p{Default_Ignorable_Code_Point}/gu, '');
+  let t = raw.normalize('NFKC').replace(/\p{Default_Ignorable_Code_Point}/gu, '').replace(/\u066C/gu, ',').replace(/\u066B/gu, '.');
   // a letter O between or right after digits is a zero ("45Ok", "4,5OO")
   for (let i = 0; i < 8; i++) {
     const next = t.replace(/(\p{Nd}[,.]?)[oO]/gu, '$10');
@@ -43,7 +44,7 @@ export function foldNumerals(raw: string): string {
     t = next;
   }
   // single digits separated by one space/dot/underscore/hyphen, three or more in a row, run together
-  t = t.replace(/(?<!\p{Nd})\p{Nd}(?:[  ._-]\p{Nd}(?!\p{Nd})){2,}/gu, (m) => m.replace(/[^\p{Nd}]/gu, ''));
+  t = t.replace(/(?<!\p{Nd})\p{Nd}(?:[ \u00A0._-]\p{Nd}(?!\p{Nd})){2,}/gu, (m) => m.replace(/[^\p{Nd}]/gu, ''));
   return t;
 }
 
@@ -82,7 +83,7 @@ const PATTERNS: readonly { shape: NumeralShape; re: RegExp }[] = [
   { shape: 'date', re: new RegExp(`${BD}${D}{1,2}(?:st|nd|rd|th)?\\s+(?:of\\s+)?${MONTH}${E}`, 'giu') },
   { shape: 'date', re: new RegExp(`${BD}${D}{1,2}(?:st|nd|rd|th)${E}(?!\\s+(?:floor|story|storey|level)${E})`, 'giu') },
   { shape: 'price', re: new RegExp(`${BD}${D}{1,3}(?:,${D}{3})+(?:\\.${D}+)?${E}`, 'gu') },
-  { shape: 'price', re: new RegExp(`${BD}${D}+(?:[.,]${D}+)?\\s*(?:k|m|mm|mil|million|thousand|grand|dollars?|bucks|usd)${E}`, 'giu') },
+  { shape: 'price', re: new RegExp(`${BD}${D}+(?:[.,]${D}+)?[\\s-]*(?:k|m|mm|mil|million|thousand|grand|dollars?|bucks|usd)${E}`, 'giu') },
   { shape: 'year', re: new RegExp(`${BD}(?:1[6-9]|20)${D}{2}'?s?${E}`, 'gu') },
   { shape: 'year', re: new RegExp(`${B}'${D}{2}s?${E}`, 'gu') },
   { shape: 'price', re: new RegExp(`${BD}${D}{2,3}'?s${E}`, 'gu') },

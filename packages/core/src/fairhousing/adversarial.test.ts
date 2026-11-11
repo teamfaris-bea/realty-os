@@ -22,6 +22,8 @@ describe('adversarial: hiding a hard term (R-FH-1)', () => {
     '𝐀𝐝𝐮𝐥𝐭𝐬 𝐨𝐧𝐥𝐲', // mathematical bold
     'Αdults οnly', // Greek capital alpha, omicron
     'perfect for young fam­ilies', // soft hyphen inside the word
+    'adults\u00ADonly', // soft hyphen as the only word break
+    'no\u200Bkids', // zero-width space as the only word break
     'Perfect for young families', // escaped but ordinary letter
     "Ideal for a growin' family".replace("growin'", 'growing'),
   ];
