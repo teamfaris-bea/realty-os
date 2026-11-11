@@ -29,6 +29,11 @@ function tagIdsOf(def: SmartListDefinition): string[] {
   return [...out];
 }
 
+/** The caller's role in this transaction (app.my_role(): from memberships, never from input). */
+export async function currentRole(tx: Tx): Promise<Role | null> {
+  return (await viewerRole(tx)).role;
+}
+
 async function viewerRole(tx: Tx): Promise<{ userId: string; role: Role | null; now: Instant }> {
   const r = await sql<{ u: string | null; role: Role | null; now: Date }>`SELECT app.user_id()::text AS u, app.my_role() AS role, clock_timestamp() AS now`.execute(tx);
   const row = r.rows[0]!;
@@ -110,8 +115,9 @@ export async function runPage(tx: Tx, def: SmartListDefinition, sort: ListSort, 
   const cursor = cursorText === null ? null : decodeCursor(cursorText, sort);
   if (cursorText !== null && cursor === null) throw new AppError('LIST_CURSOR_INVALID');
   const plan = await planFor(tx, def, { sort });
+  const hint = people.scopeHintFor(await currentRole(tx));
   await limitListStatement(tx);
-  const keys = await people.pageKeys(tx, plan, cursor, limit + 1);
+  const keys = await people.pageKeys(tx, plan, cursor, limit + 1, hint);
   const page = keys.slice(0, limit);
   const last = page[page.length - 1];
   const nextCursor = keys.length > limit && last ? encodeCursor({ sort, key: last.sort_key, id: last.id }) : null;
@@ -121,7 +127,8 @@ export async function runPage(tx: Tx, def: SmartListDefinition, sort: ListSort, 
 
 export async function runCount(tx: Tx, def: SmartListDefinition): Promise<{ count: number; capped: boolean }> {
   const plan = await planFor(tx, def);
+  const hint = people.scopeHintFor(await currentRole(tx));
   await limitListStatement(tx);
-  const n = await people.countUpTo(tx, plan, LIST_COUNT_CAP);
+  const n = await people.countUpTo(tx, plan, LIST_COUNT_CAP, hint);
   return { count: Math.min(n, LIST_COUNT_CAP), capped: n > LIST_COUNT_CAP };
 }

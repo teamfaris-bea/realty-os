@@ -55,14 +55,16 @@ describe('web/lead-admin registration', () => {
   });
 
   it("the lead-admin pages never take an agent's daily phone tabs", () => {
-    for (const role of ROLES) expect(navFor(pagesFor(defaultPageTable(), role)).tabs.map((t) => t.label)).toEqual(['Home', 'Approvals', 'Search', 'Tasks']);
+    for (const role of ROLES) expect(navFor(pagesFor(defaultPageTable(), role)).tabs.map((t) => t.label)).toEqual(['Home', 'People', 'Approvals', 'Search', 'Tasks']); // People: PARITY_PLAN §5
   });
 
   it('desktop groups them: Team (queue, scoreboard, playbooks) and Admin (members … imports)', () => {
     const nav = navFor(pagesFor(defaultPageTable(), 'owner'));
     const group = (s: string) => nav.sidebar.find((g) => g.section === s)?.items.map((i) => i.path) ?? [];
     expect(group('team')).toEqual(['/team', '/team/scoreboard', '/settings/playbooks']);
-    expect(group('admin')).toEqual(['/admin/members', '/admin/routing', '/admin/numbers', '/admin/erasure', '/settings/compliance', '/settings/team', '/imports', '/admin/system']);
+    expect(group('admin')).toEqual(expect.arrayContaining(['/admin/members', '/admin/routing', '/admin/numbers', '/admin/erasure', '/settings/compliance', '/settings/team', '/imports', '/admin/system']));
+    // parity module 61 adds the tag catalog, custom fields and stage labels to Admin
+    expect(group('admin').filter((p) => ['/admin/tags', '/admin/fields', '/admin/stage-labels'].includes(p))).toEqual(['/admin/tags', '/admin/fields', '/admin/stage-labels']);
   });
 });
 

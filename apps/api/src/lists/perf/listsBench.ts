@@ -57,11 +57,11 @@ async function people(b: LoadBench): Promise<Who[]> {
   ];
 }
 
-export async function runListBench(o: { db: string; n: number; log: (s: string) => void; explain?: boolean }): Promise<{ results: Measurement[]; plans: Record<string, unknown>; checks: { name: string; ok: boolean; detail: string }[] }> {
+export async function runListBench(o: { db: string; n: number; log: (s: string) => void; explain?: boolean; only?: RegExp }): Promise<{ results: Measurement[]; plans: Record<string, unknown>; checks: { name: string; ok: boolean; detail: string }[] }> {
   const b = await LoadBench.open({ db: o.db, iterations: o.n, log: o.log });
   const plans: Record<string, unknown> = {};
   try {
-    const defs = benchDefinitions('load-big');
+    const defs = benchDefinitions('load-big').filter((d) => !o.only || o.only.test(d.name));
     for (const who of await people(b)) {
       const s = await b.session(who.label, who.userId, who.role);
       for (const d of defs) {
@@ -124,7 +124,9 @@ if (isMain) {
   const db = argValue(args, 'db') ?? 'realty_load';
   const n = Number(argValue(args, 'n') ?? 30);
   const out = argValue(args, 'out');
-  runListBench({ db, n, log: (s) => console.log(s) })
+  const only = argValue(args, 'only');
+  const explain = argValue(args, 'explain') !== 'off';
+  runListBench({ db, n, log: (s) => console.log(s), explain, ...(only ? { only: new RegExp(only) } : {}) })
     .then((r) => {
       const miss = r.results.filter((m) => m.pass === false);
       console.log(`\n${r.results.length} measurements, ${miss.length} over budget`);

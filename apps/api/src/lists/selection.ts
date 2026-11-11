@@ -13,7 +13,7 @@ import type { Tx } from '@realty/db';
 import { AppError } from '../errors.js';
 import { limitListStatement } from './common.js';
 import * as people from './repos/people.js';
-import { planFor, resolveSource } from './run.js';
+import { currentRole, planFor, resolveSource } from './run.js';
 
 export type Selection = { contactIds: readonly string[] } | { listId: string } | { definition: unknown };
 
@@ -40,8 +40,9 @@ export async function resolveSelection(tx: Tx, sel: Selection, opts: SelectionOp
   const src = await resolveSource(tx, 'listId' in sel ? { listId: sel.listId } : { definition: sel.definition });
   const plan = await planFor(tx, src.definition, { sort: src.sort });
   if (opts.audience === 'send' && plan.audienceProtected) throw new AppError('AUDIENCE_PROTECTED_PROXY', { tagIds: plan.references.protectedTagIds });
+  const hint = people.scopeHintFor(await currentRole(tx));
   await limitListStatement(tx);
-  const ids = await people.allIds(tx, plan, cap + 1);
+  const ids = await people.allIds(tx, plan, cap + 1, hint);
   if (ids.length > cap) throw new AppError('SELECTION_TOO_LARGE', { cap });
   return ids as ContactId[];
 }

@@ -26,8 +26,14 @@ const ACTIVITY: Frag = sql`GREATEST(c.last_human_touch_at, c.last_inbound_at)`;
 
 const CMP: Readonly<Record<NumCmp, Frag>> = { eq: sql`=`, gt: sql`>`, gte: sql`>=`, lt: sql`<`, lte: sql`<=` };
 
+// Every detail-table predicate is a per-person probe by primary key (or the open-task index), written as
+// a scalar sub-query so the planner can never turn it into a hash over the whole table: under RLS each
+// detail row read costs one app.contact_detail_visible() call (the contact_tags / contact_field_values /
+// tasks policies), so a hashed semi-join pays that for every row of the tag or field in the tenant. A
+// probe reads only the person's own rows (index conditions on leakproof uuid equality), so the policy
+// runs at most once per person scanned and only when a row matches.
 const tagExists = (ids: string[]): Frag =>
-  sql`EXISTS (SELECT 1 FROM contact_tags ct WHERE ct.tenant_id = c.tenant_id AND ct.contact_id = c.id AND ct.tag_id = ANY (${ids}::uuid[]))`;
+  sql`COALESCE((SELECT TRUE FROM contact_tags ct WHERE ct.tenant_id = c.tenant_id AND ct.contact_id = c.id AND ct.tag_id = ANY (${ids}::uuid[]) LIMIT 1), FALSE)`;
 /**
  * One person's value of one field, probed by its primary key (tenant_id, contact_id, field_id). A scalar
  * sub-query is never turned into a join, so the planner cannot choose to scan every value of the field:
@@ -38,7 +44,7 @@ const tagExists = (ids: string[]): Frag =>
 const valueExists = (fieldId: string, cond: Frag | null): Frag =>
   sql`COALESCE((SELECT ${cond === null ? sql`TRUE` : cond} FROM contact_field_values v WHERE v.tenant_id = c.tenant_id AND v.contact_id = c.id AND v.field_id = ${fieldId}::uuid), FALSE)`;
 const openTask = (cond: Frag | null): Frag =>
-  sql`EXISTS (SELECT 1 FROM tasks t WHERE t.tenant_id = c.tenant_id AND t.contact_id = c.id AND t.status = 'open'${cond === null ? sql`` : sql` AND ${cond}`})`;
+  sql`COALESCE((SELECT TRUE FROM tasks t WHERE t.tenant_id = c.tenant_id AND t.contact_id = c.id AND t.status = 'open'${cond === null ? sql`` : sql` AND ${cond}`} LIMIT 1), FALSE)`;
 
 /** The one fragment of each plan node. Exhaustive: a new node kind fails to compile here. */
 export function predicateSql(n: ListPredicate): Frag {
@@ -154,9 +160,28 @@ function afterCursor(s: SortSpec, cur: ListCursor): Frag {
   return sql`(${beyond} OR (${s.key} = ${k} AND c.id > ${cur.id}::uuid)${s.nullable ? sql` OR ${s.key} IS NULL` : sql``})`;
 }
 
+/**
+ * For an Agent, ISA or TC the detail-visible people are always a subset of "owned by me, collaborating
+ * on, or on one of my deals" (contacts_select admits pond and offer cards too, but those are not
+ * detail-visible unless collaborating or on a deal; such a viewer has no team or tenant-wide branch).
+ * Saying so explicitly changes no result (it is implied by the two predicates above; the equivalence
+ * test runs every role) but lets the planner start from the owner index instead of walking the
+ * tenant-wide activity index past every other agent's contacts.
+ */
+const BOOK: Frag = sql`(c.owner_user_id = (SELECT app.user_id())
+      OR c.id = ANY ((SELECT app.my_collab_contact_ids())::uuid[])
+      OR c.id = ANY ((SELECT app.my_deal_contact_ids())::uuid[]))`;
+
+/** 'book': the viewer is an Agent, ISA or TC (see BOOK). */
+export type ScopeHint = 'book' | null;
+
+export function scopeHintFor(role: string | null): ScopeHint {
+  return role === 'agent' || role === 'isa' || role === 'tc' ? 'book' : null;
+}
+
 /** The WHERE of a list run (shared by page, count and selection). */
-export function whereSql(plan: ListPlan): Frag {
-  return sql`${LIVE} AND ${DETAIL_VISIBLE} AND ${predicateSql(plan.where)}`;
+export function whereSql(plan: ListPlan, hint: ScopeHint = null): Frag {
+  return sql`${LIVE} AND ${DETAIL_VISIBLE}${hint === 'book' ? sql` AND ${BOOK}` : sql``} AND ${predicateSql(plan.where)}`;
 }
 
 export interface PageKeyRow {
@@ -165,33 +190,33 @@ export interface PageKeyRow {
 }
 
 /** The SQL of one page (exported for the fuzz and EXPLAIN tests). */
-export function pageQuery(plan: ListPlan, cursor: ListCursor | null, limit: number): Frag {
+export function pageQuery(plan: ListPlan, cursor: ListCursor | null, limit: number, hint: ScopeHint = null): Frag {
   const s = SORTS[plan.sort];
   return sql`SELECT c.id, ${s.keyText} AS sort_key FROM contacts c
-     WHERE ${whereSql(plan)}${cursor === null ? sql`` : sql` AND ${afterCursor(s, cursor)}`}
+     WHERE ${whereSql(plan, hint)}${cursor === null ? sql`` : sql` AND ${afterCursor(s, cursor)}`}
      ORDER BY ${orderBy(s)} LIMIT ${limit}`;
 }
 
 /** One page of ids in list order, plus each row's cursor key. */
-export async function pageKeys(tx: Tx, plan: ListPlan, cursor: ListCursor | null, limit: number): Promise<PageKeyRow[]> {
-  const r = await pageQuery(plan, cursor, limit).execute(tx);
+export async function pageKeys(tx: Tx, plan: ListPlan, cursor: ListCursor | null, limit: number, hint: ScopeHint = null): Promise<PageKeyRow[]> {
+  const r = await pageQuery(plan, cursor, limit, hint).execute(tx);
   return r.rows as PageKeyRow[];
 }
 
-export function countQuery(plan: ListPlan, cap: number): Frag {
-  return sql`SELECT count(*)::int AS n FROM (SELECT 1 FROM contacts c WHERE ${whereSql(plan)} LIMIT ${cap + 1}) x`;
+export function countQuery(plan: ListPlan, cap: number, hint: ScopeHint = null): Frag {
+  return sql`SELECT count(*)::int AS n FROM (SELECT 1 FROM contacts c WHERE ${whereSql(plan, hint)} LIMIT ${cap + 1}) x`;
 }
 
 /** Exact count up to `cap`, then cap + 1 (the API says "10,000+"). */
-export async function countUpTo(tx: Tx, plan: ListPlan, cap: number): Promise<number> {
-  const r = await countQuery(plan, cap).execute(tx);
+export async function countUpTo(tx: Tx, plan: ListPlan, cap: number, hint: ScopeHint = null): Promise<number> {
+  const r = await countQuery(plan, cap, hint).execute(tx);
   return (r.rows[0] as { n: number } | undefined)?.n ?? 0;
 }
 
 /** Up to `limit` ids of the list, in list order (resolveSelection). */
-export async function allIds(tx: Tx, plan: ListPlan, limit: number): Promise<string[]> {
+export async function allIds(tx: Tx, plan: ListPlan, limit: number, hint: ScopeHint = null): Promise<string[]> {
   const s = SORTS[plan.sort];
-  const r = await sql<{ id: string }>`SELECT c.id FROM contacts c WHERE ${whereSql(plan)} ORDER BY ${orderBy(s)} LIMIT ${limit}`.execute(tx);
+  const r = await sql<{ id: string }>`SELECT c.id FROM contacts c WHERE ${whereSql(plan, hint)} ORDER BY ${orderBy(s)} LIMIT ${limit}`.execute(tx);
   return r.rows.map((x) => x.id);
 }
 
