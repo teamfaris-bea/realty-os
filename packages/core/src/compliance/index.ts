@@ -20,7 +20,6 @@ export {
   canContact,
   gateInputsRecord,
   optedOut,
-  platformWindowOpen,
 } from './gate.js';
 export * from './fanout.js';
 

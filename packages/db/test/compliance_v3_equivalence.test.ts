@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest';
 import {
   type Channel,
   ChannelUnknownError,
+  OUT_OF_SCOPE_CHANNELS,
   type ConsentStateRow,
   type GateInput,
   type ReasonCode,
@@ -75,8 +76,6 @@ function gateInput(o: Partial<GateInput> = {}): GateInput {
     policy: POLICY,
     personDoNotContact: false,
     connection: null,
-    platformWindow: null,
-    platformCleared: false,
     ...o,
   };
 }
@@ -111,8 +110,13 @@ const CORE_REASON: Record<string, ReasonCode> = {
   RECIPIENT_OPTED_OUT: 'CONSENT_REVOKED',
   RECIPIENT_SUPPRESSED: 'SUPPRESSED',
   PERSON_DO_NOT_CONTACT: 'PERSON_DO_NOT_CONTACT',
-  PLATFORM_NOT_CLEARED: 'PLATFORM_NOT_CLEARED',
 };
+
+/**
+ * Owner scope change D2: Messenger/Instagram DMs are out of scope. Their rows stay in the shared table (they prove
+ * the DB guard fails closed); core has no such channel and refuses them outright, so no equivalence is claimed.
+ */
+const outOfScope = (c: OptOutCase): boolean => OUT_OF_SCOPE_CHANNELS.includes(c.channel);
 
 function rows(addressHmac: string, r: RevokeFact): ConsentStateRow[] {
   return (r.purpose === 'all' ? (['informational', 'marketing'] as const) : [r.purpose]).map((purpose) => ({
@@ -147,22 +151,21 @@ function caseInput(c: OptOutCase): GateInput {
     ...(ch === 'voice' ? { rendered: undefined } : {}),
     personDoNotContact: c.personDoNotContact || c.mergedDuplicateDoNotContact,
     connection: { status: 'connected' },
-    platformWindow: { openUntil: instant(NOW + 3_600_000) },
-    platformCleared: c.platformCleared ?? false,
   });
 }
 
-describe('R-CHAN-5 F17 equivalence: canContact denies every case the DB guard denies (shared opt_out_cases.json)', () => {
+describe('R-CHAN-5 F17 equivalence: canContact denies every in-scope case the DB guard denies (shared opt_out_cases.json; D2)', () => {
   it('reads the same table the DB guard test runs (every channel of the guard map, a call and an unknown channel)', () => {
     expect(cases.length).toBeGreaterThanOrEqual(46);
     expect(new Set(cases.map((c) => c.channel))).toEqual(new Set(['sms', 'mms', 'email', 'messenger', 'instagram', 'web_chat', 'voice', 'fax']));
-    for (const c of cases) if (c.expect !== 'allow' && c.expect !== 'CHANNEL_UNKNOWN') expect(CORE_REASON[c.expect], c.id).toBeDefined();
+    for (const c of cases) if (c.expect !== 'allow' && c.expect !== 'CHANNEL_UNKNOWN' && !outOfScope(c)) expect(CORE_REASON[c.expect], c.id).toBeDefined();
   });
 
   for (const c of cases) {
     it(`${c.id}: ${c.why} ⇒ DB ${c.expect}`, () => {
-      if (c.expect === 'CHANNEL_UNKNOWN') {
-        // refused, never mapped: the message channel map throws, and so does the gate itself
+      if (c.expect === 'CHANNEL_UNKNOWN' || outOfScope(c)) {
+        // refused, never mapped (an unknown channel, or a DM channel out of scope under D2): the message channel map
+        // throws, and so does the gate itself
         expect(() => gateChannelForMessage(c.channel)).toThrow(ChannelUnknownError);
         expect(() => canContact(gateInput({ recipient: { kind: 'contact', addressHmac: H1, channel: c.channel as Channel } }))).toThrow(ChannelUnknownError);
         return;
@@ -178,10 +181,7 @@ describe('R-CHAN-5 F17 equivalence: canContact denies every case the DB guard de
     });
   }
 
-  it('core denies more, never less: with the Meta window closed or the Page disconnected, every DM case is denied', () => {
-    for (const c of cases.filter((x) => x.channel === 'messenger' || x.channel === 'instagram')) {
-      expect(canContact({ ...caseInput(c), platformWindow: { openUntil: NOW } }).outcome, c.id).toBe('deny');
-      expect(canContact({ ...caseInput(c), connection: null }).outcome, c.id).toBe('deny');
-    }
+  it('core denies more, never less: with the chat widget disconnected, every web-chat case is denied', () => {
+    for (const c of cases.filter((x) => x.channel === 'web_chat')) expect(canContact({ ...caseInput(c), connection: null }).outcome, c.id).toBe('deny');
   });
 });

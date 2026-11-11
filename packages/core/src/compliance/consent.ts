@@ -44,8 +44,8 @@ import {
   levelRank,
 } from './types.js';
 
-/** Channels with a resubscribe keyword (START): the 0018 `consent_events_resubscribe_keyword` CHECK. */
-export const RESUBSCRIBE_CHANNELS: ReadonlySet<Channel> = new Set<Channel>(['sms', 'messenger', 'instagram']);
+/** Channels with a resubscribe keyword (START): texts only (0018's CHECK also lists the out-of-scope Meta channels, D2). */
+export const RESUBSCRIBE_CHANNELS: ReadonlySet<Channel> = new Set<Channel>(['sms']);
 
 /** The `consent_events.evidence` key that marks an R-CONSENT-8 "not an opt-out" review. */
 export const VOIDS_REVOKE_EVIDENCE_KEY = 'voids_revoke_event_id';

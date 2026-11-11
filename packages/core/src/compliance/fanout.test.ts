@@ -1,5 +1,6 @@
-// optOutFanout and the DM side of inbound classification (core-compliance/3.0.0; R-CHAN-3, R-CHAN-4, R-CONSENT-7,
-// D-OPTOUT-LANG; E73, E74, E76, E155). Every spec it writes must pass the consent_events CHECK mirror.
+// optOutFanout and the chat side of inbound classification (core-compliance/3.0.0; R-CHAN-3, R-CONSENT-7, D-OPTOUT-LANG;
+// E155). Messenger/Instagram DMs are out of scope (owner scope change D2). Every spec written must pass the
+// consent_events CHECK mirror.
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { sequentialIds } from '../foundation/index.js';
@@ -15,38 +16,33 @@ const H5 = '5'.repeat(64);
 const phone: PointFacts = { kind: 'phone', hmac: H1, hint: '•••4821' };
 const phone2: PointFacts = { kind: 'phone', hmac: H2, hint: '•••0001' };
 const mail: PointFacts = { kind: 'email', hmac: H3, hint: 'j•••@x.com' };
-const page1: PointFacts = { kind: 'messenger', hmac: H4, hint: 'Messenger' };
-const page2: PointFacts = { kind: 'messenger', hmac: H5, hint: 'Messenger' };
-const ig: PointFacts = { kind: 'instagram', hmac: '6'.repeat(64), hint: 'Instagram' };
-const all = [phone, phone2, mail, page1, page2, ig];
+const chat1: PointFacts = { kind: 'web_chat', hmac: H4, hint: 'Website chat' };
+const chat2: PointFacts = { kind: 'web_chat', hmac: H5, hint: 'Website chat' };
+const all = [phone, phone2, mail, chat1, chat2];
 const ctx = (o: Partial<Parameters<typeof optOutFanout>[3]> = {}) => ({ occurredAt: NOW, contactId: 'c-1', messageId: 'm-1', actor: { kind: 'system' } as const, ids: sequentialIds(), ...o });
 const pairs = (specs: ReturnType<typeof optOutFanout>) => specs.map((s) => [s.addressHmac, s.channel]);
 
 describe('optOutFanout vectors', () => {
-  it('R-CHAN-4 E76 a Messenger keyword revokes Messenger on every Page identity of the contact, nothing else', () => {
-    const s = optOutFanout(all, 'keyword', 'messenger', ctx({ matched: 'STOP' }));
-    expect(pairs(s)).toEqual([[H4, 'messenger'], [H5, 'messenger']]);
+  it('R-CONSENT-7 an SMS keyword revokes texts on every phone; an email keyword only the address that sent it', () => {
+    const s = optOutFanout(all, 'keyword', 'sms', ctx({ matched: 'STOP' }));
+    expect(pairs(s)).toEqual([[H1, 'sms'], [H2, 'sms']]);
     expect(s.every((e) => e.source === 'inbound_keyword' && !e.needsReview && e.purpose === 'all' && e.eventType === 'revoke')).toBe(true);
     expect(s[0]!.evidence).toEqual({ matched: 'STOP' });
-  });
-  it('R-CONSENT-7 an SMS keyword revokes texts on every phone; an email keyword only the address that sent it', () => {
-    expect(pairs(optOutFanout(all, 'keyword', 'sms', ctx()))).toEqual([[H1, 'sms'], [H2, 'sms']]);
     expect(pairs(optOutFanout(all, 'keyword', 'email', ctx({ inboundHmac: H3 })))).toEqual([[H3, 'email']]);
     expect(optOutFanout(all, 'keyword', 'email', ctx())).toEqual([]);
   });
-  it('R-CHAN-3 E74 opt-out language revokes every channel on every point, needs_review, written by the system', () => {
-    const s = optOutFanout(all, 'language', 'messenger', ctx());
-    expect(pairs(s)).toEqual([[H1, 'sms'], [H1, 'voice'], [H2, 'sms'], [H2, 'voice'], [H3, 'email'], [H4, 'messenger'], [H5, 'messenger'], [ig.hmac, 'instagram']]);
+  it('R-CHAN-3 opt-out language revokes every channel on every point, needs_review, written by the system', () => {
+    const s = optOutFanout(all, 'language', 'web_chat', ctx());
+    expect(pairs(s)).toEqual([[H1, 'sms'], [H1, 'voice'], [H2, 'sms'], [H2, 'voice'], [H3, 'email'], [H4, 'web_chat'], [H5, 'web_chat']]);
     expect(s.every((e) => e.source === 'inbound_language' && e.needsReview && e.actor.kind === 'system')).toBe(true);
   });
   it('R-CHAN-3 an agent-recorded do-not-contact fans out the same, as that user, with no review', () => {
     const s = optOutFanout(all, 'agent_dnc', 'sms', ctx({ actor: { kind: 'user', userId: 'u-1' }, messageId: null }));
-    expect(s).toHaveLength(8);
+    expect(s).toHaveLength(7);
     expect(s.every((e) => e.source === 'agent_revoke' && !e.needsReview && e.actor.kind === 'user')).toBe(true);
   });
   it('E155 a chat keyword is language (chat has no keyword protocol); from chat the points are the session contact only', () => {
-    const chat: PointFacts = { kind: 'web_chat', hmac: H5, hint: 'Website chat' };
-    const s = optOutFanout([chat], 'keyword', 'web_chat', ctx());
+    const s = optOutFanout([chat2], 'keyword', 'web_chat', ctx());
     expect(pairs(s)).toEqual([[H5, 'web_chat']]);
     expect(s[0]!.needsReview).toBe(true);
   });
@@ -69,55 +65,43 @@ describe('optOutFanout vectors', () => {
   });
 });
 
-describe('classifyInbound per channel (R-CHAN-4, R-CHAN-3, D-OPTOUT-LANG)', () => {
-  it('STOP on Messenger/Instagram is the channel keyword; on chat it is person-scoped language', () => {
-    expect(classifyInbound('STOP', K, 'messenger')).toEqual({ kind: 'stop', matched: 'STOP', needsReview: false, scope: 'channel' });
-    expect(classifyInbound('stop', K, 'instagram')).toMatchObject({ kind: 'stop', scope: 'channel' });
+describe('classifyInbound on website chat (R-CHAN-3, D-OPTOUT-LANG)', () => {
+  it('E155 STOP on chat is person-scoped language; texts keep the keyword', () => {
     expect(classifyInbound('STOP', K, 'web_chat')).toEqual({ kind: 'opt_out_language', matched: 'stop', needsReview: true, scope: 'person' });
+    expect(classifyInbound('STOP', K, 'sms')).toEqual({ kind: 'stop', matched: 'STOP', needsReview: false, scope: 'channel' });
+    expect(classifyInbound('Please stop contacting me', K, 'web_chat')).toMatchObject({ kind: 'opt_out_language', scope: 'person', needsReview: true });
   });
-  it('E74 "Please stop contacting me" on Messenger is person-scoped language', () => {
-    expect(classifyInbound('Please stop contacting me', K, 'messenger')).toMatchObject({ kind: 'opt_out_language', scope: 'person', needsReview: true });
-  });
-  it('START resubscribes on texts and Meta DMs, never on chat; HELP is ignored on chat', () => {
-    expect(classifyInbound('START', K, 'messenger').kind).toBe('start');
+  it('START and HELP mean nothing on chat; ordinary chat is not an opt-out', () => {
     expect(classifyInbound('START', K, 'web_chat').kind).toBe('none');
     expect(classifyInbound('HELP', K, 'web_chat').kind).toBe('none');
-    expect(classifyInbound('Stop by at 5?', K, 'messenger').kind).toBe('none');
+    expect(classifyInbound('Stop by at 5?', K, 'web_chat').kind).toBe('none');
   });
 });
 
-describe('planInboundEffects on the new channels', () => {
-  const base = (channel: Channel, body: string) =>
+describe('planInboundEffects on website chat', () => {
+  const run = (body: string) =>
     planInboundEffects({
-      classification: classifyInbound(body, K, channel),
-      channel,
-      address: page1,
-      otherPhones: [phone, phone2],
-      otherEmails: [mail],
-      otherPointsOfKind: [page2],
+      classification: classifyInbound(body, K, 'web_chat'),
+      channel: 'web_chat',
+      address: chat1,
+      otherPhones: [],
+      otherEmails: [],
+      otherPointsOfKind: [chat2],
       occurredAt: NOW,
-      contactId: 'c-1',
+      contactId: 'c-session',
       messageId: 'm-1',
       policy: { optOutConfirmationSender: 'provider' },
       ids: sequentialIds(),
     });
-  it('R-CHAN-4 a Messenger STOP revokes Messenger on both Pages, cancels queued DMs to both, and sends one confirmation', () => {
-    const fx = base('messenger', 'STOP');
-    expect(fx.consentEvents.map((e) => [e.addressHmac, e.channel])).toEqual([[H4, 'messenger'], [H5, 'messenger']]);
-    expect(fx.cancelQueued).toEqual([{ channel: 'messenger', hmac: H4 }, { channel: 'messenger', hmac: H5 }]);
-    expect(fx.reply).toBe('opt_out_confirmation');
-    expect(fx.personDoNotContact).toBe(false);
-    for (const e of fx.consentEvents) expect(validateConsentEventSpec(e)).toEqual([]);
-  });
-  it('E73 an earlier SMS STOP is untouched by a Messenger START (separate channel)', () => {
-    const fx = base('messenger', 'START');
-    expect(fx.consentEvents.map((e) => [e.addressHmac, e.channel, e.eventType])).toEqual([[H4, 'messenger', 'resubscribe']]);
-    for (const e of fx.consentEvents) expect(validateConsentEventSpec(e)).toEqual([]);
-  });
-  it('E74 opt-out language on Messenger flags the person-level do-not-contact and revokes Messenger on both Pages', () => {
-    const fx = base('messenger', 'please stop contacting me');
+  it('E155 "stop contacting me" in chat flags the person-level do-not-contact of the session contact and revokes chat on its identities', () => {
+    const fx = run('stop contacting me');
     expect(fx.personDoNotContact).toBe(true);
-    expect(fx.consentEvents.filter((e) => e.channel === 'messenger').map((e) => e.addressHmac)).toEqual([H4, H5]);
+    expect(fx.consentEvents.filter((e) => e.channel === 'web_chat').map((e) => e.addressHmac)).toEqual([H4, H5]);
+    expect(fx.cancelQueued).toEqual(expect.arrayContaining([{ channel: 'web_chat', hmac: H4 }]));
+    expect(fx.reply).toBe('none');
     for (const e of fx.consentEvents) expect(validateConsentEventSpec(e)).toEqual([]);
+  });
+  it('a plain chat message changes nothing', () => {
+    expect(run('Is the house still available?')).toMatchObject({ consentEvents: [], personDoNotContact: false, cancelQueued: [] });
   });
 });

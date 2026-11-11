@@ -177,7 +177,7 @@ export function connectionTestLines(categories: Record<Category, number | null>,
   return lines;
 }
 
-const CHANNEL_WORD: Record<Channel, string> = { sms: 'texts', voice: 'calls', email: 'email', messenger: 'Messenger', instagram: 'Instagram', web_chat: 'website chat' };
+const CHANNEL_WORD: Record<Channel, string> = { sms: 'texts', voice: 'calls', email: 'email', web_chat: 'website chat' };
 
 /**
  * E39: the review-list note for a record whose address is already opted out. Importing never lifts

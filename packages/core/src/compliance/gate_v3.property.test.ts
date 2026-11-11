@@ -1,6 +1,5 @@
 // core-compliance/3.0.0 property tests (R-GATE-5, R-CHAN-5): determinism and monotonic denial over EVERY input,
-// the new ones included (person DNC, connection, Meta window, platform clearance, fair-housing matches), on every
-// channel. "Adding a channel never relaxes a deny": every opt-out fact that blocks a text blocks each new channel too.
+// the new ones included (person DNC, chat connection, fair-housing matches), on every channel (D2: no Meta DMs). "Adding a channel never relaxes a deny": every opt-out fact that blocks a text blocks website chat too.
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { type Instant, instant } from '../foundation/index.js';
@@ -22,9 +21,6 @@ const arb: fc.Arbitrary<GateInput> = fc
     paused: fc.boolean(),
     dnc: fc.boolean(),
     conn: fc.constantFrom('connected', 'degraded', 'other', null) as fc.Arbitrary<'connected' | 'degraded' | 'other' | null>,
-    window: fc.option(fc.integer({ min: -7_200_000, max: 7_200_000 }), { nil: undefined }),
-    windowNull: fc.boolean(),
-    cleared: fc.boolean(),
     fh: fc.integer({ min: 0, max: 2 }),
     keyword: fc.boolean(),
   })
@@ -47,8 +43,6 @@ const arb: fc.Arbitrary<GateInput> = fc
       automationPausedAt: r.paused ? T(-1) : null,
       personDoNotContact: r.dnc,
       connection: r.conn === null ? null : { status: r.conn },
-      platformWindow: r.window === undefined ? null : { openUntil: r.windowNull ? null : T(r.window) },
-      platformCleared: r.cleared,
     });
   });
 
@@ -57,9 +51,6 @@ const MUTATIONS: Record<string, Mut> = {
   personDnc: (i) => ({ ...i, personDoNotContact: true }),
   disconnect: (i) => ({ ...i, connection: null }),
   degradeToOther: (i) => ({ ...i, connection: { status: 'other' } }),
-  closeWindow: (i) => ({ ...i, platformWindow: { openUntil: i.now } }),
-  forgetWindow: (i) => ({ ...i, platformWindow: null }),
-  unclear: (i) => ({ ...i, platformCleared: false }),
   fairHousing: (i) => (i.rendered ? { ...i, rendered: { ...i.rendered, fairHousingHardMatches: (i.rendered.fairHousingHardMatches ?? 0) + 1 } } : i),
   revokeOwn: (i) => ({ ...i, consent: [...i.consent, revokedRow({ channel: i.recipient.channel, purpose: i.purpose })] }),
   revokeOther: (i) => ({ ...i, consent: [...i.consent, revokedRow({ channel: i.recipient.channel, purpose: i.purpose, addressHmac: H2 })] }),
@@ -98,20 +89,16 @@ describe('core-compliance/3.0.0 properties over every channel and every new inpu
     fc.assert(
       fc.property(arb, (i) => {
         const ch = i.recipient.channel;
-        const exempt = i.initiator === 'system' && (i.category === 'opt_out_confirmation' || i.category === 'help_reply') && i.purpose === 'informational' && (ch === 'sms' || ch === 'messenger' || ch === 'instagram') && (i.keywordSenders ?? []).includes(H1);
+        const exempt = i.initiator === 'system' && (i.category === 'opt_out_confirmation' || i.category === 'help_reply') && i.purpose === 'informational' && ch === 'sms' && (i.keywordSenders ?? []).includes(H1);
         if (!exempt) expect(canContact(MUTATIONS.personDnc!(i)).reasons).toContain('PERSON_DO_NOT_CONTACT');
         if (isPlatformChannel(ch)) expect(canContact(MUTATIONS.disconnect!(i)).reasons).toContain('CHANNEL_NOT_CONNECTED');
-        if (ch === 'messenger' || ch === 'instagram') {
-          expect(canContact(MUTATIONS.closeWindow!(i)).reasons).toContain('PLATFORM_WINDOW_CLOSED');
-          expect(canContact(MUTATIONS.unclear!(i)).reasons).toContain('PLATFORM_NOT_CLEARED');
-        }
         expect(canContact(MUTATIONS.suppressAll!(i)).outcome).toBe('deny');
       }),
       { numRuns: 1000 },
     );
   });
 
-  it('adding a channel never relaxes a deny: every opt-out fact that blocks a text blocks each new channel', () => {
+  it('adding a channel never relaxes a deny: every opt-out fact that blocks a text blocks website chat', () => {
     const facts: Mut[] = [MUTATIONS.personDnc!, MUTATIONS.revokeOwn!, MUTATIONS.revokeOther!, MUTATIONS.suppressAll!, MUTATIONS.suppressChannel!];
     fc.assert(
       fc.property(arb, fc.constantFrom(...facts), (i, fact) => {

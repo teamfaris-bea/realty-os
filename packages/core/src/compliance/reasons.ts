@@ -29,11 +29,10 @@ export const REASON_CODES = [
   'SUPPRESSED',
   'PAYMENT_INSTRUCTIONS',
   'AUTOMATION_PAUSED',
-  // core-compliance/3.0.0 (R-CHAN-2, R-CHAN-5, R-INBOX-6, R-INT-6)
+  // core-compliance/3.0.0 (R-CHAN-2, R-CHAN-5, R-INT-2). The Meta window and platform:meta clearance
+  // codes of the plan are not added: Messenger/Instagram DMs are out of scope (D2).
   'PERSON_DO_NOT_CONTACT',
   'CHANNEL_NOT_CONNECTED',
-  'PLATFORM_WINDOW_CLOSED',
-  'PLATFORM_NOT_CLEARED',
   'FAIR_HOUSING_TERMS',
 ] as const;
 
@@ -42,26 +41,19 @@ export type ReasonCode = (typeof REASON_CODES)[number];
 /** The opt-out reasons: never overridable by anyone (R-CONSENT-10). */
 export const OPT_OUT_REASONS: ReadonlySet<ReasonCode> = new Set<ReasonCode>(['CONSENT_REVOKED', 'SUPPRESSED', 'PERSON_DO_NOT_CONTACT']);
 
-/**
- * Operational platform rules (core-compliance/3.0.0): not consent, D1 stands. They block until the
- * platform state changes (a connection reconnects, the person writes again, counsel reviews the pack).
- */
-export const PLATFORM_REASONS: ReadonlySet<ReasonCode> = new Set<ReasonCode>(['CHANNEL_NOT_CONNECTED', 'PLATFORM_WINDOW_CLOSED', 'PLATFORM_NOT_CLEARED']);
+/** Operational platform rules (core-compliance/3.0.0): not consent, D1 stands. Blocks until the chat widget reconnects. */
+export const PLATFORM_REASONS: ReadonlySet<ReasonCode> = new Set<ReasonCode>(['CHANNEL_NOT_CONNECTED']);
 
 const CHANNEL_NOUN: Record<Channel, string> = {
   sms: 'texts',
   voice: 'calls',
   email: 'email',
-  messenger: 'Messenger messages',
-  instagram: 'Instagram messages',
   web_chat: 'chat messages',
 };
 const CHANNEL_NAME: Record<Channel, string> = {
   sms: 'Texting',
   voice: 'Calling',
   email: 'Email',
-  messenger: 'Messenger',
-  instagram: 'Instagram',
   web_chat: 'Website chat',
 };
 
@@ -110,10 +102,6 @@ export function reasonSentence(r: ReasonCode, channel: Channel): string {
       return 'This person asked not to be contacted on any channel';
     case 'CHANNEL_NOT_CONNECTED':
       return `${CHANNEL_NAME[channel]} isn't connected right now`;
-    case 'PLATFORM_WINDOW_CLOSED':
-      return `${CHANNEL_NAME[channel]} only allows replies for a while after the person's last message; use another channel`;
-    case 'PLATFORM_NOT_CLEARED':
-      return `Sending on ${CHANNEL_NAME[channel]} is off until counsel reviews it`;
     case 'FAIR_HOUSING_TERMS':
       return 'Contains wording that fair-housing rules do not allow; edit it first';
   }

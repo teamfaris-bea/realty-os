@@ -1,8 +1,10 @@
 // R-GATE-13 architecture test (module 19, core/compliance-v3; E80): core's Channel union, the `messages.channel` CHECK,
 // the consent/suppression channel CHECKs, the point-kind CHECKs and the explicit map inside `app.messages_dispatch_guard`
 // are the same lists. They are read from a freshly migrated database's catalog (whatever migration last defined them),
-// so adding a channel in one place and not the others fails here.
-import { CHANNELS, MESSAGE_CHANNEL_MAP, MESSAGE_CHANNELS, PLATFORM_CHANNELS, POINT_KINDS, channelsOfKind, pointKindOf } from '@realty/core/compliance';
+// so adding a channel in one place and not the others fails here. Owner scope change D2: 0018 still lists messenger and
+// instagram (a later migration narrows them); core deliberately does not, so every comparison is "core = DB minus exactly
+// OUT_OF_SCOPE_CHANNELS", and core refusing those values outright is asserted by the equivalence test.
+import { CHANNELS, MESSAGE_CHANNEL_MAP, MESSAGE_CHANNELS, OUT_OF_SCOPE_CHANNELS, PLATFORM_CHANNELS, POINT_KINDS, channelsOfKind, pointKindOf } from '@realty/core/compliance';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestDb, type TestDb } from '../src/testing/index.js';
@@ -27,8 +29,12 @@ async function checkValues(table: string, constraint: string): Promise<string[]>
     [table, constraint],
   );
   expect(r.rows, `${table}.${constraint}`).toHaveLength(1);
-  return quoted(r.rows[0]!.def).sort();
+  return quoted(r.rows[0]!.def).filter((v) => !OUT_OF_SCOPE_CHANNELS.includes(v)).sort();
 }
+
+it('D2: the only DB channel values core leaves out are Messenger and Instagram', () => {
+  expect([...OUT_OF_SCOPE_CHANNELS].sort()).toEqual(['instagram', 'messenger']);
+});
 
 describe('R-GATE-13 E80 the channel lists are equal (architecture test)', () => {
   it('core Channel union = the consent_events / consent_state channel CHECKs; + all = the suppressions CHECK', async () => {
@@ -43,6 +49,7 @@ describe('R-GATE-13 E80 the channel lists are equal (architecture test)', () => 
     const body = r.rows[0]!.src;
     const map: Record<string, string> = {};
     for (const m of body.matchAll(/WHEN '([a-z_]+)'\s+THEN ch := '([a-z_]+)';\s*pk := '([a-z_]+)';/g)) {
+      if (OUT_OF_SCOPE_CHANNELS.includes(m[1]!)) continue;
       map[m[1]!] = m[2]!;
       expect(m[3], `point kind of ${m[1]}`).toBe(pointKindOf(m[2] as never));
     }

@@ -365,8 +365,6 @@ export function assistantGateInput(o: Partial<GateInput> = {}): GateInput {
     policy,
     personDoNotContact: false,
     connection: null,
-    platformWindow: null,
-    platformCleared: false,
     ...o,
   };
 }

@@ -91,13 +91,10 @@ async function gateContext(tx: Tx, m: OutboundIntent, now: Instant): Promise<{ i
     tenant: { suspended: tenant.suspended, brokerageNamePresent: tenant.brokerageLegalName.trim() !== '', postalAddressPresent: (tenant.postalAddress ?? '').trim() !== '' },
     policy,
     ...(ch === 'voice' ? {} : { rendered: renderedFacts(m.body ?? '', { channel: ch, brokerageLegalName: tenant.brokerageLegalName }) }),
-    // core-compliance/3.0.0: the person-level do-not-contact (R-CHAN-2). The DM/chat facts (connection,
-    // window, platform:meta) are wired by the channel send paths of module 22; until then a DM is refused
-    // here (CHANNEL_NOT_CONNECTED, PLATFORM_*), failing closed.
+    // core-compliance/3.0.0: the person-level do-not-contact (R-CHAN-2). The chat widget connection is
+    // wired by module 22's chat send path; until then a chat reply is refused here (CHANNEL_NOT_CONNECTED).
     personDoNotContact: m.contactId && !toUser ? await g.personDoNotContact(tx, m.contactId) : false,
     connection: null,
-    platformWindow: null,
-    platformCleared: false,
   };
   return { input, policy, tenant };
 }

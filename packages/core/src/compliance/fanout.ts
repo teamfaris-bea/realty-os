@@ -1,12 +1,12 @@
-// Opt-out fan-out (core-compliance/3.0.0; R-CHAN-3, R-CHAN-4, R-CONSENT-7, D-OPTOUT-LANG; E74, E76, E155).
+// Opt-out fan-out (core-compliance/3.0.0; R-CHAN-3, R-CONSENT-7, D-OPTOUT-LANG; E155). Messenger/Instagram
+// DMs are out of scope (owner scope change D2), so R-CHAN-4's DM keyword rule and E74/E76 do not apply here.
 //
 // One function turns "this person opted out" into the consent events that make every dispatch path
 // refuse, address-keyed exactly as Phase 1 (R-CONSENT-1, R-CHAN-1):
 //
 //   keyword    an exact STOP on a channel revokes that channel, all purposes, on every point of the
-//              channel's kind on the contact (texts: every phone; Messenger/Instagram: every Page's
-//              identity, E76). Email keeps Phase 1 behaviour (the address itself). A "keyword" on web
-//              chat is treated as language (chat has no keyword protocol).
+//              channel's kind on the contact (texts: every phone). Email keeps Phase 1 behaviour (the
+//              address itself). A "keyword" on web chat is treated as language (no keyword protocol).
 //   language   opt-out language on any channel ("please stop contacting me") revokes EVERY channel on
 //              EVERY point of the contact, needs_review; the caller also records the person-level
 //              do-not-contact (contacts.do_not_contact_at). From web chat the points are the session's

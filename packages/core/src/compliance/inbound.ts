@@ -27,7 +27,7 @@ export interface InboundClassification {
   /**
    * core-compliance/3.0.0: what the opt-out reaches. `person` (opt-out language on any channel,
    * D-OPTOUT-LANG, R-CHAN-3) sets the person-level do-not-contact; `channel` (an exact keyword) revokes
-   * that channel on the contact's points of its kind (R-CONSENT-7, R-CHAN-4); `address` (wrong number)
+   * that channel on the contact's points of its kind (R-CONSENT-7); `address` (wrong number)
    * the sending address only. Absent for START/HELP/none.
    */
   scope?: 'person' | 'channel' | 'address';
@@ -230,7 +230,7 @@ export function planInboundEffects(i: {
   otherPhones: readonly InboundAddress[];
   /** The contact's other email addresses: opt-out language naming email ("do not email me") reaches them. */
   otherEmails?: readonly InboundAddress[];
-  /** Messenger/Instagram/web chat: the contact's other identities of the inbound channel's kind (R-CHAN-4). */
+  /** Web chat: the contact's other chat identities (opt-out language reaches them). */
   otherPointsOfKind?: readonly InboundAddress[];
   occurredAt: Instant;
   contactId: string | null;
@@ -289,14 +289,6 @@ export function planInboundEffects(i: {
       if (i.channel === 'sms') {
         revokeSms('inbound_keyword', false);
         fx.reply = platform ? 'opt_out_confirmation' : 'none';
-      } else if (i.channel === 'messenger' || i.channel === 'instagram') {
-        // R-CHAN-4: that channel on every identity of that kind on the contact (every Page); no carrier
-        // answers a DM keyword, so the platform sends the one confirmation (the API dedupes within 24 h).
-        for (const a of allOfKind(i.channel)) {
-          fx.consentEvents.push(event(a, i.channel, 'revoke', 'inbound_keyword', false));
-          fx.cancelQueued.push({ channel: i.channel, hmac: a.hmac });
-        }
-        fx.reply = 'opt_out_confirmation';
       } else {
         fx.consentEvents.push(event(i.address, i.channel, 'revoke', 'inbound_keyword', false));
         fx.cancelQueued.push({ channel: i.channel, hmac: i.address.hmac });
@@ -318,7 +310,6 @@ export function planInboundEffects(i: {
       break;
     case 'help':
       if (i.channel === 'sms' && platform) fx.reply = 'help_reply';
-      else if (i.channel === 'messenger' || i.channel === 'instagram') fx.reply = 'help_reply';
       break;
     case 'wrong_number':
       fx.notifyOwner = true;

@@ -97,8 +97,6 @@ export function gateInput(o: Partial<GateInput> = {}): GateInput {
     policy: policy(),
     personDoNotContact: false,
     connection: null,
-    platformWindow: null,
-    platformCleared: false,
     ...o,
   };
 }
@@ -173,15 +171,13 @@ export function zonesOf(...z: IanaZone[]): { zones: IanaZone[]; source: 'explici
   return { zones: z, source: 'explicit' };
 }
 
-/** A clean human informational Messenger reply inside the window, through a connected Page, platform:meta cleared. */
-export function dmInput(channel: 'messenger' | 'instagram' | 'web_chat' = 'messenger', o: Partial<GateInput> = {}): GateInput {
+/** A clean human informational website-chat reply through a connected widget. */
+export function dmInput(channel: 'web_chat' = 'web_chat', o: Partial<GateInput> = {}): GateInput {
   return gateInput({
     recipient: { kind: 'contact', addressHmac: H1, channel },
     consent: [],
     sender: null,
     connection: { status: 'connected' },
-    platformWindow: { openUntil: (NOW + 3_600_000) as Instant },
-    platformCleared: true,
     ...o,
   });
 }
