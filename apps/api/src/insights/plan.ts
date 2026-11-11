@@ -201,13 +201,15 @@ async function renderFilter(tx: Tx, actor: UserActor, items: readonly PlanItem[]
 
 export async function getPlan(tx: Tx, actor: UserActor, week: string) {
   const row = await planRow(tx, actor, week);
-  if (!row) return { week, exists: false as const };
+  const zone = (await tenantZone(tx)) as string;
+  if (!row) return { week, zone, exists: false as const };
   const all = row.payload.items;
   const f = await renderFilter(tx, actor, all);
   const kept = new Set(dropInvisible(all, f.visible, f.dnc));
   const accepted = row.status === 'executed' ? (row.edited_payload ?? {}) : null;
   return {
     week,
+    zone,
     exists: true as const,
     basis: row.payload.basis,
     note: row.payload.note,

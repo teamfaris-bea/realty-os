@@ -113,7 +113,7 @@ test('(b) R-PLAN-2: the Owner sets a goal for an agent and sees its pace', async
   await tap(page, page.getByRole('button', { name: 'Set goal' }), n);
   expect(n.taps - before).toBe(1);
   await expect(page.getByText(/^2 of 4 closings; [\d.]+ expected by now; 2 to go in \d+ days?$/)).toBeVisible();
-  await expect(page.getByText(/Counted from the scoreboard/)).toBeVisible();
+  await expect(page.getByText(/Counted from this member.s deals that closed/)).toBeVisible();
   await layoutChecks(page);
 });
 

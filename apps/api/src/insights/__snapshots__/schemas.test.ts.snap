@@ -835,9 +835,13 @@ exports[`R-OWNER-4 R-AST-13 R-TEN-3 response schemas > R-OWNER-4 R-AST-13 R-TEN-
         "pattern": "^\\d{4}-W(0[1-9]|[1-4]\\d|5[0-3])$",
         "type": "string",
       },
+      "zone": {
+        "type": "string",
+      },
     },
     "required": [
       "week",
+      "zone",
       "exists",
     ],
     "type": "object",

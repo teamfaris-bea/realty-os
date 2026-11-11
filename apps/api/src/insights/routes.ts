@@ -22,7 +22,7 @@ import { AppError } from '../errors.js';
 import { authorize } from '../rbac.js';
 import type { RouteModule } from '../routes.js';
 import { addMonthsYm, insightsTx, mondayOfIsoWeek, monthOf, monthsBetween, platformOf, tenantZone } from './common.js';
-import { createGoal, deleteGoal, goalMembers, goalOwner, goalRelation, goalsWithPace, updateGoal } from './goals.js';
+import { PACE_METHOD, createGoal, deleteGoal, goalMembers, goalOwner, goalRelation, goalsWithPace, updateGoal } from './goals.js';
 import { costMonthState, forecastView, listCosts, putCost, sources, velocity } from './owner.js';
 import { acceptPlan, currentWeek, getPlan } from './plan.js';
 import {
@@ -47,8 +47,6 @@ import {
 /** At most two years in one owner-view request. */
 export const MAX_PERIOD_MONTHS = 24;
 
-export const PACE_METHOD =
-  'Counted from the scoreboard for this member over the goal period so far (closings: their deals that closed in the period), compared with an even pace across the period.';
 
 async function period(req: FastifyRequest, q: { from?: string | undefined; to?: string | undefined }) {
   const now = platformOf(req).clock.now();
@@ -78,13 +76,13 @@ function goalView(g: Awaited<ReturnType<typeof goalsWithPace>>['goals'][number])
       daysLeft: g.pace.daysLeft,
       status: g.pace.status,
       words: g.pace.words,
-      method: PACE_METHOD,
+      method: PACE_METHOD[g.goal.metric],
     },
   };
 }
 
 function planView(p: Awaited<ReturnType<typeof getPlan>>) {
-  if (!p.exists) return { week: p.week, exists: false };
+  if (!p.exists) return { week: p.week, zone: p.zone, exists: false };
   return {
     ...p,
     items: p.items.map((x) => ({ index: x.index, accepted: x.accepted, item: { ...x.item, evidence: x.item.evidence.map((e) => ({ ...e })), deadline: x.item.deadline === null ? null : new Date(x.item.deadline).toISOString() } })),

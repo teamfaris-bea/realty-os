@@ -17,12 +17,22 @@ import { type AgentGoal, type GoalMetric, type GoalPeriodKind, goalPace, periodE
 import { type IanaZone, type IdGenerator, type Instant, type LocalDate, type UserActor, localDate, toIso } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
-import { audit, redactDiff } from '../audit.js';
+import { audit, redactDiff, redactSnapshot } from '../audit.js';
 import { AppError } from '../errors.js';
 import { isoWeekday, midnight, tenantZone } from './common.js';
 
 export const GOAL_METRICS = ['appointments_set', 'appointments_held', 'agreements_signed', 'closings', 'touches'] as const;
 export const GOAL_PERIODS = ['week', 'month', 'quarter', 'year'] as const;
+
+const PACE_TAIL = ' over the goal period so far, compared with an even pace across the period.';
+/** How each metric's count is made, in one sentence (shown on every goal). */
+export const PACE_METHOD: Record<GoalMetric, string> = {
+  touches: `Counted from the scoreboard: calls this member made and texts and emails they sent themselves (never imported or the assistant's)${PACE_TAIL}`,
+  appointments_set: `Counted from the scoreboard: appointments this member set${PACE_TAIL}`,
+  appointments_held: `Counted from the scoreboard: this member's appointments marked held${PACE_TAIL}`,
+  agreements_signed: `Counted from the scoreboard: this member's deals that moved to agreement signed${PACE_TAIL}`,
+  closings: `Counted from this member's deals that closed${PACE_TAIL}`,
+};
 
 interface GoalRow {
   id: string;
@@ -140,29 +150,63 @@ export async function createGoal(tx: Tx, actor: UserActor, ids: IdGenerator, b: 
        AND period_start = ${start}::date AND metric = ${b.metric}`.execute(tx);
   if (dup.rows[0]) throw new AppError('GOAL_EXISTS', { goalId: dup.rows[0].id });
   const id = ids.next<'AgentGoalId'>();
-  await sql`
+  // the unique key decides between two concurrent creates (the read above only gives the common case its goal id)
+  const ins = await sql<{ id: string }>`
     INSERT INTO agent_goals (tenant_id, id, user_id, period_kind, period_start, metric, target, created_by_user_id)
-    VALUES (app.tenant_id(), ${id}, ${b.userId}, ${b.periodKind}, ${start}::date, ${b.metric}, ${b.target}, ${actor.userId})`.execute(tx);
+    VALUES (app.tenant_id(), ${id}, ${b.userId}, ${b.periodKind}, ${start}::date, ${b.metric}, ${b.target}, ${actor.userId})
+    ON CONFLICT (tenant_id, user_id, period_kind, period_start, metric) DO NOTHING
+    RETURNING id`.execute(tx);
+  if (!ins.rows[0]) throw new AppError('GOAL_EXISTS');
   await audit(tx, actor, {
     action: 'goal.changed',
     entity: { type: 'agent_goal', id },
-    changes: redactDiff(null, { user_id: b.userId, period_kind: b.periodKind, period_start: b.periodStart, metric: b.metric, target: b.target }, { entity: 'agent_goal' }),
+    changes: redactDiff(null, { user_id: b.userId, period_kind: b.periodKind, period_start_date: b.periodStart, metric_kind: b.metric, target_count: b.target }, { entity: 'agent_goal' }),
     reason: 'CREATED',
   });
   return id;
 }
 
+interface GoalSnapshot {
+  user_id: string;
+  period_kind: string;
+  period_start: string;
+  metric: string;
+  target: number;
+}
+
+async function lockGoal(tx: Tx, id: string): Promise<GoalSnapshot> {
+  const r = await sql<GoalSnapshot>`
+    SELECT user_id, period_kind, period_start::text AS period_start, metric, target FROM agent_goals
+     WHERE tenant_id = app.tenant_id() AND id = ${id} FOR UPDATE`.execute(tx);
+  const g = r.rows[0];
+  if (!g) throw new AppError('NOT_FOUND');
+  return g;
+}
+
+/** The goal's identity (member, period, metric) travels with every audited change, so a removed goal can be read back. */
+// field names use the audit classifier's plain suffixes (_id, _kind, _date, _count), so the values stay readable
+const goalContext = (g: GoalSnapshot) => ({ user_id: g.user_id, period_kind: g.period_kind, period_start_date: g.period_start, metric_kind: g.metric });
+
 export async function updateGoal(tx: Tx, actor: UserActor, id: string, target: number): Promise<void> {
-  const r = await sql<{ target: number }>`SELECT target FROM agent_goals WHERE tenant_id = app.tenant_id() AND id = ${id} FOR UPDATE`.execute(tx);
-  const before = r.rows[0];
-  if (!before) throw new AppError('NOT_FOUND');
+  const before = await lockGoal(tx, id);
   const u = await sql`UPDATE agent_goals SET target = ${target} WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx);
   if (Number(u.numAffectedRows ?? 0) !== 1) throw new AppError('NOT_FOUND');
-  await audit(tx, actor, { action: 'goal.changed', entity: { type: 'agent_goal', id }, changes: redactDiff({ target: before.target }, { target }, { entity: 'agent_goal' }), reason: 'TARGET_CHANGED' });
+  await audit(tx, actor, {
+    action: 'goal.changed',
+    entity: { type: 'agent_goal', id },
+    changes: redactSnapshot({ ...goalContext(before), target_before_count: before.target, target_after_count: target }, { entity: 'agent_goal' }),
+    reason: 'TARGET_CHANGED',
+  });
 }
 
 export async function deleteGoal(tx: Tx, actor: UserActor, id: string): Promise<void> {
+  const before = await lockGoal(tx, id);
   const d = await sql`DELETE FROM agent_goals WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx);
   if (Number(d.numAffectedRows ?? 0) !== 1) throw new AppError('NOT_FOUND');
-  await audit(tx, actor, { action: 'goal.changed', entity: { type: 'agent_goal', id }, reason: 'DELETED' });
+  await audit(tx, actor, {
+    action: 'goal.changed',
+    entity: { type: 'agent_goal', id },
+    changes: redactDiff({ ...goalContext(before), target_count: before.target }, null, { entity: 'agent_goal' }),
+    reason: 'DELETED',
+  });
 }

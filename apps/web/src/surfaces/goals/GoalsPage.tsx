@@ -10,6 +10,7 @@ import { type ApiError, useApi } from '../../shell/index.js';
 import { useAction, useAnnounce } from '../admin/lib/hooks.js';
 import { Pill, Section, SelectField, StatusLine } from '../admin/lib/ui.js';
 import { sentenceFor } from '../owner/messages.js';
+import { periodWords } from './humanize.js';
 import { GOALS_KEY, type GoalView, type GoalsResponse, METRIC_LABEL, type Metric, PERIOD_LABEL, type PeriodKind, STATUS_LABEL } from './types.js';
 
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -61,7 +62,7 @@ export default function GoalsPage() {
       {q.isPending ? <p className="text-[15px] text-ink-muted">Loading</p> : null}
       {q.isError ? <Notice tone="error">{sentenceFor(q.error)}</Notice> : null}
       {q.data ? (
-        <Section title={who && members.length > 1 ? `Goals for ${who.name}` : 'Your goals'} description={goals[0]?.pace.method}>
+        <Section title={who && members.length > 1 ? `Goals for ${who.name}` : 'Your goals'}>
           {goals.length === 0 ? (
             <EmptyState icon="checklist" title="No goals yet">
               {who?.canManage ? 'Set one below. Your weekly plan then puts first what moves you toward it.' : 'Your Team Lead or the Owner sets goals. Until then your weekly plan is built from your pipeline only.'}
@@ -88,7 +89,9 @@ function GoalCard({ goal, canManage, onDone }: { goal: GoalView; canManage: bool
   const patch = useAction<{ target: number }>('PATCH', { invalidate: [[...GOALS_KEY]] });
   const del = useAction('DELETE', { invalidate: [[...GOALS_KEY]] });
   const [error, setError] = useState<string | null>(null);
-  const label = `${METRIC_LABEL[goal.metric]}, ${goal.periodKind} starting ${goal.periodStart}`;
+  const [confirming, setConfirming] = useState(false);
+  const when = periodWords(goal.periodKind, goal.periodStart);
+  const label = `${METRIC_LABEL[goal.metric]}, ${when}`;
   const save = async (e: FormEvent) => {
     e.preventDefault();
     const n = Number(target);
@@ -106,24 +109,35 @@ function GoalCard({ goal, canManage, onDone }: { goal: GoalView; canManage: bool
         <h3 className="text-[17px] font-semibold text-ink">{METRIC_LABEL[goal.metric]}</h3>
         <Pill tone={TONE[goal.pace.status]}>{STATUS_LABEL[goal.pace.status]}</Pill>
       </div>
-      <p className="text-[15px] text-ink-muted">
-        {goal.periodKind === 'week' ? 'Week' : goal.periodKind === 'month' ? 'Month' : goal.periodKind === 'quarter' ? 'Quarter' : 'Year'} starting {goal.periodStart}
-      </p>
+      <p className="text-[15px] text-ink-muted">{when}</p>
       <p className="text-[16px] text-ink">{goal.pace.words}</p>
-      {canManage && !editing ? (
+      <p className="text-[14px] text-ink-muted">{goal.pace.method}</p>
+      {canManage && !editing && !confirming ? (
         <div className="flex flex-wrap gap-2">
-          <Button variant="secondary" onClick={() => setEditing(true)}>
+          <Button variant="secondary" onClick={() => setEditing(true)} aria-label={`Change target: ${label}`}>
             Change target
           </Button>
+          <Button variant="quiet" onClick={() => setConfirming(true)} aria-label={`Remove: ${label}`}>
+            Remove
+          </Button>
+        </div>
+      ) : null}
+      {confirming ? (
+        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Confirm removal">
+          <p className="text-[15px] text-ink">Remove the {METRIC_LABEL[goal.metric].toLowerCase()} goal for {when}?</p>
           <Button
-            variant="quiet"
+            variant="danger"
             onClick={async () => {
               const r = await del.run(`/goals/${goal.id}`);
+              setConfirming(false);
               if (r.ok) onDone('Goal removed.');
               else setError(sentenceFor(r));
             }}
           >
-            Remove
+            Remove goal
+          </Button>
+          <Button variant="quiet" onClick={() => setConfirming(false)}>
+            Keep it
           </Button>
         </div>
       ) : null}

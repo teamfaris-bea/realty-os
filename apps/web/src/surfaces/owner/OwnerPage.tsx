@@ -18,6 +18,7 @@ import { type ApiError, useApi } from '../../shell/index.js';
 import { dollarsToCents, plural } from '../admin/lib/format.js';
 import { useAction, useAnnounce } from '../admin/lib/hooks.js';
 import { Section, Segmented, SelectField, StatusLine } from '../admin/lib/ui.js';
+import { humanize } from '../goals/humanize.js';
 import { sentenceFor } from './messages.js';
 import { type CostsResponse, type ForecastResponse, type ForecastUnitView, OWNER_KEY, type PutCostResponse, type SourceRowView, type SourcesResponse, type VelocityResponse, stageLabel } from './types.js';
 
@@ -40,8 +41,11 @@ export function monthsOf(from: string, to: string): string[] {
   return out;
 }
 
-export function rangeQuery(range: Range, now = new Date()): { from: string; to: string } {
-  const cur = ymOf(now);
+/**
+ * The months of a period choice. `cur` is the current month in the TEAM's zone, as the server reported it for "This
+ * month" (the browser's clock can be in another month near midnight); until that is known the browser's is used.
+ */
+export function rangeQuery(range: Range, cur: string = ymOf(new Date())): { from: string; to: string } {
   if (range === 'this') return { from: cur, to: cur };
   if (range === 'last') return { from: shiftYm(cur, -1), to: shiftYm(cur, -1) };
   return { from: shiftYm(cur, -11), to: cur };
@@ -50,10 +54,14 @@ export function rangeQuery(range: Range, now = new Date()): { from: string; to: 
 export default function OwnerPage() {
   const api = useApi();
   const [range, setRange] = useState<Range>('this');
-  const q = rangeQuery(range);
-  const qs = `?from=${q.from}&to=${q.to}`;
-  const sources = useQuery<SourcesResponse, ApiError>({ queryKey: [...OWNER_KEY, 'sources', qs], queryFn: ({ signal }) => api.get(`/owner/sources${qs}`, { signal }) });
-  const costs = useQuery<CostsResponse, ApiError>({ queryKey: [...OWNER_KEY, 'costs', qs], queryFn: ({ signal }) => api.get(`/lead-source-costs${qs}`, { signal }) });
+  // "This month" asks without from/to, so the server answers in the team's zone; its period gives the other choices
+  const current = useQuery<SourcesResponse, ApiError>({ queryKey: [...OWNER_KEY, 'sources', ''], queryFn: ({ signal }) => api.get('/owner/sources', { signal }) });
+  const cur = current.data?.period.to;
+  const q = cur ? rangeQuery(range, cur) : null;
+  const qs = range === 'this' || !q ? '' : `?from=${q.from}&to=${q.to}`;
+  const other = useQuery<SourcesResponse, ApiError>({ queryKey: [...OWNER_KEY, 'sources', qs], queryFn: ({ signal }) => api.get(`/owner/sources${qs}`, { signal }), enabled: qs !== '' });
+  const sources = qs === '' ? current : other;
+  const costs = useQuery<CostsResponse, ApiError>({ queryKey: [...OWNER_KEY, 'costs', qs], queryFn: ({ signal }) => api.get(`/lead-source-costs${qs}`, { signal }), enabled: range === 'this' || !!cur });
   const velocity = useQuery<VelocityResponse, ApiError>({ queryKey: [...OWNER_KEY, 'velocity'], queryFn: ({ signal }) => api.get('/owner/velocity', { signal }) });
   const forecast = useQuery<ForecastResponse, ApiError>({ queryKey: [...OWNER_KEY, 'forecast'], queryFn: ({ signal }) => api.get('/owner/forecast', { signal }) });
   const [status, announce] = useAnnounce(6000);
@@ -105,7 +113,7 @@ export default function OwnerPage() {
         {velocity.data ? <Velocity v={velocity.data} /> : null}
       </Section>
 
-      <Section title="90-day forecast" description={forecast.data ? `${plural(forecast.data.openDeals, 'open deal')} today. Stages with fewer than ${forecast.data.minSample} deals entering them in the last year are left out.` : undefined}>
+      <Section title="90-day forecast" description={forecast.data ? `${plural(forecast.data.openDeals, 'open deal')} today. Stages with fewer than ${forecast.data.minSample} deals that entered them 90 to 365 days ago are left out.` : undefined}>
         {forecast.isError ? <Notice tone="error">{sentenceFor(forecast.error)}</Notice> : null}
         {forecast.data ? (
           <div className="grid gap-4 md:grid-cols-2">
@@ -224,20 +232,30 @@ function Excluded({ s }: { s: SourcesResponse }) {
     <Notice tone="info" title="Left out of the dollars">
       {mc.count > 0 ? (
         <p>
-          {plural(mc.count, 'closed deal')} with no commission entered:{' '}
-          {mc.deals.map((d, i) => (
-            <span key={d.dealId}>
-              {i > 0 ? ', ' : ''}
-              <Link to={`/deals/${d.dealId}`} className="font-semibold text-accent underline">
-                {d.name}
-              </Link>
-            </span>
-          ))}
-          . They still count as closings.
+          {plural(mc.count, 'closed deal')} with no commission entered: <DealLinks deals={mc.deals} />. Those with a lead source still count as that source’s closings.
         </p>
       ) : null}
-      {ns.count > 0 ? <p>{plural(ns.count, 'closed deal')} with no lead source: not in any row.</p> : null}
+      {ns.count > 0 ? (
+        <p>
+          {plural(ns.count, 'closed deal')} with no lead source, so in no row: <DealLinks deals={ns.deals} />.
+        </p>
+      ) : null}
     </Notice>
+  );
+}
+
+function DealLinks({ deals }: { deals: readonly { dealId: string; name: string }[] }) {
+  return (
+    <>
+      {deals.map((d, i) => (
+        <span key={d.dealId}>
+          {i > 0 ? ', ' : ''}
+          <Link to={`/deals/${d.dealId}`} className="font-semibold text-accent underline">
+            {d.name}
+          </Link>
+        </span>
+      ))}
+    </>
   );
 }
 
@@ -272,7 +290,7 @@ function ForecastCard({ title, f }: { title: string; f: ForecastUnitView }) {
       <p className="text-[22px] font-semibold text-ink" data-testid={`forecast-${f.unit}`}>
         {f.rangeWords}
       </p>
-      <p className="text-[15px] text-ink">{f.method}</p>
+      <p className="text-[15px] text-ink">{humanize(f.method)}</p>
       {counted.length > 0 ? (
         <ul className="flex flex-col gap-1 text-[15px]" aria-label={`${title}: history behind each stage`}>
           {counted.map((s) => (

@@ -7,6 +7,8 @@ import axe from 'axe-core';
 import { describe, expect, it } from 'vitest';
 import { AGENT, DEAL, FakeFetch, err, goalsBody, insightsApp, plan } from '../owner/testing.js';
 import { periodStartOf, todayIn } from './GoalsPage.js';
+import { humanize, periodWords, weekWords } from './humanize.js';
+import { deadlineWords } from './PlanPage.js';
 
 const violations = async () => (await axe.run(document.body, { rules: { 'color-contrast': { enabled: false } }, resultTypes: ['violations'] })).violations.map((v) => v.id);
 
@@ -16,6 +18,7 @@ describe('Goals', () => {
     expect(await screen.findByText('1 of 4 closings; 1.3 expected by now; 3 to go in 20 days')).toBeInTheDocument();
     expect(screen.getByText('On pace')).toBeInTheDocument();
     expect(screen.getByText(/Counted from the scoreboard/)).toBeInTheDocument();
+    expect(screen.getByText('November 2026')).toBeInTheDocument();
     expect(screen.getByRole('main').textContent).not.toMatch(/\bgrade|\bscore\b|%|confiden/i);
     expect(await violations()).toEqual([]);
   });
@@ -59,8 +62,9 @@ describe('Weekly plan page', () => {
     const items = within(screen.getByRole('list', { name: /built from your pipeline only/ })).getAllByRole('article');
     expect(items.map((a) => within(a).getByRole('heading', { level: 2 }).textContent)).toEqual(['Keep your promise: Send Sam the comps', 'Log the outcome of this appointment', 'Move Ortiz purchase forward']);
     expect(within(items[0]!).getByText(/^Due /)).toBeInTheDocument();
-    expect(within(items[2]!).getByText('Deal in prospect for 12 days; median 2 (n=5)')).toBeInTheDocument();
-    expect(within(items[2]!).getByRole('link', { name: 'Open the deal' })).toHaveAttribute('href', `/deals/${DEAL}`);
+    expect(within(items[2]!).getByText('Deal in prospect for 12 days; the team’s median is 2 days (from 5 deals)')).toBeInTheDocument();
+    expect(within(items[0]!).getByText('Open promise, due Tue, Nov 10')).toBeInTheDocument();
+    expect(within(items[2]!).getByRole('link', { name: 'Open the deal: Move Ortiz purchase forward' })).toHaveAttribute('href', `/deals/${DEAL}`);
     expect(screen.getByRole('main').textContent).not.toMatch(/\bgrade|\bscore\b|%|confiden/i);
     expect(await violations()).toEqual([]);
   });
@@ -72,7 +76,7 @@ describe('Weekly plan page', () => {
     const u = userEvent.setup();
     const add = await screen.findByRole('button', { name: 'Add 3 items to my tasks' });
     expect(fake.callsTo('POST /me/weekly-plans/2026-W46/accept')).toHaveLength(0);
-    await u.click(screen.getAllByRole('checkbox', { name: 'Add to my tasks' })[1]!);
+    await u.click(screen.getByRole('checkbox', { name: /^Add\W+Log the outcome of this appointment\W+to my tasks$/ }));
     expect(add).toHaveTextContent('Add 2 items to my tasks');
     await u.click(add);
     await waitFor(() => expect(fake.callsTo('POST /me/weekly-plans/2026-W46/accept')).toHaveLength(1));
@@ -93,6 +97,49 @@ describe('Weekly plan page', () => {
     expect(await screen.findByRole('alert')).toBeInTheDocument();
     expect(screen.getByRole('main').textContent).not.toMatch(/PLAN_ALREADY_ACCEPTED/);
     await router.navigate('/plan');
-    expect(await screen.findByText('No plan for this week yet')).toBeInTheDocument();
+    expect(await screen.findByText('No plan for the week of Mon, Nov 16 to Sun, Nov 22 yet')).toBeInTheDocument();
+  });
+});
+
+describe('module 40 review fixes', () => {
+  it('the plan says which week it is, and its deadline is the day in the TEAM zone (not the browser’s)', async () => {
+    // 07:30 UTC on Nov 10 is still Mon Nov 9 in Los Angeles
+    const p = plan({ items: [{ ...plan().items![0]!, item: { ...plan().items![0]!.item, deadline: '2026-11-10T07:30:00.000Z' } }] });
+    insightsApp(new FakeFetch().on('GET /me/weekly-plans/2026-W46', { status: 200, body: p }), '/plan/2026-W46', 'agent');
+    expect(await screen.findByTestId('plan-week')).toHaveTextContent('Week of Mon, Nov 9 to Sun, Nov 15');
+    expect(deadlineWords('2026-11-10T07:30:00.000Z', 'America/Los_Angeles')).toBe('Due Mon, Nov 9');
+    expect(deadlineWords('2026-11-10T07:30:00.000Z', 'America/New_York')).toBe('Due Tue, Nov 10');
+    expect(screen.getByText('Due Mon, Nov 9')).toBeInTheDocument();
+  });
+
+  it('every plan checkbox and link has a name of its own (screen readers can tell them apart)', async () => {
+    insightsApp(new FakeFetch().on('GET /me/weekly-plans/2026-W46', { status: 200, body: plan() }), '/plan/2026-W46', 'agent');
+    await screen.findByTestId('plan-week');
+    const names = [...screen.getAllByRole('checkbox'), ...within(screen.getByRole('main')).getAllByRole('link')].map((e) => e.getAttribute('aria-label') ?? e.closest('label')?.textContent ?? e.textContent);
+    expect(new Set(names).size).toBe(names.length);
+  });
+
+  it('Remove asks first, names the goal, and sends nothing until confirmed; each goal shows its own counting method', async () => {
+    const touches = { ...goalsBody().goals[0]!, id: '01900000-0000-7000-8000-0000000a0002', metric: 'touches' as const, pace: { ...goalsBody().goals[0]!.pace, method: 'Counted from the scoreboard: calls and texts.' } };
+    const fake = new FakeFetch().on('GET /goals', { status: 200, body: goalsBody({ goals: [goalsBody().goals[0]!, touches] }) }).on('DELETE /goals/01900000-0000-7000-8000-0000000a0001', { status: 200, body: { ok: true } });
+    insightsApp(fake, '/goals', 'owner');
+    const u = userEvent.setup();
+    await u.click(await screen.findByRole('button', { name: 'Remove: Closings, November 2026' }));
+    expect(fake.callsTo('DELETE /goals/01900000-0000-7000-8000-0000000a0001')).toHaveLength(0);
+    expect(screen.getByText('Remove the closings goal for November 2026?')).toBeInTheDocument();
+    await u.click(screen.getByRole('button', { name: 'Remove goal' }));
+    await waitFor(() => expect(fake.callsTo('DELETE /goals/01900000-0000-7000-8000-0000000a0001')).toHaveLength(1));
+    expect(screen.getByText('Counted from the scoreboard: calls and texts.')).toBeInTheDocument();
+    expect(screen.getByText(/Counted from the scoreboard for this member/)).toBeInTheDocument();
+  });
+
+  it('wording helpers: stage codes, ISO days and sample notation become words; numbers are kept', () => {
+    expect(humanize('Deal in under_contract for 100 days; median 30 (n=7)')).toBe('Deal in under contract for 100 days; the team’s median is 30 days (from 7 deals)');
+    expect(humanize('Appointment on 2026-11-08 has no outcome logged')).toBe('Appointment on Sun, Nov 8 has no outcome logged');
+    expect(humanize('(not enough history: prospect, agreement_signed, active)')).toBe('(not enough history: prospect, agreement signed, active)');
+    expect(periodWords('week', '2026-11-09')).toBe('Week of Nov 9');
+    expect(periodWords('quarter', '2026-10-01')).toBe('Q4 2026');
+    expect(periodWords('year', '2026-01-01')).toBe('2026');
+    expect(weekWords('2020-W53')).toBe('Week of Mon, Dec 28 to Sun, Jan 3');
   });
 });

@@ -134,6 +134,8 @@ const PlanItem = z.object({
 });
 export const PlanResponse = z.object({
   week: Week,
+  /** the team zone the week, deadlines and reasons are in */
+  zone: z.string(),
   exists: z.boolean(),
   basis: z.enum(['goals_and_pipeline', 'pipeline_only']).optional(),
   note: z.string().optional(),

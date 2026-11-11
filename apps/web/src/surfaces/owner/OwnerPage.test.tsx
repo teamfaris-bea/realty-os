@@ -7,7 +7,7 @@ import axe from 'axe-core';
 import { describe, expect, it } from 'vitest';
 import { navFor, pagesFor } from '../../shell/index.js';
 import { centsToDollarsWords, monthsOf, rangeQuery, shiftYm } from './OwnerPage.js';
-import { ZILLOW, err, insightsApp, insightsTable, ownerFake } from './testing.js';
+import { ZILLOW, costs, err, insightsApp, insightsTable, ownerFake, sources } from './testing.js';
 
 describe('Owner view', () => {
   it('R-OWNER-1 R-OWNER-2: the sources table shows each number with its denominator and the section’s method; E108 says "— (0 closings)"', async () => {
@@ -38,6 +38,8 @@ describe('Owner view', () => {
     expect(within(box).getByText(/1 closed deal with no commission entered/)).toBeInTheDocument();
     expect(within(box).getByRole('link', { name: 'Lee purchase' })).toHaveAttribute('href', expect.stringMatching(/\/deals\//));
     expect(within(box).getByText(/1 closed deal with no lead source/)).toBeInTheDocument();
+    // R-OWNER-1 "counted and listed": the no-source deals are named too (review fix)
+    expect(within(box).getByRole('link', { name: 'Walk-in sale' })).toHaveAttribute('href', '/deals/01900000-0000-7000-8000-00000000d002');
   });
 
   it('R-OWNER-3 E109: velocity with n, thin stages listed; the forecast range, its method sentence, k of n per counted stage and the stages left out', async () => {
@@ -94,5 +96,28 @@ describe('Owner view', () => {
     await screen.findByRole('dialog', { name: 'Enter cost' });
     const r = await axe.run(document.body, { rules: { 'color-contrast': { enabled: false } }, resultTypes: ['violations'] });
     expect(r.violations.map((v) => v.id)).toEqual([]);
+  });
+});
+
+describe('module 40 review fixes (owner view)', () => {
+  it('"This month" asks the server without from/to, so the month is the team zone’s; the other choices derive from the server’s month', async () => {
+    const fake = ownerFake();
+    const last = rangeQuery('last', sources().period.to);
+    fake.on(`GET /owner/sources?from=${last.from}&to=${last.to}`, { status: 200, body: sources() }).on(`GET /lead-source-costs?from=${last.from}&to=${last.to}`, { status: 200, body: costs() });
+    insightsApp(fake, '/owner');
+    await screen.findByRole('table');
+    expect(fake.callsTo('GET /owner/sources').length).toBeGreaterThanOrEqual(1);
+    expect(fake.calls.some((c) => c.path.startsWith('/owner/sources?'))).toBe(false);
+    await userEvent.setup().click(screen.getByRole('radio', { name: 'Last month' }));
+    await waitFor(() => expect(fake.callsTo(`GET /owner/sources?from=${last.from}&to=${last.to}`)).toHaveLength(1));
+    expect(rangeQuery('last', '2026-01')).toEqual({ from: '2025-12', to: '2025-12' });
+    expect(rangeQuery('year', '2026-11')).toEqual({ from: '2025-12', to: '2026-11' });
+  });
+
+  it('the forecast heading describes the same window as the method (90 to 365 days ago); stage codes in the method read as words', async () => {
+    insightsApp(ownerFake(), '/owner');
+    expect(await screen.findByText(/deals that entered them 90 to 365 days ago are left out/)).toBeInTheDocument();
+    expect(screen.queryByText(/in the last year are left out/)).toBeNull();
+    expect(screen.getByRole('main').textContent).not.toMatch(/agreement_signed|under_contract/);
   });
 });

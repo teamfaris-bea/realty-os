@@ -36,6 +36,8 @@ export interface PlanItemView {
 
 export interface PlanResponse {
   week: string;
+  /** the team zone the week, deadlines and reasons are in */
+  zone: string;
   exists: boolean;
   basis?: 'goals_and_pipeline' | 'pipeline_only';
   note?: string;

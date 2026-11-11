@@ -104,6 +104,8 @@ export function ownerFake(): FakeFetch {
   const q = rangeQuery('this');
   const qs = `?from=${q.from}&to=${q.to}`;
   return new FakeFetch()
+    .on('GET /owner/sources', { status: 200, body: sources() })
+    .on('GET /lead-source-costs', { status: 200, body: costs() })
     .on(`GET /owner/sources${qs}`, { status: 200, body: sources() })
     .on(`GET /lead-source-costs${qs}`, { status: 200, body: costs() })
     .on('GET /owner/velocity', { status: 200, body: velocity() })
@@ -137,6 +139,7 @@ export const goalsBody = (o: Partial<GoalsResponse> = {}): GoalsResponse => ({
 export function plan(over: Partial<PlanResponse> = {}): PlanResponse {
   return {
     week: '2026-W46',
+    zone: 'America/Los_Angeles',
     exists: true,
     basis: 'pipeline_only',
     note: 'You have no goals set, so this plan is built from your pipeline only (ranked by deadline).',

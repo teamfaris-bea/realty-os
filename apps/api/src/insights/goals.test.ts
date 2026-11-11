@@ -44,7 +44,7 @@ describe('R-PLAN-2 goals and pace', () => {
     const g = mine.body.goals.find((x) => x.id === r.body.goal.id)!;
     expect(g.pace.actual).toBe(1);
     expect(g.pace.words).toMatch(/^1 of 4 closings; [\d.]+ expected by now; 3 to go in \d+ days?$/);
-    expect(g.pace.method).toMatch(/scoreboard/);
+    expect(g.pace.method).toMatch(/deals that closed/);
     expect(JSON.stringify(mine.body)).not.toMatch(/confidence|score"|grade/i);
     const owner = await call<{ goals: GoalT[] }>(w.owner, 'GET', `/goals?userId=${a0.userId}`);
     expect(owner.body.goals.find((x) => x.id === r.body.goal.id)!.pace.actual).toBe(1);
@@ -100,5 +100,34 @@ describe('R-PLAN-2 goals and pace', () => {
     expect((await call<{ goals: GoalT[] }>(other, 'GET', '/goals')).body.goals).toEqual([]);
     expect((await call(other, 'PATCH', `/goals/${g.id}`, { target: 1 })).status).toBe(404);
     expect((await call(other, 'POST', '/goals', { userId: a0.userId, periodKind: 'month', periodStart: monthStart, metric: 'touches', target: 1 })).status).toBe(404);
+  });
+});
+
+describe('review fixes (module 33 review)', () => {
+  it('R-PLAN-2: a changed or removed goal’s audit row names whose goal it was, its period and metric, and the target before', async () => {
+    const g = await create(w.owner, { userId: a1.userId, metric: 'appointments_held', target: 7 });
+    expect(g.status).toBe(201);
+    expect((await call(w.owner, 'PATCH', `/goals/${g.body.goal.id}`, { target: 8 })).status).toBe(200);
+    expect((await call(w.owner, 'DELETE', `/goals/${g.body.goal.id}`)).status).toBe(200);
+    const rows = (await h.su.query(`SELECT reason, changes FROM audit_log WHERE tenant_id = $1 AND action = 'goal.changed' AND entity_id = $2 ORDER BY occurred_at`, [w.tenantId, g.body.goal.id])).rows;
+    const upd = rows.find((r) => r.reason === 'TARGET_CHANGED')!.changes;
+    expect(upd).toMatchObject({ user_id: { to: a1.userId }, metric_kind: { to: 'appointments_held' }, period_start_date: { to: monthStart }, target_before_count: { to: 7 }, target_after_count: { to: 8 } });
+    const del = rows.find((r) => r.reason === 'DELETED')!.changes;
+    expect(del).toMatchObject({ user_id: { from: a1.userId, to: null }, period_kind: { from: 'month' }, metric_kind: { from: 'appointments_held' }, target_count: { from: 8 } });
+  });
+
+  it('R-PLAN-2: two concurrent creates of the same goal give one goal and one GOAL_EXISTS (never a 500)', async () => {
+    const body = { userId: a1.userId, metric: 'appointments_set', target: 3, periodKind: 'year', periodStart: `${monthStart.slice(0, 4)}-01-01` };
+    const rs = await Promise.all([call(w.owner, 'POST', '/goals', body), call(w.admin, 'POST', '/goals', body), call(w.owner, 'POST', '/goals', body)]);
+    expect(rs.map((r) => r.status).sort()).toEqual([201, 409, 409]);
+    expect(rs.filter((r) => r.status === 409).every((r) => r.code === 'GOAL_EXISTS')).toBe(true);
+  });
+
+  it('R-PLAN-2: each goal carries the counting method of its own metric', async () => {
+    const all = (await call<{ goals: GoalT[] }>(w.owner, 'GET', '/goals')).body.goals;
+    const by = new Map(all.map((g) => [g.metric, g.pace.method]));
+    expect(by.get('closings')).toMatch(/deals that closed/);
+    expect(by.get('touches')).toMatch(/calls .* texts and emails/);
+    expect(new Set(all.map((g) => g.pace.method)).size).toBe(new Set(all.map((g) => g.metric)).size);
   });
 });

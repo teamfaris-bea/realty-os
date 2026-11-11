@@ -15,11 +15,12 @@ import { plural } from '../admin/lib/format.js';
 import { useAction, useAnnounce } from '../admin/lib/hooks.js';
 import { Check, StatusLine } from '../admin/lib/ui.js';
 import { sentenceFor } from '../owner/messages.js';
+import { humanize, instantDayWords, weekWords } from './humanize.js';
 import { PLAN_KEY, type PlanItemView, type PlanResponse } from './types.js';
 
-function deadlineWords(iso: string | null): string | null {
-  if (!iso) return null;
-  return `Due ${new Date(iso).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}`;
+/** The deadline as a day in the TEAM's zone (the same zone the evidence sentences use). */
+export function deadlineWords(iso: string | null, zone: string): string | null {
+  return iso ? `Due ${instantDayWords(iso, zone)}` : null;
 }
 
 function openLink(i: PlanItemView): { to: string; label: string } | null {
@@ -50,7 +51,7 @@ export default function PlanPage() {
   const p = q.data;
   if (!p.exists)
     return (
-      <EmptyState icon="checklist" title="No plan for this week yet">
+      <EmptyState icon="checklist" title={`No plan for the ${weekWords(p.week).replace(/^Week/, 'week')} yet`}>
         Your plan is made on Monday morning from your tasks, promises, appointments and deals.
       </EmptyState>
     );
@@ -69,6 +70,9 @@ export default function PlanPage() {
 
   return (
     <div className="flex w-full max-w-3xl flex-col gap-4">
+      <p className="text-[17px] font-semibold text-ink" data-testid="plan-week">
+        {weekWords(p.week)}
+      </p>
       <p className="text-[16px] text-ink" id={hid}>
         {p.note}
       </p>
@@ -86,7 +90,7 @@ export default function PlanPage() {
         <ol className="flex flex-col gap-3" aria-labelledby={hid}>
           {items.map(({ index, item, accepted: done }, n) => {
             const link = openLink(item);
-            const due = deadlineWords(item.deadline);
+            const due = deadlineWords(item.deadline, p.zone);
             return (
               <li key={index}>
                 <Card as="article" className="flex flex-col gap-2">
@@ -99,11 +103,11 @@ export default function PlanPage() {
                       {due ? <p className="text-[15px] font-medium text-ink">{due}</p> : null}
                       <ul className="text-[15px] text-ink-muted" aria-label="Why this is on your plan">
                         {item.evidence.map((e) => (
-                          <li key={e.sourceId}>{e.reason}</li>
+                          <li key={e.sourceId}>{humanize(e.reason)}</li>
                         ))}
                       </ul>
                       {link ? (
-                        <Link to={link.to} className="inline-flex min-h-tap items-center font-semibold text-accent underline">
+                        <Link to={link.to} aria-label={`${link.label}: ${item.title}`} className="inline-flex min-h-tap items-center font-semibold text-accent underline">
                           {link.label}
                         </Link>
                       ) : null}
@@ -113,7 +117,11 @@ export default function PlanPage() {
                     done ? <p className="text-[15px] font-medium text-ok">On your tasks</p> : null
                   ) : (
                     <Check
-                      label="Add to my tasks"
+                      label={
+                        <>
+                          Add<span className="sr-only"> “{item.title}”</span> to my tasks
+                        </>
+                      }
                       checked={chosen.has(index)}
                       onChange={(v) => {
                         const next = new Set(chosen);
