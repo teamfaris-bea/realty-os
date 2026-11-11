@@ -14,7 +14,7 @@ import { asSystem, clearGmailPack, confirmAddresses, connectGmail, copiesOf, ena
 
 let h: ApiHarness;
 let w: CommsWorld;
-let agent: TestClient;
+
 let agent2: TestClient;
 let n = 0;
 const mailbox = () => `agent-${++n}-${randomUUID().slice(0, 6)}@gmail.test`;
@@ -23,7 +23,7 @@ const HOUR = 3600_000;
 beforeAll(async () => {
   h = await createApiHarness();
   w = await commsWorld(h, { agents: 2, teamLead: true });
-  agent = w.agents[0]!;
+
   agent2 = w.agents[1]!;
   await clearGmailPack(h);
   await enableMailSync(h, w.owner);
@@ -64,7 +64,7 @@ describe('accept: connect read-only Gmail, a client thread in the timeline, remo
     const { a, box, c, link } = await connectedAgent();
     expect(link).toMatchObject({ status: 'connected' });
     expect(link.refresh_enc).not.toBeNull();
-    const now = Date.now();
+
     h.providers.gmail.deliver(box, { from: `Client <${c.email}>`, to: [box], subject: 'Re: showing', text: 'Thursday works for me.\n\nOn Tue Agent wrote:\n> Can we meet?', internalDate: Date.now() });
     h.providers.gmail.deliver(box, { from: 'mom@family.test', to: [box], subject: 'Dinner', text: 'Sunday?', internalDate: Date.now() });
     await runMailSync(h, w.tenantId);

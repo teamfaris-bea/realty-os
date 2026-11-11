@@ -1,5 +1,6 @@
 // @realty/eslint-plugin: architecture rules (docs/BUILD_PLAN.md ground rules; wired in /eslint.config.js).
 import isolatedBundle from './rules/isolated-bundle.js';
+import mailSyncBoundary from './rules/mail-sync-boundary.js';
 import noPredictionImport from './rules/no-prediction-import.js';
 import noProviderOutbound from './rules/no-provider-outbound.js';
 import noRelativeOutsidePackage from './rules/no-relative-outside-package.js';
@@ -12,6 +13,7 @@ const plugin = {
   meta: { name: '@realty/eslint-plugin', version: '0.0.0' },
   rules: {
     'isolated-bundle': isolatedBundle,
+    'mail-sync-boundary': mailSyncBoundary,
     'no-prediction-import': noPredictionImport,
     'no-provider-outbound': noProviderOutbound,
     'no-relative-outside-package': noRelativeOutsidePackage,

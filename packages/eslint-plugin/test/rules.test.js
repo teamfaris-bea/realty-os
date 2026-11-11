@@ -293,3 +293,30 @@ describe('realty/isolated-bundle (PHASE2_3_PLAN §5.3, module 37: the chat widge
     ],
   });
 });
+
+describe('realty/mail-sync-boundary (R-GMAIL-14, module 68)', () => {
+  const inMailSync = new URL('../../../apps/api/src/mailSync/sync.ts', import.meta.url).pathname;
+  const inAssistant = new URL('../../../apps/api/src/assistant/drafts.ts', import.meta.url).pathname;
+  const inLeads = new URL('../../../apps/api/src/leads/intake.ts', import.meta.url).pathname;
+  tester.run('mail-sync-boundary', rules['mail-sync-boundary'], {
+    valid: [
+      { code: 'const q = sql`SELECT * FROM lead_email_messages`', filename: inLeads, options: [{ mode: 'outside' }] },
+      { code: 'const q = "SELECT * FROM messages"', filename: inLeads, options: [{ mode: 'outside' }] },
+      { code: 'export async function ingestSyncedMailInTx() { await sql`SELECT * FROM mail_messages`; }', filename: inLeads, options: [{ mode: 'outside', allowInFunctions: ['ingestSyncedMailInTx'] }] },
+      { code: "import { audit } from '../audit.js'", filename: inAssistant, options: [{ mode: 'no-import' }] },
+      { code: "import { audit } from '../audit.js'; const q = 'SELECT 1 FROM mail_messages'", filename: inMailSync, options: [{ mode: 'inside' }] },
+      { code: "import { ingestSyncedMailInTx } from '../comms/inbound.js'", filename: inMailSync, options: [{ mode: 'inside' }] },
+    ],
+    invalid: [
+      { code: 'const q = sql`SELECT body FROM mail_messages WHERE id = ${id}`', filename: inLeads, options: [{ mode: 'outside' }], errors: [{ messageId: 'table' }] },
+      { code: "const q = 'select refresh_enc from user_mail_links'", filename: inLeads, options: [{ mode: 'outside' }], errors: [{ messageId: 'table' }] },
+      { code: 'function other() { return sql`DELETE FROM mail_messages`; }', filename: inLeads, options: [{ mode: 'outside', allowInFunctions: ['ingestSyncedMailInTx'] }], errors: [{ messageId: 'table' }] },
+      { code: "import { syncTenant } from '../mailSync/sync.js'", filename: inAssistant, options: [{ mode: 'no-import' }], errors: [{ messageId: 'importMailSync' }] },
+      { code: "const m = await import('../mailSync/service.js')", filename: inAssistant, options: [{ mode: 'no-import' }], errors: [{ messageId: 'importMailSync' }] },
+      { code: "import { anthropicAi } from '../providers/anthropic.js'", filename: inMailSync, options: [{ mode: 'inside' }], errors: [{ messageId: 'importModel' }] },
+      { code: "import Anthropic from '@anthropic-ai/sdk'", filename: inMailSync, options: [{ mode: 'inside' }], errors: [{ messageId: 'importModel' }] },
+      { code: "import { draft } from '../assistant/drafts.js'", filename: inMailSync, options: [{ mode: 'inside' }], errors: [{ messageId: 'importModel' }] },
+      { code: "import { dispatchOutbound } from '../comms/dispatch.js'", filename: inMailSync, options: [{ mode: 'inside' }], errors: [{ messageId: 'send' }, { messageId: 'send' }] },
+    ],
+  });
+});
