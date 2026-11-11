@@ -116,7 +116,7 @@ export function DealPage() {
           {d.primaryContact ? (
             <>
               {' · '}
-              <Link to={`/contacts/${d.primaryContact.id}`} className="text-accent hover:underline">
+              <Link to={`/contacts/${d.primaryContact.id}`} className="text-accent underline">
                 {d.primaryContact.name}
               </Link>
             </>

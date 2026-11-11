@@ -32,10 +32,10 @@ describe('Lead routing', () => {
   it('moving a rule sends the whole new order in one request', async () => {
     const fake = routingFake().on('PUT /routing-rules/order', { status: 200, body: { rules: [] } });
     leadAdminApp(fake, '/admin/routing', 'admin');
-    await userEvent.setup().click(await screen.findByRole('button', { name: 'Move Everything else up' }));
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Move up: Everything else' }));
     await waitFor(() => expect(fake.callsTo('PUT /routing-rules/order')).toHaveLength(1));
     expect(fake.callsTo('PUT /routing-rules/order')[0]!.body).toEqual({ ruleIds: ['r1', 'r3', 'r2'] });
-    expect(screen.getByRole('button', { name: 'Move Zillow buyers up' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Move up: Zillow buyers' })).toBeDisabled();
   });
 
   it('creates a round-robin rule for Zillow buyers in two ZIPs; TCs are never offered as candidates', async () => {

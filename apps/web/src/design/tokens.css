@@ -106,6 +106,8 @@ body {
 body {
   margin: 0;
   min-height: 100dvh;
+  /* a long email or address wraps instead of pushing the page sideways at large text sizes (WCAG 1.4.10) */
+  overflow-wrap: break-word;
 }
 
 /* One visible focus style everywhere (WCAG 2.4.7 / 2.4.13). Pointer clicks do not show it. In the
@@ -118,13 +120,30 @@ body {
   }
 }
 
-/* Respect reduced motion: no transitions or animations beyond an instant change. */
+/* Respect reduced motion: no transitions, animations or smooth scrolling beyond an instant change.
+   An animation runs once and stops (an infinite one at 0.001 ms would flicker); the spinner is
+   motion-safe only, so it shows a still arc next to its "Loading"/pending words instead. */
 @media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto !important;
+  }
   *,
   *::before,
   *::after {
     animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Phone: the sticky top bar and the bottom tab bar cover the edges of the page. Scroll padding keeps a
+   control the browser scrolls into view (keyboard focus, find-in-page, #anchors) clear of both
+   (WCAG 2.2 2.4.11 Focus Not Obscured). */
+@media (max-width: 767.98px) {
+  html {
+    scroll-padding-top: calc(52px + env(safe-area-inset-top) + 8px);
+    scroll-padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 8px);
   }
 }
 

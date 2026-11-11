@@ -173,18 +173,32 @@ describe('Ratio', () => {
 });
 
 describe('Button and TextField', () => {
-  it('a pending button is busy and disabled and cannot be tapped twice', async () => {
+  it('a pending button is busy, cannot be tapped twice, and keeps keyboard focus', async () => {
     const onClick = vi.fn();
-    render(
-      <Button pending pendingLabel="Sending" onClick={onClick}>
-        Send
-      </Button>,
+    const onSubmit = vi.fn((e: { preventDefault(): void }) => e.preventDefault());
+    const { rerender } = render(
+      <form onSubmit={onSubmit}>
+        <Button type="submit" onClick={onClick}>
+          Send
+        </Button>
+      </form>,
+    );
+    screen.getByRole('button', { name: 'Send' }).focus();
+    rerender(
+      <form onSubmit={onSubmit}>
+        <Button type="submit" pending pendingLabel="Sending" onClick={onClick}>
+          Send
+        </Button>
+      </form>,
     );
     const b = screen.getByRole('button', { name: 'Sending' });
-    expect(b).toBeDisabled();
+    // aria-disabled, not disabled: a disabled button would drop focus to <body> mid-action
+    expect(b).toHaveAttribute('aria-disabled', 'true');
     expect(b).toHaveAttribute('aria-busy', 'true');
+    expect(b).toHaveFocus();
     await userEvent.click(b);
     expect(onClick).not.toHaveBeenCalled();
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it('every button and field meets the 44 px tap target token', () => {

@@ -105,7 +105,7 @@ function PendingInvites({ invites, viewer, onDone }: { invites: Invite[]; viewer
           <li key={i.id}>
             <Card className="flex flex-wrap items-center gap-3">
               <div className="min-w-0 flex-1">
-                <p className="truncate text-[16px] text-ink">{i.email}</p>
+                <p className="text-[16px] text-ink [overflow-wrap:anywhere]">{i.email}</p>
                 <p className="text-[14px] text-ink-muted">
                   {roleLabel(i.role)} · link works until {formatDate(i.expiresAt)}
                 </p>
@@ -148,7 +148,7 @@ function MemberRow({ member, viewer, self, onDone }: { member: Member; viewer: R
             {member.displayName}
             {self ? <span className="font-normal text-ink-muted"> (you)</span> : null}
           </p>
-          <p className="truncate text-[14px] text-ink-muted">
+          <p className="text-[14px] text-ink-muted [overflow-wrap:anywhere]">
             {member.email} · {roleLabel(member.role)}
             {member.joinedAt ? ` · joined ${formatDate(member.joinedAt)}` : ''}
           </p>

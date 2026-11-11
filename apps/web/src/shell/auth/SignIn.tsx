@@ -315,7 +315,7 @@ export function ChooseTeamPage() {
             <li key={t.id}>
               <Button variant="secondary" block className="justify-between" pending={choosing === t.slug} onClick={() => void choose(t.slug)} aria-current={session.tenant?.id === t.id ? 'true' : undefined}>
                 <span className="flex w-full items-center justify-between gap-3">
-                  <span className="truncate">{t.name}</span>
+                  <span className="min-w-0 [overflow-wrap:anywhere]">{t.name}</span>
                   <span className="text-[14px] font-normal text-ink-muted">{ROLE_LABEL[t.role]}</span>
                 </span>
               </Button>

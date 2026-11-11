@@ -73,7 +73,7 @@ export function PageFrame({ title, detail, children }: { title: string; detail: 
           ) : (
             <span className="w-2 md:hidden" aria-hidden="true" />
           )}
-          <h1 ref={h1} tabIndex={-1} className="min-w-0 flex-1 truncate text-[17px] font-semibold text-ink outline-none md:text-[28px] md:font-bold">
+          <h1 ref={h1} tabIndex={-1} className="min-w-0 flex-1 text-[17px] font-semibold text-ink outline-none [overflow-wrap:anywhere] md:text-[28px] md:font-bold">
             {shown}
           </h1>
         </div>
@@ -138,7 +138,7 @@ function Sidebar({ nav }: { nav: NavModel }) {
   return (
     <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 flex-col border-r border-line bg-surface md:flex">
       <div className="px-5 pb-3 pt-6">
-        <p className="truncate text-[17px] font-bold text-ink">{session?.tenant?.name ?? 'Realty OS'}</p>
+        <p className="text-[17px] font-bold text-ink [overflow-wrap:anywhere]">{session?.tenant?.name ?? 'Realty OS'}</p>
         {session?.tenant ? <p className="text-[13px] text-ink-muted">{ROLE_LABEL[session.tenant.role]}</p> : null}
       </div>
       <nav aria-label="Main" className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3">
@@ -177,7 +177,7 @@ function SideLink({ item, current }: { item: NavItem; current: boolean }) {
       className={`flex min-h-tap items-center gap-3 rounded-xl px-3 text-[15px] font-medium ${current ? 'bg-accent-soft text-accent' : 'text-ink hover:bg-surface-2'}`}
     >
       <Icon name={item.icon} size={20} />
-      <span className="truncate">{item.label}</span>
+      <span className="min-w-0 [overflow-wrap:anywhere]">{item.label}</span>
     </NavLink>
   );
 }

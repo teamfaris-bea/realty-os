@@ -174,7 +174,7 @@ function Momentum() {
                   <ul className="flex flex-col gap-1 pl-3">
                     {s.deals.map((d) => (
                       <li key={d.dealId} className="flex flex-wrap items-center gap-2 text-[15px]">
-                        <Link to={`/deals/${d.dealId}`} className="text-accent hover:underline">
+                        <Link to={`/deals/${d.dealId}`} className="inline-flex min-h-tap items-center text-accent underline">
                           {d.name}
                         </Link>
                         <span className="tabular-nums text-ink-muted">{formatDays(d.dwellDays)} in this stage</span>

@@ -135,11 +135,11 @@ function RuleRow(p: { rule: RoutingRule; position: number; first: boolean; last:
         <Button variant="quiet" pending={patch.pending} onClick={async () => (await patch.run(`/routing-rules/${rule.id}`, { enabled: !rule.enabled, version: rule.version })).ok && p.onDone(`${rule.name} turned ${rule.enabled ? 'off' : 'on'}`)}>
           {rule.enabled ? 'Turn off' : 'Turn on'}
         </Button>
-        <Button variant="quiet" disabled={p.first || p.moving} onClick={() => p.onMove(rule.id, -1)} aria-label={`Move ${rule.name} up`}>
-          Move up
+        <Button variant="quiet" disabled={p.first || p.moving} onClick={() => p.onMove(rule.id, -1)}>
+          Move up<span className="sr-only">: {rule.name}</span>
         </Button>
-        <Button variant="quiet" disabled={p.last || p.moving} onClick={() => p.onMove(rule.id, 1)} aria-label={`Move ${rule.name} down`}>
-          Move down
+        <Button variant="quiet" disabled={p.last || p.moving} onClick={() => p.onMove(rule.id, 1)}>
+          Move down<span className="sr-only">: {rule.name}</span>
         </Button>
         <Button variant="quiet" pending={archive.pending} onClick={async () => (await archive.run(`/routing-rules/${rule.id}`)).ok && p.onDone(`${rule.name} archived`)}>
           Archive
