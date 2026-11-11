@@ -98,7 +98,9 @@ describe('Thread', () => {
     const u = user();
     await u.type(await screen.findByRole('textbox', { name: 'Text message' }), 'Tomorrow?');
     await u.click(screen.getByRole('button', { name: 'Send' }));
-    expect(await screen.findByText(/^Sends Wed, Nov 11, \d{1,2}:00 (AM|PM)\.$/)).toBeInTheDocument();
+    // while the fixed instant is still in the future (wall clock), the thread also lists the scheduled message with
+    // the same words, so more than one element may match: the compose status must be among them
+    expect((await screen.findAllByText(/^Sends Wed, Nov 11, \d{1,2}:00 (AM|PM)\.$/)).length).toBeGreaterThanOrEqual(1);
   });
 
   it('a send the gate blocks keeps the text and shows why', async () => {
