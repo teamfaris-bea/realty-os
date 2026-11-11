@@ -10,12 +10,11 @@ const CONTROLS = 'button, a[href], input:not([type=hidden]), select, textarea, s
  * - no horizontal scroll at the current width;
  * - every visible control is at least 44 × 44 px (a checkbox or radio counts its wrapping label;
  *   a link inside running text is exempt, WCAG 2.5.8's inline exception);
- * - every focusable control, once focused (the browser scrolls it into view), is not hidden behind
- *   the sticky top bar or the bottom tab bar (WCAG 2.4.11 Focus Not Obscured);
+ * - focus is never hidden behind the top bar, the tab bar or a sticky bar (obscuredFocus below);
  * - at the bottom of the page the last piece of content sits above the tab bar.
  */
 export async function phoneProblems(page: Page): Promise<string[]> {
-  return page.evaluate(
+  const size = await page.evaluate(
     ({ CONTROLS, MIN_TAP }) => {
       const out: string[] = [];
       const doc = document.documentElement;
@@ -37,20 +36,8 @@ export async function phoneProblems(page: Page): Promise<string[]> {
         const r = target.getBoundingClientRect();
         if (Math.round(r.width) < MIN_TAP || Math.round(r.height) < MIN_TAP) out.push(`small tap target "${label(e)}" ${Math.round(r.width)}×${Math.round(r.height)}`);
       }
-      // focus not obscured by the sticky header or the tab bar
-      const startY = window.scrollY;
-      for (const e of [...document.querySelectorAll<HTMLElement>('main ' + CONTROLS.split(', ').join(', main '))].filter(visible)) {
-        if (e.tabIndex < 0) continue;
-        e.focus({ preventScroll: false });
-        if (document.activeElement !== e) continue;
-        const r = e.getBoundingClientRect();
-        const x = Math.min(Math.max(r.left + r.width / 2, 1), window.innerWidth - 1);
-        const y = Math.min(Math.max(r.top + r.height / 2, 1), window.innerHeight - 1);
-        const hit = document.elementFromPoint(x, y);
-        if (hit && !e.contains(hit) && !hit.contains(e) && hit.closest('header, nav[aria-label="Main tabs"], [data-sticky]')) out.push(`focused "${label(e)}" is hidden behind ${hit.closest('header') ? 'the top bar' : 'a sticky bar'}`);
-      }
-      (document.activeElement as HTMLElement | null)?.blur();
       // the end of the page is reachable above the tab bar
+      const startY = window.scrollY;
       window.scrollTo(0, doc.scrollHeight);
       const main = document.querySelector('main');
       const tabbar = document.querySelector('nav[aria-label="Main tabs"]');
@@ -63,6 +50,61 @@ export async function phoneProblems(page: Page): Promise<string[]> {
       return [...new Set(out)];
     },
     { CONTROLS, MIN_TAP },
+  );
+  return [...new Set([...size, ...(await obscuredFocus(page))])];
+}
+
+/**
+ * WCAG 2.4.11 Focus Not Obscured, at any width:
+ * - every bar inside <main> that stays on screen while the page scrolls (position sticky or fixed)
+ *   must be marked data-sticky, so this check knows about it (an unmarked bar is a problem itself);
+ * - every focusable control in <main>, once focused and scrolled into view as WebKit and Firefox do
+ *   (only as far as needed, honouring the page's scroll padding), is not hidden behind the top bar, the tab bar or a data-sticky bar.
+ * The page is first scrolled to the end, as a conversation opens, so controls are reached from below
+ * and from above.
+ */
+export async function obscuredFocus(page: Page): Promise<string[]> {
+  return page.evaluate(
+    ({ CONTROLS }) => {
+      const out: string[] = [];
+      const label = (e: Element) => (e.getAttribute('aria-label') ?? (e as HTMLElement).innerText ?? e.getAttribute('name') ?? e.tagName).trim().replace(/\s+/g, ' ').slice(0, 40) || e.tagName.toLowerCase();
+      const visible = (e: Element) => {
+        const r = e.getBoundingClientRect();
+        const s = getComputedStyle(e);
+        return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
+      };
+      for (const e of document.querySelectorAll<HTMLElement>('main *')) {
+        const pos = getComputedStyle(e).position;
+        if (pos !== 'sticky' && pos !== 'fixed') continue;
+        if (!visible(e) || e.closest('header, nav[aria-label="Main tabs"], [aria-hidden="true"], .sr-only, [role="dialog"], [data-sticky]')) continue;
+        out.push(`"${label(e)}" stays on screen (position: ${pos}) but is not marked data-sticky`);
+      }
+      const startY = window.scrollY;
+      window.scrollTo(0, document.documentElement.scrollHeight);
+      const sel = 'main ' + CONTROLS.split(', ').join(', main ');
+      for (const pass of ['down', 'up'] as const) {
+        const list = [...document.querySelectorAll<HTMLElement>(sel)].filter(visible);
+        if (pass === 'up') list.reverse();
+        for (const e of list) {
+          if (e.tabIndex < 0 || e.closest('[inert]')) continue;
+          // Chromium centres a control it scrolls to on focus; WebKit (the iOS bar) and Firefox
+          // scroll only as far as needed. Scroll the way they do, honouring scroll padding.
+          e.focus({ preventScroll: true });
+          if (document.activeElement !== e) continue;
+          e.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+          const r = e.getBoundingClientRect();
+          const x = Math.min(Math.max(r.left + r.width / 2, 1), window.innerWidth - 1);
+          const y = Math.min(Math.max(r.top + r.height / 2, 1), window.innerHeight - 1);
+          const hit = document.elementFromPoint(x, y);
+          const bar = hit?.closest('header, nav[aria-label="Main tabs"], [data-sticky]');
+          if (hit && bar && !e.contains(hit) && !hit.contains(e) && !bar.contains(e)) out.push(`focused "${label(e)}" is hidden behind ${hit.closest('header') ? 'the top bar' : bar.matches('[data-sticky]') ? 'a sticky bar' : 'the tab bar'}`);
+        }
+      }
+      (document.activeElement as HTMLElement | null)?.blur();
+      window.scrollTo(0, startY);
+      return [...new Set(out)];
+    },
+    { CONTROLS },
   );
 }
 

@@ -139,11 +139,15 @@ body {
 
 /* Phone: the sticky top bar and the bottom tab bar cover the edges of the page. Scroll padding keeps a
    control the browser scrolls into view (keyboard focus, find-in-page, #anchors) clear of both
-   (WCAG 2.2 2.4.11 Focus Not Obscured). */
+   (WCAG 2.2 2.4.11 Focus Not Obscured). A page's own bottom sticky bar (the thread's compose bar)
+   adds its height through --sticky-bottom-h (design/Sticky.tsx), on every width. */
+html {
+  scroll-padding-bottom: calc(var(--sticky-bottom-h, 0px) + 8px);
+}
 @media (max-width: 767.98px) {
   html {
     scroll-padding-top: calc(52px + env(safe-area-inset-top) + 8px);
-    scroll-padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 8px);
+    scroll-padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + var(--sticky-bottom-h, 0px) + 8px);
   }
 }
 

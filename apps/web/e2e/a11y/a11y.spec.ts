@@ -15,7 +15,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { type Page, expect, test } from 'playwright/test';
 import { ROLES, SIGNED_OUT_PAGES, SWEEP_PAGES } from './pages.js';
 import { type A11yStack, type World, startA11yStack } from './stack.js';
-import { phoneProblems } from './checks.js';
+import { obscuredFocus, phoneProblems } from './checks.js';
 import { settle, signIn as signInAs } from './session.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -73,6 +73,20 @@ for (const role of ROLES) {
     expect(own).toEqual([]);
   });
 }
+
+test('a long conversation: the compose bar is a marked sticky bar and no focused control hides behind it (WCAG 2.4.11)', async ({ page }) => {
+  await signInAs(page, stack, world, 'agent');
+  await page.goto(`${stack.webUrl}/contacts/${world.ids.longThreadContactId}/thread`);
+  await settle(page);
+  const held = page.getByRole('group', { name: 'Held message' });
+  await expect(held.getByRole('button', { name: 'Send anyway' })).toBeVisible({ timeout: 15_000 });
+  // the conversation is taller than the window, so the bar really floats over it
+  const tall = await page.evaluate(() => document.documentElement.scrollHeight > window.innerHeight * 1.5);
+  expect(tall, 'the seeded conversation is longer than the screen').toBe(true);
+  expect(await obscuredFocus(page)).toEqual([]);
+  await expect(page.locator('main [data-sticky]')).toHaveCount(1);
+  expect(await axe(page)).toEqual([]);
+});
 
 test('signed-out screens pass axe in light and dark, and hold up on a phone', async ({ page }) => {
   const found: string[] = [];

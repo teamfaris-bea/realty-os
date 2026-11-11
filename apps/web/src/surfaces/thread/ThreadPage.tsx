@@ -16,7 +16,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useId, useRef } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { Button, Notice } from '../../design/index.js';
+import { Button, Notice, useStickyBottom } from '../../design/index.js';
 import { REACHABILITY_KEY, ReasonCaption, isHeld, messageStatus, useChannelState } from '../../reasons/index.js';
 import { type ApiError, messageFor, useApi, usePageTitle, useSession } from '../../shell/index.js';
 import { useInbox } from '../approvals/ApprovalsPage.js';
@@ -57,6 +57,9 @@ function Thread() {
   // contact prefills the box, so Text → Send is 2 taps from anywhere
   const inbox = useInbox();
   const pendingDraft = inbox.data?.items.find((a) => a.contactId === contactId && a.status === 'proposed' && a.primaryAction === 'send' && a.draft !== null && (params.get('compose') === 'email' ? a.draft.channel === 'email' : a.draft.channel === 'sms'))?.id ?? null;
+  // the compose bar floats over a long conversation: its height is part of the scroll padding, so a
+  // focused control is never left behind it (WCAG 2.4.11)
+  const composeBar = useStickyBottom<HTMLDivElement>();
 
   if (c.isPending) return <p className="py-10 text-center text-[15px] text-ink-muted">Loading</p>;
   if (c.isError || !c.data) return <Notice tone="error">{c.error ? messageFor(c.error, AGENT_ERROR_MESSAGES) : null}</Notice>;
@@ -76,7 +79,7 @@ function Thread() {
       {t.isError ? <Notice tone="error">{messageFor(t.error, AGENT_ERROR_MESSAGES)}</Notice> : null}
       {t.data && items.length === 0 ? <p className="py-6 text-center text-[15px] text-ink-muted">No messages or calls yet.</p> : null}
       <Messages items={items} contact={{ id: full.id, name: full.displayName }} />
-      <div className="sticky bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))] -mx-4 border-t border-line bg-canvas/95 px-4 py-3 backdrop-blur md:bottom-0 md:mx-0 md:rounded-2xl md:border md:bg-surface">
+      <div ref={composeBar} data-sticky className="sticky bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))] -mx-4 border-t border-line bg-canvas/95 px-4 py-3 backdrop-blur md:bottom-0 md:mx-0 md:rounded-2xl md:border md:bg-surface">
         <ComposeBox
           key={draft ?? 'none'}
           suggestedDraftId={compose !== null && draft === null ? pendingDraft : null}
@@ -97,7 +100,7 @@ function ThreadHeader({ contact }: { contact: ContactFullView }) {
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center gap-2">
-        <Link to={`/contacts/${contact.id}`} className="inline-flex min-h-tap min-w-0 flex-1 items-center truncate text-[15px] font-medium text-accent">
+        <Link to={`/contacts/${contact.id}`} className="inline-flex min-h-tap min-w-0 flex-1 items-center py-2 text-[15px] font-medium text-accent [overflow-wrap:anywhere]">
           View {contact.displayName}'s details
         </Link>
         {contact.phones.length > 0 ? (

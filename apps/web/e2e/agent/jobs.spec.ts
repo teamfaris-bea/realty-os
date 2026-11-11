@@ -9,6 +9,9 @@ import { createRequire } from 'node:module';
 import { type Locator, type Page, expect, test } from 'playwright/test';
 import { type AgentStack, startAgentStack } from './stack.js';
 
+/** The visible toast (it is also announced through the app's one live region). */
+const toast = (page: Page) => page.getByTestId('toast');
+
 const require = createRequire(import.meta.url);
 const AXE_PATH = require.resolve('axe-core/axe.min.js');
 
@@ -87,7 +90,7 @@ test('an agent’s day: every benchmark job within its tap target', async ({ pag
   // accept: 1 tap from the feed card
   const accept = { taps: 0 };
   await tap(page, priya.getByRole('button', { name: 'Accept' }), accept);
-  await expect(page.getByText('Priya Shah is yours now.')).toBeVisible();
+  await expect(toast(page).getByText('Priya Shah is yours now.')).toBeVisible();
   expect(accept.taps).toBe(1);
 
   // a new portal lead can be called straight away: no consent entry, no registry scrub, no contact
@@ -100,7 +103,7 @@ test('an agent’s day: every benchmark job within its tap target', async ({ pag
   await expect(priyaCall.getByText("Your phone will ring first. Answer it and you're connected to Priya.")).toBeVisible({ timeout: 15_000 });
   await expect(priyaCall.getByRole('button', { name: 'Call anyway' })).toHaveCount(0);
   await priyaCall.getByRole('button', { name: 'No answer' }).click();
-  await expect(page.getByText(/Call outcome saved\.|saved as a task for the new owner/)).toBeVisible();
+  await expect(toast(page).getByText(/Call outcome saved\.|saved as a task for the new owner/)).toBeVisible();
 
   // text a lead: Text → the assistant's draft is prefilled → Send = 2 taps
   const text = { taps: 0 };
@@ -110,7 +113,7 @@ test('an agent’s day: every benchmark job within its tap target', async ({ pag
   await expect(box).not.toHaveValue('', { timeout: 15_000 });
   await expect(page.getByText('Drafted by the assistant.')).toBeVisible();
   await tap(page, page.getByRole('button', { name: 'Send' }), text);
-  await expect(page.getByText(/^(Sent to Jane\.|Sending to Jane\.|Sends .+)$/)).toBeVisible({ timeout: 15_000 });
+  await expect(toast(page).getByText(/^(Sent to Jane\.|Sending to Jane\.|Sends .+)$/)).toBeVisible({ timeout: 15_000 });
   expect(text.taps).toBe(2);
 
   // approve an assistant draft: 1 tap on its card (Approvals is a tab / sidebar entry away)
@@ -121,7 +124,7 @@ test('an agent’s day: every benchmark job within its tap target', async ({ pag
   await expect(lenaCard.getByText(/the text/).first()).toBeVisible(); // evidence: a quote with its source
   const approve = { taps: 0 };
   await tap(page, lenaCard.getByRole('button', { name: 'Send' }), approve);
-  await expect(page.getByText(/^(Sent to Lena Park\.|Marked as reviewed\.)$|Scheduled|Not sent/)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/^(Sent to Lena Park\.|Marked as reviewed\.)$|Scheduled|Not sent/).first()).toBeVisible({ timeout: 15_000 });
   expect(approve.taps).toBe(1);
   expect(await page.locator('body').textContent()).not.toMatch(/confiden|\d+\s?%/i);
 
@@ -131,7 +134,7 @@ test('an agent’s day: every benchmark job within its tap target', async ({ pag
   const appt = { taps: 0 };
   await tap(page, marcoCard.getByRole('button', { name: 'Log outcome' }), appt);
   await tap(page, page.getByRole('dialog').getByRole('button', { name: 'Follow up' }), appt);
-  await expect(page.getByText('Outcome saved.')).toBeVisible();
+  await expect(toast(page).getByText('Outcome saved.')).toBeVisible();
   expect(appt.taps).toBeLessThanOrEqual(2);
 
   // call: from the contact, 1 tap (dial-time gate on the server); the post-call outcome is 1 chip
@@ -143,7 +146,7 @@ test('an agent’s day: every benchmark job within its tap target', async ({ pag
   expect(callTaps.taps).toBe(1);
   const outcome = { taps: 0 };
   await tap(page, sheet.getByRole('button', { name: 'No answer' }), outcome);
-  await expect(page.getByText(/Call outcome saved\.|saved as a task for the new owner/)).toBeVisible();
+  await expect(toast(page).getByText(/Call outcome saved\.|saved as a task for the new owner/)).toBeVisible();
   expect(outcome.taps).toBe(1);
 
   // an opt-out is said plainly where the buttons are, before any tap, and the action is disabled
