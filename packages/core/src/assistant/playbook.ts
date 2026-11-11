@@ -131,7 +131,8 @@ const MAX_OFFSET_SECONDS = 3 * 366 * 24 * 3600;
 const StepSchemaInner = z.strictObject({
   stepKey: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
   /**
-   * `inbound_channel` = "reply where the lead wrote" (Messenger, Instagram, web chat): only for the
+   * `inbound_channel` = "reply where the lead wrote" (web chat; owner decision D2 keeps Messenger and
+   * Instagram DMs out of scope): only for the
    * 60-second first response, as part of the approved content (R-INBOX-4).
    */
   channel: z.enum(['sms', 'email', 'inbound_channel']),
@@ -427,10 +428,11 @@ export function onOwnerChange(i: { state: 'active' | 'paused' | 'completed' | 's
 
 export const FIRST_RESPONSE_DEDUPE_MS = DAY_MS;
 
-const INBOUND_WORDS: Readonly<Record<InboundChannel, string>> = { messenger: 'Messenger', instagram: 'Instagram', web_chat: 'web chat' };
+const INBOUND_WORDS: Readonly<Record<InboundChannel, string>> = { web_chat: 'web chat' };
 
 /** Where a lead wrote from, when it was a DM or chat (R-INBOX-4). */
-export type InboundChannel = 'messenger' | 'instagram' | 'web_chat';
+// Owner decision D2: Messenger and Instagram direct messages are out of scope; web chat only.
+export type InboundChannel = 'web_chat';
 
 export type FirstResponsePlan =
   | { send: true; channel: 'sms' | 'email' | InboundChannel; explanation: string }

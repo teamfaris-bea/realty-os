@@ -68,7 +68,7 @@ export interface GuardResult {
 
 /** The parts of a playbook step the guard needs (PlaybookStep satisfies it). */
 export interface GuardStep {
-  channel: Extract<Channel, 'sms' | 'email'> | 'inbound_channel' | 'messenger' | 'instagram' | 'web_chat';
+  channel: Extract<Channel, 'sms' | 'email'> | 'inbound_channel' | 'web_chat';
   purpose: Purpose;
   maxLength: number;
 }

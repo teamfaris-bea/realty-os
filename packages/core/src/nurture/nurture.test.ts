@@ -342,7 +342,10 @@ describe('PlaybookContent (R-AST-20, R-INBOX-4, R-MKT-11)', () => {
     expect(validatePlaybookContent([step], { kind: 'new_lead_response' })).toEqual([]);
     expect(validatePlaybookContent([{ ...step, category: 'nurture_step', intent: 'check_in', purpose: 'marketing' }], { kind: 'nurture' }).map((i) => i.code)).toContain('INBOUND_CHANNEL_NOT_ALLOWED');
     expect(validatePlaybookContent([{ ...step, subject: 'x' }], { kind: 'new_lead_response' }).map((i) => i.code)).toContain('SMS_SUBJECT_NOT_ALLOWED');
-    expect(stepForChannel(step as never, 'messenger')).toBe(step);
+    expect(stepForChannel(step as never, 'web_chat')).toBe(step);
+    // owner decision D2: Messenger and Instagram DMs are not channels at all
+    // @ts-expect-error messenger is not an inbound channel
+    expect(stepForChannel(step as never, 'messenger')).toBeNull();
     expect(stepForChannel(step as never, 'sms')).toBeNull();
   });
 
