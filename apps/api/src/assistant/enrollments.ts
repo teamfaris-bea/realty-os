@@ -9,7 +9,8 @@
 //
 // One live enrollment per contact (DB unique). A human enrolling into another playbook must confirm the
 // replacement (core.planEnroll); the system never replaces silently. Pause / stop / resume are human
-// actions on the enrollment; resume is human-only (DB guard) and audited.
+// actions on the enrollment; resume is human-only (DB guard) and audited. A human never enrolls a person
+// the plan cannot reach (B9): the stage entry's rule, through the same function (stageAutomation/reach.ts).
 import { type PlaybookStep, PlaybookStepSchema, migrateEnrollment, planEnroll, planNextStep, type StopCondition } from '@realty/core/assistant';
 import type { ContactId, Instant, SystemActor, UserActor } from '@realty/core/foundation';
 import { plusMs } from '@realty/core/foundation';
@@ -19,6 +20,7 @@ import { audit } from '../audit.js';
 import { resumeAutomation } from '../comms/repos/automation.js';
 import { asSystem, asUser } from '../comms/runtime.js';
 import { AppError } from '../errors.js';
+import { reachableForVersion } from '../stageAutomation/reach.js';
 import { PLAYBOOK_STEP } from '../worker/contracts.js';
 import { enqueueTyped } from '../worker/registry.js';
 import { contactCore } from './repos/context.js';
@@ -247,6 +249,11 @@ export async function enrollContact(actor: UserActor, contactId: string, input: 
       if (plan.code === 'ENROLLMENT_REPLACE_NEEDS_CONFIRMATION') throw new AppError('ENROLLMENT_REPLACE_NEEDS_CONFIRMATION', { currentEnrollmentId: plan.currentEnrollmentId, currentPlaybookId: plan.currentPlaybookId });
       throw new AppError('ALREADY_ENROLLED', { enrollmentId: live?.id ?? null });
     }
+    // B9 (R-PAR-16, D1): exactly the rule of a stage entry (stageAutomation/decide.ts, skip cannot_be_reached),
+    // decided by the same function: some channel this version messages on has an address that no opt-out blocks
+    // (core canContact, the removed phones' STOPs included, R-PAR-12). A version with no text or email step is
+    // reachable, as there. Checked before anything is written, so a refusal replaces and enrolls nothing.
+    if (!(await reachableForVersion(tx, contactId, v!.id, now))) throw new AppError('CANNOT_BE_REACHED', { reason: 'cannot_be_reached', playbookId: pb.id });
     let replaced: string | null = null;
     if (plan.action === 'replace') {
       await P.endEnrollment(tx, plan.stopEnrollmentId, 'stopped', plan.stopReason, now);

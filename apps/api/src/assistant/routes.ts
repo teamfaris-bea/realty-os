@@ -14,6 +14,7 @@
 //   POST /saved-searches/:id/{approve,activate,pause}                                        comms.send (marketing)
 // Enrolling, resuming and starting search alerts let the assistant message the contact on the caller's
 // behalf, marketing included, so they need the right to send ANY message to the contact (a TC cannot).
+// An enrollment the plan could never send is refused (409 CANNOT_BE_REACHED, B9): the stage entry's rule.
 import { classifyHumanPurpose } from '@realty/core/compliance';
 import type { ResourceFacts, UserActor } from '@realty/core/foundation';
 import { type Tx, withTenantTx } from '@realty/db';

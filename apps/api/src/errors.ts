@@ -120,6 +120,7 @@ export const ERROR_STATUS = {
   PLAYBOOK_OWNER_MISMATCH: 409, // an agent playbook only runs for contacts its agent owns
   ALREADY_ENROLLED: 409, // R-AST-8: the contact is already in this playbook
   ENROLLMENT_REPLACE_NEEDS_CONFIRMATION: 409, // R-AST-8: another live enrollment would be stopped (details.currentPlaybookId)
+  CANNOT_BE_REACHED: 409, // B9 R-PAR-16 D1: they can't be messaged: every channel this plan messages on is opted out (or do-not-contact) or has no address, so it could never send; nothing was enrolled (details.reason = stage automation's skip reason cannot_be_reached, details.playbookId)
   ENROLLMENT_NOT_LIVE: 409, // the enrollment already ended
   ENROLLMENT_NOT_RESUMABLE: 409, // opt-out, wrong number or revoked approval pauses are not resumed here (details.pauseReason)
   SAVED_SEARCH_INVALID: 422, // the reviewed criteria are empty or invalid
