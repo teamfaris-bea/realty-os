@@ -30,6 +30,8 @@ export interface MessageRow {
   gateDecisionId: string | null;
   providerMessageRef: string | null;
   imported: boolean;
+  /** the bulk action of a bulk send (parity module 63; never a touch, R-PAR-37); null otherwise */
+  bulkActionId: string | null;
 }
 
 interface Raw {
@@ -58,11 +60,12 @@ interface Raw {
   gate_decision_id: string | null;
   provider_message_ref: string | null;
   imported: boolean;
+  bulk_action_id: string | null;
 }
 
 const COLS = sql`id, conversation_id, contact_id, channel, direction, status, status_reason, initiator, initiated_by_user_id, purpose,
   action_category, assistant_action_id, playbook_step_run_id, phone_number_id, email_identity_id, from_address, to_address, subject,
-  body, pinned_inbound_seq, scheduled_for, dispatched_at, gate_decision_id, provider_message_ref, imported`;
+  body, pinned_inbound_seq, scheduled_for, dispatched_at, gate_decision_id, provider_message_ref, imported, bulk_action_id`;
 
 function row(x: Raw): MessageRow {
   return {
@@ -91,6 +94,7 @@ function row(x: Raw): MessageRow {
     gateDecisionId: x.gate_decision_id,
     providerMessageRef: x.provider_message_ref,
     imported: x.imported,
+    bulkActionId: x.bulk_action_id,
   };
 }
 
@@ -146,6 +150,8 @@ export interface OutboundInsert {
   pinnedInboundSeq: number | null;
   idempotencyKey: string | null;
   occurredAt: Instant;
+  /** parity module 63: a bulk send's action (messages_bulk_guard checks it); absent = none */
+  bulkActionId?: string | null;
 }
 
 /**
@@ -156,11 +162,11 @@ export async function insertOutbound(tx: Tx, m: OutboundInsert): Promise<boolean
   const r = await sql<{ id: string }>`
     INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, email_identity_id, from_address,
       to_address, subject, body, status, initiator, initiated_by_user_id, purpose, action_category, assistant_action_id, playbook_step_run_id,
-      pinned_inbound_seq, idempotency_key, scheduled_for, occurred_at)
+      pinned_inbound_seq, idempotency_key, scheduled_for, occurred_at, bulk_action_id)
     VALUES (app.tenant_id(), ${m.id}, ${m.conversationId}, ${m.contactId}, ${m.channel}, 'outbound', ${m.phoneNumberId}, ${m.emailIdentityId},
       ${m.fromAddress}, ${m.toAddress}, ${m.subject}, ${m.body}, ${m.status}, ${m.initiator}, ${m.initiatedByUserId}, ${m.purpose},
       ${m.actionCategory}, ${m.assistantActionId}, ${m.playbookStepRunId}, ${m.pinnedInboundSeq}, ${m.idempotencyKey},
-      ${m.scheduledFor === null ? null : toIso(m.scheduledFor)}::timestamptz, ${toIso(m.occurredAt)}::timestamptz)
+      ${m.scheduledFor === null ? null : toIso(m.scheduledFor)}::timestamptz, ${toIso(m.occurredAt)}::timestamptz, ${m.bulkActionId ?? null}::uuid)
     ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING RETURNING id`.execute(tx);
   return r.rows.length === 1;
 }

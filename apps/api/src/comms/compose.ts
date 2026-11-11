@@ -22,6 +22,7 @@ import { contactFacts, dealOrAppointmentContext, detailVisibleContact } from './
 import * as g from './repos/gate.js';
 import * as msgs from './repos/messages.js';
 import { asUser } from './runtime.js';
+import { senderSignature } from '../templates/repos/signature.js';
 import type { CommsDeps, DecisionView, DispatchResult, OutboundIntent } from './types.js';
 
 export interface ComposeInput {
@@ -31,6 +32,10 @@ export interface ComposeInput {
   scheduleAt?: string | undefined;
   idempotencyKey: string;
   toPointId?: string | undefined;
+  /** parity module 63: the bulk action this send belongs to (messages_bulk_guard); absent for one-to-one sends */
+  bulkActionId?: string | undefined;
+  /** parity module 63: a bulk send is always marketing (R-PAR-39); absent = classified as today */
+  purposeOverride?: 'marketing' | undefined;
 }
 
 export interface MessageView {
@@ -133,7 +138,7 @@ export async function previewHumanMessage(actor: UserActor, contactId: string, i
     if (!(await detailVisibleContact(tx, contactId))) throw new AppError('NOT_FOUND');
     const d = await draftFor(tx, deps, contactId, actor.userId, input.channel, input.toPointId, now);
     const { tenant } = await resolvedPolicy(tx);
-    const body = renderHumanBody(input.body, { channel: input.channel, purpose: d.purpose, identity: { brokerageLegalName: tenant.brokerageLegalName, postalAddress: tenant.postalAddress }, unsubscribe: d.purpose === 'marketing' ? '(unsubscribe link)' : null });
+    const body = renderHumanBody(input.body, { channel: input.channel, purpose: d.purpose, identity: { brokerageLegalName: tenant.brokerageLegalName, postalAddress: tenant.postalAddress }, unsubscribe: d.purpose === 'marketing' ? '(unsubscribe link)' : null, signature: input.channel === 'email' ? await senderSignature(tx) : null });
     const intent = humanIntent(contactId, d, input.channel, body);
     const evaluated = await evaluateGate(tx, intent, now);
     return { decision: decisionView({ id: null, ...verdictOf(evaluated.decision) }, 'preview'), body };
@@ -157,11 +162,11 @@ export async function composeHumanMessage(actor: UserActor, contactId: string, i
       scheduledFor = at(input.scheduleAt);
       if (scheduledFor <= now) throw new AppError('SCHEDULE_IN_PAST');
     }
-    const d = await draftFor(tx, deps, contactId, actor.userId, input.channel, input.toPointId, now);
+    const d = await draftFor(tx, deps, contactId, actor.userId, input.channel, input.toPointId, now, input.purposeOverride ? { purpose: input.purposeOverride } : {});
     const messageId = deps.ids.next<'MessageId'>();
     const { tenant } = await resolvedPolicy(tx);
     const unsub = input.channel === 'email' && d.purpose === 'marketing' ? unsubscribeUrl(deps.publicBaseUrl, deps.linkSecret, actor.tenantId, messageId) : null;
-    const body = renderHumanBody(input.body, { channel: input.channel, purpose: d.purpose, identity: { brokerageLegalName: tenant.brokerageLegalName, postalAddress: tenant.postalAddress }, unsubscribe: unsub });
+    const body = renderHumanBody(input.body, { channel: input.channel, purpose: d.purpose, identity: { brokerageLegalName: tenant.brokerageLegalName, postalAddress: tenant.postalAddress }, unsubscribe: unsub, signature: input.channel === 'email' ? await senderSignature(tx) : null });
     if (!d.fromAddress) {
       // No sending number / identity: the send is blocked (SENDER_UNAVAILABLE) and logged; nothing to create.
       const intent = humanIntent(contactId, d, input.channel, body);
@@ -193,6 +198,7 @@ export async function composeHumanMessage(actor: UserActor, contactId: string, i
       pinnedInboundSeq: d.inboundSeq,
       idempotencyKey: key,
       occurredAt: scheduledFor ?? now,
+      bulkActionId: input.bulkActionId ?? null,
     });
     if (!inserted) {
       // the same command raced in (double tap, network retry): it is that command's message

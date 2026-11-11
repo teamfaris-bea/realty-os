@@ -137,6 +137,12 @@ export const ACTIONS = [
   'custom_field.manage', // parity api/lists: define, edit, archive custom fields (R-PAR-17)
   'smart_list.personal', // parity api/lists: own personal smart lists; run any visible list (R-PAR-27)
   'smart_list.team_manage', // parity api/lists: create, edit, archive team lists (R-PAR-27)
+  'template.personal', // parity module 63: own personal templates (DATA_MODEL §12: every role)
+  'template.team_manage', // parity module 63: create/edit/archive team templates (Owner/Admin; Q-PAR-4)
+  'bulk.run', // parity module 63: bulk tag/untag/stage/enroll/email, per person (✅ | ✅ | T | O | O | —)
+  'bulk.assign', // parity module 63: bulk assign through the ownership engine (✅ | ✅ | T to team members | — …)
+  'bulk.text', // parity module 63: batch text, per person; also needs the Owner's switch (R-PAR-40)
+  'settings.batch_text', // parity module 63: the batch-text switch (Owner on 🔒 + attestation; Admin off only)
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -263,6 +269,15 @@ export const AUDIT_ACTIONS = [
   'custom_field.changed', // parity api/lists: label, options or position changed
   'custom_field.archived', // parity api/lists: a custom field archived or restored
   'smart_list.team_changed', // parity api/lists: a team list created, changed or archived
+  'template.created', // parity module 63: a template was created (ids, scope, channel; no text)
+  'template.updated', // parity module 63: a template's content or name changed (version; text redacted)
+  'template.archived', // parity module 63: a template was archived
+  'bulk.created', // parity module 63: a bulk action draft was built (kind, counts; no PII)
+  'bulk.confirmed', // parity module 63: the creator confirmed a bulk action (frozen target count)
+  'bulk.canceled', // parity module 63: a bulk action was canceled (creator or Owner/Admin)
+  'bulk.completed', // parity module 63: a bulk action finished (counts by reason)
+  'settings.batch_text_changed', // parity module 63: batch text turned on (Owner, re-auth + attestation) or off
+  'member.signature_changed', // parity module 63: a member changed their own email signature (text redacted)
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -528,6 +543,18 @@ const MATRIX: Record<Action, ActionRule> = {
   // smart_list.personal: ✅ ✅ ✅ ✅ ✅ ✅ (D: a TC's runs return deal contacts only, by RLS); team_manage: ✅ ✅ ✅ — — —
   'smart_list.personal': { roles: { owner: ALL, admin: ALL, team_lead: ALL, agent: ALL, isa: ALL, tc: ALL } },
   'smart_list.team_manage': { roles: { owner: ALL, admin: ALL, team_lead: ALL } },
+  // FUB parity (DATA_MODEL §12). template.personal: ✅ for every role (own templates only, RLS).
+  'template.personal': { roles: { owner: ALL, admin: ALL, team_lead: ALL, agent: ALL, isa: ALL, tc: ALL } },
+  // template.team_manage: ✅ | ✅ | — … (Q-PAR-4: Team Leads copy to personal)
+  'template.team_manage': { roles: { owner: ALL, admin: ALL } },
+  // bulk.run (tag, untag, stage, enroll, email), per person: ✅ | ✅ | T | O | O | —
+  'bulk.run': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: O, isa: O } },
+  // bulk.assign: ✅ | ✅ | T (to team members) | — | — | —; never to a TC (R-PERM-15)
+  'bulk.assign': { roles: { owner: ALL, admin: ALL, team_lead: { scopes: ['own', 'collab', 'team'], checks: ['target_in_team'] } }, checks: ['target_can_own'] },
+  // bulk.text: ✅ | ✅ | T | O | O | — (and the Owner's switch, checked by the API and the DB)
+  'bulk.text': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: O, isa: O } },
+  // settings.batch_text: ✅ 🔒 (on needs re-auth + attestation) | off only | — … ("loosening" = turning it on)
+  'settings.batch_text': { roles: { owner: { scopes: ['all'], checks: ['attest_when_loosening'], reauth: 'when_loosening' }, admin: { scopes: ['all'], checks: ['not_loosening'] } } },
 };
 
 const DENY_NOT_FOUND: CanResult = { ok: false, code: 'NOT_FOUND' };

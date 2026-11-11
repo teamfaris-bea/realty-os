@@ -162,7 +162,8 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
       const facts = await contactFacts(tx, m.contactId);
       const ok = facts !== null && can(c.actor, 'comms.send', { ...facts, purpose }).ok;
       if (!ok && !extra.includes('SENDER_NOT_AUTHORIZED')) extra.push('SENDER_NOT_AUTHORIZED');
-      touch = ok && facts !== null && (facts.own === true || facts.collaborator === true);
+      // parity module 63 (R-PAR-37): a bulk send is never a touch
+      touch = ok && facts !== null && (facts.own === true || facts.collaborator === true) && m.bulkActionId === null;
     }
   } else if (m.initiator === 'assistant') {
     const a = m.assistantActionId ? await auto.actionFacts(tx, m.assistantActionId) : null;

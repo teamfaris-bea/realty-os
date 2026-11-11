@@ -25,6 +25,8 @@ import { sparkMlsRoutes } from './mls/spark/routes.js';
 import { peopleRoutes } from './people/routes.js';
 import { duplicatesRoutes } from './duplicates/routes.js';
 import { listsRoutes } from './lists/routes.js';
+import { templatesRoutes } from './templates/routes.js';
+import { bulkRoutes } from './bulk/routes.js';
 
 export interface RouteModule {
   name: string;
@@ -48,5 +50,7 @@ export const routeModules: RouteModule[] = [
   peopleRoutes,
   duplicatesRoutes,
   listsRoutes,
+  templatesRoutes,
+  bulkRoutes,
   // registry: add new entries above this line
 ];

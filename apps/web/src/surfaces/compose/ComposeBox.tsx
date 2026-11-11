@@ -18,7 +18,7 @@
 // - DRAFT_INVALIDATED (R-AST-7): the draft no longer applies; nothing was sent. The text stays, and
 //   Send becomes the agent's own message.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { Button, CheckThis, GateBadge, Notice } from '../../design/index.js';
 import { REACHABILITY_KEY, ReasonCaption, channelState, useReachability } from '../../reasons/index.js';
 import { type ApiError, useApi, useCommand } from '../../shell/index.js';
@@ -46,6 +46,11 @@ export interface ComposeBoxProps {
   /** focus the message field on mount (opened from a Text / Edit tap) */
   autoFocus?: boolean;
   onSent?: () => void;
+  /**
+   * Parity module 64: a template picker rendered beside Send (e.g. templates' TemplatePicker). It only puts
+   * text in the box (`insert`); Send and the send-time check are unchanged.
+   */
+  templatePicker?: (p: { channel: Channel; insert(t: { channel: Channel; subject: string | null; body: string }): void }) => ReactNode;
 }
 
 /** Debounce a value (ms). */
@@ -58,7 +63,7 @@ function useDebounced<T>(v: T, ms: number): T {
   return d;
 }
 
-export function ComposeBox({ contact, initialChannel, draftActionId: initialDraft = null, suggestedDraftId = null, autoFocus = false, onSent }: ComposeBoxProps) {
+export function ComposeBox({ contact, initialChannel, draftActionId: initialDraft = null, suggestedDraftId = null, autoFocus = false, onSent, templatePicker }: ComposeBoxProps) {
   const api = useApi();
   const qc = useQueryClient();
   const sheets = useAgentSheets();
@@ -71,6 +76,8 @@ export function ComposeBox({ contact, initialChannel, draftActionId: initialDraf
   const [seenSeq, setSeenSeq] = useState<number | null>(null);
   const [notice, setNotice] = useState<{ tone: 'warn' | 'error' | 'ok'; text: string } | null>(null);
   const [outcome, setOutcome] = useState<ComposeResponse | null>(null);
+  // parity module 64 (R-PAR-25): "Send later" exposes the existing scheduleAt (one-to-one only)
+  const [later, setLater] = useState<string | null>(null);
   const loadedDraft = useRef<string | null>(null);
 
   const draftQ = useQuery<{ action: ActionView }, ApiError>({
@@ -142,6 +149,7 @@ export function ComposeBox({ contact, initialChannel, draftActionId: initialDraf
       setSubject('');
       setDraftId(null);
       setOutcome(null);
+      setLater(null);
       sheets.announce(sendOutcomeText(r, contact.name).title);
       onSent?.();
     }
@@ -176,7 +184,12 @@ export function ComposeBox({ contact, initialChannel, draftActionId: initialDraf
       setNotice({ tone: 'error', text: r.message });
       return;
     }
-    const r = await human.run({ channel, body: text, ...(channel === 'email' && subject.trim() ? { subject: subject.trim() } : {}) });
+    const at = later ? new Date(later) : null;
+    if (at && !(at.getTime() > Date.now())) {
+      setNotice({ tone: 'error', text: 'Pick a time in the future, or turn off Send later.' });
+      return;
+    }
+    const r = await human.run({ channel, body: text, ...(channel === 'email' && subject.trim() ? { subject: subject.trim() } : {}), ...(at ? { scheduleAt: at.toISOString() } : {}) });
     if (r.ok) afterSend(r.data);
     else setNotice({ tone: 'error', text: r.message });
   };
@@ -256,9 +269,42 @@ export function ComposeBox({ contact, initialChannel, draftActionId: initialDraf
           className="min-h-tap flex-1 resize-y rounded-xl border border-line bg-surface px-3.5 py-2.5 text-[17px] text-ink placeholder:text-ink-muted"
         />
         <Button type="submit" pending={pending} pendingLabel="Sending" disabled={body.trim().length === 0 || blockedNow.blocked} aria-describedby={blockedNow.blocked || blockedNow.note ? `${id}-reason` : undefined}>
-          Send
+          {later ? 'Schedule' : 'Send'}
         </Button>
       </div>
+      {templatePicker || !draft ? (
+        <div className="flex flex-wrap items-center gap-2">
+          {templatePicker
+            ? templatePicker({
+                channel,
+                insert: (t) => {
+                  setChannel(t.channel);
+                  setBody(t.body);
+                  if (t.channel === 'email') setSubject(t.subject ?? '');
+                  setDraftId(null);
+                  requestAnimationFrame(() => field.current?.focus());
+                },
+              })
+            : null}
+          {!draft ? (
+            later === null ? (
+              <Button type="button" variant="quiet" icon="clock" onClick={() => setLater(new Date(Date.now() + 3_600_000 - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16))}>
+                Send later
+              </Button>
+            ) : (
+              <span className="flex flex-wrap items-center gap-2">
+                <label htmlFor={`${id}-later`} className="text-[15px] font-medium text-ink">
+                  Send at
+                </label>
+                <input id={`${id}-later`} type="datetime-local" value={later} onChange={(e) => setLater(e.target.value || null)} className="min-h-tap rounded-xl border border-line bg-surface px-3 text-[17px] text-ink" />
+                <Button type="button" variant="quiet" onClick={() => setLater(null)}>
+                  Send now instead
+                </Button>
+              </span>
+            )
+          ) : null}
+        </div>
+      ) : null}
       {outcome === null ? <ReasonCaption id={`${id}-reason`} state={blockedNow} /> : null}
       {showPreview ? <GateBadge decision={decision} /> : null}
       {notice ? <Notice tone={notice.tone}>{notice.text}</Notice> : null}

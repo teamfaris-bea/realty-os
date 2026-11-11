@@ -63,6 +63,12 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   { path: '/settings/playbooks', roles: NOT_TC, url: at('/settings/playbooks') },
   { path: '/settings/playbooks/:playbookId', roles: NOT_TC, url: (i) => `/settings/playbooks/${i.playbookId}` },
   { path: '/settings/compliance', roles: ADMINS, url: at('/settings/compliance') },
+  // parity module 64 (lane par-templates-bulk)
+  { path: '/templates', roles: ALL, url: at('/templates') },
+  { path: '/bulk', roles: NOT_TC, url: at('/bulk') },
+  { path: '/bulk/new', roles: NOT_TC, url: (i) => `/bulk/new?kind=email&contacts=${i.contactId}` },
+  { path: '/bulk/:bulkId', roles: NOT_TC, url: at('/bulk/00000000-0000-7000-8000-000000000000') },
+  { path: '/settings/batch-text', roles: ADMINS, url: at('/settings/batch-text') },
   { path: '/settings/team', roles: ADMINS, url: at('/settings/team') },
   { path: '/imports', roles: ADMINS, url: at('/imports') },
   { path: '/imports/:importId', roles: ADMINS, url: (i) => `/imports/${i.importId}` },

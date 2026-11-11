@@ -428,6 +428,7 @@ describe('R-PERM-1 generated can() matrix: one case per DATA_MODEL §3 cell', ()
     // FUB parity actions are DATA_MODEL §12 rows; each module tests its own (module 57: apps/api/src/people/matrix.test.ts;
     // modules 59-60: packages/core/src/parity/lists/authz.test.ts).
     PHASE_2_3.push('contact.edit', 'note.write', 'note.delete', 'activity.log', 'collaborator.manage', 'settings.stage_labels');
+    PHASE_2_3.push('template.personal', 'template.team_manage', 'bulk.run', 'bulk.assign', 'bulk.text', 'settings.batch_text'); // parity L3: DATA_MODEL §12 rows, tested in parity/bulk/authz.test.ts
     const PARITY_LISTS: Action[] = ['contact.edit', 'tag.create', 'tag.manage', 'custom_field.manage', 'smart_list.personal', 'smart_list.team_manage'];
     expect(notInMatrix.filter((a) => !PHASE_2_3.includes(a) && !PARITY_LISTS.includes(a)).sort()).toEqual(['data.export', 'number.release', 'support.revoke', 'system.jobs', 'system.view']);
   });

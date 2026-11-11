@@ -83,6 +83,11 @@ export interface OwnershipCommandOptions {
   /** deactivate_owner: the staged deactivation's facts (R-OWN-22) */
   deactivation?: DeactivationFacts;
   db?: Database;
+  /**
+   * Parity module 63 (bulk assign, R-PAR-35): the per-person REASSIGNED_TO_YOU / REASSIGNED_AWAY notices are
+   * replaced by the caller's one summary per affected user. The decision, ledger, feed and timers are unchanged.
+   */
+  summaryNotices?: true;
 }
 
 /** A replay returns what the first execution stored (R-OWN-7): the ledger events, or the rejection. */
@@ -314,7 +319,8 @@ async function persistDecision(
   } else if (state !== null) {
     await updateContactColumns(tx, contactId, fx);
   }
-  await runEffects(tx, actor, contactId, cmd, state, decision.next, decision.effects, ctx, opts.commandId);
+  const effects = opts.summaryNotices ? decision.effects.filter((e) => !(e.kind === 'notify' && (e.notification.kind === 'reassigned_to_you' || e.notification.kind === 'reassigned_away'))) : decision.effects;
+  await runEffects(tx, actor, contactId, cmd, state, decision.next, effects, ctx, opts.commandId);
 }
 
 async function runEffects(
