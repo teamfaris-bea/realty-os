@@ -14,12 +14,11 @@
 //   every other rejection          409/422 with its code (the rejection is already in the log)
 import type { Actor, ContactId, IdGenerator } from '@realty/core/foundation';
 import type { OwnershipCommand, OwnershipErrorCode, OwnershipEvent, OwnershipProjection } from '@realty/core/ownership';
-import { type Database, applyOwnershipCommand, withTenantTx } from '@realty/db';
+import { type Database, type Tx, applyOwnershipCommandThen } from '@realty/db';
 import type { z } from 'zod';
 import { AppError, type ErrorCode, isErrorCode } from '../errors.js';
-import * as repo from './repos/contacts.js';
+import { projectionOfRow, projectionRow } from './repos/ownership.js';
 import type { ProjectionView } from './schemas.js';
-import { projectionFromRow } from './views.js';
 
 export interface OwnershipEventSummary {
   seq: number;
@@ -43,10 +42,15 @@ function summary(events: readonly OwnershipEvent[], contactId: ContactId): Owner
     .map((e) => ({ seq: e.seq, type: e.type, reasonCode: e.reasonCode, occurredAt: new Date(e.occurredAt).toISOString() }));
 }
 
-/** The projection the caller can see right now (a fresh transaction under the caller's RLS). */
-async function visibleProjection(actor: Actor, contactId: ContactId, db: Database | undefined): Promise<z.infer<typeof ProjectionView> | null> {
-  const row = await withTenantTx(actor, (tx) => repo.getContact(tx, contactId), db ? { db } : {});
-  return row ? projectionFromRow(row) : null;
+/**
+ * The projection the caller can see once the command commits: read in the command's own transaction
+ * after its last write, with app.ownership_command cleared (applyOwnershipCommandThen), i.e. under the
+ * caller's plain RLS exactly as a fresh transaction would see it, without holding a second pooled
+ * connection per tap (lane perf-misses: 45 agents tapping at once queued for connections).
+ */
+async function visibleProjection(tx: Tx, contactId: ContactId): Promise<z.infer<typeof ProjectionView> | null> {
+  const row = await projectionRow(tx, contactId);
+  return row ? projectionOfRow(row) : null;
 }
 
 /**
@@ -61,14 +65,19 @@ export async function runOwnershipCommand(
   expectedSeq?: number,
   opts: RunOptions = {},
 ): Promise<OwnershipResult> {
-  const r = await applyOwnershipCommand(actor, contactId, cmd, {
-    commandId,
-    ...(expectedSeq !== undefined ? { expectedSeq } : {}),
-    ...(opts.ids ? { ids: opts.ids } : {}),
-    ...(opts.db ? { db: opts.db } : {}),
-  });
   const id = (cmd.kind === 'merge' ? cmd.survivorId : contactId) as ContactId;
-  const projection = await visibleProjection(actor, id, opts.db);
+  const { result: r, after: projection } = await applyOwnershipCommandThen(
+    actor,
+    contactId,
+    cmd,
+    {
+      commandId,
+      ...(expectedSeq !== undefined ? { expectedSeq } : {}),
+      ...(opts.ids ? { ids: opts.ids } : {}),
+      ...(opts.db ? { db: opts.db } : {}),
+    },
+    (tx) => visibleProjection(tx, id),
+  );
   if (r.outcome.ok) {
     return { ok: true, contactId: id, replayed: r.replayed, events: summary(r.outcome.events, id), projection };
   }

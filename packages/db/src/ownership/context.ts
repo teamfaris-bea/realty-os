@@ -158,19 +158,21 @@ export async function loadPond(tx: Tx, pondId: PondId, actorUserId: UserId | nul
 }
 
 export async function loadPeople(tx: Tx): Promise<PeopleFacts> {
-  const admins = await sql<{ user_id: string }>`
-    SELECT user_id FROM memberships WHERE tenant_id = app.tenant_id() AND role IN ('owner', 'admin') AND status = 'active'
-     ORDER BY user_id`.execute(tx);
-  const leads = await sql<{ member: string; lead: string }>`
-    SELECT DISTINCT tm.user_id AS member, l.user_id AS lead
-      FROM team_members tm
-      JOIN team_members l ON l.tenant_id = tm.tenant_id AND l.team_id = tm.team_id AND l.is_lead
-      JOIN memberships m ON m.tenant_id = l.tenant_id AND m.user_id = l.user_id AND m.status = 'active'
-     WHERE tm.tenant_id = app.tenant_id()
-     ORDER BY 1, 2`.execute(tx);
+  // One round trip (lane perf-misses): the two reads below were separate statements; each keeps its own
+  // WHERE and ORDER BY, aggregated in that order, so the facts are identical.
+  const r = await sql<{ admins: string[] | null; leads: { member: string; lead: string }[] | null }>`
+    SELECT (SELECT array_agg(user_id ORDER BY user_id) FROM memberships
+             WHERE tenant_id = app.tenant_id() AND role IN ('owner', 'admin') AND status = 'active') AS admins,
+           (SELECT json_agg(json_build_object('member', x.member, 'lead', x.lead) ORDER BY x.member, x.lead)
+              FROM (SELECT DISTINCT tm.user_id AS member, l.user_id AS lead
+                      FROM team_members tm
+                      JOIN team_members l ON l.tenant_id = tm.tenant_id AND l.team_id = tm.team_id AND l.is_lead
+                      JOIN memberships m ON m.tenant_id = l.tenant_id AND m.user_id = l.user_id AND m.status = 'active'
+                     WHERE tm.tenant_id = app.tenant_id()) x) AS leads`.execute(tx);
+  const row = r.rows[0];
   const teamLeadsOf: Record<string, UserId[]> = {};
-  for (const row of leads.rows) (teamLeadsOf[row.member] ??= []).push(row.lead as UserId);
-  return { admins: admins.rows.map((a) => a.user_id as UserId), teamLeadsOf };
+  for (const x of row?.leads ?? []) (teamLeadsOf[x.member] ??= []).push(x.lead as UserId);
+  return { admins: (row?.admins ?? []).map((a) => a as UserId), teamLeadsOf };
 }
 
 /** app.claim_stats for the claimer (counts span contacts the caller may not see). */

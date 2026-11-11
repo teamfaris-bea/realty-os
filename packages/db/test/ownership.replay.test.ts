@@ -5,7 +5,7 @@ import { fold } from '@realty/core/ownership';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { dueWork } from '../src/jobs.js';
-import { applyOwnershipCommandInTx } from '../src/ownership/apply.js';
+import { applyOwnershipCommandInTx, applyOwnershipCommandThen } from '../src/ownership/apply.js';
 import { selectLedger } from '../src/ownership/rows.js';
 import { withTenantTx } from '../src/tenantTx.js';
 import { BUY, cmd, contactRow, createHarness, createWorld, drainFollowups, type Harness, intakeLead, jobsFor, ledger, suFixture, suRows, uuid, type World } from './world.js';
@@ -222,5 +222,43 @@ describe('timers and fences', () => {
     const audit = await suRows<{ action: string }>(h.su, 'SELECT action FROM audit_log WHERE entity_id = $1 ORDER BY seq', [contactId]);
     expect(audit.map((x) => x.action)).toEqual(['ownership.claim', 'ownership.soft_delete']);
     expect((await ledger(h.su, contactId)).at(-1)?.type).toBe('closed');
+  });
+});
+
+// Lane perf-misses (claim contention): applyOwnershipCommandThen reads back in the command's own
+// transaction, after its writes and with app.ownership_command cleared; replays still short-circuit
+// with the cheap EXISTS check and return the stored outcome; the ledger, rejection log and audit mirror
+// are written exactly as applyOwnershipCommand writes them.
+describe('applyOwnershipCommandThen (read-back in the command transaction)', () => {
+  it('the read-back sees the committed-to-be state under plain RLS (no command GUC); a replay returns the stored outcome and writes nothing; a loser is rejected with LEAD_ALREADY_CLAIMED', async () => {
+    // a world of its own: the claims, misses and cooldowns of the tests above never decide this one
+    const w = await createWorld(h.app, { agents: 2 });
+    const { contactId } = await intakeLead(h.app, w);
+    const [a, b] = [w.agents[0]!, w.agents[1]!];
+    const commandId = uuid();
+    const read = (tx: Parameters<Parameters<typeof applyOwnershipCommandThen>[4]>[0]) =>
+      sql<{ c: string; state: string | null }>`
+        SELECT current_setting('app.ownership_command', true) AS c,
+               (SELECT ownership_state FROM contacts WHERE tenant_id = app.tenant_id() AND id = ${contactId}) AS state`
+        .execute(tx)
+        .then((r) => r.rows[0]!);
+    const first = await applyOwnershipCommandThen(a.actor, contactId, { kind: 'claim', pondId: w.pondId }, { commandId, db: h.app }, read);
+    expect(first.result.replayed).toBe(false);
+    expect(first.result.outcome.ok ? null : first.result.outcome.code).toBeNull();
+    expect(first.after).toEqual({ c: '', state: 'owned' });
+    const before = await counts(contactId);
+    expect(Number(before.a)).toBe(1); // ownership.claim audit mirror
+    const replay = await applyOwnershipCommandThen(a.actor, contactId, { kind: 'claim', pondId: w.pondId }, { commandId, db: h.app }, read);
+    expect([replay.result.replayed, replay.result.outcome.ok, replay.after]).toEqual([true, true, { c: '', state: 'owned' }]);
+    expect(await counts(contactId)).toEqual(before);
+    const lost = await applyOwnershipCommandThen(b.actor, contactId, { kind: 'claim', pondId: w.pondId }, { commandId: uuid(), db: h.app }, read);
+    expect(lost.result.outcome.ok).toBe(false);
+    expect(lost.result.outcome.ok ? null : lost.result.outcome.code).toBe('LEAD_ALREADY_CLAIMED');
+    // b no longer sees the claimed lead under plain RLS (its claim race gave it sight only inside the command)
+    expect(lost.after).toEqual({ c: '', state: null });
+    expect(Number((await counts(contactId)).r)).toBe(Number(before.r) + 1);
+    // a stored rejection replays too
+    const lostAgain = await applyOwnershipCommandThen(b.actor, contactId, { kind: 'claim', pondId: w.pondId }, { commandId: (await suRows<{ command_id: string }>(h.su, 'SELECT command_id FROM ownership_command_rejections WHERE contact_id = $1', [contactId]))[0]!.command_id, db: h.app }, read);
+    expect([lostAgain.result.replayed, lostAgain.result.outcome.ok]).toEqual([true, false]);
   });
 });

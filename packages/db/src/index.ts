@@ -20,6 +20,7 @@ export {
   isRetryable,
   setOwnershipCommand,
   withPreTenant,
+  withPreTenantThenTenant,
   withTenantTx,
 } from './tenantTx.js';
 export { hmacBytes, lockAddress, lockAddresses, lockContact, lockContacts } from './locks.js';
@@ -50,6 +51,7 @@ export {
   OwnershipWriteConflict,
   type StoredOutcome,
   applyOwnershipCommand,
+  applyOwnershipCommandThen,
   applyOwnershipCommandInTx,
   defaultIds,
   derivedCommandId,

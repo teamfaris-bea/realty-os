@@ -197,3 +197,70 @@ describe('merge (R-OWN-24)', () => {
     expect((await command(offeree, mine, 'merge', { loserId: offer.contactId })).status).toBe(404);
   });
 });
+
+// Lane perf-misses (claim contention): accept / decline / claim / release read their facts with the narrow
+// read of repos/ownership.ts instead of getContact. (1) For these actions core's can() reads only the
+// offer / pond / own facts: exhaustively, for every role and every combination of the six relation facts,
+// the decision with the narrow facts equals the decision with all of them. (2) The narrow read returns the
+// row exactly when getContact does, with the same relation values and projection, for every role and row
+// variant (offered, owned, in a pond after a release, closed, absent).
+describe('narrow command facts (lane perf-misses)', () => {
+  it('can() for lead.accept / lead.decline / lead.claim / lead.release is decided by the offer, pond and own facts alone (every role, all 64 combinations)', async () => {
+    const { can } = await import('@realty/core/foundation');
+    const roles = ['owner', 'admin', 'team_lead', 'agent', 'isa', 'tc'] as const;
+    const keys = ['own', 'collaborator', 'team', 'pond', 'offer', 'deal'] as const;
+    const reauth = { reauthenticatedAt: 0, now: 0 } as never;
+    let checked = 0;
+    for (const action of ['lead.accept', 'lead.decline', 'lead.claim', 'lead.release'] as const) {
+      for (const role of roles) {
+        const actor = { kind: 'user', tenantId: randomUUID(), userId: randomUUID(), role, sessionId: randomUUID() } as never;
+        for (let m = 0; m < 64; m++) {
+          const full = Object.fromEntries(keys.map((k, i) => [k, (m & (1 << i)) !== 0])) as Record<(typeof keys)[number], boolean>;
+          const narrow = { own: full.own, pond: full.pond, offer: full.offer };
+          expect(can(actor, action, { ...narrow, reauth })).toEqual(can(actor, action, { ...full, reauth }));
+          checked++;
+        }
+      }
+    }
+    expect(checked).toBe(4 * 6 * 64);
+  });
+
+  it('commandContact / projectionRow see exactly the rows getContact sees, with the same relations and projection (Owner, agents, Team Lead, an agent outside the team, ISA, TC; offered, owned, in a pond, closed, absent)', async () => {
+    const { actorFor } = await import('../auth/sessions.js');
+    const repo = await import('./repos/contacts.js');
+    const narrow = await import('./repos/ownership.js');
+    const { projectionFromRow } = await import('./views.js');
+    const offered = (await intake(h, w)).contactId;
+    const st = await contactState(h, offered);
+    const offeree = [...w.agents, outsider].find((a) => a.userId === st.offered_to_user_id) ?? w.agents[0]!;
+    const accepted = (await intake(h, w)).contactId;
+    const acc = await contactState(h, accepted);
+    const accepter = [...w.agents, outsider].find((a) => a.userId === acc.offered_to_user_id)!;
+    expect((await command(accepter, accepted, 'accept', { offerId: acc.offer_id })).status).toBe(200);
+    const released = (await intake(h, w)).contactId;
+    const rs = await contactState(h, released);
+    const releaser = [...w.agents, outsider].find((a) => a.userId === rs.offered_to_user_id)!;
+    expect((await command(releaser, released, 'accept', { offerId: rs.offer_id })).status).toBe(200);
+    expect((await command(releaser, released, 'release', { reason: 'not_a_fit' })).status).toBe(200);
+    const own = await ownedBy(w.agents[0]!);
+    const closed = await ownedBy(w.agents[1]!);
+    expect((await command(w.agents[1]!, closed, 'close', { reason: 'spam' })).status).toBe(200);
+    const contacts = [offered, accepted, released, own, closed, randomUUID()];
+    const clients = [w.owner, ...w.agents, w.teamLead!, outsider, isa, tc, offeree];
+    let visible = 0;
+    for (const c of clients) {
+      const actor = actorFor({ userId: c.userId!, tenantId: c.tenantId!, role: c.role!, sessionId: randomUUID() });
+      for (const id of contacts) {
+        const [full, n, p] = await withTenantTx(actor, async (tx) => [await repo.getContact(tx, id), await narrow.commandContact(tx, id), await narrow.projectionRow(tx, id)] as const, { db: h.database });
+        expect(n === null).toBe(full === null);
+        expect(p === null).toBe(full === null);
+        if (!full || !n || !p) continue;
+        visible++;
+        expect([n.rel_own, n.rel_offer, n.rel_pond]).toEqual([full.rel_own, full.rel_offer, full.rel_pond]);
+        expect(narrow.projectionOfRow(p)).toEqual(projectionFromRow(full));
+        expect(narrow.projectionOfRow(n)).toEqual(projectionFromRow(full));
+      }
+    }
+    expect(visible).toBeGreaterThan(clients.length); // the Owner sees every real contact; agents see their own
+  });
+});

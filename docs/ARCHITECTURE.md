@@ -146,8 +146,18 @@ BEGIN; withTenantTx context; set_config('app.ownership_command', command_id, tru
     previous owner's drafts, pausing agent enrollments, collaborator rows) and any routing go to ONE job,
     ownership.followup (realtime, dedupe followup:{command_id}), which applies them as the system actor
     under the same locks. For a system actor the same effects run inline.
+    The timer jobs of one command are inserted in one multi-row INSERT (same rows and outcome as one by one).
+  8 API taps only (applyOwnershipCommandThen): set_config('app.ownership_command', '', true), then the
+    response projection is read under the caller's plain RLS, i.e. what a fresh transaction would see after
+    COMMIT (null after a decline or a reassign away, R-PERM-7), without a second pooled connection.
 COMMIT   (serialization_failure / deadlock ⇒ retry ≤ 3 with the same command_id)
 ```
+
+Step 0 is one `EXISTS` per check for a new command; the stored outcome is read only when there is one. A tap
+uses three pooled connections in all: session resolution (one transaction since lane perf-misses: the
+pre-tenant `auth.resolve_session`, then the actor's GUCs replace every pre-tenant GUC), the route's
+authorization facts, and the command. Accept / decline / claim / release read their facts with a narrow
+row read (the offer, pond and own relations their MATRIX rows use), not the full contact view.
 
 - **Routing never runs under a user actor.** An agent's RLS cannot see or lock other candidates' routing inputs: their memberships `FOR SHARE`, their push subscriptions, their `app.claim_stats`, and `routing_rotation_state` (smoke-tested). A user-actor router would therefore decide on an empty or partial candidate set, falsely send the lead to the pond (`NO_ELIGIBLE_AGENT`), or silently fail to persist the round-robin cursor. So:
   - A **decline** commits only `offer_declined` → `unassigned` with `route_due_at = now`, and enqueues `ownership.followup`. The follow-up routes as the system actor. The sweeper re-issues routing for any `route_due_at` older than 15 s.
@@ -430,6 +440,16 @@ connection/export test (counts only — no promises before this) → snapshot (e
   - `listings.search_tsv` plus address trigram
 
   Each branch returns at most 10 rows under a 300 ms statement timeout. Transcripts are not searchable (encrypted). Pond-card contacts appear by name only; their points and messages are hidden by RLS. No search index lives outside Postgres.
+- **Priority Feed, incremental (lane `perf-misses`).**
+  - **Storage.** Cards are materialized in `priority_feed_items`. Statement-level SECURITY INVOKER triggers on the
+    input tables add `feed_dirty` marks per (member, group); a group is a contact, a contactless task or
+    appointment, or a deal date.
+  - **Read.** GET /feed first re-scores the dirty groups and the groups whose stored next change instant
+    (`feed_groups.check_at`) has come, as the member under their own RLS, then reads the top 50 in index order.
+    Relative-time wording is stored as a template and rendered at read time.
+  - **Background.** `feed.materialize` keeps feeds current and runs an hourly full reconcile per member.
+  - **Proof.** Equality with a full recompute: `apps/api/src/load/feed_incremental.test.ts`
+    (docs/PERFORMANCE.md §7.1).
 - **Team Lead live exception queue (A5).** `core.accountability.deriveExceptions(snapshot, now)` is pure and deterministic. It upserts `exception_items` by `dedupe_key` and sets `condition_cleared_at` when the condition goes away. Keys are **per occurrence**, so an earlier resolution can never cover a new miss. The types and their keys are:
   - `untouched_lead` (`untouched:{contact}:{ownership_period_seq}`): an ownership period that started an SLA and had no human touch by its `first_touch_due_at`. It is derived from the **ledger** (`v_speed_to_lead`), not the current projection, so auto-release does not erase the miss. The item's owner is the agent who missed.
   - `overdue_promise` (`promise:{task}`): a promise task, extracted with evidence, past due and open.

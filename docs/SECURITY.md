@@ -135,6 +135,48 @@ See §2.9 (import pipeline and storage); that part of the pass is in `apps/api/s
 | FUB SSRF: `FUB_BASE_URL` comes from server config only (never tenant input). `config.ts` (`fub`) reads `FUB_PROVIDER`, `FUB_BASE_URL`, `FUB_ALLOWED_HOSTS` and `FUB_SYSTEM_*`; nothing in `imports/` reads `process.env`, and the API routes and worker handlers get the value from the loaded `Config`. `FUB_ALLOWED_HOSTS` (default `api.followupboss.com`) must list lowercase public host names only (no scheme, port, path, wildcard, IP literal or internal name). The base URL must be https on the default port, with no credentials, query or fragment, and its host must be on the list; `loadConfig` refuses otherwise at startup, naming the key and never the value, and the adapter re-checks when it is built. Redirects are not followed; API pages are capped at 32 MiB; recording URLs must be public hosts on default ports | `config.ts`, `imports/fub.ts`, `imports/handlers.ts` | `config.test.ts`, `imports/fub.test.ts` |
 | Storage keys: `tenants/{uuid}/…` only, at most 1024 characters, with no traversal, absolute paths, backslashes, NUL or encoded traversal. A bad key throws everywhere (it never reads as "absent"). The local FS adapter refuses paths that escape its root through symlinks | `providers/storage.ts` | `providers/storage.test.ts` |
 
+### 2.10 Security review: contact-detail policies read through `app.contact_detail_row` (lane perf-misses, miss #4)
+
+**What changed.** Migration `*_deal_visibility_once.sql` adds `app.contact_detail_row(p_tenant, p_contact)` and
+rewrites the USING clause (not WITH CHECK) of 15 policies from `app.contact_detail_visible(tenant_id, contact_id)` to
+`EXISTS (SELECT 1 FROM app.contact_detail_row(tenant_id, contact_id))`: the `contact_detail` policy of the 10
+contact-children tables (contact_points, contact_addresses, contact_attributes, lead_inquiries, conversations,
+behavior_events, saved_searches, playbook_enrollments, home_valuations, listing_contacts), `messages_select`,
+`calls_select`, `notes_select`, `appointments_all`, and the non-Team-Lead branch of `loe_select`.
+
+**Why.** `contact_detail_visible` is a scalar SQL function with an `EXISTS` body, which Postgres never inlines, so
+the contacts policy's InitPlans ran once per child row. For a TC on about 2,900 deals that meant rebuilding
+`app.my_deal_contact_ids()` (about 5,800 ids, about 10 ms) for every message, call and note read.
+
+**Why it cannot widen visibility.**
+- `app.contact_detail_row` is **not** SECURITY DEFINER, has no `SET` clause, and is not LEAKPROOF. It is a plain
+  invoker SQL function with the same body as `contact_detail_visible`: it returns the contact's id when a contacts
+  row **visible to the caller** (the `contacts_select` policy is applied inside it) passes the detail test.
+- The planner inlines it into the reading statement. That changes only *when* the parameter-free helpers run (once
+  per statement instead of once per row), not what they return. The helpers are `is_tenant_wide`, `my_role`,
+  `sees_all_detail`, `my_collab_contact_ids` and `my_deal_contact_ids`. If it were ever not inlined (for example,
+  someone adds a `SET` clause), it would still return the same rows, only slowly. The migration's self-check fails
+  if it is not inlined.
+- No definer was added. No index, membership or deal data is exposed beyond what `contact_detail_visible`
+  already answered.
+- WITH CHECK clauses, `contacts_select`, `contact_detail_visible` itself, and every other caller are unchanged.
+
+**Proof.** `apps/api/src/load/deal_visibility_equivalence.test.ts`, run through the real RLS stack as `app_user` with
+the API's context:
+- For two members of every role (owner, admin, team lead, agent, ISA, TC), plus the agent on most deals and the
+  system actor, every row of the 15 tables is read through the new policies. Then, in the same rolled-back
+  transaction, the policies are restored to their old text and every row is read again. The two row sets are
+  compared, with 0 differences allowed.
+- Variants: a contact on the TC's deal through `deal_contacts` only; one through `deals.primary_contact_id` only; a
+  deal the TC left; in a pond, offered or closed and on the TC's deal; soft-deleted and on the TC's deal; moved by
+  the caller's current ownership command; and a TC deal membership in another tenant.
+- The TC's expected visibility per variant is asserted for messages, calls, notes and contact points.
+- `EXISTS (SELECT 1 FROM app.contact_detail_row(t, c))` is compared with `contact_detail_visible` and the 0020 body
+  for every contact, for every sampled actor.
+
+**Rule for future edits.** Keep `contact_detail_row` and `contact_detail_visible` identical in meaning. Any change
+to one must be made to both and must extend the equivalence test.
+
 ---
 
 ## 3. What remains (needs the owner, an account, or counsel)
@@ -279,3 +321,130 @@ Tests (mock Spark transport only; a network tripwire fails any real outbound cal
 | **VERIFY** key deactivation at FBS | How a leaked or retired key is deactivated at FBS is not documented here | Owner confirms the process with FBS; disconnecting in the app only purges our copy |
 | DNS rebinding on the allowed host | A public name that resolves to a private address is not re-checked at connect time (as for FUB, §3) | Worker and API egress policy that denies private ranges |
 | Feed sync not built | Module 24 (api/mls) | Review its writes into `listings` and the display rules when it lands |
+
+---
+
+## 6. Performance lane: security review items (lane `perf-misses`)
+
+Every change of this lane that touches who-sees-what, a definer, or a policy is listed here with its proof. None
+marks anything LEAKPROOF, none adds `USING (true)`, and none gives a role BYPASSRLS.
+
+### 6.1 Incremental Priority Feed (migration `feed_incremental`)
+
+**What changed.** GET /feed reads stored cards instead of recomputing the book (docs/PERFORMANCE.md §7.1).
+
+- **No existing policy changes.** `priority_feed_items` keeps `feed_select` (own cards, contact visible) and
+  `feed_insert` / `feed_update`. The new columns `sort_at` and `card` hold the card's order instant, its reason
+  template and its one-tap actions: what the API already returned for the card, never more.
+- **No definer.** The marking triggers are `SECURITY INVOKER`. The migration's self-check fails if a `app.feed_*`
+  function is a definer.
+- **The materializer acts as the member.** Both GET /feed and the background `feed.materialize` job read the inputs
+  in a transaction whose GUCs are the member's own (`withTenantTx` with a user actor, as the worker already does
+  for a human sender in `comms/runtime.ts senderActor`). The job never reads feed inputs with the system's
+  tenant-wide view, so a member's stored cards can never hold more than that member could see.
+- **A card is written only while its contact is visible to the member.** Tasks, appointments and assistant actions
+  can name a contact the member cannot see; such a card is skipped (it would be hidden by `feed_select` anyway).
+  The Phase 1 refresh tried to write it and failed, which broke that member's GET /feed (found by the
+  equivalence test below).
+- **New tables.** Both have FORCE RLS, the tenant `RESTRICTIVE` policy, the support-read-only policies and the
+  `support_read_only` statement trigger.
+  - `feed_dirty` (marks: tenant, user, group key, instant). Any member's or the system's write may INSERT a mark
+    for any member of the same tenant, because one person's write can change another person's feed. Only the
+    mark's own user and the system can SELECT or DELETE marks. A forged mark only causes an extra re-score of
+    the member's own data under the member's own RLS.
+  - `feed_groups` (per member and group: the next change instant and the count of open visible cards). The
+    member's own (`user_id = app.user_id()`); the system may read it to find due work.
+  - Neither holds PII: user ids, group keys (contact, task, appointment or deal-date ids the member already saw),
+    instants and counts.
+- **Trigger lookups run under the writer's RLS.** The contact-owner lookup in a marking trigger is invoker, so it
+  cannot learn anything the writer may not see. A mark it cannot derive is repaired by the hourly reconcile.
+- **Read-path plan pin.** GET sets `enable_sort = off` transaction-locally around its two ordered reads. This is a
+  planner choice only and does not change what RLS admits.
+
+**Equivalence proof.**
+- `apps/api/src/load/feed_incremental.test.ts`: random event sequences on a generated tenant, with every trigger and
+  guard on. The events are client messages, missed calls, replies, tasks, appointments, drafts, handbacks, claims,
+  contract dates, opt-outs, the member's own taps and time jumps (also exactly to a stored change instant and
+  1 ms before it). After every event, for three agents, the TC and a team lead, the incremental feed equals a
+  full recompute: same view, and no stored card or change instant differs.
+- `packages/core/src/priority/incremental.test.ts`: property tests of the three facts the design relies on (groups
+  are independent; templated wording renders to the plain wording; between change instants only wording moves).
+- The Phase 1 feed tests (`workspace/feed.test.ts`, `feed.foreign.test.ts`, R-PERM-4 reassignment included) pass
+  unchanged.
+
+### 6.2 Contact-detail policies (migration `deal_visibility_once`)
+
+The full review is §2.10. In short:
+- Fifteen child-table `USING` clauses read through `app.contact_detail_row`, a new SECURITY INVOKER set-returning
+  helper with the same body as `contact_detail_visible`. The planner inlines it, so the TC's deal-contact set is
+  built once per statement instead of once per row.
+- No definer, no SET clause, no LEAKPROOF. Every `WITH CHECK` is unchanged.
+- Proof: `apps/api/src/load/deal_visibility_equivalence.test.ts`. Old and new policies are compared row by row for
+  every role (two members each) and the system actor over all 15 tables, plus TC deal variants. Zero differences.
+
+### 6.3 Scoreboard daily rollup (migration `scoreboard_rollup`)
+
+**Visibility is unchanged.** The team scoreboard was never computed under the viewer's row visibility: it reads
+the 0012 SECURITY DEFINER aggregates. Those count a member's own activity whatever happened to the contacts
+later. The only viewer-dependent part is which members' numbers a viewer may see (`app.scoreboard_allowed_users`).
+A rollup per (tenant, member, local day) is therefore exact for every viewer:
+- The read path takes rollup rows only for the members the live call in the same statement admits.
+- The rollup tables' RLS repeats the same member rule.
+- The tables hold timings and counts only, no contact ids.
+
+**New and changed definers** (all owned by `app_definer`, `search_path` pinned):
+- `app.scoreboard_mark` and six mark trigger functions only insert dates into `scoreboard_rollup_dirty`, and
+  return nothing.
+- `app.scoreboard_rollup_roll` and `app.scoreboard_rollup_sample` refuse any caller but the tenant's system actor,
+  and return only a summary of counts.
+- `app.scoreboard_speed` got a new body that returns the same rows (one ledger probe instead of two). It is proved
+  equal to the 0012 body row for row for every role and the system actor.
+
+**New tables.**
+- `scoreboard_activity_daily`, `scoreboard_speed_daily`, `scoreboard_rollup_days`, `scoreboard_rollup_dirty` and
+  `scoreboard_rollup_state`.
+- All have FORCE RLS, the tenant policy, the support-read-only policies and the statement trigger.
+- `app_user` can only SELECT them.
+
+**Proof.** `apps/api/src/accountability/scoreboard_rollup.test.ts`: rollup + live equals live for every role, range
+and board. This holds after reassignments, soft deletes, pond releases, team moves and suspensions done through the
+ownership engine, after backdated and late writes, and across DST days in five zones.
+
+### 6.4 Exception recompute (no policy change)
+
+`exception_items` upserts are batched: one statement per 1,000 items, same values, order and conflict rule. No
+policy, definer or read changed. Proof: `apps/api/src/accountability/recompute_equivalence.test.ts` compares the old
+per-row path with the new one, state for state, ids included.
+
+### 6.5 Search token tables (migration `search_visibility`)
+
+**What.** `message_search_tokens` and `note_search_tokens` hold one row per lexeme of a message's or note's own
+`search_tsv`, with that row's tenant, id and instant. Everything in them is already readable by anyone who can see
+the parent row.
+
+**Visibility.**
+- Each table's SELECT policy is `EXISTS` over its parent table, evaluated under the caller's own RLS. A token row is
+  visible exactly when its message or note is, and any later change to the parents' policies applies automatically.
+- They have the tenant policy, the support-read-only policies and the statement trigger. `app_user` has SELECT only.
+- An orphan row would be invisible.
+
+**Writers.**
+- Rows are written only by six SECURITY DEFINER trigger functions (owner `app_definer`, `search_path` pinned,
+  EXECUTE revoked from PUBLIC).
+- They copy columns of the row the caller's own statement inserted, updated or deleted, which has already passed
+  the parent's RLS and guards. They return nothing.
+
+**No LEAKPROOF marking.** Searches probe with `starts_with`, `text_ge` and `text_lt`, which stock Postgres already
+marks leakproof. The migration fails if that ever changes. The original `search_tsv @@ tsquery` is re-checked on
+the parent row. The 300 ms branch timeout is unchanged.
+
+**Proof.** `apps/api/src/load/search_equivalence.test.ts` covers:
+- every role and the system actor, with about 100 terms, over every ownership state, deal and collaborated
+  contacts, soft deletes, edited and removed bodies, imported rows and another tenant: the same rows in the same
+  order as the old query;
+- token visibility equal to parent visibility;
+- the token tables equal to the parents' lexemes after bulk writes;
+- `app_user` cannot write the token tables.
+
+**Residual.** Which access path a search takes (key probe or newest-first walk) varies its latency with how many
+token rows match. This is the same class of timing signal as before, and it is not exposed in responses.

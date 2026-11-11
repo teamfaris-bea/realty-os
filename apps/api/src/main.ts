@@ -25,7 +25,7 @@ async function main(): Promise<void> {
   const errorReporter = createErrorReporter(obs.errorReporting);
   process.on('uncaughtException', (e) => errorReporter.capture(e, { process: 'api', level: 'fatal', code: 'UNCAUGHT' }));
   process.on('unhandledRejection', (e) => errorReporter.capture(e, { process: 'api', code: 'UNHANDLED_REJECTION' }));
-  const db = configureDatabase({ url: config.databaseUrl, applicationName: 'realty-api' });
+  const db = configureDatabase({ url: config.databaseUrl, applicationName: 'realty-api', max: config.databasePoolMax });
   const role = await withPreTenant(async (tx) => (await sql<{ su: boolean; bypass: boolean }>`SELECT rolsuper AS su, rolbypassrls AS bypass FROM pg_roles WHERE rolname = current_user`.execute(tx)).rows[0], { db });
   if (!role || role.su || role.bypass) throw Object.assign(new Error('DATABASE_URL must be the RLS-bound app role (not superuser, no BYPASSRLS)'), { name: 'ConfigError' });
   const clock = { now: () => instant(Date.now()) };

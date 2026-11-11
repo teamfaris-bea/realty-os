@@ -1,0 +1,429 @@
+{
+  "db": "realty_load",
+  "at": "2026-11-11T05:20:16.099Z",
+  "machine": {
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "cores": 4,
+    "ramGb": 16,
+    "postgres": "PostgreSQL 16.15 (Ubuntu 16.15-0ubuntu0.24.04.1)"
+  },
+  "sizes": {
+    "contacts": 250000,
+    "contact_points": 454991,
+    "messages": 1957078,
+    "calls": 249141,
+    "notes": 146187,
+    "lead_ownership_events": 707918,
+    "exception_items": 11341,
+    "consent_state": 90775,
+    "deals": 3008
+  },
+  "results": [
+    {
+      "name": "feed: GET /feed (busiest agent)",
+      "budgetMs": 150,
+      "budgetSource": "BUILD_PLAN exit criterion 4 (feed p95 < 150 ms)",
+      "n": 40,
+      "p50": 23.40478200000007,
+      "p95": 29.879245000000083,
+      "max": 31.81370799999968,
+      "pass": true
+    },
+    {
+      "name": "feed: GET /feed (median agent)",
+      "budgetMs": 150,
+      "budgetSource": "BUILD_PLAN exit criterion 4 (feed p95 < 150 ms)",
+      "n": 40,
+      "p50": 32.35353099999975,
+      "p95": 41.83577299999979,
+      "max": 50.21900100000039,
+      "pass": true
+    },
+    {
+      "name": "feed: GET /feed after 3 new client messages (busiest agent)",
+      "budgetMs": 150,
+      "budgetSource": "BUILD_PLAN exit criterion 4 (feed p95 < 150 ms)",
+      "n": 40,
+      "p50": 71.38919499999975,
+      "p95": 88.21903699999893,
+      "max": 115.43017099999815,
+      "pass": true
+    },
+    {
+      "name": "search name: GET /search (agent)",
+      "budgetMs": 300,
+      "budgetSource": "BUILD_PLAN exit criterion 4 (search p95 < 300 ms)",
+      "n": 40,
+      "p50": 23.593645999997534,
+      "p95": 37.59888800000044,
+      "max": 46.49219699999958,
+      "pass": true
+    },
+    {
+      "name": "search phone: GET /search (agent)",
+      "budgetMs": 300,
+      "budgetSource": "BUILD_PLAN exit criterion 4 (search p95 < 300 ms)",
+      "n": 40,
+      "p50": 10.258373000000574,
+      "p95": 14.187321999997948,
+      "max": 21.63658000000214,
+      "pass": true
+    },
+    {
+      "name": "search email: GET /search (agent)",
+      "budgetMs": 300,
+      "budgetSource": "BUILD_PLAN exit criterion 4 (search p95 < 300 ms)",
+      "n": 40,
+      "p50": 9.771338999998989,
+      "p95": 11.510454999999638,
+      "max": 12.069271999997,
+      "pass": true
+    },
+    {
+      "name": "search name: GET /search (admin)",
+      "budgetMs": 300,
+      "budgetSource": "BUILD_PLAN exit criterion 4 (search p95 < 300 ms)",
+      "n": 40,
+      "p50": 14.522855999999592,
+      "p95": 19.142565999998624,
+      "max": 21.756900000000314,
+      "pass": true
+    },
+    {
+      "name": "search phone: GET /search (admin)",
+      "budgetMs": 300,
+      "budgetSource": "BUILD_PLAN exit criterion 4 (search p95 < 300 ms)",
+      "n": 40,
+      "p50": 10.821565999998711,
+      "p95": 15.160584999997809,
+      "max": 29.865279999998165,
+      "pass": true
+    },
+    {
+      "name": "search email: GET /search (admin)",
+      "budgetMs": 300,
+      "budgetSource": "BUILD_PLAN exit criterion 4 (search p95 < 300 ms)",
+      "n": 40,
+      "p50": 10.040701000001718,
+      "p95": 13.454147000000376,
+      "max": 15.678264999998646,
+      "pass": true
+    },
+    {
+      "name": "contact page: 6 calls in parallel (busiest agent)",
+      "budgetMs": 300,
+      "budgetSource": "lane rule: phone reads p95 < 300 ms",
+      "n": 40,
+      "p50": 44.33381100000042,
+      "p95": 52.807152999997925,
+      "max": 57.070905000000494,
+      "pass": true
+    },
+    {
+      "name": "  contact page part: contact",
+      "budgetMs": 300,
+      "budgetSource": "lane rule: phone reads p95 < 300 ms",
+      "n": 40,
+      "p50": 22.319456000001082,
+      "p95": 31.656149000002188,
+      "max": 34.84873900000093,
+      "pass": true,
+      "note": "measured inside the parallel page load"
+    },
+    {
+      "name": "  contact page part: timeline",
+      "budgetMs": 300,
+      "budgetSource": "lane rule: phone reads p95 < 300 ms",
+      "n": 40,
+      "p50": 27.13020300000062,
+      "p95": 38.43673000000126,
+      "max": 44.12977200000023,
+      "pass": true,
+      "note": "measured inside the parallel page load"
+    },
+    {
+      "name": "  contact page part: tasks",
+      "budgetMs": 300,
+      "budgetSource": "lane rule: phone reads p95 < 300 ms",
+      "n": 40,
+      "p50": 10.639470000001893,
+      "p95": 20.004290000000765,
+      "max": 26.570777999997517,
+      "pass": true,
+      "note": "measured inside the parallel page load"
+    },
+    {
+      "name": "  contact page part: deals",
+      "budgetMs": 300,
+      "budgetSource": "lane rule: phone reads p95 < 300 ms",
+      "n": 40,
+      "p50": 13.660576000002038,
+      "p95": 18.41094499999963,
+      "max": 30.740849000001617,
+      "pass": true,
+      "note": "measured inside the parallel page load"
+    },
+    {
+      "name": "  contact page part: inbox",
+      "budgetMs": 300,
+      "budgetSource": "lane rule: phone reads p95 < 300 ms",
+      "n": 40,
+      "p50": 10.907391999997344,
+      "p95": 14.205901999997877,
+      "max": 17.913402000001952,
+      "pass": true,
+      "note": "measured inside the parallel page load"
+    },
+    {
+      "name": "  contact page part: send check",
+      "budgetMs": 300,
+      "budgetSource": "lane rule: phone reads p95 < 300 ms",
+      "n": 40,
+      "p50": 44.2866240000003,
+      "p95": 52.72595300000103,
+      "max": 57.02298200000223,
+      "pass": true,
+      "note": "measured inside the parallel page load"
+    },
+    {
+      "name": "contact timeline alone: GET /contacts/:id/timeline?limit=100",
+      "budgetMs": 300,
+      "budgetSource": "lane rule: phone reads p95 < 300 ms",
+      "n": 40,
+      "p50": 19.803435000001627,
+      "p95": 23.297153999999864,
+      "max": 24.472271000002365,
+      "pass": true
+    },
+    {
+      "name": "thread: contact + timeline (chattiest contacts, 97–57 messages)",
+      "budgetMs": 300,
+      "budgetSource": "lane rule: phone reads p95 < 300 ms",
+      "n": 40,
+      "p50": 23.806953999999678,
+      "p95": 30.420555000000604,
+      "max": 34.19956299999831,
+      "pass": true
+    },
+    {
+      "name": "thread as the TC (deal visibility): contact + timeline",
+      "budgetMs": 300,
+      "budgetSource": "lane rule: phone reads p95 < 300 ms",
+      "n": 40,
+      "p50": 110.19945899999948,
+      "p95": 134.0028259999999,
+      "max": 147.21450399999958,
+      "pass": true
+    },
+    {
+      "name": "exception queue: GET /team/exceptions?state=live&limit=200 (team lead)",
+      "budgetMs": 300,
+      "budgetSource": "lane rule: phone reads p95 < 300 ms",
+      "n": 40,
+      "p50": 221.20714600000065,
+      "p95": 300.1333969999978,
+      "max": 307.5764380000037,
+      "pass": false
+    },
+    {
+      "name": "exception queue: GET /team/exceptions?state=live&limit=200 (admin)",
+      "budgetMs": 300,
+      "budgetSource": "lane rule: phone reads p95 < 300 ms",
+      "n": 40,
+      "p50": 164.67421399999876,
+      "p95": 180.21170299999358,
+      "max": 213.47477800000343,
+      "pass": true
+    },
+    {
+      "name": "exception queue: GET /team/exceptions?state=live&limit=200 (busiest agent)",
+      "budgetMs": 300,
+      "budgetSource": "lane rule: phone reads p95 < 300 ms",
+      "n": 40,
+      "p50": 67.51652399999875,
+      "p95": 85.38416400000278,
+      "max": 88.80339200000162,
+      "pass": true
+    },
+    {
+      "name": "scoreboard: GET /scoreboard?range=7d (busiest agent)",
+      "budgetMs": 300,
+      "budgetSource": "lane rule: phone reads p95 < 300 ms",
+      "n": 40,
+      "p50": 25.309774000001198,
+      "p95": 29.376406000003044,
+      "max": 32.50430200000119,
+      "pass": true
+    },
+    {
+      "name": "scoreboard: GET /scoreboard?range=90d (busiest agent)",
+      "budgetMs": 300,
+      "budgetSource": "lane rule: phone reads p95 < 300 ms",
+      "n": 40,
+      "p50": 34.96220600000379,
+      "p95": 42.53284100000019,
+      "max": 49.245496000003186,
+      "pass": true
+    },
+    {
+      "name": "team scoreboard: GET /team/scoreboard?range=30d (team lead)",
+      "budgetMs": 300,
+      "budgetSource": "lane rule: phone reads p95 < 300 ms",
+      "n": 40,
+      "p50": 82.53263500000321,
+      "p95": 94.29760399999941,
+      "max": 95.33855300000141,
+      "pass": true
+    },
+    {
+      "name": "team momentum: GET /team/momentum (team lead)",
+      "budgetMs": 300,
+      "budgetSource": "lane rule: phone reads p95 < 300 ms",
+      "n": 40,
+      "p50": 20.378959000001487,
+      "p95": 23.110418000003847,
+      "max": 28.56587700000091,
+      "pass": true
+    },
+    {
+      "name": "team scoreboard: GET /team/scoreboard?range=30d (admin)",
+      "budgetMs": 300,
+      "budgetSource": "lane rule: phone reads p95 < 300 ms",
+      "n": 40,
+      "p50": 166.69941399999516,
+      "p95": 203.4939119999981,
+      "max": 231.02907399999822,
+      "pass": true
+    },
+    {
+      "name": "team momentum: GET /team/momentum (admin)",
+      "budgetMs": 300,
+      "budgetSource": "lane rule: phone reads p95 < 300 ms",
+      "n": 40,
+      "p50": 25.094858999997086,
+      "p95": 28.190341000001354,
+      "max": 30.71172399999341,
+      "pass": true
+    },
+    {
+      "name": "pond cards: GET /ponds/:id/cards?limit=50 (median agent)",
+      "budgetMs": 300,
+      "budgetSource": "lane rule: phone reads p95 < 300 ms",
+      "n": 40,
+      "p50": 184.91509799999767,
+      "p95": 213.80593400000362,
+      "max": 236.1028890000016,
+      "pass": true
+    },
+    {
+      "name": "pond cards: GET /ponds/:id/cards?limit=50 (team lead)",
+      "budgetMs": 300,
+      "budgetSource": "lane rule: phone reads p95 < 300 ms",
+      "n": 40,
+      "p50": 129.35859699999855,
+      "p95": 175.3760900000052,
+      "max": 201.72954000000027,
+      "pass": true
+    },
+    {
+      "name": "pond list: GET /ponds (admin)",
+      "budgetMs": 300,
+      "budgetSource": "lane rule: phone reads p95 < 300 ms",
+      "n": 40,
+      "p50": 22.913738000002922,
+      "p95": 29.664613000000827,
+      "max": 31.81398099999933,
+      "pass": true
+    },
+    {
+      "name": "accept: 200 live offers, 47 agents accepting at once",
+      "budgetMs": 300,
+      "budgetSource": "lane rule applied to the tap (p95 < 300 ms); no doc budget",
+      "n": 200,
+      "p50": 373.5803989999986,
+      "p95": 636.589902000007,
+      "max": 746.9020739999978,
+      "pass": false
+    },
+    {
+      "name": "claim: 20 pond leads, 10 agents racing on each (all requests)",
+      "budgetMs": 300,
+      "budgetSource": "lane rule applied to the tap (p95 < 300 ms); no doc budget",
+      "n": 200,
+      "p50": 107.86778499999491,
+      "p95": 167.98551899999438,
+      "max": 200.7253849999979,
+      "pass": true
+    },
+    {
+      "name": "claim: 44 agents each claim a different lead at once",
+      "budgetMs": 300,
+      "budgetSource": "lane rule applied to the tap (p95 < 300 ms); no doc budget",
+      "n": 44,
+      "p50": 318.3403879999969,
+      "p95": 381.89704700000584,
+      "max": 389.460070000001,
+      "pass": false,
+      "note": "wall 390 ms"
+    },
+    {
+      "name": "dispatch: 500 immediate SMS sends, concurrency 8",
+      "budgetMs": 300,
+      "budgetSource": "lane rule applied to the tap (p95 < 300 ms); no doc budget",
+      "n": 500,
+      "p50": 197.99593400000595,
+      "p95": 233.31312799999432,
+      "max": 275.56906699998945,
+      "pass": true,
+      "note": "40.2 sends/s end to end"
+    },
+    {
+      "name": "import: 50000-row CSV dry run (job, one transaction)",
+      "budgetMs": null,
+      "budgetSource": "no budget in the docs; reported only",
+      "n": 1,
+      "p50": 12836.937223999994,
+      "p95": 12836.937223999994,
+      "max": 12836.937223999994,
+      "pass": null,
+      "note": "create + snapshot 374 ms before it"
+    }
+  ],
+  "checks": [
+    {
+      "name": "accept: every live offer accepted by its offeree",
+      "ok": true,
+      "detail": "200/200 accepted; others: none"
+    },
+    {
+      "name": "claim race (E1): exactly one winner per lead",
+      "ok": true,
+      "detail": "20/20; losers: 409 LEAD_ALREADY_CLAIMED ×180"
+    },
+    {
+      "name": "claim race (E1): every loser gets a 409 naming the reason",
+      "ok": true,
+      "detail": "409 LEAD_ALREADY_CLAIMED"
+    },
+    {
+      "name": "uncontested claims all succeed",
+      "ok": true,
+      "detail": "44/44"
+    },
+    {
+      "name": "dispatch: every reachable send went out",
+      "ok": true,
+      "detail": "500/500 sent; other results: none"
+    },
+    {
+      "name": "D1: opted-out numbers are never sent to",
+      "ok": true,
+      "detail": "30/30 not sent (200 blocked:CONSENT_REVOKED); 0 outbound rows went out to them"
+    },
+    {
+      "name": "import dry run: counts reconcile",
+      "ok": true,
+      "detail": "dry_run_ready {\"source\":50000,\"willImport\":1495,\"imported\":null,\"needsReview\":48505,\"rejected\":0,\"duplicate\":0}"
+    }
+  ]
+}

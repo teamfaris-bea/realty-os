@@ -12,6 +12,7 @@ import type { Providers } from '../providers/index.js';
 import { type DeliveryPayload, NOTIFY_DELIVER } from '../worker/contracts.js';
 import type { JobHandler, StandaloneJobHandler } from '../worker/types.js';
 import { type DeliveryDeps, deliverNotification } from './notifications.js';
+import { feedHandlers } from './feedJob.js';
 
 type DepsFor = (providers: Providers) => Omit<DeliveryDeps, 'alerts'>;
 const defaultDeps: DepsFor = (providers) => ({ ...commsRuntime(), providers });
@@ -35,5 +36,5 @@ export function makeNotificationHandlers(depsFor: DepsFor = defaultDeps): JobHan
 
 /** BUILD_PLAN interface: push / SMS-to-agent (gated) / email delivery handlers. */
 export const notificationHandlers: JobHandler<DeliveryPayload>[] = makeNotificationHandlers();
-/** What api/workspace registers with the worker (CONVENTIONS §3). */
-export const workspaceHandlers: JobHandler<unknown>[] = notificationHandlers as unknown as JobHandler<unknown>[];
+/** What api/workspace registers with the worker (CONVENTIONS §3); feed.materialize: the incremental feed (lane perf-misses). */
+export const workspaceHandlers: JobHandler<unknown>[] = [...(notificationHandlers as unknown as JobHandler<unknown>[]), ...feedHandlers];

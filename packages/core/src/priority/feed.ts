@@ -31,7 +31,7 @@ import {
   zoneOffsetMs,
 } from '../foundation/index.js';
 import { canonicalJson } from '../compliance/index.js';
-import { CHANNEL_VERB, ago, clip, formatDuration, inFuture } from './format.js';
+import { CHANNEL_VERB, type LabelFormat, renderFeedLabel, templateLabels, textLabels } from './format.js';
 import {
   apptOutcomeFeedKey,
   dealDateFeedKey,
@@ -120,17 +120,17 @@ interface ContactPlan {
  * blocked preferred channel demotes the item; when nothing works the card still shows, with the
  * contact as its action and the gate's explanations as the reason.
  */
-function planContact(contactId: ContactId, prefs: readonly Channel[], g: GateSummary | undefined, draft?: { channel: 'sms' | 'email'; actionId: AssistantActionId }): ContactPlan {
+function planContact(f: LabelFormat, contactId: ContactId, prefs: readonly Channel[], g: GateSummary | undefined, draft?: { channel: 'sms' | 'email'; actionId: AssistantActionId }): ContactPlan {
   const usable = prefs.filter((ch) => !isBlocked(g, ch)).map((ch) => channelAction(ch, contactId, draft));
   const open: OneTapAction = { kind: 'open_contact', label: 'Open', contactId };
   const first = prefs[0] as Channel;
   const demotion: FeedReason[] = [];
   if (usable.length === 0) {
     const why = [...new Set(prefs.map((ch) => g?.[ch]?.explanation).filter((s): s is string => s !== undefined && s.length > 0))];
-    demotion.push(reason('CANT_CONTACT', why.length > 0 ? `Can't reach them right now: ${clip(why.join(' · '), 200)}` : undefined));
+    demotion.push(reason('CANT_CONTACT', why.length > 0 ? `Can't reach them right now: ${f.text(why.join(' · '), 200)}` : undefined));
   } else if (isBlocked(g, first)) {
     const why = g?.[first]?.explanation;
-    demotion.push(reason(BLOCK_CODE[first], why ? `Can't ${CHANNEL_VERB[first]}: ${clip(why, 160)}` : undefined));
+    demotion.push(reason(BLOCK_CODE[first], why ? `Can't ${CHANNEL_VERB[first]}: ${f.text(why, 160)}` : undefined));
   }
   return { usable, open, demotion };
 }
@@ -167,15 +167,15 @@ function waitingReasons(now: Instant, since: Instant): FeedReason[] {
   return [];
 }
 
-function dueReasons(now: Instant, deadline: Instant, promise: boolean): FeedReason[] {
+function dueReasons(f: LabelFormat, now: Instant, deadline: Instant, promise: boolean): FeedReason[] {
   const [overdue, due, prefix]: [FeedReasonCode, FeedReasonCode, string] = promise ? ['PROMISE_OVERDUE', 'PROMISE_DUE', 'You promised this; '] : ['TASK_OVERDUE', 'TASK_DUE', ''];
   if (now >= deadline) {
-    const late = formatDuration(now - deadline);
+    const late = f.since(deadline);
     const out = [reason(overdue, promise ? `${prefix}${late} overdue` : `Overdue by ${late}`)];
     if (now - deadline > DAY_MS) out.push(reason('OVERDUE_OVER_DAY'));
     return out;
   }
-  const out = [reason(due, promise ? `${prefix}due ${inFuture(now, deadline)}` : `Due ${inFuture(now, deadline)}`)];
+  const out = [reason(due, promise ? `${prefix}due ${f.in(deadline)}` : `Due ${f.in(deadline)}`)];
   if (deadline - now <= HOUR_MS) out.push(reason('DUE_WITHIN_HOUR'));
   return out;
 }
@@ -245,17 +245,29 @@ export function compareFeedItems(a: FeedItem, b: FeedItem): number {
   return primary || a.createdAt - b.createdAt || compareStr(a.dedupeKey, b.dedupeKey);
 }
 
+export interface ScoreFeedOptions {
+  /**
+   * 'text' (default): labels carry relative times as words ("Texted 3 h ago"). 'template': every relative
+   * time is a token that renderFeedItem(item, at) turns into the same words for the instant `at`. The
+   * incremental feed (lane perf-misses) stores templated cards and renders them when read, so a stored
+   * card's wording is exactly what scoreFeed would say at read time (renderFeedItem(scoreFeed(i,
+   * template), i.now) deep-equals scoreFeed(i); proved in incremental.test.ts).
+   */
+  labels?: 'text' | 'template';
+}
+
 /** Scores and orders the Priority Feed for `i.userId`. Pure; see the file header for the rules. */
-export function scoreFeed(i: FeedInputs): FeedItem[] {
+export function scoreFeed(i: FeedInputs, opts: ScoreFeedOptions = {}): FeedItem[] {
   const { now, userId } = i;
+  const f: LabelFormat = opts.labels === 'template' ? templateLabels : textLabels(now);
   const gateOf = (c: ContactId): GateSummary | undefined => i.blockedChannels.get(c);
   const out: Draft[] = [];
 
   // -- lead offers (pinned) ------------------------------------------------------------------------
   for (const o of i.offers) {
     if (o.offeredToUserId !== userId || o.expiresAt <= now) continue;
-    const reasons = [reason('LEAD_OFFER'), reason('OFFER_ENDS', `Offer ends ${inFuture(now, o.expiresAt)}`)];
-    if (o.sourceName) reasons.push(reason('LEAD_SOURCE', `From ${clip(o.sourceName, 60)}`));
+    const reasons = [reason('LEAD_OFFER'), reason('OFFER_ENDS', `Offer ends ${f.in(o.expiresAt)}`)];
+    if (o.sourceName) reasons.push(reason('LEAD_SOURCE', `From ${f.text(o.sourceName, 60)}`));
     out.push({
       itemType: 'lead_offer',
       band: 'pinned',
@@ -279,11 +291,11 @@ export function scoreFeed(i: FeedInputs): FeedItem[] {
     const overdue = now >= s.firstTouchDueAt;
     const reasons = [
       overdue
-        ? reason('FIRST_TOUCH_OVERDUE', `First contact ${formatDuration(now - s.firstTouchDueAt)} overdue`)
-        : reason('FIRST_TOUCH_DUE', `First contact due ${inFuture(now, s.firstTouchDueAt)}`),
+        ? reason('FIRST_TOUCH_OVERDUE', `First contact ${f.since(s.firstTouchDueAt)} overdue`)
+        : reason('FIRST_TOUCH_DUE', `First contact due ${f.in(s.firstTouchDueAt)}`),
     ];
-    if (s.releaseDueAt != null && s.releaseDueAt > now) reasons.push(reason('RELEASE_SOON', `Goes back to the pond ${inFuture(now, s.releaseDueAt)} if not contacted`));
-    const plan = planContact(s.contactId, CALL_FIRST, gateOf(s.contactId));
+    if (s.releaseDueAt != null && s.releaseDueAt > now) reasons.push(reason('RELEASE_SOON', `Goes back to the pond ${f.in(s.releaseDueAt)} if not contacted`));
+    const plan = planContact(f, s.contactId, CALL_FIRST, gateOf(s.contactId));
     const d: Draft = {
       itemType: 'first_touch_due',
       band: 'pinned',
@@ -310,17 +322,17 @@ export function scoreFeed(i: FeedInputs): FeedItem[] {
   }
   for (const [contactId, at] of latestAsk) {
     const ft = firstTouchContacts.get(contactId) as Draft;
-    ft.reasons.splice(1, 0, reason('ASKED_AGAIN', `Asked again ${ago(now, at)}`));
+    ft.reasons.splice(1, 0, reason('ASKED_AGAIN', `Asked again ${f.ago(at)}`));
   }
   for (const r of i.reinquiries ?? []) {
     if (r.ownerUserId !== userId || r.touchedSince || firstTouchContacts.has(r.contactId)) continue;
-    const plan = planContact(r.contactId, CALL_FIRST, gateOf(r.contactId));
-    const reasons = [reason('REINQUIRY', `Asked again ${ago(now, r.at)}`)];
+    const plan = planContact(f, r.contactId, CALL_FIRST, gateOf(r.contactId));
+    const reasons = [reason('REINQUIRY', `Asked again ${f.ago(r.at)}`)];
     if (r.dueAt !== null) {
       reasons.push(
         now >= r.dueAt
-          ? reason('FIRST_TOUCH_OVERDUE', `Reply ${formatDuration(now - r.dueAt)} overdue`)
-          : reason('FIRST_TOUCH_DUE', `Reply due ${inFuture(now, r.dueAt)}`),
+          ? reason('FIRST_TOUCH_OVERDUE', `Reply ${f.since(r.dueAt)} overdue`)
+          : reason('FIRST_TOUCH_DUE', `Reply due ${f.in(r.dueAt)}`),
       );
     }
     out.push({
@@ -341,11 +353,11 @@ export function scoreFeed(i: FeedInputs): FeedItem[] {
   // -- inactivity warnings (pinned) ----------------------------------------------------------------
   for (const w of i.inactivityWarnings ?? []) {
     if (w.ownerUserId !== userId || w.releaseAt <= now) continue;
-    const plan = planContact(w.contactId, CALL_FIRST, gateOf(w.contactId));
+    const plan = planContact(f, w.contactId, CALL_FIRST, gateOf(w.contactId));
     out.push({
       itemType: 'inactivity_warning',
       band: 'pinned',
-      reasons: [reason('INACTIVITY_WARNING', `No contact in a while; goes back to the pond ${inFuture(now, w.releaseAt)}`), ...plan.demotion],
+      reasons: [reason('INACTIVITY_WARNING', `No contact in a while; goes back to the pond ${f.in(w.releaseAt)}`), ...plan.demotion],
       dueAt: w.releaseAt,
       dedupeKey: inactivityFeedKey(w.contactId, w.periodSeq, w.warnAt),
       ...contactCard(plan),
@@ -374,10 +386,10 @@ export function scoreFeed(i: FeedInputs): FeedItem[] {
     if (draftId !== null) handbackDrafts.add(draftId);
     if (draftId !== null && replyCh !== null && !isBlocked(g, replyCh)) {
       primaryAction = { kind: 'send_draft', label: 'Send', actionId: draftId };
-      const plan = planContact(h.contactId, prefs, g);
+      const plan = planContact(f, h.contactId, prefs, g);
       alternatives = [{ kind: 'edit_draft', label: 'Edit', actionId: draftId }, ...plan.usable.filter((a) => a.kind === 'call'), review, plan.open];
     } else {
-      const plan = planContact(h.contactId, prefs, g);
+      const plan = planContact(f, h.contactId, prefs, g);
       reasons.push(...plan.demotion);
       const extra: OneTapAction[] = draftId !== null ? [{ kind: 'edit_draft', label: 'Edit draft', actionId: draftId }, review] : [review];
       ({ primaryAction, alternatives } = contactCard(plan, extra));
@@ -425,7 +437,7 @@ export function scoreFeed(i: FeedInputs): FeedItem[] {
     const first = msgs[0] as InboundFacts;
     const latest = msgs[msgs.length - 1] as InboundFacts;
     const missed = latest.kind === 'missed_call';
-    const what = missed ? `Missed call ${ago(now, latest.at)}` : `${latest.channel === 'email' ? 'Emailed' : 'Texted'} ${ago(now, latest.at)}; no reply yet`;
+    const what = missed ? `Missed call ${f.ago(latest.at)}` : `${latest.channel === 'email' ? 'Emailed' : 'Texted'} ${f.ago(latest.at)}; no reply yet`;
     const reasons: FeedReason[] = [missed ? reason('MISSED_CALL', what) : reason('CLIENT_WAITING', what)];
     if (msgs.length > 1) reasons.push(reason('MORE_WAITING', `${msgs.length} messages or calls waiting`));
     reasons.push(...waitingReasons(now, first.at));
@@ -434,7 +446,7 @@ export function scoreFeed(i: FeedInputs): FeedItem[] {
       if (replyDraft.needsReview) reasons.push(reason('CHECK_THIS', 'Check this: a detail needs your OK'));
     }
     const replyPrefs = replyDraft !== undefined ? (replyDraft.channel === 'email' ? EMAIL_FIRST : TEXT_FIRST) : prefsFor(missed ? 'voice' : latest.channel);
-    const plan = planContact(contactId, replyPrefs, gateOf(contactId), replyDraft && { channel: replyDraft.channel, actionId: replyDraft.actionId });
+    const plan = planContact(f, contactId, replyPrefs, gateOf(contactId), replyDraft && { channel: replyDraft.channel, actionId: replyDraft.actionId });
     reasons.push(...plan.demotion);
     out.push({
       itemType: missed ? 'missed_call' : 'unanswered_inbound',
@@ -457,7 +469,7 @@ export function scoreFeed(i: FeedInputs): FeedItem[] {
     const g = gateOf(d.contactId);
     const reasons: FeedReason[] = [
       reason('DRAFT_READY', d.channel === 'email' ? 'Email drafted for you' : 'Text drafted for you'),
-      reason('ASSISTANT_NOTE', clip(d.explanation, 140)),
+      reason('ASSISTANT_NOTE', f.text(d.explanation, 140)),
     ];
     if (d.needsReview) reasons.push(reason('CHECK_THIS', 'Check this: a detail needs your OK'));
     const edit: OneTapAction = { kind: 'edit_draft', label: d.needsReview ? 'Review' : 'Edit', actionId: d.actionId };
@@ -469,7 +481,7 @@ export function scoreFeed(i: FeedInputs): FeedItem[] {
       primaryAction = d.needsReview ? edit : send;
       alternatives = d.needsReview ? [{ kind: 'open_contact', label: 'Open', contactId: d.contactId }] : [edit, { kind: 'open_contact', label: 'Open', contactId: d.contactId }];
     } else {
-      const plan = planContact(d.contactId, d.channel === 'email' ? EMAIL_FIRST : TEXT_FIRST, g);
+      const plan = planContact(f, d.contactId, d.channel === 'email' ? EMAIL_FIRST : TEXT_FIRST, g);
       reasons.push(...plan.demotion);
       ({ primaryAction, alternatives } = contactCard(plan, [edit]));
     }
@@ -501,14 +513,14 @@ export function scoreFeed(i: FeedInputs): FeedItem[] {
       reasons = [reason('PROMISE_NEEDS_DATE')];
     } else {
       if (deadline - now > TASK_LOOKAHEAD_MS) continue;
-      reasons = dueReasons(now, deadline, promise);
+      reasons = dueReasons(f, now, deadline, promise);
     }
     const ev = promise ? t.evidence?.[0] : undefined;
-    if (ev !== undefined) reasons.push(reason('PROMISE_SOURCE', clip(formatEvidence(ev), 200)));
+    if (ev !== undefined) reasons.push(reason('PROMISE_SOURCE', f.text(formatEvidence(ev), 200)));
     const done: OneTapAction = deadline === null ? { kind: 'open_task', label: 'Set the date', taskId: t.taskId } : { kind: 'complete_task', label: 'Done', taskId: t.taskId };
     let card: { primaryAction: OneTapAction; alternatives: OneTapAction[] };
     if (t.contactId !== null) {
-      const plan = planContact(t.contactId, t.kind === 'document' ? EMAIL_FIRST : CALL_FIRST, gateOf(t.contactId));
+      const plan = planContact(f, t.contactId, t.kind === 'document' ? EMAIL_FIRST : CALL_FIRST, gateOf(t.contactId));
       if (deadline === null) card = { primaryAction: done, alternatives: [...plan.usable, plan.open] };
       else {
         reasons.push(...plan.demotion);
@@ -547,13 +559,13 @@ export function scoreFeed(i: FeedInputs): FeedItem[] {
     }
     const { start, end } = w;
     if (start - now > DEAL_DATE_LOOKAHEAD_MS) continue;
-    const name = d.kind === 'custom' ? clip(d.label ?? 'Contract', 60) : DEAL_DATE_NAME[d.kind];
+    const name = d.kind === 'custom' ? f.text(d.label ?? 'Contract', 60) : DEAL_DATE_NAME[d.kind];
     const r =
       now >= end
-        ? reason('DEAL_DATE_PASSED', `${name} date passed ${ago(now, end)}`)
+        ? reason('DEAL_DATE_PASSED', `${name} date passed ${f.ago(end)}`)
         : now >= start
           ? reason('DEAL_DATE_TODAY', `${name} date is today`)
-          : reason('DEAL_DATE_SOON', `${name} date ${inFuture(now, start)}`);
+          : reason('DEAL_DATE_SOON', `${name} date ${f.in(start)}`);
     const reasons = [r];
     if (now - end > DAY_MS) reasons.push(reason('OVERDUE_OVER_DAY'));
     out.push({
@@ -575,7 +587,7 @@ export function scoreFeed(i: FeedInputs): FeedItem[] {
   // -- appointment outcomes ------------------------------------------------------------------------
   for (const a of i.appointments) {
     if (a.userId !== userId || !awaitsOutcome(a) || a.endsAt > now) continue;
-    const reasons = [reason('OUTCOME_MISSING', `${APPT_NAME[a.kind]} ended ${ago(now, a.endsAt)}; log how it went`)];
+    const reasons = [reason('OUTCOME_MISSING', `${APPT_NAME[a.kind]} ended ${f.ago(a.endsAt)}; log how it went`)];
     if (now - a.endsAt > OUTCOME_LATE_MS) reasons.push(reason('OUTCOME_OVER_2H'));
     out.push({
       itemType: 'appointment_outcome',
@@ -599,7 +611,7 @@ export function scoreFeed(i: FeedInputs): FeedItem[] {
     out.push({
       itemType: 'pond_new',
       band: 'scored',
-      reasons: [reason('POND_NEW', `New in the pond ${ago(now, p.enteredAt)}; first to claim gets it`)],
+      reasons: [reason('POND_NEW', `New in the pond ${f.ago(p.enteredAt)}; first to claim gets it`)],
       dueAt: null,
       dedupeKey: pondFeedKey(p.contactId, p.enteredSeq),
       primaryAction: { kind: 'claim', label: 'Claim', contactId: p.contactId, pondId: p.pondId },
@@ -633,11 +645,12 @@ export function scoreFeed(i: FeedInputs): FeedItem[] {
     });
   }
 
-  return dedupeAndSort(out.map(finish));
+  const canon = opts.labels === 'template' ? (it: FeedItem) => canonicalJson(renderFeedItem(it, now)) : (it: FeedItem) => canonicalJson(it);
+  return dedupeAndSort(out.map(finish), canon);
 }
 
 /** One item per dedupe key (the best by feed order; full ties by canonical content), then sorted. */
-function dedupeAndSort(items: FeedItem[]): FeedItem[] {
+function dedupeAndSort(items: FeedItem[], canon: (it: FeedItem) => string): FeedItem[] {
   const best = new Map<string, FeedItem>();
   for (const it of items) {
     const prev = best.get(it.dedupeKey);
@@ -646,7 +659,7 @@ function dedupeAndSort(items: FeedItem[]): FeedItem[] {
       continue;
     }
     const c = compareFeedItems(it, prev);
-    if (c < 0 || (c === 0 && canonicalJson(it) < canonicalJson(prev))) best.set(it.dedupeKey, it);
+    if (c < 0 || (c === 0 && canon(it) < canon(prev))) best.set(it.dedupeKey, it);
   }
   return [...best.values()].sort(compareFeedItems);
 }
@@ -656,3 +669,8 @@ export function splitBands(items: readonly FeedItem[]): { pinned: FeedItem[]; sc
   return { pinned: items.filter((x) => x.band === 'pinned'), scored: items.filter((x) => x.band === 'scored') };
 }
 
+
+/** A templated item (scoreFeed labels: 'template') with its relative times rendered for `at`. */
+export function renderFeedItem(item: FeedItem, at: Instant): FeedItem {
+  return { ...item, reasons: item.reasons.map((r) => ({ ...r, label: renderFeedLabel(r.label, at) })) };
+}
