@@ -97,20 +97,49 @@ export async function markDegraded(tx: Tx, id: string, code: string): Promise<vo
     WHERE tenant_id = app.tenant_id() AND id = ${id} AND status IN ('connected','degraded')`.execute(tx);
 }
 
-/** Live links whose person is no longer an active member (R-INT-5: removing the member revokes the grant). System actor. */
-export async function linksOfInactiveMembers(tx: Tx): Promise<{ id: string; user_id: string; provider: CalendarProviderKey }[]> {
+/**
+ * Links reconcile must finish (system actor; R-INT-5): a removed member's link not yet revoked (a safety net:
+ * the 0050 trigger revokes it in the removal transaction), and any revoked link that still holds a token (the
+ * trigger keeps it so the grant can be revoked at the provider before the purge). Suspension is not removal.
+ */
+export async function linksToFinishRevoking(tx: Tx): Promise<{ id: string; user_id: string; provider: CalendarProviderKey }[]> {
   return (
     await sql<{ id: string; user_id: string; provider: CalendarProviderKey }>`
       SELECT l.id, l.user_id, l.provider FROM user_calendar_links l
         JOIN memberships m ON m.tenant_id = l.tenant_id AND m.user_id = l.user_id
-       WHERE l.tenant_id = app.tenant_id() AND l.status <> 'revoked' AND m.status <> 'active'
+       WHERE l.tenant_id = app.tenant_id()
+         AND ((l.status <> 'revoked' AND m.status = 'removed') OR (l.status = 'revoked' AND (l.access_enc IS NOT NULL OR l.refresh_enc IS NOT NULL)))
        ORDER BY l.id LIMIT 500`.execute(tx)
   ).rows;
 }
 
 export async function memberActive(tx: Tx, userId: string): Promise<boolean> {
-  const r = await sql<{ ok: boolean }>`SELECT (status = 'active') AS ok FROM memberships WHERE tenant_id = app.tenant_id() AND user_id = ${userId}`.execute(tx);
-  return r.rows[0]?.ok === true;
+  return (await memberStatus(tx, userId)) === 'active';
+}
+
+export async function memberStatus(tx: Tx, userId: string): Promise<string | null> {
+  const r = await sql<{ status: string }>`SELECT status FROM memberships WHERE tenant_id = app.tenant_id() AND user_id = ${userId}`.execute(tx);
+  return r.rows[0]?.status ?? null;
+}
+
+/** Purges the token of a link that is already revoked (system actor). */
+export async function purgeRevokedTokens(tx: Tx, id: string): Promise<number> {
+  const r = await sql`UPDATE user_calendar_links SET access_enc = NULL, refresh_enc = NULL, key_version = NULL
+    WHERE tenant_id = app.tenant_id() AND id = ${id} AND status = 'revoked' AND (access_enc IS NOT NULL OR refresh_enc IS NOT NULL)`.execute(tx);
+  return Number(r.numAffectedRows ?? 0);
+}
+
+/**
+ * The person's appointments the calendar does not have at their current version (sync stopped, a failure, a
+ * new connection): not detached, not over, newest content never accepted.
+ */
+export async function pendingPushesOf(tx: Tx, userId: string): Promise<{ id: string; sync_version: number }[]> {
+  return (
+    await sql<{ id: string; sync_version: number }>`SELECT id, sync_version FROM appointments
+      WHERE tenant_id = app.tenant_id() AND user_id = ${userId} AND external_sync_status <> 'detached' AND ends_at > clock_timestamp()
+        AND (external_pushed_version IS NULL OR external_pushed_version < sync_version)
+      ORDER BY starts_at LIMIT 200`.execute(tx)
+  ).rows;
 }
 
 // ---- appointments (sync bookkeeping only; content columns are module 14's) -------------------------------

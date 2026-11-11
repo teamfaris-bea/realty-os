@@ -60,6 +60,10 @@ describe('Calendar settings', () => {
     mount(f);
     await userEvent.setup().click(await screen.findByRole('button', { name: 'Connect Google Calendar' }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith('https://oauth.fake.invalid/google/authorize?x=1'));
+    // back from the provider with the Back button (a bfcache restore): Connect works again
+    expect(screen.getByRole('button', { name: 'Opening' })).toHaveAttribute('aria-busy', 'true');
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Connect Google Calendar' })).not.toHaveAttribute('aria-busy'));
   });
 
   it('a connected calendar shows its state, the other provider says why it cannot connect, and detached appointments are listed in words (E103)', async () => {
@@ -77,13 +81,18 @@ describe('Calendar settings', () => {
     const u = userEvent.setup();
     await u.click(await screen.findByRole('button', { name: 'Disconnect Google Calendar' }));
     expect(f.callsTo('POST /me/calendar/google_calendar/disconnect')).toHaveLength(0);
+    // focus moves into the confirmation, and back to Disconnect when it is dismissed (never to <body>)
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Yes, disconnect' })));
     await u.click(screen.getByRole('button', { name: 'Keep connected' }));
     expect(screen.queryByRole('button', { name: 'Yes, disconnect' })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Disconnect Google Calendar' })));
     await u.click(screen.getByRole('button', { name: 'Disconnect Google Calendar' }));
     await u.click(screen.getByRole('button', { name: 'Yes, disconnect' }));
-    expect(await screen.findByText(/Google Calendar is disconnected\. Nothing more is sent to it\./)).toBeInTheDocument();
+    expect(await screen.findByText(/Google Calendar is disconnected\. Nothing more is sent to it\./, { selector: '[role=status] *' })).toBeInTheDocument();
     expect(f.callsTo('POST /me/calendar/google_calendar/disconnect')).toHaveLength(1);
     expect(screen.getByRole('button', { name: 'Connect Google Calendar' })).toBeInTheDocument();
+    // focus lands on the card's heading, and the result is announced
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('heading', { level: 2, name: 'Google Calendar' })));
   });
 
   it('needs reconnect (E102) and not configured are stated honestly', async () => {
@@ -98,6 +107,12 @@ describe('Calendar settings', () => {
     );
     expect(await screen.findByText('Needs reconnect')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reconnect Google Calendar' })).toBeInTheDocument();
+    // dismissing the warning is called what it is: no access is being revoked (it already was)
+    expect(screen.getByRole('button', { name: 'Remove Google Calendar' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Disconnect Google Calendar' })).toBeNull();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Remove Google Calendar' }));
+    expect(screen.getByText(/Realty OS already has no access to Google Calendar\. This only clears the reconnect warning/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Yes, remove' })).toBeInTheDocument();
     expect(screen.getByText('Not set up on this platform')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Connect Microsoft Outlook calendar' })).toBeNull();
   });

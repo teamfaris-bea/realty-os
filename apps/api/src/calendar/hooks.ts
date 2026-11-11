@@ -17,6 +17,16 @@ export async function enqueueCalendarPush(tx: Tx, appointmentId: string): Promis
   await enqueueTyped(tx, CALENDAR_PUSH_JOB, { appointmentId }, { dedupeKey: `calendar.push:${appointmentId}:${a.sync_version}` });
 }
 
+/**
+ * After a (re)connect or a recovery from `degraded` (system actor): every appointment of the person the
+ * calendar does not have at its current version gets its push (edits made while sync was stopped).
+ */
+export async function enqueuePendingPushes(tx: Tx, userId: string): Promise<number> {
+  const rows = await repo.pendingPushesOf(tx, userId);
+  for (const a of rows) await enqueueTyped(tx, CALENDAR_PUSH_JOB, { appointmentId: a.id }, { dedupeKey: `calendar.push:${a.id}:${a.sync_version}` });
+  return rows.length;
+}
+
 /** For a caller that already holds the organizer's booking lock (bookSlot). */
 export async function enqueueCalendarPushLocked(tx: Tx, appointmentId: string): Promise<void> {
   const a = await repo.versionOf(tx, appointmentId);

@@ -77,7 +77,7 @@ test('an agent connects Google Calendar, an appointment reaches it, and they dis
   taps = 0;
   await tap(page.getByRole('button', { name: 'Disconnect Google Calendar' }));
   await tap(page.getByRole('button', { name: 'Yes, disconnect' }));
-  await expect(page.getByText(/Google Calendar is disconnected\. Nothing more is sent to it\./)).toBeVisible();
+  await expect(page.locator('#main').getByText(/Google Calendar is disconnected\. Nothing more is sent to it\./)).toBeVisible();
   await expect(page.getByText('Not connected. Nothing is sent to your Google Calendar.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Connect Google Calendar' })).toBeVisible();
   expect(taps).toBe(2);

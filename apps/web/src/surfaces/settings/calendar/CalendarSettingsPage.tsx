@@ -6,9 +6,9 @@
 // Taps: connect = 1 tap here (then the provider's approval screen); disconnect = 2 taps (Disconnect, then
 // "Yes, disconnect"), so one stray tap never revokes the grant.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Button, Card, Notice } from '../../../design/index.js';
+import { Button, Card, Notice, announce } from '../../../design/index.js';
 import { type ApiError, messageFor, useApi } from '../../../shell/index.js';
 import { formatDateTime } from '../../feed/lib/format.js';
 
@@ -77,6 +77,26 @@ function ProviderCard({ p, onChanged }: { p: ProviderView; onChanged: (v: Calend
   const [confirming, setConfirming] = useState(false);
   const [pending, setPending] = useState<'connect' | 'disconnect' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // where keyboard and screen-reader focus goes after each step (never dropped to <body>)
+  const [focusTo, setFocusTo] = useState<'yes' | 'disconnect' | 'heading' | null>(null);
+  const yesRef = useRef<HTMLButtonElement>(null);
+  const disconnectRef = useRef<HTMLButtonElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (!focusTo) return;
+    (focusTo === 'yes' ? yesRef : focusTo === 'disconnect' ? disconnectRef : headingRef).current?.focus();
+    setFocusTo(null);
+  }, [focusTo, confirming, p.state]);
+  // back from the provider with the browser's Back button (page restored from the back/forward cache):
+  // the Connect button is usable again
+  useEffect(() => {
+    const onShow = (e: PageTransitionEvent) => {
+      if (e.persisted) setPending(null);
+    };
+    window.addEventListener('pageshow', onShow);
+    return () => window.removeEventListener('pageshow', onShow);
+  }, []);
+  const removing = p.state === 'needs_reconnect';
 
   const connect = async () => {
     setPending('connect');
@@ -95,7 +115,12 @@ function ProviderCard({ p, onChanged }: { p: ProviderView; onChanged: (v: Calend
     try {
       const v = await api.request<CalendarView>('POST', `/me/calendar/${p.provider}/disconnect`, {});
       setConfirming(false);
-      onChanged(v, `${p.name} is disconnected. Nothing more is sent to it. Events already added stay in your calendar, and your appointments in Realty OS are unchanged.`);
+      const text = removing
+        ? `${p.name} is removed from this page. Realty OS already had no access to it.`
+        : `${p.name} is disconnected. Nothing more is sent to it. Events already added stay in your calendar, and your appointments in Realty OS are unchanged.`;
+      onChanged(v, text);
+      announce(text);
+      setFocusTo('heading');
     } catch (e) {
       setError(messageFor(e as ApiError, MESSAGES));
     } finally {
@@ -107,7 +132,7 @@ function ProviderCard({ p, onChanged }: { p: ProviderView; onChanged: (v: Calend
   return (
     <Card aria-labelledby={`${id}-name`} className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 id={`${id}-name`} className="text-[19px] font-semibold text-ink">
+        <h2 id={`${id}-name`} ref={headingRef} tabIndex={-1} className="text-[19px] font-semibold text-ink outline-none">
           {p.name}
         </h2>
         <span className={`rounded-full px-2.5 py-1 text-[14px] font-medium ${STATE_TONE[p.state]}`}>{STATE_LABEL[p.state]}</span>
@@ -123,20 +148,37 @@ function ProviderCard({ p, onChanged }: { p: ProviderView; onChanged: (v: Calend
           </Button>
         ) : null}
         {p.canDisconnect && !confirming ? (
-          <Button variant="secondary" onClick={() => setConfirming(true)}>
-            {`Disconnect ${p.name}`}
+          <Button
+            ref={disconnectRef}
+            variant="secondary"
+            onClick={() => {
+              setConfirming(true);
+              setFocusTo('yes');
+            }}
+          >
+            {removing ? `Remove ${p.name}` : `Disconnect ${p.name}`}
           </Button>
         ) : null}
       </div>
       {confirming ? (
-        <div role="group" aria-label={`Disconnect ${p.name}?`} className="flex flex-col gap-2 rounded-xl border border-line p-3">
-          <p className="text-[15px] text-ink">Realty OS stops adding appointments to {p.name} and deletes its access right away. Events already added stay in your calendar.</p>
+        <div role="group" aria-label={removing ? `Remove ${p.name}?` : `Disconnect ${p.name}?`} className="flex flex-col gap-2 rounded-xl border border-line p-3">
+          <p className="text-[15px] text-ink">
+            {removing
+              ? `Realty OS already has no access to ${p.name}. This only clears the reconnect warning; you can connect again any time.`
+              : `Realty OS stops adding appointments to ${p.name} and deletes its access right away. Events already added stay in your calendar.`}
+          </p>
           <div className="flex flex-wrap gap-2">
-            <Button variant="danger" pending={pending === 'disconnect'} pendingLabel="Disconnecting" onClick={() => void disconnect()}>
-              Yes, disconnect
+            <Button ref={yesRef} variant="danger" pending={pending === 'disconnect'} pendingLabel={removing ? 'Removing' : 'Disconnecting'} onClick={() => void disconnect()}>
+              {removing ? 'Yes, remove' : 'Yes, disconnect'}
             </Button>
-            <Button variant="secondary" onClick={() => setConfirming(false)}>
-              Keep connected
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setConfirming(false);
+                setFocusTo('disconnect');
+              }}
+            >
+              {removing ? 'Keep the warning' : 'Keep connected'}
             </Button>
           </div>
         </div>

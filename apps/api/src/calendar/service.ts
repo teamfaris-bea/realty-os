@@ -19,7 +19,7 @@ import { AppError } from '../errors.js';
 import type { Busy, IntegrationAdapters, OAuthToken } from '../providers/integrations/types.js';
 import { systemActor } from '../worker/systemActor.js';
 import { CALENDAR_PROVIDER_KEYS, CALENDAR_SERVICES, type CalendarProviderKey, type CalendarService, type LinkState, PRIVACY_SENTENCE, SYNC_SENTENCE, calendarService, detachedSentence, linkSentence, shortOfRef } from './catalog.js';
-import { enqueueCalendarPushLocked } from './hooks.js';
+import { enqueueCalendarPushLocked, enqueuePendingPushes } from './hooks.js';
 import { CALENDAR_STATE_TTL_MS, type CalendarOAuthState, calendarPkceVerifier, pkceChallenge, signCalendarState, verifyCalendarState } from './oauthState.js';
 import * as repo from './repos/links.js';
 import { GrantRevokedError, liveAuth, sealToken, tokenForRevoke, withAuth } from './tokens.js';
@@ -220,6 +220,8 @@ export async function connectCallback(deps: CalendarDeps, session: UserActor, pr
         const fields = { scopes: [...svc.scopes], accessEnc: sealed.accessEnc, refreshEnc: sealed.refreshEnc, keyVersion: sealed.keyVersion, calendarRef: svc.calendarRef };
         if (again.link) await repo.reconnect(tx, id, fields);
         else await repo.insertConnected(tx, { id, userId: st.userId, provider: svc.key, ...fields });
+        // edits made while no calendar was connected (or while it needed a reconnect) reach the calendar now
+        await enqueuePendingPushes(tx, st.userId);
         await audit(tx, actor, {
           action: 'calendar.connected',
           entity: { type: 'user_calendar_link', id },

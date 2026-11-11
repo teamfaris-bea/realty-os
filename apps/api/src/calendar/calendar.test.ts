@@ -267,12 +267,40 @@ describe('push: one-way, fenced by sync_version (R-CAL-2)', () => {
     expect(google().calls.length).toBe(calls);
     expect((await connectCalendar(h, c, 'google_calendar')).result).toBe('CONNECTED');
     expect((await linkRow(h, c.userId!))!.status).toBe('connected');
+    // the edits made while the calendar needed a reconnect reach it after the reconnect
+    await runCalendarJobs(h, c.tenantId!);
+    expect(google().events.get(id)!.startsAt).toBe(inHours(93));
+    expect((await apptSync(h, id)).external_pushed_version).toBe((await apptSync(h, id)).sync_version);
+  });
+
+  it('R-CAL-2: a push the calendar applied but whose transaction rolled back is adopted on retry, never detached', async () => {
+    const id = await newAppointment(agent, { startsAt: inHours(140) });
+    await runCalendarJobs(h, agent.tenantId!);
+    await call(agent, 'PATCH', `/appointments/${id}`, { startsAt: inHours(141), endsAt: inHours(142) });
+    const fake = google();
+    const original = fake.pushEvent.bind(fake);
+    const { ProviderError } = await import('../providers/types.js');
+    fake.pushEvent = async (a, e, f) => {
+      await original(a, e, f); // the calendar applied it...
+      throw new ProviderError('timeout'); // ...and the answer was lost: the job's transaction rolls back
+    };
+    try {
+      await expect(pushNow(agent, id)).rejects.toThrow(/timeout/);
+    } finally {
+      fake.pushEvent = original;
+    }
+    expect((await apptSync(h, id)).external_pushed_version).toBe(1);
+    expect(await pushNow(agent, id)).toBe('pushed');
+    expect(await apptSync(h, id)).toMatchObject({ external_sync_status: 'synced', external_pushed_version: 2 });
+    expect(fake.events.get(id)!.startsAt).toBe(inHours(141));
   });
 
   it('a provider outage retries; on the last attempt the link is degraded and the page says so', async () => {
     const c = await inviteViaApi(h, owner, 'agent');
     await connectCalendar(h, c, 'google_calendar');
     const id = await newAppointment(c, { startsAt: inHours(95) });
+    // these direct runs stand for that job's attempts: the job itself is spent (dead) once they fail
+    await h.su.query("UPDATE jobs SET status = 'dead', finished_at = now() WHERE kind = 'calendar.push' AND payload->>'appointmentId' = $1 AND status = 'pending'", [id]);
     const fake = google();
     const original = fake.pushEvent.bind(fake);
     const { ProviderError } = await import('../providers/types.js');
@@ -288,8 +316,12 @@ describe('push: one-way, fenced by sync_version (R-CAL-2)', () => {
     expect((await linkRow(h, c.userId!))!.status).toBe('degraded');
     const v = (await call<{ providers: { provider: string; state: string; sentence: string }[] }>(c, 'GET', '/me/calendar')).body;
     expect(v.providers.find((p) => p.provider === 'google_calendar')!.sentence).toMatch(/^Connected, but the last update to your Google Calendar did not go through/);
-    await runCalendarJobs(h, c.tenantId!);
+    expect((await apptSync(h, id)).external_sync_status).toBe('failed');
+    // recovery: the next successful push marks the link connected and re-pushes what failed meanwhile
+    await newAppointment(c, { startsAt: inHours(96) });
+    await runCalendarJobs(h, c.tenantId!, 3);
     expect((await linkRow(h, c.userId!))!.status).toBe('connected');
+    expect(await apptSync(h, id)).toMatchObject({ external_sync_status: 'synced', external_pushed_version: 1 });
   });
 });
 
@@ -470,19 +502,48 @@ describe('disconnect and removal (R-INT-5, R-CAL-4)', () => {
     expect((await call(c, 'POST', '/me/calendar/google_calendar/disconnect')).status).toBe(200); // idempotent
   });
 
-  it('R-INT-5: removing the member who owns a calendar link revokes the grant at the provider and purges the token (hourly reconcile)', async () => {
+  it('R-INT-5: removing the member revokes their link in the removal transaction; reconcile then revokes the grant at the provider and purges the token', async () => {
     const c = await inviteViaApi(h, owner, 'agent');
     await connectCalendar(h, c, 'google_calendar');
     const token = await currentAccessToken(c);
-    // the Owner suspends the member through the real API
+    // the Owner removes the member through the real API
     await freshReauth(h, owner);
     const m = (await call<{ members: { userId: string; version: number }[] }>(owner, 'GET', '/members')).body.members.find((x) => x.userId === c.userId)!;
-    expect((await call(owner, 'PATCH', `/members/${c.userId}`, { version: m.version, status: 'suspended' })).status).toBe(200);
+    const r = await call(owner, 'PATCH', `/members/${c.userId}`, { version: m.version, status: 'removed' });
+    expect(r.status).toBe(200);
+    // revoked locally in that same transaction (0050 trigger): nothing can use it any more
+    expect(await linkRow(h, c.userId!)).toMatchObject({ status: 'revoked', last_error_code: 'MEMBER_REMOVED' });
+    expect((await linkRow(h, c.userId!))!.purge_after).not.toBeNull();
     const { reconcileLinks } = await import('./push.js');
     const actor = systemActor(c.tenantId!, 'provider');
-    expect(await withTenantTx(actor, (tx) => reconcileLinks({ envelope: h.app.platform.envelope, adapters: h.providers.integrations, now: () => Date.now() }, tx, actor), { db: h.database })).toBe(1);
+    const run = () => withTenantTx(actor, (tx) => reconcileLinks({ envelope: h.app.platform.envelope, adapters: h.providers.integrations, now: () => Date.now() }, tx, actor), { db: h.database });
+    expect(await run()).toBe(1);
     expect(await linkRow(h, c.userId!)).toMatchObject({ status: 'revoked', last_error_code: 'MEMBER_REMOVED', access_enc: null, refresh_enc: null });
     expect(gOAuth().revoked).toContain(token);
+    expect((await auditRows(h, c.tenantId!, 'calendar.link_revoked')).at(-1)).toMatchObject({ reason: 'MEMBER_REMOVED' });
+    expect(await run()).toBe(0);
+  });
+
+  it('R-INT-5: suspending a member is not removal: sync pauses, the link and the grant are kept, and sync resumes on reactivation', async () => {
+    const c = await inviteViaApi(h, owner, 'agent');
+    await connectCalendar(h, c, 'google_calendar');
+    const id = await newAppointment(c, { startsAt: inHours(310) });
+    const patch = async (status: string) => {
+      await freshReauth(h, owner);
+      const m = (await call<{ members: { userId: string; version: number }[] }>(owner, 'GET', '/members')).body.members.find((x) => x.userId === c.userId)!;
+      expect((await call(owner, 'PATCH', `/members/${c.userId}`, { version: m.version, status })).status).toBe(200);
+    };
+    await patch('suspended');
+    expect(await pushNow(c, id)).toBe('member_inactive');
+    const { reconcileLinks } = await import('./push.js');
+    const actor = systemActor(c.tenantId!, 'provider');
+    expect(await withTenantTx(actor, (tx) => reconcileLinks({ envelope: h.app.platform.envelope, adapters: h.providers.integrations, now: () => Date.now() }, tx, actor), { db: h.database })).toBe(0);
+    const row = (await linkRow(h, c.userId!))!;
+    expect(row.status).toBe('connected');
+    expect(row.access_enc).not.toBeNull();
+    await patch('active');
+    expect(await pushNow(c, id)).toBe('pushed');
+    expect(google().events.has(id)).toBe(true);
   });
 });
 

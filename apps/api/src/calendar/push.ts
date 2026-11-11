@@ -3,7 +3,7 @@
 //   1. the appointment's push lock (pushes of one appointment never overlap), then a fresh read
 //   2. nothing to do when it is detached (E103: never touched again), already pushed at this version (the
 //      fence), or its person has no live calendar (R-CAL-4: sync stopped, in-app unaffected)
-//   3. the person is no longer an active member ⇒ their link is revoked and purged (R-INT-5)
+//   3. the person was removed ⇒ their link is revoked and purged (R-INT-5); suspended ⇒ sync pauses, link kept
 //   4. the token is decrypted and refreshed lazily (tokens.ts); a refused grant revokes and purges the link (E102)
 //   5. the push is conditional on the stored etag: an event edited or deleted in the calendar comes back
 //      `detached` and the appointment is detached, never overwritten (E103)
@@ -14,12 +14,14 @@ import type { SystemActor, TenantId } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import type { EnvelopeService } from '../crypto/envelope.js';
 import type { CalendarEvent, IntegrationAdapters } from '../providers/integrations/types.js';
+import { audit, redactSnapshot } from '../audit.js';
 import { CALENDAR_SERVICES, refProvider } from './catalog.js';
+import { enqueuePendingPushes } from './hooks.js';
 import * as repo from './repos/links.js';
 import { revokeLinkAsSystem } from './service.js';
 import { GrantRevokedError, liveAuth, tokenForRevoke, withAuth } from './tokens.js';
 
-export type PushOutcome = 'missing' | 'detached_already' | 'up_to_date' | 'no_calendar' | 'member_removed' | 'not_pushable' | 'grant_revoked' | 'pushed' | 'stale' | 'detached' | 'failed';
+export type PushOutcome = 'missing' | 'detached_already' | 'up_to_date' | 'no_calendar' | 'member_removed' | 'member_inactive' | 'not_pushable' | 'grant_revoked' | 'pushed' | 'stale' | 'detached' | 'failed';
 
 const KIND_LABEL: Record<repo.PushRow['kind'], string> = { buyer_consult: 'Buyer consult', listing_appointment: 'Listing appointment', consult: 'Consult', other: 'Appointment' };
 
@@ -47,10 +49,13 @@ export async function pushAppointment(deps: PushDeps, tx: Tx, actor: SystemActor
   if (a.external_sync_status === 'detached') return 'detached_already';
   const v = a.sync_version;
   if (a.external_pushed_version !== null && a.external_pushed_version >= v) return 'up_to_date';
-  if (!(await repo.memberActive(tx, a.user_id))) {
-    for (const l of await repo.linksOfUser(tx, a.user_id)) if (l.status !== 'revoked') await revokeRemovedMember(deps, tx, actor, l);
+  const member = await repo.memberStatus(tx, a.user_id);
+  if (member === 'removed') {
+    for (const l of await repo.linksOfUser(tx, a.user_id)) await finishRemovalRevoke(deps, tx, actor, l);
     return 'member_removed';
   }
+  // suspended, deactivating or invited: sync pauses, the link and its grant are kept (R-INT-5 is removal only)
+  if (member !== 'active') return 'member_inactive';
   const link = await repo.liveLinkOf(tx, a.user_id);
   if (!link) return 'no_calendar';
   const svc = CALENDAR_SERVICES[link.provider];
@@ -87,21 +92,27 @@ export async function pushAppointment(deps: PushDeps, tx: Tx, actor: SystemActor
   if (result.kind === 'detached') {
     await repo.recordDetached(tx, a.id);
     await repo.markSynced(tx, link.id);
+    if (link.status === 'degraded') await enqueuePendingPushes(tx, a.user_id);
     return 'detached';
   }
   if (result.kind === 'stale') return 'stale';
   await repo.recordPushed(tx, a.id, { ref: `${svc.calendar}:${result.externalEventRef}`, etag: result.externalEtag, version: v });
   await repo.markSynced(tx, link.id);
+  // back from `degraded`: the appointments whose pushes gave up while it was failing are pushed again
+  if (link.status === 'degraded') await enqueuePendingPushes(tx, a.user_id);
   return 'pushed';
 }
 
 /**
- * R-INT-5 for a person who is no longer an active member: the token is decrypted (system actor) only to revoke
- * the grant at the provider, best effort; the link is revoked and purged locally in this transaction either way.
+ * R-INT-5 for a removed member: the token is decrypted (system actor) only to revoke the grant at the provider,
+ * best effort; the link is revoked (if the 0050 trigger has not already) and its token purged in this transaction.
  */
-async function revokeRemovedMember(deps: PushDeps, tx: Tx, actor: SystemActor, l: Pick<repo.LinkRow, 'id' | 'provider'>): Promise<void> {
+async function finishRemovalRevoke(deps: PushDeps, tx: Tx, actor: SystemActor, l: Pick<repo.LinkRow, 'id' | 'provider'>): Promise<void> {
   const token = await tokenForRevoke(deps.envelope, tx, actor.tenantId as TenantId, l.id);
-  await revokeLinkAsSystem(tx, actor, l, 'MEMBER_REMOVED');
+  const revoked = await repo.revokeAndPurge(tx, l.id, 'MEMBER_REMOVED');
+  const purged = revoked === 0 ? await repo.purgeRevokedTokens(tx, l.id) : 0;
+  if (revoked === 0 && purged === 0) return;
+  await audit(tx, actor, { action: 'calendar.link_revoked', entity: { type: 'user_calendar_link', id: l.id }, changes: redactSnapshot({ status: 'revoked', provider: l.provider, token_purged: true }), reason: 'MEMBER_REMOVED' });
   if (!token) return;
   try {
     await deps.adapters.oauth[CALENDAR_SERVICES[l.provider].oauth].revoke(token);
@@ -112,8 +123,8 @@ async function revokeRemovedMember(deps: PushDeps, tx: Tx, actor: SystemActor, l
 
 /** calendar.reconcile: R-INT-5 for people removed while no push ran for them. */
 export async function reconcileLinks(deps: PushDeps, tx: Tx, actor: SystemActor): Promise<number> {
-  const rows = await repo.linksOfInactiveMembers(tx);
-  for (const l of rows) await revokeRemovedMember(deps, tx, actor, l);
+  const rows = await repo.linksToFinishRevoking(tx);
+  for (const l of rows) await finishRemovalRevoke(deps, tx, actor, l);
   return rows.length;
 }
 

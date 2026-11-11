@@ -207,7 +207,11 @@ export interface CalendarEvent {
   /**
    * Module 34 (additive): a canceled appointment cancels its pushed event; absent means 'confirmed'. The
    * push is conditional on `externalEtag` (If-Match): an event edited or deleted in the calendar is never
-   * overwritten, the result is `detached` (R-CAL-2, E103). VERIFY Google/Graph conditional-update shapes.
+   * overwritten, the result is `detached` (R-CAL-2, E103). On an etag mismatch the adapter first reads the
+   * event: if it already equals what this push would write (start, end, title, status; our own earlier write
+   * whose acknowledgement was lost to a rollback or timeout), the result is `pushed` with the event's current
+   * etag, since nothing the person did would be overwritten. An update writes only these fields (PATCH), so a
+   * person's notes or attendees are never touched. VERIFY Google/Graph conditional-update shapes.
    */
   status?: 'confirmed' | 'cancelled';
 }

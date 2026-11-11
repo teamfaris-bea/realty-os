@@ -291,7 +291,15 @@ export class FakeCalendar implements CalendarProvider {
     if (cur && cur.syncVersion > fence.syncVersion) return { kind: 'stale', syncVersion: cur.syncVersion };
     if (e.externalEventRef !== null) {
       if (this.#deleted.has(e.externalEventRef) || !cur || cur.externalEventRef !== e.externalEventRef) return { kind: 'detached' };
-      if (cur.externalEtag !== e.externalEtag) return { kind: 'detached' };
+      if (cur.externalEtag !== e.externalEtag) {
+        // the calendar already holds exactly what we would write (our own earlier write whose acknowledgement
+        // was lost, e.g. the push's transaction rolled back): adopt it instead of detaching
+        if (cur.startsAt === e.startsAt && cur.endsAt === e.endsAt && cur.title === e.title && (cur.status ?? 'confirmed') === (e.status ?? 'confirmed')) {
+          this.events.set(e.appointmentId, { ...cur, syncVersion: Math.max(cur.syncVersion, fence.syncVersion) });
+          return { kind: 'pushed', externalEventRef: cur.externalEventRef!, externalEtag: cur.externalEtag!, syncVersion: fence.syncVersion };
+        }
+        return { kind: 'detached' };
+      }
     }
     const ref = cur?.externalEventRef ?? `fake-${this.provider}-event-${e.appointmentId}`;
     const etag = `etag-${fence.syncVersion}`;
