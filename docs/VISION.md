@@ -40,7 +40,7 @@ Facebook Messenger and Instagram DMs, Meta Lead Ads and Meta ads are out of scop
 | Google Business Profile | Posts, review monitoring, reply drafts that always need a tap | 3 |
 | Transaction milestones | Contract dates become milestones with risk flags and client/lender updates | 2 |
 | Call scoring and self-coaching | Every call scored; one specific fix a day per agent; weekly improving/slipping view | 2–3 |
-| Gmail sync | Agents' Gmail conversations with clients appear in the contact timeline, read-only | 2 |
+| Gmail sync | Agents' Gmail conversations with clients appear in the contact timeline, read-only (nothing is ever sent through Gmail); off until counsel review and Google's verification, then the Owner turns it on | 2 |
 | Owner view | Dollars by lead source, cost per closing, pipeline velocity, forecast | 2 |
 | Voice AI | Answers missed and after-hours calls live, qualifies, books, warm-transfers hot leads to the on-duty agent | 3 |
 | 90-day prediction | Who will transact, from behavior plus public records (equity, time in home, life events) | 3 |
