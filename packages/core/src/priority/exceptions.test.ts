@@ -55,18 +55,20 @@ describe('R-ACC-2 untouched_lead', () => {
     expect(s.evidence.map((e) => e.explanation)).toEqual(['No human call, text or email by the first-contact deadline', 'Lead became theirs']);
   });
 
-  it('R-ACC-2: not yet due, touched in time, or ended before the deadline is not an exception', () => {
+  it('R-ACC-2: not yet due, touched in time, or ended before the deadline (the lead left, or a re-inquiry started a new period) is not an exception', () => {
     const r = deriveExceptions(
       exceptionInputs({
         ownedWithSla: [
           sla({ periodSeq: 1, firstTouchDueAt: t(min(1)) }),
           sla({ periodSeq: 3, firstTouchDueAt: due, firstTouchAt: due }),
           sla({ periodSeq: 4, firstTouchDueAt: due, periodEndedAt: t(-min(2)) }),
+          // R-OWN-20 E68: the breach timer is fenced on the period, so no breach was ever written for it
+          sla({ periodSeq: 5, firstTouchDueAt: due, nextPeriodAt: t(-min(2)) }),
         ],
       }),
     );
     expect(r.upserts).toEqual([]);
-    expect(r.cleared).toEqual([1, 3, 4].map((n) => `untouched:${contact(2)}:${n}`));
+    expect(r.cleared).toEqual([1, 3, 4, 5].map((n) => `untouched:${contact(2)}:${n}`));
     // R-OWN-13 writes the breach at the due instant, so at exactly the deadline it is a miss.
     expect(keys(deriveExceptions(exceptionInputs({ ownedWithSla: [sla({ firstTouchDueAt: NOW })] })))).toEqual([`untouched:${contact(2)}:4`]);
   });
@@ -102,6 +104,15 @@ describe('R-ACC-2 untouched_lead', () => {
       exceptionInputs({ ownedWithSla: [sla({ periodSeq: 4, firstTouchDueAt: t(-hours(30 * 24)) }), sla({ periodSeq: 19, firstTouchDueAt: t(-min(15)) })], existing: stored }),
     );
     expect(keys(again)).toEqual([`untouched:${contact(2)}:19`]);
+  });
+
+  it('R-ACC-2 E68: a miss whose window a re-inquiry period ended stays open; the lead did not leave the agent, so the evidence does not say it did', () => {
+    // the input's first touch is the period's own (none here); a touch in the re-inquiry period is that period's
+    const s = only(exceptionInputs({ ownedWithSla: [sla({ firstTouchDueAt: t(-hours(8 * 24)), nextPeriodAt: t(-min(30)) })] }));
+    expect(s.conditionClearedAt).toBeNull();
+    expect(s.evidence.map((e) => e.explanation)).toEqual(['No human call, text or email by the first-contact deadline', 'Lead became theirs']);
+    const left = only(exceptionInputs({ ownedWithSla: [sla({ firstTouchDueAt: t(-hours(8 * 24)), nextPeriodAt: t(-min(30)), periodEndedAt: t(-min(5)) })] }));
+    expect(left.evidence[0]?.explanation).toBe('No human call, text or email by the first-contact deadline; the lead later left this agent');
   });
 
   // R-AST-15 (partial, with the ledger): SlaFacts.firstTouchAt is first_touch_recorded, which only a human touch writes.

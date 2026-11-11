@@ -2,6 +2,7 @@
 // R-IMPORT-6, R-AST-15, E68). Recomputes run as the system actor (what the job does); the queue is read
 // through the real server as each role, under RLS.
 import { randomUUID } from 'node:crypto';
+import { EXCEPTION_RULE_VERSION } from '@realty/core/priority';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { grantConsent } from '../comms/testing.js';
@@ -51,6 +52,31 @@ async function missedLead() {
   await setPeriodDeadlines(h, lead.contactId, -60_000, 86_400_000);
   await recompute(h, w.tenantId, { contactId: lead.contactId });
   return { ...lead, key: untouched(lead.contactId, lead.periodSeq) };
+}
+
+const explanations = (evidence: unknown) => (evidence as { explanation: string }[]).map((e) => e.explanation);
+const phoneOf = async (contactId: string) =>
+  (await h.su.query(`SELECT address FROM contact_points WHERE contact_id = $1 AND kind = 'phone' LIMIT 1`, [contactId])).rows[0].address as string;
+const lastFirstTouchAt = async (contactId: string) =>
+  (await h.su.query(`SELECT occurred_at FROM lead_ownership_events WHERE contact_id = $1 AND type = 'first_touch_recorded' ORDER BY seq DESC LIMIT 1`, [contactId])).rows[0].occurred_at as Date;
+
+/**
+ * E68: a missed lead the Team Lead verified, then more than 7 days of quiet (clock fixture), then an intake
+ * re-inquiry that starts a new SLA period of the same agent (R-OWN-20). Returns the newer period's item key.
+ */
+async function reinquiryAfterVerifiedMiss() {
+  const lead = await missedLead();
+  expect((await act(w.teamLead!, lead.key, 'verify', { note: 'Talked with them about it' })).status).toBe(200);
+  // the lead went quiet for more than 7 days (clock fixture), then inquires again
+  await suFixture(h, [{ text: `UPDATE contacts SET owned_at = now() - interval '8 days', last_human_touch_at = now() - interval '8 days' WHERE id = $1`, values: [lead.contactId] }]);
+  const again = await intake(h, w, { phones: [await phoneOf(lead.contactId)], fullName: 'Pat Lead', inquiryType: 'sell', message: 'Thinking of selling now too' });
+  expect([again.contactId, again.outcome]).toEqual([lead.contactId, 'reinquiry']);
+  const st = await contactState(h, lead.contactId);
+  expect([st.ownership_state, st.owner_user_id]).toEqual(['owned', lead.owner.userId]);
+  expect((await ledger(h, lead.contactId)).at(-1)).toMatchObject({ type: 'reinquiry', reason_code: 'REINQUIRY_SLA' });
+  const secondSeq = Number(st.ownership_period_seq);
+  expect(secondSeq).toBeGreaterThan(lead.periodSeq);
+  return { lead, second: untouched(lead.contactId, secondSeq) };
 }
 
 describe('untouched_lead', () => {
@@ -140,19 +166,7 @@ describe('untouched_lead', () => {
   });
 
   it('E68 R-ACC-1: a lead that re-inquires and is missed again by the same agent after an earlier VERIFIED miss is a new item (the re-inquiry SLA is a new ownership period)', async () => {
-    const lead = await missedLead();
-    expect((await act(w.teamLead!, lead.key, 'verify', { note: 'Talked with them about it' })).status).toBe(200);
-    // the lead went quiet for more than 7 days (clock fixture), then inquires again
-    await suFixture(h, [{ text: `UPDATE contacts SET owned_at = now() - interval '8 days', last_human_touch_at = now() - interval '8 days' WHERE id = $1`, values: [lead.contactId] }]);
-    const phone = (await h.su.query(`SELECT address FROM contact_points WHERE contact_id = $1 AND kind = 'phone' LIMIT 1`, [lead.contactId])).rows[0].address as string;
-    const again = await intake(h, w, { phones: [phone], fullName: 'Pat Lead', inquiryType: 'sell', message: 'Thinking of selling now too' });
-    expect([again.contactId, again.outcome]).toEqual([lead.contactId, 'reinquiry']);
-    const st = await contactState(h, lead.contactId);
-    expect([st.ownership_state, st.owner_user_id]).toEqual(['owned', lead.owner.userId]);
-    expect((await ledger(h, lead.contactId)).at(-1)).toMatchObject({ type: 'reinquiry', reason_code: 'REINQUIRY_SLA' });
-    const secondSeq = Number(st.ownership_period_seq);
-    expect(secondSeq).toBeGreaterThan(lead.periodSeq);
-    const second = untouched(lead.contactId, secondSeq);
+    const { lead, second } = await reinquiryAfterVerifiedMiss();
     await setPeriodDeadlines(h, lead.contactId, -60_000, 86_400_000);
     await recompute(h, w.tenantId);
     const live = (await queue(w.teamLead!)).items;
@@ -161,6 +175,69 @@ describe('untouched_lead', () => {
     expect(live.find((i) => i.dedupeKey === second)!.owner?.userId).toBe(lead.owner.userId);
     const handled = (await queue(w.teamLead!, '?state=handled')).items.find((i) => i.dedupeKey === lead.key)!;
     expect(handled.latestEvent).toMatchObject({ action: 'verified', actor: { userId: w.teamLead!.userId } });
+
+    // R-ACC-2 (owner decision 2026-11-11): the re-inquiry ended the earlier period. The agent's touch now is the
+    // newer period's late first touch; it never marks the earlier miss fixed late.
+    await humanTouch(h, lead.owner, lead.contactId);
+    await recompute(h, w.tenantId, { contactId: lead.contactId });
+    const earlier = (await itemRow(h, lead.key))!;
+    expect(earlier.condition_cleared_at).toBeNull();
+    expect(explanations(earlier.evidence)).toEqual(['No human call, text or email by the first-contact deadline', 'Lead became theirs']);
+    const touchAt = await lastFirstTouchAt(lead.contactId);
+    const newer = (await itemRow(h, second))!;
+    expect(newer.condition_cleared_at?.getTime()).toBe(touchAt.getTime());
+    expect(explanations(newer.evidence)).toEqual(['First human call, text or email came after the first-contact deadline', 'Lead became theirs', 'First human contact']);
+    const tl = (await queue(w.teamLead!)).items;
+    expect(tl.find((i) => i.dedupeKey === second)).toMatchObject({ live: true, conditionClearedAt: touchAt.toISOString() });
+    expect(keysOf(tl)).not.toContain(lead.key);
+  });
+
+  it('R-ACC-1 rule version 3: an item the earlier rule stored as fixed late by a touch in a later re-inquiry period reopens its condition on the next recompute; its human events stand', async () => {
+    const { lead } = await reinquiryAfterVerifiedMiss();
+    await humanTouch(h, lead.owner, lead.contactId);
+    const touchAt = await lastFirstTouchAt(lead.contactId);
+    // what rule version 2 stored: the touch in the re-inquiry period taken as the earlier period's late first touch
+    await suFixture(h, [{
+      text: `UPDATE exception_items
+                SET rule_version = 2, condition_cleared_at = $2,
+                    evidence = jsonb_set(evidence, '{0,explanation}', '"First human call, text or email came after the first-contact deadline"')
+                               || jsonb_build_array(jsonb_build_object('sourceType', 'ownership_period', 'sourceId', contact_id, 'explanation', 'First human contact', 'at', $3::bigint))
+              WHERE dedupe_key = $1`,
+      values: [lead.key, touchAt, touchAt.getTime()],
+    }]);
+    expect((await itemRow(h, lead.key))!.evidence).toHaveLength(3);
+    await recompute(h, w.tenantId, { contactId: lead.contactId });
+    const row = (await h.su.query('SELECT condition_cleared_at, rule_version, evidence FROM exception_items WHERE dedupe_key = $1', [lead.key])).rows[0];
+    expect([row.condition_cleared_at, row.rule_version]).toEqual([null, EXCEPTION_RULE_VERSION]);
+    expect(row.rule_version).toBeGreaterThanOrEqual(3);
+    expect(explanations(row.evidence)).toEqual(['No human call, text or email by the first-contact deadline', 'Lead became theirs']);
+    // the condition reopened, the Team Lead's verification still stands: handled, not back in the live queue
+    expect(keysOf((await queue(w.teamLead!)).items)).not.toContain(lead.key);
+    expect((await queue(w.teamLead!, '?state=handled')).items.find((i) => i.dedupeKey === lead.key)?.latestEvent).toMatchObject({ action: 'verified' });
+  });
+
+  it('R-ACC-2 R-OWN-20: a period a re-inquiry superseded before its deadline is no item (its breach timer was fenced out); the touch after it is the newer period\'s, in time', async () => {
+    const lead = await acceptedLead(h, w);
+    const earlierKey = untouched(lead.contactId, lead.periodSeq);
+    // never touched, quiet for more than 7 days (clock fixture), and inquires again before its first-touch deadline
+    await suFixture(h, [{ text: `UPDATE contacts SET owned_at = now() - interval '8 days' WHERE id = $1`, values: [lead.contactId] }]);
+    const again = await intake(h, w, { phones: [await phoneOf(lead.contactId)], fullName: 'Pat Lead', inquiryType: 'sell' });
+    expect(again.outcome).toBe('reinquiry');
+    const newerSeq = Number((await contactState(h, lead.contactId)).ownership_period_seq);
+    expect(newerSeq).toBeGreaterThan(lead.periodSeq);
+    // a long first-touch SLA: the earlier deadline fell just after the re-inquiry, and it has passed by now
+    await suFixture(h, [{
+      text: `UPDATE lead_ownership_events e SET deadline_at = n.occurred_at + interval '1 millisecond'
+               FROM lead_ownership_events n WHERE e.contact_id = $1 AND e.seq = $2 AND n.contact_id = e.contact_id AND n.seq = $3`,
+      values: [lead.contactId, lead.periodSeq, newerSeq],
+    }]);
+    await sleep(5);
+    await recompute(h, w.tenantId, { contactId: lead.contactId });
+    expect(await itemRow(h, earlierKey)).toBeNull();
+    await humanTouch(h, lead.owner, lead.contactId);
+    await recompute(h, w.tenantId, { contactId: lead.contactId });
+    expect(await itemRow(h, earlierKey)).toBeNull();
+    expect(await itemRow(h, untouched(lead.contactId, newerSeq))).toBeNull();
   });
 });
 

@@ -179,7 +179,7 @@ Notation used below:
 | View | Purpose |
 |---|---|
 | `contact_timeline` | Unified timeline: messages, calls, notes, ownership events (excluding rejections), appointments, behavior events; `provenance` native/imported |
-| `v_speed_to_lead` | Per ownership period that started an SLA: owned_at, due, first human touch, response seconds, within_sla |
+| `v_speed_to_lead` | Per ownership period that started an SLA (accept, claim, assign, reassign, or a re-inquiry that started a new SLA period): owned_at, due, first human touch (before the lead left the agent or a re-inquiry started a new period), response seconds, within_sla |
 | `v_agent_activity_daily` | Per agent per tenant-local day: touches (human outbound only), calls, texts/emails, appointments set/held, agreements signed |
 | `v_pipeline_momentum` | Open deals: current stage dwell vs tenant median (`app.stage_dwell_norms()`, aggregates only), `is_slow` when > 1.5× with sample ≥ 5 |
 
@@ -532,12 +532,21 @@ Each rule has at least one test. Where the rule is enforced is given in brackets
 ### R-ACC (accountability, A5 / A7e)
 - **R-ACC-1** Exception items are derived only by `core.accountability.deriveExceptions(inputs, now)`. The function is pure and recomputable; upserts are keyed by a **per-occurrence** `dedupe_key` (`untouched:{contact}:{ownership_period_seq}`, `promise:{task}`, `send:{message}`, `appt:{appointment}`); `condition_cleared_at` is set when the condition stops holding. An item stays in the live queue until its latest human event is `resolved` or `verified`, even after its condition clears ("fixed late"). No one hand-enters an exception. Recompute runs on relevant writes and every 60 s per active tenant, so time-only conditions appear within 60 s. [core + job]
 - **R-ACC-2** The four definitions:
-  - **untouched_lead**: an ownership period (accept/claim/assign/reassign with an SLA) with no human touch (R-OWN-14) by its `first_touch_due_at`. It is derived from the ledger (`v_speed_to_lead`), not the current projection, so a later auto-release does not erase it. The owner is the agent of that period.
+  - **untouched_lead**: an ownership period (accept/claim/assign/reassign with an SLA, or a re-inquiry that started a new SLA period, R-OWN-20) with no human touch (R-OWN-14) by its `first_touch_due_at`. It is derived from the ledger (`v_speed_to_lead`), not the current projection, so a later auto-release does not erase it. The owner is the agent of that period. The period's first-touch window ends when the lead leaves that agent or when a re-inquiry starts a new period of theirs; a touch after that belongs to the later period.
   - **overdue_promise**: an open `promise` task with `due_at < now`.
   - **failed_send**: an outbound message `blocked/failed/undelivered/bounced`, `dispatch_unknown` for more than 10 min, or `dispatching` for more than 20 min.
   - **missing_outcome**: an appointment that ended more than 2 h ago with no outcome logged and status not canceled/rescheduled.
 
   Each item carries ≥ 1 evidence ref and an owner. [core + DB CHECK]
+
+  **Owner decision (2026-11-11): a re-inquiry period ends the earlier period (R-OWN-20, E68).** When a re-inquiry starts a new ownership period (`reinquiry` with `payload.newPeriod`), the earlier period ends there for the derivation and for the scoreboard:
+  - A touch made after the re-inquiry is the newer period's first touch. It is never the earlier period's late first touch, so the earlier miss stays unfixed (not "fixed late"), with no response time.
+  - The newer period has its own item (`untouched:{contact}:{seq}`) and its own speed-to-lead row. `v_speed_to_lead`, `app.scoreboard_speed` and the daily rollup count it (migration `0042_api_accountability_reinquiry_periods.sql`). The untouched-lead card's logged-activity window ends at the same re-inquiry.
+  - A period that a re-inquiry superseded before its deadline is no item, like a period whose lead left before it: its breach timer is fenced on the period (R-OWN-15), so no breach was ever written. The scoreboard still counts that period as unanswered, as it does a period whose lead left before its deadline.
+  - `slaFacts` keeps `periodEndedAt` meaning "the lead left this agent", which the item's evidence says. The re-inquiry instant travels separately (`SlaFacts.nextPeriodAt`).
+  - `exception_items.rule_version` 3. A stored item that a later-period touch had marked "fixed late" reopens its condition on its next recompute (`condition_cleared_at` back to NULL; its human events stand). A tenant scan reaches periods whose deadline is in the last 30 days, and a recompute for the contact reaches all of its periods.
+
+  The rejected alternative was to count the touch as the earlier period's late fix. It would mark the earlier miss fixed by a reply to a later inquiry, and once re-inquiry periods are counted, one touch would answer two periods.
 - **R-ACC-3** Actions on exceptions are append-only `exception_events`:
   - resolve requires a note;
   - reassign goes through the ownership engine and records the command id; a trigger requires a `reassigned`/`assigned` ledger event of the item's contact by the same user after detection, and the actor role must be TL/Admin/Owner (smoke);
@@ -546,7 +555,7 @@ Each rule has at least one test. Where the rule is enforced is given in brackets
 
   [DB]
 - **R-ACC-4** Scoreboard metrics are views over source tables, and every displayed number shows its denominator:
-  - speed-to-lead median and SLA compliance, from `v_speed_to_lead`;
+  - speed-to-lead median and SLA compliance, from `v_speed_to_lead` (re-inquiry periods included; R-ACC-2 owner decision 2026-11-11);
   - touches, appointments set/held and agreements signed, from `v_agent_activity_daily`.
 
   Agents see their own metrics; TLs see their team's. [DB views + web]
@@ -669,7 +678,7 @@ Each rule has at least one test. Where the rule is enforced is given in brackets
 | E65 | Client replies at the moment a TL reassigns A → B | Both take `app.lock_contact`: either ingestion reads owner B, or the reassign's follow-up re-homes the handback and its feed item to B; never stranded with A | R-AST-9, ARCH §10 |
 | E66 | Agent taps Send at 29:58; auto-release is due at 30:00 | TX1 and `auto_release` serialize on the contact locks: touch committed first ⇒ no release; release first ⇒ send blocked (no longer owner), nothing reaches the client | R-OWN-14 |
 | E67 | Admin lowers inactivity_release_days 30 → 14 with 400 leads aged 15–29 days | No lead becomes overdue; stored deadlines stand; new periods and touches use 14 | R-OWN-15, R-OWN-23 (smoke) |
-| E68 | Lead re-inquires and is missed again by the same agent after an earlier verified miss | New ownership period ⇒ new key `untouched:{contact}:{period}`; the old verification does not cover it | R-ACC-1 |
+| E68 | Lead re-inquires and is missed again by the same agent after an earlier verified miss | New ownership period ⇒ new key `untouched:{contact}:{period}`; the old verification does not cover it. The re-inquiry ends the earlier period (owner decision 2026-11-11): the agent's later touch fixes the newer miss late and never the earlier one, which stays unfixed; the newer period is a speed-to-lead row of its own | R-ACC-1, R-ACC-2, R-OWN-20 |
 | E69 | Merge Y (paused, handback open) into X (active nurture, unpaused) | Survivor conversation paused (earliest pause kept); loser enrollment stopped `merged`; handback moved to the surviving owner; no unique-index violation | R-OWN-24 |
 | E70 | Breach at T+15 min, then auto-release at T+30 min | Breach advances `ownership_seq` but not the period; the auto-release job's fence (period seq + `release_due_at`) still matches and fires on time | R-OWN-15 |
 

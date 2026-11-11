@@ -304,7 +304,7 @@ export async function loadFeedInputsScoped(tx: Tx, actor: UserActor, envelope: E
   });
   const slasOut: SlaFacts[] = slas.rows.map((s) => {
     contactIds.add(s.id);
-    return { contactId: s.id as ContactId, ownerUserId: s.owner_user_id as UserId, periodSeq: Number(s.ownership_period_seq), ownedAt: ms(s.owned_at), firstTouchDueAt: ms(s.first_touch_due_at), firstTouchAt: null, periodEndedAt: null, releaseDueAt: msOrNull(s.release_due_at) };
+    return { contactId: s.id as ContactId, ownerUserId: s.owner_user_id as UserId, periodSeq: Number(s.ownership_period_seq), ownedAt: ms(s.owned_at), firstTouchDueAt: ms(s.first_touch_due_at), firstTouchAt: null, periodEndedAt: null, nextPeriodAt: null, releaseDueAt: msOrNull(s.release_due_at) };
   });
   const inactivityOut: InactivityFacts[] = inactivity.rows.map((w) => {
     contactIds.add(w.id);

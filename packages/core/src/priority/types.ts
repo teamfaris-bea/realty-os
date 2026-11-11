@@ -96,6 +96,10 @@ export interface OfferFacts {
  * One ownership period that started a first-touch SLA (a `v_speed_to_lead` row joined with the
  * period's end). `firstTouchAt` is the ledger's `first_touch_recorded` instant, which only a human
  * touch writes (R-OWN-14); assistant, system and imported messages never produce it (R-AST-15).
+ *
+ * The period's first-touch window ends at whichever comes first: the lead leaving the agent
+ * (`periodEndedAt`) or a re-inquiry starting a new period of theirs (`nextPeriodAt`, R-OWN-20, E68).
+ * A touch after that is the later period's, never this one's (owner decision 2026-11-11, R-ACC-2).
  */
 export interface SlaFacts {
   contactId: ContactId;
@@ -104,9 +108,16 @@ export interface SlaFacts {
   periodSeq: number;
   ownedAt: Instant;
   firstTouchDueAt: Instant;
+  /** The period's own first human touch: the first one before its first-touch window ended. */
   firstTouchAt: Instant | null;
-  /** When the period ended (release, auto-release, reassign, close ...); null while current. */
+  /** When the lead left this agent (release, auto-release, reassign, close ...); null while they hold it. */
   periodEndedAt: Instant | null;
+  /**
+   * When a re-inquiry started a new ownership period of the same owner while they still held the lead
+   * (R-OWN-20, E68): it ends this period's first-touch window, but the lead did not leave the agent.
+   * Null if none did (always null for the lead's current period).
+   */
+  nextPeriodAt: Instant | null;
   /** Auto-release instant (contacts.release_due_at) while current; null when disabled. */
   releaseDueAt?: Instant | null;
 }
