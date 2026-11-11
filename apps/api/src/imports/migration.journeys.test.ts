@@ -434,14 +434,11 @@ describe('M2: a member suspended between the ownership approval and its commit',
       ],
     });
     expect(m.status).toBe(200);
-    await fullStage(ih, w.admin, b.id, 'contacts').catch(async () => {
-      // needs-review records (if any) are decided "import", then the stage is run again
-      for (const r of (await records(w.admin, b.id, 'contacts')).filter((x) => x.dryRunOutcome === 'needs_review')) await call(w.admin, 'POST', `/imports/${b.id}/records/${r.id}/review`, { decision: 'import' });
-    });
+    await fullStage(ih, w.admin, b.id, 'contacts');
     expect(stageOf(await batchOf(w.admin, b.id), 'contacts').status).toBe('verified');
     const d = await dryRunStage(ih, w.admin, b.id, 'ownership');
     expect((await approve(w.admin, b.id, 'ownership', d.dryRunSha256 as string)).status).toBe(200);
-    await suspend(w, w.agents[1]!.userId);
+    await suspend(w, w.agents[1]!.userId as string);
     const s = await commitStage(ih, w.admin, b.id, 'ownership');
     expect(s.status).toBe('committed');
     const owners = await ownersOf(w, b.id);
