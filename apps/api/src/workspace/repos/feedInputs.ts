@@ -453,6 +453,18 @@ export async function gateSummaries(tx: Tx, contactIds: readonly string[]): Prom
            EXISTS (SELECT 1 FROM consent_state cs WHERE cs.tenant_id = p.tenant_id AND cs.address_hmac = p.address_hmac AND cs.channel = 'email' AND cs.status = 'revoked') AS rev_email
       FROM contact_points p
      WHERE p.tenant_id = app.tenant_id() AND p.contact_id = ANY (${[...contactIds]}::uuid[]) AND p.removed_at IS NULL AND p.status = 'active'`.execute(tx);
+  // The opt-out fan-out of the send gate (comms/repos/gate.ts optOutFanoutPhoneHmacs, the `others` set of the
+  // 0021 dispatch guards): every phone of the contact, live or removed, except one removed as a confirmed
+  // wrong number. A STOP (or "do not call me") on any of them blocks texting (calling) every phone of the
+  // person (R-CONSENT-7, outbound-3, R-PAR-12), so the card never offers a channel the composer refuses.
+  const fan = await sql<{ contact_id: string; rev_sms: boolean; rev_voice: boolean }>`
+    SELECT p.contact_id,
+           bool_or(EXISTS (SELECT 1 FROM consent_state cs WHERE cs.tenant_id = p.tenant_id AND cs.address_hmac = p.address_hmac AND cs.channel = 'sms' AND cs.status = 'revoked')) AS rev_sms,
+           bool_or(EXISTS (SELECT 1 FROM consent_state cs WHERE cs.tenant_id = p.tenant_id AND cs.address_hmac = p.address_hmac AND cs.channel = 'voice' AND cs.status = 'revoked')) AS rev_voice
+      FROM contact_points p
+     WHERE p.tenant_id = app.tenant_id() AND p.contact_id = ANY (${[...contactIds]}::uuid[]) AND p.kind = 'phone'
+       AND (p.removed_at IS NULL OR p.removed_reason IS DISTINCT FROM 'wrong_number')
+     GROUP BY p.contact_id`.execute(tx);
   type Acc = { usable: boolean; why: Set<string> };
   const per = new Map<string, Record<Channel, Acc>>();
   const fresh = (): Record<Channel, Acc> => ({ sms: { usable: false, why: new Set() }, voice: { usable: false, why: new Set() }, email: { usable: false, why: new Set() } });
@@ -473,12 +485,18 @@ export async function gateSummaries(tx: Tx, contactIds: readonly string[]): Prom
       judge('voice', p.sup_voice, p.rev_voice);
     } else judge('email', p.sup_email, p.rev_email);
   }
-  // A STOP on any of the contact's phones blocks texting all of them (the gate's SMS opt-out rule).
-  for (const p of r.rows) {
-    const acc = per.get(p.contact_id);
-    if (p.kind === 'phone' && p.rev_sms && acc) {
+  // A STOP on any phone of the fan-out blocks texting all of them, a "do not call me" calling all of them
+  // (the gate's opt-out rule, removed phones included).
+  for (const f of fan.rows) {
+    const acc = per.get(f.contact_id);
+    if (!acc) continue;
+    if (f.rev_sms) {
       acc.sms.usable = false;
       acc.sms.why.add('Opted out of texts');
+    }
+    if (f.rev_voice) {
+      acc.voice.usable = false;
+      acc.voice.why.add('Asked not to be called');
     }
   }
   for (const id of contactIds) {
