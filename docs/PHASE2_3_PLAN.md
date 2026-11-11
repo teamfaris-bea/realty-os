@@ -398,9 +398,13 @@ export function ingestChannelInbound(actor: SystemActor, e: ChannelInboundEvent)
 //   hash, once, trigger messages_rfc_guard), inbound.ts on inbound (R-GMAIL-12, dedupe with module 68). VERIFY whether the provider
 //   keeps the Message-ID we generate or assigns its own; TX2 stores the one the provider confirms
 // the DB dedupes a Gmail copy only of a platform row that carries the hash: rows saved before this ships, and imported email, never
-//   do; optional one-time repair job (system): hash SendGrid inbound rows from provider_message_ref (the Message-ID header) and SMTP
-//   outbound rows from makeMessageId(idempotency_key, from) (Postmark inbound, SES/Mailgun outbound: only from the provider, VERIFY);
-//   platform:gmail's vendor_ready_at waits for 90 days of hashing or this repair (its notes)
+//   do; optional one-time repair job (system), hashing each Message-ID as live rows are hashed; the hash is final, so it skips any
+//   row it cannot recover exactly: SendGrid inbound rows from provider_message_ref with its 'sendgrid:' prefix stripped, skipping
+//   'sendgrid:sha256:' refs (no Message-ID header) and refs whose Message-ID part is 180 characters (parseSendgridInbound cuts it
+//   there); sent SMTP outbound rows from makeMessageId(messages.id, the sending identity's from address) (dispatch passes the row id
+//   as the provider idempotency key; messages.idempotency_key is the compose key, not the Message-ID input); Postmark inbound and
+//   SES/Mailgun outbound only from the provider (VERIFY); platform:gmail's vendor_ready_at waits for 90 days of hashing or this
+//   repair (its notes)
 // inbound.ts: when the Message-ID hash is known, the inbound email handback uses the dedupe key email:{contact}:{rfc_message_id_sha256},
 //   the same key module 68's ingestSyncedMailInTx uses, so a Reply-All that reaches both paths hands back once (E201)
 // drafts.ts: approved drafts may use web_chat; firstResponse.ts: step channel inbound_channel (web chat, lead intake)
