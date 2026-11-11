@@ -62,7 +62,7 @@ describe('web/lead-admin registration', () => {
     const nav = navFor(pagesFor(defaultPageTable(), 'owner'));
     const group = (s: string) => nav.sidebar.find((g) => g.section === s)?.items.map((i) => i.path) ?? [];
     expect(group('team')).toEqual(['/team', '/team/scoreboard', '/settings/playbooks']);
-    expect(group('admin')).toEqual(['/admin/members', '/admin/routing', '/admin/numbers', '/admin/erasure', '/settings/compliance', '/settings/team', '/imports', '/admin/system']);
+    expect(group('admin')).toEqual(['/admin/members', '/admin/routing', '/admin/numbers', '/admin/erasure', '/settings/compliance', '/settings/team', '/imports', '/admin/integrations/mls', '/admin/system']);
   });
 });
 
