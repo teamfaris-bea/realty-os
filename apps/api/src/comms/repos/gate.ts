@@ -187,6 +187,18 @@ export async function keywordSenderHmacs(tx: Tx, conversationId: string, now: In
   return r.rows.map((x) => Buffer.from(x.h).toString('hex'));
 }
 
+/**
+ * core-compliance/3.0.0 (R-CHAN-2): whether the contact, or a duplicate merged into it, carries the
+ * person-level do-not-contact. Read under the caller's RLS; the DB guard re-checks as a definer.
+ */
+export async function personDoNotContact(tx: Tx, contactId: string): Promise<boolean> {
+  const r = await sql<{ dnc: boolean }>`
+    SELECT EXISTS (SELECT 1 FROM contacts c
+                    WHERE c.tenant_id = app.tenant_id() AND c.do_not_contact_at IS NOT NULL
+                      AND (c.id = ${contactId} OR c.merged_into_contact_id = ${contactId})) AS dnc`.execute(tx);
+  return r.rows[0]?.dnc === true;
+}
+
 export async function conversationOf(tx: Tx, contactId: string): Promise<ConversationRow | null> {
   const r = await sql<{ id: string; contact_id: string; automation_paused_at: Date | null; automation_pause_reason: string | null; last_inbound_at: Date | null; inbound_seq: string; sticky_phone_number_id: string | null }>`
     SELECT id, contact_id, automation_paused_at, automation_pause_reason, last_inbound_at, inbound_seq, sticky_phone_number_id

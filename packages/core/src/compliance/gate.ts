@@ -24,6 +24,23 @@
 //   7  payment / wire instructions
 //   8  automation paused (the client replied): automated sends only
 //
+// core-compliance/3.0.0 (Phase 2, PHASE2_3_PLAN module 19; R-CHAN-1..5, R-GATE-13, R-INBOX-6, R-INT-6).
+// New channels Messenger, Instagram and website chat, gated exactly like texts: an opt-out on any of the
+// contact's identities of that kind blocks all of them. Added checks (D1 stands: only opt-outs block,
+// plus these operational platform rules, none of them about consent):
+//
+//   9  PERSON_DO_NOT_CONTACT: the person-level do-not-contact (contacts.do_not_contact_at, also when a
+//      do-not-contact duplicate was merged into the recipient) blocks every channel for every initiator;
+//      only the keyword reply below is exempt, as in the DB guard
+//  10  CHANNEL_NOT_CONNECTED: a DM or chat goes out only through a connected or degraded connection
+//  11  PLATFORM_WINDOW_CLOSED: Messenger/Instagram only inside the platform messaging window stored on
+//      the point at inbound (fails closed: no stored instant ⇒ closed). VERIFY current Meta policy
+//  12  PLATFORM_NOT_CLEARED: Messenger/Instagram wait for counsel review of `platform:meta`
+//  13  FAIR_HOUSING_TERMS: a hard fair-housing match (counted by core/fairhousing, module 20) blocks
+//      marketing for everyone and any automated send. VERIFY WITH COUNSEL
+//
+// Every new input only ever adds reasons (monotonic denial, property-tested). An unknown channel throws
+// ChannelUnknownError (R-GATE-13): it is refused, never mapped.
 // The opt-out exemption (ARCHITECTURE §9 path 8) covers only the system's own informational SMS reply
 // to a STOP/HELP keyword; it still checks everything else, suppressions included.
 //
@@ -36,8 +53,12 @@ import {
   type ActionCategory,
   ALWAYS_HUMAN_CATEGORIES,
   AUTONOMOUS_ELIGIBLE,
+  CHANNELS,
   type Channel,
+  ChannelUnknownError,
   CONSENT_EXEMPT_CATEGORIES,
+  isMetaChannel,
+  isPlatformChannel,
   type ConsentStateRow,
   type Initiator,
   type LineType,
@@ -47,7 +68,13 @@ import {
 } from './types.js';
 
 /** Stored in gate_decisions.core_rules_version. Bump on any change to a decision rule. */
-export const RULES_VERSION = 'core-compliance/2.1.0';
+export const RULES_VERSION = 'core-compliance/3.0.0';
+
+/** Channels whose system STOP/HELP reply may reach the identity that sent the keyword (DB guard `exempt`). */
+export const KEYWORD_REPLY_CHANNELS: ReadonlySet<Channel> = new Set<Channel>(['sms', 'messenger', 'instagram']);
+
+/** Live connection statuses a DM or chat may be sent through (R-INT-2, R-TEN-11). */
+export type GateConnectionStatus = 'connected' | 'degraded' | 'other';
 
 export interface GateInput {
   now: Instant;
@@ -72,8 +99,25 @@ export interface GateInput {
   automationPausedAt: Instant | null;
   sender: { kind: 'phone' | 'email'; registration: 'ready' | 'pending' | 'blocked'; domainVerified?: boolean } | null;
   tenant: { suspended: boolean; brokerageNamePresent: boolean; postalAddressPresent: boolean };
-  rendered?: { containsBrokerageName: boolean; containsOptOutHint: boolean; paymentInstructions: boolean };
+  rendered?: {
+    containsBrokerageName: boolean;
+    containsOptOutHint: boolean;
+    paymentInstructions: boolean;
+    /** Hard fair-housing matches in the text (core/fairhousing `check(...).hard.length`); absent = not checked. */
+    fairHousingHardMatches?: number;
+  };
   policy: ResolvedPolicy;
+  /**
+   * The person-level do-not-contact (R-CHAN-2): `contacts.do_not_contact_at` of the recipient contact, or of
+   * any duplicate merged into it. False for a user recipient.
+   */
+  personDoNotContact: boolean;
+  /** Messenger/Instagram/web chat: the sending `integration_connections` row's status; null = none. Ignored otherwise. */
+  connection: { status: GateConnectionStatus } | null;
+  /** Messenger/Instagram: `contact_points.platform_window_until` (stored at inbound); null = never opened. Ignored otherwise. */
+  platformWindow: { openUntil: Instant | null } | null;
+  /** Messenger/Instagram: `platform:meta` reviewed by counsel (R-INT-6). Ignored otherwise. */
+  platformCleared: boolean;
 }
 
 export type GateOutcome = 'allow' | 'deny';
@@ -103,13 +147,22 @@ export function optedOut(rows: readonly ConsentStateRow[], channel: Channel, pur
     if (r.status !== 'revoked' || r.channel !== channel) return false;
     if (channel === 'voice') return true;
     if (r.purpose !== purpose) return false;
-    return r.addressHmac === addressHmac || channel === 'sms';
+    // texts and DMs: a revoke on any of the contact's points of the kind (R-CONSENT-7, R-CHAN-4); email: this address
+    return r.addressHmac === addressHmac || channel !== 'email';
   });
+}
+
+/** Whether a send on `channel` is open in the platform messaging window at `now` (fails closed). */
+export function platformWindowOpen(w: GateInput['platformWindow'], now: Instant): boolean {
+  return w !== null && w.openUntil !== null && now < w.openUntil;
 }
 
 export function canContact(input: GateInput): GateDecision {
   const { recipient, policy, category } = input;
   const ch = recipient.channel;
+  if (!(CHANNELS as readonly string[]).includes(ch)) throw new ChannelUnknownError(String(ch));
+  const platform = isPlatformChannel(ch);
+  const meta = isMetaChannel(ch);
   const reasons: ReasonCode[] = [];
   const add = (r: ReasonCode): void => {
     reasons.push(r); // each check adds a distinct code at most once
@@ -126,7 +179,7 @@ export function canContact(input: GateInput): GateDecision {
     CONSENT_EXEMPT_CATEGORIES.has(category) &&
     input.initiator === 'system' &&
     !marketing &&
-    ch === 'sms' &&
+    KEYWORD_REPLY_CHANNELS.has(ch) &&
     !toUser &&
     (input.keywordSenders ?? []).includes(recipient.addressHmac);
   const messaging = ch !== 'voice';
@@ -153,10 +206,12 @@ export function canContact(input: GateInput): GateDecision {
   else if (point.status !== 'active') add('CONTACT_POINT_INVALID');
   if (point !== null && ch === 'sms' && point.lineType === 'landline') add('LANDLINE_NO_SMS');
 
-  // 3. sender
+  // 3. sender (a DM or chat is sent by its connection, check 10)
   const sender = input.sender;
-  if (sender === null || sender.kind !== (ch === 'email' ? 'email' : 'phone')) add('SENDER_UNAVAILABLE');
-  else if (ch === 'voice' ? sender.registration === 'blocked' : sender.registration !== 'ready') add('SENDER_NOT_REGISTERED');
+  if (!platform) {
+    if (sender === null || sender.kind !== (ch === 'email' ? 'email' : 'phone')) add('SENDER_UNAVAILABLE');
+    else if (ch === 'voice' ? sender.registration === 'blocked' : sender.registration !== 'ready') add('SENDER_NOT_REGISTERED');
+  }
   if (ch === 'email' && marketing && sender?.domainVerified !== true) add('EMAIL_DOMAIN_UNVERIFIED');
 
   // 4. marketing identity (R-GATE-12, R-CONSENT-18) and content presence
@@ -179,6 +234,24 @@ export function canContact(input: GateInput): GateDecision {
 
   // 8. automation pause (R-AST-9); humans can always reply
   if (automated && !toUser && !optOutExempt && input.automationPausedAt !== null) add('AUTOMATION_PAUSED');
+
+  // 9. person-level do-not-contact (R-CHAN-2): every channel, every initiator, no override
+  if (!optOutExempt && input.personDoNotContact) add('PERSON_DO_NOT_CONTACT');
+
+  // 10. a DM or chat needs a live connection (R-INT-2, E134)
+  if (platform) {
+    const st = input.connection?.status;
+    if (st !== 'connected' && st !== 'degraded') add('CHANNEL_NOT_CONNECTED');
+  }
+
+  // 11. Meta's messaging window (R-INBOX-6, E72): operational, not consent
+  if (meta && !platformWindowOpen(input.platformWindow, input.now)) add('PLATFORM_WINDOW_CLOSED');
+
+  // 12. platform clearance (R-INT-6): Meta DMs wait for counsel review of platform:meta
+  if (meta && !input.platformCleared) add('PLATFORM_NOT_CLEARED');
+
+  // 13. fair housing (R-FH-1/2 at send time): marketing for everyone, anything automated
+  if ((rendered?.fairHousingHardMatches ?? 0) > 0 && (marketing || automated)) add('FAIR_HOUSING_TERMS');
 
   const outcome: GateOutcome = reasons.length > 0 ? 'deny' : 'allow';
   return {

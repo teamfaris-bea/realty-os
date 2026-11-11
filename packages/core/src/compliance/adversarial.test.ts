@@ -9,7 +9,9 @@ import { classifyInbound, planInboundEffects } from './inbound.js';
 import { parseJurisdictionPack } from './policy.js';
 import { decideRecording } from './recording.js';
 import { consentKey } from './types.js';
-import { H1, H2, H3, NOW, assistantInput, ev, gateInput, grantRow, policy, spec } from './testing/fixtures.js';
+import { H1, H2, H3, NOW, assistantInput, dmInput, ev, gateInput, grantRow, policy, revokedRow as revokedOn, spec } from './testing/fixtures.js';
+import { ChannelUnknownError, gateChannelForMessage } from './types.js';
+import { optOutFanout } from './fanout.js';
 
 const K = policy().keywords;
 const revokedRow = () => grantRow({ status: 'revoked', level: 'none' });
@@ -297,5 +299,50 @@ describe('invisible characters do not hide a keyword (R-CONSENT-7)', () => {
   }
   it('R-CONSENT-8: zero-width characters inside opt-out language do not hide it', () => {
     expect(classifyInbound('stop​ texting me', K).kind).toBe('opt_out_language');
+  });
+});
+
+// ---- core-compliance/3.0.0 (module 19): attempts to get a DM or chat past an opt-out ---------------------------
+describe('adversarial v3: new channels cannot reopen an opt-out', () => {
+  it('R-GATE-13 hostile channel strings are refused, never mapped (prototype keys, case, padding)', () => {
+    for (const c of ['__proto__', 'constructor', 'toString', 'MESSENGER', 'sms ', '', 'fax', 'whatsapp']) {
+      expect(() => gateChannelForMessage(c)).toThrow(ChannelUnknownError);
+      expect(() => canContact(gateInput({ recipient: { kind: 'contact', addressHmac: H1, channel: c as never } }))).toThrow(ChannelUnknownError);
+    }
+  });
+  it('the keyword exemption cannot reach a different Page identity, a chat, a marketing message or a human/assistant send', () => {
+    const optedOut = { consent: [revokedOn({ channel: 'messenger' })], personDoNotContact: true };
+    expect(canContact(dmInput('messenger', { ...optedOut, initiator: 'system', category: 'opt_out_confirmation', keywordSenders: [H2] })).outcome).toBe('deny');
+    expect(canContact(dmInput('web_chat', { consent: [revokedOn({ channel: 'web_chat' })], initiator: 'system', category: 'opt_out_confirmation', keywordSenders: [H1] })).outcome).toBe('deny');
+    expect(canContact(dmInput('messenger', { ...optedOut, initiator: 'system', category: 'opt_out_confirmation', purpose: 'marketing', keywordSenders: [H1] })).outcome).toBe('deny');
+    expect(canContact(dmInput('messenger', { ...optedOut, initiator: 'human', category: 'opt_out_confirmation', keywordSenders: [H1] })).outcome).toBe('deny');
+    expect(canContact(dmInput('messenger', { ...optedOut, initiator: 'assistant', category: 'help_reply', keywordSenders: [H1] })).outcome).toBe('deny');
+  });
+  it('malformed operational facts fail closed: unknown connection status, NaN window, a window on the wrong side', () => {
+    expect(canContact(dmInput('messenger', { connection: { status: 'CONNECTED' as never } })).reasons).toContain('CHANNEL_NOT_CONNECTED');
+    // a non-finite instant cannot even be recorded in the decision digest: the gate throws rather than allow
+    expect(() => canContact(dmInput('messenger', { platformWindow: { openUntil: Number.NaN as never } }))).toThrow();
+    expect(canContact(dmInput('instagram', { platformCleared: 'yes' as never })).reasons).not.toContain('PLATFORM_NOT_CLEARED'); // truthy cast is the caller's bug, but:
+    expect(canContact(dmInput('instagram', { platformCleared: undefined as never })).reasons).toContain('PLATFORM_NOT_CLEARED');
+    expect(canContact(dmInput('messenger', { personDoNotContact: 1 as never })).reasons).toContain('PERSON_DO_NOT_CONTACT');
+  });
+  it('a grant on a DM channel (form, provider, inbound first contact) never lifts a person-level do-not-contact or a DM opt-out', () => {
+    const grants = [grantRow({ channel: 'messenger', level: 'express_written' }), grantRow({ channel: 'messenger', purpose: 'marketing', level: 'express_written' })];
+    expect(canContact(dmInput('messenger', { consent: [...grants, revokedOn({ channel: 'messenger', addressHmac: H2 })] })).reasons).toContain('CONSENT_REVOKED');
+    expect(canContact(dmInput('messenger', { consent: grants, personDoNotContact: true })).reasons).toContain('PERSON_DO_NOT_CONTACT');
+  });
+  it('E155 an anonymous chat visitor can only silence the session\'s own contact: the fan-out writes only the points it is given', () => {
+    const visitor = [{ kind: 'web_chat' as const, hmac: H3, hint: 'Website chat' }];
+    const s = optOutFanout(visitor, 'language', 'web_chat', { occurredAt: NOW, contactId: 'c-session', messageId: 'm', actor: { kind: 'system' }, ids: sequentialIds() });
+    expect(s.map((e) => e.addressHmac)).toEqual([H3]);
+    expect(s.every((e) => e.contactId === 'c-session')).toBe(true);
+  });
+  it('a typed "STOP" disguised with invisible characters on Messenger still revokes', () => {
+    expect(classifyInbound('S\u200BTOP', policy().keywords, 'messenger')).toMatchObject({ kind: 'stop', scope: 'channel' });
+  });
+  it('the fair-housing count cannot be gamed into an allow for marketing by an odd value', () => {
+    const r = { containsBrokerageName: true, containsOptOutHint: true, paymentInstructions: false };
+    expect(canContact(gateInput({ purpose: 'marketing', rendered: { ...r, fairHousingHardMatches: 3 } })).reasons).toContain('FAIR_HOUSING_TERMS');
+    expect(canContact(assistantInput({ rendered: { ...r, fairHousingHardMatches: 1 } })).reasons).toContain('FAIR_HOUSING_TERMS');
   });
 });

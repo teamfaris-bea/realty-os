@@ -4,7 +4,8 @@ import { type Instant, at, instant } from '../foundation/index.js';
 import { canonicalJson, sha256Hex } from './digest.js';
 import { type GateDecision, type GateInput, RULES_VERSION, canContact, gateInputsRecord, optedOut } from './gate.js';
 import { OPT_OUT_REASONS, REASON_CODES, type ReasonCode, reasonSentence } from './reasons.js';
-import { H1, H2, H3, NOW, assistantInput, days, gateInput, grantRow, minutes, policy, revokedRow } from './testing/fixtures.js';
+import { H1, H2, H3, NOW, assistantInput, days, dmInput, gateInput, grantRow, hours, minutes, policy, revokedRow } from './testing/fixtures.js';
+import { CHANNELS, ChannelUnknownError } from './types.js';
 import type { ConsentStateRow } from './types.js';
 
 // Every decision made in this file is recorded so the last test can prove that every reason code
@@ -176,7 +177,7 @@ describe('opt-out block (R-CONSENT-7, R-CONSENT-10, R-CONSENT-20): no override f
     expect(decide(gateInput({ ...toAgent })).outcome).toBe('allow');
   });
   it('the opt-out reasons are the ones listed as never overridable', () => {
-    expect([...OPT_OUT_REASONS].sort()).toEqual(['CONSENT_REVOKED', 'SUPPRESSED']);
+    expect([...OPT_OUT_REASONS].sort()).toEqual(['CONSENT_REVOKED', 'PERSON_DO_NOT_CONTACT', 'SUPPRESSED']);
   });
   it('optedOut() agrees with the gate for every channel/purpose/address combination', () => {
     const rows = [revoked({ addressHmac: H2, purpose: 'marketing' }), revoked({ channel: 'voice', purpose: 'marketing' }), revoked({ channel: 'email', purpose: 'informational', addressHmac: H3 })];
@@ -323,8 +324,8 @@ describe('check details', () => {
     expectDecision(decide(gateInput({ ...toAgent, contactPoint: { status: 'invalid', lineType: 'mobile' } })), 'deny', 'CONTACT_POINT_INVALID');
     expectDecision(decide(gateInput({ ...toAgent, tenant: { suspended: true, brokerageNamePresent: true, postalAddressPresent: true } })), 'deny', 'TENANT_SUSPENDED');
   });
-  it('RULES_VERSION is a stable versioned string, bumped to 2.x for the simplified gate', () => {
-    expect(RULES_VERSION).toMatch(/^core-compliance\/2\.\d+\.\d+$/);
+  it('RULES_VERSION is a stable versioned string, bumped to 3.0.0 for the Phase 2 channels', () => {
+    expect(RULES_VERSION).toBe('core-compliance/3.0.0');
   });
 });
 
@@ -417,6 +418,86 @@ describe('R-GATE-11 decision content', () => {
   });
 });
 
+// ---- core-compliance/3.0.0 (module 19): new channels, person DNC, connection, window, clearance --------
+describe('core-compliance/3.0.0: Messenger, Instagram and website chat (R-CHAN-1..5, R-INBOX-3, R-INBOX-6, R-INT-6)', () => {
+  it('a clean human reply on each new channel is allowed (no sender phone/email needed: the connection sends)', () => {
+    for (const ch of ['messenger', 'instagram', 'web_chat'] as const) expect(decide(dmInput(ch)).outcome).toBe('allow');
+  });
+  it('R-CHAN-1 E134 a DM identity is gated by the HMAC of its full address: the same Page reconnected keeps its opt-out; the same person on another Page is a different identity of the same kind', () => {
+    const optOut = [revoked({ channel: 'messenger', addressHmac: H1 })];
+    expectDecision(decide(dmInput('messenger', { consent: optOut })), 'deny', 'CONSENT_REVOKED');
+    expectDecision(decide(dmInput('messenger', { consent: optOut, connection: { status: 'connected' } })), 'deny', 'CONSENT_REVOKED');
+    expect(decide(dmInput('instagram', { consent: optOut })).outcome).toBe('allow');
+  });
+  it('R-CHAN-4 E76 a STOP on another Page identity of the contact blocks Messenger to this one; a phone STOP does not', () => {
+    expectDecision(decide(dmInput('messenger', { consent: [revoked({ channel: 'messenger', addressHmac: H2 })] })), 'deny', 'CONSENT_REVOKED');
+    expect(decide(dmInput('messenger', { consent: [revoked({ channel: 'sms', addressHmac: H3 })] })).outcome).toBe('allow');
+    expectDecision(decide(dmInput('web_chat', { consent: [revoked({ channel: 'web_chat' })] })), 'deny', 'CONSENT_REVOKED');
+  });
+  it('R-CHAN-2 E139 a person-level do-not-contact blocks every channel for every initiator, calls included', () => {
+    for (const ch of CHANNELS) {
+      const base = ch === 'messenger' || ch === 'instagram' || ch === 'web_chat' ? dmInput(ch) : ch === 'voice' ? gateInput({ recipient: { kind: 'contact', addressHmac: H1, channel: 'voice' }, rendered: undefined }) : ch === 'email' ? gateInput(email) : gateInput();
+      for (const initiator of ['human', 'assistant', 'system'] as const) {
+        expectDecision(decide({ ...base, initiator, category: initiator === 'human' ? 'none' : 'reminder', personDoNotContact: true }), 'deny', 'PERSON_DO_NOT_CONTACT');
+      }
+    }
+  });
+  it('R-CHAN-2 only the system keyword reply to the identity that sent the keyword is exempt (as in the DB guard)', () => {
+    const reply = { initiator: 'system' as const, category: 'opt_out_confirmation' as const, personDoNotContact: true, keywordSenders: [H1] };
+    expect(decide(gateInput({ ...reply, consent: [revoked()] })).reasons).not.toContain('PERSON_DO_NOT_CONTACT');
+    expect(decide(dmInput('messenger', { ...reply, consent: [revoked({ channel: 'messenger' })] })).outcome).toBe('allow');
+    expect(decide(dmInput('instagram', { ...reply, consent: [revoked({ channel: 'instagram' })] })).outcome).toBe('allow');
+    expectDecision(decide(dmInput('web_chat', { ...reply, consent: [revoked({ channel: 'web_chat' })] })), 'deny', 'CONSENT_REVOKED', 'PERSON_DO_NOT_CONTACT');
+    expectDecision(decide(gateInput({ ...reply, keywordSenders: [H2] })), 'deny', 'PERSON_DO_NOT_CONTACT');
+  });
+  it('E134 a DM or chat through a disconnected, revoked, pending or missing connection is CHANNEL_NOT_CONNECTED; degraded still sends', () => {
+    for (const ch of ['messenger', 'instagram', 'web_chat'] as const) {
+      expectDecision(decide(dmInput(ch, { connection: null })), 'deny', 'CHANNEL_NOT_CONNECTED');
+      expectDecision(decide(dmInput(ch, { connection: { status: 'other' } })), 'deny', 'CHANNEL_NOT_CONNECTED');
+      expect(decide(dmInput(ch, { connection: { status: 'degraded' } })).outcome).toBe('allow');
+    }
+    expect(decide(gateInput({ connection: null })).outcome).toBe('allow');
+  });
+  it('R-INBOX-6 E72 Messenger/Instagram outside the stored window is PLATFORM_WINDOW_CLOSED before any provider call; no stored instant is closed', () => {
+    for (const ch of ['messenger', 'instagram'] as const) {
+      expectDecision(decide(dmInput(ch, { platformWindow: { openUntil: T(-hours(1)) } })), 'deny', 'PLATFORM_WINDOW_CLOSED');
+      expectDecision(decide(dmInput(ch, { platformWindow: { openUntil: NOW } })), 'deny', 'PLATFORM_WINDOW_CLOSED');
+      expectDecision(decide(dmInput(ch, { platformWindow: { openUntil: null } })), 'deny', 'PLATFORM_WINDOW_CLOSED');
+      expectDecision(decide(dmInput(ch, { platformWindow: null })), 'deny', 'PLATFORM_WINDOW_CLOSED');
+      expect(decide(dmInput(ch, { platformWindow: { openUntil: T(1) } })).outcome).toBe('allow');
+    }
+    expect(decide(dmInput('web_chat', { platformWindow: null })).outcome).toBe('allow');
+    expect(decide(gateInput({ platformWindow: null })).outcome).toBe('allow');
+  });
+  it('R-INT-6 Messenger/Instagram wait for counsel review of platform:meta (PLATFORM_NOT_CLEARED); chat, texts, email and calls do not', () => {
+    for (const ch of ['messenger', 'instagram'] as const) expectDecision(decide(dmInput(ch, { platformCleared: false })), 'deny', 'PLATFORM_NOT_CLEARED');
+    expect(decide(dmInput('web_chat', { platformCleared: false })).outcome).toBe('allow');
+    expect(decide(gateInput({ platformCleared: false })).outcome).toBe('allow');
+  });
+  it('the platform rules are operational, not consent: D1 still never asks for a consent level on a DM', () => {
+    expect(decide(dmInput('instagram', { consent: [], initiator: 'assistant', category: 'speed_to_lead_reply' })).outcome).toBe('allow');
+  });
+  it('R-FH-1/2 a hard fair-housing match blocks marketing for everyone and any automated send; a human one-to-one informational reply is not blocked', () => {
+    const fh = { containsBrokerageName: true, containsOptOutHint: true, paymentInstructions: false, fairHousingHardMatches: 1 };
+    expectDecision(decide(gateInput({ purpose: 'marketing', rendered: fh })), 'deny', 'FAIR_HOUSING_TERMS');
+    expectDecision(decide(assistantInput({ rendered: fh })), 'deny', 'FAIR_HOUSING_TERMS');
+    expect(decide(gateInput({ rendered: fh })).reasons).not.toContain('FAIR_HOUSING_TERMS');
+    expect(decide(gateInput({ purpose: 'marketing', rendered: { ...fh, fairHousingHardMatches: 0 } })).reasons).not.toContain('FAIR_HOUSING_TERMS');
+  });
+  it('R-GATE-13 E80 an unknown channel is refused (throws CHANNEL_UNKNOWN), never mapped to texts', () => {
+    expect(() => canContact(gateInput({ recipient: { kind: 'contact', addressHmac: H1, channel: 'fax' as never } }))).toThrow(ChannelUnknownError);
+  });
+  it('the assistant sends DMs only in approved autonomous categories and never pastes a pause', () => {
+    expectDecision(decide(dmInput('messenger', { initiator: 'assistant', category: 'money' })), 'deny', 'CATEGORY_REQUIRES_HUMAN');
+    expectDecision(decide(dmInput('messenger', { initiator: 'assistant', category: 'speed_to_lead_reply', automationPausedAt: T(-1) })), 'deny', 'AUTOMATION_PAUSED');
+  });
+  it('every new reason renders a sentence naming the channel where it matters', () => {
+    expect(decide(dmInput('messenger', { platformCleared: false })).explanation).toBe('Sending on Messenger is off until counsel reviews it');
+    expect(decide(dmInput('instagram', { connection: null })).explanation).toBe("Instagram isn't connected right now");
+    expect(decide(dmInput('messenger', { personDoNotContact: true })).explanation).toBe('This person asked not to be contacted on any channel');
+  });
+});
+
 describe('explanations', () => {
   it('a block reads as short human sentences joined with " · "', () => {
     expect(decide(gateInput({ consent: [revoked()], suppressions: [{ channel: 'sms', reason: 'internal_dnc', liftedAt: null }] })).explanation).toBe('Opted out of texts · Blocked for texts (bounce, complaint or do-not-contact)');
@@ -428,7 +509,7 @@ describe('explanations', () => {
 
 describe('reason catalogue', () => {
   it('every reason code renders a sentence on every channel', () => {
-    for (const r of REASON_CODES) for (const ch of ['sms', 'voice', 'email'] as const) expect(reasonSentence(r, ch).length).toBeGreaterThan(3);
+    for (const r of REASON_CODES) for (const ch of CHANNELS) expect(reasonSentence(r, ch).length).toBeGreaterThan(3);
   });
 });
 

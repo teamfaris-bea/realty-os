@@ -95,6 +95,10 @@ export function gateInput(o: Partial<GateInput> = {}): GateInput {
     tenant: { suspended: false, brokerageNamePresent: true, postalAddressPresent: true },
     rendered: { containsBrokerageName: true, containsOptOutHint: true, paymentInstructions: false },
     policy: policy(),
+    personDoNotContact: false,
+    connection: null,
+    platformWindow: null,
+    platformCleared: false,
     ...o,
   };
 }
@@ -167,4 +171,17 @@ export const days = (n: number): number => n * 86_400_000;
 
 export function zonesOf(...z: IanaZone[]): { zones: IanaZone[]; source: 'explicit' } {
   return { zones: z, source: 'explicit' };
+}
+
+/** A clean human informational Messenger reply inside the window, through a connected Page, platform:meta cleared. */
+export function dmInput(channel: 'messenger' | 'instagram' | 'web_chat' = 'messenger', o: Partial<GateInput> = {}): GateInput {
+  return gateInput({
+    recipient: { kind: 'contact', addressHmac: H1, channel },
+    consent: [],
+    sender: null,
+    connection: { status: 'connected' },
+    platformWindow: { openUntil: (NOW + 3_600_000) as Instant },
+    platformCleared: true,
+    ...o,
+  });
 }

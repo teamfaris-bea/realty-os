@@ -56,7 +56,7 @@ describe('human texts (ARCHITECTURE §9 path 1)', () => {
     expect((await messageRow(h, r.body.message!.id)).gate_decision_id).toBe(d.id);
     expect(r.body.decision!.id).toBe(d.id);
     expect([d.phase, d.outcome]).toEqual(['send', 'deny']);
-    expect(d.core_rules_version).toMatch(/^core-compliance\/2\./);
+    expect(d.core_rules_version).toMatch(/^core-compliance\/3\./);
     expect(d.policy_version_id).toMatch(/^[0-9a-f-]{36}$/);
     expect(d.inputs_sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(d.inputs_sha256).toBe(sha256Hex(canonicalJson(d.inputs)));

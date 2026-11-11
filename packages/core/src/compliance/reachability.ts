@@ -18,8 +18,8 @@
 // Pure and deterministic, like the gate.
 import { optedOut } from './gate.js';
 import type { ReasonCode } from './reasons.js';
-import type { Channel, ConsentStateRow, LineType, PointStatus, Purpose, SuppressionRow } from './types.js';
-import { CHANNELS, PURPOSES } from './types.js';
+import type { PointKind, Channel, ConsentStateRow, LineType, PointStatus, Purpose, SuppressionRow } from './types.js';
+import { CHANNELS, PHONE_EMAIL_CHANNELS, PURPOSES, pointKindOf } from './types.js';
 
 /** The canContact reasons reachability predicts. Every other reason depends on the message or the sender. */
 export const REACHABILITY_REASONS = ['CONSENT_REVOKED', 'SUPPRESSED', 'WRONG_NUMBER', 'CONTACT_POINT_INVALID', 'LANDLINE_NO_SMS'] as const satisfies readonly ReasonCode[];
@@ -27,7 +27,7 @@ export type ReachabilityReason = (typeof REACHABILITY_REASONS)[number];
 
 export interface ReachPoint {
   id: string;
-  kind: 'phone' | 'email';
+  kind: PointKind;
   addressHmac: string;
   status: PointStatus;
   lineType: LineType;
@@ -56,8 +56,8 @@ export interface ReachBlock {
   suppressions: ReachSuppression[];
 }
 
-export function pointKindFor(channel: Channel): 'phone' | 'email' {
-  return channel === 'email' ? 'email' : 'phone';
+export function pointKindFor(channel: Channel): PointKind {
+  return pointKindOf(channel);
 }
 
 /**
@@ -66,7 +66,8 @@ export function pointKindFor(channel: Channel): 'phone' | 'email' {
  */
 export function gateConsentRows(input: ReachabilityInput, point: ReachPoint, channel: Channel): ConsentStateRow[] {
   const hmacs = new Set([point.addressHmac]);
-  if (channel !== 'email') for (const p of input.points) if (p.kind === 'phone') hmacs.add(p.addressHmac);
+  // texts and calls: every phone; DMs: every identity of the kind (R-CHAN-4); email: the address
+  if (channel !== 'email') for (const p of input.points) if (p.kind === pointKindOf(channel)) hmacs.add(p.addressHmac);
   return input.consent.filter((r) => r.channel === channel && hmacs.has(r.addressHmac));
 }
 
@@ -101,9 +102,13 @@ export interface ChannelReach {
   points: PointReach[];
 }
 
-/** Every channel × the contact's points of that kind × both purposes. */
+/**
+ * Every Phase 1 channel, plus each DM/chat channel the contact has an identity on, × the contact's points
+ * of that kind × both purposes. (A contact with no Messenger identity gets no Messenger row.)
+ */
 export function reachability(input: ReachabilityInput): ChannelReach[] {
-  return CHANNELS.map((channel) => ({
+  const channels = CHANNELS.filter((c) => (PHONE_EMAIL_CHANNELS as readonly Channel[]).includes(c) || input.points.some((p) => p.kind === pointKindOf(c)));
+  return channels.map((channel) => ({
     channel,
     points: input.points
       .filter((p) => p.kind === pointKindFor(channel))

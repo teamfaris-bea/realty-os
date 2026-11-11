@@ -30,7 +30,7 @@ function rowOf(s: ConsentEventSpec): ImportedConsentEventRow {
     imported: s.imported,
     channel: s.channel,
     purpose: s.purpose,
-    addressKind: s.addressKind,
+    addressKind: s.addressKind as 'phone' | 'email',
     addressHmac: s.addressHmac,
     addressHint: s.addressHint,
     source: s.source,

@@ -92,7 +92,7 @@ describe('classifyInbound: opt-out language and negation (R-CONSENT-8, E24)', ()
     ['No more texts please', 'no more texts'],
     ['Stop. Do not text me.', 'do not text'],
   ])('R-CONSENT-8 %j is opt-out language (revoke with needs_review)', (b, matched) => {
-    expect(classifyInbound(b, K)).toEqual({ kind: 'opt_out_language', matched, needsReview: true });
+    expect(classifyInbound(b, K)).toEqual({ kind: 'opt_out_language', matched, needsReview: true, scope: 'person' });
   });
 
   it.each([
@@ -101,7 +101,7 @@ describe('classifyInbound: opt-out language and negation (R-CONSENT-8, E24)', ()
     ['this is the wrong #', 'wrong #'],
     ["This isn't the right number for Jane", "isn't the right number"],
   ])('R-CONSENT-11 %j is a wrong-number reply (needs_review)', (b, matched) => {
-    expect(classifyInbound(b, K)).toEqual({ kind: 'wrong_number', matched, needsReview: true });
+    expect(classifyInbound(b, K)).toEqual({ kind: 'wrong_number', matched, needsReview: true, scope: 'address' });
   });
 
   it('a negated wrong-number phrase is not a wrong number', () => {
@@ -230,7 +230,7 @@ describe('planInboundEffects', () => {
 
   it('a plain message changes no consent', () => {
     const fx = run(classifyInbound('See you at 5', K));
-    expect(fx).toEqual({ consentEvents: [], cancelQueuedSmsTo: [], markWrongNumber: false, notifyOwner: false, reply: 'none' });
+    expect(fx).toEqual({ consentEvents: [], cancelQueuedSmsTo: [], markWrongNumber: false, notifyOwner: false, reply: 'none', cancelQueued: [], personDoNotContact: false });
     const noMatch = run({ kind: 'opt_out_language', needsReview: true });
     expect(noMatch.consentEvents.map((e) => e.channel)).toEqual(['sms', 'sms']);
     expect(noMatch.consentEvents[0]!.evidence).toEqual({});

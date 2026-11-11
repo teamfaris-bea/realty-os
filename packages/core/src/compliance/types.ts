@@ -8,8 +8,60 @@
 // hex string (`addressHmac`).
 import type { Instant } from '../foundation/index.js';
 
-export type Channel = 'sms' | 'voice' | 'email';
-export const CHANNELS: readonly Channel[] = ['sms', 'voice', 'email'];
+/**
+ * Consent channels (core-compliance/3.0.0, R-GATE-13). Equal to the `consent_events.channel`,
+ * `consent_state.channel` CHECKs of 0018 and to the consent channels of `messages_dispatch_guard`'s map
+ * (architecture test `channels.test.ts`); add a channel to all of them together.
+ */
+export type Channel = 'sms' | 'voice' | 'email' | 'messenger' | 'instagram' | 'web_chat';
+export const CHANNELS: readonly Channel[] = ['sms', 'voice', 'email', 'messenger', 'instagram', 'web_chat'];
+
+/** The Phase 1 channels (phone and email addresses). */
+export type PhoneEmailChannel = 'sms' | 'voice' | 'email';
+export const PHONE_EMAIL_CHANNELS: readonly PhoneEmailChannel[] = ['sms', 'voice', 'email'];
+
+/** Direct-message and chat channels: the sender identity is an `integration_connections` row (R-INBOX-3). */
+export type PlatformChannel = 'messenger' | 'instagram' | 'web_chat';
+export const PLATFORM_CHANNELS: readonly PlatformChannel[] = ['messenger', 'instagram', 'web_chat'];
+export function isPlatformChannel(c: Channel): c is PlatformChannel {
+  return (PLATFORM_CHANNELS as readonly Channel[]).includes(c);
+}
+
+/** Meta's channels: sending waits for `platform:meta` (R-INT-6) and the platform messaging window (R-INBOX-6). */
+export type MetaChannel = 'messenger' | 'instagram';
+export const META_CHANNELS: readonly MetaChannel[] = ['messenger', 'instagram'];
+export function isMetaChannel(c: Channel): c is MetaChannel {
+  return c === 'messenger' || c === 'instagram';
+}
+
+/**
+ * Stored message channels (`messages.channel` CHECK of 0018) and the consent channel each maps to: the
+ * explicit map of `messages_dispatch_guard` (MMS is a text). Anything else is `CHANNEL_UNKNOWN`
+ * (R-GATE-13, E80): there is no fallthrough.
+ */
+export type MessageChannel = 'sms' | 'mms' | 'email' | 'messenger' | 'instagram' | 'web_chat';
+export const MESSAGE_CHANNEL_MAP: Readonly<Record<MessageChannel, Exclude<Channel, 'voice'>>> = Object.freeze({
+  sms: 'sms',
+  mms: 'sms',
+  email: 'email',
+  messenger: 'messenger',
+  instagram: 'instagram',
+  web_chat: 'web_chat',
+});
+export const MESSAGE_CHANNELS: readonly MessageChannel[] = Object.keys(MESSAGE_CHANNEL_MAP) as MessageChannel[];
+
+export class ChannelUnknownError extends Error {
+  readonly code = 'CHANNEL_UNKNOWN';
+  constructor(readonly channel: string) {
+    super(`CHANNEL_UNKNOWN: no opt-out mapping for channel ${channel}`);
+  }
+}
+
+/** The consent channel a stored message channel is gated on; throws `ChannelUnknownError` for anything else. */
+export function gateChannelForMessage(channel: string): Exclude<Channel, 'voice'> {
+  if (!Object.prototype.hasOwnProperty.call(MESSAGE_CHANNEL_MAP, channel)) throw new ChannelUnknownError(channel);
+  return MESSAGE_CHANNEL_MAP[channel as MessageChannel];
+}
 
 export type Purpose = 'marketing' | 'informational';
 export const PURPOSES: readonly Purpose[] = ['marketing', 'informational'];
@@ -116,7 +168,37 @@ export type ConsentSource =
   | 'import_csv'
   | 'system_expiry';
 
+/** Phase 1 address kinds (phones and emails: imports, intake). */
 export type AddressKind = 'phone' | 'email';
+
+/** `contact_points.kind` / `consent_events.address_kind` / `suppressions.address_kind` (0018). */
+export type PointKind = AddressKind | 'messenger' | 'instagram' | 'web_chat';
+export const POINT_KINDS: readonly PointKind[] = ['phone', 'email', 'messenger', 'instagram', 'web_chat'];
+
+/** The kind of contact point a channel reaches: texts and calls a phone, email an email, a DM its own identity. */
+export function pointKindOf(channel: Channel): PointKind {
+  switch (channel) {
+    case 'sms':
+    case 'voice':
+      return 'phone';
+    case 'email':
+      return 'email';
+    default:
+      return channel;
+  }
+}
+
+/** The consent channels a point of `kind` carries (a platform identity carries only its own, 0018 CHECK). */
+export function channelsOfKind(kind: PointKind): Channel[] {
+  switch (kind) {
+    case 'phone':
+      return ['sms', 'voice'];
+    case 'email':
+      return ['email'];
+    default:
+      return [kind];
+  }
+}
 
 /** The status of one `consent_state` row. */
 export type ConsentStatus = 'granted' | 'revoked' | 'none';
@@ -152,7 +234,8 @@ export type SuppressionReason =
   | 'admin_block'
   | 'wrong_number'
   | 'provider_opt_out'
-  | 'import_dnc';
+  | 'import_dnc'
+  | 'platform_blocked';
 
 /** A `suppressions` row for the recipient's address. Lifted rows are ignored by the gate. */
 export interface SuppressionRow {
