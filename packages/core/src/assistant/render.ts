@@ -126,8 +126,10 @@ export function renderStep(step: PlaybookStep, slots: SlotValues, identity: Rend
  * The step as it would be sent on `channel`: itself, its email fallback (the 60-second first
  * response goes by email when SMS is not allowed, R-AST-16), or null when it cannot go that way.
  */
-export function stepForChannel(step: PlaybookStep, channel: 'sms' | 'email'): PlaybookStep | null {
+export function stepForChannel(step: PlaybookStep, channel: 'sms' | 'email' | 'web_chat'): PlaybookStep | null {
   if (step.channel === channel) return step;
+  // an `inbound_channel` step goes out where the lead wrote (R-INBOX-4)
+  if (step.channel === 'inbound_channel' && channel === 'web_chat') return step;
   if (channel === 'email' && step.fallback !== undefined) {
     const { fallback, ...rest } = step;
     return { ...rest, channel: 'email', subject: fallback.subject, template: fallback.template, maxLength: fallback.maxLength };

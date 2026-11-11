@@ -118,7 +118,7 @@ describe('identity, links and length (R-AST-11, R-GATE-12)', () => {
 
   it('a clean autonomous message passes', () => {
     const g = contentGuard(ok('Hi Jane! Are you still thinking about a move this spring?'), smsStep, team);
-    expect(g).toEqual({ pass: true, issues: [], hardBlock: false, category: null });
+    expect(g).toEqual({ pass: true, issues: [], hardBlock: false, category: null, checkThis: false });
   });
 });
 

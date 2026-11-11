@@ -161,6 +161,12 @@ export async function buildStep(tx: Tx, deps: AssistantDeps, tenantId: string, b
     await upsertRun(tx, b, runId, 'skipped_ineligible', null);
     return { kind: 'skipped', stepKey: step.stepKey, reason: `${rendered.code}:${rendered.slot}` };
   }
+  // core module 25 added the `inbound_channel` step channel (R-INBOX-4). DM/chat dispatch arrives with
+  // module 22; until then such a step is skipped visibly and never sent on another channel.
+  if (step.channel === 'inbound_channel') {
+    await upsertRun(tx, b, runId, 'skipped_ineligible', null);
+    return { kind: 'skipped', stepKey: step.stepKey, reason: 'STEP_CHANNEL_UNAVAILABLE' };
+  }
   let text = rendered.text;
   if (step.channel === 'email' && step.purpose === 'marketing') text = `${text}\n${EMAIL_UNSUBSCRIBE_LINE}`;
   const { policy } = await resolvedPolicy(tx);
