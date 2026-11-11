@@ -20,6 +20,7 @@ import { Button, Notice, useStickyBottom } from '../../design/index.js';
 import { REACHABILITY_KEY, ReasonCaption, isHeld, messageStatus, useChannelState } from '../../reasons/index.js';
 import { type ApiError, messageFor, useApi, usePageTitle, useSession } from '../../shell/index.js';
 import { useInbox } from '../approvals/ApprovalsPage.js';
+import { TemplatePicker } from '../templates/index.js';
 import { ComposeBox } from '../compose/ComposeBox.js';
 import { RowAttachments } from './Attachments.js';
 import { useContact } from '../contact/useContact.js';
@@ -90,6 +91,7 @@ function Thread() {
           initialChannel={compose === 'email' ? 'email' : compose === 'sms' ? 'sms' : undefined}
           draftActionId={draft}
           autoFocus={compose !== null}
+          templatePicker={({ channel, insert }) => <TemplatePicker contactId={full.id} channel={channel} onInsert={insert} />}
         />
       </div>
     </div>
