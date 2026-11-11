@@ -22,7 +22,8 @@ export const FREE_TEXT_MAX = 60;
 /** The serialized definition limit of `smart_lists.definition` (bytes). */
 export const DEFINITION_MAX_BYTES = 8_192;
 
-const Id = z.uuid();
+/** Ids are stored lower-case (the tag-merge rewrite of saved lists relies on it). */
+const Id = z.uuid().transform((s) => s.toLowerCase());
 const Ids = (max: number) => z.array(Id).min(1).max(max);
 const Days = z.number().int().min(1).max(MAX_DAYS);
 const IsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);

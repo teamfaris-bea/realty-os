@@ -3,7 +3,7 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { compileList, type ListPredicate, PREDICATE_KINDS, SmartListDefinitionSchema, validateDefinition, walkPlan } from './index.js';
-import { F_AREA, F_BUDGET, F_FEATURES, fixtureViewer, T_BUYER, T_VA } from './testing.js';
+import { F_AREA, F_BUDGET, F_FEATURES, fixtureViewer, T_BUYER, T_VA } from './testing/index.js';
 
 const INJECTIONS = ["'; DROP TABLE contacts; --", '" OR 1=1 --', '%_\\', 'app.tenant_id()', '$1', '{{agent.email}}', 'SELECT * FROM users', '‮evil'];
 

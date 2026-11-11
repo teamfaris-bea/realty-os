@@ -425,7 +425,9 @@ describe('R-PERM-1 generated can() matrix: one case per DATA_MODEL §3 cell', ()
     const notInMatrix = ACTIONS.filter((a) => !exercised.has(a));
     // Phase 2-3 actions are DATA_MODEL §8 rows (not §3); each module tests its own row.
     const PHASE_2_3: Action[] = ['integration.view', 'integration.manage'];
-    expect(notInMatrix.filter((a) => !PHASE_2_3.includes(a)).sort()).toEqual(['data.export', 'number.release', 'support.revoke', 'system.jobs', 'system.view']);
+    // FUB parity actions are DATA_MODEL §12 rows; packages/core/src/parity/lists/authz.test.ts tests them.
+    const PARITY_LISTS: Action[] = ['contact.edit', 'tag.create', 'tag.manage', 'custom_field.manage', 'smart_list.personal', 'smart_list.team_manage'];
+    expect(notInMatrix.filter((a) => !PHASE_2_3.includes(a) && !PARITY_LISTS.includes(a)).sort()).toEqual(['data.export', 'number.release', 'support.revoke', 'system.jobs', 'system.view']);
   });
 
   it('system.view and system.jobs (System page, not a §3 row): Owner and Admin only, no re-auth; never support or the system', () => {

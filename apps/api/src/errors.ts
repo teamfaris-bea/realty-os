@@ -148,6 +148,42 @@ export const ERROR_STATUS = {
   CONNECTION_NOT_CONNECTABLE: 409, // the connection's status does not allow a (re)connect or change
   CONNECTION_ACCOUNT_MISMATCH: 409, // a different external account is a new connection (R-INT-3)
   LEAD_SOURCE_REQUIRED: 422, // an inbound channel needs a lead source before it can go live
+  // ---- parity api/lists (module 60) ----
+  TAG_NAME_EMPTY: 422, // R-PAR-6: a tag needs a name
+  TAG_NAME_TOO_LONG: 422, // R-PAR-6: at most 64 characters
+  TAG_NAME_INVALID: 422, // R-PAR-6: control characters are not allowed
+  TAG_LIMIT: 409, // R-PAR-6: a team has at most 1,000 tags (merge some first)
+  CONTACT_TAG_LIMIT: 409, // R-PAR-6: a person has at most 100 tags
+  TAG_NAME_TAKEN: 409, // R-PAR-6: a rename collides with another tag's name (case- and width-insensitive); merge instead
+  TAG_MERGE_INVALID: 422, // R-PAR-9: a tag merges into a different, existing tag
+  TAG_PROTECTION_OWNER_ONLY: 403, // R-PAR-8: only the Owner lifts a tag's fair-housing protection
+  AUDIENCE_PROTECTED_PROXY: 422, // R-PAR-8: a protected (fair-housing proxy) tag never defines a bulk send/enroll audience and is never applied in bulk
+  CUSTOM_FIELD_LIMIT: 409, // R-PAR-17: at most 50 live custom fields
+  CUSTOM_FIELD_PROTECTED: 422, // R-PAR-18: a fair-housing protected trait (details.path); use the built-in self-reported details
+  CUSTOM_FIELD_LABEL_TAKEN: 409, // R-PAR-17: another live field has this label
+  CUSTOM_FIELD_LABEL_INVALID: 422,
+  CUSTOM_FIELD_KEY_INVALID: 422,
+  CUSTOM_FIELD_TYPE_INVALID: 422,
+  CUSTOM_FIELD_OPTIONS_INVALID: 422, // details.path
+  CUSTOM_FIELD_ANNUAL_INVALID: 422, // only a date field repeats every year
+  CUSTOM_FIELD_IMMUTABLE: 409, // R-PAR-17: a field keeps its key and type
+  CUSTOM_FIELD_OPTION_REMOVED: 409, // R-PAR-17: archive an option instead of removing it
+  CUSTOM_FIELD_ARCHIVED: 409, // R-PAR-17: an archived field is read-only
+  CUSTOM_VALUE_TYPE: 422, // the value does not fit the field type
+  CUSTOM_VALUE_TOO_LONG: 422, // text values are at most 1,000 characters
+  CUSTOM_VALUE_OPTION: 422, // not a live option of this field
+  CUSTOM_VALUE_RANGE: 422, // a number out of range, or too many options
+  LIST_DEFINITION_INVALID: 422, // R-PAR-29: details.issues (paths)
+  LIST_DEFINITION_TOO_LARGE: 422, // R-PAR-29: at most 8 KB
+  LIST_FREE_TEXT_IN_TEAM_LIST: 422, // R-PAR-27: team lists carry no typed names or text values
+  LIST_FIELD_UNKNOWN: 422,
+  LIST_FIELD_OP_INVALID: 422, // the clause does not fit the field type (e.g. "coming up" on a non-annual date)
+  LIST_TAG_UNKNOWN: 422,
+  LIST_OPTION_UNKNOWN: 422,
+  LIST_CURSOR_INVALID: 422, // the page cursor is malformed or for another sort
+  LIST_TOO_SLOW: 503, // R-PAR-29: the list ran past its 3 s statement timeout (narrow it and try again)
+  SMART_LIST_IMMUTABLE: 409, // a list keeps its scope and owner (copy it instead)
+  SELECTION_TOO_LARGE: 422, // resolveSelection: more people than the action's cap (details.cap)
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

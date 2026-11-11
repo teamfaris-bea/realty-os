@@ -105,6 +105,14 @@ describe('eslint.config.js architecture wiring', () => {
     expect(await lint('apps/api/src/leads/intake.test.ts', code)).toEqual([]);
   });
 
+  it('R-PAR-29: sql.raw / sql.lit / sql.ref / sql.id / sql.table are banned in apps/api/src/lists (smart-list SQL)', async () => {
+    const code = "import { sql } from 'kysely';\nexport const f = (c: string) => sql.raw(c);\n";
+    expect(await lint('apps/api/src/lists/repos/people.ts', code)).toContain('realty/no-sql-raw');
+    expect(await lint('apps/api/src/lists/run.ts', code)).toContain('realty/no-sql-raw');
+    expect(await lint('apps/api/src/leads/repos/contacts.ts', code)).not.toContain('realty/no-sql-raw');
+    expect(await lint('apps/api/src/lists/people.sql.test.ts', code)).not.toContain('realty/no-sql-raw');
+  });
+
   it('packages/db never imports api/web; apps/web never imports db and api only as types', async () => {
     expect(await lint('packages/db/src/jobs.ts', "import { x } from '@realty/api';\nexport const y = x;\n")).toContain(
       '@typescript-eslint/no-restricted-imports',

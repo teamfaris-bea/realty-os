@@ -1,0 +1,1286 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`R-PERM-1 route × role matrix (lists routes) > R-AST-13 R-TEN-3: lists response schemas have no confidence* fields and no tenant id fields (snapshot) 1`] = `
+{
+  "AddContactTagsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "added": {
+        "items": {
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "type": "string",
+        },
+        "type": "array",
+      },
+      "optOutLike": {
+        "items": {
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "type": "string",
+        },
+        "type": "array",
+      },
+      "tags": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "color": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "gray",
+                    "red",
+                    "orange",
+                    "amber",
+                    "green",
+                    "teal",
+                    "blue",
+                    "indigo",
+                    "purple",
+                    "pink",
+                    "brown",
+                    "slate",
+                  ],
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "name": {
+              "type": "string",
+            },
+            "protected": {
+              "type": "boolean",
+            },
+          },
+          "required": [
+            "id",
+            "name",
+            "color",
+            "protected",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "tags",
+      "added",
+      "optOutLike",
+    ],
+    "type": "object",
+  },
+  "ContactFieldsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "values": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "date": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "fieldId": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "number": {
+              "type": [
+                "number",
+                "null",
+              ],
+            },
+            "optionIds": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string",
+                  },
+                  "type": "array",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "text": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "updatedAt": {
+              "type": "string",
+            },
+            "updatedByKind": {
+              "enum": [
+                "user",
+                "bulk",
+                "import",
+              ],
+              "type": "string",
+            },
+          },
+          "required": [
+            "fieldId",
+            "text",
+            "number",
+            "date",
+            "optionIds",
+            "updatedByKind",
+            "updatedAt",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "values",
+    ],
+    "type": "object",
+  },
+  "ContactTagsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "tags": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "color": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "gray",
+                    "red",
+                    "orange",
+                    "amber",
+                    "green",
+                    "teal",
+                    "blue",
+                    "indigo",
+                    "purple",
+                    "pink",
+                    "brown",
+                    "slate",
+                  ],
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "name": {
+              "type": "string",
+            },
+            "protected": {
+              "type": "boolean",
+            },
+          },
+          "required": [
+            "id",
+            "name",
+            "color",
+            "protected",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "tags",
+    ],
+    "type": "object",
+  },
+  "DeleteResultResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "deleted": {
+        "const": true,
+        "type": "boolean",
+      },
+      "removedLinks": {
+        "maximum": 9007199254740991,
+        "minimum": -9007199254740991,
+        "type": "integer",
+      },
+    },
+    "required": [
+      "deleted",
+      "removedLinks",
+    ],
+    "type": "object",
+  },
+  "FieldDefResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "field": {
+        "additionalProperties": false,
+        "properties": {
+          "annual": {
+            "type": "boolean",
+          },
+          "archived": {
+            "type": "boolean",
+          },
+          "fieldType": {
+            "enum": [
+              "text",
+              "number",
+              "date",
+              "single_select",
+              "multi_select",
+            ],
+            "type": "string",
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "key": {
+            "type": "string",
+          },
+          "label": {
+            "type": "string",
+          },
+          "options": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "archived": {
+                  "type": "boolean",
+                },
+                "id": {
+                  "type": "string",
+                },
+                "label": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "id",
+                "label",
+                "archived",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "origin": {
+            "enum": [
+              "manual",
+              "fub_import",
+              "csv_import",
+            ],
+            "type": "string",
+          },
+          "position": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+        },
+        "required": [
+          "id",
+          "key",
+          "label",
+          "fieldType",
+          "options",
+          "annual",
+          "position",
+          "origin",
+          "archived",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "field",
+    ],
+    "type": "object",
+  },
+  "FieldDefsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "fields": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "annual": {
+              "type": "boolean",
+            },
+            "archived": {
+              "type": "boolean",
+            },
+            "fieldType": {
+              "enum": [
+                "text",
+                "number",
+                "date",
+                "single_select",
+                "multi_select",
+              ],
+              "type": "string",
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "key": {
+              "type": "string",
+            },
+            "label": {
+              "type": "string",
+            },
+            "options": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "archived": {
+                    "type": "boolean",
+                  },
+                  "id": {
+                    "type": "string",
+                  },
+                  "label": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "id",
+                  "label",
+                  "archived",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+            "origin": {
+              "enum": [
+                "manual",
+                "fub_import",
+                "csv_import",
+              ],
+              "type": "string",
+            },
+            "position": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer",
+            },
+          },
+          "required": [
+            "id",
+            "key",
+            "label",
+            "fieldType",
+            "options",
+            "annual",
+            "position",
+            "origin",
+            "archived",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "limit": {
+        "maximum": 9007199254740991,
+        "minimum": -9007199254740991,
+        "type": "integer",
+      },
+      "liveCount": {
+        "maximum": 9007199254740991,
+        "minimum": -9007199254740991,
+        "type": "integer",
+      },
+    },
+    "required": [
+      "fields",
+      "liveCount",
+      "limit",
+    ],
+    "type": "object",
+  },
+  "MergeResultResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "alreadyTagged": {
+        "maximum": 9007199254740991,
+        "minimum": -9007199254740991,
+        "type": "integer",
+      },
+      "listsRewritten": {
+        "maximum": 9007199254740991,
+        "minimum": -9007199254740991,
+        "type": "integer",
+      },
+      "moved": {
+        "maximum": 9007199254740991,
+        "minimum": -9007199254740991,
+        "type": "integer",
+      },
+      "tag": {
+        "additionalProperties": false,
+        "properties": {
+          "color": {
+            "anyOf": [
+              {
+                "enum": [
+                  "gray",
+                  "red",
+                  "orange",
+                  "amber",
+                  "green",
+                  "teal",
+                  "blue",
+                  "indigo",
+                  "purple",
+                  "pink",
+                  "brown",
+                  "slate",
+                ],
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "createdByKind": {
+            "enum": [
+              "user",
+              "import",
+            ],
+            "type": "string",
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "name": {
+            "type": "string",
+          },
+          "protected": {
+            "type": "boolean",
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+        },
+        "required": [
+          "id",
+          "name",
+          "color",
+          "protected",
+          "createdByKind",
+          "usage",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "tag",
+      "moved",
+      "alreadyTagged",
+      "listsRewritten",
+    ],
+    "type": "object",
+  },
+  "PeopleCountResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "capped": {
+        "type": "boolean",
+      },
+      "count": {
+        "maximum": 9007199254740991,
+        "minimum": -9007199254740991,
+        "type": "integer",
+      },
+    },
+    "required": [
+      "count",
+      "capped",
+    ],
+    "type": "object",
+  },
+  "PeoplePageResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "audienceProtected": {
+        "type": "boolean",
+      },
+      "list": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+              "name": {
+                "type": "string",
+              },
+              "scope": {
+                "enum": [
+                  "team",
+                  "personal",
+                ],
+                "type": "string",
+              },
+            },
+            "required": [
+              "id",
+              "name",
+              "scope",
+            ],
+            "type": "object",
+          },
+          {
+            "type": "null",
+          },
+        ],
+      },
+      "nextCursor": {
+        "type": [
+          "string",
+          "null",
+        ],
+      },
+      "people": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "contactType": {
+              "type": "string",
+            },
+            "createdAt": {
+              "type": "string",
+            },
+            "displayName": {
+              "type": "string",
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "intent": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "lastActivityAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "nextTaskDueAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "owner": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "displayName": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "userId": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "userId",
+                    "displayName",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "sourceName": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "stage": {
+              "type": "string",
+            },
+            "tags": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "color": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "gray",
+                          "red",
+                          "orange",
+                          "amber",
+                          "green",
+                          "teal",
+                          "blue",
+                          "indigo",
+                          "purple",
+                          "pink",
+                          "brown",
+                          "slate",
+                        ],
+                        "type": "string",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "id": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                  "name": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "color",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+          },
+          "required": [
+            "id",
+            "displayName",
+            "stage",
+            "intent",
+            "contactType",
+            "owner",
+            "sourceName",
+            "lastActivityAt",
+            "createdAt",
+            "nextTaskDueAt",
+            "tags",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "scope": {
+        "const": "people_you_can_see",
+        "type": "string",
+      },
+      "sort": {
+        "enum": [
+          "last_activity_desc",
+          "created_desc",
+          "name_asc",
+          "next_task_asc",
+          "stage_entered_desc",
+        ],
+        "type": "string",
+      },
+    },
+    "required": [
+      "people",
+      "nextCursor",
+      "sort",
+      "list",
+      "scope",
+      "audienceProtected",
+    ],
+    "type": "object",
+  },
+  "RemoveContactTagResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "removed": {
+        "type": "boolean",
+      },
+      "tags": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "color": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "gray",
+                    "red",
+                    "orange",
+                    "amber",
+                    "green",
+                    "teal",
+                    "blue",
+                    "indigo",
+                    "purple",
+                    "pink",
+                    "brown",
+                    "slate",
+                  ],
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "name": {
+              "type": "string",
+            },
+            "protected": {
+              "type": "boolean",
+            },
+          },
+          "required": [
+            "id",
+            "name",
+            "color",
+            "protected",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "tags",
+      "removed",
+    ],
+    "type": "object",
+  },
+  "SetFieldValueResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "changed": {
+        "type": "boolean",
+      },
+      "value": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "date": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "fieldId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+              "number": {
+                "type": [
+                  "number",
+                  "null",
+                ],
+              },
+              "optionIds": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string",
+                    },
+                    "type": "array",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
+              "text": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "updatedAt": {
+                "type": "string",
+              },
+              "updatedByKind": {
+                "enum": [
+                  "user",
+                  "bulk",
+                  "import",
+                ],
+                "type": "string",
+              },
+            },
+            "required": [
+              "fieldId",
+              "text",
+              "number",
+              "date",
+              "optionIds",
+              "updatedByKind",
+              "updatedAt",
+            ],
+            "type": "object",
+          },
+          {
+            "type": "null",
+          },
+        ],
+      },
+    },
+    "required": [
+      "value",
+      "changed",
+    ],
+    "type": "object",
+  },
+  "SmartListResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "list": {
+        "additionalProperties": false,
+        "properties": {
+          "audienceProtected": {
+            "type": "boolean",
+          },
+          "definition": {},
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "mine": {
+            "type": "boolean",
+          },
+          "name": {
+            "type": "string",
+          },
+          "position": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "scope": {
+            "enum": [
+              "team",
+              "personal",
+            ],
+            "type": "string",
+          },
+          "sort": {
+            "enum": [
+              "last_activity_desc",
+              "created_desc",
+              "name_asc",
+              "next_task_asc",
+              "stage_entered_desc",
+            ],
+            "type": "string",
+          },
+          "updatedAt": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+          "scope",
+          "mine",
+          "name",
+          "definition",
+          "sort",
+          "position",
+          "updatedAt",
+          "audienceProtected",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "list",
+    ],
+    "type": "object",
+  },
+  "SmartListsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "lists": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "audienceProtected": {
+              "type": "boolean",
+            },
+            "definition": {},
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "mine": {
+              "type": "boolean",
+            },
+            "name": {
+              "type": "string",
+            },
+            "position": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer",
+            },
+            "scope": {
+              "enum": [
+                "team",
+                "personal",
+              ],
+              "type": "string",
+            },
+            "sort": {
+              "enum": [
+                "last_activity_desc",
+                "created_desc",
+                "name_asc",
+                "next_task_asc",
+                "stage_entered_desc",
+              ],
+              "type": "string",
+            },
+            "updatedAt": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "scope",
+            "mine",
+            "name",
+            "definition",
+            "sort",
+            "position",
+            "updatedAt",
+            "audienceProtected",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "lists",
+    ],
+    "type": "object",
+  },
+  "TagCreatedResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "created": {
+        "type": "boolean",
+      },
+      "readsLikeOptOut": {
+        "type": "boolean",
+      },
+      "tag": {
+        "additionalProperties": false,
+        "properties": {
+          "color": {
+            "anyOf": [
+              {
+                "enum": [
+                  "gray",
+                  "red",
+                  "orange",
+                  "amber",
+                  "green",
+                  "teal",
+                  "blue",
+                  "indigo",
+                  "purple",
+                  "pink",
+                  "brown",
+                  "slate",
+                ],
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "createdByKind": {
+            "enum": [
+              "user",
+              "import",
+            ],
+            "type": "string",
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "name": {
+            "type": "string",
+          },
+          "protected": {
+            "type": "boolean",
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+        },
+        "required": [
+          "id",
+          "name",
+          "color",
+          "protected",
+          "createdByKind",
+          "usage",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "tag",
+      "created",
+      "readsLikeOptOut",
+    ],
+    "type": "object",
+  },
+  "TagResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "tag": {
+        "additionalProperties": false,
+        "properties": {
+          "color": {
+            "anyOf": [
+              {
+                "enum": [
+                  "gray",
+                  "red",
+                  "orange",
+                  "amber",
+                  "green",
+                  "teal",
+                  "blue",
+                  "indigo",
+                  "purple",
+                  "pink",
+                  "brown",
+                  "slate",
+                ],
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "createdByKind": {
+            "enum": [
+              "user",
+              "import",
+            ],
+            "type": "string",
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "name": {
+            "type": "string",
+          },
+          "protected": {
+            "type": "boolean",
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+        },
+        "required": [
+          "id",
+          "name",
+          "color",
+          "protected",
+          "createdByKind",
+          "usage",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "tag",
+    ],
+    "type": "object",
+  },
+  "TagsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "tags": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "color": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "gray",
+                    "red",
+                    "orange",
+                    "amber",
+                    "green",
+                    "teal",
+                    "blue",
+                    "indigo",
+                    "purple",
+                    "pink",
+                    "brown",
+                    "slate",
+                  ],
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "createdByKind": {
+              "enum": [
+                "user",
+                "import",
+              ],
+              "type": "string",
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "name": {
+              "type": "string",
+            },
+            "protected": {
+              "type": "boolean",
+            },
+            "usage": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+          },
+          "required": [
+            "id",
+            "name",
+            "color",
+            "protected",
+            "createdByKind",
+            "usage",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "tags",
+    ],
+    "type": "object",
+  },
+}
+`;

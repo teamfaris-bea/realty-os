@@ -13,7 +13,7 @@ import {
   SmartListDefinitionSchema,
   validateDefinition,
 } from './index.js';
-import { F_AREA, F_BIRTHDAY, F_BUDGET, F_CLOSED_ON, F_FEATURES, F_TIMELINE, fixtureViewer, T_BUYER, T_HOT, T_VA } from './testing.js';
+import { F_AREA, F_BIRTHDAY, F_BUDGET, F_CLOSED_ON, F_FEATURES, F_TIMELINE, fixtureViewer, T_BUYER, T_HOT, T_VA } from './testing/index.js';
 
 const NY = zone('America/New_York');
 

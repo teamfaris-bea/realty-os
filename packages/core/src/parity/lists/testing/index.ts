@@ -1,7 +1,7 @@
 // Test fixtures for the list compiler (used by core and api/lists tests). Not part of the runtime API.
-import { at, type IanaZone, zone } from '../../foundation/index.js';
-import type { FieldDef } from '../fields/types.js';
-import type { ListViewer } from './compile.js';
+import { at, type IanaZone, zone } from '../../../foundation/index.js';
+import type { FieldDef } from '../../fields/types.js';
+import type { ListViewer } from '../compile.js';
 
 export const F_BIRTHDAY = '00000000-0000-4000-8000-0000000000b1';
 export const F_BUDGET = '00000000-0000-4000-8000-0000000000b2';
