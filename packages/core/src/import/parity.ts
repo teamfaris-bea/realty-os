@@ -66,9 +66,17 @@ export interface ResolvedField {
 
 // ---- names -------------------------------------------------------------------------------------------
 
+/** C0 and C1 control characters out (tabs and newlines become spaces first). */
+export function stripControls(s: string): string {
+  return [...s.replace(/[\t\n\r]/g, ' ')].filter((ch) => {
+    const c = ch.codePointAt(0) ?? 0;
+    return !(c < 0x20 || (c >= 0x7f && c <= 0x9f));
+  }).join('');
+}
+
 /** STUB for module 59 normalizeTagName: trimmed, whitespace collapsed, ≤ 64, no control characters; key = lower(NFKC). */
 export function normalizeTagName(raw: string): { name: string; key: string } | null {
-  const name = raw.normalize('NFC').replace(/[\u0000-\u001f\u007f-\u009f]/g, '').replace(/\s+/g, ' ').trim().slice(0, MAX_TAG_NAME).trim();
+  const name = stripControls(raw.normalize('NFC')).replace(/\s+/g, ' ').trim().slice(0, MAX_TAG_NAME).trim();
   if (name === '') return null;
   return { name, key: name.normalize('NFKC').toLowerCase() };
 }

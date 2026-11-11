@@ -54,7 +54,7 @@ const FieldTypeEnum = z.enum(['text', 'number', 'date', 'single_select', 'multi_
 const SourceKey = z.string().trim().min(1).max(200);
 const FieldActionBody = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('skip') }),
-  z.strictObject({ action: z.literal('create'), type: FieldTypeEnum, label: z.string().trim().min(1).max(60).regex(/^[^\u0000-\u001f\u007f]+$/) }),
+  z.strictObject({ action: z.literal('create'), type: FieldTypeEnum, label: z.string().trim().min(1).max(60).refine((v) => ![...v].some((ch) => (ch.codePointAt(0) ?? 0) < 0x20 || ch.codePointAt(0) === 0x7f), 'control_character') }),
   z.strictObject({ action: z.literal('existing'), fieldId: z.uuid() }),
 ]);
 /** PUT /imports/:id/parity (R-PAR-46): labels and keys only, never contact data. */

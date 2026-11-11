@@ -76,7 +76,7 @@ describe('R-PAR-6 R-PAR-8 tags', () => {
         expect(n.name.length).toBeGreaterThan(0);
         expect(n.name.length).toBeLessThanOrEqual(64);
         expect(n.name).toBe(n.name.trim());
-        expect(/[\u0000-\u001f\u007f]/.test(n.name)).toBe(false);
+        expect([...n.name].some((ch) => (ch.codePointAt(0) ?? 0) < 0x20 || ch.codePointAt(0) === 0x7f)).toBe(false);
         expect(normalizeTagName(n.name)).toEqual(n);
         expect(normalizeTagName(n.name.toUpperCase())?.key).toBe(normalizeTagName(n.name.toLowerCase())?.key);
       }),
