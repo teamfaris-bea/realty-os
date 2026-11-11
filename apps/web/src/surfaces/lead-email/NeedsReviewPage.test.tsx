@@ -1,7 +1,8 @@
 // Needs review (Owner/Admin/Team Lead): held lead emails newest first with the server's sentence (never the
 // hold code), what was read from each, the email text on request; Accept (one tap when there is a contact
 // point, a small form for the reviewer's typing otherwise), Discard behind a confirm, "Lead created" with a
-// link to the contact, the Decided tab, the waiting count and the empty state; error codes as sentences.
+// link to the contact, the Decided tab, the waiting count and the empty state (said once, not also in the
+// header); error codes as sentences, and never the internal VERIFY marker.
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
@@ -46,7 +47,25 @@ describe('Needs review', () => {
     expect(c.getByText('12 Elm St')).toBeInTheDocument();
     expect(c.getByText('Can I tour Saturday?')).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/DKIM_UNALIGNED|SENDER_NOT_ALLOWED|LEAD_EMAIL_/);
+    // VERIFY is an internal marker for engineers and counsel, never a word on the page
+    expect(document.body.textContent).not.toMatch(/VERIFY/);
     expect(newestFirst([older, review()]).map((i) => i.subject)).toEqual(['New lead for 12 Elm St', 'Older lead']);
+  });
+
+  it('with nothing held it says so once, in the empty state (the header adds no second "No emails are waiting" line); on Decided the header still says none are waiting', async () => {
+    leadEmailApp(fake([], [review({ status: 'accepted', contactId: CONTACT, decidedAt: '2026-11-11T16:30:00.000Z', canAccept: false })]), '/team/lead-email', 'owner');
+    const u = userEvent.setup();
+    expect(await screen.findByText('Nothing needs review')).toBeInTheDocument();
+    expect(screen.getByText('Lead emails that could not be trusted or read automatically wait here until someone accepts or discards them.')).toBeInTheDocument();
+    expect(screen.queryByText('No emails are waiting for review.')).toBeNull();
+    expect(screen.getByTestId('pending-count').textContent?.trim()).toBe('');
+    expect(screen.getAllByText(/nothing needs review|no emails are waiting/i)).toHaveLength(1);
+    // the Decided list does not say what is waiting, so the header does
+    await u.click(screen.getByRole('radio', { name: 'Decided' }));
+    expect(await screen.findByText('Accepted')).toBeInTheDocument();
+    expect(screen.getByTestId('pending-count')).toHaveTextContent('No emails are waiting for review.');
+    expect(screen.queryByText('Nothing needs review')).toBeNull();
+    expect(document.body.textContent).not.toMatch(/VERIFY/);
   });
 
   it('the email text is behind "Show the email" and opens on request', async () => {
@@ -127,7 +146,6 @@ describe('Needs review', () => {
     leadEmailApp(fake([], decided), '/team/lead-email', 'owner');
     const u = userEvent.setup();
     expect(await screen.findByText('Nothing needs review')).toBeInTheDocument();
-    expect(screen.getByText('No emails are waiting for review.')).toBeInTheDocument();
     await u.click(screen.getByRole('radio', { name: 'Decided' }));
     expect(await screen.findByText('Accepted')).toBeInTheDocument();
     expect(screen.getByText('Discarded')).toBeInTheDocument();

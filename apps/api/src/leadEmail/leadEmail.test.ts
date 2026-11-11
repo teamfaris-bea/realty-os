@@ -10,6 +10,7 @@ import { type AssistantWorld, approvedPlaybook, assistantWorld, call, messagesOf
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
 import { contactState, jobs } from '../leads/testing.js';
 import { contactCount, contactsWith, enableInbox, labelledBody, leadAddress, messageRows, outcomeOf, postLeadEmail } from './testing.js';
+import { HOLD_SENTENCES } from './trust.js';
 
 let h: ApiHarness;
 let w: AssistantWorld;
@@ -35,11 +36,17 @@ const verified = (o: { name?: string; email?: string; phone?: string; message?: 
 describe('R-LEM-1 the inbound address of a lead source', () => {
   it('R-LEM-1: an Owner turns it on: a server-generated leads+<160-bit key>@<inbound domain>, shown again on reload, with the allowed sender domains; only its hash routes; audited', async () => {
     expect(address).toMatch(/^leads\+[0-9a-f]{40}@leads\.realty-os\.invalid$/);
-    const again = await call<{ inbox: { address: string; allowedSenderDomains: string[]; suggestedSenderDomains: { domain: string }[] } }>(w.owner, 'GET', `/lead-sources/${w.sourceId}/lead-email`);
+    const again = await call<{ inbox: { address: string; allowedSenderDomains: string[]; suggestedSenderDomains: { domain: string; label: string }[] } }>(w.owner, 'GET', `/lead-sources/${w.sourceId}/lead-email`);
     expect(again.status).toBe(200);
     expect(again.body.inbox.address).toBe(address);
     expect(again.body.inbox.allowedSenderDomains).toEqual(['zillow.com', 'realtor.com', 'portal.test']);
-    expect(again.body.inbox.suggestedSenderDomains.map((s) => s.domain)).toEqual(['zillow.com', 'realtor.com']);
+    // a suggestion's label is the portal's name: the page marks it "suggested" and says it is unconfirmed until a
+    // test lead arrives; the VERIFY marker is for engineers and counsel (trust.ts), never in what an Owner reads
+    expect(again.body.inbox.suggestedSenderDomains).toEqual([
+      { domain: 'zillow.com', label: 'Zillow' },
+      { domain: 'realtor.com', label: 'Realtor.com' },
+    ]);
+    expect(JSON.stringify(again.body)).not.toMatch(/VERIFY/);
     const key = address.slice('leads+'.length, address.indexOf('@'));
     const k = (await h.su.query<{ key_hash: Buffer; key_enc: Buffer }>('SELECT key_hash, key_enc FROM lead_email_inbox_keys WHERE tenant_id = $1', [w.tenantId])).rows;
     expect(k).toHaveLength(1);
@@ -175,7 +182,10 @@ describe('R-LEM-5 E153 Needs review', () => {
       expect(it.holdSentence).toMatch(/different domain/);
       expect(it.fields.name?.value).toBe('Hal Held');
       expect(r.body.pendingCount).toBeGreaterThanOrEqual(1);
+      expect(JSON.stringify(r.body)).not.toMatch(/VERIFY/);
     }
+    // every reason a reviewer can be shown is plain words
+    for (const s of Object.values(HOLD_SENTENCES)) expect(s).not.toMatch(/VERIFY/);
     for (const role of ['agent', 'isa', 'tc'] as const) expect((await call(others[role]!, 'GET', '/lead-email/reviews')).status, role).toBe(404);
   });
 

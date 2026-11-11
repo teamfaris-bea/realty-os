@@ -98,10 +98,14 @@ test('(a) the Owner turns on lead email for a source (with re-auth) and copies t
 
   const box = intake(page);
   await expect(box.getByText(/Only emails DKIM-signed by an allowed domain become leads automatically; everything else waits in/)).toBeVisible();
-  // the suggested portals are pre-filled, each with its VERIFY label and a Remove control
-  await expect(box.getByText('Zillow (VERIFY the signing domain)', { exact: false })).toBeVisible();
+  // the suggested portals are pre-filled, each marked "suggested" with a Remove control, and one plain sentence
+  // says they are unconfirmed until a test lead arrives (the internal VERIFY marker never shows)
+  await expect(box.getByText('· Zillow · suggested', { exact: false })).toBeVisible();
+  await expect(box.getByText('· Realtor.com · suggested', { exact: false })).toBeVisible();
+  await expect(box.getByText('Suggested domains are unconfirmed until a test lead from each portal arrives.')).toBeVisible();
   await expect(box.getByRole('button', { name: 'Remove zillow.com' })).toBeVisible();
   await expect(box.getByRole('button', { name: 'Remove realtor.com' })).toBeVisible();
+  expect(await page.locator('body').textContent()).not.toMatch(/VERIFY/);
 
   // the re-auth window has passed since sign-in: the server asks, the shell prompts once, the same request goes again
   await stack.fixture('/stale-reauth', { email: w.owner.email });
@@ -125,7 +129,7 @@ test('(a) the Owner turns on lead email for a source (with re-auth) and copies t
   await page.reload();
   await expect(addressField(page)).toHaveValue(address);
   await expect(intake(page).getByRole('button', { name: 'Remove zillow.com' })).toBeVisible();
-  expect(await page.locator('body').textContent()).not.toMatch(/LEAD_EMAIL_|REAUTH_REQUIRED/);
+  expect(await page.locator('body').textContent()).not.toMatch(/LEAD_EMAIL_|REAUTH_REQUIRED|VERIFY/);
 });
 
 test('(b) a verified portal email becomes an offer; the agent accepts it; the first response goes exactly once, to the lead’s phone, never to the portal', async ({ page }) => {
@@ -179,7 +183,7 @@ test('(c) an unverified email waits in Needs review with its reason; no contact 
   await expect(card.getByText('Rae Moss', { exact: true })).toBeVisible();
   await expect(card.getByText(held.email, { exact: true })).toBeVisible();
   await expect(reviewCard(page, junkSubject).getByText(w.holdSentences.SENDER_NOT_ALLOWED!)).toBeVisible();
-  expect(await page.locator('body').textContent()).not.toMatch(/DKIM_UNALIGNED|SENDER_NOT_ALLOWED|LEAD_EMAIL_/);
+  expect(await page.locator('body').textContent()).not.toMatch(/DKIM_UNALIGNED|SENDER_NOT_ALLOWED|LEAD_EMAIL_|VERIFY/);
   // the email text is there on request
   await card.getByText('Show the email').click();
   await expect(card.getByText(/Message: Can I tour Saturday\?/)).toBeVisible();
@@ -201,7 +205,9 @@ test('(c) an unverified email waits in Needs review with its reason; no contact 
   await tap(page, dialog.getByRole('button', { name: 'Discard email' }), discard);
   await expect(page.getByText('Email discarded. No lead was made.')).toBeVisible();
   expect(discard.taps).toBe(2);
+  // nothing left: the empty state says so once (the header line does not repeat it)
   await expect(page.getByText('Nothing needs review')).toBeVisible();
+  await expect(page.getByText('No emails are waiting for review.')).toHaveCount(0);
 
   // Decided lists both
   await page.getByRole('radio', { name: 'Decided' }).click();

@@ -9,7 +9,8 @@
 //   overrides. Either way the server runs the same intake and never sends an automatic first response.
 //   "Lead created" then links to the new contact.
 // - Discard asks first: the email leaves the list and no lead is made.
-// - "Decided" lists what was accepted or discarded. The header says how many are waiting.
+// - "Decided" lists what was accepted or discarded. The header says how many are waiting; when none are, the
+//   Needs review list's empty state says it instead (once, not twice), and on Decided the header does.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type FormEvent, useId, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -62,7 +63,8 @@ export default function NeedsReviewPage() {
     <div className="flex w-full max-w-3xl flex-col gap-4">
       <div className="flex flex-col gap-3 md:flex-row md:items-center">
         <p className="text-[16px] text-ink" data-testid="pending-count">
-          {pending === undefined ? ' ' : pending === 0 ? 'No emails are waiting for review.' : `${plural(pending, 'email')} waiting for review`}
+          {/* with none waiting, the Needs review list's empty state says so (once); only Decided needs this line */}
+          {pending === undefined ? ' ' : pending > 0 ? `${plural(pending, 'email')} waiting for review` : view === 'decided' ? 'No emails are waiting for review.' : ' '}
         </p>
         <div className="md:ml-auto">
           <Segmented<View>

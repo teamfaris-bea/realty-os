@@ -1,7 +1,10 @@
 // Email intake of one lead source (Owner/Admin; shown on Lead routing under "Lead sources").
 //
 // - Off: "Turn on lead email" with the sender domains pre-filled from the server's suggestions (each a
-//   removable chip; a suggestion's label says to VERIFY which domain really signs the portal's mail).
+//   removable chip). The suggestions are guesses (VERIFY with each portal which domain really signs its
+//   mail): a suggested chip says "suggested" after the portal's name, and one plain sentence under the
+//   chips says they are unconfirmed until a test lead arrives. The VERIFY marker itself is for engineers
+//   and counsel and never shows.
 // - On: the inbound address (read-only, with Copy and an announced "Copied"), the allowed sender
 //   domains (add / remove, Save), and "Get a new address", which asks first because the old address
 //   stops working at once.
@@ -23,6 +26,8 @@ import { INBOX_KEY, type Inbox, type InboxResponse, REVIEWS_KEY } from './types.
 export const MAX_DOMAINS = 10;
 export const TRUST_SENTENCE = 'Only emails DKIM-signed by an allowed domain become leads automatically; everything else waits in Needs review.';
 export const ROTATE_WARNING = 'The old address stops working at once: emails sent to it from now on are not received. Give the new address to every portal that uses the old one.';
+/** Under the sender-domain chips while any of them is one of the server's suggestions. */
+export const SUGGESTED_UNCONFIRMED = 'Suggested domains are unconfirmed until a test lead from each portal arrives.';
 
 /** "Zillow.com." / "@zillow.com" → "zillow.com"; null when it is not even shaped like a domain. */
 export function cleanDomain(raw: string): string | null {
@@ -218,7 +223,9 @@ function DomainEditor(p: {
   const [draftError, setDraftError] = useState<string | null>(null);
   const [saved, announceSaved] = useAnnounce();
   const listId = useId();
+  const noteId = useId();
   const labelOf = (d: string) => p.inbox.suggestedSenderDomains.find((s) => s.domain === d)?.label ?? null;
+  const anySuggested = domains.some((d) => labelOf(d) !== null);
   const changed = domains.join(' ') !== p.initial.join(' ');
   const full = domains.length >= MAX_DOMAINS;
   const add = (e: FormEvent) => {
@@ -243,14 +250,14 @@ function DomainEditor(p: {
           Allowed sender domains
         </p>
         {domains.length === 0 ? <p className="text-[15px] text-ink-muted">None. Every email to this address will wait in Needs review.</p> : null}
-        <ul aria-labelledby={listId} className="flex flex-wrap gap-2">
+        <ul aria-labelledby={listId} aria-describedby={anySuggested ? noteId : undefined} className="flex flex-wrap gap-2">
           {domains.map((d) => {
             const label = labelOf(d);
             return (
               <li key={d} className="inline-flex max-w-full items-center gap-1 rounded-full border border-line bg-surface-2 pl-3.5 text-[15px] text-ink">
                 <span className="min-w-0 break-words py-1">
                   <span className="font-medium">{d}</span>
-                  {label ? <span className="text-ink-muted"> · {label}</span> : null}
+                  {label ? <span className="text-ink-muted"> · {label} · suggested</span> : null}
                 </span>
                 <button
                   type="button"
@@ -264,6 +271,11 @@ function DomainEditor(p: {
             );
           })}
         </ul>
+        {anySuggested ? (
+          <p id={noteId} className="text-[15px] text-ink-muted">
+            {SUGGESTED_UNCONFIRMED}
+          </p>
+        ) : null}
       </div>
       <form className="flex flex-col gap-2 sm:flex-row sm:items-end" onSubmit={add} aria-label={`Add a sender domain for ${p.sourceName}`}>
         <TextField

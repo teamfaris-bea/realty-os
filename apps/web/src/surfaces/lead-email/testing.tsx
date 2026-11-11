@@ -12,9 +12,10 @@ export const leadEmailTable = () => tableWith(...AGENT_SURFACES, ...LEAD_ADMIN_S
 export const SRC = '01900000-0000-7000-8000-00000000500a';
 export const KEY = 'ab'.repeat(20);
 export const ADDRESS = `leads+${KEY}@leads.realty-os.invalid`;
+/** What the API suggests (apps/api/src/leadEmail/trust.ts SUGGESTED_SENDER_DOMAINS): the portal's name only. */
 export const SUGGESTED = [
-  { domain: 'zillow.com', label: 'Zillow (VERIFY the signing domain)' },
-  { domain: 'realtor.com', label: 'Realtor.com (VERIFY the signing domain)' },
+  { domain: 'zillow.com', label: 'Zillow' },
+  { domain: 'realtor.com', label: 'Realtor.com' },
 ];
 
 export function inbox(over: Partial<Inbox> = {}): Inbox {
