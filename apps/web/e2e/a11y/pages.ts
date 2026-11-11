@@ -47,6 +47,7 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   { path: '/listings', roles: ALL, url: at('/listings') },
   { path: '/listings/:listingId', roles: ALL, url: (i) => `/listings/${i.listingId}` },
   { path: '/contacts/:contactId', roles: ALL, url: (i) => `/contacts/${i.contactId}` },
+  { path: '/people/new', roles: NOT_TC, url: at('/people/new') },
   { path: '/contacts/:contactId/thread', roles: ALL, url: (i) => `/contacts/${i.contactId}/thread?compose=sms` },
   { path: '/team', roles: LEADS, url: at('/team') },
   { path: '/team/scoreboard', roles: NOT_TC, url: at('/team/scoreboard') },

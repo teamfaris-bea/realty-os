@@ -77,6 +77,12 @@ export function PageFrame({ title, detail, children }: { title: string; detail: 
           <h1 ref={h1} tabIndex={-1} className="min-w-0 flex-1 text-[17px] font-semibold text-ink outline-none [overflow-wrap:anywhere] md:text-[28px] md:font-bold">
             {shown}
           </h1>
+          {/* FUB parity module 58: the global + opens Add person (PARITY_PLAN §5); not for TCs, who create no contacts */}
+          {session?.tenant && session.tenant.role !== 'tc' && location.pathname !== '/people/new' ? (
+            <Link to="/people/new" aria-label="Add person" className="inline-flex min-h-tap min-w-tap items-center justify-center rounded-xl text-[28px] font-semibold leading-none text-accent">
+              <span aria-hidden="true">+</span>
+            </Link>
+          ) : null}
         </div>
       </header>
       <div className="mx-auto w-full max-w-5xl px-4 pb-6 pt-4 md:mx-0 md:px-8">{children}</div>

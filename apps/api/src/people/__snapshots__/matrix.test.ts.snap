@@ -1,0 +1,1586 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`route table and schemas > R-AST-13 R-TEN-3: api/people response schemas have no confidence* fields and no tenant id fields (snapshot) 1`] = `
+{
+  "ActivityResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "note": {
+        "additionalProperties": false,
+        "properties": {
+          "author": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "displayName": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "userId": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "userId",
+                  "displayName",
+                ],
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "body": {
+            "type": "string",
+          },
+          "canDelete": {
+            "type": "boolean",
+          },
+          "canEdit": {
+            "type": "boolean",
+          },
+          "canPin": {
+            "type": "boolean",
+          },
+          "contactId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "createdAt": {
+            "type": "string",
+          },
+          "editedAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "loggedActivity": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "at": {
+                    "type": "string",
+                  },
+                  "direction": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "kind": {
+                    "type": "string",
+                  },
+                  "outcome": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "verified": {
+                    "const": false,
+                    "type": "boolean",
+                  },
+                },
+                "required": [
+                  "kind",
+                  "direction",
+                  "at",
+                  "outcome",
+                  "verified",
+                ],
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "mentions": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "displayName": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "userId": {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+              },
+              "required": [
+                "userId",
+                "displayName",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "pinned": {
+            "type": "boolean",
+          },
+          "source": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+          "contactId",
+          "body",
+          "pinned",
+          "source",
+          "author",
+          "createdAt",
+          "editedAt",
+          "loggedActivity",
+          "mentions",
+          "canEdit",
+          "canDelete",
+          "canPin",
+        ],
+        "type": "object",
+      },
+      "replayed": {
+        "type": "boolean",
+      },
+      "suggestDoNotContact": {
+        "type": "boolean",
+      },
+      "taskId": {
+        "anyOf": [
+          {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          {
+            "type": "null",
+          },
+        ],
+      },
+    },
+    "required": [
+      "note",
+      "taskId",
+      "suggestDoNotContact",
+      "replayed",
+    ],
+    "type": "object",
+  },
+  "AddressResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "address": {
+        "additionalProperties": false,
+        "properties": {
+          "city": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "country": {
+            "type": "string",
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "kind": {
+            "type": "string",
+          },
+          "line1": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "line2": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "postalCode": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "region": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+        },
+        "required": [
+          "id",
+          "kind",
+          "line1",
+          "line2",
+          "city",
+          "region",
+          "postalCode",
+          "country",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "address",
+    ],
+    "type": "object",
+  },
+  "CollaboratorsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "collaborators": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "displayName": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "expiresAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "role": {
+              "type": "string",
+            },
+            "userId": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+          },
+          "required": [
+            "userId",
+            "displayName",
+            "role",
+            "expiresAt",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "collaborators",
+    ],
+    "type": "object",
+  },
+  "ContactEditResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "changed": {
+        "items": {
+          "type": "string",
+        },
+        "type": "array",
+      },
+      "contact": {
+        "additionalProperties": false,
+        "properties": {
+          "contactType": {
+            "type": "string",
+          },
+          "displayName": {
+            "type": "string",
+          },
+          "firstName": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "intent": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "lastName": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "pondSummary": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "rowVersion": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "stage": {
+            "type": "string",
+          },
+          "timezone": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+        },
+        "required": [
+          "id",
+          "rowVersion",
+          "displayName",
+          "firstName",
+          "lastName",
+          "contactType",
+          "intent",
+          "timezone",
+          "stage",
+          "pondSummary",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "contact",
+      "changed",
+    ],
+    "type": "object",
+  },
+  "DetailsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "details": {
+        "additionalProperties": false,
+        "properties": {
+          "addresses": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "city": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "country": {
+                  "type": "string",
+                },
+                "id": {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                "kind": {
+                  "type": "string",
+                },
+                "line1": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "line2": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "postalCode": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "region": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+              },
+              "required": [
+                "id",
+                "kind",
+                "line1",
+                "line2",
+                "city",
+                "region",
+                "postalCode",
+                "country",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "canEdit": {
+            "type": "boolean",
+          },
+          "canManageCollaborators": {
+            "type": "boolean",
+          },
+          "collaborators": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "displayName": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "expiresAt": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "role": {
+                  "type": "string",
+                },
+                "userId": {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+              },
+              "required": [
+                "userId",
+                "displayName",
+                "role",
+                "expiresAt",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "contactId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "doNotContact": {
+            "type": "boolean",
+          },
+          "relationships": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "createdAt": {
+                  "type": "string",
+                },
+                "direction": {
+                  "enum": [
+                    "outgoing",
+                    "incoming",
+                  ],
+                  "type": "string",
+                },
+                "id": {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                "kind": {
+                  "type": "string",
+                },
+                "label": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "other": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "displayName": {
+                      "type": "string",
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "id",
+                    "displayName",
+                  ],
+                  "type": "object",
+                },
+              },
+              "required": [
+                "id",
+                "kind",
+                "label",
+                "direction",
+                "other",
+                "createdAt",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "removedPoints": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                "kind": {
+                  "enum": [
+                    "phone",
+                    "email",
+                  ],
+                  "type": "string",
+                },
+                "optedOut": {
+                  "type": "boolean",
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "removedAt": {
+                  "type": "string",
+                },
+                "stillBlocks": {
+                  "type": "boolean",
+                },
+                "tail": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "id",
+                "kind",
+                "tail",
+                "reason",
+                "stillBlocks",
+                "optedOut",
+                "removedAt",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "rowVersion": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "stage": {
+            "additionalProperties": false,
+            "properties": {
+              "label": {
+                "type": "string",
+              },
+              "locked": {
+                "items": {
+                  "type": "string",
+                },
+                "type": "array",
+              },
+              "lockedReason": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "stage": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "stage",
+              "label",
+              "locked",
+              "lockedReason",
+            ],
+            "type": "object",
+          },
+          "stageLabels": {
+            "additionalProperties": {
+              "type": "string",
+            },
+            "propertyNames": {
+              "type": "string",
+            },
+            "type": "object",
+          },
+        },
+        "required": [
+          "contactId",
+          "rowVersion",
+          "doNotContact",
+          "stage",
+          "stageLabels",
+          "addresses",
+          "collaborators",
+          "relationships",
+          "removedPoints",
+          "canEdit",
+          "canManageCollaborators",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "details",
+    ],
+    "type": "object",
+  },
+  "DoNotContactResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "alreadySet": {
+        "type": "boolean",
+      },
+      "doNotContact": {
+        "const": true,
+        "type": "boolean",
+      },
+      "revokedPoints": {
+        "maximum": 9007199254740991,
+        "minimum": -9007199254740991,
+        "type": "integer",
+      },
+    },
+    "required": [
+      "doNotContact",
+      "alreadySet",
+      "revokedPoints",
+    ],
+    "type": "object",
+  },
+  "MentionCandidatesResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "members": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "canSee": {
+              "type": "boolean",
+            },
+            "displayName": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "role": {
+              "type": "string",
+            },
+            "userId": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+          },
+          "required": [
+            "userId",
+            "displayName",
+            "role",
+            "canSee",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "members",
+    ],
+    "type": "object",
+  },
+  "NoteResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "mentions": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "displayName": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "status": {
+              "enum": [
+                "notified",
+                "no_access",
+                "already_notified",
+              ],
+              "type": "string",
+            },
+            "userId": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+          },
+          "required": [
+            "userId",
+            "displayName",
+            "status",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "note": {
+        "additionalProperties": false,
+        "properties": {
+          "author": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "displayName": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "userId": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "userId",
+                  "displayName",
+                ],
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "body": {
+            "type": "string",
+          },
+          "canDelete": {
+            "type": "boolean",
+          },
+          "canEdit": {
+            "type": "boolean",
+          },
+          "canPin": {
+            "type": "boolean",
+          },
+          "contactId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "createdAt": {
+            "type": "string",
+          },
+          "editedAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "loggedActivity": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "at": {
+                    "type": "string",
+                  },
+                  "direction": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "kind": {
+                    "type": "string",
+                  },
+                  "outcome": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "verified": {
+                    "const": false,
+                    "type": "boolean",
+                  },
+                },
+                "required": [
+                  "kind",
+                  "direction",
+                  "at",
+                  "outcome",
+                  "verified",
+                ],
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "mentions": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "displayName": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "userId": {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+              },
+              "required": [
+                "userId",
+                "displayName",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "pinned": {
+            "type": "boolean",
+          },
+          "source": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+          "contactId",
+          "body",
+          "pinned",
+          "source",
+          "author",
+          "createdAt",
+          "editedAt",
+          "loggedActivity",
+          "mentions",
+          "canEdit",
+          "canDelete",
+          "canPin",
+        ],
+        "type": "object",
+      },
+      "replayed": {
+        "type": "boolean",
+      },
+    },
+    "required": [
+      "note",
+      "mentions",
+      "replayed",
+    ],
+    "type": "object",
+  },
+  "NotesResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "audience": {
+        "type": "string",
+      },
+      "nextCursor": {
+        "type": [
+          "string",
+          "null",
+        ],
+      },
+      "notes": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "author": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "displayName": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "userId": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "userId",
+                    "displayName",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "body": {
+              "type": "string",
+            },
+            "canDelete": {
+              "type": "boolean",
+            },
+            "canEdit": {
+              "type": "boolean",
+            },
+            "canPin": {
+              "type": "boolean",
+            },
+            "contactId": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "createdAt": {
+              "type": "string",
+            },
+            "editedAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "loggedActivity": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "at": {
+                      "type": "string",
+                    },
+                    "direction": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "kind": {
+                      "type": "string",
+                    },
+                    "outcome": {
+                      "type": [
+                        "string",
+                        "null",
+                      ],
+                    },
+                    "verified": {
+                      "const": false,
+                      "type": "boolean",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "direction",
+                    "at",
+                    "outcome",
+                    "verified",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "mentions": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "displayName": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "userId": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "userId",
+                  "displayName",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+            "pinned": {
+              "type": "boolean",
+            },
+            "source": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "contactId",
+            "body",
+            "pinned",
+            "source",
+            "author",
+            "createdAt",
+            "editedAt",
+            "loggedActivity",
+            "mentions",
+            "canEdit",
+            "canDelete",
+            "canPin",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "notes",
+      "nextCursor",
+      "audience",
+    ],
+    "type": "object",
+  },
+  "OkResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "ok": {
+        "const": true,
+        "type": "boolean",
+      },
+    },
+    "required": [
+      "ok",
+    ],
+    "type": "object",
+  },
+  "PointResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "duplicates": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "contactId": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "ownerDisplayName": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+          },
+          "required": [
+            "contactId",
+            "ownerDisplayName",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "point": {
+        "additionalProperties": false,
+        "properties": {
+          "address": {
+            "type": "string",
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "isPrimary": {
+            "type": "boolean",
+          },
+          "kind": {
+            "enum": [
+              "phone",
+              "email",
+            ],
+            "type": "string",
+          },
+          "label": {
+            "type": "string",
+          },
+          "status": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+          "kind",
+          "address",
+          "label",
+          "status",
+          "isPrimary",
+        ],
+        "type": "object",
+      },
+      "removedPointId": {
+        "anyOf": [
+          {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          {
+            "type": "null",
+          },
+        ],
+      },
+    },
+    "required": [
+      "point",
+      "removedPointId",
+      "duplicates",
+    ],
+    "type": "object",
+  },
+  "PointsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "points": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "address": {
+              "type": "string",
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "isPrimary": {
+              "type": "boolean",
+            },
+            "kind": {
+              "enum": [
+                "phone",
+                "email",
+              ],
+              "type": "string",
+            },
+            "label": {
+              "type": "string",
+            },
+            "status": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "kind",
+            "address",
+            "label",
+            "status",
+            "isPrimary",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "removed": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "kind": {
+              "enum": [
+                "phone",
+                "email",
+              ],
+              "type": "string",
+            },
+            "optedOut": {
+              "type": "boolean",
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "removedAt": {
+              "type": "string",
+            },
+            "stillBlocks": {
+              "type": "boolean",
+            },
+            "tail": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "kind",
+            "tail",
+            "reason",
+            "stillBlocks",
+            "optedOut",
+            "removedAt",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "points",
+      "removed",
+    ],
+    "type": "object",
+  },
+  "RelationshipResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "relationship": {
+        "additionalProperties": false,
+        "properties": {
+          "createdAt": {
+            "type": "string",
+          },
+          "direction": {
+            "enum": [
+              "outgoing",
+              "incoming",
+            ],
+            "type": "string",
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "kind": {
+            "type": "string",
+          },
+          "label": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "other": {
+            "additionalProperties": false,
+            "properties": {
+              "displayName": {
+                "type": "string",
+              },
+              "id": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+            },
+            "required": [
+              "id",
+              "displayName",
+            ],
+            "type": "object",
+          },
+        },
+        "required": [
+          "id",
+          "kind",
+          "label",
+          "direction",
+          "other",
+          "createdAt",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "relationship",
+    ],
+    "type": "object",
+  },
+  "RelationshipsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "relationships": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "createdAt": {
+              "type": "string",
+            },
+            "direction": {
+              "enum": [
+                "outgoing",
+                "incoming",
+              ],
+              "type": "string",
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "kind": {
+              "type": "string",
+            },
+            "label": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "other": {
+              "additionalProperties": false,
+              "properties": {
+                "displayName": {
+                  "type": "string",
+                },
+                "id": {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+              },
+              "required": [
+                "id",
+                "displayName",
+              ],
+              "type": "object",
+            },
+          },
+          "required": [
+            "id",
+            "kind",
+            "label",
+            "direction",
+            "other",
+            "createdAt",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "relationships",
+    ],
+    "type": "object",
+  },
+  "StageLabelsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "labels": {
+        "additionalProperties": {
+          "type": "string",
+        },
+        "propertyNames": {
+          "type": "string",
+        },
+        "type": "object",
+      },
+      "stages": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "key": {
+              "type": "string",
+            },
+            "label": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "key",
+            "label",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "labels",
+      "stages",
+    ],
+    "type": "object",
+  },
+  "StageResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "previousStage": {
+        "type": "string",
+      },
+      "rowVersion": {
+        "maximum": 9007199254740991,
+        "minimum": -9007199254740991,
+        "type": "integer",
+      },
+      "stage": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": "string",
+          },
+          "locked": {
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "lockedReason": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "stage": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "stage",
+          "label",
+          "locked",
+          "lockedReason",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "stage",
+      "previousStage",
+      "rowVersion",
+    ],
+    "type": "object",
+  },
+}
+`;
+
+exports[`route table and schemas > every api/people route declares its authorization and carries authorize(<that action>) (snapshot) 1`] = `
+[
+  "GET /api/contacts/:id/details → contact.view_detail",
+  "HEAD /api/contacts/:id/details → contact.view_detail",
+  "PATCH /api/contacts/:id → contact.edit",
+  "POST /api/contacts/:id/stage → contact.edit",
+  "GET /api/stage-labels → self",
+  "HEAD /api/stage-labels → self",
+  "PUT /api/stage-labels → settings.stage_labels",
+  "POST /api/contacts/:id/do-not-contact → contact.edit",
+  "GET /api/contacts/:id/points → contact.view_detail",
+  "HEAD /api/contacts/:id/points → contact.view_detail",
+  "POST /api/contacts/:id/points → contact.edit",
+  "POST /api/contacts/:id/points/:pointId/replace → contact.edit",
+  "POST /api/contacts/:id/points/:pointId/remove → contact.edit",
+  "POST /api/contacts/:id/points/:pointId/primary → contact.edit",
+  "PATCH /api/contacts/:id/points/:pointId → contact.edit",
+  "POST /api/contacts/:id/addresses → contact.edit",
+  "PATCH /api/contacts/:id/addresses/:addressId → contact.edit",
+  "GET /api/contacts/:id/collaborators → contact.view_detail",
+  "HEAD /api/contacts/:id/collaborators → contact.view_detail",
+  "POST /api/contacts/:id/collaborators → collaborator.manage",
+  "DELETE /api/contacts/:id/collaborators/:userId → collaborator.manage",
+  "GET /api/contacts/:id/relationships → contact.view_detail",
+  "HEAD /api/contacts/:id/relationships → contact.view_detail",
+  "POST /api/contacts/:id/relationships → contact.edit",
+  "DELETE /api/contacts/:id/relationships/:relationshipId → contact.edit",
+  "GET /api/contacts/:id/notes → contact.view_detail",
+  "HEAD /api/contacts/:id/notes → contact.view_detail",
+  "GET /api/contacts/:id/mention-candidates → note.write",
+  "HEAD /api/contacts/:id/mention-candidates → note.write",
+  "POST /api/contacts/:id/notes → note.write",
+  "PATCH /api/notes/:id → note.write",
+  "POST /api/notes/:id/pin → note.write",
+  "DELETE /api/notes/:id → note.delete",
+  "POST /api/contacts/:id/activities → activity.log",
+]
+`;

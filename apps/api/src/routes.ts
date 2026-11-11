@@ -22,6 +22,7 @@ import { healthRoutes } from './health.js';
 import { systemRoutes } from './observability/systemRoutes.js';
 import { integrationsRoutes } from './integrations/routes.js';
 import { sparkMlsRoutes } from './mls/spark/routes.js';
+import { peopleRoutes } from './people/routes.js';
 
 export interface RouteModule {
   name: string;
@@ -42,5 +43,6 @@ export const routeModules: RouteModule[] = [
   systemRoutes,
   integrationsRoutes,
   sparkMlsRoutes,
+  peopleRoutes,
   // registry: add new entries above this line
 ];
