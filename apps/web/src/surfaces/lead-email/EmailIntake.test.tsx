@@ -1,12 +1,14 @@
 // Email intake of a lead source on Lead routing (Owner/Admin): off → "Turn on lead email" with the
-// suggested sender domains as removable chips (VERIFY labels shown) and re-auth on a stale session; on →
-// the address read-only with Copy ("Copied" announced), sender domains add/remove/Save, and "Get a new
-// address" behind a confirm that says the old address stops working at once. Codes never show.
+// suggested sender domains as removable chips (each marked "suggested", with one plain sentence that they
+// are unconfirmed until a test lead from each portal becomes a lead automatically; the internal VERIFY marker
+// never shows) and re-auth on a stale session; on → the address read-only with Copy ("Copied" announced),
+// sender domains add/remove/Save, and "Get a new address" behind a confirm that says the old address stops
+// working at once. Codes never show.
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { member, settings } from '../admin/lib/testing.js';
-import { ROTATE_WARNING, cleanDomain } from './EmailIntake.js';
+import { ROTATE_WARNING, TRUST_SENTENCE, cleanDomain } from './EmailIntake.js';
 import { LEAD_EMAIL_ERROR_MESSAGES } from './messages.js';
 import { ADDRESS, FakeFetch, SRC, enabledInbox, err, inbox, leadEmailApp } from './testing.js';
 import type { Inbox } from './types.js';
@@ -25,22 +27,57 @@ function routingFake(box: Inbox | null = inbox()) {
 }
 
 const intake = async () => within(await screen.findByRole('region', { name: 'Email intake for Portal' }));
+type Box = Awaited<ReturnType<typeof intake>>;
+
+/** What each sender-domain chip says (its text, without the Remove control). */
+const chips = (box: Box) => within(box.getByRole('list', { name: 'Allowed sender domains' })).queryAllByRole('listitem').map((li) => li.querySelector('span')?.textContent ?? '');
+// What confirms a suggestion is the trust sentence's own condition: a test lead that arrives but waits in Needs
+// review (signed by the portal's email vendor, say) confirms nothing, so "arrives" would mislead.
+const UNCONFIRMED = 'Suggested domains are unconfirmed until a test lead from each portal becomes a lead automatically.';
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
 describe('Email intake on Lead routing', () => {
-  it('lists the lead source with the plain trust sentence; off, it offers Turn on lead email with the suggested domains as chips, VERIFY labels shown', async () => {
+  it('lists the lead source with the plain trust sentence; off, it offers Turn on lead email with the suggested domains as chips marked "suggested" and says in plain words they are unconfirmed (never the internal VERIFY marker)', async () => {
     leadEmailApp(routingFake(), '/admin/routing', 'owner');
     expect(await screen.findByRole('heading', { level: 3, name: /Portal/ })).toBeInTheDocument();
     const box = await intake();
     expect(await box.findByRole('button', { name: 'Turn on lead email' })).toBeInTheDocument();
     expect(box.getByText((_, el) => el?.tagName === 'P' && el.textContent === 'Only emails DKIM-signed by an allowed domain become leads automatically; everything else waits in Needs review.')).toBeInTheDocument();
     expect(box.getByRole('link', { name: 'Needs review' })).toHaveAttribute('href', '/team/lead-email');
-    expect(box.getByText(/Zillow \(VERIFY the signing domain\)/)).toBeInTheDocument();
-    expect(box.getByText(/Realtor\.com \(VERIFY the signing domain\)/)).toBeInTheDocument();
+    expect(chips(box)).toEqual(['zillow.com · Zillow · suggested', 'realtor.com · Realtor.com · suggested']);
+    expect(box.getByText(UNCONFIRMED)).toBeInTheDocument();
+    expect(box.getByRole('list', { name: 'Allowed sender domains' })).toHaveAccessibleDescription(UNCONFIRMED);
     expect(box.getByRole('button', { name: 'Remove zillow.com' })).toBeInTheDocument();
+    // VERIFY is an internal marker for engineers and counsel: an Owner never reads it
+    expect(document.body.textContent).not.toMatch(/VERIFY/);
+    for (const s of [TRUST_SENTENCE, ROTATE_WARNING, ...Object.values(LEAD_EMAIL_ERROR_MESSAGES)]) expect(s).not.toMatch(/VERIFY/);
+  });
+
+  it('a domain the Owner types is not marked suggested; with no suggestion left on the list, the unconfirmed sentence goes', async () => {
+    leadEmailApp(routingFake(), '/admin/routing', 'owner');
+    const u = userEvent.setup();
+    const box = await intake();
+    await u.type(await box.findByLabelText('Add a sender domain'), 'homes.example.test');
+    await u.click(box.getByRole('button', { name: 'Add domain' }));
+    await u.click(box.getByRole('button', { name: 'Remove zillow.com' }));
+    expect(chips(box)).toEqual(['realtor.com · Realtor.com · suggested', 'homes.example.test']);
+    expect(box.getByText(UNCONFIRMED)).toBeInTheDocument();
+    await u.click(box.getByRole('button', { name: 'Remove realtor.com' }));
+    expect(chips(box)).toEqual(['homes.example.test']);
+    expect(box.queryByText(UNCONFIRMED)).toBeNull();
+    expect(box.getByRole('list', { name: 'Allowed sender domains' })).not.toHaveAttribute('aria-describedby');
+  });
+
+  it('on: a saved suggestion keeps its "suggested" mark and the sentence, a typed domain has neither; nothing says VERIFY', async () => {
+    leadEmailApp(routingFake(enabledInbox({ allowedSenderDomains: ['zillow.com', 'homes.example.test'] })), '/admin/routing', 'owner');
+    const box = await intake();
+    expect(await box.findByLabelText('Inbound address for Portal')).toHaveValue(ADDRESS);
+    expect(chips(box)).toEqual(['zillow.com · Zillow · suggested', 'homes.example.test']);
+    expect(box.getByText(UNCONFIRMED)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/VERIFY/);
   });
 
   it('turning it on sends the chips left after a removal and an addition; a stale session asks for the password once and sends the same request', async () => {

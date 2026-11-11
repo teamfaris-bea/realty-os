@@ -37,6 +37,8 @@ test.afterAll(async () => {
 
 const isPhone = (page: Page) => (page.viewportSize()?.width ?? 1440) < 768;
 const toast = (page: Page) => page.getByTestId('toast');
+/** An element's top in the document (the window scrolls; the phone's sticky header does not change it). */
+const docTop = (l: Locator) => l.evaluate((el) => el.getBoundingClientRect().top + window.scrollY);
 
 /** One counted tap (a real touch tap on the phone project, a click on desktop). */
 async function tap(page: Page, target: Locator, counter: { taps: number }) {
@@ -98,10 +100,15 @@ test('(a) the Owner turns on lead email for a source (with re-auth) and copies t
 
   const box = intake(page);
   await expect(box.getByText(/Only emails DKIM-signed by an allowed domain become leads automatically; everything else waits in/)).toBeVisible();
-  // the suggested portals are pre-filled, each with its VERIFY label and a Remove control
-  await expect(box.getByText('Zillow (VERIFY the signing domain)', { exact: false })).toBeVisible();
+  // the suggested portals are pre-filled, each marked "suggested" with a Remove control, and one plain sentence
+  // says they are unconfirmed until a test lead from each portal becomes a lead automatically (one that arrives
+  // but is held confirms nothing); the internal VERIFY marker never shows
+  await expect(box.getByText('· Zillow · suggested', { exact: false })).toBeVisible();
+  await expect(box.getByText('· Realtor.com · suggested', { exact: false })).toBeVisible();
+  await expect(box.getByText('Suggested domains are unconfirmed until a test lead from each portal becomes a lead automatically.')).toBeVisible();
   await expect(box.getByRole('button', { name: 'Remove zillow.com' })).toBeVisible();
   await expect(box.getByRole('button', { name: 'Remove realtor.com' })).toBeVisible();
+  expect(await page.locator('body').textContent()).not.toMatch(/VERIFY/);
 
   // the re-auth window has passed since sign-in: the server asks, the shell prompts once, the same request goes again
   await stack.fixture('/stale-reauth', { email: w.owner.email });
@@ -125,7 +132,7 @@ test('(a) the Owner turns on lead email for a source (with re-auth) and copies t
   await page.reload();
   await expect(addressField(page)).toHaveValue(address);
   await expect(intake(page).getByRole('button', { name: 'Remove zillow.com' })).toBeVisible();
-  expect(await page.locator('body').textContent()).not.toMatch(/LEAD_EMAIL_|REAUTH_REQUIRED/);
+  expect(await page.locator('body').textContent()).not.toMatch(/LEAD_EMAIL_|REAUTH_REQUIRED|VERIFY/);
 });
 
 test('(b) a verified portal email becomes an offer; the agent accepts it; the first response goes exactly once, to the lead’s phone, never to the portal', async ({ page }) => {
@@ -173,13 +180,16 @@ test('(c) an unverified email waits in Needs review with its reason; no contact 
   await navTo(page, 'Needs review', nav);
   expect(nav.taps).toBe(isPhone(page) ? 2 : 1);
   await expect(page.getByText('2 emails waiting for review')).toBeVisible();
+  // the Show control keeps this place whether the header has a count line or not (checked below)
+  const show = page.getByRole('radiogroup', { name: 'Show' });
+  const showTop = await docTop(show);
   const card = reviewCard(page, subject);
   await expect(card.getByText(w.holdSentences.DKIM_UNALIGNED!)).toBeVisible();
   await expect(card.getByText(/· Portal · from zillow\.com/)).toBeVisible();
   await expect(card.getByText('Rae Moss', { exact: true })).toBeVisible();
   await expect(card.getByText(held.email, { exact: true })).toBeVisible();
   await expect(reviewCard(page, junkSubject).getByText(w.holdSentences.SENDER_NOT_ALLOWED!)).toBeVisible();
-  expect(await page.locator('body').textContent()).not.toMatch(/DKIM_UNALIGNED|SENDER_NOT_ALLOWED|LEAD_EMAIL_/);
+  expect(await page.locator('body').textContent()).not.toMatch(/DKIM_UNALIGNED|SENDER_NOT_ALLOWED|LEAD_EMAIL_|VERIFY/);
   // the email text is there on request
   await card.getByText('Show the email').click();
   await expect(card.getByText(/Message: Can I tour Saturday\?/)).toBeVisible();
@@ -201,10 +211,23 @@ test('(c) an unverified email waits in Needs review with its reason; no contact 
   await tap(page, dialog.getByRole('button', { name: 'Discard email' }), discard);
   await expect(page.getByText('Email discarded. No lead was made.')).toBeVisible();
   expect(discard.taps).toBe(2);
+  // nothing left: the empty state says so once (the header line does not repeat it), and no blank header line
+  // stays in its place: no blank band above the Show control on a phone, no empty paragraph for a screen reader
   await expect(page.getByText('Nothing needs review')).toBeVisible();
+  await expect(page.getByText('No emails are waiting for review.')).toHaveCount(0);
+  await expect(page.getByTestId('pending-count')).toHaveCount(0);
+  expect(await docTop(show)).toBeCloseTo(showTop, 0);
 
   // Decided lists both
   await page.getByRole('radio', { name: 'Decided' }).click();
+  // its header line comes after the control (under it on a phone, beside it on desktop), so the control does not
+  // move under the finger that just tapped it
+  const count = page.getByTestId('pending-count');
+  await expect(count).toHaveText('No emails are waiting for review.');
+  expect(await docTop(show)).toBeCloseTo(showTop, 0);
+  const [c, s] = [(await count.boundingBox())!, (await show.boundingBox())!];
+  if (isPhone(page)) expect(c.y).toBeGreaterThanOrEqual(s.y + s.height);
+  else expect(c.x).toBeGreaterThanOrEqual(s.x + s.width);
   // (the server deletes a decided email's content, so the cards are named by their sender)
   const accepted = reviewCard(page, 'Email from zillow.com');
   await expect(accepted.getByText('Accepted', { exact: true })).toBeVisible();

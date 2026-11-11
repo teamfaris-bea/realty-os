@@ -1,7 +1,8 @@
 // Needs review (Owner/Admin/Team Lead): held lead emails newest first with the server's sentence (never the
 // hold code), what was read from each, the email text on request; Accept (one tap when there is a contact
 // point, a small form for the reviewer's typing otherwise), Discard behind a confirm, "Lead created" with a
-// link to the contact, the Decided tab, the waiting count and the empty state; error codes as sentences.
+// link to the contact, the Decided tab, the waiting count and the empty state (said once, not also in the
+// header); error codes as sentences, and never the internal VERIFY marker.
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
@@ -29,12 +30,16 @@ function fake(items: ReviewItem[] = [review(), older], decided: ReviewItem[] = [
 }
 
 const card = (name: string | RegExp) => screen.getAllByRole('article').find((a) => within(a).queryByRole('heading', { level: 2, name }))!;
+/** The header's count line comes after the Show control in reading order (under it on a phone, as on Needs attention). */
+const countFollowsShow = () => Boolean(screen.getByRole('radiogroup', { name: 'Show' }).compareDocumentPosition(screen.getByTestId('pending-count')) & Node.DOCUMENT_POSITION_FOLLOWING);
 
 describe('Needs review', () => {
   it('lists held emails newest first with the reason sentence, received time, source, sender domain, subject and what was read; the count is in the header; codes never show', async () => {
     leadEmailApp(fake(), '/team/lead-email', 'team_lead');
     expect(await screen.findByRole('heading', { level: 1, name: 'Needs review' })).toBeInTheDocument();
     expect(await screen.findByText('2 emails waiting for review')).toBeInTheDocument();
+    // so a count that comes or goes never moves the control
+    expect(countFollowsShow()).toBe(true);
     const headings = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent);
     expect(headings).toEqual(['New lead for 12 Elm St', 'Older lead']);
     const c = within(card('New lead for 12 Elm St'));
@@ -46,7 +51,44 @@ describe('Needs review', () => {
     expect(c.getByText('12 Elm St')).toBeInTheDocument();
     expect(c.getByText('Can I tour Saturday?')).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/DKIM_UNALIGNED|SENDER_NOT_ALLOWED|LEAD_EMAIL_/);
+    // VERIFY is an internal marker for engineers and counsel, never a word on the page
+    expect(document.body.textContent).not.toMatch(/VERIFY/);
     expect(newestFirst([older, review()]).map((i) => i.subject)).toEqual(['New lead for 12 Elm St', 'Older lead']);
+  });
+
+  it('with nothing held it says so once, in the empty state (the header adds no second "No emails are waiting" line); on Decided the header still says none are waiting', async () => {
+    leadEmailApp(fake([], [review({ status: 'accepted', contactId: CONTACT, decidedAt: '2026-11-11T16:30:00.000Z', canAccept: false })]), '/team/lead-email', 'owner');
+    const u = userEvent.setup();
+    expect(await screen.findByText('Nothing needs review')).toBeInTheDocument();
+    expect(screen.getByText('Lead emails that could not be trusted or read automatically wait here until someone accepts or discards them.')).toBeInTheDocument();
+    expect(screen.queryByText('No emails are waiting for review.')).toBeNull();
+    // and no blank header line is left in its place (a blank band above the Show control on a phone, an empty
+    // paragraph for a screen reader)
+    expect(screen.queryByTestId('pending-count')).toBeNull();
+    expect(screen.getAllByText(/nothing needs review|no emails are waiting/i)).toHaveLength(1);
+    // the Decided list does not say what is waiting, so the header does, after the control
+    await u.click(screen.getByRole('radio', { name: 'Decided' }));
+    expect(await screen.findByText('Accepted')).toBeInTheDocument();
+    expect(screen.getByTestId('pending-count')).toHaveTextContent('No emails are waiting for review.');
+    expect(countFollowsShow()).toBe(true);
+    expect(screen.queryByText('Nothing needs review')).toBeNull();
+    expect(document.body.textContent).not.toMatch(/VERIFY/);
+  });
+
+  it('while the list loads there is no blank header line either; the count arrives after the Show control', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((ok) => (release = ok));
+    const f = new FakeFetch().on('GET /lead-email/reviews?status=needs_review', async () => {
+      await gate;
+      return { status: 200, body: { items: [review()], pendingCount: 1 } };
+    });
+    leadEmailApp(f, '/team/lead-email', 'owner');
+    await waitFor(() => expect(f.callsTo('GET /lead-email/reviews?status=needs_review').length).toBeGreaterThan(0));
+    expect(screen.getByRole('radiogroup', { name: 'Show' })).toBeInTheDocument();
+    expect(screen.queryByTestId('pending-count')).toBeNull();
+    release();
+    expect(await screen.findByText('1 email waiting for review')).toBeInTheDocument();
+    expect(countFollowsShow()).toBe(true);
   });
 
   it('the email text is behind "Show the email" and opens on request', async () => {
@@ -127,7 +169,6 @@ describe('Needs review', () => {
     leadEmailApp(fake([], decided), '/team/lead-email', 'owner');
     const u = userEvent.setup();
     expect(await screen.findByText('Nothing needs review')).toBeInTheDocument();
-    expect(screen.getByText('No emails are waiting for review.')).toBeInTheDocument();
     await u.click(screen.getByRole('radio', { name: 'Decided' }));
     expect(await screen.findByText('Accepted')).toBeInTheDocument();
     expect(screen.getByText('Discarded')).toBeInTheDocument();

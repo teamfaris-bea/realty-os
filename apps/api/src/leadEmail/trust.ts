@@ -43,10 +43,14 @@ export const PUBLIC_SUFFIXES: ReadonlySet<string> = new Set([
 /**
  * Seed suggestions shown when an Owner/Admin sets up an inbox. VERIFY with each portal which domain DKIM-signs its
  * lead notifications (a portal may sign with an email vendor's domain, which would then be unaligned and held).
+ * The label is the portal's name only, because an Owner reads it: the page marks each chip "suggested" and says
+ * the suggested domains are unconfirmed until a test lead from each portal becomes a lead automatically (one that
+ * arrives but is held, e.g. DKIM_UNALIGNED, confirms nothing). VERIFY is for engineers and counsel and never
+ * appears in what the API sends (leadEmail.test.ts).
  */
 export const SUGGESTED_SENDER_DOMAINS: readonly { domain: string; label: string }[] = [
-  { domain: 'zillow.com', label: 'Zillow (VERIFY the signing domain)' },
-  { domain: 'realtor.com', label: 'Realtor.com (VERIFY the signing domain)' },
+  { domain: 'zillow.com', label: 'Zillow' },
+  { domain: 'realtor.com', label: 'Realtor.com' },
 ];
 
 export function normalizeDomain(d: string): string {
