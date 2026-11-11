@@ -135,6 +135,17 @@ function planContact(f: LabelFormat, contactId: ContactId, prefs: readonly Chann
   return { usable, open, demotion };
 }
 
+/**
+ * The client wrote last in the website chat (module 22): a Reply in the chat comes first, ahead of the other channels.
+ * Such a lead often has no phone or email at all (the chat is its only identity), which is not "can't reach them":
+ * the chat is how to answer, so the plan's demotion goes. Whether the chat is still open is the reachability
+ * summary's to say on the button (the web disables it with the reason); the send-time check decides the rest.
+ */
+function withChatReply(plan: ContactPlan, contactId: ContactId, chat: boolean): ContactPlan {
+  if (!chat) return plan;
+  return { usable: [{ kind: 'reply_chat', label: 'Reply', contactId }, ...plan.usable], open: plan.open, demotion: [] };
+}
+
 function contactCard(plan: ContactPlan, extra: OneTapAction[] = []): { primaryAction: OneTapAction; alternatives: OneTapAction[] } {
   const [primary, ...rest] = plan.usable;
   if (primary === undefined) return { primaryAction: plan.open, alternatives: extra };
@@ -145,7 +156,7 @@ const CALL_FIRST: readonly Channel[] = ['voice', 'sms', 'email'];
 const TEXT_FIRST: readonly Channel[] = ['sms', 'voice', 'email'];
 const EMAIL_FIRST: readonly Channel[] = ['email', 'voice', 'sms'];
 
-function prefsFor(ch: 'sms' | 'mms' | 'email' | 'voice' | null): readonly Channel[] {
+function prefsFor(ch: InboundFacts['channel'] | null): readonly Channel[] {
   if (ch === 'email') return EMAIL_FIRST;
   if (ch === 'voice') return CALL_FIRST;
   if (ch === 'sms' || ch === 'mms') return TEXT_FIRST;
@@ -284,6 +295,15 @@ export function scoreFeed(i: FeedInputs, opts: ScoreFeedOptions = {}): FeedItem[
     });
   }
 
+  // the contacts whose latest message waiting on this agent is in the website chat (a reply goes there first)
+  const latestWaiting = new Map<ContactId, InboundFacts>();
+  for (const m of i.unansweredInbound) {
+    if (m.ownerUserId !== userId || m.imported || m.isAutoReply === true || m.isKeyword === true || m.laterTouches.some((t) => answersClient(t, m.at))) continue;
+    const prev = latestWaiting.get(m.contactId);
+    if (prev === undefined || m.at > prev.at || (m.at === prev.at && compareStr(m.id, prev.id) > 0)) latestWaiting.set(m.contactId, m);
+  }
+  const chatLatest = (c: ContactId) => latestWaiting.get(c)?.channel === 'web_chat';
+
   // -- first-touch SLAs (pinned) -------------------------------------------------------------------
   const firstTouchContacts = new Map<ContactId, Draft>();
   for (const s of i.slas) {
@@ -295,7 +315,7 @@ export function scoreFeed(i: FeedInputs, opts: ScoreFeedOptions = {}): FeedItem[
         : reason('FIRST_TOUCH_DUE', `First contact due ${f.in(s.firstTouchDueAt)}`),
     ];
     if (s.releaseDueAt != null && s.releaseDueAt > now) reasons.push(reason('RELEASE_SOON', `Goes back to the pond ${f.in(s.releaseDueAt)} if not contacted`));
-    const plan = planContact(f, s.contactId, CALL_FIRST, gateOf(s.contactId));
+    const plan = withChatReply(planContact(f, s.contactId, CALL_FIRST, gateOf(s.contactId)), s.contactId, chatLatest(s.contactId));
     const d: Draft = {
       itemType: 'first_touch_due',
       band: 'pinned',
@@ -437,8 +457,10 @@ export function scoreFeed(i: FeedInputs, opts: ScoreFeedOptions = {}): FeedItem[
     const first = msgs[0] as InboundFacts;
     const latest = msgs[msgs.length - 1] as InboundFacts;
     const missed = latest.kind === 'missed_call';
-    // the client wrote (never "Texted …", which reads as if the agent had texted): "They texted 20 min ago; no reply yet"
-    const what = missed ? `Missed call ${f.ago(latest.at)}` : `They ${latest.channel === 'email' ? 'emailed' : 'texted'} ${f.ago(latest.at)}; no reply yet`;
+    // the client wrote (never "Texted …", which reads as if the agent had texted): "They texted 20 min ago; no reply yet";
+    // in the website chat: "They wrote in the website chat 1 min ago; no reply yet" (finding UXA-3)
+    const wrote = latest.channel === 'email' ? 'emailed' : latest.channel === 'web_chat' ? 'wrote in the website chat' : 'texted';
+    const what = missed ? `Missed call ${f.ago(latest.at)}` : `They ${wrote} ${f.ago(latest.at)}; no reply yet`;
     const reasons: FeedReason[] = [missed ? reason('MISSED_CALL', what) : reason('CLIENT_WAITING', what)];
     if (msgs.length > 1) reasons.push(reason('MORE_WAITING', `${msgs.length} messages or calls waiting`));
     reasons.push(...waitingReasons(now, first.at));
@@ -447,7 +469,7 @@ export function scoreFeed(i: FeedInputs, opts: ScoreFeedOptions = {}): FeedItem[
       if (replyDraft.needsReview) reasons.push(reason('CHECK_THIS', 'Check this: a detail needs your OK'));
     }
     const replyPrefs = replyDraft !== undefined ? (replyDraft.channel === 'email' ? EMAIL_FIRST : TEXT_FIRST) : prefsFor(missed ? 'voice' : latest.channel);
-    const plan = planContact(f, contactId, replyPrefs, gateOf(contactId), replyDraft && { channel: replyDraft.channel, actionId: replyDraft.actionId });
+    const plan = withChatReply(planContact(f, contactId, replyPrefs, gateOf(contactId), replyDraft && { channel: replyDraft.channel, actionId: replyDraft.actionId }), contactId, !missed && replyDraft === undefined && latest.channel === 'web_chat');
     reasons.push(...plan.demotion);
     out.push({
       itemType: missed ? 'missed_call' : 'unanswered_inbound',

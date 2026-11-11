@@ -15,6 +15,7 @@ export const REACHABILITY_KEY = ['reachability'] as const;
 interface Batch {
   ids: ReadonlySet<string>;
   byId: ReadonlyMap<string, Reachability>;
+  pending: boolean;
 }
 const BatchCtx = createContext<Batch | null>(null);
 
@@ -29,25 +30,37 @@ export function ReachabilityBatch({ contactIds, children }: { contactIds: readon
     staleTime: 30_000,
     retry: false,
   });
-  const value = useMemo<Batch>(() => ({ ids: new Set(ids), byId: new Map((q.data?.reachability ?? []).map((r) => [r.contactId, r])) }), [ids, q.data]);
+  const pending = ids.length > 0 && q.isPending;
+  const value = useMemo<Batch>(() => ({ ids: new Set(ids), byId: new Map((q.data?.reachability ?? []).map((r) => [r.contactId, r])), pending }), [ids, q.data, pending]);
   return <BatchCtx.Provider value={value}>{children}</BatchCtx.Provider>;
+}
+
+/**
+ * The summary for one contact (null while unknown: loading, failed, not visible) and whether it is still loading, so a
+ * box can wait instead of saying something it then takes back (finding UXA-8). `refetchMs`: ask again on that
+ * interval (the thread, while a web chat is live: a chat that ends is then said by the summary too).
+ */
+export function useReachabilityQuery(contactId: string | null | undefined, o: { refetchMs?: number | undefined } = {}): { summary: Reachability | null; pending: boolean } {
+  const api = useApi();
+  const batch = useContext(BatchCtx);
+  const inBatch = !!contactId && batch !== null && batch.ids.has(contactId);
+  const enabled = !!contactId && !inBatch;
+  const q = useQuery<{ reachability: Reachability }, ApiError>({
+    queryKey: [...REACHABILITY_KEY, contactId],
+    queryFn: ({ signal }) => api.get<{ reachability: Reachability }>(`/contacts/${contactId}/reachability`, { signal }),
+    enabled,
+    staleTime: 15_000,
+    retry: false,
+    refetchInterval: o.refetchMs ?? false,
+  });
+  if (!contactId) return { summary: null, pending: false };
+  if (inBatch) return { summary: batch.byId.get(contactId) ?? null, pending: batch.pending };
+  return { summary: q.data?.reachability ?? null, pending: enabled && q.isPending };
 }
 
 /** The summary for one contact, or null while unknown (loading, failed, not visible). */
 export function useReachability(contactId: string | null | undefined): Reachability | null {
-  const api = useApi();
-  const batch = useContext(BatchCtx);
-  const inBatch = !!contactId && batch !== null && batch.ids.has(contactId);
-  const q = useQuery<{ reachability: Reachability }, ApiError>({
-    queryKey: [...REACHABILITY_KEY, contactId],
-    queryFn: ({ signal }) => api.get<{ reachability: Reachability }>(`/contacts/${contactId}/reachability`, { signal }),
-    enabled: !!contactId && !inBatch,
-    staleTime: 15_000,
-    retry: false,
-  });
-  if (!contactId) return null;
-  if (inBatch) return batch.byId.get(contactId) ?? null;
-  return q.data?.reachability ?? null;
+  return useReachabilityQuery(contactId).summary;
 }
 
 export interface ChannelState {

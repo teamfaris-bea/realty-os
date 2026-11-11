@@ -8,6 +8,7 @@ import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { optOutFanoutPhoneHmacs } from '../comms/repos/gate.js';
 import { intake } from '../leads/testing.js';
 import { type AssistantWorld, assistantWorld, call, inboundSms, randomEmail, randomPhone } from '../assistant/testing.js';
+import { acceptLead, chatSource, createWidget, openChat, SITE } from '../channels/testing.js';
 import { gateSummaries } from './repos/feedInputs.js';
 
 let h: ApiHarness;
@@ -71,5 +72,30 @@ describe('feed channel hint = the send gate\'s opt-out fan-out (R-PAR-12)', () =
     expect(await fanout(p.contactId)).toHaveLength(1);
     const g = await hint(p.contactId);
     expect(g.sms).toBeUndefined();
+  });
+});
+
+describe('a website-chat lead on the feed (finding UXA-3)', () => {
+  it('its chat identity (contact_points kind web_chat) is never read as an email address: a chat-only lead has no email, phone or text on the card, and no Email action', async () => {
+    const src = await chatSource(h, w.owner, w.tenantId);
+    const widget = await createWidget(h, w.owner, src.sourceId, [SITE]);
+    const c = await openChat(h, widget.key, src.disclosureId, { name: 'Omar Diaz', email: randomEmail() });
+    expect((await h.su.query('SELECT kind FROM contact_points WHERE contact_id = $1', [c.contactId])).rows).toEqual([{ kind: 'web_chat' }]);
+    expect(await hint(c.contactId)).toEqual({
+      sms: { outcome: 'unavailable', explanation: 'No working phone number' },
+      voice: { outcome: 'unavailable', explanation: 'No working phone number' },
+      email: { outcome: 'unavailable', explanation: 'No email address' },
+    });
+    // the agent's feed: the chat is where to answer
+    const agent = await acceptLead(h, w.agents, c.contactId);
+    type Card = { contact: { id: string } | null; primaryAction: { kind: string }; alternatives: { kind: string }[]; reasons: { label: string }[] };
+    const feed = await call<{ pinned: Card[]; scored: Card[] }>(agent, 'GET', '/feed');
+    const cards = [...feed.body.pinned, ...feed.body.scored].filter((x) => x.contact?.id === c.contactId);
+    expect(cards.length).toBeGreaterThan(0);
+    for (const card of cards) {
+      expect([card.primaryAction.kind, ...card.alternatives.map((a) => a.kind)]).not.toContain('email');
+      expect(card.primaryAction.kind).toBe('reply_chat');
+      expect(card.reasons.map((r) => r.label).join(' ')).not.toMatch(/They texted/);
+    }
   });
 });

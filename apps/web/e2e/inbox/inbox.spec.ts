@@ -7,8 +7,10 @@
 //   - compose opens on web chat while the chat is open (the reachability summary's web_chat entry) and says why;
 //     replying is 2 taps from the person (Open conversation → Send), and the reply reaches the visitor's own poll,
 //     from the team (R-GATE-14);
-//   - when the visitor has gone (E77) a reply is not sent: the box keeps the text, moves to text and says why; on
-//     the next visit the summary already says the chat ended, so Web chat is shown closed with that reason;
+//   - Home shows a lead waiting in the website chat with Reply first, which opens the thread on web chat (UXA-3);
+//   - when the visitor has gone (E77) a reply is not sent: the box's preview says the chat ended, the box keeps the
+//     text, moves to text and says why; on the next visit the summary already says the chat ended, so Web chat is
+//     shown closed with that reason;
 //   - a STOP texted from a phone the agent later removed still blocks texting, also on a phone added after the
 //     STOP: Text is never offered and the reason names the removed number (D1, R-PAR-12); the box writes by
 //     email and says why.
@@ -65,6 +67,18 @@ test('R-INBOX-1: a chat started on the website, a text and the chat again appear
   await expect(convo.locator('li', { hasText: 'Is the open house still on?' }).locator('[data-channel-tag]')).toHaveText('Web chat');
 });
 
+test('finding UXA-3: Home shows Jane waiting in the website chat with Reply first (never Email, which she has none of); Reply opens the thread on web chat, ready to type', async ({ page }) => {
+  await signIn(page);
+  const card = page.locator('article, li').filter({ hasText: 'They wrote in the website chat' }).filter({ hasText: 'Jane Doe' }).first();
+  await expect(card).toBeVisible({ timeout: 15_000 });
+  await expect(card).not.toContainText('They texted');
+  await expect(card.getByRole('button', { name: 'Email' })).toHaveCount(0);
+  await card.getByRole('button', { name: 'Reply' }).click();
+  await expect(page).toHaveURL(new RegExp(`/contacts/${jane.id}/thread\\?compose=web_chat$`));
+  await expect(page.getByRole('radio', { name: 'Web chat' })).toBeChecked({ timeout: 15_000 });
+  await expect(page.getByRole('textbox', { name: 'Web chat message' })).toBeFocused();
+});
+
 test("R-GATE-14: compose opens on the open web chat, where Jane wrote last, and says so; replying is 2 taps from the person and reaches Jane's chat from the team", async ({ page }, info) => {
   await signIn(page);
   await page.goto(`${stack.webUrl}/contacts/${jane.id}`);
@@ -101,8 +115,9 @@ test('E77: once Jane has left the page, a reply is not sent; the box keeps the t
   // Jane closed the page half an hour ago (clock fixture), after this box was opened
   await stack.fixture('/age-chat', { token: jane.token });
   await page.getByRole('textbox', { name: 'Web chat message' }).fill('Are you still there?');
-  await page.getByRole('button', { name: 'Send', exact: true }).click();
-  await expect(page.getByText(/Not sent: the chat has ended \(Jane left the page, or the chat was turned off\)/)).toBeVisible({ timeout: 15_000 });
+  // the box's own preview of the real text says the chat ended (finding UXA-8): it moves to text and says so before any
+  // send (a send that races it is refused the same way and says so too: thread/inbox.test.tsx)
+  await expect(page.getByText("The chat has ended (Jane left the page, or the chat was turned off), so this can't go there. Your text is still here. Send now sends it by text.")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole('radio', { name: 'Text' })).toBeChecked();
   await expect(page.getByRole('textbox', { name: 'Text message' })).toHaveValue('Are you still there?');
   await expect(page.getByRole('radio', { name: 'Web chat' })).toBeDisabled();
@@ -116,7 +131,8 @@ test('E77: once Jane has left the page, a reply is not sent; the box keeps the t
   await expect(web).toHaveAccessibleDescription('Web chat not offered: The chat has ended: they left the page');
   await expect(page.getByRole('radio', { name: 'Text' })).toBeChecked();
   await expect(page.getByTestId('channel-why')).toHaveText('Writing by text: the web chat has ended.');
-  await expect(page.getByRole('list', { name: 'Conversation' }).getByText('Not sent: the chat had ended')).toBeVisible();
+  // no reply was ever attempted, so none is in the thread as refused
+  await expect(page.getByRole('list', { name: 'Conversation' }).getByText('Not sent: the chat had ended')).toHaveCount(0);
 });
 
 test('D1 R-PAR-12 E168: a STOP from a phone the agent removed still blocks texting; Text is never offered and the reason names the removed number', async ({ page }, info) => {

@@ -101,7 +101,9 @@ export function reasonSentence(r: ReasonCode, channel: Channel): string {
     case 'PERSON_DO_NOT_CONTACT':
       return 'This person asked not to be contacted on any channel';
     case 'CHANNEL_NOT_CONNECTED':
-      return `${CHANNEL_NAME[channel]} isn't connected right now`;
+      // a chat reply's channel is its session: the visitor left (E77) or the widget was turned off (R-INBOX-7), never
+      // a setup fault for the agent to fix (finding UXA-8)
+      return channel === 'web_chat' ? 'The chat has ended: they left the page or the website chat was turned off' : `${CHANNEL_NAME[channel]} isn't connected right now`;
     case 'FAIR_HOUSING_TERMS':
       return 'Contains wording that fair-housing rules do not allow; edit it first';
   }

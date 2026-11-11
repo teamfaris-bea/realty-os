@@ -3,6 +3,8 @@
 //   accept_offer / decline_offer / claim   ownership command (useCommand: commandId once per tap)
 //   call                                   tap-to-call with the post-call outcome sheet
 //   text / email / edit_draft              the thread with the compose box (assistant draft prefilled)
+//   reply_chat                             the thread with the box on web chat, where the client wrote last (module 22);
+//                                          disabled before the tap once the chat ended, with the summary's reason
 //   send_draft                             approve the assistant's draft as is → send (1 tap)
 //   review_handback                        the approvals inbox at that handback
 //   complete_task / complete_deal_date     mark done
@@ -24,7 +26,8 @@
 import { type ReactNode, useId } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, type ButtonVariant, type IconName } from '../../design/index.js';
-import { type ChannelState, ReasonCaption, useChannelState } from '../../reasons/index.js';
+import { type ChannelState, ReasonCaption, channelState, useChannelState, useReachability } from '../../reasons/index.js';
+import { webChatState } from '../compose/channelChoice.js';
 import { useCommand } from '../../shell/index.js';
 import { useInbox } from '../approvals/ApprovalsPage.js';
 import { sendOutcomeText, sentResult, useAgentSheets } from './lib/AgentSheets.js';
@@ -37,6 +40,7 @@ export const ACTION_ICON: Partial<Record<OneTapAction['kind'], IconName>> = {
   call: 'phone',
   text: 'message',
   email: 'message',
+  reply_chat: 'message',
   send_draft: 'message',
   complete_task: 'checklist',
   complete_deal_date: 'check',
@@ -217,6 +221,8 @@ export function actionHref(a: OneTapAction, card?: Pick<FeedCard, 'contact'>): s
       return `/contacts/${a.contactId}/thread?compose=sms${a.draftActionId ? `&draft=${a.draftActionId}` : ''}`;
     case 'email':
       return `/contacts/${a.contactId}/thread?compose=email${a.draftActionId ? `&draft=${a.draftActionId}` : ''}`;
+    case 'reply_chat':
+      return `/contacts/${a.contactId}/thread?compose=web_chat`;
     case 'edit_draft':
       return card?.contact ? `/contacts/${card.contact.id}/thread?compose=draft&draft=${a.actionId}` : `/approvals#action-${a.actionId}`;
     case 'review_handback':
@@ -240,9 +246,11 @@ function NavButton({ action, card, variant = 'primary', block, className }: Acti
   const navigate = useNavigate();
   const href = actionHref(action, card);
   const note = 'note' in action ? action.note : undefined;
-  // Text / Email open the composer: say before the tap when that channel is blocked
+  // Text / Email / Reply (web chat) open the composer: say before the tap when that channel is blocked
   const channel = action.kind === 'text' ? 'sms' : action.kind === 'email' ? 'email' : null;
-  const reach = useChannelState(channel && 'contactId' in action ? action.contactId : null, channel);
+  const chat = action.kind === 'reply_chat';
+  const summary = useReachability((channel || chat) && 'contactId' in action ? action.contactId : null);
+  const reach: ChannelState = chat ? webChatState(summary, true) : channel ? channelState(summary, channel) : { blocked: false, sentence: null, note: null };
   const reasonId = useId();
   return (
     <Wrap note={note} block={block} reach={reach} reasonId={reasonId}>

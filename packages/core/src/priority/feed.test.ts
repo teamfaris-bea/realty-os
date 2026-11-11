@@ -131,6 +131,28 @@ describe('scoreFeed: item types and reasons', () => {
     expect(it.createdAt).toBe(t(-hours(5)));
   });
 
+  it('client waiting (finding UXA-3): a message in the website chat says so and offers a Reply in the chat first, never "They texted"; a chat-only lead is not demoted as unreachable', () => {
+    const unreachable = new Map([[contact(3), { sms: { outcome: 'unavailable' as const, explanation: 'No working phone number' }, voice: { outcome: 'unavailable' as const, explanation: 'No working phone number' }, email: { outcome: 'unavailable' as const, explanation: 'No email address' } }]]);
+    const it = one(feedInputs({ unansweredInbound: [inbound({ channel: 'web_chat', at: t(-min(1)) })], blockedChannels: unreachable }));
+    expect(it.reasons[0]).toMatchObject({ code: 'CLIENT_WAITING', label: 'They wrote in the website chat 1 min ago; no reply yet' });
+    expect(it.primaryAction).toEqual({ kind: 'reply_chat', label: 'Reply', contactId: contact(3) });
+    expect(it.alternatives.map((a) => a.kind)).toEqual(['open_contact']);
+    expect(codes(it)).not.toContain('CANT_CONTACT');
+    // a chat lead the agent also has a phone for: Reply in the chat, then call, text (email only with an address)
+    const withPhone = new Map([[contact(3), { email: { outcome: 'unavailable' as const, explanation: 'No email address' } }]]);
+    const both = one(feedInputs({ unansweredInbound: [inbound({ channel: 'web_chat' })], blockedChannels: withPhone }));
+    expect([both.primaryAction.kind, ...both.alternatives.map((a) => a.kind)]).toEqual(['reply_chat', 'call', 'text', 'open_contact']);
+    expect(FeedItemSchema.safeParse(both).success).toBe(true);
+  });
+
+  it('first-touch SLA (finding UXA-3): a new lead who wrote in the website chat gets a Reply in the chat first', () => {
+    const unreachable = new Map([[contact(2), { sms: { outcome: 'unavailable' as const, explanation: 'No working phone number' }, voice: { outcome: 'unavailable' as const, explanation: 'No working phone number' }, email: { outcome: 'unavailable' as const, explanation: 'No email address' } }]]);
+    const out = scoreFeed(feedInputs({ slas: [sla()], unansweredInbound: [inbound({ contactId: contact(2), channel: 'web_chat', at: t(-min(1)) })], blockedChannels: unreachable }));
+    const ft = out.find((x) => x.itemType === 'first_touch_due')!;
+    expect(ft.primaryAction).toEqual({ kind: 'reply_chat', label: 'Reply', contactId: contact(2) });
+    expect(codes(ft)).not.toContain('CANT_CONTACT');
+  });
+
   it('client waiting: an email asks for an email reply; over an hour adds urgency', () => {
     const it = one(feedInputs({ unansweredInbound: [inbound({ channel: 'email', at: t(-hours(2)) })] }));
     expect(it.reasons.map((r) => r.code)).toEqual(['CLIENT_WAITING', 'WAITING_OVER_1H']);

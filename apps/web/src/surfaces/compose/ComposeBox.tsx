@@ -32,10 +32,10 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { Button, CheckThis, GateBadge, Notice } from '../../design/index.js';
-import { REACHABILITY_KEY, ReasonCaption, channelState, useReachability } from '../../reasons/index.js';
+import { REACHABILITY_KEY, ReasonCaption, channelState, useReachabilityQuery } from '../../reasons/index.js';
 import { type ApiError, useApi, useCommand } from '../../shell/index.js';
 import { SendOutcome, WENT_OUT, sendOutcomeText, sentResult, useAgentSheets } from '../feed/lib/AgentSheets.js';
-import { type ComposeChannel, useWebChatApprove, useWebChatSend } from './channelApi.js';
+import { CHANNEL_NOT_CONNECTED, type ComposeChannel, useWebChatApprove, useWebChatSend } from './channelApi.js';
 import { chooseChannel, webChatState } from './channelChoice.js';
 import { firstName } from '../feed/lib/format.js';
 import { useSendCheck } from '../feed/lib/sendCheck.js';
@@ -55,7 +55,8 @@ export interface ComposeContact {
 
 export interface ComposeBoxProps {
   contact: ComposeContact;
-  initialChannel?: Channel;
+  /** opened to write on this channel (a Text / Email / Reply tap): kept while it can be used */
+  initialChannel?: ComposeChannel;
   /** the channel of the client's latest message: the box defaults to it while it is open (module 37) */
   lastInboundChannel?: ComposeChannel | null;
   draftActionId?: string | null;
@@ -63,6 +64,13 @@ export interface ComposeBoxProps {
   suggestedDraftId?: string | null;
   /** focus the message field on mount (opened from a Text / Edit tap) */
   autoFocus?: boolean;
+  /**
+   * the thread's messages have loaded, so the channel the client wrote on last is known (default true). Until it and
+   * the reachability summary are in, the box picks no channel and says nothing it may take back (finding UXA-8).
+   */
+  ready?: boolean;
+  /** a web chat is live in the thread: the summary is asked again every 15 s, so a chat that ends is said at once */
+  liveChat?: boolean;
   onSent?: () => void;
   /**
    * Parity module 64: a template picker rendered beside Send (e.g. templates' TemplatePicker). It only puts
@@ -81,7 +89,7 @@ function useDebounced<T>(v: T, ms: number): T {
   return d;
 }
 
-export function ComposeBox({ contact, initialChannel, lastInboundChannel = null, draftActionId: initialDraft = null, suggestedDraftId = null, autoFocus = false, onSent, templatePicker }: ComposeBoxProps) {
+export function ComposeBox({ contact, initialChannel, lastInboundChannel = null, draftActionId: initialDraft = null, suggestedDraftId = null, autoFocus = false, ready = true, liveChat = false, onSent, templatePicker }: ComposeBoxProps) {
   const api = useApi();
   const qc = useQueryClient();
   const sheets = useAgentSheets();
@@ -133,7 +141,11 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
     setDraftId(suggestedDraftId);
   }, [suggestedDraftId, draftId, body]);
 
-  const reach = useReachability(contact.id);
+  const reachQ = useReachabilityQuery(contact.id, { refetchMs: liveChat ? 15_000 : undefined });
+  const reach = reachQ.summary;
+  // the box decides its channel from the summary and the thread; until both are in it waits (UXA-8: it had said
+  // "Replying in web chat" for a chat that had ended, and "no phone or email" for a chat-only lead, then taken it back)
+  const settled = ready && !reachQ.pending;
   const choiceInput = {
     firstName: firstName(contact.name),
     canText: contact.canText,
@@ -168,7 +180,20 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
   const previewSubject = useDebounced(subject.trim(), 500);
   const blockedNow = isChat ? { blocked: choice.channel === null, sentence: choice.options.find((o) => o.channel === 'web_chat')?.reason ?? null, note: null } : channelState(reach, channel);
   // the same preview for every channel, web chat included (module 22): what the send would decide for this text
-  const preview = useSendCheck({ contactId: contact.id, channel, body: previewBody, subject: previewSubject, enabled: (channel === 'sms' ? contact.canText : channel === 'email' ? contact.canEmail : choiceInput.webChat.offered) && !blockedNow.blocked });
+  const preview = useSendCheck({ contactId: contact.id, channel, body: previewBody, subject: previewSubject, enabled: settled && (channel === 'sms' ? contact.canText : channel === 'email' ? contact.canEmail : choiceInput.webChat.offered) && !blockedNow.blocked });
+  // the chat ended while the agent was on the thread: the preview of the real text says so (CHANNEL_NOT_CONNECTED). The
+  // box closes Web chat at once and asks the summary again, so it never offers what the preview and the send refuse
+  const previewEnded = isChat && (preview.decision?.reasons.includes(CHANNEL_NOT_CONNECTED) ?? false);
+  useEffect(() => {
+    if (!previewEnded || webChatEnded) return;
+    setWebChatEnded(true);
+    setChannel(null);
+    void qc.invalidateQueries({ queryKey: [...REACHABILITY_KEY] });
+    // nothing was sent; the box moved, so it says where Send goes now
+    const next = chooseChannel({ ...choiceInput, webChatEnded: true, picked: null }).channel;
+    setNotice({ tone: 'warn', text: `The chat has ended (${firstName(contact.name)} left the page, or the chat was turned off), so this can't go there. Your text is still here.${next === 'sms' ? ' Send now sends it by text.' : next === 'email' ? ' Send now sends it by email.' : ''}` });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, when the preview first says the chat ended
+  }, [previewEnded, webChatEnded, qc]);
 
   const human = useCommand<Record<string, unknown>, ComposeResponse>(`/contacts/${contact.id}/messages`, { idKey: 'idempotencyKey', invalidate: [['feed'], ['timeline', contact.id], [...REACHABILITY_KEY]] });
   const approve = useCommand<Record<string, unknown>, ApproveResponse>(`/assistant/actions/${draftId ?? 'none'}/approve`, { invalidate: [['feed'], ['inbox'], ['timeline', contact.id], [...REACHABILITY_KEY]] });
@@ -220,7 +245,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
     setNotice(null);
     setOutcome(null);
     const text = body.trim();
-    if (!text || blockedNow.blocked) return;
+    if (!text || !settled || blockedNow.blocked) return;
     if (isChat) {
       // a reply in web chat, or the draft approved as one (never scheduled)
       const o = draft ? await chatApprove.approve(text, seenSeq, edited) : await chat.send(text);
@@ -273,10 +298,10 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
   const finalText = !blockedNow.blocked && outcome === null && previewBody === body.trim() && preview.final !== null && preview.final.trim() !== body.trim() ? preview.final : null;
   const needsReview = draft?.claims.some((c) => c.needsReview) ?? false;
   const noChannel = choice.options.length === 0;
-  const fieldLabel = channel === 'sms' ? 'Text message' : channel === 'email' ? 'Email message' : 'Web chat message';
-  const placeholder = channel === 'sms' ? `Text ${firstName(contact.name)}` : channel === 'email' ? `Email ${firstName(contact.name)}` : `Reply to ${firstName(contact.name)} in web chat`;
+  const fieldLabel = !settled ? 'Message' : channel === 'sms' ? 'Text message' : channel === 'email' ? 'Email message' : 'Web chat message';
+  const placeholder = !settled ? `Message ${firstName(contact.name)}` : channel === 'sms' ? `Text ${firstName(contact.name)}` : channel === 'email' ? `Email ${firstName(contact.name)}` : `Reply to ${firstName(contact.name)} in web chat`;
 
-  if (noChannel) return <Notice tone="info">There's no phone number or email on file to message.</Notice>;
+  if (settled && noChannel) return <Notice tone="info">There's no phone number or email on file to message.</Notice>;
 
   return (
     <form
@@ -287,7 +312,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
         void send();
       }}
     >
-      {choice.options.length > 1 ? (
+      {settled && choice.options.length > 1 ? (
         <div role="radiogroup" aria-label="Send as" className="flex flex-wrap gap-1 self-start rounded-xl bg-surface-2 p-1">
           {choice.options.map((o) => (
             <button
@@ -305,7 +330,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
           ))}
         </div>
       ) : null}
-      {choice.options.length > 1
+      {settled && choice.options.length > 1
         ? choice.options
             .filter((o) => !o.open && o.reason && o.channel !== channel)
             .map((o) => (
@@ -314,7 +339,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
               </p>
             ))
         : null}
-      {choice.why ? (
+      {settled && choice.why ? (
         <p data-testid="channel-why" className="text-[13px] leading-snug text-ink-muted">
           {choice.why}
         </p>
@@ -352,11 +377,11 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
           placeholder={placeholder}
           className="min-h-tap flex-1 resize-y rounded-xl border border-line bg-surface px-3.5 py-2.5 text-[17px] text-ink placeholder:text-ink-muted"
         />
-        <Button type="submit" pending={pending} pendingLabel="Sending" disabled={body.trim().length === 0 || blockedNow.blocked} aria-describedby={blockedNow.blocked || blockedNow.note ? `${id}-reason` : undefined}>
+        <Button type="submit" pending={pending} pendingLabel="Sending" disabled={!settled || body.trim().length === 0 || blockedNow.blocked} aria-describedby={settled && (blockedNow.blocked || blockedNow.note) ? `${id}-reason` : undefined}>
           {later ? 'Schedule' : 'Send'}
         </Button>
       </div>
-      {templatePicker || !draft ? (
+      {settled && (templatePicker || !draft) ? (
         <div className="flex flex-wrap items-center gap-2">
           {templatePicker
             ? templatePicker({
@@ -390,7 +415,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
           ) : null}
         </div>
       ) : null}
-      {outcome === null ? <ReasonCaption id={`${id}-reason`} state={blockedNow} /> : null}
+      {settled && outcome === null ? <ReasonCaption id={`${id}-reason`} state={blockedNow} /> : null}
       {finalText !== null ? (
         <figure aria-label={`What ${firstName(contact.name)} will get`} className="flex flex-col gap-1 rounded-xl bg-surface-2 px-3 py-2 text-[14px] text-ink">
           <figcaption className="font-medium text-ink-muted">What {firstName(contact.name)} will get</figcaption>
@@ -400,7 +425,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
       {showPreview ? <GateBadge decision={decision} /> : null}
       {notice ? <Notice tone={notice.tone}>{notice.text}</Notice> : null}
       {outcome ? <SendOutcome result={outcome} contactName={contact.name} /> : null}
-      {!draft && draftId === null && body.trim() === '' && contact.ownedByMe ? (
+      {settled && !draft && draftId === null && body.trim() === '' && contact.ownedByMe ? (
         <Button variant="quiet" className="self-start" pending={askDraft.pending} pendingLabel="Asking the assistant" onClick={() => void requestDraft()}>
           Ask the assistant for a draft
         </Button>

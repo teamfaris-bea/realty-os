@@ -119,7 +119,8 @@ export interface InboundFacts {
   /** messages.id, or calls.id for a missed call. */
   id: MessageId | CallId;
   kind: 'message' | 'missed_call';
-  channel: 'sms' | 'mms' | 'email' | 'voice';
+  /** 'web_chat' (module 22): the client wrote in the website chat; the card offers a reply there */
+  channel: 'sms' | 'mms' | 'email' | 'voice' | 'web_chat';
   contactId: ContactId;
   /** The contact's current owner (the user the feed item belongs to). */
   ownerUserId: UserId;
@@ -356,6 +357,8 @@ export type OneTapAction =
   | { kind: 'call'; label: string; contactId: ContactId; note?: string }
   | { kind: 'text'; label: string; contactId: ContactId; draftActionId?: AssistantActionId; note?: string }
   | { kind: 'email'; label: string; contactId: ContactId; draftActionId?: AssistantActionId; note?: string }
+  /** a reply in the website chat where the client wrote last (module 22): the thread with the box on web chat */
+  | { kind: 'reply_chat'; label: string; contactId: ContactId }
   | { kind: 'send_draft'; label: string; actionId: AssistantActionId; note?: string }
   | { kind: 'edit_draft'; label: string; actionId: AssistantActionId }
   | { kind: 'review_handback'; label: string; actionId: AssistantActionId }

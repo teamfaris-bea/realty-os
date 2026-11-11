@@ -468,7 +468,8 @@ describe('core-compliance/3.0.0: website chat, person-level do-not-contact (R-CH
     expectDecision(decide(dmInput('web_chat', { initiator: 'assistant', category: 'speed_to_lead_reply', automationPausedAt: T(-1) })), 'deny', 'AUTOMATION_PAUSED');
   });
   it('every new reason renders a sentence naming the channel where it matters', () => {
-    expect(decide(dmInput('web_chat', { connection: null })).explanation).toBe("Website chat isn't connected right now");
+    // a chat reply's CHANNEL_NOT_CONNECTED is the chat ending or its widget turned off, never a setup fault (finding UXA-8)
+    expect(decide(dmInput('web_chat', { connection: null })).explanation).toBe('The chat has ended: they left the page or the website chat was turned off');
     expect(decide(dmInput('web_chat', { personDoNotContact: true })).explanation).toBe('This person asked not to be contacted on any channel');
   });
 });

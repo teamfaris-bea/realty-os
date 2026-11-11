@@ -196,6 +196,61 @@ describe('module 37: compose on the client\'s last open channel', () => {
     }
   });
 
+  it('finding UXA-8: a chat that ends while the agent is on the thread: the box\'s own preview naming CHANNEL_NOT_CONNECTED closes Web chat at once and asks the summary again, so the box, the preview and the send never disagree', async () => {
+    let ended = false;
+    const f = fake()
+      .on(`GET /contacts/${IDS.jane}/reachability`, () => summary(ended ? 'ended' : 'open'))
+      .on(`POST /contacts/${IDS.jane}/messages/preview`, (c) => {
+        const b = c.body as { channel: string; body: string };
+        return { status: 200, body: { decision: b.channel === 'web_chat' && ended ? decision({ id: null, phase: 'preview', outcome: 'deny', reasons: ['CHANNEL_NOT_CONNECTED'], explanation: 'The chat has ended: they left the page or the website chat was turned off' }) : decision({ id: null, phase: 'preview' }), body: b.body } };
+      });
+    agentApp(f, `/contacts/${IDS.jane}/thread`);
+    const chat = await screen.findByRole('radio', { name: 'Web chat' });
+    await waitFor(() => expect(chat).toBeChecked());
+    const asked = f.callsTo(`GET /contacts/${IDS.jane}/reachability`).length;
+    // Jane's session went idle while the agent was reading
+    ended = true;
+    await user().type(screen.getByRole('textbox', { name: 'Web chat message' }), 'Are you still there?');
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Web chat' })).toBeDisabled());
+    expect(screen.getByRole('radio', { name: 'Text' })).toBeChecked();
+    expect(screen.getByTestId('channel-why')).toHaveTextContent('Writing by text: the web chat has ended.');
+    expect(screen.getByText("The chat has ended (Jane left the page, or the chat was turned off), so this can't go there. Your text is still here. Send now sends it by text.")).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Text message' })).toHaveValue('Are you still there?');
+    expect(document.body.textContent).not.toContain('Replying in web chat');
+    await waitFor(() => expect(f.callsTo(`GET /contacts/${IDS.jane}/reachability`).length).toBeGreaterThan(asked));
+    // nothing was sent anywhere
+    expect(f.callsTo(`POST /contacts/${IDS.jane}/messages`)).toEqual([]);
+  });
+
+  it('finding UXA-8: while the summary is still loading the box picks no channel and says nothing it may take back: no "Replying in web chat" for a chat that ended, and for a chat-only lead no "no phone or email on file"; the message field is there from the start', async () => {
+    for (const [contact, items] of [
+      [fullContact(), chatThenText()],
+      [fullContact({ phones: [], emails: [] }), chatThenText().slice(0, 2)],
+    ] as const) {
+      let release: () => void = () => undefined;
+      const gate = new Promise<void>((ok) => (release = ok));
+      const f = new FakeFetch()
+        .on(`GET /contacts/${IDS.jane}`, { status: 200, body: { contact } })
+        .on(`GET /contacts/${IDS.jane}/timeline?limit=100`, { status: 200, body: { items, nextCursor: null } })
+        .on(`GET /contacts/${IDS.jane}/reachability`, async () => {
+          await gate;
+          return summary('ended');
+        });
+      const view = agentApp(f, `/contacts/${IDS.jane}/thread?compose=web_chat`);
+      const box = await screen.findByRole('textbox');
+      await waitFor(() => expect(box).toHaveFocus());
+      // the thread has loaded, the summary has not: nothing about channels is said yet, and Send waits
+      await screen.findByText(items[0]!.preview!);
+      expect(document.body.textContent).not.toMatch(/Replying in web chat|no phone number or email on file/i);
+      expect(screen.queryByRole('radiogroup', { name: 'Send as' })).toBeNull();
+      expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+      release();
+      if (contact.phones.length > 0) await waitFor(() => expect(screen.getByTestId('channel-why')).toHaveTextContent('Writing by text: the web chat has ended.'));
+      else expect(await screen.findByText('The chat has ended: they left the page')).toBeInTheDocument();
+      view.view.unmount();
+    }
+  });
+
   it('E155 R-CHAN-3: after "stop contacting me" in the chat the summary blocks the chat with that opt-out, in words', async () => {
     const said = stopReason({ source: 'opt_out_language', keyword: null, addressHint: 'web chat' });
     agentApp(fake().on(`GET /contacts/${IDS.jane}/reachability`, summary({ reasons: [said] })), `/contacts/${IDS.jane}/thread`);

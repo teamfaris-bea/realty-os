@@ -1,6 +1,6 @@
 // Thread + compose (BUILD_PLAN module 17): the texts, emails and calls with one contact, oldest first,
-// with the compose box at the bottom (thumb reach on a phone). Opened from a Text / Email / Edit tap
-// with `?compose=sms|email|draft&draft=<assistant action id>`, the box is focused and prefilled with
+// with the compose box at the bottom (thumb reach on a phone). Opened from a Text / Email / Reply / Edit tap
+// with `?compose=sms|email|web_chat|draft&draft=<assistant action id>`, the box is focused and prefilled with
 // the assistant's draft, so texting a lead is Text → Send (2 taps).
 //
 // Messages come from the contact timeline (GET /contacts/:id/timeline), which RLS scopes to what the
@@ -81,7 +81,9 @@ function Thread() {
   // opened to write (Text / Email) without a named draft: a pending assistant reply for this
   // contact prefills the box, so Text → Send is 2 taps from anywhere
   const inbox = useInbox();
-  const pendingDraft = inbox.data?.items.find((a) => a.contactId === contactId && a.status === 'proposed' && a.primaryAction === 'send' && a.draft !== null && (params.get('compose') === 'email' ? a.draft.channel === 'email' : a.draft.channel === 'sms'))?.id ?? null;
+  const asked = params.get('compose');
+  const draftChannel = asked === 'email' ? 'email' : asked === 'web_chat' ? 'web_chat' : 'sms';
+  const pendingDraft = inbox.data?.items.find((a) => a.contactId === contactId && a.status === 'proposed' && a.primaryAction === 'send' && a.draft !== null && a.draft.channel === draftChannel)?.id ?? null;
   // the compose bar floats over a long conversation: its height is part of the scroll padding, so a
   // focused control is never left behind it (WCAG 2.4.11). On a short screen (a landscape phone, or
   // 200 % zoom: a 390 × 844 phone becomes 195 × 422) it would cover half the conversation, so there it
@@ -113,10 +115,12 @@ function Thread() {
           key={draft ?? 'none'}
           suggestedDraftId={compose !== null && draft === null ? pendingDraft : null}
           contact={{ id: full.id, name: full.displayName, canText: full.phones.length > 0, canEmail: full.emails.length > 0, canWebChat: hasWebChat, ownedByMe: full.ownership.ownedByMe }}
-          initialChannel={compose === 'email' ? 'email' : compose === 'sms' ? 'sms' : undefined}
+          initialChannel={compose === 'email' ? 'email' : compose === 'sms' ? 'sms' : compose === 'web_chat' ? 'web_chat' : undefined}
           lastInboundChannel={t.data ? lastInboundChannel(newest) : null}
           draftActionId={draft}
           autoFocus={compose !== null}
+          ready={t.data !== undefined || t.isError}
+          liveChat={liveChat(newest)}
           templatePicker={({ channel, insert }) => <TemplatePicker contactId={full.id} channel={channel} onInsert={insert} />}
         />
       </div>

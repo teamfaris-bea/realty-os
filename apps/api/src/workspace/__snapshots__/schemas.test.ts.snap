@@ -1156,6 +1156,28 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                   {
                     "additionalProperties": false,
                     "properties": {
+                      "contactId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "reply_chat",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "contactId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
                       "actionId": {
                         "minLength": 1,
                         "type": "string",
@@ -1638,6 +1660,28 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                     "note": {
                       "maxLength": 300,
                       "minLength": 1,
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "contactId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contactId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "reply_chat",
+                      "type": "string",
+                    },
+                    "label": {
                       "type": "string",
                     },
                   },
@@ -2165,6 +2209,28 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                   {
                     "additionalProperties": false,
                     "properties": {
+                      "contactId": {
+                        "minLength": 1,
+                        "type": "string",
+                      },
+                      "kind": {
+                        "const": "reply_chat",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "contactId",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
                       "actionId": {
                         "minLength": 1,
                         "type": "string",
@@ -2647,6 +2713,28 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                     "note": {
                       "maxLength": 300,
                       "minLength": 1,
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "contactId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "contactId": {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "const": "reply_chat",
+                      "type": "string",
+                    },
+                    "label": {
                       "type": "string",
                     },
                   },

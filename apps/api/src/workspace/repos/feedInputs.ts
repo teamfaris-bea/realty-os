@@ -160,7 +160,7 @@ export async function loadFeedInputsScoped(tx: Tx, actor: UserActor, envelope: E
          AND e.type = 'reinquiry' AND e.seq >= c.ownership_period_seq AND e.payload ? 'inquiryId'
          AND e.occurred_at > ${nowIso}::timestamptz - interval '14 days' ${byContact('c.id')}
        ORDER BY e.occurred_at DESC`.execute(tx),
-    sql<{ id: string; channel: 'sms' | 'mms' | 'email'; contact_id: string; occurred_at: Date; is_auto_reply: boolean; opt_out_keyword: string | null }>`
+    sql<{ id: string; channel: 'sms' | 'mms' | 'email' | 'web_chat'; contact_id: string; occurred_at: Date; is_auto_reply: boolean; opt_out_keyword: string | null }>`
       WITH mine AS MATERIALIZED (
         -- the agent's owned contacts with the instant after which a client message is still unanswered
         SELECT c.tenant_id, c.id, GREATEST(${nowIso}::timestamptz - make_interval(days => ${INBOUND_WINDOW_DAYS}), COALESCE(c.last_human_touch_at, '-infinity'::timestamptz)) AS since
@@ -490,7 +490,9 @@ export async function gateSummaries(tx: Tx, contactIds: readonly string[]): Prom
            EXISTS (SELECT 1 FROM consent_state cs WHERE cs.tenant_id = p.tenant_id AND cs.address_hmac = p.address_hmac AND cs.channel = 'voice' AND cs.status = 'revoked') AS rev_voice,
            EXISTS (SELECT 1 FROM consent_state cs WHERE cs.tenant_id = p.tenant_id AND cs.address_hmac = p.address_hmac AND cs.channel = 'email' AND cs.status = 'revoked') AS rev_email
       FROM contact_points p
-     WHERE p.tenant_id = app.tenant_id() AND p.contact_id = ANY (${[...contactIds]}::uuid[]) AND p.removed_at IS NULL AND p.status = 'active'`.execute(tx);
+     WHERE p.tenant_id = app.tenant_id() AND p.contact_id = ANY (${[...contactIds]}::uuid[]) AND p.removed_at IS NULL AND p.status = 'active'
+       -- phones and emails only: a website-chat identity (kind web_chat, wc:<hex>) is no email address (finding UXA-3)
+       AND p.kind IN ('phone','email')`.execute(tx);
   // The opt-out fan-out of the send gate (comms/repos/gate.ts optOutFanoutPhoneHmacs, the `others` set of the
   // 0021 dispatch guards): every phone of the contact, live or removed, except one removed as a confirmed
   // wrong number. A STOP (or "do not call me") on any of them blocks texting (calling) every phone of the

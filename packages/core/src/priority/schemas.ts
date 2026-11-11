@@ -23,6 +23,7 @@ export const OneTapActionSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('call'), label: z.string(), contactId: id, note }),
   z.object({ kind: z.literal('text'), label: z.string(), contactId: id, draftActionId: id.optional(), note }),
   z.object({ kind: z.literal('email'), label: z.string(), contactId: id, draftActionId: id.optional(), note }),
+  z.object({ kind: z.literal('reply_chat'), label: z.string(), contactId: id }),
   z.object({ kind: z.literal('send_draft'), label: z.string(), actionId: id, note }),
   z.object({ kind: z.literal('edit_draft'), label: z.string(), actionId: id }),
   z.object({ kind: z.literal('review_handback'), label: z.string(), actionId: id }),

@@ -576,6 +576,28 @@ exports[`core/priority schemas > FeedItemSchema has no confidence fields and no 
           {
             "additionalProperties": false,
             "properties": {
+              "contactId": {
+                "minLength": 1,
+                "type": "string",
+              },
+              "kind": {
+                "const": "reply_chat",
+                "type": "string",
+              },
+              "label": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "kind",
+              "label",
+              "contactId",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
               "actionId": {
                 "minLength": 1,
                 "type": "string",
@@ -1078,6 +1100,28 @@ exports[`core/priority schemas > FeedItemSchema has no confidence fields and no 
             "note": {
               "maxLength": 300,
               "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "kind",
+            "label",
+            "contactId",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "contactId": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "kind": {
+              "const": "reply_chat",
+              "type": "string",
+            },
+            "label": {
               "type": "string",
             },
           },
@@ -1622,6 +1666,28 @@ exports[`core/priority schemas > OneTapActionSchema has no confidence fields and
         "note": {
           "maxLength": 300,
           "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "kind",
+        "label",
+        "contactId",
+      ],
+      "type": "object",
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "contactId": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "kind": {
+          "const": "reply_chat",
+          "type": "string",
+        },
+        "label": {
           "type": "string",
         },
       },

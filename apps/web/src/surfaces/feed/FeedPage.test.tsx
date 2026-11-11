@@ -356,6 +356,44 @@ describe('Priority Feed: opt-outs said before the tap (lane optout-visibility)',
     expect(fake.callsTo(`GET /reachability?contactIds=${ids}`).length).toBeGreaterThanOrEqual(1);
     expect(fake.calls.filter((c) => /reachability|messages\/preview/.test(c.path) && c.path !== `/reachability?contactIds=${ids}`)).toEqual([]);
   });
+
+  it('finding UXA-3: a lead waiting in the website chat is answered in 2 taps: Reply → the thread opens on web chat → Send; once the chat ended, Reply is disabled with the reason', async () => {
+    const chatOnly = fullContact({ phones: [], emails: [] });
+    const c = card({ reasons: [{ code: 'CLIENT_WAITING', label: 'They wrote in the website chat 1 min ago; no reply yet' }], primaryAction: { kind: 'reply_chat', label: 'Reply', contactId: IDS.jane }, alternatives: [{ kind: 'open_contact', label: 'Open', contactId: IDS.jane }] });
+    const chatTimeline = [timelineItem({ id: '01900000-0000-7000-8000-0000000e5604', detail: 'web_chat:inbound', preview: 'Is the open house still on?', occurredAt: iso(-60_000) })];
+    const sentChat = { status: 200, body: { message: { id: IDS.message, channel: 'web_chat', status: 'sent', statusReason: null, purpose: 'informational', body: 'Yes, 10 to 12', subject: null, scheduledFor: null, dispatchedAt: iso(0) }, decision: decision({}), result: 'sent' } };
+    const fake = new FakeFetch()
+      .on('GET /feed', { status: 200, body: feed([], [c]) })
+      .on(`GET /reachability?contactIds=${IDS.jane}`, { status: 200, body: { reachability: [reachability(IDS.jane, {}, 'open')] } })
+      .on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: reachability(IDS.jane, {}, 'open') } })
+      .on(`GET /contacts/${IDS.jane}`, { status: 200, body: { contact: chatOnly } })
+      .on(`GET /contacts/${IDS.jane}/timeline?limit=100`, { status: 200, body: { items: chatTimeline, nextCursor: null } })
+      .on(`POST /contacts/${IDS.jane}/messages/preview`, (call) => ({ status: 200, body: { decision: allowPreview(), body: (call.body as { body: string }).body } }))
+      .on(`POST /contacts/${IDS.jane}/messages`, sentChat);
+    const { router } = agentApp(fake);
+    const u = user();
+    expect(await screen.findByText('They wrote in the website chat 1 min ago; no reply yet')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Email' })).toBeNull();
+    await u.click(await screen.findByRole('button', { name: 'Reply' }));
+    await waitFor(() => expect(router.state.location.search).toBe('?compose=web_chat'));
+    const box = await screen.findByRole('textbox', { name: 'Web chat message' });
+    await waitFor(() => expect(box).toHaveFocus());
+    await u.type(box, 'Yes, 10 to 12');
+    await u.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await findToast('Sent to Jane.')).toBeInTheDocument();
+    expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages`)[0]!.body).toMatchObject({ channel: 'web_chat', body: 'Yes, 10 to 12' });
+  });
+
+  it('finding UXA-3: Reply on a card whose chat has ended is disabled before the tap, with the reachability summary\'s reason', async () => {
+    const c = card({ primaryAction: { kind: 'reply_chat', label: 'Reply', contactId: IDS.jane } });
+    const fake = new FakeFetch()
+      .on('GET /feed', { status: 200, body: feed([], [c]) })
+      .on(`GET /reachability?contactIds=${IDS.jane}`, { status: 200, body: { reachability: [reachability(IDS.jane, {}, 'ended')] } });
+    agentApp(fake);
+    const reply = await screen.findByRole('button', { name: 'Reply' });
+    await waitFor(() => expect(reply).toBeDisabled());
+    expect(reply).toHaveAccessibleDescription('The chat has ended: they left the page');
+  });
 });
 
 

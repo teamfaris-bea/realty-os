@@ -96,7 +96,7 @@ function Feed() {
   );
 }
 
-const CONTACTING: ReadonlySet<string> = new Set(['text', 'email', 'call', 'send_draft']);
+const CONTACTING: ReadonlySet<string> = new Set(['text', 'email', 'call', 'send_draft', 'reply_chat']);
 
 function Band({ title, cards, pinned }: { title: string; cards: FeedCard[]; pinned: boolean }) {
   const id = useId();
