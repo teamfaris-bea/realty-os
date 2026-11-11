@@ -27,7 +27,7 @@ import { Button, type ButtonVariant, type IconName } from '../../design/index.js
 import { type ChannelState, ReasonCaption, useChannelState } from '../../reasons/index.js';
 import { useCommand } from '../../shell/index.js';
 import { useInbox } from '../approvals/ApprovalsPage.js';
-import { useAgentSheets } from './lib/AgentSheets.js';
+import { sendOutcomeText, sentResult, useAgentSheets } from './lib/AgentSheets.js';
 import { useMutate } from './lib/hooks.js';
 import type { ApproveResponse, FeedCard, OneTapAction, OwnershipResultResponse } from './lib/types.js';
 
@@ -126,7 +126,8 @@ function OwnershipButton({ action, card, variant = 'primary', expired, block, cl
 function SendDraftButton({ action, card, variant = 'primary', block, className }: ActionButtonProps & { action: Extract<OneTapAction, { kind: 'send_draft' }> }) {
   const sheets = useAgentSheets();
   const draftChannel = useInbox().data?.items.find((a) => a.id === action.actionId)?.draft?.channel ?? null;
-  const reach = useChannelState(card?.contact?.id, draftChannel);
+  // (a web-chat draft's chat state is the thread's to show; here the send-time check decides)
+  const reach = useChannelState(card?.contact?.id, draftChannel === 'web_chat' ? null : draftChannel);
   const reasonId = useId();
   const navigate = useNavigate();
   const cmd = useCommand<Record<string, unknown>, ApproveResponse>(`/assistant/actions/${action.actionId}/approve`, { invalidate: [...FEED_KEYS, ['timeline']] });
@@ -138,8 +139,11 @@ function SendDraftButton({ action, card, variant = 'primary', block, className }
       if (r.code === 'DRAFT_STALE' && card?.contact) navigate(`/contacts/${card.contact.id}/thread?compose=draft&draft=${action.actionId}`);
       return;
     }
-    if (r.data.result === 'sent' || r.data.result === 'queued' || r.data.result === 'noop') sheets.announce(`Sent to ${name}.`);
-    else if (r.data.result === 'acknowledged') sheets.announce('Marked as reviewed.');
+    // a replay ('noop') went out only if its message did (finding F1)
+    const did = sentResult(r.data);
+    if (did === 'sent' || did === 'queued') sheets.announce(`Sent to ${name}.`);
+    else if (did === 'acknowledged') sheets.announce('Marked as reviewed.');
+    else if (did === 'noop') sheets.announce(sendOutcomeText({ result: did, decision: r.data.decision, message: null }, name).title);
     else sheets.announce(r.data.decision?.explanation ? `Not sent: ${r.data.decision.explanation}` : 'Not sent.');
   };
   return (

@@ -34,7 +34,7 @@ import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } f
 import { Button, CheckThis, GateBadge, Notice } from '../../design/index.js';
 import { REACHABILITY_KEY, ReasonCaption, channelState, useReachability } from '../../reasons/index.js';
 import { type ApiError, useApi, useCommand } from '../../shell/index.js';
-import { SendOutcome, sendOutcomeText, useAgentSheets } from '../feed/lib/AgentSheets.js';
+import { SendOutcome, WENT_OUT, sendOutcomeText, sentResult, useAgentSheets } from '../feed/lib/AgentSheets.js';
 import { type ComposeChannel, useWebChatApprove, useWebChatSend } from './channelApi.js';
 import { chooseChannel, webChatState } from './channelChoice.js';
 import { firstName } from '../feed/lib/format.js';
@@ -187,7 +187,8 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
 
   const afterSend = (r: ComposeResponse) => {
     setOutcome(r);
-    if (r.result === 'sent' || r.result === 'queued' || r.result === 'noop' || r.result === 'scheduled') {
+    // a replay ('noop', after a lost answer) went out only if its message did (finding F1)
+    if (WENT_OUT.has(sentResult(r))) {
       setBody('');
       setSubject('');
       setDraftId(null);
@@ -223,7 +224,12 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
     if (isChat) {
       // a reply in web chat, or the draft approved as one (never scheduled)
       const o = draft ? await chatApprove.approve(text, seenSeq, edited) : await chat.send(text);
-      if (o.kind === 'chat_ended') return chatEnded();
+      if (o.kind === 'chat_ended') {
+        // an approved draft was used up by that approval (it is approved, not sent): the next Send is the agent's own
+        // message on the next channel, never a re-approval the API would answer as a replay of the blocked one (F1)
+        if (draft) setDraftId(null);
+        return chatEnded();
+      }
       if (o.kind === 'done') return afterSend(o.response);
       if (draft && draftRefused(o.code, o.message, o.details)) return;
       setNotice({ tone: 'error', text: o.message });
@@ -235,7 +241,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
       if (seenSeq !== null) payload.reviewedInboundSeq = seenSeq;
       const r = await approve.run(payload);
       if (r.ok) {
-        afterSend({ result: r.data.result, decision: r.data.decision, message: r.data.messageId ? { id: r.data.messageId, channel, status: r.data.status, statusReason: null, purpose: null, body: text, subject: null, scheduledFor: null, dispatchedAt: null } : null });
+        afterSend({ result: r.data.result, decision: r.data.decision, message: r.data.messageId ? { id: r.data.messageId, channel, status: r.data.messageStatus ?? r.data.result, statusReason: null, purpose: null, body: text, subject: null, scheduledFor: null, dispatchedAt: null } : null });
         return;
       }
       if (draftRefused(r.code, r.message, r.details)) return;

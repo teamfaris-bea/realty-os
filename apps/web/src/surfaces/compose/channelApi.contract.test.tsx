@@ -87,6 +87,35 @@ describe('compose web chat against the real module 22 routes (webContract.json)'
     expect(problems).toEqual([]);
   });
 
+  it('F1: a lost answer and its automatic retry (the same idempotency key or commandId): the API\'s replay (noop, the stored message or messageStatus, the stored decision) is read as what the first attempt did: the chat ended', async () => {
+    const problems: string[] = [];
+    const ended = { id: DECISION_ID, outcome: 'deny', reasons: [CHANNEL_NOT_CONNECTED], explanation: 'The chat has ended.', phase: 'send' };
+    const reply = byContract(new FakeFetch(), 'POST /contacts/:id/messages', `/contacts/${CONTACT}/messages`, (_c, n) => (n === 1 ? 'network-error' : { status: 200, body: { message: message('blocked', CHANNEL_NOT_CONNECTED, 'Are you still there?'), decision: ended, result: 'noop' } }), problems);
+    const sendHook = renderHook(() => useWebChatSend(CONTACT), { wrapper: wrapper(reply) });
+    let out: WebChatOutcome | null = null;
+    await act(async () => {
+      out = await sendHook.result.current.send('Are you still there?');
+    });
+    expect(out).toEqual({ kind: 'chat_ended' });
+    const keys = reply.callsTo(`POST /contacts/${CONTACT}/messages`).map((c) => (c.body as { idempotencyKey: string }).idempotencyKey);
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).toBe(keys[0]);
+    const approve = byContract(new FakeFetch(), 'POST /assistant/actions/:id/approve', `/assistant/actions/${DRAFT}/approve`, (_c, n) => (n === 1 ? 'network-error' : { status: 200, body: { actionId: DRAFT, status: 'approved', result: 'noop', messageId: MESSAGE, decision: ended, messageStatus: 'blocked' } }), problems);
+    const approveHook = renderHook(() => useWebChatApprove(CONTACT, DRAFT), { wrapper: wrapper(approve) });
+    await act(async () => {
+      out = await approveHook.result.current.approve('Happy to help with Elm!', null, false);
+    });
+    expect(out).toEqual({ kind: 'chat_ended' });
+    // a replay of an approval that did go out is that message, sent
+    const went = byContract(new FakeFetch(), 'POST /assistant/actions/:id/approve', `/assistant/actions/${DRAFT}/approve`, () => ({ status: 200, body: { actionId: DRAFT, status: 'executed', result: 'noop', messageId: MESSAGE, decision: null, messageStatus: 'delivered' } }), problems);
+    const wentHook = renderHook(() => useWebChatApprove(CONTACT, DRAFT), { wrapper: wrapper(went) });
+    await act(async () => {
+      out = await wentHook.result.current.approve('Happy to help with Elm!', null, false);
+    });
+    expect(out).toMatchObject({ kind: 'done', response: { result: 'noop', message: { status: 'delivered' } } });
+    expect(problems).toEqual([]);
+  });
+
   it('a draft answered in web chat is the API\'s ApproveBody {commandId, editedPayload: {channel: web_chat, body}, reviewedInboundSeq}; a chat draft sent as drafted carries no editedPayload', async () => {
     const problems: string[] = [];
     const fake = byContract(new FakeFetch(), 'POST /assistant/actions/:id/approve', `/assistant/actions/${DRAFT}/approve`, () => ({ status: 200, body: { actionId: DRAFT, status: 'executed', result: 'sent', messageId: MESSAGE, decision: allow } }), problems);

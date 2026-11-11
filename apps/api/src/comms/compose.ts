@@ -16,7 +16,7 @@ import { AppError } from '../errors.js';
 import { COMMS_DISPATCH } from '../worker/contracts.js';
 import { enqueueTyped } from '../worker/registry.js';
 import { dispatchOutbound } from './dispatch.js';
-import { decisionView, evaluateGate, insertBlockedDecision, resolvedPolicy, verdictOf } from './gateInput.js';
+import { decisionView, evaluateGate, insertBlockedDecision, resolvedPolicy, storedDecisionView, verdictOf } from './gateInput.js';
 import { renderHumanBody, unsubscribeUrl } from './render.js';
 import { contactFacts, dealOrAppointmentContext, detailVisibleContact } from './repos/contacts.js';
 import * as g from './repos/gate.js';
@@ -178,12 +178,12 @@ export async function previewHumanMessage(actor: UserActor, contactId: string, i
 /** POST /contacts/:id/messages (BUILD_PLAN): GateDecision | Message. */
 export async function composeHumanMessage(actor: UserActor, contactId: string, input: ComposeInput, deps: CommsDeps): Promise<ComposeResult> {
   const key = `h:${actor.userId}:${input.idempotencyKey}`;
-  type Created = { kind: 'existing'; m: msgs.MessageRow } | { kind: 'created'; messageId: string; scheduled: boolean } | { kind: 'blocked'; decision: DecisionView };
+  type Created = { kind: 'existing'; m: msgs.MessageRow; decision: DecisionView | null } | { kind: 'created'; messageId: string; scheduled: boolean } | { kind: 'blocked'; decision: DecisionView };
   const created: Created = await asUser(deps, actor, async (tx, now) => {
     const prior = await msgs.messageByIdempotencyKey(tx, key);
     if (prior) {
       if (prior.contactId !== contactId) throw new AppError('NOT_FOUND');
-      return { kind: 'existing', m: prior };
+      return { kind: 'existing', m: prior, decision: await storedDecisionView(tx, prior.gateDecisionId) };
     }
     if (!(await detailVisibleContact(tx, contactId))) throw new AppError('NOT_FOUND');
     if (input.channel === 'email' && !(input.subject ?? '').trim()) throw new AppError('SUBJECT_REQUIRED');
@@ -236,7 +236,7 @@ export async function composeHumanMessage(actor: UserActor, contactId: string, i
       // the same command raced in (double tap, network retry): it is that command's message
       const winner = await msgs.messageByIdempotencyKey(tx, key);
       if (!winner || winner.contactId !== contactId) throw new AppError('NOT_FOUND');
-      return { kind: 'existing', m: winner };
+      return { kind: 'existing', m: winner, decision: await storedDecisionView(tx, winner.gateDecisionId) };
     }
     if (scheduledFor !== null) {
       await enqueueTyped(tx, COMMS_DISPATCH, { messageId }, { dedupeKey: COMMS_DISPATCH.dedupeKey({ messageId }), runAt: scheduledFor });
@@ -246,8 +246,9 @@ export async function composeHumanMessage(actor: UserActor, contactId: string, i
 
   if (created.kind === 'blocked') return { message: null, decision: created.decision, result: 'not_created' };
   // An idempotent re-post is the same command and has no new effect (a retry of the original request
-  // must never stand in for the human having seen a reply, E27: that re-tap is POST /messages/:id/send).
-  if (created.kind === 'existing') return { message: messageView(created.m), decision: null, result: 'noop' };
+  // must never stand in for the human having seen a reply, E27: that re-tap is POST /messages/:id/send). It reports
+  // what the first one did: the message as it stands and, when it was blocked, the stored decision (finding F1).
+  if (created.kind === 'existing') return { message: messageView(created.m), decision: created.decision, result: 'noop' };
   const messageId = created.messageId;
   if (created.scheduled) return { message: await viewOf(actor, messageId, deps), decision: null, result: 'scheduled' };
   const r = await dispatchOutbound(messageId, deps, { tenantId: actor.tenantId as TenantId, actor });

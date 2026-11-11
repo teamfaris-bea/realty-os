@@ -228,3 +228,17 @@ export async function insertBlockedDecision(tx: Tx, s: BlockedSpec): Promise<Sto
 export function decisionView(d: StoredDecision, phase: DecisionView['phase']): DecisionView {
   return { id: d.id, outcome: d.outcome, reasons: d.reasons, explanation: d.explanation, phase };
 }
+
+/**
+ * The stored decision of a blocked message (messages.gate_decision_id), as the send that made it reported it; null for
+ * a message that was not blocked. A replayed command (the same idempotency key or commandId after a lost answer)
+ * returns it, so the client says what the first attempt did instead of reading the replay as a send (finding F1).
+ * Read in the caller's transaction (gate_decisions_select: the actor's own decisions, or the contact's).
+ */
+export async function storedDecisionView(tx: Tx, decisionId: string | null): Promise<DecisionView | null> {
+  if (!decisionId) return null;
+  const r = await sql<{ id: string; outcome: DecisionView['outcome']; reason_codes: string[]; explanation: string }>`
+    SELECT id, outcome, reason_codes, explanation FROM gate_decisions WHERE tenant_id = app.tenant_id() AND id = ${decisionId}::uuid`.execute(tx);
+  const d = r.rows[0];
+  return d ? { id: d.id, outcome: d.outcome, reasons: d.reason_codes, explanation: d.explanation, phase: 'send' } : null;
+}

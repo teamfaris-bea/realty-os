@@ -7,7 +7,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import { FakeFetch, IDS, agentApp, chatEndedReply, decision, findToast, fullContact, iso, reachability, stopReason, timelineItem } from '../feed/lib/testing.js';
+import { FakeFetch, IDS, agentApp, chatEndedReply, decision, draftAction, findToast, fullContact, iso, reachability, stopReason, timelineItem } from '../feed/lib/testing.js';
 import { lastInboundChannel, liveChat } from './ThreadPage.js';
 
 const user = () => userEvent.setup();
@@ -134,6 +134,47 @@ describe('module 37: compose on the client\'s last open channel', () => {
     expect(screen.getByRole('textbox', { name: 'Text message' })).toHaveValue('Yes, 10 to 12');
     // nothing was sent by text on the agent's behalf
     expect(f.callsTo(`POST /contacts/${IDS.jane}/messages`).every((c) => (c.body as { channel: string }).channel === 'web_chat')).toBe(true);
+  });
+
+  it('F1: a reply whose answer was lost (a dropped connection, a 502) and whose automatic retry came back as the API\'s replay ("noop", the blocked message) is never shown as sent: the chat ended, the text stays', async () => {
+    const replay = chatEndedReply('Yes, 10 to 12');
+    // what the API answers the same idempotency key again: the stored message, result noop (with or without its decision)
+    for (const decisionOnReplay of [null, replay.body.decision]) {
+      const f = fake().on(`GET /contacts/${IDS.jane}/reachability`, summary('open')).on(`POST /contacts/${IDS.jane}/messages`, (_c, n) => (n === 1 ? 'network-error' : { status: 200, body: { ...replay.body, decision: decisionOnReplay, result: 'noop' } }));
+      const view = agentApp(f, `/contacts/${IDS.jane}/thread`);
+      const chat = await screen.findByRole('radio', { name: 'Web chat' });
+      await waitFor(() => expect(chat).toBeChecked());
+      await user().type(screen.getByRole('textbox', { name: 'Web chat message' }), 'Yes, 10 to 12');
+      await user().click(screen.getByRole('button', { name: 'Send' }));
+      expect(await screen.findByText(/Not sent: the chat has ended/)).toBeInTheDocument();
+      expect(screen.getByRole('textbox', { name: 'Text message' })).toHaveValue('Yes, 10 to 12');
+      expect(screen.getByTestId('toast').textContent ?? '').not.toContain('Sent to Jane.');
+      expect(f.callsTo(`POST /contacts/${IDS.jane}/messages`)).toHaveLength(2);
+      view.view.unmount();
+    }
+  });
+
+  it('F1: a web-chat draft approved twice for one tap (the answer was lost) reports what the first approval did: the chat had ended, nothing was sent; the next tap sends the agent\'s own text, never a re-approval', async () => {
+    const draft = draftAction({ draft: { channel: 'web_chat', subject: null, body: 'Happy to help with Elm!' } });
+    const ended = decision({ id: '01900000-0000-7000-8000-0000000d0001', outcome: 'deny', reasons: ['CHANNEL_NOT_CONNECTED'], explanation: 'The chat has ended, so this was not sent.' });
+    const f = fake()
+      .on(`GET /contacts/${IDS.jane}/reachability`, summary('open'))
+      .on(`GET /assistant/actions/${IDS.draft}`, { status: 200, body: { action: draft } })
+      // the API's replay of the same commandId: result noop, the stored decision and the message's status (module 22)
+      .on(`POST /assistant/actions/${IDS.draft}/approve`, (_c, n) => (n === 1 ? 'network-error' : { status: 200, body: { actionId: IDS.draft, status: 'approved', result: 'noop', messageId: IDS.message, decision: ended, messageStatus: 'blocked' } }))
+      .on(`POST /contacts/${IDS.jane}/messages`, { status: 200, body: { message: { id: '01900000-0000-7000-8000-0000000e5577', channel: 'sms', status: 'sent', statusReason: null, purpose: 'informational', body: 'Happy to help with Elm!', subject: null, scheduledFor: null, dispatchedAt: iso(0) }, decision: decision({}), result: 'sent' } });
+    agentApp(f, `/contacts/${IDS.jane}/thread?compose=draft&draft=${IDS.draft}`);
+    const box = await screen.findByRole('textbox', { name: 'Web chat message' });
+    await waitFor(() => expect(box).toHaveValue('Happy to help with Elm!'));
+    await user().click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText(/Not sent: the chat has ended .*Send now sends it by text\./)).toBeInTheDocument();
+    expect(screen.getByTestId('toast').textContent ?? '').not.toContain('Sent to Jane.');
+    expect(screen.getByRole('textbox', { name: 'Text message' })).toHaveValue('Happy to help with Elm!');
+    // "Send now sends it by text": a new message of the agent's own, on text
+    await user().click(screen.getByRole('button', { name: 'Send' }));
+    expect(await findToast('Sent to Jane.')).toBeInTheDocument();
+    expect(f.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(2);
+    expect(f.callsTo(`POST /contacts/${IDS.jane}/messages`).map((c) => c.body)).toEqual([expect.objectContaining({ channel: 'sms', body: 'Happy to help with Elm!' })]);
   });
 
   it('E77 R-INBOX-7: before anyone types, the summary says the chat ended or was turned off: Web chat is shown closed with that reason, and the box writes by text and says why', async () => {

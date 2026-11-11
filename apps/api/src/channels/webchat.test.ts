@@ -185,6 +185,33 @@ describe('R-GATE-14 R-GATE-15 replies in chat go through dispatchOutbound', () =
     expect((await h.su.query('SELECT last_seen_at < now() - interval \'30 minutes\' AS idle FROM webchat_sessions WHERE id = $1', [c.sessionId])).rows[0].idle).toBe(true);
   });
 
+  it('F1: the same reply or approval sent again (a lost answer, the same idempotency key or commandId) reports what the first one did: the stored decision and the message\'s status, never a bare "noop"', async () => {
+    const c = await openChat(h, widget.key, src.disclosureId, { name: 'Rhea Replay' });
+    const agent = await acceptLead(h, w.agents, c.contactId);
+    await h.su.query("UPDATE webchat_sessions SET last_seen_at = now() - interval '31 minutes', started_at = LEAST(started_at, now() - interval '40 minutes') WHERE id = $1", [c.sessionId]);
+    const key = `chat-${randomUUID()}`;
+    type Composed = { result: string; decision: { id: string | null; outcome: string; reasons: string[] } | null; message: { id: string; status: string; statusReason: string | null } };
+    const first = await call<Composed>(agent, 'POST', `/contacts/${c.contactId}/messages`, { channel: 'web_chat', body: 'Are you still there?', idempotencyKey: key });
+    expect([first.body.result, first.body.decision?.reasons]).toEqual(['blocked', ['CHANNEL_NOT_CONNECTED']]);
+    const again = await call<Composed>(agent, 'POST', `/contacts/${c.contactId}/messages`, { channel: 'web_chat', body: 'Are you still there?', idempotencyKey: key });
+    expect([again.status, again.body.result, again.body.message.id, again.body.message.status, again.body.message.statusReason]).toEqual([200, 'noop', first.body.message.id, 'blocked', 'CHANNEL_NOT_CONNECTED']);
+    expect(again.body.decision).toEqual(first.body.decision);
+    // an approved web-chat draft, approved again with the same commandId
+    const owner = (await h.su.query<{ ownership_period_seq: string }>('SELECT ownership_period_seq FROM contacts WHERE id = $1', [c.contactId])).rows[0]!;
+    const conv = (await h.su.query<{ inbound_seq: string }>('SELECT inbound_seq FROM conversations WHERE contact_id = $1', [c.contactId])).rows[0]!;
+    const id = randomUUID();
+    await h.su.query(
+      "INSERT INTO assistant_actions (tenant_id, id, contact_id, kind, action_category, autonomy, status, owner_user_id, explanation, payload, bound_ownership_seq, pinned_inbound_seq) VALUES ($1,$2,$3,'message_draft','novel_message','requires_approval','proposed',$4,'Draft reply',$5,$6,$7)",
+      [w.tenantId, id, c.contactId, agent.userId, JSON.stringify({ channel: 'web_chat', body: 'Happy to help with Elm!' }), owner.ownership_period_seq, conv.inbound_seq],
+    );
+    const commandId = randomUUID();
+    type Approved = { result: string; messageId: string; decision: { reasons: string[] } | null; messageStatus?: string | null };
+    const a1 = await call<Approved>(agent, 'POST', `/assistant/actions/${id}/approve`, { commandId });
+    expect([a1.body.result, a1.body.decision?.reasons]).toEqual(['blocked', ['CHANNEL_NOT_CONNECTED']]);
+    const a2 = await call<Approved>(agent, 'POST', `/assistant/actions/${id}/approve`, { commandId });
+    expect([a2.status, a2.body.result, a2.body.messageId, a2.body.messageStatus, a2.body.decision?.reasons]).toEqual([200, 'noop', a1.body.messageId, 'blocked', ['CHANNEL_NOT_CONNECTED']]);
+  });
+
   it('R-GATE-14: an approved draft may answer in web chat (drafts.ts), through the same send path', async () => {
     const c = await openChat(h, widget.key, src.disclosureId, { name: 'Dora Draft' });
     const agent = await acceptLead(h, w.agents, c.contactId);

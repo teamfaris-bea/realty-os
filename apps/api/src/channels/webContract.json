@@ -665,6 +665,12 @@
                 "type": "null"
               }
             ]
+          },
+          "messageStatus": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [

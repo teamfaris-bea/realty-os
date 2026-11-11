@@ -68,6 +68,8 @@ export const ApproveResponse = z.object({
   result: z.string(),
   messageId: Id.nullable(),
   decision: DecisionSchema.nullable(),
+  /** on a replay (result 'noop'): the status of the message the first approval made (finding F1) */
+  messageStatus: z.string().nullable().optional(),
 });
 export const RejectResponse = z.object({ actionId: Id, status: z.string() });
 

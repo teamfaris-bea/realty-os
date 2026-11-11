@@ -52,6 +52,27 @@ describe('Thread', () => {
     await waitFor(() => expect(box).toHaveValue(''));
   });
 
+  it('F1: a text whose answer was lost and whose retry came back as the API\'s replay of a send the gate blocked ("noop", the blocked message) says Not sent and keeps the text; a replay of one that went out says Sent', async () => {
+    const blocked = { id: IDS.message, channel: 'sms', status: 'blocked', statusReason: 'CONSENT_REVOKED', purpose: 'informational', body: 'On my way', subject: null, scheduledFor: null, dispatchedAt: null };
+    const fake = threadFake().on(`POST /contacts/${IDS.jane}/messages`, (_c, n) => (n === 1 ? 'network-error' : { status: 200, body: { message: blocked, decision: null, result: 'noop' } }));
+    const view = agentApp(fake, `/contacts/${IDS.jane}/thread?compose=sms`);
+    const box = await screen.findByRole('textbox', { name: 'Text message' });
+    await user().type(box, 'On my way');
+    await user().click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText('Not sent.')).toBeInTheDocument();
+    expect(box).toHaveValue('On my way');
+    expect(screen.getByTestId('toast').textContent ?? '').not.toContain('Sent to Jane.');
+    view.view.unmount();
+    // the replay of a text that did go out is the sent message: that is said, and the box clears
+    const ok = threadFake().on(`POST /contacts/${IDS.jane}/messages`, (_c, n) => (n === 1 ? 'network-error' : { ...sent(), body: { ...sent().body, decision: null, result: 'noop' } }));
+    agentApp(ok, `/contacts/${IDS.jane}/thread?compose=sms`);
+    const again = await screen.findByRole('textbox', { name: 'Text message' });
+    await user().type(again, 'See you at 11');
+    await user().click(screen.getByRole('button', { name: 'Send' }));
+    expect(await findToast('Sent to Jane.')).toBeInTheDocument();
+    await waitFor(() => expect(again).toHaveValue(''));
+  });
+
   it('the inline gate preview shows the server sentence before sending (e.g. a shared number that opted out)', async () => {
     const fake = threadFake().on(`POST /contacts/${IDS.jane}/messages/preview`, { status: 200, body: { decision: decision({ id: null, phase: 'preview', outcome: 'deny', explanation: 'This number opted out of texts on Nov 3' }), body: '' } });
     agentApp(fake, `/contacts/${IDS.jane}/thread?compose=sms`);

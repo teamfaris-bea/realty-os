@@ -15,7 +15,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Button, Card, ClaimLine, EmptyState, GateBadge, Notice } from '../../design/index.js';
 import { ReachabilityBatch, ReasonCaption, useChannelState } from '../../reasons/index.js';
 import { type ApiError, messageFor, useApi, useCommand } from '../../shell/index.js';
-import { AgentSheetsProvider, SendOutcome, useAgentSheets } from '../feed/lib/AgentSheets.js';
+import { AgentSheetsProvider, SendOutcome, sentResult, useAgentSheets } from '../feed/lib/AgentSheets.js';
 import { claimView, firstName, relativeTime } from '../feed/lib/format.js';
 import { useMutate, useNow } from '../feed/lib/hooks.js';
 import { AGENT_ERROR_MESSAGES } from '../feed/lib/messages.js';
@@ -106,7 +106,8 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
   const threadHref = action.contactId ? `/contacts/${action.contactId}/thread?compose=draft&draft=${action.id}` : null;
   // whether the draft's channel is blocked at all (an opt-out, a suppression) comes from the summary;
   // the draft's own words are still previewed for the rules that depend on them
-  const reach = useChannelState(sendable ? action.contactId : null, action.draft?.channel ?? null);
+  // (a web-chat draft's chat state is the thread's to show; here the send-time check decides)
+  const reach = useChannelState(sendable ? action.contactId : null, action.draft?.channel === 'web_chat' ? null : (action.draft?.channel ?? null));
   const reasonId = useId();
   const check = useSendCheck({ contactId: action.contactId ?? '', channel: action.draft?.channel ?? 'sms', body: action.draft?.body ?? '', subject: action.draft?.subject ?? '', enabled: sendable && action.contactId !== null && !reach.blocked });
 
@@ -121,8 +122,10 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
       return;
     }
     setStale(false);
-    if (r.data.result === 'sent' || r.data.result === 'queued' || r.data.result === 'noop') sheets.announce(`Sent to ${name}.`);
-    else if (r.data.result === 'acknowledged') sheets.announce('Marked as handled.');
+    // a replay ('noop') went out only if its message did (finding F1)
+    const did = sentResult(r.data);
+    if (did === 'sent' || did === 'queued') sheets.announce(`Sent to ${name}.`);
+    else if (did === 'acknowledged') sheets.announce('Marked as handled.');
     setResult(r.data);
   };
   const doReject = async () => {
@@ -171,8 +174,8 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
       ) : null}
       {approve.error && approve.error.code !== 'DRAFT_STALE' ? <Notice tone="error">{approve.error.message}</Notice> : null}
       {reject.error ? <Notice tone="error">{reject.error.message}</Notice> : null}
-      {result && result.result !== 'acknowledged' && result.result !== 'sent' && result.result !== 'queued' && result.result !== 'noop' ? (
-        <SendOutcome result={{ result: result.result, decision: result.decision, message: null }} contactName={name} />
+      {result && !['acknowledged', 'sent', 'queued'].includes(sentResult(result)) ? (
+        <SendOutcome result={{ result: sentResult(result), decision: result.decision, message: null }} contactName={name} />
       ) : sendable && reach.blocked ? (
         <ReasonCaption id={reasonId} state={reach} />
       ) : sendable && check.decision?.outcome === 'deny' ? (

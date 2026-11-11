@@ -202,12 +202,41 @@ function AppointmentSheet({ appointmentId, label, onClose, announce }: { appoint
 
 // ---- what happened to a send, in words ---------------------------------------------------------
 
-export function sendOutcomeText(r: Pick<ComposeResponse, 'result' | 'decision' | 'message'>, contactName: string): { tone: 'ok' | 'warn' | 'error'; title: string; detail?: string } {
+/** What a message's status says a send did (a replay's only source: it carries no new result of its own). */
+const BY_STATUS: Record<string, string> = {
+  sent: 'sent',
+  delivered: 'sent',
+  queued: 'queued',
+  dispatching: 'queued',
+  scheduled: 'scheduled',
+  dispatch_unknown: 'dispatch_unknown',
+  failed: 'failed',
+  undelivered: 'failed',
+  bounced: 'failed',
+  blocked: 'blocked',
+  canceled: 'blocked',
+};
+
+/**
+ * What a send, an approval or a re-tap actually did. A replay (result 'noop': the same idempotency key or commandId
+ * again, as after an automatic retry of a lost answer) has no effect of its own; what the first attempt did is in its
+ * message's status (`message.status`, or an approval's `messageStatus`), so a blocked, failed or canceled message is
+ * never shown as sent (finding F1). A replay whose message is unknown stays 'noop': nobody can say it went out.
+ */
+export function sentResult(r: { result: string; message?: { status: string } | null; messageStatus?: string | null }): string {
+  if (r.result !== 'noop') return r.result;
+  const status = r.messageStatus ?? r.message?.status ?? null;
+  return (status !== null ? BY_STATUS[status] : undefined) ?? 'noop';
+}
+
+/** The outcomes after which the text is on its way (the box clears; "Sent to Jane." / "Sending" / "Sends at"). */
+export const WENT_OUT: ReadonlySet<string> = new Set(['sent', 'queued', 'scheduled']);
+
+export function sendOutcomeText(r: Pick<ComposeResponse, 'result' | 'decision' | 'message'> & { messageStatus?: string | null }, contactName: string): { tone: 'ok' | 'warn' | 'error'; title: string; detail?: string } {
   const who = firstName(contactName);
   const until = r.message?.scheduledFor ?? null;
-  switch (r.result) {
+  switch (sentResult(r)) {
     case 'sent':
-    case 'noop':
       return { tone: 'ok', title: `Sent to ${who}.` };
     case 'queued':
       return { tone: 'ok', title: `Sending to ${who}.` };

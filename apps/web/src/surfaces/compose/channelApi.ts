@@ -14,6 +14,7 @@
 // What is NOT here, on purpose (D2): no Messenger or Instagram channel, and no messaging-window input.
 import { type CommandResult, useCommand } from '../../shell/index.js';
 import { REACHABILITY_KEY } from '../../reasons/index.js';
+import { sentResult } from '../feed/lib/AgentSheets.js';
 import type { ApproveResponse, ComposeResponse } from '../feed/lib/types.js';
 
 /** The channels compose can write on. Web chat is a reply where the client wrote last (R-INBOX-4 is the assistant's side). */
@@ -34,9 +35,14 @@ export type WebChatOutcome =
   | { kind: 'chat_ended' }
   | { kind: 'error'; code: string; message: string; details: Record<string, unknown> | null };
 
-/** True when the send-time check refused the reply because the chat is no longer there. */
-export function isChatEnded(r: { result: string; decision: { reasons: string[] } | null }): boolean {
-  return r.result === 'blocked' && (r.decision?.reasons.includes(CHANNEL_NOT_CONNECTED) ?? false);
+/**
+ * True when the send-time check refused the reply because the chat is no longer there: on the first answer (blocked,
+ * the decision names CHANNEL_NOT_CONNECTED) and on a replay of it (noop, the stored message blocked for that reason,
+ * finding F1).
+ */
+export function isChatEnded(r: { result: string; decision: { reasons: string[] } | null; message?: { status: string; statusReason: string | null } | null; messageStatus?: string | null }): boolean {
+  if (sentResult(r) !== 'blocked') return false;
+  return (r.decision?.reasons.includes(CHANNEL_NOT_CONNECTED) ?? false) || r.message?.statusReason === CHANNEL_NOT_CONNECTED;
 }
 
 const NO_CHAT = "There's no website chat with them to reply to.";
@@ -54,7 +60,8 @@ export function webChatOutcome(r: CommandResult<ComposeResponse>): WebChatOutcom
 export function approvalOutcome(r: CommandResult<ApproveResponse>, body: string): WebChatOutcome {
   if (!r.ok) return failure(r);
   if (isChatEnded(r.data)) return { kind: 'chat_ended' };
-  const message = r.data.messageId ? { id: r.data.messageId, channel: 'web_chat' as const, status: r.data.status, statusReason: null, purpose: null, body, subject: null, scheduledFor: null, dispatchedAt: null } : null;
+  // the message's own status: a replay's (messageStatus) says what the first approval did
+  const message = r.data.messageId ? { id: r.data.messageId, channel: 'web_chat' as const, status: r.data.messageStatus ?? r.data.result, statusReason: null, purpose: null, body, subject: null, scheduledFor: null, dispatchedAt: null } : null;
   return { kind: 'done', response: { result: r.data.result, decision: r.data.decision, message } };
 }
 

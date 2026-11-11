@@ -264,7 +264,8 @@ export interface ActionView {
   contactName: string | null;
   explanation: string;
   primaryAction: 'send' | 'acknowledge';
-  draft: { channel: 'sms' | 'email'; subject: string | null; body: string } | null;
+  /** module 22: an approved draft may answer in web chat (the API's ActionView: sms, email or web_chat) */
+  draft: { channel: 'sms' | 'email' | 'web_chat'; subject: string | null; body: string } | null;
   claims: ClaimApiView[];
   createdAt: string;
 }
@@ -275,6 +276,8 @@ export interface ApproveResponse {
   result: string;
   messageId: string | null;
   decision: DecisionView | null;
+  /** a replay (result 'noop'): the status of the message the first approval made */
+  messageStatus?: string | null;
 }
 
 export interface SavedSearchListing {

@@ -22,6 +22,7 @@ import { type Tx, lockContact } from '@realty/db';
 import { sql } from 'kysely';
 import { audit, redactDiff } from '../audit.js';
 import { dispatchOutbound, queueOutboundInTx } from '../comms/index.js';
+import { storedDecisionView } from '../comms/gateInput.js';
 import { renderHumanBody, unsubscribeUrl } from '../comms/render.js';
 import { dealOrAppointmentContext } from '../comms/repos/contacts.js';
 import { conversationOf, tenantFacts } from '../comms/repos/gate.js';
@@ -58,6 +59,8 @@ export interface ApproveResult {
   result: 'sent' | 'acknowledged' | 'queued' | 'blocked' | 'failed' | 'dispatch_unknown' | 'noop';
   messageId: string | null;
   decision: { id: string | null; outcome: string; reasons: string[]; explanation: string; phase: string } | null;
+  /** a replay ('noop'): the status of the message the first approval made (with `decision` when it was blocked) */
+  messageStatus?: string | null;
 }
 
 const SENDABLE = new Set(['message_draft', 'handback', 'seller_update_draft']);
@@ -89,8 +92,8 @@ async function contactState(tx: Tx, contactId: string): Promise<{ ownerUserId: s
   return { ownerUserId: c?.owner_user_id ?? null, periodSeq: c?.ownership_period_seq == null ? null : Number(c.ownership_period_seq) };
 }
 
-async function messageByKey(tx: Tx, key: string): Promise<{ id: string; status: string } | null> {
-  const r = await sql<{ id: string; status: string }>`SELECT id, status FROM messages WHERE tenant_id = app.tenant_id() AND idempotency_key = ${key}`.execute(tx);
+async function messageByKey(tx: Tx, key: string): Promise<{ id: string; status: string; gate_decision_id: string | null } | null> {
+  const r = await sql<{ id: string; status: string; gate_decision_id: string | null }>`SELECT id, status, gate_decision_id FROM messages WHERE tenant_id = app.tenant_id() AND idempotency_key = ${key}`.execute(tx);
   return r.rows[0] ?? null;
 }
 
@@ -110,7 +113,9 @@ export async function approveAction(actor: UserActor, actionId: string, input: A
       if ((a.status === 'approved' || a.status === 'executed') && a.decidedByUserId === actor.userId) {
         const sendId = typeof a.payload.sentActionId === 'string' ? a.payload.sentActionId : a.id;
         const m = await messageByKey(tx, approvalKey(sendId));
-        if (m) return { kind: 'done', result: { actionId, status: a.status, result: 'noop', messageId: m.id, decision: null } };
+        // what the first approval did: its message's status and, when blocked, the stored decision (finding F1: a
+        // bare noop read as "Sent" although the chat had ended)
+        if (m) return { kind: 'done', result: { actionId, status: a.status, result: 'noop', messageId: m.id, decision: await storedDecisionView(tx, m.gate_decision_id), messageStatus: m.status } };
         // approved but never queued (the queue transaction failed or the process died after the tap):
         // the re-tap finishes the send instead of reporting it handled
         const resume = a.status === 'approved' ? await unsentApproval(tx, a, sendId) : null;

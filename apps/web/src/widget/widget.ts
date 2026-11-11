@@ -526,8 +526,8 @@ export class ChatWidget {
 
   private end(kind: 'closed' | 'unavailable'): void {
     // a reply the visitor was typing is not lost: it starts the new chat (finding UXA-6)
-    const typing = this.panel?.querySelector<HTMLTextAreaElement>('.foot textarea')?.value ?? '';
-    if (this.carry === '' && typing.trim() !== '') this.carry = typing;
+    const unsent = this.panel?.querySelector<HTMLTextAreaElement>('.foot textarea')?.value ?? '';
+    if (this.carry === '' && unsent.trim() !== '') this.carry = unsent;
     this.ended = kind;
     this.pending = null;
     this.stopPolling();
