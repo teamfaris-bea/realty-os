@@ -148,6 +148,26 @@ describe('approving a draft (R-AST-6, R-AST-7, R-AUDIT-5)', () => {
     expect(a.changes).toMatchObject({ body: { changed: true } });
   });
 
+  it('R-PAR-25: an approved email draft goes out with the approving agent\'s signature above the brokerage footer, exactly as the composer\'s preview showed it', async () => {
+    const agent = w.agents[0]!;
+    expect((await call(agent, 'PUT', '/email-signature', { signature: 'Ava Agent\nLic. #01234567' })).status).toBe(200);
+    try {
+      const c = await ownedContact(agent);
+      await inboundSms(h, c.phone, w.mainNumber, 'Is Saturday still good for the showing?');
+      const card = (await draftFor(0, c.id)).body.action;
+      const text = 'Yes, Saturday 1-3 works.';
+      // what the composer's "What Jane will get" shows for this text (the same preview the box reads)
+      const preview = await call<{ body: string }>(agent, 'POST', `/contacts/${c.id}/messages/preview`, { channel: 'email', subject: 'Saturday', body: text });
+      expect(preview.status).toBe(200);
+      expect(preview.body.body).toContain('Ava Agent\nLic. #01234567\n\n--\n');
+      const r = await call<{ result: string; messageId: string }>(agent, 'POST', `/assistant/actions/${card.id}/approve`, { commandId: randomUUID(), editedPayload: { channel: 'email', subject: 'Saturday', body: text } });
+      expect(r.body.result).toBe('sent');
+      expect((await messageRow(h, r.body.messageId)).body).toBe(preview.body.body);
+    } finally {
+      await call(agent, 'PUT', '/email-signature', { signature: null });
+    }
+  });
+
   it('R-AST-6: a draft is stale once the client wrote again: DRAFT_STALE, then the agent re-reviews and the re-tap sends', async () => {
     const c = await ownedContact(w.agents[0]!);
     await inboundSms(h, c.phone, w.mainNumber, 'Are you free Thursday?');

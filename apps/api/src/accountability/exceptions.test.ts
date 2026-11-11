@@ -19,6 +19,7 @@ import {
   enqueueTenantScan,
   humanTouch,
   intake,
+  type ItemT,
   itemRow,
   leadsWorker,
   ledger,
@@ -161,6 +162,16 @@ describe('untouched_lead', () => {
     expect(live.find((i) => i.dedupeKey === second)!.owner?.userId).toBe(lead.owner.userId);
     const handled = (await queue(w.teamLead!, '?state=handled')).items.find((i) => i.dedupeKey === lead.key)!;
     expect(handled.latestEvent).toMatchObject({ action: 'verified', actor: { userId: w.teamLead!.userId } });
+    // R-PAR-32: the earlier card is the same agent's earlier period. The lead never left them (a new period started
+    // when it inquired again), so the card must not say it moved on.
+    expect(handled.period).toEqual({ current: false, movedOn: false });
+    expect(live.find((i) => i.dedupeKey === second)!.period).toEqual({ current: true, movedOn: false });
+    // a call they log in the new period is context of the new period's card only, never of the earlier one
+    const loggedNow = await call<{ note: { id: string } }>(lead.owner, 'POST', `/contacts/${lead.contactId}/activities`, { kind: 'call', direction: 'outbound', at: new Date().toISOString(), outcome: 'connected' });
+    expect(loggedNow.status, JSON.stringify(loggedNow.body)).toBe(201);
+    const notes = (i: ItemT | undefined) => i!.evidence.filter((e) => e.sourceType === 'note').map((e) => e.sourceId);
+    expect(notes((await queue(w.teamLead!, '?state=handled')).items.find((i) => i.dedupeKey === lead.key))).toEqual([]);
+    expect(notes((await queue(w.teamLead!)).items.find((i) => i.dedupeKey === second))).toEqual([loggedNow.body.note.id]);
   });
 });
 

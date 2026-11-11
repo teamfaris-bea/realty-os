@@ -324,17 +324,18 @@ function UserMappings({ batch, onDone }: { batch: ImportBatch; onDone(t: string)
   );
 }
 
-/** After an undo the import's count is history: say what the undo did, and what it left for a person. */
+/** After an undo the import's count is history: say what the undo did, and what it left for a person (verbs agree with the counts). */
 export function importedLine(counts: NonNullable<ImportStage['counts']>, stage: Pick<ImportStage, 'status' | 'revert'>): string | null {
   if (counts.imported === null) return null;
+  const was = (k: number) => (k === 1 ? 'was' : 'were');
   if (stage.status === 'reverted') {
     const left = typeof stage.revert?.needsDecision === 'number' ? stage.revert.needsDecision : 0;
     const removed = Math.max(0, counts.imported - left);
     return left === 0
-      ? `Undone: the ${counts.imported} of ${counts.source} that had been imported were removed.`
-      : `Undone: ${removed} of the ${counts.imported} imported were removed; ${left} changed since the import and wait for your decision.`;
+      ? `Undone: the ${counts.imported} of ${counts.source} that had been imported ${was(counts.imported)} removed.`
+      : `Undone: ${removed} of the ${counts.imported} imported ${was(removed)} removed; ${left} ${left === 1 ? 'was changed since the import and waits' : 'were changed since the import and wait'} for your decision.`;
   }
-  if (stage.status === 'reverting') return `Undoing the ${counts.imported} of ${counts.source} that were imported…`;
+  if (stage.status === 'reverting') return `Undoing the ${counts.imported} of ${counts.source} that ${was(counts.imported)} imported…`;
   return `${counts.imported} of ${counts.source} imported`;
 }
 

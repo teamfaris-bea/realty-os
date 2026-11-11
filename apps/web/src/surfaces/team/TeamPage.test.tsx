@@ -36,7 +36,7 @@ describe('Team exception queue', () => {
   it('R-PAR-32: an untouched lead shows the activities its agent logged in the period as context ("Logged by …"); once the lead moved on its facts are labelled as the earlier owner\'s period, never mixed with the new one', async () => {
     const at = new Date(Date.now() - 3.5 * 3_600_000).toISOString();
     const moved = exceptionItem({
-      period: { current: false },
+      period: { current: false, movedOn: true },
       latestEvent: { action: 'reassigned', note: null, actor: { userId: ID.me, name: 'Sam Lead' }, at: new Date().toISOString() },
       actions: { resolve: true, reassign: false, verify: true, reopen: false },
       evidence: [

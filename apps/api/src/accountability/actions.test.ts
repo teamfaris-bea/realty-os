@@ -18,6 +18,7 @@ import {
   humanTouch,
   itemRow,
   keyPath,
+  leadsWorker,
   ledger,
   queue,
   recompute,
@@ -143,7 +144,7 @@ describe('R-PAR-32 logged activities as context', () => {
     ]);
     expect(logged(item)[0]!.at).not.toBeNull();
     // never a touch: the item is open, nothing cleared it, the ledger has no first touch, and the stored item has no note
-    expect(item).toMatchObject({ live: true, conditionClearedAt: null, period: { current: true } });
+    expect(item).toMatchObject({ live: true, conditionClearedAt: null, period: { current: true, movedOn: false } });
     expect((await ledger(h, lead.contactId)).map((e) => e.type)).not.toContain('first_touch_recorded');
     expect(JSON.stringify((await itemRow(h, key))!.evidence)).not.toContain(inPeriod.body.note.id);
     // the agent sees the same context on their own item
@@ -159,11 +160,32 @@ describe('R-PAR-32 logged activities as context', () => {
     // a text the new owner logs belongs to their period, not the missed one
     expect((await call(lead.other, 'POST', `/contacts/${lead.contactId}/activities`, { kind: 'email', direction: 'outbound', at: new Date(Date.now() + 1_000).toISOString() })).status).toBe(201);
     const tl = (await queue(w.teamLead!)).items.find((i) => i.dedupeKey === lead.key)!;
-    expect(tl.period).toEqual({ current: false });
+    expect(tl.period).toEqual({ current: false, movedOn: true });
     expect(logged(tl).map((e) => e.explanation)).toEqual([expect.stringMatching(/^Logged by .+: outgoing text \(context only; not a first contact\)$/)]);
     const own = (await queue(lead.owner)).items.find((i) => i.dedupeKey === lead.key)!;
-    expect(own.period).toEqual({ current: false });
+    expect(own.period).toEqual({ current: false, movedOn: true });
     expect(logged(own)).toEqual([]);
+  });
+
+  it('R-PAR-32: a lead that left the agent and came back to them has moved on since the earlier period (no re-inquiry kept it), and the new period\'s notes are not that card\'s context', async () => {
+    const lead = await acceptedLead(h, w);
+    const key = `untouched:${lead.contactId}:${lead.periodSeq}`;
+    await setPeriodDeadlines(h, lead.contactId, -2_000, -1_000);
+    await leadsWorker(h).drain();
+    expect((await ledger(h, lead.contactId)).at(-1)).toMatchObject({ type: 'auto_released', reason_code: 'FIRST_TOUCH_MISSED' });
+    await recompute(h, w.tenantId, { contactId: lead.contactId });
+    // the Owner assigns the pond lead back to the same agent from the card: a newer period of the same owner
+    const back = await act(w.owner, key, 'reassign', { toUserId: lead.owner.userId, commandId: randomUUID() });
+    expect(back.status, JSON.stringify(back.body)).toBe(200);
+    const st = await contactState(h, lead.contactId);
+    expect([st.ownership_state, st.owner_user_id]).toEqual(['owned', lead.owner.userId]);
+    expect(Number(st.ownership_period_seq)).toBeGreaterThan(lead.periodSeq);
+    expect((await call(lead.owner, 'POST', `/contacts/${lead.contactId}/activities`, { kind: 'call', direction: 'outbound', at: new Date().toISOString(), outcome: 'connected' })).status).toBe(201);
+    for (const viewer of [w.teamLead!, lead.owner]) {
+      const item = (await queue(viewer)).items.find((i) => i.dedupeKey === key)!;
+      expect(item.period).toEqual({ current: false, movedOn: true });
+      expect(logged(item)).toEqual([]);
+    }
   });
 });
 

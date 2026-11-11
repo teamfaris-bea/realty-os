@@ -52,7 +52,7 @@ export function exceptionItem(over: Partial<ExceptionItem> = {}): ExceptionItem 
       { sourceType: 'ownership_period', sourceId: ID.pat, explanation: 'First human contact was due', at: new Date(Date.now() - 3 * 3_600_000).toISOString(), locator: null, snippet: null, needsReview: false, link: { kind: 'contact', id: ID.pat, contactId: ID.pat, offsetMs: null } },
       { sourceType: 'ownership_period', sourceId: ID.pat, explanation: 'Lead became theirs', at: new Date(Date.now() - 4 * 3_600_000).toISOString(), locator: null, snippet: null, needsReview: false, link: { kind: 'contact', id: ID.pat, contactId: ID.pat, offsetMs: null } },
     ],
-    period: { current: true },
+    period: { current: true, movedOn: false },
     contactOwnershipSeq: 3,
     latestEvent: null,
     actions: { resolve: true, reassign: true, verify: true, reopen: false },

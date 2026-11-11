@@ -265,12 +265,12 @@ describe('Imports', () => {
     const reverted = stage('contacts', 'reverted', { counts: { source: 5, willImport: 3, imported: 3, needsReview: 0, rejected: 2, duplicate: 0 }, revert: { removed: 6, needsDecision: 0, removedByTable: { contacts: 3, contact_points: 3 }, done: true } });
     const b = batch([reverted], { status: 'reverted', revertedAt: '2026-11-10T13:00:00.000Z' });
     const parity = { phase: 'reverted', rows: [{ category: 'stages', source: 2, imported: 2, needsReview: 0, rejected: 0, duplicate: 0 }, { category: 'tags', source: 5, imported: 5, needsReview: 0, rejected: 0, duplicate: 0 }, { category: 'fields', source: 7, imported: 7, needsReview: 0, rejected: 0, duplicate: 0 }], lines: ['Before the undo, the import had set 2 stages, added 5 tags and written 7 custom values.'] };
-    const fake = importFake(b).on(`GET /imports/${BID}/report`, { status: 200, body: { source: 'Follow Up Boss', parity, categories: [{ category: 'contacts', status: 'reverted', phase: 'reverted', source: 5, imported: 3, needsReview: 0, rejected: 2, duplicate: 0, reconciles: true, lines: ['Undone. The undo removed what this import added: 3 people and 3 phone numbers or emails; nothing was left for your decision.'] }] } });
+    const fake = importFake(b).on(`GET /imports/${BID}/report`, { status: 200, body: { source: 'Follow Up Boss', parity, categories: [{ category: 'contacts', status: 'reverted', phase: 'reverted', source: 5, imported: 3, needsReview: 0, rejected: 2, duplicate: 0, reconciles: true, lines: ['Undone. The undo removed 3 people and 3 phone numbers or emails that this import added; nothing was left for your decision.'] }] } });
     leadAdminApp(fake, `/imports/${BID}`, 'owner');
     const card = (await screen.findByRole('heading', { level: 3, name: '1. Contacts' })).closest('article')!;
     expect(within(card).getByText('Undone: the 3 of 5 that had been imported were removed.')).toBeInTheDocument();
     expect(within(card).queryByText('3 of 5 imported')).toBeNull();
-    expect(await screen.findByText(/The undo removed what this import added: 3 people and 3 phone numbers or emails/)).toBeInTheDocument();
+    expect(await screen.findByText(/The undo removed 3 people and 3 phone numbers or emails that this import added/)).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'Imported, then undone' })).toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: 'Imported' })).toBeNull();
     expect(screen.getByText('This import was undone.')).toBeInTheDocument();
@@ -278,8 +278,15 @@ describe('Imports', () => {
 
   it('after an Undo that left changed records, the card says how many were removed and how many wait for a decision', () => {
     const c = { source: 5, willImport: 3, imported: 3, needsReview: 0, rejected: 2, duplicate: 0 };
-    expect(importedLine(c, { status: 'reverted', revert: { needsDecision: 1 } })).toBe('Undone: 2 of the 3 imported were removed; 1 changed since the import and wait for your decision.');
+    expect(importedLine(c, { status: 'reverted', revert: { needsDecision: 1 } })).toBe('Undone: 2 of the 3 imported were removed; 1 was changed since the import and waits for your decision.');
+    expect(importedLine(c, { status: 'reverted', revert: { needsDecision: 2 } })).toBe('Undone: 1 of the 3 imported was removed; 2 were changed since the import and wait for your decision.');
     expect(importedLine(c, { status: 'committed', revert: null })).toBe('3 of 5 imported');
+    // the verbs agree with the counts on every line of the card
+    const one = { ...c, willImport: 1, imported: 1 };
+    expect(importedLine(one, { status: 'reverted', revert: { needsDecision: 0 } })).toBe('Undone: the 1 of 5 that had been imported was removed.');
+    expect(importedLine(one, { status: 'reverted', revert: { needsDecision: 1 } })).toBe('Undone: 0 of the 1 imported were removed; 1 was changed since the import and waits for your decision.');
+    expect(importedLine(one, { status: 'reverting', revert: null })).toBe('Undoing the 1 of 5 that was imported…');
+    expect(importedLine(c, { status: 'reverting', revert: null })).toBe('Undoing the 3 of 5 that were imported…');
     expect(parityImportedHeader('dry_run')).toBe('Will import');
     expect(parityImportedHeader('committed')).toBe('Imported');
   });

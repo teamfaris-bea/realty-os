@@ -147,7 +147,7 @@ export interface ItemT {
   conditionClearedAt: string | null;
   live: boolean;
   evidence: { sourceType: string; sourceId: string; explanation: string; at?: string | null; snippet: string | null; needsReview: boolean; locator: Record<string, unknown> | null; link: { kind: string; id: string; contactId: string | null; offsetMs: number | null } | null }[];
-  period?: { current: boolean } | null;
+  period?: { current: boolean; movedOn: boolean } | null;
   contactOwnershipSeq: number | null;
   latestEvent: { action: string; note: string | null; actor: { userId: string } } | null;
   actions: { resolve: boolean; reassign: boolean; verify: boolean; reopen: boolean };

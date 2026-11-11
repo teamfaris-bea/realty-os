@@ -8,8 +8,8 @@
 // assign rather than claim. Everyone else gets exactly the ponds they may claim from (GET /me/ponds: an
 // eligible role, the pond open to all or naming them, claims allowed), with the leads they may claim there
 // (a lead they released or lost recently is left out by the server: the claim cooldown). When their own
-// totals block a claim (today's claims against the pond's daily limit, or new leads they have not reached
-// against the cap) the pond says so, with its numbers, instead of listing leads they cannot take.
+// totals block a claim (today's claims from every pond against this pond's daily limit, or new leads they
+// have not reached against the cap) the pond says so, with its numbers, instead of listing leads they cannot take.
 import { useQuery } from '@tanstack/react-query';
 import { useId } from 'react';
 import { Link } from 'react-router-dom';
@@ -24,10 +24,23 @@ import type { ContactCardView, MyPondsResponse, PondCardsResponse } from '../fee
 
 type MyPond = MyPondsResponse['ponds'][number];
 
-/** Why the member cannot claim from a pond right now, with the numbers it rests on (null: they can). */
+/**
+ * Why the member cannot claim from a pond right now, with the numbers it rests on (null: they can), counted the way
+ * the claim rule counts them (R-OWN-16): today's claims are the member's claims from every pond, held against this
+ * pond's own daily limit; a claim needs fewer waiting leads than the cap, and the count can be above the cap (a
+ * lowered cap, accepted offers, re-inquiries), so it says how many to reach.
+ */
 export function blockedSentence(p: MyPond, me: Pick<MyPondsResponse, 'claimsToday' | 'uncontactedOwned' | 'capacityCap'>): string | null {
-  if (p.blockedBy === 'CLAIM_LIMIT_REACHED') return `You've claimed ${me.claimsToday} of the ${p.claimsPerDay} leads this pond allows a day. You can claim from it again tomorrow.`;
-  if (p.blockedBy === 'CAPACITY_REACHED') return `${me.uncontactedOwned} of your leads are still waiting for a first call, text or email (the most is ${me.capacityCap}). Reach one of them before claiming more.`;
+  if (p.blockedBy === 'CLAIM_LIMIT_REACHED') {
+    const claimed = `${me.claimsToday} ${me.claimsToday === 1 ? 'lead' : 'leads'}`;
+    return `You've claimed ${claimed} today (from any pond), and this pond lets you claim only until you reach ${p.claimsPerDay} a day. You can claim from it again tomorrow.`;
+  }
+  if (p.blockedBy === 'CAPACITY_REACHED') {
+    const waiting = me.uncontactedOwned;
+    const need = Math.max(1, waiting - me.capacityCap + 1);
+    const reach = need === 1 ? (waiting === 1 ? 'it' : 'one of them') : `${need} of them`;
+    return `${waiting} of your leads ${waiting === 1 ? 'is' : 'are'} still waiting for a first call, text or email (the most is ${me.capacityCap}). Reach ${reach} before claiming more.`;
+  }
   return null;
 }
 
