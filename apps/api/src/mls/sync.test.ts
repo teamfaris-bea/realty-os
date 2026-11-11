@@ -102,6 +102,18 @@ describe('MLS rows in the Phase 1 saved-search alerts (R-MLS-6, R-MLS-2)', () =>
     expect(await matches(searchId)).toHaveLength(1);
   });
 
+  it('R-MLS-6: a city search finds MLS rows whatever the capitalisation (the indexed prefilter is complete)', async () => {
+    const conn = await mlsConnection(h, w.tenantId, w.owner.userId!);
+    await sync(conn, pagedFeed([[reso(6301, { City: 'McKittrick Hollow', PostalCode: '94631' }), reso(6302, { City: 'MCKITTRICK HOLLOW', PostalCode: '94632' })]]));
+    const agent = w.agents[0]!;
+    const c = await ownedContact(agent);
+    const id = randomUUID();
+    await h.su.query(`INSERT INTO saved_searches (tenant_id, id, contact_id, name, status, criteria, criterion_evidence) VALUES ($1,$2,$3,'City','proposed',$4::jsonb,'{}'::jsonb)`, [w.tenantId, id, c.id, JSON.stringify({ cities: [{ city: 'mckittrick hollow' }] })]);
+    const r = await call<{ search: { matches: { source: string; listingBrokerageName: string | null; postalCode: string }[] } }>(agent, 'GET', `/saved-searches/${id}/preview`);
+    expect(r.body.search.matches.map((m) => m.postalCode).sort()).toEqual(['94631', '94632']);
+    expect(r.body.search.matches.every((m) => m.source === 'mls' && m.listingBrokerageName === 'Other Brokerage (test)')).toBe(true);
+  });
+
   it('R-MLS-2: nothing reaches a client until the pack is counsel-reviewed and carries attribution and disclaimer', async () => {
     const { contactId } = await activeSearch('94602');
     const { reviewed_by_counsel_at: _r, ...unreviewed } = REVIEWED_PACK;

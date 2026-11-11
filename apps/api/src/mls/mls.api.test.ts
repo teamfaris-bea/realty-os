@@ -197,4 +197,14 @@ describe('mls.compliance_sweep and the handlers (R-OWN-27)', () => {
     const again = await withTenantTx(systemActor(tid(), 'worker'), (tx, now) => complianceSweepInTx(tx, systemActor(tid(), 'worker'), now), { db: h.database });
     expect(again.degraded).not.toContain(conn);
   });
+
+  it("R-TEN-1: another tenant's sweep touches none of this tenant's connections, rows or alerts", async () => {
+    const conn = await mlsConnection(h, w.tenantId, w.owner.userId!);
+    await h.su.query("UPDATE integration_connections SET last_synced_at = now() - interval '3 days' WHERE id = $1", [conn]);
+    const other = await h.signup();
+    const oid = other.tenantId as TenantId;
+    const r = await withTenantTx(systemActor(oid, 'worker'), (tx, now) => complianceSweepInTx(tx, systemActor(oid, 'worker'), now), { db: h.database });
+    expect(r).toEqual({ degraded: [], canceledAlerts: 0, mirrorsLinked: 0 });
+    expect((await h.su.query('SELECT status FROM integration_connections WHERE id = $1', [conn])).rows[0]).toEqual({ status: 'connected' });
+  });
 });

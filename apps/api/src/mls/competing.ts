@@ -15,7 +15,7 @@ import type { IanaZone, Instant } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 import { AppError } from '../errors.js';
-import { LISTING_COLS, type ListingRow, factsOfRow, mlsAsOf, mlsEligibility } from './eligibility.js';
+import { LISTING_COLS, type ListingRow, factsOfRow, mlsAsOf, mlsCitySpellings, mlsEligibility } from './eligibility.js';
 
 export interface CompetingView {
   subjectId: string;
@@ -37,16 +37,24 @@ export async function competingFor(tx: Tx, listingId: string, now: Instant): Pro
   const e = await mlsEligibility(tx, now);
   const live = e.connections.filter((c) => (c.status === 'connected' || c.status === 'degraded') && !e.staleIds.includes(c.id)).map((c) => c.id);
   const rule: CompetingRule = { ...DEFAULT_COMPETING_RULE, area: 'city_or_postal_code', mlsFeedStale: e.connections.length > 0 && live.length === 0 };
-  const rows = (
-    await sql<ListingRow>`
-      SELECT ${LISTING_COLS} FROM listings l
-       WHERE l.tenant_id = app.tenant_id() AND l.id <> ${subj.id}
-         AND (l.source = 'team' OR l.mls_connection_id = ANY (${live}::uuid[]))
-         AND (l.team_listing_id = ${subj.id}
-              OR (l.status = ANY (${[...rule.statuses]}::text[])
-                  AND (left(l.postal_code, 5) = left(${subj.postal_code}, 5) OR (lower(l.city) = lower(${subj.city}) AND l.region = ${subj.region}))))
-       ORDER BY l.id LIMIT ${CANDIDATE_LIMIT}`.execute(tx)
-  ).rows;
+  // two queries, so each side uses its own index (team rows: Phase 1 indexes; MLS rows: 0041 partial indexes)
+  // plain-column equality (leakproof under RLS): the subject's postal code, and the stored spellings of its city
+  const zips = [subj.postal_code, subj.postal_code.trim().slice(0, 5)];
+  const cities = [...new Set([subj.city, ...(await mlsCitySpellings(tx, [subj.city]))])];
+  const area = sql`(l.postal_code = ANY (${zips}::text[]) OR (l.city = ANY (${cities}::text[]) AND l.region = ${subj.region}))`;
+  const team = await sql<ListingRow>`
+    SELECT ${LISTING_COLS} FROM listings l
+     WHERE l.tenant_id = app.tenant_id() AND l.source = 'team' AND l.id <> ${subj.id} AND l.status = ANY (${[...rule.statuses]}::text[]) AND ${area}
+     ORDER BY l.id LIMIT ${CANDIDATE_LIMIT}`.execute(tx);
+  const mls =
+    live.length === 0
+      ? { rows: [] as ListingRow[] }
+      : await sql<ListingRow>`
+    SELECT ${LISTING_COLS} FROM listings l
+     WHERE l.tenant_id = app.tenant_id() AND l.source = 'mls' AND l.id <> ${subj.id} AND l.mls_connection_id = ANY (${live}::uuid[])
+       AND (l.team_listing_id = ${subj.id} OR (l.status = ANY (${[...rule.statuses]}::text[]) AND ${area}))
+     ORDER BY l.id LIMIT ${CANDIDATE_LIMIT}`.execute(tx);
+  const rows = [...team.rows, ...mls.rows];
   const subject = factsOfRow(subj);
   const candidates = rows.map(factsOfRow);
   const { listings, why } = competingSet(subject, candidates, rule);

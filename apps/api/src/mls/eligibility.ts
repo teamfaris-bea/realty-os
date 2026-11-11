@@ -64,6 +64,25 @@ export function mlsAsOf(e: MlsEligibility, zone: IanaZone): string | null {
   return staleNotice(last, zone);
 }
 
+/**
+ * The stored spellings of MLS cities that equal `cities` case-insensitively. Lets the candidate queries
+ * compare `city` with plain equality (leakproof, so the RLS-bound planner can use listings_mls_city_idx);
+ * lower(city) on row data would force a scan of every MLS row under RLS.
+ */
+export async function mlsCitySpellings(tx: Tx, cities: readonly string[]): Promise<string[]> {
+  const want = new Set(cities.map((c) => c.trim().toLowerCase()).filter((c) => c !== ''));
+  if (want.size === 0) return [];
+  // a loose index scan over listings_mls_city_idx: one probe per distinct city, not one row per listing
+  const r = await sql<{ city: string }>`
+    WITH RECURSIVE c(city) AS (
+      (SELECT l.city FROM listings l WHERE l.tenant_id = app.tenant_id() AND l.source = 'mls' ORDER BY l.city LIMIT 1)
+      UNION ALL
+      SELECT (SELECT l.city FROM listings l WHERE l.tenant_id = app.tenant_id() AND l.source = 'mls' AND l.city > c.city ORDER BY l.city LIMIT 1)
+        FROM c WHERE c.city IS NOT NULL)
+    SELECT city FROM c WHERE city IS NOT NULL LIMIT 20000`.execute(tx);
+  return r.rows.map((x) => x.city).filter((c) => want.has(c.trim().toLowerCase()));
+}
+
 // ---- listing rows ----------------------------------------------------------------------------------
 
 /** The listing columns every MLS-aware reader selects (LISTING_COLS) and their row type. */

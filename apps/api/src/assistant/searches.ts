@@ -21,7 +21,7 @@ import type { ContactId, Instant, SystemActor, UserActor } from '@realty/core/fo
 import { type Tx, lockContact, withTenantTx } from '@realty/db';
 import type { DisplayListing } from '@realty/core/listings';
 import { sql } from 'kysely';
-import { LISTING_COLS, type ListingRow, type MlsEligibility, clientView, mlsEligibility } from '../mls/eligibility.js';
+import { LISTING_COLS, type ListingRow, type MlsEligibility, clientView, mlsCitySpellings, mlsEligibility } from '../mls/eligibility.js';
 import { audit } from '../audit.js';
 import { queueOutboundInTx } from '../comms/index.js';
 import { asSystem, asUser } from '../comms/runtime.js';
@@ -156,12 +156,20 @@ function mlsMatchable(e: MlsEligibility, l: RawListing): boolean {
 const mlsEligibleSql = (e: MlsEligibility) =>
   sql`(l.source = 'team' OR (l.source = 'mls' AND l.display_allowed AND l.team_listing_id IS NULL AND l.mls_connection_id = ANY (${e.clientIds}::uuid[])))`;
 
-/** Location / price / beds narrowing for the MLS candidate query (500k rows per tenant); matchListing decides exactly. */
-function mlsPrefilter(c: SearchCriteria) {
+/**
+ * Location / price / beds narrowing for the MLS candidate query (500k rows per tenant); matchListing decides
+ * exactly. Plain-column equality only (RESO PostalCode is the 5-digit code; cities by their stored spelling,
+ * mlsCitySpellings), so the RLS-bound planner can use the 0041 indexes.
+ */
+async function mlsPrefilter(tx: Tx, c: SearchCriteria) {
   const parts = [sql`TRUE`];
   const zips = c.postalCodes ?? [];
-  const cities = (c.cities ?? []).map((x) => x.city.trim().toLowerCase());
-  if (zips.length > 0 || cities.length > 0) parts.push(sql`(left(l.postal_code, 5) = ANY (${zips}::text[]) OR lower(l.city) = ANY (${cities}::text[]))`);
+  const cities = await mlsCitySpellings(tx, (c.cities ?? []).map((x) => x.city));
+  const zip = sql`l.postal_code = ANY (${zips}::text[])`;
+  const city = sql`l.city = ANY (${cities}::text[])`;
+  if (zips.length > 0 && (c.cities?.length ?? 0) > 0) parts.push(sql`(${zip} OR ${city})`);
+  else if (zips.length > 0) parts.push(zip);
+  else if ((c.cities?.length ?? 0) > 0) parts.push(city);
   if (c.priceMinCents !== undefined) parts.push(sql`l.list_price_cents >= ${c.priceMinCents}`);
   if (c.priceMaxCents !== undefined) parts.push(sql`l.list_price_cents <= ${c.priceMaxCents}`);
   if (c.bedsMin !== undefined) parts.push(sql`l.beds >= ${c.bedsMin}`);
@@ -178,7 +186,7 @@ async function matchingListings(tx: Tx, c: SearchCriteria, limit: number, e: Mls
       ? { rows: [] as RawListing[] }
       : await sql<RawListing>`
     SELECT ${LCOLS} FROM listings l WHERE l.tenant_id = app.tenant_id() AND l.source = 'mls' AND l.status IN ('active','coming_soon')
-       AND ${mlsEligibleSql(e)} AND ${mlsPrefilter(c)}
+       AND ${mlsEligibleSql(e)} AND ${await mlsPrefilter(tx, c)}
      ORDER BY l.mls_modified_at DESC, l.id LIMIT 2000`.execute(tx);
   return [...team.rows, ...mls.rows].filter((l) => matchListing(c, facts(l)) && mlsMatchable(e, l)).slice(0, limit);
 }

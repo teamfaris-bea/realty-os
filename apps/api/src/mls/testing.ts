@@ -83,13 +83,15 @@ export function pagedFeed(pages: ResoLike[][], o: { fail?: () => Error | null } 
     push(p: ResoLike[]) {
       pages.push(p);
     },
-    async records(): Promise<MlsRecordPage> {
+    async records(_cursor: string | null, limit: number): Promise<MlsRecordPage> {
       f.calls += 1;
       const err = o.fail?.() ?? null;
       if (err) throw err;
-      const records = pages.shift() ?? [];
+      const page = pages.shift() ?? [];
+      const records = page.slice(0, limit);
+      if (page.length > limit) pages.unshift(page.slice(limit)); // the rest is the next read (like a real feed's limit)
       n += records.length;
-      return { records, cursor: `c${n}`, unpositioned: 0, more: false };
+      return { records, cursor: `c${n}`, unpositioned: 0, more: page.length > limit };
     },
   };
   return f;
