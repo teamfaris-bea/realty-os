@@ -423,7 +423,9 @@ describe('R-PERM-1 generated can() matrix: one case per DATA_MODEL §3 cell', ()
     const exercised = new Set<Action>();
     for (const row of MATRIX) for (const role of ROLE_COLUMNS) for (const s of ROWS[row.capability]!(role, row.cells[role])) exercised.add(s.action);
     const notInMatrix = ACTIONS.filter((a) => !exercised.has(a));
-    expect(notInMatrix.sort()).toEqual(['data.export', 'number.release', 'support.revoke']);
+    // Phase 2-3 actions are DATA_MODEL §8 rows (not §3); each module tests its own row.
+    const PHASE_2_3: Action[] = ['integration.view', 'integration.manage'];
+    expect(notInMatrix.filter((a) => !PHASE_2_3.includes(a)).sort()).toEqual(['data.export', 'number.release', 'support.revoke']);
   });
 });
 

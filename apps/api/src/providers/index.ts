@@ -34,6 +34,7 @@ import type {
   TranscriptionProvider,
 } from './types.js';
 import { webPushProvider } from './webpush.js';
+import { type FakeIntegrationAdapters, type IntegrationAdapters, createFakeIntegrations, selectIntegrations } from './integrations/index.js';
 
 export * from './types.js';
 export { FakeAi, FAKE_BAD_QUOTE, parseFakeSources } from './fake/ai.js';
@@ -44,6 +45,7 @@ export { LocalFsStorage, MemoryStorage, StorageKeyError, assertStorageKey } from
 export { S3Storage } from './s3/s3.js';
 export { SmtpAccountMailer, SmtpEmail } from './email/smtp.js';
 export { TwilioCarrierLookup, TwilioTelephony, announcementTwiml, bridgeTwiml } from './twilio/telephony.js';
+export type { FakeIntegrationAdapters, IntegrationAdapters } from './integrations/index.js';
 
 export interface Providers {
   telephony: TelephonyProvider;
@@ -59,6 +61,8 @@ export interface Providers {
   push: PushProvider;
   /** password reset / invite emails to users (not a contact communication, ARCHITECTURE §9) */
   accountMail: AccountMailer;
+  /** Phase 2-3 adapters (module 21 api/integrations): Meta, lead feeds, MLS, AVM, calendar, publishing, showings, PDF */
+  integrations: IntegrationAdapters;
 }
 
 /** The fakes with their concrete types, so tests can inspect outboxes and inject failures. */
@@ -74,6 +78,7 @@ export interface FakeProviders extends Providers {
   carrier: FakeCarrier;
   push: FakePush;
   accountMail: FakeAccountMailer;
+  integrations: FakeIntegrationAdapters;
 }
 
 export function createFakeProviders(opts: { clock?: Clock } = {}): FakeProviders {
@@ -90,6 +95,7 @@ export function createFakeProviders(opts: { clock?: Clock } = {}): FakeProviders
     carrier: new FakeCarrier(),
     push: new FakePush(),
     accountMail: new FakeAccountMailer(),
+    integrations: createFakeIntegrations(),
   };
 }
 
@@ -157,5 +163,6 @@ export function createProviders(config: Config, opts: { clock: Clock; fetch?: ty
       ...(opts.fetch ? { fetch: opts.fetch } : {}),
     });
   }
-  return { ...fakes, telephony, carrier, email, accountMail, ai, push, storage };
+  const integrations = selectIntegrations(config);
+  return { ...fakes, telephony, carrier, email, accountMail, ai, push, storage, integrations };
 }

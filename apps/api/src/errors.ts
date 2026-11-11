@@ -137,6 +137,12 @@ export const ERROR_STATUS = {
   EXCEPTION_NOT_REASSIGNABLE: 409, // the item is not about a lead (an appointment or task without a contact): nothing to reassign
   CONTACT_ON_DEAL: 409, // lane rule-coverage (E59, R-DATA-4): erasure refused while the person is on a deal; details = deal ids/stages
   DEAL_STILL_OPEN: 409, // lane rule-coverage (E59): the primary contact of an open deal is changed on the deal, not removed
+  // ---- api/integrations (module 21) ----
+  INTEGRATION_NOT_CONNECTABLE: 409, // this kind is not connected by OAuth (partner, keyed, or a later phase)
+  INTEGRATION_NOT_CONFIGURED: 409, // no platform app is configured for this provider on this deployment
+  CONNECTION_NOT_CONNECTABLE: 409, // the connection's status does not allow a (re)connect or change
+  CONNECTION_ACCOUNT_MISMATCH: 409, // a different external account is a new connection (R-INT-3)
+  LEAD_SOURCE_REQUIRED: 422, // an inbound channel needs a lead source before it can go live
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

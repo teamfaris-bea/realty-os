@@ -122,6 +122,8 @@ export const ACTIONS = [
   'data.export', // Exports (R-PERM-13; not a §3 row: Owner/Admin by default)
   'support.grant',
   'support.revoke',
+  'integration.view', // api/integrations: the Integrations admin page (Phase 2, DATA_MODEL §8)
+  'integration.manage', // api/integrations: create, rename, connect (OAuth start), disconnect (DATA_MODEL §8: ✅ 🔒 | ✅ 🔒)
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -223,6 +225,11 @@ export const AUDIT_ACTIONS = [
   'message.held_send', // api/comms: the sender tapped Send anyway on a message held because the client replied (E27); dispatch still checks it
   'message.held_cancel', // api/comms: the sender canceled a scheduled or held message
   'deal.contact_removed', // lane rule-coverage: the Owner removed a person from a deal before erasure (E59)
+  'integration.connect_started', // api/integrations: an Owner/Admin started an OAuth connect (R-INT-3)
+  'integration.connected', // api/integrations: the provider callback proved control and linked the account (system)
+  'integration.connect_refused', // api/integrations: the callback refused (E160 account not managed, live elsewhere, stale state)
+  'integration.disconnected', // api/integrations: an Owner/Admin disconnected; credential revoked in the same tx (R-INT-5)
+  'integration.changed', // api/integrations: rename or lead source of a connection
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -459,6 +466,10 @@ const MATRIX: Record<Action, ActionRule> = {
   // Grant support access: ✅ 🔒 | — …  Revoking only ever reduces access: Owner, no re-auth.
   'support.grant': { roles: { owner: ALL_REAUTH } },
   'support.revoke': { roles: { owner: ALL } },
+  // Phase 2 integrations (DATA_MODEL §8): Owner/Admin read; create, rename, connect and disconnect are 🔒.
+  // Linking an external account is never an Action: only the provider callback does it, as the system.
+  'integration.view': { roles: { owner: ALL, admin: ALL } },
+  'integration.manage': { roles: { owner: ALL_REAUTH, admin: ALL_REAUTH } },
 };
 
 const DENY_NOT_FOUND: CanResult = { ok: false, code: 'NOT_FOUND' };

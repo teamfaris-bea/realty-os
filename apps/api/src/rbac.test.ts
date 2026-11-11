@@ -146,7 +146,7 @@ describe('R-PERM-13 re-authentication on sensitive actions', () => {
     // the Phase 1 list: imports, role/member changes, erasure, export, number release, support grant,
     // brokerage identity, compliance loosening
     expect(new Set(sensitive.map(([, a]) => a))).toEqual(
-      new Set(['import.run', 'number.release', 'settings.compliance', 'settings.identity', 'member.invite', 'member.role', 'member.suspend', 'member.remove', 'contact.erase', 'data.export', 'support.grant']),
+      new Set(['import.run', 'number.release', 'settings.compliance', 'settings.identity', 'member.invite', 'member.role', 'member.suspend', 'member.remove', 'contact.erase', 'data.export', 'support.grant', 'integration.manage']),
     );
     for (const role of new Set(sensitive.map(([r]) => r))) {
       await h.su.query("UPDATE sessions SET reauthenticated_at = now() - interval '16 minutes' WHERE user_id = $1 AND revoked_at IS NULL", [users[role].userId]);
