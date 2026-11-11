@@ -1,14 +1,17 @@
 // The deployable web server (deploy/nginx.conf, run by the Dockerfile `web` stage) must send exactly
-// `webSecurityHeaders` on every response it serves for the web app (SECURITY §2.1). This test parses the
+// `webSecurityHeaders` on every response it serves for the web app (SECURITY §2.1), except the chat widget's
+// script (/widget/chat.js, module 37), which brokerages' websites load cross-origin and so gets
+// `widgetScriptHeaders` (the same set with Cross-Origin-Resource-Policy: cross-origin). This test parses the
 // nginx config, expands its `include`s through the files the Dockerfile copies into the image, applies
 // nginx's add_header inheritance rule (a level with any add_header of its own inherits none), and compares
-// the effective header set of every location with the single definition in security-headers.ts.
+// the effective header set of every location with the single definition in security-headers.ts. It also checks
+// that /api/ passes the API's own CORS through untouched (module 22's public chat routes answer it per route).
 /// <reference types="node" />
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { nginxSecurityHeadersConf, webSecurityHeaders } from '../security-headers.js';
+import { nginxSecurityHeadersConf, nginxWidgetHeadersConf, webSecurityHeaders, widgetScriptHeaders } from '../security-headers.js';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const read = (rel: string) => readFileSync(resolve(repo, rel), 'utf8');
@@ -130,13 +133,17 @@ function locations(server: Directive): LocationView[] {
   return out;
 }
 
-/** Problems with one nginx config: an empty list means every location sends exactly webSecurityHeaders. */
+/** The one location that serves the chat widget's script to other websites (module 37). */
+const WIDGET_SCRIPT = '= /widget/chat.js';
+/** The header set a content location must send: the widget's script gets widgetScriptHeaders, every other webSecurityHeaders. */
+const expectedFor = (path: string): Readonly<Record<string, string>> => (path === WIDGET_SCRIPT ? widgetScriptHeaders : webSecurityHeaders);
+
+/** Problems with one nginx config: an empty list means every location sends exactly its expected header set. */
 function headerProblems(conf: Directive[]): string[] {
   const problems: string[] = [];
   const servers = conf.filter((d) => d.name === 'server');
   if (servers.length === 0) problems.push('no server block');
   if (ownHeaders(conf).length > 0) problems.push('add_header at http level');
-  const want = new Map(Object.entries(webSecurityHeaders).map(([k, v]) => [k.toLowerCase(), v]));
   for (const s of servers) {
     // server-level add_header lines would be inherited by /api/ (a second, conflicting CSP on API responses)
     if (ownHeaders(s.block ?? []).length > 0) problems.push('server-level add_header (would reach /api/)');
@@ -147,6 +154,7 @@ function headerProblems(conf: Directive[]): string[] {
         if (l.headers.length > 0) problems.push(`${l.path}: proxied location adds ${l.headers.map((h) => h.name).join(', ')}`);
         continue;
       }
+      const want = new Map(Object.entries(expectedFor(l.path)).map(([k, v]) => [k.toLowerCase(), v]));
       const seen = new Map<string, Header>();
       for (const h of l.headers) {
         const k = h.name.toLowerCase();
@@ -158,7 +166,7 @@ function headerProblems(conf: Directive[]): string[] {
         const h = seen.get(k);
         if (!h) problems.push(`${l.path}: missing ${k}`);
         else {
-          if (h.value !== v) problems.push(`${l.path}: ${k} differs from webSecurityHeaders`);
+          if (h.value !== v) problems.push(`${l.path}: ${k} differs from ${l.path === WIDGET_SCRIPT ? 'widgetScriptHeaders' : 'webSecurityHeaders'}`);
           if (!h.always) problems.push(`${l.path}: ${k} lacks "always" (error responses would miss it)`);
         }
       }
@@ -177,20 +185,22 @@ const includeFromImage = (path: string) => {
 describe('deploy/nginx.conf sends exactly webSecurityHeaders (SECURITY §2.1)', () => {
   const conf = parse(read('deploy/nginx.conf'), includeFromImage);
 
-  it('the Dockerfile web stage installs deploy/nginx.conf and the generated header snippet', () => {
+  it('the Dockerfile web stage installs deploy/nginx.conf and the generated header snippets', () => {
     expect(files.get('/etc/nginx/templates/default.conf.template')).toBe('deploy/nginx.conf');
     expect([...files.values()]).toContain('deploy/security-headers.conf');
+    expect([...files.values()]).toContain('deploy/widget-security-headers.conf');
   });
 
-  it('deploy/security-headers.conf is exactly the text generated from security-headers.ts (node deploy/render-security-headers.mjs)', () => {
+  it('deploy/security-headers.conf and deploy/widget-security-headers.conf are exactly the text generated from security-headers.ts (node deploy/render-security-headers.mjs)', () => {
     expect(read('deploy/security-headers.conf')).toBe(nginxSecurityHeadersConf());
+    expect(read('deploy/widget-security-headers.conf')).toBe(nginxWidgetHeadersConf());
   });
 
   it('every content location (HTML, assets, SPA fallback, health) has the full header set, names and values, with always', () => {
     expect(headerProblems(conf)).toEqual([]);
     const locs = locations(conf.find((d) => d.name === 'server')!);
     const content = locs.filter((l) => !l.proxied);
-    expect(content.map((l) => l.path).sort()).toEqual(['/', '/assets/', '= /healthz']);
+    expect(content.map((l) => l.path).sort()).toEqual(['/', '/assets/', '= /healthz', WIDGET_SCRIPT]);
     for (const l of content) {
       const csp = l.headers.find((h) => h.name === 'Content-Security-Policy')!.value;
       expect(csp).toBe(webSecurityHeaders['Content-Security-Policy']);
@@ -203,6 +213,30 @@ describe('deploy/nginx.conf sends exactly webSecurityHeaders (SECURITY §2.1)', 
     const api = locations(conf.find((d) => d.name === 'server')!).filter((l) => l.proxied);
     expect(api.map((l) => l.path)).toEqual(['/api/']);
     expect(api[0]!.headers).toEqual([]);
+  });
+
+  it('module 37: only /widget/chat.js is Cross-Origin-Resource-Policy: cross-origin (brokerages\' websites load it); every other location stays same-origin; the script is served as itself, never the SPA fallback', () => {
+    const server = conf.find((d) => d.name === 'server')!;
+    const corp = (l: LocationView) => l.headers.find((h) => h.name.toLowerCase() === 'cross-origin-resource-policy')?.value;
+    const content = locations(server).filter((l) => !l.proxied);
+    expect(Object.fromEntries(content.map((l) => [l.path, corp(l)]))).toEqual({ '= /healthz': 'same-origin', [WIDGET_SCRIPT]: 'cross-origin', '/assets/': 'same-origin', '/': 'same-origin' });
+    expect(widgetScriptHeaders).toEqual({ ...webSecurityHeaders, 'Cross-Origin-Resource-Policy': 'cross-origin' });
+    const widget = server.block!.find((d) => d.name === 'location' && d.args.join(' ') === WIDGET_SCRIPT)!.block!;
+    // a missing script is a 404, never index.html served as a script
+    expect(widget.find((d) => d.name === 'try_files')?.args).toEqual(['$uri', '=404']);
+    expect(locations(server).find((l) => l.path === WIDGET_SCRIPT)!.headers.find((h) => h.name === 'Cache-Control')?.value).toBe('public, max-age=300');
+  });
+
+  it('module 22: /api/ passes the API\'s CORS through unchanged: nginx adds, hides or rewrites no Access-Control-* header, answers no preflight itself, and keeps the Origin the API checks', () => {
+    const server = conf.find((d) => d.name === 'server')!;
+    const api = server.block!.find((d) => d.name === 'location' && d.args.join(' ') === '/api/')!.block!;
+    const flat = (b: Directive[]): Directive[] => b.flatMap((d) => [d, ...flat(d.block ?? [])]);
+    const all = flat(api);
+    expect(all.filter((d) => /^(add_header|more_set_headers|more_clear_headers|proxy_hide_header|proxy_ignore_headers|proxy_pass_header)$/.test(d.name))).toEqual([]);
+    expect(all.filter((d) => /^(if|return|limit_except)$/.test(d.name))).toEqual([]);
+    expect(all.filter((d) => d.name === 'proxy_set_header' && /^origin$/i.test(d.args[0] ?? ''))).toEqual([]);
+    expect(JSON.stringify(flat(server.block!))).not.toMatch(/access-control/i);
+    expect(all.some((d) => d.name === 'proxy_pass')).toBe(true);
   });
 
   it('keeps the caching rules: hashed assets immutable, everything else (index.html) no-store; the SPA falls back to /index.html', () => {
@@ -251,6 +285,19 @@ describe('the container stack (Dockerfile, docker-compose.prod.yml, deploy/nginx
 
   it('hashed assets send Cache-Control once (no `expires`, which added a second Cache-Control header)', () => {
     for (const d of server.block!) if (d.name === 'location') expect(d.block!.some((x) => x.name === 'expires'), d.args.join(' ')).toBe(false);
+  });
+
+  it('module 37: the image holds the chat widget script: the build stage builds vite.widget.config.ts (dist/widget/chat.js) after the app, and the web stage serves apps/web/dist', () => {
+    const build = stage('build');
+    const app = build.indexOf('exec vite build \\');
+    const widget = build.indexOf('exec vite build -c vite.widget.config.ts');
+    expect(app).toBeGreaterThan(0);
+    // after the app build, which empties dist/ (the widget build empties only dist/widget)
+    expect(widget).toBeGreaterThan(app);
+    const cfg = read('apps/web/vite.widget.config.ts');
+    expect(cfg).toMatch(/outDir: resolve\(here, 'dist\/widget'\)/);
+    expect(cfg).toMatch(/fileName: \(\) => 'chat\.js'/);
+    expect(stage('web')).toMatch(/^COPY --from=build \/app\/apps\/web\/dist \/usr\/share\/nginx\/html$/m);
   });
 
   it('the web image serves no source maps (/assets/*.js.map was public: the whole client source)', () => {

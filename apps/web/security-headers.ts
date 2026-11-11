@@ -53,24 +53,49 @@ export const webSecurityHeaders: Readonly<Record<string, string>> = {
 };
 
 /**
- * The nginx `add_header` lines that send `webSecurityHeaders` (with `always`, so error pages carry them
- * too). deploy/security-headers.conf is exactly this text, written by `node deploy/render-security-headers.mjs`;
- * src/security-headers.nginx.test.ts fails when that file or deploy/nginx.conf drifts from this policy.
+ * The website chat widget's script, /widget/chat.js (module 37, built by vite.widget.config.ts), is loaded by the
+ * brokerages' own websites with a plain <script src>: a cross-origin no-cors request, which
+ * Cross-Origin-Resource-Policy: same-origin would block. That one path gets the same headers with CORP
+ * cross-origin; every other response stays same-origin. (The widget's calls to the API are CORS requests that the
+ * API answers itself, per route, limited to each widget's allowed websites.)
  */
-export function nginxSecurityHeadersConf(): string {
-  const lines = Object.entries(webSecurityHeaders).map(([name, value]) => {
+export const widgetScriptHeaders: Readonly<Record<string, string>> = {
+  ...webSecurityHeaders,
+  'Cross-Origin-Resource-Policy': 'cross-origin',
+};
+
+/** `add_header` lines for a header set (with `always`, so error pages carry them too), after a header comment. */
+function nginxHeaders(headers: Readonly<Record<string, string>>, comment: readonly string[]): string {
+  const lines = Object.entries(headers).map(([name, value]) => {
     // a value is written inside "…": refuse anything nginx would interpret (quotes, escapes, variables)
     if (!/^[A-Za-z0-9-]+$/.test(name) || /["\\$\r\n{}]/.test(value)) throw new Error(`${name} cannot be written as an nginx header`);
     return `add_header ${name} "${value}" always;`;
   });
-  return [
+  return [...comment, ...lines, ''].join('\n');
+}
+
+/**
+ * The nginx `add_header` lines that send `webSecurityHeaders`. deploy/security-headers.conf is exactly this text,
+ * written by `node deploy/render-security-headers.mjs`; src/security-headers.nginx.test.ts fails when that file or
+ * deploy/nginx.conf drifts from this policy.
+ */
+export function nginxSecurityHeadersConf(): string {
+  return nginxHeaders(webSecurityHeaders, [
     '# GENERATED from apps/web/security-headers.ts (webSecurityHeaders) by `node deploy/render-security-headers.mjs`.',
     '# Do not edit: apps/web/src/security-headers.nginx.test.ts fails when this file drifts from that policy.',
     '# Included by every content location of deploy/nginx.conf (nginx drops inherited add_header lines in a',
     '# location that sets its own, so each location includes this file instead of relying on inheritance).',
-    ...lines,
-    '',
-  ].join('\n');
+  ]);
+}
+
+/** The same for `widgetScriptHeaders`: deploy/widget-security-headers.conf, included by the /widget/chat.js location only. */
+export function nginxWidgetHeadersConf(): string {
+  return nginxHeaders(widgetScriptHeaders, [
+    '# GENERATED from apps/web/security-headers.ts (widgetScriptHeaders) by `node deploy/render-security-headers.mjs`.',
+    '# Do not edit: apps/web/src/security-headers.nginx.test.ts fails when this file drifts from that policy.',
+    '# Included only by the /widget/chat.js location of deploy/nginx.conf: the chat widget script that brokerages\'',
+    '# websites load cross-origin (Cross-Origin-Resource-Policy: cross-origin); every other location stays same-origin.',
+  ]);
 }
 
 /** The <meta> tag the build injects at the top of <head>, before any script or stylesheet. */

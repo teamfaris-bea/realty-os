@@ -30,11 +30,12 @@ RUN --mount=type=secret,id=ca,required=false \
     if [ -f /run/secrets/ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/ca; fi; \
     corepack prepare --activate && pnpm install --frozen-lockfile
 
-# ---- build (typecheck + compile every package, then the web bundle) ----
+# ---- build (typecheck + compile every package, then the web bundle and the chat widget's /widget/chat.js) ----
 FROM deps AS build
 COPY . .
 RUN pnpm --filter @realty/core --filter @realty/db --filter @realty/api build \
- && pnpm --filter @realty/web exec vite build
+ && pnpm --filter @realty/web exec vite build \
+ && pnpm --filter @realty/web exec vite build -c vite.widget.config.ts
 
 # ---- production dependencies of the API only ----
 FROM base AS prod-deps
@@ -71,6 +72,7 @@ FROM nginx:1.27-alpine AS web
 COPY deploy/nginx.conf /etc/nginx/templates/default.conf.template
 # generated from apps/web/security-headers.ts (node deploy/render-security-headers.mjs); included by nginx.conf
 COPY deploy/security-headers.conf /etc/nginx/snippets/security-headers.conf
+COPY deploy/widget-security-headers.conf /etc/nginx/snippets/widget-security-headers.conf
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html
 # source maps are not served publicly (they hold the whole client source); keep them from the build stage if needed
 RUN find /usr/share/nginx/html -name '*.map' -delete
