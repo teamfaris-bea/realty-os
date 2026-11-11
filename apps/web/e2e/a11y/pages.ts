@@ -79,6 +79,8 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   { path: '/admin/tags', roles: ADMINS, url: at('/admin/tags') },
   { path: '/admin/fields', roles: ADMINS, url: at('/admin/fields') },
   { path: '/admin/stage-labels', roles: ADMINS, url: at('/admin/stage-labels') },
+  // module 41's calendar page (lane calendar)
+  { path: '/settings/calendar', roles: ALL, url: at('/settings/calendar') },
 ];
 
 /** Screens outside the app frame (signed out). */
