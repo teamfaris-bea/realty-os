@@ -22,6 +22,7 @@ import { AppError } from '../errors.js';
 import { PLAYBOOK_STEP } from '../worker/contracts.js';
 import { enqueueTyped } from '../worker/registry.js';
 import { contactCore } from './repos/context.js';
+import { stepCapabilities } from '../nurture/capabilities.js'; // module 26 (flagged): review_requests once its pack is cleared
 import * as P from './repos/playbooks.js';
 import { type Anchor, CHECK_BACK_MS, anchorBelongsTo, anchorFacts, buildStep } from './steps.js';
 import type { AssistantDeps, StepOutcome } from './types.js';
@@ -148,7 +149,7 @@ export async function executePlaybookStepInTx(tx: Tx, deps: AssistantDeps, tenan
       }
       existingRunId = run.id; // rebuilt after a version migration
     }
-    const plan = planNextStep({ state: 'active', steps, currentStep: current, now, anchors: { enrolledAt: e.createdAt, previousStepAt, eventAt: anchor.eventAt }, facts, capabilities: new Set() });
+    const plan = planNextStep({ state: 'active', steps, currentStep: current, now, anchors: { enrolledAt: e.createdAt, previousStepAt, eventAt: anchor.eventAt }, facts, capabilities: await stepCapabilities(tx) });
     switch (plan.action) {
       case 'none':
         return { kind: 'noop', reason: plan.reason };

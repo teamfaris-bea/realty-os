@@ -190,7 +190,7 @@ export async function createDraft(actor: UserActor, input: CreateInput, deps: Bu
     let approved = false;
     if (input.kind === 'enroll') {
       playbook = await P.playbookById(tx, params['playbookId']!);
-      if (!playbook || playbook.status !== 'active' || playbook.kind === 'new_lead_response') throw new AppError('NOT_FOUND');
+      if (!playbook || playbook.status !== 'active' || playbook.kind === 'new_lead_response' || playbook.kind === 'trigger' || playbook.kind === 'voice_answering') throw new AppError('NOT_FOUND');
       approved = (await P.approvedVersionOf(tx, playbook.id)) !== null;
     }
     const ctx = isSendKind(input.kind) ? await sendContext(tx, input.kind, actor.userId) : null;

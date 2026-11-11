@@ -21,6 +21,8 @@ import { AppError } from '../errors.js';
 import { assertAssignable, iso, isoOrNull } from './common.js';
 import type { CreateListingBody, CreateShowingBody, FeedbackBody, ListingDetailSchema, ListingSchema, ListingsQuery, ShowingSchema, UpdateListingBody } from './schemas.js';
 import { assertRefsVisible } from './tasks.js';
+import { enqueueTeamListingChange } from '../nurture/detect.js';
+import type { ListingStatus } from '@realty/core/nurture';
 
 export type ListingView = z.infer<typeof ListingSchema>;
 export type ListingDetail = z.infer<typeof ListingDetailSchema>;
@@ -172,6 +174,8 @@ export async function updateListing(tx: Tx, id: string, b: z.infer<typeof Update
   const priceChanged = b.listPriceCents !== undefined && String(b.listPriceCents ?? '') !== String(c.list_price_cents ?? '');
   const statusChanged = b.status !== undefined && b.status !== c.status;
   if (priceChanged || statusChanged) await enqueueMatch(tx, id);
+  // module 26 (flagged): a price decrease or a return to market on a followed home is a trigger fact (R-NURT-2)
+  await enqueueTeamListingChange(tx, { listingId: id, before: { status: c.status as ListingStatus, priceCents: c.list_price_cents === null ? null : Number(c.list_price_cents) }, priceChanged, statusChanged });
 }
 
 export async function addListingContact(tx: Tx, listingId: string, contactId: string, role: string): Promise<void> {

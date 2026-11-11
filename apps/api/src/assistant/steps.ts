@@ -29,6 +29,7 @@ import { resolvedPolicy } from '../comms/gateInput.js';
 import * as A from './repos/actions.js';
 import { type ContactCore, firstNameOf, identityFacts, latestInquiry } from './repos/context.js';
 import * as P from './repos/playbooks.js';
+import { triggerAnniversaryCovered } from '../nurture/repos.js';
 import type { AssistantDeps, StepOutcome } from './types.js';
 
 /** How long after queuing a step the enrollment is looked at again (to advance once the message went out). */
@@ -173,6 +174,12 @@ export async function buildStep(tx: Tx, deps: AssistantDeps, tenantId: string, b
   if (step.channel === 'inbound_channel' && b.sendChannel !== 'web_chat') {
     await upsertRun(tx, b, runId, 'skipped_ineligible', null);
     return { kind: 'skipped', stepKey: step.stepKey, reason: 'STEP_CHANNEL_UNAVAILABLE' };
+  }
+  // module 26 (F7): one anniversary note a year. A post-closing version that still has an anniversary step (v1)
+  // skips it visibly when the after-closing alerts trigger already covers this year's anniversary.
+  if (step.intent === 'home_anniversary' && (await triggerAnniversaryCovered(tx, contact.id, now))) {
+    await upsertRun(tx, b, runId, 'skipped_ineligible', null);
+    return { kind: 'skipped', stepKey: step.stepKey, reason: 'ANNIVERSARY_ALREADY_SENT' };
   }
   let text = rendered.text;
   if (step.channel === 'email' && step.purpose === 'marketing') text = `${text}\n${EMAIL_UNSUBSCRIBE_LINE}`;

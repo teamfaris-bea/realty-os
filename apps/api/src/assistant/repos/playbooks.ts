@@ -1,10 +1,11 @@
 // Playbooks, versions, approvals, enrollments and step runs (DATA_MODEL §1.6). Versions are frozen once
 // they leave draft and only approved versions run (DB triggers, R-AST-4); step runs are system-written.
-import type { PlaybookStep, Tone } from '@realty/core/assistant';
+import type { PlaybookContent, PlaybookStep, Tone } from '@realty/core/assistant';
 import type { Instant } from '@realty/core/foundation';
 import { instantFromDate, toIso } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
+import { AppError } from '../../errors.js';
 
 export interface PlaybookRow {
   id: string;
@@ -75,13 +76,13 @@ export async function approvedVersionOf(tx: Tx, playbookId: string): Promise<Ver
   return r.rows[0] ? version(r.rows[0]) : null;
 }
 
-export async function insertVersion(tx: Tx, v: { id: string; playbookId: string; versionNo: number; steps: readonly PlaybookStep[]; tone: Tone; sha: string; userId: string }): Promise<void> {
+export async function insertVersion(tx: Tx, v: { id: string; playbookId: string; versionNo: number; steps: readonly PlaybookStep[] | PlaybookContent; tone: Tone; sha: string; userId: string }): Promise<void> {
   await sql`
     INSERT INTO playbook_versions (tenant_id, id, playbook_id, version_no, steps, tone, content_sha256, status, created_by_user_id)
     VALUES (app.tenant_id(), ${v.id}, ${v.playbookId}, ${v.versionNo}, ${JSON.stringify(v.steps)}::jsonb, ${JSON.stringify(v.tone)}::jsonb, ${v.sha}, 'draft', ${v.userId})`.execute(tx);
 }
 
-export async function replaceDraft(tx: Tx, id: string, v: { steps: readonly PlaybookStep[]; tone: Tone; sha: string }): Promise<void> {
+export async function replaceDraft(tx: Tx, id: string, v: { steps: readonly PlaybookStep[] | PlaybookContent; tone: Tone; sha: string }): Promise<void> {
   await sql`
     UPDATE playbook_versions SET steps = ${JSON.stringify(v.steps)}::jsonb, tone = ${JSON.stringify(v.tone)}::jsonb, content_sha256 = ${v.sha}
      WHERE tenant_id = app.tenant_id() AND id = ${id} AND status = 'draft'`.execute(tx);
@@ -187,6 +188,10 @@ export async function enrollmentsToRevoke(tx: Tx, versionId: string, limit: numb
 }
 
 export async function insertEnrollment(tx: Tx, e: { id: string; playbookId: string; versionId: string; contactId: string; enrolledBy: 'user' | 'new_lead' | 'deal_closed' | 'bulk' | 'stage_change'; userId: string | null; dueAt: Instant | null; anchor: { kind: 'deal' | 'appointment' | 'task'; id: string } | null }): Promise<void> {
+  // module 26 (R-NURT-1): trigger and voice playbooks hold one content object and are never enrolled into; every
+  // enrollment path (a person, bulk, stage change, deal closed) reaches this insert, so it is refused here once
+  const k = await sql<{ t: string }>`SELECT jsonb_typeof(steps) AS t FROM playbook_versions WHERE tenant_id = app.tenant_id() AND id = ${e.versionId}`.execute(tx);
+  if (k.rows[0] && k.rows[0].t !== 'array') throw new AppError('PLAYBOOK_INVALID', { issues: [{ code: 'NOT_ENROLLABLE' }] });
   await sql`
     INSERT INTO playbook_enrollments (tenant_id, id, playbook_id, playbook_version_id, contact_id, enrolled_by, enrolled_by_user_id, state, current_step, next_step_due_at,
       anchor_kind, anchor_id)
