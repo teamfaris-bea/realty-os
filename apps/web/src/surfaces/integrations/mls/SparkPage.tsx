@@ -246,7 +246,8 @@ function KeyForm({ replacing, defaultScheme, pending, busy, onSave }: { replacin
             ))}
           </select>
           <p id={`${schemeId}-hint`} className="text-[14px] text-ink-muted">
-            VERIFY with Spark: their documentation shows both Bearer and OAuth. Keep the default unless Spark tells you otherwise.
+            {/* VERIFY with Spark which scheme the CRM's key takes (markers stay in comments; the Owner sees plain words) */}
+            Not yet confirmed with Spark: their documentation shows both Bearer and OAuth. Keep the default unless Spark tells you otherwise.
           </p>
         </div>
         <div>

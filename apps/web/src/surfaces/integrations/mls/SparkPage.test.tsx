@@ -103,7 +103,7 @@ describe('Connect MLS (Spark) page', () => {
     expect(document.body.textContent).not.toContain(LIVE_CALLS_OFF);
   });
 
-  it('the key form: password input, no autocomplete or spellcheck, no name, Bearer by default, the hint and VERIFY note', async () => {
+  it('the key form: password input, no autocomplete or spellcheck, no name, Bearer by default, the hint and the not-yet-confirmed note', async () => {
     mount(new FakeFetch().on(`GET ${BASE}`, { status: 200, body: overview() }));
     await screen.findByRole('heading', { level: 2, name: 'Save a Spark key' });
     const t = tokenInput();
@@ -115,7 +115,7 @@ describe('Connect MLS (Spark) page', () => {
     const scheme = screen.getByLabelText('Auth scheme') as HTMLSelectElement;
     expect(scheme.value).toBe('Bearer');
     expect(within(scheme).getAllByRole('option').map((o) => o.textContent)).toEqual(['Bearer (default)', 'OAuth']);
-    expect(scheme).toHaveAccessibleDescription(/VERIFY with Spark/);
+    expect(scheme).toHaveAccessibleDescription(/Not yet confirmed with Spark/);
     expect(await violations()).toEqual([]);
   });
 

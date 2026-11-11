@@ -156,3 +156,21 @@ describe('Integrations page', () => {
     });
   }
 });
+
+describe('internal markers never reach the page', () => {
+  // VERIFY / VERIFY WITH COUNSEL markers stay in code comments and docs; the Owner sees plain words
+  const spark = { status: 200, body: { provider: 'spark', liveCalls: false, sentence: 'Live MLS calls are turned off on this deployment.', authSchemeDefault: 'Bearer', connection: { id: ID.mls, status: 'connected', statusSentence: 'Connected.', keyLabel: 'CRM key', credentialSaved: true, lastResult: 'CONNECTED', connectedAt: null } } };
+  const mlsBody = { connections: [{ id: ID.mls, displayName: 'Test MLS feed', status: 'connected', statusSentence: 'Connected.', lastSyncedAt: null, nextSyncAt: null, mlsDataAsOf: 'MLS data as of never', feedStale: true, clientDisplay: false, clientDisplaySentence: 'MLS listings are not shown to clients: the licence pack is not counsel-reviewed.', licensePack: { values: [], reviewedByCounselAt: null, unreviewedCount: 9, sentence: '' } }] };
+  const pages: [string, () => FakeFetch, string][] = [
+    ['/admin/integrations', () => new FakeFetch().on('GET /admin/integrations', { status: 200, body: integrations({ messengerRow: 'live' }) }), 'Counsel review'],
+    ['/admin/integrations/mls', () => new FakeFetch().on('GET /admin/mls', { status: 200, body: mlsBody }).on('GET /admin/integrations/mls/spark', spark), 'Replace the Spark key'],
+    ['/admin/web-chat', () => new FakeFetch().on('GET /admin/web-chat/widgets', { status: 200, body: { widgets: [] } }).on('GET /lead-sources', { status: 200, body: { sources: [{ id: ID.source, name: 'Website', active: true }] } }), 'Add a chat widget'],
+  ];
+  for (const [path, fake, ready] of pages) {
+    it(`${path} renders no "VERIFY" marker, in text or in attributes`, async () => {
+      mount(fake(), path);
+      await screen.findByRole('heading', { level: 2, name: ready });
+      expect(document.body.innerHTML).not.toMatch(/VERIFY/i);
+    });
+  }
+});
