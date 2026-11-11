@@ -12,6 +12,7 @@ import { recomputeExceptions } from '../accountability/exceptions.js';
 import { systemActor } from '../worker/systemActor.js';
 import type { EnvelopeService } from '../crypto/envelope.js';
 import { materializeTenant, membersWithFeedWork } from '../workspace/feedJob.js';
+import { runScoreboardRollup } from '../accountability/scoreboardRollup.js';
 
 export const MIGRATIONS_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../packages/db/migrations');
 
@@ -81,6 +82,25 @@ export async function materializeAll(database: Database, envelope: EnvelopeServi
       members += (await materializeTenant(t, work, { db: database, envelope, ids }, Infinity)).length;
     }
     out.push({ tenantId: t, ms: performance.now() - t0, members });
+  }
+  return out;
+}
+
+/**
+ * Runs the scoreboard.rollup job (0027) for each tenant until the backfill is done: the first run takes the
+ * horizon sample, later runs roll every closed day up to it (as the worker does every 10 min).
+ */
+export async function rollupAll(database: Database, tenantIds: readonly string[]): Promise<{ tenantId: string; ms: number; days: number }[]> {
+  const out: { tenantId: string; ms: number; days: number }[] = [];
+  for (const t of tenantIds) {
+    const t0 = performance.now();
+    let days = 0;
+    for (let k = 0; k < 4; k++) {
+      const r = await runScoreboardRollup((fn) => withTenantTx(systemActor(t as TenantId, 'worker'), (tx) => fn(tx), { db: database }), { maxCalls: 20 });
+      days += r.daysRolled;
+      if (k > 0 && r.daysRolled === 0) break;
+    }
+    out.push({ tenantId: t, ms: performance.now() - t0, days });
   }
   return out;
 }

@@ -5,7 +5,7 @@ import { createDatabase } from '@realty/db';
 import { hashPassword } from '../auth/password.js';
 import { localKek } from '../crypto/kek.js';
 import { EnvelopeService } from '../crypto/envelope.js';
-import { materializeAll, recomputeAll, loadUrls, recreateDatabase } from './db.js';
+import { materializeAll, recomputeAll, loadUrls, recreateDatabase, rollupAll } from './db.js';
 import { LOAD_PASSWORD, defaultSpec, generateLoad, loadUuid } from './generate.js';
 
 export function argValue(args: readonly string[], name: string): string | undefined {
@@ -33,7 +33,10 @@ export async function seedLoad(o: { db: string; contacts: number; log: (s: strin
     // the feed.materialize job catching up after the bulk load (every member's first materialization)
     const feed = await materializeAll(database, new EnvelopeService(kekFromEnv()), spec.tenants.map((t) => loadUuid(t.slug, 'tenant')));
     for (const r of feed) o.log(`feed materialized ${r.tenantId}: ${r.members} members in ${r.ms.toFixed(0)} ms`);
-    return { spec, gen, recompute: rec, feed, urls };
+    // the scoreboard.rollup job's backfill (0027): every closed day of the window rolled up
+    const roll = await rollupAll(database, spec.tenants.map((t) => loadUuid(t.slug, 'tenant')));
+    for (const r of roll) o.log(`scoreboard rollup ${r.tenantId}: ${r.days} days in ${r.ms.toFixed(0)} ms`);
+    return { spec, gen, recompute: rec, feed, roll, urls };
   } finally {
     await database.close();
   }
