@@ -83,7 +83,7 @@ describe('chat widget adversarial (module 37)', () => {
     let release: () => void = () => undefined;
     const api: ChatApi = {
       start: vi.fn(async () => ({ ok: true as const, data: { token: TOKEN, messages: [], cursor: null } })),
-      send: vi.fn((_t: string, body: string) => new Promise((ok) => (release = () => ok({ ok: true as const, data: { message: { id: 's1', from: 'visitor' as const, body, at: '2026-11-11T17:00:00Z' } } })))),
+      send: vi.fn<ChatApi['send']>((_t, body) => new Promise((ok) => (release = () => ok({ ok: true, data: { message: { id: 's1', from: 'visitor', body, at: '2026-11-11T17:00:00Z' } } })))),
       poll: vi.fn(async () => ({ ok: true as const, data: { messages: [], cursor: null, ended: false } })),
     };
     const w = new ChatWidget(CFG, { api, storage: null, setTimer: () => 0, clearTimer: () => undefined });
