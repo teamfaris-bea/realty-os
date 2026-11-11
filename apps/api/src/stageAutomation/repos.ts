@@ -79,17 +79,17 @@ export async function contactRow(tx: Tx, contactId: string): Promise<ContactRow>
 }
 
 /**
- * Active playbooks naming `toStage` that could cover a contact owned by `ownerUserId` (team playbooks,
+ * Active playbooks naming the event's stage that could cover a contact owned by `ownerUserId` (team playbooks,
  * and the owner's own agent playbook), as they were configured when the stage was entered: a playbook
  * changed after the event (its stage set later, renamed, retired) does not reach back to it.
  */
-export async function candidatePlaybooks(tx: Tx, toStage: string, ownerUserId: string | null, enteredAt: Instant): Promise<StagePlaybook[]> {
+export async function candidatePlaybooks(tx: Tx, stageEventId: string, ownerUserId: string | null): Promise<StagePlaybook[]> {
   const r = await sql<{ id: string; name: string; scope: 'team' | 'agent'; owner_user_id: string | null; approved: string | null }>`
     SELECT p.id, p.name, p.scope, p.owner_user_id,
            (SELECT v.id FROM playbook_versions v WHERE v.tenant_id = p.tenant_id AND v.playbook_id = p.id AND v.status = 'approved') AS approved
-      FROM playbooks p
-     WHERE p.tenant_id = app.tenant_id() AND p.status = 'active' AND p.kind <> 'new_lead_response'
-       AND p.auto_enroll_stage = ${toStage} AND p.updated_at <= ${toIso(enteredAt)}::timestamptz
+      FROM contact_stage_events e
+      JOIN playbooks p ON p.tenant_id = e.tenant_id AND p.auto_enroll_stage = e.to_stage AND p.updated_at <= e.occurred_at
+     WHERE e.tenant_id = app.tenant_id() AND e.id = ${stageEventId} AND p.status = 'active' AND p.kind <> 'new_lead_response'
        AND (p.scope = 'team' OR (p.scope = 'agent' AND p.owner_user_id = ${ownerUserId}::uuid))
      ORDER BY p.id`.execute(tx);
   return r.rows.map((x) => ({ id: x.id, name: x.name, scope: x.scope, ownerUserId: x.owner_user_id, approvedVersionId: x.approved }));
@@ -128,13 +128,18 @@ export async function pendingStageEvents(tx: Tx, since: Instant, limit: number):
   return r.rows.map((x) => x.id);
 }
 
-/** A merge copy (see pendingStageEvents): the request path never meets one, the job re-checks it. */
-export async function isMergeCopy(tx: Tx, e: StageEventRow): Promise<boolean> {
+/**
+ * A merge copy (see pendingStageEvents): the request path never meets one, the job re-checks it. Compared
+ * in SQL against the event row itself (timestamps keep their microseconds; a JS Date would not).
+ */
+export async function isMergeCopy(tx: Tx, eventId: string): Promise<boolean> {
   const r = await sql<{ x: boolean }>`
-    SELECT EXISTS (SELECT 1 FROM contact_stage_events o JOIN contacts l ON l.tenant_id = o.tenant_id AND l.id = o.contact_id
-                    WHERE o.tenant_id = app.tenant_id() AND l.merged_into_contact_id = ${e.contactId} AND o.occurred_at = ${toIso(e.occurredAt)}::timestamptz
-                      AND o.to_stage = ${e.toStage} AND o.from_stage IS NOT DISTINCT FROM ${e.fromStage}
-                      AND o.actor_kind = ${e.actorKind} AND o.actor_user_id IS NOT DISTINCT FROM ${e.actorUserId}::uuid) AS x`.execute(tx);
+    SELECT EXISTS (SELECT 1 FROM contact_stage_events e
+                     JOIN contact_stage_events o ON o.tenant_id = e.tenant_id AND o.id <> e.id AND o.occurred_at = e.occurred_at
+                      AND o.to_stage = e.to_stage AND o.from_stage IS NOT DISTINCT FROM e.from_stage
+                      AND o.actor_kind = e.actor_kind AND o.actor_user_id IS NOT DISTINCT FROM e.actor_user_id
+                     JOIN contacts l ON l.tenant_id = o.tenant_id AND l.id = o.contact_id AND l.merged_into_contact_id = e.contact_id
+                    WHERE e.tenant_id = app.tenant_id() AND e.id = ${eventId}) AS x`.execute(tx);
   return r.rows[0]?.x === true;
 }
 

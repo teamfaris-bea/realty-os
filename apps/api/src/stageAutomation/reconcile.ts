@@ -132,10 +132,10 @@ export async function reconcileStageEventInTx(tx: Tx, actor: SystemActor, eventI
   await lockContact(tx, e.contactId as ContactId);
   const prior = await R.decisionOf(tx, eventId);
   if (prior) return { automation: outcomeOf(prior), decided: false, enrollmentId: prior.enrollmentId };
-  if (e.actorKind === 'user' && (await R.isMergeCopy(tx, e))) return { automation: null, decided: false, enrollmentId: null };
+  if (e.actorKind === 'user' && (await R.isMergeCopy(tx, e.id))) return { automation: null, decided: false, enrollmentId: null };
 
   const contact = await R.contactRow(tx, e.contactId);
-  const candidates = await R.candidatePlaybooks(tx, e.toStage, contact.ownerUserId, e.occurredAt);
+  const candidates = await R.candidatePlaybooks(tx, e.id, contact.ownerUserId);
   if (candidates.length === 0) return { automation: null, decided: false, enrollmentId: null };
   const live = (await P.liveEnrollmentOf(tx, e.contactId)) !== null;
   // reachability is read for the playbook decide would choose (the same choice, computed first)
