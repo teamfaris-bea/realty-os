@@ -31,6 +31,8 @@ function fake() {
     .on('GET /playbooks', { status: 200, body: { playbooks: [] } })
     .on('GET /imports', { status: 200, body: { batches: [batch] } })
     .on(`GET /imports/${batch.id}`, { status: 200, body: { batch } })
+    .on(`GET /contacts/${ID.pat}`, { status: 200, body: { contact: { id: ID.pat, view: 'full', displayName: 'Pat Lead' } } })
+    .on(`GET /contacts/${ID.pat}/erasure`, { status: 200, body: { contactId: ID.pat, erasable: false, deals: [{ id: '01900000-0000-7000-8000-0000000d0001', name: 'Maple St purchase', stage: 'closed', link: 'primary_and_party', closed: true }] } })
     .on(`GET /imports/${batch.id}/report`, { status: 200, body: { source: 'your file', categories: [] } });
 }
 
@@ -45,6 +47,8 @@ const PAGES: [string, string, RegExp][] = [
   ['/settings/playbooks', 'Playbooks', /No playbooks yet/],
   ['/imports', 'Imports', /leads\.csv/],
   [`/imports/${batch.id}`, 'Import', /1\. Contacts/],
+  ['/admin/erasure', 'Erase a contact', /Find the contact/],
+  [`/admin/erasure?contact=${ID.pat}`, 'Erase a contact', /Maple St purchase/],
 ];
 
 describe('accessibility (axe-core)', () => {

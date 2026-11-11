@@ -135,6 +135,8 @@ export const ERROR_STATUS = {
   // ---- api/accountability ----
   EXCEPTION_STATE_CONFLICT: 409, // the item's latest human event does not allow this action (details.latestAction): e.g. resolving a resolved item
   EXCEPTION_NOT_REASSIGNABLE: 409, // the item is not about a lead (an appointment or task without a contact): nothing to reassign
+  CONTACT_ON_DEAL: 409, // lane rule-coverage (E59, R-DATA-4): erasure refused while the person is on a deal; details = deal ids/stages
+  DEAL_STILL_OPEN: 409, // lane rule-coverage (E59): the primary contact of an open deal is changed on the deal, not removed
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

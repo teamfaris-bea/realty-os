@@ -508,7 +508,7 @@ export interface DealsTable {
   side: string;
   stage: Generated<string>;
   stage_entered_at: Timestamp;
-  primary_contact_id: string;
+  primary_contact_id: string | null;
   owner_user_id: string;
   listing_id: string | null;
   price_cents: Int8 | null;

@@ -28,6 +28,7 @@ const PAGES: { path: string; job: string; roles: Role[] }[] = [
   { path: '/settings/compliance', job: 'Compliance policy', roles: ADMINS },
   { path: '/settings/team', job: 'Brokerage identity and team settings', roles: ADMINS },
   { path: '/imports', job: 'Imports', roles: ADMINS },
+  { path: '/admin/erasure', job: 'Erase a contact (privacy request)', roles: ADMINS },
 ];
 
 describe('web/lead-admin registration', () => {
@@ -61,7 +62,7 @@ describe('web/lead-admin registration', () => {
     const nav = navFor(pagesFor(defaultPageTable(), 'owner'));
     const group = (s: string) => nav.sidebar.find((g) => g.section === s)?.items.map((i) => i.path) ?? [];
     expect(group('team')).toEqual(['/team', '/team/scoreboard', '/settings/playbooks']);
-    expect(group('admin')).toEqual(['/admin/members', '/admin/routing', '/admin/numbers', '/settings/compliance', '/settings/team', '/imports']);
+    expect(group('admin')).toEqual(['/admin/members', '/admin/routing', '/admin/numbers', '/admin/erasure', '/settings/compliance', '/settings/team', '/imports']);
   });
 });
 

@@ -65,7 +65,7 @@ const OVERRIDES: Record<string, Record<string, string>> = {
   exception_items: { evidence: "'[{\"k\":\"fixture\"}]'" },
   exception_events: { action: "'reopened'" },
   listings: { source: "'mls'" },
-  deals: { stage: "'prospect'" },
+  deals: { stage: "'prospect'", primary_contact_id: 'gen_random_uuid()' },
   deal_dates: { kind: "'inspection'" },
   tasks: { status: "'open'", created_by_kind: "'system'", due_at: 'NULL' },
   appointments: { status: "'scheduled'", starts_at: 'now()', ends_at: "now() + interval '1 hour'", outcome: 'NULL' },

@@ -44,6 +44,9 @@ export const LEAD_ADMIN_ERROR_MESSAGES: Record<string, string> = {
   PLAYBOOK_VERSION_NOT_DRAFT: 'This version was already approved or replaced.',
   PLAYBOOK_NOT_APPROVED: 'This playbook has no approved version yet.',
   PLAYBOOK_OWNER_MISMATCH: 'Only the playbook’s owner can approve it. Team playbooks are approved by an Owner or Admin.',
+  // privacy erasure (api/admin erasure, R-DATA-4, E59)
+  CONTACT_ON_DEAL: "This person is on a deal, so they can't be erased yet. The deal is a transaction record and stays; the Owner removes them from the deal first.",
+  DEAL_STILL_OPEN: 'This person is the primary contact of a deal that is still open. Change the primary contact on the deal first, then remove them here.',
 };
 
 /** Every sentence these surfaces may need: theirs plus the agent surfaces' (shared codes). */

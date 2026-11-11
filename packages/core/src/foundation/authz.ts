@@ -222,6 +222,7 @@ export const AUDIT_ACTIONS = [
   'mfa.recovery_codes_regenerated', // api/platform: the user replaced their MFA recovery codes
   'message.held_send', // api/comms: the sender tapped Send anyway on a message held because the client replied (E27); dispatch still checks it
   'message.held_cancel', // api/comms: the sender canceled a scheduled or held message
+  'deal.contact_removed', // lane rule-coverage: the Owner removed a person from a deal before erasure (E59)
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

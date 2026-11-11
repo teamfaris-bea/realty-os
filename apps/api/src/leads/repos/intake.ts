@@ -154,6 +154,53 @@ export async function listLeadSources(tx: Tx): Promise<(LeadSourceRow & { has_to
   return r.rows;
 }
 
-export async function insertLeadSource(tx: Tx, id: string, name: string, kind: string, tokenHash: Buffer | null): Promise<void> {
-  await sql`INSERT INTO lead_sources (tenant_id, id, name, kind, ingest_token_hash) VALUES (app.tenant_id(), ${id}::uuid, ${name}, ${kind}, ${tokenHash})`.execute(tx);
+export async function insertLeadSource(tx: Tx, id: string, name: string, kind: string, tokenHash: Buffer | null, consentDisclosureId: string | null = null): Promise<void> {
+  await sql`INSERT INTO lead_sources (tenant_id, id, name, kind, ingest_token_hash, consent_disclosure_id)
+            VALUES (app.tenant_id(), ${id}::uuid, ${name}, ${kind}, ${tokenHash}, ${consentDisclosureId}::uuid)`.execute(tx);
+}
+
+// ---- consent disclosures (R-CONSENT-4, E38) --------------------------------------------------------
+
+export interface DisclosureRow {
+  id: string;
+  channel_scope: ('sms' | 'voice' | 'email')[];
+  purpose_scope: ('marketing' | 'informational')[];
+  names_seller: string;
+  source_kind: 'own_form' | 'lead_provider' | 'signed_document_template';
+}
+
+export interface DisclosureInsert {
+  id: string;
+  channelScope: readonly string[];
+  purposeScope: readonly string[];
+  body: string;
+  bodySha256: string;
+  namesSeller: string;
+  sourceKind: DisclosureRow['source_kind'];
+}
+
+/**
+ * The tenant's disclosure with this exact text: inserted once (UNIQUE tenant_id, body_sha256; the DB
+ * CHECK re-verifies the hash), then reused. The table is append-only, so an existing row is never
+ * changed: the stored scope and names_seller of the first post of that text stay authoritative.
+ */
+export async function upsertDisclosure(tx: Tx, d: DisclosureInsert): Promise<DisclosureRow> {
+  await sql`
+    INSERT INTO consent_disclosures (tenant_id, id, channel_scope, purpose_scope, body, body_sha256, names_seller, source_kind)
+    VALUES (app.tenant_id(), ${d.id}::uuid, ${[...d.channelScope]}::text[], ${[...d.purposeScope]}::text[], ${d.body}, ${d.bodySha256},
+            ${d.namesSeller}, ${d.sourceKind})
+    ON CONFLICT (tenant_id, body_sha256) DO NOTHING`.execute(tx);
+  const r = await sql<DisclosureRow>`
+    SELECT id, channel_scope, purpose_scope, names_seller, source_kind FROM consent_disclosures
+     WHERE tenant_id = app.tenant_id() AND body_sha256 = ${d.bodySha256}`.execute(tx);
+  const row = r.rows[0];
+  if (!row) throw new Error('consent disclosure not visible after insert');
+  return row;
+}
+
+export async function disclosureById(tx: Tx, id: string): Promise<DisclosureRow | null> {
+  const r = await sql<DisclosureRow>`
+    SELECT id, channel_scope, purpose_scope, names_seller, source_kind FROM consent_disclosures
+     WHERE tenant_id = app.tenant_id() AND id = ${id}::uuid`.execute(tx);
+  return r.rows[0] ?? null;
 }

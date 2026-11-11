@@ -162,14 +162,19 @@ const SUBJECT_PATH: Record<string, string> = {
 /**
  * What a push notification (and the lock screen) shows. Never a phone number, an email address or a
  * message body: the title is the creator's PII-minimized title masked again, the body a fixed sentence.
+ * Tagged by tenant (E56): a user can belong to two tenants and the browser session has one active, so the
+ * url carries the tenant's slug as `?team=` (the web app offers to switch before opening the deep link) and
+ * the tag is prefixed with the tenant id (two tenants' notifications never replace each other). The slug
+ * only names which of the user's own teams to offer; the session's tenant never comes from it (R-TEN-3).
  */
-export function lockScreenPayload(n: { id: string; kind: string; title: string; subjectType: string | null; subjectId: string | null }): { title: string; body: string; url: string; tag: string } {
+export function lockScreenPayload(n: { id: string; kind: string; title: string; subjectType: string | null; subjectId: string | null; tenant: { id: string; slug: string } }): { title: string; body: string; url: string; tag: string } {
   const prefix = n.subjectType ? SUBJECT_PATH[n.subjectType] : undefined;
+  const path = prefix && n.subjectId ? `${prefix}${n.subjectId}` : '/notifications';
   return {
     title: maskPii(n.title).slice(0, 120),
     body: LOCK_SCREEN_BODY[n.kind] ?? LOCK_SCREEN_BODY.system!,
-    url: prefix && n.subjectId ? `${prefix}${n.subjectId}` : '/notifications',
-    tag: n.id,
+    url: `${path}?team=${encodeURIComponent(n.tenant.slug)}`,
+    tag: `${n.tenant.id}:${n.id}`,
   };
 }
 
@@ -234,6 +239,7 @@ interface DeliveryRow {
   quiet_start: string | null;
   quiet_end: string | null;
   zone: string;
+  tenant_slug: string;
 }
 
 async function setStatus(tx: Tx, id: string, status: string, o: { error?: string | null; nextAt?: Instant | null; bump?: boolean; providerRef?: string | null } = {}): Promise<void> {
@@ -266,10 +272,11 @@ export async function deliverNotification(deliveryId: string, deps: DeliveryDeps
   const plan: Plan = await asSystem(deps, tenantId, 'worker', async (tx, now) => {
     const r = await sql<DeliveryRow>`
       SELECT d.id, d.status, d.channel, d.target_ref, d.attempts, d.updated_at, n.id AS notification_id, n.user_id, n.kind, n.title, n.subject_type, n.subject_id,
-             n.expires_at, p.channels, p.muted_until, p.quiet_start::text AS quiet_start, p.quiet_end::text AS quiet_end, s.default_timezone AS zone
+             n.expires_at, p.channels, p.muted_until, p.quiet_start::text AS quiet_start, p.quiet_end::text AS quiet_end, s.default_timezone AS zone, t.slug::text AS tenant_slug
         FROM notification_deliveries d
         JOIN notifications n ON n.tenant_id = d.tenant_id AND n.id = d.notification_id
         JOIN tenant_settings s ON s.tenant_id = d.tenant_id
+        JOIN tenants t ON t.id = d.tenant_id
         LEFT JOIN notification_preferences p ON p.tenant_id = n.tenant_id AND p.user_id = n.user_id AND p.kind = n.kind
        WHERE d.tenant_id = app.tenant_id() AND d.id = ${deliveryId}
        FOR UPDATE OF d SKIP LOCKED`.execute(tx);
@@ -329,7 +336,7 @@ export async function deliverNotification(deliveryId: string, deps: DeliveryDeps
   const d = plan.d;
   let status: 'sent' | 'gone' | 'failed';
   try {
-    status = (await deps.providers.push.deliverPush(plan.target, lockScreenPayload({ id: d.notification_id, kind: d.kind, title: d.title, subjectType: d.subject_type, subjectId: d.subject_id }))).status;
+    status = (await deps.providers.push.deliverPush(plan.target, lockScreenPayload({ id: d.notification_id, kind: d.kind, title: d.title, subjectType: d.subject_type, subjectId: d.subject_id, tenant: { id: tenantId, slug: d.tenant_slug } }))).status;
   } catch {
     status = 'failed';
   }
