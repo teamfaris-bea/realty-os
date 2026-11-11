@@ -283,7 +283,7 @@ beforeAll(async () => {
     });
   }
   // assistant proposals (the generator makes none): drafts (half with a detail to check) and handbacks per agent
-  for (const [i, u] of users.slice(0, 3).entries()) {
+  for (let i = 0; i < 3; i++) {
     for (let j = 0; j < 6; j++) {
       await apply({ kind: 13, pick: 1_000 * i + j, size: j, user: i }); // event 13: the assistant proposes
     }
