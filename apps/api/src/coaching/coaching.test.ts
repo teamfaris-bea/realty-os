@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { FAKE_BAD_REVIEW_QUOTE } from '../providers/fake/ai.js';
 import { feedOf } from '../workspace/testing.js';
-import { DAY_MS, actorOf, cardsOf, call, coachingWorld, freshReauth, ownedContact, reconcile, recordedCall, review, scoringOn, setPackCleared, type CoachingWorld } from './testing.js';
+import { DAY_MS, actorOf, cardsOf, playableCall, call, coachingWorld, freshReauth, ownedContact, reconcile, recordedCall, review, scoringOn, setPackCleared, type CoachingWorld } from './testing.js';
 
 let h: ApiHarness;
 
@@ -196,6 +196,20 @@ describe('the daily fix', () => {
     const after = await cardsOf(h, a.userId);
     expect(after.filter((c) => c.state === 'open')).toHaveLength(1);
     expect(after.find((c) => c.id === cards[0]!.id)).toMatchObject({ state: 'done', resolved_by: 'condition' });
+  });
+
+  it('R-COACH-4: each quote of the tip is playable: the agent gets a single-use stream token for its recording, and the play is audited', async () => {
+    const { w } = await readyWorld();
+    const a = w.agents[0]!;
+    const c = await ownedContact(a, { firstName: 'Ravi' });
+    for (let i = 0; i < 3; i++) expect(await review(h, w.tenantId, await playableCall(h, w, a, c.id, { skip: ['asked_financing'] }))).toMatchObject({ kind: 'reviewed' });
+    const today = await call<{ coaching: { fix: { quotes: { recordingId: string; startMs: number }[] } } }>(a, 'GET', '/coaching/today');
+    const q = today.body.coaching.fix.quotes[0]!;
+    const tok = await call<{ url: string }>(a, 'POST', `/recordings/${q.recordingId}/stream-token`, { purpose: 'play' });
+    expect(tok.status).toBe(200);
+    const stream = await a.request('GET', `/api${tok.body.url.replace(/^\/api/, '')}`);
+    expect(stream.statusCode).toBe(200);
+    expect((await h.su.query("SELECT count(*)::int AS n FROM audit_log WHERE tenant_id = $1 AND action = 'recording.play' AND entity_id = $2", [w.tenantId, q.recordingId])).rows[0].n).toBe(1);
   });
 
   it('E106 R-COACH-4: an agent with two scored calls gets no daily fix ("Not enough calls yet")', async () => {

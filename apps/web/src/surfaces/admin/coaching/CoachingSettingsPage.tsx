@@ -69,7 +69,7 @@ export default function CoachingSettingsPage() {
 
       <Card aria-labelledby={`${id}-scoring`} className="flex flex-col gap-2">
         <h2 id={`${id}-scoring`} className="text-[19px] font-semibold text-ink">
-          Call reviews are {v.scoringEnabled ? 'on' : 'off'}
+          Call reviews are {v.scoringEnabled ? (v.pack.cleared ? 'on' : 'paused') : 'off'}
         </h2>
         <p className="text-[15px] text-ink">{v.scoringSentence}</p>
         <p className="text-[14px] text-ink-muted">Only calls a person handled are reviewed, never AI-handled calls or imported recordings. Agents see one tip a day; there are no scores, grades or rankings.</p>

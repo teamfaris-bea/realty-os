@@ -182,6 +182,6 @@ export async function teamView(tx: Tx, actor: UserActor, envelope: EnvelopeServi
       noFix: null,
     });
   }
-  const sentence = state === 'ready' ? 'From each person’s recent reviewed calls. Each person sees their own tip; only you and the Owner’s chosen roles see this list.' : state === 'not_cleared' ? 'Call reviews are off until counsel reviews them.' : 'Call scoring is off.';
+  const sentence = state === 'ready' ? 'From each person’s recent reviewed calls. Each person also sees their own tip.' : state === 'not_cleared' ? 'Call reviews are off until counsel reviews them.' : 'Call scoring is off.';
   return { state, visible: true, sentence, members: out };
 }

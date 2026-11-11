@@ -24,17 +24,19 @@ const OFF_TEXT = {
   scoring_off: { title: 'Call reviews are off', body: 'Your Owner has not turned on call reviews, so there is no tip today.' },
 } as const;
 
-function FixBody({ fix, headingId }: { fix: FixView; headingId: string }) {
+function FixBody({ fix, headingId, level = 2 }: { fix: FixView; headingId: string; level?: 2 | 3 }) {
+  const H = level === 2 ? 'h2' : 'h3';
+  const Sub = level === 2 ? 'h3' : 'h4';
   return (
     <>
       <p className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted">Try this on your next call</p>
-      <h2 id={headingId} className="break-words text-[21px] font-semibold leading-snug text-ink">
+      <H id={headingId} className="break-words text-[21px] font-semibold leading-snug text-ink">
         {fix.tip}
-      </h2>
+      </H>
       <p className="text-[15px] text-ink">{fix.why}</p>
       {fix.quotes.length > 0 ? (
         <>
-          <h3 className="pt-1 text-[15px] font-semibold text-ink">{fix.quotes.length === 1 ? 'A moment from your calls' : 'Two moments from your calls'}</h3>
+          <Sub className="pt-1 text-[15px] font-semibold text-ink">{fix.quotes.length === 1 ? 'A moment from the calls' : 'Two moments from the calls'}</Sub>
           <ul className="flex flex-col gap-2" aria-label="Moments from the calls">
             {fix.quotes.map((q, i) => (
               <QuotePlayer key={`${q.callId}:${q.startMs}`} quote={q} index={i} />
@@ -124,11 +126,11 @@ function Team() {
               <ul className="flex flex-col gap-3" aria-label="Tips by person">
                 {q.data.team.members.map((m) => (
                   <li key={m.userId}>
-                    <Card aria-labelledby={`${id}-${m.userId}`} className="flex flex-col gap-2">
+                    <Card as="div" className="flex flex-col gap-2">
                       <p id={`${id}-${m.userId}`} className="text-[17px] font-semibold text-ink">
                         {m.name}
                       </p>
-                      {m.fix ? <FixBody fix={m.fix} headingId={`${id}-${m.userId}-tip`} /> : <p className="text-[15px] text-ink-muted">{m.noFix?.text ?? 'No tip yet'}</p>}
+                      {m.fix ? <FixBody fix={m.fix} headingId={`${id}-${m.userId}-tip`} level={3} /> : <p className="text-[15px] text-ink-muted">{m.noFix?.text ?? 'No tip yet'}</p>}
                     </Card>
                   </li>
                 ))}

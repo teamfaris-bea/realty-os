@@ -5,7 +5,10 @@
 // counsel's review is recorded by the platform, never by a tenant) and writes recorded calls, which have no
 // application path outside the provider webhooks (as api/assistant's tests do).
 import type { Instant, TenantId, UserActor, UserId } from '@realty/core/foundation';
+import { randomUUID } from 'node:crypto';
 import { withTenantTx } from '@realty/db';
+import { sql } from 'kysely';
+import { runJobs as commsJobs, telephonyWebhook } from '../comms/testing.js';
 import type { ApiHarness, TestClient } from '../auth/testHarness.js';
 import { type AssistantWorld, assistantWorld, call, depsOf, ownedContact, transcribedCall } from '../assistant/testing.js';
 import { freshReauth } from '../admin/testing.js';
@@ -128,4 +131,45 @@ export const DAY_MS = 24 * 3_600_000;
 export function actorOf(c: TestClient): UserActor {
   if (!c.userId || !c.tenantId || !c.role) throw new Error('client not signed in');
   return { kind: 'user', userId: c.userId as UserId, tenantId: c.tenantId as TenantId, role: c.role, sessionId: 'rls-proof' };
+}
+
+/**
+ * A call that is really playable: dialed through the API, announced, completed and recorded through the
+ * provider webhooks, the recording copied into tenant storage by the comms job (as production does), and
+ * then its transcript set to `lines` (the fake transcriber's text is fixed; the transcript is encrypted as
+ * comms writes it). Returns the call id.
+ */
+export async function playableCall(h: ApiHarness, w: CoachingWorld, agent: TestClient, contactId: string, o: { skip?: string[] } = {}): Promise<string> {
+  await alertPhone(h, agent);
+  const r = await call<{ callId: string }>(agent, 'POST', `/contacts/${contactId}/calls`, {});
+  if (r.status !== 200) throw new Error(`dial: ${r.status} ${JSON.stringify(r.body)}`);
+  const callId = r.body.callId;
+  const ref = (await h.su.query<{ r: string }>('SELECT provider_call_ref AS r FROM calls WHERE id = $1', [callId])).rows[0]!.r;
+  const voice = (status: string, extra: Record<string, string> = {}) => telephonyWebhook(h, '/webhooks/telephony/voice', { CallSid: ref, From: w.mainNumber, To: '+14155550000', CallStatus: status, Direction: 'outbound-api', ...extra });
+  await voice('ringing');
+  await voice('in-progress', { AnnouncementStatus: 'played' });
+  await voice('completed', { CallDuration: '80' });
+  const rec = await telephonyWebhook(h, '/webhooks/telephony/recording', { CallSid: ref, RecordingSid: `RE${randomUUID().replace(/-/g, '').slice(0, 30)}`, RecordingDuration: '80', From: w.mainNumber });
+  if (rec.statusCode !== 200) throw new Error(`recording webhook: ${rec.statusCode}`);
+  await commsJobs(h, w.tenantId, ['comms.recording_copy', 'comms.transcribe']);
+  const t = (await h.su.query<{ id: string }>('SELECT t.id FROM transcripts t JOIN recordings r ON r.tenant_id = t.tenant_id AND r.id = t.recording_id WHERE r.call_id = $1', [callId])).rows[0];
+  if (!t) throw new Error('playableCall: no transcript');
+  const deps = depsOf(h);
+  await withTenantTx(systemActor(w.tenantId, 'provider'), async (tx) => {
+    const enc = await deps.envelope.inTx(tx, w.tenantId as TenantId).encrypt(w.tenantId as TenantId, { table: 'transcripts', column: 'segments_enc', rowId: t.id }, Buffer.from(JSON.stringify(segments(callLines(o.skip)))));
+    await sql`UPDATE transcripts SET segments_enc = ${Buffer.from(enc)}, status = 'ready', key_version = 1 WHERE tenant_id = app.tenant_id() AND id = ${t.id}`.execute(tx);
+  }, { db: h.database });
+  return callId;
+}
+
+const verified = new WeakSet<TestClient>();
+/** The agent's verified alert phone (the dial path bridges the agent first). */
+export async function alertPhone(h: ApiHarness, c: TestClient): Promise<void> {
+  if (verified.has(c)) return;
+  const phone = `+1415${String(2000000 + Math.floor(Math.random() * 7_000_000)).padStart(7, '0')}`;
+  const ch = await c.post('/api/me/alert-phone', { phone });
+  const code = h.providers.telephony.verificationCodes.at(-1)!.code;
+  const r = await c.post('/api/me/alert-phone/verify', { challenge: (ch.json() as { challenge: string }).challenge, code });
+  if (r.statusCode !== 200) throw new Error(`alert phone: ${r.statusCode} ${r.body}`);
+  verified.add(c);
 }

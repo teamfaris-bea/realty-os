@@ -44,13 +44,15 @@ export async function coachingSettingsView(tx: Tx): Promise<CoachingSettingsView
       reviewedAt: s.packCleared ? s.packReviewedAt : null,
       sentence: s.packCleared
         ? 'Counsel has reviewed call reviews for this platform. Check your own state’s rules on recording and employee monitoring before you turn them on.'
-        : 'Not reviewed by counsel. Call reviews stay off until counsel reviews them (employee monitoring and call-recording law).',
+        : 'Call reviews stay off until counsel reviews them (employee monitoring and call-recording law).',
     },
     scoringEnabled: s.scoringEnabled,
     tlSeesCallScores: s.tlSeesCallScores,
     rubric: RUBRIC_V1.items.map((i) => ({ key: i.key, label: i.label, good: i.good, enabled: !disabled.has(i.key) })),
     scoringSentence: !s.packCleared
-      ? 'Call scoring cannot be turned on until counsel reviews it.'
+      ? s.scoringEnabled
+        ? 'Paused: your switch is on, but no call is reviewed and no tip is shown until counsel reviews call reviews.'
+        : 'Call scoring cannot be turned on until counsel reviews it.'
       : s.scoringEnabled
         ? 'Calls a person handled, recorded with an announcement or under your one-party policy, are reviewed against the checklist. Each agent gets one tip a day.'
         : 'Call scoring is off. No call is reviewed and no tips are shown.',
