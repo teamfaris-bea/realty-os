@@ -153,7 +153,7 @@ timers and provider health, and can retry or cancel a job (audited).
 ### 4.1 ApiDown
 - **Means:** no API instance answers. Agents cannot sign in or see their feed; inbound webhooks fail and providers will retry them (Twilio and the email vendors retry for hours).
 - **Check:** `/api/health` on each instance; container status; the API's start-up line (`api failed to start` names the configuration problem, never a value); the database.
-- **Fix:** a bad deploy → roll back to the previous image. A configuration refusal → fix the named variable. Database down → §4.2's database branch.
+- **Fix:** a bad deploy → roll back to the previous image, which is safe as is only when that deploy's release step applied no migration (`0 applied`); otherwise follow DEPLOY §3 "Rollback". A configuration refusal → fix the named variable. Database down → §4.2's database branch.
 - **Escalate:** after 15 minutes down, to the on-call engineer and the team Owner (agents should use their phones directly meanwhile).
 
 ### 4.2 ApiDegraded

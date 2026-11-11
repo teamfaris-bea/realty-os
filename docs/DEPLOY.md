@@ -24,7 +24,11 @@ docker build --target api -t realty-api:<version> .
 docker build --target web -t realty-web:<version> .
 ```
 
-`docker-compose.prod.yml` is a complete example stack: Postgres, then release, then API and worker, then web. Copy `deploy/env.production.example` to `.env.production` and fill it in. For real teams, use a managed Postgres with backups and TLS instead of the compose database, and put a TLS-terminating load balancer in front of `web`.
+`docker-compose.prod.yml` is a complete example stack: Postgres, then release, then API and worker, then web. Copy `deploy/env.production.example` to `.env.production` and fill it in (`docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build`; the `--env-file` flag is needed on **every** compose command, because the compose file itself reads `POSTGRES_OWNER_PASSWORD` and `WEB_PORT`). For real teams, use a managed Postgres with backups and TLS instead of the compose database, and put a TLS-terminating load balancer in front of `web`. A fake-provider staging stack starts from `deploy/env.staging.example` instead (`docs/STAGING.md`).
+
+- **Storage volume.** With `STORAGE_PROVIDER=local`, set `STORAGE_DIR=/var/lib/realty/storage`: the compose file mounts the named volume `storage` there on the API and the worker, and the `api` image creates that directory owned by `node`. Any other path is not writable in the image, and `/api/ready` then reports `degraded` with `storage: failed`.
+- **Re-resolving the API.** nginx resolves `API_UPSTREAM` through `NGINX_RESOLVER` (default `127.0.0.11`, Docker's DNS) at most every 10 s, so a recreated `api` container is found again. If you run the `web` image outside Docker networking, set `NGINX_RESOLVER` to a resolver that knows the API's name.
+- **No source maps** are shipped in the `web` image (the build stage still has them).
 
 **Same origin.** The session cookie is first-party (`__Host-sid`, Secure, SameSite). Serve the web app and `/api` from one origin, which the `web` image does. Set `PUBLIC_BASE_URL` and `WEB_ORIGIN` to that origin (for example `https://app.example.com`) and set `TRUST_PROXY=true` behind the load balancer.
 
@@ -50,10 +54,12 @@ The bodies say only `ok`, `ready`, `degraded`, `draining` or `unavailable`, plus
 
 Give the orchestrator a stop grace period of at least `SHUTDOWN_DRAIN_MS + SHUTDOWN_TIMEOUT_MS`. The compose file uses 40 s.
 
-**Start-up refusals.** The API refuses to start, and prints one JSON line naming the problem, when:
+**Start-up refusals.** The API **and the worker** refuse to start, exit 1, and print one JSON line on stderr (`{"level":"fatal","msg":"api failed to start" | "worker failed to start","type":…,"detail":…}`) naming the problem by key, never by value, when:
 
-- the configuration is incomplete (§4);
+- the configuration is incomplete or unsafe (§4). Rehearsed refusals: `KEK_BASE64` missing, not base64 or not 32 bytes; `KEK_REF` missing; fake providers without `ALLOW_FAKE_PROVIDERS=true`; a non-https `PUBLIC_BASE_URL` or `WEB_ORIGIN` entry; `SESSION_COOKIE_SECURE=false`; the KEK equal to the session secret; with `MLS_PROVIDER=spark`, a Spark base URL that is http, has a path, a port or credentials, or a host missing from `SPARK_ALLOWED_HOSTS`, and a wildcard or internal name in that list; an unknown `MLS_PROVIDER` or `MLS_LIVE_CALLS` value;
 - `DATABASE_URL` logs in as a superuser or a `BYPASSRLS` role.
+
+A `KEK_BASE64` or `SESSION_SECRET_BASE64` problem is reported on its own, before the rest of the list: fix it and start again to see the other problems.
 
 **Logs** are JSON lines on stdout and stderr, for any collector. They follow the ARCHITECTURE §15 rules:
 
@@ -72,7 +78,9 @@ The nginx access log omits query strings, because reset, invite and unsubscribe 
 Two **different** roles:
 
 - **Owner** (`MIGRATION_DATABASE_URL`): creates roles, owns objects and runs migrations. The application never uses it.
-- **App** (`DATABASE_URL`, normally `app_user`): `LOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT`, member of no role. Every API and worker connection uses it.
+- **App** (`DATABASE_URL`): it **must** log in as `app_user`, because the migrations grant to that role by name. The release step refuses any other name before it changes anything. `LOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT`, member of no role. Every API and worker connection uses it. Roles are cluster-wide: two environments that share one Postgres cluster share one `app_user` and its password.
+
+**Database host (owner decision, 2026-11-11).** Accept and claim taps miss their 300 ms p95 budget on 4 shared cores (docs/PERFORMANCE.md: accept 637 ms, 44 simultaneous claims 382 ms). So production runs Postgres on its **own** host (or managed instance) with at least 4 dedicated cores, never on the same machine as the API and worker. A staging VM may share one host (docs/STAGING.md); its timings then say nothing about production.
 
 Every deploy runs the release step once, **before** the new API and worker start:
 
@@ -80,7 +88,24 @@ Every deploy runs the release step once, **before** the new API and worker start
 2. It applies pending migrations. Each runs in one transaction and is checksummed. An edited, renamed or missing applied migration aborts the release.
 3. It proves the app role is RLS-bound: not superuser, no BYPASSRLS, and zero tenants visible without context.
 
-It exits non-zero on any failure. Do not start the new version then.
+It exits non-zero on any failure. Do not start the new version then. It prints `migrations: <n> applied, <m> already applied` and finally `release ok: app connects as app_user, RLS-bound`. Run again with nothing pending, it prints `0 applied` and `release ok`.
+
+The runner refuses, and the release step exits 1 on, each of these (rehearsed, exact messages):
+
+- an edited applied file: `applied migration <name> was edited (checksum mismatch)…`;
+- a missing or renamed applied file: `applied migration <name> is missing from <dir>` / `…was renamed to <name>`;
+- a pending file numbered below the last applied one: `pending migration <name> sorts before already-applied <n>; renumber it to the next free number`;
+- a duplicate number or a badly named file.
+
+A migration that fails leaves nothing behind: the file and its bookkeeping row are one transaction. (Numbers need not be contiguous: there is no `0015`.)
+
+**Rollback.** Migrations are forward-only: there are no down migrations, and nobody edits `realty_migrations.schema_migrations` by hand.
+
+1. **Take a restore point before every release step** (a PITR mark or a snapshot, §8).
+2. **Bad deploy, no migration applied** (its release log says `0 applied`): redeploy the previous image, without its release step.
+3. **Bad deploy that applied migrations:** the previous image may run against the newer schema only if every migration it does not know is additive, and only after it passes `/api/ready`, a sign-in and a smoke check against that schema. Rehearsed once (`a0fa34b` against the `0036` schema: ready, sign-in, MFA, search, contact and feed all worked), which proves that pair only. Function replacements (for example `0035`) mean the old code runs the new function bodies.
+4. **Otherwise** (a migration changed or destroyed data, or the previous image misbehaves): restore the restore point into a **new** instance (§8), point the previous image at it, and accept that writes after that point are lost.
+5. **To fix a bad migration**, add the next-numbered migration. Never edit an applied one.
 
 **Managed Postgres (VERIFY).** Migration `0001` creates the `NOLOGIN BYPASSRLS` owner roles `app_definer` and `app_retention`, and `SECURITY DEFINER` functions owned by them. Some managed services do not give the owner full superuser. Before choosing a provider, check that its admin role can create roles with `BYPASSRLS` and transfer function ownership.
 
@@ -107,9 +132,11 @@ Choosing a real vendor without its credentials fails in every environment. The f
 | `WEB_ORIGIN` | yes, https | CSRF/CORS allowlist (comma-separated) |
 | `TRUST_PROXY` | behind a proxy | trust `X-Forwarded-*` from the load balancer |
 | `SESSION_COOKIE_SECURE` | default true in prod | must be true |
-| `KEK_BASE64` / `KEK_REF` | yes | 32-byte master key-encryption key and its name (§9) |
+| `KEK_BASE64` / `KEK_REF` | yes (both; production refuses a missing `KEK_REF`) | 32-byte master key-encryption key and its name, stamped on every key it wraps (§9) |
 | `SESSION_SECRET_BASE64` | yes | 32-byte server secret (CSRF, signed links, routing refs) |
 | `LEAD_WEBHOOK_SECRET` | yes | signs the lead intake webhook |
+| `ALLOW_FAKE_PROVIDERS` | no | `true` lets production run the fakes: a staging demo only (docs/STAGING.md), never for real teams |
+| `STORAGE_DIR` | with `STORAGE_PROVIDER=local` | an absolute path on a persistent, backed-up volume (`/var/lib/realty/storage` in the images, §1) |
 | `API_HOST` / `API_PORT` | no | the image defaults to `0.0.0.0:3001` |
 | `LOG_LEVEL` | no | `info` |
 | `DB_POOL_MAX` | no | connections in each API process's pool (default 10). Keep the sum over all API instances at about 2–3 per database vCPU, plus the workers' `--concurrency + 4` each, under `max_connections`. More connections than the database has cores only moves the queue into Postgres (docs/PERFORMANCE.md, accept/claim pool study). |
@@ -130,7 +157,7 @@ Choosing a real vendor without its credentials fails in every environment. The f
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` | yes | the platform's **master** account. Each tenant gets its own subaccount automatically when it buys its first number. |
 | `TWILIO_PLATFORM_SENDER` | yes in prod | the master-account sender of account-security codes (alert-phone verification): E.164 or a Messaging Service SID `MG…` |
 | `TWILIO_NUMBER_COUNTRY` | no | `US` |
-| `TELEPHONY_WEBHOOK_SECRET` | no | only signs the fake's callbacks. With Twilio, each subaccount's own auth token verifies its webhooks. |
+| `TELEPHONY_WEBHOOK_SECRET` | in production with the fake (staging) | only signs the fake's callbacks. With Twilio, each subaccount's own auth token verifies its webhooks. |
 
 **Email** (`EMAIL_PROVIDER=smtp`)
 
@@ -147,7 +174,7 @@ Choosing a real vendor without its credentials fails in every environment. The f
 | `MAILGUN_WEBHOOK_SIGNING_KEY` | with `mailgun` | Mailgun's webhook signing key (HMAC-SHA256 over timestamp + token) |
 | `EMAIL_WEBHOOK_BASIC_USER`, `EMAIL_WEBHOOK_BASIC_PASSWORD` | with `postmark` or `sendgrid` | HTTP Basic credentials in the vendor webhook URLs (password ≥ 16 characters) |
 | `SENDGRID_EVENT_PUBLIC_KEY` | with `sendgrid` | Event Webhook verification key |
-| `EMAIL_WEBHOOK_SECRET` | when no vendor format | the generic `X-Realty-Signature` format |
+| `EMAIL_WEBHOOK_SECRET` | when no vendor format (also with the fake, in production) | the generic `X-Realty-Signature` format |
 
 **Storage** (`STORAGE_PROVIDER=s3`, or `local` with an absolute `STORAGE_DIR` on a persistent, backed-up volume)
 

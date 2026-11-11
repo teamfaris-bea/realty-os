@@ -227,3 +227,45 @@ describe('deploy/nginx.conf sends exactly webSecurityHeaders (SECURITY §2.1)', 
     expect(headerProblems(noAlways)).toContain('/: content-security-policy lacks "always" (error responses would miss it)');
   });
 });
+
+// Deploy rehearsal (docker-compose.prod.yml with fakes): each of these broke the running stack.
+describe('the container stack (Dockerfile, docker-compose.prod.yml, deploy/nginx.conf)', () => {
+  const conf = parse(read('deploy/nginx.conf'), includeFromImage);
+  const server = conf.find((d) => d.name === 'server')!;
+  const block = (p: string) => server.block!.find((d) => d.name === 'location' && d.args.join(' ') === p)!.block!;
+  const stage = (name: string) => {
+    const lines = read('Dockerfile').split('\n');
+    const start = lines.findIndex((l) => new RegExp(`^FROM\\s+\\S+\\s+AS\\s+${name}\\s*$`, 'i').test(l));
+    const end = lines.findIndex((l, i) => i > start && /^FROM\s/i.test(l));
+    return lines.slice(start, end < 0 ? undefined : end).join('\n');
+  };
+
+  it('/api/ re-resolves the API name: a variable upstream plus a resolver (a literal upstream kept a recreated api container’s old address: 502 until web restarted)', () => {
+    const api = block('/api/');
+    const pass = api.find((d) => d.name === 'proxy_pass')!.args[0]!;
+    expect(pass).toMatch(/^\$[a-z_]+$/);
+    expect(api.find((d) => d.name === 'set' && d.args[0] === pass)?.args[1]).toBe('http://${API_UPSTREAM}');
+    expect(api.find((d) => d.name === 'resolver')?.args[0]).toBe('${NGINX_RESOLVER}');
+    expect(stage('web')).toMatch(/^ENV .*NGINX_RESOLVER=127\.0\.0\.11/m);
+  });
+
+  it('hashed assets send Cache-Control once (no `expires`, which added a second Cache-Control header)', () => {
+    for (const d of server.block!) if (d.name === 'location') expect(d.block!.some((x) => x.name === 'expires'), d.args.join(' ')).toBe(false);
+  });
+
+  it('the web image serves no source maps (/assets/*.js.map was public: the whole client source)', () => {
+    expect(stage('web')).toMatch(/^RUN find \/usr\/share\/nginx\/html -name '\*\.map' -delete$/m);
+  });
+
+  it('STORAGE_PROVIDER=local has a writable, persistent STORAGE_DIR: owned by node in the api image and a named volume on api and worker', () => {
+    const dir = '/var/lib/realty/storage';
+    expect(stage('api')).toContain(`RUN mkdir -p ${dir} && chown node:node ${dir}`);
+    const compose = read('docker-compose.prod.yml');
+    for (const svc of ['api', 'worker']) {
+      const body = new RegExp(`^  ${svc}:\\n((?:    .*\\n|\\s*\\n)*)`, 'm').exec(compose)?.[1] ?? '';
+      expect(body, svc).toContain(`- storage:${dir}`);
+    }
+    expect(compose).toMatch(/^volumes:\n(?: {2}\S+:\n)*? {2}storage:$/m);
+    for (const f of ['deploy/env.production.example', 'deploy/env.staging.example']) expect(read(f), f).toMatch(new RegExp(`^STORAGE_DIR=${dir}$`, 'm'));
+  });
+});
