@@ -226,7 +226,8 @@ describe('R-CHAN-2 equivalence: the app gate decides exactly what the DB dispatc
     await merge(before.id, dupBefore);
     cases.push({ label: 'a duplicate merged in had asked', contactId: before.id, phone: before.phone, email: before.email, want: DNC });
 
-    // a duplicate merged in first; the Owner (the only one who still sees the merged record) records its do-not-contact later
+    // a duplicate merged in first; the Owner (who still sees the merged record; the agent, its former owner, does not)
+    // records its do-not-contact later
     const after = await recipient();
     const dupAfter = await person({ emails: [randomEmail()] });
     await merge(after.id, dupAfter);

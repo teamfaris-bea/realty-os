@@ -1,11 +1,13 @@
 // secreview api/people writes on a contact that is no longer live (soft-deleted or merged away).
 //
-// A merged-away loser (after the merge only tenant-wide roles still see it) takes no write that would strand a row
-// on it: edits, stage changes, points, addresses, relationships, notes, logged activity and tags are 404
-// (people/common.ts liveDetailFacts, R-PAR-45). The one exception is the person-level do-not-contact (R-CHAN-2,
-// E140): recording an opt-out only tightens, and the definer trigger app.contacts_dnc_follow_merge (migration 0018)
-// copies it onto the survivor's own row, along merge chains, which is the row core canContact and the dispatch
-// guards read. Real Postgres, the real server, fake providers only.
+// A merged-away loser takes no write that would strand a row on it: edits, stage changes, points, addresses,
+// relationships, notes, logged activity and tags are 404 (people/common.ts liveDetailFacts, R-PAR-45). After the
+// merge its detail is still seen by the Owner, Admins, the loser's collaborators and the members of the loser's deals
+// (a merge moves neither), never by its former owner or their Team Lead. The one exception is the person-level
+// do-not-contact (R-CHAN-2, E140), open to whoever still sees the record and holds contact.edit on it (the Owner, an
+// Admin, a collaborator of the loser; not a TC, F3): recording an opt-out only tightens, and the definer trigger
+// app.contacts_dnc_follow_merge (migration 0018) copies it onto the survivor's own row, along merge chains, which is
+// the row core canContact and the dispatch guards read. Real Postgres, the real server, fake providers only.
 import { randomUUID } from 'node:crypto';
 import type { Purpose } from '@realty/core/compliance';
 import type { Instant } from '@realty/core/foundation';
@@ -21,15 +23,19 @@ import { call, command, freshReauth, randomPhone } from '../leads/testing.js';
 let h: ApiHarness;
 let w: CommsWorld;
 let agent: TestClient;
+let agent2: TestClient;
 let admin: TestClient;
+let tc: TestClient;
 let brokerage: string;
 let identity: { id: string; address: string };
 
 beforeAll(async () => {
   h = await createApiHarness();
-  w = await commsWorld(h, { agents: 1, rule: false, others: ['admin'] });
+  w = await commsWorld(h, { agents: 2, rule: false, teamLead: true, others: ['admin', 'tc'] });
   agent = w.agents[0]!;
+  agent2 = w.agents[1]!;
   admin = w.others[0]!;
+  tc = w.others[1]!;
   brokerage = (await h.su.query<{ n: string }>('SELECT brokerage_legal_name AS n FROM tenant_settings WHERE tenant_id = $1', [w.tenantId])).rows[0]!.n;
   identity = { id: w.identityId, address: (await h.su.query<{ a: string }>('SELECT from_address AS a FROM email_identities WHERE id = $1', [w.identityId])).rows[0]!.a };
 }, 180_000);
@@ -52,7 +58,7 @@ async function mergedPair(): Promise<{ s: { id: string; phone: string; email: st
   await freshReauth(h, w.owner);
   const m = await command(w.owner, s.id, 'merge', { loserId: l.id });
   expect(m.status, JSON.stringify(m.body)).toBe(200);
-  // after the merge the agent no longer sees the merged-away record; tenant-wide roles still do
+  // after the merge the agent (its former owner) no longer sees the merged-away record; the Owner and Admins still do
   expect((await call(agent, 'GET', `/contacts/${l.id}`)).status).toBe(404);
   return { s, l };
 }
@@ -232,6 +238,50 @@ describe('secreview: writes on a contact that is not live', () => {
       expect([again.status, again.body]).toMatchObject([200, { doNotContact: true, alreadySet: true }]);
       expect(await dncOf([s.id, l.id])).toEqual(dnc);
     }
+  });
+
+  it('R-PERM-5 F3: who records a merged-away record’s do-not-contact is whoever still sees its detail and holds contact.edit on it: a collaborator of the loser (200, carried onto a survivor they cannot see, which it then blocks; their other writes stay 404); the TC on the loser’s deal sees it but has no contact.edit (404); the former owner and their Team Lead see nothing (404)', async () => {
+    const s = await ownedContact(agent, { consent: false });
+    const l = await ownedContact(agent, { consent: false, confirmDistinct: true });
+    expect((await call(agent, 'POST', `/contacts/${l.id}/collaborators`, { userId: agent2.userId, role: 'co_agent' })).status).toBe(200);
+    const deal = await call<{ deal: { id: string } }>(agent, 'POST', '/deals', { primaryContactId: l.id, side: 'buy' });
+    expect(deal.status, JSON.stringify(deal.body)).toBe(201);
+    expect((await call(agent, 'POST', `/deals/${deal.body.deal.id}/members`, { userId: tc.userId, role: 'tc' })).status).toBe(200);
+    await freshReauth(h, w.owner);
+    expect((await command(w.owner, s.id, 'merge', { loserId: l.id })).status).toBe(200);
+    // who sees what after the merge: a merge moves neither the loser's collaborators nor its deals
+    const sees = async (c: TestClient, id: string) => (await call(c, 'GET', `/contacts/${id}`)).status;
+    const tl = w.teamLead!;
+    expect({ collaborator: [await sees(agent2, l.id), await sees(agent2, s.id)], tc: [await sees(tc, l.id), await sees(tc, s.id)], former: await sees(agent, l.id), teamLead: await sees(tl, l.id) })
+      .toEqual({ collaborator: [200, 404], tc: [200, 404], former: 404, teamLead: 404 });
+    const ledger = async () => Number((await h.su.query<{ n: string }>('SELECT count(*) AS n FROM consent_events WHERE contact_id = ANY ($1::uuid[])', [[s.id, l.id]])).rows[0]!.n);
+    const n = await ledger();
+    // refused: no contact.edit (the TC), or no sight of the record (the former owner, the Team Lead); nothing is recorded
+    for (const [who, c] of [['tc', tc], ['former owner', agent], ['team lead', tl]] as const) {
+      const r = await call<{ error: { code: string } }>(c, 'POST', `/contacts/${l.id}/do-not-contact`, { reason: 'asked_on_call' });
+      expect({ who, r: [r.status, r.body.error?.code] }).toEqual({ who, r: [404, 'NOT_FOUND'] });
+    }
+    expect(await dncOf([s.id, l.id])).toEqual({ [s.id]: { at: null, ev: null }, [l.id]: { at: null, ev: null } });
+    expect(await ledger()).toBe(n);
+    // the loser's collaborator records it: tighten-only, and the trigger carries it to the survivor they cannot see
+    const r = await call<{ doNotContact: boolean; alreadySet: boolean; revokedPoints: number }>(agent2, 'POST', `/contacts/${l.id}/do-not-contact`, { reason: 'asked_on_call' });
+    expect([r.status, r.body]).toEqual([200, { doNotContact: true, alreadySet: false, revokedPoints: 2 }]);
+    const dnc = await dncOf([s.id, l.id]);
+    expect(dnc[l.id]!.ev).not.toBeNull();
+    expect(dnc[s.id]).toEqual(dnc[l.id]);
+    // which blocks the person: the survivor's owner texting the survivor is refused, nothing reaches the provider
+    const sent = h.providers.telephony.sms.length;
+    expect((await sendText(agent, s.id, 'Checking in')).body).toMatchObject({ result: 'blocked', decision: { reasons: expect.arrayContaining(['PERSON_DO_NOT_CONTACT']) } });
+    expect(h.providers.telephony.sms.length).toBe(sent);
+    // and the collaborator's writes that would strand a row on the loser stay refused
+    const at = new Date().toISOString();
+    const writes = {
+      note: (await call(agent2, 'POST', `/contacts/${l.id}/notes`, { body: 'on the loser' })).status,
+      point: (await call(agent2, 'POST', `/contacts/${l.id}/points`, { kind: 'phone', address: randomPhone() })).status,
+      stage: (await call(agent2, 'POST', `/contacts/${l.id}/stage`, { stage: 'nurture' })).status,
+      activity: (await call(agent2, 'POST', `/contacts/${l.id}/activities`, { kind: 'call', direction: 'outbound', at })).status,
+    };
+    expect(writes).toEqual({ note: 404, point: 404, stage: 404, activity: 404 });
   });
 
   it('R-PERM-5: an agent who cannot see the merged-away record gets 404 for its do-not-contact, and nothing is recorded', async () => {
