@@ -643,7 +643,8 @@ const STAGE_TABLES: Record<Category, readonly ImportedRow['table'][]> = {
   ownership: ['lead_ownership_events'],
   notes: ['notes'],
   messages: ['messages'],
-  call_recordings: ['calls', 'recordings'],
+  // a FUB call's note is written by the calls stage as a notes row on the person (api/imports applyCall)
+  call_recordings: ['calls', 'recordings', 'notes'],
   consent: ['consent_events', 'suppressions'],
 };
 
