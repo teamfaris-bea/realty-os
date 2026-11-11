@@ -10,6 +10,7 @@
 --       app.ops_dispatch_results(p_since)     sent / failed (provider code) / blocked (gate reason) by channel
 --       app.ops_timer_lateness(p_since)       offer expiry, first-touch SLA and auto-release lateness (ledger)
 --       app.ops_tenant_count()                active tenants (the exporter buckets it)
+--       app.ops_first_response(p_since)       new-lead first response: inquiries answered within / over 60 s
 --   tenant-scoped (System page): filter tenant_id = app.tenant_id() and require a live Owner/Admin
 --     user actor (app.my_role()), so support actors and other roles get nothing.
 --       app.ops_tenant_jobs(p_view, p_limit)  dead (last 7 days) or retrying jobs: ids, kinds, scrubbed codes
@@ -35,6 +36,7 @@ CREATE INDEX gate_decisions_send_deny_idx ON gate_decisions (evaluated_at)
   WHERE phase = 'send' AND outcome = 'deny';
 CREATE INDEX messages_outbound_dispatched_idx ON messages (dispatched_at)
   WHERE direction = 'outbound' AND dispatched_at IS NOT NULL;
+CREATE INDEX lead_inquiries_received_idx ON lead_inquiries (received_at);
 
 -- ---- helpers -------------------------------------------------------------------------------------
 -- A label value safe for a metrics backend: bounded charset and length, else OTHER.
@@ -156,6 +158,39 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public AS $$
    WHERE app.tenant_id() IS NULL AND app.user_id() IS NULL AND t.status = 'active'
 $$;
 
+-- New-lead first response (SLO: 60 s). Per inquiry received since p_since (and at least 60 s ago, so
+-- every counted inquiry had its full minute): seconds until the first outbound message to that contact
+-- left (sent or delivered). An inquiry whose contact cannot be messaged (an opt-out blocked the reply)
+-- counts as 'blocked', never as a miss; one with no reply at all is 'none'.
+CREATE FUNCTION app.ops_first_response(p_since timestamptz)
+RETURNS TABLE (result text, n bigint, p50_seconds double precision, p95_seconds double precision)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+  WITH i AS (
+    SELECT q.tenant_id, q.contact_id, q.received_at,
+           (SELECT min(m.dispatched_at) FROM public.messages m
+             WHERE m.tenant_id = q.tenant_id AND m.contact_id = q.contact_id AND m.direction = 'outbound'
+               AND m.status IN ('sent','delivered') AND m.dispatched_at >= q.received_at) AS first_at,
+           EXISTS (SELECT 1 FROM public.gate_decisions g
+                    WHERE g.tenant_id = q.tenant_id AND g.contact_id = q.contact_id AND g.phase = 'send'
+                      AND g.outcome = 'deny' AND g.evaluated_at >= q.received_at) AS blocked
+      FROM public.lead_inquiries q
+     WHERE q.received_at >= p_since AND q.received_at <= now() - interval '60 seconds'),
+  r AS (
+    SELECT CASE WHEN i.first_at IS NOT NULL AND i.first_at - i.received_at <= interval '60 seconds' THEN 'within_60s'
+                WHEN i.first_at IS NOT NULL THEN 'over_60s'
+                WHEN i.blocked THEN 'blocked'
+                ELSE 'none' END AS result,
+           EXTRACT(EPOCH FROM i.first_at - i.received_at)::double precision AS secs
+      FROM i)
+  -- the quantiles are over every answered inquiry (the same two values on each row)
+  SELECT r.result, count(*),
+         (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY a.secs) FROM r a WHERE a.secs IS NOT NULL),
+         (SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY a.secs) FROM r a WHERE a.secs IS NOT NULL)
+    FROM r
+   WHERE app.tenant_id() IS NULL AND app.user_id() IS NULL
+   GROUP BY r.result
+$$;
+
 -- ---- tenant-scoped (System page; Owner/Admin user actors only) -----------------------------------
 CREATE FUNCTION app.ops_tenant_jobs(p_view text, p_limit integer)
 RETURNS TABLE (id bigint, queue text, kind text, status text, attempts integer, max_attempts integer,
@@ -235,7 +270,7 @@ DECLARE f text;
 BEGIN
   FOREACH f IN ARRAY ARRAY[
     'app.ops_queue_stats()', 'app.ops_message_stats()', 'app.ops_dispatch_results(timestamptz)',
-    'app.ops_timer_lateness(timestamptz)', 'app.ops_tenant_count()', 'app.ops_tenant_jobs(text, integer)',
+    'app.ops_timer_lateness(timestamptz)', 'app.ops_tenant_count()', 'app.ops_first_response(timestamptz)', 'app.ops_tenant_jobs(text, integer)',
     'app.ops_tenant_job_counts()', 'app.ops_retry_job(bigint)', 'app.ops_cancel_job(bigint)']
   LOOP
     EXECUTE format('ALTER FUNCTION %s OWNER TO app_definer', f);

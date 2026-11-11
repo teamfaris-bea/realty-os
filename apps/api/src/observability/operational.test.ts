@@ -87,6 +87,40 @@ describe('operational metrics from the database', () => {
   });
 });
 
+describe('new-lead first response (SLO 60 s)', () => {
+  it('counts inquiries answered within 60 s, over 60 s, blocked by an opt-out, or not at all', async () => {
+    const su = await h.su.connect();
+    try {
+      await su.query('BEGIN');
+      await su.query('SET LOCAL session_replication_role = replica');
+      const ins = `INSERT INTO lead_inquiries (tenant_id, id, contact_id, lead_source_id, received_at, inquiry_type, fingerprint, outcome) VALUES ($1, gen_random_uuid(), $2, $3, $4, 'buy', md5(random()::text), 'new_contact')`;
+      // answered 10 s after the inquiry (the text sent in beforeAll)
+      // (both instants moved 5 minutes back so the inquiry had its full minute)
+      const received = new Date(Date.now() - 5 * 60_000);
+      await su.query(`UPDATE messages SET dispatched_at = $2 WHERE contact_id = $1 AND status IN ('sent','delivered')`, [sentTo.id, new Date(received.getTime() + 10_000)]);
+      await su.query(ins, [w.tenantId, sentTo.id, w.sourceId, received]);
+      // the opted-out contact: the reply was blocked (never a miss)
+      await su.query(ins, [w.tenantId, optedOut.id, w.sourceId, new Date(Date.now() - 5 * 60_000)]);
+      // a third contact never answered
+      const silent = await ownedContact(w.agents[0]!, { consent: false });
+      await su.query(ins, [w.tenantId, silent.id, w.sourceId, new Date(Date.now() - 3 * 60_000)]);
+      // and one too fresh to count yet
+      await su.query(ins, [w.tenantId, silent.id, w.sourceId, new Date()]);
+      await su.query('COMMIT');
+    } finally {
+      su.release();
+    }
+    const r = new Registry();
+    collectOperational(r, h.database, { minIntervalMs: 0 });
+    const text = await r.render();
+    expect(valueOf(text, /^realty_first_response_inquiries_window\{result="within_60s"\}/)).toBe(1);
+    expect(valueOf(text, /^realty_first_response_inquiries_window\{result="blocked"\}/)).toBe(1);
+    expect(valueOf(text, /^realty_first_response_inquiries_window\{result="none"\}/)).toBe(1);
+    expect(valueOf(text, /^realty_first_response_inquiries_window\{result="over_60s"\}/)).toBe(0);
+    expect(valueOf(text, /^realty_first_response_seconds\{quantile="0.95"\}/)).toBeCloseTo(10, 0);
+  });
+});
+
 describe('HTTP metrics', () => {
   it('requests, latency and errors by route template; raw URLs and ids never appear', async () => {
     const metrics = new Registry();

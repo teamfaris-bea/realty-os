@@ -34,23 +34,31 @@ export interface TimerStat {
   p95Seconds: number;
   maxSeconds: number;
 }
+export interface FirstResponseStat {
+  result: 'within_60s' | 'over_60s' | 'blocked' | 'none';
+  count: number;
+  p50Seconds: number;
+  p95Seconds: number;
+}
 export interface OpsSnapshot {
   queues: QueueStat[];
   messages: MessageStat[];
   dispatch: DispatchStat[];
   timers: TimerStat[];
+  firstResponse: FirstResponseStat[];
   tenantCount: number;
 }
 
 const num = (v: unknown) => (v === null || v === undefined ? 0 : Number(v));
 
-export function readOpsSnapshot(db: Database, o: { dispatchSinceMs: number; timerSinceMs: number }): Promise<OpsSnapshot> {
+export function readOpsSnapshot(db: Database, o: { dispatchSinceMs: number; timerSinceMs: number; firstResponseSinceMs?: number }): Promise<OpsSnapshot> {
   return withPreTenant(
     async (tx) => {
       const q = await sql<Record<string, unknown>>`SELECT * FROM app.ops_queue_stats()`.execute(tx);
       const m = await sql<Record<string, unknown>>`SELECT * FROM app.ops_message_stats()`.execute(tx);
       const d = await sql<Record<string, unknown>>`SELECT * FROM app.ops_dispatch_results(now() - make_interval(secs => ${o.dispatchSinceMs / 1000}))`.execute(tx);
       const t = await sql<Record<string, unknown>>`SELECT * FROM app.ops_timer_lateness(now() - make_interval(secs => ${o.timerSinceMs / 1000}))`.execute(tx);
+      const fr = await sql<Record<string, unknown>>`SELECT * FROM app.ops_first_response(now() - make_interval(secs => ${(o.firstResponseSinceMs ?? o.timerSinceMs) / 1000}))`.execute(tx);
       const n = await sql<{ n: number }>`SELECT app.ops_tenant_count() AS n`.execute(tx);
       return {
         queues: q.rows.map((r) => ({
@@ -73,6 +81,7 @@ export function readOpsSnapshot(db: Database, o: { dispatchSinceMs: number; time
           p95Seconds: num(r.p95_seconds),
           maxSeconds: num(r.max_seconds),
         })),
+        firstResponse: fr.rows.map((r) => ({ result: String(r.result) as FirstResponseStat['result'], count: num(r.n), p50Seconds: num(r.p50_seconds), p95Seconds: num(r.p95_seconds) })),
         tenantCount: num(n.rows[0]?.n),
       };
     },

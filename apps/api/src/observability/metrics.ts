@@ -181,6 +181,8 @@ export function collectOperational(registry: Registry, db: Database, o: Operatio
   const late = registry.gauge('realty_timer_late_window', 'Of those, the ones that fired more than 60 s after they were due, by kind.');
   const lateness = registry.gauge('realty_timer_lateness_seconds', 'Timer lateness over the timer window by kind and quantile (0.5, 0.95, 1 = max).');
   const timerWin = registry.gauge('realty_timer_window_seconds', 'Length of the timer lateness window.');
+  const firstResponse = registry.gauge('realty_first_response_inquiries_window', 'New-lead inquiries received in the timer window (and at least 60 s ago) by first-response result: within_60s, over_60s, blocked (an opt-out refused the reply), none (no reply).');
+  const firstResponseSecs = registry.gauge('realty_first_response_seconds', 'Seconds from inquiry to the first outbound message that left, over the timer window, by quantile (answered inquiries only).');
   const tenants = registry.gauge('realty_tenants', 'Active tenants as a coarse bucket (value 1 on the current bucket).');
   const ok = registry.gauge('realty_ops_collect_ok', '1 when the last database read of the operational view succeeded, else 0.');
   const age = registry.gauge('realty_ops_collect_age_seconds', 'Age of the operational snapshot being exported.');
@@ -190,7 +192,7 @@ export function collectOperational(registry: Registry, db: Database, o: Operatio
   let inflight: Promise<OpsSnapshot | null> | null = null;
 
   function apply(s: OpsSnapshot): void {
-    for (const g of [jobs, dead, lag, lagKind, stuck, stuckAge, dispatch, fired, late, lateness, tenants]) g.reset();
+    for (const g of [jobs, dead, lag, lagKind, stuck, stuckAge, dispatch, fired, late, lateness, tenants, firstResponse, firstResponseSecs]) g.reset();
     const byQueue = new Map<string, number>();
     for (const q of s.queues) {
       jobs.set(q.ready, { queue: q.queue, kind: q.kind, state: 'ready' });
@@ -217,6 +219,11 @@ export function collectOperational(registry: Registry, db: Database, o: Operatio
       lateness.set(t?.maxSeconds ?? 0, { kind, quantile: '1' });
     }
     timerWin.set(timerWindow / 1000);
+    for (const result of ['within_60s', 'over_60s', 'blocked', 'none'] as const) firstResponse.set(s.firstResponse.find((x) => x.result === result)?.count ?? 0, { result });
+    // the database computes both quantiles over every answered inquiry (the same values on each row)
+    const any = s.firstResponse[0];
+    firstResponseSecs.set(any?.p50Seconds ?? 0, { quantile: '0.5' });
+    firstResponseSecs.set(any?.p95Seconds ?? 0, { quantile: '0.95' });
     tenants.set(1, { bucket: tenantBucket(s.tenantCount) });
   }
 
