@@ -7,7 +7,7 @@
 // Payloads carry ids only (R-TEN-7). The verification recount is computed on request (GET …/verification
 // and POST …/verify) from the stored records, so it needs no job.
 import { getDatabase, defaultIds } from '@realty/db';
-import { loadConfig } from '../config.js';
+import { type Config, loadConfig } from '../config.js';
 import { EnvelopeService } from '../crypto/envelope.js';
 import { localKek } from '../crypto/kek.js';
 import type { Providers } from '../providers/index.js';
@@ -27,16 +27,13 @@ export type StagePayload = { stageId: string };
 
 /**
  * FUB_PROVIDER=real uses the HTTP adapter (VERIFY against a live account); anything else the fake.
- * FUB_BASE_URL is server config, never tenant input; it must name a host in FUB_ALLOWED_HOSTS
- * (comma-separated, default api.followupboss.com), else the adapter refuses to start (FubConfigError).
+ * The settings come from the process Config only (config.ts `fub`, never tenant input or process.env here):
+ * FUB_BASE_URL must name a host in FUB_ALLOWED_HOSTS (default api.followupboss.com). loadConfig checks that
+ * at startup and the adapter re-checks it when built (FubConfigError).
  */
-export function defaultFubConnector(env: NodeJS.ProcessEnv = process.env): FubConnector {
-  if (env.FUB_PROVIDER === 'real') {
-    return httpFubConnector({
-      ...(env.FUB_BASE_URL ? { baseUrl: env.FUB_BASE_URL } : {}),
-      ...(env.FUB_ALLOWED_HOSTS ? { allowedHosts: env.FUB_ALLOWED_HOSTS.split(',') } : {}),
-      ...(env.FUB_SYSTEM_NAME && env.FUB_SYSTEM_KEY ? { system: { name: env.FUB_SYSTEM_NAME, key: env.FUB_SYSTEM_KEY } } : {}),
-    });
+export function defaultFubConnector(fub: Config['fub']): FubConnector {
+  if (fub.provider === 'real') {
+    return httpFubConnector({ baseUrl: fub.baseUrl, allowedHosts: fub.allowedHosts, ...(fub.system ? { system: fub.system } : {}) });
   }
   return new FakeFub().connector;
 }
@@ -47,7 +44,7 @@ let runtime: Omit<ImportDeps, 'storage'> | null = null;
 const defaultDeps: DepsFor = (providers) => {
   if (!runtime) {
     const cfg = loadConfig();
-    runtime = { db: getDatabase(), envelope: new EnvelopeService(localKek(cfg.kek, cfg.kekRef)), ids: defaultIds(), fub: defaultFubConnector() };
+    runtime = { db: getDatabase(), envelope: new EnvelopeService(localKek(cfg.kek, cfg.kekRef)), ids: defaultIds(), fub: defaultFubConnector(cfg.fub) };
   }
   return { ...runtime, storage: providers.storage };
 };

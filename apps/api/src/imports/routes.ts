@@ -74,12 +74,13 @@ export function makeImportsRoutes(depsFor?: ImportDepsFromPlatform): RouteModule
   return {
     name: 'imports',
     async register(app: FastifyInstance) {
-      const fub = defaultFubConnector();
+      // built once at startup from the process Config (SECURITY §2.9); tests pass their own deps
+      const fub = depsFor ? null : defaultFubConnector(app.platform.config.fub);
       let cached: ImportDeps | null = null;
       const deps = (req: FastifyRequest): ImportDeps => {
         if (cached) return cached;
         const p = req.server.platform;
-        cached = depsFor ? depsFor(p) : { db: p.db, envelope: p.envelope, ids: p.ids, storage: p.providers.storage, fub };
+        cached = depsFor ? depsFor(p) : { db: p.db, envelope: p.envelope, ids: p.ids, storage: p.providers.storage, fub: fub ?? defaultFubConnector(p.config.fub) };
         return cached;
       };
       const r = app.withTypeProvider<ZodTypeProvider>();

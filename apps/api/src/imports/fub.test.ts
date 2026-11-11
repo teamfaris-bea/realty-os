@@ -1,7 +1,9 @@
 // The FUB adapter (interface + deterministic fake + HTTP adapter). The HTTP adapter is exercised
 // against a recorded stand-in `fetch` only: it has not been run against the live FUB API from this
 // environment (no account) — VERIFY with a real account before the first production migration.
+import { randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
+import { ConfigError, loadConfig } from '../config.js';
 import { FakeFub, FubAccessError, FubConfigError, MAX_API_PAGE_BYTES, httpFubConnector, readCollection } from './fub.js';
 import { defaultFubConnector } from './handlers.js';
 
@@ -143,11 +145,17 @@ describe('httpFubConnector SSRF guards', () => {
   });
 
   it('FUB_BASE_URL comes from server config only and is checked at startup against FUB_ALLOWED_HOSTS (default api.followupboss.com)', () => {
-    expect(() => defaultFubConnector({ FUB_PROVIDER: 'real', FUB_BASE_URL: 'https://169.254.169.254/latest' })).toThrow(FubConfigError);
-    expect(() => defaultFubConnector({ FUB_PROVIDER: 'real', FUB_BASE_URL: 'https://fub.test/v1' })).toThrow(FubConfigError);
-    expect(() => defaultFubConnector({ FUB_PROVIDER: 'real', FUB_BASE_URL: 'https://fub.test/v1', FUB_ALLOWED_HOSTS: 'api.followupboss.com, fub.test' })).not.toThrow();
-    expect(() => defaultFubConnector({ FUB_PROVIDER: 'real' })).not.toThrow();
-    expect(() => defaultFubConnector({ FUB_PROVIDER: 'real', FUB_ALLOWED_HOSTS: '10.0.0.1' })).toThrow(FubConfigError);
+    const env = (o: Record<string, string>) => ({ DATABASE_URL: 'postgres://x', KEK_BASE64: randomBytes(32).toString('base64'), SESSION_SECRET_BASE64: randomBytes(32).toString('base64'), FUB_PROVIDER: 'real', ...o });
+    // loadConfig refuses at startup (ConfigError, naming the key) ...
+    expect(() => loadConfig(env({ FUB_BASE_URL: 'https://169.254.169.254/latest' }))).toThrow(ConfigError);
+    expect(() => loadConfig(env({ FUB_BASE_URL: 'https://fub.test/v1' }))).toThrow(/FUB_BASE_URL host must be listed in FUB_ALLOWED_HOSTS/);
+    expect(() => loadConfig(env({ FUB_ALLOWED_HOSTS: '10.0.0.1' }))).toThrow(/FUB_ALLOWED_HOSTS/);
+    // ... a valid config builds the real adapter ...
+    expect(() => defaultFubConnector(loadConfig(env({ FUB_BASE_URL: 'https://fub.test/v1', FUB_ALLOWED_HOSTS: 'api.followupboss.com, fub.test' })).fub)).not.toThrow();
+    expect(() => defaultFubConnector(loadConfig(env({})).fub)).not.toThrow();
+    // ... and the adapter re-checks a hand-built one (defence in depth)
+    expect(() => defaultFubConnector({ provider: 'real', baseUrl: 'https://169.254.169.254/latest', allowedHosts: ['api.followupboss.com'] })).toThrow(FubConfigError);
+    expect(() => defaultFubConnector({ provider: 'real', baseUrl: 'https://fub.test/v1', allowedHosts: ['api.followupboss.com'] })).toThrow(FubConfigError);
   });
 
   it('API requests never follow a redirect: a 3xx is FUB_UNAVAILABLE and its Location is never requested (with or without the key)', async () => {
