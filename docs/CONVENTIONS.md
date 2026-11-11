@@ -126,7 +126,7 @@ Shared registration files keep conflicts small: each dependent module adds **one
 | watch | `pnpm --filter @realty/core exec vitest` |
 | coverage (core: 100 % branches on decision functions) | `pnpm --filter @realty/core test:coverage` |
 | mutation (gate.ts ≥ 90 %) | `pnpm --filter @realty/core test:mutation` |
-| Playwright (phone + desktop projects) | `pnpm --filter @realty/web test:e2e` (starts Vite on 5173; start the API yourself when a spec needs it) |
+| Playwright (phone + desktop projects) | `pnpm --filter @realty/web test:e2e` (starts Vite on `E2E_WEB_PORT`, default 5173, never reusing a server already on it: a busy port fails the run; specs with an `e2e/*/stack.ts` start their own API and Vite on free ports) |
 | rule/edge-case coverage (exit criteria 2/3) | `pnpm rule-coverage` (static scan of test names), `pnpm test:report` (only **passed** tests count) |
 
 Vitest runs test files in parallel (`pool: 'forks'`). The test timeout is 30 s and the hook timeout 180 s (the first `createTestDb()` after a migration change rebuilds the template).

@@ -60,7 +60,7 @@ Other commands:
 | typecheck everything | `pnpm -r typecheck` |
 | all tests | `pnpm -r test` (each DB test gets its own Postgres database through `createTestDb`; `realty_dev` is never used) |
 | lint, including the architecture rules | `pnpm lint` |
-| browser tests (phone and desktop) | `pnpm --filter @realty/web test:e2e` (starts Vite on 5173, so stop `dev:web` first) |
+| browser tests (phone and desktop) | `pnpm --filter @realty/web test:e2e` (starts Vite on `E2E_WEB_PORT`, default 5173, and fails at once if that port is taken: stop `dev:web` first, or run another checkout's suite on another port, `E2E_WEB_PORT=5273 pnpm --filter @realty/web test:e2e`) |
 | rule and edge-case coverage | `pnpm rule-coverage` |
 | apply new migrations to the dev DB | `pnpm db:migrate` |
 | load test at 250k contacts (see [docs/PERFORMANCE.md](docs/PERFORMANCE.md)) | `pnpm load:seed --contacts 250000`, then `pnpm load:bench`; CI-sized check: `pnpm load:smoke` |
