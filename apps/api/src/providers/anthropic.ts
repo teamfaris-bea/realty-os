@@ -8,6 +8,8 @@
 // - Server-side refusal fallbacks are enabled ("default" routing), so a policy decline on a benign
 //   real-estate message is retried on a fallback model inside the same call. A refusal that survives
 //   is reported as stopReason 'refusal' and the caller marks the output needs_review.
+// - The system prompt is static per purpose and marked for prompt caching; per-request facts and all
+//   untrusted content are in the user turn.
 // - Prompts and outputs are never logged here.
 import Anthropic from '@anthropic-ai/sdk';
 import { type AiProvider, type AiRequest, type AiResponse, ProviderError } from './types.js';
@@ -20,7 +22,9 @@ export function anthropicAi(opts: { apiKey: string; model: string; timeoutMs?: n
         const res = await client.beta.messages.create({
           model: opts.model,
           max_tokens: Math.max(r.maxOutputTokens, 1024),
-          system: r.system,
+          // the system prompt is static per purpose (core assistant-prompts/2): mark it cacheable. A prompt
+          // shorter than the model's minimum cacheable prefix is simply not cached.
+          system: [{ type: 'text', text: r.system, cache_control: { type: 'ephemeral' } }],
           messages: [{ role: 'user', content: r.user }],
           output_config: { effort: 'medium' },
           betas: ['server-side-fallback-2026-07-01'],

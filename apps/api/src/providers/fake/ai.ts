@@ -36,6 +36,7 @@ export function parseFakeSources(user: string): FakeSource[] {
       while (j < lines.length && !/^<\/untrusted_[0-9a-f]+>$/.test(lines[j]!)) body.push(lines[j++]!);
       const seg = /^\[(\d+)-(\d+)ms\]\s*[^:]*:\s*(.*)$/.exec(body[0] ?? '');
       if (rest.startsWith('CALL') && seg) out.push({ handle, kind: 'transcript', text: seg[3]!, startMs: Number(seg[1]), endMs: Number(seg[2]) });
+      else if (/^(?:DEAL|LISTING|ACTIVITY)\b/.test(rest)) out.push({ handle, kind: 'fields', text: body.join(' '), field: rest.startsWith('DEAL') ? 'stage' : 'status' });
       else out.push({ handle, kind: 'text', text: body.join('\n') });
       i = j;
     } else if (/^[^:]*:\s*\S/.test(rest) && !/^stage:/.test(rest)) {
@@ -82,7 +83,8 @@ export class FakeAi implements AiProvider {
   private answer(r: AiRequest): string {
     const purpose = r.templateKey.replace(/^assistant\./, '');
     const sources = parseFakeSources(r.user);
-    const signOff = /end with "([^"]+)"/.exec(r.system)?.[1] ?? '';
+    // the sign-off is in the server-written <request> block of the user turn (assistant-prompts/2)
+    const signOff = /end with "([^"]+)"/.exec(r.user)?.[1] ?? /end with "([^"]+)"/.exec(r.system)?.[1] ?? '';
     const first = sources.find((s) => s.kind !== 'fields' && s.text.trim() !== '') ?? sources[0];
     const claims: unknown[] = [];
     if (first) {
