@@ -182,8 +182,11 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
     picked,
   };
   const choice = chooseChannel(choiceInput);
-  // with no usable channel the box still names the first one (its reason is shown and Send stays disabled)
-  const channel: ComposeChannel = choice.channel ?? choice.options[0]?.channel ?? 'sms';
+  // With no usable channel the box still names one, so its reason is shown and Send stays disabled: the one it was
+  // opened on (a Text or Email tap), else the client's last channel, else the first. Opened from Email for a person
+  // blocked on both, it says why email is blocked, never only why texting is (e2e journeys M3.1).
+  const listed = (c: ComposeChannel | null | undefined): ComposeChannel | null => (c && choice.options.some((o) => o.channel === c) ? c : null);
+  const channel: ComposeChannel = choice.channel ?? listed(initialChannel) ?? listed(lastInboundChannel) ?? choice.options[0]?.channel ?? 'sms';
   const isChat = channel === 'web_chat';
 
   // grow with the text (up to about 12 lines) so a prefilled draft is readable without scrolling
