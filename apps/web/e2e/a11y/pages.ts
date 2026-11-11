@@ -21,8 +21,9 @@ export interface SweepPage {
   /** the concrete URL to open */
   url(ids: SweepIds): string;
   /**
-   * The surface is being changed by another lane (lane/optout-visibility owns contact, thread,
-   * compose, approvals and feed). Violations there are reported, not fixed, in this lane.
+   * The surface is being changed by another lane: violations there are reported (annotations and the
+   * JSON report), not failed. No page is marked today; lane a11y-optout-surfaces took back feed,
+   * approvals, contact and thread (with compose).
    */
   foreignLane?: true;
 }
@@ -34,10 +35,10 @@ const LEADS = ['owner', 'admin', 'team_lead'] as const;
 const at = (u: string) => () => u;
 
 export const SWEEP_PAGES: readonly SweepPage[] = [
-  { path: '/', roles: ALL, url: at('/'), foreignLane: true },
+  { path: '/', roles: ALL, url: at('/') },
   { path: '/account', roles: ALL, url: at('/account') },
   { path: '/more', roles: ALL, url: at('/more') },
-  { path: '/approvals', roles: ALL, url: at('/approvals'), foreignLane: true },
+  { path: '/approvals', roles: ALL, url: at('/approvals') },
   { path: '/search', roles: ALL, url: at('/search?q=jane') },
   { path: '/tasks', roles: ALL, url: at('/tasks') },
   { path: '/pond', roles: NOT_TC, url: at('/pond') },
@@ -45,8 +46,8 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   { path: '/deals/:dealId', roles: ALL, url: (i) => `/deals/${i.dealId}` },
   { path: '/listings', roles: ALL, url: at('/listings') },
   { path: '/listings/:listingId', roles: ALL, url: (i) => `/listings/${i.listingId}` },
-  { path: '/contacts/:contactId', roles: ALL, url: (i) => `/contacts/${i.contactId}`, foreignLane: true },
-  { path: '/contacts/:contactId/thread', roles: ALL, url: (i) => `/contacts/${i.contactId}/thread?compose=sms`, foreignLane: true },
+  { path: '/contacts/:contactId', roles: ALL, url: (i) => `/contacts/${i.contactId}` },
+  { path: '/contacts/:contactId/thread', roles: ALL, url: (i) => `/contacts/${i.contactId}/thread?compose=sms` },
   { path: '/team', roles: LEADS, url: at('/team') },
   { path: '/team/scoreboard', roles: NOT_TC, url: at('/team/scoreboard') },
   { path: '/admin/members', roles: ADMINS, url: at('/admin/members') },

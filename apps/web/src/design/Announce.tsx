@@ -28,7 +28,7 @@ export function Announcer() {
     };
   }, []);
   return (
-    <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+    <div role="status" aria-live="polite" aria-atomic="true" data-testid="announcer" className="sr-only">
       {text}
     </div>
   );

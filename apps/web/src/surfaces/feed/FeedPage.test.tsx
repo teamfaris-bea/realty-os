@@ -6,7 +6,7 @@ import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import axe from 'axe-core';
 import { describe, expect, it } from 'vitest';
-import { FakeFetch, IDS, agentApp, card, decision, draftAction, err, feed, fullContact, iso, offerCard, reachability, stopReason, timelineItem } from './lib/testing.js';
+import { FakeFetch, findToast, IDS, agentApp, card, decision, draftAction, err, feed, fullContact, iso, offerCard, reachability, stopReason, timelineItem } from './lib/testing.js';
 
 const user = () => userEvent.setup();
 
@@ -39,7 +39,7 @@ describe('Priority Feed', () => {
     const u = user();
     const accept = await screen.findByRole('button', { name: 'Accept' });
     await u.click(accept); // tap 1
-    await screen.findByText('Pat L. is yours now.');
+    await findToast('Pat L. is yours now.');
     const calls = fake.callsTo(`POST /leads/${IDS.pat}/accept`);
     expect(calls).toHaveLength(1);
     const feedsBefore = fake.callsTo('GET /feed').length;
@@ -63,7 +63,7 @@ describe('Priority Feed', () => {
       accept.click();
     });
     release();
-    await screen.findByText('Pat L. is yours now.');
+    await findToast('Pat L. is yours now.');
     expect(fake.callsTo(`POST /leads/${IDS.pat}/accept`)).toHaveLength(1);
   });
 
@@ -138,7 +138,7 @@ describe('Priority Feed', () => {
       .on(`POST /assistant/actions/${IDS.draft}/approve`, { status: 200, body: { actionId: IDS.draft, status: 'approved', result: 'sent', messageId: IDS.message, decision: decision({}) } });
     agentApp(fake);
     await user().click(await screen.findByRole('button', { name: 'Send' })); // tap 1
-    expect(await screen.findByText('Sent to Jane Doe.')).toBeInTheDocument();
+    expect(await findToast('Sent to Jane Doe.')).toBeInTheDocument();
     expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(1);
   });
 
@@ -150,7 +150,7 @@ describe('Priority Feed', () => {
       .on(`POST /assistant/actions/${IDS.draft}/approve`, { status: 200, body: { actionId: IDS.draft, status: 'approved', result: 'blocked', messageId: IDS.message, decision: blocked } });
     agentApp(fake);
     await user().click(await screen.findByRole('button', { name: 'Send' }));
-    expect(await screen.findByText('Not sent: Opted out of texts')).toBeInTheDocument();
+    expect(await findToast('Not sent: Opted out of texts')).toBeInTheDocument();
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.queryByRole('button', { name: /anyway/ })).toBeNull();
     expect(fake.calls.some((x) => x.path.endsWith('/send'))).toBe(false);
@@ -195,7 +195,7 @@ describe('Priority Feed', () => {
     expect(await within(sheet).findByText("Your phone will ring first. Answer it and you're connected to Jane.")).toBeInTheDocument();
     expect(fake.callsTo(`POST /contacts/${IDS.jane}/calls`)).toHaveLength(1);
     await u.click(within(sheet).getByRole('button', { name: 'No answer' })); // outcome: 1 tap
-    expect(await screen.findByText('Call outcome saved.')).toBeInTheDocument();
+    expect(await findToast('Call outcome saved.')).toBeInTheDocument();
     expect(fake.callsTo(`POST /calls/${IDS.call}/outcome`)[0]!.body).toEqual({ outcome: 'no_answer' });
     expect(screen.queryByRole('dialog')).toBeNull();
   });
@@ -210,7 +210,7 @@ describe('Priority Feed', () => {
     const u = user();
     await u.click(await screen.findByRole('button', { name: 'Call' }));
     await u.click(await screen.findByRole('button', { name: 'Talked' }));
-    expect(await screen.findByText('Jane was reassigned during the call, so your outcome was saved as a task for the new owner.')).toBeInTheDocument();
+    expect(await findToast('Jane was reassigned during the call, so your outcome was saved as a task for the new owner.')).toBeInTheDocument();
   });
 
   it('a call the dial-time check blocks (asked not to be called) shows the sentence, dials nothing and offers no way past it', async () => {
@@ -240,7 +240,7 @@ describe('Priority Feed', () => {
     const u = user();
     await u.click(await screen.findByRole('button', { name: 'Log outcome' }));
     await u.click(await screen.findByRole('button', { name: 'Signed' }));
-    expect(await screen.findByText('Outcome saved.')).toBeInTheDocument();
+    expect(await findToast('Outcome saved.')).toBeInTheDocument();
     expect(fake.callsTo(`POST /appointments/${IDS.appt}/outcome`)[0]!.body).toEqual({ result: 'agreement_signed' });
   });
 
@@ -280,7 +280,7 @@ describe('Priority Feed', () => {
     await screen.findByRole('button', { name: 'Accept' });
     expect(screen.getAllByRole('button', { name: 'Later' })).toHaveLength(1);
     await user().click(screen.getByRole('button', { name: 'Later' }));
-    expect(await screen.findByText('Snoozed for 3 hours.')).toBeInTheDocument();
+    expect(await findToast('Snoozed for 3 hours.')).toBeInTheDocument();
     const body = fake.callsTo(`POST /feed/${scored.id}/snooze`)[0]!.body as { until: string };
     expect(Date.parse(body.until) - Date.now()).toBeGreaterThan(2.9 * 3_600_000);
   });
@@ -318,3 +318,60 @@ describe('Priority Feed: opt-outs said before the tap (lane optout-visibility)',
   });
 });
 
+
+describe('Priority Feed: heard, not only seen (lane a11y-optout-surfaces)', () => {
+  const announcer = () => screen.getByTestId('announcer');
+
+  it('the offer countdown is announced politely at milestones (here: 1 minute left), not every second', async () => {
+    const fake = new FakeFetch().on('GET /feed', { status: 200, body: feed([offerCard(61_500)]) });
+    agentApp(fake);
+    const timer = await screen.findByRole('timer');
+    // role="timer" is not a live region; the milestone already reached on mount is not said
+    expect(timer).not.toHaveAttribute('aria-live');
+    expect(announcer()).toHaveTextContent('');
+    await waitFor(() => expect(announcer()).toHaveTextContent('Offer for Pat L.: 1 minute left'), { timeout: 3000 });
+    expect(announcer()).toHaveAttribute('aria-live', 'polite');
+  });
+
+  it('a toast is seen in place and said through the one live region (the visible toast is not a second one)', async () => {
+    const c = card({ primaryAction: { kind: 'call', label: 'Call', contactId: IDS.jane } });
+    const fake = new FakeFetch()
+      .on('GET /feed', { status: 200, body: feed([], [c]) })
+      .on(`POST /contacts/${IDS.jane}/calls`, { status: 200, body: { result: 'dialing', callId: IDS.call, bridgeToken: 'b', reason: null, decision: decision({}) } })
+      .on(`POST /calls/${IDS.call}/outcome`, { status: 200, body: { callId: IDS.call, outcome: 'no_answer', recordedAs: 'call' } });
+    agentApp(fake);
+    const u = user();
+    await u.click(await screen.findByRole('button', { name: 'Call' }));
+    await u.click(await screen.findByRole('button', { name: 'No answer' }));
+    const line = await findToast('Call outcome saved.');
+    expect(line.closest('[aria-hidden="true"]')).not.toBeNull();
+    const live = [...document.querySelectorAll('[aria-live], [role="status"], [role="alert"]')].filter((e) => (e.textContent ?? '').includes('Call outcome saved.'));
+    expect(live).toEqual([announcer()]);
+  });
+
+  it('the call sheet is the shared Dialog: the page behind is inert, Tab stays inside, Escape closes it and focus returns to Call', async () => {
+    const c = card({ primaryAction: { kind: 'call', label: 'Call', contactId: IDS.jane } });
+    const fake = new FakeFetch()
+      .on('GET /feed', { status: 200, body: feed([], [c]) })
+      .on(`POST /contacts/${IDS.jane}/calls`, { status: 200, body: { result: 'dialing', callId: IDS.call, bridgeToken: 'b', reason: null, decision: decision({}) } });
+    agentApp(fake);
+    const u = user();
+    const callButton = await screen.findByRole('button', { name: 'Call' });
+    await u.click(callButton);
+    const sheet = await screen.findByRole('dialog', { name: 'Call Jane Doe' });
+    await within(sheet).findByRole('button', { name: 'No answer' });
+    expect(sheet).toHaveAttribute('aria-modal', 'true');
+    expect(callButton.closest('[inert]')).not.toBeNull();
+    expect(sheet.closest('[inert]')).toBeNull();
+    for (let i = 0; i < 12; i += 1) {
+      await u.tab();
+      expect(sheet.contains(document.activeElement)).toBe(true);
+    }
+    // a visible way out for a phone (no Escape key there)
+    expect(within(sheet).getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    await u.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(callButton.closest('[inert]')).toBeNull();
+    expect(callButton).toHaveFocus();
+  });
+});

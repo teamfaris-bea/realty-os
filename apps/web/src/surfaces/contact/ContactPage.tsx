@@ -66,7 +66,7 @@ function CardView({ contact }: { contact: ContactCardView }) {
               {[intentLabel(contact.intent), contact.source?.name ? `From ${contact.source.name}` : null, `Came in ${relativeTime(Date.parse(contact.createdAt), now)}`].filter(Boolean).join(' · ')}
             </p>
           </div>
-          {o.state === 'offered' && o.offeredToMe && o.offerExpiresAt ? <Countdown dueAt={o.offerExpiresAt} kind="offer" /> : null}
+          {o.state === 'offered' && o.offeredToMe && o.offerExpiresAt ? <Countdown dueAt={o.offerExpiresAt} kind="offer" label={`Offer for ${contact.displayName}`} /> : null}
         </div>
         {contact.pondSummary ? <p className="text-[16px] text-ink">{contact.pondSummary}</p> : null}
         {o.state === 'in_pond' && o.pondName ? <p className="text-[15px] text-ink-muted">In the {o.pondName} pond</p> : null}
@@ -153,7 +153,7 @@ function FullView({ contact }: { contact: ContactFullView }) {
         </div>
         {firstTouchDue ? (
           <p className="flex flex-wrap items-center gap-2 text-[15px] text-ink">
-            First contact due: <Countdown dueAt={firstTouchDue} kind="deadline" />
+            First contact due: <Countdown dueAt={firstTouchDue} kind="deadline" label={`First contact with ${contact.displayName}`} />
           </p>
         ) : null}
         {o.state === 'offered' && o.offeredToMe && o.offerId ? (

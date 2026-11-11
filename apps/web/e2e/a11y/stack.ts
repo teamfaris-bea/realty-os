@@ -28,7 +28,7 @@ import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { createApiHarness, TEST_ORIGIN, TEST_PASSWORD } from './src/auth/testHarness.ts';
 import { totpCode, totpStep } from './src/auth/totp.ts';
-import { commsWorld, call, inboundSms, randomEmail, freshReauth } from './src/comms/testing.ts';
+import { commsWorld, call, inboundSms, randomEmail, freshReauth, runJobs } from './src/comms/testing.ts';
 import { intake } from './src/leads/testing.ts';
 import { promiseTask, recompute } from './src/accountability/testing.ts';
 (async () => {
@@ -64,6 +64,26 @@ const routes = {
     const jane = await contact('Jane', 'Doe', { inbound: 'Does Saturday work for a showing? We are pre-approved.' });
     const marco = await contact('Marco', 'Silva', { intent: 'seller' });
     const owen = await contact('Owen', 'Price', { inbound: 'Thanks for the info', optOut: true });
+    // a long conversation (taller than a phone, and than a desktop window) with a held text in the
+    // middle, so its Send anyway / Cancel are reached by focus from above and below the sticky
+    // compose bar (WCAG 2.4.11)
+    const rosaPhone = phone();
+    const rosa = must(await call(agent, 'POST', '/contacts', { commandId: randomUUID(), firstName: 'Rosa', lastName: 'Lin', phones: [rosaPhone], emails: [randomEmail()], intent: 'buyer' }), 'contact').contact.id;
+    const exchange = async (n) => {
+      for (let i = 0; i < n; i += 1) {
+        const r = await inboundSms(h, rosaPhone, w.mainNumber, 'Question ' + (i + 1) + ' about the condo on Pine St: is parking included, and what are the HOA dues?');
+        if (r.statusCode >= 300) throw new Error('inbound: ' + r.statusCode + ' ' + r.body);
+        must(await call(agent, 'POST', '/contacts/' + rosa + '/messages', { channel: 'sms', body: 'Answer ' + (i + 1) + ': one parking space is included, and the HOA dues are listed in the disclosure packet.', idempotencyKey: 'k-' + randomUUID() }), 'reply');
+      }
+    };
+    await exchange(6);
+    const held = must(await call(agent, 'POST', '/contacts/' + rosa + '/messages', { channel: 'sms', body: 'Reminder: open house Saturday at 10', idempotencyKey: 'k-' + randomUUID(), scheduleAt: new Date(Date.now() + 3600000).toISOString() }), 'schedule');
+    const reply = await inboundSms(h, rosaPhone, w.mainNumber, 'Can we make it 11 instead?');
+    if (reply.statusCode >= 300) throw new Error('inbound: ' + reply.statusCode + ' ' + reply.body);
+    // clock fixture: the scheduled time has come, so dispatch holds it (E27; no application path moves time)
+    await h.su.query("UPDATE messages SET scheduled_for = clock_timestamp() - interval '1 second' WHERE id = $1", [held.message.id]);
+    await runJobs(h, w.tenantId, ['comms.dispatch']);
+    await exchange(6);
     must(await call(agent, 'POST', '/contacts/' + jane + '/drafts', { commandId: randomUUID() }), 'draft');
     must(await call(agent, 'POST', '/tasks', { title: 'Send Marco the pricing comps', contactId: marco, dueAt: new Date(Date.now() + 7200000).toISOString() }), 'task');
     const start = new Date(Date.now() + 86400000);
@@ -87,7 +107,7 @@ const routes = {
     const imp = must(await call(w.owner, 'POST', '/imports', { source: 'csv', fileName: 'open-house.csv', fileBase64: Buffer.from(csv).toString('base64') }), 'import');
     for (const [role, c] of Object.entries(people)) if (c.totpSecret) secrets.set(c.email, c.totpSecret);
     const users = Object.fromEntries(Object.entries(people).map(([role, c]) => [role, { email: c.email, password: TEST_PASSWORD, mfa: Boolean(c.totpSecret) }]));
-    return { users, ids: { contactId: jane, optedOutContactId: owen, dealId: deal.deal.id, listingId: listing.listing.id, playbookId: pb.playbook.id, importId: imp.batch.id } };
+    return { users, ids: { contactId: jane, optedOutContactId: owen, longThreadContactId: rosa, dealId: deal.deal.id, listingId: listing.listing.id, playbookId: pb.playbook.id, importId: imp.batch.id } };
   },
   /** clock fixture: the user's password proof is an hour old, so the next sensitive action asks again */
   async '/stale-reauth'(b) {
@@ -131,6 +151,8 @@ export interface SeededUser {
 export interface SeedIds {
   contactId: string;
   optedOutContactId: string;
+  /** a conversation longer than the screen, with a held text (and its buttons) in the middle */
+  longThreadContactId: string;
   dealId: string;
   listingId: string;
   playbookId: string;

@@ -6,7 +6,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import { FakeFetch, IDS, agentApp, decision, draftAction, err, fullContact, iso, reachability, stopReason, timelineItem } from '../feed/lib/testing.js';
+import { FakeFetch, findToast, IDS, agentApp, decision, draftAction, err, fullContact, iso, reachability, stopReason, timelineItem } from '../feed/lib/testing.js';
 
 const user = () => userEvent.setup();
 
@@ -42,7 +42,7 @@ describe('Thread', () => {
     const box = await screen.findByRole('textbox', { name: 'Text message' });
     await u.type(box, 'On my way');
     await u.click(screen.getByRole('button', { name: 'Send' }));
-    expect(await screen.findByText('Sent to Jane.')).toBeInTheDocument();
+    expect(await findToast('Sent to Jane.')).toBeInTheDocument();
     const calls = fake.callsTo(`POST /contacts/${IDS.jane}/messages`);
     expect(calls).toHaveLength(2);
     const keys = calls.map((c) => (c.body as { idempotencyKey: string }).idempotencyKey);
@@ -164,7 +164,7 @@ describe('Thread', () => {
     await user().click(within(group).getByRole('button', { name: 'Send anyway' }));
     await waitFor(() => expect(fake.callsTo(`POST /messages/${held.id}/send`)).toHaveLength(1));
     expect(fake.callsTo(`POST /messages/${held.id}/send`)[0]!.body).toEqual({});
-    expect(await screen.findByText('Sent to Jane.')).toBeInTheDocument();
+    expect(await findToast('Sent to Jane.')).toBeInTheDocument();
     await user().click(within(group).getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(fake.callsTo(`POST /messages/${held.id}/cancel`)).toHaveLength(1));
   });
@@ -210,7 +210,7 @@ describe('Thread', () => {
     await waitFor(() => expect(fake.callsTo(`GET /contacts/${IDS.jane}/timeline?limit=100`).length).toBeGreaterThan(timelineBefore));
     expect(box).toHaveValue('Hi Jane, Saturday at 11 works. Want me to book it?');
     await u.click(screen.getByRole('button', { name: 'Send' }));
-    expect(await screen.findByText('Sent to Jane.')).toBeInTheDocument();
+    expect(await findToast('Sent to Jane.')).toBeInTheDocument();
     const bodies = fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`).map((c) => c.body as { reviewedInboundSeq?: number; commandId: string });
     expect(bodies).toHaveLength(2);
     expect(bodies[0]!.reviewedInboundSeq).toBeUndefined();

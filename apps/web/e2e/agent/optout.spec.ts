@@ -9,6 +9,9 @@
 import { type Page, expect, test } from 'playwright/test';
 import { type AgentStack, startAgentStack } from './stack.js';
 
+/** The visible toast (it is also announced through the app's one live region). */
+const toast = (page: Page) => page.getByTestId('toast');
+
 test.describe.configure({ mode: 'serial' });
 
 let stack: AgentStack;
@@ -81,7 +84,7 @@ test('E27: a text held because Jane replied says so in the thread; Send anyway s
   const group = page.getByRole('group', { name: 'Held message' });
   await expect(group.getByRole('button', { name: 'Cancel' })).toBeVisible();
   await group.getByRole('button', { name: 'Send anyway' }).click();
-  await expect(page.getByText('Sent to Jane.')).toBeVisible({ timeout: 15_000 });
+  await expect(toast(page).getByText('Sent to Jane.')).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText('Held because Jane replied')).toHaveCount(0, { timeout: 15_000 });
 });
 
@@ -92,6 +95,6 @@ test('E27: Cancel on a held text cancels it; nothing is sent', async ({ page }) 
   await page.goto(`${stack.webUrl}/contacts/${lena.id}/thread`);
   await expect(page.getByText('Held because Lena replied')).toBeVisible({ timeout: 15_000 });
   await page.getByRole('group', { name: 'Held message' }).getByRole('button', { name: 'Cancel' }).click();
-  await expect(page.getByText('Canceled. Nothing was sent.')).toBeVisible({ timeout: 15_000 });
+  await expect(toast(page).getByText('Canceled. Nothing was sent.')).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText('Canceled, not sent')).toBeVisible({ timeout: 15_000 });
 });

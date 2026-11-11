@@ -13,7 +13,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useId, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Button, Card, EmptyState, Notice, Ratio } from '../../design/index.js';
+import { Button, Card, EmptyState, Notice, Ratio, useCountdownAnnouncement } from '../../design/index.js';
 import { type ApiError, messageFor, useApi } from '../../shell/index.js';
 import { ReachabilityBatch } from '../../reasons/index.js';
 import { ActionButton } from './ActionButton.js';
@@ -107,11 +107,17 @@ function Band({ title, cards, pinned }: { title: string; cards: FeedCard[]; pinn
   );
 }
 
-/** The live countdown of a pinned card. */
-export function Countdown({ dueAt, kind }: { dueAt: string; kind: 'offer' | 'deadline' }) {
+/**
+ * The live countdown of a pinned card. It ticks visibly every second; role="timer" is not a live
+ * region, so screen-reader users hear it only at milestones (5, 2 and 1 minutes, 30 and 10 seconds,
+ * and the end), politely, through the app's one announcer. `label` names what is counting down
+ * ("Offer for Pat L.") so the announcement makes sense on its own.
+ */
+export function Countdown({ dueAt, kind, label }: { dueAt: string; kind: 'offer' | 'deadline'; label?: string }) {
   const now = useNow(1000);
   const due = Date.parse(dueAt);
   const left = formatCountdown(due, now);
+  useCountdownAnnouncement(label ?? (kind === 'offer' ? 'Lead offer' : 'First contact'), due - now);
   if (left === null) {
     return (
       <span className="text-[15px] font-semibold text-danger">
@@ -124,6 +130,12 @@ export function Countdown({ dueAt, kind }: { dueAt: string; kind: 'offer' | 'dea
       {left} left
     </span>
   );
+}
+
+/** What a pinned card's countdown is for, in words: "Offer for Pat L.", "Due now for Jane Doe". */
+export function countdownLabel(card: Pick<FeedCard, 'itemType' | 'contact'>): string {
+  const what = card.itemType === 'lead_offer' ? 'Offer' : itemLabel(card.itemType);
+  return card.contact ? `${what} for ${card.contact.name}` : what;
 }
 
 export function FeedCardView({ card, pinned }: { card: FeedCard; pinned: boolean }) {
@@ -150,7 +162,7 @@ export function FeedCardView({ card, pinned }: { card: FeedCard; pinned: boolean
           </h3>
           {lead && card.contact && lead.label !== itemLabel(card.itemType) ? <p className="text-[15px] text-ink">{lead.label}</p> : null}
         </div>
-        {pinned && card.dueAt ? <Countdown dueAt={card.dueAt} kind={isOffer ? 'offer' : 'deadline'} /> : null}
+        {pinned && card.dueAt ? <Countdown dueAt={card.dueAt} kind={isOffer ? 'offer' : 'deadline'} label={countdownLabel(card)} /> : null}
       </div>
       {expired ? <p className="text-[15px] text-ink-muted">This offer ended. The lead is going to the next agent.</p> : null}
       <div className="flex flex-wrap items-start gap-2">
