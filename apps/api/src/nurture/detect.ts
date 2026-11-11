@@ -7,8 +7,8 @@
 // compliance reasons (D1); the send-time gate and the DB guards decide when the message goes.
 //
 // Sources:
-//   - MLS sync (module 24, one flagged hook in mls/sync.ts): every changed MLS row, as the system, in the sync's
-//     write transaction. MLS rows reach clients only while mls/eligibility.ts says so (clientView: live,
+//   - MLS sync (module 24, one flagged hook in mls/sync.ts): every changed MLS row enqueues one system job
+//     (nurture.listing_changed), so contact locks are never held across the sync's page. MLS rows reach clients only while mls/eligibility.ts says so (clientView: live,
 //     reviewed pack, fresh feed, display allowed, not a mirror of a team listing, E81/E85/E86).
 //   - Team price and status changes (workspace/listings.ts updateListing, one flagged line): a job
 //     nurture.listing_changed carries the listing_price_history row id (or the status change), run as the system.
@@ -18,7 +18,7 @@
 // reconcile wakes each batch once.
 import { anniversariesDue, detectFirings, digest, type Fact, type Firing, type ListingStatus, type TriggerCandidate } from '@realty/core/nurture';
 import type { ContactId, Instant, TenantId } from '@realty/core/foundation';
-import { type Tx, enqueueJob, lockContact } from '@realty/db';
+import { type Tx, enqueueJob, lockContact, lockContacts } from '@realty/db';
 import { sql } from 'kysely';
 import { type ListingRow, LISTING_COLS, clientView, mlsEligibility } from '../mls/eligibility.js';
 import { firingOfRow } from './decide.js';
@@ -34,7 +34,7 @@ export async function recordFactInTx(tx: Tx, deps: Pick<NurtureDeps, 'ids'>, fac
   const firings = detectFirings(fact, candidates);
   let inserted = 0;
   const touched = new Map<string, { contactId: string; playbookId: string }>();
-  // one contact lock at a time, in id order (the lock dispatch, ingestion and executeTriggerRun take)
+  // contact locks in id order (callers that record several facts in one transaction lock all their contacts first)
   for (const f of [...firings].sort((a, b) => a.contactId.localeCompare(b.contactId) || a.triggerKey.localeCompare(b.triggerKey))) {
     await lockContact(tx, f.contactId as ContactId);
     const c = await R.contactState(tx, f.contactId);
@@ -112,6 +112,8 @@ export async function recordListingChangeInTx(tx: Tx, deps: Pick<NurtureDeps, 'i
   const address = row.address_line1;
   const followers = await R.listingFollowers(tx, row.id);
   const rels = followers.map((f) => ({ contactId: f.contactId, ownerUserId: f.ownerUserId, relation: { kind: 'listing' as const, listingId: row.id, via: f.via } }));
+  // every contact lock this job takes, once, in id order (the order lockContacts uses everywhere)
+  await lockContacts(tx, followers.map((f) => f.contactId as ContactId));
   let n = 0;
   if (i.priceChanged) {
     const step = await R.priceStep(tx, row.id, i.historyId ?? null);
@@ -132,12 +134,29 @@ export async function mlsListingBefore(tx: Tx, mlsNumber: string, connectionId: 
   return s ? { id: s.id, status: s.status, priceCents: s.priceCents } : null;
 }
 
-/** MLS hook (module 24, flagged): after a changed row was upserted in the sync's write transaction. */
-export async function mlsListingChangedInTx(tx: Tx, deps: Pick<NurtureDeps, 'ids'>, listingId: string, before: ListingBefore | null, now: Instant): Promise<number> {
+/**
+ * MLS hook (module 24, flagged): after a changed row was upserted in the sync's write transaction, enqueue one
+ * nurture.listing_changed system job for it. Detection does not run inside the sync transaction: it takes contact
+ * locks, and holding those across a whole page (in an order no other path uses) could deadlock with ingestion,
+ * merges and dispatch, and roll the page back.
+ */
+export async function mlsListingChangedInTx(tx: Tx, _deps: Pick<NurtureDeps, 'ids'>, listingId: string, before: ListingBefore | null, now: Instant): Promise<number> {
   if (before === null) return 0;
   const after = await R.listingSnapshotById(tx, listingId);
   if (!after) return 0;
-  return recordListingChangeInTx(tx, deps, { listingId, before, priceChanged: after.priceCents !== before.priceCents, now });
+  const priceChanged = after.priceCents !== before.priceCents;
+  const statusChanged = after.status !== before.status;
+  if (!priceChanged && !statusChanged) return 0;
+  let historyId: string | null = null;
+  if (priceChanged) historyId = (await R.priceStep(tx, listingId, null))?.historyId ?? null;
+  const statusKey = statusChanged ? `${listingId}:status:${after.modifiedAt ?? now}` : null;
+  await enqueueJob(tx, {
+    queue: 'default',
+    kind: NURTURE_JOBS.listingChanged,
+    payload: { listingId, historyId, fromStatus: before.status, priceChanged: priceChanged && historyId !== null, statusKey },
+    dedupeKey: `${NURTURE_JOBS.listingChanged}:${listingId}:${historyId ?? 'nohistory'}:${statusKey ?? 'nostatus'}`.slice(0, 200),
+  });
+  return 1;
 }
 
 /**
@@ -189,19 +208,22 @@ export async function anniversaryScanInTx(tx: Tx, deps: Pick<NurtureDeps, 'ids'>
   const year = Number(today.slice(0, 4));
   const md = today.slice(5);
   const monthDays = md === '02-28' && !isLeap(year) ? ['02-28', '02-29'] : [md];
-  let n = 0;
+  const facts: ReturnType<typeof anniversariesDue> = [];
   let after: string | null = null;
   for (;;) {
     const deals = await R.closedDealsOn(tx, monthDays, zoneName, after, PAGE);
     if (deals.length === 0) break;
     after = deals[deals.length - 1]!.dealId;
-    const facts = anniversariesDue(deals.map((d) => ({ dealId: d.dealId, status: 'closed' as const, closedOn: d.closedOn, contactIds: d.contactIds, address: d.address })), today, now);
-    for (const f of facts) {
-      const c = await R.contactState(tx, f.contactId);
-      if (!c || !c.live) continue;
-      n += await recordFactInTx(tx, deps, f, [{ contactId: c.id, ownerUserId: c.ownerUserId, relation: { kind: 'contact' } }]);
-    }
+    facts.push(...anniversariesDue(deals.map((d) => ({ dealId: d.dealId, status: 'closed' as const, closedOn: d.closedOn, contactIds: d.contactIds, address: d.address })), today, now));
     if (deals.length < PAGE) break;
+  }
+  // every contact lock of the scan, once, in id order, before any firing is written (no lock cycle with other paths)
+  await lockContacts(tx, facts.map((f) => f.contactId as ContactId));
+  let n = 0;
+  for (const f of facts) {
+    const c = await R.contactState(tx, f.contactId);
+    if (!c || !c.live) continue;
+    n += await recordFactInTx(tx, deps, f, [{ contactId: c.id, ownerUserId: c.ownerUserId, relation: { kind: 'contact' } }]);
   }
   return n;
 }

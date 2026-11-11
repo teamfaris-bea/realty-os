@@ -87,7 +87,10 @@ async function currentFact(tx: Tx, f: Firing, e: MlsEligibility): Promise<Pick<I
       const onMarket = row.status === 'active' || row.status === 'coming_soon';
       const displayAllowed = row.source === 'team' || !onMarket ? true : view !== null && (r.kind !== 'price_drop' || (view.listPriceCents !== undefined && view.listPriceCents !== null));
       const feedFresh = row.source === 'team' ? true : row.mls_connection_id !== null && !e.staleIds.includes(row.mls_connection_id);
-      return { current: { kind: 'listing', status: row.status, priceCents: row.list_price_cents === null ? null : Number(row.list_price_cents), displayAllowed, feedFresh }, listing: { row, view } };
+      // R-MLS-2: an MLS row's price is the one its pack lets a client see (none when the pack withholds it)
+      const rowPrice = row.list_price_cents === null ? null : Number(row.list_price_cents);
+      const priceCents = row.source === 'mls' && view !== null ? (view.listPriceCents ?? null) : rowPrice;
+      return { current: { kind: 'listing', status: row.status, priceCents, displayAllowed, feedFresh }, listing: { row, view } };
     }
     case 'home_anniversary': {
       const d = await R.dealState(tx, r.dealId, f.contactId);
@@ -124,8 +127,9 @@ function currentPrice(it: Item): number | null {
 function itemText(it: Item, zone: IanaZone): { line: string; slots: SlotValues } {
   const where = literal(whereOf(it));
   const r = it.firing.ref;
-  const mlsNumber = it.listing?.row.source === 'mls' ? (it.listing.view?.mlsNumber ?? null) : null;
-  const shown: Firing = { ...it.firing, ref: { ...r, address: where, ...(r.kind === 'price_drop' || r.kind === 'back_on_market' ? { mlsNumber } : {}) } as Firing['ref'] };
+  // the MLS number is left out of client lines (the content guard reads a long digit run as an account number)
+  const mlsPrice = it.listing?.row.source === 'mls' ? currentPrice(it) : undefined;
+  const shown: Firing = { ...it.firing, ref: { ...r, address: where, ...(r.kind === 'price_drop' || r.kind === 'back_on_market' ? { mlsNumber: null } : {}), ...(r.kind === 'back_on_market' && mlsPrice !== undefined ? { priceCents: mlsPrice } : {}) } as Firing['ref'] };
   let line = alertItemLine(shown, it.current);
   const broker = it.listing?.row.source === 'mls' ? it.listing.view?.listingBrokerageName : null;
   if (broker) line = `${line}. Listed by ${literal(broker)}`;
@@ -201,7 +205,16 @@ export async function executeTriggerRunInTx(tx: Tx, deps: NurtureDeps, tenantId:
       skipped.push({ run, reason: 'FACT_MISMATCH' });
       continue;
     }
-    const v = await versionOf(run.versionId);
+    let v = await versionOf(run.versionId);
+    // R-AST-4: a firing of a version superseded before the migrate job reached it is built from the playbook's
+    // CURRENT approved version (approved by a person, hash-bound); apiSkip skips it if that version lost the step
+    if (v !== null && v.status === 'superseded') {
+      const curId = await R.currentApprovedVersionId(tx, v.playbookId);
+      if (curId !== null) {
+        v = await versionOf(curId);
+        run.versionId = curId;
+      }
+    }
     const c = v === null ? null : storedContent(v.steps);
     const content = c !== null && c.kind === 'triggers' ? (c as unknown as Extract<PlaybookContent, { kind: 'triggers' }>) : null;
     const api = apiSkip({
@@ -228,6 +241,21 @@ export async function executeTriggerRunInTx(tx: Tx, deps: NurtureDeps, tenantId:
     });
     if (plan.action === 'skip') skipped.push({ run, reason: plan.reason });
     else items.push({ item: { run, firing: f, ...cur }, plan });
+  }
+  // one message = one step's channel, purpose and category (the ones dispatch re-checks): items of another step
+  // shape are left scheduled and untouched, and the next reconcile pass builds them as their own message
+  const sigOf = async (it: Item): Promise<string> => {
+    const v = await versionOf(it.run.versionId);
+    const c = v === null ? null : storedContent(v.steps);
+    const t = c !== null && c.kind === 'triggers' ? (c as unknown as Extract<PlaybookContent, { kind: 'triggers' }>).triggers.find((x) => x.stepKey === it.firing.stepKey) : undefined;
+    return t ? `${t.channel}|${t.purpose}|${t.category}` : 'none';
+  };
+  items.sort((a, b) => a.item.firing.scheduledFor - b.item.firing.scheduledFor || a.item.run.id.localeCompare(b.item.run.id));
+  if (items.length > 1) {
+    const sig0 = await sigOf(items[0]!.item);
+    const same: typeof items = [];
+    for (const x of items) if ((await sigOf(x.item)) === sig0) same.push(x);
+    items.splice(0, items.length, ...same);
   }
   const finishSkips = async () => {
     for (const s of skipped) await R.skipRun(tx, s.run.id, s.reason);
@@ -342,7 +370,7 @@ export async function executeTriggerRunInTx(tx: Tx, deps: NurtureDeps, tenantId:
       dedupeKey: `trigger_draft:${head.run.id}:${version.id}`,
       claims,
     });
-    await R.attachRuns(tx, allRuns, { status: 'converted_to_draft', actionId, messageId: null });
+    await R.attachRuns(tx, allRuns, { status: 'converted_to_draft', actionId, messageId: null, versionId: version.id });
     await A.upsertFeed(tx, deps.ids, { userId: owner, itemType: 'assistant_draft', contactId: c.id, subjectType: 'assistant_action', subjectId: actionId, assistantActionId: actionId, score: 55, reasons: [decision.checkThis ? { code: 'CHECK_THIS', text: 'Alert ready: check this before sending' } : { code: 'NEEDS_YOUR_TAP', text: explanation }], dedupeKey: `draft:${actionId}` });
     return { kind: 'drafted', actionId, runIds: allRuns, reasons: decision.reasons };
   }
@@ -382,6 +410,6 @@ export async function executeTriggerRunInTx(tx: Tx, deps: NurtureDeps, tenantId:
     for (const id of allRuns) await R.skipRun(tx, id, 'NOT_QUEUED');
     return { kind: 'skipped', runIds: allRuns, reasons: allRuns.map(() => 'NOT_QUEUED' as const) };
   }
-  await R.attachRuns(tx, allRuns, { status: 'scheduled', actionId, messageId: q.messageId });
+  await R.attachRuns(tx, allRuns, { status: 'scheduled', actionId, messageId: q.messageId, versionId: version.id });
   return { kind: 'queued', messageId: q.messageId, actionId, runIds: allRuns };
 }

@@ -279,7 +279,7 @@ async function playbookReasons(
   tx: Tx,
   m: msgs.MessageRow,
   a: auto.ActionFacts,
-  owner: { ownerUserId: string | null },
+  owner: { ownerUserId: string | null; periodSeq: number | null },
   channel: Channel,
   autonomous: ReadonlySet<string>,
   tenant: g.TenantFacts,
@@ -296,6 +296,8 @@ async function playbookReasons(
     // module 26 (flagged, additive; R-NURT-1): a trigger firing has no enrollment. It sends only while its run is
     // still scheduled (inbound ingestion cancels it, R-NURT-5) and only as its step of the approved trigger content.
     if (run.status !== 'scheduled') return [...out, 'ENROLLMENT_NOT_ACTIVE'];
+    // R-NURT-7 at send time: an owned contact, still the owner and ownership period the message was built for
+    if (owner.ownerUserId === null || a.ownerUserId !== owner.ownerUserId || a.boundOwnershipSeq !== owner.periodSeq) return [...out, 'ASSISTANT_ACTION_STALE'];
     const t = storedTriggerStep(pb.steps, run.stepKey);
     parsedStep = t === null ? null : triggerStepAsPlaybookStep(t);
   } else {

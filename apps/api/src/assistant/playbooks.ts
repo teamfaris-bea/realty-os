@@ -278,6 +278,8 @@ async function stopRevokedTriggerRuns(tx: Tx, versionId: string, batch: number):
   const r = await sql<{ id: string; contact_id: string; message_id: string | null }>`
     SELECT id, contact_id, message_id FROM playbook_step_runs
      WHERE tenant_id = app.tenant_id() AND enrollment_id IS NULL AND playbook_version_id = ${versionId} AND status = 'scheduled'
+       AND (message_id IS NULL OR EXISTS (SELECT 1 FROM messages m WHERE m.tenant_id = playbook_step_runs.tenant_id AND m.id = playbook_step_runs.message_id
+                                            AND m.status IN ('queued','scheduled')))
      ORDER BY contact_id, id LIMIT ${batch}`.execute(tx);
   for (const x of r.rows) {
     await lockContact(tx, x.contact_id as ContactId);

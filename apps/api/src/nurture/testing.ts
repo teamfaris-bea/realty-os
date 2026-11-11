@@ -56,6 +56,7 @@ export async function mlsRecord(h: ApiHarness, w: NurtureWorld, n: number, o: Re
   await makeDue(h, connectionId);
   const r = await syncConnection(mlsDeps(h, { [connectionId]: pagedFeed([[reso(n, { ModificationTimestamp: ts, ...o })]]) }), tenantId as TenantId, connectionId);
   if (r.outcome !== 'synced') throw new Error(`mls sync: ${JSON.stringify(r)}`);
+  await drainKinds(h, tenantId, ['nurture.listing_changed']); // detection runs as its own system job (module 26)
   const row = await h.su.query<{ id: string }>("SELECT id FROM listings WHERE tenant_id = $1 AND source = 'mls' AND mls_number = $2", [tenantId, `M${n}`]);
   return row.rows[0]!.id;
 }
@@ -84,6 +85,14 @@ export async function triggerRuns(h: ApiHarness, contactId: string): Promise<Run
 /** A clock fixture: the contact's open firings are due now (their stored instant moved into the past). */
 export async function firingsDue(h: ApiHarness, contactId: string): Promise<void> {
   await h.su.query("UPDATE playbook_step_runs SET scheduled_for = now() - interval '1 second' WHERE contact_id = $1 AND enrollment_id IS NULL AND status = 'scheduled' AND message_id IS NULL", [contactId]);
+}
+
+/** Runs the pending jobs of these kinds now (and what they enqueue). */
+export async function drainKinds(h: ApiHarness, tenantId: string, kinds: string[]): Promise<void> {
+  const deps = depsFromPlatform(h.app.platform);
+  const registry = new HandlerRegistry().registerAll([...makeCommsHandlers(() => deps), ...makeAssistantHandlers(() => deps), ...makeNurtureHandlers(() => deps)]);
+  await h.su.query(`UPDATE jobs SET run_at = now() - interval '1 second' WHERE tenant_id = $1 AND status = 'pending' AND kind = ANY ($2)`, [tenantId, kinds]);
+  await createWorker({ db: h.database, registry, providers: h.providers, queues: ['default'], concurrency: 1, worker: `nurture-drain-${randomUUID().slice(0, 8)}`, idleMs: 10, log: silentLogger }).drain(30);
 }
 
 /** One reconcile pass as the worker would run it, then drains the jobs it and they enqueue (trigger.step, comms.dispatch). */

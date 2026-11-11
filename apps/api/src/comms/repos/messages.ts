@@ -385,6 +385,9 @@ export async function cancelScheduledTriggerRuns(tx: Tx, contactIds: readonly st
   const r = await sql<{ id: string }>`
     UPDATE playbook_step_runs SET status = 'canceled_paused', updated_at = now()
      WHERE tenant_id = app.tenant_id() AND enrollment_id IS NULL AND contact_id = ANY (${contactIds}::uuid[]) AND status = 'scheduled'
+       -- module 26 (flagged): a run whose message already left (dispatching, sent, dispatch_unknown) is not canceled
+       AND (message_id IS NULL OR EXISTS (SELECT 1 FROM messages m WHERE m.tenant_id = playbook_step_runs.tenant_id AND m.id = playbook_step_runs.message_id
+                                            AND m.status IN ('queued','scheduled','canceled')))
     RETURNING id`.execute(tx);
   return r.rows.map((x) => x.id);
 }

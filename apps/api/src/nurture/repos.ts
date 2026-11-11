@@ -212,10 +212,15 @@ export async function skipRun(tx: Tx, id: string, reason: RunSkipReason): Promis
      WHERE tenant_id = app.tenant_id() AND id = ${id} AND enrollment_id IS NULL`.execute(tx);
 }
 
-export async function attachRuns(tx: Tx, ids: readonly string[], u: { status: 'scheduled' | 'converted_to_draft'; actionId: string; messageId: string | null }): Promise<void> {
+export async function currentApprovedVersionId(tx: Tx, playbookId: string): Promise<string | null> {
+  const r = await sql<{ id: string }>`SELECT id FROM playbook_versions WHERE tenant_id = app.tenant_id() AND playbook_id = ${playbookId} AND status = 'approved'`.execute(tx);
+  return r.rows[0]?.id ?? null;
+}
+
+export async function attachRuns(tx: Tx, ids: readonly string[], u: { status: 'scheduled' | 'converted_to_draft'; actionId: string; messageId: string | null; versionId: string }): Promise<void> {
   if (ids.length === 0) return;
   await sql`
-    UPDATE playbook_step_runs SET status = ${u.status}, assistant_action_id = ${u.actionId}, message_id = ${u.messageId}, updated_at = now()
+    UPDATE playbook_step_runs SET status = ${u.status}, assistant_action_id = ${u.actionId}, message_id = ${u.messageId}, playbook_version_id = ${u.versionId}, updated_at = now()
      WHERE tenant_id = app.tenant_id() AND id = ANY (${ids}::uuid[]) AND enrollment_id IS NULL`.execute(tx);
 }
 
@@ -236,21 +241,39 @@ export async function dueLeads(tx: Tx, now: Instant, limit: number): Promise<str
  * reply, which cancels the run itself) is skipped visibly.
  */
 export async function settleBatches(tx: Tx, limit = 500): Promise<number> {
-  const a = await sql`
-    UPDATE playbook_step_runs r SET status = lead.status, last_gate_decision_id = lead.last_gate_decision_id, updated_at = now()
-      FROM messages m, playbook_step_runs lead
-     WHERE r.tenant_id = app.tenant_id() AND r.enrollment_id IS NULL AND r.status = 'scheduled' AND r.message_id IS NOT NULL
-       AND m.tenant_id = r.tenant_id AND m.id = r.message_id AND m.playbook_step_run_id IS NOT NULL AND m.playbook_step_run_id <> r.id
-       AND lead.tenant_id = m.tenant_id AND lead.id = m.playbook_step_run_id AND lead.status <> 'scheduled'
-       AND r.id IN (SELECT x.id FROM playbook_step_runs x WHERE x.tenant_id = app.tenant_id() AND x.enrollment_id IS NULL
-                     AND x.status = 'scheduled' AND x.message_id IS NOT NULL LIMIT ${limit})`.execute(tx);
+  let total = 0;
+  // (1) members follow their lead once dispatch decided it; the limited set holds only rows that can settle
+  for (;;) {
+    const a = await sql`
+      UPDATE playbook_step_runs r SET status = lead.status, last_gate_decision_id = lead.last_gate_decision_id, updated_at = now()
+        FROM messages m, playbook_step_runs lead
+       WHERE r.tenant_id = app.tenant_id() AND m.tenant_id = r.tenant_id AND m.id = r.message_id
+         AND lead.tenant_id = m.tenant_id AND lead.id = m.playbook_step_run_id
+         AND r.id IN (SELECT x.id FROM playbook_step_runs x
+                        JOIN messages mm ON mm.tenant_id = x.tenant_id AND mm.id = x.message_id
+                        JOIN playbook_step_runs ld ON ld.tenant_id = mm.tenant_id AND ld.id = mm.playbook_step_run_id
+                       WHERE x.tenant_id = app.tenant_id() AND x.enrollment_id IS NULL AND x.status = 'scheduled'
+                         AND ld.id <> x.id AND ld.status <> 'scheduled'
+                       ORDER BY x.updated_at, x.id LIMIT ${limit})`.execute(tx);
+    const k = Number(a.numAffectedRows ?? 0n);
+    total += k;
+    if (k < limit) break;
+  }
+  // (2) a run (lead or member) whose message reached a final status the dispatch path did not write back to the
+  // run (comms.reconcile resolving a dispatch_unknown): sent/delivered ⇒ sent, failed/undelivered/bounced ⇒ failed
   const b = await sql`
+    UPDATE playbook_step_runs r SET status = CASE WHEN m.status IN ('sent','delivered') THEN 'sent' ELSE 'failed' END, updated_at = now()
+      FROM messages m
+     WHERE r.tenant_id = app.tenant_id() AND r.enrollment_id IS NULL AND r.status = 'scheduled'
+       AND m.tenant_id = r.tenant_id AND m.id = r.message_id AND m.status IN ('sent','delivered','failed','undelivered','bounced')`.execute(tx);
+  // (3) a message canceled before dispatch (not by an inbound reply, which cancels the run itself): skipped visibly
+  const c = await sql`
     UPDATE playbook_step_runs r SET status = 'skipped_ineligible', updated_at = now(),
-           trigger_ref = r.trigger_ref || jsonb_build_object('skip', jsonb_build_object('reason', 'NOT_QUEUED', 'text', ${'The message was canceled before it went out: ' }::text || COALESCE(m.status_reason, 'canceled')))
+           trigger_ref = r.trigger_ref || jsonb_build_object('skip', jsonb_build_object('reason', 'NOT_QUEUED', 'text', ${'The message was canceled before it went out: '}::text || COALESCE(m.status_reason, 'canceled')))
       FROM messages m
      WHERE r.tenant_id = app.tenant_id() AND r.enrollment_id IS NULL AND r.status = 'scheduled'
        AND m.tenant_id = r.tenant_id AND m.id = r.message_id AND m.status = 'canceled'`.execute(tx);
-  return Number(a.numAffectedRows ?? 0n) + Number(b.numAffectedRows ?? 0n);
+  return total + Number(b.numAffectedRows ?? 0n) + Number(c.numAffectedRows ?? 0n);
 }
 
 /** Runs of a contact for the agent's view (most recent first). */
