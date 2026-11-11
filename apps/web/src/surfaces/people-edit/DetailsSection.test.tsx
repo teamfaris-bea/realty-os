@@ -124,3 +124,31 @@ describe('Details: address Remove and Undo (module 57)', () => {
     expect(document.body.textContent).not.toContain('ADDRESS_RESTORE_EXPIRED');
   });
 });
+
+describe('Details: what a visitor typed in the website chat (E77, E154, finding UXA-5)', () => {
+  it('shows it marked typed in chat, not verified, and Add as email makes it a point by the agent\'s own decision', async () => {
+    const fake = new FakeFetch().on(`POST /contacts/${C}/points`, { status: 201, body: { point: { id: '01900000-0000-7000-8000-0000000ac0e1', kind: 'email', address: 'sam.rivera@example.com', label: 'other', status: 'active', isPrimary: true, wrongNumberReported: false }, removedPointId: null, duplicates: [] } });
+    fake
+      .on('GET /auth/session', { status: 200, body: sessionFixture() })
+      .on(`GET /contacts/${C}/points`, { status: 200, body: { points: [] } });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const contact = { id: C, displayName: 'Sam Rivera', firstName: 'Sam', lastName: 'Rivera', phones: [], emails: [], typedInChat: [{ kind: 'email', address: 'sam.rivera@example.com', typedAt: '2026-11-11T17:00:00.000Z' }] };
+    render(
+      <QueryClientProvider client={qc}>
+        <ShellProvider api={new ApiClient({ fetch: fake.fetch })} table={tableWith()}>
+          <MemoryRouter>
+            <ToastProvider>
+              <DetailsSection contact={contact as never} details={details()} />
+            </ToastProvider>
+          </MemoryRouter>
+        </ShellProvider>
+      </QueryClientProvider>,
+    );
+    const u = userEvent.setup();
+    const row = (await screen.findByText('sam.rivera@example.com')).closest('li')!;
+    expect(row.textContent).toMatch(/typed in chat, not verified/);
+    await u.click(screen.getByRole('button', { name: 'Add sam.rivera@example.com as an email' }));
+    await waitFor(() => expect(fake.callsTo(`POST /contacts/${C}/points`)).toHaveLength(1));
+    expect(fake.callsTo(`POST /contacts/${C}/points`)[0]!.body).toEqual({ kind: 'email', address: 'sam.rivera@example.com', label: 'other' });
+  });
+});

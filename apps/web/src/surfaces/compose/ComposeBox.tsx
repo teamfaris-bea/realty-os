@@ -31,15 +31,16 @@
 //   D2: no Messenger or Instagram compose and no messaging-window copy.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Button, CheckThis, GateBadge, Notice } from '../../design/index.js';
 import { REACHABILITY_KEY, ReasonCaption, channelState, useReachabilityQuery } from '../../reasons/index.js';
 import { type ApiError, useApi, useCommand } from '../../shell/index.js';
 import { SendOutcome, WENT_OUT, sendOutcomeText, sentResult, useAgentSheets } from '../feed/lib/AgentSheets.js';
 import { CHANNEL_NOT_CONNECTED, type ComposeChannel, useWebChatApprove, useWebChatSend } from './channelApi.js';
 import { chooseChannel, webChatState } from './channelChoice.js';
-import { firstName } from '../feed/lib/format.js';
+import { firstName, formatPhone } from '../feed/lib/format.js';
 import { useSendCheck } from '../feed/lib/sendCheck.js';
-import type { ActionView, ApproveResponse, ComposeResponse } from '../feed/lib/types.js';
+import type { ActionView, ApproveResponse, ComposeResponse, TypedInChat } from '../feed/lib/types.js';
 
 export type Channel = 'sms' | 'email';
 
@@ -50,7 +51,28 @@ export interface ComposeContact {
   canEmail: boolean;
   /** the client has written by web chat (a web-chat message is in the thread); module 37 */
   canWebChat?: boolean;
+  /** what they typed in the website chat (never a point): said when nothing else can reach them (E77, UXA-5) */
+  typedInChat?: TypedInChat[];
   ownedByMe: boolean;
+}
+
+/**
+ * Nothing can be sent to them (E77: a chat-only lead whose chat ended), but they typed a phone or email in the chat:
+ * say so, unverified, and where the agent may add it by hand to call, text or email (finding UXA-5).
+ */
+function TypedInChatNote({ contact }: { contact: ComposeContact }) {
+  const typed = contact.typedInChat ?? [];
+  if (typed.length === 0) return null;
+  const shown = typed.map((t) => (t.kind === 'phone' ? formatPhone(t.address) : t.address)).join(' and ');
+  return (
+    <p data-testid="typed-in-chat" className="text-[14px] leading-snug text-ink">
+      {firstName(contact.name)} typed {shown} in the website chat (not verified). Add it on{' '}
+      <Link to={`/contacts/${contact.id}`} className="font-medium text-accent underline">
+        their details
+      </Link>{' '}
+      to call, text or email.
+    </p>
+  );
 }
 
 export interface ComposeBoxProps {
@@ -301,7 +323,15 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
   const fieldLabel = !settled ? 'Message' : channel === 'sms' ? 'Text message' : channel === 'email' ? 'Email message' : 'Web chat message';
   const placeholder = !settled ? `Message ${firstName(contact.name)}` : channel === 'sms' ? `Text ${firstName(contact.name)}` : channel === 'email' ? `Email ${firstName(contact.name)}` : `Reply to ${firstName(contact.name)} in web chat`;
 
-  if (settled && noChannel) return <Notice tone="info">There's no phone number or email on file to message.</Notice>;
+  // nothing to write on at all, or nothing that can take a message now: no template and no draft (nothing could send them)
+  const nothingSends = settled && choice.channel === null;
+  if (settled && noChannel)
+    return (
+      <div className="flex flex-col gap-2">
+        <Notice tone="info">There's no phone number or email on file to message.</Notice>
+        <TypedInChatNote contact={contact} />
+      </div>
+    );
 
   return (
     <form
@@ -381,7 +411,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
           {later ? 'Schedule' : 'Send'}
         </Button>
       </div>
-      {settled && (templatePicker || !draft) ? (
+      {settled && !nothingSends && (templatePicker || !draft) ? (
         <div className="flex flex-wrap items-center gap-2">
           {templatePicker
             ? templatePicker({
@@ -416,6 +446,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
         </div>
       ) : null}
       {settled && outcome === null ? <ReasonCaption id={`${id}-reason`} state={blockedNow} /> : null}
+      {nothingSends ? <TypedInChatNote contact={contact} /> : null}
       {finalText !== null ? (
         <figure aria-label={`What ${firstName(contact.name)} will get`} className="flex flex-col gap-1 rounded-xl bg-surface-2 px-3 py-2 text-[14px] text-ink">
           <figcaption className="font-medium text-ink-muted">What {firstName(contact.name)} will get</figcaption>
@@ -425,7 +456,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
       {showPreview ? <GateBadge decision={decision} /> : null}
       {notice ? <Notice tone={notice.tone}>{notice.text}</Notice> : null}
       {outcome ? <SendOutcome result={outcome} contactName={contact.name} /> : null}
-      {settled && !draft && draftId === null && body.trim() === '' && contact.ownedByMe ? (
+      {settled && !nothingSends && !draft && draftId === null && body.trim() === '' && contact.ownedByMe ? (
         <Button variant="quiet" className="self-start" pending={askDraft.pending} pendingLabel="Asking the assistant" onClick={() => void requestDraft()}>
           Ask the assistant for a draft
         </Button>

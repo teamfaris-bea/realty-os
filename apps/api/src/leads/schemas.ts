@@ -169,6 +169,11 @@ export const ContactFull = z.object({
   ownership: ProjectionView.extend({ pondName: z.string().nullable(), offeredToMe: z.boolean(), ownedByMe: z.boolean() }),
   phones: z.array(PointView),
   emails: z.array(PointView),
+  /**
+   * module 22 (E77, E154): what visitors typed in this contact's website chats, not a contact point: shown as "typed in
+   * chat, not verified" (nothing automated ever goes to it); a person may add it by hand as a phone or email
+   */
+  typedInChat: z.array(z.object({ kind: z.enum(['phone', 'email']), address: z.string(), typedAt: Iso })),
   inquiries: z.array(InquiryView),
   mergedIntoContactId: Id.nullable(),
 });

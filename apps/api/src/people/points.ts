@@ -99,7 +99,9 @@ export async function registerPointRoutes(app: FastifyInstance): Promise<void> {
 
   r.get('/contacts/:id/points', { config: { auth: 'contact.view_detail' }, preHandler: authorize('contact.view_detail', readAuth), schema: { params: S.IdParams, response: { 200: S.PointsResponse } } }, async (req) =>
     peopleTx(req, async (tx) => {
-      const all = await repo.allPoints(tx, req.params.id);
+      // phones and emails: a website-chat identity (kind web_chat) is not a point a person edits here, and listing it
+      // answered every chat lead with a 500 (PointDetail.kind is phone | email)
+      const all = (await repo.allPoints(tx, req.params.id)).filter((p) => p.kind === 'phone' || p.kind === 'email');
       return { points: all.filter((p) => p.removed_at === null).map(pointView), removed: all.filter((p) => p.removed_at !== null).map(removedPointView) };
     }),
   );
@@ -139,7 +141,9 @@ export async function registerPointRoutes(app: FastifyInstance): Promise<void> {
       await repo.removePoint(tx, pt.id, why.reason);
       if (pt.is_primary) await promoteNext(tx, req.params.id, pt.kind);
       await audit(tx, actor, { action: 'contact.update', entity: { type: 'contact', id: req.params.id }, changes: redactSnapshot({ point_action: 'remove', kind: pt.kind, removed_reason: why.reason }, { entity: 'contact_point' }) });
-      const all = await repo.allPoints(tx, req.params.id);
+      // phones and emails: a website-chat identity (kind web_chat) is not a point a person edits here, and listing it
+      // answered every chat lead with a 500 (PointDetail.kind is phone | email)
+      const all = (await repo.allPoints(tx, req.params.id)).filter((p) => p.kind === 'phone' || p.kind === 'email');
       return { points: all.filter((p) => p.removed_at === null).map(pointView), removed: all.filter((p) => p.removed_at !== null).map(removedPointView) };
     }),
   );
@@ -148,7 +152,9 @@ export async function registerPointRoutes(app: FastifyInstance): Promise<void> {
     peopleTx(req, async (tx) => {
       const pt = await livePoint(tx, req.params.id, req.params.pointId);
       await repo.setPrimary(tx, req.params.id, pt.id, pt.kind);
-      const all = await repo.allPoints(tx, req.params.id);
+      // phones and emails: a website-chat identity (kind web_chat) is not a point a person edits here, and listing it
+      // answered every chat lead with a 500 (PointDetail.kind is phone | email)
+      const all = (await repo.allPoints(tx, req.params.id)).filter((p) => p.kind === 'phone' || p.kind === 'email');
       return { points: all.filter((p) => p.removed_at === null).map(pointView), removed: all.filter((p) => p.removed_at !== null).map(removedPointView) };
     }),
   );
@@ -157,7 +163,9 @@ export async function registerPointRoutes(app: FastifyInstance): Promise<void> {
     peopleTx(req, async (tx) => {
       const pt = await livePoint(tx, req.params.id, req.params.pointId);
       await repo.setPointLabel(tx, pt.id, req.body.label);
-      const all = await repo.allPoints(tx, req.params.id);
+      // phones and emails: a website-chat identity (kind web_chat) is not a point a person edits here, and listing it
+      // answered every chat lead with a 500 (PointDetail.kind is phone | email)
+      const all = (await repo.allPoints(tx, req.params.id)).filter((p) => p.kind === 'phone' || p.kind === 'email');
       return { points: all.filter((p) => p.removed_at === null).map(pointView), removed: all.filter((p) => p.removed_at !== null).map(removedPointView) };
     }),
   );

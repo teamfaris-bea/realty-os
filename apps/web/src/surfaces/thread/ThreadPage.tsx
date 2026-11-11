@@ -114,7 +114,7 @@ function Thread() {
         <ComposeBox
           key={draft ?? 'none'}
           suggestedDraftId={compose !== null && draft === null ? pendingDraft : null}
-          contact={{ id: full.id, name: full.displayName, canText: full.phones.length > 0, canEmail: full.emails.length > 0, canWebChat: hasWebChat, ownedByMe: full.ownership.ownedByMe }}
+          contact={{ id: full.id, name: full.displayName, canText: full.phones.length > 0, canEmail: full.emails.length > 0, canWebChat: hasWebChat, typedInChat: full.typedInChat ?? [], ownedByMe: full.ownership.ownedByMe }}
           initialChannel={compose === 'email' ? 'email' : compose === 'sms' ? 'sms' : compose === 'web_chat' ? 'web_chat' : undefined}
           lastInboundChannel={t.data ? lastInboundChannel(newest) : null}
           draftActionId={draft}

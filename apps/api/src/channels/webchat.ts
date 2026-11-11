@@ -246,7 +246,9 @@ export async function startChat(deps: WebChatDeps, widgetKey: string, origin: st
 async function typedClaimSuggestion(tx: Tx, deps: WebChatDeps, sys: SystemActor, chatContactId: string, claim: { kind: 'phone' | 'email'; address: string }, now: Instant): Promise<void> {
   const env = deps.comms.envelope.inTx(tx, sys.tenantId as TenantId);
   const h = Buffer.from(await env.hmacAddress(sys.tenantId as TenantId, claim.address));
-  const matches = (await repo.contactsWithHmac(tx, h)).filter((m) => m.contact_id !== chatContactId);
+  // a person with that point, and (UXA-5) an earlier chat lead who typed the same thing: a returning visitor
+  const found = [...(await repo.contactsWithHmac(tx, h)), ...(await repo.contactsWithClaim(tx, claim.kind, claim.address))];
+  const matches = [...new Map(found.filter((m) => m.contact_id !== chatContactId).map((m) => [m.contact_id, m])).values()];
   if (matches.length === 0) return;
   await lockContacts(tx, [...new Set([chatContactId, ...matches.map((m) => m.contact_id)])].sort() as ContactId[]);
   for (const m of matches) {

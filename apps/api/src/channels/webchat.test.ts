@@ -6,7 +6,7 @@ import { withTenantTx } from '@realty/db';
 import { systemActor } from '../worker/systemActor.js';
 import { purgeWebchatSessions } from './handlers.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type AssistantWorld, approvedPlaybook, assistantWorld, call, decisionsFor, messagesOf, ownedContact, runJobs } from '../assistant/testing.js';
+import { type AssistantWorld, approvedPlaybook, assistantWorld, call, decisionsFor, messagesOf, ownedContact, randomEmail, runJobs } from '../assistant/testing.js';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { BUILT_IN_TEMPLATES as TEMPLATES } from '../assistant/templates.js';
 import { acceptLead, chatConfig, chatMessage, chatSource, codeOf, createWidget, openChat, pointsOf, pollBody, scheduledTriggerRun, startChat, visitorIp } from './testing.js';
@@ -245,6 +245,44 @@ describe('E138 E137 what the visitor types is never trusted', () => {
     expect(n.some((x) => /typed in chat, not verified/i.test(x.body ?? ''))).toBe(true);
     expect(JSON.stringify(n)).not.toContain(client.email);
     expect(h.providers.email.sent.slice(mail).filter((m) => m.to.toLowerCase() === client.email.toLowerCase())).toEqual([]);
+  });
+
+  it('E77 E154 (findings chat-claim-collected-never-shown, UXA-5): the phone or email a visitor typed is shown to the agent on the lead, marked typed in chat (not verified), and nowhere a person may not see the lead; added by hand it becomes a point and is no longer listed as typed', async () => {
+    const typed = randomEmail();
+    const c = await openChat(h, widget.key, src.disclosureId, { name: 'Sam Rivera', email: typed.toUpperCase() });
+    const agent = await acceptLead(h, w.agents, c.contactId);
+    type Full = { contact: { view: string; emails: { address: string }[]; typedInChat?: { kind: string; address: string; typedAt: string }[] } };
+    const view = await call<Full>(agent, 'GET', `/contacts/${c.contactId}`);
+    expect(view.status).toBe(200);
+    expect(view.body.contact.typedInChat).toEqual([{ kind: 'email', address: typed.toLowerCase(), typedAt: expect.any(String) }]);
+    expect(view.body.contact.emails).toEqual([]);
+    // another agent, who may not see this lead in detail, gets no claim (RLS: webchat_staff_read)
+    const other = w.agents.find((x) => x.userId !== agent.userId)!;
+    const theirs = await call<Full>(other, 'GET', `/contacts/${c.contactId}`);
+    expect(theirs.status === 404 || theirs.body.contact.view === 'card').toBe(true);
+    expect(JSON.stringify(theirs.body)).not.toContain(typed.toLowerCase());
+    // the points route answers for a chat lead (its chat identity is no phone or email): it was a 500
+    const points = await call<{ points: { kind: string }[] }>(agent, 'GET', `/contacts/${c.contactId}/points`);
+    expect([points.status, points.body.points]).toEqual([200, []]);
+    // the agent's human decision (E77): add it, and it is a point like any other, no longer a claim
+    expect((await call(agent, 'POST', `/contacts/${c.contactId}/points`, { kind: 'email', address: typed.toLowerCase(), label: 'other' })).status).toBe(201);
+    const after = await call<Full>(agent, 'GET', `/contacts/${c.contactId}`);
+    expect(after.body.contact.emails.map((e) => e.address)).toEqual([typed.toLowerCase()]);
+    expect(after.body.contact.typedInChat).toEqual([]);
+  });
+
+  it('E138 (finding UXA-5): a returning visitor who types the same email in a new chat, under another name, raises a duplicate suggestion between the two chat leads ("typed in chat, not verified" to the first one\'s agent)', async () => {
+    const typed = randomEmail();
+    const first = await openChat(h, widget.key, src.disclosureId, { name: 'Sam Rivera', email: typed });
+    const agent = await acceptLead(h, w.agents, first.contactId);
+    const again = await openChat(h, widget.key, src.disclosureId, { name: 'Jordan Blake', email: typed.toUpperCase() });
+    const dup = (await h.su.query('SELECT match_reason, status FROM contact_duplicate_candidates WHERE (contact_a_id = $1 AND contact_b_id = $2) OR (contact_a_id = $2 AND contact_b_id = $1)', [first.contactId, again.contactId])).rows;
+    expect(dup).toEqual([{ match_reason: 'shared_email', status: 'open' }]);
+    const n = (await h.su.query('SELECT body FROM notifications WHERE user_id = $1 AND subject_id = $2', [agent.userId, first.contactId])).rows;
+    expect(n.some((x) => /typed in chat, not verified/i.test(x.body ?? ''))).toBe(true);
+    expect(JSON.stringify(n)).not.toContain(typed);
+    // the sessions never attach: two contacts, each with only its own chat identity
+    expect((await pointsOf(h, again.contactId)).map((p) => p.kind)).toEqual(['web_chat']);
   });
 
   it('E137 R-INBOX-5: a spam opening creates no contact, offer or notification (the session is purged in 30 days); 5,000 starts from one IP are cut off by the rate limit (429)', async () => {

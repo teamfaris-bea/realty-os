@@ -273,6 +273,21 @@ describe('module 37: compose on the client\'s last open channel', () => {
     expect(f.callsTo(`POST /contacts/${IDS.jane}/messages`)).toEqual([]);
   });
 
+  it('E77 (finding UXA-5): once a chat-only lead\'s chat ended, the box says what they typed in it (not verified) and where to add it to call, text or email; it offers no template and no draft, since nothing could send them', async () => {
+    const sam = fullContact({ phones: [], emails: [], typedInChat: [{ kind: 'email', address: 'sam.rivera@example.com', typedAt: iso(-3_600_000) }] });
+    const f = new FakeFetch()
+      .on(`GET /contacts/${IDS.jane}`, { status: 200, body: { contact: sam } })
+      .on(`GET /contacts/${IDS.jane}/timeline?limit=100`, { status: 200, body: { items: chatThenText().slice(0, 2), nextCursor: null } })
+      .on(`GET /contacts/${IDS.jane}/reachability`, summary('ended'));
+    agentApp(f, `/contacts/${IDS.jane}/thread`);
+    expect(await screen.findByText('The chat has ended: they left the page')).toBeInTheDocument();
+    const said = await screen.findByText(/Jane typed sam\.rivera@example\.com in the website chat \(not verified\)/);
+    expect(said.textContent).toMatch(/Add it on their details to call, text or email\./);
+    expect(screen.getByRole('link', { name: /their details/ })).toHaveAttribute('href', `/contacts/${IDS.jane}`);
+    expect(screen.queryByRole('button', { name: 'Ask the assistant for a draft' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Templates/ })).toBeNull();
+  });
+
   it('no web chat is offered when the summary says there is no chat to reply to, whatever the thread shows', async () => {
     agentApp(fake().on(`GET /contacts/${IDS.jane}/reachability`, summary('none')), `/contacts/${IDS.jane}/thread`);
     await waitFor(() => expect(screen.getByRole('radio', { name: 'Email' })).toBeInTheDocument());

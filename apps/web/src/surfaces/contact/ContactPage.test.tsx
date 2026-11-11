@@ -63,6 +63,20 @@ describe('Contact: full view', () => {
     expect(document.body.textContent).not.toMatch(/consent|quiet hours|anyway/i);
   });
 
+  it('E77 E154 (finding UXA-5): the lead card shows the phone or email the visitor typed in the website chat, marked typed in chat, not verified (never as a point to call or text)', async () => {
+    const sam = fullContact({ phones: [], emails: [], typedInChat: [{ kind: 'email', address: 'sam.rivera@example.com', typedAt: iso(-60_000) }, { kind: 'phone', address: '+14155550123', typedAt: iso(-3_600_000) }] });
+    agentApp(fullFake(sam), `/contacts/${IDS.jane}`);
+    const email = await screen.findByText('sam.rivera@example.com');
+    expect(email.closest('li')!.textContent).toMatch(/typed in chat, not verified/);
+    const phone = screen.getByText('(415) 555-0123');
+    expect(phone.closest('li')!.textContent).toMatch(/typed in chat, not verified/);
+    // still nothing on file to call or text: Call, Text and Email say there is no number or address
+    for (const name of ['Call', 'Text', 'Email']) {
+      const b = screen.queryByRole('button', { name });
+      if (b) expect(b).toBeDisabled();
+    }
+  });
+
   it('an agent-recorded do-not-call disables Call and says who recorded it and when', async () => {
     const dnc = stopReason({ source: 'agent_recorded', keyword: null, at: new Date(new Date().getFullYear(), 9, 3, 12).toISOString(), recordedBy: { userId: IDS.me, displayName: 'Avery Brooks' } });
     const fake = fullFake().on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: reachability(IDS.jane, { voice: [dnc] }) } });

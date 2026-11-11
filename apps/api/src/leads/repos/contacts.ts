@@ -111,6 +111,26 @@ export async function contactPoints(tx: Tx, contactId: string): Promise<PointRow
   return r.rows;
 }
 
+export interface ChatClaimRow {
+  claimed_kind: 'phone' | 'email';
+  claimed_address: string;
+  started_at: Date;
+}
+
+/**
+ * The phones and emails visitors typed in this contact's website chats (webchat_sessions.claimed_*, E77, E154): never a
+ * contact point and never sent anything automated; shown to a person, marked "typed in chat, not verified", so they may
+ * add one by hand. Read under the caller's RLS (0018 webchat_staff_read: sessions of a contact they may see in detail),
+ * newest first.
+ */
+export async function chatClaims(tx: Tx, contactId: string): Promise<ChatClaimRow[]> {
+  const r = await sql<ChatClaimRow>`
+    SELECT claimed_kind, claimed_address, started_at FROM webchat_sessions
+     WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId}::uuid AND claimed_kind IS NOT NULL
+     ORDER BY started_at DESC, id DESC LIMIT 20`.execute(tx);
+  return r.rows;
+}
+
 export interface InquiryRow {
   id: string;
   received_at: Date;

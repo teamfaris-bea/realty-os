@@ -42,7 +42,7 @@ export function seesDetail(req: FastifyRequest, row: repo.ContactRow): boolean {
 
 export async function contactView(tx: Tx, req: FastifyRequest, row: repo.ContactRow) {
   if (!seesDetail(req, row)) return cardOf(row, { masked: row.ownership_state === 'in_pond' });
-  return fullOf(row, await repo.contactPoints(tx, row.id), await repo.contactInquiries(tx, row.id));
+  return fullOf(row, await repo.contactPoints(tx, row.id), await repo.contactInquiries(tx, row.id), await repo.chatClaims(tx, row.id));
 }
 
 const Params = z.object({ id: z.uuid() });

@@ -98,6 +98,13 @@ export interface ProjectionView {
   seq: number;
 }
 
+/** What a visitor typed in the contact's website chat (module 22, E77, E154): never a point; "typed in chat, not verified". */
+export interface TypedInChat {
+  kind: 'phone' | 'email';
+  address: string;
+  typedAt: string;
+}
+
 export interface ContactFullView {
   id: string;
   view: 'full';
@@ -118,6 +125,8 @@ export interface ContactFullView {
   ownership: ProjectionView & { pondName: string | null; offeredToMe: boolean; ownedByMe: boolean };
   phones: PointView[];
   emails: PointView[];
+  /** module 22: absent from an API older than it */
+  typedInChat?: TypedInChat[];
   inquiries: {
     id: string;
     receivedAt: string;

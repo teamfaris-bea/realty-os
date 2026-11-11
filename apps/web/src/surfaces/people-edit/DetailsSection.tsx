@@ -347,6 +347,31 @@ export function DetailsSection({ contact, details }: { contact: ContactFullView;
             {points.length === 0 ? <li className="text-ink-muted">No phone or email on file.</li> : null}
           </ul>
         )}
+        {/* E77, E154: what the visitor typed in the website chat. Nothing automated ever goes to it; adding it as a phone
+            or email is the agent's own decision, and only then can it be called, texted or emailed */}
+        {(contact.typedInChat ?? []).length > 0 ? (
+          <ul className="flex flex-col gap-1 text-[16px] text-ink" aria-label="Typed in the website chat">
+            {(contact.typedInChat ?? []).map((t) => {
+              const shown = t.kind === 'phone' ? formatPhone(t.address) : t.address;
+              return (
+                <li key={`${t.kind}:${t.address}`} className="flex flex-wrap items-center gap-2 break-all">
+                  <span>
+                    {shown} <span className="text-ink-muted">· typed in chat, not verified</span>
+                  </span>
+                  {details.canEdit ? (
+                    <Button
+                      variant="quiet"
+                      aria-label={`Add ${shown} as ${t.kind === 'phone' ? 'a phone number' : 'an email'}`}
+                      onClick={() => void act.run('POST', `/contacts/${contact.id}/points`, { kind: t.kind, address: t.address, label: t.kind === 'phone' ? 'mobile' : 'other' }).then((r) => r.ok && toast({ text: t.kind === 'phone' ? 'Number added' : 'Email added' }))}
+                    >
+                      {t.kind === 'phone' ? 'Add as phone' : 'Add as email'}
+                    </Button>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
       </div>
       {blockingRemoved.length > 0 ? (
         <Notice tone="warn">

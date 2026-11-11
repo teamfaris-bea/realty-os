@@ -180,6 +180,12 @@ function FullView({ contact }: { contact: ContactFullView }) {
             </li>
           ))}
           {contact.phones.length === 0 && contact.emails.length === 0 ? <li className="text-ink-muted">No phone or email on file.</li> : null}
+          {/* E77, E154: what the visitor typed in the website chat; never a point, so nothing calls, texts or emails it */}
+          {(contact.typedInChat ?? []).map((t) => (
+            <li key={`${t.kind}:${t.address}`} className="break-all">
+              {t.kind === 'phone' ? formatPhone(t.address) : t.address} <span className="text-ink-muted">· typed in chat, not verified</span>
+            </li>
+          ))}
         </ul>
         {inquiry && (inquiry.message || inquiry.propertyText) ? (
           <p className="rounded-xl bg-surface-2 px-3 py-2 text-[15px] text-ink">

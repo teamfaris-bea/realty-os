@@ -216,6 +216,20 @@ export async function contactsWithHmac(tx: Tx, hmac: Buffer): Promise<{ contact_
   ).rows;
 }
 
+/**
+ * Contacts whose earlier website chat carried the same typed claim (E138, finding UXA-5: a returning visitor who types
+ * the same email or phone under another name). Claims are stored normalized (E.164, lowercased email). System actor.
+ */
+export async function contactsWithClaim(tx: Tx, kind: 'phone' | 'email', address: string): Promise<{ contact_id: string; owner_user_id: string | null }[]> {
+  return (
+    await sql<{ contact_id: string; owner_user_id: string | null }>`
+      SELECT DISTINCT s.contact_id, c.owner_user_id FROM webchat_sessions s JOIN contacts c ON c.tenant_id = s.tenant_id AND c.id = s.contact_id
+       WHERE s.tenant_id = app.tenant_id() AND s.claimed_kind = ${kind} AND s.claimed_address = ${address} AND s.contact_id IS NOT NULL
+         AND c.deleted_at IS NULL AND c.merged_into_contact_id IS NULL
+       ORDER BY s.contact_id LIMIT 5`.execute(tx)
+  ).rows;
+}
+
 export async function activeRole(tx: Tx, userId: string): Promise<string | null> {
   return (await sql<{ role: string }>`SELECT role FROM memberships WHERE tenant_id = app.tenant_id() AND user_id = ${userId}::uuid AND status = 'active'`.execute(tx)).rows[0]?.role ?? null;
 }

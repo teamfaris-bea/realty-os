@@ -3,7 +3,7 @@
 // serialized when the caller sees the contact's detail.
 import type { OwnershipProjection } from '@realty/core/ownership';
 import type { z } from 'zod';
-import type { ContactRow, InquiryRow, PointRow } from './repos/contacts.js';
+import type { ChatClaimRow, ContactRow, InquiryRow, PointRow } from './repos/contacts.js';
 import type { ContactCard, ContactFull, ProjectionView } from './schemas.js';
 
 const iso = (d: Date | null | undefined): string | null => (d ? d.toISOString() : null);
@@ -91,7 +91,22 @@ function pointView(p: PointRow) {
   return { id: p.id, address: p.address, label: p.label, lineType: p.line_type, status: p.status, isPrimary: p.is_primary };
 }
 
-export function fullOf(r: ContactRow, points: readonly PointRow[], inquiries: readonly InquiryRow[]): z.infer<typeof ContactFull> {
+/**
+ * What visitors typed in this contact's website chats that is not already one of its live points, once per address,
+ * newest first (E77, E154: "typed in chat, not verified"; added by hand it becomes a point and leaves this list).
+ */
+export function typedInChat(claims: readonly ChatClaimRow[], points: readonly PointRow[]): { kind: 'phone' | 'email'; address: string; typedAt: string }[] {
+  const have = new Set(points.map((p) => `${p.kind}:${p.address.toLowerCase()}`));
+  const out = new Map<string, { kind: 'phone' | 'email'; address: string; typedAt: string }>();
+  for (const c of claims) {
+    const key = `${c.claimed_kind}:${c.claimed_address.toLowerCase()}`;
+    if (have.has(key) || out.has(key)) continue;
+    out.set(key, { kind: c.claimed_kind, address: c.claimed_address, typedAt: c.started_at.toISOString() });
+  }
+  return [...out.values()];
+}
+
+export function fullOf(r: ContactRow, points: readonly PointRow[], inquiries: readonly InquiryRow[], claims: readonly ChatClaimRow[] = []): z.infer<typeof ContactFull> {
   return {
     id: r.id,
     view: 'full',
@@ -117,6 +132,7 @@ export function fullOf(r: ContactRow, points: readonly PointRow[], inquiries: re
     ownership: { ...projectionFromRow(r), pondName: r.pond_name, offeredToMe: r.rel_offer, ownedByMe: r.rel_own },
     phones: points.filter((p) => p.kind === 'phone').map(pointView),
     emails: points.filter((p) => p.kind === 'email').map(pointView),
+    typedInChat: typedInChat(claims, points),
     inquiries: inquiries.map((i) => ({
       id: i.id,
       receivedAt: i.received_at.toISOString(),

@@ -67,6 +67,15 @@ test('R-INBOX-1: a chat started on the website, a text and the chat again appear
   await expect(convo.locator('li', { hasText: 'Is the open house still on?' }).locator('[data-channel-tag]')).toHaveText('Web chat');
 });
 
+test('E77 E154 (finding UXA-5): Jane\'s lead shows the email she typed in the chat, marked typed in chat, not verified, with Add as email on her details', async ({ page }) => {
+  await signIn(page);
+  await page.goto(`${stack.webUrl}/contacts/${jane.id}`);
+  const typed = page.getByRole('main').locator('li', { hasText: 'typed in chat, not verified' }).first();
+  await expect(typed).toBeVisible({ timeout: 15_000 });
+  await expect(typed).toContainText('@');
+  await expect(page.getByRole('button', { name: /^Add .+ as an email$/ })).toBeVisible();
+});
+
 test('finding UXA-3: Home shows Jane waiting in the website chat with Reply first (never Email, which she has none of); Reply opens the thread on web chat, ready to type', async ({ page }) => {
   await signIn(page);
   const card = page.locator('article, li').filter({ hasText: 'They wrote in the website chat' }).filter({ hasText: 'Jane Doe' }).first();
