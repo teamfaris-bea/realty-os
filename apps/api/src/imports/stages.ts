@@ -27,6 +27,7 @@ import {
   type PlannedRecord,
   type Review,
   type StageDryRun,
+  addSkippedDuplicates,
   buildExistingIndex,
   buildVerification,
   commitPlan,
@@ -34,6 +35,7 @@ import {
   importedOptOuts,
   mapFub,
   personRefOf,
+  skippedDuplicateOf,
   spotCheckSample,
 } from '@realty/core/import';
 import { type Tx, enqueueJob, withTenantTx } from '@realty/db';
@@ -100,10 +102,21 @@ function personRefOfRecord(r: rrepo.RecordRow): string | null {
   return fub ? (fub[1] as string) : r.source_ref;
 }
 
-/** The contacts-stage plan for person refs not committed yet (later stages may dry-run first, R-IMPORT-3). */
+/**
+ * The contacts-stage plan for person refs not committed yet (later stages may dry-run first, R-IMPORT-3), and for
+ * the people skipped as duplicates: a skip is never committed and writes no external_ref, so a later stage needs to
+ * know what the skip points at (B6, R-IMPORT-4; core skippedDuplicateOf, the same rule as core contactsStagePlan).
+ */
 export async function contactsStageMap(tx: Tx, batchId: string): Promise<Map<string, ContactsStagePlan>> {
   const out = new Map<string, ContactsStagePlan>();
-  for (const r of await rrepo.contactsStageRecords(tx, batchId)) {
+  const recs = await rrepo.contactsStageRecords(tx, batchId);
+  const refOf = new Map<string, string>();
+  for (const r of recs) {
+    const ref = personRefOfRecord(r);
+    if (ref !== null) refOf.set(r.source_ref, ref);
+  }
+  const skips: { personRef: string; sameAs: ReturnType<typeof skippedDuplicateOf> }[] = [];
+  for (const r of recs) {
     if (r.outcome === 'imported') continue; // committed: external_refs knows it
     const ref = personRefOfRecord(r);
     if (ref === null) continue;
@@ -111,8 +124,10 @@ export async function contactsStageMap(tx: Tx, batchId: string): Promise<Map<str
     if (r.dry_run_outcome === 'rejected' || r.review_decision === 'reject' || r.outcome === 'rejected') out.set(ref, 'rejected');
     else if (r.dry_run_outcome === 'needs_review' && r.review_decision === null) out.set(ref, 'needs_review');
     else if (plan?.kind === 'create_contact' && r.review_decision !== 'merge') out.set(ref, 'create');
+    else if (plan?.kind === 'skip') skips.push({ personRef: ref, sameAs: skippedDuplicateOf({ action: plan, issues: r.issues as Issue[] }, (s) => refOf.get(s)) });
     else out.set(ref, 'attach');
   }
+  addSkippedDuplicates(out, skips);
   return out;
 }
 

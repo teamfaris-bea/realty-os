@@ -32,6 +32,7 @@ export const ISSUE_SENTENCES: Record<string, string> = {
   PARENT_NOT_FOUND: 'The contact this belongs to is not in the import.',
   PARENT_REJECTED: 'The contact this belongs to was not imported.',
   PARENT_NOT_LINKED: 'The contact this belongs to still needs your review.',
+  PARENT_DUPLICATE: 'The person this belongs to was skipped as a duplicate (of an earlier row, or of a contact already here), so it goes on that contact.',
   USER_UNMAPPED: 'Assigned to a Follow Up Boss user who is not mapped to a team member yet.',
   IN_FILE_DUPLICATE: 'Same person as an earlier row of this import (same id, phone or email).',
   ALREADY_IMPORTED: 'Already imported earlier; nothing new to add.',

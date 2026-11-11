@@ -149,13 +149,13 @@ function largeFub(n: number): { data: FubDataset; ex: Expect } {
   const textMessages: unknown[] = [];
   const calls: unknown[] = [];
   const recordings: Record<string, Uint8Array> = {};
-  // History never names an in-file duplicate person: that is a known product bug (the dry run plans it,
-  // the commit fails it PARENT_NOT_FOUND), reproduced on its own below ("found by M6"). At 50k the subsets
-  // below never hit those people anyway (they are i % 200 === 199); the guard matters for small sizes.
+  // History may name an in-file duplicate person (B6, fixed): it goes on the contact of the earlier row the duplicate
+  // repeats, as the dry run says (reproduced on its own below, "found by M6"). At 50k the subsets below never hit those
+  // people (they are i % 200 === 199); at small sizes (IMPORT_LARGE_PEOPLE) they do.
   const histEvery = Math.max(1, Math.round(n / 5_000)); // ~5,000 notes and ~5,000 texts at 50k
   for (let i = 0; i < n; i += histEvery) {
     const p = persons[i] as { id: number; ok: boolean; dup: boolean };
-    if (p.dup || !p.ok) continue;
+    if (!p.ok) continue;
     notes.push({ id: 5_000_000 + i, personId: p.id, ...(i % 3 === 0 ? { subject: 'Call recap' } : {}), body: i % 4 === 0 ? `<p>Wants <b>${2 + (i % 3)} beds</b> &amp; a yard.</p>` : `Followed up about listing ${i}.`, isHtml: i % 4 === 0, created: '2025-01-15T16:00:00Z', createdById: i % 2 === 0 ? 11 : 12 });
     textMessages.push({ id: 6_000_000 + i, personId: p.id, created: '2025-03-01T18:00:00Z', isIncoming: true, message: `Is ${i} Elm St still available?`, status: 'Received' });
     if (i % (histEvery * 2) === 0) textMessages.push({ id: 6_500_000 + i, personId: p.id, created: '2025-03-01T18:05:00Z', isIncoming: false, message: 'Yes! Want to see it Saturday?', status: 'Delivered', userId: 11 });
@@ -168,7 +168,7 @@ function largeFub(n: number): { data: FubDataset; ex: Expect } {
   const callEvery = Math.max(1, Math.round(n / 1_000)); // ~1,000 calls at 50k
   for (let i = 0; i < n; i += callEvery) {
     const p = persons[i] as { id: number; ok: boolean; dup: boolean };
-    if (p.dup || !p.ok) continue;
+    if (!p.ok) continue;
     const withRec = calls.length < 20;
     const url = `https://fub.example/rec/large-${i}?token=secret`;
     calls.push({ id: 7_000_000 + i, personId: p.id, created: '2025-04-04T15:00:00Z', isIncoming: i % 2 === 0, duration: i % 5 === 0 ? 0 : 30 + (i % 600), outcome: i % 5 === 0 ? 'No Answer' : 'Interested', ...(i % 3 === 0 ? { note: 'Talked about schools' } : {}), userId: 11, ...(withRec ? { recordingUrl: url } : {}) });
@@ -380,17 +380,17 @@ describe.skipIf(!ENABLED)(`journey M6: a ${N.toLocaleString('en-US')}-person FUB
 
 // ---- found by M6 (runs in the normal suite: a handful of records) ------------------------------------------
 //
-// PRODUCT BUG (not fixed here; see the report): history (notes / texts / emails / calls) of a person whose
-// contacts record ended `duplicate` with a `skip` plan — an in-file duplicate (IN_FILE_DUPLICATE: same id,
-// phone or email as an earlier row) or an exact match to an existing contact with nothing new to fill — is
-// planned `will_import` by the history dry run (core resolveParent sees the person as a pending 'attach':
-// api contactsStageMap / core contactsStagePlan map every non-create, non-rejected record to 'attach'),
-// but the contacts commit wrote no external_ref for that person (a skip writes nothing), so the history
-// commit cannot resolve the parent and rejects the record COMMIT_FAILED / PARENT_NOT_FOUND. The dry run the
-// Admin approved did not predict the commit (R-IMPORT-4). Whether such history should attach to the
-// surviving contact (the record's skip.existingId) or be rejected at the dry run is a product decision, so
-// the invariant below only requires that the commit does what the reviewed dry run said. `it.fails`: these
-// pass while the bug is present and start failing (to be flipped to `it`) once it is fixed.
+// PRODUCT BUG found here, fixed (B6): history (notes / texts / emails / calls) of a person whose contacts record
+// ended `duplicate` with a `skip` plan — an in-file duplicate (IN_FILE_DUPLICATE: same id, phone or email as an
+// earlier row) or an exact match to an existing contact with nothing new to fill — was planned `will_import` by the
+// history dry run (core resolveParent saw the person as a pending 'attach': api contactsStageMap / core
+// contactsStagePlan mapped every non-create, non-rejected record to 'attach'), but the contacts commit wrote no
+// external_ref for that person (a skip writes nothing), so the history commit could not resolve the parent and
+// rejected the record COMMIT_FAILED / PARENT_NOT_FOUND: the dry run the Admin approved did not predict the commit
+// (R-IMPORT-4). Owner default: such history goes on the contact the skip points at (the earlier row's contact, or
+// the existing contact; R-IMPORT-7 "exact matches attach"), and the dry run says so. The invariant below is the
+// R-IMPORT-4 one: the commit does what the reviewed dry run said (imports/duplicates.history.test.ts and
+// core import/duplicates.test.ts cover the rest).
 describe('found by M6: history of a person whose contacts record was a skipped duplicate', () => {
   let ih: ImportsHarness;
   let w: ImportWorld;
@@ -439,9 +439,9 @@ describe('found by M6: history of a person whose contacts record was a skipped d
     expect(runs.inFile.planned.counts).toMatchObject({ source: 1, willImport: 1 });
   });
 
-  it.fails('an in-file duplicate person: the note the dry run planned to import does not fail at commit (R-IMPORT-4)', () => {
+  it('an in-file duplicate person: the note the dry run planned to import does not fail at commit (R-IMPORT-4)', () => {
     const r = runs.inFile as Run;
-    // today: committed { imported: 0, rejected: 1 } with [{ source_ref: 'fub:notes/9302', detail: 'PARENT_NOT_FOUND' }]
+    // before B6: committed { imported: 0, rejected: 1 } with [{ source_ref: 'fub:notes/9302', detail: 'PARENT_NOT_FOUND' }]
     expect(r.failed).toEqual([]);
     expect(r.committed.counts).toMatchObject({ imported: r.planned.counts!.willImport, rejected: r.planned.counts!.rejected });
   });
@@ -452,9 +452,9 @@ describe('found by M6: history of a person whose contacts record was a skipped d
     expect(runs.existing.planned.counts).toMatchObject({ source: 1, willImport: 1 });
   });
 
-  it.fails('an exact match to an existing contact with nothing new: the planned note does not fail at commit (R-IMPORT-4)', () => {
+  it('an exact match to an existing contact with nothing new: the planned note does not fail at commit (R-IMPORT-4)', () => {
     const r = runs.existing as Run;
-    // today: committed { imported: 0, rejected: 1 } with [{ source_ref: 'fub:notes/9401', detail: 'PARENT_NOT_FOUND' }]
+    // before B6: committed { imported: 0, rejected: 1 } with [{ source_ref: 'fub:notes/9401', detail: 'PARENT_NOT_FOUND' }]
     expect(r.failed).toEqual([]);
     expect(r.committed.counts).toMatchObject({ imported: r.planned.counts!.willImport, rejected: r.planned.counts!.rejected });
   });
