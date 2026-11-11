@@ -54,6 +54,7 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   { path: '/contacts/:contactId/thread', roles: ALL, url: (i) => `/contacts/${i.contactId}/thread?compose=sms` },
   { path: '/team', roles: LEADS, url: at('/team') },
   { path: '/team/scoreboard', roles: NOT_TC, url: at('/team/scoreboard') },
+  { path: '/team/lead-email', roles: LEADS, url: at('/team/lead-email') },
   { path: '/admin/members', roles: ADMINS, url: at('/admin/members') },
   { path: '/admin/routing', roles: ADMINS, url: at('/admin/routing') },
   { path: '/admin/numbers', roles: ADMINS, url: at('/admin/numbers') },

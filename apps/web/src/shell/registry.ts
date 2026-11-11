@@ -35,6 +35,7 @@ import { surface as adminParitySurface } from '../surfaces/admin/parity/index.js
 import { surface as templatesSurface } from '../surfaces/templates/index.js';
 import { surface as bulkSurface } from '../surfaces/bulk/index.js';
 import { surface as batchTextSurface } from '../surfaces/settings/batch-text/index.js';
+import { surface as leadEmailSurface } from '../surfaces/lead-email/index.js';
 
 export type { NavSection, PageDef, PageNav, SurfaceModule } from './types.js';
 
@@ -62,5 +63,6 @@ export const surfaces: SurfaceModule[] = [
   templatesSurface,
   bulkSurface,
   batchTextSurface,
+  leadEmailSurface,
   // registry: add new entries above this line
 ];
