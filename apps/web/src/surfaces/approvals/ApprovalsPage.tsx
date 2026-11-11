@@ -22,6 +22,7 @@ import { AGENT_ERROR_MESSAGES } from '../feed/lib/messages.js';
 import { useSendCheck } from '../feed/lib/sendCheck.js';
 import type { ActionView, ApproveResponse, ClaimApiView } from '../feed/lib/types.js';
 import { ContactSearches } from './SavedSearchReview.js';
+import { MarketingApprovals } from './MarketingApprovals.js';
 
 export const INBOX_KEY = ['inbox'] as const;
 
@@ -69,22 +70,29 @@ function Approvals() {
   const items = q.data.items;
   if (items.length === 0) {
     return (
-      <EmptyState icon="inbox" title="Nothing to approve">
-        Drafts and replies from the assistant that need you will show up here.
-      </EmptyState>
+      <MarketingApprovals
+        whenEmpty={
+          <EmptyState icon="inbox" title="Nothing to approve">
+            Drafts and replies from the assistant that need you will show up here.
+          </EmptyState>
+        }
+      />
     );
   }
   // one reachability request for every card's contact (not one per card)
   const contactIds = items.flatMap((a) => (a.contactId && a.primaryAction === 'send' && a.draft ? [a.contactId] : []));
   return (
     <ReachabilityBatch contactIds={contactIds}>
-      <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        {items.map((a) => (
-          <li key={a.id} id={`action-${a.id}`} className="scroll-mt-20">
-            <ActionCard action={a} />
-          </li>
-        ))}
-      </ul>
+      <div className="flex flex-col gap-4">
+        <MarketingApprovals />
+        <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          {items.map((a) => (
+            <li key={a.id} id={`action-${a.id}`} className="scroll-mt-20">
+              <ActionCard action={a} />
+            </li>
+          ))}
+        </ul>
+      </div>
     </ReachabilityBatch>
   );
 }

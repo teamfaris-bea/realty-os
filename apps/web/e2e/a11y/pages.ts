@@ -49,6 +49,8 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   { path: '/deals/:dealId', roles: ALL, url: (i) => `/deals/${i.dealId}` },
   { path: '/listings', roles: ALL, url: at('/listings') },
   { path: '/listings/:listingId', roles: ALL, url: (i) => `/listings/${i.listingId}` },
+  // module 38 (lane 2C marketing)
+  { path: '/listings/:listingId/marketing', roles: ALL, url: (i) => `/listings/${i.listingId}/marketing` },
   { path: '/contacts/:contactId', roles: ALL, url: (i) => `/contacts/${i.contactId}` },
   { path: '/people/new', roles: NOT_TC, url: at('/people/new') },
   { path: '/contacts/:contactId/thread', roles: ALL, url: (i) => `/contacts/${i.contactId}/thread?compose=sms` },
