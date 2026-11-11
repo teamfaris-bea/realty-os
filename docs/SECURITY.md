@@ -357,3 +357,36 @@ ownership engine, after backdated and late writes, and across DST days in five z
 `exception_items` upserts are batched: one statement per 1,000 items, same values, order and conflict rule. No
 policy, definer or read changed. Proof: `apps/api/src/accountability/recompute_equivalence.test.ts` compares the old
 per-row path with the new one, state for state, ids included.
+
+### 5.5 Search token tables (migration `search_visibility`)
+
+**What.** `message_search_tokens` and `note_search_tokens` hold one row per lexeme of a message's or note's own
+`search_tsv`, with that row's tenant, id and instant. Everything in them is already readable by anyone who can see
+the parent row.
+
+**Visibility.**
+- Each table's SELECT policy is `EXISTS` over its parent table, evaluated under the caller's own RLS. A token row is
+  visible exactly when its message or note is, and any later change to the parents' policies applies automatically.
+- They have the tenant policy, the support-read-only policies and the statement trigger. `app_user` has SELECT only.
+- An orphan row would be invisible.
+
+**Writers.**
+- Rows are written only by six SECURITY DEFINER trigger functions (owner `app_definer`, `search_path` pinned,
+  EXECUTE revoked from PUBLIC).
+- They copy columns of the row the caller's own statement inserted, updated or deleted, which has already passed
+  the parent's RLS and guards. They return nothing.
+
+**No LEAKPROOF marking.** Searches probe with `starts_with`, `text_ge` and `text_lt`, which stock Postgres already
+marks leakproof. The migration fails if that ever changes. The original `search_tsv @@ tsquery` is re-checked on
+the parent row. The 300 ms branch timeout is unchanged.
+
+**Proof.** `apps/api/src/load/search_equivalence.test.ts` covers:
+- every role and the system actor, with about 100 terms, over every ownership state, deal and collaborated
+  contacts, soft deletes, edited and removed bodies, imported rows and another tenant: the same rows in the same
+  order as the old query;
+- token visibility equal to parent visibility;
+- the token tables equal to the parents' lexemes after bulk writes;
+- `app_user` cannot write the token tables.
+
+**Residual.** Which access path a search takes (key probe or newest-first walk) varies its latency with how many
+token rows match. This is the same class of timing signal as before, and it is not exposed in responses.
