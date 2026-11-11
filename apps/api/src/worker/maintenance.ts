@@ -4,7 +4,12 @@
 //
 //   1. app.reap_stuck_jobs()            expired leases → pending (or dead when attempts are exhausted)
 //   2. dead-job scan (app.dead_jobs_after) every newly dead job raises a platform alert (P1 on realtime)
-//   3. app.retention_sweep(now)         hourly; R-DATA-3 defaults (VERIFY WITH COUNSEL), counts tracked
+//   3. app.retention_sweep(now)         hourly; R-DATA-3 defaults (VERIFY WITH COUNSEL), counts tracked. Just
+//                                       before it, the do-not-contact carry (D1, migration 0037): every
+//                                       soft-deleted person due for purge whose person-level do-not-contact is
+//                                       not yet on each of their addresses gets it there (admin/optOutCarry.ts),
+//                                       as the system actor in that person's own tenant transaction (R-TEN-6);
+//                                       one person's failure is logged and alerted, and the sweep skips them
 //   3b app.purge_webhook_events()       hourly with retention: webhook ids past their replay window
 //                                       (windows per provider in migration 0018; real DB clock), counts tracked
 //   4. audit seq gap check              daily; global audit_log.seq gaps counted and tracked (R-AUDIT-8)
@@ -12,12 +17,14 @@
 //                                       (ownership.drift_check, consent.drift_check, storage.blob_delete),
 //                                       due at its next boundary, enqueued in the tenant's own
 //                                       transaction (R-TEN-6); dedupe `periodic:{kind}`
-import type { Instant, TenantId } from '@realty/core/foundation';
-import { DAY_MS, HOUR_MS, MINUTE_MS, instant } from '@realty/core/foundation';
+import { randomBytes } from 'node:crypto';
+import type { IdGenerator, Instant, TenantId } from '@realty/core/foundation';
+import { DAY_MS, HOUR_MS, MINUTE_MS, instant, uuidv7Generator } from '@realty/core/foundation';
 import { type Database, getDatabase, reapJobs, withTenantTx } from '@realty/db';
+import { carryPersonOptOut } from '../admin/optOutCarry.js';
 import { type AlertSink, type Logger, type Metrics, MemoryMetrics, jsonLogger, logAlertSink } from './observability.js';
 import { type HandlerRegistry, enqueueTyped, registry as defaultRegistry } from './registry.js';
-import { type AuditSeqStats, type DeadCursor, auditSeqStats, dbClock, deadCursorAt, deadJobs, purgeWebhookEvents, retentionSweep, tenantIds } from './repos/jobs.js';
+import { type AuditSeqStats, type DeadCursor, auditSeqStats, dbClock, deadCursorAt, deadJobs, optOutCarryDue, purgeWebhookEvents, retentionSweep, tenantIds } from './repos/jobs.js';
 import { systemActor } from './systemActor.js';
 import type { JobHandler } from './types.js';
 import { abortableSleep } from './sleep.js';
@@ -36,12 +43,16 @@ export interface MaintenanceOptions {
   periodicEveryMs?: number;
   /** how far back the first dead-job scan looks (default 1 h) */
   deadLookbackMs?: number;
+  /** ids of the consent events the do-not-contact carry writes (default: UUIDv7) */
+  ids?: IdGenerator;
 }
 
 export interface MaintenanceReport {
   at: Instant;
   reaped: number | null;
   deadAlerted: number | null;
+  /** consent revokes written by the do-not-contact carry before the sweep (null when the step did not run or failed) */
+  optOutsCarried: number | null;
   retention: Record<string, number> | null;
   /** webhook ids purged per provider (null when the step did not run or failed) */
   webhookIdsPurged: Record<string, number> | null;
@@ -76,12 +87,14 @@ export function createMaintenance(o: MaintenanceOptions = {}): Maintenance {
   const retentionEvery = o.retentionEveryMs ?? HOUR_MS;
   const auditEvery = o.auditCheckEveryMs ?? DAY_MS;
   const periodicEvery = o.periodicEveryMs ?? 5 * MINUTE_MS;
+  const ids = o.ids ?? uuidv7Generator({ now: () => instant(Date.now()) }, (n) => new Uint8Array(randomBytes(n)));
   let lastRetention = Number.NEGATIVE_INFINITY;
   let lastAudit = Number.NEGATIVE_INFINITY;
   let lastPeriodic = Number.NEGATIVE_INFINITY;
   let lastMissing: number | null = null;
   let deadCursor: DeadCursor | null = null;
   const alerted = new Set<string>();
+  const carryAlerted = new Set<string>();
 
   async function step<T>(name: string, report: MaintenanceReport, fn: () => Promise<T>): Promise<T | null> {
     try {
@@ -126,6 +139,37 @@ export function createMaintenance(o: MaintenanceOptions = {}): Maintenance {
     return n;
   }
 
+  /**
+   * D1 (migration 0037): before the sweep purges anyone, each soft-deleted person due for purge whose person-level
+   * do-not-contact is not yet on every one of their addresses gets it there, as the system actor in the person's own
+   * tenant transaction (R-TEN-6). One person's failure is logged and alerted (ids and codes only) and the rest go
+   * on; the sweep skips that person (its candidate filter is the same predicate), so nothing is dropped.
+   */
+  async function carryDueOptOuts(now: Instant): Promise<number> {
+    let n = 0;
+    for (const d of await optOutCarryDue(db, now)) {
+      const actor = systemActor(d.tenantId, 'worker');
+      let error: string | null = null;
+      try {
+        const r = await withTenantTx(actor, (tx, txNow) => carryPersonOptOut(tx, d.contactId, actor, txNow, ids), { db });
+        n += r.written;
+        // an address no core channel can carry (an out-of-scope Meta identity): the person is never purged with it
+        if (r.uncarriable > 0) error = 'PERSON_DO_NOT_CONTACT_UNCARRIED';
+      } catch (e) {
+        const err = e as { name?: string; code?: string };
+        error = `${err.name ?? 'Error'}${err.code ? `:${err.code}` : ''}`;
+      }
+      if (error === null || carryAlerted.has(d.contactId)) continue;
+      carryAlerted.add(d.contactId); // once per process, as the dead-job scan: the person is listed again every hour
+      log.error('do-not-contact carry failed; the person is not purged', { tenantId: d.tenantId, contactId: d.contactId, error });
+      alerts.raise({ severity: 'P2', code: 'WORKER_ERROR', tenantId: d.tenantId, details: { step: 'retention_optout_carry', contactId: d.contactId, error } });
+    }
+    if (carryAlerted.size > 50_000) carryAlerted.clear();
+    metrics.gauge('retention_optouts_carried_last', n);
+    if (n > 0) log.info('do-not-contact carried before the sweep', { count: n });
+    return n;
+  }
+
   async function schedulePeriodic(now: Instant): Promise<number> {
     const periodic = reg.periodic();
     if (periodic.length === 0) return 0;
@@ -156,7 +200,7 @@ export function createMaintenance(o: MaintenanceOptions = {}): Maintenance {
 
   async function runOnce(at?: Instant): Promise<MaintenanceReport> {
     const now = at ?? (await dbClock(db));
-    const report: MaintenanceReport = { at: now, reaped: null, deadAlerted: null, retention: null, webhookIdsPurged: null, audit: null, periodicEnqueued: null, failedSteps: [] };
+    const report: MaintenanceReport = { at: now, reaped: null, deadAlerted: null, optOutsCarried: null, retention: null, webhookIdsPurged: null, audit: null, periodicEnqueued: null, failedSteps: [] };
 
     report.reaped = await step('reap', report, async () => {
       const n = await reapJobs({ db });
@@ -168,6 +212,8 @@ export function createMaintenance(o: MaintenanceOptions = {}): Maintenance {
     report.deadAlerted = await step('dead_scan', report, () => scanDead(now));
 
     if (now - lastRetention >= retentionEvery) {
+      // before the sweep: a person it would purge keeps their do-not-contact on each of their addresses (D1)
+      report.optOutsCarried = await step('retention_optout_carry', report, () => carryDueOptOuts(now));
       report.retention = await step('retention', report, async () => {
         const r = await retentionSweep(db, now);
         for (const [k, v] of Object.entries(r)) metrics.gauge('retention_last', v, { item: k });

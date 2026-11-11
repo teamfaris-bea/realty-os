@@ -1,11 +1,15 @@
 // The lead-handling follow-up migration (0037 when written) at the database: the address delete grant and its RESTRICTIVE policy,
-// and erasure / purge of a merge survivor (R-DATA-4, R-DATA-5). Every write goes through app_user (RLS) and the
-// ownership engine; the superuser pool only reads, and builds the one corrupt state no application path can
-// reach (a merge cycle) to show the merge tree still ends.
-import { randomUUID } from 'node:crypto';
-import type { Actor, ContactId } from '@realty/core/foundation';
+// erasure / purge of a merge survivor (R-DATA-4, R-DATA-5), and the person-level do-not-contact that must be in the
+// consent ledger on every address of the person before any record of them is deleted (D1, §2b). Every write goes
+// through app_user (RLS) and the ownership engine; the superuser pool only reads, moves purge_after (a clock
+// fixture), and builds the one corrupt state no application path can reach (a merge cycle) to show the merge tree
+// still ends.
+import { createHash, randomUUID } from 'node:crypto';
+import type { Channel, ConsentEventSpec, ConsentSource } from '@realty/core/compliance';
+import type { Actor, ContactId, Instant } from '@realty/core/foundation';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { recordConsentEvent } from '../src/consent.js';
 import { withPreTenant, withTenantTx } from '../src/tenantTx.js';
 import { cmd, createHarness, createWorld, type Harness, type Member, selfCreated, suFixture, suRows, uuid, type World } from './world.js';
 
@@ -100,5 +104,149 @@ describe('lead-handling follow-ups: erasure and purge take the person with every
                             WHERE id IN ($1::uuid, $2::uuid)`, [x, y]);
     const tree = await suRows<{ contact_id: string }>(h.su, 'SELECT contact_id FROM app.contact_merge_tree($1, $2)', [w.tenantId, x]);
     expect(tree.map((t) => t.contact_id).sort()).toEqual([x, y].sort());
+  });
+});
+
+describe('lead-handling follow-ups: a person-level do-not-contact outlives the person (D1, §2b)', () => {
+  let seq = 0;
+  const hmacHex = (addr: string) => createHash('sha256').update(`test-hmac:${addr}`).digest('hex');
+  const phone = () => `+1555017${String(1000 + ++seq).slice(-4)}`;
+  const email = () => `dnc-${++seq}-${randomUUID().slice(0, 6)}@example.test`;
+  type Kind = 'phone' | 'email';
+
+  async function point(contactId: string, kind: Kind, address: string): Promise<string> {
+    const id = uuid();
+    await as(agent.actor, (tx) => sql`INSERT INTO contact_points (tenant_id, id, contact_id, kind, address, address_hmac)
+      VALUES (app.tenant_id(), ${id}, ${contactId}, ${kind}, ${address}, decode(${hmacHex(address)}, 'hex'))`.execute(tx));
+    return id;
+  }
+  /** One revoke for every purpose, recorded as `actor` through recordConsentEvent (the ledger + its projection). */
+  async function revoke(actor: Actor, kind: Kind, address: string, channel: Channel, source: ConsentSource = 'agent_revoke'): Promise<string> {
+    const id = uuid();
+    const spec: ConsentEventSpec = {
+      id, addressKind: kind, addressHmac: hmacHex(address), addressHint: '•••', channel, purpose: 'all', eventType: 'revoke', level: 'none', source,
+      occurredAt: Date.now() as Instant, contactId: null, actor: actor.kind === 'user' ? { kind: 'user', userId: actor.userId } : { kind: 'system' },
+      disclosureId: null, evidenceObjectId: null, evidenceMessageId: source.startsWith('inbound_') ? uuid() : null, evidenceCallId: null, evidenceCallOffsetMs: null,
+      evidence: {}, imported: false, importRecordId: null, originalProvenance: null, revertsEventId: null, expiresAt: null, needsReview: source === 'inbound_language',
+    };
+    await as(actor, (tx) => recordConsentEvent(tx, spec));
+    return id;
+  }
+  /** The person-level do-not-contact, citing a revoke (any writer of the contact may set it, 0018). */
+  const doNotContact = (contactId: string, eventId: string) =>
+    as(agent.actor, (tx) => sql`UPDATE contacts SET do_not_contact_at = now(), do_not_contact_event_id = ${eventId}::uuid WHERE id = ${contactId}::uuid`.execute(tx));
+  const remove = (pointId: string, reason: 'old' | 'wrong_number') =>
+    as(agent.actor, (tx) => sql`UPDATE contact_points SET status = 'removed', removed_at = now(), removed_reason = ${reason} WHERE id = ${pointId}::uuid`.execute(tx));
+  /** (address, channel) pairs still to carry, as the superuser sees them (the definers' view). */
+  const uncarried = async (contactId: string) =>
+    (await suRows<{ k: string }>(h.su, `SELECT DISTINCT address || ' ' || channel AS k FROM app.person_optout_uncarried($1, $2) ORDER BY 1`, [w.tenantId, contactId])).map((r) => r.k);
+  /** Carries what is listed, as the erase route and the worker do (agent_revoke, every purpose). */
+  async function carry(actor: Actor, contactId: string): Promise<void> {
+    const rows = await suRows<{ kind: Kind; address: string; channel: Channel }>(h.su, 'SELECT DISTINCT kind, address, channel FROM app.person_optout_uncarried($1, $2)', [w.tenantId, contactId]);
+    for (const r of rows) await revoke(actor, r.kind, r.address, r.channel);
+  }
+  const sweep = (at = sql`now()`) => withPreTenant(async (tx) => (await sql<{ r: Record<string, number> }>`SELECT app.retention_sweep(${at}) AS r`.execute(tx)).rows[0]!.r, { db: h.app });
+  async function softDeletedAndDue(id: ContactId): Promise<void> {
+    expect((await cmd(h.app, w.owner.actor, id, { kind: 'soft_delete' })).outcome.ok).toBe(true);
+    await suFixture(h.su, "UPDATE contacts SET purge_after = now() - interval '1 minute' WHERE id = $1", [id]);
+  }
+  const due = (actor?: Actor) => {
+    const q = (tx: Parameters<Parameters<typeof withPreTenant>[0]>[0]) =>
+      sql<{ contact_id: string }>`SELECT contact_id FROM app.retention_optout_carry_due(now(), 500)`.execute(tx).then((r) => r.rows.map((x) => x.contact_id));
+    return actor ? as(actor, q) : withPreTenant(q, { db: h.app });
+  };
+
+  it('D1: app.person_optout_uncarried lists, once any record of the person carries a do-not-contact, each (address, channel) of the contact and of the records merged into it, live or removed, without a revoke only the person can lift: a keyword STOP or opt-out language does not count, a confirmed wrong number is left out; RLS bounds what app_user sees', async () => {
+    const p = await selfCreated(h.app, w, agent, 'Dee Carry');
+    const [a, b, c, d, e, g] = [phone(), phone(), phone(), phone(), phone(), phone()];
+    const f = email();
+    await point(p, 'phone', a);
+    const asked = await revoke(agent.actor, 'phone', a, 'sms');
+    await revoke(agent.actor, 'phone', a, 'voice');
+    await point(p, 'phone', b);
+    await revoke(w.system('provider'), 'phone', b, 'sms', 'inbound_keyword'); // STOP: the person's START would pop it
+    await point(p, 'phone', c);
+    await revoke(w.system('provider'), 'phone', c, 'sms', 'inbound_language'); // a reviewer may mark it "not an opt-out"
+    await revoke(w.system('provider'), 'phone', c, 'voice', 'inbound_language');
+    await remove(await point(p, 'phone', d), 'old');
+    const wrong = await point(p, 'phone', e);
+    await revoke(agent.actor, 'phone', e, 'sms', 'wrong_number');
+    await remove(wrong, 'wrong_number'); // reaches someone else: not the person's to carry
+    await point(p, 'email', f);
+    const l = await selfCreated(h.app, w, agent, 'Dee Duplicate');
+    await point(l, 'phone', g);
+    expect(await uncarried(p)).toEqual([]); // no do-not-contact: nothing to carry
+    await doNotContact(p, asked);
+    await merge(p, l);
+    const expected = [`${b} sms`, `${b} voice`, `${c} sms`, `${c} voice`, `${d} sms`, `${d} voice`, `${f} email`, `${g} sms`, `${g} voice`].sort();
+    expect(await uncarried(p)).toEqual(expected);
+    expect(await uncarried(l)).toEqual([]); // L alone (its own tree) has no do-not-contact of its own: the flag went to P
+    // as app_user the function reads through the caller's RLS: the Owner (tenant-wide) sees the same; another tenant nothing
+    const asOwner = await as(w.owner.actor, async (tx) => (await sql<{ k: string }>`SELECT DISTINCT address || ' ' || channel AS k FROM app.person_optout_uncarried(app.tenant_id(), ${p}::uuid) ORDER BY 1`.execute(tx)).rows.map((r) => r.k));
+    expect(asOwner).toEqual(expected);
+    const other = await createWorld(h.app, { agents: 1 });
+    const fromOther = await withTenantTx(other.owner.actor, async (tx) => (await sql`SELECT 1 FROM app.person_optout_uncarried(${w.tenantId}::uuid, ${p}::uuid)`.execute(tx)).rows, { db: h.app });
+    expect(fromOther).toEqual([]);
+    // carried: an agent_revoke on each listed pair (also on top of the STOP and the language revokes)
+    await carry(w.owner.actor, p);
+    expect(await uncarried(p)).toEqual([]);
+  });
+
+  it('D1 R-DATA-4: app.erase_contact refuses PERSON_DO_NOT_CONTACT_UNCARRIED while an address of the person lacks the revoke, deleting nothing, and erases once each one carries it', async () => {
+    const q = await selfCreated(h.app, w, agent, 'Quinn Asked');
+    const [x, y] = [phone(), email()];
+    await point(q, 'phone', x);
+    await point(q, 'email', y);
+    await doNotContact(q, await revoke(agent.actor, 'phone', x, 'sms'));
+    expect(await uncarried(q)).toEqual([`${x} voice`, `${y} email`]);
+    await expect(as(w.owner.actor, (tx) => sql`SELECT app.erase_contact(${q}::uuid, ${randomUUID()}::uuid, 'PRIVACY_REQUEST')`.execute(tx))).rejects.toThrow(/PERSON_DO_NOT_CONTACT_UNCARRIED/);
+    expect(await exists(q)).toBe(true);
+    await carry(w.owner.actor, q);
+    await as(w.owner.actor, (tx) => sql`SELECT app.erase_contact(${q}::uuid, ${randomUUID()}::uuid, 'PRIVACY_REQUEST')`.execute(tx));
+    expect(await exists(q)).toBe(false);
+    // the ledger outlives the person: every channel of both addresses stays revoked (HMAC, no PII)
+    const kept = await suRows<{ k: string }>(h.su, `SELECT channel || ':' || purpose AS k FROM consent_state WHERE tenant_id = $1 AND status = 'revoked'
+      AND address_hmac IN (decode($2, 'hex'), decode($3, 'hex')) ORDER BY 1`, [w.tenantId, hmacHex(x), hmacHex(y)]);
+    expect(kept.map((r) => r.k)).toEqual(['email:informational', 'email:marketing', 'sms:informational', 'sms:marketing', 'voice:informational', 'voice:marketing']);
+  });
+
+  it('D1 R-DATA-5: the sweep skips a due person whose do-not-contact is not carried and still purges the others; app.retention_optout_carry_due lists that person only without tenant and user context; carried by the system, the next sweep purges them', async () => {
+    const r = await selfCreated(h.app, w, agent, 'Rae Sweep');
+    const z = phone();
+    await point(r, 'phone', z);
+    const lone = phone();
+    await point(r, 'phone', lone);
+    await doNotContact(r, await revoke(agent.actor, 'phone', z, 'sms'));
+    await softDeletedAndDue(r);
+    const t = await selfCreated(h.app, w, agent, 'Tad Plain');
+    await softDeletedAndDue(t);
+    const first = await sweep();
+    expect(first.contacts_purged).toBeGreaterThanOrEqual(1);
+    expect([await exists(r), await exists(t)]).toEqual([true, false]);
+    expect(await due()).toContain(r);
+    // ids only, and only to the context-free worker: a tenant session (even the system's) gets nothing
+    expect(await due(w.system('worker'))).toEqual([]);
+    expect(await due(w.owner.actor)).toEqual([]);
+    await carry(w.system('worker'), r);
+    expect(await due()).not.toContain(r);
+    await sweep();
+    expect(await exists(r)).toBe(false);
+  });
+
+  it('R-DATA-5: a purge that refuses inside the sweep after the candidate scan (here a document retained past the scan instant) skips that person and is counted; the sweep completes', async () => {
+    const u = await selfCreated(h.app, w, agent, 'Uma Held');
+    const obj = uuid();
+    // a retention period is set by an Owner or Admin (documents_guard)
+    await as(w.owner.actor, async (tx) => {
+      await sql`INSERT INTO stored_objects (tenant_id, id, purpose, storage_key, content_type, byte_size, sha256, key_version, dek_wrapped, created_by_user_id)
+        VALUES (app.tenant_id(), ${obj}, 'document', ${`tenants/${w.tenantId}/doc/${obj}`}, 'application/pdf', 10, digest(${obj}, 'sha256'), 1, '\\x01', ${w.owner.id})`.execute(tx);
+      await sql`INSERT INTO documents (tenant_id, id, contact_id, object_id, kind, display_name, uploaded_by_user_id, retention_until)
+        VALUES (app.tenant_id(), ${uuid()}, ${u}, ${obj}, 'other', 'ID.pdf', ${w.owner.id}, now() + interval '1 day')`.execute(tx);
+    });
+    await softDeletedAndDue(u);
+    // scanned "two days from now", the document no longer looks retained; the purge checks it against the real clock
+    const r = await sweep(sql`now() + interval '2 days'`);
+    expect(r.contacts_skipped).toBeGreaterThanOrEqual(1);
+    expect(await exists(u)).toBe(true);
   });
 });

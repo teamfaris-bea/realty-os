@@ -46,6 +46,29 @@ export async function dealLinks(tx: Tx, ids: readonly string[]): Promise<DealLin
   return r.rows;
 }
 
+export interface UncarriedOptOutRow {
+  kind: string;
+  address: string;
+  /** hex */
+  hmac: string;
+  channel: string;
+  do_not_contact_event_id: string;
+}
+
+/**
+ * Every (address, channel) of the person on which their person-level do-not-contact is not in the consent ledger
+ * yet (app.person_optout_uncarried, migration 0037: the predicate app.purge_contact_internal refuses on), ordered by
+ * HMAC and channel so concurrent writers take the address locks in one order. Runs under the caller's RLS: the
+ * Owner/Admin and the system see every record of the person.
+ */
+export async function uncarriedOptOut(tx: Tx, contactId: string): Promise<UncarriedOptOutRow[]> {
+  const r = await sql<UncarriedOptOutRow>`
+    SELECT kind, address, encode(address_hmac, 'hex') AS hmac, channel, do_not_contact_event_id
+      FROM app.person_optout_uncarried(app.tenant_id(), ${contactId}::uuid)
+     ORDER BY address_hmac, channel, point_id`.execute(tx);
+  return r.rows;
+}
+
 export async function eraseContact(tx: Tx, contactId: string, auditId: string, reason: string): Promise<void> {
   await sql`SELECT app.erase_contact(${contactId}::uuid, ${auditId}::uuid, ${reason})`.execute(tx);
 }

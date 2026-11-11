@@ -64,6 +64,18 @@ const PROBES: Probe[] = [
       return call(c, 'DELETE', `/contacts/${t.id}/addresses/${a.body.address.id}`);
     },
   },
+  {
+    // the Undo is the remover's own (the token is sealed to them): each role restores what it deleted, and a role that
+    // may not delete tries the owning agent's token, which contact.edit refuses before the token is read
+    name: 'POST address restore',
+    action: 'contact.edit',
+    run: async (c, t) => {
+      const a = await call<{ address: { id: string } }>(users.agent, 'POST', `/contacts/${t.id}/addresses`, { kind: 'home', city: 'Reno' });
+      const own = await call<{ restoreToken?: string }>(c, 'DELETE', `/contacts/${t.id}/addresses/${a.body.address.id}`);
+      const token = own.body.restoreToken ?? (await call<{ restoreToken: string }>(users.agent, 'DELETE', `/contacts/${t.id}/addresses/${a.body.address.id}`)).body.restoreToken;
+      return call(c, 'POST', `/contacts/${t.id}/addresses/${a.body.address.id}/restore`, { restoreToken: token });
+    },
+  },
   { name: 'GET relationships', action: 'contact.view_detail', run: (c, t) => call(c, 'GET', `/contacts/${t.id}/relationships`) },
   { name: 'GET collaborators', action: 'contact.view_detail', run: (c, t) => call(c, 'GET', `/contacts/${t.id}/collaborators`) },
   { name: 'POST collaborator', action: 'collaborator.manage', run: (c, t) => call(c, 'POST', `/contacts/${t.id}/collaborators`, { userId: users.tc.userId }) },

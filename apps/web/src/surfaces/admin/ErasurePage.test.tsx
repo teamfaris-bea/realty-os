@@ -109,6 +109,18 @@ describe('Erase a contact', () => {
     expect(document.body.textContent).not.toContain('CONTACT_ON_DEAL');
   });
 
+  it('D1 R-DATA-4: a PERSON_DO_NOT_CONTACT_UNCARRIED refusal (their do-not-contact cannot be kept on every address) says in words that nothing was erased, never the code; they are still there to erase later', async () => {
+    const fake = erasureFake({ preview: free }).on(`POST /contacts/${C}/erase`, err(409, 'PERSON_DO_NOT_CONTACT_UNCARRIED'));
+    leadAdminApp(fake, PATH, 'owner');
+    const u = userEvent.setup();
+    await u.click(await screen.findByRole('button', { name: 'Erase Rosa Diaz' }));
+    await u.click(screen.getByRole('button', { name: 'Yes, erase Rosa Diaz' }));
+    expect(await screen.findByText("This person asked not to be contacted, and Realty OS can't keep that on every one of their addresses yet, so they weren't erased. Nothing was changed.")).toBeInTheDocument();
+    expect(screen.queryByText('Rosa Diaz was erased.')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Erase Rosa Diaz' })).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain('PERSON_DO_NOT_CONTACT_UNCARRIED');
+  });
+
   it('E59 R-DATA-4: DEAL_STILL_OPEN tells the Owner to change the primary contact on the deal first', async () => {
     const fake = erasureFake({ preview: onDeal }).on(`POST /contacts/${C}/deals/${DEAL}/remove`, err(409, 'DEAL_STILL_OPEN'));
     leadAdminApp(fake, PATH, 'owner');

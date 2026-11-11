@@ -297,12 +297,15 @@ export function DetailsSection({ contact, details }: { contact: ContactFullView;
   const blockingRemoved = details.removedPoints.filter((p) => p.optedOut && p.stillBlocks);
   const close = () => setOpen(null);
   // Delete an address (module 57): one tap, then an Undo toast instead of a confirm modal (PARITY_PLAN §5,
-  // reversible one-person edits). Undo adds the same address back.
+  // reversible one-person edits). Undo is the server's restore of the row it deleted (the delete's restore token):
+  // the same address exactly, never one rebuilt from what this page shows (an imported address can be longer than
+  // the add form allows, and carries details the page does not show).
   const removeAddress = async (a: AddressView) => {
     const r = await act.run('DELETE', `/contacts/${contact.id}/addresses/${a.id}`);
     if (!r.ok) return;
-    const again = { kind: a.kind, line1: a.line1, line2: a.line2, city: a.city, region: a.region, postalCode: a.postalCode, country: a.country };
-    toast({ text: 'Address removed', undo: () => void act.run('POST', `/contacts/${contact.id}/addresses`, again) });
+    const token = (r.data as { restoreToken?: unknown } | null)?.restoreToken;
+    const undo = typeof token === 'string' ? () => void act.run('POST', `/contacts/${contact.id}/addresses/${a.id}/restore`, { restoreToken: token }) : undefined;
+    toast(undo ? { text: 'Address removed', undo } : { text: 'Address removed' });
   };
 
   return (

@@ -49,7 +49,9 @@ describe('address delete (module 57)', () => {
     const before = await call<{ details: { addresses: { id: string }[] } }>(agent, 'GET', `/contacts/${p.id}/details`);
     expect(before.body.details.addresses.map((a) => a.id)).toEqual([p.addressId]);
     const r = await call(agent, 'DELETE', `/contacts/${p.id}/addresses/${p.addressId}`);
-    expect([r.status, r.body]).toEqual([200, { ok: true }]);
+    // the answer carries the token the Undo restores from (addressUndo.test.ts), never the address in the clear
+    expect([r.status, r.body]).toEqual([200, { ok: true, restoreToken: expect.any(String) }]);
+    expect(JSON.stringify(r.body)).not.toMatch(/Oak|Oakland|94610/);
     expect(await exists(p.addressId)).toBe(false);
     expect((await call<{ details: { addresses: unknown[] } }>(agent, 'GET', `/contacts/${p.id}/details`)).body.details.addresses).toEqual([]);
     const rows = (await auditRows(h, tenantId, 'contact.update')).filter((a) => a.entity_id === p.id);

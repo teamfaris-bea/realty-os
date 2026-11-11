@@ -19,10 +19,23 @@
 --    it, along merge chains (app.contact_merge_tree), deepest first: a merge says those records are one
 --    person, and erasing the person erases all of them. This is the most privacy-protective reading and an
 --    OWNER / COUNSEL QUESTION (what erasure of a person means for their merged records); VERIFY WITH COUNSEL.
---    Opt-outs are untouched: consent and suppressions are keyed by HMAC and survive erasure, as before
---    (R-CONSENT-1, R-DATA-4). The deal and document refusals now cover every record of the person: erasure
---    refuses CONTACT_ON_DEAL / DOCUMENT_RETAINED when any of them is on a deal or holds a retained document,
---    and the sweep skips such a person instead of failing.
+--    Consent and suppressions are keyed by HMAC and survive erasure, as before (R-CONSENT-1, R-DATA-4). The
+--    deal and document refusals now cover every record of the person: erasure refuses CONTACT_ON_DEAL /
+--    DOCUMENT_RETAINED when any of them is on a deal or holds a retained document, and the sweep skips such a
+--    person instead of failing.
+--
+-- 2b. A person's do-not-contact outlives the person (D1). The person-level do-not-contact (0018,
+--    contacts.do_not_contact_at) is a column of the person's rows, so deleting them deletes it; only the
+--    HMAC-keyed ledger survives. And the ledger did not hold all of it: POST /contacts/:id/do-not-contact revokes
+--    only the live points the record had at that moment, and a merge copies only the flag onto the survivor
+--    (contacts_dnc_follow_merge), so the survivor's own phones and emails, and any point added after the
+--    do-not-contact, had no revoke. Erasing or purging such a person (both possible since item 2) made those
+--    addresses contactable again: a review probe texted a re-created contact through the fake provider. Now the
+--    application records an agent_revoke (purpose all) on each such address and channel before any record of
+--    the person is deleted (the erase route as the Owner/Admin; the worker as the system, before each sweep),
+--    and the database refuses the deletion while one is missing: purge_contact_internal raises
+--    PERSON_DO_NOT_CONTACT_UNCARRIED and the sweep skips such a person. app.person_optout_uncarried is the one
+--    predicate both sides use.
 --
 -- 3. app.contact_points_immutable(): its refusal to restore a confirmed wrong number said "add the number
 --    again", which cannot work on the same person (UNIQUE (tenant, contact, kind, address)); the text now says
@@ -35,12 +48,27 @@
 --     trigger. A delete cascades only to the address's property_records row (and sets a home_valuations
 --     reference to it to NULL).
 --   * new function app.contact_merge_tree(uuid, uuid): plain SQL, NOT security definer, pinned search_path,
---     EXECUTE revoked from PUBLIC and granted to app_retention only (its callers below); explicit tenant filter;
---     a CYCLE clause makes it terminate even on corrupt data.
+--     explicit tenant filter; a CYCLE clause makes it terminate even on corrupt data. EXECUTE revoked from
+--     PUBLIC and granted to app_retention (its definer callers below) and to app_user, only so that
+--     app.person_optout_uncarried can run as its caller: called by app_user it returns only records the
+--     caller's RLS shows.
+--   * new function app.person_optout_uncarried(uuid, uuid): plain SQL, NOT security definer, pinned
+--     search_path, explicit tenant filter, writes nothing; EXECUTE revoked from PUBLIC and granted to app_user
+--     and app_retention. Called by app_user it reads points, consent_state and consent_events through the
+--     caller's own RLS, so it shows nothing the caller could not select; the API calls it as the Owner/Admin
+--     and the worker as the system (both tenant-wide), the definers below as app_retention.
+--   * new SECURITY DEFINER function app.retention_optout_carry_due(timestamptz, integer): owner app_retention,
+--     pinned search_path, EXECUTE revoked from PUBLIC and granted to app_user; it answers only with NO tenant
+--     and NO user context (as 0004's worker read-outs) and returns at most 500 (tenant id, contact id) pairs of
+--     soft-deleted people past purge_after whose do-not-contact is not carried yet: no names, addresses or
+--     payloads. Residual risk as for 0004: a process that clears its GUCs can learn those ids.
 --   * replaces app.purge_contact_internal, app.erase_contact and app.retention_sweep (SECURITY DEFINER, owner
 --     app_retention, pinned search_path, grants unchanged). Each keeps its latest version's statements (0018,
---     0001, 0018); the merge-tree lines are marked. erase_contact writes one extra contact.erase audit row per
---     merged record erased with the person (ids only, no PII).
+--     0001, 0018); the merge-tree and do-not-contact lines are marked. erase_contact writes one extra
+--     contact.erase audit row per merged record erased with the person (ids only, no PII). They only refuse
+--     more: purge_contact_internal also refuses PERSON_DO_NOT_CONTACT_UNCARRIED, and the sweep skips such a
+--     person; inside a subtransaction per person it also skips one whose purge refuses with that code or with
+--     DOCUMENT_RETAINED after the candidate scan (a race), and counts them; every other error still fails it.
 --   * replaces app.contact_points_immutable() (invoker trigger function, 0021) verbatim except one message.
 -- =============================================================================
 
@@ -68,10 +96,64 @@ RETURNS TABLE (contact_id uuid, depth integer) LANGUAGE sql STABLE SET search_pa
   SELECT tree.contact_id, tree.depth FROM tree WHERE NOT tree.is_cycle
 $$;
 REVOKE ALL ON FUNCTION app.contact_merge_tree(uuid, uuid) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION app.contact_merge_tree(uuid, uuid) TO app_retention;
+GRANT EXECUTE ON FUNCTION app.contact_merge_tree(uuid, uuid) TO app_retention, app_user;
 
--- Erasure (R-DATA-4, R-DATA-7, R-DOC-4): 0018's statements, run once per record of the person (the loop and the
--- documents check over the merge tree are marked; inside the loop only the contact id and two table aliases differ).
+-- -----------------------------------------------------------------------------
+-- 2b. A person's do-not-contact outlives the person: it is carried onto every address before any record goes
+-- -----------------------------------------------------------------------------
+-- Every (point, channel) of the person on which their person-level do-not-contact is not carried yet; empty
+-- when no record of the person (the contact and every record merged into it) carries one. Points: live or
+-- removed, except one removed as a confirmed wrong number (that number reaches someone else, R-PAR-12).
+-- Channels: as the dispatch guards map a point's kind (a phone is texted and called). Carried: for that channel
+-- and each purpose, a revoked consent_state row whose basis is a revoke only the person's own reinstating action
+-- lifts: not a keyword STOP (the person's START pops it) and not opt-out language (a reviewer may mark it "not
+-- an opt-out"), since a person-level do-not-contact yields to neither. Runs as its caller: the API
+-- (Owner/Admin) and the worker (system) see every record of the person under RLS, and the definers below run
+-- it as app_retention, so the application carries exactly what the database refuses to delete.
+CREATE FUNCTION app.person_optout_uncarried(p_tenant uuid, p_contact uuid)
+RETURNS TABLE (point_id uuid, kind text, address text, address_hmac bytea, channel text, do_not_contact_event_id uuid)
+LANGUAGE sql STABLE SET search_path = pg_catalog, public AS $$
+  WITH tree AS (SELECT t.contact_id FROM app.contact_merge_tree(p_tenant, p_contact) t),
+  dnc AS (SELECT c.do_not_contact_event_id AS event_id FROM public.contacts c JOIN tree ON tree.contact_id = c.id
+           WHERE c.tenant_id = p_tenant AND c.do_not_contact_at IS NOT NULL
+           ORDER BY c.do_not_contact_at, c.id LIMIT 1)
+  SELECT p.id, p.kind, p.address, p.address_hmac, ch.channel, dnc.event_id
+    FROM dnc CROSS JOIN tree
+    JOIN public.contact_points p ON p.tenant_id = p_tenant AND p.contact_id = tree.contact_id
+    CROSS JOIN LATERAL unnest(CASE WHEN p.kind = 'phone' THEN ARRAY['sms','voice'] ELSE ARRAY[p.kind] END) AS ch(channel)
+   WHERE p.removed_reason IS DISTINCT FROM 'wrong_number'
+     AND EXISTS (SELECT 1 FROM unnest(ARRAY['marketing','informational']) AS pu(purpose)
+                  WHERE NOT EXISTS (
+                    SELECT 1 FROM public.consent_state cs
+                      JOIN public.consent_events e ON e.tenant_id = cs.tenant_id AND e.id = cs.basis_event_id
+                     WHERE cs.tenant_id = p_tenant AND cs.channel = ch.channel AND cs.purpose = pu.purpose
+                       AND cs.address_hmac = p.address_hmac AND cs.status = 'revoked'
+                       AND e.event_type = 'revoke' AND e.source NOT IN ('inbound_keyword','inbound_language')))
+   ORDER BY p.address_hmac, ch.channel, p.id
+$$;
+REVOKE ALL ON FUNCTION app.person_optout_uncarried(uuid, uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION app.person_optout_uncarried(uuid, uuid) TO app_user, app_retention;
+
+-- The worker's list before each sweep: soft-deleted people past purge_after whose do-not-contact is not carried
+-- yet. The worker carries it as the system actor, in each person's own tenant transaction (R-TEN-6); the sweep
+-- then purges them. Answers only without tenant and user context, as 0004's worker read-outs; ids only.
+CREATE FUNCTION app.retention_optout_carry_due(p_now timestamptz, p_limit integer)
+RETURNS TABLE (tenant_id uuid, contact_id uuid)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+  SELECT c.tenant_id, c.id FROM public.contacts c
+   WHERE app.tenant_id() IS NULL AND app.user_id() IS NULL
+     AND c.deleted_at IS NOT NULL AND c.purge_after <= p_now
+     AND EXISTS (SELECT 1 FROM app.person_optout_uncarried(c.tenant_id, c.id))
+   ORDER BY c.purge_after, c.tenant_id, c.id
+   LIMIT LEAST(GREATEST(p_limit, 1), 500)
+$$;
+ALTER FUNCTION app.retention_optout_carry_due(timestamptz, integer) OWNER TO app_retention;
+REVOKE ALL ON FUNCTION app.retention_optout_carry_due(timestamptz, integer) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION app.retention_optout_carry_due(timestamptz, integer) TO app_user;
+
+-- Erasure (R-DATA-4, R-DATA-7, R-DOC-4): 0018's statements, run once per record of the person (the loop, the
+-- documents check over the merge tree and the do-not-contact check are marked; inside the loop only the contact
+-- id and two table aliases differ).
 CREATE OR REPLACE FUNCTION app.purge_contact_internal(p_tenant uuid, p_contact uuid)
 RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public AS $$
 DECLARE m record;   -- 0037
@@ -81,6 +163,12 @@ BEGIN
                 ON d.tenant_id = p_tenant AND d.contact_id = t.contact_id
               WHERE d.legal_hold OR d.retention_until > now()) THEN
     RAISE EXCEPTION 'DOCUMENT_RETAINED: a document of this contact is on legal hold or inside its retention period'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  -- 0037 (2b): the person's do-not-contact goes with their rows, so it must already be on every one of their
+  -- addresses in the consent ledger (the erase route and the worker record it first)
+  IF EXISTS (SELECT 1 FROM app.person_optout_uncarried(p_tenant, p_contact)) THEN
+    RAISE EXCEPTION 'PERSON_DO_NOT_CONTACT_UNCARRIED: this person asked not to be contacted; record that on each of their addresses before deleting them'
       USING ERRCODE = 'check_violation';
   END IF;
   -- 0037: deepest first, so a merged record is deleted before the contact it was merged into and is never left
@@ -140,15 +228,18 @@ BEGIN
 END $$;
 ALTER FUNCTION app.erase_contact(uuid, uuid, text) OWNER TO app_retention;
 
--- The retention sweep: verbatim from 0018 except the marked candidate filter, which now skips a person any of
--- whose records is on a deal or holds a retained document (as it already skipped the contact itself), so the
--- purge never refuses inside the sweep.
+-- The retention sweep: verbatim from 0018 except the marked lines. The candidate filter now skips a person any
+-- of whose records is on a deal or holds a retained document (as it already skipped the contact itself), or
+-- whose do-not-contact is not carried yet (2b), so the purge does not refuse inside the sweep; a purge that
+-- still refuses with one of those two codes (a point or a held document added since the scan) skips that person
+-- until the next sweep instead of failing the sweep, and is counted.
 CREATE OR REPLACE FUNCTION app.retention_sweep(p_now timestamptz)
 RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public AS $$
 DECLARE
   rec record;
   n_contacts integer := 0; n_sessions integer; n_jobs integer; n_auth integer; n_notif integer;
   n_audit integer; n_rec integer; n_raw integer; n_ai integer; n_webhooks integer;
+  n_skipped integer := 0;   -- 0037
 BEGIN
   DELETE FROM public.sessions WHERE COALESCE(revoked_at, absolute_expires_at) < p_now - interval '30 days';
   GET DIAGNOSTICS n_sessions = ROW_COUNT;
@@ -189,7 +280,8 @@ BEGIN
    WHERE e.source_type = 'call' AND e.source_available AND EXISTS (
          SELECT 1 FROM public.recordings r WHERE r.tenant_id = e.tenant_id AND r.call_id = e.source_id AND r.status = 'shredded');
   -- soft-deleted contacts past purge_after, with no record of the person (the contact or one merged into it,
-  -- 0037) on any deal or holding a document still held or retained
+  -- 0037) on any deal or holding a document still held or retained, and the person's do-not-contact, if any,
+  -- already on each of their addresses (0037, 2b)
   FOR rec IN SELECT c.tenant_id, c.id FROM public.contacts c
               WHERE c.deleted_at IS NOT NULL AND c.purge_after <= p_now
                 AND NOT EXISTS (SELECT 1 FROM app.contact_merge_tree(c.tenant_id, c.id) m
@@ -197,13 +289,20 @@ BEGIN
                                     OR EXISTS (SELECT 1 FROM public.deal_contacts dc WHERE dc.tenant_id = c.tenant_id AND dc.contact_id = m.contact_id)
                                     OR EXISTS (SELECT 1 FROM public.documents dd WHERE dd.tenant_id = c.tenant_id AND dd.contact_id = m.contact_id
                                                   AND (dd.legal_hold OR dd.retention_until > p_now)))
+                AND NOT EXISTS (SELECT 1 FROM app.person_optout_uncarried(c.tenant_id, c.id))   -- 0037 (2b)
               ORDER BY c.purge_after LIMIT 500 LOOP
-    PERFORM app.purge_contact_internal(rec.tenant_id, rec.id);
-    n_contacts := n_contacts + 1;
+    BEGIN   -- 0037: one person's refusal skips that person, never the sweep
+      PERFORM app.purge_contact_internal(rec.tenant_id, rec.id);
+      n_contacts := n_contacts + 1;
+    EXCEPTION WHEN check_violation THEN
+      IF SQLERRM NOT LIKE 'PERSON_DO_NOT_CONTACT_UNCARRIED%' AND SQLERRM NOT LIKE 'DOCUMENT_RETAINED%' THEN RAISE; END IF;
+      n_skipped := n_skipped + 1;
+    END;
   END LOOP;
   RETURN jsonb_build_object('sessions', n_sessions, 'jobs', n_jobs, 'auth_events', n_auth, 'notifications', n_notif,
                             'audit_log', n_audit, 'recordings_shredded', n_rec, 'import_raw_purged', n_raw,
-                            'ai_outputs_purged', n_ai, 'webhook_payloads_purged', n_webhooks, 'contacts_purged', n_contacts);
+                            'ai_outputs_purged', n_ai, 'webhook_payloads_purged', n_webhooks, 'contacts_purged', n_contacts,
+                            'contacts_skipped', n_skipped);   -- 0037
 END $$;
 ALTER FUNCTION app.retention_sweep(timestamptz) OWNER TO app_retention;
 

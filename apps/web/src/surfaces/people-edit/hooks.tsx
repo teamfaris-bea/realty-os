@@ -12,19 +12,32 @@ const MESSAGES = { ...AGENT_ERROR_MESSAGES, ...PEOPLE_ERROR_MESSAGES };
 
 export type ActionResult<R> = { ok: true; data: R } | { ok: false; code: string; message: string; details: Record<string, unknown> | null };
 
-/** One request per tap (a second tap while one is in flight reuses it); refreshes the person's queries. */
+/**
+ * One request per tap: a call for the same request (method, path and body) while that one is in flight reuses it, so
+ * a double tap sends once. Any other request is its own: it waits for the ones before it, then goes out, and resolves
+ * with its own answer. (One action is shared by several controls, e.g. every address's Remove and the toast's Undo;
+ * handing a later, different call the first request's answer reported the wrong address removed and swallowed an
+ * Undo.) Refreshes the person's queries after each request; `pending` while any is queued or in flight.
+ */
 export function usePersonAction<R = unknown>(contactId: string) {
   const api = useApi();
   const qc = useQueryClient();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const inFlight = useRef<Promise<ActionResult<R>> | null>(null);
+  const inFlight = useRef(new Map<string, Promise<ActionResult<R>>>());
+  const last = useRef<Promise<unknown>>(Promise.resolve());
+  const open = useRef(0);
   const run = useCallback(
     (method: Exclude<HttpMethod, 'GET'>, path: string, body?: unknown): Promise<ActionResult<R>> => {
-      if (inFlight.current) return inFlight.current;
-      const p = (async (): Promise<ActionResult<R>> => {
-        setPending(true);
-        setError(null);
+      const key = `${method} ${path} ${JSON.stringify(body ?? {})}`;
+      const same = inFlight.current.get(key);
+      if (same) return same;
+      open.current += 1;
+      setPending(true);
+      setError(null);
+      // runs after the requests before it (a microtask later when there are none), never rejects (a failure is a
+      // result), so the next request always gets its turn
+      const send = async (): Promise<ActionResult<R>> => {
         try {
           return { ok: true, data: await api.request<R>(method, path, body ?? {}) };
         } catch (e) {
@@ -33,12 +46,15 @@ export function usePersonAction<R = unknown>(contactId: string) {
           setError(message);
           return { ok: false, code: err.code, message, details: err.details };
         } finally {
-          inFlight.current = null;
-          setPending(false);
-          for (const key of personKeys(contactId)) void qc.invalidateQueries({ queryKey: key });
+          if (inFlight.current.get(key) === p) inFlight.current.delete(key);
+          open.current -= 1;
+          if (open.current === 0) setPending(false);
+          for (const k of personKeys(contactId)) void qc.invalidateQueries({ queryKey: k });
         }
-      })();
-      inFlight.current = p;
+      };
+      const p: Promise<ActionResult<R>> = last.current.then(send);
+      inFlight.current.set(key, p);
+      last.current = p;
       return p;
     },
     [api, qc, contactId],

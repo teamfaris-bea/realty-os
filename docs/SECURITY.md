@@ -99,6 +99,7 @@ See §2.9 (import pipeline and storage); that part of the pass is in `apps/api/s
 - The JSON parser drops `__proto__`, `constructor` and `prototype` keys.
 - A wrong media type gets 415.
 - Push endpoints accept only public push-service hosts (SSRF; `auth/hardening.test.ts`).
+- The Undo of an address delete takes no address fields from the client. The delete answers an opaque restore token: the deleted row, the person, the deleting user and the database time, sealed with the tenant's field key (AES-256-GCM, AAD bound to the address id). `POST /contacts/:id/addresses/:addressId/restore` is an ordinary authenticated, CSRF-checked `contact.edit` route, not a capability URL: it opens the token inside the caller's tenant transaction and restores only for that user, person and address within 10 minutes (an altered or misdirected token is 404). So an Undo cannot plant a jurisdiction (it steers call-recording announcements) or an import batch (`people/addressUndo.test.ts`).
 
 ### 2.7 Secrets, logs and errors
 

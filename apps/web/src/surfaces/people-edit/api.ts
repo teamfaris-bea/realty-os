@@ -139,6 +139,8 @@ export const PEOPLE_ERROR_MESSAGES: Record<string, string> = {
   ACTIVITY_OUT_OF_WINDOW: 'That time is outside what can be logged.',
   OUTCOME_CALLS_ONLY: 'An outcome is only for calls.',
   NO_ADDRESS_TO_REVOKE: 'This person has no phone or email to record that on.',
+  // module 57: the Undo of an address delete is honored for 10 minutes
+  ADDRESS_RESTORE_EXPIRED: 'It’s too late to undo that: the address was removed more than 10 minutes ago.',
   DUPLICATE_CONTACT: 'This person may already be in Realty OS.',
   PHONE_INVALID: 'That phone number doesn’t look right.',
   EMAIL_INVALID: 'That email doesn’t look right.',

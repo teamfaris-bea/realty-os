@@ -17,6 +17,11 @@
 // privacy-protective reading of what erasure means for merged records; an owner/counsel question (VERIFY
 // WITH COUNSEL). The database enforces the same rules (0037 app.erase_contact over app.contact_merge_tree,
 // 0016 deals_primary_contact_guard), so a race or a missed check still fails closed.
+//
+// A do-not-contact outlives the erasure (D1): the person-level flag is a column of the rows being erased, so
+// the same transaction first puts it on each of the person's addresses in the HMAC-keyed consent ledger
+// (optOutCarry.ts, recorded by the Owner/Admin). The database refuses the erasure while one is missing
+// (PERSON_DO_NOT_CONTACT_UNCARRIED, 409), and a refused erasure rolls the carried revokes back with it.
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -24,6 +29,7 @@ import { audit, redactDiff } from '../audit.js';
 import { AppError } from '../errors.js';
 import { authorize } from '../rbac.js';
 import { adminTx, platformOf } from './common.js';
+import { carryPersonOptOut } from './optOutCarry.js';
 import * as repo from './repos/erasure.js';
 
 /** A reason code, never free text (audit `reason` holds no PII, CONVENTIONS §8). */
@@ -63,15 +69,19 @@ async function register(app: FastifyInstance): Promise<void> {
     async (req) => {
       const p = platformOf(req);
       // The refusal names the deals (ids and stages only, no PII in error details) so the Owner can act.
-      const blocking = await adminTx(req, async (tx) => {
+      const blocking = await adminTx(req, async (tx, now, actor) => {
         if (!(await repo.contactExists(tx, req.params.id))) throw new AppError('NOT_FOUND');
         const deals = await repo.dealLinks(tx, await repo.mergeTree(tx, req.params.id));
         if (deals.length > 0) return deals;
+        // an address the carry cannot take (an out-of-scope Meta identity): nothing is erased (the revokes roll back)
+        if ((await carryPersonOptOut(tx, req.params.id, actor, now, p.ids)).uncarriable > 0) throw new AppError('PERSON_DO_NOT_CONTACT_UNCARRIED');
         try {
           await repo.eraseContact(tx, req.params.id, p.ids.next<'AuditId'>(), req.body.reason);
         } catch (e) {
           if (pgMessage(e).startsWith('CONTACT_ON_DEAL')) throw new AppError('CONTACT_ON_DEAL'); // a deal appeared meanwhile (the tx is aborted)
           if (pgMessage(e).startsWith('NOT_FOUND')) throw new AppError('NOT_FOUND');
+          // the database's own check (a point added meanwhile): nothing is erased
+          if (pgMessage(e).startsWith('PERSON_DO_NOT_CONTACT_UNCARRIED')) throw new AppError('PERSON_DO_NOT_CONTACT_UNCARRIED');
           throw e;
         }
         return [];

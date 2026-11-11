@@ -90,6 +90,32 @@ test('delete an address: Remove = 1 tap, no confirm modal, an Undo toast; Undo p
   await expect(page.getByRole('list', { name: 'Addresses' }).getByText(text)).toBeVisible({ timeout: 15_000 });
 });
 
+test('Undo puts back an address longer than the add form allows (as an import stores it): the server restores the deleted row, nothing is re-added through the add form', async ({ page }) => {
+  test.setTimeout(120_000);
+  await signIn(page);
+  const p = await stack.fixture<{ id: string; name: string }>('/contact', { firstName: 'Ima', lastName: isPhone(page) ? 'Phone' : 'Desk' });
+  // 300 characters: over the add form's 200, inside an import's 500
+  const street = `${'1200 Old Mill Pond Road Building Seven '.repeat(8).slice(0, 292)}Suite 4B`;
+  expect(street).toHaveLength(300);
+  await stack.fixture('/long-address', { contactId: p.id, line1: street });
+  await openContact(page, p.id, p.name);
+  const text = `${street}, Oakland, CA, 94610`;
+  const addresses = page.getByRole('list', { name: 'Addresses' });
+  await expect(addresses.getByText(text)).toBeVisible();
+  const sent: string[] = [];
+  page.on('request', (r) => {
+    if (r.method() === 'POST' && /\/api\/contacts\/[^/]+\/addresses/.test(r.url())) sent.push(new URL(r.url()).pathname);
+  });
+
+  await tap(page, addresses.getByRole('button', { name: `Remove address ${text}` }), { taps: 0 });
+  await expect(peopleToast(page).getByText('Address removed')).toBeVisible();
+  await expect(page.getByText(text)).toHaveCount(0, { timeout: 15_000 });
+  await peopleToast(page).getByRole('button', { name: 'Undo' }).click();
+  await expect(page.getByRole('list', { name: 'Addresses' }).getByText(text)).toBeVisible({ timeout: 15_000 });
+  expect(sent).toEqual([expect.stringMatching(/\/addresses\/[0-9a-f-]{36}\/restore$/)]);
+  await expect(page.getByRole('alert')).toHaveCount(0);
+});
+
 test('the person’s page with an address: axe (incl. contrast) in light and dark, 44 px tap targets, no sideways scroll', async ({ page }) => {
   test.setTimeout(180_000);
   await signIn(page);

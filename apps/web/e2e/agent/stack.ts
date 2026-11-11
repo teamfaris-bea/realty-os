@@ -111,6 +111,13 @@ const routes = {
     const r = must(await call(agent, 'POST', '/contacts/' + b.contactId + '/addresses', { kind: b.kind ?? 'home', line1: b.line1 ?? '12 Oak St', city: b.city ?? 'Oakland', region: b.region ?? 'CA', postalCode: b.postalCode ?? '94610' }), 'address');
     return { id: r.address.id };
   },
+  // an address as a CSV or FUB import stores it: a line longer than the add route allows, with a jurisdiction (a
+  // superuser fixture; apps/api people/addressUndo.test.ts runs the real import), the input the Undo must restore
+  async '/long-address'(b) {
+    const id = randomUUID();
+    await h.su.query("INSERT INTO contact_addresses (tenant_id, id, contact_id, kind, line1, city, region, postal_code, country, jurisdiction) VALUES ($1, $2, $3, 'home', $4, 'Oakland', 'CA', '94610', 'US', 'US-CA')", [w.tenantId, id, b.contactId, b.line1]);
+    return { id };
+  },
   async '/listing'() {
     const r = must(await call(agent, 'POST', '/listings', { status: 'active', addressLine1: '12 Oak St', city: 'Oakland', region: 'CA', postalCode: '94610', listPriceCents: 85000000, beds: 3, bathsX10: 20, sqft: 1450, propertyType: 'single_family' }), 'listing');
     return { id: r.listing.id };
@@ -138,7 +145,7 @@ process.stdin.resume();
 })().catch((e) => { console.error(e); process.exit(1); });
 `;
 
-export type FixturePath = '/world' | '/contact' | '/offer' | '/draft' | '/task' | '/appointment' | '/deal' | '/listing' | '/held' | '/attempt' | '/dnc' | '/address';
+export type FixturePath = '/world' | '/contact' | '/offer' | '/draft' | '/task' | '/appointment' | '/deal' | '/listing' | '/held' | '/attempt' | '/dnc' | '/address' | '/long-address';
 
 export interface AgentStack {
   webUrl: string;

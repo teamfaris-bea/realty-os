@@ -3,7 +3,11 @@
 //   POST   /contacts/:id/addresses                    add               contact.edit
 //   PATCH  /contacts/:id/addresses/:addressId         edit              contact.edit
 //   DELETE /contacts/:id/addresses/:addressId         delete (audited)  contact.edit
-//          (the DB's contact_addresses_delete policy, migration 0037: detail visible + an editing role as itself)
+//          (the DB's contact_addresses_delete policy, migration 0037: detail visible + an editing role as itself);
+//          answers a restore token: the deleted row, sealed for that user's Undo (addressRestore.ts)
+//   POST   /contacts/:id/addresses/:addressId/restore { restoreToken }
+//                                                     the Undo: puts the deleted row back verbatim (same id,
+//                                                     jurisdiction, import batch), within 10 min (audited)  contact.edit
 //   GET    /contacts/:id/collaborators                list              contact.view_detail
 //   POST   /contacts/:id/collaborators                add (audited)     collaborator.manage (existing RLS)
 //   DELETE /contacts/:id/collaborators/:userId        remove (audited)  collaborator.manage
@@ -23,6 +27,7 @@ import { AppError } from '../errors.js';
 import { factsOf } from '../leads/contacts.js';
 import * as leads from '../leads/repos/contacts.js';
 import { authorize } from '../rbac.js';
+import { openAddressRestore, sealAddressRestore } from './addressRestore.js';
 import { detailFacts, idOf, peopleTx, platformOf } from './common.js';
 import * as repo from './repos/people.js';
 import * as S from './schemas.js';
@@ -65,16 +70,30 @@ export async function registerLinkRoutes(app: FastifyInstance): Promise<void> {
       return { address: addressView((await repo.addresses(tx, req.params.id)).find((a) => a.id === req.params.addressId)!) };
     }),
   );
-  r.delete('/contacts/:id/addresses/:addressId', { config: { auth: 'contact.edit' }, preHandler: authorize('contact.edit', editAuth), schema: { params: S.AddressParams, response: { 200: S.OkResponse } } }, async (req) =>
-    peopleTx(req, async (tx, _now, actor) => {
+  r.delete('/contacts/:id/addresses/:addressId', { config: { auth: 'contact.edit' }, preHandler: authorize('contact.edit', editAuth), schema: { params: S.AddressParams, response: { 200: S.AddressDeleteResponse } } }, async (req) =>
+    peopleTx(req, async (tx, now, actor) => {
       // an address of another person, or one RLS does not let this caller delete, is simply not found (R-PERM-5)
       const gone = await repo.deleteAddress(tx, req.params.id, req.params.addressId);
       if (!gone) throw new AppError('NOT_FOUND');
       // the diff reads as a removal: the address id and kind go to null (ids and codes only, never the address text)
       await audit(tx, actor, { action: 'contact.update', entity: { type: 'contact', id: req.params.id }, changes: redactDiff({ address_id: gone.id, kind: gone.kind }, { address_action: 'delete', address_id: null, kind: null }, { entity: 'contact_address' }) });
-      return { ok: true as const };
+      return { ok: true as const, restoreToken: await sealAddressRestore(platformOf(req).envelope, tx, actor, req.params.id, gone, now) };
     }),
   );
+  // the Undo of a delete: the row the token seals goes back exactly as it was (never fields the client sends)
+  r.post('/contacts/:id/addresses/:addressId/restore', { config: { auth: 'contact.edit' }, preHandler: authorize('contact.edit', editAuth), schema: { params: S.AddressParams, body: S.RestoreAddressBody, response: { 201: S.AddressResponse } } }, async (req, reply) => {
+    const out = await peopleTx(req, async (tx, now, actor) => {
+      const row = await openAddressRestore(platformOf(req).envelope, tx, actor, req.params.id, req.params.addressId, req.body.restoreToken, now);
+      const restored = await repo.restoreAddress(tx, req.params.id, row);
+      const view = (await repo.addresses(tx, req.params.id)).find((a) => a.id === row.id);
+      if (!view) throw new AppError('NOT_FOUND');
+      // an Undo sent twice puts nothing back twice: the second answers the address as it is
+      if (restored) await audit(tx, actor, { action: 'contact.update', entity: { type: 'contact', id: req.params.id }, changes: redactDiff({ address_id: null, kind: null }, { address_action: 'restore', address_id: row.id, kind: row.kind }, { entity: 'contact_address' }) });
+      return { address: addressView(view) };
+    });
+    reply.status(201);
+    return out;
+  });
   // ---- collaborators ----
   r.get('/contacts/:id/collaborators', { config: { auth: 'contact.view_detail' }, preHandler: authorize('contact.view_detail', editAuth), schema: { params: S.IdParams, response: { 200: S.CollaboratorsResponse } } }, async (req) =>
     peopleTx(req, async (tx) => ({ collaborators: (await repo.collaborators(tx, req.params.id)).map(collaboratorView) })),

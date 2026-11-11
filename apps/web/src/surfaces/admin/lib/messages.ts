@@ -47,6 +47,8 @@ export const LEAD_ADMIN_ERROR_MESSAGES: Record<string, string> = {
   // privacy erasure (api/admin erasure, R-DATA-4, E59)
   CONTACT_ON_DEAL: "This person is on a deal, so they can't be erased yet. The deal is a transaction record and stays; the Owner removes them from the deal first.",
   DEAL_STILL_OPEN: 'This person is the primary contact of a deal that is still open. Change the primary contact on the deal first, then remove them here.',
+  // D1: their do-not-contact could not be kept on every one of their addresses (an old Messenger or Instagram identity)
+  PERSON_DO_NOT_CONTACT_UNCARRIED: "This person asked not to be contacted, and Realty OS can't keep that on every one of their addresses yet, so they weren't erased. Nothing was changed.",
   // System page job commands (api/observability, lane ops-observability)
   JOB_NOT_RETRYABLE: "This job can't be retried now: it already finished, is running, or was cancelled. The list below is up to date.",
   JOB_ALREADY_QUEUED: 'A newer copy of this work is already waiting or running, so retrying this one would do it twice. Nothing was changed.',

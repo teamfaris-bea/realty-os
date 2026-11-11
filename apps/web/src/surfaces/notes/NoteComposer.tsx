@@ -77,11 +77,16 @@ export function NoteComposer({ contactId, contactName, canShare, autoFocus = fal
     });
   };
 
+  // one note id per draft text: ⌘↵ twice (or Save, then ⌘↵) is the same request, so the action sends it once, and a
+  // retry after a lost answer is the server's replay of the same note, never a second one
+  const draft = useRef<{ body: string; noteId: string } | null>(null);
   const save = async () => {
     const body = withTokens(text.trim(), picked.filter((p) => text.includes(`@${p.name}`)));
     if (!body) return;
-    const r = await act.run('POST', `/contacts/${contactId}/notes`, { body, noteId: globalThis.crypto.randomUUID() });
+    if (draft.current?.body !== body) draft.current = { body, noteId: globalThis.crypto.randomUUID() };
+    const r = await act.run('POST', `/contacts/${contactId}/notes`, { body, noteId: draft.current.noteId });
     if (!r.ok) return;
+    if (draft.current?.body === body) draft.current = null;
     setText('');
     setPicked([]);
     const missed = r.data.mentions.filter((m) => m.status === 'no_access');

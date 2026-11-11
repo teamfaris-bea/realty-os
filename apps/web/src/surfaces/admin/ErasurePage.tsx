@@ -11,6 +11,8 @@
 //   appears meanwhile (CONTACT_ON_DEAL from the erase) is worded and the deal list reloads.
 // - The person is the contact and every duplicate record merged into it: erasing them erases those too, and
 //   the page says how many (the deals listed are those of any of these records). VERIFY WITH COUNSEL.
+// - Opt-outs outlive the erasure (D1): the server first records a person's do-not-contact on every phone and
+//   email they had (PERSON_DO_NOT_CONTACT_UNCARRIED, worded, if one of them cannot keep it: nothing is erased).
 // - Deep link: /admin/erasure?contact=<id> (e.g. from a contact page). Without it, a search field
 //   finds the contact (GET /search, read-only reuse of the search surface's endpoint).
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -314,8 +316,8 @@ function EraseStep({ contactId, name, reason, mergedRecords, onErased, onRefused
   return (
     <div className="flex flex-col gap-3">
       <p className="text-[15px] text-ink">
-        {name} is on no deals, so they can be erased. This deletes {name} and what Realty OS holds about them, such as messages and call recordings. An opt-out they gave is kept without their
-        details, so they aren't contacted again by mistake. The audit log notes that an erasure happened and why.
+        {name} is on no deals, so they can be erased. This deletes {name} and what Realty OS holds about them, such as messages and call recordings. An opt-out they gave, or a request not to
+        be contacted, is kept on every phone and email they had, without their details, so they aren't contacted again by mistake. The audit log notes that an erasure happened and why.
       </p>
       {mergedRecords > 0 ? (
         <p className="text-[15px] text-ink">

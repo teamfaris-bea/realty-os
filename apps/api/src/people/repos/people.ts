@@ -193,11 +193,36 @@ export async function updateAddress(tx: Tx, contactId: string, id: string, a: Ad
   return r.rows.length > 0;
 }
 
-/** Deletes one address of the contact (RLS: contact_addresses_delete); null when there is none this caller may delete. */
-export async function deleteAddress(tx: Tx, contactId: string, id: string): Promise<{ id: string; kind: string } | null> {
-  const r = await sql<{ id: string; kind: string }>`
-    DELETE FROM contact_addresses WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId}::uuid AND id = ${id}::uuid RETURNING id, kind`.execute(tx);
+/** Every stored column of an address (the generated search_line1 and updated_at aside): what a restore puts back. */
+export interface AddressFullRow extends AddressRow {
+  jurisdiction: string | null;
+  import_batch_id: string | null;
+  created_at: Date;
+}
+
+/**
+ * Deletes one address of the contact (RLS: contact_addresses_delete): the deleted row as it was, or null when there
+ * is none this caller may delete.
+ */
+export async function deleteAddress(tx: Tx, contactId: string, id: string): Promise<AddressFullRow | null> {
+  const r = await sql<AddressFullRow>`
+    DELETE FROM contact_addresses WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId}::uuid AND id = ${id}::uuid
+    RETURNING id, kind, line1, line2, city, region, postal_code, country, jurisdiction, import_batch_id, created_at`.execute(tx);
   return r.rows[0] ?? null;
+}
+
+/**
+ * Puts a deleted address back verbatim, the same id included, under the caller's RLS (the contact_detail policy's
+ * WITH CHECK). False when an address with that id exists already (restored before).
+ */
+export async function restoreAddress(tx: Tx, contactId: string, a: AddressFullRow): Promise<boolean> {
+  const r = await sql<{ id: string }>`
+    INSERT INTO contact_addresses (tenant_id, id, contact_id, kind, line1, line2, city, region, postal_code, country, jurisdiction, import_batch_id, created_at)
+    VALUES (app.tenant_id(), ${a.id}::uuid, ${contactId}::uuid, ${a.kind}, ${a.line1}, ${a.line2}, ${a.city}, ${a.region}, ${a.postal_code}, ${a.country},
+            ${a.jurisdiction}, ${a.import_batch_id}::uuid, ${a.created_at.toISOString()}::timestamptz)
+    ON CONFLICT (tenant_id, id) DO NOTHING
+    RETURNING id`.execute(tx);
+  return r.rows.length > 0;
 }
 
 // ---- collaborators ---------------------------------------------------------------------------------
