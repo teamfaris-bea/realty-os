@@ -1868,6 +1868,56 @@ export interface SavedSearchesTable {
   updated_at: Generated<Timestamp>;
 }
 
+/** public.scoreboard_activity_daily (table) */
+export interface ScoreboardActivityDailyTable {
+  tenant_id: string;
+  user_id: string;
+  day: string;
+  calls: Generated<number>;
+  texts_and_emails: Generated<number>;
+  appointments_set: Generated<number>;
+  appointments_held: Generated<number>;
+  appointments_due: Generated<number>;
+  agreements_signed: Generated<number>;
+}
+
+/** public.scoreboard_rollup_days (table) */
+export interface ScoreboardRollupDaysTable {
+  tenant_id: string;
+  day: string;
+  zone: string;
+  rolled_at: Generated<Timestamp>;
+}
+
+/** public.scoreboard_rollup_dirty (table) */
+export interface ScoreboardRollupDirtyTable {
+  tenant_id: string;
+  id: GeneratedAlways<Int8>;
+  day: string;
+  marked_at: Generated<Timestamp>;
+}
+
+/** public.scoreboard_rollup_state (table) */
+export interface ScoreboardRollupStateTable {
+  tenant_id: string;
+  zone: string | null;
+  safe_until: Timestamp | null;
+  pending_at: Timestamp | null;
+  pending_xid: Int8 | null;
+  updated_at: Generated<Timestamp>;
+}
+
+/** public.scoreboard_speed_daily (table) */
+export interface ScoreboardSpeedDailyTable {
+  tenant_id: string;
+  user_id: string;
+  day: string;
+  ord: number;
+  owned_at: Timestamp;
+  first_touch_due_at: Timestamp;
+  first_touch_at: Timestamp | null;
+}
+
 /** public.sender_registrations (table) */
 export interface SenderRegistrationsTable {
   tenant_id: string;
@@ -2403,6 +2453,11 @@ export interface DB {
   routing_rules: RoutingRulesTable;
   saved_search_matches: SavedSearchMatchesTable;
   saved_searches: SavedSearchesTable;
+  scoreboard_activity_daily: ScoreboardActivityDailyTable;
+  scoreboard_rollup_days: ScoreboardRollupDaysTable;
+  scoreboard_rollup_dirty: ScoreboardRollupDirtyTable;
+  scoreboard_rollup_state: ScoreboardRollupStateTable;
+  scoreboard_speed_daily: ScoreboardSpeedDailyTable;
   sender_registrations: SenderRegistrationsTable;
   sending_domains: SendingDomainsTable;
   sessions: SessionsTable;
@@ -2541,6 +2596,11 @@ export const TABLE_NAMES = [
   'routing_rules',
   'saved_search_matches',
   'saved_searches',
+  'scoreboard_activity_daily',
+  'scoreboard_rollup_days',
+  'scoreboard_rollup_dirty',
+  'scoreboard_rollup_state',
+  'scoreboard_speed_daily',
   'sender_registrations',
   'sending_domains',
   'sessions',
