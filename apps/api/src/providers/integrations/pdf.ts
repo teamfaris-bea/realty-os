@@ -24,7 +24,7 @@ export function winAnsi(s: string): string {
     .replace(/[“”]/g, '"')
     .replace(/[–—]/g, '-')
     .replace(/\u00A0/g, ' ')
-    .replace(/[^\x20-\x7E\xA1-\xFF\n]/g, '?');
+    .replace(/[^\x20-\x7E\xA1-\xFF\n]/gu, '?');
 }
 
 function wrap(text: string, width: number, measure: (s: string) => number): string[] {
