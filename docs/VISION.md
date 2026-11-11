@@ -6,6 +6,10 @@ North star for the product. Most of this is **later phases**; the phase each ite
 
 This is a standalone platform that teams move onto, not a layer on top of Follow Up Boss. Teams come over through the staged FUB migration (export test, then dry run, then a check for each data category).
 
+## Decision: scope D2 (2026-11-11)
+
+Facebook Messenger and Instagram DMs, Meta Lead Ads and Meta ads are out of scope. In scope instead: posting to Facebook Pages and Instagram business accounts (content publishing only), Zillow and realtor.com leads, Google Business Profile, Google Ads only, and Gmail inbox sync (new: read-only, an agent's own client conversations in the contact timeline). Website chat stays in the unified inbox; D1 (only opt-outs block sends) is unchanged. Details: `PHASE2_3_PLAN.md` §2.2.
+
 ## Product values
 
 - **Simplicity.** Fewer concepts, fewer screens. Nothing ships unless it removes real work.
@@ -29,16 +33,18 @@ This is a standalone platform that teams move onto, not a layer on top of Follow
 | Lead source → commission | Every source traced to commission earned | 1 (capture); owner view 2 |
 | Staged FUB migration | Export test and dry run first; contacts, ownership, notes, messages, recordings, and opt-outs with consent history verified separately (a STOP in FUB stays a STOP here) | 1 |
 | Brokerage identity | Brokerage name on all outbound marketing; jurisdiction rule packs (e.g. SC team-name/advertising rules) | 1 (name); packs grow |
-| Unified inbox beyond SMS/email/call | Facebook/Instagram DMs, Zillow/realtor.com leads, website chat in one thread per person | 2 |
+| Unified inbox beyond SMS/email/call | Website chat plus Zillow/realtor.com leads in one thread per person (Facebook/Instagram DMs out of scope, owner decision D2) | 2 |
 | Active seller updates | Showings, feedback, marketing activity, competing listings assembled; agent adds recommendation before sending | 2 |
 | Post-closing program | Long-term nurture, referral asks, review requests, monthly home value updates | 1 (playbook template); value updates 2 |
-| Marketing built in | One listing in → website page, social posts, open house blast, Marketplace post, flyer, seller report; approve each once | 2 |
+| Marketing built in | One listing in → website page, social posts, open house blast, Marketplace post, flyer, seller report; approve each once; social posts go to the team's Facebook Pages and Instagram business accounts (export when not connected) | 2 |
+| Google Business Profile | Posts, review monitoring, reply drafts that always need a tap | 3 |
 | Transaction milestones | Contract dates become milestones with risk flags and client/lender updates | 2 |
 | Call scoring and self-coaching | Every call scored; one specific fix a day per agent; weekly improving/slipping view | 2–3 |
+| Gmail sync | Agents' Gmail conversations with clients appear in the contact timeline, read-only (nothing is ever sent through Gmail); off until counsel review and Google's verification, then the Owner turns it on | 2 |
 | Owner view | Dollars by lead source, cost per closing, pipeline velocity, forecast | 2 |
 | Voice AI | Answers missed and after-hours calls live, qualifies, books, warm-transfers hot leads to the on-duty agent | 3 |
 | 90-day prediction | Who will transact, from behavior plus public records (equity, time in home, life events) | 3 |
-| Ad spend that shifts itself | Toward what closes, within a budget cap you set (cap changes require a tap) | 3 |
+| Ad spend that shifts itself | Google Ads toward what closes, within a budget cap you set (cap changes require a tap); Meta ads out of scope (D2) | 3 |
 | Client portal | Buyers and sellers see their timeline, documents, showings, feedback, next steps | 3 |
 
 ## Compliance flags (VERIFY WITH COUNSEL)

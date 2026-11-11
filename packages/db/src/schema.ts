@@ -1190,6 +1190,46 @@ export interface ListingsTable {
   seller_update_next_due_at: Timestamp | null;
 }
 
+/** public.mail_messages (table) */
+export interface MailMessagesTable {
+  tenant_id: string;
+  id: string;
+  link_id: string;
+  contact_id: string;
+  contact_point_id: string;
+  contact_address_hmac: Buffer;
+  gmail_message_id: string;
+  gmail_thread_id: string;
+  rfc_message_id_sha256: Buffer | null;
+  sender: string;
+  contact_role: string;
+  other_recipient_count: Generated<number>;
+  subject: string | null;
+  body: string;
+  body_truncated: Generated<boolean>;
+  attachments: Generated<Json>;
+  internal_at: Timestamp;
+  origin: string;
+  created_at: Generated<Timestamp>;
+}
+
+/** public.mail_sync_points (table) */
+export interface MailSyncPointsTable {
+  tenant_id: string;
+  link_id: string;
+  contact_point_id: string;
+  contact_id: string;
+  confirmed_at: Generated<Timestamp>;
+}
+
+/** public.mail_thread_exclusions (table) */
+export interface MailThreadExclusionsTable {
+  tenant_id: string;
+  link_id: string;
+  gmail_thread_id: string;
+  excluded_at: Generated<Timestamp>;
+}
+
 /** public.marketing_activity (table) */
 export interface MarketingActivityTable {
   tenant_id: string;
@@ -1233,6 +1273,23 @@ export interface MarketingPiecesTable {
   exported_at: Timestamp | null;
   retracted_at: Timestamp | null;
   created_by_user_id: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
+/** public.marketing_publications (table) */
+export interface MarketingPublicationsTable {
+  tenant_id: string;
+  id: string;
+  piece_id: string;
+  connection_id: string;
+  status: Generated<string>;
+  external_post_id: string | null;
+  error_code: string | null;
+  requested_by_user_id: string;
+  requested_at: Generated<Timestamp>;
+  published_at: Timestamp | null;
+  retracted_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }
@@ -1350,6 +1407,7 @@ export interface MessagesTable {
   integration_connection_id: string | null;
   marketing_piece_id: string | null;
   bulk_action_id: string | null;
+  rfc_message_id_sha256: Buffer | null;
 }
 
 /** public.mfa_recovery_codes (table) */
@@ -2112,6 +2170,8 @@ export interface TenantSettingsTable {
   voice_answer_when: Generated<string>;
   stage_labels: Generated<Json>;
   batch_text_enabled: Generated<boolean>;
+  mail_sync_enabled: Generated<boolean>;
+  mail_backfill_days: Generated<number>;
 }
 
 /** public.tenants (table) */
@@ -2155,6 +2215,34 @@ export interface UserCalendarLinksTable {
   last_synced_at: Timestamp | null;
   last_error_code: string | null;
   revoked_at: Timestamp | null;
+  purge_after: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
+/** public.user_mail_links (table) */
+export interface UserMailLinksTable {
+  tenant_id: string;
+  id: string;
+  user_id: string;
+  provider: string;
+  mailbox_address: string;
+  mailbox_address_hmac: Buffer;
+  scopes: string[];
+  disclosure_sha256: string;
+  status: string;
+  refresh_enc: Buffer | null;
+  key_version: number | null;
+  history_id: string | null;
+  connected_at: Timestamp;
+  next_sync_at: Timestamp | null;
+  last_synced_at: Timestamp | null;
+  backfill_requested_at: Timestamp | null;
+  backfill_page_token: string | null;
+  backfill_done_at: Timestamp | null;
+  last_error_code: string | null;
+  revoked_at: Timestamp | null;
+  revoke_reason: string | null;
   purge_after: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
@@ -2340,9 +2428,13 @@ export interface DB {
   listing_contacts: ListingContactsTable;
   listing_price_history: ListingPriceHistoryTable;
   listings: ListingsTable;
+  mail_messages: MailMessagesTable;
+  mail_sync_points: MailSyncPointsTable;
+  mail_thread_exclusions: MailThreadExclusionsTable;
   marketing_activity: MarketingActivityTable;
   marketing_piece_assets: MarketingPieceAssetsTable;
   marketing_pieces: MarketingPiecesTable;
+  marketing_publications: MarketingPublicationsTable;
   memberships: MembershipsTable;
   message_media: MessageMediaTable;
   message_media_skipped: MessageMediaSkippedTable;
@@ -2399,6 +2491,7 @@ export interface DB {
   tenants: TenantsTable;
   transcripts: TranscriptsTable;
   user_calendar_links: UserCalendarLinksTable;
+  user_mail_links: UserMailLinksTable;
   users: UsersTable;
   v_agent_activity_daily: VAgentActivityDailyTable;
   v_pipeline_momentum: VPipelineMomentumTable;
@@ -2476,9 +2569,13 @@ export const TABLE_NAMES = [
   'listing_contacts',
   'listing_price_history',
   'listings',
+  'mail_messages',
+  'mail_sync_points',
+  'mail_thread_exclusions',
   'marketing_activity',
   'marketing_piece_assets',
   'marketing_pieces',
+  'marketing_publications',
   'memberships',
   'message_media',
   'message_media_skipped',
@@ -2535,6 +2632,7 @@ export const TABLE_NAMES = [
   'tenants',
   'transcripts',
   'user_calendar_links',
+  'user_mail_links',
   'users',
   'voice_settings',
   'voice_tool_calls',

@@ -124,6 +124,12 @@ const OVERRIDES: Record<string, Record<string, string>> = {
   contact_relationships: { kind: "'spouse_partner'" },
   message_templates: { scope: "'team'", channel: "'sms'" },
   smart_lists: { scope: "'team'" },
+  // D2 migration (Gmail inbox sync): a revoked link holds no token, so the generic row is a revoked one
+  user_mail_links: {
+    status: "'revoked'", revoked_at: 'now()', revoke_reason: "'USER_DISCONNECTED'", purge_after: 'now()',
+    scopes: "ARRAY['https://www.googleapis.com/auth/gmail.readonly']", disclosure_sha256: "repeat('ab', 32)",
+    mailbox_address: "'fixture-' || gen_random_uuid() || '@example.test'",
+  },
 };
 
 function firstInList(checks: string[], col: string): string | null {
