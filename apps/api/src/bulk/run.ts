@@ -132,7 +132,7 @@ async function applyOutcome(deps: CommsDeps, tenantId: string, actionId: string,
 
 // ---- sends ------------------------------------------------------------------------------------------
 
-type Prepared = { kind: 'skip' } | { kind: 'send'; body: string; subject: string | null; pointId: string; key: string; channel: 'sms' | 'email' } | { kind: 'existing'; messageId: string; status: string } | { kind: 'invisible' };
+type Prepared = { kind: 'skip' } | { kind: 'send'; body: string; subject: string | null; pointId: string; key: string; channel: 'sms' | 'email' } | { kind: 'existing'; messageId: string; status: string } | { kind: 'disabled'; messageId: string } | { kind: 'invisible' };
 
 async function sendItem(deps: CommsDeps, tenantId: string, creator: UserActor, a: B.ActionRow, it: B.ItemRow): Promise<void> {
   const key = bulkSendKey(a.id, it.addressHmac!);
@@ -143,8 +143,13 @@ async function sendItem(deps: CommsDeps, tenantId: string, creator: UserActor, a
     if (cur.status !== 'pending') return { kind: 'skip' };
     // a replay after a crash: the message this item already created decides (never a second message)
     const prior = await B.messageByKey(tx, composeKey);
-    if (prior) return { kind: 'existing', messageId: prior.id, status: prior.status };
-    if (a.kind === 'text' && !(await B.batchTextEnabled(tx))) {
+    // R-PAR-40 (E185): the switch is re-read at every message, including one a crash left queued: a replay
+    // never dispatches it once the Owner turned batch text off (security review; dispatch does not re-read it)
+    const textOff = a.kind === 'text' && !(await B.batchTextEnabled(tx));
+    const unsent = prior !== null && prior !== undefined && (prior.status === 'queued' || prior.status === 'scheduled');
+    if (prior && !(textOff && unsent)) return { kind: 'existing', messageId: prior.id, status: prior.status };
+    if (textOff) {
+      if (prior) return { kind: 'disabled', messageId: prior.id };
       await B.finishItem(tx, a.id, it.contactId, 'skipped', 'BATCH_TEXT_DISABLED'); // E185
       return { kind: 'skip' };
     }
@@ -174,6 +179,7 @@ async function sendItem(deps: CommsDeps, tenantId: string, creator: UserActor, a
   });
   if (prep.kind === 'invisible') return markInvisible(deps, tenantId, a.id, it.contactId);
   if (prep.kind === 'skip') return;
+  if (prep.kind === 'disabled') return applyOutcome(deps, tenantId, a.id, it.contactId, { status: 'skipped', reasonCode: 'BATCH_TEXT_DISABLED', cancelMessage: true }, prep.messageId);
   if (prep.kind === 'existing') {
     // run dispatch again (a no-op unless the message is still queued), then record what happened
     const r = prep.status === 'queued' ? await dispatchOutbound(prep.messageId, deps, { tenantId, actor: creator }).catch(() => null) : null;
@@ -298,9 +304,14 @@ async function apply(tx: Tx, deps: CommsDeps, creator: UserActor, a: B.ActionRow
       await sql`INSERT INTO contact_tags (tenant_id, contact_id, tag_id, added_by_kind, added_by_user_id)
                 VALUES (app.tenant_id(), ${p.id}, ${String(a.params['tagId'])}, 'bulk', app.user_id()) ON CONFLICT DO NOTHING`.execute(tx);
       return null;
-    case 'untag':
+    case 'untag': {
+      // core refuses a protected tag in bulk at draft (TAG_PROTECTED); a tag protected since (protect, or a
+      // merge into a protected tag, R-PAR-9) is re-read here so the run agrees with a fresh draft (security review)
+      const t = await sql<{ p: boolean }>`SELECT protected_proxy AS p FROM tags WHERE tenant_id = app.tenant_id() AND id = ${String(a.params['tagId'])}`.execute(tx);
+      if (t.rows[0]?.p) return 'TAG_PROTECTED';
       await sql`DELETE FROM contact_tags WHERE tenant_id = app.tenant_id() AND contact_id = ${p.id} AND tag_id = ${String(a.params['tagId'])}`.execute(tx);
       return null;
+    }
     case 'stage':
       // the DB stage guard re-decides R-PAR-14; the definer trigger writes the stage history (R-PAR-15)
       await sql`UPDATE contacts SET stage = ${String(a.params['stage'])} WHERE tenant_id = app.tenant_id() AND id = ${p.id}`.execute(tx);

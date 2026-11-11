@@ -21,7 +21,7 @@ import { AppError } from '../errors.js';
 import { identifiersOf } from '../leads/intake.js';
 import * as leads from '../leads/repos/contacts.js';
 import { authorize } from '../rbac.js';
-import { detailFacts, peopleTx, platformOf } from './common.js';
+import { detailFacts, liveDetailFacts, peopleTx, platformOf } from './common.js';
 import * as repo from './repos/people.js';
 import * as S from './schemas.js';
 import { pointView, removedPointView } from './views.js';
@@ -91,12 +91,13 @@ async function livePoint(tx: Tx, contactId: string, pointId: string): Promise<re
   return pt;
 }
 
-const editAuth = (req: FastifyRequest) => detailFacts(req);
+const readAuth = (req: FastifyRequest) => detailFacts(req);
+const editAuth = (req: FastifyRequest) => liveDetailFacts(req);
 
 export async function registerPointRoutes(app: FastifyInstance): Promise<void> {
   const r = app.withTypeProvider<ZodTypeProvider>();
 
-  r.get('/contacts/:id/points', { config: { auth: 'contact.view_detail' }, preHandler: authorize('contact.view_detail', editAuth), schema: { params: S.IdParams, response: { 200: S.PointsResponse } } }, async (req) =>
+  r.get('/contacts/:id/points', { config: { auth: 'contact.view_detail' }, preHandler: authorize('contact.view_detail', readAuth), schema: { params: S.IdParams, response: { 200: S.PointsResponse } } }, async (req) =>
     peopleTx(req, async (tx) => {
       const all = await repo.allPoints(tx, req.params.id);
       return { points: all.filter((p) => p.removed_at === null).map(pointView), removed: all.filter((p) => p.removed_at !== null).map(removedPointView) };

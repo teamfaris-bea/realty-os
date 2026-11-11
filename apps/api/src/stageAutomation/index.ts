@@ -1,6 +1,10 @@
 // Public interface of api/stage-automation (parity module 67) for the stage-change path of api/people.
-import type { Database } from '@realty/db';
+import type { UserActor } from '@realty/core/foundation';
+import { type Database, withTenantTx } from '@realty/db';
+import { sql } from 'kysely';
 import { z } from 'zod';
+import { systemActor } from '../worker/systemActor.js';
+import { decisionOf } from './repos.js';
 import { type AutomationOutcome, SKIP_REASONS } from './decide.js';
 import { reconcileStageEvent } from './reconcile.js';
 
@@ -15,11 +19,23 @@ export const AutomationOutcomeSchema = z.union([z.object({ started: z.string() }
  * failure here never fails the stage change (it is committed): it answers null and the worker's backup scan
  * (stage_automation.scan) decides the event within a minute; the decision row makes both paths agree.
  */
-export async function stageChangeAutomation(db: Database, tenantId: string, stageEventId: string, log?: { warn(o: object, m: string): void }): Promise<AutomationOutcome> {
+export async function stageChangeAutomation(db: Database, tenantId: string, stageEventId: string, log?: { warn(o: object, m: string): void }, viewer?: UserActor): Promise<AutomationOutcome> {
   try {
-    return (await reconcileStageEvent({ db }, tenantId, stageEventId)).automation;
+    const out = (await reconcileStageEvent({ db }, tenantId, stageEventId)).automation;
+    return out === null || viewer === undefined ? out : await asSeenBy(db, viewer, stageEventId, out);
   } catch (e) {
     log?.warn({ code: (e as { code?: string }).code ?? 'error' }, 'stage automation deferred to the scan');
     return null;
   }
+}
+
+/** A plan's name only if the viewer's own RLS shows that playbook (an agent's private plan is hidden from a collaborator; security review). */
+const HIDDEN_PLAN = "the owner's plan";
+async function asSeenBy(db: Database, viewer: UserActor, stageEventId: string, out: NonNullable<AutomationOutcome>): Promise<AutomationOutcome> {
+  const d = await withTenantTx(systemActor(viewer.tenantId, 'worker'), (tx) => decisionOf(tx, stageEventId), { db });
+  const visible = d?.playbookId
+    ? await withTenantTx(viewer, async (tx) => (await sql<{ ok: number }>`SELECT 1 AS ok FROM playbooks WHERE tenant_id = app.tenant_id() AND id = ${d.playbookId}`.execute(tx)).rows.length > 0, { db })
+    : false;
+  if (visible) return out;
+  return 'started' in out ? { started: HIDDEN_PLAN } : { skipped: out.skipped, plan: HIDDEN_PLAN };
 }

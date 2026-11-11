@@ -18,7 +18,9 @@ export const PROTECTED_CONTACT_KEYS = [
 ] as const;
 
 function buildSchema() {
-  const Name = z.string().trim().min(1).max(120);
+  // no control characters or bidi overrides in a name (they reach titles and other people's screens; security review)
+  // eslint-disable-next-line no-control-regex -- refusing control characters is the point
+  const Name = z.string().trim().min(1).max(120).regex(/^[^\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]*$/u);
   const NullableName = z.union([Name, z.null()]);
   return z.strictObject({
     rowVersion: z.number().int().min(1),

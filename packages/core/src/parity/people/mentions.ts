@@ -67,12 +67,17 @@ export function renderMentions(body: string, nameOf: (userId: UserId) => string 
   return out + body.slice(at);
 }
 
+// eslint-disable-next-line no-control-regex -- removing control characters is the point
+const TITLE_STRIP_RE = /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/gu;
+
 /**
  * R-PAR-3: the mention notification's title. Never note text: at most the person's first name and last
  * initial (null when the tenant's notification_detail is 'none').
  */
 export function mentionTitle(personLabel: string | null): string {
-  return personLabel ? `You were mentioned in a note on ${personLabel}` : 'You were mentioned in a note';
+  // a name from intake or an import may carry control or bidi-override characters: never into a title
+  const label = personLabel === null ? '' : personLabel.replace(TITLE_STRIP_RE, '').replace(/\s+/gu, ' ').trim();
+  return label ? `You were mentioned in a note on ${label}` : 'You were mentioned in a note';
 }
 
 /** R-PAR-3: one notification per note per user. */

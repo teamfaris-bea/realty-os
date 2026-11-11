@@ -27,7 +27,7 @@ import { AppError } from '../errors.js';
 import { factsOf } from '../leads/contacts.js';
 import * as leads from '../leads/repos/contacts.js';
 import { authorize } from '../rbac.js';
-import { actorOf, detailFacts, idOf, peopleTx, platformOf } from './common.js';
+import { actorOf, detailFacts, liveDetailFacts, idOf, peopleTx, platformOf } from './common.js';
 import * as repo from './repos/people.js';
 import { addressView, collaboratorView, relationshipView, removedPointView } from './views.js';
 import * as S from './schemas.js';
@@ -64,14 +64,15 @@ async function staleOrMissing(tx: Tx, id: string): Promise<never> {
   throw new AppError('STALE_CONTACT', { rowVersion: now.row_version });
 }
 
-const editAuth = (req: FastifyRequest) => detailFacts(req);
+const readAuth = (req: FastifyRequest) => detailFacts(req);
+const editAuth = (req: FastifyRequest) => liveDetailFacts(req);
 
 export async function registerContactEditRoutes(app: FastifyInstance): Promise<void> {
   const r = app.withTypeProvider<ZodTypeProvider>();
 
   r.get(
     '/contacts/:id/details',
-    { config: { auth: 'contact.view_detail' }, preHandler: authorize('contact.view_detail', editAuth), schema: { params: S.IdParams, response: { 200: S.DetailsResponse } } },
+    { config: { auth: 'contact.view_detail' }, preHandler: authorize('contact.view_detail', readAuth), schema: { params: S.IdParams, response: { 200: S.DetailsResponse } } },
     async (req) =>
       peopleTx(req, async (tx, _now, actor) => {
         const id = req.params.id;
@@ -169,7 +170,7 @@ export async function registerContactEditRoutes(app: FastifyInstance): Promise<v
       });
       // parity module 67 (flagged edit): the stage entry's plan, decided after the change committed
       const { eventId, ...res } = out;
-      const automation = eventId ? await stageChangeAutomation(platformOf(req).db, actorOf(req).tenantId, eventId, req.log) : null;
+      const automation = eventId ? await stageChangeAutomation(platformOf(req).db, actorOf(req).tenantId, eventId, req.log, actorOf(req)) : null;
       return { ...res, automation };
     },
   );

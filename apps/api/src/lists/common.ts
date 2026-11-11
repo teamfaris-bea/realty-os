@@ -60,6 +60,7 @@ export function mapListsDbError(e: unknown): AppError | null {
     case '23514': // a CHECK constraint (e.g. the built-in protected keys of custom_field_defs)
       if (pe.constraint === 'custom_field_defs_key_check1') return new AppError('CUSTOM_FIELD_PROTECTED');
       if (pe.constraint === 'custom_field_defs_key_check') return new AppError('CUSTOM_FIELD_KEY_INVALID');
+      if (pe.constraint === 'smart_lists_definition_check') return new AppError('LIST_DEFINITION_TOO_LARGE');
       return null;
     case '42501': // RLS refused the row: the caller may not write it
     case '23503': // an id that is not a row of this tenant

@@ -94,8 +94,15 @@ function originOf(req: FastifyRequest): string | null {
   return null;
 }
 
+/**
+ * JSON bodies: prototype keys dropped, and a NUL (U+0000) anywhere is a bad body. Postgres text and jsonb
+ * refuse NUL, so it used to reach the database and come back as a 500 (security review).
+ */
 function safeJsonParse(body: string): unknown {
-  return JSON.parse(body, (k, v: unknown) => (k === '__proto__' || k === 'constructor' || k === 'prototype' ? undefined : v));
+  return JSON.parse(body, (k, v: unknown) => {
+    if (k.includes('\u0000') || (typeof v === 'string' && v.includes('\u0000'))) throw new SyntaxError('NUL in body');
+    return k === '__proto__' || k === 'constructor' || k === 'prototype' ? undefined : v;
+  });
 }
 
 function badBody(): FastifyError {

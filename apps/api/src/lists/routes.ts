@@ -26,7 +26,7 @@
 import { can, type ResourceFacts } from '@realty/core/foundation';
 import { applyFieldDefPatch, CUSTOM_FIELD_LIMIT, validateNewFieldDef } from '@realty/core/parity/fields';
 import { LIST_SORTS, type ListSort } from '@realty/core/parity/lists';
-import { normalizeTagName, tagReadsLikeOptOut } from '@realty/core/parity/tags';
+import { classifyProtected, normalizeTagName, tagReadsLikeOptOut } from '@realty/core/parity/tags';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -118,8 +118,12 @@ export async function registerListsRoutes(app: FastifyInstance): Promise<void> {
           if (!n.ok) throw new AppError(n.code);
           name = n.name;
         }
-        const after = await catalog.updateTag(tx, before.id, { ...(name !== undefined ? { name } : {}), ...(req.body.color !== undefined ? { color: req.body.color } : {}) });
+        // R-PAR-8: a name in the fair-housing lexicon is protected, whether typed at create or by a rename
+        // (tighten-only; security review: a rename used to keep an unprotected tag bulk-appliable)
+        const protect = name !== undefined && !before.protected_proxy && classifyProtected(name);
+        const after = await catalog.updateTag(tx, before.id, { ...(name !== undefined ? { name } : {}), ...(req.body.color !== undefined ? { color: req.body.color } : {}), ...(protect ? { protectedProxy: true } : {}) });
         if (!after) throw new AppError('NOT_FOUND');
+        if (protect) await audit(tx, actor, { action: 'tag.protect', entity: { type: 'tag', id: after.id }, changes: redactDiff({ is_protected: false }, { is_protected: true }, { entity: 'tag' }) });
         await audit(tx, actor, { action: 'tag.rename', entity: { type: 'tag', id: after.id }, changes: redactDiff({ name: before.name, color: before.color }, { name: after.name, color: after.color }, { entity: 'tag' }) });
         return { tag: tagView(after) };
       }),

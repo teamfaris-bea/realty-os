@@ -28,12 +28,13 @@ import { factsOf } from '../leads/contacts.js';
 import * as leads from '../leads/repos/contacts.js';
 import { authorize } from '../rbac.js';
 import { createTask } from '../workspace/tasks.js';
-import { decodeCursor, detailFacts, encodeCursor, peopleTx, platformOf } from './common.js';
+import { decodeCursor, detailFacts, liveDetailFacts, encodeCursor, peopleTx, platformOf } from './common.js';
 import * as repo from './repos/people.js';
 import * as S from './schemas.js';
 import { noteView } from './views.js';
 
 const contactAuth = (req: FastifyRequest) => detailFacts(req);
+const writeAuth = (req: FastifyRequest) => liveDetailFacts(req);
 
 /** Facts for a note route: the note's person (detail visible) + `own` = the caller wrote the note. */
 function noteFacts(req: FastifyRequest, ownMeansAuthor: boolean) {
@@ -105,9 +106,23 @@ function namesOf(plan: { members: Map<string, repo.MemberRow> }): Map<string, st
   return new Map([...plan.members.values()].map((m) => [m.user_id, m.display_name]));
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// exactly what `created_at::text` prints; anything else used to reach a ::timestamptz cast (a 500, security review)
+const AT_TEXT_RE = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})(\.\d{1,6})?[+-]\d{2}(:\d{2})?$/;
+
+function isAtText(a: string): boolean {
+  const m = AT_TEXT_RE.exec(a);
+  if (!m) return false;
+  const [y, mo, d, h, mi, se] = m.slice(1, 7).map(Number) as [number, number, number, number, number, number];
+  if (y < 1 || h > 23 || mi > 59 || se > 59) return false;
+  const t = new Date(Date.UTC(2000, mo - 1, d));
+  t.setUTCFullYear(y);
+  return t.getUTCFullYear() === y && t.getUTCMonth() === mo - 1 && t.getUTCDate() === d;
+}
+
 function isNotesCursor(v: unknown): v is { p: boolean; a: string; i: string } {
   const o = v as { p?: unknown; a?: unknown; i?: unknown };
-  return !!o && typeof o.p === 'boolean' && typeof o.a === 'string' && typeof o.i === 'string' && /^[0-9a-f-]{36}$/i.test(o.i);
+  return !!o && typeof o.p === 'boolean' && typeof o.a === 'string' && typeof o.i === 'string' && UUID_RE.test(o.i) && isAtText(o.a);
 }
 
 export async function registerNoteRoutes(app: FastifyInstance): Promise<void> {
@@ -138,7 +153,7 @@ export async function registerNoteRoutes(app: FastifyInstance): Promise<void> {
     return { members: out };
   });
 
-  r.post('/contacts/:id/notes', { config: { auth: 'note.write' }, preHandler: authorize('note.write', contactAuth), schema: { params: S.IdParams, body: S.CreateNoteBody, response: { 201: S.NoteResponse, 200: S.NoteResponse } } }, async (req, reply) => {
+  r.post('/contacts/:id/notes', { config: { auth: 'note.write' }, preHandler: authorize('note.write', writeAuth), schema: { params: S.IdParams, body: S.CreateNoteBody, response: { 201: S.NoteResponse, 200: S.NoteResponse } } }, async (req, reply) => {
     const p = platformOf(req);
     const contactId = req.params.id;
     // idempotent retry: the client's note id, written by the same author on the same person
@@ -213,7 +228,7 @@ export async function registerNoteRoutes(app: FastifyInstance): Promise<void> {
     }),
   );
 
-  r.post('/contacts/:id/activities', { config: { auth: 'activity.log' }, preHandler: authorize('activity.log', contactAuth), schema: { params: S.IdParams, body: S.ActivityBody, response: { 201: S.ActivityResponse, 200: S.ActivityResponse } } }, async (req, reply) => {
+  r.post('/contacts/:id/activities', { config: { auth: 'activity.log' }, preHandler: authorize('activity.log', writeAuth), schema: { params: S.IdParams, body: S.ActivityBody, response: { 201: S.ActivityResponse, 200: S.ActivityResponse } } }, async (req, reply) => {
     const p = platformOf(req);
     const b = req.body;
     const contactId = req.params.id;

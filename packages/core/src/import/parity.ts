@@ -28,6 +28,7 @@
 import { BUILT_IN_PROTECTED_KEYS, CUSTOM_FIELD_LIMIT as PARITY_FIELD_LIMIT, FIELD_TYPES as PARITY_FIELD_TYPES, type FieldDef, type FieldOption as ParityFieldOption, type FieldType as ParityFieldType, type TypedValue as ParityTypedValue, validateFieldValue } from '../parity/fields/index.js';
 import { TAG_LIMIT_PER_CONTACT, TAG_LIMIT_PER_TENANT, TAG_NAME_MAX, classifyProtected as classifyParityProtected, normalizeTagName as normalizeParityTagName } from '../parity/tags/index.js';
 import { suggestStage } from './csv.js';
+import { optOutTagForms } from './fub.js';
 import type { ContactStage, NormalizedContact } from './types.js';
 
 export const PARITY_STAGES: readonly ContactStage[] = ['new', 'attempting', 'connected', 'nurture', 'active', 'under_contract', 'closed', 'lost'];
@@ -361,7 +362,7 @@ export function paritySummary(contacts: readonly NormalizedContact[], o: ParityO
   for (const c of contacts) {
     const names = contactTagNames(c, o, ctx.source);
     links += names.length;
-    if (c.tags.some((t) => OPT_OUT_TAG.test(t.trim()))) optOutTagged += 1;
+    if (c.tags.some((t) => optOutTagForms(t).some((f) => OPT_OUT_TAG.test(f)))) optOutTagged += 1;
     for (const n of names) if (!firstName.has(n.key)) firstName.set(n.key, n.name);
   }
   const keys = [...firstName.keys()];

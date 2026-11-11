@@ -42,7 +42,8 @@ export const RelationshipBody = z
   .strictObject({
     relatedContactId: Id,
     kind: z.enum(['spouse_partner', 'family', 'household', 'co_buyer', 'co_seller', 'referred_by', 'other']),
-    label: z.string().trim().min(1).max(40).optional(),
+    // eslint-disable-next-line no-control-regex -- no control characters or bidi overrides (security review)
+    label: z.string().trim().min(1).max(40).regex(/^[^\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]*$/u).optional(),
   })
   .refine((b) => (b.kind === 'other') === (b.label !== undefined), { message: 'a label is required for kind other, and only for it', path: ['label'] });
 

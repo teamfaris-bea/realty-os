@@ -26,7 +26,16 @@ export const DEFINITION_MAX_BYTES = 8_192;
 const Id = z.uuid().transform((s) => s.toLowerCase());
 const Ids = (max: number) => z.array(Id).min(1).max(max);
 const Days = z.number().int().min(1).max(MAX_DAYS);
-const IsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+/** A real calendar date (security review: "2025-02-31" or "0000-01-01" used to reach Postgres and 500 every run). */
+const IsoDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/)
+  .refine((s) => {
+    const [y, m, d] = s.split('-').map(Number) as [number, number, number];
+    if (y < 1000) return false; // Date.UTC maps years 0-99 to 1900-1999
+    const t = new Date(Date.UTC(y, m - 1, d));
+    return t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d;
+  }, 'not a calendar date');
 const OptionId = z.string().regex(/^[a-z0-9_]{1,40}$/);
 // eslint-disable-next-line no-control-regex -- free text never carries control characters
 const FreeText = z.string().trim().min(1).max(FREE_TEXT_MAX).regex(/^[^\u0000-\u001f\u007f-\u009f]*$/u);
@@ -110,6 +119,22 @@ export function isFreeTextClause(c: ListClause): boolean {
   return c.kind === 'name' || (c.kind === 'field' && (c.op === 'text_eq' || c.op === 'text_contains'));
 }
 
+/**
+ * The definition as Postgres prints `jsonb::text` (a space after every `:` and `,`), which is what the
+ * `smart_lists.definition` CHECK measures. Plain `JSON.stringify` is shorter, so a definition core accepted
+ * could fail the CHECK with a 500 (security review).
+ */
+function jsonbText(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(jsonbText).join(', ')}]`;
+  if (v !== null && typeof v === 'object') {
+    return `{${Object.entries(v as Record<string, unknown>)
+      .filter(([, x]) => x !== undefined)
+      .map(([k, x]) => `${JSON.stringify(k)}: ${jsonbText(x)}`)
+      .join(', ')}}`;
+  }
+  return JSON.stringify(v);
+}
+
 /** Parses and checks a definition for a scope (R-PAR-27: team lists carry no free text). */
 export function validateDefinition(raw: unknown, scope: ListScope): { ok: true; definition: SmartListDefinition } | DefinitionIssue {
   const parsed = SmartListDefinitionSchema.safeParse(raw);
@@ -121,7 +146,7 @@ export function validateDefinition(raw: unknown, scope: ListScope): { ok: true; 
     };
   }
   const def = parsed.data;
-  if (utf8Length(JSON.stringify(def)) > DEFINITION_MAX_BYTES) {
+  if (utf8Length(jsonbText(def)) > DEFINITION_MAX_BYTES) {
     return { ok: false, code: 'LIST_DEFINITION_TOO_LARGE', issues: [{ path: '/', message: `at most ${DEFINITION_MAX_BYTES} bytes` }] };
   }
   if (scope === 'team') {

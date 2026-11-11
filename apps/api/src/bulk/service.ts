@@ -28,6 +28,7 @@ import { assignTarget, kindFacts, personFacts, personRow, sendContext, sendFacts
 import * as B from './repos/bulk.js';
 import { type AudienceSource, type SelectionDef, resolveSelection, selectionOptionsFor } from './selection.js';
 import { notifyFinished } from './notices.js';
+import { selectionAudience } from '../lists/index.js';
 
 export interface BulkDeps {
   db: Database;
@@ -76,6 +77,8 @@ interface StoredCounts {
   preflight?: Record<string, number>;
   sharedAddresses?: number;
   final?: ReturnType<typeof tally>;
+  /** send/enroll: every tag the audience was built from, re-checked at confirm (R-PAR-8, security review) */
+  audienceTagIds?: string[];
 }
 
 export function viewOf(actor: UserActor, a: B.ActionRow, items: { status: B.ItemRow['status']; reasonCode: string | null }[]): ActionView {
@@ -111,6 +114,19 @@ async function anyProtected(tx: Tx, tagIds: readonly string[]): Promise<boolean>
   if (tagIds.length === 0) return false;
   const r = await sql<{ p: boolean }>`SELECT bool_or(protected_proxy) AS p FROM tags WHERE tenant_id = app.tenant_id() AND id = ANY (${tagIds}::uuid[])`.execute(tx);
   return r.rows[0]?.p === true;
+}
+
+const sendsToAudience = (kind: CreateInput['kind']): boolean => kind === 'email' || kind === 'text' || kind === 'enroll';
+
+/** The tags a send/enroll audience was built from: its list or definition, the list people were picked from, and the client's chips. */
+async function audienceTagsOf(tx: Tx, input: CreateInput): Promise<string[]> {
+  const out = new Set((input.audienceTagIds ?? []).map((t) => t.toLowerCase()));
+  const sources: AudienceSource[] = [];
+  if ('listId' in input.selection) sources.push({ listId: input.selection.listId });
+  else if ('definition' in input.selection) sources.push({ definition: input.selection.definition });
+  if (input.audienceSource) sources.push(input.audienceSource);
+  for (const src of sources) for (const t of (await selectionAudience(tx, src)).tagIds) out.add(t);
+  return [...out].sort();
 }
 
 function requiredParams(input: CreateInput): Record<string, string> {
@@ -245,7 +261,8 @@ export async function createDraft(actor: UserActor, input: CreateInput, deps: Bu
       items.push({ contactId: cid, addressHmac: isSendKind(input.kind) ? address : null });
     }
     await B.insertItems(tx, actionId, items);
-    await B.setDraftCounts(tx, actionId, items.length, { selected, preflight, sharedAddresses: shared });
+    const audienceTagIds = sendsToAudience(input.kind) ? await audienceTagsOf(tx, input) : undefined;
+    await B.setDraftCounts(tx, actionId, items.length, { selected, preflight, sharedAddresses: shared, ...(audienceTagIds ? { audienceTagIds } : {}) });
     await audit(tx, actor, { action: 'bulk.created', entity: { type: 'bulk_action', id: actionId }, changes: redactSnapshot({ kind: input.kind, status: 'draft', targetCount: items.length, selectedCount: selected }, { entity: 'bulk_action' }) });
     return actionId;
   });
@@ -280,6 +297,13 @@ export async function confirmAction(actor: UserActor, id: string, deps: BulkDeps
     if ((a.targetCount ?? 0) === 0) throw new AppError('BULK_NOTHING_TO_DO');
     const selected = (a.counts as StoredCounts).selected ?? a.targetCount ?? 0;
     if (a.kind === 'text' && !(await B.batchTextEnabled(tx))) throw new AppError('BATCH_TEXT_DISABLED');
+    // R-PAR-8 (E189): a tag protected (or merged into a protected one) between draft and confirm still never
+    // defines the audience: re-read the protection of the tags the draft was built from, and the saved list.
+    if (sendsToAudience(a.kind)) {
+      let audienceProtected = await anyProtected(tx, (a.counts as StoredCounts).audienceTagIds ?? []);
+      if (!audienceProtected && a.smartListId) audienceProtected = await selectionAudience(tx, { listId: a.smartListId }).then((x) => x.audienceProtected, () => false);
+      if (audienceProtected) throw new AppError('AUDIENCE_PROTECTED_PROXY');
+    }
     if (a.kind === 'email') {
       // Q-PAR-7: the tenant's daily budget, counted across every creator (as the system), under a tenant lock
       await B.lockEmailBudget(tx);

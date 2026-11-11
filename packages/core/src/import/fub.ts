@@ -334,6 +334,20 @@ const TAG_DNC = /^(dnc|do[\s_-]*not[\s_-]*(contact|call))$/i;
 const TAG_OPT_OUT = /^(opted[\s_-]*out|opt[\s_-]*out|stop)$/i;
 const TAG_UNSUB = /^unsubscribed$/i;
 
+// eslint-disable-next-line no-control-regex -- control characters are what gets removed
+const OPT_OUT_STRIP_RE = /[\p{Default_Ignorable_Code_Point}\u0000-\u001f\u007f-\u009f]/gu;
+
+/**
+ * The texts an imported tag is tested as for the opt-out conversion: as written (trimmed), and folded the way
+ * the tag catalog folds it (invisible and control characters out, NFKC, whitespace collapsed), so a tag that
+ * shows as "DNC" is always honoured as DNC.
+ */
+export function optOutTagForms(raw: string): string[] {
+  const t = String(raw).trim();
+  const folded = t.normalize('NFKC').replace(OPT_OUT_STRIP_RE, '').replace(/\s+/gu, ' ').trim();
+  return folded === t ? [t] : [t, folded];
+}
+
 /**
  * R-CONSENT-3 / E40: the person's consent indicators. Positive flags become grants (capped at
  * `imported_unverified` by `mapImportedConsent`); point statuses and flags that say opted out,
@@ -343,7 +357,9 @@ const TAG_UNSUB = /^unsubscribed$/i;
 function mapConsent(person: FubPerson): RecordOutcome<NormalizedConsent> {
   const sourceRef = fubSourceRef('people', person.id);
   const issues: Issue[] = [];
-  const tags = (person.tags ?? []).map((t) => t.trim());
+  // each tag both as written and as the catalog will store it (security review: "D\u200BNC" or full-width
+  // "ＤＮＣ" lands in the catalog as "DNC", so it must also be honoured as DNC)
+  const tags = (person.tags ?? []).flatMap((t) => optOutTagForms(t));
   const dncTag = tags.some((t) => TAG_DNC.test(t));
   const optOutTag = tags.some((t) => TAG_OPT_OUT.test(t));
   const unsubTag = tags.some((t) => TAG_UNSUB.test(t));

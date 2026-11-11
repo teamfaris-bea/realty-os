@@ -67,8 +67,9 @@ export function validateStageLabels(input: unknown): { ok: true; labels: StageLa
   for (const [k, v] of Object.entries(input)) {
     if (!isStage(k) || typeof v !== 'string') return { ok: false, code: 'STAGE_LABEL_INVALID' };
     const t = v.trim();
+    // no control characters or bidi overrides either (a label shows on everyone's screen; security review)
     // eslint-disable-next-line no-control-regex
-    if (t.length < 1 || t.length > 24 || /[\u0000-\u001f\u007f]/.test(t)) return { ok: false, code: 'STAGE_LABEL_INVALID' };
+    if (t.length < 1 || t.length > 24 || /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u.test(t)) return { ok: false, code: 'STAGE_LABEL_INVALID' };
     out[k] = t;
   }
   return { ok: true, labels: out };

@@ -42,7 +42,11 @@ export interface Rendered {
 // eslint-disable-next-line no-control-regex -- values are plain single-line text
 const VALUE_STRIP_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g;
 /** Invisible formatting a value could use to spoof the text around it (bidi overrides, zero-width). */
-const VALUE_INVISIBLE_RE = /[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
+// U+061C, the soft hyphen, CGJ, fillers and the invisible tag characters added by the security review: a value
+// made only of them is empty (MERGE_FIELD_EMPTY, never a "Hi ," that only looks filled). Emoji variation
+// selectors stay. (Each listed character is removed on its own, so a combining one in the class is intended.)
+// eslint-disable-next-line no-misleading-character-class
+const VALUE_INVISIBLE_RE = /[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\u3164\ufeff\uffa0\u{e0000}-\u{e007f}]/gu;
 
 /** A value as printed: control characters and line breaks become one space, invisible formatting is dropped, trimmed. */
 export function cleanValue(v: string | null | undefined): string {

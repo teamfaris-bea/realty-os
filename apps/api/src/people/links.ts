@@ -28,12 +28,13 @@ import { factsOf } from '../leads/contacts.js';
 import * as leads from '../leads/repos/contacts.js';
 import { authorize } from '../rbac.js';
 import { openAddressRestore, sealAddressRestore } from './addressRestore.js';
-import { detailFacts, idOf, peopleTx, platformOf } from './common.js';
+import { detailFacts, idOf, liveDetailFacts, peopleTx, platformOf } from './common.js';
 import * as repo from './repos/people.js';
 import * as S from './schemas.js';
 import { addressView, collaboratorView, relationshipView } from './views.js';
 
-const editAuth = (req: FastifyRequest) => detailFacts(req);
+const readAuth = (req: FastifyRequest) => detailFacts(req);
+const editAuth = (req: FastifyRequest) => liveDetailFacts(req);
 
 function addressInput(b: { kind: string; line1?: string | null | undefined; line2?: string | null | undefined; city?: string | null | undefined; region?: string | null | undefined; postalCode?: string | null | undefined; country: string }): repo.AddressInput {
   return { kind: b.kind, line1: b.line1 ?? null, line2: b.line2 ?? null, city: b.city ?? null, region: b.region ?? null, postalCode: b.postalCode ?? null, country: b.country };
@@ -95,7 +96,7 @@ export async function registerLinkRoutes(app: FastifyInstance): Promise<void> {
     return out;
   });
   // ---- collaborators ----
-  r.get('/contacts/:id/collaborators', { config: { auth: 'contact.view_detail' }, preHandler: authorize('contact.view_detail', editAuth), schema: { params: S.IdParams, response: { 200: S.CollaboratorsResponse } } }, async (req) =>
+  r.get('/contacts/:id/collaborators', { config: { auth: 'contact.view_detail' }, preHandler: authorize('contact.view_detail', readAuth), schema: { params: S.IdParams, response: { 200: S.CollaboratorsResponse } } }, async (req) =>
     peopleTx(req, async (tx) => ({ collaborators: (await repo.collaborators(tx, req.params.id)).map(collaboratorView) })),
   );
   r.post('/contacts/:id/collaborators', { config: { auth: 'collaborator.manage' }, preHandler: authorize('collaborator.manage', collabFacts), schema: { params: S.IdParams, body: S.CollaboratorBody, response: { 200: S.CollaboratorsResponse } } }, async (req) =>
@@ -119,7 +120,7 @@ export async function registerLinkRoutes(app: FastifyInstance): Promise<void> {
   );
 
   // ---- relationships ----
-  r.get('/contacts/:id/relationships', { config: { auth: 'contact.view_detail' }, preHandler: authorize('contact.view_detail', editAuth), schema: { params: S.IdParams, response: { 200: S.RelationshipsResponse } } }, async (req) =>
+  r.get('/contacts/:id/relationships', { config: { auth: 'contact.view_detail' }, preHandler: authorize('contact.view_detail', readAuth), schema: { params: S.IdParams, response: { 200: S.RelationshipsResponse } } }, async (req) =>
     peopleTx(req, async (tx) => ({ relationships: (await repo.relationships(tx, req.params.id)).map((x) => relationshipView(x, req.params.id)) })),
   );
   r.post('/contacts/:id/relationships', { config: { auth: 'contact.edit' }, preHandler: authorize('contact.edit', editAuth), schema: { params: S.IdParams, body: S.RelationshipBody, response: { 201: S.RelationshipResponse } } }, async (req, reply) => {
@@ -127,7 +128,7 @@ export async function registerLinkRoutes(app: FastifyInstance): Promise<void> {
       if (req.body.relatedContactId === req.params.id) throw new AppError('VALIDATION_FAILED', { issues: [{ path: '/relatedContactId', code: 'self' }] });
       // R-PAR-21: nobody links a person whose detail they cannot see (and RLS refuses it anyway)
       const other = await leads.getContact(tx, req.body.relatedContactId);
-      if (!other || !other.detail_visible) throw new AppError('NOT_FOUND');
+      if (!other || !other.detail_visible || other.merged_into_contact_id !== null) throw new AppError('NOT_FOUND');
       const id = platformOf(req).ids.next();
       await repo.insertRelationship(tx, { id, contactId: req.params.id, relatedId: other.id, kind: req.body.kind, label: req.body.kind === 'other' ? (req.body.label ?? null) : null, userId: actor.userId });
       return { relationship: relationshipView((await repo.relationships(tx, req.params.id)).find((x) => x.id === id)!, req.params.id) };
