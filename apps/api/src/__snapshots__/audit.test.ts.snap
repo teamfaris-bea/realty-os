@@ -169,6 +169,7 @@ exports[`R-AUDIT-4 redacted diffs > R-AUDIT-4: generated field classification â€
     "period_start",
     "phone_suffix7",
     "plan",
+    "point_hmacs",
     "pond_summary",
     "postal_code",
     "preview",
