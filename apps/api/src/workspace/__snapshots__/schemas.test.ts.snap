@@ -4823,6 +4823,7 @@ exports[`api/workspace route table and schemas > every workspace route declares 
   "GET /api/listings self",
   "GET /api/listings/:id listing.view authorize(listing.view)",
   "GET /api/listings/:id/competing listing.view authorize(listing.view)",
+  "GET /api/listings/:id/seller-update listing.view authorize(listing.view)",
   "GET /api/listings/:id/showings listing.view authorize(listing.view)",
   "GET /api/notification-preferences self",
   "GET /api/notifications self",
