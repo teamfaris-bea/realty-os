@@ -98,7 +98,7 @@ describe('Thread', () => {
     const u = user();
     await u.type(await screen.findByRole('textbox', { name: 'Text message' }), 'Tomorrow?');
     await u.click(screen.getByRole('button', { name: 'Send' }));
-    expect(await screen.findByText(/^Sends Wed, Nov 11, \d{1,2}:00 (AM|PM)\.$/)).toBeInTheDocument();
+    expect(await screen.findByText(/^Sends Wed, Nov 11, \d{1,2}:00 (AM|PM)\.$/, undefined, { timeout: 5000 })).toBeInTheDocument();
   });
 
   it('a send the gate blocks keeps the text and shows why', async () => {

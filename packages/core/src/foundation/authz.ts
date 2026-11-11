@@ -122,6 +122,8 @@ export const ACTIONS = [
   'data.export', // Exports (R-PERM-13; not a §3 row: Owner/Admin by default)
   'support.grant',
   'support.revoke',
+  'system.view', // lane ops-observability: the System page (failed/dead jobs, stuck messages, late timers, connection health)
+  'system.jobs', // lane ops-observability: retry or cancel a failed job from the System page (audited)
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -225,6 +227,8 @@ export const AUDIT_ACTIONS = [
   'deal.contact_removed', // lane rule-coverage: the Owner removed a person from a deal before erasure (E59)
   'assistant.output_blocked', // lane prompt-injection: a model output was discarded (wiring details, oversized, not the contract); codes only
   'assistant.output_flagged', // lane prompt-injection: a model draft needs a check (human claim, unsourced link/phone/email, hidden characters); codes only
+  'job.retried', // lane ops-observability: an Owner/Admin retried a failed or dead job from the System page
+  'job.cancelled', // lane ops-observability: an Owner/Admin cancelled a waiting job from the System page
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -461,6 +465,10 @@ const MATRIX: Record<Action, ActionRule> = {
   // Grant support access: ✅ 🔒 | — …  Revoking only ever reduces access: Owner, no re-auth.
   'support.grant': { roles: { owner: ALL_REAUTH } },
   'support.revoke': { roles: { owner: ALL } },
+  // System page (lane ops-observability; not a §3 row): Owner/Admin only, like the audit log. Support
+  // access stays out (fail closed); job commands only ever re-run or stop the tenant's own idempotent jobs.
+  'system.view': { roles: { owner: ALL, admin: ALL } },
+  'system.jobs': { roles: { owner: ALL, admin: ALL } },
 };
 
 const DENY_NOT_FOUND: CanResult = { ok: false, code: 'NOT_FOUND' };

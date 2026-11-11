@@ -19,8 +19,7 @@
     "seed": "pnpm --filter @realty/api seed",
     "demo:totp": "pnpm --filter @realty/api demo:totp",
     "load:seed": "pnpm --filter @realty/api load:seed",
-    "load:bench": "pnpm --filter @realty/api load:bench",
-    "load:smoke": "pnpm --filter @realty/api load:smoke"
+    "ops:synthetic": "pnpm --filter @realty/api ops:synthetic"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
