@@ -188,9 +188,9 @@ describe("a person's tags (R-PAR-7, R-PAR-10)", () => {
     const full = await call<{ contact: { view: string; tags: string[] } }>(w.agentB, 'GET', `/contacts/${w.bContacts[1]}`);
     expect(full.body.contact.view).toBe('full');
     expect(full.body.contact.tags).toContain('Investor list');
-    // a stale contacts.tags value is never read
-    await h.su.query("UPDATE contacts SET tags = '{legacy-only}' WHERE id = $1", [w.bContacts[1]]);
-    expect((await call<{ contact: { tags: string[] } }>(w.agentB, 'GET', `/contacts/${w.bContacts[1]}`)).body.contact.tags).not.toContain('legacy-only');
+    // removing the link removes it from the record (the one source of a person's tags)
+    await call(w.agentB, 'DELETE', `/contacts/${w.bContacts[1]}/tags/${t.id}`);
+    expect((await call<{ contact: { tags: string[] } }>(w.agentB, 'GET', `/contacts/${w.bContacts[1]}`)).body.contact.tags).not.toContain('Investor list');
   });
 
   it('R-PAR-6: a person holds at most 100 tags (CONTACT_TAG_LIMIT); typed names are capped at 20 per call', async () => {
