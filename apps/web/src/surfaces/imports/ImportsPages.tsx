@@ -21,7 +21,7 @@ import { ADMIN_MESSAGES } from '../admin/lib/messages.js';
 import type { ImportBatch, ImportRecord, ImportStage, MappingsResponse, MembersResponse, Pond, ReportResponse, VerificationResponse } from '../admin/lib/types.js';
 import { ErrorLine, Pill, Section, Segmented, SelectField, StatusLine } from '../admin/lib/ui.js';
 import { ParityMapping } from './ParityMapping.js';
-import { CATEGORY_LABEL, CATEGORY_NOTE, PARITY_CATEGORY_LABEL, type ParityResponse, type ParityRowView, parityEditable, OUTCOME_LABEL, SKIP_WARNING, SOURCE_LABEL, STAGE_STATUS, blockingEarlier, isRunning, nextStep, ordered, reconciles, recordSummary, spotChecksReady, toBase64 } from './lib.js';
+import { CATEGORY_LABEL, CATEGORY_NOTE, PARITY_CATEGORY_LABEL, type ParityResponse, type ParityRowView, parityEditable, OUTCOME_LABEL, SKIP_WARNING, SOURCE_LABEL, STAGE_STATUS, blockingEarlier, canSkipStage, canUndoStage, consentNeedsDryRunToSkip, isRunning, nextStep, ordered, reconciles, recordSummary, spotChecksReady, toBase64 } from './lib.js';
 
 const IMPORTS_KEY = ['imports'] as const;
 const POLL_MS = 2000;
@@ -365,8 +365,9 @@ function StageCard({ batch, stage, stages, onDone }: { batch: ImportBatch; stage
   const base = `/imports/${batch.id}/stages/${stage.category}`;
   const label = CATEGORY_LABEL[stage.category];
   const failure = dry.error ?? approve.error ?? commit.error ?? skip.error ?? undo.error;
-  const canUndo = ['committed', 'verified'].includes(stage.status) && batch.status !== 'reverted';
-  const canSkip = ['pending', 'dry_run_ready', 'failed'].includes(stage.status) && batch.status !== 'reverted';
+  const canUndo = canUndoStage(stage, stages, batch);
+  const canSkip = canSkipStage(stage, stages, batch);
+  const skipNeedsDryRun = consentNeedsDryRunToSkip(stage, stages, batch) && batch.status !== 'reverted' && ['pending', 'failed'].includes(stage.status);
   return (
     <Card className="flex flex-col gap-3" as="article" aria-labelledby={`stage-${stage.id}`}>
       <div className="flex flex-wrap items-center gap-2">
@@ -377,7 +378,8 @@ function StageCard({ batch, stage, stages, onDone }: { batch: ImportBatch; stage
       </div>
       {CATEGORY_NOTE[stage.category] ? <p className="text-[15px] text-ink">{CATEGORY_NOTE[stage.category]}</p> : null}
       {stage.counts ? <Counts counts={stage.counts} /> : null}
-      {canSkip && SKIP_WARNING[stage.category] ? <p className="text-[14px] text-ink-muted">{SKIP_WARNING[stage.category]}</p> : null}
+      {(canSkip || skipNeedsDryRun) && SKIP_WARNING[stage.category] ? <p className="text-[14px] text-ink-muted">{SKIP_WARNING[stage.category]}</p> : null}
+      {skipNeedsDryRun ? <p className="text-[14px] text-ink-muted">To skip it, run its dry run first, so you can see which opt-outs would not carry over.</p> : null}
       {stage.blockers.map((x, i) => (
         <Notice key={`${x.code}:${i}`} tone="warn">
           {x.sentence}
@@ -546,7 +548,8 @@ function Verify({ batch, stage, onDone }: { batch: ImportBatch; stage: ImportSta
       {q.isError ? <QueryError error={q.error} retry={() => void q.refetch()} /> : null}
       {v ? (
         <>
-          <div className="overflow-x-auto">
+          {/* a table wider than a phone scrolls inside this box, so the box takes keyboard focus (axe scrollable-region-focusable) */}
+          <div className="overflow-x-auto" tabIndex={0} role="region" aria-label={`Recount of ${CATEGORY_LABEL[stage.category].toLowerCase()}`}>
             <table className="w-full text-left text-[15px]">
               <thead className="text-[13px] text-ink-muted">
                 <tr>
@@ -635,7 +638,7 @@ function Report({ batch }: { batch: ImportBatch }) {
       {parity ? (
         <Card className="flex flex-col gap-2">
           <h3 className="text-[16px] font-semibold text-ink">Stages, tags and custom fields</h3>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="Counts for stages, tags and fields">
             <table className="w-full text-left text-[15px] text-ink">
               <caption className="sr-only">Stages, tags and custom fields: in the source, {parity.phase === 'dry_run' ? 'will import' : 'imported'}, needs review, not imported, already here</caption>
               <thead>
