@@ -430,6 +430,7 @@ describe('R-PERM-1 generated can() matrix: one case per DATA_MODEL §3 cell', ()
     PHASE_2_3.push('contact.edit', 'note.write', 'note.delete', 'activity.log', 'collaborator.manage', 'settings.stage_labels');
     PHASE_2_3.push('template.personal', 'template.team_manage', 'bulk.run', 'bulk.assign', 'bulk.text', 'settings.batch_text'); // parity L3: DATA_MODEL §12 rows, tested in parity/bulk/authz.test.ts
     PHASE_2_3.push('lead_email_review.view', 'lead_email_review.decide'); // module 22 lead-email slice: DATA_MODEL §8 row, tested in apps/api/src/leadEmail/leadEmail.test.ts (role × route vs can())
+    PHASE_2_3.push('mail_sync.manage'); // module 68 (D2): DATA_MODEL §8 Gmail rows, tested in apps/api/src/mailSync/mailSync.test.ts (role × route)
     PHASE_2_3.push('playbook.auto_enroll_stage'); // parity module 67: DATA_MODEL §12 row, tested in apps/api/src/stageAutomation/stageAutomation.test.ts (role × route vs can())
     const PARITY_LISTS: Action[] = ['contact.edit', 'tag.create', 'tag.manage', 'custom_field.manage', 'smart_list.personal', 'smart_list.team_manage'];
     expect(notInMatrix.filter((a) => !PHASE_2_3.includes(a) && !PARITY_LISTS.includes(a)).sort()).toEqual(['data.export', 'number.release', 'support.revoke', 'system.jobs', 'system.view']);

@@ -146,6 +146,7 @@ export const ACTIONS = [
   'playbook.auto_enroll_stage', // parity module 67: the stage whose entry enrolls (team: Owner/Admin; an agent: own agent playbook)
   'lead_email_review.view', // module 22 lead-email slice: the "Needs review" list of held lead emails (Owner/Admin/Team Lead; support read-only)
   'lead_email_review.decide', // module 22 lead-email slice: accept a held lead email as a lead (same intake path) or discard it
+  'mail_sync.manage', // module 68 (D2): the Owner turns Gmail sync on (only while platform:gmail is cleared) and sets the window; an Admin may only turn it off (DB guard; DATA_MODEL §8)
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -289,6 +290,14 @@ export const AUDIT_ACTIONS = [
   'webchat.widget_created', // module 22: an Owner/Admin created a website chat widget (its key is shown once)
   'webchat.widget_key_rotated', // module 22: the widget key was replaced; the old embed stops working at once
   'webchat.widget_origins_changed', // module 22: the websites a widget may run on changed
+  'mail.link_connected', // module 68 (D2): the Gmail OAuth callback (system) linked a user's own mailbox (no address, no content)
+  'mail.link_disconnected', // module 68: the user disconnected their Gmail (token deleted, copies hidden at once)
+  'mail.link_revoked', // module 68: the sync revoked a link (member inactive, switch off, pack uncleared, provider revoked)
+  'mail.import_again', // module 68: the user asked to re-run the backfill window (R-GMAIL-8)
+  'mail.thread_excluded', // module 68: the mailbox owner removed a thread from Realty OS (R-GMAIL-7; no content)
+  'mail.sync_points_confirmed', // module 68: the mailbox owner confirmed client addresses for sync (S-D2-1; counts only)
+  'mail.sync_point_removed', // module 68: the mailbox owner stopped syncing an address (S-D2-2)
+  'mail.settings_changed', // module 68: the Owner switch or the backfill window changed (R-GMAIL-1, -8)
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -533,6 +542,8 @@ const MATRIX: Record<Action, ActionRule> = {
   // Linking an external account is never an Action: only the provider callback does it, as the system.
   'integration.view': { roles: { owner: ALL, admin: ALL } },
   'integration.manage': { roles: { owner: ALL_REAUTH, admin: ALL_REAUTH } },
+  // module 68 (D2): Owner turns Gmail sync on and sets the window; Admin turns it off only (enforced by the 0025 tenant_settings guard). 🔒 both.
+  'mail_sync.manage': { roles: { owner: ALL_REAUTH, admin: ALL_REAUTH } },
   // Module 22 lead-email slice (DATA_MODEL §8 lead-email row, R-LEM-6): the held-email list. Team Leads triage it too;
   // support reads it (read-only) and never decides. The system never "decides" (it holds or creates on arrival).
   'lead_email_review.view': { roles: { owner: ALL, admin: ALL, team_lead: ALL }, support: true },
