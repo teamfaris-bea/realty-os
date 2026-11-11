@@ -734,3 +734,53 @@ points and the flag, and an imported DNC stays as an address-keyed `import_dnc` 
   a protected one is caught only through the recorded tag ids of the draft, not the rewritten definition.
 - **Not reachable through the API:** an Admin or the creator could write `bulk_actions.counts` directly in the DB
   (`counts.selected` feeds the confirm-time email budget); freezing it after the draft would need a migration.
+
+### 7.4 Batch 5 review fixes (migration `0041_batch5_review_fixes`)
+
+A review of batch 5 (lead-handling follow-ups 0037, pond leads in the feed 0038, the helper plan cache 0039, lead-email
+intake 0040, the parity security-review fixes and the deploy rehearsal) confirmed five findings, each reproduced by
+an independent probe through the real routes. One migration and the code changes below fix them. Each change only
+locks, refuses, purges or marks more; no opt-out check, guard, policy or grant is weakened, and each is proved by a
+test that failed before the fix.
+
+| finding | severity | fix | proof |
+|---|---|---|---|
+| **F1-ERASE-DNC-TOCTOU.** The erasure's do-not-contact check was check-then-act: a phone a still-open transaction added to a do-not-contact person (a lead-email intake or accept, `POST /contacts/:id/points`) was invisible to the route's carry and to `app.purge_contact_internal`'s `PERSON_DO_NOT_CONTACT_UNCARRIED` check; the DELETE waited for the writer, then cascade-deleted the phone with no revoke, and the number was texted afterwards, also by the lead-email first response (D1) | medium | the purge locks every record of the person `FOR UPDATE`, sorted, before it checks anything (re-reading the merge tree until stable): `FOR UPDATE` conflicts with the `FOR KEY SHARE` every child row's foreign key holds, so the writer is waited for and its point is seen (the check refuses), and a later writer fails its foreign key. The erase route first takes, in the global lock order, the address lock of every point of the person (an intake that matched the person holds one), then the same row locks (`repos/erasure.ts lockPerson`), so its carry sees the point and records the revoke | `admin/erasure.race.test.ts` (the receive webhook, the Needs review accept and the points route, each held open by an outside table lock after writing the phone: the erasure waits, the phone carries the revoke, and neither an agent's text nor the first response reaches it); `packages/db/test/batch5_review_fixes.test.ts` (the purge and the sweep against an uncommitted point insert: refused / skipped) |
+| **F2-ERASE-HELD-LEAD-EMAIL.** A held ("Needs review") lead email is never linked to a contact, so a privacy erasure left the person's name, phone, email and message decrypted in Needs review, and accepting it re-created the erased person; held content never expired either (R-DATA-4, R-DATA-3) | medium | held rows keep `point_hmacs` (the tenant-HMACs of their parsed addresses, keyed as intake keys points; never an address); the purge ends every held email naming an address of the person (live or removed, a confirmed wrong number excepted) as `erased` (content, parse, keys, sender and DKIM domains gone; the row stays only as the replay tombstone of its message key) and drops the sender/DKIM domains of lead emails linked to the person; `app.retention_sweep` expires held content 30 days after receipt by the database clock (`LEAST(p_now, now())`: a far-future `p_now` expires nothing young). The guard lets only `current_user = 'app_retention'` make these transitions; erased/expired rows are `NOT_FOUND` to the review routes | `leadEmail/erasure.test.ts` (keys only, never an address; the erased person's held email is gone for the Owner and the Team Lead, accept/discard `NOT_FOUND`, nobody re-created, a replay after the webhook-id purge still a duplicate, a stranger's held email untouched; expiry through the worker's pass); `packages/db/test/batch5_review_fixes.test.ts` (the guard refuses the system actor, a merged duplicate's and a removed address's held mail is purged, expiry) |
+| **F4-ERASE-POND-PHANTOM-COUNT.** The contacts feed marks fired on INSERT and UPDATE only: an erased or purged pond lead's cards cascaded away, but every claim-eligible member's stored count (`feed_groups.n_open`, GET /feed's total) kept it until the hourly reconcile (cosmetic: "0 of 1 items shown") | low | an AFTER DELETE statement trigger on `contacts` (`app.feed_mark_contacts_deleted`, SECURITY INVOKER, writes `public.feed_dirty` only, probes `feed_groups` by its primary key through `memberships`) marks every member holding a feed group of a deleted record | `workspace/pond.feed.test.ts` (every eligible member's total equals what is shown right after the erase); `load/feed_incremental.test.ts` (incremental equals full after an erase; fails without the trigger); `packages/db/test/batch5_review_fixes.test.ts` |
+| **F1 (bulk stage).** A bulk Change stage into a stage whose plan starts on entry enrolled a protected-tag audience (a "VA buyer" list) into a marketing plan, around the `AUDIENCE_PROTECTED_PROXY` refusal bulk enroll gets; an agent could do it alone on their own plan (R-PAR-8, R-PAR-16) | medium | the bulk runner names its action in `app.bulk_action_id` for each stage change; the replaced history definer stores it in `contact_stage_events.bulk_action_id` only for a running stage action of the tenant created by the user making the change; a stage draft records the tags its audience was built from (as sends do); the stage automation skips such an event (`protected_audience`, a new closed-set reason) when, read as the creator now, the recorded tags or the saved list's plan are protected, or the audience is unknown. The stage change itself still happens (one-to-one work), and an unprotected bulk stage still starts the plan (owner decision 2026-11-11) | `bulk/secreview.stageplan.test.ts` (saved list, tag chip and picked-from-list selections; a tag protected after the run; the unprotected control); `packages/db/test/batch5_review_fixes.test.ts` (only a valid id is recorded); `stageAutomation/decide.property.test.ts` |
+| **F2 (deploy).** `docker-compose.prod.yml` gave the internet-facing api and worker the shared env file holding the Postgres superuser's URL and password (`MIGRATION_DATABASE_URL`, `POSTGRES_OWNER_PASSWORD`); nothing refused it (`assertRlsBoundLogin` checks only `DATABASE_URL`). A leak or code execution there would have been a superuser login: every database guard, the append-only and audit tables, `COPY … TO PROGRAM` | medium | two env files: `.env.production` (api, worker, release) holds no owner credential; `.env.owner` (`deploy/env.owner.example`, `fill-staging-env.sh … owner`) reaches only the postgres service and the release step, by interpolation from `--env-file .env.owner`; one-off owner commands take it explicitly (DEPLOY §9, STAGING §5-§6). Under `NODE_ENV=production` the API and the worker refuse to start, first thing, with `MIGRATION_DATABASE_URL`, `POSTGRES_OWNER_PASSWORD` or `POSTGRES_PASSWORD` in their environment (`dbRole.ts assertNoOwnerCredentials`) | `deploy.env.test.ts` (the templates; the compose file; `docker compose config` rendered from the filled templates: no owner credential in api, worker or web); `dbRole.test.ts` (unit, and both entrypoints spawned: exit 1, the variable named, never its value) |
+
+**Security review items (CONVENTIONS §4).**
+- `app.purge_contact_internal` and `app.retention_sweep` (SECURITY DEFINER, owner `app_retention`, pinned
+  `search_path`, grants unchanged): 0037's statements verbatim plus the marked 0041 lines. New: the row locks (only
+  the person's own records, by tenant), two UPDATEs of `lead_email_messages` by tenant (the person's held mail, their
+  linked rows' domains), and one expiry UPDATE in the sweep. The self-check asserts owner, `prosecdef`, the pinned path
+  and that the lock precedes the do-not-contact check.
+- `app.contacts_stage_history` (SECURITY DEFINER trigger, owner `app_definer`, pinned path): 0021's insert plus one
+  validated column. The GUC is caller-settable, so it is trusted only to ADD a restriction: a value that is not this
+  user's running stage action of this tenant records NULL, which is what every stage change recorded before.
+- `app.lead_email_messages_guard` (invoker trigger): refuses everything it refused; only `current_user =
+  'app_retention'` (inside the two definers above) may end a held email as `erased`/`expired` or drop its sender/DKIM
+  domains; `point_hmacs` may only be cleared, and a CHECK keeps keys on held rows only.
+- `app.feed_mark_contacts_deleted` (invoker, EXECUTE revoked from PUBLIC; 0038's self-check scope: an invoker that
+  names `public.feed_dirty`). Inside the purge it runs as `app_retention`, which already had INSERT on `feed_dirty`
+  and SELECT on `feed_groups` and `memberships`.
+- No table, policy or grant is added or widened; `lead_email_messages`, `contact_stage_events` and
+  `stage_automation_decisions` keep FORCE RLS, their policies and the `support_read_only` statement trigger (the
+  self-check asserts it).
+
+**Residual and left for the owner.**
+- A point committed while the erase route waited for its address locks has an address the route did not lock; the
+  carry takes that lock after the row locks (out of the global order). A conflicting transaction in that window is a
+  deadlock Postgres resolves by aborting one side, which is retried (`adminTx` retries twice, intake three times).
+- A held email whose parse found no phone or email has no key: erasure cannot find it, only its 30-day retention
+  purges it. A held email naming only a person's confirmed wrong number is kept (that number reaches someone else).
+  Held rows received before 0041 carry no keys: only the expiry covers them.
+  The 30-day period is **VERIFY WITH COUNSEL** (owner decision).
+- Decided (`accepted`/`discarded`) rows keep their sender and DKIM domains unless linked to the erased person (an
+  accepted row is; a discarded one is not linked to anyone).
+- The erasure preview does not count the held emails that will go with the person; the web bulk sheet does not warn
+  before a bulk stage of a protected list into a plan's stage (the server skips the plan and records why).
+- An existing stack with one env file must move the four owner variables into `.env.owner` before upgrading
+  (DEPLOY §1): the new API and worker refuse to start until it does, and name the variables.

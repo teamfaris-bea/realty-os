@@ -11,7 +11,10 @@
 //     address, inquiry with the lead source, routing through the ownership engine (offer, SLA timers, feed card),
 //     and the 60-second first response job (to the LEAD's own points: the portal's From address is never a
 //     contact point; opted-out addresses are never auto-messaged, D1, decided at send time by the gate)
-//     anything else ⇒ held in "Needs review" with the reason; nothing is created, routed or sent (E153)
+//     anything else ⇒ held in "Needs review" with the reason; nothing is created, routed or sent (E153). A held
+//     email keeps the tenant-HMACs of the addresses it names (point_hmacs, keyed as intake keys a contact's
+//     points; never an address): erasing a person purges every held email naming one of their addresses, and the
+//     retention sweep expires held content after 30 days (batch 5 review F2, migration 0041, R-DATA-4, R-DATA-3).
 // acceptReview / discardReview: an Owner/Admin/Team Lead (role re-read under the system actor) decides a held email.
 // Accepting goes through the same intake, audited, WITHOUT an autonomous first response (R-INBOX-9).
 import { createHash, randomBytes } from 'node:crypto';
@@ -21,7 +24,7 @@ import { type Database, type Tx, lockAddresses, withTenantTx } from '@realty/db'
 import { audit, redactDiff, redactSnapshot } from '../audit.js';
 import type { EnvelopeService } from '../crypto/envelope.js';
 import { AppError } from '../errors.js';
-import { type IngestResult, ingestInquiryInTx } from '../leads/intake.js';
+import { type IngestResult, identifiersOf, ingestInquiryInTx } from '../leads/intake.js';
 import { systemActor } from '../worker/systemActor.js';
 import { type LeadEmailInbound, inboundAddress, keyFromRecipients } from './formats.js';
 import { type ParseResult, type ParsedLead, parseLeadEmail } from './parse/index.js';
@@ -135,7 +138,7 @@ async function receiveInTx(tx: Tx, actor: SystemActor, deps: LeadEmailDeps, reso
 
   if (hold === null && parsed.ok) {
     const res: IngestResult = await ingestInquiryInTx(tx, actor, inquiryOf(parsed.lead, points, inbox.lead_source_id, `lead-email:${key.toString('hex').slice(0, 40)}`), now, { envelope: deps.envelope, ids: deps.ids }, { parse: { status: 'parsed', evidence: evidenceOf(parsed.lead) } });
-    await repo.claimMessage(tx, { ...base, status: 'lead_created', holdCode: null, parserKind: parsed.lead.format, contentEnc: null, parsedEnc: null, contactId: res.contactId, inquiryId: res.inquiryId });
+    await repo.claimMessage(tx, { ...base, status: 'lead_created', holdCode: null, parserKind: parsed.lead.format, contentEnc: null, parsedEnc: null, pointHmacs: [], contactId: res.contactId, inquiryId: res.inquiryId });
     return { outcome: 'lead_created', contactId: res.contactId };
   }
 
@@ -143,8 +146,18 @@ async function receiveInTx(tx: Tx, actor: SystemActor, deps: LeadEmailDeps, reso
   const content = { subject: (n.subject ?? '').slice(0, 998), text: parsed.text.slice(0, STORED_TEXT_CHARS) };
   const contentEnc = await env.encrypt(actor.tenantId, { table: 'lead_email_messages', column: 'content_enc', rowId: id }, Buffer.from(JSON.stringify(content)));
   const parsedEnc = lead ? await env.encrypt(actor.tenantId, { table: 'lead_email_messages', column: 'parsed_enc', rowId: id }, Buffer.from(JSON.stringify(lead))) : null;
-  await repo.claimMessage(tx, { ...base, status: 'needs_review', holdCode: hold ?? 'UNKNOWN_FORMAT', contentEnc, parsedEnc, contactId: null, inquiryId: null });
+  const pointHmacs = await addressKeys(tx, deps.envelope, actor.tenantId, points);
+  await repo.claimMessage(tx, { ...base, status: 'needs_review', holdCode: hold ?? 'UNKNOWN_FORMAT', contentEnc, parsedEnc, pointHmacs, contactId: null, inquiryId: null });
   return { outcome: 'needs_review', contactId: null };
+}
+
+/**
+ * The tenant-HMACs of a held email's valid addresses, exactly as intake keys a contact's points (identifiersOf), so
+ * that erasing a person finds the held emails naming them (app.purge_contact_internal, migration 0041).
+ */
+async function addressKeys(tx: Tx, envelope: EnvelopeService, tenantId: TenantId, points: { phones: string[]; emails: string[] }): Promise<Buffer[]> {
+  const ids = await identifiersOf(tx, envelope, tenantId, points.phones, points.emails);
+  return [...ids.phones, ...ids.emails].map((x) => Buffer.from(x.hmac, 'hex'));
 }
 
 // ---- inbox settings (Owner/Admin) -------------------------------------------------------------------------

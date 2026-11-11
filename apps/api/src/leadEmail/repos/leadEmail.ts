@@ -105,6 +105,8 @@ export interface MessageInsert {
   dkimPassDomains: readonly string[];
   contentEnc: Uint8Array | null;
   parsedEnc: Uint8Array | null;
+  /** held only: the tenant-HMACs of the addresses the email names (migration 0041; erasure finds the person's held mail by them) */
+  pointHmacs: readonly Buffer[];
   contactId: string | null;
   inquiryId: string | null;
 }
@@ -114,11 +116,11 @@ export async function claimMessage(tx: Tx, m: MessageInsert): Promise<boolean> {
   const r = await sql<{ id: string }>`
     INSERT INTO lead_email_messages (tenant_id, id, connection_id, lead_source_id, message_key_sha256, provider_format, received_at,
                                      status, hold_code, parser_kind, sender_domain, dkim_pass_domains, content_enc, parsed_enc,
-                                     contact_id, inquiry_id)
+                                     point_hmacs, contact_id, inquiry_id)
     VALUES (app.tenant_id(), ${m.id}::uuid, ${m.connectionId}::uuid, ${m.leadSourceId}::uuid, ${m.messageKey}, ${m.providerFormat},
             clock_timestamp(), ${m.status}, ${m.holdCode}, ${m.parserKind}, ${m.senderDomain}, ${[...m.dkimPassDomains]}::text[],
             ${m.contentEnc ? Buffer.from(m.contentEnc) : null}, ${m.parsedEnc ? Buffer.from(m.parsedEnc) : null},
-            ${m.contactId}::uuid, ${m.inquiryId}::uuid)
+            ${[...m.pointHmacs]}::bytea[], ${m.contactId}::uuid, ${m.inquiryId}::uuid)
     ON CONFLICT (tenant_id, message_key_sha256) DO NOTHING
     RETURNING id`.execute(tx);
   return r.rows.length === 1;
@@ -164,18 +166,24 @@ export async function countReview(tx: Tx): Promise<number> {
   return Number((await sql<{ n: string }>`SELECT count(*)::text AS n FROM lead_email_messages WHERE tenant_id = app.tenant_id() AND status = 'needs_review'`.execute(tx)).rows[0]?.n ?? 0);
 }
 
+/**
+ * One lead email by id. An erased or expired one (migration 0041: its person was erased, or it was held past
+ * retention) is not found: nothing of it is shown, accepted or discarded.
+ */
 export async function messageById(tx: Tx, id: string, o: { forUpdate?: boolean } = {}): Promise<MessageRow | null> {
   const lock = o.forUpdate ? sql`FOR UPDATE OF m` : sql``;
   return (
     await sql<MessageRow>`SELECT ${MSG_COLS} FROM lead_email_messages m
                             JOIN lead_sources s ON s.tenant_id = m.tenant_id AND s.id = m.lead_source_id
-                           WHERE m.tenant_id = app.tenant_id() AND m.id = ${id}::uuid ${lock}`.execute(tx)
+                           WHERE m.tenant_id = app.tenant_id() AND m.id = ${id}::uuid
+                             AND m.status IN ('lead_created','needs_review','accepted','discarded') ${lock}`.execute(tx)
   ).rows[0] ?? null;
 }
 
+/** The decision purges what the held email kept: its content, its parse and its address keys. */
 export async function decide(tx: Tx, id: string, d: { status: 'accepted' | 'discarded'; userId: string; contactId: string | null; inquiryId: string | null }): Promise<void> {
   await sql`UPDATE lead_email_messages SET status = ${d.status}, decided_by_user_id = ${d.userId}::uuid, decided_at = clock_timestamp(),
                    contact_id = COALESCE(${d.contactId}::uuid, contact_id), inquiry_id = COALESCE(${d.inquiryId}::uuid, inquiry_id),
-                   content_enc = NULL, parsed_enc = NULL
+                   content_enc = NULL, parsed_enc = NULL, point_hmacs = '{}'
              WHERE tenant_id = app.tenant_id() AND id = ${id}::uuid AND status = 'needs_review'`.execute(tx);
 }

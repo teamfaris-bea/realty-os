@@ -13,14 +13,18 @@ export interface StageEventRow {
   actorKind: 'user' | 'system' | 'support' | 'none';
   actorUserId: string | null;
   occurredAt: Instant;
+  /** the bulk stage action that made this change (migration 0041: recorded by the history definer), else null */
+  bulkActionId: string | null;
 }
 
 export async function stageEvent(tx: Tx, id: string): Promise<StageEventRow | null> {
-  const r = await sql<{ id: string; contact_id: string; from_stage: string | null; to_stage: string; actor_kind: StageEventRow['actorKind']; actor_user_id: string | null; occurred_at: Date }>`
-    SELECT id, contact_id, from_stage, to_stage, actor_kind, actor_user_id, occurred_at
+  const r = await sql<{ id: string; contact_id: string; from_stage: string | null; to_stage: string; actor_kind: StageEventRow['actorKind']; actor_user_id: string | null; occurred_at: Date; bulk_action_id: string | null }>`
+    SELECT id, contact_id, from_stage, to_stage, actor_kind, actor_user_id, occurred_at, bulk_action_id
       FROM contact_stage_events WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx);
   const x = r.rows[0];
-  return x ? { id: x.id, contactId: x.contact_id, fromStage: x.from_stage, toStage: x.to_stage, actorKind: x.actor_kind, actorUserId: x.actor_user_id, occurredAt: x.occurred_at.getTime() as Instant } : null;
+  return x
+    ? { id: x.id, contactId: x.contact_id, fromStage: x.from_stage, toStage: x.to_stage, actorKind: x.actor_kind, actorUserId: x.actor_user_id, occurredAt: x.occurred_at.getTime() as Instant, bulkActionId: x.bulk_action_id }
+    : null;
 }
 
 /**

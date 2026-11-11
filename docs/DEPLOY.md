@@ -24,7 +24,7 @@ docker build --target api -t realty-api:<version> .
 docker build --target web -t realty-web:<version> .
 ```
 
-`docker-compose.prod.yml` is a complete example stack: Postgres, then release, then API and worker, then web. Copy `deploy/env.production.example` to `.env.production` and fill it in (`docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build`; the `--env-file` flag is needed on **every** compose command, because the compose file itself reads `POSTGRES_OWNER_PASSWORD` and `WEB_PORT`). For real teams, use a managed Postgres with backups and TLS instead of the compose database, and put a TLS-terminating load balancer in front of `web`. A fake-provider staging stack starts from `deploy/env.staging.example` instead (`docs/STAGING.md`).
+`docker-compose.prod.yml` is a complete example stack: Postgres, then release, then API and worker, then web. It takes **two** env files (§3): copy `deploy/env.production.example` to `.env.production` (the app's environment, which the api, worker and release containers read) and `deploy/env.owner.example` to `.env.owner` (the database owner's user, password and URL, which only the postgres service and the release step receive, by interpolation), and fill both in. Then `docker compose -f docker-compose.prod.yml --env-file .env.owner up -d --build`; the `--env-file .env.owner` flag is needed on **every** compose command, because the compose file itself reads the owner's credentials from it (and `WEB_PORT` from the shell). Never put an owner credential in `.env.production`: the API and the worker refuse to start in production with one in their environment (§2). A stack that still keeps one env file (before batch 5) moves `POSTGRES_OWNER_USER`, `POSTGRES_OWNER_PASSWORD`, `POSTGRES_DB` and `MIGRATION_DATABASE_URL` from `.env.production` into `.env.owner` and switches its `--env-file` to `.env.owner`; until then the new API and worker refuse to start and name the variables to move. For real teams, use a managed Postgres with backups and TLS instead of the compose database, and put a TLS-terminating load balancer in front of `web`. A fake-provider staging stack starts from `deploy/env.staging.example` instead (`docs/STAGING.md`).
 
 - **Storage volume.** With `STORAGE_PROVIDER=local`, set `STORAGE_DIR=/var/lib/realty/storage`: the compose file mounts the named volume `storage` there on the API and the worker, and the `api` image creates that directory owned by `node`. Any other path is not writable in the image, and `/api/ready` then reports `degraded` with `storage: failed`.
 - **Re-resolving the API.** nginx resolves `API_UPSTREAM` through `NGINX_RESOLVER` (default `127.0.0.11`, Docker's DNS) at most every 10 s, so a recreated `api` container is found again. If you run the `web` image outside Docker networking, set `NGINX_RESOLVER` to a resolver that knows the API's name.
@@ -57,7 +57,8 @@ Give the orchestrator a stop grace period of at least `SHUTDOWN_DRAIN_MS + SHUTD
 **Start-up refusals.** The API **and the worker** refuse to start, exit 1, and print one JSON line on stderr (`{"level":"fatal","msg":"api failed to start" | "worker failed to start","type":…,"detail":…}`) naming the problem by key, never by value, when:
 
 - the configuration is incomplete or unsafe (§4). Rehearsed refusals: `KEK_BASE64` missing, not base64 or not 32 bytes; `KEK_REF` missing; fake providers without `ALLOW_FAKE_PROVIDERS=true`; a non-https `PUBLIC_BASE_URL` or `WEB_ORIGIN` entry; `SESSION_COOKIE_SECURE=false`; the KEK equal to the session secret; with `MLS_PROVIDER=spark`, a Spark base URL that is http, has a path, a port or credentials, or a host missing from `SPARK_ALLOWED_HOSTS`, and a wildcard or internal name in that list; an unknown `MLS_PROVIDER` or `MLS_LIVE_CALLS` value;
-- `DATABASE_URL` logs in as a superuser or a `BYPASSRLS` role.
+- `DATABASE_URL` logs in as a superuser or a `BYPASSRLS` role;
+- with `NODE_ENV=production`, a database owner credential is in the process environment at all: `MIGRATION_DATABASE_URL`, `POSTGRES_OWNER_PASSWORD` or `POSTGRES_PASSWORD` (checked first, before anything else is read; the line names the variables, never their values). The batch 5 review found the compose file giving the internet-facing api and worker the owner's superuser URL and password; an environment leak or code execution there would have been a superuser login (every guard, the append-only and audit tables, `COPY … TO PROGRAM` on the database host).
 
 A `KEK_BASE64` or `SESSION_SECRET_BASE64` problem is reported on its own, before the rest of the list: fix it and start again to see the other problems.
 
@@ -77,7 +78,7 @@ The nginx access log omits query strings, because reset, invite and unsubscribe 
 
 Two **different** roles:
 
-- **Owner** (`MIGRATION_DATABASE_URL`): creates roles, owns objects and runs migrations. The application never uses it.
+- **Owner** (`MIGRATION_DATABASE_URL`): creates roles, owns objects and runs migrations. The application never uses it, and the API and the worker never **hold** it: it reaches the release step only (with the compose stack, from `.env.owner`, which the postgres and release services alone receive), and one-off owner commands take it explicitly (§9, STAGING §5-§6). Under `NODE_ENV=production` the API and the worker refuse to start when it, `POSTGRES_OWNER_PASSWORD` or `POSTGRES_PASSWORD` is in their environment (§2).
 - **App** (`DATABASE_URL`): it **must** log in as `app_user`, because the migrations grant to that role by name. The release step refuses any other name before it changes anything. `LOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT`, member of no role. Every API and worker connection uses it. Roles are cluster-wide: two environments that share one Postgres cluster share one `app_user` and its password.
 
 **Database host (owner decision, 2026-11-11).** Accept and claim taps miss their 300 ms p95 budget on 4 shared cores (docs/PERFORMANCE.md: accept 637 ms, 44 simultaneous claims 382 ms). So production runs Postgres on its **own** host (or managed instance) with at least 4 dedicated cores, never on the same machine as the API and worker. A staging VM may share one host (docs/STAGING.md); its timings then say nothing about production.
@@ -127,7 +128,7 @@ Choosing a real vendor without its credentials fails in every environment. The f
 |---|---|---|
 | `NODE_ENV` | yes | `production` |
 | `DATABASE_URL` | yes | app role (RLS-bound) |
-| `MIGRATION_DATABASE_URL` | release step | owner role |
+| `MIGRATION_DATABASE_URL` | release step only (`.env.owner` with the compose stack) | owner role; never in the api or worker environment (refused in production, §2) |
 | `PUBLIC_BASE_URL` | yes, https | the public origin. Webhook signatures are computed over it, and it builds links and the reply domain `in.<host>`. |
 | `WEB_ORIGIN` | yes, https | CSRF/CORS allowlist (comma-separated) |
 | `TRUST_PROXY` | behind a proxy | trust `X-Forwarded-*` from the load balancer |
@@ -396,13 +397,13 @@ Encrypt both and store them away from the host. Roles are cluster-wide, so a dum
 3. Run the rotation in the `api` image, with the owner role:
 
    ```sh
-   docker run --rm --env-file .env.production \
+   docker run --rm --env-file .env.production --env-file .env.owner \
      -e PREVIOUS_KEK_BASE64="$OLD" -e PREVIOUS_KEK_REF=prod-kek:v1 \
      -e KEK_BASE64="$NEW" -e KEK_REF=prod-kek:v2 \
      realty-api:<version> node apps/api/dist/crypto/rotateKekMain.js
    ```
 
-   With the compose stack, add `--network realty_default` so the container can reach the `postgres` host named in `MIGRATION_DATABASE_URL`. Without Docker, the same command is `node apps/api/dist/crypto/rotateKekMain.js` with those five variables set. `-e` overrides the env file's `KEK_BASE64` and `KEK_REF`, so the env file can still hold the old values while the command runs.
+   With the compose stack, add `--network realty_default` so the container can reach the `postgres` host named in `MIGRATION_DATABASE_URL`. The owner URL comes from `.env.owner` (`--env-file` twice: this one-off container, never the api or worker, gets it). Without Docker, the same command is `node apps/api/dist/crypto/rotateKekMain.js` with those five variables set. `-e` overrides the env file's `KEK_BASE64` and `KEK_REF`, so the env file can still hold the old values while the command runs.
 
    It re-wraps every tenant key and re-encrypts the data under platform keys (users' MFA secrets and stored webhook payloads) in one transaction, then prints counts (`kek rotation ok: 3 tenant keys re-wrapped, 1 MFA secrets and 4 webhook payloads re-encrypted, 0 already under the new KEK`). The tenant data itself is untouched, because it sits under the tenant keys, which do not change. It is idempotent: rows already under the new KEK are skipped, so an interrupted run can simply be repeated. A wrong "previous" key aborts without changing anything.
 4. Put the new `KEK_BASE64` and `KEK_REF` in the secret store and the env file, then start the API and worker. Check `/api/ready`, an MFA login and opening a stored object (a recording, or an import file's snapshot). **`/api/ready` does not detect a wrong KEK:** an API started with the old KEK after the rotation answers `ready`, while every MFA verification fails with 500 (`DecryptError` in the log). The MFA login is the check that matters.
@@ -415,7 +416,7 @@ A KMS-backed KEK (wrap and unwrap as KMS calls) is a drop-in for the same interf
 ## 10. Launch checklist
 
 - [ ] Release step green. `/api/ready` 200 behind the load balancer. TLS on the public origin.
-- [ ] `DATABASE_URL` is the app role. The owner credentials are only in the release job's environment.
+- [ ] `DATABASE_URL` is the app role. The owner credentials are only in the release job's environment (with the compose stack: in `.env.owner`, never `.env.production`; `docker compose -f docker-compose.prod.yml --env-file .env.owner exec -T api printenv MIGRATION_DATABASE_URL` prints nothing and exits 1).
 - [ ] Twilio: master account upgraded; the first team's brand and campaign approved; a live test text, reply, STOP and HELP; a click-to-call with the announcement and the recording kept; a call to a one-party state if you use that mode (**VERIFY WITH COUNSEL**).
 - [ ] Email: SPF, DKIM and DMARC aligned for the platform and team domains; a test marketing email unsubscribed with the mail client's own button; a reply lands in the thread; a hard bounce to a test address shows as a suppression.
 - [ ] Storage: private bucket; a recording plays back.

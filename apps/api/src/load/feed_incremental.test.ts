@@ -640,6 +640,31 @@ describe('incremental feed after ownership, deal, team, contact point and settin
     expect(JSON.stringify(await card())).not.toBe(withPhone);
   }, 300_000);
 
+  it('an erased person marks every member whose stored state holds one of their groups (batch 5 review F4: the contacts marks fired on INSERT and UPDATE only, so the stored total kept the erased cards)', async () => {
+    const agent = users.find((u) => u.role === 'agent')!;
+    // a lead of the agent with a stored, non-zero count, erasable as it is (no deal, no document, no do-not-contact to
+    // carry, no merged record), and with no task or appointment: their own delete marks would hide the missing one
+    const c = (await su.query<{ id: string }>(`
+      SELECT c.id FROM contacts c
+       WHERE c.tenant_id = $1 AND c.owner_user_id = $2 AND c.deleted_at IS NULL AND c.merged_into_contact_id IS NULL AND c.do_not_contact_at IS NULL
+         AND NOT (c.id = ANY ($3::uuid[]))
+         AND EXISTS (SELECT 1 FROM feed_groups g WHERE g.tenant_id = c.tenant_id AND g.user_id = $2 AND g.group_key = 'c:' || c.id AND g.n_open > 0)
+         AND NOT EXISTS (SELECT 1 FROM deal_contacts dc WHERE dc.tenant_id = c.tenant_id AND dc.contact_id = c.id)
+         AND NOT EXISTS (SELECT 1 FROM deals d WHERE d.tenant_id = c.tenant_id AND d.primary_contact_id = c.id)
+         AND NOT EXISTS (SELECT 1 FROM documents x WHERE x.tenant_id = c.tenant_id AND x.contact_id = c.id)
+         AND NOT EXISTS (SELECT 1 FROM contacts l WHERE l.tenant_id = c.tenant_id AND l.merged_into_contact_id = c.id)
+         AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.tenant_id = c.tenant_id AND t.contact_id = c.id)
+         AND NOT EXISTS (SELECT 1 FROM appointments a WHERE a.tenant_id = c.tenant_id AND a.contact_id = c.id)
+       ORDER BY md5(c.id::text) LIMIT 1`, [T, agent.userId, used])).rows[0]!;
+    expect(c).toBeDefined();
+    used.push(c.id);
+    await compare(agent, 'a lead with a stored count');
+    await asMember(owner, (tx) => sql`SELECT app.erase_contact(${c.id}::uuid, ${randomUUID()}::uuid, 'PRIVACY_REQUEST')`.execute(tx));
+    expect(await marks(agent.userId, `c:${c.id}`)).toBeGreaterThan(0);
+    await compare(agent, 'the lead erased');
+    expect((await su.query('SELECT 1 FROM feed_groups WHERE tenant_id = $1 AND group_key = $2', [T, `c:${c.id}`])).rowCount).toBe(0);
+  }, 300_000);
+
   it('a settings write marks no member unless the zone changes; a zone change marks every member \'!full\'', async () => {
     const full = async () => Number((await su.query<{ n: string }>(`SELECT count(*) AS n FROM feed_dirty WHERE tenant_id = $1 AND group_key = '!full'`, [T])).rows[0]!.n);
     const members = Number((await su.query<{ n: string }>(`SELECT count(*) AS n FROM memberships WHERE tenant_id = $1`, [T])).rows[0]!.n);

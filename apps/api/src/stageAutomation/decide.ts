@@ -3,6 +3,8 @@
 //
 // A stage entry starts at most one playbook, and only when ALL hold (R-PAR-16):
 //   - a person changed the stage (an import, migration, merge copy or the system never auto-enrolls);
+//   - not as a bulk action whose audience is built from a protected tag (R-PAR-8: a protected tag never defines the
+//     audience of a bulk enrollment, and a bulk stage change into a plan's stage would be one; batch 5 review F1);
 //   - the person still exists, is not merged, and is still in that stage (an Undo or a later change wins);
 //   - the person who changed the stage still sees the person's detail by their own RLS;
 //   - the chosen playbook has an APPROVED version (a draft, superseded or revoked version never runs);
@@ -19,6 +21,7 @@
 
 export const SKIP_REASONS = [
   'not_a_person_change', // an import, migration or system stage change
+  'protected_audience', // a bulk stage change of an audience built from a protected tag (R-PAR-8)
   'person_removed', // deleted or merged away
   'stage_changed_again', // the stage moved on before the plan could start (e.g. Undo)
   'not_visible', // the person who changed the stage no longer sees this person
@@ -44,6 +47,8 @@ export interface StagePlaybook {
 export interface StageEntryFacts {
   /** who changed the stage, from contact_stage_events.actor_kind */
   actorKind: 'user' | 'system' | 'support' | 'none';
+  /** the change was made by a bulk action whose audience is protected now (R-PAR-8; bulk/audience.ts) */
+  protectedAudience: boolean;
   toStage: string;
   contact: { exists: boolean; deleted: boolean; merged: boolean; stage: string; ownerUserId: string | null };
   /** the stage-changer's own RLS shows the person's detail now */
@@ -72,6 +77,7 @@ export function decideStageEntry(f: StageEntryFacts): StageDecision {
   if (playbook === null) return { kind: 'none' };
   const skip = (reason: SkipReason): StageDecision => ({ kind: 'skip', reason, playbook });
   if (f.actorKind !== 'user') return skip('not_a_person_change');
+  if (f.protectedAudience) return skip('protected_audience');
   if (!f.contact.exists || f.contact.deleted || f.contact.merged) return skip('person_removed');
   if (f.contact.stage !== f.toStage) return skip('stage_changed_again');
   if (!f.changerSeesDetail) return skip('not_visible');

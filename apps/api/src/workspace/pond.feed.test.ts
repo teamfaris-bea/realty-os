@@ -119,6 +119,28 @@ describe('pond leads in the Priority Feed and on the Pond page (R-OWN-16)', () =
     expect(fw.all.some((c) => c.itemType === 'first_touch_due' && c.contact?.id === lead.id)).toBe(true);
   });
 
+  it('F4-ERASE-POND-PHANTOM-COUNT R-DATA-4 R-OWN-16: erasing a pond lead takes its card out of every eligible member\'s feed and feed total at once (before: the card went, but each total kept counting it until the hourly reconcile)', async () => {
+    const lead = await releasedLead();
+    const members = [...othersThan(lead.by), w.teamLead!];
+    for (const m of members) {
+      const f = await feedOf(m);
+      expect(pondCard(f, lead.id), `${m.role} ${m.userId}`).toBeDefined();
+      expect(f.total, `${m.role} ${m.userId}`).toBe(f.all.length);
+    }
+    await freshReauth(h, w.owner);
+    const er = await call(w.owner, 'POST', `/contacts/${lead.id}/erase`, { reason: 'PRIVACY_REQUEST' });
+    expect(er.status, JSON.stringify(er.body)).toBe(200);
+    // the delete marked each member whose stored count held the lead's group (the materializer re-scores it on read)
+    const marked = (await h.su.query<{ user_id: string }>('SELECT DISTINCT user_id FROM feed_dirty WHERE group_key = $1', [`c:${lead.id}`])).rows.map((r) => r.user_id);
+    expect(marked).toEqual(expect.arrayContaining(members.map((m) => m.userId!)));
+    for (const m of members) {
+      const f = await feedOf(m);
+      expect(pondCard(f, lead.id), `${m.role} ${m.userId}`).toBeUndefined();
+      expect(f.total, `${m.role} ${m.userId}`).toBe(f.all.length);
+    }
+    expect((await h.su.query('SELECT user_id FROM feed_groups WHERE group_key = $1', [`c:${lead.id}`])).rows).toEqual([]);
+  });
+
   it('R-OWN-16: a members-only pond reaches only its members; adding a member marks them and the card reaches them', async () => {
     const ag = w.agents;
     const p = await call<{ pond: { id: string } }>(w.owner, 'POST', '/ponds', { name: `Buyers only ${randomUUID().slice(0, 6)}`, openToAll: false });

@@ -3,10 +3,10 @@
 //   node dist/worker/main.js [--queues realtime,default,bulk,maintenance] [--concurrency 8]
 //                            [--no-sweeper] [--no-maintenance]
 //
-// config → database (app_user) → providers → registry (handlers/index.ts) → worker loop + sweeper
-// (every 15 s) + maintenance (every 60 s). SIGTERM/SIGINT stop claiming, let in-flight jobs finish,
-// then close the pool. Several worker processes may run: claims use SKIP LOCKED, sweeper and
-// periodic enqueues are deduplicated, and maintenance steps are idempotent.
+// no owner credentials (production; dbRole.ts) → config → database (app_user) → providers → registry
+// (handlers/index.ts) → worker loop + sweeper (every 15 s) + maintenance (every 60 s). SIGTERM/SIGINT stop
+// claiming, let in-flight jobs finish, then close the pool. Several worker processes may run: claims use
+// SKIP LOCKED, sweeper and periodic enqueues are deduplicated, and maintenance steps are idempotent.
 // SHUTDOWN_TIMEOUT_MS is a hard deadline for that stop (exit 1). WORKER_HEALTH_PORT (optional) serves
 // GET /health: 200 while the loops run, 503 once stopping (for container health checks; no details).
 import { createServer } from 'node:http';
@@ -15,7 +15,7 @@ import { instant } from '@realty/core/foundation';
 import { QUEUES, type Queue, closeDefaultDatabase, configureDatabase } from '@realty/db';
 import { z } from 'zod';
 import { loadConfig } from '../config.js';
-import { assertRlsBoundLogin } from '../dbRole.js';
+import { assertNoOwnerCredentials, assertRlsBoundLogin } from '../dbRole.js';
 import { observedAlerts } from '../observability/alerts.js';
 import { loadObservabilityConfig } from '../observability/config.js';
 import { createErrorReporter } from '../observability/errors.js';
@@ -51,6 +51,7 @@ export function parseArgs(argv: readonly string[]): z.infer<typeof Args> {
 }
 
 async function main(): Promise<void> {
+  assertNoOwnerCredentials(process.env);
   const args = parseArgs(process.argv.slice(2));
   const config = loadConfig();
   const obs = loadObservabilityConfig(process.env);

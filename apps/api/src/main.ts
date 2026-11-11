@@ -2,14 +2,15 @@
 // entrypoint (src/worker/main.ts, api/jobs-worker).
 //
 // Start-up refuses to serve when the database login is not RLS-bound (superuser or BYPASSRLS): the app
-// connects only as app_user. Graceful stop on SIGTERM/SIGINT: /api/ready turns 503 at once, the server
+// connects only as app_user. In production it refuses first, before reading anything else, when the database
+// owner's credentials are in its environment (dbRole.ts; they belong to the release step only). Graceful stop on SIGTERM/SIGINT: /api/ready turns 503 at once, the server
 // keeps serving for SHUTDOWN_DRAIN_MS (the load balancer takes it out), then stops accepting and lets
 // in-flight requests finish, closes the pool and exits 0. SHUTDOWN_TIMEOUT_MS is a hard deadline (exit 1).
 import { randomBytes } from 'node:crypto';
 import { instant, uuidv7Generator } from '@realty/core/foundation';
 import { closeDefaultDatabase, configureDatabase } from '@realty/db';
 import { loadConfig, redactConfig } from './config.js';
-import { assertRlsBoundLogin } from './dbRole.js';
+import { assertNoOwnerCredentials, assertRlsBoundLogin } from './dbRole.js';
 import { markDraining, registerReadinessCheck } from './health.js';
 import { loadObservabilityConfig } from './observability/config.js';
 import { createErrorReporter } from './observability/errors.js';
@@ -20,6 +21,7 @@ import { createProviders } from './providers/index.js';
 import { buildServer } from './server.js';
 
 async function main(): Promise<void> {
+  assertNoOwnerCredentials(process.env);
   const config = loadConfig();
   const obs = loadObservabilityConfig(process.env);
   const errorReporter = createErrorReporter(obs.errorReporting);
