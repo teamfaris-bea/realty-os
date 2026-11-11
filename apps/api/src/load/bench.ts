@@ -430,12 +430,15 @@ export async function benchDispatch(b: LoadBench, a: Actors, o: { sends: number;
   const stopped = await b.q<{ id: string; owner_user_id: string }>(
     `SELECT DISTINCT c.id, c.owner_user_id FROM contacts c JOIN consent_events e ON e.tenant_id = c.tenant_id AND e.contact_id = c.id
       WHERE c.tenant_id = $1 AND c.ownership_state = 'owned' AND e.event_type = 'revoke' AND e.channel = 'sms' ORDER BY c.id LIMIT 30`, [T]);
-  const before = await b.q<{ n: string }>(`SELECT count(*)::text AS n FROM messages WHERE tenant_id = $1 AND status IN ('sent','delivered','dispatching') AND created_at > now() - interval '1 hour'`, [T]);
+  const since = (await b.q<{ t: Date }>(`SELECT now() AS t`))[0]!.t;
   const blocked = await Promise.all(stopped.map((c) => b.req<{ result: string; decision?: { outcome: string; reasons: string[] } }>(sessionOf.get(c.owner_user_id)!, 'POST', `/contacts/${c.id}/messages`, { channel: 'sms', body: 'Checking in!', idempotencyKey: `load-${randomUUID()}` })));
-  const after = await b.q<{ n: string }>(`SELECT count(*)::text AS n FROM messages WHERE tenant_id = $1 AND status IN ('sent','delivered','dispatching') AND created_at > now() - interval '1 hour'`, [T]);
+  // nothing left for any of these contacts' opted-out numbers since the attempt started (any status that means it went out)
+  const leaked = Number((await b.q<{ n: string }>(
+    `SELECT count(*)::text AS n FROM messages WHERE tenant_id = $1 AND contact_id = ANY ($2::uuid[]) AND direction = 'outbound' AND created_at >= $3
+        AND status IN ('dispatching','sent','delivered','dispatch_unknown')`, [T, stopped.map((c) => c.id), since]))[0]!.n);
   const nonSent = blocked.filter((r) => r.body.result !== 'sent').length;
-  b.check('D1: opted-out numbers are never sent to', nonSent === stopped.length && before[0]!.n === after[0]!.n,
-    `${nonSent}/${stopped.length} not sent (${[...new Set(blocked.map((r) => `${r.status} ${r.body.result}:${(r.body.decision?.reasons ?? []).join('+')}`))].join(', ')}); sent rows ${before[0]!.n} → ${after[0]!.n}`);
+  b.check('D1: opted-out numbers are never sent to', nonSent === stopped.length && leaked === 0,
+    `${nonSent}/${stopped.length} not sent (${[...new Set(blocked.map((r) => `${r.status} ${r.body.result}:${(r.body.decision?.reasons ?? []).join('+')}`))].join(', ')}); ${leaked} outbound rows went out to them`);
 }
 
 /** 10. import dry run of a 50k-row CSV (create → snapshot → dry run job), as the admin. */
