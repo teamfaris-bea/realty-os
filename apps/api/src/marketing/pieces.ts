@@ -38,6 +38,7 @@ import { sql } from 'kysely';
 import { audit, redactSnapshot } from '../audit.js';
 import { AppError } from '../errors.js';
 import { EXPORTED_POST_IT_YOURSELF, PAGE_SLUG_RE, earlierPostNotice, pageSlug, publicationLabel, publishOptions } from './decide.js';
+import { marketingAssumptions } from './assumptions.js';
 import * as repo from './repo.js';
 
 /** The kinds module 29 generates (Phase 2; the GBP post is module 53's). */
@@ -464,7 +465,7 @@ async function pieceView(
     retractedAt: iso(p.retracted_at),
     publicPath: p.kind === 'website_page' && p.public_slug ? `/p/${tenantSlug}/${p.public_slug}` : null,
     publications: views,
-    publishOptions: publishOptions({ kind: p.kind, status: p.status, imageCount: assets.length }, targets.map((t) => ({ connectionId: t.id, kind: t.kind, status: t.status, displayName: t.display_name })), live, cleared),
+    publishOptions: publishOptions({ kind: p.kind, status: p.status, imageCount: assets.length }, targets.map((t) => ({ connectionId: t.id, kind: t.kind, status: t.status, displayName: t.display_name })), live, cleared, marketingAssumptions()),
     earlierPostNotice: earlierPostNotice(olderLive),
     exportable: p.kind !== 'open_house_invite' && ['approved', 'exported', 'published'].includes(p.status),
     invitable: p.kind === 'open_house_invite' && ['approved', 'published'].includes(p.status),

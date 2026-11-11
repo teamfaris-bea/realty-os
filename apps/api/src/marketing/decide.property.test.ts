@@ -151,3 +151,12 @@ describe('page slugs', () => {
     );
   });
 });
+
+describe('VERIFY assumptions are configuration with strict defaults', () => {
+  it('R-MKT-12 VERIFY: defaults are the strictest (Instagram needs an image, 1 h image links, 24 h before an unfound unknown fails); bad values fall back', async () => {
+    const { assumptionsFrom } = await import('./assumptions.js');
+    expect(assumptionsFrom({})).toEqual({ instagramRequiresImage: true, imageUrlTtlMs: 3_600_000, unknownGiveUpMs: 86_400_000 });
+    expect(assumptionsFrom({ MARKETING_INSTAGRAM_REQUIRES_IMAGE: 'false', MARKETING_IMAGE_URL_TTL_MINUTES: '10', MARKETING_UNKNOWN_GIVE_UP_HOURS: '48' })).toEqual({ instagramRequiresImage: false, imageUrlTtlMs: 600_000, unknownGiveUpMs: 172_800_000 });
+    expect(assumptionsFrom({ MARKETING_INSTAGRAM_REQUIRES_IMAGE: 'nope', MARKETING_IMAGE_URL_TTL_MINUTES: '-1', MARKETING_UNKNOWN_GIVE_UP_HOURS: 'x' })).toEqual({ instagramRequiresImage: true, imageUrlTtlMs: 3_600_000, unknownGiveUpMs: 86_400_000 });
+  });
+});

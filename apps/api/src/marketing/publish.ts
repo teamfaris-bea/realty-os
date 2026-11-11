@@ -29,7 +29,8 @@ import { AppError } from '../errors.js';
 import type { OAuthToken, PublishRequest, SocialPublisher } from '../providers/integrations/types.js';
 import { systemActor } from '../worker/systemActor.js';
 import type { Database } from '@realty/db';
-import { type PublishTargetKind, DEFAULT_ASSUMPTIONS, classifyPublish, reconcileFromLookup, retractFromDelete } from './decide.js';
+import { type PublishTargetKind, classifyPublish, reconcileFromLookup, retractFromDelete } from './decide.js';
+import { type MarketingAssumptions, marketingAssumptions } from './assumptions.js';
 import { signedAssetUrl } from './assetLinks.js';
 import { closeReviewCard, raiseRemoveYourselfCard } from './cards.js';
 import { mapDbError } from './pieces.js';
@@ -44,14 +45,14 @@ export interface PublishDeps {
   /** keys the signed asset URLs (HMAC, derived per purpose) */
   linkSecret: Uint8Array;
   ids: IdGenerator;
+  /** the VERIFY items (assumptions.ts); default: the process environment's, strict */
+  assumptions?: MarketingAssumptions;
 }
 
 const asSystem = <T>(d: Pick<PublishDeps, 'db'>, tenantId: string, fn: (tx: Tx, now: Instant) => Promise<T>) => withTenantTx(systemActor(tenantId, 'provider'), fn, { db: d.db, retries: 2 });
 
 /** A stuck 'publishing' row (the process died between TX1 and TX2) is treated as unknown after this long. */
 export const STALE_PUBLISHING_MS = 5 * 60_000;
-/** Signed image URLs live this long (VERIFY: long enough for Meta to fetch them). */
-export const IMAGE_URL_TTL_MS = 60 * 60_000;
 
 interface Prepared {
   publicationId: string;
@@ -83,7 +84,7 @@ export async function publishPost(deps: PublishDeps, actor: UserActor, pieceId: 
       if (!t.external_account_id || !t.credential_id) throw new AppError('CHANNEL_NOT_CONNECTED');
       if (!(await repo.platformCleared(tx, 'platform:fair_housing'))) throw new AppError('PLATFORM_NOT_CLEARED');
       const assets = await repo.assetsOf(tx, pieceId);
-      if (t.kind === 'instagram_business' && DEFAULT_ASSUMPTIONS.instagramRequiresImage && assets.length === 0) throw new AppError('PUBLISH_NEEDS_IMAGE');
+      if (t.kind === 'instagram_business' && (deps.assumptions ?? marketingAssumptions()).instagramRequiresImage && assets.length === 0) throw new AppError('PUBLISH_NEEDS_IMAGE');
       // R-MKT-4: the frozen approval stands only while the live rendering still passes (identity / pack changes)
       const [facts, identity] = await Promise.all([repo.listingFacts(tx, p.listing_id), repo.identityOf(tx)]);
       if (!facts) throw new AppError('NOT_FOUND');
@@ -130,7 +131,7 @@ async function sendAndRecord(deps: PublishDeps, tenantId: string, prep: Prepared
   // TXk, as the system: the token in memory only, and the signed image URLs
   const ctx = await asSystem(deps, tenantId, async (tx, now) => {
     const token = await tokenFor(deps, tx, tenantId, prep.credentialId).catch(() => null);
-    const imageUrls = prep.imageObjectIds.map((objectId) => signedAssetUrl({ publicBaseUrl: deps.publicBaseUrl, secret: deps.linkSecret }, { tenantId, objectId, expiresAt: now + IMAGE_URL_TTL_MS }));
+    const imageUrls = prep.imageObjectIds.map((objectId) => signedAssetUrl({ publicBaseUrl: deps.publicBaseUrl, secret: deps.linkSecret }, { tenantId, objectId, expiresAt: now + (deps.assumptions ?? marketingAssumptions()).imageUrlTtlMs }));
     return { token, imageUrls };
   });
   if (!ctx.token) {
@@ -202,7 +203,7 @@ export async function reconcilePublications(deps: PublishDeps, tenantId: string)
     out.looked += 1;
     let decided: ReturnType<typeof reconcileFromLookup>;
     try {
-      decided = reconcileFromLookup({ ok: true, result: await deps.social.lookupPost({ externalAccountId: r.external_account_id, accessToken: token.accessToken, target: r.kind, pieceId: r.piece_id, contentSha256: r.content_sha256 }) }, rows.now - r.requested_at.getTime());
+      decided = reconcileFromLookup({ ok: true, result: await deps.social.lookupPost({ externalAccountId: r.external_account_id, accessToken: token.accessToken, target: r.kind, pieceId: r.piece_id, contentSha256: r.content_sha256 }) }, rows.now - r.requested_at.getTime(), (deps.assumptions ?? marketingAssumptions()).unknownGiveUpMs);
     } catch (e) {
       decided = reconcileFromLookup({ ok: false, error: e }, rows.now - r.requested_at.getTime());
     }
