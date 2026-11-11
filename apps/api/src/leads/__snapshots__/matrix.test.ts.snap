@@ -2302,5 +2302,7 @@ exports[`route table and schemas > every leads route declares its authorization 
   "POST /api/members/:userId/deactivate → member.remove",
   "GET /api/contacts/:id/reachability → contact.view_detail",
   "HEAD /api/contacts/:id/reachability → contact.view_detail",
+  "GET /api/contacts/:id/attachments → contact.view_detail",
+  "HEAD /api/contacts/:id/attachments → contact.view_detail",
 ]
 `;
