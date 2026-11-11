@@ -250,7 +250,7 @@ Numbers continue from Phase 1 (1–17; `docs/BUILD_PLAN.md`), all built. Module 
 | 33 | api/insights | `apps/api/src/insights/**`, M33 | 18a, 32 | 15 | **yes** (money visibility) | Owner view, source costs, goals, weekly plan job. |
 | 34 | api/calendar | `apps/api/src/calendar/**` | 21 | 14 | no | OAuth connect, one-way push, live free/busy, booking lock. |
 | 35 | core/coaching | `packages/core/src/coaching/**` | — | 4 | no | Rubric v1, verified scoring, daily fix, trend math. |
-| 36 | api/coaching | `apps/api/src/coaching/**` | 18a, 35 | 13 | **yes** (recording scope) | Call review job, daily fix job, Owner-only coaching settings. |
+| 36 | api/coaching | `apps/api/src/coaching/**` | 18a, 35 | 13 | **yes** (recording scope) | Call review job, daily fix job, coaching settings (the Owner's; an Admin may only turn call reviews off, E283). |
 | 37 | web/inbox | `apps/web/src/surfaces/{thread,compose}/**` (Phase 2 owner), `apps/web/src/widget/**` (separate bundle) | 22 | 17 | **yes** | Channel tags (SMS, email, call, web chat), channel-aware compose, chat widget. D2: no Messenger/Instagram compose or window copy. |
 | 38 | web/listing-marketing | `apps/web/src/surfaces/{listings,marketing}/**`, `apps/web/src/surfaces/approvals/**` (Phase 2 owner of approval card types) | 24, 28, 29 | 17 | no | Seller-update card, marketing tab, MLS badges and attribution. |
 | 39 | web/deals-milestones | `apps/web/src/surfaces/deals/**` | 31 | 17 | no | Milestone timeline with confirm chips, TC board, risk cards. |
@@ -502,7 +502,7 @@ export function dailyFix(scores, dismissed7d, localDate): Fix | null;   export f
 - **38 web/listing-marketing:** seller-update card (recommendation box, remove per item), marketing tab (one card per piece, Approve, Copy, Download, "Exported: post it yourself"), approval card types. Rules: R-SELL-3, R-MKT-6. Accept: approve a piece in 1 tap from the approvals inbox.
 - **39 web/deals-milestones:** phone timeline with Confirm chips; desktop TC board; risk cards from the exception queue. Accept: confirm a proposed date in 1 tap.
 - **40 web/insights:** owner view (desktop-first table, phone cards), goals, the weekly plan and daily fix pages the feed cards link to (no grades).
-- **41 web/admin-p2:** integrations with status sentences and each platform pack's review state (Facebook Page, Instagram business account, Google Ads, GBP, Zillow/Realtor.com feeds, lead email, web-chat widget, MLS; no Meta DM, lead-ads or Meta-ads kinds; `platform:meta` is not shown as something to clear), MLS pack, marketing templates, milestone templates, coaching settings (Owner-only), each with "not reviewed by counsel" banners where true.
+- **41 web/admin-p2:** integrations with status sentences and each platform pack's review state (Facebook Page, Instagram business account, Google Ads, GBP, Zillow/Realtor.com feeds, lead email, web-chat widget, MLS; no Meta DM, lead-ads or Meta-ads kinds; `platform:meta` is not shown as something to clear), MLS pack, marketing templates, milestone templates, coaching settings (the Owner's; an Admin may only turn call reviews off, E283), each with "not reviewed by counsel" banners where true.
 
 #### 68. `api/mail-sync` (D2)
 ```ts

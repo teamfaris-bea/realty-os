@@ -1,20 +1,23 @@
-// The Owner's coaching settings (module 36 for module 41; R-COACH-1, R-COACH-3, R-INT-6; D-COACH).
+// The coaching settings (module 36 for module 41; R-COACH-1, R-COACH-3, R-INT-6; D-COACH; E283).
 //
-//   coachingSettingsView   Owner: whether counsel has reviewed the platform:coaching pack (the page says
-//                          "not reviewed by counsel" while it has not), call scoring on/off, whether Team
+//   coachingSettingsView   Owner and Admins: whether counsel has reviewed the platform:coaching pack (the page
+//                          says "not reviewed by counsel" while it has not), call scoring on/off, whether Team
 //                          Leads see their team's call reviews and tips (default off, D-COACH), the rubric.
 //   saveCoachingSettings   Owner 🔒 when widening (scoring on, Team Lead visibility on): written under the
-//                          Owner's RLS. tenant_settings_p23_guard refuses anyone but the Owner
-//                          (OWNER_ONLY_SETTING → OWNER_REQUIRED) and refuses scoring on while the pack is not
-//                          cleared (COACHING_NOT_CLEARED); the API checks the same first. Audited with values
-//                          only (booleans and rubric keys: no PII).
+//                          Owner's RLS. An Admin may only turn call reviews off (owner decision 2026-11-11, the
+//                          Gmail sync rule): anything else an Admin asks for is refused here, before the
+//                          database, with OWNER_REQUIRED, and for an Admin only the switch is written.
+//                          tenant_settings_p23_guard is the backstop: it refuses everyone else, and an Admin
+//                          anything but "off" (OWNER_ONLY_SETTING → OWNER_REQUIRED), and refuses scoring on while
+//                          the pack is not cleared (COACHING_NOT_CLEARED); the API checks the same first. Audited
+//                          with values only (booleans and rubric keys: no PII).
 // Turning scoring off closes every open coaching card at once, and the review job stops at its next run. VERIFY WITH COUNSEL: employee monitoring notice (counsel item C11).
 import { RUBRIC_V1 } from '@realty/core/coaching';
 import type { Instant, UserActor } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import { audit, redactDiff } from '../audit.js';
 import { AppError } from '../errors.js';
-import { closeFixCards, coachingSettings, updateCoachingSettings } from './repos/coaching.js';
+import { closeFixCards, coachingSettings, turnCallReviewsOff, updateCoachingSettings } from './repos/coaching.js';
 
 export interface CoachingSettingsView {
   pack: { cleared: boolean; version: string | null; reviewedAt: string | null; sentence: string };
@@ -64,18 +67,36 @@ export function isWidening(before: { scoringEnabled: boolean; tlSeesCallScores: 
   return (after.scoringEnabled && !before.scoringEnabled) || (after.tlSeesCallScores && !before.tlSeesCallScores);
 }
 
+/**
+ * What an Admin may ask for (E283): call reviews off, or left as they are, with Team Lead visibility and the
+ * checklist exactly as they are. Turning call reviews on, and every other change, is the Owner's.
+ */
+function adminMayChange(before: { scoringEnabled: boolean; tlSeesCallScores: boolean; disabledKeys: readonly string[] }, after: { scoringEnabled: boolean; tlSeesCallScores: boolean; disabledKeys: readonly string[] }): boolean {
+  if (after.scoringEnabled && !before.scoringEnabled) return false;
+  return after.tlSeesCallScores === before.tlSeesCallScores && KEYS.every((k) => before.disabledKeys.includes(k) === after.disabledKeys.includes(k));
+}
+
 export async function saveCoachingSettings(tx: Tx, actor: UserActor, input: CoachingSettingsInput, now: Instant): Promise<CoachingSettingsView> {
-  if (actor.role !== 'owner') throw new AppError('OWNER_REQUIRED');
+  if (actor.role !== 'owner' && actor.role !== 'admin') throw new AppError('OWNER_REQUIRED');
+  const owner = actor.role === 'owner';
   const unknown = input.disabledKeys.filter((k) => !KEYS.includes(k));
   if (unknown.length > 0) throw new AppError('VALIDATION_FAILED', { issues: [{ path: '/disabledKeys', code: 'unknown_item' }] });
   const before = await coachingSettings(tx);
   if (!before) throw new AppError('NOT_FOUND');
+  // an Admin turns call reviews off and nothing else: refused here, before the database (whose guard refuses it too)
+  if (!owner && !adminMayChange(before, input)) throw new AppError('OWNER_REQUIRED');
   if (input.scoringEnabled && !before.scoringEnabled && !before.packCleared) throw new AppError('COACHING_NOT_CLEARED');
   const disabledKeys = KEYS.filter((k) => input.disabledKeys.includes(k));
-  if (disabledKeys.length === KEYS.length) throw new AppError('VALIDATION_FAILED', { issues: [{ path: '/disabledKeys', code: 'at_least_one_item' }] });
-  await updateCoachingSettings(tx, { scoringEnabled: input.scoringEnabled, tlSeesCallScores: input.tlSeesCallScores, disabledKeys });
-  // off is off at once: every open coaching card closes now (the Owner is tenant-wide), not at the next pass
-  if (before.scoringEnabled && !input.scoringEnabled) await closeFixCards(tx, { now });
+  const turningOff = before.scoringEnabled && !input.scoringEnabled;
+  if (owner) {
+    if (disabledKeys.length === KEYS.length) throw new AppError('VALIDATION_FAILED', { issues: [{ path: '/disabledKeys', code: 'at_least_one_item' }] });
+    await updateCoachingSettings(tx, { scoringEnabled: input.scoringEnabled, tlSeesCallScores: input.tlSeesCallScores, disabledKeys });
+  } else if (turningOff) {
+    // the Admin's only write: the switch alone, so Team Lead visibility and the checklist stay as the Owner set them
+    await turnCallReviewsOff(tx);
+  }
+  // off is off at once: every open coaching card closes now (the Owner and Admins are tenant-wide), not at the next pass
+  if (turningOff) await closeFixCards(tx, { now });
   const prev = KEYS.filter((k) => before.disabledKeys.includes(k));
   const changes = redactDiff(
     { call_scoring_enabled: before.scoringEnabled, tl_sees_call_scores: before.tlSeesCallScores, coaching_rubric_disabled: prev },

@@ -4,7 +4,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import axe from 'axe-core';
 import { describe, expect, it } from 'vitest';
-import { FakeFetch, renderApp, sessionFixture, tableWith } from '../../shell/testing/fakeApi.js';
+import { FakeFetch, err, renderApp, sessionFixture, tableWith } from '../../shell/testing/fakeApi.js';
 import { surface as adminCoaching } from '../admin/coaching/index.js';
 import { surface } from './index.js';
 import type { CoachingSettingsView, TeamView, TodayView } from './types.js';
@@ -131,6 +131,7 @@ const settings = (over: Partial<CoachingSettingsView> = {}): { settings: Coachin
     ...over,
   },
 });
+const CLEARED: CoachingSettingsView['pack'] = { cleared: true, version: '2026.11.0', reviewedAt: '2026-11-11T00:00:00Z', sentence: 'Counsel has reviewed call reviews.' };
 
 describe('the Owner\'s coaching settings', () => {
   it('R-INT-6: "Not reviewed by counsel" is said first and turning reviews on is not offered; axe finds nothing', async () => {
@@ -168,6 +169,19 @@ describe('the Owner\'s coaching settings', () => {
     expect(within(tlCard).getByText('Team Leads now see their team’s reviews.')).toBeInTheDocument();
   });
 
+  it('E283: nothing changes for the Owner: every switch and the checklist stay live, and no "Only the Owner" sentence appears', async () => {
+    app(new FakeFetch().on('GET /admin/coaching', { status: 200, body: settings({ pack: CLEARED, scoringEnabled: true, scoringSentence: 'Calls a person handled are reviewed.' }) }), '/admin/coaching', 'owner');
+    const off = await screen.findByRole('button', { name: 'Turn call reviews off' });
+    expect(off).toBeEnabled();
+    expect(off).not.toHaveAccessibleDescription();
+    expect(screen.getByRole('button', { name: 'Let Team Leads see them' })).toBeEnabled();
+    const items = screen.getByRole('group', { name: 'Checklist items' });
+    expect(items).not.toHaveAccessibleDescription();
+    for (const box of within(items).getAllByRole('checkbox')) expect(box).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Save checklist' })).toBeInTheDocument();
+    expect(screen.queryByText(/Only the Owner/)).toBeNull();
+  });
+
   it('a checklist item can be turned off and saved; the last one cannot', async () => {
     const saved = settings();
     saved.settings.rubric[0]!.enabled = false;
@@ -179,5 +193,91 @@ describe('the Owner\'s coaching settings', () => {
     await waitFor(() => expect(fake.callsTo('PUT /admin/coaching')[0]?.body).toEqual({ scoringEnabled: false, tlSeesCallScores: false, disabledKeys: ['asked_timeline'] }));
     await u.click(screen.getByRole('checkbox', { name: 'Recapped the call' }));
     expect(screen.getByText('Keep at least one item.')).toBeInTheDocument();
+  });
+});
+
+describe('an Admin\'s coaching settings (E283: only the Owner turns call reviews on; an Admin can turn them off)', () => {
+  const on = (over: Partial<CoachingSettingsView> = {}) => {
+    const v = settings({ pack: CLEARED, scoringEnabled: true, tlSeesCallScores: true, scoringSentence: 'Calls a person handled are reviewed against the checklist.', ...over });
+    v.settings.rubric[1]!.enabled = false;
+    return v;
+  };
+
+  it('E283 R-COACH-1: an Admin opens the coaching settings; while call reviews are on, one tap turns them off and says so (the other settings sent as they are); axe finds nothing', async () => {
+    const start = on();
+    const fake = new FakeFetch()
+      .on('GET /admin/coaching', { status: 200, body: start })
+      .on('PUT /admin/coaching', (c) => ({ status: 200, body: { settings: { ...start.settings, ...(c.body as object), rubric: start.settings.rubric, scoringSentence: 'Call scoring is off. No call is reviewed and no tips are shown.' } } }));
+    app(fake, '/admin/coaching', 'admin');
+    expect(await screen.findByRole('heading', { name: 'Call reviews are on' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: 'Coaching' })).toBeInTheDocument();
+    const off = screen.getByRole('button', { name: 'Turn call reviews off' });
+    expect(off).toBeEnabled();
+    expect(off).toHaveAccessibleDescription('Only the Owner can turn them on again.');
+    expect(await axeClean()).toEqual([]);
+    await userEvent.setup().click(off);
+    await waitFor(() => expect(fake.callsTo('PUT /admin/coaching')).toHaveLength(1));
+    expect(fake.callsTo('PUT /admin/coaching')[0]!.body).toEqual({ scoringEnabled: false, tlSeesCallScores: true, disabledKeys: ['recapped_call'] });
+    const heading = await screen.findByRole('heading', { name: 'Call reviews are off' });
+    const card = heading.closest('section') as HTMLElement;
+    expect(within(card).getByText('Call reviews are off. Today’s tips are gone.')).toBeInTheDocument();
+    // now off: turning them on again is the Owner's; the switch is disabled, so focus moves to what it changed, not to <body>
+    expect(within(card).getByRole('button', { name: 'Turn call reviews on' })).toBeDisabled();
+    await waitFor(() => expect(heading).toHaveFocus());
+  });
+
+  it('E283 R-COACH-1: while call reviews are off, an Admin\'s switch is disabled and says "Only the Owner can turn call reviews on."; a tap sends nothing', async () => {
+    const fake = new FakeFetch().on('GET /admin/coaching', { status: 200, body: settings({ pack: CLEARED, scoringSentence: 'Call scoring is off. No call is reviewed and no tips are shown.' }) });
+    app(fake, '/admin/coaching', 'admin');
+    const turnOn = await screen.findByRole('button', { name: 'Turn call reviews on' });
+    expect(turnOn).toBeDisabled();
+    expect(turnOn).toHaveAccessibleDescription('Only the Owner can turn call reviews on.');
+    expect(screen.getByText('Only the Owner can turn call reviews on.')).toBeVisible();
+    await userEvent.setup().click(turnOn);
+    expect(fake.callsTo('PUT /admin/coaching')).toHaveLength(0);
+    expect(await axeClean()).toEqual([]);
+  });
+
+  it('E283 R-INT-6: while counsel has not reviewed call reviews and they are off, an Admin is told both reasons', async () => {
+    app(new FakeFetch().on('GET /admin/coaching', { status: 200, body: settings() }), '/admin/coaching', 'admin');
+    expect(await screen.findByText('Not reviewed by counsel')).toBeInTheDocument();
+    const turnOn = screen.getByRole('button', { name: 'Turn call reviews on' });
+    expect(turnOn).toBeDisabled();
+    expect(turnOn).toHaveAccessibleDescription('Only the Owner can turn call reviews on. Waiting for counsel review.');
+  });
+
+  it('E283 R-COACH-3 D-COACH: Team Lead visibility and the checklist are read-only for an Admin, each with a sentence saying only the Owner changes it; axe finds nothing', async () => {
+    app(new FakeFetch().on('GET /admin/coaching', { status: 200, body: on({ tlSeesCallScores: false }) }), '/admin/coaching', 'admin');
+    const tlCard = (await screen.findByRole('heading', { name: 'Team Leads do not see their team’s reviews' })).closest('section') as HTMLElement;
+    expect(within(tlCard).queryByRole('button')).toBeNull();
+    expect(within(tlCard).getByText('Only the Owner can change whether Team Leads see call reviews.')).toBeInTheDocument();
+    const items = screen.getByRole('group', { name: 'Checklist items' });
+    expect(items).toHaveAccessibleDescription('Only the Owner can change what calls are checked for.');
+    const boxes = within(items).getAllByRole('checkbox');
+    expect(boxes).toHaveLength(2);
+    for (const box of boxes) expect(box).toBeDisabled();
+    expect(within(items).getByRole('checkbox', { name: 'Asked about timeline' })).toBeChecked();
+    expect(within(items).getByRole('checkbox', { name: 'Asked about timeline' })).toHaveAccessibleDescription('Asked when the lead hopes to move.');
+    expect(within(items).getByRole('checkbox', { name: 'Recapped the call' })).not.toBeChecked();
+    expect(screen.queryByRole('button', { name: 'Save checklist' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Team Leads/ })).toBeNull();
+    expect(await axeClean()).toEqual([]);
+  });
+
+  it('E283: a refusal (the settings changed since the page loaded) says what an Admin can do, and the page loads the settings again', async () => {
+    let refused = false;
+    const fake = new FakeFetch()
+      .on('GET /admin/coaching', () => ({ status: 200, body: refused ? on({ tlSeesCallScores: false }) : on() }))
+      .on('PUT /admin/coaching', () => {
+        refused = true;
+        return err(403, 'OWNER_REQUIRED');
+      });
+    app(fake, '/admin/coaching', 'admin');
+    const off = await screen.findByRole('button', { name: 'Turn call reviews off' });
+    const loads = fake.callsTo('GET /admin/coaching').length;
+    await userEvent.setup().click(off);
+    expect(await screen.findByText('Only the Owner can do that. An Admin can only turn call reviews off.')).toBeInTheDocument();
+    await waitFor(() => expect(fake.callsTo('GET /admin/coaching').length).toBeGreaterThan(loads));
+    expect(await screen.findByRole('heading', { name: 'Team Leads do not see their team’s reviews' })).toBeInTheDocument();
   });
 });

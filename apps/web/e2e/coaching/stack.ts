@@ -4,10 +4,10 @@
 //      apps/web never imports @realty/api or @realty/db code;
 //   2. a fixture control endpoint on the same child. `/seed` clears the platform:coaching pack (platform
 //      data: counsel's review is recorded by the platform), has the Owner turn call reviews on through the
-//      API, and gives agent 0 three really recorded calls (dialed, announced and recorded through the
-//      provider webhooks, copied into tenant storage by the comms job) that miss the financing question;
-//      the review job and the daily-fix reconcile then run exactly as the worker runs them. `/pack` sets the
-//      pack's review state; `/totp` gives the current MFA code of an Owner;
+//      API, invites an Admin, and gives agent 0 three really recorded calls (dialed, announced and recorded
+//      through the provider webhooks, copied into tenant storage by the comms job) that miss the financing
+//      question; the review job and the daily-fix reconcile then run exactly as the worker runs them. `/pack`
+//      sets the pack's review state; `/totp` gives the current MFA code of an Owner or the Admin;
 //   3. a Vite dev server for apps/web whose /api proxy points at that API.
 // stop() closes everything and drops the test database.
 import { type ChildProcess, spawn } from 'node:child_process';
@@ -30,12 +30,14 @@ const h = await createApiHarness({ config: { webOrigins: [origin, TEST_ORIGIN] }
 await h.app.listen({ port: 0, host: '127.0.0.1' });
 const apiPort = h.app.server.address().port;
 let w = null;
+let admin = null;
 const body = (req) => new Promise((ok) => { let s = ''; req.on('data', (c) => (s += c)); req.on('end', () => ok(s ? JSON.parse(s) : {})); });
 const routes = {
   async '/seed'() {
     await setPackCleared(h, true);
     w = await coachingWorld(h);
     await scoringOn(h, w.owner);
+    admin = await h.invite(w.owner, 'admin');
     const agent = w.agents[0];
     const lena = await ownedContact(agent, { firstName: 'Lena' });
     for (let i = 0; i < 3; i++) {
@@ -44,14 +46,14 @@ const routes = {
       if (r.kind !== 'reviewed') throw new Error('review: ' + JSON.stringify(r));
     }
     await reconcile(h, w.tenantId);
-    return { password: TEST_PASSWORD, agent: agent.email, owner: w.owner.email, teamLead: w.teamLead.email };
+    return { password: TEST_PASSWORD, agent: agent.email, owner: w.owner.email, teamLead: w.teamLead.email, admin: admin.email };
   },
   async '/pack'(b) {
     await setPackCleared(h, b.cleared === true);
     return { ok: true };
   },
   async '/totp'(b) {
-    const who = [w.owner, w.teamLead, ...w.agents].find((c) => c.email === b.email);
+    const who = [w.owner, w.teamLead, admin, ...w.agents].find((c) => c && c.email === b.email);
     await h.su.query('UPDATE users SET mfa_last_used_step = NULL WHERE email = $1', [b.email]);
     return { code: who && who.totpSecret ? totpCode(who.totpSecret, totpStep(Date.now())) : null };
   },
@@ -85,6 +87,7 @@ export interface CoachingSeed {
   agent: string;
   owner: string;
   teamLead: string;
+  admin: string;
 }
 
 export interface CoachingStack {

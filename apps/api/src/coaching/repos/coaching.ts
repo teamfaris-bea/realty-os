@@ -54,6 +54,14 @@ export async function updateCoachingSettings(tx: Tx, v: { scoringEnabled: boolea
      WHERE tenant_id = app.tenant_id()`.execute(tx);
 }
 
+/**
+ * An Admin turns call reviews off (E283): only the switch is written, so Team Lead visibility and the checklist stay
+ * exactly as stored. tenant_settings_p23_guard admits nothing else from an Admin.
+ */
+export async function turnCallReviewsOff(tx: Tx): Promise<void> {
+  await sql`UPDATE tenant_settings SET call_scoring_enabled = false WHERE tenant_id = app.tenant_id()`.execute(tx);
+}
+
 /** The tenant's local date at `now` (one fix per agent per local day; the tenant zone, as the scoreboard days). */
 export async function localDateAt(tx: Tx, now: Instant): Promise<string> {
   const r = await sql<{ d: string }>`

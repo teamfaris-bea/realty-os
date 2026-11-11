@@ -32,7 +32,7 @@ const ROUTES: { method: 'GET' | 'POST' | 'PUT'; url: string; action: Action; fac
 ];
 
 describe('coaching routes × roles', () => {
-  it('R-COACH-3: every coaching route answers each role exactly as core.can() decides (Call reviews: own calls; team view Owner/Admin/TL; settings Owner only)', async () => {
+  it('R-COACH-3 E283: every coaching route answers each role exactly as core.can() decides (Call reviews: own calls; team view Owner/Admin/TL; settings Owner, and Admins only to turn call reviews off)', async () => {
     const got: string[] = [];
     for (const role of Object.keys(users) as Role[]) {
       for (const r of ROUTES) {
@@ -44,7 +44,7 @@ describe('coaching routes × roles', () => {
       }
     }
     expect(got.filter((g) => g.startsWith('tc ')).every((g) => g.endsWith('404'))).toBe(true);
-    expect(got.filter((g) => g.includes('/admin/coaching') && g.endsWith(' 200')).map((g) => g.split(' ')[0])).toEqual(['owner', 'owner']);
+    expect(got.filter((g) => g.includes('/admin/coaching') && g.endsWith(' 200')).map((g) => g.split(' ')[0])).toEqual(['owner', 'owner', 'admin', 'admin']);
   });
 
   it('every coaching route carries authorize(<its action>)', () => {

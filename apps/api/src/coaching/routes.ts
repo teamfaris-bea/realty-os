@@ -3,8 +3,8 @@
 //   GET  /coaching/today            the caller's daily fix and its two quotes          coaching.view (own)
 //   POST /coaching/today/dismiss    set today's fix aside (not suggested for 7 days)    coaching.view (own)
 //   GET  /coaching/team             the team's current tips                            coaching.team_view (Owner/Admin; TL: what call_scores RLS lets them read)
-//   GET  /admin/coaching            the Owner's coaching settings                      coaching.settings (Owner)
-//   PUT  /admin/coaching            change them (🔒 when turning scoring or TL access on) coaching.settings (Owner)
+//   GET  /admin/coaching            the coaching settings                              coaching.settings (Owner/Admin)
+//   PUT  /admin/coaching            change them (🔒 when turning scoring or TL access on) coaching.settings (Owner; an Admin only turns call reviews off, E283)
 //
 // Every handler runs in the caller's tenant transaction under RLS. Quotes play through the existing audited
 // recording stream (POST /recordings/:id/stream-token), never from here. Response schemas carry no tenant id,
@@ -53,7 +53,8 @@ async function register(app: FastifyInstance): Promise<void> {
     '/admin/coaching',
     {
       config: { auth: 'coaching.settings' as const },
-      // turning scoring or Team Lead access on widens who is reviewed or who sees reviews: re-auth (can())
+      // turning scoring or Team Lead access on widens who is reviewed or who sees reviews: re-auth for the Owner,
+      // OWNER_REQUIRED for an Admin (can()); saveCoachingSettings refuses an Admin anything else but "off"
       preHandler: authorize('coaching.settings', async (req) => {
         const b = req.body as CoachingSettingsInput;
         const cur = await adminTx(req, (tx) => coachingSettings(tx));
