@@ -293,6 +293,7 @@ exports[`R-AUDIT-4 redacted diffs > R-AUDIT-4: generated field classification â€
     "secret_enc",
     "segments_enc",
     "snippet_enc",
+    "token",
     "token_hash",
     "wrapped_key",
   ],
