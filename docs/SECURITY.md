@@ -471,7 +471,7 @@ A rollup per (tenant, member, local day) is therefore exact for every viewer:
   equal to the 0012 body row for row for every role and the system actor. Since the re-inquiry change below, the
   reference is the 0012 body plus the re-inquiry rule.
 - **Re-inquiry periods (owner decision 2026-11-11, DATA_MODEL R-ACC-2 / E68; migration
-  `0042_api_accountability_reinquiry_periods.sql`).** A re-inquiry that starts a new ownership period
+  `0045_api_accountability_reinquiry_periods.sql`).** A re-inquiry that starts a new ownership period
   (`payload.newPeriod`) is a speed-to-lead period of its own and ends the earlier period's first-touch window.
   `app.scoreboard_speed`, `app.scoreboard_rollup_roll` (speed rows only) and `app.scoreboard_mark_ledger` were
   replaced with `CREATE OR REPLACE` (same signatures) and re-asserted: owner `app_definer`,

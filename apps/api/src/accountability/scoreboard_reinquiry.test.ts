@@ -137,8 +137,11 @@ async function liveSpeed(): Promise<Map<number, number | null>> {
 beforeAll(async () => {
   // a database at the migration before this one
   dir = mkdtempSync(join(tmpdir(), 'realty-migrations-'));
-  const before = listMigrations(MIGRATIONS_DIR).filter((m) => !THIS_MIGRATION.test(m.name));
-  expect(before.length).toBe(listMigrations(MIGRATIONS_DIR).length - 1);
+  // every migration that sorts before this one (later ones, from later batches, are applied with it below)
+  const all = listMigrations(MIGRATIONS_DIR);
+  const at = all.findIndex((m) => THIS_MIGRATION.test(m.name));
+  expect(at).toBeGreaterThan(0);
+  const before = all.slice(0, at);
   for (const m of before) copyFileSync(join(MIGRATIONS_DIR, m.name), join(dir, m.name));
   db = await createTestDb({ migrationsDir: dir });
   const spec = defaultSpec(150, PH);
@@ -170,7 +173,7 @@ beforeAll(async () => {
   expect(await marks()).toEqual([]);
   // ... then this migration, as on a live deployment
   const applied = await migrate(db.ownerUrl, MIGRATIONS_DIR);
-  expect(applied.applied).toHaveLength(1);
+  expect(applied.applied).toHaveLength(listMigrations(MIGRATIONS_DIR).length - before.length);
   expect(applied.applied[0]).toMatch(THIS_MIGRATION);
 }, 600_000);
 
