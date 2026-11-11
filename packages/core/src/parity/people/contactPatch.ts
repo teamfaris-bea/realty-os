@@ -17,21 +17,30 @@ export const PROTECTED_CONTACT_KEYS = [
   'importedFields', 'importBatchId', 'createdByUserId', 'createdAt', 'tags', 'tenantId', 'id',
 ] as const;
 
-const Name = z.string().trim().min(1).max(120);
-const NullableName = z.union([Name, z.null()]);
-
-export const ContactPatchSchema = z.strictObject({
-  rowVersion: z.number().int().min(1),
-  displayName: Name.optional(),
-  firstName: NullableName.optional(),
-  lastName: NullableName.optional(),
-  contactType: z.enum(CONTACT_TYPES).optional(),
-  intent: z.union([z.enum(INTENTS), z.null()]).optional(),
-  timezone: z.union([z.string().min(1).max(64), z.null()]).optional(),
-  stage: z.enum(STAGES).optional(),
-  pondSummary: z.union([z.string().trim().min(1).max(200), z.null()]).optional(),
-});
-export type ContactPatch = z.infer<typeof ContactPatchSchema>;
+function buildSchema() {
+  const Name = z.string().trim().min(1).max(120);
+  const NullableName = z.union([Name, z.null()]);
+  return z.strictObject({
+    rowVersion: z.number().int().min(1),
+    displayName: Name.optional(),
+    firstName: NullableName.optional(),
+    lastName: NullableName.optional(),
+    contactType: z.enum(CONTACT_TYPES).optional(),
+    intent: z.union([z.enum(INTENTS), z.null()]).optional(),
+    timezone: z.union([z.string().min(1).max(64), z.null()]).optional(),
+    stage: z.enum(STAGES).optional(),
+    pondSummary: z.union([z.string().trim().min(1).max(200), z.null()]).optional(),
+  });
+}
+let schema: ReturnType<typeof buildSchema> | null = null;
+/**
+ * Built on first use, never at import: Zod 4 probes `new Function` when it builds an object schema, which a
+ * browser bundle importing this module (the web's mention and activity helpers) must not do under its CSP.
+ */
+export function contactPatchSchema(): ReturnType<typeof buildSchema> {
+  return (schema ??= buildSchema());
+}
+export type ContactPatch = z.infer<ReturnType<typeof buildSchema>>;
 
 /** The editable fields (everything but rowVersion). */
 export const PATCH_FIELDS = ['displayName', 'firstName', 'lastName', 'contactType', 'intent', 'timezone', 'stage', 'pondSummary'] as const;
@@ -52,7 +61,7 @@ export function validateContactPatch(input: unknown): ContactPatchResult {
     const protectedKeys = Object.keys(input).filter((k) => (PROTECTED_CONTACT_KEYS as readonly string[]).includes(k));
     if (protectedKeys.length > 0) return { ok: false, code: 'FIELD_NOT_EDITABLE', issues: protectedKeys.sort().map((k) => ({ path: `/${k}`, code: 'not_editable' })) };
   }
-  const parsed = ContactPatchSchema.safeParse(input);
+  const parsed = contactPatchSchema().safeParse(input);
   if (!parsed.success) {
     return { ok: false, code: 'VALIDATION_FAILED', issues: parsed.error.issues.map((i) => ({ path: `/${i.path.join('/')}`, code: i.code })) };
   }

@@ -3,7 +3,7 @@
 export {
   CONTACT_TYPES,
   type ContactPatch,
-  ContactPatchSchema,
+  contactPatchSchema,
   type ContactPatchResult,
   INTENTS,
   PATCH_FIELDS,
