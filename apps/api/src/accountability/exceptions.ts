@@ -25,6 +25,11 @@
 // items they are added at read time from the task's source claim under the VIEWER's rights, so a
 // transcript quote appears only to someone allowed to read that transcript (R-PERM-8). No confidence
 // anywhere (R-AST-13).
+//
+// Module 18a (Phase 2): milestone_at_risk (R-ACC-6, R-TXN-3) is the fifth definition: a confirmed deal date
+// overdue, or due within 48 h with nobody responsible, keyed milestone:{deal_date}:{due_version} and owned by
+// the deal owner (no contact; its evidence links to the deal). Open-house invite rows never raise
+// failed_send (R-MKT-8). Both run on the 60-second tenant scan.
 import { type Action, type ContactId, DAY_MS, type IdGenerator, type Instant, type ResourceFacts, type Role, type UserActor, type UserId, can } from '@realty/core/foundation';
 import type { OwnershipCommand } from '@realty/core/ownership';
 import {
@@ -33,6 +38,7 @@ import {
   type ExceptionType,
   apptKey,
   deriveExceptions,
+  milestoneKey,
   promiseKey,
   sendKey,
   untouchedKey,
@@ -58,15 +64,15 @@ export type RecomputeScope = 'tenant' | { contactId: string };
 export interface RecomputeResult {
   upserted: number;
   cleared: number;
-  inputs: { periods: number; promises: number; outbound: number; appointments: number };
+  inputs: { periods: number; promises: number; outbound: number; appointments: number; milestones: number };
 }
 
-const KEY_RE = /^(?:untouched:([0-9a-f-]{36}):(\d+)|promise:([0-9a-f-]{36})|send:([0-9a-f-]{36})|appt:([0-9a-f-]{36}))$/;
+const KEY_RE = /^(?:untouched:([0-9a-f-]{36}):(\d+)|promise:([0-9a-f-]{36})|send:([0-9a-f-]{36})|appt:([0-9a-f-]{36})|milestone:([0-9a-f-]{36}):\d+)$/;
 /** The dedupe keys core derives (R-ACC-1, per occurrence). Anything else is not an exception key. */
-export const DEDUPE_KEY_PATTERN = '^(untouched:[0-9a-f-]{36}:[0-9]{1,18}|promise:[0-9a-f-]{36}|send:[0-9a-f-]{36}|appt:[0-9a-f-]{36})$';
+export const DEDUPE_KEY_PATTERN = '^(untouched:[0-9a-f-]{36}:[0-9]{1,18}|promise:[0-9a-f-]{36}|send:[0-9a-f-]{36}|appt:[0-9a-f-]{36}|milestone:[0-9a-f-]{36}:[0-9]{1,9})$';
 
 function extraOf(rows: readonly repo.StoredItemRow[]): repo.InputScope['extra'] {
-  const extra: repo.InputScope['extra'] = { periods: [], taskIds: [], messageIds: [], appointmentIds: [] };
+  const extra: repo.InputScope['extra'] = { periods: [], taskIds: [], messageIds: [], appointmentIds: [], dealDateIds: [] };
   for (const r of rows) {
     const m = KEY_RE.exec(r.dedupe_key);
     if (!m) continue;
@@ -74,6 +80,7 @@ function extraOf(rows: readonly repo.StoredItemRow[]): repo.InputScope['extra'] 
     else if (m[3]) extra.taskIds.push(m[3]);
     else if (m[4]) extra.messageIds.push(m[4]);
     else if (m[5]) extra.appointmentIds.push(m[5]);
+    else if (m[6]) extra.dealDateIds.push(m[6]);
   }
   return extra;
 }
@@ -89,17 +96,19 @@ export async function recomputeExceptions(tx: Tx, scope: RecomputeScope, now: In
   const stored = await repo.storedRowsForScope(tx, contactId);
   const input: repo.InputScope = { contactId, now, windowStart: (now - RECOMPUTE_WINDOW_MS) as Instant, extra: extraOf(stored.filter((r) => r.condition_cleared_at === null)) };
   const settings = DEFAULT_EXCEPTION_SETTINGS;
-  const [periods, promises, outbound, appointments] = await Promise.all([
+  const [periods, promises, outbound, appointments, milestoneDates] = await Promise.all([
     repo.slaFacts(tx, input),
     repo.promiseFacts(tx, input),
     repo.outboundFacts(tx, input),
     repo.appointmentFacts(tx, input, settings.missingOutcomeHours),
+    repo.milestoneFacts(tx, input),
   ]);
   const keys = [
     ...periods.map((p) => untouchedKey(p.contactId, p.periodSeq)),
     ...promises.map((t) => promiseKey(t.taskId)),
     ...outbound.map((m) => sendKey(m.messageId)),
     ...appointments.map((a) => apptKey(a.appointmentId)),
+    ...milestoneDates.map((d) => milestoneKey(d.dealDateId, d.dueVersion)),
   ];
   const byKey = new Map<string, repo.StoredItemRow>();
   for (const r of stored) byKey.set(r.dedupe_key, r);
@@ -112,12 +121,13 @@ export async function recomputeExceptions(tx: Tx, scope: RecomputeScope, now: In
     promiseTasks: promises,
     outbound,
     appointments,
+    milestoneDates,
     settings,
     existing: [...byKey.values()].map(repo.specOf),
   });
   await repo.upsertItems(tx, d.upserts, ids, now);
   const cleared = await repo.clearItems(tx, d.cleared, now);
-  return { upserted: d.upserts.length, cleared, inputs: { periods: periods.length, promises: promises.length, outbound: outbound.length, appointments: appointments.length } };
+  return { upserted: d.upserts.length, cleared, inputs: { periods: periods.length, promises: promises.length, outbound: outbound.length, appointments: appointments.length, milestones: milestoneDates.length } };
 }
 
 // ---- the queue view --------------------------------------------------------------------------------------
@@ -126,7 +136,7 @@ export type ExceptionAction = 'resolved' | 'reassigned' | 'verified' | 'reopened
 export type Verb = 'resolve' | 'reassign' | 'verify' | 'reopen';
 
 export interface EvidenceLink {
-  kind: 'contact' | 'message' | 'call' | 'task' | 'appointment';
+  kind: 'contact' | 'message' | 'call' | 'task' | 'appointment' | 'deal';
   id: string;
   contactId: string | null;
   /** where to start the call player ("at 2:14 in the call") */
@@ -177,7 +187,7 @@ export interface ExceptionView {
   actions: { resolve: boolean; reassign: boolean; verify: boolean; reopen: boolean };
 }
 
-const LINKABLE = new Set(['message', 'call', 'task', 'appointment']);
+const LINKABLE = new Set(['message', 'call', 'task', 'appointment', 'deal']);
 
 function linkOf(sourceType: string, sourceId: string, locator: Record<string, unknown> | undefined, row: repo.QueueRow): EvidenceLink | null {
   const contactId = row.contact_visible ? row.contact_id : null;
@@ -309,7 +319,7 @@ export async function listExceptions(tx: Tx, actor: UserActor, envelope: Envelop
   const ownerUserId = f.owner === 'me' ? actor.userId : f.owner;
   const rows = await repo.queueRows(tx, { type: f.type, ownerUserId, state: f.state ?? 'live', limit: Math.min(f.limit ?? QUEUE_LIMIT, QUEUE_LIMIT) });
   const claimEv = await claimEvidenceFor(tx, actor, envelope, rows);
-  const byType: Record<ExceptionType, number> = { untouched_lead: 0, overdue_promise: 0, failed_send: 0, missing_outcome: 0 };
+  const byType: Record<ExceptionType, number> = { untouched_lead: 0, overdue_promise: 0, failed_send: 0, missing_outcome: 0, milestone_at_risk: 0 };
   const all = f.type === undefined && (f.state ?? 'live') === 'live' && rows.length < QUEUE_LIMIT ? rows : await repo.queueRows(tx, { ownerUserId, state: 'live', limit: 10_000 });
   for (const r of all) byType[r.item_type] += 1;
   return {

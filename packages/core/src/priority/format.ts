@@ -2,6 +2,7 @@
 // client's name, number or address; relative times are computed from the injected `now`.
 import { DAY_MS, HOUR_MS, MINUTE_MS } from '../foundation/index.js';
 import type { Channel } from '../compliance/index.js';
+import type { ForeignFeedItemType } from './types.js';
 
 /** "less than a minute", "12 min", "5 h" (under 48 h), "3 d". Negative values count as 0. */
 export function formatDuration(ms: number): string {
@@ -32,3 +33,15 @@ export function clip(s: string, max: number): string {
 }
 
 export const CHANNEL_VERB: Record<Channel, string> = { sms: 'text', voice: 'call', email: 'email' };
+
+/**
+ * The card heading of each Phase 2/3 card type (module 18a). Plain words for what the owning module
+ * put on the card; never a number, a band or a model's name (R-AST-13: no confidence anywhere).
+ */
+export const FOREIGN_CARD_LABEL: Readonly<Record<ForeignFeedItemType, string>> = {
+  seller_update: 'Seller update to review',
+  marketing_review: 'Marketing to review',
+  weekly_plan: 'Your plan this week',
+  coaching_fix: "Today's coaching tip",
+  likely_to_move: 'May be thinking of moving',
+};

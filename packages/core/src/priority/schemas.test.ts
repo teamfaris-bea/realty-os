@@ -47,8 +47,14 @@ describe('core/priority schemas', () => {
       'pond_new',
       'saved_search_review',
       'missed_call',
+      // 0018: Phase 2/3 cards, materialized by their owning modules (module 18a)
+      'seller_update',
+      'marketing_review',
+      'weekly_plan',
+      'coaching_fix',
+      'likely_to_move',
     ]);
-    expect(priority.EXCEPTION_TYPES).toEqual(['untouched_lead', 'overdue_promise', 'failed_send', 'missing_outcome']);
+    expect(priority.EXCEPTION_TYPES).toEqual(['untouched_lead', 'overdue_promise', 'failed_send', 'missing_outcome', 'milestone_at_risk']);
   });
 
   it('the public module surface exposes the BUILD_PLAN interface', () => {

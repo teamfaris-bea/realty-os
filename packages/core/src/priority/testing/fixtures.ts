@@ -30,6 +30,7 @@ import type {
   HandbackFacts,
   InactivityFacts,
   InboundFacts,
+  MilestoneDateFacts,
   OfferFacts,
   OutboundStatusFacts,
   PondLeadFacts,
@@ -243,6 +244,22 @@ export const outbound = (o: Partial<OutboundStatusFacts> = {}): OutboundStatusFa
   statusReason: '30007',
   ...o,
 });
+
+/** A confirmed milestone date of deal(1), owned by ME, due in 5 days with an agent responsible. */
+export function milestone(over: Partial<MilestoneDateFacts> = {}): MilestoneDateFacts {
+  return {
+    dealDateId: dealDate(1),
+    dealId: deal(1),
+    ownerUserId: ME,
+    dueAt: t(hours(5 * 24)),
+    dueVersion: 1,
+    responsible: 'agent',
+    completedAt: null,
+    status: 'confirmed',
+    kind: 'inspection',
+    ...over,
+  };
+}
 
 export function exceptionInputs(over: Partial<ExceptionInputs> = {}): ExceptionInputs {
   return {

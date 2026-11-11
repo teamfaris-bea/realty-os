@@ -32,14 +32,16 @@ export {
   overduePromise,
   failedSend,
   missingOutcome,
+  milestoneAtRisk,
   statusReasonWords,
   EXCEPTION_RULE_VERSION,
+  MILESTONE_UNASSIGNED_WINDOW_MS,
   DEFAULT_EXCEPTION_SETTINGS,
   exceptionFingerprint,
   type DerivedException,
 } from './exceptions.js';
 export { speedToLeadSummary, countTouches, momentum, MOMENTUM_FACTOR, MOMENTUM_MIN_SAMPLE } from './scoreboard.js';
-export { formatDuration } from './format.js';
+export { formatDuration, FOREIGN_CARD_LABEL } from './format.js';
 export {
   FeedItemSchema,
   FeedReasonSchema,

@@ -7,10 +7,12 @@ import {
   ExceptionItemSpecSchema,
   type ExceptionInputs,
   type ExceptionItemSpec,
+  MILESTONE_UNASSIGNED_WINDOW_MS,
   deriveExceptions,
+  milestoneKey,
   statusReasonWords,
 } from './index.js';
-import { ME, NOW, NY, OTHER, apptF, call, contact, exceptionInputs, hours, min, msg, outbound, shuffled, sla, t, task, taskF } from './testing/fixtures.js';
+import { ME, NOW, NY, OTHER, apptF, call, contact, deal, dealDate, exceptionInputs, hours, milestone, min, msg, outbound, shuffled, sla, t, task, taskF } from './testing/fixtures.js';
 
 const keys = (r: { upserts: ExceptionItemSpec[] }) => r.upserts.map((x) => x.dedupeKey);
 const only = (i: ExceptionInputs): ExceptionItemSpec => {
@@ -256,6 +258,126 @@ describe('R-ACC-2 failed_send', () => {
 
   it('R-IMPORT-6: imported messages never raise failed_send', () => {
     expect(deriveExceptions(exceptionInputs({ outbound: [outbound({ imported: true, initiator: 'import' }), outbound({ messageId: msg(2), initiator: 'import' })] }))).toEqual({ upserts: [], cleared: [] });
+  });
+});
+
+describe('R-MKT-8 failed_send exclusion', () => {
+  it('E94 E152 R-MKT-8: an open-house invite recipient blocked by an opt-out raises no failed_send; a normal failed text still does', () => {
+    const invite = outbound({ messageId: msg(7), channel: 'email', initiator: 'human', status: 'blocked', statusReason: 'RECIPIENT_OPTED_OUT', marketingPieceId: 'b0000000-0000-7000-8000-000000000001' });
+    const text = outbound({ messageId: msg(8), status: 'failed', statusReason: 'PROVIDER_REJECTED' });
+    const r = deriveExceptions(exceptionInputs({ outbound: [invite, text] }));
+    expect(keys(r)).toEqual([`send:${msg(8)}`]);
+    expect(r.cleared).toEqual([`send:${msg(7)}`]);
+  });
+
+  it('E152 R-MKT-8: 40 blocked invite rows of one send are 0 items, and a stored invite item from before is cleared', () => {
+    const rows = Array.from({ length: 40 }, (_, n) => outbound({ messageId: msg(100 + n), channel: 'email', status: 'blocked', marketingPieceId: 'b0000000-0000-7000-8000-000000000001' }));
+    const stale = deriveExceptions(exceptionInputs({ outbound: [outbound({ messageId: msg(100), channel: 'email', status: 'blocked' })] })).upserts;
+    const r = deriveExceptions(exceptionInputs({ outbound: rows, existing: stale }));
+    expect(r.upserts).toEqual([]);
+    expect(r.cleared).toEqual([`send:${msg(100)}`]);
+  });
+});
+
+describe('R-ACC-6 milestone_at_risk', () => {
+  const ddKey = milestoneKey(dealDate(1), 1);
+
+  it('E156 / R-ACC-6 R-TXN-3: a confirmed inspection deadline that passed uncompleted is milestone_at_risk (overdue) for the deal owner, detected at due_at', () => {
+    const due = t(-hours(2));
+    const s = only(exceptionInputs({ milestoneDates: [milestone({ dueAt: due })] }));
+    expect(s).toMatchObject({
+      itemType: 'milestone_at_risk',
+      subjectType: 'deal_date',
+      subjectId: dealDate(1),
+      contactId: null,
+      ownerUserId: ME,
+      detectedAt: due,
+      dueAt: due,
+      conditionClearedAt: null,
+      ruleVersion: EXCEPTION_RULE_VERSION,
+      dedupeKey: `milestone:${dealDate(1)}:1`,
+    });
+    expect(s.evidence.filter((e) => e.predicate !== undefined).map((e) => e.predicate)).toEqual(['overdue']);
+    expect(s.evidence[0]).toMatchObject({ sourceType: 'deal_date', sourceId: dealDate(1), explanation: 'Inspection deadline has passed and is not marked done', at: due });
+    expect(s.evidence.at(-1)).toMatchObject({ sourceType: 'deal', sourceId: deal(1) });
+    expect(ExceptionItemSpecSchema.parse(s)).toEqual(s);
+  });
+
+  it('E157 / R-ACC-6: a confirmed appraisal date 36 h away with no responsible party is milestone_at_risk (unassigned), detected 48 h before due', () => {
+    const due = t(hours(36));
+    const s = only(exceptionInputs({ milestoneDates: [milestone({ kind: 'appraisal', dueAt: due, responsible: null })] }));
+    expect(s.evidence.filter((e) => e.predicate !== undefined).map((e) => e.predicate)).toEqual(['unassigned']);
+    expect(s.evidence[0]!.explanation).toBe('Appraisal date is due within 48 h and nobody is named as responsible for it');
+    expect(s.detectedAt).toBe(due - MILESTONE_UNASSIGNED_WINDOW_MS);
+    expect(s.ownerUserId).toBe(ME);
+  });
+
+  it('E157 / R-ACC-6: the 48 h boundary is inclusive (due_at - now ≤ 48 h); 48 h + 1 ms is not yet a risk; a responsible party means no risk', () => {
+    expect(keys(deriveExceptions(exceptionInputs({ milestoneDates: [milestone({ dueAt: t(hours(48)), responsible: null })] })))).toEqual([ddKey]);
+    expect(deriveExceptions(exceptionInputs({ milestoneDates: [milestone({ dueAt: t(hours(48) + 1), responsible: null })] })).upserts).toEqual([]);
+    expect(deriveExceptions(exceptionInputs({ milestoneDates: [milestone({ dueAt: t(hours(36)), responsible: 'lender' })] })).upserts).toEqual([]);
+  });
+
+  it('R-ACC-6: overdue AND nobody responsible names both predicates; due exactly now is not yet overdue (due_at < now)', () => {
+    const s = only(exceptionInputs({ milestoneDates: [milestone({ dueAt: t(-min(1)), responsible: null })] }));
+    expect(s.evidence.filter((e) => e.predicate !== undefined).map((e) => e.predicate)).toEqual(['overdue', 'unassigned']);
+    expect(deriveExceptions(exceptionInputs({ milestoneDates: [milestone({ dueAt: NOW, responsible: 'agent' })] })).upserts).toEqual([]);
+  });
+
+  it('E158 / R-TXN-2 R-TXN-3: a proposed (unconfirmed) date due tomorrow is never a risk, nor a waived one, nor one already overdue', () => {
+    for (const status of ['proposed', 'waived'] as const) {
+      for (const dueAt of [t(hours(20)), t(-hours(20))]) {
+        const r = deriveExceptions(exceptionInputs({ milestoneDates: [milestone({ status, dueAt, responsible: null })] }));
+        expect(r.upserts).toEqual([]);
+        expect(r.cleared).toEqual([ddKey]);
+      }
+    }
+  });
+
+  it('R-TXN-2 R-ACC-6: stored fields only: a confirmed date with no stored due_at (repair pending) is not judged', () => {
+    expect(deriveExceptions(exceptionInputs({ milestoneDates: [milestone({ dueAt: null, responsible: null })] })).upserts).toEqual([]);
+  });
+
+  it('R-ACC-1 R-ACC-6: completed on time clears; completed after the date passed is "fixed late" at completed_at', () => {
+    const due = t(-hours(10));
+    expect(deriveExceptions(exceptionInputs({ milestoneDates: [milestone({ dueAt: due, completedAt: t(-hours(11)) })] })).upserts).toEqual([]);
+    const late = only(exceptionInputs({ milestoneDates: [milestone({ dueAt: due, completedAt: t(-hours(1)) })] }));
+    expect(late.conditionClearedAt).toBe(t(-hours(1)));
+    expect(late.detectedAt).toBe(due);
+    expect(late.evidence[0]!.predicate).toBe('overdue');
+  });
+
+  it('E156 R-ACC-1 R-ACC-6: after the date moves, due_version bumps and the key changes, so the old occurrence resolves and the new one is judged on its own', () => {
+    const v1 = deriveExceptions(exceptionInputs({ milestoneDates: [milestone({ dueAt: t(-hours(2)) })] })).upserts;
+    expect(keys({ upserts: v1 })).toEqual([`milestone:${dealDate(1)}:1`]);
+    // moved three days out (still someone responsible): no risk for version 2, version 1 clears
+    const moved = deriveExceptions(exceptionInputs({ milestoneDates: [milestone({ dueAt: t(hours(72)), dueVersion: 2 })], existing: v1 }));
+    expect(moved).toEqual({ upserts: [], cleared: [`milestone:${dealDate(1)}:1`] });
+    // moved, but overdue again: a new item under the new key, the old one clears
+    const again = deriveExceptions(exceptionInputs({ milestoneDates: [milestone({ dueAt: t(-min(5)), dueVersion: 2 })], existing: v1 }));
+    expect(keys(again)).toEqual([`milestone:${dealDate(1)}:2`]);
+    expect(again.cleared).toEqual([`milestone:${dealDate(1)}:1`]);
+  });
+
+  it('R-ACC-1 R-ACC-6: idempotent, and a responsible party named later clears the unassigned item', () => {
+    const at36 = milestone({ dueAt: t(hours(36)), responsible: null });
+    const first = deriveExceptions(exceptionInputs({ milestoneDates: [at36] }));
+    expect(deriveExceptions(exceptionInputs({ milestoneDates: [at36], existing: first.upserts }))).toEqual({ upserts: [], cleared: [] });
+    expect(deriveExceptions(exceptionInputs({ milestoneDates: [{ ...at36, responsible: 'title' }], existing: first.upserts }))).toEqual({ upserts: [], cleared: [ddKey] });
+  });
+
+  it('R-ACC-6: time alone turns a date into a risk on the next recompute, and detectedAt never moves (property over now)', () => {
+    const d = milestone({ dueAt: t(hours(100)), responsible: null });
+    fc.assert(
+      fc.property(fc.integer({ min: -hours(200), max: hours(200) }), (delta) => {
+        const now = t(delta);
+        const r = deriveExceptions(exceptionInputs({ now, milestoneDates: [d] }));
+        const inWindow = (d.dueAt as number) - now <= MILESTONE_UNASSIGNED_WINDOW_MS;
+        expect(r.upserts.length).toBe(inWindow ? 1 : 0);
+        if (inWindow) expect(r.upserts[0]!.detectedAt).toBe((d.dueAt as number) - MILESTONE_UNASSIGNED_WINDOW_MS);
+      }),
+      { numRuns: 100 },
+    );
   });
 });
 

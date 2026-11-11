@@ -25,6 +25,7 @@ import type {
   IanaZone,
   Instant,
   LeadInquiryId,
+  ListingId,
   LocalDate,
   MessageId,
   PondId,
@@ -304,7 +305,17 @@ export type FeedItemType =
   | 'inactivity_warning'
   | 'pond_new'
   | 'saved_search_review'
-  | 'missed_call';
+  | 'missed_call'
+  | ForeignFeedItemType;
+
+/**
+ * Phase 2/3 card types (module 18a). Each is MATERIALIZED by its owning module, which writes one
+ * priority_feed_items row under its own key family (keys.ts `FOREIGN_FEED_KEY`); the scorer never
+ * produces, refreshes or closes them (the Phase 1 extension point). The feed API only gives each one its
+ * label and one-tap action on the way out.
+ */
+export type ForeignFeedItemType = 'seller_update' | 'marketing_review' | 'weekly_plan' | 'coaching_fix' | 'likely_to_move';
+export const FOREIGN_FEED_ITEM_TYPES: readonly ForeignFeedItemType[] = ['seller_update', 'marketing_review', 'weekly_plan', 'coaching_fix', 'likely_to_move'];
 
 export const FEED_ITEM_TYPES: readonly FeedItemType[] = [
   'lead_offer',
@@ -321,6 +332,7 @@ export const FEED_ITEM_TYPES: readonly FeedItemType[] = [
   'pond_new',
   'saved_search_review',
   'missed_call',
+  ...FOREIGN_FEED_ITEM_TYPES,
 ];
 
 /** priority_feed_items.subject_type as core writes it. */
@@ -353,7 +365,11 @@ export type OneTapAction =
   | { kind: 'open_deal'; label: string; dealId: DealId }
   | { kind: 'complete_deal_date'; label: string; dealDateId: DealDateId }
   | { kind: 'review_search'; label: string; savedSearchId: SavedSearchId }
-  | { kind: 'open_contact'; label: string; contactId: ContactId };
+  | { kind: 'open_contact'; label: string; contactId: ContactId }
+  /** the listing page (seller updates and marketing pieces belong to a listing) */
+  | { kind: 'open_listing'; label: string; listingId: ListingId }
+  /** opens the card's own details in place (what the owning module wrote on the card), no navigation */
+  | { kind: 'show_details'; label: string };
 
 export type OneTapKind = OneTapAction['kind'];
 
@@ -385,8 +401,8 @@ export interface FeedItem {
 // ---- exceptions ----------------------------------------------------------------------------------
 
 /** exception_items.item_type */
-export type ExceptionType = 'untouched_lead' | 'overdue_promise' | 'failed_send' | 'missing_outcome';
-export const EXCEPTION_TYPES: readonly ExceptionType[] = ['untouched_lead', 'overdue_promise', 'failed_send', 'missing_outcome'];
+export type ExceptionType = 'untouched_lead' | 'overdue_promise' | 'failed_send' | 'missing_outcome' | 'milestone_at_risk';
+export const EXCEPTION_TYPES: readonly ExceptionType[] = ['untouched_lead', 'overdue_promise', 'failed_send', 'missing_outcome', 'milestone_at_risk'];
 
 /** messages.status */
 export type MessageStatus =
@@ -418,11 +434,38 @@ export interface OutboundStatusFacts {
   dispatchedAt: Instant | null;
   /** The gate explanation (blocked) or the provider error code (failed). Never PII. */
   statusReason?: string | null;
+  /**
+   * messages.marketing_piece_id: one recipient's row of an open-house invite (R-MKT-8). An invite that
+   * an opt-out blocked is counted on the send ("Sent 41 of 45; 4 opted out"), never a failed_send.
+   */
+  marketingPieceId?: string | null;
+}
+
+/**
+ * One milestone date (deal_dates row with its Phase 2 columns) for R-ACC-6 `milestone_at_risk`. Only
+ * stored fields: `dueAt` is the instant module 31 computed at confirm time (end of the due day in the
+ * tenant zone), `dueVersion` bumps whenever a confirmed date moves (so a moved date is a new occurrence).
+ */
+export interface MilestoneDateFacts {
+  dealDateId: DealDateId;
+  dealId: DealId;
+  /** The deal owner: who answers for the date (R-ACC-6). */
+  ownerUserId: UserId;
+  /** Null while a confirmed date's stored instant is missing (module 31's reconcile repairs it). */
+  dueAt: Instant | null;
+  dueVersion: number;
+  /** deal_dates.responsible; null = nobody named. */
+  responsible: 'buyer' | 'seller' | 'lender' | 'title' | 'agent' | 'tc' | 'other' | null;
+  completedAt: Instant | null;
+  /** Only `confirmed` dates are ever at risk (R-TXN-2/3: a proposal drives nothing). */
+  status: 'proposed' | 'confirmed' | 'waived';
+  /** For the evidence wording only ("Inspection date"). */
+  kind?: DealDateFacts['kind'];
 }
 
 /** One evidence entry on an exception (exception_items.evidence jsonb element). */
 export interface ExceptionEvidence {
-  sourceType: SourceType | 'ownership_period' | 'message_status';
+  sourceType: SourceType | 'ownership_period' | 'message_status' | 'deal_date';
   sourceId: string;
   /** Short, PII-free explanation shown to the Team Lead. */
   explanation: string;
@@ -432,12 +475,17 @@ export interface ExceptionEvidence {
   locator?: Locator;
   /** Verbatim snippet (from the source claim), when the evidence is a quote. */
   snippet?: string;
+  /** milestone_at_risk: which R-ACC-6 predicate this entry shows. */
+  predicate?: MilestonePredicate;
 }
+
+/** R-ACC-6: overdue (`due_at < now`), or due within 48 h with no responsible party. */
+export type MilestonePredicate = 'overdue' | 'unassigned';
 
 /** One exception_items row as core derives it (`computed_at` is stamped by the API). */
 export interface ExceptionItemSpec {
   itemType: ExceptionType;
-  subjectType: 'contact' | 'task' | 'message' | 'appointment';
+  subjectType: 'contact' | 'task' | 'message' | 'appointment' | 'deal_date';
   subjectId: string;
   contactId: ContactId | null;
   /** The agent who answers for it (R-ACC-2). Null only for a failed send with no owner at all. */
@@ -450,7 +498,10 @@ export interface ExceptionItemSpec {
   /** Set when the condition no longer holds ("fixed late"); the item stays queued until handled. */
   conditionClearedAt: Instant | null;
   ruleVersion: number;
-  /** Per occurrence: `untouched:{contact}:{period}`, `promise:{task}`, `send:{message}`, `appt:{appointment}`. */
+  /**
+   * Per occurrence: `untouched:{contact}:{period}`, `promise:{task}`, `send:{message}`, `appt:{appointment}`,
+   * `milestone:{deal_date}:{due_version}`.
+   */
   dedupeKey: string;
 }
 
@@ -470,6 +521,8 @@ export interface ExceptionInputs {
   promiseTasks: TaskFacts[];
   outbound: OutboundStatusFacts[];
   appointments: ApptFacts[];
+  /** R-ACC-6: milestone dates (any status; core keeps the confirmed, uncompleted ones). */
+  milestoneDates?: MilestoneDateFacts[];
   settings: ExceptionSettings;
   /**
    * Spec correction (additive): the exception_items rows already stored for the same scope. With

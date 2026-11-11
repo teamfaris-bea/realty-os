@@ -33,6 +33,8 @@ export const OneTapActionSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('complete_deal_date'), label: z.string(), dealDateId: id }),
   z.object({ kind: z.literal('review_search'), label: z.string(), savedSearchId: id }),
   z.object({ kind: z.literal('open_contact'), label: z.string(), contactId: id }),
+  z.object({ kind: z.literal('open_listing'), label: z.string(), listingId: id }),
+  z.object({ kind: z.literal('show_details'), label: z.string() }),
 ]);
 
 export const FeedItemSchema = z.object({
@@ -60,17 +62,18 @@ const LocatorSchema = z.discriminatedUnion('kind', [
 ]);
 
 export const ExceptionEvidenceSchema = z.object({
-  sourceType: z.enum(['ownership_period', 'message_status', ...SOURCE_TYPES]),
+  sourceType: z.enum(['ownership_period', 'message_status', 'deal_date', ...SOURCE_TYPES]),
   sourceId: id,
   explanation: z.string().min(1).max(300),
   at: instantMs.optional(),
   locator: LocatorSchema.optional(),
   snippet: z.string().min(1).max(500).optional(),
+  predicate: z.enum(['overdue', 'unassigned']).optional(),
 });
 
 export const ExceptionItemSpecSchema = z.object({
   itemType: z.enum(EXCEPTION_TYPES as [string, ...string[]]),
-  subjectType: z.enum(['contact', 'task', 'message', 'appointment']),
+  subjectType: z.enum(['contact', 'task', 'message', 'appointment', 'deal_date']),
   subjectId: id,
   contactId: id.nullable(),
   ownerUserId: id.nullable(),
@@ -79,7 +82,7 @@ export const ExceptionItemSpecSchema = z.object({
   evidence: z.array(ExceptionEvidenceSchema).min(1),
   conditionClearedAt: instantMs.nullable(),
   ruleVersion: z.number().int().min(1),
-  dedupeKey: z.string().regex(/^(untouched|promise|send|appt):/),
+  dedupeKey: z.string().regex(/^(untouched|promise|send|appt|milestone):/),
 });
 
 export const SpeedToLeadSummarySchema = z.object({

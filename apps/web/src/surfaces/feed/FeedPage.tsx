@@ -10,6 +10,10 @@
 // - One-tap actions: the primary action is the big button; alternatives sit beside it.
 // - Counts show their denominator ("Showing 50 of 63", R-ACC-4 display half).
 // - Nothing on this page animates to look busy: "Updated 10:42 AM" is the real fetch time.
+// - Phase 2/3 cards (seller update, marketing, weekly plan, coaching tip, likely to move; module 18a) are
+//   written by their own modules and arrive with a label and one primary action like any other card. A
+//   card whose page does not exist yet (the weekly plan, the daily tip) opens its own lines in place
+//   ("See the plan"): one tap, and nothing pretends a page is there.
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useId, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -146,12 +150,16 @@ export function FeedCardView({ card, pinned }: { card: FeedCard; pinned: boolean
   const expired = isOffer && card.dueAt !== null && Date.parse(card.dueAt) <= now;
   const lead = card.reasons[0];
   const titleId = `${whyId}-title`;
+  // a card whose one tap IS its details shows them in the same panel, under its own name
+  const detailsFirst = card.primaryAction.kind === 'show_details';
+  const details = { open: why, controls: whyId, onOpen: () => setWhy((w) => !w) };
   return (
     <Card as="article" aria-labelledby={titleId} className={`flex flex-col gap-3 ${pinned ? 'border-accent/50' : ''}`}>
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
           <p className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted">{itemLabel(card.itemType)}</p>
-          <h3 id={titleId} className="truncate text-[19px] font-semibold text-ink">
+          {/* a name stays on one line; a card without a contact is headed by its first line, which wraps (it is the content) */}
+          <h3 id={titleId} className={`text-[19px] font-semibold text-ink ${card.contact ? 'truncate' : 'break-words'}`}>
             {card.contact ? (
               <Link to={`/contacts/${card.contact.id}`} className="inline-flex min-h-tap items-center hover:underline">
                 {card.contact.name}
@@ -166,25 +174,27 @@ export function FeedCardView({ card, pinned }: { card: FeedCard; pinned: boolean
       </div>
       {expired ? <p className="text-[15px] text-ink-muted">This offer ended. The lead is going to the next agent.</p> : null}
       <div className="flex flex-wrap items-start gap-2">
-        <ActionButton action={card.primaryAction} card={card} expired={expired} className="min-w-[8rem]" />
+        <ActionButton action={card.primaryAction} card={card} expired={expired} details={details} className="min-w-[8rem]" />
         {inlineAlternatives(card).map((a, i) => (
-          <ActionButton key={`${a.kind}:${i}`} action={a} card={card} variant="secondary" expired={expired && (a.kind === 'accept_offer' || a.kind === 'decline_offer')} />
+          <ActionButton key={`${a.kind}:${i}`} action={a} card={card} variant="secondary" details={details} expired={expired && (a.kind === 'accept_offer' || a.kind === 'decline_offer')} />
         ))}
       </div>
       <div className="flex flex-wrap items-center gap-x-1">
-        <button
-          type="button"
-          aria-expanded={why}
-          aria-controls={whyId}
-          onClick={() => setWhy((w) => !w)}
-          className="inline-flex min-h-tap items-center rounded-lg px-1 text-[15px] font-medium text-accent"
-        >
-          {why ? 'Hide why' : 'Why this'}
-        </button>
+        {detailsFirst ? null : (
+          <button
+            type="button"
+            aria-expanded={why}
+            aria-controls={whyId}
+            onClick={() => setWhy((w) => !w)}
+            className="inline-flex min-h-tap items-center rounded-lg px-1 text-[15px] font-medium text-accent"
+          >
+            {why ? 'Hide why' : 'Why this'}
+          </button>
+        )}
         {!pinned ? <LaterButtons card={card} /> : null}
       </div>
       {why ? (
-        <ul id={whyId} className="flex flex-col gap-1 border-t border-line pt-2 text-[15px] text-ink" aria-label="Why this is in your feed">
+        <ul id={whyId} className="flex flex-col gap-1 border-t border-line pt-2 text-[15px] text-ink" aria-label={detailsFirst ? 'Details' : 'Why this is in your feed'}>
           {card.reasons.map((r, i) => (
             <li key={`${r.code}:${i}`} className="flex gap-2">
               <span aria-hidden="true" className="text-ink-muted">
