@@ -1076,6 +1076,42 @@ export interface JurisdictionPacksTable {
   created_at: Generated<Timestamp>;
 }
 
+/** public.lead_email_inbox_keys (table) */
+export interface LeadEmailInboxKeysTable {
+  tenant_id: string;
+  id: string;
+  connection_id: string;
+  key_hash: Buffer;
+  key_enc: Buffer;
+  created_by_user_id: string | null;
+  created_at: Generated<Timestamp>;
+  retired_at: Timestamp | null;
+}
+
+/** public.lead_email_messages (table) */
+export interface LeadEmailMessagesTable {
+  tenant_id: string;
+  id: string;
+  connection_id: string;
+  lead_source_id: string;
+  message_key_sha256: Buffer;
+  provider_format: string;
+  received_at: Timestamp;
+  status: string;
+  hold_code: string | null;
+  parser_kind: string | null;
+  sender_domain: string | null;
+  dkim_pass_domains: Generated<string[]>;
+  content_enc: Buffer | null;
+  parsed_enc: Buffer | null;
+  contact_id: string | null;
+  inquiry_id: string | null;
+  decided_by_user_id: string | null;
+  decided_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
 /** public.lead_inquiries (table) */
 export interface LeadInquiriesTable {
   tenant_id: string;
@@ -2521,6 +2557,8 @@ export interface DB {
   invites: InvitesTable;
   jobs: JobsTable;
   jurisdiction_packs: JurisdictionPacksTable;
+  lead_email_inbox_keys: LeadEmailInboxKeysTable;
+  lead_email_messages: LeadEmailMessagesTable;
   lead_inquiries: LeadInquiriesTable;
   lead_ownership_events: LeadOwnershipEventsTable;
   lead_source_costs: LeadSourceCostsTable;
@@ -2672,6 +2710,8 @@ export const TABLE_NAMES = [
   'invites',
   'jobs',
   'jurisdiction_packs',
+  'lead_email_inbox_keys',
+  'lead_email_messages',
   'lead_inquiries',
   'lead_ownership_events',
   'lead_source_costs',

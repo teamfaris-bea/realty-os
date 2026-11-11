@@ -173,7 +173,27 @@ export async function ingestInquiry(actor: SystemActor, input: InquiryInput, dep
   return withTenantTx(actor, (tx, now) => ingestInTx(tx, actor, i, now, deps), { retries: 3, ...(deps.db ? { db: deps.db } : {}) });
 }
 
-async function ingestInTx(tx: Tx, actor: SystemActor, i: InquiryInput, now: Instant, deps: IntakeDeps): Promise<IngestResult> {
+/** How a caller inside its own transaction (lead-email intake, module 22) shapes one inquiry. */
+export interface IngestOptions {
+  /**
+   * false: no autonomous first response for a new contact. Used when a person accepted a held lead email
+   * (R-INBOX-9: an email that was not verified never gets an autonomous reply; the agent replies themselves).
+   */
+  firstResponse?: boolean;
+  /** a parsed lead email: lead_inquiries.parse_status 'parsed' with each field's source span (R-INBOX-9) */
+  parse?: { status: 'parsed'; evidence: Record<string, unknown> };
+}
+
+/**
+ * The same intake, inside the caller's transaction, as the system actor of the caller's resolved tenant (lead email:
+ * the inbox key resolver). Identical dedupe, routing (ownership engine), consent history and first response.
+ */
+export async function ingestInquiryInTx(tx: Tx, actor: SystemActor, input: InquiryInput, now: Instant, deps: IntakeDeps, opts: IngestOptions = {}): Promise<IngestResult> {
+  const parsed = IntakeBody.parse(Object.fromEntries(Object.entries(input).filter(([k]) => k !== 'leadSourceId')));
+  return ingestInTx(tx, actor, { ...parsed, leadSourceId: input.leadSourceId }, now, deps, opts);
+}
+
+async function ingestInTx(tx: Tx, actor: SystemActor, i: InquiryInput, now: Instant, deps: IntakeDeps, opts: IngestOptions = {}): Promise<IngestResult> {
   const { ids, envelope } = deps;
   const source = await repo.leadSource(tx, i.leadSourceId);
   if (!source || !source.active) throw new AppError('NOT_FOUND');
@@ -234,6 +254,7 @@ async function ingestInTx(tx: Tx, actor: SystemActor, i: InquiryInput, now: Inst
     rawPayloadEnc: await rawPayloadEnc(inquiryId),
     fingerprint,
     outcome,
+    ...(opts.parse ? { parseStatus: opts.parse.status, parseEvidence: opts.parse.evidence } : {}),
   });
   if (dup === 'FINGERPRINT') {
     const first = prior.find((p) => p.fingerprint === fingerprint)!;
@@ -305,7 +326,9 @@ async function ingestInTx(tx: Tx, actor: SystemActor, i: InquiryInput, now: Inst
     await recordConsent(contactId, inquiryId);
     await addCandidates(contactId);
     // 6 R-AST-16: the first response job, in the intake transaction (ids only in the payload)
-    await enqueueJob(tx, { queue: FIRST_RESPONSE_JOB.queue, kind: FIRST_RESPONSE_JOB.kind, priority: FIRST_RESPONSE_JOB.priority, payload: { contactId }, dedupeKey: FIRST_RESPONSE_JOB.dedupeKey(contactId) });
+    if (opts.firstResponse !== false) {
+      await enqueueJob(tx, { queue: FIRST_RESPONSE_JOB.queue, kind: FIRST_RESPONSE_JOB.kind, priority: FIRST_RESPONSE_JOB.priority, payload: { contactId }, dedupeKey: FIRST_RESPONSE_JOB.dedupeKey(contactId) });
+    }
     return { contactId, outcome: 'new_contact', inquiryId };
   }
 

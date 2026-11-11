@@ -144,6 +144,8 @@ export const ACTIONS = [
   'bulk.text', // parity module 63: batch text, per person; also needs the Owner's switch (R-PAR-40)
   'settings.batch_text', // parity module 63: the batch-text switch (Owner on 🔒 + attestation; Admin off only)
   'playbook.auto_enroll_stage', // parity module 67: the stage whose entry enrolls (team: Owner/Admin; an agent: own agent playbook)
+  'lead_email.review_view', // module 22 lead-email slice: the "Needs review" list of held lead emails (Owner/Admin/Team Lead; support read-only)
+  'lead_email.review_decide', // module 22 lead-email slice: accept a held lead email as a lead (same intake path) or discard it
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -279,6 +281,11 @@ export const AUDIT_ACTIONS = [
   'bulk.completed', // parity module 63: a bulk action finished (counts by reason)
   'settings.batch_text_changed', // parity module 63: batch text turned on (Owner, re-auth + attestation) or off
   'member.signature_changed', // parity module 63: a member changed their own email signature (text redacted)
+  'lead_email.inbox_enabled', // module 22 lead-email slice: an Owner/Admin turned on a lead source's inbound address (key created by the system)
+  'lead_email.key_rotated', // module 22 lead-email slice: the inbound address was rotated; the old key routes nothing from then on
+  'lead_email.sender_domains_changed', // module 22 lead-email slice: the allowlisted DKIM sender domains of an inbox changed
+  'lead_email.review_accepted', // module 22 lead-email slice: a held lead email was accepted as a lead (through intake)
+  'lead_email.review_discarded', // module 22 lead-email slice: a held lead email was discarded (its content purged)
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -523,6 +530,10 @@ const MATRIX: Record<Action, ActionRule> = {
   // Linking an external account is never an Action: only the provider callback does it, as the system.
   'integration.view': { roles: { owner: ALL, admin: ALL } },
   'integration.manage': { roles: { owner: ALL_REAUTH, admin: ALL_REAUTH } },
+  // Module 22 lead-email slice (DATA_MODEL §8 lead-email row, R-LEM-6): the held-email list. Team Leads triage it too;
+  // support reads it (read-only) and never decides. The system never "decides" (it holds or creates on arrival).
+  'lead_email.review_view': { roles: { owner: ALL, admin: ALL, team_lead: ALL }, support: true },
+  'lead_email.review_decide': { roles: { owner: ALL, admin: ALL, team_lead: ALL } },
   // FUB parity (DATA_MODEL §12 capability matrix; not §3 rows). Each module tests its own row.
   // note.write: ✅ | ✅ | T + pond detail | O + D | O | D
   'note.write': { roles: { owner: ALL, admin: ALL, team_lead: { scopes: ['own', 'collab', 'team', 'pond'] }, agent: { scopes: ['own', 'collab', 'deal'] }, isa: O, tc: DEAL } },

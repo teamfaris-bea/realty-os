@@ -110,7 +110,11 @@ function occurred(v: string | undefined, now: Instant): Instant {
   return Number.isFinite(t) && Math.abs(t - now) < 7 * 24 * 3600_000 ? instant(t) : now;
 }
 
-async function run<T>(req: FastifyRequest, provider: Provider, eventId: string, tenantId: string | null, payload: unknown, fn: () => Promise<T>): Promise<'duplicate' | 'unrouted' | T> {
+/**
+ * Records the delivery once (webhook_events: idempotency + the unrouted log), then runs `fn` in the resolved tenant.
+ * Also used by the lead-email webhooks (module 22 slice: apps/api/src/leadEmail/routes.ts).
+ */
+export async function run<T>(req: FastifyRequest, provider: Provider, eventId: string, tenantId: string | null, payload: unknown, fn: () => Promise<T>): Promise<'duplicate' | 'unrouted' | T> {
   const p = req.server.platform;
   const now = p.clock.now();
   const id = await recordEvent(p.db, p.ids, p.envelope, provider, eventId, tenantId, payload, now);

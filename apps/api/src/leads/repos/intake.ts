@@ -120,17 +120,21 @@ export interface InquiryInsert {
   rawPayloadEnc: Uint8Array | null;
   fingerprint: string;
   outcome: 'new_contact' | 'attached' | 'reinquiry' | 'duplicate_ignored';
+  /** lead email (module 22): 'parsed' with each field's source span (R-INBOX-9); default 'structured' */
+  parseStatus?: 'structured' | 'parsed';
+  parseEvidence?: Record<string, unknown>;
 }
 
 export async function insertInquiry(tx: Tx, i: InquiryInsert): Promise<void> {
   await sql`
     INSERT INTO lead_inquiries (tenant_id, id, contact_id, lead_source_id, external_id, received_at, inquiry_type, message,
                                 property_text, postal_code, price_min_cents, price_max_cents, campaign_ref, ad_ref,
-                                source_detail, consent_disclosure_id, raw_payload_enc, fingerprint, outcome)
+                                source_detail, consent_disclosure_id, raw_payload_enc, fingerprint, outcome, parse_status, parse_evidence)
     VALUES (app.tenant_id(), ${i.id}::uuid, ${i.contactId}::uuid, ${i.leadSourceId}::uuid, ${i.externalId}, ${i.receivedAt}::timestamptz,
             ${i.inquiryType}, ${i.message}, ${i.propertyText}, ${i.postalCode}, ${i.priceMinCents}, ${i.priceMaxCents},
             ${i.campaignRef}, ${i.adRef}, ${JSON.stringify(i.sourceDetail)}::jsonb, ${i.consentDisclosureId}::uuid,
-            ${i.rawPayloadEnc === null ? null : Buffer.from(i.rawPayloadEnc)}, ${i.fingerprint}, ${i.outcome})`.execute(tx);
+            ${i.rawPayloadEnc === null ? null : Buffer.from(i.rawPayloadEnc)}, ${i.fingerprint}, ${i.outcome},
+            ${i.parseStatus ?? 'structured'}, ${JSON.stringify(i.parseEvidence ?? {})}::jsonb)`.execute(tx);
 }
 
 /** The card narrative a pond / offer viewer sees (R-PERM-6): structured, PII-free facts only. */
