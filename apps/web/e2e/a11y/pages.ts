@@ -79,6 +79,11 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   { path: '/admin/tags', roles: ADMINS, url: at('/admin/tags') },
   { path: '/admin/fields', roles: ADMINS, url: at('/admin/fields') },
   { path: '/admin/stage-labels', roles: ADMINS, url: at('/admin/stage-labels') },
+  // module 40 (lane insights)
+  { path: '/owner', roles: ADMINS, url: at('/owner') },
+  { path: '/plan', roles: ALL, url: at('/plan') },
+  { path: '/plan/:week', roles: ALL, url: at('/plan/2026-W46') },
+  { path: '/goals', roles: ALL, url: at('/goals') },
 ];
 
 /** Screens outside the app frame (signed out). */
