@@ -27,6 +27,7 @@ import { surface as teamSurface } from '../surfaces/team/index.js';
 import { surface as adminSurface } from '../surfaces/admin/index.js';
 import { surface as settingsSurface } from '../surfaces/settings/index.js';
 import { surface as importsSurface } from '../surfaces/imports/index.js';
+import { surface as peopleEditSurface } from '../surfaces/people-edit/index.js';
 
 export type { NavSection, PageDef, PageNav, SurfaceModule } from './types.js';
 
@@ -46,5 +47,6 @@ export const surfaces: SurfaceModule[] = [
   adminSurface,
   settingsSurface,
   importsSurface,
+  peopleEditSurface,
   // registry: add new entries above this line
 ];

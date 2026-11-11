@@ -28,7 +28,9 @@ import { useMutate, useNow } from '../feed/lib/hooks.js';
 import { AGENT_ERROR_MESSAGES } from '../feed/lib/messages.js';
 import type { ContactCardView, ContactFullView, DealSide, DealView, TaskView, TimelineItem } from '../feed/lib/types.js';
 import { MessageRow, useTimeline } from '../thread/ThreadPage.js';
+import { ContactSections } from './sections.js';
 import { useContact } from './useContact.js';
+import { renderMentions } from '@realty/core/parity/people';
 
 export default function ContactPage() {
   return (
@@ -187,6 +189,8 @@ function FullView({ contact }: { contact: ContactFullView }) {
         ) : null}
       </Card>
 
+      <ContactSections contact={contact} />
+
       {forContact.length > 0 ? (
         <Section title="From the assistant">
           <ul className="flex flex-col gap-3">
@@ -217,6 +221,8 @@ function FullView({ contact }: { contact: ContactFullView }) {
     </div>
   );
 }
+
+const STAGE_WORD: Record<string, string> = { new: 'New', attempting: 'Attempting', connected: 'Connected', nurture: 'Nurture', active: 'Active', under_contract: 'Under contract', closed: 'Closed', lost: 'Lost' };
 
 const TIMELINE_LABEL: Record<string, string> = {
   note: 'Note',
@@ -265,15 +271,18 @@ function RecentTimeline({ contactId, contact }: { contactId: string; contact: { 
 }
 
 function OtherItem({ item }: { item: TimelineItem }) {
-  const what = item.type === 'ownership' ? (OWNERSHIP_LABEL[item.detail ?? ''] ?? (item.detail ?? '').replace(/_/g, ' ')) : (TIMELINE_LABEL[item.type] ?? item.type);
+  // FUB parity: an outside activity is always labelled as logged (R-PAR-30); a stage change says from → to
+  const logged = item.type === 'note' && item.detail?.startsWith('logged_activity:') ? `Logged ${item.detail.slice('logged_activity:'.length)}` : null;
+  const stage = item.type === 'stage' && item.detail ? `Stage: ${item.detail.split('>').map((s) => STAGE_WORD[s] ?? s.replace(/_/g, ' ')).filter(Boolean).join(' → ')}` : null;
+  const what = logged ?? stage ?? (item.type === 'ownership' ? (OWNERSHIP_LABEL[item.detail ?? ''] ?? (item.detail ?? '').replace(/_/g, ' ')) : (TIMELINE_LABEL[item.type] ?? item.type));
   return (
     <li className="rounded-xl border border-line bg-surface px-3 py-2 text-[15px] text-ink">
       <span className="font-medium">{what}</span>
-      {item.type === 'note' && item.preview ? <span>: {item.preview}</span> : null}
+      {item.type === 'note' && item.preview ? <span>: {renderMentions(item.preview)}</span> : null}
       {item.type === 'ownership' && item.note ? <span>: {item.note}</span> : null}
       <span className="text-ink-muted">
         {' '}
-        · {item.actor?.displayName ? `${item.actor.displayName}, ` : ''}
+        · {logged ? 'by ' : ''}{item.actor?.displayName ? `${item.actor.displayName}, ` : ''}
         {formatDateTime(item.occurredAt)}
         {item.provenance === 'imported' ? ' · Imported' : ''}
       </span>
