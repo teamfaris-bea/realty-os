@@ -145,7 +145,9 @@ test('where publishing is not available, Copy exports it: "Exported: post it you
   await expect(mp.getByRole('button', { name: /^Publish/ })).toHaveCount(0);
   await tap(page, mp.getByRole('button', { name: 'Copy' }), n);
   await expect(mp.getByTestId('status-label')).toHaveText('Exported: post it yourself', { timeout: 15_000 });
-  await expect(mp.getByRole('status').filter({ hasText: 'Exported: post it yourself' })).toBeVisible();
+  await expect(mp.getByText('Copied. Exported: post it yourself')).toBeVisible();
+  // and heard: the page's one live region says it
+  await expect(page.getByTestId('announcer')).toHaveText(/Exported: post it yourself/);
   expect(await mp.textContent()).not.toMatch(/\bposted\b/i);
   expect(n.taps).toBe(2);
 

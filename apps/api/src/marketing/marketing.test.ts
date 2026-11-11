@@ -108,3 +108,19 @@ describe('assets', () => {
     expect([notImage.status, notImage.code]).toEqual([422, 'MARKETING_ASSET_INVALID']);
   });
 });
+
+describe('open-house time', () => {
+  it('R-MKT-3: an open-house time typed as a wall-clock time is read in the team\'s own time zone, never the device\'s, and the invite renders it so', async () => {
+    const tz = (await h.su.query('SELECT default_timezone FROM tenant_settings WHERE tenant_id = $1', [w.tenantId])).rows[0].default_timezone as string;
+    const l = await teamListing(w.agent, {});
+    const p = (await generateAll(w.agent, l, { kinds: ['open_house_invite'], openHouse: undefined })).open_house_invite!;
+    const r = await call<{ piece: { openHouse: { startsAt: string; zone: string }; timezone: string; preview: { text: string }; guard: { approvable: boolean } } }>(w.agent, 'PATCH', `/marketing-pieces/${p.id}`, { openHouse: { localStart: '2027-06-05T10:00', localEnd: '2027-06-05T12:00' } });
+    expect(r.status).toBe(200);
+    expect(r.body.piece.timezone).toBe(tz);
+    expect(r.body.piece.openHouse.zone).toBe(tz);
+    const wall = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date(r.body.piece.openHouse.startsAt));
+    expect(wall).toBe('10:00 AM');
+    expect(r.body.piece.preview.text).toMatch(/10:00 AM/);
+    expect(r.body.piece.guard.approvable).toBe(true);
+  });
+});

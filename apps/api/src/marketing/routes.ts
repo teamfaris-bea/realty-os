@@ -65,7 +65,8 @@ const IdParams = z.strictObject({ id: z.uuid() });
 const AssetParams = z.strictObject({ id: z.uuid(), position: z.coerce.number().int().min(1).max(50) });
 const TokenParams = z.strictObject({ assetToken: z.string().min(10).max(400) });
 const Kind = z.enum(PIECE_KINDS);
-const OpenHouse = z.strictObject({ startsAt: z.iso.datetime({ offset: true }), endsAt: z.iso.datetime({ offset: true }) });
+const LocalTime = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+const OpenHouse = z.union([z.strictObject({ startsAt: z.iso.datetime({ offset: true }), endsAt: z.iso.datetime({ offset: true }) }), z.strictObject({ localStart: LocalTime, localEnd: LocalTime })]);
 const Sha = z.string().regex(/^[0-9a-f]{64}$/);
 
 export const GenerateBody = z.strictObject({ kinds: z.array(Kind).min(1).max(PIECE_KINDS.length).optional(), openHouse: OpenHouse.optional() });
@@ -106,6 +107,7 @@ export const PieceSchema = z.object({
   boundFields: z.array(z.string()),
   contentSha256: z.string(),
   openHouse: z.object({ startsAt: z.string(), endsAt: z.string(), zone: z.string() }).nullable(),
+  timezone: z.string(),
   preview: z.object({ text: z.string(), blocks: z.array(z.object({ role: z.string(), origin: z.string(), prominence: z.string(), text: z.string() })) }).nullable(),
   assets: z.array(z.object({ position: z.number(), objectId: z.uuid(), url: z.string() })),
   guard: z.object({ approvable: z.boolean(), reasons: z.array(z.string()), checkThis: z.boolean(), soft: z.array(z.string()), fairHousingReviewed: z.boolean() }),

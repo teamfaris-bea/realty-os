@@ -28,6 +28,7 @@ function piece(over: Partial<PieceView> = {}): PieceView {
     statusLabel: 'Draft: not approved yet',
     prose: {},
     contentSha256: SHA,
+    timezone: 'America/New_York',
     preview: {
       text: 'A bright home near the water.',
       blocks: [
@@ -137,7 +138,9 @@ describe('Marketing tab', () => {
     app(fake);
     const u = user();
     await u.click(await screen.findByRole('button', { name: 'Copy' }));
-    expect(await screen.findByText('Copied. Exported: post it yourself')).toBeInTheDocument();
+    // shown on the card (aria-hidden) and spoken through the page's one live region
+    expect((await screen.findAllByText('Copied. Exported: post it yourself')).length).toBeGreaterThanOrEqual(1);
+    await waitFor(() => expect(screen.getByTestId('announcer')).toHaveTextContent('Copied. Exported: post it yourself'));
     expect(await navigator.clipboard.readText()).toBe('Bright home. Harbor Realty LLC');
     expect(fake.callsTo(`POST /marketing-pieces/${p.id}/export`)).toHaveLength(1);
   });
@@ -195,9 +198,9 @@ describe('Marketing approval card (approvals inbox)', () => {
     const p = piece({ kind: 'website_page', preview: { text: '', blocks: [{ role: 'headline', origin: 'prose', prominence: 'display', text: 'Room to grow' }, { role: 'address', origin: 'bound', prominence: 'heading', text: '12 Harbor View Rd, Charleston' }] } });
     const fake = inbox([p]).on(`POST /marketing-pieces/${p.id}/approve`, { status: 200, body: { piece: { ...p, status: 'approved' } } });
     app(fake, '/approvals');
-    const card = (await screen.findByRole('heading', { name: '12 Harbor View Rd, Charleston' })).closest('article')!;
+    const card = (await screen.findByRole('heading', { name: 'Listing page: 12 Harbor View Rd, Charleston' })).closest('article')!;
     expect(within(card).getAllByText('Room to grow')[0]).toBeVisible();
-    expect(within(card).getByText(/Listing page/)).toBeInTheDocument();
+    expect(within(card).getByRole('heading', { name: /^Listing page: / })).toBeInTheDocument();
     expect(screen.queryByText('Nothing to approve')).toBeNull();
     await user().click(within(card).getByRole('button', { name: 'Approve' }));
     await waitFor(() => expect(fake.callsTo(`POST /marketing-pieces/${p.id}/approve`)).toHaveLength(1));

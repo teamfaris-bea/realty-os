@@ -49,6 +49,7 @@ export interface PieceView {
   prose: Record<string, unknown>;
   contentSha256: string;
   openHouse?: { startsAt: string; endsAt: string; zone: string } | null;
+  timezone: string;
   preview: { text: string; blocks: PreviewBlock[] } | null;
   assets: { position: number; objectId: string; url: string }[];
   guard: {

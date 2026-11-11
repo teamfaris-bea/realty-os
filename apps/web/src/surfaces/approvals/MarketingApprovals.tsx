@@ -3,7 +3,7 @@
 // Approving is ONE tap (Approve: POST /marketing-pieces/:id/approve with the contentSha256 shown). A draft
 // the fair-housing or brokerage checks refuse shows the reasons and no Approve button.
 import { useQuery } from '@tanstack/react-query';
-import { type ReactNode, useId, useState } from 'react';
+import { type ReactNode, useEffect, useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Card, Notice } from '../../design/index.js';
 import { type ApiError, messageFor, useApi } from '../../shell/index.js';
@@ -29,6 +29,19 @@ export function useMarketingApprovals() {
 export function MarketingApprovals({ whenEmpty = null }: { whenEmpty?: ReactNode }) {
   const q = useMarketingApprovals();
   const headingId = useId();
+  // after an approval the card goes away: keyboard focus moves to the card now in its place (or the page heading)
+  const [focusAt, setFocusAt] = useState<number | null>(null);
+  const pieces = q.data?.pieces;
+  useEffect(() => {
+    if (focusAt === null || !pieces) return;
+    const next = pieces[Math.min(focusAt, pieces.length - 1)];
+    const target = next ? document.getElementById(`marketing-title-${next.id}`) : document.querySelector<HTMLElement>('h1');
+    if (target) {
+      if (!target.hasAttribute('tabindex')) target.setAttribute('tabindex', '-1');
+      target.focus();
+      setFocusAt(null);
+    }
+  }, [focusAt, pieces]);
   if (q.isPending) return null;
   if (q.isError) {
     return (
@@ -45,9 +58,9 @@ export function MarketingApprovals({ whenEmpty = null }: { whenEmpty?: ReactNode
         Marketing to approve
       </h2>
       <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        {q.data.pieces.map((p) => (
+        {q.data.pieces.map((p, i) => (
           <li key={p.id} id={`marketing-${p.id}`} className="min-w-0 scroll-mt-20">
-            <MarketingApprovalCard piece={p} />
+            <MarketingApprovalCard piece={p} onApproved={() => setFocusAt(i)} />
           </li>
         ))}
       </ul>
@@ -55,8 +68,8 @@ export function MarketingApprovals({ whenEmpty = null }: { whenEmpty?: ReactNode
   );
 }
 
-export function MarketingApprovalCard({ piece }: { piece: PieceView }) {
-  const titleId = useId();
+export function MarketingApprovalCard({ piece, onApproved }: { piece: PieceView; onApproved?: () => void }) {
+  const titleId = `marketing-title-${piece.id}`;
   const sheets = useAgentSheets();
   const approve = useApprovePiece();
   const [failure, setFailure] = useState<string | null>(null);
@@ -65,8 +78,10 @@ export function MarketingApprovalCard({ piece }: { piece: PieceView }) {
   const doApprove = async () => {
     setFailure(null);
     const r = await approve.approve(piece);
-    if (r.ok) sheets.announce(`Approved: ${kindLabel(piece.kind).toLowerCase()}${address ? ` for ${address}` : ''}.`);
-    else setFailure(errorText(r));
+    if (r.ok) {
+      sheets.announce(`Approved: ${kindLabel(piece.kind).toLowerCase()}${address ? ` for ${address}` : ''}.`);
+      onApproved?.();
+    } else setFailure(errorText(r));
   };
   return (
     <Card as="article" aria-labelledby={titleId} className="flex min-w-0 flex-col gap-3">
@@ -74,15 +89,13 @@ export function MarketingApprovalCard({ piece }: { piece: PieceView }) {
         <p className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted">
           {kindLabel(piece.kind)} · Version {piece.versionNo}
         </p>
-        <h3 id={titleId} className="text-[19px] font-semibold text-ink">
-          {address ?? kindLabel(piece.kind)}
+        <h3 id={titleId} tabIndex={-1} className="text-[19px] font-semibold text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+          {address ? `${kindLabel(piece.kind)}: ${address}` : kindLabel(piece.kind)}
         </h3>
         {headline ? <p className="text-[15px] text-ink">{headline}</p> : null}
       </div>
-      <details>
-        <summary className="flex min-h-tap cursor-pointer items-center text-[15px] font-medium text-accent">See all of it</summary>
-        <PiecePreview piece={piece} label={`${kindLabel(piece.kind)} preview`} />
-      </details>
+      {/* the whole version is shown: Approve signs off on exactly this content (its contentSha256) */}
+      <PiecePreview piece={piece} label={`${kindLabel(piece.kind)} preview`} />
       <GuardNotes piece={piece} />
       {failure ? <Notice tone="error">{failure}</Notice> : null}
       <div className="flex flex-wrap gap-2">

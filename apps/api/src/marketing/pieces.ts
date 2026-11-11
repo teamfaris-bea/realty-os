@@ -33,7 +33,7 @@ import {
   parseGuardResult,
 } from '@realty/core/marketing';
 import type { Instant, StoredObjectId, UserActor } from '@realty/core/foundation';
-import { toIso } from '@realty/core/foundation';
+import { localDate, localTime, resolveLocal, toIso, zone as ianaZoneOf } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 import { audit, redactSnapshot } from '../audit.js';
@@ -85,10 +85,8 @@ export function starterProse(kind: PieceKind, f: { city: string; propertyType: s
   }
 }
 
-export interface OpenHouseInput {
-  startsAt: string;
-  endsAt: string;
-}
+/** Instants with an offset, or wall-clock times ('YYYY-MM-DDTHH:mm') read in the team's own time zone (never the device's). */
+export type OpenHouseInput = { startsAt: string; endsAt: string } | { localStart: string; localEnd: string };
 
 /** The guard over a piece as it is stored now: rendered against the live facts, bound to the DB's own hash. */
 export async function computeGuard(tx: Tx, pieceId: string): Promise<{ guard: GuardResult; sha: string; rendered: Rendered; piece: repo.PieceRow }> {
@@ -120,8 +118,16 @@ async function writeGuard(tx: Tx, pieceId: string): Promise<void> {
 
 function openHouseJson(o: OpenHouseInput | null | undefined, zone: string): string | null {
   if (!o) return null;
-  const a = Date.parse(o.startsAt);
-  const b = Date.parse(o.endsAt);
+  const at = (local: string): number => {
+    try {
+      const [d, t] = local.split('T') as [string, string];
+      return resolveLocal(localDate(d), localTime(t), ianaZoneOf(zone), 'earlier');
+    } catch {
+      return Number.NaN;
+    }
+  };
+  const a = 'localStart' in o ? at(o.localStart) : Date.parse(o.startsAt);
+  const b = 'localStart' in o ? at(o.localEnd) : Date.parse(o.endsAt);
   if (!Number.isFinite(a) || !Number.isFinite(b)) throw new AppError('VALIDATION_FAILED', { issues: [{ path: '/openHouse', code: 'invalid_instant' }] });
   if (b <= a) throw new AppError('VALIDATION_FAILED', { issues: [{ path: '/openHouse', code: 'ends_before_start' }] });
   return JSON.stringify({ startsAt: new Date(a).toISOString(), endsAt: new Date(b).toISOString(), zone });
@@ -376,6 +382,8 @@ export interface PieceView {
   boundFields: string[];
   contentSha256: string;
   openHouse: { startsAt: string; endsAt: string; zone: string } | null;
+  /** the team's time zone: an open-house time is typed and shown in it */
+  timezone: string;
   preview: { text: string; blocks: { role: string; origin: string; prominence: string; text: string }[] } | null;
   assets: { position: number; objectId: string; url: string }[];
   guard: { approvable: boolean; reasons: string[]; checkThis: boolean; soft: string[]; fairHousingReviewed: boolean };
@@ -486,6 +494,7 @@ async function pieceView(
     boundFields: p.bound_fields,
     contentSha256: sha,
     openHouse: p.open_house,
+    timezone: (await repo.identityOf(tx)).timezone,
     preview: rendered.ok ? { text: rendered.text, blocks: rendered.blocks.map((b) => ({ role: b.role, origin: b.origin, prominence: b.prominence, text: b.text })) } : null,
     assets: assets.map((a) => ({ position: a.position, objectId: a.objectId as string, url: `/api/marketing-pieces/${p.id}/assets/${a.position}` })),
     guard: { approvable: p.status === 'draft' && reasons.length === 0, reasons: rendered.ok ? reasons : [rendered.reason, ...reasons], checkThis: needsFairHousingCheck(guard), soft: guard.soft.map((s) => s.text), fairHousingReviewed: guard.fair_housing_reviewed },

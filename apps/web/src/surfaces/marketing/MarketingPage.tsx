@@ -56,7 +56,7 @@ export default function MarketingPage() {
       </p>
       {q.isPending ? <p className="py-10 text-center text-[15px] text-ink-muted">Loading</p> : null}
       {q.isError ? <Notice tone="error">{messageFor(q.error, AGENT_ERROR_MESSAGES)}</Notice> : null}
-      {q.data ? <Marketing listingId={listingId} data={q.data} canMake={l?.editable ?? true} /> : null}
+      {q.data ? <Marketing listingId={listingId} data={q.data} canMake={l?.editable ?? false} /> : null}
     </div>
   );
 }

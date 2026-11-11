@@ -6,8 +6,8 @@
 // - Copy / Download export the approved version first, so its label becomes "Exported: post it yourself".
 // - Publish to <account> appears only for the server's `publish` options; `export` options show the
 //   server's sentence. "Posted" appears only where the server's posted flag is true (lib.ts).
-import { type ReactNode, useEffect, useId, useState } from 'react';
-import { Button, Card, CheckThis, Notice } from '../../design/index.js';
+import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { Button, Card, CheckThis, Notice, announce } from '../../design/index.js';
 import { EXPORTED_POST_IT_YOURSELF, errorText, kindLabel, publicationWords, statusWords, useApprovePiece, useExportPiece, usePieceCommand } from './lib.js';
 import { OpenHouseTime } from './OpenHouseTime.js';
 import type { ExportView, PieceView, PublicationView } from './types.js';
@@ -113,19 +113,30 @@ export function PieceCard({ piece, publishingCleared, headingLevel = 2, extra }:
     }
   >();
   const [exported, setExported] = useState<ExportView | null>(null);
-  const [said, setSaid] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   // a new version or status from the server replaces what this card said about the old one
   useEffect(() => {
     setFailure(null);
   }, [piece.id, piece.status]);
 
+  // what the card says is also spoken through the page's one persistent live region (a status element that is
+  // inserted already filled is often not read aloud)
+  const [said, setSaidState] = useState<string | null>(null);
+  const setSaid = (t: string | null) => {
+    setSaidState(t);
+    if (t) announce(t);
+  };
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const fail = (r: Parameters<typeof errorText>[0]) => setFailure(errorText(r));
 
   const doApprove = async () => {
     setSaid(null);
     const r = await approve.approve(piece);
-    if (r.ok) setSaid('Approved.');
+    if (r.ok) {
+      setSaid('Approved.');
+      // the Approve button is gone now: keep the keyboard on this card, not the top of the page
+      requestAnimationFrame(() => headingRef.current?.focus());
+    }
     else fail(r);
   };
 
@@ -183,7 +194,7 @@ export function PieceCard({ piece, publishingCleared, headingLevel = 2, extra }:
   const social = piece.kind === 'social_post';
   const publishable = social && live ? piece.publishOptions.filter((o) => o.kind === 'publish') : [];
   // "Approve this version first" is the Approve button's job; the other export reasons are said in the server's words
-  const exportOnly = social && live ? piece.publishOptions.filter((o): o is Extract<typeof o, { kind: 'export' }> => o.kind === 'export' && o.reason !== 'NOT_APPROVED') : [];
+  const exportOnly = social && live ? piece.publishOptions.filter((o): o is Extract<typeof o, { kind: 'export' }> => o.kind === 'export' && o.reason !== 'NOT_APPROVED' && !(o.reason === 'ALREADY_LIVE' && piece.publications.some((p) => p.posted && p.connectionId === o.connectionId))) : [];
   const livePosts = piece.publications.filter((p) => p.status === 'published');
   const busy = approve.pending || exporter.pending || command.pending;
 
@@ -191,7 +202,7 @@ export function PieceCard({ piece, publishingCleared, headingLevel = 2, extra }:
     <Card as="article" aria-labelledby={titleId} className="flex min-w-0 flex-col gap-3">
       <div>
         <p className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted">Version {piece.versionNo}</p>
-        <H id={titleId} className="text-[19px] font-semibold text-ink">
+        <H id={titleId} ref={headingRef} tabIndex={-1} className="text-[19px] font-semibold text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
           {kindLabel(piece.kind)}
         </H>
         <p className="text-[15px] text-ink" data-testid="status-label">
@@ -222,7 +233,12 @@ export function PieceCard({ piece, publishingCleared, headingLevel = 2, extra }:
       {live && !social && piece.kind !== 'website_page' && piece.exportable ? (
         <p className="text-[15px] text-ink-muted">We don't post this for you: copy or download it, then post it yourself.</p>
       ) : null}
-      {said ? <Notice tone="ok">{said}</Notice> : null}
+      {/* seen here, heard through announce(): aria-hidden so a screen reader does not meet it twice */}
+      {said ? (
+        <div aria-hidden="true">
+          <Notice tone="ok">{said}</Notice>
+        </div>
+      ) : null}
       {failure ? <Notice tone="error">{failure}</Notice> : null}
       {exported && (exported.images.length > 0 || exported.flags.length > 0) ? (
         <div className="flex flex-col gap-1 text-[15px] text-ink">
@@ -259,7 +275,7 @@ export function PieceCard({ piece, publishingCleared, headingLevel = 2, extra }:
           ) : null,
         )}
         {piece.kind === 'website_page' && (piece.status === 'approved' || piece.status === 'exported') && publishingCleared ? (
-          <Button pending={command.pending} onClick={() => void doPublish()}>
+          <Button pending={command.pending} disabled={busy && !command.pending} onClick={() => void doPublish()}>
             Put the page live
           </Button>
         ) : null}
@@ -274,13 +290,13 @@ export function PieceCard({ piece, publishingCleared, headingLevel = 2, extra }:
           </>
         ) : null}
         {piece.kind === 'website_page' && piece.status === 'published' ? (
-          <Button variant="quiet" pending={command.pending} onClick={() => void doRetract()}>
+          <Button variant="quiet" pending={command.pending} disabled={busy && !command.pending} onClick={() => void doRetract()}>
             Take the page down
           </Button>
         ) : null}
         {social
           ? livePosts.map((p) => (
-              <Button key={p.id} variant="quiet" pending={command.pending} onClick={() => void doRetract(p.id)}>
+              <Button key={p.id} variant="quiet" pending={command.pending} disabled={busy && !command.pending} onClick={() => void doRetract(p.id)}>
                 Take down from {p.targetName}
               </Button>
             ))
