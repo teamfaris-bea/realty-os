@@ -134,13 +134,50 @@ export async function pointById(tx: Tx, id: string): Promise<PointRow | null> {
   return r.rows[0] ? point(r.rows[0]) : null;
 }
 
-/** The contact's points (removed ones excluded), primary first. */
+/**
+ * The contact's points (removed ones excluded), primary first: the numbers and addresses a send may go
+ * to or a call may dial. Not the opt-out fan-out: that also reads removed phones (optOutFanoutPhoneHmacs).
+ */
 export async function contactPoints(tx: Tx, contactId: string): Promise<PointRow[]> {
   const r = await sql<Parameters<typeof point>[0]>`
     SELECT id, contact_id, kind, address, address_hmac, status, line_type, timezone, is_primary FROM contact_points
      WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND removed_at IS NULL
      ORDER BY is_primary DESC, created_at, id`.execute(tx);
   return r.rows.map(point);
+}
+
+/**
+ * The phones whose opt-out blocks texting or calling the contact (R-CONSENT-7, outbound-3, R-PAR-12):
+ * every phone of the contact, live or removed, except one removed as a confirmed wrong number. The WHERE
+ * clause is the `others` set of app.messages_dispatch_guard and app.calls_dispatch_guard (migration 0021),
+ *   kind = 'phone' AND (removed_at IS NULL OR removed_reason IS DISTINCT FROM 'wrong_number')
+ * so canContact sees every opt-out the guards see and refuses the send first, with its reason. Only the
+ * fan-out reads removed phones: what a send goes to or a call dials still comes from contactPoints.
+ */
+export async function optOutFanoutPhoneHmacs(tx: Tx, contactId: string): Promise<string[]> {
+  const r = await sql<{ h: Buffer }>`
+    SELECT DISTINCT address_hmac AS h FROM contact_points
+     WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND kind = 'phone'
+       AND (removed_at IS NULL OR removed_reason IS DISTINCT FROM 'wrong_number')
+     ORDER BY address_hmac`.execute(tx);
+  return r.rows.map((x) => Buffer.from(x.h).toString('hex'));
+}
+
+/**
+ * The removed half of optOutFanoutPhoneHmacs, with each address for the hint: the contact's phones removed
+ * other than as a confirmed wrong number,
+ *   kind = 'phone' AND removed_at IS NOT NULL AND removed_reason IS DISTINCT FROM 'wrong_number'
+ * They still block texting the person (R-PAR-12), so a START must be able to lift the keyword revoke its
+ * own STOP left on one of them (R-CONSENT-10, outbound-4; see keywordRevokedBy), or the person could never
+ * be texted again after a remove or replace. Only the START lift reads these: never a send target.
+ */
+export async function removedFanoutPhones(tx: Tx, contactId: string): Promise<{ hmac: string; address: string }[]> {
+  const r = await sql<{ h: Buffer; address: string }>`
+    SELECT DISTINCT ON (address_hmac) address_hmac AS h, address FROM contact_points
+     WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND kind = 'phone'
+       AND removed_at IS NOT NULL AND removed_reason IS DISTINCT FROM 'wrong_number'
+     ORDER BY address_hmac, id`.execute(tx);
+  return r.rows.map((x) => ({ hmac: Buffer.from(x.h).toString('hex'), address: x.address }));
 }
 
 export interface ConversationRow {

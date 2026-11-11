@@ -153,6 +153,37 @@ describe('reachability summary agrees with the send-time gate', () => {
     expect(r.channels.email.hasAddress).toBe(false);
   });
 
+  it('R-PAR-12 R-CONSENT-7 E168: a STOP texted from a phone that was later removed still blocks texts to the live phone; the summary agrees with the gate, names the removed number’s STOP and never lists the removed number', async () => {
+    const agent = w.agents[0]!;
+    const mobile = randomPhone();
+    const id = await contactWith(agent, [mobile], [randomEmail()]);
+    expect((await inboundSms(h, mobile, w.mainNumber, 'STOP')).statusCode).toBe(200);
+    const work = randomPhone();
+    expect((await call(agent, 'POST', `/contacts/${id}/points`, { kind: 'phone', address: work, label: 'work' })).status).toBe(201);
+    const gone = (await points(id)).find((p) => p.address === mobile)!;
+    expect((await call(agent, 'POST', `/contacts/${id}/points/${gone.id}/remove`, { reason: 'old' })).status).toBe(200);
+    const r = await expectAgrees(agent, id);
+    expect(r.channels.sms.blocked).toBe(true);
+    expect(r.channels.sms.points.map((p) => p.addressHint)).toEqual([`•••-•••-${work.slice(-4)}`]);
+    expect(r.channels.sms.reasons).toEqual([expect.objectContaining({ code: 'CONSENT_REVOKED', source: 'keyword', keyword: 'STOP', otherAddress: true, addressHint: `•••-•••-${mobile.slice(-4)}` })]);
+    expect(r.channels.voice.blocked).toBe(false);
+    expect(r.channels.email.blocked).toBe(false);
+  });
+
+  it('R-PAR-12 E169: a phone removed as a confirmed wrong number no longer blocks the person: the summary and the gate both say the live phone is reachable', async () => {
+    const agent = w.agents[0]!;
+    const mobile = randomPhone();
+    const id = await contactWith(agent, [mobile], []);
+    expect((await inboundSms(h, mobile, w.mainNumber, 'STOP')).statusCode).toBe(200);
+    expect((await inboundSms(h, mobile, w.mainNumber, 'Wrong number')).statusCode).toBe(200);
+    expect((await call(agent, 'POST', `/contacts/${id}/points`, { kind: 'phone', address: randomPhone(), label: 'work' })).status).toBe(201);
+    const gone = (await points(id)).find((p) => p.address === mobile)!;
+    expect((await call(agent, 'POST', `/contacts/${id}/points/${gone.id}/remove`, { reason: 'wrong_number' })).status).toBe(200);
+    const r = await expectAgrees(agent, id);
+    expect(r.channels.sms).toMatchObject({ hasAddress: true, blocked: false, reasons: [] });
+    expect(r.channels.voice).toMatchObject({ hasAddress: true, blocked: false, reasons: [] });
+  });
+
   it('R-CONSENT-18: an email unsubscribe blocks marketing email only, and says so for the marketing purpose', async () => {
     const agent = w.agents[1]!;
     const email = randomEmail();

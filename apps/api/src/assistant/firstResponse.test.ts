@@ -71,6 +71,20 @@ describe('the 60-second first response (R-AST-16)', () => {
     expect(a.explanation).toMatch(/by email/);
   });
 
+  it('R-PAR-12 R-AST-16: an opt-out on a phone of the lead that was then removed still counts: the first response goes by email, never a text to the lead’s other phone', async () => {
+    const email = randomEmail();
+    const [first, second] = [randomPhone(), randomPhone()];
+    const r = await intake(h, w, { fullName: 'Rita Removed', phones: [first, second], emails: [email] });
+    const pid = (await h.su.query<{ id: string }>('SELECT id FROM contact_points WHERE contact_id = $1 AND address = $2', [r.contactId, first])).rows[0]!.id;
+    expect((await call(w.owner, 'POST', `/contacts/${r.contactId}/consent`, { kind: 'revoke', pointId: pid, channel: 'sms', purpose: 'all', evidence: { note: 'asked us to stop texting' } })).status).toBe(200);
+    expect((await call(w.owner, 'POST', `/contacts/${r.contactId}/points/${pid}/remove`, { reason: 'old' })).status).toBe(200);
+    await runJobs(h, w.tenantId, FR);
+    const ms = (await messagesOf(h, r.contactId)).filter((m) => m.initiator === 'assistant');
+    expect(ms.map((m) => `${m.channel}:${m.status}:${m.action_category}`)).toEqual(['email:sent:speed_to_lead_reply']);
+    expect(h.providers.telephony.sms.filter((x) => x.to === first || x.to === second)).toHaveLength(0);
+    expect(h.providers.email.sent.filter((x) => x.to === email)).toHaveLength(1);
+  });
+
   it('R-AST-16: with no allowed channel (the only number opted out) nothing is sent and the lead card says why', async () => {
     const phone = randomPhone();
     const r = await intake(h, w, { fullName: 'Ned None', phones: [phone] });

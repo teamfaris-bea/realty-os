@@ -227,6 +227,11 @@ export function planInboundEffects(i: {
   classification: InboundClassification;
   channel: Channel;
   address: InboundAddress;
+  /**
+   * The contact's other phones. A STOP or opt-out language fans out over the live ones. For a START the
+   * API also passes the phones removed other than as a confirmed wrong number (they still block the
+   * person at send time, R-PAR-12), each with `keywordRevokedBySender`.
+   */
   otherPhones: readonly InboundAddress[];
   /** The contact's other email addresses: opt-out language naming email ("do not email me") reaches them. */
   otherEmails?: readonly InboundAddress[];

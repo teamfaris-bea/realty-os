@@ -186,7 +186,16 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
     const others = (kind: 'phone' | 'email') => targetPoints.filter((p) => p.kind === kind && p.hmac !== hmac).map((p) => ({ kind, hmac: p.hmac, hint: hint(p.address) }) as InboundAddress);
     let otherPhones = others('phone');
     if (classification.kind === 'start' && e.kind === 'sms') {
-      // outbound-4: START lifts another phone only when its keyword revoke came from this number's own STOP
+      // outbound-4: START lifts another phone only when its keyword revoke came from this number's own STOP.
+      // The candidates are the phones the send-time fan-out reads (R-PAR-12): the live ones, plus those
+      // removed other than as a confirmed wrong number, which still block the person. Only the lift reaches
+      // removed phones; the STOP fan-out, the cancel list and the reply target stay on live points.
+      const seen = new Set([hmac, ...otherPhones.map((p) => p.hmac)]);
+      for (const p of await g.removedFanoutPhones(tx, target)) {
+        if (seen.has(p.hmac)) continue;
+        seen.add(p.hmac);
+        otherPhones.push({ kind: 'phone', hmac: p.hmac, hint: hint(p.address) });
+      }
       const bySender = await g.keywordRevokedBy(tx, otherPhones.map((p) => p.hmac), from);
       otherPhones = otherPhones.map((p) => ({ ...p, keywordRevokedBySender: bySender.has(p.hmac) }));
     }

@@ -56,11 +56,13 @@ async function gateContext(tx: Tx, m: OutboundIntent, now: Instant): Promise<{ i
   const toUser = m.recipient.kind === 'user';
   const point = m.recipient.pointId ? await g.pointById(tx, m.recipient.pointId) : null;
 
-  // consent rows (only revocations matter): this address, plus (SMS, voice) the contact's other phones
-  // (R-CONSENT-7: a STOP on any of the contact's phones blocks texting the contact; outbound-3: a
-  // "do not call me" on any of them blocks calling the contact)
+  // consent rows (only revocations matter): this address, plus (SMS, voice) every phone of the contact the
+  // dispatch guards fan out over (R-CONSENT-7: a STOP on any of the contact's phones blocks texting the
+  // contact; outbound-3: a "do not call me" on any of them blocks calling the contact; R-PAR-12: a removed
+  // phone still counts unless removed as a confirmed wrong number). The guards' own set, read with their
+  // WHERE clause, so canContact refuses first and says why instead of the guard refusing the dispatch.
   const hmacs = new Set([m.recipient.addressHmac]);
-  if (ch !== 'email' && m.contactId && !toUser) for (const p of await g.contactPoints(tx, m.contactId)) if (p.kind === 'phone') hmacs.add(p.hmac);
+  if (ch !== 'email' && m.contactId && !toUser) for (const h of await g.optOutFanoutPhoneHmacs(tx, m.contactId)) hmacs.add(h);
   const consent = await g.consentRows(tx, ch, [...hmacs]);
 
   let sender: GateInput['sender'];
@@ -114,6 +116,7 @@ export async function evaluateGate(tx: Tx, m: OutboundIntent, now: Instant): Pro
 /**
  * API-level reasons that join the core reasons in a send-time decision row: the sender is no longer
  * authorized for the contact (E15), the assistant action / playbook is no longer valid. Each is a deny.
+ * The last two are the dispatch guards' own opt-out refusals (see guardOptOutRefusal).
  */
 export const DISPATCH_DENY_SENTENCES = {
   SENDER_NOT_AUTHORIZED: 'You no longer handle this contact, so this message was not sent.',
@@ -123,8 +126,31 @@ export const DISPATCH_DENY_SENTENCES = {
   PLAYBOOK_OWNER_NOT_CONTACT_OWNER: 'This playbook belongs to an agent who no longer owns the lead, so the assistant did not send this.',
   ENROLLMENT_NOT_ACTIVE: 'The playbook for this contact is paused or stopped, so the assistant did not send this.',
   AUTONOMY_DOWNGRADED: 'The assistant held this message for review instead of sending it.',
+  RECIPIENT_OPTED_OUT: 'This person opted out, so it did not go out.',
+  RECIPIENT_NOT_A_CONTACT_POINT: "This number or address is not on the person's record, so their opt-outs could not be checked and it did not go out.",
 } as const;
 export type DispatchDenyReason = keyof typeof DISPATCH_DENY_SENTENCES;
+
+/**
+ * The dispatch guards' refusals that are a BLOCKED send, never an error (defence in depth, R-PAR-12, D1):
+ * the recipient opted out, or its opt-out status cannot be checked. canContact reads the facts the guards
+ * read (optOutFanoutPhoneHmacs), so neither should ever reach the database; if one does, the send is
+ * recorded as blocked with the guard's code, exactly like a canContact deny.
+ */
+export const GUARD_DENY_REASONS = ['RECIPIENT_OPTED_OUT', 'RECIPIENT_NOT_A_CONTACT_POINT'] as const satisfies readonly DispatchDenyReason[];
+export type GuardDenyReason = (typeof GUARD_DENY_REASONS)[number];
+
+/**
+ * The code when `err` is app.messages_dispatch_guard or app.calls_dispatch_guard refusing a send with
+ * RECIPIENT_OPTED_OUT or RECIPIENT_NOT_A_CONTACT_POINT (a check_violation whose message starts with the
+ * code); null for anything else. Every other guard refusal and every other database error stays an error.
+ */
+export function guardOptOutRefusal(err: unknown): GuardDenyReason | null {
+  if (typeof err !== 'object' || err === null) return null;
+  const { code, message } = err as { code?: unknown; message?: unknown };
+  if (code !== '23514' || typeof message !== 'string') return null;
+  return GUARD_DENY_REASONS.find((r) => message.startsWith(`${r}:`)) ?? null;
+}
 
 /** The send-time verdict: the core decision, or a deny when an API-level reason applies. */
 export interface Verdict {

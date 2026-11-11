@@ -12,6 +12,10 @@
 //                the assistant autonomy); nothing is written to gate_decisions;
 //                human owner/collaborator ⇒ the touch in THIS transaction (R-OWN-14, E66)
 //        deny  ⇒ INSERT gate_decisions (the blocked-send evidence) + 'blocked' with the reason
+//        guard refuses an allowed send (RECIPIENT_OPTED_OUT / RECIPIENT_NOT_A_CONTACT_POINT; canContact
+//                reads the guard's own fan-out, so this is defence in depth) ⇒ TX1 rolls back whole and
+//                runs again in a NEW transaction with the guard's code as a deny: recorded as above,
+//                answered as blocked, never sent, never retried, never a 500
 //   provider.send(idempotencyKey = message.id)        (never inside a transaction)
 //   TX2  'sent' + provider ref | 'failed' | timeout ⇒ 'dispatch_unknown' + comms.reconcile (never resent)
 //
@@ -32,7 +36,7 @@ import { ProviderError } from '../providers/types.js';
 import { COMMS_RECONCILE } from '../worker/contracts.js';
 import { enqueueTyped } from '../worker/registry.js';
 import { systemActor } from '../worker/systemActor.js';
-import { type DispatchDenyReason, type StoredDecision, decisionView, evaluateGate, insertBlockedDecision, resolvedPolicy, verdictOf } from './gateInput.js';
+import { type DispatchDenyReason, type StoredDecision, decisionView, evaluateGate, guardOptOutRefusal, insertBlockedDecision, resolvedPolicy, verdictOf } from './gateInput.js';
 import { EMAIL_REF_HEADER, listUnsubscribeHeaders, replyAddress, replyToken, replyTokenHash, signedRef, unsubscribeUrl } from './render.js';
 import * as auto from './repos/automation.js';
 import { contactFacts, dealOrAppointmentContext } from './repos/contacts.js';
@@ -93,8 +97,23 @@ export async function dispatchOutbound(messageId: string, deps: CommsDeps, opts:
     }
   } else actor = systemActor(tenantId, pre.m.initiator === 'assistant' ? 'assistant' : 'worker');
 
-  const run = (a: Actor, deny: DispatchDenyReason[]) =>
-    withTenantTx(a, (tx, now) => tx1(tx, now, { deps, tenantId, actor: a, opts, forceDeny: deny }, messageId), { db: deps.db, retries: 2 });
+  // Defence in depth (R-PAR-12, D1): the guard should never refuse a send TX1 allowed. When it does, the
+  // error has already rolled TX1 back (no dispatching row, no touch, nothing half-written) and that
+  // transaction is gone; TX1 runs once more, in a fresh transaction, with the guard's code as a deny
+  // reason, so it is blocked and recorded exactly like a canContact deny. That run cannot dispatch (its
+  // verdict is a deny), so nothing is retried. Any other error is not a block and propagates.
+  const guardDeny: DispatchDenyReason[] = [];
+  const run = async (a: Actor, deny: DispatchDenyReason[]): Promise<Tx1> => {
+    const once = () => withTenantTx(a, (tx, now) => tx1(tx, now, { deps, tenantId, actor: a, opts, forceDeny: [...deny, ...guardDeny] }, messageId), { db: deps.db, retries: 2 });
+    try {
+      return await once();
+    } catch (e) {
+      const refused = guardOptOutRefusal(e);
+      if (refused === null || guardDeny.includes(refused)) throw e;
+      guardDeny.push(refused);
+      return once();
+    }
+  };
   let r = await run(actor, forceDeny);
   if (r.kind === 'invisible') {
     if (actor.kind !== 'user') return { kind: 'noop', messageId, status: 'missing' };

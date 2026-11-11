@@ -180,6 +180,24 @@ export async function pointsForContacts(tx: Tx, contactIds: readonly string[]): 
 }
 
 /**
+ * R-PAR-12: per contact, the HMACs of its REMOVED phones whose opt-out still counts (removed for any
+ * reason but a confirmed wrong number). With the live phones of pointsForContacts this is exactly the
+ * dispatch guards' fan-out set (`kind = 'phone' AND (removed_at IS NULL OR removed_reason IS DISTINCT FROM
+ * 'wrong_number')`, g.optOutFanoutPhoneHmacs for one contact). Only for the fan-out: never listed.
+ */
+export async function removedFanoutPhones(tx: Tx, contactIds: readonly string[]): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>(contactIds.map((id) => [id, []]));
+  if (contactIds.length === 0) return out;
+  const r = await sql<{ contact_id: string; h: Buffer }>`
+    SELECT DISTINCT contact_id, address_hmac AS h FROM contact_points
+     WHERE tenant_id = app.tenant_id() AND contact_id = ANY (${[...contactIds]}::uuid[]) AND kind = 'phone'
+       AND removed_at IS NOT NULL AND removed_reason IS DISTINCT FROM 'wrong_number'
+     ORDER BY contact_id, address_hmac`.execute(tx);
+  for (const x of r.rows) out.get(x.contact_id)?.push(Buffer.from(x.h).toString('hex'));
+  return out;
+}
+
+/**
  * Of these contacts, the ones whose detail the caller sees, with what classifies a human message's purpose
  * now (repos/contacts.dealOrAppointmentContext and the conversation's last inbound, batched).
  */
