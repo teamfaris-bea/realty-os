@@ -29,7 +29,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Category } from '@realty/core/import';
 import type { FubDataset } from './fub.js';
 import { BULK_STATEMENT_TIMEOUT } from './repos/existing.js';
-import { type ImportWorld, type ImportsHarness, type StageView, approve, batchOf, call, commitStage, dryRunStage, importWorld, importsHarness, mapAgents, startFub, verify } from './testing.js';
+import { CHUNKS_PER_RUN } from './commit.js';
+import { type ImportWorld, type ImportsHarness, type StageView, approve, batchOf, call, commitStage, dryRunStage, freshReauth, importWorld, importsHarness, mapAgents, startFub, stageOf, verify } from './testing.js';
 
 const ENABLED = process.env.IMPORT_LARGE === '1' || process.env.IMPORT_LARGE === 'true';
 const N = Number(process.env.IMPORT_LARGE_PEOPLE ?? 50_000);
@@ -222,8 +223,33 @@ describe.skipIf(!ENABLED)(`journey M6: a ${N.toLocaleString('en-US')}-person FUB
       [stageId],
     );
 
+  /** The Admin's step-up window (15 minutes) lapses during the long commits: they re-authenticate before each step. */
+  const reauth = () => freshReauth(ih.h, w.admin);
+
+  /**
+   * POST …/commit, then drain until the stage leaves `committing`. The commit job yields after
+   * CHUNKS_PER_RUN chunks (10,000 records) and app.reschedule_job puts it back at least 1 s in the future,
+   * so the harness's one-shot drain() (testing.ts commitStage) returns after the first 10,000 records with
+   * the stage still committing; the real worker loop just polls again, which is what this does.
+   */
+  async function commitAll(cat: Category): Promise<StageView> {
+    await reauth();
+    const r = await call(w.admin, 'POST', `/imports/${batchId}/stages/${cat}/commit`);
+    expect(r.status).toBe(202);
+    const maxRuns = Math.ceil(N / (1000 * CHUNKS_PER_RUN)) * 4 + 10;
+    for (let run = 0; run < maxRuns; run++) {
+      await ih.drain();
+      await reauth();
+      const s = stageOf(await batchOf(w.admin, batchId), cat);
+      if (s.status !== 'committing') return s;
+      await new Promise((res) => setTimeout(res, 1_100));
+    }
+    throw new Error(`commit ${cat} still committing after ${maxRuns} worker drains`);
+  }
+
   /** dry run (timed, ≤ the 10-minute statement timeout) → approve → commit (timed) → verify. */
   async function runStage(cat: Category, expectSource: number): Promise<{ dry: StageView; done: StageView }> {
+    await reauth();
     const t = performance.now();
     const dry = await dryRunStage(ih, w.admin, batchId, cat);
     const dryMs = Math.round(performance.now() - t);
@@ -236,12 +262,13 @@ describe.skipIf(!ENABLED)(`journey M6: a ${N.toLocaleString('en-US')}-person FUB
     expect(BULK_STATEMENT_TIMEOUT).toBe('10min');
     expect(dryMs).toBeLessThan(DRY_RUN_LIMIT_MS);
 
+    await reauth();
     const a = await approve(w.admin, batchId, cat, dry.dryRunSha256 as string);
     expect(a.status).toBe(200);
     expect(a.body.expected).toEqual({ source: expectSource, imported: dry.counts!.willImport, needs_review: dry.counts!.needsReview, rejected: dry.counts!.rejected, duplicate: dry.counts!.duplicate });
 
     const tc = performance.now();
-    const done = await commitStage(ih, w.admin, batchId, cat);
+    const done = await commitAll(cat);
     const commitMs = Math.round(performance.now() - tc);
     console.info(`imports M6 ${cat} commit: ${commitMs} ms`, JSON.stringify(done.counts));
     expect(done.status).toBe('committed');
@@ -250,6 +277,7 @@ describe.skipIf(!ENABLED)(`journey M6: a ${N.toLocaleString('en-US')}-person FUB
     expect(c.source).toBe(expectSource);
     expect(c.source).toBe((c.imported ?? 0) + c.needsReview + c.rejected + c.duplicate);
 
+    await reauth();
     const tv = performance.now();
     const v = await verify(w.admin, batchId, cat);
     const verifyMs = Math.round(performance.now() - tv);
@@ -258,15 +286,15 @@ describe.skipIf(!ENABLED)(`journey M6: a ${N.toLocaleString('en-US')}-person FUB
     expect(v.view.sample.length).toBeGreaterThan(0);
     expect(v.view.sample.filter((s) => !s.same)).toEqual([]);
     expect(v.res.status).toBe(200);
-    expect(stageOfBatch(await batchOf(w.admin, batchId), cat).status).toBe('verified');
+    expect(stageOf(await batchOf(w.admin, batchId), cat).status).toBe('verified');
     times[cat] = { dryRun: dryMs, commit: commitMs, verify: verifyMs };
     return { dry, done };
   }
-  const stageOfBatch = (b: Awaited<ReturnType<typeof batchOf>>, cat: Category) => b.stages.find((s) => s.category === cat) as StageView;
 
   it(
     'snapshot: every collection is read once and counted',
     async () => {
+      await reauth();
       const t = performance.now();
       const b = await startFub(ih, w.admin, KEY);
       times.snapshot = { total: Math.round(performance.now() - t) };
@@ -337,6 +365,7 @@ describe.skipIf(!ENABLED)(`journey M6: a ${N.toLocaleString('en-US')}-person FUB
     'consent: grants, revocations and DNC reconcile and verify; the batch is committed',
     async () => {
       await runStage('consent', N);
+      await reauth();
       const b = await batchOf(w.admin, batchId);
       expect(b.status).toBe('committed');
       expect(b.stages.map((s) => s.status)).toEqual(['verified', 'verified', 'verified', 'verified', 'verified', 'verified']);
