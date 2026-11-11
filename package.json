@@ -17,6 +17,7 @@
     "dev:worker": "pnpm --filter @realty/api dev:worker",
     "dev:web": "pnpm --filter @realty/web dev",
     "seed": "pnpm --filter @realty/api seed",
+    "ops:synthetic": "pnpm --filter @realty/api ops:synthetic",
     "demo:totp": "pnpm --filter @realty/api demo:totp"
   },
   "devDependencies": {
