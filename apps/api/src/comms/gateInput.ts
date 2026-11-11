@@ -62,7 +62,9 @@ async function gateContext(tx: Tx, m: OutboundIntent, now: Instant): Promise<{ i
   // phone still counts unless removed as a confirmed wrong number). The guards' own set, read with their
   // WHERE clause, so canContact refuses first and says why instead of the guard refusing the dispatch.
   const hmacs = new Set([m.recipient.addressHmac]);
-  if (ch !== 'email' && m.contactId && !toUser) for (const h of await g.optOutFanoutPhoneHmacs(tx, m.contactId)) hmacs.add(h);
+  if (ch !== 'email' && ch !== 'web_chat' && m.contactId && !toUser) for (const h of await g.optOutFanoutPhoneHmacs(tx, m.contactId)) hmacs.add(h);
+  // module 22: a chat opt-out on any of the contact's chat identities blocks all of them (the guard's `others` set)
+  if (ch === 'web_chat' && m.contactId && !toUser) for (const h of await g.chatFanoutHmacs(tx, m.contactId)) hmacs.add(h);
   const consent = await g.consentRows(tx, ch, [...hmacs]);
 
   let sender: GateInput['sender'];
@@ -93,10 +95,11 @@ async function gateContext(tx: Tx, m: OutboundIntent, now: Instant): Promise<{ i
     tenant: { suspended: tenant.suspended, brokerageNamePresent: tenant.brokerageLegalName.trim() !== '', postalAddressPresent: (tenant.postalAddress ?? '').trim() !== '' },
     policy,
     ...(ch === 'voice' ? {} : { rendered: renderedFacts(m.body ?? '', { channel: ch, brokerageLegalName: tenant.brokerageLegalName }) }),
-    // core-compliance/3.0.0: the person-level do-not-contact (R-CHAN-2). The chat widget connection is
-    // wired by module 22's chat send path; until then a chat reply is refused here (CHANNEL_NOT_CONNECTED).
+    // core-compliance/3.0.0: the person-level do-not-contact (R-CHAN-2). The chat widget connection comes from
+    // module 22's chat send path (compose / dispatch: the widget's status, a closed session counting as not
+    // connected, E77); absent ⇒ a chat reply is refused (CHANNEL_NOT_CONNECTED).
     personDoNotContact: m.contactId && !toUser ? await g.personDoNotContact(tx, m.contactId) : false,
-    connection: null,
+    connection: m.connection ?? null,
   };
   return { input, policy, tenant };
 }

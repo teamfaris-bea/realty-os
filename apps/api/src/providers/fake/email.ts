@@ -3,12 +3,13 @@
 import { createHash } from 'node:crypto';
 import { type AccountMailer, type EmailProvider, type EmailRequest, ProviderError, type ProviderMessageStatus } from '../types.js';
 import type { FakeFailure } from './telephony.js';
+import { makeMessageId } from '../email/mime.js';
 
 const ref = (s: string) => 'EM' + createHash('sha256').update(s).digest('hex').slice(0, 30);
 
 export class FakeEmail implements EmailProvider {
   readonly sent: (EmailRequest & { providerRef: string })[] = [];
-  private readonly byKey = new Map<string, { providerRef: string; status: ProviderMessageStatus }>();
+  private readonly byKey = new Map<string, { providerRef: string; status: ProviderMessageStatus; rfcMessageId?: string }>();
   private failures: FakeFailure[] = [];
   /** domains that pass SPF+DKIM+DMARC (default: none until a test adds them) */
   readonly verifiedDomains = new Set<string>();
@@ -22,7 +23,14 @@ export class FakeEmail implements EmailProvider {
     if (prior) return prior;
     const f = this.failures.shift();
     if (f && f !== 'timeout_after_submit') throw new ProviderError(f);
-    const out = { providerRef: ref(r.idempotencyKey), status: 'queued' as const };
+    // the fake keeps the Message-ID we generate, as a plain SMTP relay does (module 22, R-GMAIL-12)
+    let rfcMessageId: string | undefined;
+    try {
+      rfcMessageId = makeMessageId(r.idempotencyKey, r.from.address);
+    } catch {
+      rfcMessageId = undefined;
+    }
+    const out = { providerRef: ref(r.idempotencyKey), status: 'queued' as const, ...(rfcMessageId ? { rfcMessageId } : {}) };
     this.byKey.set(r.idempotencyKey, out);
     this.sent.push({ ...r, providerRef: out.providerRef });
     if (f === 'timeout_after_submit') throw new ProviderError('timeout');

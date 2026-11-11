@@ -16,7 +16,7 @@ export const DecisionSchema = z.object({
 
 export const MessageSchema = z.object({
   id: z.uuid(),
-  channel: z.enum(['sms', 'mms', 'email']),
+  channel: z.enum(['sms', 'mms', 'email', 'web_chat']),
   status: z.string(),
   statusReason: z.string().nullable(),
   purpose: z.enum(['marketing', 'informational']).nullable(),
@@ -27,7 +27,8 @@ export const MessageSchema = z.object({
 });
 
 export const ComposeBody = z.strictObject({
-  channel: z.enum(['sms', 'email']),
+  /** 'web_chat' (module 22): a reply in the contact's open website chat, through its widget */
+  channel: z.enum(['sms', 'email', 'web_chat']),
   body: z.string().trim().min(1).max(10_000),
   subject: z.string().trim().min(1).max(300).optional(),
   scheduleAt: z.iso.datetime({ offset: true }).optional(),
@@ -36,7 +37,7 @@ export const ComposeBody = z.strictObject({
 });
 
 export const PreviewBody = z.strictObject({
-  channel: z.enum(['sms', 'email']),
+  channel: z.enum(['sms', 'email', 'web_chat']),
   body: z.string().trim().min(1).max(10_000),
   subject: z.string().trim().min(1).max(300).optional(),
   toPointId: z.uuid().optional(),

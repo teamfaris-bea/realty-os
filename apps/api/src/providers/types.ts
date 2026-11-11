@@ -115,7 +115,12 @@ export interface DomainVerification {
 }
 
 export interface EmailProvider {
-  sendEmail(r: EmailRequest): Promise<{ providerRef: string; status: ProviderMessageStatus }>;
+  /**
+   * `rfcMessageId`: the RFC 5322 Message-ID the provider confirms it sent (module 22 hashes it into
+   * messages.rfc_message_id_sha256 at TX2, R-GMAIL-12); absent when the provider assigns its own and does not
+   * report it (VERIFY per vendor), so the row is then not deduplicated.
+   */
+  sendEmail(r: EmailRequest): Promise<{ providerRef: string; status: ProviderMessageStatus; rfcMessageId?: string }>;
   lookupMessage(idempotencyKey: string): Promise<{ providerRef: string; status: ProviderMessageStatus } | null>;
   verifyDomain(domain: string): Promise<DomainVerification>;
 }

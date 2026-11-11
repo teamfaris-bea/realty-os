@@ -34,6 +34,11 @@ export type OwnershipResult =
 export interface RunOptions {
   db?: Database;
   ids?: IdGenerator;
+  /**
+   * Module 22 (F19): work that must commit in the SAME transaction as an applied (not replayed) command, e.g.
+   * closing as do_not_contact records the person-level opt-out. Runs after the engine, before the read-back.
+   */
+  afterApplied?: (tx: Tx) => Promise<void>;
 }
 
 function summary(events: readonly OwnershipEvent[], contactId: ContactId): OwnershipEventSummary[] {
@@ -76,7 +81,10 @@ export async function runOwnershipCommand(
       ...(opts.ids ? { ids: opts.ids } : {}),
       ...(opts.db ? { db: opts.db } : {}),
     },
-    (tx) => visibleProjection(tx, id),
+    async (tx, result) => {
+      if (opts.afterApplied && result.outcome.ok && !result.replayed) await opts.afterApplied(tx);
+      return visibleProjection(tx, id);
+    },
   );
   if (r.outcome.ok) {
     return { ok: true, contactId: id, replayed: r.replayed, events: summary(r.outcome.events, id), projection };

@@ -15,6 +15,14 @@
 //   8 feed item + notification (critical when the lead is new), assistant.enrich_handback job
 // An agent texting the tenant number from their verified alert phone is a USER recipient (E60): only the
 // keywords apply (their STOP stops alert texts; Admins are told), and nothing is stored on a contact.
+//
+// Module 22 (Phase 2): ingestChannelInbound runs the SAME transaction for a web-chat message (the session's own
+// chat identity, R-INBOX-1/2): pause, cancel of queued assistant messages, one handback, feed card; opt-out language
+// sets the person-level do-not-contact on the session's own contact (R-CHAN-3, E155). On every channel, ingestion also
+// cancels the scheduled trigger runs of every contact on the address (R-NURT-5), and opt-out language records the
+// person-level do-not-contact (app.record_person_opt_out, needs_review). Platform inbound email stores the Message-ID
+// hash as the system (messages.rfc_message_id_sha256, R-GMAIL-12) and its handback is deduped by
+// email:{contact}:{hash}, the key module 68 shares, so a Reply-All reaching both paths hands back once (E201).
 import { type Channel, type InboundAddress, type InboundClassification, classifyInbound, planInboundEffects } from '@realty/core/compliance';
 import type { ContactId, IdGenerator, Instant, SystemActor, TenantId } from '@realty/core/foundation';
 import { normalizeEmail, normalizePhone, toIso } from '@realty/core/foundation';
@@ -30,11 +38,28 @@ import * as g from './repos/gate.js';
 import * as msgs from './repos/messages.js';
 import { adminUserIds, contactLabel, handlerOf, notifyUser, upsertFeedItem } from './repos/notify.js';
 import { LEDGER_SYSTEM, SYSTEM_NOTICE, type CommsDeps } from './types.js';
+import { emailHandbackKey, messageIdHeader, rfcMessageIdSha256 } from '../channels/rfcMessageId.js';
 
 export type InboundEvent =
   | { kind: 'sms'; providerRef: string; from: string; to: string; body: string; mediaCount?: number; occurredAt?: Instant }
   | { kind: 'email'; providerRef: string; from: string; to: string; subject: string | null; text: string; headers: Record<string, string>; conversationId: string; occurredAt?: Instant }
-  | { kind: 'call'; providerRef: string; from: string; to: string; status: 'ringing' | 'no_answer' | 'voicemail' | 'completed' | 'busy'; occurredAt?: Instant };
+  | { kind: 'call'; providerRef: string; from: string; to: string; status: 'ringing' | 'no_answer' | 'voicemail' | 'completed' | 'busy'; occurredAt?: Instant }
+  | ChannelInboundEvent;
+
+/**
+ * Module 22: a message on a Phase 2 channel. Web chat only (D2: no Messenger/Instagram). `from` is the session's own
+ * chat identity (wc:<hex>), never anything the visitor typed; `connectionId` the widget it came through.
+ */
+export type ChannelInboundEvent = { kind: 'web_chat'; providerRef: string; from: string; connectionId: string; body: string; occurredAt?: Instant };
+
+export interface ChannelIngestOptions {
+  /**
+   * The chat's opening message (it is also the lead's inquiry): stored and opt-out-classified like any message, but
+   * it neither pauses nor hands back (nothing ran yet; intake already made the lead card and queued the first
+   * response, which it must not cancel).
+   */
+  opening?: boolean;
+}
 
 export type IngestResult =
   | { kind: 'stored'; contactId: string; messageId: string | null; callId: string | null; sharedContactIds: string[]; classification: InboundClassification['kind']; paused: boolean; handbackId: string | null; created: boolean }
@@ -70,21 +95,40 @@ export async function ingestInbound(actor: SystemActor, e: InboundEvent, deps: C
   return withTenantTx(actor, (tx, now) => ingestInTx(tx, actor, e, now, deps), { db: deps.db, retries: 3 });
 }
 
-async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: Instant, deps: CommsDeps): Promise<IngestResult> {
+/** PHASE2_3_PLAN §5.4 #22: the Phase 1 ingestion transaction, per Phase 2 channel. */
+export async function ingestChannelInbound(actor: SystemActor, e: ChannelInboundEvent, deps: CommsDeps): Promise<IngestResult> {
+  return withTenantTx(actor, (tx, now) => ingestInTx(tx, actor, e, now, deps), { db: deps.db, retries: 3 });
+}
+
+/** The same, inside the caller's system transaction (the web-chat start creates the contact and stores the opening). */
+export async function ingestChannelInboundInTx(tx: Tx, actor: SystemActor, e: ChannelInboundEvent, now: Instant, deps: CommsDeps, o: ChannelIngestOptions = {}): Promise<IngestResult> {
+  return ingestInTx(tx, actor, e, now, deps, o);
+}
+
+const WC_ADDRESS = /^wc:[0-9a-f]{32}$/;
+
+async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: Instant, deps: CommsDeps, o: ChannelIngestOptions = {}): Promise<IngestResult> {
   const ids = deps.ids;
   const tenantId = actor.tenantId as TenantId;
   const env = deps.envelope.inTx(tx, tenantId);
   const occurredAt = e.occurredAt ?? txNow;
   const isEmail = e.kind === 'email';
-  const fromNorm = isEmail ? normalizeEmail(e.from) : normalizePhone(e.from, 'US');
-  if (!fromNorm.ok) return { kind: 'unroutable', reason: 'ADDRESS_INVALID' };
-  const from = 'email' in fromNorm ? fromNorm.email : fromNorm.e164;
+  const isChat = e.kind === 'web_chat';
+  let from: string;
+  if (isChat) {
+    if (!WC_ADDRESS.test(e.from)) return { kind: 'unroutable', reason: 'ADDRESS_INVALID' };
+    from = e.from;
+  } else {
+    const fromNorm = isEmail ? normalizeEmail(e.from) : normalizePhone(e.from, 'US');
+    if (!fromNorm.ok) return { kind: 'unroutable', reason: 'ADDRESS_INVALID' };
+    from = 'email' in fromNorm ? fromNorm.email : fromNorm.e164;
+  }
   const hmac = Buffer.from(await env.hmacAddress(tenantId, from)).toString('hex');
   const { policy, tenant } = await resolvedPolicy(tx);
 
   // the number that was texted / called (still live for this tenant: the resolver checked, R-TEN-8)
   let toNumber: { id: string; assignedUserId: string | null } | null = null;
-  if (!isEmail) {
+  if (!isEmail && !isChat) {
     const r = await sql<{ id: string; assigned_user_id: string | null }>`
       SELECT id, assigned_user_id FROM phone_numbers WHERE tenant_id = app.tenant_id() AND e164 = ${e.to} AND released_at IS NULL`.execute(tx);
     if (!r.rows[0]) return { kind: 'unroutable', reason: 'NUMBER_NOT_LIVE' };
@@ -110,6 +154,10 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
   if (e.kind === 'email') {
     target = e.conversationId ? await conversationContact(tx, e.conversationId) : null;
     if (!target) return { kind: 'unroutable', reason: 'CONVERSATION_NOT_FOUND' };
+  } else if (isChat) {
+    // the session's own identity is on exactly one live contact (it follows a merge); never a new "Unknown" contact
+    if (sharing.length !== 1) return { kind: 'unroutable', reason: 'ADDRESS_INVALID' };
+    target = sharing[0]!;
   } else if (sharing.length === 1) target = sharing[0]!;
   else if (sharing.length > 1) target = await affinity(tx, sharing, toNumber?.id ?? null);
   if (target === null) {
@@ -142,6 +190,7 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
   let callId: string | null = null;
   let body = '';
   let autoReply: { name: string; value: string } | null = null;
+  let rfcHash: Buffer | null = null;
   if (e.kind === 'call') {
     callId = ids.next<'CallId'>();
     const handler = await handlerOf(tx, target);
@@ -155,34 +204,38 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
     if (r.rows.length === 0) return { kind: 'duplicate' };
   } else {
     messageId = ids.next<'MessageId'>();
-    body = e.kind === 'sms' ? e.body : e.text;
+    body = e.kind === 'sms' || e.kind === 'web_chat' ? e.body : e.text;
     autoReply = e.kind === 'email' ? autoReplyHeader(e.headers) : null;
+    // R-GMAIL-12: platform inbound email's Message-ID hash, written here by the system ingestion (never a person)
+    rfcHash = e.kind === 'email' ? rfcMessageIdSha256(messageIdHeader(e.headers)) : null;
     const inserted = await msgs.insertInbound(tx, {
       id: messageId,
       conversationId,
       contactId: target,
-      channel: e.kind === 'sms' ? ((e.mediaCount ?? 0) > 0 ? 'mms' : 'sms') : 'email',
+      channel: e.kind === 'sms' ? ((e.mediaCount ?? 0) > 0 ? 'mms' : 'sms') : e.kind === 'web_chat' ? 'web_chat' : 'email',
       phoneNumberId: toNumber?.id ?? null,
       fromAddress: from,
-      toAddress: e.to,
+      toAddress: e.kind === 'web_chat' ? `widget:${e.connectionId}` : e.to,
       subject: e.kind === 'email' ? e.subject : null,
       body,
       isAutoReply: autoReply !== null,
       optOutKeyword: null,
-      provider: e.kind === 'email' ? 'email' : 'telephony',
+      provider: e.kind === 'email' ? 'email' : e.kind === 'web_chat' ? 'web_chat' : 'telephony',
       providerRef: e.providerRef,
       occurredAt,
+      integrationConnectionId: e.kind === 'web_chat' ? e.connectionId : null,
+      rfcMessageIdSha256: rfcHash,
     });
     if (!inserted) return { kind: 'duplicate' };
   }
   const inboundSeq = await msgs.bumpInbound(tx, conversationId, target, occurredAt);
 
   // 5 consent side of the message (SMS and email bodies; a call has no text)
-  const channel: Channel = e.kind === 'email' ? 'email' : 'sms';
-  const classification: InboundClassification = e.kind === 'call' ? { kind: 'none', needsReview: false } : classifyInbound(body, policy.keywords);
+  const channel: Channel = e.kind === 'email' ? 'email' : e.kind === 'web_chat' ? 'web_chat' : 'sms';
+  const classification: InboundClassification = e.kind === 'call' ? { kind: 'none', needsReview: false } : classifyInbound(body, policy.keywords, channel);
   if (e.kind !== 'call') {
     const targetPoints = await g.contactPoints(tx, target);
-    const inbound: InboundAddress = { kind: isEmail ? 'email' : 'phone', hmac, hint: hint(from) };
+    const inbound: InboundAddress = { kind: isEmail ? 'email' : isChat ? 'web_chat' : 'phone', hmac, hint: isChat ? 'web chat' : hint(from) };
     const others = (kind: 'phone' | 'email') => targetPoints.filter((p) => p.kind === kind && p.hmac !== hmac).map((p) => ({ kind, hmac: p.hmac, hint: hint(p.address) }) as InboundAddress);
     let otherPhones = others('phone');
     if (classification.kind === 'start' && e.kind === 'sms') {
@@ -199,8 +252,21 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
       const bySender = await g.keywordRevokedBy(tx, otherPhones.map((p) => p.hmac), from);
       otherPhones = otherPhones.map((p) => ({ ...p, keywordRevokedBySender: bySender.has(p.hmac) }));
     }
-    const fx = planInboundEffects({ classification, channel, address: inbound, otherPhones, otherEmails: others('email'), occurredAt: now, contactId: target, messageId, policy, ids });
+    const otherChats = targetPoints.filter((p) => p.kind === 'web_chat' && p.hmac !== hmac).map((p) => ({ kind: 'web_chat', hmac: p.hmac, hint: 'web chat' }) as InboundAddress);
+    const fx = planInboundEffects({ classification, channel, address: inbound, otherPhones, otherEmails: others('email'), otherPointsOfKind: otherChats, occurredAt: now, contactId: target, messageId, policy, ids });
     for (const ev of fx.consentEvents) await recordConsentEvent(tx, ev);
+    if (isChat) {
+      const byHmac = new Map<string, string>([[hmac, from], ...targetPoints.map((p) => [p.hmac, p.address] as [string, string])]);
+      const chatTargets = fx.cancelQueued.filter((c) => c.channel === 'web_chat').map((c) => byHmac.get(c.hmac)).filter((a): a is string => !!a);
+      await msgs.cancelQueuedTo(tx, 'web_chat', chatTargets, 'OPTED_OUT');
+    }
+    // R-CHAN-3 / D-OPTOUT-LANG: opt-out language sets the person-level do-not-contact (needs_review) on the contact
+    // that wrote (from web chat: the session's own contact, never someone the visitor named, E155), citing the
+    // revoke just written. It only ever refuses more; "Not an opt-out" is the reviewed reversal.
+    const firstRevoke = fx.consentEvents.find((ev) => ev.eventType === 'revoke');
+    if (fx.personDoNotContact && firstRevoke) {
+      await sql`SELECT app.record_person_opt_out(${target}::uuid, ${firstRevoke.id}::uuid)`.execute(tx);
+    }
     if (classification.kind !== 'none' && messageId) {
       await sql`UPDATE messages SET opt_out_keyword = ${(classification.matched ?? classification.kind).slice(0, 40)} WHERE tenant_id = app.tenant_id() AND id = ${messageId}`.execute(tx);
     }
@@ -245,6 +311,11 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
     }
   }
 
+  if (o.opening) {
+    // the chat's opening message is the inquiry itself: intake routed it and queued the first response
+    return { kind: 'stored', contactId: target, messageId, callId, sharedContactIds: sharing, classification: classification.kind, paused: false, handbackId: null, created };
+  }
+
   // 6 pause every contact on this address (R-AST-9: shared-address pause)
   const reason = pauseReasonOf(classification.kind);
   let paused = false;
@@ -254,12 +325,15 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
   }
   const pausedEnrollments = await auto.pauseEnrollments(tx, sharing, reason, messageId, now);
   const canceledAssistant = await msgs.cancelQueuedAssistant(tx, sharing, 'CLIENT_REPLIED');
+  // R-NURT-5 / R-INBOX-2 (module 22): the scheduled trigger runs of every contact on the address, too
+  // (module 26's executeTriggerRun also re-checks the pause)
+  const canceledTriggerRuns = await msgs.cancelScheduledTriggerRuns(tx, sharing);
 
   // 7 handback for the replying contact when the assistant was running (or about to run) its thread
   const h = await handlerOf(tx, target);
   const enrollment = pausedEnrollments.find((x) => x.contactId === target) ?? (await auto.liveEnrollment(tx, target));
   const inFlight = await auto.messagesInFlight(tx, target, now);
-  const assistantWasActive = pausedEnrollments.some((x) => x.contactId === target) || canceledAssistant.length > 0 || inFlight.length > 0;
+  const assistantWasActive = pausedEnrollments.some((x) => x.contactId === target) || canceledAssistant.length > 0 || inFlight.length > 0 || canceledTriggerRuns.length > 0;
   let handbackId: string | null = null;
   const label = await contactLabel(tx, target);
   const who = h.firstName ?? 'They';
@@ -267,6 +341,8 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
     handbackId = ids.next<'AssistantActionId'>();
     const claims: auto.ClaimSpec[] = [];
     const srcType = e.kind === 'email' ? 'email' : e.kind === 'call' ? 'call' : 'message';
+    // E201 / R-GMAIL-12: with the Message-ID hash known, one handback per message per contact, shared with module 68
+    const dedupeKey = rfcHash ? emailHandbackKey(target, rfcHash) : `handback:${enrollment?.id ?? 'none'}:${messageId ?? callId}`;
     const srcId = (messageId ?? callId)!;
     if (e.kind !== 'call' && body.trim()) {
       const snippet = body.slice(0, 280);
@@ -295,10 +371,10 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
       contactId: target,
       ownerUserId: h.userId,
       explanation,
-      payload: { inboundMessageId: messageId, inboundCallId: callId, enrollmentId: enrollment?.id ?? null, autoReply: autoReply !== null, sentAtSameMoment: flying !== undefined, canceledMessageIds: canceledAssistant },
+      payload: { inboundMessageId: messageId, inboundCallId: callId, enrollmentId: enrollment?.id ?? null, autoReply: autoReply !== null, sentAtSameMoment: flying !== undefined, canceledMessageIds: canceledAssistant, ...(canceledTriggerRuns.length > 0 ? { canceledTriggerRunIds: canceledTriggerRuns } : {}), ...(isChat ? { channel: 'web_chat' } : {}) },
       pinnedInboundSeq: inboundSeq,
       boundOwnershipSeq: h.periodSeq,
-      dedupeKey: `handback:${enrollment?.id ?? 'none'}:${messageId ?? callId}`,
+      dedupeKey,
       claims,
     });
     if (!ok) handbackId = null;

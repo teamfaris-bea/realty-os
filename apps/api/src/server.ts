@@ -20,6 +20,7 @@
 // raw URL.
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
+import { PUBLIC_CHAT_PREFIX } from './channels/publicPaths.js';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import type { Clock, IdGenerator } from '@realty/core/foundation';
@@ -242,7 +243,12 @@ export function buildServer(cfg: Config, deps: ServerDeps): FastifyInstance {
 
   app.register(cookie);
   app.register(helmet, { global: true, contentSecurityPolicy: { directives: { defaultSrc: ["'none'"], frameAncestors: ["'none'"] } } });
-  app.register(cors, { origin: cfg.webOrigins, credentials: true, methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'], allowedHeaders: ['content-type', 'x-csrf-token'] });
+  // Module 22: the public website-chat routes are called from the team's own websites (any origin; the widget's
+  // allowed origins are enforced by the route itself): CORS without credentials, so no cookie ever rides along.
+  // Every other route keeps the web-origin allowlist with credentials.
+  const appCors = { origin: cfg.webOrigins, credentials: true, methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'], allowedHeaders: ['content-type', 'x-csrf-token'] };
+  const chatCors = { origin: true, credentials: false, methods: ['GET', 'POST'], allowedHeaders: ['content-type'], maxAge: 600 };
+  app.register(cors, { delegator: (req, cb) => cb(null, (req.url ?? '').startsWith(PUBLIC_CHAT_PREFIX) ? chatCors : appCors) });
   app.register(rateLimit, {
     global: true,
     max: cfg.globalRateLimitPerMinute,

@@ -182,6 +182,14 @@ export interface IngestOptions {
   firstResponse?: boolean;
   /** a parsed lead email: lead_inquiries.parse_status 'parsed' with each field's source span (R-INBOX-9) */
   parse?: { status: 'parsed'; evidence: Record<string, unknown> };
+  /**
+   * Module 22 web chat (R-INBOX-1, E138): the session's own new chat identity (wc:<hex>, its tenant HMAC and the
+   * point id to give it). The inquiry then carries no phone or email (what the visitor typed is only a claim on the
+   * session), the fingerprint is the identity's HMAC (so two visitors who type the same name never collapse into one
+   * contact), and the contact is always NEW: nothing matches an unseen identity, and a name match only suggests a
+   * duplicate. The identity is the contact's only point.
+   */
+  webChat?: { address: string; hmac: string; pointId: string };
 }
 
 /**
@@ -198,6 +206,7 @@ async function ingestInTx(tx: Tx, actor: SystemActor, i: InquiryInput, now: Inst
   const source = await repo.leadSource(tx, i.leadSourceId);
   if (!source || !source.active) throw new AppError('NOT_FOUND');
   const inquiryType = (i.inquiryType ?? 'general') as InquiryType;
+  if (opts.webChat && ((i.phones ?? []).length > 0 || (i.emails ?? []).length > 0)) throw new AppError('INTERNAL_ERROR');
   const idents = await identifiersOf(tx, envelope, actor.tenantId, i.phones ?? [], i.emails ?? []);
   const name = personName(i);
   if (!name.displayName && idents.phones.length === 0 && idents.emails.length === 0) throw new AppError('INQUIRY_EMPTY');
@@ -210,7 +219,7 @@ async function ingestInTx(tx: Tx, actor: SystemActor, i: InquiryInput, now: Inst
   // inquiry of one source and type inside 10 minutes would be "the same lead". The name (+ ZIP)
   // stands in, keyed with the tenant HMAC like an address so the stored fingerprint is not a plain
   // hash of a name.
-  const fingerprintIds = [...person.phoneHmacs, ...person.emailHmacs];
+  const fingerprintIds = [...person.phoneHmacs, ...person.emailHmacs, ...(opts.webChat ? [opts.webChat.hmac] : [])];
   if (fingerprintIds.length === 0 && name.displayName) {
     const key = `intake-name:${name.displayName.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim()}|${(i.postalCode ?? '').slice(0, 5)}`;
     fingerprintIds.push(Buffer.from(await envelope.inTx(tx, actor.tenantId).hmacAddress(actor.tenantId, key)).toString('hex'));
@@ -277,9 +286,12 @@ async function ingestInTx(tx: Tx, actor: SystemActor, i: InquiryInput, now: Inst
       existing.push({ contactId: f.contact_id as ContactId, createdAt: instantOf(f.created_at), ownershipState: f.ownership_state, closedReason: f.closed_reason, matchedHmacs: [], nameSimilarity: f.sim, samePostal: f.same_postal });
     }
   }
-  const decision: DedupOutcome = matchContacts(person, existing);
+  const matched: DedupOutcome = matchContacts(person, existing);
+  // web chat: an unseen identity never attaches (a name match is only a suggestion, R-INBOX-1)
+  const decision: DedupOutcome = opts.webChat && matched.kind !== 'create' ? { kind: 'create', duplicates: matched.duplicates } : matched;
 
   const addPoints = async (contactId: string) => {
+    if (opts.webChat) await contacts.addPoint(tx, { id: opts.webChat.pointId, contactId, kind: 'web_chat', address: opts.webChat.address, hmacHex: opts.webChat.hmac });
     for (const p of idents.phones) await contacts.addPoint(tx, { id: ids.next(), contactId, kind: 'phone', address: p.e164, hmacHex: p.hmac });
     for (const e of idents.emails) await contacts.addPoint(tx, { id: ids.next(), contactId, kind: 'email', address: e.email, hmacHex: e.hmac });
   };

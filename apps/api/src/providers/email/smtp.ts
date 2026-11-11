@@ -362,7 +362,9 @@ class SmtpTransport {
       const done = want(await conn.read(), (c) => c === 250);
       const providerRef = queueIdFromReply(done.lines.join(' ')) ?? messageId.slice(1, -1);
       await conn.quit();
-      return { providerRef, status: 'queued' };
+      // module 22 (R-GMAIL-12): the Message-ID we generated, reported only where the relay keeps it. A plain SMTP
+      // server does; SES, Mailgun, SendGrid and Postmark may assign their own (VERIFY per vendor), so none is reported.
+      return { providerRef, status: 'queued', ...((o.vendor ?? 'generic') === 'generic' ? { rfcMessageId: messageId } : {}) };
     } finally {
       conn.close();
     }

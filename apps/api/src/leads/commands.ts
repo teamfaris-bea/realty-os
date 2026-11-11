@@ -20,6 +20,9 @@ import type { OwnershipCommand } from '@realty/core/ownership';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { type Tx, dbNow } from '@realty/db';
+import { audit, redactSnapshot } from '../audit.js';
+import { recordPersonDoNotContactInTx } from '../channels/personOptOut.js';
 import { AppError } from '../errors.js';
 import { authorize } from '../rbac.js';
 import { NIL_UUID, actorOf, leadsTx, mapLeadsDbError, platformOf } from './common.js';
@@ -163,8 +166,20 @@ export async function registerCommandRoutes(app: FastifyInstance): Promise<void>
         const b = req.body as Record<string, unknown> & Body;
         const cmd = commandOf(verb, req.params.contactId, b, seen.get(req) ?? null);
         let res: Awaited<ReturnType<typeof runOwnershipCommand>>;
+        // F19 / R-CHAN-3 (module 22): closing a lead as do-not-contact records the person-level opt-out in the
+        // close's own transaction (every channel of every point revoked, contacts.do_not_contact_at set)
+        const afterApplied =
+          cmd.kind === 'close' && cmd.reason === 'do_not_contact'
+            ? async (tx: Tx) => {
+                const now = await dbNow(tx);
+                const out = await recordPersonDoNotContactInTx(tx, p.ids, actor, req.params.contactId, 'closed_as_do_not_contact', now);
+                if (out.firstEventId !== null) {
+                  await audit(tx, actor, { action: 'consent.recorded', entity: { type: 'contact', id: req.params.contactId }, changes: redactSnapshot({ kind: 'revoke', source: 'agent_revoke', scope: 'person' }, { entity: 'consent_event' }), reason: 'PERSON_DO_NOT_CONTACT' });
+                }
+              }
+            : undefined;
         try {
-          res = await runOwnershipCommand(actor, req.params.contactId as ContactId, cmd, b.commandId, b.expectedSeq, { db: p.db, ids: p.ids });
+          res = await runOwnershipCommand(actor, req.params.contactId as ContactId, cmd, b.commandId, b.expectedSeq, { db: p.db, ids: p.ids, ...(afterApplied ? { afterApplied } : {}) });
         } catch (e) {
           const mapped = mapLeadsDbError(e);
           if (mapped) throw mapped;

@@ -30,6 +30,8 @@ export interface OutboundIntent {
   sender: { phoneNumberId: string | null; emailIdentityId: string | null };
   /** the body exactly as it will be sent (rendered facts are derived from it) */
   body: string | null;
+  /** web chat (module 22): the sending widget's state for the gate (core check 10); absent/null on other channels */
+  connection?: { status: 'connected' | 'degraded' | 'other' } | null;
 }
 
 /**

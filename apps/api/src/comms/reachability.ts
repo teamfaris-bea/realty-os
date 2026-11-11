@@ -194,7 +194,8 @@ export async function reachabilityFor(tx: Tx, contactIds: readonly string[], now
   const supById = new Map(sups.map((s) => [s.id, s]));
   const out = new Map<string, ReachabilityView>();
   for (const contactId of ids) {
-    const pts = byContact.get(contactId) ?? [];
+    // texts, calls and email only: a web-chat identity (module 22) is not a reachability point
+    const pts = (byContact.get(contactId) ?? []).filter((p): p is typeof p & { kind: 'phone' | 'email' } => p.kind === 'phone' || p.kind === 'email');
     const f = facts.get(contactId)!;
     const purposeNow = classifyHumanPurpose({ lastInboundAt: f.lastInboundAt ? instantFromDate(f.lastInboundAt) : null, dealOrAppointmentContext: f.dealOrAppointmentContext, now });
     const own = new Set(pts.map((p) => p.hmac));

@@ -114,7 +114,8 @@ export async function suppressionRows(tx: Tx, hmac: string): Promise<Suppression
 export interface PointRow {
   id: string;
   contactId: string;
-  kind: 'phone' | 'email';
+  /** 'web_chat': a chat session's own identity (module 22) */
+  kind: 'phone' | 'email' | 'web_chat';
   address: string;
   hmac: string;
   status: PointStatus;
@@ -123,7 +124,7 @@ export interface PointRow {
   isPrimary: boolean;
 }
 
-function point(x: { id: string; contact_id: string; kind: 'phone' | 'email'; address: string; address_hmac: Buffer; status: PointStatus; line_type: LineType; timezone: string | null; is_primary: boolean }): PointRow {
+function point(x: { id: string; contact_id: string; kind: PointRow['kind']; address: string; address_hmac: Buffer; status: PointStatus; line_type: LineType; timezone: string | null; is_primary: boolean }): PointRow {
   return { id: x.id, contactId: x.contact_id, kind: x.kind, address: x.address, hmac: x.address_hmac.toString('hex'), status: x.status, lineType: x.line_type, timezone: x.timezone, isPrimary: x.is_primary };
 }
 
@@ -303,4 +304,16 @@ export async function chooseEmailIdentity(tx: Tx, userId: string | null): Promis
        AND (user_id = ${userId} OR user_id IS NULL)
      ORDER BY (user_id IS NULL), created_at, id LIMIT 1`.execute(tx);
   return r.rows[0]?.id ?? null;
+}
+
+/**
+ * Module 22: the chat identities whose opt-out blocks a chat reply to the contact: every web-chat point of the
+ * contact except one removed as a confirmed wrong number (the dispatch guard's `others` set for web_chat, 0021).
+ */
+export async function chatFanoutHmacs(tx: Tx, contactId: string): Promise<string[]> {
+  const r = await sql<{ h: Buffer }>`
+    SELECT address_hmac AS h FROM contact_points
+     WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND kind = 'web_chat'
+       AND (removed_at IS NULL OR removed_reason IS DISTINCT FROM 'wrong_number')`.execute(tx);
+  return r.rows.map((x) => x.h.toString('hex'));
 }

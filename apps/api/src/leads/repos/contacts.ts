@@ -140,7 +140,8 @@ export async function contactInquiries(tx: Tx, contactId: string, limit = 10): P
 export interface NewPoint {
   id: string;
   contactId: string;
-  kind: 'phone' | 'email';
+  /** 'web_chat': a chat session's own identity (module 22; address wc:<hex>) */
+  kind: 'phone' | 'email' | 'web_chat';
   address: string;
   hmacHex: string;
   label?: 'mobile' | 'home' | 'work' | 'other';
