@@ -1417,6 +1417,23 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                     ],
                     "type": "object",
                   },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "open_coaching_fix",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                    ],
+                    "type": "object",
+                  },
                 ],
               },
               "type": "array",
@@ -1900,6 +1917,23 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                   "properties": {
                     "kind": {
                       "const": "show_details",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "open_coaching_fix",
                       "type": "string",
                     },
                     "label": {
@@ -2426,6 +2460,23 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                     ],
                     "type": "object",
                   },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "open_coaching_fix",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                    ],
+                    "type": "object",
+                  },
                 ],
               },
               "type": "array",
@@ -2909,6 +2960,23 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                   "properties": {
                     "kind": {
                       "const": "show_details",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "open_coaching_fix",
                       "type": "string",
                     },
                     "label": {

@@ -44,7 +44,13 @@ const SYSTEM = [
 
 /** Text from the call never closes the delimiter or forges a handle line. */
 function clean(s: string): string {
-  return s.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, ' ').replace(/<\/?transcript_[0-9a-f]*>/gi, ' ').replace(/\n/g, ' ');
+  // control characters (newlines included) become spaces, so a segment stays on its one handle line
+  let out = '';
+  for (const ch of s) {
+    const c = ch.codePointAt(0) ?? 0;
+    out += c < 0x20 || c === 0x7f ? ' ' : ch;
+  }
+  return out.replace(/<\/?transcript_[0-9a-f]*>/gi, ' ');
 }
 
 export function buildCallReviewPrompt(rubric: Rubric, transcript: CallTranscript, disabledKeys: readonly string[] = []): ReviewPrompt {

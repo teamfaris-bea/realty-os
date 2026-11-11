@@ -837,6 +837,23 @@ exports[`core/priority schemas > FeedItemSchema has no confidence fields and no 
             ],
             "type": "object",
           },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "open_coaching_fix",
+                "type": "string",
+              },
+              "label": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "kind",
+              "label",
+            ],
+            "type": "object",
+          },
         ],
       },
       "type": "array",
@@ -1340,6 +1357,23 @@ exports[`core/priority schemas > FeedItemSchema has no confidence fields and no 
           "properties": {
             "kind": {
               "const": "show_details",
+              "type": "string",
+            },
+            "label": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "kind",
+            "label",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "open_coaching_fix",
               "type": "string",
             },
             "label": {
@@ -1884,6 +1918,23 @@ exports[`core/priority schemas > OneTapActionSchema has no confidence fields and
       "properties": {
         "kind": {
           "const": "show_details",
+          "type": "string",
+        },
+        "label": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "kind",
+        "label",
+      ],
+      "type": "object",
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "open_coaching_fix",
           "type": "string",
         },
         "label": {

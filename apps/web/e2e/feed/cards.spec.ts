@@ -57,7 +57,8 @@ const CARDS = [
   { label: 'Seller update to review', action: 'Open listing', to: () => `/listings/${seed.listingId}` },
   { label: 'Marketing to review', action: 'Open listing', to: () => `/listings/${seed.listingId}` },
   { label: 'Your plan this week', action: 'See the plan', details: 'Log the outcome of each consult' },
-  { label: "Today's coaching tip", action: 'See the tip', details: 'Ask about their timeline before you talk price' },
+  // module 40: the coaching tip links to the daily fix page
+  { label: "Today's coaching tip", action: 'See the tip', to: () => '/coaching' },
   { label: 'May be thinking of moving', action: 'Open contact', to: () => `/contacts/${seed.lenaId}` },
 ] as const;
 

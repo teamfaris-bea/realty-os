@@ -146,13 +146,13 @@ describe('R-PERM-13 re-authentication on sensitive actions', () => {
     // the Phase 1 list: imports, role/member changes, erasure, export, number release, support grant,
     // brokerage identity, compliance loosening
     expect(new Set(sensitive.map(([, a]) => a))).toEqual(
-      new Set(['import.run', 'number.release', 'settings.compliance', 'settings.identity', 'member.invite', 'member.role', 'member.suspend', 'member.remove', 'contact.erase', 'data.export', 'support.grant', 'integration.manage', 'settings.batch_text']),
+      new Set(['import.run', 'number.release', 'settings.compliance', 'settings.identity', 'member.invite', 'member.role', 'member.suspend', 'member.remove', 'contact.erase', 'data.export', 'support.grant', 'integration.manage', 'settings.batch_text', 'coaching.settings']),
     );
     for (const role of new Set(sensitive.map(([r]) => r))) {
       await h.su.query("UPDATE sessions SET reauthenticated_at = now() - interval '16 minutes' WHERE user_id = $1 AND revoked_at IS NULL", [users[role].userId]);
     }
     for (const [role, action] of sensitive) {
-      const facts = action === 'settings.compliance' || action === 'settings.batch_text' ? { ...FULL, loosening: true } : FULL; // parity L3: batch text on is "loosening"
+      const facts = action === 'settings.compliance' || action === 'settings.batch_text' || action === 'coaching.settings' ? { ...FULL, loosening: true } : FULL; // parity L3: batch text on is "loosening"; module 36: coaching on
       const got = await call(users[role], action, facts);
       expect({ role, action, ...got }).toEqual({ role, action, status: 401, code: 'REAUTH_REQUIRED' });
     }
@@ -165,7 +165,7 @@ describe('R-PERM-13 re-authentication on sensitive actions', () => {
       expect((await c.post('/api/auth/reauth', body)).statusCode).toBe(200);
     }
     for (const [role, action] of sensitive) {
-      const facts = action === 'settings.compliance' || action === 'settings.batch_text' ? { ...FULL, loosening: true } : FULL;
+      const facts = action === 'settings.compliance' || action === 'settings.batch_text' || action === 'coaching.settings' ? { ...FULL, loosening: true } : FULL;
       expect({ role, action, ...(await call(users[role], action, facts)) }).toEqual({ role, action, status: 200, code: null });
     }
   });
