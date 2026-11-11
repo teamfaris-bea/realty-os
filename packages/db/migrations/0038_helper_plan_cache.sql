@@ -59,6 +59,8 @@
 --    named above, parity rows on pond / offered / deleted / merged / deal contacts and in another tenant).
 --    WITH CHECK, INSERT, UPDATE and DELETE policies are unchanged.
 --
+-- 3. Two indexes for smart lists: the name sort, and value-driven counts (no policy or visibility change).
+--
 -- No LEAKPROOF, no BYPASSRLS, no USING (true), no new definer, no grant change.
 -- =============================================================================
 
@@ -203,6 +205,18 @@ ALTER POLICY contact_tags_select ON public.contact_tags USING (
 ALTER POLICY contact_field_values_select ON public.contact_field_values USING (
   (SELECT app.is_tenant_wide())
   OR EXISTS (SELECT 1 FROM app.contact_detail_row(contact_field_values.tenant_id, contact_field_values.contact_id)));
+
+-- ---- 3. smart lists sorted by name (R-PAR-29) -------------------------------------------------------------
+-- The "name A-Z" sort (lists/repos/people.ts: ORDER BY lower(display_name), id) had no index: an Owner's first
+-- page sorted every live person of the tenant (564 ms p95 at 250k). Same partial predicate as 0021's list indexes.
+CREATE INDEX contacts_list_name_idx ON contacts (tenant_id, lower(display_name), id)
+  WHERE deleted_at IS NULL AND merged_into_contact_id IS NULL;
+-- Value-driven counts (lists/repos/people.ts driverRows) read one field's values for the tenant and intersect
+-- the people of several fields: (field, person) order with the compared columns, so a field's rows are read from
+-- the index (index-only once vacuumed) instead of a bitmap over the primary key (features + timeline: 888 -> 619 ms
+-- p95 at 250k). value_text is left out (long values; text conditions keep contact_field_values_text_idx).
+CREATE INDEX contact_field_values_field_contact_idx ON contact_field_values (tenant_id, field_id, contact_id)
+  INCLUDE (value_options, value_number, value_date);
 
 -- ---- self-checks -------------------------------------------------------------------------------------------
 DO $$

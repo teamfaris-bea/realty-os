@@ -6,7 +6,7 @@
 // through RLS in one transaction. The fixture is the CI-sized load seed plus the list workload (tags,
 // typed values) and parity rows placed on pond, offered, deleted, merged and deal contacts.
 import type { Actor, TenantId, UserId } from '@realty/core/foundation';
-import { compileList, type ListPlan, SmartListDefinitionSchema } from '@realty/core/parity/lists';
+import { compileList, type ListCursor, type ListPlan, SmartListDefinitionSchema } from '@realty/core/parity/lists';
 import { createDatabase, type Database, withTenantTx } from '@realty/db';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -16,7 +16,7 @@ import { loadUuid } from '../load/generate.js';
 import { seedLoad } from '../load/seed.js';
 import { benchDefinitions } from './perf/listsBench.js';
 import { perfFieldId, perfTagId, seedLists } from './perf/seedLists.js';
-import { driverSql, plainWhereSql, whereSql } from './repos/people.js';
+import { driverSql, pageKeysVia, pageQuery, plainWhereSql, whereSql } from './repos/people.js';
 import { viewerFor } from './run.js';
 
 const DB = `realty_lists_vd_${process.pid}`;
@@ -36,6 +36,7 @@ const EXTRA = [
   { name: 'date between', definition: { v: 1, all: [{ kind: 'field', fieldId: field('closing_date'), op: 'date_after', value: '2020-01-01' }] } },
   { name: 'opt all', definition: { v: 1, all: [{ kind: 'field', fieldId: field('features'), op: 'opt_all', optionIds: ['pool', 'garage'] }] } },
   { name: 'nested and: stage then tag', definition: { v: 1, all: [{ kind: 'stage', in: ['new', 'nurture', 'active'] }, { kind: 'tag', op: 'any', tagIds: [tag(190), tag(7)] }] } },
+  { name: 'name contains, rare', definition: { v: 1, all: [{ kind: 'name', contains: 'zq' }] } },
   { name: 'tag none (no driver)', definition: { v: 1, all: [{ kind: 'tag', op: 'none', tagIds: [tag(5)] }] } },
 ];
 
@@ -54,6 +55,14 @@ beforeAll(async () => {
     await su.query(`INSERT INTO contact_tags (tenant_id, contact_id, tag_id, added_by_kind) VALUES ($1, $2, $3, 'migrated'), ($1, $2, $4, 'migrated') ON CONFLICT DO NOTHING`, [T, id, tag(10), tag(190)]);
   }
   await su.query(`UPDATE contacts SET deleted_at = now(), purge_after = now() + interval '30 days' WHERE tenant_id = $1 AND id = ANY ($2::uuid[])`, [T, special.slice(40, 45)]).catch(() => undefined);
+  // open tasks without a due date (the next-task key ignores them): on people with no other open task and on
+  // people with a dated one, so the NULL-key boundary of the next-task page shape is exercised
+  const noTask = (await su.query<{ id: string }>(`SELECT c.id FROM contacts c WHERE c.tenant_id = $1 AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.tenant_id = c.tenant_id AND t.contact_id = c.id) ORDER BY c.id LIMIT 30`, [T])).rows.map((r) => r.id);
+  const dated = (await su.query<{ id: string }>(`SELECT DISTINCT contact_id AS id FROM tasks WHERE tenant_id = $1 AND status = 'open' AND due_at IS NOT NULL AND contact_id IS NOT NULL ORDER BY 1 LIMIT 10`, [T])).rows.map((r) => r.id);
+  for (const id of [...noTask, ...dated]) {
+    await su.query(`INSERT INTO tasks SELECT (jsonb_populate_record(NULL::tasks, to_jsonb(t) || jsonb_build_object('id', gen_random_uuid(), 'contact_id', $2::uuid, 'due_at', NULL, 'kind', 'todo',
+                      'source_claim_id', NULL, 'needs_review', false))).* FROM (SELECT * FROM tasks WHERE tenant_id = $1 AND status = 'open' AND contact_id IS NOT NULL ORDER BY id LIMIT 1) t`, [T, id]);
+  }
   database = createDatabase({ url: loadUrls(DB).appUserUrl, max: 2 });
   actors = await equivalenceActors(su, T);
   const owner = (await su.query<{ user_id: string }>(`SELECT user_id FROM memberships WHERE tenant_id = $1 AND role = 'owner' LIMIT 1`, [T])).rows[0]!.user_id;
@@ -98,7 +107,7 @@ describe('value-driven list runs return the same people (lane perf-misses-2)', (
         await enterAs(su, a);
         for (const p of plans) {
           const plain = await ids(su, plainWhereSql(p.plan));
-          const driven = await ids(su, whereSql(p.plan));
+          const driven = await ids(su, whereSql(p.plan, null, { driven: true }));
           if (plain.length > 0) nonEmpty++;
           if (plain.join() !== driven.join()) diffs.push(`${a.label} / ${p.name}: plain ${plain.length}, driven ${driven.length}`);
         }
@@ -110,4 +119,81 @@ describe('value-driven list runs return the same people (lane perf-misses-2)', (
     expect(diffs).toEqual([]);
     expect(nonEmpty).toBeGreaterThan(plans.length * 6);
   }, 600_000);
+
+  it('the Owner/Admin next-task page in two parts (dated tasks, then the undated) = the single-scan page, page after page, for every context', async () => {
+    const diffs: string[] = [];
+    const sorted = plans.filter((p) => ['everyone (People tab)', 'tag: popular', 'stage + active in 30 days', 'overdue task'].includes(p.name))
+      .map((p) => ({ ...p, plan: { ...p.plan, sort: 'next_task_asc' as const } }));
+    const run = async (q: ReturnType<typeof pageQuery>) => {
+      const c = q.compile(database.kysely);
+      return (await su.query<{ id: string; sort_key: string | null }>(c.sql, c.parameters as unknown[])).rows;
+    };
+    let rows = 0;
+    let crossed = 0;
+    for (const a of actors) {
+      await su.query('BEGIN');
+      try {
+        await enterAs(su, a);
+        for (const p of sorted) {
+          // pages of 40 through the cursor until the list ends (crossing from dated into undated people)
+          let cur: ListCursor | null = null;
+          for (let page = 0; page < 60; page++) {
+            const plain = await run(pageQuery(p.plan, cur, 40, 'wide'));
+            const parts = await pageKeysVia(run, p.plan, cur, 40, 'wide');
+            rows += plain.length;
+            if (plain.some((r) => r.sort_key === null) && plain.some((r) => r.sort_key !== null)) crossed++;
+            if (JSON.stringify(plain) !== JSON.stringify(parts)) diffs.push(`${a.label} / ${p.name} page ${page}: plain ${plain.length}, parts ${parts.length}`);
+            const last = plain[plain.length - 1];
+            if (!last || plain.length < 40) break;
+            cur = { sort: 'next_task_asc', key: last.sort_key, id: last.id };
+          }
+        }
+        await leave(su);
+      } finally {
+        await su.query('ROLLBACK');
+      }
+    }
+    expect(diffs).toEqual([]);
+    expect(rows).toBeGreaterThan(1000);
+    expect(crossed).toBeGreaterThan(0);
+  }, 900_000);
+  it('the Owner/Admin name-filter page from a bounded prefix of the sort index = the single-scan page, page after page, for every context', async () => {
+    const diffs: string[] = [];
+    const named = plans.filter((p) => p.name === 'name contains' || p.name === 'name contains, rare');
+    expect(named.length).toBe(2);
+    const variants = named.flatMap((p) => (['last_activity_desc', 'created_desc', 'name_asc'] as const).map((sort) => ({ name: `${p.name} by ${sort}`, plan: { ...p.plan, sort } })));
+    const run = async (q: ReturnType<typeof pageQuery>) => {
+      const c = q.compile(database.kysely);
+      return (await su.query<{ id: string; sort_key: string | null }>(c.sql, c.parameters as unknown[])).rows;
+    };
+    const pin = async (off: boolean) => void (await su.query(off ? 'SET LOCAL enable_sort = off' : 'SET LOCAL enable_sort = on'));
+    let rows = 0;
+    for (const a of actors) {
+      await su.query('BEGIN');
+      try {
+        await enterAs(su, a);
+        for (const p of variants) {
+          let cur: ListCursor | null = null;
+          for (let page = 0; page < 8; page++) {
+            const plain = await run(pageQuery(p.plan, cur, 40, 'wide'));
+            // the production prefix, and a short one (100 rows, smaller than this tenant) so both outcomes occur:
+            // a prefix holding the whole page, and one that falls back to the single scan
+            for (const prefix of [undefined, 100]) {
+              const viaPrefix = await pageKeysVia(run, p.plan, cur, 40, 'wide', pin, prefix);
+              if (JSON.stringify(plain) !== JSON.stringify(viaPrefix)) diffs.push(`${a.label} / ${p.name} page ${page} prefix ${prefix ?? 'default'}: plain ${plain.length}, prefix ${viaPrefix.length}`);
+            }
+            rows += plain.length;
+            const last = plain[plain.length - 1];
+            if (!last || plain.length < 40) break;
+            cur = { sort: p.plan.sort, key: last.sort_key, id: last.id };
+          }
+        }
+        await leave(su);
+      } finally {
+        await su.query('ROLLBACK');
+      }
+    }
+    expect(diffs).toEqual([]);
+    expect(rows).toBeGreaterThan(500);
+  }, 900_000);
 });

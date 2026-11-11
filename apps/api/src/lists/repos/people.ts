@@ -148,11 +148,12 @@ function valueCond(n: PositiveField): Frag | null {
  * under the same RLS). Adding it changes no result, only lets the planner start from the tag or value index.
  * Proven in lists/value_driven.test.ts against the plain WHERE for every role and the system actor.
  */
-export function driverSql(n: ListPredicate): Frag | null {
+/** The contact ids of the detail rows a required tag or value predicate needs (null: not such a predicate). */
+function driverRows(n: ListPredicate): Frag | null {
   switch (n.p) {
     case 'tag_any':
     case 'tag_all':
-      return sql`c.id IN (SELECT ct.contact_id FROM contact_tags ct WHERE ct.tenant_id = app.tenant_id() AND ct.tag_id = ANY (${n.tagIds}::uuid[]))`;
+      return sql`SELECT ct.contact_id FROM contact_tags ct WHERE ct.tenant_id = app.tenant_id() AND ct.tag_id = ANY (${n.tagIds}::uuid[])`;
     case 'field_set':
     case 'field_text_eq':
     case 'field_text_like':
@@ -162,14 +163,34 @@ export function driverSql(n: ListPredicate): Frag | null {
     case 'field_opt_any':
     case 'field_opt_all': {
       const cond = valueCond(n);
-      return sql`c.id IN (SELECT v.contact_id FROM contact_field_values v WHERE v.tenant_id = app.tenant_id() AND v.field_id = ${n.fieldId}::uuid${cond === null ? sql`` : sql` AND ${cond}`})`;
+      return sql`SELECT v.contact_id FROM contact_field_values v WHERE v.tenant_id = app.tenant_id() AND v.field_id = ${n.fieldId}::uuid${cond === null ? sql`` : sql` AND ${cond}`}`;
     }
-    case 'and':
-      for (const x of n.of) {
-        const d = driverSql(x);
-        if (d !== null) return d;
-      }
+    default:
       return null;
+  }
+}
+
+export function driverSql(n: ListPredicate): Frag | null {
+  switch (n.p) {
+    case 'tag_any':
+    case 'tag_all':
+      return sql`c.id IN (${driverRows(n)})`;
+    case 'field_set':
+    case 'field_text_eq':
+    case 'field_text_like':
+    case 'field_num':
+    case 'field_date_between':
+    case 'field_md_in':
+    case 'field_opt_any':
+    case 'field_opt_all': {
+      return sql`c.id IN (${driverRows(n)})`;
+    }
+    case 'and': {
+      // every required tag / value of the AND: the people in ALL of their row sets (each set is implied on its
+      // own, so their intersection is too), read once each and intersected instead of probed per person
+      const ds = n.of.map(driverRows).filter((d): d is Frag => d !== null);
+      return ds.length === 0 ? null : sql`c.id IN (${sql.join(ds, sql` INTERSECT `)})`;
+    }
     default:
       return null;
   }
@@ -225,17 +246,24 @@ const BOOK: Frag = sql`(c.owner_user_id = (SELECT app.user_id())
       OR c.id = ANY ((SELECT app.my_collab_contact_ids())::uuid[])
       OR c.id = ANY ((SELECT app.my_deal_contact_ids())::uuid[]))`;
 
-/** 'book': the viewer is an Agent, ISA or TC (see BOOK). */
-export type ScopeHint = 'book' | null;
+/**
+ * 'book': the viewer is an Agent, ISA or TC (see BOOK). 'wide': an Owner or Admin, whose detail reads pay no
+ * per-row check (tenant-wide policies), so a shape that reads a whole detail table once is cheap for them.
+ * A hint only chooses a query shape; every shape returns the same rows (proven in lists/value_driven.test.ts).
+ */
+export type ScopeHint = 'book' | 'wide' | null;
 
 export function scopeHintFor(role: string | null): ScopeHint {
-  return role === 'agent' || role === 'isa' || role === 'tc' ? 'book' : null;
+  if (role === 'agent' || role === 'isa' || role === 'tc') return 'book';
+  return role === 'owner' || role === 'admin' ? 'wide' : null;
 }
 
 /** The WHERE of a list run (shared by page, count and selection). */
-export function whereSql(plan: ListPlan, hint: ScopeHint = null): Frag {
-  // 'book' viewers start from their own book; everyone else from the list's tag or value index when it has one
-  const driver = hint === 'book' ? null : driverSql(plan.where);
+export function whereSql(plan: ListPlan, hint: ScopeHint = null, o: { driven?: boolean } = {}): Frag {
+  // counts of 'book' viewers start from their own book; everyone else's from the list's tag or value index
+  // when it has one. Pages never: walking the sort index until the page is full is cheaper while matches are
+  // dense, and the driver made a dense list's first page scan every matching value (measured at 250k).
+  const driver = hint === 'book' || o.driven !== true ? null : driverSql(plan.where);
   return sql`${LIVE} AND ${DETAIL_VISIBLE}${hint === 'book' ? sql` AND ${BOOK}` : sql``}${driver === null ? sql`` : sql` AND ${driver}`} AND ${predicateSql(plan.where)}`;
 }
 
@@ -244,12 +272,7 @@ export function plainWhereSql(plan: ListPlan, hint: ScopeHint = null): Frag {
   return sql`${LIVE} AND ${DETAIL_VISIBLE}${hint === 'book' ? sql` AND ${BOOK}` : sql``} AND ${predicateSql(plan.where)}`;
 }
 
-export interface PageKeyRow {
-  id: string;
-  sort_key: string | null;
-}
-
-/** The SQL of one page (exported for the fuzz and EXPLAIN tests). */
+/** The SQL of one page (exported for the fuzz and EXPLAIN tests): one scan in list order. */
 export function pageQuery(plan: ListPlan, cursor: ListCursor | null, limit: number, hint: ScopeHint = null): Frag {
   const s = SORTS[plan.sort];
   return sql`SELECT c.id, ${s.keyText} AS sort_key FROM contacts c
@@ -257,14 +280,98 @@ export function pageQuery(plan: ListPlan, cursor: ListCursor | null, limit: numb
      ORDER BY ${orderBy(s)} LIMIT ${limit}`;
 }
 
+/**
+ * The "next task" page of an Owner or Admin ('wide'), in two parts (lane perf-misses-2). The key,
+ * min(due_at) of the person's open tasks the viewer sees, is NULL exactly for the people with no dated open
+ * task, so the list in (key ASC NULLS LAST, id) order is the dated people in (key, id) order followed by the
+ * undated people in id order.
+ *   dated:   the open dated tasks grouped by person (the same rows and the same min as the per-person key:
+ *            one read of the tenant's open tasks, no per-row check for a tenant-wide viewer), joined to the
+ *            people the list holds, in key order, until the page is full;
+ *   undated: only when the page is not full, the people the list holds whose key is NULL, in id order.
+ * The single scan computed the key of every person of the tenant and sorted them all (1.3 s at 250k).
+ * Proven equal to pageQuery page after page in lists/value_driven.test.ts.
+ */
+export function nextTaskPageParts(plan: ListPlan, cursor: ListCursor | null, limit: number, hint: ScopeHint): { dated: Frag | null; undated: (n: number) => Frag } {
+  const s = SORTS.next_task_asc;
+  const dated = cursor !== null && cursor.key === null ? null : sql`
+    SELECT c.id, ${isoText(sql`g.k`)} AS sort_key
+      FROM (SELECT t.contact_id, min(t.due_at) AS k FROM tasks t
+             WHERE t.tenant_id = app.tenant_id() AND t.status = 'open' AND t.contact_id IS NOT NULL AND t.due_at IS NOT NULL
+             GROUP BY t.contact_id) g
+      JOIN contacts c ON c.tenant_id = app.tenant_id() AND c.id = g.contact_id
+     WHERE ${whereSql(plan, hint)}${cursor === null ? sql`` : sql` AND (g.k > ${cursor.key}::timestamptz OR (g.k = ${cursor.key}::timestamptz AND c.id > ${cursor.id}::uuid))`}
+     ORDER BY g.k ASC, c.id ASC LIMIT ${limit}`;
+  const undated = (n: number) => sql`
+    SELECT c.id, NULL::text AS sort_key FROM contacts c
+     WHERE ${whereSql(plan, hint)} AND ${s.key} IS NULL${cursor !== null && cursor.key === null ? sql` AND c.id > ${cursor.id}::uuid` : sql``}
+     ORDER BY c.id ASC LIMIT ${n}`;
+  return { dated, undated };
+}
+
+/** Whether the predicate tree holds a free-text name filter. */
+function hasNameLike(n: ListPredicate): boolean {
+  return n.p === 'name_like' || ((n.p === 'and' || n.p === 'or') && n.of.some(hasNameLike));
+}
+
+/** Sorts backed by a list index (contacts_list_activity_idx, contacts_list_created_idx, contacts_list_name_idx). */
+const INDEXED_SORTS: ReadonlySet<ListSort> = new Set(['last_activity_desc', 'created_desc', 'name_asc']);
+export const PREFIX_ROWS = 2_000;
+
+/**
+ * Lane perf-misses-2: the first PREFIX_ROWS live people the viewer sees in list order (walking the sort
+ * index), filtered by the list. When that holds `limit` rows they ARE the page: the prefix is the start of
+ * the list order, so no later person can come before them. Otherwise the caller runs pageQuery. Under RLS
+ * the planner estimates a few hundred visible people of 250k (the contacts_select disjunction), so for a
+ * name filter it scanned and sorted the whole tenant (544 ms p95 at 250k) instead of walking the index.
+ */
+export function prefixPageQuery(plan: ListPlan, cursor: ListCursor | null, limit: number, hint: ScopeHint, prefixRows = PREFIX_ROWS): Frag {
+  const s = SORTS[plan.sort];
+  return sql`SELECT c.id, ${s.keyText} AS sort_key FROM (
+       SELECT c.* FROM contacts c WHERE ${LIVE}${cursor === null ? sql`` : sql` AND ${afterCursor(s, cursor)}`}
+        ORDER BY ${orderBy(s)} LIMIT ${prefixRows}) c
+     WHERE ${whereSql(plan, hint)}
+     ORDER BY ${orderBy(s)} LIMIT ${limit}`;
+}
+
+/**
+ * One page of ids in list order, plus each row's cursor key. `run` executes one statement; `pinSort` turns
+ * enable_sort off (true) or back on (false) for the bounded prefix statement only (a planner choice, no
+ * change to what RLS admits).
+ */
+export async function pageKeysVia(run: (q: Frag) => Promise<PageKeyRow[]>, plan: ListPlan, cursor: ListCursor | null, limit: number, hint: ScopeHint = null,
+  pinSort: (off: boolean) => Promise<void> = async () => {}, prefixRows = PREFIX_ROWS): Promise<PageKeyRow[]> {
+  if (hint === 'wide' && INDEXED_SORTS.has(plan.sort) && hasNameLike(plan.where)) {
+    await pinSort(true);
+    let pre: PageKeyRow[];
+    try {
+      pre = await run(prefixPageQuery(plan, cursor, limit, hint, prefixRows));
+    } finally {
+      await pinSort(false);
+    }
+    if (pre.length >= limit) return pre;
+    return run(pageQuery(plan, cursor, limit, hint));
+  }
+  if (plan.sort !== 'next_task_asc' || hint !== 'wide') return run(pageQuery(plan, cursor, limit, hint));
+  const parts = nextTaskPageParts(plan, cursor, limit, hint);
+  const first = parts.dated === null ? [] : await run(parts.dated);
+  if (first.length >= limit) return first;
+  return [...first, ...(await run(parts.undated(limit - first.length)))];
+}
+
+export interface PageKeyRow {
+  id: string;
+  sort_key: string | null;
+}
+
 /** One page of ids in list order, plus each row's cursor key. */
 export async function pageKeys(tx: Tx, plan: ListPlan, cursor: ListCursor | null, limit: number, hint: ScopeHint = null): Promise<PageKeyRow[]> {
-  const r = await pageQuery(plan, cursor, limit, hint).execute(tx);
-  return r.rows as PageKeyRow[];
+  return pageKeysVia(async (q) => (await q.execute(tx)).rows as PageKeyRow[], plan, cursor, limit, hint,
+    async (off) => void (await (off ? sql`SET LOCAL enable_sort = off` : sql`SET LOCAL enable_sort = on`).execute(tx)));
 }
 
 export function countQuery(plan: ListPlan, cap: number, hint: ScopeHint = null): Frag {
-  return sql`SELECT count(*)::int AS n FROM (SELECT 1 FROM contacts c WHERE ${whereSql(plan, hint)} LIMIT ${cap + 1}) x`;
+  return sql`SELECT count(*)::int AS n FROM (SELECT 1 FROM contacts c WHERE ${whereSql(plan, hint, { driven: true })} LIMIT ${cap + 1}) x`;
 }
 
 /** Exact count up to `cap`, then cap + 1 (the API says "10,000+"). */
