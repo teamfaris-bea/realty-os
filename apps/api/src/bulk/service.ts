@@ -25,6 +25,7 @@ import * as P from '../assistant/repos/playbooks.js';
 import * as T from '../templates/repos/templates.js';
 import { BULK_RUN } from './contract.js';
 import { assignTarget, kindFacts, personFacts, personRow, sendContext, sendFacts } from './facts.js';
+import { anyProtected } from './audience.js';
 import * as B from './repos/bulk.js';
 import { type AudienceSource, type SelectionDef, resolveSelection, selectionOptionsFor } from './selection.js';
 import { notifyFinished } from './notices.js';
@@ -77,7 +78,7 @@ interface StoredCounts {
   preflight?: Record<string, number>;
   sharedAddresses?: number;
   final?: ReturnType<typeof tally>;
-  /** send/enroll: every tag the audience was built from, re-checked at confirm (R-PAR-8, security review) */
+  /** send/enroll: every tag the audience was built from, re-checked at confirm (R-PAR-8, security review); stage: read before a plan starts (batch 5 review F1) */
   audienceTagIds?: string[];
 }
 
@@ -109,16 +110,16 @@ export function viewOf(actor: UserActor, a: B.ActionRow, items: { status: B.Item
 const asUserTx = <R>(deps: BulkDeps, actor: UserActor, fn: (tx: Tx, now: number) => Promise<R>) => withTenantTx(actor, (tx, now) => fn(tx, now), { db: deps.db, retries: 2 });
 const asSys = <R>(deps: BulkDeps, tenantId: string, fn: (tx: Tx) => Promise<R>) => withTenantTx(systemActor(tenantId, 'worker'), (tx) => fn(tx), { db: deps.db, retries: 2 });
 
-/** The audience is protected when any tag it was built from is (R-PAR-8). */
-async function anyProtected(tx: Tx, tagIds: readonly string[]): Promise<boolean> {
-  if (tagIds.length === 0) return false;
-  const r = await sql<{ p: boolean }>`SELECT bool_or(protected_proxy) AS p FROM tags WHERE tenant_id = app.tenant_id() AND id = ANY (${tagIds}::uuid[])`.execute(tx);
-  return r.rows[0]?.p === true;
-}
-
 const sendsToAudience = (kind: CreateInput['kind']): boolean => kind === 'email' || kind === 'text' || kind === 'enroll';
+/**
+ * The kinds whose draft records the tags its audience was built from: the sends and enrollments (re-checked at
+ * confirm), and a stage change (batch 5 review F1, R-PAR-8): the stage automation reads them before one of its stage
+ * changes starts a plan, and skips the plan for a protected audience (bulk/audience.ts stageAudienceProtected). The
+ * stage change itself is allowed on a protected audience (one-to-one work, not a send).
+ */
+const recordsAudience = (kind: CreateInput['kind']): boolean => sendsToAudience(kind) || kind === 'stage';
 
-/** The tags a send/enroll audience was built from: its list or definition, the list people were picked from, and the client's chips. */
+/** The tags a send/enroll/stage audience was built from: its list or definition, the list people were picked from, and the client's chips. */
 async function audienceTagsOf(tx: Tx, input: CreateInput): Promise<string[]> {
   const out = new Set((input.audienceTagIds ?? []).map((t) => t.toLowerCase()));
   const sources: AudienceSource[] = [];
@@ -261,7 +262,7 @@ export async function createDraft(actor: UserActor, input: CreateInput, deps: Bu
       items.push({ contactId: cid, addressHmac: isSendKind(input.kind) ? address : null });
     }
     await B.insertItems(tx, actionId, items);
-    const audienceTagIds = sendsToAudience(input.kind) ? await audienceTagsOf(tx, input) : undefined;
+    const audienceTagIds = recordsAudience(input.kind) ? await audienceTagsOf(tx, input) : undefined;
     await B.setDraftCounts(tx, actionId, items.length, { selected, preflight, sharedAddresses: shared, ...(audienceTagIds ? { audienceTagIds } : {}) });
     await audit(tx, actor, { action: 'bulk.created', entity: { type: 'bulk_action', id: actionId }, changes: redactSnapshot({ kind: input.kind, status: 'draft', targetCount: items.length, selectedCount: selected }, { entity: 'bulk_action' }) });
     return actionId;

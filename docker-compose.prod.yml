@@ -2,8 +2,14 @@
 # a managed Postgres 16 with backups and TLS, and put a TLS-terminating proxy or load balancer in front of
 # `web` (it serves the app and proxies /api on the same origin).
 #
-#   cp deploy/env.production.example .env.production   # fill in every value
-#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+#   cp deploy/env.production.example .env.production   # the app's environment: fill in every value
+#   cp deploy/env.owner.example .env.owner             # the database owner's credentials: fill in both
+#   docker compose -f docker-compose.prod.yml --env-file .env.owner up -d --build
+#
+# Two files on purpose (DEPLOY §3): api, worker and release read only .env.production, which holds no owner
+# credential; the owner's user, password and URL in .env.owner reach only the postgres service (its superuser) and
+# the release step (migrations), by interpolation from --env-file. The API and the worker refuse to start in
+# production with an owner credential in their environment.
 #
 # Order: postgres healthy → release (migrations as the OWNER role, aligns the app role) → api + worker → web.
 name: realty
@@ -19,7 +25,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_OWNER_USER:-realty_owner}
-      POSTGRES_PASSWORD: ${POSTGRES_OWNER_PASSWORD:?set POSTGRES_OWNER_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_OWNER_PASSWORD:?set POSTGRES_OWNER_PASSWORD in .env.owner and pass --env-file .env.owner}
       POSTGRES_DB: ${POSTGRES_DB:-realty}
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -35,6 +41,9 @@ services:
     image: realty-api:latest
     restart: "no"
     command: ["node", "packages/db/dist/scripts/release.js"]
+    environment:
+      # the owner role, for the migrations of this one-off step only (never in .env.production)
+      MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:?set MIGRATION_DATABASE_URL in .env.owner and pass --env-file .env.owner}
     depends_on:
       postgres: { condition: service_healthy }
 

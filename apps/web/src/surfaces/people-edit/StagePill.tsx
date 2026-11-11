@@ -17,6 +17,8 @@ const SKIP_WORDS: Record<string, string> = {
   stage_changed_again: 'the stage changed again',
   person_removed: 'this person was removed',
   not_a_person_change: 'only a stage change made by a person starts it',
+  // R-PAR-8: a bulk stage change of a list built on a protected tag never starts a plan
+  protected_audience: 'they were picked by a protected tag, and a plan never starts for such a list',
 };
 
 /** The sentence after "Stage: Active." on the toast; '' when no plan is set for that stage. */

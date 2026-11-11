@@ -20,6 +20,7 @@ const playbookArb: fc.Arbitrary<StagePlaybook> = fc.record({
 
 const factsArb: fc.Arbitrary<StageEntryFacts> = fc.record({
   actorKind: fc.constantFrom('user' as const, 'system' as const, 'support' as const, 'none' as const),
+  protectedAudience: fc.boolean(),
   toStage: fc.constantFrom(...STAGES),
   contact: fc.record({ exists: fc.boolean(), deleted: fc.boolean(), merged: fc.boolean(), stage: fc.constantFrom(...STAGES), ownerUserId: fc.constantFrom<string | null>(...USERS, null) }),
   changerSeesDetail: fc.boolean(),
@@ -34,7 +35,7 @@ describe('R-PAR-16 E172 decideStageEntry (property)', () => {
       fc.property(factsArb, (f) => {
         const d = decideStageEntry(f);
         const chosen = choosePlaybook(f.candidates, f.contact.ownerUserId);
-        const all = f.actorKind === 'user' && f.contact.exists && !f.contact.deleted && !f.contact.merged && f.contact.stage === f.toStage
+        const all = f.actorKind === 'user' && !f.protectedAudience && f.contact.exists && !f.contact.deleted && !f.contact.merged && f.contact.stage === f.toStage
           && f.changerSeesDetail && chosen !== null && chosen.approvedVersionId !== null && !f.liveEnrollment && f.reachable;
         expect(d.kind === 'start').toBe(all);
         if (d.kind === 'start') expect(d.versionId).toBe(chosen!.approvedVersionId);
@@ -45,11 +46,11 @@ describe('R-PAR-16 E172 decideStageEntry (property)', () => {
     );
   });
 
-  it('R-PAR-16 never an import/system change, never a live enrollment, never an unreachable person, never an unapproved version', () => {
+  it('R-PAR-16 R-PAR-8 never an import/system change, never a protected bulk audience, never a live enrollment, never an unreachable person, never an unapproved version', () => {
     fc.assert(
       fc.property(factsArb, (f) => {
         const d = decideStageEntry(f);
-        if (f.actorKind !== 'user' || f.liveEnrollment || !f.reachable) expect(d.kind).not.toBe('start');
+        if (f.actorKind !== 'user' || f.protectedAudience || f.liveEnrollment || !f.reachable) expect(d.kind).not.toBe('start');
         if (d.kind === 'start') expect(d.playbook.approvedVersionId).not.toBeNull();
       }),
       { numRuns: 2000 },
@@ -75,11 +76,12 @@ describe('R-PAR-16 E172 decideStageEntry (property)', () => {
 
   it('E172 mutation guards: each single condition flipped from a start skips with its own reason', () => {
     const plan: StagePlaybook = { id: '00000000-0000-4000-8000-000000000001', name: 'Buyer plan', scope: 'team', ownerUserId: null, approvedVersionId: '00000000-0000-4000-8000-000000000002' };
-    const ok: StageEntryFacts = { actorKind: 'user', toStage: 'active', contact: { exists: true, deleted: false, merged: false, stage: 'active', ownerUserId: 'u1' }, changerSeesDetail: true, candidates: [plan], liveEnrollment: false, reachable: true };
+    const ok: StageEntryFacts = { actorKind: 'user', protectedAudience: false, toStage: 'active', contact: { exists: true, deleted: false, merged: false, stage: 'active', ownerUserId: 'u1' }, changerSeesDetail: true, candidates: [plan], liveEnrollment: false, reachable: true };
     expect(decideStageEntry(ok)).toEqual({ kind: 'start', playbook: plan, versionId: plan.approvedVersionId });
     const cases: [Partial<StageEntryFacts>, string][] = [
       [{ actorKind: 'system' }, 'not_a_person_change'],
       [{ actorKind: 'none' }, 'not_a_person_change'],
+      [{ protectedAudience: true }, 'protected_audience'],
       [{ contact: { ...ok.contact, deleted: true } }, 'person_removed'],
       [{ contact: { ...ok.contact, merged: true } }, 'person_removed'],
       [{ contact: { ...ok.contact, stage: 'nurture' } }, 'stage_changed_again'],
@@ -100,11 +102,15 @@ describe('R-PAR-16 E172 decideStageEntry (property)', () => {
     expect(outcomeOf({ outcome: 'skipped', reason: 'SOMETHING_ELSE', playbookName: 'Buyer plan' })).toBeNull();
   });
 
-  it('R-PAR-16 the closed set of skip reasons is exactly the DB CHECK of stage_automation_decisions.reason', () => {
-    const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql'));
-    const sqlText = files.map((f) => readFileSync(`${MIGRATIONS_DIR}/${f}`, 'utf8')).find((t) => t.includes('CREATE TABLE stage_automation_decisions'));
-    expect(sqlText).toBeDefined();
-    const m = /reason\s+text CHECK \(reason IN \(([^)]*)\)\)/.exec(sqlText!.replace(/\s+/g, ' '));
+  it('R-PAR-16 the closed set of skip reasons is exactly the DB CHECK of stage_automation_decisions.reason (as the last migration that defines it leaves it)', () => {
+    const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
+    // the table's own CHECK (0036), replaced since by name (0041 adds protected_audience)
+    const defining = files.map((f) => readFileSync(`${MIGRATIONS_DIR}/${f}`, 'utf8').replace(/\s+/g, ' '))
+      .filter((t) => t.includes('CREATE TABLE stage_automation_decisions') || t.includes('ADD CONSTRAINT stage_automation_decisions_reason_check'));
+    expect(defining.length).toBeGreaterThanOrEqual(2);
+    const last = defining.at(-1)!;
+    const at = last.includes('ADD CONSTRAINT stage_automation_decisions_reason_check') ? last.slice(last.indexOf('ADD CONSTRAINT stage_automation_decisions_reason_check')) : last;
+    const m = /CHECK \(reason IN \(([^)]*)\)\)/.exec(at);
     expect(m).not.toBeNull();
     const inDb = m![1]!.split(',').map((x) => x.trim().replace(/'/g, ''));
     expect(inDb.sort()).toEqual([...SKIP_REASONS].sort());

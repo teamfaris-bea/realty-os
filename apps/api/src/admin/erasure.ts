@@ -22,6 +22,11 @@
 // the same transaction first puts it on each of the person's addresses in the HMAC-keyed consent ledger
 // (optOutCarry.ts, recorded by the Owner/Admin). The database refuses the erasure while one is missing
 // (PERSON_DO_NOT_CONTACT_UNCARRIED, 409), and a refused erasure rolls the carried revokes back with it.
+// Before the carry the person is LOCKED (repos/erasure.ts lockPerson: their addresses, then their records FOR
+// UPDATE; batch 5 review F1-ERASE-DNC-TOCTOU, migration 0041): a transaction still adding a phone to the person (a
+// lead-email intake or accept, POST /contacts/:id/points, an import) is waited for, so its phone is carried too.
+// Before, the carry and the database's check both read a snapshot without that phone, the delete then waited for
+// the writer and cascade-deleted the phone with no revoke, and the number was texted afterwards.
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -71,8 +76,11 @@ async function register(app: FastifyInstance): Promise<void> {
       // The refusal names the deals (ids and stages only, no PII in error details) so the Owner can act.
       const blocking = await adminTx(req, async (tx, now, actor) => {
         if (!(await repo.contactExists(tx, req.params.id))) throw new AppError('NOT_FOUND');
-        const deals = await repo.dealLinks(tx, await repo.mergeTree(tx, req.params.id));
+        const records = await repo.mergeTree(tx, req.params.id);
+        const deals = await repo.dealLinks(tx, records);
         if (deals.length > 0) return deals;
+        // in-flight writers of the person's points finish first, so the carry below sees what they added
+        await repo.lockPerson(tx, records);
         // an address the carry cannot take (an out-of-scope Meta identity): nothing is erased (the revokes roll back)
         if ((await carryPersonOptOut(tx, req.params.id, actor, now, p.ids)).uncarriable > 0) throw new AppError('PERSON_DO_NOT_CONTACT_UNCARRIED');
         try {
@@ -80,7 +88,7 @@ async function register(app: FastifyInstance): Promise<void> {
         } catch (e) {
           if (pgMessage(e).startsWith('CONTACT_ON_DEAL')) throw new AppError('CONTACT_ON_DEAL'); // a deal appeared meanwhile (the tx is aborted)
           if (pgMessage(e).startsWith('NOT_FOUND')) throw new AppError('NOT_FOUND');
-          // the database's own check (a point added meanwhile): nothing is erased
+          // the database's own check (a point the locks above missed): nothing is erased
           if (pgMessage(e).startsWith('PERSON_DO_NOT_CONTACT_UNCARRIED')) throw new AppError('PERSON_DO_NOT_CONTACT_UNCARRIED');
           throw e;
         }

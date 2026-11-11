@@ -1,6 +1,6 @@
 // Queries for privacy erasure (R-DATA-4, E59). All run as the session actor under RLS (Owner/Admin: every
 // contact of the tenant is visible to them, merged records included).
-import type { Tx } from '@realty/db';
+import { type Tx, lockAddresses } from '@realty/db';
 import { sql } from 'kysely';
 
 export interface DealLinkRow {
@@ -30,6 +30,30 @@ export async function mergeTree(tx: Tx, contactId: string): Promise<string[]> {
     )
     SELECT id FROM tree`.execute(tx);
   return r.rows.map((x) => x.id);
+}
+
+/**
+ * Locks the person before their do-not-contact is carried and they are erased (batch 5 review F1-ERASE-DNC-TOCTOU;
+ * migration 0041), in the global lock order (packages/db/src/locks.ts):
+ *   1. app.lock_address on the HMAC of every point of every record of the person (`records`, from mergeTree), live or
+ *      removed, sorted: an intake, accept or import that matched the person by one of their addresses holds one of
+ *      these until it commits, so it is waited for whole, the phone it attaches included;
+ *   2. the records themselves FOR UPDATE, sorted by id: any other transaction that inserted a point (or any child row)
+ *      of one of them holds FOR KEY SHARE on it through the foreign key, so it is waited for too (POST
+ *      /contacts/:id/points locks only the NEW address); one that comes later waits for the erasure, then fails its
+ *      foreign key.
+ * The carry that follows reads after both, so it sees every point those writers added. A point committed while this
+ * waited has an address this did not lock; the carry's recordConsentEvent takes that lock after the row locks (out of
+ * order: a rare window that Postgres resolves as a deadlock, and the request is retried). app.purge_contact_internal
+ * takes the same row locks before its own check, so a write this missed still fails closed.
+ */
+export async function lockPerson(tx: Tx, records: readonly string[]): Promise<void> {
+  const ids = [...records];
+  const r = await sql<{ h: string }>`
+    SELECT DISTINCT encode(address_hmac, 'hex') AS h FROM contact_points
+     WHERE tenant_id = app.tenant_id() AND contact_id = ANY (${ids}::uuid[])`.execute(tx);
+  await lockAddresses(tx, r.rows.map((x) => x.h));
+  await sql`SELECT id FROM contacts WHERE tenant_id = app.tenant_id() AND id = ANY (${ids}::uuid[]) ORDER BY id FOR UPDATE`.execute(tx);
 }
 
 /** Every deal one of the person's records (`ids`, from mergeTree) is on: as the primary contact and/or a party (deal_contacts). */

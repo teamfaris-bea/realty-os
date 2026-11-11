@@ -6,7 +6,8 @@
 //      so the person who changed the stage is told at once ("Started Buyer plan" or why not);
 //   2. the worker: stage_automation.scan finds recent user-made stage events with no decision (a stage set
 //      by PATCH /contacts/:id or a bulk stage action, or a request-path crash) and enqueues one
-//      stage_automation.reconcile job per event.
+//      stage_automation.reconcile job per event. A bulk action's change carries the action's id (migration
+//      0041), and starts no plan while that action's audience is protected (R-PAR-8, protected_audience).
 // Under the contact lock (the lock every enrollment path takes) the decision row is read first: when it
 // exists, it is the answer; otherwise the facts are read, core-style decideStageEntry decides, and the
 // decision and the enrollment are written in the SAME transaction. Two stage changes of one person, two
@@ -26,6 +27,7 @@ import { sql } from 'kysely';
 import { audit } from '../audit.js';
 import * as P from '../assistant/repos/playbooks.js';
 import { enqueueStep } from '../assistant/enrollments.js';
+import { stageAudienceProtected } from '../bulk/audience.js';
 import { buildGateInput } from '../comms/gateInput.js';
 import * as g from '../comms/repos/gate.js';
 import { systemActor } from '../worker/systemActor.js';
@@ -99,16 +101,30 @@ export async function reachableForVersion(tx: Tx, contactId: string, versionId: 
   return reachableOn(reach);
 }
 
-/** R-PAR-16: does the person who changed the stage still see this person, by THEIR OWN RLS (read-only)? */
-export async function changerSeesPerson(deps: StageAutomationDeps, tenantId: string, userId: string, role: string, contactId: string): Promise<boolean> {
-  const asUser: Actor = { kind: 'user', userId: userId as never, tenantId: tenantId as never, role: role as Role, sessionId: 'stage-automation-check' };
+/** What the person who changed the stage sees now, by THEIR OWN RLS. */
+export interface ChangerView {
+  /** they still see the person's detail (R-PAR-16) */
+  sees: boolean;
+  /** the change was made by their bulk action, and its audience is built from a protected tag now (R-PAR-8) */
+  protectedAudience: boolean;
+}
+
+/**
+ * Read-only, as the person who changed the stage: do they still see this person (R-PAR-16)? And for a change their
+ * bulk stage action made (the history names it only for its own creator, migration 0041), is that action's audience
+ * protected now (R-PAR-8, batch 5 review F1: the tags its draft recorded and its saved list's plan, read as the
+ * creator, who can read their own personal list; bulk/audience.ts)?
+ */
+export async function changerView(deps: StageAutomationDeps, tenantId: string, who: { userId: string; role: string; contactId: string; bulkActionId: string | null }): Promise<ChangerView> {
+  const asUser: Actor = { kind: 'user', userId: who.userId as never, tenantId: tenantId as never, role: who.role as Role, sessionId: 'stage-automation-check' };
   return withTenantTx(
     asUser,
     async (tx) => {
       await sql`SET LOCAL transaction_read_only = on`.execute(tx);
       const r = await sql<{ v: boolean }>`
-        SELECT app.contact_detail_visible(c.tenant_id, c.id) AS v FROM contacts c WHERE c.tenant_id = app.tenant_id() AND c.id = ${contactId}`.execute(tx);
-      return r.rows[0]?.v === true;
+        SELECT app.contact_detail_visible(c.tenant_id, c.id) AS v FROM contacts c WHERE c.tenant_id = app.tenant_id() AND c.id = ${who.contactId}`.execute(tx);
+      const protectedAudience = who.bulkActionId !== null && (await stageAudienceProtected(tx, who.bulkActionId));
+      return { sees: r.rows[0]?.v === true, protectedAudience };
     },
     { db: deps.db },
   );
@@ -123,10 +139,10 @@ export interface ReconcileResult {
 }
 
 /**
- * Decides one stage event in `tx` (the tenant's system actor). `sees` is the stage-changer's visibility,
- * read BEFORE this transaction took the contact lock (a separate read-only transaction as that user).
+ * Decides one stage event in `tx` (the tenant's system actor). `view` is what the stage-changer sees, read BEFORE
+ * this transaction took the contact lock (a separate read-only transaction as that user).
  */
-export async function reconcileStageEventInTx(tx: Tx, actor: SystemActor, eventId: string, sees: boolean, now: Instant): Promise<ReconcileResult> {
+export async function reconcileStageEventInTx(tx: Tx, actor: SystemActor, eventId: string, view: ChangerView, now: Instant): Promise<ReconcileResult> {
   const e = await R.stageEvent(tx, eventId);
   if (!e) return { automation: null, decided: false, enrollmentId: null };
   await lockContact(tx, e.contactId as ContactId);
@@ -138,10 +154,13 @@ export async function reconcileStageEventInTx(tx: Tx, actor: SystemActor, eventI
   const candidates = await R.candidatePlaybooks(tx, e.id, contact.ownerUserId);
   if (candidates.length === 0) return { automation: null, decided: false, enrollmentId: null };
   const live = (await P.liveEnrollmentOf(tx, e.contactId)) !== null;
+  const sees = view.sees;
+  // R-PAR-8 (batch 5 review F1): a change a bulk action made is judged on that action's audience as it is now
+  const protectedAudience = e.bulkActionId !== null && view.protectedAudience;
   // reachability is read for the playbook decide would choose (the same choice, computed first)
-  const pre = decideStageEntry({ actorKind: e.actorKind, toStage: e.toStage, contact, changerSeesDetail: sees, candidates, liveEnrollment: live, reachable: true });
+  const pre = decideStageEntry({ actorKind: e.actorKind, protectedAudience, toStage: e.toStage, contact, changerSeesDetail: sees, candidates, liveEnrollment: live, reachable: true });
   const reachable = pre.kind === 'start' ? await reachableForVersion(tx, e.contactId, pre.versionId, now) : true;
-  const d = decideStageEntry({ actorKind: e.actorKind, toStage: e.toStage, contact, changerSeesDetail: sees, candidates, liveEnrollment: live, reachable });
+  const d = decideStageEntry({ actorKind: e.actorKind, protectedAudience, toStage: e.toStage, contact, changerSeesDetail: sees, candidates, liveEnrollment: live, reachable });
 
   if (d.kind === 'none') return { automation: null, decided: false, enrollmentId: null };
   if (d.kind === 'skip') {
@@ -157,23 +176,25 @@ export async function reconcileStageEventInTx(tx: Tx, actor: SystemActor, eventI
 }
 
 /** Who changed the stage, as the system reads it (null: no person made it, or the member is gone). */
-export async function stageChangerOf(tx: Tx, eventId: string): Promise<{ userId: string; role: string; contactId: string } | null> {
+export async function stageChangerOf(tx: Tx, eventId: string): Promise<{ userId: string; role: string; contactId: string; bulkActionId: string | null } | null> {
   const e = await R.stageEvent(tx, eventId);
   if (!e || e.actorKind !== 'user' || e.actorUserId === null) return null;
   const m = await R.memberOf(tx, e.actorUserId);
-  return m && m.active ? { userId: e.actorUserId, role: m.role, contactId: e.contactId } : null;
+  return m && m.active ? { userId: e.actorUserId, role: m.role, contactId: e.contactId, bulkActionId: e.bulkActionId } : null;
 }
 
 /**
  * Decides one stage event in three SEQUENTIAL transactions, never nested (a nested second connection
  * per call would starve the pool under load): (1) the system reads who changed the stage, (2) a read-only
- * transaction as that person reads whether they still see the person, (3) the system decides under the
- * contact lock. `withTx` opens a transaction as the tenant's system actor (the worker's ctx.withTx).
+ * transaction as that person reads whether they still see the person (and, for their bulk action's change,
+ * whether its audience is protected), (3) the system decides under the contact lock. `withTx` opens a
+ * transaction as the tenant's system actor (the worker's ctx.withTx).
  */
 export async function reconcileWith(deps: StageAutomationDeps, actor: SystemActor, withTx: <T>(fn: (tx: Tx, now: Instant) => Promise<T>) => Promise<T>, eventId: string): Promise<ReconcileResult> {
   const who = await withTx((tx) => stageChangerOf(tx, eventId));
-  const sees = who ? await changerSeesPerson(deps, actor.tenantId, who.userId, who.role, who.contactId) : false;
-  return withTx((tx, now) => reconcileStageEventInTx(tx, actor, eventId, sees, now));
+  // nobody to ask (no person made it, or they are gone): nothing is seen, so no plan starts (not_visible)
+  const view: ChangerView = who ? await changerView(deps, actor.tenantId, who) : { sees: false, protectedAudience: false };
+  return withTx((tx, now) => reconcileStageEventInTx(tx, actor, eventId, view, now));
 }
 
 /** Decides one stage event (the request path after its commit). */

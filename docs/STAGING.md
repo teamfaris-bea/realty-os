@@ -44,22 +44,25 @@ a rebuild after a code change took 31–51 s. Behind a TLS-intercepting proxy, a
 
 The template is `deploy/env.staging.example`: production mode, every vendor fake, `ALLOW_FAKE_PROVIDERS=true`,
 `MLS_LIVE_CALLS=false`, local encrypted storage on a volume, metrics with a token. It holds no secret and no real
-host. Fill it once:
+host. The database owner's credentials are a second file, from `deploy/env.owner.example`: only the postgres
+service and the release step receive them (DEPLOY §3), never the API or the worker, which refuse to start with
+one in their environment. Fill both once:
 
 ```sh
 umask 077
 sh deploy/fill-staging-env.sh <staging-host> postgres > .env.production
-git check-ignore .env.production        # must print .env.production: never commit it
+sh deploy/fill-staging-env.sh <staging-host> postgres owner > .env.owner
+git check-ignore .env.production .env.owner   # must print both: never commit them
 ```
 
 `fill-staging-env.sh` generates every key and secret with `openssl` (two different 32-byte keys, a different
-secret per webhook, the database passwords and the metrics token) and fills the placeholders. `postgres` is
-the database host inside the compose network. Then:
+secret per webhook, the app role's and the owner's database passwords and the metrics token) and fills the
+placeholders; the two files share no secret. `postgres` is the database host inside the compose network. Then:
 
-1. Store the whole file in your secret manager now. `KEK_BASE64` cannot be regenerated: anything encrypted under
+1. Store both files in your secret manager now. `KEK_BASE64` cannot be regenerated: anything encrypted under
    it is unreadable without it (DEPLOY §8). Staging gets its **own** keys, never production's.
-2. Keep the file only where compose reads it (`.env.production` next to `docker-compose.prod.yml`, mode 600), or
-   render it from the secret manager at deploy time.
+2. Keep the files only where compose reads them (`.env.production` and `.env.owner` next to
+   `docker-compose.prod.yml`, mode 600), or render them from the secret manager at deploy time.
 
 What the template sets, and why each line matters (all rehearsed):
 
@@ -75,12 +78,12 @@ What the template sets, and why each line matters (all rehearsed):
 
 ## 4. Start it
 
-Every compose command needs `--env-file .env.production` (the compose file reads `POSTGRES_OWNER_PASSWORD` and
-`WEB_PORT` from it):
+Every compose command needs `--env-file .env.owner` (the compose file reads the owner's credentials from it, for
+the postgres service and the release step only; `WEB_PORT` comes from the shell):
 
 ```sh
 export WEB_PORT=8080        # the VM port your TLS proxy forwards to
-DC="docker compose -f docker-compose.prod.yml --env-file .env.production"
+DC="docker compose -f docker-compose.prod.yml --env-file .env.owner"
 $DC up -d --no-build
 $DC logs release | grep -E 'migrations:|release ok'
 curl -s http://127.0.0.1:$WEB_PORT/api/ready
@@ -122,8 +125,11 @@ TOTP secret to `/app/.demo/credentials.json`, which is read-only in the image, s
 ```sh
 DEMO=$HOME/realty-demo-credentials      # outside the checkout: it will hold the Owner's TOTP secret
 mkdir -p "$DEMO" && sudo chown 1000:1000 "$DEMO" && sudo chmod 700 "$DEMO"
-$DC run --rm --no-deps -v "$DEMO:/app/.demo" api node apps/api/dist/seed/main.js
+$DC run --rm --no-deps --env-from-file .env.owner -v "$DEMO:/app/.demo" api node apps/api/dist/seed/main.js
 ```
+
+The seed writes through the owner role where no application path exists yet, so this one-off container gets
+`.env.owner` explicitly (`--env-from-file`, Compose 2.27 or later); the long-running api and worker never do.
 
 11–14 s. It creates 40 contacts, 7 users and the rest of the README's tour. Its passwords are public: never seed
 an environment that real people's data will ever reach. To start over: `$DC down -v` (this deletes the database
@@ -175,7 +181,7 @@ the env file and the secret manager and start them again:
 
 ```sh
 $DC stop api worker
-docker run --rm --network realty_default --env-file .env.production \
+docker run --rm --network realty_default --env-file .env.production --env-file .env.owner \
   -e PREVIOUS_KEK_BASE64="$OLD" -e PREVIOUS_KEK_REF=staging-kek:v1 \
   -e KEK_BASE64="$NEW" -e KEK_REF=staging-kek:v2 \
   realty-api:latest node apps/api/dist/crypto/rotateKekMain.js
@@ -190,7 +196,9 @@ the secret manager, never in a file in the repository. Then sign in once **with 
 ## 7. Before you call it done
 
 - [ ] `/api/ready` 200 `ready` through `https://<staging-host>`, and a browser sign-in works (TLS in place).
-- [ ] `.env.production` is in the secret manager and is not in git (`git status` clean).
+- [ ] `.env.production` and `.env.owner` are in the secret manager and not in git (`git status` clean).
+- [ ] `$DC exec -T api printenv MIGRATION_DATABASE_URL` prints nothing and exits 1 (the same for `worker`): the
+      owner's credentials are only in the postgres and release containers.
 - [ ] The release log says `release ok`.
 - [ ] The synthetic check exits 0.
 - [ ] One backup taken and one restore drill done (DEPLOY §8), with the times written down.

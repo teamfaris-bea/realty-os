@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { automationText } from './StagePill.js';
 
-const REASONS = ['already_in_a_plan', 'plan_not_approved', 'cannot_be_reached', 'not_visible', 'stage_changed_again', 'person_removed', 'not_a_person_change'];
+const REASONS = ['already_in_a_plan', 'plan_not_approved', 'cannot_be_reached', 'not_visible', 'stage_changed_again', 'person_removed', 'not_a_person_change', 'protected_audience'];
 
 describe('R-PAR-16 the stage toast names the plan that started, or why it did not', () => {
   it('R-PAR-16 started / skipped / nothing', () => {

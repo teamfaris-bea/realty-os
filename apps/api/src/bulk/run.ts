@@ -313,8 +313,12 @@ async function apply(tx: Tx, deps: CommsDeps, creator: UserActor, a: B.ActionRow
       return null;
     }
     case 'stage':
-      // the DB stage guard re-decides R-PAR-14; the definer trigger writes the stage history (R-PAR-15)
+      // the DB stage guard re-decides R-PAR-14; the definer trigger writes the stage history (R-PAR-15), naming this
+      // action (it keeps the id only for the creator's running stage action): the stage automation never starts a
+      // plan for a protected audience from it (R-PAR-8, batch 5 review F1, migration 0041)
+      await sql`SELECT set_config('app.bulk_action_id', ${a.id}, true)`.execute(tx);
       await sql`UPDATE contacts SET stage = ${String(a.params['stage'])} WHERE tenant_id = app.tenant_id() AND id = ${p.id}`.execute(tx);
+      await sql`SELECT set_config('app.bulk_action_id', '', true)`.execute(tx);
       return null;
     case 'assign': {
       // R-PAR-35: one ownership command per person, id derived from (action, person): a retry is a replay

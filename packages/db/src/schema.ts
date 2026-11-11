@@ -529,6 +529,7 @@ export interface ContactStageEventsTable {
   actor_kind: string;
   actor_user_id: string | null;
   occurred_at: Generated<Timestamp>;
+  bulk_action_id: string | null;
 }
 
 /** public.contact_tags (table) */
@@ -1110,6 +1111,7 @@ export interface LeadEmailMessagesTable {
   decided_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+  point_hmacs: Generated<Buffer[]>;
 }
 
 /** public.lead_inquiries (table) */
