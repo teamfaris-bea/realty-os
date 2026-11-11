@@ -9,7 +9,7 @@ const base: OAuthState = {
   tenantId: '0190d1a4-0000-7000-8000-000000000001',
   connectionId: '0190d1a4-0000-7000-8000-000000000002',
   userId: '0190d1a4-0000-7000-8000-000000000003',
-  kind: 'messenger_page',
+  kind: 'facebook_page',
   externalAccountId: 'page-123',
   fence: '1762862400000000',
   expiresAt: 1_000_000 + STATE_TTL_MS,

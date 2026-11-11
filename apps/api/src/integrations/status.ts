@@ -5,7 +5,13 @@
 // external account (web-chat widget, lead inbox), `keyed_enabled`. A different external account is a new
 // row: `oauth_proved` for another account id throws. `disconnected` is final (a reconnect is a new row,
 // which keeps the same HMAC identities and opt-outs, E134).
+//
+// Owner decision D2: the out-of-scope kinds (OUT_OF_SCOPE_KINDS: Messenger, Instagram DMs, Meta Lead Ads, Meta
+// ads) never move toward a connection: `partner_access_required`, `oauth_proved` and `review_approved` throw
+// KIND_MISMATCH for them. A row of such a kind made before D2 can still degrade, be revoked or be disconnected
+// (R-INT-5), so an Owner can retire it.
 import type { Capabilities, ConnectionKind, ConnectionStatus } from '../providers/integrations/types.js';
+import { OUT_OF_SCOPE_KINDS } from './catalog.js';
 
 export const KEYED_KINDS: readonly ConnectionKind[] = ['web_chat_widget', 'lead_email'];
 export const LIVE_STATUSES: readonly ConnectionStatus[] = ['connected', 'degraded'];
@@ -62,12 +68,14 @@ export function transitionConnection(c: ConnectionRow, e: ConnectionEvent): Conn
   const bad = (k: ConnectionTransitionError['code'] = 'TRANSITION_INVALID') => new ConnectionTransitionError(c.status, e.type, k);
   if (c.status === 'disconnected') throw bad();
   const keyed = KEYED_KINDS.includes(c.kind);
+  const outOfScope = OUT_OF_SCOPE_KINDS.includes(c.kind);
   switch (e.type) {
     case 'partner_access_required':
+      if (outOfScope) throw bad('KIND_MISMATCH');
       if (keyed || c.status !== 'not_configured') throw bad();
       return { ...c, status: 'needs_partner_access', statusReason: 'PARTNER_ACCESS_REQUIRED' };
     case 'oauth_proved': {
-      if (keyed) throw bad('KIND_MISMATCH');
+      if (keyed || outOfScope) throw bad('KIND_MISMATCH');
       if (!CONNECTABLE_STATUSES.includes(c.status)) throw bad();
       if (c.externalAccountId !== null && c.externalAccountId !== e.externalAccountId) throw bad('CONNECTION_ACCOUNT_IMMUTABLE');
       if (e.externalAccountId.length === 0 || e.credentialId.length === 0) throw bad();
@@ -88,6 +96,7 @@ export function transitionConnection(c: ConnectionRow, e: ConnectionEvent): Conn
       if (!CONNECTABLE_STATUSES.includes(c.status)) throw bad();
       return { ...c, lastErrorCode: code(e.code) };
     case 'review_approved':
+      if (outOfScope) throw bad('KIND_MISMATCH');
       if (c.status !== 'pending_review') throw bad();
       return { ...c, status: 'connected', statusReason: null, connectedAt: c.connectedAt ?? e.at };
     case 'health_degraded':

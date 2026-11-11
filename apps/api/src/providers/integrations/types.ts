@@ -4,9 +4,9 @@
 // explicit account ids and the credentials the caller decrypted as the system actor.
 //
 // Owner scope change D2 (overrides PHASE2_3_PLAN): Facebook Messenger and Instagram direct messages are OUT
-// of scope, and so is Meta Lead Ads retrieval. There is no Meta messaging adapter, no DM webhook parser, no
-// messaging window and no messaging scope here. A Meta connection exists ONLY for Facebook Page / Instagram
-// content publishing (SocialPublisher).
+// of scope, and so are Meta Lead Ads retrieval and Meta ads. There is no Meta messaging adapter, no DM webhook
+// parser, no messaging window and no messaging scope here. A Meta connection exists ONLY for content
+// publishing (SocialPublisher), on the 0025 kinds `facebook_page` and `instagram_business`.
 //
 // Reserved outbound name (R-GATE-15, ARCHITECTURE §21.2): `SocialPublisher.publishPost` is callable only
 // from apps/api/src/marketing/publish.ts (module 29 extends the lint rule). Nothing in this module calls it.
@@ -19,7 +19,11 @@
 // adapters are wired only once a partner account exists; until then the fakes are the only working
 // implementation and production reports "not set up on this platform" instead of using them.
 
-/** integration_connections.kind (0018 CHECK). */
+/**
+ * integration_connections.kind (0018 CHECK, widened by 0025). D2: `facebook_page` and `instagram_business` are
+ * publishing only (never an inbound channel, never a lead source); 0018's `messenger_page`, `instagram_account`,
+ * `meta_lead_ads` and `ads_meta` stay in the CHECK until the cleanup migration and module 21 never offers them.
+ */
 export const CONNECTION_KINDS = [
   'messenger_page',
   'instagram_account',
@@ -33,6 +37,8 @@ export const CONNECTION_KINDS = [
   'ads_meta',
   'ads_google',
   'gbp_location',
+  'facebook_page',
+  'instagram_business',
 ] as const;
 export type ConnectionKind = (typeof CONNECTION_KINDS)[number];
 
@@ -213,8 +219,8 @@ export interface CalendarProvider {
 export interface PublishRequest {
   externalAccountId: string;
   accessToken: string;
-  /** 'facebook_page' | 'instagram_account' | 'gbp_location' */
-  target: 'facebook_page' | 'instagram_account' | 'gbp_location';
+  /** the target account's connection kind (0025 marketing_publications_guard: a social post goes to a Page or an Instagram business account, a GBP post to a GBP location) */
+  target: 'facebook_page' | 'instagram_business' | 'gbp_location';
   pieceId: string;
   contentSha256: string;
   text: string;

@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { FakeFetch, ID, err, leadAdminApp } from '../lib/testing.js';
 import { LEAD_ADMIN_ERROR_MESSAGES } from '../lib/messages.js';
 import type { JobView, SystemOverview } from './types.js';
-import { summaryWords } from './words.js';
+import { connectionKindWords, summaryWords } from './words.js';
 
 const job = (over: Partial<JobView> = {}): JobView => ({
   id: '41',
@@ -175,6 +175,22 @@ describe('System page', () => {
     const dialog = screen.getByRole('dialog');
     expect(await within(dialog).findByText(LEAD_ADMIN_ERROR_MESSAGES.JOB_ALREADY_QUEUED!)).toBeInTheDocument();
     expect(document.body.textContent).not.toContain('JOB_ALREADY_QUEUED');
+  });
+
+  it('D2: Facebook and Instagram connections are named as publishing; the old Meta kinds say they are not offered', async () => {
+    const connections = [
+      { id: 'c2', kind: 'facebook_page', name: 'Harbor Page', status: 'connected', statusReason: null, lastErrorCode: null, lastSyncedAt: null },
+      { id: 'c3', kind: 'instagram_business', name: 'Harbor Instagram', status: 'pending_review', statusReason: 'PLATFORM_REVIEW_PENDING', lastErrorCode: null, lastSyncedAt: null },
+      { id: 'c4', kind: 'messenger_page', name: 'Old Page', status: 'disconnected', statusReason: 'DISCONNECTED_BY_USER', lastErrorCode: null, lastSyncedAt: null },
+    ];
+    leadAdminApp(systemFake(overview({ connections })), '/admin/system', 'owner');
+    const health = await screen.findByRole('region', { name: 'Provider health' });
+    expect(await within(health).findByText('Facebook Page (publishing) · Harbor Page')).toBeInTheDocument();
+    expect(within(health).getByText('Instagram business account (publishing) · Harbor Instagram')).toBeInTheDocument();
+    expect(within(health).getByText('Facebook Messenger (not offered) · Old Page')).toBeInTheDocument();
+    expect(connectionKindWords('instagram_account')).toBe('Instagram direct messages (not offered)');
+    expect(connectionKindWords('meta_lead_ads')).toBe('Meta lead ads (not offered)');
+    expect(connectionKindWords('ads_meta')).toBe('Meta ads (not offered)');
   });
 
   it('a failed load says so in words', async () => {
