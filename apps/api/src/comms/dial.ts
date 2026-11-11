@@ -7,7 +7,9 @@
 //     allow ⇒ the calls row (the calls dispatch guard re-checks the do-not-call block) + the recording
 //     decision (core.decideRecording; announce unless every party is one-party and the Owner attested)
 //     + the touch in the same transaction (R-OWN-14). deny ⇒ a gate_decisions row (the blocked-call
-//     evidence), the decision is returned and no call exists.
+//     evidence), the decision is returned and no call exists. If the guard refuses a call the gate
+//     allowed (RECIPIENT_OPTED_OUT / RECIPIENT_NOT_A_CONTACT_POINT: defence in depth, as in dispatch.ts),
+//     the transaction rolls back and a NEW one records it as that deny; nothing is dialed, never a 500.
 //   dialOutbound (after commit): provider.dialCall(idempotencyKey = call id) with the announcement;
 //     'ringing' + provider ref, or 'failed'. Never re-dials a call that already has a provider ref.
 //   applyCallStatus (provider callbacks): forward-only status; an announcement that failed to play
@@ -19,7 +21,7 @@ import { applyOwnershipCommandInTx, derivedCommandId, lockContact, setOwnershipC
 import { sql } from 'kysely';
 import { AppError } from '../errors.js';
 import { ProviderError } from '../providers/types.js';
-import { decisionView, evaluateGate, insertBlockedDecision, resolvedPolicy, verdictOf } from './gateInput.js';
+import { type GuardDenyReason, decisionView, evaluateGate, guardOptOutRefusal, insertBlockedDecision, resolvedPolicy, verdictOf } from './gateInput.js';
 import { contactFacts, dealOrAppointmentContext, detailVisibleContact } from './repos/contacts.js';
 import { telephonyAccount } from './repos/credentials.js';
 import * as g from './repos/gate.js';
@@ -35,7 +37,8 @@ export type StartCallResult = { kind: 'dialing'; callId: string; bridgeToken: st
 
 export async function startCall(actor: UserActor, contactId: string, input: { toPointId?: string | undefined }, deps: CommsDeps): Promise<StartCallResult> {
   type Out = { kind: 'gate'; decision: DecisionView } | { kind: 'created'; callId: string; decision: DecisionView };
-  const out: Out = await asUser(deps, actor, async (tx, txNow) => {
+  // guardDeny: the calls guard's refusal of a call this gate allowed, as a deny reason of the second run
+  const attempt = (guardDeny: readonly GuardDenyReason[]): Promise<Out> => asUser(deps, actor, async (tx, txNow) => {
     void txNow;
     if (!(await detailVisibleContact(tx, contactId))) throw new AppError('NOT_FOUND');
     await lockContact(tx, contactId as ContactId);
@@ -67,9 +70,9 @@ export async function startCall(actor: UserActor, contactId: string, input: { to
       body: null,
     };
     const evaluated = await evaluateGate(tx, intent, now);
-    const verdict = verdictOf(evaluated.decision);
+    const verdict = verdictOf(evaluated.decision, guardDeny);
     if (verdict.outcome === 'deny') {
-      const blocked = await insertBlockedDecision(tx, { ids: deps.ids, intent, evaluated, verdict, actorUserId: actor.userId, callId, now });
+      const blocked = await insertBlockedDecision(tx, { ids: deps.ids, intent, evaluated, verdict, actorUserId: actor.userId, callId, now, extraDeny: guardDeny });
       return { kind: 'gate', decision: decisionView(blocked, 'send') };
     }
     if (!n) return { kind: 'gate', decision: decisionView({ id: null, ...verdict }, 'send') };
@@ -97,6 +100,16 @@ export async function startCall(actor: UserActor, contactId: string, input: { to
     await msgs.touchConversationOutbound(tx, conversationId, n.id, now);
     return { kind: 'created', callId, decision: decisionView({ id: null, ...verdict }, 'send') };
   });
+  let out: Out;
+  try {
+    out = await attempt([]);
+  } catch (e) {
+    // the calls guard refused the row the gate allowed: that transaction is rolled back and gone (no calls
+    // row, no touch); a fresh one records the refusal as a deny. Nothing is dialed; any other error propagates.
+    const refused = guardOptOutRefusal(e);
+    if (refused === null) throw e;
+    out = await attempt([refused]);
+  }
   if (out.kind === 'gate') return out;
   const r = await dialOutbound(out.callId, deps, actor.tenantId);
   if (r.kind === 'failed') return { kind: 'failed', callId: out.callId, reason: r.reason, decision: out.decision };

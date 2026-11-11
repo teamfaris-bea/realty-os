@@ -177,8 +177,10 @@ export async function reachabilityFor(tx: Tx, contactIds: readonly string[], now
   const facts = await rr.purposeFacts(tx, [...new Set(contactIds)]);
   const ids = [...facts.keys()];
   const byContact = await rr.pointsForContacts(tx, ids);
+  // R-PAR-12: removed phones whose opt-out still blocks the person (never listed, never a default point)
+  const removed = await rr.removedFanoutPhones(tx, ids);
   const hmacs = [...new Set([...byContact.values()].flat().map((p) => p.hmac))];
-  const consent = await rr.consentStateFor(tx, hmacs);
+  const consent = await rr.consentStateFor(tx, [...new Set([...hmacs, ...[...removed.values()].flat()])]);
   const sups = await rr.suppressionsFor(tx, hmacs);
   const events = await rr.revokeEvents(tx, consent.filter((r) => r.status === 'revoked' && r.basisEventId !== null).map((r) => r.basisEventId!));
   const supById = new Map(sups.map((s) => [s.id, s]));
@@ -188,9 +190,12 @@ export async function reachabilityFor(tx: Tx, contactIds: readonly string[], now
     const f = facts.get(contactId)!;
     const purposeNow = classifyHumanPurpose({ lastInboundAt: f.lastInboundAt ? instantFromDate(f.lastInboundAt) : null, dealOrAppointmentContext: f.dealOrAppointmentContext, now });
     const own = new Set(pts.map((p) => p.hmac));
+    const removedPhoneHmacs = removed.get(contactId) ?? [];
+    const keys = new Set([...own, ...removedPhoneHmacs]);
     const input = {
       points: pts.map((p): ReachPoint => ({ id: p.id, kind: p.kind, addressHmac: p.hmac, status: p.status, lineType: p.lineType })),
-      consent: consent.filter((r) => own.has(r.addressHmac)),
+      removedPhoneHmacs,
+      consent: consent.filter((r) => keys.has(r.addressHmac)),
       suppressions: sups.filter((s) => own.has(s.addressHmac)).map((s): ReachSuppression => ({ id: s.id, addressHmac: s.addressHmac, channel: s.channel, reason: s.reason, liftedAt: s.liftedAt ? instantFromDate(s.liftedAt) : null })),
     };
     const channel = (ch: 'sms' | 'voice' | 'email'): ChannelReachView => {

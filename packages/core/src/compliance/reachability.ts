@@ -9,7 +9,8 @@
 //
 //   CONSENT_REVOKED         an opt-out (check 5): the same predicate canContact uses (`optedOut`), over
 //                           the same rows (this address, plus the contact's other phones for texts and
-//                           calls). STOP, unsubscribe, an agent-recorded do-not-contact, an import.
+//                           calls, removed ones that still count included, R-PAR-12). STOP, unsubscribe,
+//                           an agent-recorded do-not-contact, an import.
 //   SUPPRESSED              an active suppression on this address for the channel or `all` (check 6)
 //   WRONG_NUMBER            the point is marked a wrong number (check 2)
 //   CONTACT_POINT_INVALID   the point is not active (invalid, bouncing, removed) (check 2)
@@ -40,9 +41,15 @@ export interface ReachSuppression extends SuppressionRow {
 }
 
 export interface ReachabilityInput {
-  /** the contact's points (removed ones excluded, as the send paths read them), primary first */
+  /** the contact's points (removed ones excluded: the ones a send goes to or a call dials), primary first */
   points: readonly ReachPoint[];
-  /** consent_state rows for every one of the contact's addresses, any channel */
+  /**
+   * R-PAR-12: HMACs of the contact's REMOVED phones whose opt-out still counts (removed for any reason but
+   * a confirmed wrong number). Never listed and never sent to: their opt-outs only join the any-phone
+   * fan-out of texts and calls, as the send-time gate and the dispatch guards read it. Absent = none.
+   */
+  removedPhoneHmacs?: readonly string[];
+  /** consent_state rows for every one of the contact's addresses (removed phones above included), any channel */
   consent: readonly ConsentStateRow[];
   /** suppressions for every one of the contact's addresses (lifted ones are ignored) */
   suppressions: readonly ReachSuppression[];
@@ -62,12 +69,18 @@ export function pointKindFor(channel: Channel): PointKind {
 
 /**
  * The consent rows canContact sees for a send to `point` on `channel` (api/comms gateInput): this
- * address, plus every other phone of the contact for texts and calls (R-CONSENT-7, outbound-3).
+ * address, plus every other phone of the contact for texts and calls (R-CONSENT-7, outbound-3), the
+ * removed phones that still count included (R-PAR-12).
  */
 export function gateConsentRows(input: ReachabilityInput, point: ReachPoint, channel: Channel): ConsentStateRow[] {
   const hmacs = new Set([point.addressHmac]);
-  // texts and calls: every phone; DMs: every identity of the kind (R-CHAN-4); email: the address
-  if (channel !== 'email') for (const p of input.points) if (p.kind === pointKindOf(channel)) hmacs.add(p.addressHmac);
+  // texts and calls: every phone, removed ones that still count too; DMs: every identity of the kind
+  // (R-CHAN-4); email: the address
+  if (channel !== 'email') {
+    const kind = pointKindOf(channel);
+    for (const p of input.points) if (p.kind === kind) hmacs.add(p.addressHmac);
+    if (kind === 'phone') for (const h of input.removedPhoneHmacs ?? []) hmacs.add(h);
+  }
   return input.consent.filter((r) => r.channel === channel && hmacs.has(r.addressHmac));
 }
 

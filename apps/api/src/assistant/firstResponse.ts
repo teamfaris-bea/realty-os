@@ -20,7 +20,7 @@ import { plusMs } from '@realty/core/foundation';
 import { type Tx, lockContact, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { resolvedPolicy } from '../comms/gateInput.js';
-import { consentRows, contactPoints, suppressionRows } from '../comms/repos/gate.js';
+import { consentRows, contactPoints, optOutFanoutPhoneHmacs, suppressionRows } from '../comms/repos/gate.js';
 import { enqueueStep } from './enrollments.js';
 import { contactCore } from './repos/context.js';
 import * as P from './repos/playbooks.js';
@@ -60,8 +60,9 @@ export async function sendFirstResponseInTx(tx: Tx, deps: AssistantDeps, tenantI
   const purpose = step?.purpose ?? 'informational';
   let smsBlocked = false;
   if (phone) {
-    // the gate's SMS opt-out rule: a STOP on any of the lead's phones blocks texting all of them
-    const rows = await consentRows(tx, 'sms', points.filter((p) => p.kind === 'phone').map((p) => p.hmac));
+    // the gate's SMS opt-out rule: a STOP on any of the lead's phones blocks texting all of them, a removed
+    // phone included unless removed as a confirmed wrong number (R-PAR-12: the gate's and the guard's set)
+    const rows = await consentRows(tx, 'sms', await optOutFanoutPhoneHmacs(tx, contactId));
     const sup = await suppressionRows(tx, phone.hmac);
     smsBlocked = optedOut(rows, 'sms', purpose, phone.hmac) || sup.some((s) => s.liftedAt === null && (s.channel === 'sms' || s.channel === 'all'));
   }

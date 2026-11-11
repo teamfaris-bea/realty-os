@@ -38,29 +38,36 @@ const suppressionArb = fc.record({
 const contactArb = fc
   .record({
     points: fc.array(pointArb, { minLength: 1, maxLength: 4 }),
+    // R-PAR-12: removed phones whose opt-out still counts (an address is on a contact once, live or removed)
+    removed: fc.subarray(HMACS, { maxLength: 2 }),
     consent: fc.array(consentArb, { maxLength: 8 }),
     suppressions: fc.array(suppressionArb, { maxLength: 4 }),
   })
-  .map(({ points, consent, suppressions }): ReachabilityInput => {
+  .map(({ points, removed, consent, suppressions }): ReachabilityInput => {
     // one consent_state row per key, as in the table (PRIMARY KEY channel, purpose, address)
     const rows = new Map<string, ConsentStateRow>();
     for (const c of consent) {
       const row: ConsentStateRow = c.status === 'granted' ? { ...revokedRow(), ...c, level: 'express', basisEventId: 'g' } : { ...revokedRow(), ...c, basisEventId: c.status === 'revoked' ? `r-${c.channel}-${c.purpose}-${c.addressHmac[0]}` : null };
       rows.set(`${c.channel}:${c.purpose}:${c.addressHmac}`, row);
     }
+    const live = points.map((p, i): ReachPoint => ({ id: `p${i}`, ...p, addressHmac: p.kind === 'email' ? `e${p.addressHmac.slice(1)}` : p.addressHmac }));
     return {
       // a phone hmac and an email hmac never collide in practice; keep the kinds apart so the
       // generated contact is one the database can hold
-      points: points.map((p, i): ReachPoint => ({ id: `p${i}`, ...p, addressHmac: p.kind === 'email' ? `e${p.addressHmac.slice(1)}` : p.addressHmac })),
+      points: live,
+      removedPhoneHmacs: removed.filter((h) => !live.some((p) => p.addressHmac === h)),
       consent: [...rows.values()].map((r) => (r.channel === 'email' ? { ...r, addressHmac: `e${r.addressHmac.slice(1)}` } : r)),
       suppressions: suppressions.map((s, i) => ({ id: `s${i}`, channel: s.channel, reason: s.reason, liftedAt: s.lifted ? (1 as never) : null, addressHmac: s.addressHmac })),
     };
   });
 
-/** api/comms gateInput.ts, restated independently for a clean human one-to-one send. */
+/**
+ * api/comms gateInput.ts, restated independently for a clean human one-to-one send: for texts and calls,
+ * every phone the dispatch guards fan out over (live, and removed but not as a confirmed wrong number).
+ */
 function apiGateInput(c: ReachabilityInput, point: ReachPoint, channel: Channel, purpose: Purpose): GateInput {
   const hmacs = new Set([point.addressHmac]);
-  if (channel !== 'email') for (const p of c.points) if (p.kind === 'phone') hmacs.add(p.addressHmac);
+  if (channel !== 'email') for (const h of [...c.points.filter((p) => p.kind === 'phone').map((p) => p.addressHmac), ...(c.removedPhoneHmacs ?? [])]) hmacs.add(h);
   return gateInput({
     recipient: { kind: 'contact', addressHmac: point.addressHmac, channel },
     purpose,
@@ -142,6 +149,18 @@ describe('reachability examples', () => {
     const c = { ...base, consent: [revokedRow({ channel: 'voice', purpose: 'marketing', addressHmac: other.addressHmac, basisEventId: 'dnc' })] };
     expect(pointBlocks(c, phone, 'voice', 'informational').map((b) => b.reason)).toEqual(['CONSENT_REVOKED']);
     expect(pointBlocks(c, phone, 'sms', 'informational')).toEqual([]);
+  });
+  it('R-PAR-12 R-CONSENT-7: a STOP or a do-not-call on a removed phone that still counts blocks texts and calls to every live phone, and the removed phone is never listed', () => {
+    const gone = HMACS[2]!;
+    const c: ReachabilityInput = { points: [phone, mail], removedPhoneHmacs: [gone], consent: [stop(gone, 'informational'), revokedRow({ channel: 'voice', purpose: 'informational', addressHmac: gone, basisEventId: 'dnc' })], suppressions: [] };
+    expect(pointBlocks(c, phone, 'sms', 'informational').map((b) => b.reason)).toEqual(['CONSENT_REVOKED']);
+    expect(pointBlocks(c, phone, 'sms', 'informational')[0]!.revokedRows.map((r) => r.addressHmac)).toEqual([gone]);
+    expect(pointBlocks(c, phone, 'sms', 'marketing')).toEqual([]);
+    expect(pointBlocks(c, phone, 'voice', 'marketing').map((b) => b.reason)).toEqual(['CONSENT_REVOKED']);
+    expect(pointBlocks(c, mail, 'email', 'informational')).toEqual([]);
+    // a phone removed as a confirmed wrong number is not among them: its opt-out blocks nobody else
+    expect(pointBlocks({ ...c, removedPhoneHmacs: [] }, phone, 'sms', 'informational')).toEqual([]);
+    expect(reachability(c).find((x) => x.channel === 'sms')!.points.map((p) => p.pointId)).toEqual([phone.id]);
   });
   it('a marketing email unsubscribe blocks marketing email only', () => {
     const c = { ...base, consent: [revokedRow({ channel: 'email', purpose: 'marketing', addressHmac: mail.addressHmac })] };

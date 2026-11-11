@@ -29,7 +29,7 @@ async function pointIdOf(contactId: string, address: string): Promise<string> {
 }
 
 describe('adversarial: api/people', () => {
-  it('R-PAR-12 E168 a removed phone that texted STOP keeps blocking texts to the person’s other phone, and the DB guard refuses it with core bypassed', async () => {
+  it('R-PAR-12 R-CONSENT-7 E168 a removed phone that texted STOP keeps blocking texts to the person’s other phone: the send-time gate refuses it with a clean blocked answer and its reason (never a 500), and the DB guard refuses it with core bypassed', async () => {
     const c = await ownedContact(agent);
     expect((await inboundSms(h, c.phone, w.mainNumber, 'STOP')).statusCode).toBe(200);
     const work = randomPhone();
@@ -39,25 +39,26 @@ describe('adversarial: api/people', () => {
     expect((await call(agent, 'POST', `/contacts/${c.id}/points/${stopped}/remove`, { reason: 'old' })).status).toBe(200);
     expect((await call(agent, 'POST', `/contacts/${c.id}/points/${await pointIdOf(c.id, work)}/primary`)).status).toBe(200);
     await grantConsent(agent, c.id, 'sms').catch(() => undefined);
-    // Nothing reaches the provider: the opt-out guard refuses the dispatch. FINDING for module 22 (comms):
-    // core's gate loader (comms/repos/gate.ts contactPoints) skips removed points, so the send is not
-    // refused up front and dispatch surfaces the guard's refusal as a 500. Reported in the lane report.
+    // The send-time gate reads the guards' own fan-out (removed phones count unless removed as a confirmed
+    // wrong number), so canContact refuses up front: a blocked message with the opt-out reason and its
+    // blocked-send record. Nothing reaches the provider.
     const r = await sendText(agent, c.id, 'Checking in');
-    expect(r.status === 200 || r.status === 201 ? r.body.message?.status : 'refused').not.toMatch(/^(sent|delivered|dispatching|queued)$/);
+    expect(r.status).toBe(200);
+    expect(r.body.result).toBe('blocked');
+    expect(r.body.message).toMatchObject({ status: 'blocked', statusReason: 'CONSENT_REVOKED' });
+    expect(r.body.decision).toMatchObject({ id: expect.any(String), outcome: 'deny', reasons: ['CONSENT_REVOKED'], phase: 'send' });
+    expect((await h.su.query('SELECT reason_codes FROM gate_decisions WHERE message_id = $1', [r.body.message!.id])).rows).toEqual([{ reason_codes: ['CONSENT_REVOKED'] }]);
     expect((await h.su.query("SELECT count(*)::int AS n FROM messages WHERE contact_id = $1 AND direction = 'outbound' AND status IN ('sent','delivered','dispatching')", [c.id])).rows[0].n).toBe(0);
     expect(h.providers.telephony.sms.filter((m) => m.to === work)).toEqual([]);
     // core bypassed: a message row to the work phone, moved to dispatching by the system, is refused by the guard
     const mid = randomUUID();
     await h.su.query(
-      `INSERT INTO messages (tenant_id, id, contact_id, conversation_id, channel, direction, initiator, initiated_by_user_id, purpose, category, body, from_address, to_address, status, occurred_at)
-       SELECT c.tenant_id, $2, c.id, (SELECT id FROM conversations WHERE contact_id = c.id LIMIT 1), 'sms', 'outbound', 'human', $3, 'informational', 'one_to_one', 'x', $4, $5, 'queued', now()
+      `INSERT INTO messages (tenant_id, id, contact_id, conversation_id, channel, direction, initiator, initiated_by_user_id, purpose, action_category, body, phone_number_id, from_address, to_address, status, occurred_at)
+       SELECT c.tenant_id, $2, c.id, (SELECT id FROM conversations WHERE contact_id = c.id LIMIT 1), 'sms', 'outbound', 'human', $3, 'informational', 'none', 'x', $4, $5, $6, 'queued', now()
          FROM contacts c WHERE c.id = $1`,
-      [c.id, mid, agent.userId, w.mainNumber, work],
-    ).catch(() => undefined);
-    const exists = (await h.su.query('SELECT 1 FROM messages WHERE id = $1', [mid])).rows.length > 0;
-    if (exists) {
-      await expect(withTenantTx(systemActor(w.tenantId, 'worker'), (tx) => sql`UPDATE messages SET status = 'dispatching', dispatched_at = now() WHERE id = ${mid}`.execute(tx), { db: h.database })).rejects.toThrow(/RECIPIENT_OPTED_OUT/);
-    }
+      [c.id, mid, agent.userId, w.mainNumberId, w.mainNumber, work],
+    );
+    await expect(withTenantTx(systemActor(w.tenantId, 'worker'), (tx) => sql`UPDATE messages SET status = 'dispatching', dispatched_at = now() WHERE id = ${mid}`.execute(tx), { db: h.database })).rejects.toThrow(/RECIPIENT_OPTED_OUT/);
     // the details explain the over-block with the removed number's tail only
     const d = await call<{ details: { removedPoints: { tail: string; stillBlocks: boolean }[] } }>(agent, 'GET', `/contacts/${c.id}/details`);
     expect(d.body.details.removedPoints).toEqual([expect.objectContaining({ tail: `•••${c.phone.slice(-4)}`, stillBlocks: true, optedOut: true })]);
