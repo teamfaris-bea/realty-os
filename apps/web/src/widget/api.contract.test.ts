@@ -149,6 +149,23 @@ describe('widget/api.ts against the real module 22 public chat routes (webContra
     expect(await future.poll(TOKEN, null)).toEqual({ ok: true, data: { messages: [later], cursor: `1762880431000000.${later.id}`, open: true } });
   });
 
+  it('R-INBOX-5: a joined emoji (a family, a profession, a rainbow flag) keeps its zero-width joiner and goes as typed; a joiner that joins no emoji and every other format character are still dropped', async () => {
+    const m = module22(happy);
+    const typed = ['\ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67 see you at 3', '\ud83c\udff3\ufe0f\u200d\ud83c\udf08', '\ud83d\udc69\ud83c\udffd\u200d\ud83d\udcbb sent the docs', '\ud83c\udfc3\ud83c\udffd\u200d\u2640\ufe0f on my way', '\u2764\ufe0f\u200d\ud83d\udd25'];
+    for (const t of typed) await m.api.send(TOKEN, t, newMessageId());
+    // a joiner after a letter or before nothing, a bidi override, a zero-width space and a tag character
+    await m.api.send(TOKEN, 'a\u200db \u202eok\u200b \ud83d\udc68\u200d \u{E0041}', newMessageId());
+    // the contract fake refuses any message the API's own pattern refuses
+    expect(m.problems).toEqual([]);
+    const sent = m.seen.map((s) => (s.body as { message: string }).message);
+    expect(sent.slice(0, typed.length)).toEqual(typed);
+    expect(sent[typed.length]).toBe('ab ok \ud83d\udc68');
+    // at the cap, a joiner whose second emoji was cut off goes with it
+    expect(clean(`${'z'.repeat(1997)}\ud83d\udc68\u200d\ud83d\udc69`, MESSAGE_MAX, true)).toBe(`${'z'.repeat(1997)}\ud83d\udc68`);
+    // a name, a phone and an email keep no format character at all (the API refuses every one there)
+    expect(clean('Pat \ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67', NAME_MAX)).toBe('Pat \ud83d\udc68\ud83d\udc69\ud83d\udc67');
+  });
+
   it('a response that is not the API shape is a failure and is never rendered (no invented messages)', () => {
     expect(parseStart({ sessionToken: 'short', status: 'open' })).toBeNull();
     expect(parseStart({ sessionToken: TOKEN, status: 'closed' })).toBeNull();

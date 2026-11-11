@@ -72,6 +72,19 @@ describe('R-INBOX-5 hostile bodies', () => {
     }
   });
 
+  it('R-INBOX-5: a joined emoji keeps its zero-width joiner and is stored as typed; a joiner that joins no emoji, or any other format character in a message, is 422', async () => {
+    const c = await openChat(h, wa.key, srcA.disclosureId, { name: 'Em Oji' });
+    const ip = visitorIp();
+    const typed = ['👨‍👩‍👧 we are three', '🏳️‍🌈', '👩🏽‍💻 sent the docs', '🏃🏽‍♀️'];
+    for (const message of typed) expect((await chatMessage(h, c.token, { message, clientMessageId: randomUUID() }, { ip })).statusCode).toBe(200);
+    const stored = await h.su.query<{ body: string }>("SELECT body FROM messages WHERE contact_id = $1 AND direction = 'inbound' AND body = ANY($2::text[])", [c.contactId, typed]);
+    expect(stored.rows.map((r) => r.body).sort()).toEqual([...typed].sort());
+    for (const message of ['a‍b', '‍👩', '👨‍', '👨‍‍👩', '👨​‍👩', 'hi‮', 'hi⁦', 'hi​', 'hi\u{E0041}']) {
+      const r = await chatMessage(h, c.token, { message, clientMessageId: randomUUID() }, { ip });
+      expect([JSON.stringify(message), r.statusCode]).toEqual([JSON.stringify(message), 422]);
+    }
+  });
+
   it('R-INBOX-5: per-session message limits cut a flood off with 429; nothing past the limit is stored', async () => {
     const c = await openChat(h, wa.key, srcA.disclosureId, { name: 'Flo Flood' });
     const ip = visitorIp();
