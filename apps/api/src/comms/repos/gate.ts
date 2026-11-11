@@ -163,6 +163,23 @@ export async function optOutFanoutPhoneHmacs(tx: Tx, contactId: string): Promise
   return r.rows.map((x) => Buffer.from(x.h).toString('hex'));
 }
 
+/**
+ * The removed half of optOutFanoutPhoneHmacs, with each address for the hint: the contact's phones removed
+ * other than as a confirmed wrong number,
+ *   kind = 'phone' AND removed_at IS NOT NULL AND removed_reason IS DISTINCT FROM 'wrong_number'
+ * They still block texting the person (R-PAR-12), so a START must be able to lift the keyword revoke its
+ * own STOP left on one of them (R-CONSENT-10, outbound-4; see keywordRevokedBy), or the person could never
+ * be texted again after a remove or replace. Only the START lift reads these: never a send target.
+ */
+export async function removedFanoutPhones(tx: Tx, contactId: string): Promise<{ hmac: string; address: string }[]> {
+  const r = await sql<{ h: Buffer; address: string }>`
+    SELECT DISTINCT ON (address_hmac) address_hmac AS h, address FROM contact_points
+     WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND kind = 'phone'
+       AND removed_at IS NOT NULL AND removed_reason IS DISTINCT FROM 'wrong_number'
+     ORDER BY address_hmac, id`.execute(tx);
+  return r.rows.map((x) => ({ hmac: Buffer.from(x.h).toString('hex'), address: x.address }));
+}
+
 export interface ConversationRow {
   id: string;
   contactId: string;

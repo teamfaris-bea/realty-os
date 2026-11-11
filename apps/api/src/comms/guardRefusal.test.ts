@@ -18,12 +18,17 @@ import { DISPATCH_DENY_SENTENCES, guardOptOutRefusal } from './gateInput.js';
 import type * as GateRepo from './repos/gate.js';
 import { type CommsWorld, call, commsWorld, decisionsFor, inboundSms, messageRow, ownedContact, randomPhone, sendText } from './testing.js';
 
-// The seam: while `blind` is set, the gate's fan-out read returns no phones, so canContact sees only the
-// recipient's own opt-outs. Unset, it is the real read.
-const seam = vi.hoisted(() => ({ blind: false }));
+// The seams: while `blind` is set, the gate's fan-out read returns no phones, so canContact sees only the
+// recipient's own opt-outs. While `blindSuppressions` is set, the gate reads no suppressions, so the guards'
+// RECIPIENT_SUPPRESSED (a refusal that is not an opt-out) reaches the real paths. Unset, they are the real reads.
+const seam = vi.hoisted(() => ({ blind: false, blindSuppressions: false }));
 vi.mock('./repos/gate.js', async (importOriginal) => {
   const real = await importOriginal<typeof GateRepo>();
-  return { ...real, optOutFanoutPhoneHmacs: async (...a: Parameters<typeof real.optOutFanoutPhoneHmacs>) => (seam.blind ? [] : real.optOutFanoutPhoneHmacs(...a)) };
+  return {
+    ...real,
+    optOutFanoutPhoneHmacs: async (...a: Parameters<typeof real.optOutFanoutPhoneHmacs>) => (seam.blind ? [] : real.optOutFanoutPhoneHmacs(...a)),
+    suppressionRows: async (...a: Parameters<typeof real.suppressionRows>) => (seam.blindSuppressions ? [] : real.suppressionRows(...a)),
+  };
 });
 
 let h: ApiHarness;
@@ -41,6 +46,7 @@ beforeAll(async () => {
 });
 afterEach(() => {
   seam.blind = false;
+  seam.blindSuppressions = false;
 });
 afterAll(async () => {
   await h?.close();
@@ -131,7 +137,7 @@ describe('defence in depth: a dispatch guard refusal is a blocked send, never a 
     expect((await call<{ result: string; decision: { reasons: string[] } }>(agent, 'POST', `/contacts/${v.id}/calls`, {})).body).toMatchObject({ result: 'gate', decision: { reasons: ['CONSENT_REVOKED'] } });
   });
 
-  it('only the guards’ opt-out refusals are a block: RECIPIENT_OPTED_OUT and RECIPIENT_NOT_A_CONTACT_POINT check violations from the real guards map, every other error stays an error', async () => {
+  it('only the guards’ opt-out refusals are classified as a block: RECIPIENT_OPTED_OUT and RECIPIENT_NOT_A_CONTACT_POINT check violations from the real guards map, every other error does not', async () => {
     const c = await personWithRemovedOptOut({ optOut: 'stop' });
     const conv = (await h.su.query<{ id: string }>('SELECT id FROM conversations WHERE contact_id = $1', [c.id])).rows[0]!.id;
     // core bypassed: a queued text moved to dispatching by the system, to the live work phone and to a number not on the person
@@ -172,5 +178,43 @@ describe('defence in depth: a dispatch guard refusal is a blocked send, never a 
     ]) {
       expect(guardOptOutRefusal(e), JSON.stringify(e ?? null)).toBeNull();
     }
+  });
+
+  it('every other guard refusal stays an error through the real paths: a RECIPIENT_SUPPRESSED the gate did not see rejects the dispatch and is a 500 from the dial; nothing recorded, nothing sent, the message left as it was', async () => {
+    const c = await ownedContact(agent);
+    const later = await sendText(agent, c.id, 'Later', { scheduleAt: new Date(Date.now() + 3600_000).toISOString() });
+    expect(later.body.result).toBe('scheduled');
+    const mid = later.body.message!.id;
+    const hmac = (await h.su.query<{ hmac: string }>("SELECT encode(address_hmac, 'hex') AS hmac FROM contact_points WHERE contact_id = $1 AND address = $2", [c.id, c.phone])).rows[0]!.hmac;
+    await suFixture(h, [
+      { text: "UPDATE messages SET scheduled_for = now() - interval '1 minute' WHERE id = $1", values: [mid] },
+      { text: "INSERT INTO suppressions (tenant_id, id, address_kind, address_hmac, address_hint, channel, reason) VALUES ($1, $2, 'phone', decode($3, 'hex'), $4, 'all', 'admin_block')", values: [w.tenantId, randomUUID(), hmac, `•••-•••-${c.phone.slice(-4)}`] },
+    ]);
+    const calls = async () => (await h.su.query<{ n: number }>('SELECT count(*)::int AS n FROM calls WHERE contact_id = $1', [c.id])).rows[0]!.n;
+    const callsBefore = await calls();
+    const decisionsBefore = (await decisionsFor(h, { contactId: c.id })).map((d) => d.id);
+    const touched = await touchOf(c.id);
+    const sent = h.providers.telephony.sms.length;
+    const dialed = h.providers.telephony.calls.length;
+    seam.blindSuppressions = true;
+
+    // the dispatch (as the worker runs it): the guard's error comes out as is, not as a blocked result
+    await expect(dispatchOutbound(mid, w.deps, { tenantId: w.tenantId as TenantId })).rejects.toMatchObject({ code: '23514', message: expect.stringMatching(/^RECIPIENT_SUPPRESSED:/) });
+    expect(await messageRow(h, mid)).toMatchObject({ status: 'scheduled', status_reason: null, gate_decision_id: null, dispatched_at: null });
+    expect(await decisionsFor(h, { messageId: mid })).toEqual([]);
+    // the dial: an error, not a gate answer; no call row, no decision row, no touch
+    expect((await call(agent, 'POST', `/contacts/${c.id}/calls`, {})).status).toBe(500);
+    expect(await calls()).toBe(callsBefore);
+    expect((await decisionsFor(h, { contactId: c.id })).map((d) => d.id)).toEqual(decisionsBefore);
+    expect(await touchOf(c.id)).toEqual(touched);
+    expect(h.providers.telephony.sms.length).toBe(sent);
+    expect(h.providers.telephony.calls.length).toBe(dialed);
+
+    // control: with the real read canContact refuses both itself, cleanly, so the seam is what made them errors
+    seam.blindSuppressions = false;
+    expect(await dispatchOutbound(mid, w.deps, { tenantId: w.tenantId as TenantId })).toMatchObject({ kind: 'blocked', messageId: mid, decision: { reasons: ['SUPPRESSED'] } });
+    expect((await call<{ result: string; decision: { reasons: string[] } }>(agent, 'POST', `/contacts/${c.id}/calls`, {})).body).toMatchObject({ result: 'gate', decision: { reasons: ['SUPPRESSED'] } });
+    expect(smsTo(c.phone)).toEqual([]);
+    expect(callsTo(c.phone)).toEqual([]);
   });
 });

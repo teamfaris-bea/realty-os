@@ -63,6 +63,15 @@ describe('messageStatus: what the thread says under a message that did not simpl
     expect(messageStatus({ status: 'blocked', statusReason: 'CONSENT_REVOKED', channel: 'email' }, 'Owen')!.text).toBe('Not sent: opted out of email');
     expect(messageStatus({ status: 'blocked', statusReason: 'SOMETHING_NEW', channel: 'sms' }, 'Owen')!.text).toBe('Not sent: blocked by a sending rule');
   });
+  it('R-PAR-12: a send the dispatch guard refused reads like the gate’s own opt-out, never "a sending rule"', () => {
+    // no evidence in the stored inputs (the app gate and the guard disagreed): the same words as CONSENT_REVOKED
+    expect(messageStatus({ status: 'blocked', statusReason: 'RECIPIENT_OPTED_OUT', channel: 'sms' }, 'Ana')).toEqual({ text: 'Not sent: opted out of texts', tone: 'failed' });
+    expect(messageStatus({ status: 'blocked', statusReason: 'RECIPIENT_OPTED_OUT', channel: 'mms' }, 'Ana')!.text).toBe('Not sent: opted out of texts');
+    expect(messageStatus({ status: 'blocked', statusReason: 'RECIPIENT_OPTED_OUT', channel: 'email' }, 'Ana')!.text).toBe('Not sent: opted out of email');
+    expect(messageStatus({ status: 'blocked', statusReason: 'RECIPIENT_NOT_A_CONTACT_POINT', channel: 'sms' }, 'Ana')).toEqual({ text: "Not sent: the number or address isn't on their record, so their opt-outs couldn't be checked", tone: 'failed' });
+    // with evidence, the opt-out it rested on is named, as for any blocked send
+    expect(messageStatus({ status: 'blocked', statusReason: 'RECIPIENT_OPTED_OUT', blockedBy: reason({}), channel: 'sms' }, 'Ana', NOW)!.text).toBe('Not sent: texted STOP on Nov 10');
+  });
   it('an undelivered text says the carrier rejected it, naming a known carrier code', () => {
     expect(messageStatus({ status: 'undelivered', statusReason: 'PROVIDER_UNDELIVERED', providerErrorCode: '30008', channel: 'sms' }, 'Owen')!.text).toBe('Not delivered: the carrier rejected it');
     expect(messageStatus({ status: 'undelivered', statusReason: 'PROVIDER_UNDELIVERED', providerErrorCode: '99999', channel: 'sms' }, 'Owen')!.text).toBe('Not delivered: the carrier rejected it');

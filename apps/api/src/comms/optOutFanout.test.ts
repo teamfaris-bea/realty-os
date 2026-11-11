@@ -154,6 +154,90 @@ describe('R-PAR-12: the send-time gate reads the dispatch guards’ opt-out fan-
   });
 });
 
+// ---- START after a removal: the lift reads the same phones the send-time fan-out reads --------------
+
+describe('R-PAR-12 with R-CONSENT-10 outbound-4: START lifts what its own STOP revoked, also on a phone removed since', () => {
+  /** A contact with phones A and B, both live: a STOP from A also revokes B (R-CONSENT-7). */
+  async function twoPhones(): Promise<{ id: string; a: string; b: string }> {
+    const a = randomPhone();
+    const b = randomPhone();
+    const r = await call<{ contact: { id: string } }>(agent, 'POST', '/contacts', { commandId: randomUUID(), firstName: 'Sam', lastName: 'Start', phones: [a, b], emails: [] });
+    expect([200, 201]).toContain(r.status);
+    return { id: r.body.contact.id, a, b };
+  }
+  /** The address's SMS consent rows, one per purpose. */
+  const smsStatus = async (hmac: string) =>
+    (await h.su.query<{ status: string }>("SELECT status FROM consent_state WHERE tenant_id = $1 AND channel = 'sms' AND address_hmac = decode($2, 'hex') ORDER BY purpose", [w.tenantId, hmac])).rows.map((x) => x.status);
+  const resubscribes = async (hmac: string) =>
+    (await h.su.query<{ n: number }>("SELECT count(*)::int AS n FROM consent_events WHERE tenant_id = $1 AND address_hmac = decode($2, 'hex') AND event_type = 'resubscribe'", [w.tenantId, hmac])).rows[0]!.n;
+  type Reach = { channels: { sms: { blocked: boolean; reasons: { code: string; source: string; otherAddress: boolean; addressHint: string | null }[] } } };
+  const reach = async (id: string) => (await call<{ reachability: Reach }>(agent, 'GET', `/contacts/${id}/reachability`)).body.reachability.channels.sms;
+
+  for (const how of ['old', 'replaced'] as const) {
+    it(`R-PAR-12 outbound-4: A texts STOP (B gets its copy), B is ${how === 'old' ? 'removed as old' : 'replaced'}, A texts START: B's copy is lifted too and the next text to A is sent`, async () => {
+      const p = await twoPhones();
+      expect((await inboundSms(h, p.a, w.mainNumber, 'STOP')).statusCode).toBe(200);
+      const b = await pointOf(p.id, p.b);
+      expect(await smsStatus(b.hmac)).toEqual(['revoked', 'revoked']);
+      if (how === 'old') await removePoint(p.id, b.id, 'old');
+      else expect((await call(agent, 'POST', `/contacts/${p.id}/points/${b.id}/replace`, { address: randomPhone() })).status).toBe(201);
+      expect((await pointOf(p.id, p.b)).removed_reason).toBe(how);
+
+      expect((await inboundSms(h, p.a, w.mainNumber, 'START')).statusCode).toBe(200);
+      const a = await pointOf(p.id, p.a);
+      expect(await smsStatus(a.hmac)).not.toContain('revoked');
+      expect(await smsStatus(b.hmac)).not.toContain('revoked');
+      const r = await sendText(agent, p.id, 'Welcome back');
+      expect(r.status).toBe(200);
+      expect(r.body).toMatchObject({ result: 'sent', decision: { outcome: 'allow', reasons: [] } });
+      expect(smsTo(p.a)).toHaveLength(1);
+      // the summary agrees: nobody is shown as having texted STOP
+      expect(await reach(p.id)).toMatchObject({ blocked: false, reasons: [] });
+    });
+  }
+
+  it('R-PAR-12 outbound-4: when B texted its own STOP before it was removed, A’s START lifts A only; the person stays blocked by B’s STOP', async () => {
+    const p = await twoPhones();
+    expect((await inboundSms(h, p.b, w.mainNumber, 'STOP')).statusCode).toBe(200);
+    const b = await pointOf(p.id, p.b);
+    await removePoint(p.id, b.id, 'old');
+    expect((await inboundSms(h, p.a, w.mainNumber, 'START')).statusCode).toBe(200);
+    expect(await smsStatus((await pointOf(p.id, p.a)).hmac)).not.toContain('revoked');
+    expect(await smsStatus(b.hmac)).toEqual(['revoked', 'revoked']);
+    expect(await resubscribes(b.hmac)).toBe(0);
+    const r = await sendText(agent, p.id, 'Welcome back');
+    expect(r.body).toMatchObject({ result: 'blocked', decision: { outcome: 'deny', reasons: ['CONSENT_REVOKED'] } });
+    expect(smsTo(p.a)).toEqual([]);
+    expect(await reach(p.id)).toMatchObject({ blocked: true, reasons: [expect.objectContaining({ code: 'CONSENT_REVOKED', source: 'keyword', otherAddress: true, addressHint: `•••-•••-${p.b.slice(-4)}` })] });
+  });
+
+  it('R-PAR-12 outbound-4: B’s copy also came from its own later STOP: A’s START does not lift B', async () => {
+    const p = await twoPhones();
+    expect((await inboundSms(h, p.a, w.mainNumber, 'STOP')).statusCode).toBe(200);
+    expect((await inboundSms(h, p.b, w.mainNumber, 'STOP')).statusCode).toBe(200);
+    const b = await pointOf(p.id, p.b);
+    await removePoint(p.id, b.id, 'old');
+    expect((await inboundSms(h, p.a, w.mainNumber, 'START')).statusCode).toBe(200);
+    expect(await smsStatus(b.hmac)).toEqual(['revoked', 'revoked']);
+    expect(await resubscribes(b.hmac)).toBe(0);
+    expect((await sendText(agent, p.id, 'Welcome back')).body).toMatchObject({ result: 'blocked', decision: { reasons: ['CONSENT_REVOKED'] } });
+    expect(smsTo(p.a)).toEqual([]);
+  });
+
+  it('R-PAR-12 E169 outbound-4: a phone removed as a confirmed wrong number is outside the lift as it is outside the fan-out: A’s START writes nothing on it, it keeps its opt-outs, and A is textable', async () => {
+    const p = await twoPhones();
+    expect((await inboundSms(h, p.a, w.mainNumber, 'STOP')).statusCode).toBe(200);
+    expect((await inboundSms(h, p.b, w.mainNumber, 'Wrong number')).statusCode).toBe(200);
+    const b = await pointOf(p.id, p.b);
+    await removePoint(p.id, b.id, 'wrong_number');
+    expect((await inboundSms(h, p.a, w.mainNumber, 'START')).statusCode).toBe(200);
+    expect(await resubscribes(b.hmac)).toBe(0);
+    expect(await smsStatus(b.hmac)).toEqual(['revoked', 'revoked']);
+    expect((await sendText(agent, p.id, 'Welcome back')).body).toMatchObject({ result: 'sent' });
+    expect(smsTo(p.a)).toHaveLength(1);
+  });
+});
+
 // ---- equivalence: the app gate decides exactly what the DB guards decide ----------------------------
 
 type State = 'live' | 'removed_old' | 'removed_replaced' | 'removed_wrong_number';
