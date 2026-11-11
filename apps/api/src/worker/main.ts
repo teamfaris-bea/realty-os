@@ -7,6 +7,9 @@
 // (every 15 s) + maintenance (every 60 s). SIGTERM/SIGINT stop claiming, let in-flight jobs finish,
 // then close the pool. Several worker processes may run: claims use SKIP LOCKED, sweeper and
 // periodic enqueues are deduplicated, and maintenance steps are idempotent.
+// SHUTDOWN_TIMEOUT_MS is a hard deadline for that stop (exit 1). WORKER_HEALTH_PORT (optional) serves
+// GET /health: 200 while the loops run, 503 once stopping (for container health checks; no details).
+import { createServer } from 'node:http';
 import { hostname } from 'node:os';
 import { instant } from '@realty/core/foundation';
 import { QUEUES, type Queue, closeDefaultDatabase, configureDatabase } from '@realty/db';
@@ -58,10 +61,27 @@ async function main(): Promise<void> {
   if (args.sweeper) loops.push(createSweeper({ db, log, alerts, metrics }).run({ everyMs: 15_000, signal: ac.signal }));
   if (args.maintenance) loops.push(createMaintenance({ db, log, alerts, metrics }).run({ everyMs: 60_000, signal: ac.signal }));
 
-  const stop = () => ac.abort(new Error('shutdown'));
+  const healthPort = Number(process.env.WORKER_HEALTH_PORT ?? '');
+  const health = Number.isInteger(healthPort) && healthPort > 0
+    ? createServer((req, res) => {
+        const ok = req.url === '/health' && !ac.signal.aborted;
+        res.writeHead(req.url === '/health' ? (ok ? 200 : 503) : 404, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(JSON.stringify({ status: ok ? 'ok' : req.url === '/health' ? 'stopping' : 'not_found' }));
+      }).listen(healthPort, '0.0.0.0')
+    : null;
+  const stop = () => {
+    if (ac.signal.aborted) return;
+    log.info('stopping worker: no new claims, finishing in-flight jobs', { worker: name });
+    ac.abort(new Error('shutdown'));
+    setTimeout(() => {
+      log.error('worker stop timed out', { worker: name, code: 'SHUTDOWN_TIMEOUT' });
+      process.exit(1);
+    }, config.shutdownTimeoutMs).unref();
+  };
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);
   const results = await Promise.allSettled(loops);
+  health?.close();
   await closeDefaultDatabase();
   const crashed = results.find((r) => r.status === 'rejected' && !ac.signal.aborted);
   process.exit(crashed ? 1 : 0);

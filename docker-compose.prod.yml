@@ -1,0 +1,76 @@
+# Example production stack (docs/DEPLOY.md). Portable: any host with Docker. In a real deployment prefer
+# a managed Postgres 16 with backups and TLS, and put a TLS-terminating proxy or load balancer in front of
+# `web` (it serves the app and proxies /api on the same origin).
+#
+#   cp deploy/env.production.example .env.production   # fill in every value
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+#
+# Order: postgres healthy → release (migrations as the OWNER role, aligns the app role) → api + worker → web.
+name: realty
+
+x-app: &app
+  env_file: .env.production
+  init: true
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_OWNER_USER:-realty_owner}
+      POSTGRES_PASSWORD: ${POSTGRES_OWNER_PASSWORD:?set POSTGRES_OWNER_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-realty}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  release:
+    <<: *app
+    build: { context: ., target: api }
+    image: realty-api:latest
+    restart: "no"
+    command: ["node", "packages/db/dist/scripts/release.js"]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  api:
+    <<: *app
+    image: realty-api:latest
+    command: ["node", "apps/api/dist/main.js"]
+    stop_grace_period: 40s
+    depends_on:
+      release: { condition: service_completed_successfully }
+
+  worker:
+    <<: *app
+    image: realty-api:latest
+    command: ["node", "apps/api/dist/worker/main.js"]
+    environment:
+      WORKER_HEALTH_PORT: "3002"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+    stop_grace_period: 40s
+    depends_on:
+      release: { condition: service_completed_successfully }
+
+  web:
+    build: { context: ., target: web }
+    image: realty-web:latest
+    restart: unless-stopped
+    environment:
+      API_UPSTREAM: api:3001
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+    depends_on:
+      api: { condition: service_healthy }
+
+volumes:
+  pgdata:

@@ -10,8 +10,9 @@
 //                     audited in the redeeming transaction (recording.play). Transcript views are
 //                     audited too (transcript.view). The recording-scope RESTRICTIVE policy (R-PERM-8)
 //                     applies to every read here, so an agent outside the scope sees 404.
-// Provider-side deletion of the original recording after the copy is NOT possible yet: the Phase 1
-// TelephonyProvider interface has no delete method (reported gap); provider_copy_deleted_at stays NULL.
+// Provider-side deletion: when the provider supports it (TelephonyProvider.deleteRecording, Twilio), its copy
+// is deleted once ours is stored (provider_copy_deleted_at is set), and also when the recording may not be
+// kept (E47). A failed delete is retried by the job (the copy step is idempotent on the recording ref).
 import type { ContactId, ResourceFacts, SystemActor, TenantId, UserActor } from '@realty/core/foundation';
 import { DAY_MS, plusMs, toIso } from '@realty/core/foundation';
 import { type Tx, enqueueJob, lockContact, withTenantTx } from '@realty/db';
@@ -64,11 +65,29 @@ export async function onRecordingReady(e: RecordingReady, deps: CommsDeps, actor
     if (!mayKeepRecording(call)) return { kind: 'refused', reason: 'RECORDING_NOT_PERMITTED' } as const;
     return { kind: 'ok', call } as const;
   }, { db: deps.db });
-  if (pre.kind !== 'ok') return pre;
+  if (pre.kind === 'refused' && pre.reason === 'CALL_UNKNOWN') return pre;
   const account = await withTenantTx(actor, (tx) => telephonyAccount(tx, deps.envelope, e.tenantId), { db: deps.db });
   if (!account) throw new Error('TELEPHONY_ACCOUNT_MISSING');
+  const discard = async (recordingId: string | null) => {
+    if (!deps.providers.telephony.deleteRecording) return;
+    await deps.providers.telephony.deleteRecording(account, e.recordingRef);
+    if (recordingId) {
+      await withTenantTx(actor, async (tx) => {
+        await sql`UPDATE recordings SET provider_copy_deleted_at = clock_timestamp() WHERE tenant_id = app.tenant_id() AND id = ${recordingId} AND provider_copy_deleted_at IS NULL`.execute(tx);
+      }, { db: deps.db });
+    }
+  };
+  // a recording that may not be kept is not kept at the provider either
+  if (pre.kind === 'refused') {
+    await discard(null);
+    return pre;
+  }
+  if (pre.kind === 'duplicate') {
+    await discard(pre.recordingId);
+    return pre;
+  }
   const audio = await deps.providers.telephony.fetchRecording(account, e.recordingRef);
-  return withTenantTx(actor, async (tx, now) => {
+  const out = await withTenantTx(actor, async (tx, now) => {
     const call = pre.call;
     await lockContact(tx, call.contact_id as ContactId);
     const dup = await sql<{ id: string }>`SELECT id FROM recordings WHERE tenant_id = app.tenant_id() AND provider_recording_ref = ${e.recordingRef}`.execute(tx);
@@ -93,6 +112,8 @@ export async function onRecordingReady(e: RecordingReady, deps: CommsDeps, actor
     await enqueueJob(tx, { queue: TRANSCRIBE_JOB.queue, kind: TRANSCRIBE_JOB.kind, payload: { recordingId }, dedupeKey: TRANSCRIBE_JOB.dedupeKey(recordingId) });
     return { kind: 'stored', recordingId } as const;
   }, { db: deps.db, retries: 2 });
+  await discard(out.recordingId);
+  return out;
 }
 
 const transcriptAad = (rowId: string) => ({ table: 'transcripts', column: 'segments_enc', rowId });

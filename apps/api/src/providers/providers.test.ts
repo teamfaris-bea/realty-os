@@ -99,11 +99,13 @@ describe('fake providers are deterministic', () => {
 });
 
 describe('createProviders', () => {
-  it('defaults to fakes; refuses to start with a real adapter Phase 1 does not have (no silent fake)', () => {
+  it('defaults to fakes; an unknown provider name or a vendor without credentials refuses to start (no silent fake)', () => {
     const p = createProviders(testConfig(), { clock });
     expect(p.telephony.constructor.name).toBe('FakeTelephony');
-    expect(() => createProviders(testConfig({}, { TELEPHONY_PROVIDER: 'real' }), { clock })).toThrow(ProviderConfigError);
-    expect(() => createProviders(testConfig({}, { EMAIL_PROVIDER: 'real' }), { clock })).toThrow(ProviderConfigError);
+    expect(() => testConfig({}, { TELEPHONY_PROVIDER: 'real' })).toThrow(/TELEPHONY_PROVIDER must be one of fake, twilio/);
+    expect(() => testConfig({}, { EMAIL_PROVIDER: 'real' })).toThrow(/EMAIL_PROVIDER must be one of fake, smtp/);
+    expect(() => testConfig({}, { TELEPHONY_PROVIDER: 'twilio' })).toThrow(/missing TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN/);
+    expect(() => createProviders({ ...testConfig(), providers: { ...testConfig().providers, telephony: 'twilio' } }, { clock })).toThrow(ProviderConfigError);
     expect(() => createProviders(testConfig({}, { AI_PROVIDER: 'anthropic' }), { clock })).toThrow(/ANTHROPIC_API_KEY/);
     expect(() => createProviders(testConfig({}, { PUSH_PROVIDER: 'webpush' }), { clock })).toThrow(/VAPID/);
     const real = createProviders(testConfig({}, { AI_PROVIDER: 'anthropic', ANTHROPIC_API_KEY: 'sk-ant-test' }), { clock });

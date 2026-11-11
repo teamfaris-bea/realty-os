@@ -1,7 +1,20 @@
 // Provider webhook signature verification (ARCHITECTURE §3 "Webhook lifecycle").
 //
-//   telephony  Twilio-shaped: X-Twilio-Signature = base64(HMAC-SHA1(secret, fullUrl + sorted(k+v)))
-//              over the application/x-www-form-urlencoded parameters
+//   telephony  Twilio's scheme: X-Twilio-Signature = base64(HMAC-SHA1(token, fullUrl + sorted(k+v)))
+//              over the application/x-www-form-urlencoded parameters (matches Twilio's published example,
+//              see webhooks.test.ts). With the fake, `token` is TELEPHONY_WEBHOOK_SECRET. With
+//              TELEPHONY_PROVIDER=twilio it is the auth token of the account the request names
+//              (AccountSid): the platform master account, or a tenant subaccount resolved through
+//              app.resolve_telephony_account and decrypted as the system actor. The tenant found that way
+//              is put on the request (req.webhookTenantId) for the handlers to cross-check.
+//              Twilio signs no timestamp, so replay protection is idempotency: every handler records
+//              (provider, event id) once in webhook_events, and a replayed delivery is a no-op duplicate.
+//   vendor email formats (route config webhookAuth):
+//     basic           HTTP Basic credentials embedded in the vendor's webhook URL (Postmark webhooks and
+//                     inbound, SendGrid Inbound Parse). No timestamp: replay protection is idempotency on
+//                     the vendor's event/message id, as for Twilio.
+//     sendgrid_ecdsa  SendGrid Event Webhook: ECDSA P-256/SHA-256 over `${timestamp}${rawBody}`
+//                     (X-Twilio-Email-Event-Webhook-Signature / -Timestamp), timestamp within ±5 minutes.
 //   email/lead X-Realty-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256(secret, `${t}.${rawBody}`)>,
 //              accepted while t is at most 5 minutes old and at most 30 s in the future (clock skew),
 //              so a captured delivery can be replayed for at most ~5.5 minutes; inside that window the
@@ -12,22 +25,28 @@
 // app.record_webhook_event(… signature_valid=false, payload NULL) — a global, tenant-less row — and
 // answers 403 WEBHOOK_SIGNATURE_INVALID. No tenant row is written and no tenant is resolved.
 // Tenant resolution, idempotency and processing belong to the handler (comms/leads modules).
-import { createHmac } from 'node:crypto';
-import { withPreTenant } from '@realty/db';
+import { createHmac, createPublicKey, verify as verifySignature } from 'node:crypto';
+import { withPreTenant, withTenantTx } from '@realty/db';
 import type { FastifyRequest, preHandlerHookHandler } from 'fastify';
 import { sql } from 'kysely';
 import { constantTimeEqual } from '../crypto/primitives.js';
 import { AppError } from '../errors.js';
+import { telephonyAccount } from '../comms/repos/credentials.js';
 import { tagGuard } from '../rbac.js';
+import { systemActor } from '../worker/systemActor.js';
 
 export type WebhookProvider = 'telephony' | 'email' | 'lead';
 
 declare module 'fastify' {
   interface FastifyContextConfig {
     webhookProvider?: WebhookProvider;
+    /** a vendor email format's own authentication instead of the generic X-Realty-Signature */
+    webhookAuth?: 'basic' | 'sendgrid_ecdsa';
   }
   interface FastifyRequest {
     rawBody?: string;
+    /** TELEPHONY_PROVIDER=twilio: the tenant whose subaccount signed this request (null: the master account) */
+    webhookTenantId?: string | null;
   }
 }
 
@@ -79,6 +98,72 @@ export function verifyWebhook(provider: WebhookProvider, req: FastifyRequest): b
   return constantTimeEqual(signedHeader(secret, t, raw), header);
 }
 
+/** Basic credentials from an Authorization header, compared in constant time. */
+export function verifyBasicAuth(header: unknown, expected: { username: string; password: string } | undefined): boolean {
+  if (!expected || typeof header !== 'string') return false;
+  const m = /^Basic ([A-Za-z0-9+/=]{1,1024})$/.exec(header.trim());
+  if (!m) return false;
+  const got = Buffer.from(m[1]!, 'base64').toString('utf8');
+  return constantTimeEqual(got, `${expected.username}:${expected.password}`);
+}
+
+/** SendGrid Event Webhook signature (ECDSA over timestamp + raw body), timestamp within the replay window. */
+export function verifySendgridSignature(publicKeyBase64: string | undefined, signature: unknown, timestamp: unknown, rawBody: string | undefined, nowS: number): boolean {
+  if (!publicKeyBase64 || typeof signature !== 'string' || typeof timestamp !== 'string' || typeof rawBody !== 'string') return false;
+  if (!/^\d{1,12}$/.test(timestamp) || Math.abs(nowS - Number(timestamp)) > SIGNATURE_TOLERANCE_S) return false;
+  try {
+    const key = createPublicKey({ key: Buffer.from(publicKeyBase64, 'base64'), format: 'der', type: 'spki' });
+    return verifySignature('sha256', Buffer.from(timestamp + rawBody, 'utf8'), key, Buffer.from(signature, 'base64'));
+  } catch {
+    return false;
+  }
+}
+
+/** TELEPHONY_PROVIDER=twilio: verify with the auth token of the account the request names. */
+async function verifyTwilioAccount(req: FastifyRequest): Promise<boolean> {
+  const p = req.server.platform;
+  const t = p.config.twilio;
+  const sig = req.headers['x-twilio-signature'];
+  const params = formParams(req);
+  if (!t || typeof sig !== 'string' || !params) return false;
+  const accountSid = params.AccountSid ?? '';
+  if (!/^AC[0-9a-f]{32}$/.test(accountSid)) return false;
+  const url = new URL(req.url, p.config.publicBaseUrl).toString();
+  if (accountSid === t.accountSid) {
+    if (!constantTimeEqual(telephonySignature(t.authToken, url, params), sig)) return false;
+    req.webhookTenantId = null;
+    return true;
+  }
+  const tenantId = await withPreTenant(
+    async (tx) => (await sql<{ tenant_id: string }>`SELECT tenant_id FROM app.resolve_telephony_account(${accountSid})`.execute(tx)).rows.map((r) => r.tenant_id),
+    { db: p.db },
+  );
+  if (tenantId.length !== 1) return false;
+  const account = await withTenantTx(systemActor(tenantId[0]!, 'provider'), (tx) => telephonyAccount(tx, p.envelope, tenantId[0]!), { db: p.db });
+  if (!account || account.accountRef !== accountSid) return false;
+  if (!constantTimeEqual(telephonySignature(account.secret, url, params), sig)) return false;
+  req.webhookTenantId = tenantId[0]!;
+  return true;
+}
+
+/** The guard's check: the route's scheme, including the ones that need a database lookup. */
+export async function verifyRequest(provider: WebhookProvider, req: FastifyRequest): Promise<boolean> {
+  const p = req.server.platform;
+  const auth = req.routeOptions.config.webhookAuth;
+  if (provider === 'email' && auth === 'basic') return verifyBasicAuth(req.headers.authorization, p.config.emailInbound.basicAuth);
+  if (provider === 'email' && auth === 'sendgrid_ecdsa') {
+    return verifySendgridSignature(
+      p.config.emailInbound.sendgridEventPublicKey,
+      req.headers['x-twilio-email-event-webhook-signature'],
+      req.headers['x-twilio-email-event-webhook-timestamp'],
+      req.rawBody,
+      Math.floor(p.clock.now() / 1000),
+    );
+  }
+  if (provider === 'telephony' && p.config.providers.telephony === 'twilio') return verifyTwilioAccount(req);
+  return verifyWebhook(provider, req);
+}
+
 /** Records a rejected (unsigned / mis-signed) delivery: global row, no tenant, no payload. */
 export async function recordRejectedWebhook(req: FastifyRequest, provider: WebhookProvider): Promise<void> {
   const p = req.server.platform;
@@ -94,7 +179,7 @@ export async function recordRejectedWebhook(req: FastifyRequest, provider: Webho
 export const webhookGuard: preHandlerHookHandler = tagGuard(async function webhookGuard(req) {
   const provider = req.routeOptions.config.webhookProvider;
   if (!provider) throw new AppError('INTERNAL_ERROR');
-  if (!verifyWebhook(provider, req)) {
+  if (!(await verifyRequest(provider, req).catch(() => false))) {
     await recordRejectedWebhook(req, provider);
     throw new AppError('WEBHOOK_SIGNATURE_INVALID');
   }

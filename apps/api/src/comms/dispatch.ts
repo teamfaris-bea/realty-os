@@ -410,7 +410,8 @@ export async function reconcileOutbound(messageId: string, deps: CommsDeps, tena
     if (m.channel === 'email') found = await deps.providers.email.lookupMessage(m.id);
     else {
       const account = await asSystem(deps, tenantId, 'worker', (tx) => telephonyAccount(tx, deps.envelope, tenantId));
-      found = account ? await deps.providers.telephony.lookupMessage(account, m.id) : null;
+      // vendors without submit idempotency keys (Twilio) find the submit by sender, recipient, body and time
+      found = account ? await deps.providers.telephony.lookupMessage(account, m.id, { from: m.fromAddress, to: m.toAddress, body: m.body, dispatchedAt: m.dispatchedAt }) : null;
     }
   } catch {
     found = null;

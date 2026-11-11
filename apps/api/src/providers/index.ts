@@ -3,10 +3,12 @@
 //   createFakeProviders()      deterministic fakes for dev and every test
 //   createProviders(config)    picks real adapters where Phase 1 has one, fakes otherwise
 //
-// Real adapters available in Phase 1: AI (Anthropic), web push (VAPID), local encrypted object
-// storage. Telephony (Twilio-shaped), contact email, transcription, MLS, AVM, DNC and carrier
-// lookup need vendor accounts/licensing and ship as interface + deterministic fake only; asking for
-// a real one fails fast at start-up instead of silently using a fake.
+// Real adapters: AI (Anthropic), web push (VAPID), telephony + line-type lookup (Twilio,
+// TELEPHONY_PROVIDER=twilio), contact and account email (generic SMTP, EMAIL_PROVIDER=smtp), object
+// storage (local encrypted FS, or S3-compatible with STORAGE_PROVIDER=s3; both hold ciphertext only).
+// Transcription, MLS, AVM and DNC need vendor accounts/licensing and ship as interface + deterministic
+// fake only. A chosen vendor without its credentials fails at start-up (config.ts) instead of silently
+// using a fake.
 import type { Clock } from '@realty/core/foundation';
 import type { Config } from '../config.js';
 import { anthropicAi } from './anthropic.js';
@@ -14,7 +16,10 @@ import { FakeAi } from './fake/ai.js';
 import { FakeAvm, FakeCarrier, FakeDnc, FakeMls, FakePush, FakeTranscription } from './fake/data.js';
 import { FakeAccountMailer, FakeEmail } from './fake/email.js';
 import { FakeTelephony } from './fake/telephony.js';
+import { SmtpAccountMailer, SmtpEmail } from './email/smtp.js';
+import { S3Storage } from './s3/s3.js';
 import { LocalFsStorage, MemoryStorage } from './storage.js';
+import { TwilioCarrierLookup, TwilioTelephony } from './twilio/telephony.js';
 import type {
   AccountMailer,
   AiProvider,
@@ -36,6 +41,9 @@ export { FakeAvm, FakeCarrier, FakeDnc, FakeMls, FakePush, FakeTranscription, FA
 export { FakeAccountMailer, FakeEmail } from './fake/email.js';
 export { FakeTelephony, type FakeFailure } from './fake/telephony.js';
 export { LocalFsStorage, MemoryStorage, StorageKeyError, assertStorageKey } from './storage.js';
+export { S3Storage } from './s3/s3.js';
+export { SmtpAccountMailer, SmtpEmail } from './email/smtp.js';
+export { TwilioCarrierLookup, TwilioTelephony, announcementTwiml, bridgeTwiml } from './twilio/telephony.js';
 
 export interface Providers {
   telephony: TelephonyProvider;
@@ -89,13 +97,36 @@ export class ProviderConfigError extends Error {
   override readonly name = 'ProviderConfigError';
 }
 
-export function createProviders(config: Config, opts: { clock: Clock }): Providers {
+export function createProviders(config: Config, opts: { clock: Clock; fetch?: typeof fetch }): Providers {
   const fakes = createFakeProviders(opts);
-  if (config.providers.telephony === 'real') {
-    throw new ProviderConfigError('TELEPHONY_PROVIDER=real: no telephony vendor adapter in Phase 1 (interface + fake only)');
+  let telephony: TelephonyProvider = fakes.telephony;
+  let carrier: CarrierLookup = fakes.carrier;
+  if (config.providers.telephony === 'twilio') {
+    const t = config.twilio;
+    if (!t) throw new ProviderConfigError('TELEPHONY_PROVIDER=twilio needs TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN');
+    const f = opts.fetch ? { fetch: opts.fetch } : {};
+    telephony = new TwilioTelephony({ accountSid: t.accountSid, authToken: t.authToken, publicBaseUrl: config.publicBaseUrl, numberCountry: t.numberCountry, ...(t.platformSender ? { platformSender: t.platformSender } : {}), ...f });
+    carrier = new TwilioCarrierLookup({ accountSid: t.accountSid, authToken: t.authToken, ...f });
   }
-  if (config.providers.email === 'real') {
-    throw new ProviderConfigError('EMAIL_PROVIDER=real: no email vendor adapter in Phase 1 (interface + fake only; open question Q8)');
+  let email: EmailProvider = fakes.email;
+  let accountMail: AccountMailer = fakes.accountMail;
+  if (config.providers.email === 'smtp') {
+    const m = config.smtp;
+    if (!m) throw new ProviderConfigError('EMAIL_PROVIDER=smtp needs SMTP_HOST');
+    const o = {
+      host: m.host,
+      port: m.port,
+      secure: m.secure,
+      vendor: m.vendor,
+      dkimSelectors: m.dkimSelectors,
+      ...(m.username ? { username: m.username } : {}),
+      ...(m.password ? { password: m.password } : {}),
+      ...(m.postmarkMessageStream ? { postmarkMessageStream: m.postmarkMessageStream } : {}),
+      ...(m.sesConfigurationSet ? { sesConfigurationSet: m.sesConfigurationSet } : {}),
+      ...(m.spfInclude ? { spfInclude: m.spfInclude } : {}),
+    };
+    email = new SmtpEmail(o);
+    accountMail = new SmtpAccountMailer({ ...o, from: m.accountFrom });
   }
   let ai: AiProvider = fakes.ai;
   if (config.providers.ai === 'real') {
@@ -107,6 +138,24 @@ export function createProviders(config: Config, opts: { clock: Clock }): Provide
     if (!config.vapid) throw new ProviderConfigError('PUSH_PROVIDER=webpush needs VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY');
     push = webPushProvider(config.vapid);
   }
-  const storage: ObjectStorage = config.providers.storage === 'local' ? new LocalFsStorage(config.storageDir) : fakes.storage;
-  return { ...fakes, ai, push, storage };
+  let storage: ObjectStorage = fakes.storage;
+  if (config.providers.storage === 'local') storage = new LocalFsStorage(config.storageDir);
+  if (config.providers.storage === 's3') {
+    const b = config.s3;
+    if (!b) throw new ProviderConfigError('STORAGE_PROVIDER=s3 needs S3_BUCKET');
+    storage = new S3Storage({
+      bucket: b.bucket,
+      region: b.region,
+      accessKeyId: b.accessKeyId,
+      secretAccessKey: b.secretAccessKey,
+      forcePathStyle: b.forcePathStyle,
+      serverSideEncryption: b.serverSideEncryption,
+      ...(b.endpoint ? { endpoint: b.endpoint } : {}),
+      ...(b.sessionToken ? { sessionToken: b.sessionToken } : {}),
+      ...(b.prefix ? { prefix: b.prefix } : {}),
+      ...(b.kmsKeyId ? { kmsKeyId: b.kmsKeyId } : {}),
+      ...(opts.fetch ? { fetch: opts.fetch } : {}),
+    });
+  }
+  return { ...fakes, telephony, carrier, email, accountMail, ai, push, storage };
 }

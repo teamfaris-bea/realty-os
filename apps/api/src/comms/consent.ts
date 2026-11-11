@@ -244,22 +244,31 @@ export async function resumeAutomation(actor: UserActor, contactId: string, deps
 export async function unsubscribeByLink(token: string, deps: CommsDeps): Promise<'unsubscribed' | 'invalid'> {
   const ref = verifySignedRef(deps.linkSecret, 'unsubscribe', token);
   if (!ref) return 'invalid';
-  const actor = systemActor(ref.tenantId, 'provider');
+  return unsubscribeMessageRecipient(ref.tenantId, ref.id, 'list_unsubscribe', deps);
+}
+
+/**
+ * The recipient of one of our outbound emails unsubscribed: through our link (one-click List-Unsubscribe or
+ * the page), or at the email provider (its unsubscribe / suppression webhook, `provider_unsubscribe`). A
+ * marketing-email revoke for that address, idempotent; it blocks like every opt-out (D1).
+ */
+export async function unsubscribeMessageRecipient(tenantIdRaw: string, messageId: string, kind: 'list_unsubscribe' | 'provider_unsubscribe', deps: CommsDeps): Promise<'unsubscribed' | 'invalid'> {
+  const actor = systemActor(tenantIdRaw, 'provider');
   return withTenantTx(actor, async (tx, now) => {
-    const m = await msgs.messageById(tx, ref.id);
+    const m = await msgs.messageById(tx, messageId);
     if (!m || m.channel !== 'email' || m.direction !== 'outbound') return 'invalid' as const;
-    const tenantId = ref.tenantId as TenantId;
+    const tenantId = tenantIdRaw as TenantId;
     const hmac = Buffer.from(await deps.envelope.inTx(tx, tenantId).hmacAddress(tenantId, m.toAddress)).toString('hex');
     await lockAddress(tx, hmac);
     const st = await g.consentRows(tx, 'email', [hmac]);
     if (st.some((r) => r.purpose === 'marketing' && r.status === 'revoked')) return 'unsubscribed' as const;
     await recordConsentEvent(tx, {
       id: deps.ids.next<'ConsentEventId'>(), addressKind: 'email', addressHmac: hmac, addressHint: hint(m.toAddress), channel: 'email', purpose: 'marketing',
-      eventType: 'revoke', level: 'none', source: 'web_form', occurredAt: now, contactId: m.contactId, actor: LEDGER_SYSTEM, disclosureId: null,
-      evidenceObjectId: null, evidenceMessageId: m.id, evidenceCallId: null, evidenceCallOffsetMs: null, evidence: { kind: 'list_unsubscribe' },
+      eventType: 'revoke', level: 'none', source: kind === 'list_unsubscribe' ? 'web_form' : 'provider_report', occurredAt: now, contactId: m.contactId, actor: LEDGER_SYSTEM, disclosureId: null,
+      evidenceObjectId: null, evidenceMessageId: m.id, evidenceCallId: null, evidenceCallOffsetMs: null, evidence: { kind },
       imported: false, importRecordId: null, originalProvenance: null, revertsEventId: null, expiresAt: null, needsReview: false,
     });
-    await audit(tx, actor, { action: 'consent.opt_out_received', entity: { type: 'message', id: m.id }, reason: 'EMAIL_UNSUBSCRIBE' });
+    await audit(tx, actor, { action: 'consent.opt_out_received', entity: { type: 'message', id: m.id }, reason: kind === 'list_unsubscribe' ? 'EMAIL_UNSUBSCRIBE' : 'PROVIDER_UNSUBSCRIBE' });
     return 'unsubscribed' as const;
   }, { db: deps.db, retries: 2 });
 }
