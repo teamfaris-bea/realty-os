@@ -313,3 +313,47 @@ marks anything LEAKPROOF, none adds `USING (true)`, and none gives a role BYPASS
   are independent; templated wording renders to the plain wording; between change instants only wording moves).
 - The Phase 1 feed tests (`workspace/feed.test.ts`, `feed.foreign.test.ts`, R-PERM-4 reassignment included) pass
   unchanged.
+
+### 5.2 Contact-detail policies (migration `deal_visibility_once`)
+
+The full review is §2.10. In short:
+- Fifteen child-table `USING` clauses read through `app.contact_detail_row`, a new SECURITY INVOKER set-returning
+  helper with the same body as `contact_detail_visible`. The planner inlines it, so the TC's deal-contact set is
+  built once per statement instead of once per row.
+- No definer, no SET clause, no LEAKPROOF. Every `WITH CHECK` is unchanged.
+- Proof: `apps/api/src/load/deal_visibility_equivalence.test.ts`. Old and new policies are compared row by row for
+  every role (two members each) and the system actor over all 15 tables, plus TC deal variants. Zero differences.
+
+### 5.3 Scoreboard daily rollup (migration `scoreboard_rollup`)
+
+**Visibility is unchanged.** The team scoreboard was never computed under the viewer's row visibility: it reads
+the 0012 SECURITY DEFINER aggregates. Those count a member's own activity whatever happened to the contacts
+later. The only viewer-dependent part is which members' numbers a viewer may see (`app.scoreboard_allowed_users`).
+A rollup per (tenant, member, local day) is therefore exact for every viewer:
+- The read path takes rollup rows only for the members the live call in the same statement admits.
+- The rollup tables' RLS repeats the same member rule.
+- The tables hold timings and counts only, no contact ids.
+
+**New and changed definers** (all owned by `app_definer`, `search_path` pinned):
+- `app.scoreboard_mark` and six mark trigger functions only insert dates into `scoreboard_rollup_dirty`, and
+  return nothing.
+- `app.scoreboard_rollup_roll` and `app.scoreboard_rollup_sample` refuse any caller but the tenant's system actor,
+  and return only a summary of counts.
+- `app.scoreboard_speed` got a new body that returns the same rows (one ledger probe instead of two). It is proved
+  equal to the 0012 body row for row for every role and the system actor.
+
+**New tables.**
+- `scoreboard_activity_daily`, `scoreboard_speed_daily`, `scoreboard_rollup_days`, `scoreboard_rollup_dirty` and
+  `scoreboard_rollup_state`.
+- All have FORCE RLS, the tenant policy, the support-read-only policies and the statement trigger.
+- `app_user` can only SELECT them.
+
+**Proof.** `apps/api/src/accountability/scoreboard_rollup.test.ts`: rollup + live equals live for every role, range
+and board. This holds after reassignments, soft deletes, pond releases, team moves and suspensions done through the
+ownership engine, after backdated and late writes, and across DST days in five zones.
+
+### 5.4 Exception recompute (no policy change)
+
+`exception_items` upserts are batched: one statement per 1,000 items, same values, order and conflict rule. No
+policy, definer or read changed. Proof: `apps/api/src/accountability/recompute_equivalence.test.ts` compares the old
+per-row path with the new one, state for state, ids included.
