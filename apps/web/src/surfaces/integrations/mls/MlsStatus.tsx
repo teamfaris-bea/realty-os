@@ -70,7 +70,7 @@ function ConnectionBlock({ c, several }: { c: MlsConnection; several: boolean })
           {c.clientDisplaySentence}
         </Notice>
       </Section>
-      <PackEditor key={`${c.id}:${c.licensePack.reviewedByCounselAt ?? ''}`} c={c} several={several} editable={c.status !== 'disconnected'} />
+      <PackEditor key={c.id} c={c} several={several} editable={c.status !== 'disconnected'} />
     </>
   );
 }

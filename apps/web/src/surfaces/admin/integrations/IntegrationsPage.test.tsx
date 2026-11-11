@@ -21,6 +21,9 @@ describe('Integrations page', () => {
     expect(screen.getByText(/uses test adapters: every connection here is simulated/)).toBeInTheDocument();
     expect(screen.getAllByText(/Needs partner access: Zillow lead feed has not granted/)).toHaveLength(1);
     expect(screen.getByText('Arrives with ads (Phase 3); it cannot be connected yet.')).toBeInTheDocument();
+    // keyed services point at their own page, not at "inbox settings"
+    expect(screen.queryByText(/inbox settings/)).toBeNull();
+    expect(screen.getAllByText('It has no outside account to connect; it is set up on its own page (below).')).toHaveLength(2);
     // a raw status code in the server's sentence is not shown
     expect(screen.getByText('Connected with problems. Some messages may be delayed.')).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/PROVIDER_ERRORS|platform:/);

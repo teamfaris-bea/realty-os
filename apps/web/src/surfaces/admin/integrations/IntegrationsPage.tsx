@@ -137,7 +137,7 @@ function ServiceCard({ service }: { service: Service }) {
         <h3 id={hid} className="text-[17px] font-semibold text-ink">
           {service.name}
         </h3>
-        <p className="text-[15px] text-ink">{plainSentence(service.sentence)}</p>
+        <p className="text-[15px] text-ink">{service.connect === 'keyed' && link ? 'It has no outside account to connect; it is set up on its own page (below).' : plainSentence(service.sentence)}</p>
       </div>
       {shown.length > 0 ? (
         <ul className="flex flex-col gap-3 border-t border-line pt-3" aria-label={`${service.name} connections`}>
