@@ -19,12 +19,20 @@
 //   so, refreshes the thread, and the next Send carries the inbound seq the agent has now seen.
 // - DRAFT_INVALIDATED (R-AST-7): the draft no longer applies; nothing was sent. The text stays, and
 //   Send becomes the agent's own message.
+// - Phase 2 (module 37): the box defaults to the client's last open channel (text, email or web chat) and
+//   says in one line why it is on another (channelChoice.ts). A channel the person cannot be reached on is
+//   never offered: its option is disabled and shows the reachability summary's reason instead of hiding the
+//   block (D1, including a STOP from a removed phone, R-PAR-12). Web-chat replies go through channelApi.ts
+//   (STUB(22) until module 22 lands); a reply to a chat that has ended is not sent and says so (E77).
+//   D2: no Messenger or Instagram compose and no messaging-window copy.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { Button, CheckThis, GateBadge, Notice } from '../../design/index.js';
 import { REACHABILITY_KEY, ReasonCaption, channelState, useReachability } from '../../reasons/index.js';
 import { type ApiError, useApi, useCommand } from '../../shell/index.js';
 import { SendOutcome, sendOutcomeText, useAgentSheets } from '../feed/lib/AgentSheets.js';
+import { type ComposeChannel, useWebChatApprove, useWebChatSend } from './channelApi.js';
+import { chooseChannel } from './channelChoice.js';
 import { firstName } from '../feed/lib/format.js';
 import { useSendCheck } from '../feed/lib/sendCheck.js';
 import type { ActionView, ApproveResponse, ComposeResponse } from '../feed/lib/types.js';
@@ -36,12 +44,16 @@ export interface ComposeContact {
   name: string;
   canText: boolean;
   canEmail: boolean;
+  /** the client has written by web chat (a web-chat message is in the thread); module 37 */
+  canWebChat?: boolean;
   ownedByMe: boolean;
 }
 
 export interface ComposeBoxProps {
   contact: ComposeContact;
   initialChannel?: Channel;
+  /** the channel of the client's latest message: the box defaults to it while it is open (module 37) */
+  lastInboundChannel?: ComposeChannel | null;
   draftActionId?: string | null;
   /** a pending assistant draft for this contact, adopted only while the box is still empty */
   suggestedDraftId?: string | null;
@@ -65,13 +77,15 @@ function useDebounced<T>(v: T, ms: number): T {
   return d;
 }
 
-export function ComposeBox({ contact, initialChannel, draftActionId: initialDraft = null, suggestedDraftId = null, autoFocus = false, onSent, templatePicker }: ComposeBoxProps) {
+export function ComposeBox({ contact, initialChannel, lastInboundChannel = null, draftActionId: initialDraft = null, suggestedDraftId = null, autoFocus = false, onSent, templatePicker }: ComposeBoxProps) {
   const api = useApi();
   const qc = useQueryClient();
   const sheets = useAgentSheets();
   const id = useId();
   const field = useRef<HTMLTextAreaElement>(null);
-  const [channel, setChannel] = useState<Channel>(initialChannel ?? (contact.canText ? 'sms' : 'email'));
+  // the agent's own channel tap (or the channel of a draft or template they chose); the box's channel is derived
+  const [picked, setChannel] = useState<ComposeChannel | null>(null);
+  const [webChatEnded, setWebChatEnded] = useState(false);
   const [draftId, setDraftId] = useState<string | null>(initialDraft);
   const [body, setBody] = useState('');
   const [subject, setSubject] = useState('');
@@ -107,14 +121,6 @@ export function ComposeBox({ contact, initialChannel, draftActionId: initialDraf
     if (autoFocus) field.current?.focus();
   }, [autoFocus]);
 
-  // grow with the text (up to about 12 lines) so a prefilled draft is readable without scrolling
-  useLayoutEffect(() => {
-    const el = field.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    if (el.scrollHeight > 0) el.style.height = `${Math.min(el.scrollHeight + 2, 320)}px`;
-  }, [body, channel]);
-
   // adopt a suggested draft only if the agent hasn't started writing or chosen one
   const adopted = useRef(false);
   useEffect(() => {
@@ -123,26 +129,56 @@ export function ComposeBox({ contact, initialChannel, draftActionId: initialDraf
     setDraftId(suggestedDraftId);
   }, [suggestedDraftId, draftId, body]);
 
+  const reach = useReachability(contact.id);
+  const choiceInput = {
+    firstName: firstName(contact.name),
+    canText: contact.canText,
+    canEmail: contact.canEmail,
+    hasWebChat: contact.canWebChat ?? false,
+    sms: channelState(reach, 'sms'),
+    email: channelState(reach, 'email'),
+    webChatEnded,
+    lastInbound: lastInboundChannel,
+    requested: initialChannel ?? null,
+    picked,
+  };
+  const choice = chooseChannel(choiceInput);
+  // with no usable channel the box still names the first one (its reason is shown and Send stays disabled)
+  const channel: ComposeChannel = choice.channel ?? choice.options[0]?.channel ?? 'sms';
+  const isChat = channel === 'web_chat';
+
+  // grow with the text (up to about 12 lines) so a prefilled draft is readable without scrolling
+  useLayoutEffect(() => {
+    const el = field.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    if (el.scrollHeight > 0) el.style.height = `${Math.min(el.scrollHeight + 2, 320)}px`;
+  }, [body, channel]);
+
   const original = draft?.draft ?? null;
   const edited = original !== null && (body !== original.body || (channel === 'email' && (subject || null) !== (original.subject ?? null)) || channel !== original.channel);
 
   // inline send check: from the moment the box opens (a probe body), then with the text as typed
   const previewBody = useDebounced(body.trim(), 500);
   const previewSubject = useDebounced(subject.trim(), 500);
-  const reach = useReachability(contact.id);
-  const blockedNow = channelState(reach, channel);
-  // opened without a channel (Reply, a suggested draft) while texts are blocked and email is not: start on email
-  const pickedFor = useRef(false);
-  useEffect(() => {
-    if (pickedFor.current || !reach || initialChannel !== undefined || initialDraft !== null) return;
-    pickedFor.current = true;
-    if (channel === 'sms' && channelState(reach, 'sms').blocked && contact.canEmail && !channelState(reach, 'email').blocked) setChannel('email');
-  }, [reach, initialChannel, initialDraft, channel, contact.canEmail]);
-  const preview = useSendCheck({ contactId: contact.id, channel, body: previewBody, subject: previewSubject, enabled: (channel === 'sms' ? contact.canText : contact.canEmail) && !blockedNow.blocked });
+  const blockedNow = isChat ? { blocked: choice.channel === null, sentence: choice.options.find((o) => o.channel === 'web_chat')?.reason ?? null, note: null } : channelState(reach, channel);
+  // web chat has no preview route yet (module 22): the send-time check decides, as it always does
+  const preview = useSendCheck({ contactId: contact.id, channel: channel === 'email' ? 'email' : 'sms', body: previewBody, subject: previewSubject, enabled: !isChat && (channel === 'sms' ? contact.canText : contact.canEmail) && !blockedNow.blocked });
 
   const human = useCommand<Record<string, unknown>, ComposeResponse>(`/contacts/${contact.id}/messages`, { idKey: 'idempotencyKey', invalidate: [['feed'], ['timeline', contact.id], [...REACHABILITY_KEY]] });
   const approve = useCommand<Record<string, unknown>, ApproveResponse>(`/assistant/actions/${draftId ?? 'none'}/approve`, { invalidate: [['feed'], ['inbox'], ['timeline', contact.id], [...REACHABILITY_KEY]] });
-  const pending = human.pending || approve.pending;
+  const chat = useWebChatSend(contact.id);
+  const chatApprove = useWebChatApprove(contact.id, draftId);
+  const pending = human.pending || approve.pending || chat.pending || chatApprove.pending;
+
+  // E77 / R-INBOX-7: the chat ended (or the widget was disconnected); nothing was sent and the text stays
+  const chatEnded = () => {
+    setWebChatEnded(true);
+    setChannel(null);
+    const next = chooseChannel({ ...choiceInput, webChatEnded: true, picked: null }).channel;
+    const name = firstName(contact.name);
+    setNotice({ tone: 'warn', text: `Not sent: the chat has ended (${name} left the page, or the chat was turned off). Your text is still here.${next === 'sms' ? ' Send now sends it by text.' : next === 'email' ? ' Send now sends it by email.' : ''}` });
+  };
 
   const afterSend = (r: ComposeResponse) => {
     setOutcome(r);
@@ -162,6 +198,21 @@ export function ComposeBox({ contact, initialChannel, draftActionId: initialDraf
     setOutcome(null);
     const text = body.trim();
     if (!text || blockedNow.blocked) return;
+    if (isChat) {
+      if (draft) {
+        const r = await chatApprove.approve(text, seenSeq);
+        if (!r.ok && r.code === 'CHANNEL_NOT_CONNECTED') return chatEnded();
+        if (r.ok && r.data.result === 'blocked' && (r.data.decision?.reasons.includes('CHANNEL_NOT_CONNECTED') ?? false)) return chatEnded();
+        if (r.ok) afterSend({ result: r.data.result, decision: r.data.decision, message: null });
+        else setNotice({ tone: 'error', text: r.message });
+        return;
+      }
+      const o = await chat.send(text);
+      if (o.kind === 'chat_ended') return chatEnded();
+      if (o.kind === 'done') afterSend(o.response);
+      else setNotice({ tone: 'error', text: o.message });
+      return;
+    }
     if (draft) {
       const payload: Record<string, unknown> = {};
       if (edited) payload.editedPayload = { channel, body: text, ...(channel === 'email' && subject.trim() ? { subject: subject.trim() } : {}) };
@@ -210,7 +261,9 @@ export function ComposeBox({ contact, initialChannel, draftActionId: initialDraf
   // the text exactly as it will go out, when the send adds to what was typed (never for older text)
   const finalText = !blockedNow.blocked && outcome === null && previewBody === body.trim() && preview.final !== null && preview.final.trim() !== body.trim() ? preview.final : null;
   const needsReview = draft?.claims.some((c) => c.needsReview) ?? false;
-  const noChannel = !contact.canText && !contact.canEmail;
+  const noChannel = choice.options.length === 0;
+  const fieldLabel = channel === 'sms' ? 'Text message' : channel === 'email' ? 'Email message' : 'Web chat message';
+  const placeholder = channel === 'sms' ? `Text ${firstName(contact.name)}` : channel === 'email' ? `Email ${firstName(contact.name)}` : `Reply to ${firstName(contact.name)} in web chat`;
 
   if (noChannel) return <Notice tone="info">There's no phone number or email on file to message.</Notice>;
 
@@ -223,21 +276,37 @@ export function ComposeBox({ contact, initialChannel, draftActionId: initialDraf
         void send();
       }}
     >
-      {contact.canText && contact.canEmail ? (
-        <div role="radiogroup" aria-label="Send as" className="flex gap-1 self-start rounded-xl bg-surface-2 p-1">
-          {(['sms', 'email'] as const).map((c) => (
+      {choice.options.length > 1 ? (
+        <div role="radiogroup" aria-label="Send as" className="flex flex-wrap gap-1 self-start rounded-xl bg-surface-2 p-1">
+          {choice.options.map((o) => (
             <button
-              key={c}
+              key={o.channel}
               type="button"
               role="radio"
-              aria-checked={channel === c}
-              onClick={() => setChannel(c)}
-              className={`min-h-tap rounded-lg px-3 text-[15px] font-medium ${channel === c ? 'bg-surface text-ink shadow-sm' : 'text-ink-muted'}`}
+              aria-checked={channel === o.channel}
+              disabled={!o.open}
+              aria-describedby={o.open ? undefined : `${id}-not-${o.channel}`}
+              onClick={() => setChannel(o.channel)}
+              className={`min-h-tap rounded-lg px-3 text-[15px] font-medium disabled:cursor-not-allowed disabled:line-through ${channel === o.channel ? 'bg-surface text-ink shadow-sm' : 'text-ink-muted'}`}
             >
-              {c === 'sms' ? 'Text' : 'Email'}
+              {o.label}
             </button>
           ))}
         </div>
+      ) : null}
+      {choice.options.length > 1
+        ? choice.options
+            .filter((o) => !o.open && o.reason && o.channel !== channel)
+            .map((o) => (
+              <p key={o.channel} id={`${id}-not-${o.channel}`} data-reason="not-offered" className="flex flex-wrap gap-1 text-[13px] leading-snug text-ink-muted">
+                <span className="font-medium text-ink">{o.label} not offered:</span> <span>{o.reason}</span>
+              </p>
+            ))
+        : null}
+      {choice.why ? (
+        <p data-testid="channel-why" className="text-[13px] leading-snug text-ink-muted">
+          {choice.why}
+        </p>
       ) : null}
       {draft ? (
         <div className="flex flex-col gap-1 rounded-xl bg-accent-soft px-3 py-2 text-[14px] text-ink">
@@ -259,7 +328,7 @@ export function ComposeBox({ contact, initialChannel, draftActionId: initialDraf
         </label>
       ) : null}
       <label htmlFor={`${id}-body`} className="sr-only">
-        {channel === 'sms' ? 'Text message' : 'Email message'}
+        {fieldLabel}
       </label>
       <div className="flex items-end gap-2">
         <textarea
@@ -269,7 +338,7 @@ export function ComposeBox({ contact, initialChannel, draftActionId: initialDraf
           onChange={(e) => setBody(e.target.value)}
           rows={2}
           maxLength={10_000}
-          placeholder={channel === 'sms' ? `Text ${firstName(contact.name)}` : `Email ${firstName(contact.name)}`}
+          placeholder={placeholder}
           className="min-h-tap flex-1 resize-y rounded-xl border border-line bg-surface px-3.5 py-2.5 text-[17px] text-ink placeholder:text-ink-muted"
         />
         <Button type="submit" pending={pending} pendingLabel="Sending" disabled={body.trim().length === 0 || blockedNow.blocked} aria-describedby={blockedNow.blocked || blockedNow.note ? `${id}-reason` : undefined}>
@@ -280,9 +349,10 @@ export function ComposeBox({ contact, initialChannel, draftActionId: initialDraf
         <div className="flex flex-wrap items-center gap-2">
           {templatePicker
             ? templatePicker({
-                channel,
+                channel: channel === 'email' ? 'email' : 'sms',
                 insert: (t) => {
-                  setChannel(t.channel);
+                  // a text template keeps a web-chat reply in web chat
+                  setChannel(isChat && t.channel === 'sms' ? 'web_chat' : t.channel);
                   setBody(t.body);
                   if (t.channel === 'email') setSubject(t.subject ?? '');
                   setDraftId(null);
@@ -290,7 +360,7 @@ export function ComposeBox({ contact, initialChannel, draftActionId: initialDraf
                 },
               })
             : null}
-          {!draft ? (
+          {!draft && !isChat ? (
             later === null ? (
               <Button type="button" variant="quiet" icon="clock" onClick={() => setLater(new Date(Date.now() + 3_600_000 - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16))}>
                 Send later
