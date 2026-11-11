@@ -79,6 +79,9 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   { path: '/admin/tags', roles: ADMINS, url: at('/admin/tags') },
   { path: '/admin/fields', roles: ADMINS, url: at('/admin/fields') },
   { path: '/admin/stage-labels', roles: ADMINS, url: at('/admin/stage-labels') },
+  // module 40/41 (coaching): the daily fix page (every role that takes calls) and the Owner's coaching settings
+  { path: '/coaching', roles: NOT_TC, url: at('/coaching') },
+  { path: '/admin/coaching', roles: ['owner'], url: at('/admin/coaching') },
 ];
 
 /** Screens outside the app frame (signed out). */
