@@ -210,6 +210,7 @@ derivedCommandId(actionId, contactId): Uuid                  // v5, idempotent o
 | `packages/db/src/ownership/merge.ts` (Phase 1 module 7) | 66 | Move `contact_tags`, `contact_field_values`, `contact_relationships`, `contact_stage_events` of the loser (R-PAR-45) |
 | `apps/api/src/assistant/enrollments.ts` (26) | 67 | Export the existing single-enrollment function, if it is not exported yet; no logic change |
 | Registries (`routes.ts`, `worker/handlers/index.ts`, `errors.ts`, `foundation/authz.ts`, `shell/registry.ts`, `audit.ts` action union) | each lane | CONVENTIONS §3 additive protocol |
+| `apps/api/src/audit.ts` field classification | each lane, for its own columns | P0 left every new column in the fail-closed PII class (snapshot `audit.test.ts.snap`). A lane may move a column it owns to a non-PII class (e.g. `kind`, `status`, `field_type`) with the snapshot update in the same commit |
 | `apps/web/src/surfaces/feed/**`, `thread/**` | — | **No edit.** Mentions arrive as notifications |
 
 ### 4.4 Module details
