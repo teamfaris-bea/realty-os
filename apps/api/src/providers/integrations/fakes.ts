@@ -59,10 +59,21 @@ export interface FakeGrantAccount {
   reviewPending?: boolean;
 }
 
+/** Module 34 (additive): the token the fake provider issues for a code (defaults keep the module 21 shape). */
+export interface FakeTokenShape {
+  /** the scopes the person granted (default ['fake.scope']) */
+  scopes?: string[];
+  /** issue a refresh token (default false) */
+  refresh?: boolean;
+  /** access-token expiry as an ISO instant (default null, long-lived) */
+  expiresAt?: string | null;
+}
+
 interface Grant {
   challenge: string;
   accounts: FakeGrantAccount[];
   used: boolean;
+  token: FakeTokenShape;
 }
 
 /** Fake OAuth provider: codes are single-use, PKCE (S256) is checked, tokens map to managed accounts. */
@@ -73,14 +84,23 @@ export class FakeOAuth implements OAuthConnector {
   readonly revoked: string[] = [];
   /** set to make the next exchange fail (provider outage) */
   failNextExchange: ProviderError | null = null;
+  /** module 34: refresh token → the access tokens it produced; access tokens the provider no longer accepts */
+  readonly #byRefresh = new Map<string, string[]>();
+  readonly #dead = new Set<string>();
+  readonly #revokedGrants = new Set<string>();
+  readonly #refreshScopes = new Map<string, string[]>();
+  /** module 34: expiry given to refreshed access tokens (ISO; default null) */
+  refreshExpiresAt: string | null = null;
+  /** module 34: every refresh the fake served, in order (refresh tokens only) */
+  readonly refreshes: string[] = [];
   #n = 0;
 
   constructor(readonly provider: OAuthProviderName) {}
 
-  authorizeUrl(i: { kind: ConnectionKind; state: string; codeChallenge: string; redirectUri: string; scopes: readonly string[] }): string {
+  authorizeUrl(i: { kind?: ConnectionKind; state: string; codeChallenge: string; redirectUri: string; scopes: readonly string[] }): string {
     const u = new URL(`https://oauth.fake.invalid/${this.provider}/authorize`);
     u.searchParams.set('response_type', 'code');
-    u.searchParams.set('kind', i.kind);
+    if (i.kind !== undefined) u.searchParams.set('kind', i.kind);
     u.searchParams.set('state', i.state);
     u.searchParams.set('code_challenge', i.codeChallenge);
     u.searchParams.set('code_challenge_method', 'S256');
@@ -90,10 +110,10 @@ export class FakeOAuth implements OAuthConnector {
   }
 
   /** The "person approved in the provider dialog" step: returns the code the provider would redirect with. */
-  issueCode(i: { codeChallenge: string; accounts: FakeGrantAccount[] }): string {
+  issueCode(i: { codeChallenge: string; accounts: FakeGrantAccount[]; token?: FakeTokenShape }): string {
     this.#n += 1;
     const code = `fake-code-${this.provider}-${this.#n}`;
-    this.#grants.set(code, { challenge: i.codeChallenge, accounts: i.accounts.map((a) => ({ ...a })), used: false });
+    this.#grants.set(code, { challenge: i.codeChallenge, accounts: i.accounts.map((a) => ({ ...a })), used: false, token: { ...(i.token ?? {}) } });
     return code;
   }
 
@@ -109,7 +129,39 @@ export class FakeOAuth implements OAuthConnector {
     if (pkceChallenge(i.codeVerifier) !== g.challenge) throw new ProviderError('rejected', 'PKCE_MISMATCH');
     const accessToken = `fake-token-${this.provider}-${createHash('sha256').update(i.code).digest('hex').slice(0, 16)}`;
     this.#tokens.set(accessToken, g.accounts);
-    return { accessToken, refreshToken: null, expiresAt: null, scopes: ['fake.scope'] };
+    const refreshToken = g.token.refresh ? `fake-refresh-${this.provider}-${createHash('sha256').update(`r:${i.code}`).digest('hex').slice(0, 16)}` : null;
+    const scopes = g.token.scopes ? [...g.token.scopes] : ['fake.scope'];
+    if (refreshToken) {
+      this.#byRefresh.set(refreshToken, [accessToken]);
+      this.#refreshScopes.set(refreshToken, scopes);
+    }
+    return { accessToken, refreshToken, expiresAt: g.token.expiresAt ?? null, scopes };
+  }
+
+  async refresh(refreshToken: string): Promise<OAuthToken> {
+    const issued = this.#byRefresh.get(refreshToken);
+    if (!issued || this.#revokedGrants.has(refreshToken)) throw new ProviderError('rejected', 'INVALID_GRANT');
+    this.refreshes.push(refreshToken);
+    const accessToken = `${issued[0]}-r${issued.length}`;
+    issued.push(accessToken);
+    this.#tokens.set(accessToken, this.#tokens.get(issued[0]!) ?? []);
+    return { accessToken, refreshToken, expiresAt: this.refreshExpiresAt, scopes: [...(this.#refreshScopes.get(refreshToken) ?? [])] };
+  }
+
+  /** test helper (E102): the person removed the app in the provider's security settings */
+  revokeGrantAtProvider(refreshToken: string): void {
+    this.#revokedGrants.add(refreshToken);
+    for (const t of this.#byRefresh.get(refreshToken) ?? []) this.#dead.add(t);
+  }
+
+  /** test helper: the provider stops accepting this access token early (it "expired") */
+  expireAccessToken(accessToken: string): void {
+    this.#dead.add(accessToken);
+  }
+
+  /** whether the provider would refuse this access token (revoked, grant removed, expired early) */
+  isDead(accessToken: string): boolean {
+    return this.#dead.has(accessToken) || this.revoked.includes(accessToken);
   }
 
   async listManagedAccounts(token: OAuthToken, kind: ConnectionKind): Promise<ManagedAccount[]> {
@@ -121,6 +173,7 @@ export class FakeOAuth implements OAuthConnector {
 
   async revoke(token: OAuthToken): Promise<void> {
     if (!this.revoked.includes(token.accessToken)) this.revoked.push(token.accessToken);
+    if (token.refreshToken) this.revokeGrantAtProvider(token.refreshToken);
   }
 
   /** test helper: account ids a live token manages */
@@ -204,20 +257,64 @@ export class FakeAvmP2 implements AvmProvider {
   }
 }
 
+export interface FakeCalendarEvent extends CalendarEvent {
+  syncVersion: number;
+  calendarRef: string;
+  /** true once the person edited the event in their calendar (test helper editExternally) */
+  editedExternally: boolean;
+}
+
+/**
+ * Fake Google/Microsoft calendar (module 21 shape, extended by module 34). Events are keyed by appointment id.
+ * The provider-side fence (`stale`) stays as module 21 built it. Module 34 adds the conditional update: a push
+ * whose etag no longer matches (the person edited the event) or whose event is gone (deleted in the calendar)
+ * is `detached`, and the event is left exactly as the person made it. An access token the fake OAuth provider
+ * refuses (`isDead`) throws ProviderError('rejected', 'UNAUTHENTICATED').
+ */
 export class FakeCalendar implements CalendarProvider {
-  readonly events = new Map<string, CalendarEvent & { syncVersion: number }>();
+  readonly events = new Map<string, FakeCalendarEvent>();
+  readonly #deleted = new Set<string>();
   busy: Busy[] = [];
-  constructor(readonly provider: 'google' | 'microsoft') {}
-  async pushEvent(_auth: CalendarAuth, e: CalendarEvent, fence: { syncVersion: number }): Promise<PushResult> {
+  /** every push and free/busy call the fake served (appointment id or 'freebusy'), in order */
+  readonly calls: string[] = [];
+  constructor(
+    readonly provider: 'google' | 'microsoft',
+    private readonly isDead: (accessToken: string) => boolean = () => false,
+  ) {}
+  #auth(auth: CalendarAuth): void {
+    if (this.isDead(auth.accessToken)) throw new ProviderError('rejected', 'UNAUTHENTICATED');
+  }
+  async pushEvent(auth: CalendarAuth, e: CalendarEvent, fence: { syncVersion: number }): Promise<PushResult> {
+    this.#auth(auth);
+    this.calls.push(e.appointmentId);
     const cur = this.events.get(e.appointmentId);
     if (cur && cur.syncVersion > fence.syncVersion) return { kind: 'stale', syncVersion: cur.syncVersion };
+    if (e.externalEventRef !== null) {
+      if (this.#deleted.has(e.externalEventRef) || !cur || cur.externalEventRef !== e.externalEventRef) return { kind: 'detached' };
+      if (cur.externalEtag !== e.externalEtag) return { kind: 'detached' };
+    }
     const ref = cur?.externalEventRef ?? `fake-${this.provider}-event-${e.appointmentId}`;
     const etag = `etag-${fence.syncVersion}`;
-    this.events.set(e.appointmentId, { ...e, externalEventRef: ref, externalEtag: etag, syncVersion: fence.syncVersion });
+    this.events.set(e.appointmentId, { ...e, externalEventRef: ref, externalEtag: etag, syncVersion: fence.syncVersion, calendarRef: auth.calendarRef, editedExternally: false });
     return { kind: 'pushed', externalEventRef: ref, externalEtag: etag, syncVersion: fence.syncVersion };
   }
-  async freeBusy(_auth: CalendarAuth, range: { start: string; end: string }): Promise<Busy[]> {
+  async freeBusy(auth: CalendarAuth, range: { start: string; end: string }): Promise<Busy[]> {
+    this.#auth(auth);
+    this.calls.push('freebusy');
     return this.busy.filter((b) => b.end > range.start && b.start < range.end).map((b) => ({ ...b }));
+  }
+  /** test helper (E103): the person edits the pushed event in their calendar (a new etag) */
+  editExternally(appointmentId: string, patch: Partial<Pick<CalendarEvent, 'startsAt' | 'endsAt' | 'title'>> = {}): void {
+    const cur = this.events.get(appointmentId);
+    if (!cur) throw new Error(`no fake event for ${appointmentId}`);
+    this.events.set(appointmentId, { ...cur, ...patch, externalEtag: `${cur.externalEtag}-edited`, editedExternally: true });
+  }
+  /** test helper: the person deletes the pushed event in their calendar */
+  deleteExternally(appointmentId: string): void {
+    const cur = this.events.get(appointmentId);
+    if (!cur?.externalEventRef) throw new Error(`no fake event for ${appointmentId}`);
+    this.#deleted.add(cur.externalEventRef);
+    this.events.delete(appointmentId);
   }
 }
 
@@ -262,13 +359,14 @@ export interface FakeIntegrationAdapters extends IntegrationAdapters {
 }
 
 export function createFakeIntegrations(): FakeIntegrationAdapters {
+  const oauth = { meta: new FakeOAuth('meta'), google: new FakeOAuth('google'), microsoft: new FakeOAuth('microsoft') };
   return {
     mode: 'fake',
-    oauth: { meta: new FakeOAuth('meta'), google: new FakeOAuth('google'), microsoft: new FakeOAuth('microsoft') },
+    oauth,
     leadFeeds: { zillow: new FakeLeadFeed('zillow'), realtor: new FakeLeadFeed('realtor') },
     mlsFeed: new FakeResoMls(),
     avm: new FakeAvmP2(),
-    calendar: { google: new FakeCalendar('google'), microsoft: new FakeCalendar('microsoft') },
+    calendar: { google: new FakeCalendar('google', (t) => oauth.google.isDead(t)), microsoft: new FakeCalendar('microsoft', (t) => oauth.microsoft.isDead(t)) },
     social: new FakeSocialPublisher(),
     showing: new FakeShowingService(),
     renderer: new FakeRenderer(),

@@ -81,13 +81,20 @@ export interface OAuthConnector {
   readonly configured: boolean;
   /** Authorization URL with PKCE (S256) and the signed state. */
   /** `scopes` come from the catalog (publishing-only for Meta, D2); the adapter never widens them */
-  authorizeUrl(i: { kind: ConnectionKind; state: string; codeChallenge: string; redirectUri: string; scopes: readonly string[] }): string;
+  /** module 34 (additive): `kind` is absent for a per-person calendar connect (no tenant connection kind) */
+  authorizeUrl(i: { kind?: ConnectionKind; state: string; codeChallenge: string; redirectUri: string; scopes: readonly string[] }): string;
   /** Code → token. The code is single-use at the provider; the verifier proves this server started the flow. */
   exchangeCode(i: { code: string; codeVerifier: string; redirectUri: string }): Promise<OAuthToken>;
   /** The accounts this token manages for `kind`: the callback's proof of control (E160). */
   listManagedAccounts(token: OAuthToken, kind: ConnectionKind): Promise<ManagedAccount[]>;
   /** Best effort revocation at the provider (R-INT-5). */
   revoke(token: OAuthToken): Promise<void>;
+  /**
+   * Module 34 (additive): a fresh access token from a refresh token, called lazily inside calendar.push and
+   * the live free/busy read. A grant the person revoked at the provider throws ProviderError('rejected',
+   * 'INVALID_GRANT') (E102). VERIFY each vendor's token endpoint and error shape.
+   */
+  refresh(refreshToken: string): Promise<OAuthToken>;
 }
 
 // ---- Partner lead feeds (Zillow, realtor.com): needs_partner_access until access exists ---------
@@ -197,6 +204,12 @@ export interface CalendarEvent {
   title: string;
   externalEventRef: string | null;
   externalEtag: string | null;
+  /**
+   * Module 34 (additive): a canceled appointment cancels its pushed event; absent means 'confirmed'. The
+   * push is conditional on `externalEtag` (If-Match): an event edited or deleted in the calendar is never
+   * overwritten, the result is `detached` (R-CAL-2, E103). VERIFY Google/Graph conditional-update shapes.
+   */
+  status?: 'confirmed' | 'cancelled';
 }
 
 export type PushResult =

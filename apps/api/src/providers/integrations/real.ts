@@ -59,6 +59,9 @@ export class PlatformOAuth implements OAuthConnector {
   async revoke(): Promise<void> {
     throw notYet(`${this.provider.toUpperCase()}_REVOKE_API`);
   }
+  async refresh(): Promise<never> {
+    throw notYet(`${this.provider.toUpperCase()}_TOKEN_ENDPOINT`);
+  }
 }
 
 /** A partner lead feed we have no agreement for: honest `needs_partner_access`, never polls. */
@@ -121,6 +124,9 @@ class UnconfiguredOAuth implements OAuthConnector {
     throw new ProviderError('not_configured', 'OAUTH_APP_NOT_CONFIGURED');
   }
   async revoke(): Promise<void> {
+    throw new ProviderError('not_configured', 'OAUTH_APP_NOT_CONFIGURED');
+  }
+  async refresh(): Promise<never> {
     throw new ProviderError('not_configured', 'OAUTH_APP_NOT_CONFIGURED');
   }
 }

@@ -14,6 +14,7 @@ import { apptOutcomeFeedKey } from '@realty/core/priority';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 import type { z } from 'zod';
+import { enqueueCalendarPush } from '../calendar/hooks.js';
 import { AppError } from '../errors.js';
 import { assertAssignable, iso, isoOrNull } from './common.js';
 import { closeFeedKey } from './feed.js';
@@ -92,6 +93,7 @@ export async function createAppointment(tx: Tx, actor: UserActor, ids: IdGenerat
     INSERT INTO appointments (tenant_id, id, contact_id, deal_id, user_id, set_by_user_id, kind, starts_at, ends_at, location, created_by_kind)
     VALUES (app.tenant_id(), ${id}, ${b.contactId ?? null}, ${b.dealId ?? null}, ${organizer}, ${actor.userId}, ${b.kind}, ${b.startsAt}::timestamptz,
             ${b.endsAt}::timestamptz, ${b.location ?? null}, 'user')`.execute(tx);
+  await enqueueCalendarPush(tx, id); // module 34: one-way calendar push (R-CAL-2)
   return id;
 }
 
@@ -108,6 +110,7 @@ export async function updateAppointment(tx: Tx, id: string, b: z.infer<typeof Up
            location = CASE WHEN ${b.location !== undefined} THEN ${b.location ?? null} ELSE location END,
            status = COALESCE(${b.status ?? null}, status), updated_at = now()
      WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx);
+  await enqueueCalendarPush(tx, id); // module 34: one-way calendar push (R-CAL-2)
 }
 
 /** POST /appointments/:id/outcome: one tap. A no-show is an outcome too (logged, so nothing stays missing). */

@@ -260,6 +260,7 @@ export const ERROR_STATUS = {
   CHANNEL_NOT_CONNECTED: 409, // module 22: the web-chat widget is not connected (disconnected, revoked or never switched on; R-INBOX-7)
   WEBCHAT_DISCLOSURE_STALE: 409, // module 22: the chat must start after the visitor saw the widget's current disclosure (R-INBOX-5)
   WEBCHAT_SESSION_CLOSED: 410, // module 22: the chat session ended (idle 30 min or closed, E77); start a new chat
+  CALENDAR_ALREADY_CONNECTED: 409, // module 34: the person already has a calendar connected (one at a time); disconnect it first
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

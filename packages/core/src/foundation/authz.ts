@@ -289,6 +289,9 @@ export const AUDIT_ACTIONS = [
   'webchat.widget_created', // module 22: an Owner/Admin created a website chat widget (its key is shown once)
   'webchat.widget_key_rotated', // module 22: the widget key was replaced; the old embed stops working at once
   'webchat.widget_origins_changed', // module 22: the websites a widget may run on changed
+  'calendar.connected', // module 34: a person's own calendar linked after they approved at the provider (system; no token, no calendar id)
+  'calendar.disconnected', // module 34: the person disconnected their calendar; token purged in the same tx (R-INT-5)
+  'calendar.link_revoked', // module 34: the system revoked and purged a link (GRANT_REVOKED E102, MEMBER_REMOVED R-INT-5)
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

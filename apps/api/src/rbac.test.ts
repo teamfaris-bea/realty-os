@@ -217,6 +217,14 @@ describe('route table', () => {
         "POST /api/me/alert-phone/verify → self",
         "GET /api/me/ponds → self",
         "HEAD /api/me/ponds → self",
+        "GET /api/me/calendar → self",
+        "HEAD /api/me/calendar → self",
+        "POST /api/me/calendar/:provider/connect → self",
+        "GET /api/me/calendar/:provider/callback → self",
+        "HEAD /api/me/calendar/:provider/callback → self",
+        "POST /api/me/calendar/:provider/disconnect → self",
+        "GET /api/me/busy → self",
+        "HEAD /api/me/busy → self",
       ]
     `);
   });
