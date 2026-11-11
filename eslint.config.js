@@ -156,6 +156,14 @@ export default tseslint.config(
     rules: { 'realty/no-prediction-import': 'error' },
   },
 
+  // ---- PHASE2_3_PLAN §5.3 (module 37): the website chat widget is a separate bundle; it imports nothing from the
+  //      staff app (no surface, shell, design system or package). Module 46 adds src/portal the same way.
+  {
+    files: ['apps/web/src/widget/**/*.{ts,tsx}'],
+    ignores: TEST_FILES,
+    rules: { 'realty/isolated-bundle': ['error', { dir: 'widget' }] },
+  },
+
   // ---- packages/db depends on core only (never api/web)
   {
     files: ['packages/db/**/*.ts'],

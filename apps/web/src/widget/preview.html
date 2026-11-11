@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Chat widget preview</title>
+    <style>
+      body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: Canvas; color: CanvasText; }
+      main { max-width: 40rem; padding: 24px 16px 96px; }
+    </style>
+  </head>
+  <body>
+    <!-- A stand-in for a brokerage's website (dev, e2e and the accessibility sweep). The widget talks to the
+         module 22 public chat routes on this origin's /api; until module 22 lands they answer 404, and the
+         e2e specs answer them with a fake of the PHASE2_3_PLAN §5.4 interface. -->
+    <main>
+      <h1>Chat widget preview</h1>
+      <p>This page stands in for a brokerage's own website. The chat button is the Realty OS widget.</p>
+    </main>
+    <script
+      type="module"
+      src="./main.ts"
+      data-widget-key="wk_preview_0123456789abcdef"
+      data-brokerage="Harbor Realty LLC"
+      data-disclosure-id="01900000-0000-7000-8000-0000000d15c1"
+      data-disclosure="By starting a chat, you agree that Harbor Realty LLC may reply here and keep a record of this conversation."
+      data-api="/api"
+    ></script>
+  </body>
+</html>
