@@ -3,7 +3,7 @@
 // push subscriptions, claim stats, the rotation cursor) are only read for the system actor
 // (ARCHITECTURE §5 "Routing never runs under a user actor", Design Review F1).
 import type { BusinessCalendar, ContactId, Instant, PondId, Role, RuleId, UserId } from '@realty/core/foundation';
-import { HOUR_MS, businessCalendar, instant, plusMs, startOfLocalDay, toIso, zone } from '@realty/core/foundation';
+import { HOUR_MS, businessCalendar, instant, instantFromDate, plusMs, startOfLocalDay, toIso, zone } from '@realty/core/foundation';
 import {
   type Candidate,
   type EffectiveLeadSettings,
@@ -56,19 +56,25 @@ export class TenantNotReadyError extends Error {
   override readonly name = 'TenantNotReadyError';
 }
 
-export async function loadTenantFacts(tx: Tx): Promise<TenantFacts> {
-  const r = await sql<SettingsRow>`
+const SETTINGS_SELECT = sql`
     SELECT s.default_timezone, s.routing_hours_start::text, s.routing_hours_end::text, s.offer_window_seconds, s.max_offers,
            s.first_touch_sla_seconds, s.first_touch_release_seconds, s.reinquiry_sla_after_days, s.inactivity_release_days,
            s.inactivity_warning_hours, s.auto_pause_after_misses, s.uncontacted_capacity_cap, s.isa_access_after_handoff_days,
            s.soft_delete_purge_days, s.operating_jurisdictions,
            (SELECT p.id FROM ponds p WHERE p.tenant_id = s.tenant_id AND p.is_default) AS default_pond_id,
            (SELECT p.claim_cooldown_hours FROM ponds p WHERE p.tenant_id = s.tenant_id AND p.is_default) AS default_pond_cooldown,
-           v.id AS p_id
+           v.id AS p_id`;
+const SETTINGS_FROM = sql`
       FROM tenant_settings s
       LEFT JOIN compliance_policy_versions v ON v.tenant_id = s.tenant_id AND v.id = s.active_policy_id
-     WHERE s.tenant_id = app.tenant_id()`.execute(tx);
-  const s = r.rows[0];
+     WHERE s.tenant_id = app.tenant_id()`;
+
+export async function loadTenantFacts(tx: Tx): Promise<TenantFacts> {
+  const r = await sql<SettingsRow>`${SETTINGS_SELECT} ${SETTINGS_FROM}`.execute(tx);
+  return tenantFactsOf(r.rows[0]);
+}
+
+function tenantFactsOf(s: SettingsRow | undefined): TenantFacts {
   if (!s) throw new TenantNotReadyError('tenant settings are not visible in this context');
   if (!s.default_pond_id || !s.p_id) throw new TenantNotReadyError('tenant has no default pond or active policy');
   const tz = zone(s.default_timezone);
@@ -89,6 +95,54 @@ export async function loadTenantFacts(tx: Tx): Promise<TenantFacts> {
   };
   const calendar = businessCalendar({ zone: tz, open: s.routing_hours_start, close: s.routing_hours_end });
   return { settings, calendar, defaultPondCooldownHours: s.default_pond_cooldown ?? 72 };
+}
+
+const PEOPLE_COLUMNS = sql`
+           (SELECT array_agg(user_id ORDER BY user_id) FROM memberships
+             WHERE tenant_id = app.tenant_id() AND role IN ('owner', 'admin') AND status = 'active') AS admins,
+           (SELECT json_agg(json_build_object('member', x.member, 'lead', x.lead) ORDER BY x.member, x.lead)
+              FROM (SELECT DISTINCT tm.user_id AS member, l.user_id AS lead
+                      FROM team_members tm
+                      JOIN team_members l ON l.tenant_id = tm.tenant_id AND l.team_id = tm.team_id AND l.is_lead
+                      JOIN memberships m ON m.tenant_id = l.tenant_id AND m.user_id = l.user_id AND m.status = 'active'
+                     WHERE tm.tenant_id = app.tenant_id()) x) AS leads`;
+type PeopleRow = { admins: string[] | null; leads: { member: string; lead: string }[] | null };
+
+function peopleOf(row: PeopleRow | undefined): PeopleFacts {
+  const teamLeadsOf: Record<string, UserId[]> = {};
+  for (const x of row?.leads ?? []) (teamLeadsOf[x.member] ??= []).push(x.lead as UserId);
+  return { admins: (row?.admins ?? []).map((a) => a as UserId), teamLeadsOf };
+}
+
+const DEAL_OPEN = (contactId: ContactId) => sql`
+    EXISTS (SELECT 1 FROM deals d WHERE d.tenant_id = app.tenant_id() AND d.primary_contact_id = ${contactId}
+                     AND d.stage NOT IN ('closed', 'lost'))
+        OR EXISTS (SELECT 1 FROM deal_contacts dc JOIN deals d ON d.tenant_id = dc.tenant_id AND d.id = dc.deal_id
+                    WHERE dc.tenant_id = app.tenant_id() AND dc.contact_id = ${contactId} AND d.stage NOT IN ('closed', 'lost'))`;
+
+export interface CommandFacts {
+  facts: TenantFacts;
+  people: PeopleFacts;
+  dealOpen: boolean;
+  /** clock_timestamp() of this statement: read after every lock the command holds when it runs (R-OWN-6) */
+  now: Instant;
+}
+
+/**
+ * loadTenantFacts + loadPeople + loadDealOpen + dbNow in ONE round trip (lane perf-misses-2): the same
+ * sub-queries, each with its own WHERE and ORDER BY, read in one statement of the same transaction, so the
+ * facts are identical; the clock is read in that statement, after the contact lock the caller took before it.
+ * `dealOf` null: no contact row yet (create), dealOpen is false without a read, as before.
+ */
+export async function loadCommandFacts(tx: Tx, dealOf: ContactId | null): Promise<CommandFacts> {
+  const r = await sql<SettingsRow & PeopleRow & { deal_open: boolean; now: Date }>`${SETTINGS_SELECT},
+           ${PEOPLE_COLUMNS},
+           ${dealOf === null ? sql`false` : DEAL_OPEN(dealOf)} AS deal_open,
+           clock_timestamp() AS now
+     ${SETTINGS_FROM}`.execute(tx);
+  const row = r.rows[0];
+  const facts = tenantFactsOf(row);
+  return { facts, people: peopleOf(row), dealOpen: row!.deal_open === true, now: instantFromDate(row!.now) };
 }
 
 /**
@@ -158,21 +212,10 @@ export async function loadPond(tx: Tx, pondId: PondId, actorUserId: UserId | nul
 }
 
 export async function loadPeople(tx: Tx): Promise<PeopleFacts> {
-  // One round trip (lane perf-misses): the two reads below were separate statements; each keeps its own
+  // One round trip (lane perf-misses): the two reads are sub-queries of one statement; each keeps its own
   // WHERE and ORDER BY, aggregated in that order, so the facts are identical.
-  const r = await sql<{ admins: string[] | null; leads: { member: string; lead: string }[] | null }>`
-    SELECT (SELECT array_agg(user_id ORDER BY user_id) FROM memberships
-             WHERE tenant_id = app.tenant_id() AND role IN ('owner', 'admin') AND status = 'active') AS admins,
-           (SELECT json_agg(json_build_object('member', x.member, 'lead', x.lead) ORDER BY x.member, x.lead)
-              FROM (SELECT DISTINCT tm.user_id AS member, l.user_id AS lead
-                      FROM team_members tm
-                      JOIN team_members l ON l.tenant_id = tm.tenant_id AND l.team_id = tm.team_id AND l.is_lead
-                      JOIN memberships m ON m.tenant_id = l.tenant_id AND m.user_id = l.user_id AND m.status = 'active'
-                     WHERE tm.tenant_id = app.tenant_id()) x) AS leads`.execute(tx);
-  const row = r.rows[0];
-  const teamLeadsOf: Record<string, UserId[]> = {};
-  for (const x of row?.leads ?? []) (teamLeadsOf[x.member] ??= []).push(x.lead as UserId);
-  return { admins: (row?.admins ?? []).map((a) => a as UserId), teamLeadsOf };
+  const r = await sql<PeopleRow>`SELECT ${PEOPLE_COLUMNS}`.execute(tx);
+  return peopleOf(r.rows[0]);
 }
 
 /** app.claim_stats for the claimer (counts span contacts the caller may not see). */
@@ -187,12 +230,7 @@ export async function loadClaimStats(tx: Tx, userId: UserId, contactId: ContactI
 
 /** A deal on the contact (primary or linked) that is not closed/lost, visible to the caller. */
 export async function loadDealOpen(tx: Tx, contactId: ContactId): Promise<boolean> {
-  const r = await sql<{ open: boolean }>`
-    SELECT EXISTS (SELECT 1 FROM deals d WHERE d.tenant_id = app.tenant_id() AND d.primary_contact_id = ${contactId}
-                     AND d.stage NOT IN ('closed', 'lost'))
-        OR EXISTS (SELECT 1 FROM deal_contacts dc JOIN deals d ON d.tenant_id = dc.tenant_id AND d.id = dc.deal_id
-                    WHERE dc.tenant_id = app.tenant_id() AND dc.contact_id = ${contactId} AND d.stage NOT IN ('closed', 'lost'))
-           AS open`.execute(tx);
+  const r = await sql<{ open: boolean }>`SELECT ${DEAL_OPEN(contactId)} AS open`.execute(tx);
   return r.rows[0]?.open ?? false;
 }
 

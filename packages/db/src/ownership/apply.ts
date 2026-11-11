@@ -2,8 +2,9 @@
 // R-OWN-2, R-OWN-3, R-OWN-5, R-OWN-6, R-OWN-7).
 //
 //   BEGIN; withTenantTx context; set_config('app.ownership_command', command_id, true)
-//     0 idempotency: a rejection or ledger events with this command_id ⇒ return the stored outcome
-//     1 app.lock_contact; SELECT … FROM contacts … FOR UPDATE (merges: both, ascending id)
+//     0 app.lock_contact (merges: both, ascending id), then idempotency: a rejection or ledger events with
+//       this command_id ⇒ return the stored outcome
+//     1 SELECT … FROM contacts … FOR UPDATE
 //     2 system actor only: routing_rotation_state FOR UPDATE; candidate memberships (sorted)
 //     3 now := clock_timestamp()   (read AFTER the locks)
 //     4 decision := core.ownership.decide(projection, command, ctx)
@@ -44,14 +45,12 @@ import { dbNow, setOwnershipCommand, type Tx, withTenantTx } from '../tenantTx.j
 import {
   type TenantFacts,
   loadClaimStats,
-  loadDealOpen,
   loadInquiry,
   loadIsCollaborator,
   loadMember,
-  loadPeople,
   loadPond,
   loadRoutingSnapshot,
-  loadTenantFacts,
+  loadCommandFacts,
   lockMemberships,
   myTeamMemberIds,
   nextContactableFn,
@@ -202,6 +201,11 @@ interface Loaded {
   ctx: DecisionContext;
 }
 
+/**
+ * The decision context. Its first statement reads the tenant facts, the people, the open-deal fact and the DB
+ * clock together (loadCommandFacts), after the contact lock(s) the caller holds; `relocked` says whether this
+ * function then took further locks (routing, memberships), after which the caller must read the clock again.
+ */
 async function buildContext(
   tx: Tx,
   actor: Actor,
@@ -209,11 +213,10 @@ async function buildContext(
   cmd: OwnershipCommand,
   row: ContactOwnershipRow | null,
   state: OwnershipProjection | null,
-  now: Instant,
   ids: IdGenerator,
   opts: OwnershipCommandOptions,
-): Promise<Loaded> {
-  const facts = await loadTenantFacts(tx);
+): Promise<Loaded & { relocked: boolean }> {
+  const { facts, people, dealOpen, now } = await loadCommandFacts(tx, row ? contactId : null);
   const u = actor.kind === 'user' ? actor : null;
   const nextContactableAt = nextContactableFn();
   const ctx: DecisionContext = {
@@ -227,13 +230,13 @@ async function buildContext(
     nextContactableAt,
     ...(opts.expectedSeq !== undefined ? { expectedSeq: opts.expectedSeq } : {}),
     contactStage: row?.stage ?? opts.newContact?.stage ?? 'new',
-    dealOpen: row ? await loadDealOpen(tx, contactId) : false,
+    dealOpen,
     lastHumanTouchAt: row?.last_human_touch_at ? instantFromDate(row.last_human_touch_at) : null,
     inactivity: {
       warnAt: row?.inactivity_warn_at ? instantFromDate(row.inactivity_warn_at) : null,
       releaseAt: row?.inactivity_release_at ? instantFromDate(row.inactivity_release_at) : null,
     },
-    people: await loadPeople(tx),
+    people,
   };
   const team = u?.role === 'team_lead' ? await myTeamMemberIds(tx) : undefined;
   const ownerOrOfferee = state?.state === 'owned' ? state.ownerUserId : state?.state === 'offered' ? state.offeredToUserId : null;
@@ -297,14 +300,17 @@ async function buildContext(
     writeUsers.push(state.offeredToUserId);
   }
   // Step 2: routing inputs, system actor only (F1). Locks: rotation FOR UPDATE, memberships sorted.
+  let relocked = false;
   if (actor.kind === 'system' && actor.via !== 'assistant' && actor.via !== 'import' && ROUTING_COMMANDS.has(cmd.kind)) {
     const ledger = state ? await selectLedger(tx, contactId) : [];
     const inquiry = opts.inquiry ?? (state ? await loadInquiry(tx, contactId, cmd.kind === 'route' || cmd.kind === 'reinquiry' ? cmd.inquiryId : undefined) : { leadSourceId: null, inquiryType: null, postalCode: null, priceMinCents: null, priceMaxCents: null });
     ctx.routing = await loadRoutingSnapshot(tx, contactId, inquiry, ledger, now, facts, writeUsers);
+    relocked = true;
   } else if (writeUsers.length > 0) {
     await lockMemberships(tx, [], writeUsers);
+    relocked = true;
   }
-  return { facts, ctx };
+  return { facts, ctx, relocked };
 }
 
 async function persistDecision(
@@ -373,12 +379,16 @@ export function applyOwnershipCommandInTx(tx: Tx, actor: Actor, contactId: Conta
 async function applyInTx(tx: Tx, actor: Actor, contactId: ContactId, cmd: OwnershipCommand, opts: OwnershipCommandOptions, commandSet: boolean): Promise<OwnershipCommandResult> {
   const ids = opts.ids ?? defaultIds();
   if (!commandSet) await setOwnershipCommand(tx, opts.commandId);
-  const stored = await storedOutcome(tx, opts.commandId);
-  if (stored) return { replayed: true, outcome: stored, projection: await currentProjection(tx, cmd.kind === 'merge' ? cmd.survivorId : contactId) };
-  if (cmd.kind === 'merge') return applyMerge(tx, actor, cmd, { ...opts, ids });
+  if (cmd.kind === 'merge') {
+    const stored = await storedOutcome(tx, opts.commandId);
+    if (stored) return { replayed: true, outcome: stored, projection: await currentProjection(tx, cmd.survivorId) };
+    return applyMerge(tx, actor, cmd, { ...opts, ids });
+  }
 
   await lockContact(tx, contactId);
-  // a concurrent retry of the SAME command may have committed while this one waited for the lock
+  // R-OWN-7: the stored outcome, read once, under the contact lock (lane perf-misses-2: the read before the
+  // lock was the same check without the lock; a replay now waits for the lock and returns the same outcome),
+  // so a concurrent retry of the SAME command that committed while this one waited is seen here
   const storedAfterLock = await storedOutcome(tx, opts.commandId);
   if (storedAfterLock) return { replayed: true, outcome: storedAfterLock, projection: await currentProjection(tx, contactId) };
   const row = await selectContactForUpdate(tx, contactId);
@@ -392,10 +402,10 @@ async function applyInTx(tx: Tx, actor: Actor, contactId: ContactId, cmd: Owners
     }
   }
   const state = row ? projectionOf(row) : null;
-  const now = await dbNow(tx); // R-OWN-6: after the contact lock (routing locks follow in buildContext)
-  const { ctx } = await buildContext(tx, actor, contactId, cmd, row, state, now, ids, opts);
-  // The routing locks may have waited: the decision uses the DB clock read after ALL locks.
-  ctx.now = await dbNow(tx);
+  // R-OWN-6: buildContext reads the DB clock after the contact lock (in its first statement)
+  const { ctx, relocked } = await buildContext(tx, actor, contactId, cmd, row, state, ids, opts);
+  // The routing / membership locks may have waited: the decision uses the DB clock read after ALL locks.
+  if (relocked) ctx.now = await dbNow(tx);
   const decision = decide(state, cmd, ctx);
   await persistDecision(tx, actor, contactId, cmd, state, decision, ctx, opts);
   const projection = decision.ok ? decision.next : row ? await currentProjection(tx, contactId) : null;
@@ -468,7 +478,8 @@ async function applyMerge(tx: Tx, actor: Actor, cmd: Extract<OwnershipCommand, {
   }
   const survivor = projectionOf(srow);
   const loser = projectionOf(lrow);
-  const { ctx } = await buildContext(tx, actor, survivorId, cmd, srow, survivor, now, opts.ids, opts);
+  const { ctx, relocked } = await buildContext(tx, actor, survivorId, cmd, srow, survivor, opts.ids, opts);
+  if (relocked) ctx.now = await dbNow(tx);
   ctx.mergePeer = loser;
   ctx.mergePeerInactivity = {
     warnAt: lrow.inactivity_warn_at ? instantFromDate(lrow.inactivity_warn_at) : null,
