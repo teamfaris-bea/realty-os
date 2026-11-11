@@ -59,9 +59,16 @@ scrape_configs:
   - job_name: realty
     scheme: http                      # private network only; the token is still required
     authorization: { credentials_file: /etc/prometheus/realty-metrics-token }
-    static_configs:
-      - targets: ['api-1:9464', 'api-2:9464', 'worker-1:9465']
+    static_configs:                   # the `process` target label is what the alerts below select on
+      - targets: ['api-1:9464', 'api-2:9464']
+        labels: { process: api }
+      - targets: ['worker-1:9465']
+        labels: { process: worker }
 ```
+
+Inside a container, bind the listener with `METRICS_HOST=0.0.0.0` (a token is then required in every environment) so the scraper can reach it; on a single host running the API and the worker, give each its own `METRICS_PORT` (for example 9464 and 9465).
+
+**Counters appear on first use.** A counter series such as `realty_jobs_dead_total{kind,queue}` or `realty_alerts_total{code,severity}` is created by its first event, already at 1. `increase()` over a series that did not exist at the start of the window reads 0, so an alert written only as `increase(x[w]) > 0` misses the first event of each series. The alerts below add `or (x unless x offset w)`, which fires on a series that is new within the window.
 
 Every other path on the metrics port is 404. The registry refuses label names outside a fixed list
 (`method route status_class code kind queue outcome state channel status result reason quantile bucket
@@ -109,6 +116,8 @@ definer aggregates of migration 0019; aggregates only):
 | `realty_tenants` | bucket (0, 1-10, 11-100, 101-1000, 1000+) | now |
 | `realty_ops_collect_ok`, `realty_ops_collect_age_seconds`, `realty_ops_collect_failures_total` | | the reader's own health |
 
+**Checking the alerts against a deployment.** Save one `GET /metrics` body from an API and one from a worker (with the token), then run `node scripts/ops-alert-metrics.mjs api.txt worker.txt`. It fails when an alert in §3 names a metric or a label the processes do not export, or selects `up{}` on a target label the scrape config above does not set. Rehearsed on the production build (2026-11-11): 9 families from the API, 36 from the worker; `realty_jobs_dead_total` is listed as not seen yet until a job goes dead.
+
 Run one worker with the operational collector per deployment if you scrape several workers: every
 worker exports the same database-wide gauges, so aggregate them with `max`, never `sum`.
 
@@ -121,19 +130,19 @@ after two weeks of real traffic and write the change down here.
 
 | Alert | Severity | Condition (PromQL) | Runbook |
 |---|---|---|---|
-| `ApiDown` | page | `up{job="realty",process="api"} == 0` for 2 m on all API targets, or the external `/api/ready` probe fails for 2 m | §4.1 |
+| `ApiDown` | page | `max(up{job="realty",process="api"}) == 0` for 2 m (all API targets down; `process` is the scrape config's target label, §2), or the external `/api/ready` probe fails for 2 m | §4.1 |
 | `ApiDegraded` | ticket (page if > 30 m) | the external probe sees `/api/ready` → `{"status":"degraded"}` for 5 m | §4.2 |
 | `Api5xxBudgetBurn` | page | `sum(rate(realty_http_requests_total{status_class="5xx"}[5m])) / sum(rate(realty_http_requests_total[5m])) > 0.02` for 10 m | §4.3 |
 | `RealtimeQueueLag` | page | `max(realty_queue_lag_seconds{queue="realtime"}) > 30` for 5 m | §4.4 |
-| `DeadRealtimeJobs` | page | `increase(realty_jobs_dead_total{queue="realtime"}[15m]) > 0` | §4.5 |
+| `DeadRealtimeJobs` | page | `increase(realty_jobs_dead_total{queue="realtime"}[15m]) > 0 or (realty_jobs_dead_total{queue="realtime"} unless realty_jobs_dead_total{queue="realtime"} offset 15m)` | §4.5 |
 | `DeadJobs` | ticket | `max(realty_queue_dead_jobs_24h) by (kind) > 0` | §4.5 |
-| `SweeperLate` | page | `realty_alerts_total{code="SWEEPER_LATE"}` increased, or `histogram_quantile(0.99, rate(realty_sweeper_lateness_seconds_bucket[10m])) > 60` | §4.6 |
+| `SweeperLate` | page | `increase(realty_alerts_total{code="SWEEPER_LATE"}[10m]) > 0 or (realty_alerts_total{code="SWEEPER_LATE"} unless realty_alerts_total{code="SWEEPER_LATE"} offset 10m)`, or `histogram_quantile(0.99, rate(realty_sweeper_lateness_seconds_bucket[10m])) > 60` | §4.6 |
 | `OwnershipTimersLate` | page | `max(realty_timer_lateness_seconds{quantile="1"}) > 300` or `sum(realty_timer_late_window) / clamp_min(sum(realty_timer_fired_window), 1) > 0.01` for 15 m | §4.6 |
 | `FirstResponseSlow` | page | `max(realty_first_response_seconds{quantile="0.95"}) > 60` for 15 m, or `max(realty_first_response_inquiries_window{result="none"}) > 3` for 15 m | §4.7 |
 | `MessagesStuck` | page | `max(realty_messages_stuck_oldest_seconds{status="dispatch_unknown"}) > 900` or `max(realty_messages_stuck_oldest_seconds{status="dispatching"}) > 1800` | §4.8 |
-| `ProviderFailures` | page | with `d = max by (channel, result, reason) (realty_dispatch_results_window)`: `sum by (channel) (d{result="failed"}) / clamp_min(sum by (channel) (d{result=~"sent|failed"}), 20) > 0.05` for 15 m (the floor of 20 keeps one failure on a quiet team from paging) | §4.9 |
-| `WebhooksFailing` | page | `sum(rate(realty_http_requests_total{route=~"/api/webhooks/.*",status_class=~"4xx|5xx"}[10m])) / sum(rate(realty_http_requests_total{route=~"/api/webhooks/.*"}[10m])) > 0.05` for 10 m | §4.10 |
-| `OwnershipOrConsentDrift` | page | `increase(realty_alerts_total{code=~"OWNERSHIP_DRIFT|CONSENT_DRIFT"}[1h]) > 0` | §4.11 |
+| `ProviderFailures` | page | with `d = max by (channel, result, reason) (realty_dispatch_results_window)`: `sum by (channel) (d{result="failed"}) / clamp_min(sum by (channel) (d{result=~"sent\|failed"}), 20) > 0.05` for 15 m (the floor of 20 keeps one failure on a quiet team from paging) | §4.9 |
+| `WebhooksFailing` | page | `sum(rate(realty_http_requests_total{route=~"/api/webhooks/.*",status_class=~"4xx\|5xx"}[10m])) / sum(rate(realty_http_requests_total{route=~"/api/webhooks/.*"}[10m])) > 0.05` for 10 m | §4.10 |
+| `OwnershipOrConsentDrift` | page | `increase(realty_alerts_total{code=~"OWNERSHIP_DRIFT\|CONSENT_DRIFT"}[1h]) > 0 or (realty_alerts_total{code=~"OWNERSHIP_DRIFT\|CONSENT_DRIFT"} unless realty_alerts_total{code=~"OWNERSHIP_DRIFT\|CONSENT_DRIFT"} offset 1h)` | §4.11 |
 | `DbPoolSaturated` | ticket (page if 15 m) | `max(realty_db_pool_connections{state="waiting"}) > 0` for 5 m | §4.12 |
 | `OpsCollectorBlind` | ticket | `max(realty_ops_collect_ok) == 0` for 10 m, or `max(realty_ops_collect_age_seconds) > 300` | §4.13 |
 | `SyntheticCheckFailing` | page | two consecutive failures of `pnpm ops:synthetic` (§6) | §4.14 |
@@ -261,7 +270,7 @@ outside the deployment every 5 minutes. It talks to the public API like a browse
 line per step: `ready` (must be `ready`, not `degraded`), `login` (and `mfa` if the user has it),
 `feed`, `send` (one text to the test contact), `accepted` (the message reached `sent` or `delivered`
 within `SYNTHETIC_SEND_TIMEOUT_MS`, default 60 s), `logout`. Exit 0 = healthy, 1 = a step failed (the
-last line has the reason), 2 = the check is misconfigured.
+last line has the reason; on failure that summary line goes to stderr, the steps to stdout, so capture both), 2 = the check is misconfigured.
 
 | Variable | Meaning |
 |---|---|
