@@ -23,7 +23,7 @@ real vendors (DEPLOY §5–§7), a managed or separate Postgres on its own host 
 | Docker Engine and the compose plugin | `docker compose version` must work. Rehearsed with Docker 29.9. |
 | `git`, `openssl`, `curl` | on the VM |
 | A DNS name for `<staging-host>` | owner's choice; point it at the VM (or at your TLS proxy) |
-| TLS on `https://<staging-host>` | **required**, not optional: the session cookie is `__Host-sid` with `Secure`, so a browser over plain http cannot sign in. Terminate TLS in front of the `web` container (port 8080 inside, `WEB_PORT` on the VM) with whatever proxy you choose, and add HSTS there. |
+| TLS on `https://<staging-host>` | **required**, not optional: the session cookie is `__Host-sid` with `Secure`, so a browser over plain http cannot sign in. Terminate TLS in front of the `web` container (port 8080 inside, `WEB_PORT` on the VM) with whatever proxy you choose, and add HSTS there. The proxy must send the client's address in `X-Forwarded-For` (most do by default): nginx believes it only from private addresses such as the Docker host's (`deploy/real-ip.conf`, DEPLOY §1 "The client's address"), and without it every visitor shares one rate-limit bucket. |
 | Your secret manager | owner's choice. It holds the filled env file (§3), above all `KEK_BASE64`. |
 
 ## 2. Get the code and build the images

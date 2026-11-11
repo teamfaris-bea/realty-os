@@ -4,6 +4,7 @@
 // SHARED REGISTRATION FILE (CONVENTIONS §2): api/platform owns it. A module that needs a new setting
 // adds one field to `ConfigSchema` + one line in `loadConfig` and the matching `.env.example` key.
 import { createHmac } from 'node:crypto';
+import { isIP } from 'node:net';
 import { z } from 'zod';
 
 const base64Key = (name: string) =>
@@ -25,6 +26,41 @@ const bool = z
   .transform((v) => v === 'true' || v === '1');
 
 const providerKind = z.enum(['fake', 'real']).default('fake');
+
+/** proxy-addr's names for whole address ranges (Fastify compiles trustProxy with it) */
+const TRUST_RANGES = new Set(['loopback', 'linklocal', 'uniquelocal']);
+
+function addressOrCidr(v: string): boolean {
+  const [addr = '', bits, ...rest] = v.split('/');
+  const kind = isIP(addr);
+  if (kind === 0 || rest.length > 0) return false;
+  if (bits === undefined) return true;
+  if (!/^\d{1,3}$/.test(bits)) return false;
+  const n = Number(bits);
+  // a /0 range trusts every address, exactly like `true`
+  return n >= 1 && n <= (kind === 4 ? 32 : 128);
+}
+
+/**
+ * TRUST_PROXY (DEPLOY §4): the peers whose X-Forwarded-For the API believes, as a comma-separated list of addresses,
+ * CIDRs and the names loopback / linklocal / uniquelocal. The first address, from the right, that is not one of them
+ * is the client (req.ip): the key of every per-IP rate limit (the public chat routes' E137 limits, the global limiter,
+ * signup / reset / invite) and the audit IP. Empty or false: nobody is trusted (the socket address is the client).
+ * `true` is refused: Fastify then trusts EVERY hop, so the left-most entry, which the client writes itself, would be
+ * req.ip and one host could pick a fresh IP per request (finding chat-xff-ratelimit-bypass).
+ */
+export function parseTrustProxy(raw: string | undefined): { ok: true; value: false | string } | { ok: false; message: string } {
+  const s = (raw ?? '').trim();
+  if (s === '' || s === 'false' || s === '0') return { ok: true, value: false };
+  if (s === 'true' || s === '1') {
+    return { ok: false, message: "TRUST_PROXY=true would trust every hop, so a client could choose its own IP with X-Forwarded-For: set it to the proxies that connect to the API (uniquelocal for the compose stack's web container)" };
+  }
+  const entries = s.split(',').map((e) => e.trim()).filter((e) => e !== '');
+  if (entries.length === 0 || entries.some((e) => !TRUST_RANGES.has(e) && !addressOrCidr(e))) {
+    return { ok: false, message: 'TRUST_PROXY must list IP addresses or CIDRs (no /0), or loopback, linklocal, uniquelocal' };
+  }
+  return { ok: true, value: [...new Set(entries)].join(',') };
+}
 /** an SNS topic ARN (aws, aws-cn, aws-us-gov partitions) */
 const SNS_TOPIC_ARN = /^arn:aws(-cn|-us-gov)?:sns:[a-z0-9-]+:\d{12}:[A-Za-z0-9_-]{1,256}$/;
 
@@ -80,8 +116,11 @@ export const ConfigSchema = z.object({
   publicBaseUrl: z.url(),
   /** Secure cookie: `__Host-sid` with Secure; false only for plain-http local dev (`sid`). */
   cookieSecure: z.boolean(),
-  /** Trust X-Forwarded-For from the edge proxy (production behind a load balancer only). */
-  trustProxy: z.boolean(),
+  /**
+   * The proxies whose X-Forwarded-For is believed (TRUST_PROXY; see `parseTrustProxy`): false (none, the socket address
+   * is the client) or a comma-separated list Fastify compiles (addresses, CIDRs, loopback / linklocal / uniquelocal).
+   */
+  trustProxy: z.union([z.literal(false), z.string().min(1)]),
   /** 32-byte key-encryption key (dev); production replaces it with a KMS-backed KEK. */
   kek: z.instanceof(Uint8Array),
   kekRef: z.string().min(1),
@@ -356,6 +395,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   const fub = fubSettings(env, missing, invalid);
   const mls = mlsSettings(env, invalid);
+  const trust = parseTrustProxy(env.TRUST_PROXY);
+  if (!trust.ok) invalid.push(trust.message);
 
   if (prod) {
     // the name stamped on every key the KEK wraps (tenant_keys.kek_ref); rotation (DEPLOY §9) needs a real one
@@ -396,7 +437,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     webOrigins: origins,
     publicBaseUrl: env.PUBLIC_BASE_URL ?? `http://localhost:${port}`,
     cookieSecure: env.SESSION_COOKIE_SECURE === undefined ? prod : bool.parse(env.SESSION_COOKIE_SECURE),
-    trustProxy: bool.parse(env.TRUST_PROXY),
+    trustProxy: trust.ok ? trust.value : false,
     kek: kekRaw.data,
     kekRef: env.KEK_REF ?? 'local-kek:v1',
     sessionSecret: secret,

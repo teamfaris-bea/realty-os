@@ -203,3 +203,26 @@ describe('Amazon SES and Mailgun event formats (EMAIL_INBOUND_FORMATS=ses,mailgu
     expect(loadConfig(base({ EMAIL_PROVIDER: 'smtp', SMTP_HOST: 'localhost', ACCOUNT_EMAIL_FROM: 'a@b.test', SMTP_VENDOR: 'ses' })).smtp?.vendor).toBe('ses');
   });
 });
+
+describe('TRUST_PROXY: the proxies whose X-Forwarded-For the API believes (finding chat-xff-ratelimit-bypass)', () => {
+  it('names the proxies that connect to the API (addresses, CIDRs, loopback / linklocal / uniquelocal); empty or false trusts none', () => {
+    expect(loadConfig(prodEnv({ TRUST_PROXY: 'uniquelocal' })).trustProxy).toBe('uniquelocal');
+    expect(loadConfig(prodEnv({ TRUST_PROXY: ' 10.0.0.0/8 , 172.18.0.4,fd00::/8, loopback ' })).trustProxy).toBe('10.0.0.0/8,172.18.0.4,fd00::/8,loopback');
+    for (const v of [undefined, '', 'false', '0']) expect(loadConfig(prodEnv({ TRUST_PROXY: v })).trustProxy).toBe(false);
+  });
+
+  it('refuses true (Fastify then trusts every hop, so the left-most X-Forwarded-For entry, which the client writes, becomes the rate-limit IP), a /0 range, and anything that is not an address, naming the key only', () => {
+    for (const v of ['true', '1']) expect(() => loadConfig(prodEnv({ TRUST_PROXY: v }))).toThrow(/TRUST_PROXY=true would trust every hop/);
+    for (const v of ['0.0.0.0/0', '::/0', '10.0.0.0/33', 'proxy.internal', '10.0.0.0/8,not-an-ip', '10.0.0.0/', '300.1.1.1']) {
+      let msg = '';
+      try {
+        loadConfig(prodEnv({ TRUST_PROXY: v }));
+      } catch (e) {
+        expect(e, v).toBeInstanceOf(ConfigError);
+        msg = (e as Error).message;
+      }
+      expect(msg, v).toMatch(/TRUST_PROXY must list/);
+      if (v.includes('internal') || v.includes('not-an-ip')) expect(msg, v).not.toContain(v);
+    }
+  });
+});

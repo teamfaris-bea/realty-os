@@ -9,7 +9,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type AssistantWorld, assistantWorld, call } from '../assistant/testing.js';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { chatSpamReason, claimOf, originAllowed, parseCursor } from './webchat.js';
-import { acceptLead, chatMessage, chatPoll, chatSource, codeOf, createWidget, openChat, SITE, startChat, visitorIp } from './testing.js';
+import { freshReauth } from '../admin/testing.js';
+import { acceptLead, chatConfig, chatMessage, chatPoll, chatSource, codeOf, createWidget, openChat, SITE, startChat, visitorIp } from './testing.js';
 
 let h: ApiHarness;
 let a: AssistantWorld;
@@ -102,6 +103,22 @@ describe('credential-less CORS on the public chat routes only', () => {
     expect(pre.headers['access-control-allow-credentials']).toBeUndefined();
     const staff = await h.app.inject({ method: 'OPTIONS', url: '/api/admin/web-chat/widgets', headers: { origin: 'https://random.example', 'access-control-request-method': 'POST' } });
     expect(staff.headers['access-control-allow-origin']).not.toBe('https://random.example');
+  });
+
+  it('as DEPLOY §2 and SECURITY §2.1 state it: the allowed websites are enforced where the key is resolved; an open chat\'s session routes rely on its token alone, so removing its website or rotating the key stops new chats there, not that one', async () => {
+    const src = await chatSource(h, a.owner, a.tenantId, 'Website chat (origins)');
+    const w = await createWidget(h, a.owner, src.sourceId, [SITE]);
+    const c = await openChat(h, w.key, src.disclosureId, { name: 'Ora Origin' });
+    await freshReauth(h, a.owner);
+    expect((await call(a.owner, 'PUT', `/admin/web-chat/widgets/${w.id}/origins`, { allowedOrigins: ['https://other-site.test'] })).status).toBe(200);
+    expect((await chatConfig(h, w.key)).statusCode).toBe(404);
+    expect((await startChat(h, w.key, { name: 'New Nora', phone: '+14155550124', message: 'Hello', disclosureId: src.disclosureId })).statusCode).toBe(404);
+    expect((await chatMessage(h, c.token, { message: 'still here', clientMessageId: randomUUID() })).statusCode).toBe(200);
+    await freshReauth(h, a.owner);
+    const rotated = await call<{ widgetKey: string }>(a.owner, 'POST', `/admin/web-chat/widgets/${w.id}/rotate`);
+    expect(rotated.status).toBe(200);
+    expect((await chatConfig(h, w.key, { origin: 'https://other-site.test' })).statusCode).toBe(404);
+    expect((await chatPoll(h, c.token, undefined, { origin: 'https://evil.test' })).statusCode).toBe(200);
   });
 });
 

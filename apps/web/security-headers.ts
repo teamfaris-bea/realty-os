@@ -57,7 +57,8 @@ export const webSecurityHeaders: Readonly<Record<string, string>> = {
  * brokerages' own websites with a plain <script src>: a cross-origin no-cors request, which
  * Cross-Origin-Resource-Policy: same-origin would block. That one path gets the same headers with CORP
  * cross-origin; every other response stays same-origin. (The widget's calls to the API are CORS requests that the
- * API answers itself, per route, limited to each widget's allowed websites.)
+ * API answers itself, for any website and without credentials; the widget's allowed websites are enforced where its
+ * key is resolved, the config and start routes, while an open chat's session routes rely on its token alone.)
  */
 export const widgetScriptHeaders: Readonly<Record<string, string>> = {
   ...webSecurityHeaders,

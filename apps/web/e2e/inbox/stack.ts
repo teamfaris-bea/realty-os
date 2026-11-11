@@ -11,9 +11,11 @@
 //   3. a Vite dev server for apps/web whose /api proxy points at that API. It is reached on two origins: the staff
 //      app at http://localhost:<port> and a stand-in brokerage website at http://127.0.0.1:<port> (the widget's
 //      allowed website), so every call the widget makes is a real cross-origin request answered by the API's own
-//      CORS (Vite adds none: server.cors is off). For /api/public/chat/ the proxy names the visitor's IP in
-//      X-Forwarded-For, as nginx does in production (the API trusts it here), so each test can have its own
-//      visitor IP and rate-limit bucket (visitor()).
+//      CORS (Vite adds none: server.cors is off). For /api/public/chat/ the proxy states the visitor's IP as the
+//      only X-Forwarded-For entry, replacing anything the browser sent, exactly as nginx does in production
+//      (deploy/nginx.conf: proxy_set_header X-Forwarded-For $remote_addr after real-ip.conf); the API believes it only
+//      because the proxy is a peer TRUST_PROXY lists (loopback here, the web container in production), so each test
+//      can have its own visitor IP and rate-limit bucket (visitor()).
 import { type ChildProcess, spawn } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,8 +38,9 @@ import { acceptLead } from './src/channels/testing.ts';
 const origin = process.env.E2E_WEB_ORIGIN;
 const site = process.env.E2E_SITE_ORIGIN;
 const NOTICE = process.env.E2E_CHAT_NOTICE;
-// trustProxy: the stack's proxy names the website visitor's IP, as nginx does in production (TRUST_PROXY=true)
-const h = await createApiHarness({ config: { webOrigins: [origin, TEST_ORIGIN], trustProxy: true } });
+// trustProxy: the stack's proxy (Vite, on loopback) states the website visitor's IP, as nginx does in production,
+// where TRUST_PROXY names the web container (never true: a client could then choose its own IP)
+const h = await createApiHarness({ config: { webOrigins: [origin, TEST_ORIGIN], trustProxy: 'loopback' } });
 await h.app.listen({ port: 0, host: '127.0.0.1' });
 const apiPort = h.app.server.address().port;
 let w = null;
@@ -265,8 +268,10 @@ export async function startInboxStack(): Promise<InboxStack> {
           target: `http://127.0.0.1:${ports.apiPort}`,
           changeOrigin: false,
           configure: (proxy) => {
+            // replace, never append (what nginx does): the visitor's own X-Forwarded-For never reaches the API
             proxy.on('proxyReq', (proxyReq, req) => {
               if ((req.url ?? '').startsWith('/api/public/chat/')) proxyReq.setHeader('x-forwarded-for', visitorIp);
+              else proxyReq.removeHeader('x-forwarded-for');
             });
           },
         },

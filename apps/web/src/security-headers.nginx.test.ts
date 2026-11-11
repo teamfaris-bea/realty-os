@@ -185,10 +185,11 @@ const includeFromImage = (path: string) => {
 describe('deploy/nginx.conf sends exactly webSecurityHeaders (SECURITY §2.1)', () => {
   const conf = parse(read('deploy/nginx.conf'), includeFromImage);
 
-  it('the Dockerfile web stage installs deploy/nginx.conf and the generated header snippets', () => {
+  it('the Dockerfile web stage installs deploy/nginx.conf, the generated header snippets and the client-address snippet', () => {
     expect(files.get('/etc/nginx/templates/default.conf.template')).toBe('deploy/nginx.conf');
     expect([...files.values()]).toContain('deploy/security-headers.conf');
     expect([...files.values()]).toContain('deploy/widget-security-headers.conf');
+    expect(files.get('/etc/nginx/snippets/real-ip.conf')).toBe('deploy/real-ip.conf');
   });
 
   it('deploy/security-headers.conf and deploy/widget-security-headers.conf are exactly the text generated from security-headers.ts (node deploy/render-security-headers.mjs)', () => {
@@ -259,6 +260,97 @@ describe('deploy/nginx.conf sends exactly webSecurityHeaders (SECURITY §2.1)', 
     expect(headerProblems(leaky)).toEqual(expect.arrayContaining(['server-level add_header (would reach /api/)', expect.stringMatching(/^\/api\/: proxied location adds Content-Security-Policy/)]));
     const noAlways = parse(`server { location / { include x; } }`, () => snippet.replace(/ always;$/gm, ';'));
     expect(headerProblems(noAlways)).toContain('/: content-security-policy lacks "always" (error responses would miss it)');
+  });
+});
+
+/** Directives of a block and of every block nested in it. */
+const flatten = (b: Directive[]): Directive[] => b.flatMap((d) => [d, ...flatten(d.block ?? [])]);
+
+/** An IPv4 or IPv6 CIDR (or single address) lies inside the private, loopback or link-local ranges. */
+function privateRange(v: string): boolean {
+  const [addr = '', bits] = v.split('/');
+  const n = bits === undefined ? null : Number(bits);
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(addr)) {
+    const [a = 0, b = 0] = addr.split('.').map(Number);
+    const min = a === 10 ? 8 : a === 172 && b >= 16 && b <= 31 ? 12 : a === 192 && b === 168 ? 16 : a === 127 ? 8 : a === 169 && b === 254 ? 16 : null;
+    return min !== null && (n === null || n >= min);
+  }
+  const lower = addr.toLowerCase();
+  if (lower === '::1') return n === null || n === 128;
+  if (/^f[cd][0-9a-f]{0,2}:/.test(lower)) return n === null || n >= 7;
+  if (/^fe[89ab][0-9a-f]?:/.test(lower)) return n === null || n >= 10;
+  return false;
+}
+
+describe('the client address the API counts (finding chat-xff-ratelimit-bypass)', () => {
+  const conf = parse(read('deploy/nginx.conf'), includeFromImage);
+  const server = conf.find((d) => d.name === 'server')!;
+  const all = flatten(conf);
+
+  it('nginx states the client in X-Forwarded-For, replacing whatever the client sent: it never appends to a client-written header ($proxy_add_x_forwarded_for)', () => {
+    const api = server.block!.find((d) => d.name === 'location' && d.args.join(' ') === '/api/')!.block!;
+    const xff = flatten(api).filter((d) => d.name === 'proxy_set_header' && /^x-forwarded-for$/i.test(d.args[0] ?? ''));
+    expect(xff.map((d) => d.args[1])).toEqual(['$remote_addr']);
+    expect(JSON.stringify(all)).not.toContain('proxy_add_x_forwarded_for');
+  });
+
+  it('behind the TLS load balancer the client is the right-most address no trusted hop added (real_ip, recursive), and only private-network hops are trusted: never every address', () => {
+    expect(all.filter((d) => d.name === 'real_ip_header').map((d) => d.args)).toEqual([['X-Forwarded-For']]);
+    expect(all.filter((d) => d.name === 'real_ip_recursive').map((d) => d.args)).toEqual([['on']]);
+    const from = all.filter((d) => d.name === 'set_real_ip_from').map((d) => d.args[0]!);
+    expect(from.length).toBeGreaterThan(0);
+    for (const r of from) expect(privateRange(r), r).toBe(true);
+    // the checker refuses ranges that would trust the internet
+    for (const r of ['0.0.0.0/0', '::/0', '8.0.0.0/8', '172.0.0.0/8', 'unix:']) expect(privateRange(r), r).toBe(false);
+  });
+});
+
+/** The map that names what the access log writes for a path (`map $uri $log_uri { ... }`), applied like nginx does. */
+function logUri(conf: Directive[], uri: string): string {
+  const map = conf.find((d) => d.name === 'map' && d.args[0] === '$uri' && d.args[1] === '$log_uri');
+  if (!map?.block) throw new Error('no map $uri $log_uri');
+  for (const d of map.block) {
+    if (d.name === 'default') continue;
+    if (!d.name.startsWith('~')) throw new Error(`map entry ${d.name} is not a regular expression`);
+    const m = new RegExp(d.name.slice(1)).exec(uri);
+    if (!m) continue;
+    return (d.args[0] ?? '').replace(/\$\{([a-z_]+)\}|\$([a-z_]+)/g, (_, a: string | undefined, b: string | undefined) => m.groups?.[(a ?? b)!] ?? '');
+  }
+  const def = map.block.find((d) => d.name === 'default')?.args[0];
+  if (def !== '$uri') throw new Error('the map must default to $uri');
+  return uri;
+}
+
+describe('the access log carries no capability (finding chat-token-in-access-log)', () => {
+  const conf = parse(read('deploy/nginx.conf'), includeFromImage);
+  const server = conf.find((d) => d.name === 'server')!;
+  // Capability URLs: a secret in the PATH is the request's only authority (module 22's chat session token, polled
+  // every few seconds; the RFC 8058 one-click unsubscribe ref; a lead source's intake token).
+  const SECRET = 'TF6MynTkfd1czegmGiWVTVMYLhFWd6UJwMOXyzDEWxM';
+  const capability = [
+    [`/api/public/chat/session/${SECRET}/poll`, '/api/public/chat/session/-/poll'],
+    [`/api/public/chat/session/${SECRET}/messages`, '/api/public/chat/session/-/messages'],
+    [`/api/public/chat/session/${SECRET}`, '/api/public/chat/session/-'],
+    [`/api/email/unsubscribe/${SECRET}`, '/api/email/unsubscribe/-'],
+    [`/api/intake/${SECRET}`, '/api/intake/-'],
+  ] as const;
+
+  it('every access_log writes the format whose path is $log_uri, never the raw path or the query string', () => {
+    const logs = flatten(conf).filter((d) => d.name === 'access_log' && d.args[0] !== 'off');
+    expect(logs.length).toBeGreaterThan(0);
+    for (const l of logs) expect(l.args[1]).toBe('combined_noquery');
+    const format = conf.find((d) => d.name === 'log_format' && d.args[0] === 'combined_noquery')!.args.slice(1).join(' ');
+    expect(format).toContain('$log_uri');
+    expect(format).not.toMatch(/\$(uri|request_uri|request|args|query_string|arg_[a-z_]+)\b/);
+    expect(server.block!.some((d) => d.name === 'access_log')).toBe(true);
+  });
+
+  it('a chat session token, an unsubscribe ref and an intake token are logged as "-"; other paths as they are', () => {
+    for (const [uri, logged] of capability) {
+      expect(logUri(conf, uri), uri).toBe(logged);
+      expect(logUri(conf, uri)).not.toContain(SECRET);
+    }
+    for (const uri of ['/', '/assets/app.3f2a.js', '/api/contacts/018f0000-0000-7000-8000-000000000001/thread', '/api/public/chat/wk_0123456789abcdef0123456789abcdef01234567', '/widget/chat.js']) expect(logUri(conf, uri), uri).toBe(uri);
   });
 });
 
