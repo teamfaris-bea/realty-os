@@ -1,16 +1,16 @@
 // Browser-side helpers shared by the lead-journey specs: sign-in (with the Owner/Admin TOTP step),
 // counted taps (a real touch tap on the phone project, a click on desktop), the toast, polling the
 // fake providers / the database until a condition holds (no fixed sleeps), and key-step screenshots.
-// Screenshots go to $JOURNEY_SHOTS_DIR (default apps/web/test-results/journey-shots, gitignored),
+// Screenshots go to $JOURNEY_SHOTS_DIR (default <tmpdir>/realty-journey-shots: not under test-results,
+// which Playwright empties at the start of every run),
 // named <journey>-<step>-<project>.png, at deviceScaleFactor 1 (they are for review, not for people).
 import { mkdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
 import { type Locator, type Page, type TestInfo, expect } from 'playwright/test';
 import type { JourneyStack, Sends } from './stack.js';
 
-const here = dirname(fileURLToPath(import.meta.url));
-export const SHOTS_DIR = process.env.JOURNEY_SHOTS_DIR ?? resolve(here, '../../test-results/journey-shots');
+export const SHOTS_DIR = process.env.JOURNEY_SHOTS_DIR ?? resolve(tmpdir(), 'realty-journey-shots');
 
 export const isPhone = (page: Page) => (page.viewportSize()?.width ?? 1440) < 768;
 
