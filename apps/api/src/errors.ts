@@ -112,6 +112,7 @@ export const ERROR_STATUS = {
   DRAFT_INVALIDATED: 409, // R-AST-7: the lead changed owner / ownership period since this was drafted
   ACTION_NOT_PENDING: 409, // the assistant card was already handled (details.status)
   ASSISTANT_UNAVAILABLE: 409, // the assistant produced nothing (AI switched off for the team, or no usable output)
+  ASSISTANT_OUTPUT_BLOCKED: 409, // lane prompt-injection: the assistant's suggested reply was discarded for safety (e.g. wiring details); nothing was sent
   PLAYBOOK_INVALID: 422, // core.validatePlaybook issues (details.issues) block saving or approval
   PLAYBOOK_HASH_MISMATCH: 409, // the approval names content that is not this version's exact content
   PLAYBOOK_VERSION_NOT_DRAFT: 409, // only a draft can be approved (frozen after it leaves draft)

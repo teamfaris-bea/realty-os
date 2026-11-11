@@ -11,7 +11,7 @@ import type { SystemActor } from '@realty/core/foundation';
 import { withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import * as A from './repos/actions.js';
-import { runModel } from './runs.js';
+import { runModel, screenCodes } from './runs.js';
 import type { AssistantDeps } from './types.js';
 
 export type EnrichResult = { kind: 'enriched'; claims: number; draft: boolean; category: string | null } | { kind: 'skipped'; reason: string };
@@ -44,10 +44,21 @@ export async function enrichHandback(actor: SystemActor, actionId: string, deps:
     const cur = await A.actionById(tx, actionId, { lock: true });
     if (!cur || cur.status !== 'proposed' || cur.payload.enriched === true) return null;
     let category: string | null = null;
+    if (!run.draft && run.screen?.blocked) {
+      // the suggested reply was discarded (e.g. wiring details): say so on the handback, offer nothing to send
+      await sql`UPDATE assistant_actions SET explanation = left(explanation || ' ' || ${run.screen.explanation ?? 'The suggested reply was discarded.'}, 300)
+                 WHERE tenant_id = app.tenant_id() AND id = ${actionId}`.execute(tx);
+    }
     if (run.draft) {
       const inbound = inboundId ? (await sql<{ body: string }>`SELECT body FROM messages WHERE tenant_id = app.tenant_id() AND id = ${inboundId}`.execute(tx)).rows[0]?.body ?? null : null;
       category = draftCategory({ inboundText: inbound, draftText: run.draft.body });
-      await A.mergePayload(tx, actionId, { draft: { channel: run.draft.channel, body: run.draft.body, ...(run.draft.subject ? { subject: run.draft.subject } : {}) }, draftCategory: category, draftAiRunId: run.aiRunId });
+      const flagged = run.screen?.flagged === true;
+      await A.mergePayload(tx, actionId, { draft: { channel: run.draft.channel, body: run.draft.body, ...(run.draft.subject ? { subject: run.draft.subject } : {}) }, draftCategory: category, draftAiRunId: run.aiRunId, ...(flagged ? { draftScreen: screenCodes(run.screen) } : {}) });
+      if (flagged) {
+        // the server's sentence, never the model's (lane prompt-injection)
+        await sql`UPDATE assistant_actions SET explanation = left(explanation || ' ' || ${run.screen?.explanation ?? 'Check the suggested reply before sending.'}, 300)
+                   WHERE tenant_id = app.tenant_id() AND id = ${actionId}`.execute(tx);
+      }
       if (category === 'money' || category === 'contract') {
         await sql`UPDATE assistant_actions SET explanation = left(explanation || ${category === 'money' ? ' Their message touches price or money: the reply waits for your tap.' : ' Their message touches a contract: the reply waits for your tap.'}, 300)
                    WHERE tenant_id = app.tenant_id() AND id = ${actionId}`.execute(tx);
