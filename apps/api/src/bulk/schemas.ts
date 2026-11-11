@@ -11,9 +11,13 @@ export const Selection = z.union([
   z.strictObject({ definition: z.record(z.string(), z.unknown()) }),
 ]);
 
+/** The list people picked by id came from (a saved list, or an unsaved definition): for a send or a plan the server reads its audience rule itself (R-PAR-8). */
+export const AudienceSource = z.union([z.strictObject({ listId: z.uuid() }), z.strictObject({ definition: z.record(z.string(), z.unknown()) })]);
+
 export const CreateBody = z.strictObject({
   kind: Kind,
   selection: Selection,
+  audienceSource: AudienceSource.optional(),
   audienceTagIds: z.array(z.uuid()).max(20).optional(),
   tagId: z.uuid().optional(),
   stage: z.string().max(20).optional(),

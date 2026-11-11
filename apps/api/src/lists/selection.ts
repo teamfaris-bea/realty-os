@@ -46,3 +46,15 @@ export async function resolveSelection(tx: Tx, sel: Selection, opts: SelectionOp
   if (ids.length > cap) throw new AppError('SELECTION_TOO_LARGE', { cap });
   return ids as ContactId[];
 }
+
+/**
+ * R-PAR-8: whether a saved list or an unsaved definition is built on a protected-proxy tag, decided from
+ * the same plan resolveSelection reads, under the caller's own RLS. For people picked one by one from
+ * that list: they are still its audience (module 63's `audienceSource`). A list the caller cannot open
+ * is NOT_FOUND. Runs no list query.
+ */
+export async function selectionAudience(tx: Tx, source: { listId: string } | { definition: unknown }): Promise<{ audienceProtected: boolean; protectedTagIds: string[] }> {
+  const src = await resolveSource(tx, 'listId' in source ? { listId: source.listId } : { definition: source.definition });
+  const plan = await planFor(tx, src.definition, { sort: src.sort });
+  return { audienceProtected: plan.audienceProtected, protectedTagIds: plan.references.protectedTagIds };
+}

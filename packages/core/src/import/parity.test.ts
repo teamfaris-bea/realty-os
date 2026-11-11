@@ -2,7 +2,8 @@
 // (R-PAR-46, R-PAR-6, R-PAR-8, R-PAR-17, R-PAR-18, E190, E191).
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { validateFieldValue } from '../parity/fields/index.js';
+import { check, DEFAULT_FAIR_HOUSING_PACK, hasAnyMatch } from '../fairhousing/index.js';
+import { validateFieldValue, validateNewFieldDef } from '../parity/fields/index.js';
 import { classifyProtected as parityClassifyProtected, normalizeTagName as parityNormalizeTagName } from '../parity/tags/index.js';
 import {
   DEFAULT_PARITY_OPTIONS,
@@ -117,6 +118,59 @@ describe('R-PAR-6 R-PAR-8 tags', () => {
       }),
     );
     for (const n of ['VA buyer', 'Seniors', 'Buyer', 'Section 8', 'FUB stage: Hot Prospect']) expect(classifyProtected(n)).toBe(parityClassifyProtected(n));
+  });
+
+  // The import's interim rule at 8294de5, deleted when module 59's lexicon replaced it, kept as the oracle:
+  // the one shared rule must flag every spelling of its terms that the deleted rule flagged (plural,
+  // camelCase, acronym, joined, a FUB field key), so replacing it dropped no protection. VERIFY WITH COUNSEL (C-PAR-3).
+  const DELETED_PROTECTED_WORDS = /\b(military|veteran|va|va\s*loan|pcs|active\s*duty|source\s*of\s*income|section\s*8|voucher|familial|children|kids|pregnan|single\s*(mom|dad|parent)|disabilit|disabled|handicap|wheelchair|religio|church|christian|catholic|jewish|muslim|mosque|synagogue|national\s*origin|ethnic|race|racial|nationality|immigra|citizenship|hispanic|latin[oax]|asian|spanish\s*speak|sexual|gender|marital|senior|age\b)/i;
+  const deletedRule = (name: string) => DELETED_PROTECTED_WORDS.test(name.replace(/[_-]+/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2')) || hasAnyMatch(check(name, DEFAULT_FAIR_HOUSING_PACK));
+  const TERMS = ['military', 'military status', 'veteran', 'va', 'va loan', 'pcs', 'pcs move', 'pcs orders', 'active duty', 'source of income', 'section 8', 'voucher',
+    'familial status', 'children', 'kids', 'pregnant', 'pregnancy', 'single mom', 'single dad', 'single parent', 'disability', 'disabled', 'handicap', 'handicapped',
+    'wheelchair', 'religion', 'religious', 'church', 'christian', 'catholic', 'jewish', 'muslim', 'mosque', 'synagogue', 'national origin', 'ethnic', 'ethnicity',
+    'race', 'racial', 'nationality', 'immigrant', 'immigration', 'citizenship', 'hispanic', 'latino', 'latina', 'latinx', 'asian', 'spanish speaking',
+    'spanish speaker', 'sexual', 'sexual orientation', 'gender', 'gender identity', 'marital status', 'senior', 'age'];
+  const ACRONYMS = new Set(['va', 'pcs']);
+  const cap = (w: string) => w.charAt(0).toUpperCase() + w.slice(1);
+  const plural = (w: string) => (/(s|x|z|ch|sh)$/.test(w) ? `${w}es` : /[^aeiou]y$/.test(w) ? `${w.slice(0, -1)}ies` : `${w}s`);
+  /** A term as people and FUB write it: as is, capitalised, upper case, snake/kebab, camelCase, acronyms, joined, in a compound, a field key; and plural. */
+  const spellings = (term: string): string[] => {
+    const words = term.split(' ');
+    const out = new Set<string>();
+    for (const ws of [words, [...words.slice(0, -1), plural(words.at(-1)!)]]) {
+      const camel = ws.map(cap).join('');
+      const acro = ws.map((w) => (ACRONYMS.has(w) ? w.toUpperCase() : cap(w))).join('');
+      const acroLow = ws.map((w, i) => (ACRONYMS.has(w) ? w.toUpperCase() : i === 0 ? cap(w) : w)).join('');
+      const joined = ws.join('');
+      for (const s of [ws.join(' '), cap(ws.join(' ')), ws.map(cap).join(' '), ws.join(' ').toUpperCase(), ws.join('_'), ws.join('-'), camel, acro, acroLow, joined, cap(joined), joined.toUpperCase(), `Has${camel}`, `${camel}Buyer`, `${acro}Buyer`, `${camel}Status`, `custom${camel}`, `custom${acro}`]) out.add(s);
+    }
+    return [...out];
+  };
+  const CORPUS = [...new Set(TERMS.flatMap(spellings))];
+
+  it('R-PAR-8 C-PAR-3: every spelling of the deleted import rule\'s terms that it flagged is still protected (no protection dropped)', () => {
+    const oracleProtected = CORPUS.filter(deletedRule);
+    expect(oracleProtected.length).toBeGreaterThan(900); // the corpus is the deleted rule's own ground
+    expect(oracleProtected.filter((n) => !classifyProtected(n))).toEqual([]);
+    // a FUB custom field key: the deleted rule refused it on its key or its label's words
+    const keys = CORPUS.filter((k) => k.startsWith('custom') && (deletedRule(k) || deletedRule(fieldLabelFromKey(k))));
+    expect(keys.length).toBeGreaterThan(100);
+    expect(keys.filter((k) => !fieldKeyProtected(k))).toEqual([]);
+  });
+
+  it('R-PAR-8 R-PAR-18: the plural, camelCase and joined names the deleted rule protected are protected tags, and refused custom fields', () => {
+    const NAMES = ['Hispanics', 'Asians', 'Latinos', 'Latinas', 'Catholics', 'Christians', 'Muslims', 'Single moms', 'Single dads', 'Single parents', 'Races',
+      'SingleMom', 'Singleparent', 'HasKids', 'MaritalStatus', 'SourceOfIncome', 'SpanishSpeaking', 'Spanishspeaking', 'VALoan', 'ActiveDuty', 'Activeduty', 'PCSmove', 'PCSing'];
+    for (const n of NAMES) {
+      expect(deletedRule(n), n).toBe(true);
+      expect(classifyProtected(n), n).toBe(true);
+    }
+    for (const k of ['customSingleParents', 'customSingleMoms', 'customVALoan']) {
+      expect(fieldKeyProtected(k), k).toBe(true);
+      expect(validateNewFieldDef({ label: fieldLabelFromKey(k), fieldType: 'text' }, new Set()), k).toMatchObject({ ok: false, code: 'CUSTOM_FIELD_PROTECTED' });
+    }
+    // whole words only: the deleted rule's prefix matches were not protection ("va" in "Vacation", "race" in "Racecar")
+    for (const n of ['Vacation home', 'Racecar', 'Church St listing', 'Single family', 'Family room']) expect(classifyProtected(n), n).toBe(false);
   });
 
   it('R-PAR-6 property: an import tag name is module 59\'s normalized name (same key as tags.name_key), cut to the tag length', () => {

@@ -1,9 +1,11 @@
 // The FUB-parity lanes wired together, against the REAL API (stack.ts), on the phone (iPhone 13, 390×844)
 // and desktop (1440×900) projects. Each job runs end to end through the real interfaces, with its taps
 // counted against PARITY_PLAN §5 where §5 has a target:
-//   bulk tag 30 from a smart list: People → list → Select all → Tag → tag = 5 on a phone (4 on desktop) to
-//     module 64's count sheet with the frozen target (module 60's resolveSelection), then Confirm in it;
-//     the real runner tags all 30
+//   bulk tag 30 from a smart list: People → list → Select all → Tag → tag = 5 on a phone (4 on desktop)
+//     reaches module 64's count sheet with the frozen target (module 60's resolveSelection), and Confirm in
+//     it starts the job at 6 (5). §5's target, 5 (4) with "count sheet confirms inline", is NOT met: module
+//     64 always previews and asks for Confirm (R-PAR-33: create, preview, confirm). That is an owner
+//     decision (ARCHITECTURE, parity gaps), so the spec asserts what is built. The real runner tags all 30
 //   tags on the person's page (module 61's chips in module 58's section registry): + → tag = 2 on a phone
 //     (+ → ↵ = 1 on desktop); remove with the chip's ×
 //   the opt-out-looking tag prompt: "DNC" saves a tag, and "Record do not contact" is ONE tap through
@@ -58,7 +60,7 @@ async function signIn(page: Page, who: { email: string; password: string }) {
 
 const peopleNav = (page: Page) => page.getByRole('navigation').getByRole('link', { name: 'People', exact: true }).first();
 
-test('bulk tag 30 from a smart list through the People bulk bar and module 64\'s real sheet: phone 5 taps (desktop 4) to the count sheet, + Confirm; the runner tags all 30', async ({ page }) => {
+test('bulk tag 30 from a smart list through the People bulk bar and module 64\'s real sheet: phone 5 taps (desktop 4) to the count sheet, 6 (5) to start, one over PARITY_PLAN §5; the runner tags all 30', async ({ page }) => {
   await signIn(page, world.agent);
   const c = { taps: 0 };
   if (isPhone(page)) await tap(page, peopleNav(page), c);
@@ -75,10 +77,10 @@ test('bulk tag 30 from a smart list through the People bulk bar and module 64\'s
   await expect(sheet).toBeVisible();
   await expect(sheet.getByText('30 of 30 selected will get this tag.')).toBeVisible();
   await expect(page.getByText(/Nothing was changed/)).toHaveCount(0);
-  expect(c.taps).toBe(isPhone(page) ? 5 : 4); // PARITY_PLAN §5: bulk tag 30 = 5 on a phone, 4 on desktop
+  expect(c.taps).toBe(isPhone(page) ? 5 : 4); // to the count sheet only: nothing has started, so this is not §5's 5 / 4
   await tap(page, sheet.getByRole('button', { name: 'Tag 30 people' }), c);
   await expect(page.getByText(/Started: 30 people/)).toBeVisible();
-  expect(c.taps).toBe(isPhone(page) ? 6 : 5); // the sheet's Confirm is one more tap than §5's "count sheet confirms inline"
+  expect(c.taps).toBe(isPhone(page) ? 6 : 5); // started: one tap over §5's 5 / 4 ("count sheet confirms inline"), an owner gap
   // the bulk.run job, run by the real runner as the worker would
   const run = await stack.fixture<{ results: unknown[] }>('/run-bulk');
   expect(run.results).toEqual([{ kind: 'finished', status: 'completed' }]);

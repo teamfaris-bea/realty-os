@@ -11,11 +11,17 @@
 // card, never an assistant input) and refuses a custom field (CUSTOM_FIELD_PROTECTED: the built-in
 // self-reported attributes are the only home for such facts).
 //
+// A name is read as typed and, when it has case boundaries, as its words ("ActiveDuty", "VALoan",
+// "PCSmove"); a plural reads as its singular ("Catholics", "Single moms", "Races"); a phrase written as
+// one word is the phrase ("Activeduty", "Singlemom"). A match in any reading is a match (par-proxy/3:
+// the import's interim rule, which this lexicon replaced, flagged those spellings, so the one shared
+// rule is at least as strict as both). Whole words only: "Vacation home" and "Racecar" do not match.
+//
 // The strict default over-flags on purpose; the Owner may lift a tag's protection (R-PAR-8). A few
 // words that are part of everyday real-estate data are allowed (birthday, home anniversary).
 // **VERIFY WITH COUNSEL (C-PAR-3)**: which proxies, per state. Pure.
 import { check, classifyAttributeKey, DEFAULT_FAIR_HOUSING_PACK, type FairHousingPack, type ProtectedClass } from '../../fairhousing/index.js';
-import { foldWords } from './fold.js';
+import { caseSplits, foldWords, singularForms } from './fold.js';
 
 export interface ProtectedLexicon {
   /** The module 20 pack (its version is the `platform:fair_housing` clearance pack's). */
@@ -28,10 +34,12 @@ export interface ProtectedLexicon {
   allow: ReadonlySet<string>;
   /** Folded word sequences that describe a property or a place, not people ("family room", "Church St"); their words never count. */
   exempt: readonly (readonly string[])[];
+  /** Folded plurals that name things, not people ("blinds"): never read as their singular. */
+  notPlural: ReadonlySet<string>;
   version: string;
 }
 
-export const PARITY_PROXY_LEXICON_VERSION = 'par-proxy/2';
+export const PARITY_PROXY_LEXICON_VERSION = 'par-proxy/3';
 
 const WORDS: Record<string, ProtectedClass> = {
   // military status (VA loans, PCS moves)
@@ -60,6 +68,10 @@ const WORDS: Record<string, ProtectedClass> = {
   trans: 'gender_identity', transgender: 'gender_identity', nonbinary: 'gender_identity',
   // marital status
   divorced: 'marital_status', divorce: 'marital_status', divorcing: 'marital_status', widow: 'marital_status', widowed: 'marital_status', widower: 'marital_status',
+  // par-proxy/3: terms of the import's interim list written as one word ("Valoan", "Spanishspeaking"),
+  // which no reading splits; the phrases below match written as one word on their own ("activeduty")
+  valoan: 'military_status', pcsmove: 'military_status', pcsorders: 'military_status', sourceofincome: 'source_of_income',
+  spanishspeaking: 'national_origin', spanishspeaker: 'national_origin', maritalstatus: 'marital_status', sexualorientation: 'sexual_orientation',
 };
 
 const PHRASES: { words: string[]; class: ProtectedClass }[] = [
@@ -92,12 +104,16 @@ const EXEMPT: string[][] = [
   ...['church', 'temple', 'chapel'].flatMap((w) => STREET.map((s) => [w, s])),
 ];
 
+// Window blinds are a listing feature; "blind" itself still matches.
+const NOT_PLURAL = new Set(['blinds']);
+
 export const DEFAULT_PROTECTED_LEXICON: ProtectedLexicon = {
   pack: DEFAULT_FAIR_HOUSING_PACK,
   words: WORDS,
   phrases: PHRASES,
   allow: ALLOW,
   exempt: EXEMPT,
+  notPlural: NOT_PLURAL,
   version: PARITY_PROXY_LEXICON_VERSION,
 };
 
@@ -109,34 +125,62 @@ export interface ProtectedMatch {
   text: string;
 }
 
-function phraseAt(words: readonly string[], i: number, phrase: readonly string[]): boolean {
-  for (let k = 0; k < phrase.length; k++) if (words[i + k] !== phrase[k]) return false;
-  return true;
+const exactly = (w: string): readonly string[] => [w];
+
+/** `phrase` starts at words[i]; each word may be any of its `forms` (exemptions: the word exactly). */
+function phraseAt(words: readonly string[], i: number, phrase: readonly string[], forms: (w: string) => readonly string[] = exactly): boolean {
+  if (i + phrase.length > words.length) return false;
+  return phrase.every((p, k) => forms(words[i + k]!).includes(p));
 }
 
-/** The first protected match in a name, or null. */
-export function protectedMatch(name: string, lexicon: ProtectedLexicon = DEFAULT_PROTECTED_LEXICON): ProtectedMatch | null {
-  if (typeof name !== 'string' || name.trim() === '') return null;
-  const fh = check(name, lexicon.pack);
-  const hit = fh.hard[0] ?? fh.soft[0];
-  if (hit) return { class: hit.class, via: 'fair_housing_lexicon', text: hit.text };
-  const all = foldWords(name);
+/** One reading's folded words against the parity lists and the attribute vocabulary. */
+function wordsMatch(all: readonly string[], lexicon: ProtectedLexicon): ProtectedMatch | null {
   const covered = new Set<number>();
   for (let i = 0; i < all.length; i++) {
     for (const e of lexicon.exempt) if (phraseAt(all, i, e)) for (let k = 0; k < e.length; k++) covered.add(i + k);
   }
   const words = all.filter((_, i) => !covered.has(i));
+  // a word, then its plain singulars ("catholics", "moms")
+  const forms = (w: string): readonly string[] => (lexicon.notPlural.has(w) ? [w] : singularForms(w));
   for (let i = 0; i < words.length; i++) {
-    for (const p of lexicon.phrases) if (phraseAt(words, i, p.words)) return { class: p.class, via: 'parity_proxy_phrase', text: p.words.join(' ') };
+    for (const p of lexicon.phrases) if (phraseAt(words, i, p.words, forms)) return { class: p.class, via: 'parity_proxy_phrase', text: p.words.join(' ') };
   }
   for (const w of words) {
-    const c = lexicon.words[w];
-    if (c !== undefined) return { class: c, via: 'parity_proxy_word', text: w };
+    for (const f of forms(w)) {
+      // the lexicon's own words only ("constructor" is not one, whatever Object.prototype holds)
+      if (Object.hasOwn(lexicon.words, f)) return { class: lexicon.words[f]!, via: 'parity_proxy_word', text: f };
+      // a phrase written as one word ("activeduty", "singlemoms")
+      const joined = lexicon.phrases.find((p) => p.words.length > 1 && p.words.join('') === f);
+      if (joined) return { class: joined.class, via: 'parity_proxy_phrase', text: joined.words.join(' ') };
+    }
   }
   for (const w of words.length > 1 ? [...words, words.join('')] : words) {
     if (lexicon.allow.has(w)) continue;
-    const cat = classifyAttributeKey(w);
-    if (cat === 'protected_class' || cat === 'protected_proxy') return { class: 'protected_proxy', via: 'attribute_vocabulary', text: w };
+    for (const f of forms(w)) {
+      if (lexicon.allow.has(f)) continue;
+      const cat = classifyAttributeKey(f);
+      if (cat === 'protected_class' || cat === 'protected_proxy') return { class: 'protected_proxy', via: 'attribute_vocabulary', text: f };
+    }
+  }
+  return null;
+}
+
+/** The first protected match in a name, or null. */
+export function protectedMatch(name: string, lexicon: ProtectedLexicon = DEFAULT_PROTECTED_LEXICON): ProtectedMatch | null {
+  if (typeof name !== 'string' || name.trim() === '') return null;
+  // as typed first (a name that matched before par-proxy/3 keeps its explanation), then each case reading
+  // with words of its own (a name without case boundaries is read once)
+  const seen = new Set<string>();
+  for (const text of [name, ...caseSplits(name)]) {
+    const words = foldWords(text);
+    const key = words.join(' ');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const fh = check(text, lexicon.pack);
+    const hit = fh.hard[0] ?? fh.soft[0];
+    if (hit) return { class: hit.class, via: 'fair_housing_lexicon', text: hit.text };
+    const m = wordsMatch(words, lexicon);
+    if (m) return m;
   }
   return null;
 }

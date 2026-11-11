@@ -5,6 +5,7 @@
 //   see everyone with a tag: tap chip = 1
 //   bulk tag 30 from a list: phone People → list → Select all → Tag → tag = 5 · desktop 4 to module 64's
 //     count sheet (the frozen target, built by the server from the whole list), then Confirm in the sheet
+//     starts it at 6 · 5: one over §5's 5 · 4 ("count sheet confirms inline"), an owner gap (ARCHITECTURE)
 //   next person in a list: Next = 1 · desktop J = 1
 // Then 44 px tap targets on the People page and no horizontal scroll on a phone.
 import { type Locator, type Page, expect, test } from 'playwright/test';
@@ -66,7 +67,7 @@ test('see everyone with a tag: 1 tap on a chip', async ({ page }) => {
   expect(c.taps).toBe(1);
 });
 
-test('bulk tag 30 from a list: phone 5 taps, desktop 4 to module 64\'s count sheet with the frozen target; Confirm starts it', async ({ page }) => {
+test('bulk tag 30 from a list: phone 5 taps, desktop 4 to module 64\'s count sheet with the frozen target; Confirm starts it at 6 / 5 (one over PARITY_PLAN §5)', async ({ page }) => {
   await signIn(page);
   const c = { taps: 0 };
   if (isPhone(page)) await tap(page, peopleNav(page), c);
@@ -81,10 +82,10 @@ test('bulk tag 30 from a list: phone 5 taps, desktop 4 to module 64\'s count she
   const sheet = page.getByRole('dialog', { name: 'Tag 30 of 30?' });
   await expect(sheet).toBeVisible();
   await expect(sheet.getByText('Tag "Investor"')).toBeVisible();
-  expect(c.taps).toBe(isPhone(page) ? 5 : 4);
+  expect(c.taps).toBe(isPhone(page) ? 5 : 4); // to the count sheet only: nothing has started yet
   await tap(page, sheet.getByRole('button', { name: 'Tag 30 people' }), c);
   await expect(page.getByText(/Started: 30 people/)).toBeVisible();
-  expect(c.taps).toBe(isPhone(page) ? 6 : 5);
+  expect(c.taps).toBe(isPhone(page) ? 6 : 5); // started: §5 asks 5 / 4, an owner gap
 });
 
 test('next person in a list: 1 tap (phone) or J (desktop)', async ({ page }) => {

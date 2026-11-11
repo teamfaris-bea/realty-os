@@ -1,8 +1,9 @@
 // The bulk action sheet (parity module 64; R-PAR-33..R-PAR-42, PARITY_PLAN §5 honest UI). Exported for the
-// People page bulk bar (module 61), which opens it with the selection (the checked people, or the whole
-// smart list after "Select all") and, for tag/untag/assign/enroll, the chosen tag, person or plan. Email and
-// text pick their template here; stage picks here. The server freezes the selection at draft (module 60's
-// resolveSelection: detail-visible people only, the kind's cap, no protected-tag audience for sends).
+// People page bulk bar (module 61), which opens it with the selection (the checked people with the list they
+// came from, or the whole smart list after "Select all") and, for tag/untag/assign/enroll, the chosen tag,
+// person or plan. Email and text pick their template here; stage picks here. The server freezes the
+// selection at draft (module 60's resolveSelection: detail-visible people only, the kind's cap, no
+// protected-tag audience for sends, the checked people's list included).
 //
 //   1. choose  (email/text: a template; stage: a stage)           1 tap
 //   2. the confirm sheet: the draft the server built, with the frozen target. Everyone selected is counted:
@@ -40,6 +41,8 @@ export interface BulkActionSheetProps {
   selection?: BulkListSelection;
   /** the selection as the caller counts it ("30 people", "10,000+ people") until the draft's own count */
   selectedText?: string;
+  /** with `contactIds`: the list they were picked from; the server reads its tags, and a protected one refuses sends and plans (R-PAR-8) */
+  audienceSource?: BulkListSelection;
   /** tags the selection was built from (a tag chip): a protected one refuses sends (R-PAR-8) */
   audienceTagIds?: readonly string[];
   /** tag/untag: the tag; assign: the person; enroll: the plan (chosen by the caller) */
@@ -50,7 +53,7 @@ export interface BulkActionSheetProps {
   onConfirmed?(a: BulkActionView): void;
 }
 
-export function BulkActionSheet({ kind, contactIds = [], selection, selectedText, audienceTagIds, params = {}, paramLabel, onClose, onConfirmed }: BulkActionSheetProps) {
+export function BulkActionSheet({ kind, contactIds = [], selection, selectedText, audienceSource, audienceTagIds, params = {}, paramLabel, onClose, onConfirmed }: BulkActionSheetProps) {
   const api = useApi();
   const id = useId();
   const send = kind === 'email' || kind === 'text';
@@ -70,7 +73,15 @@ export function BulkActionSheet({ kind, contactIds = [], selection, selectedText
   const build = async (c: { templateId?: string; stage?: string; label: string } | null) => {
     setChoice(c);
     setError(null);
-    const r = await create.run({ kind, selection: selection ?? { contactIds: [...contactIds] }, ...(audienceTagIds?.length ? { audienceTagIds: [...audienceTagIds] } : {}), ...params, ...(c?.templateId ? { templateId: c.templateId } : {}), ...(c?.stage ? { stage: c.stage } : {}) });
+    const r = await create.run({
+      kind,
+      selection: selection ?? { contactIds: [...contactIds] },
+      ...(audienceSource && !selection ? { audienceSource } : {}),
+      ...(audienceTagIds?.length ? { audienceTagIds: [...audienceTagIds] } : {}),
+      ...params,
+      ...(c?.templateId ? { templateId: c.templateId } : {}),
+      ...(c?.stage ? { stage: c.stage } : {}),
+    });
     if (r.ok) setDraft(r.data.action);
     else setError(messageFor({ code: r.code, details: r.details }, BULK_ERROR_MESSAGES));
   };

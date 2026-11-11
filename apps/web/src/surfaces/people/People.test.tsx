@@ -125,7 +125,7 @@ describe('People page (module 61)', () => {
     taps++;
     // the server builds the draft at once (nothing to choose): the frozen target, counted by the server
     const sheet = await screen.findByRole('dialog', { name: 'Tag 30 of 30?' });
-    expect(taps).toBe(3); // + People tab and the list = 5 on a phone to the count sheet (PARITY_PLAN §5)
+    expect(taps).toBe(3); // + People tab and the list = 5 on a phone to the count sheet (not started yet)
     expect(within(sheet).getByText('Tag "Buyer"')).toBeInTheDocument();
     const created = fake.callsTo('POST /bulk-actions')[0]!.body as Record<string, unknown>;
     expect(created).toMatchObject({ kind: 'tag', selection: { definition: { v: 1 } }, tagId: T_BUYER });
@@ -135,7 +135,7 @@ describe('People page (module 61)', () => {
     await waitFor(() => expect(fake.callsTo(`POST /bulk-actions/${ACTION}/confirm`)).toHaveLength(1));
     expect(await screen.findByText(/Started: 30 people/)).toBeInTheDocument();
     expect(screen.queryByText(/Nothing was changed/)).toBeNull();
-    expect(taps).toBe(4);
+    expect(taps).toBe(4); // 6 on a phone to start: one over PARITY_PLAN §5's 5, an owner gap (ARCHITECTURE)
     // the selection is used up; Done closes the sheet
     expect(screen.queryByRole('region', { name: 'Bulk actions' })).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Done' }));
@@ -155,6 +155,7 @@ describe('People page (module 61)', () => {
     await user.click(await screen.findByRole('button', { name: 'Buyer' }));
     await screen.findByRole('dialog', { name: 'Tag 2 of 2?' });
     expect(fake.callsTo('POST /bulk-actions')[0]!.body).toMatchObject({ kind: 'tag', selection: { contactIds: [id(1), id(2)] }, tagId: T_BUYER });
+    expect(fake.callsTo('POST /bulk-actions')[0]!.body).not.toHaveProperty('audienceSource'); // "Everyone" is no list
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
     await user.click(await screen.findByRole('button', { name: 'Hot buyers' }));
     await user.click(await screen.findByRole('checkbox', { name: /Select all/ }));
@@ -162,31 +163,86 @@ describe('People page (module 61)', () => {
     await user.click(await screen.findByRole('button', { name: 'Buyer' }));
     await waitFor(() => expect(fake.callsTo('POST /bulk-actions')).toHaveLength(2));
     expect(fake.callsTo('POST /bulk-actions')[1]!.body).toMatchObject({ kind: 'tag', selection: { listId: L_HOT } });
+    expect(fake.callsTo('POST /bulk-actions')[1]!.body).not.toHaveProperty('audienceSource'); // the list is the selection itself
   });
 
-  it('R-PAR-8 E189: a protected tag is never applied in bulk and a protected list is never a bulk send audience (the page says so up front; the server refuses, and the sheet says why)', async () => {
+  it('R-PAR-29: a list too slow to resolve for the draft says so in the sheet (LIST_TOO_SLOW), and nothing starts', async () => {
+    const fake = base().on('POST /bulk-actions', err(503, 'LIST_TOO_SLOW'));
+    app(fake);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('checkbox', { name: /Select all/ }));
+    await user.click(within(await screen.findByRole('region', { name: 'Bulk actions' })).getByRole('button', { name: 'Tag' }));
+    await user.click(await screen.findByRole('button', { name: 'Buyer' }));
+    // a 503 is retried twice with the same idempotency key (useCommand) before the sheet says why
+    expect(await screen.findByText('This list took too long to load. Narrow it with another filter and try again.', {}, { timeout: 5_000 })).toBeInTheDocument();
+    expect(new Set(fake.callsTo('POST /bulk-actions').map((c) => (c.body as { idempotencyKey: string }).idempotencyKey)).size).toBe(1);
+    expect(screen.queryByRole('button', { name: /^Tag \d+ (person|people)$/ })).toBeNull();
+    expect(fake.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/confirm'))).toEqual([]);
+  });
+
+  it('R-PAR-8 E189: a protected tag is never applied in bulk and a protected list is never a bulk send audience (the page says so up front; a send from it is refused at once, even with the list catalog not loaded)', async () => {
     const VA_LIST = '01900000-0000-7000-8000-0000000000e2';
     const fake = base()
-      .on('GET /smart-lists', { status: 200, body: { lists: [{ id: VA_LIST, scope: 'personal', mine: true, name: 'VA list', definition: { v: 1, all: [{ kind: 'tag', op: 'any', tagIds: [T_VA] }] }, sort: 'last_activity_desc', position: 0, updatedAt: '2026-11-01T00:00:00Z', audienceProtected: true }] } })
+      .on('GET /smart-lists', err(500, 'INTERNAL_ERROR')) // the rows' own answer is what counts, not the list catalog
       .on(`GET /people?list=${VA_LIST}`, { status: 200, body: { ...page([person(1), person(2)], { audienceProtected: true }), list: { id: VA_LIST, name: 'VA list', scope: 'personal' } } })
       .on(`GET /people/count?list=${VA_LIST}`, { status: 200, body: { count: 2, capped: false } })
       .on('GET /templates?channel=email', { status: 200, body: { templates: [{ id: '01900000-0000-7000-8000-0000000071a1', scope: 'team', mine: false, channel: 'email', name: 'New listings', subject: 'New homes', body: 'Hi', version: 3, mergeFields: [], archived: false, editable: false, updatedAt: '2026-11-10T10:00:00Z' }] } })
-      .on('POST /bulk-actions', (c) => ((c.body as { kind: string }).kind === 'email' ? err(422, 'AUDIENCE_PROTECTED_PROXY') : err(409, 'TAG_PROTECTED')));
+      .on('POST /bulk-actions', err(409, 'TAG_PROTECTED'));
     app(fake, `/people?list=${VA_LIST}`);
     const user = userEvent.setup();
     expect(await screen.findByText(/This list uses a protected tag/)).toBeInTheDocument();
-    // hand-picked people from the list are still its audience: the list's (protected) tag goes with them
+    // hand-picked people from the list are still its audience: the email is refused before any template or draft
+    await user.click(await screen.findByRole('checkbox', { name: 'Select Person 1' }));
+    await user.click(within(await screen.findByRole('region', { name: 'Bulk actions' })).getByRole('button', { name: 'Email' }));
+    const refused = await screen.findByRole('dialog', { name: 'Email 1 person' });
+    expect(within(refused).getByText(/can't get bulk messages or plans/)).toBeInTheDocument();
+    expect(within(refused).queryByRole('button', { name: /New listings/ })).toBeNull();
+    expect(fake.callsTo('GET /templates?channel=email')).toHaveLength(0);
+    expect(fake.callsTo('POST /bulk-actions')).toHaveLength(0);
+    await user.click(within(refused).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    // tagging is not a send, but a protected tag is never applied in bulk: the server refuses and the sheet says why
+    await user.click(within(screen.getByRole('region', { name: 'Bulk actions' })).getByRole('button', { name: 'Tag' }));
+    await user.click(await screen.findByRole('button', { name: /VA buyer/ }));
+    expect(await screen.findByText(/can't be added or removed in bulk/)).toBeInTheDocument();
+    expect(fake.callsTo('POST /bulk-actions')[0]!.body).toMatchObject({ kind: 'tag', selection: { contactIds: [id(1)] }, audienceSource: { listId: VA_LIST } });
+    expect(fake.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/confirm'))).toEqual([]);
+  });
+
+  it('R-PAR-8: people checked in a list carry the list itself (audienceSource), so the server decides from its tags; nothing rests on what the page loaded (here the list catalog failed and the rows predate the tag\'s protection)', async () => {
+    const VA_LIST = '01900000-0000-7000-8000-0000000000e2';
+    const fake = base()
+      .on('GET /smart-lists', err(500, 'INTERNAL_ERROR'))
+      .on(`GET /people?list=${VA_LIST}`, { status: 200, body: { ...page([person(1), person(2)]), list: { id: VA_LIST, name: 'VA list', scope: 'personal' } } })
+      .on(`GET /people/count?list=${VA_LIST}`, { status: 200, body: { count: 2, capped: false } })
+      .on('POST /people/query', { status: 200, body: page([person(1)]) })
+      .on('POST /people/count', { status: 200, body: { count: 1, capped: false } })
+      .on('GET /templates?channel=email', { status: 200, body: { templates: [{ id: '01900000-0000-7000-8000-0000000071a1', scope: 'team', mine: false, channel: 'email', name: 'New listings', subject: 'New homes', body: 'Hi', version: 3, mergeFields: [], archived: false, editable: false, updatedAt: '2026-11-10T10:00:00Z' }] } })
+      .on('POST /bulk-actions', err(422, 'AUDIENCE_PROTECTED_PROXY'));
+    app(fake, `/people?list=${VA_LIST}`);
+    const user = userEvent.setup();
     await user.click(await screen.findByRole('checkbox', { name: 'Select Person 1' }));
     await user.click(within(await screen.findByRole('region', { name: 'Bulk actions' })).getByRole('button', { name: 'Email' }));
     await user.click(await screen.findByRole('button', { name: /New listings/ }));
     expect(await screen.findByText(/can't get bulk messages or plans/)).toBeInTheDocument();
-    expect(fake.callsTo('POST /bulk-actions')[0]!.body).toMatchObject({ kind: 'email', selection: { contactIds: [id(1)] }, audienceTagIds: [T_VA] });
+    expect(fake.callsTo('POST /bulk-actions')[0]!.body).toMatchObject({ kind: 'email', selection: { contactIds: [id(1)] }, audienceSource: { listId: VA_LIST } });
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    await user.click(within(screen.getByRole('region', { name: 'Bulk actions' })).getByRole('button', { name: 'Tag' }));
-    await user.click(await screen.findByRole('button', { name: /VA buyer/ }));
-    expect(await screen.findByText(/can't be added or removed in bulk/)).toBeInTheDocument();
-    expect(fake.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/confirm'))).toEqual([]);
+    // a tag chip view (an unsaved definition) goes as its definition
+    await user.click(await screen.findByRole('button', { name: 'Tag Buyer, show everyone with it' }));
+    expect(await screen.findByRole('heading', { level: 2, name: 'Tag: Buyer' })).toBeInTheDocument();
+    await user.click(await screen.findByRole('checkbox', { name: 'Select Person 1' }));
+    await user.click(within(await screen.findByRole('region', { name: 'Bulk actions' })).getByRole('button', { name: 'Email' }));
+    await user.click(await screen.findByRole('button', { name: /New listings/ }));
+    await waitFor(() => expect(fake.callsTo('POST /bulk-actions')).toHaveLength(2));
+    expect(fake.callsTo('POST /bulk-actions')[1]!.body).toMatchObject({ kind: 'email', selection: { contactIds: [id(1)] }, audienceSource: { definition: { v: 1, all: [{ kind: 'tag', op: 'any', tagIds: [T_BUYER] }] } } });
+  });
+
+  it('the bulk bar offers no Assign or Start plan until their person and plan pickers exist (no dead-end sheet)', async () => {
+    app(base(), '/people', 'owner');
+    await userEvent.setup().click(await screen.findByRole('checkbox', { name: 'Select Person 1' }));
+    const bar = await screen.findByRole('region', { name: 'Bulk actions' });
+    expect(within(bar).getAllByRole('button').map((b) => b.textContent)).toEqual(['Tag', 'Remove tag', 'Change stage', 'Email', 'Clear']);
   });
 
   it('a TC sees the list but gets no checkboxes and no bulk bar (TCs run no bulk actions)', async () => {

@@ -26,7 +26,7 @@ import * as T from '../templates/repos/templates.js';
 import { BULK_RUN } from './contract.js';
 import { assignTarget, kindFacts, personFacts, personRow, sendContext, sendFacts } from './facts.js';
 import * as B from './repos/bulk.js';
-import { type SelectionDef, resolveSelection, selectionOptionsFor } from './selection.js';
+import { type AudienceSource, type SelectionDef, resolveSelection, selectionOptionsFor } from './selection.js';
 import { notifyFinished } from './notices.js';
 
 export interface BulkDeps {
@@ -37,6 +37,8 @@ export interface BulkDeps {
 export interface CreateInput {
   kind: BulkKind;
   selection: SelectionDef;
+  /** the list people picked by id came from: one built on a protected tag refuses sends and plans (R-PAR-8; the server reads its plan) */
+  audienceSource?: AudienceSource | undefined;
   /** tags the UI used to build the selection (a tag chip view): a protected one refuses sends (R-PAR-8) */
   audienceTagIds?: string[] | undefined;
   tagId?: string | undefined;
@@ -145,8 +147,9 @@ export async function createDraft(actor: UserActor, input: CreateInput, deps: Bu
     }
     const requested = 'contactIds' in input.selection ? new Set(input.selection.contactIds.map((s) => s.toLowerCase())).size : 0;
     // module 60's resolveSelection: detail-visible people only, at most the kind's cap (BULK_TOO_LARGE past
-    // it), and a list or definition built on a protected tag is never a send/enroll audience (R-PAR-8)
-    const ids = await resolveSelection(tx, input.selection, selectionOptionsFor(input.kind));
+    // it), LIST_TOO_SLOW past the list's 3 s, and a list or definition built on a protected tag is never a
+    // send/enroll audience, nor are people picked one by one from it (audienceSource, R-PAR-8)
+    const ids = await resolveSelection(tx, input.selection, { ...selectionOptionsFor(input.kind), audienceSource: input.audienceSource });
     const selected = Math.max(requested, ids.length);
 
     // ---- the action as a whole (core) ----
