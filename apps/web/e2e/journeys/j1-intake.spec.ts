@@ -108,6 +108,7 @@ test('J1: a webhook lead is offered, accepted on this device, answered within it
   const dialog = page.getByRole('dialog', { name: `Task for ${name}` });
   await dialog.getByLabel('What').fill('Confirm Saturday showing at 12 Oak St');
   await tap(page, dialog.getByRole('button', { name: 'Add task' }));
+  await expect(page.getByTestId('people-toast').getByText('Task added')).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole('region', { name: 'Tasks' }).getByRole('link', { name: 'Confirm Saturday showing at 12 Oak St' })).toBeVisible({ timeout: 15_000 });
   await shot(page, info, 'j1', '4-task-added');
   const tasks = await pollSql<{ assignee_user_id: string; status: string }>(stack, 'SELECT assignee_user_id, status FROM tasks WHERE contact_id = $1 AND title = $2', [contactId, 'Confirm Saturday showing at 12 Oak St'], (r) => r.length === 1);

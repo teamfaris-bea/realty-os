@@ -41,6 +41,11 @@ import { FakeFub } from './src/imports/fub.ts';
 import { makeImportHandlers } from './src/imports/handlers.ts';
 import { makeImportsRoutes } from './src/imports/routes.ts';
 import { handlers } from './src/worker/handlers/index.ts';
+import { makeCommsHandlers } from './src/comms/handlers.ts';
+import { depsFromPlatform } from './src/comms/runtime.ts';
+import { makeAssistantHandlers } from './src/assistant/handlers.ts';
+import { makeBulkHandlers } from './src/bulk/handlers.ts';
+import { makeNotificationHandlers } from './src/workspace/handlers.ts';
 import { HandlerRegistry } from './src/worker/registry.ts';
 import { createWorker } from './src/worker/loop.ts';
 import { silentLogger } from './src/worker/observability.ts';
@@ -61,8 +66,16 @@ holder.deps = { db: p.db, envelope: p.envelope, ids: p.ids, storage: p.providers
 await h.app.listen({ port: 0, host: '127.0.0.1' });
 const apiPort = h.app.server.address().port;
 const importKinds = new Set(makeImportHandlers(() => holder.deps).map((x) => x.kind));
-const registry = () => new HandlerRegistry().registerAll([...handlers.filter((x) => !importKinds.has(x.kind)), ...makeImportHandlers(() => holder.deps)]);
-const worker = (name) => createWorker({ db: h.database, registry: registry(), providers: h.providers, queues: [...QUEUES], concurrency: 2, worker: name ?? ('e2e-journey-' + randomUUID().slice(0, 8)), idleMs: 5, log: silentLogger });
+// The provider-sending handlers are bound to THIS API's platform deps (the harness's test KEK), as
+// comms/testing.ts' commsWorker does: their process-config defaults (commsRuntime(): the KEK in .env) cannot
+// decrypt the test tenant's provider credentials ("DecryptError: decrypt failed: auth").
+const registry = () => {
+  const deps = () => depsFromPlatform(h.app.platform);
+  const bound = [...makeCommsHandlers(() => deps()), ...makeAssistantHandlers((pr) => ({ ...deps(), providers: pr })), ...makeBulkHandlers(() => deps()), ...makeNotificationHandlers(() => deps())];
+  const kinds = new Set([...bound.map((x) => x.kind), ...importKinds]);
+  return new HandlerRegistry().registerAll([...handlers.filter((x) => !kinds.has(x.kind)), ...bound, ...makeImportHandlers(() => holder.deps)]);
+};
+const worker = (name, o = {}) => createWorker({ db: h.database, registry: registry(), providers: h.providers, queues: [...QUEUES], concurrency: 2, worker: name ?? ('e2e-journey-' + randomUUID().slice(0, 8)), idleMs: 5, log: silentLogger, ...o });
 const must = (r, what) => { if (r.status >= 300) throw new Error(what + ': ' + r.status + ' ' + JSON.stringify(r.body)); return r.body; };
 const body = (req) => new Promise((ok) => { let s = ''; req.on('data', (c) => (s += c)); req.on('end', () => ok(s ? JSON.parse(s) : {})); });
 const worlds = new Map();
@@ -115,6 +128,10 @@ const routes = {
     if (b.kinds) await h.su.query("UPDATE jobs SET run_at = now() - interval '1 second' WHERE status = 'pending' AND kind = ANY ($1) AND ($2::uuid IS NULL OR tenant_id = $2)", [b.kinds, b.tenantId ?? null]);
     return { ran: await worker(b.worker).drain(b.rounds ?? 200) };
   },
+  /** for spec routes: the bound registry and a named worker (e.g. one that dies mid-send) */
+  _registry() { return registry(); },
+  _worker(name, o = {}) { return worker(name, o); },
+  async '/pjobs'(b) { return routes['/jobs'](b); },
   async '/sends'() {
     const t = h.providers.telephony;
     return {
