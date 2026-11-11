@@ -123,7 +123,7 @@ describe('Needs review', () => {
   });
 
   it('the Decided tab lists accepted (with a link to the lead) and discarded emails, without buttons', async () => {
-    const decided = [review({ status: 'accepted', contactId: CONTACT, decidedAt: '2026-11-11T16:30:00.000Z', canAccept: false }), review({ id: '01900000-0000-7000-8000-0000000e1009', subject: 'Spam', status: 'discarded', text: null, decidedAt: '2026-11-11T16:40:00.000Z', canAccept: false })];
+    const decided = [review({ status: 'accepted', contactId: CONTACT, decidedAt: '2026-11-11T16:30:00.000Z', canAccept: false }), review({ id: '01900000-0000-7000-8000-0000000e1009', subject: null, fields: null, senderDomain: 'prizes.example.test', status: 'discarded', text: null, decidedAt: '2026-11-11T16:40:00.000Z', canAccept: false })];
     leadEmailApp(fake([], decided), '/team/lead-email', 'owner');
     const u = userEvent.setup();
     expect(await screen.findByText('Nothing needs review')).toBeInTheDocument();
@@ -131,6 +131,10 @@ describe('Needs review', () => {
     await u.click(screen.getByRole('radio', { name: 'Decided' }));
     expect(await screen.findByText('Accepted')).toBeInTheDocument();
     expect(screen.getByText('Discarded')).toBeInTheDocument();
+    // the server deletes a decided email's content: the card is named by its sender and says so
+    expect(screen.getByRole('heading', { level: 2, name: 'Email from prizes.example.test' })).toBeInTheDocument();
+    expect(screen.getByText('The email itself was deleted once it was decided.')).toBeInTheDocument();
+    expect(screen.queryByText('Nothing could be read from this email.')).toBeNull();
     expect(screen.getByRole('link', { name: 'Open the lead' })).toHaveAttribute('href', `/contacts/${CONTACT}`);
     expect(screen.queryByRole('button', { name: /^Accept/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Discard/ })).toBeNull();

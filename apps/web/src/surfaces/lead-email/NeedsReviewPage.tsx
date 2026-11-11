@@ -137,8 +137,9 @@ export function ReviewCard({ item, onAccepted, onDiscarded, onFailure }: { item:
   const opts = { invalidate: [[...REVIEWS_KEY]] };
   const accept = useAction<{ name?: string; phone?: string; email?: string }, ReviewDecisionResponse>('POST', opts);
   const discard = useAction<undefined, ReviewDecisionResponse>('POST', opts);
-  const subject = item.subject?.trim() || 'No subject';
   const decided = item.status !== 'needs_review';
+  // a decided email's content is deleted on the server, so its subject may be gone too
+  const subject = item.subject?.trim() || (decided ? `Email from ${item.senderDomain ?? 'an unreadable sender'}` : 'No subject');
 
   const fail = (e: { code: string; details: Record<string, unknown> | null }) => {
     if (e.code === 'LEAD_EMAIL_NOT_PENDING') void qc.invalidateQueries({ queryKey: [...REVIEWS_KEY] });
@@ -224,6 +225,7 @@ export function ReviewCard({ item, onAccepted, onDiscarded, onFailure }: { item:
 
 function Extracted({ item }: { item: ReviewItem }) {
   const f = item.fields;
+  if (!f && item.status !== 'needs_review') return null;
   if (!f) return <p className="text-[15px] text-ink-muted">Nothing could be read from this email.</p>;
   const rows: [string, string][] = [];
   if (f.name) rows.push(['Name', f.name.value]);
@@ -246,7 +248,7 @@ function Extracted({ item }: { item: ReviewItem }) {
 
 function Excerpt({ item }: { item: ReviewItem }) {
   const text = item.text ?? '';
-  if (!text.trim()) return item.status === 'discarded' ? <p className="text-[14px] text-ink-muted">The email text was deleted when it was discarded.</p> : null;
+  if (!text.trim()) return item.status !== 'needs_review' ? <p className="text-[14px] text-ink-muted">The email itself was deleted once it was decided.</p> : null;
   const cut = text.length > EXCERPT_CHARS;
   return (
     <details className="rounded-xl border border-line">

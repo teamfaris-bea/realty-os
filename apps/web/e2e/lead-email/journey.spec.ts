@@ -80,7 +80,7 @@ async function confirmReauth(page: Page, counter: { taps: number }) {
 }
 
 const intake = (page: Page) => page.getByRole('region', { name: 'Email intake for Portal' });
-const addressField = (page: Page) => intake(page).getByLabel('Inbound address for Portal');
+const addressField = (page: Page) => intake(page).getByRole('textbox', { name: 'Inbound address for Portal' });
 
 function reviewCard(page: Page, subject: string): Locator {
   return page.locator('article').filter({ has: page.getByRole('heading', { level: 2, name: subject }) });
@@ -176,8 +176,8 @@ test('(c) an unverified email waits in Needs review with its reason; no contact 
   const card = reviewCard(page, subject);
   await expect(card.getByText(w.holdSentences.DKIM_UNALIGNED!)).toBeVisible();
   await expect(card.getByText(/· Portal · from zillow\.com/)).toBeVisible();
-  await expect(card.getByText('Rae Moss')).toBeVisible();
-  await expect(card.getByText(held.email)).toBeVisible();
+  await expect(card.getByText('Rae Moss', { exact: true })).toBeVisible();
+  await expect(card.getByText(held.email, { exact: true })).toBeVisible();
   await expect(reviewCard(page, junkSubject).getByText(w.holdSentences.SENDER_NOT_ALLOWED!)).toBeVisible();
   expect(await page.locator('body').textContent()).not.toMatch(/DKIM_UNALIGNED|SENDER_NOT_ALLOWED|LEAD_EMAIL_/);
   // the email text is there on request
@@ -205,13 +205,14 @@ test('(c) an unverified email waits in Needs review with its reason; no contact 
 
   // Decided lists both
   await page.getByRole('radio', { name: 'Decided' }).click();
-  await expect(reviewCard(page, subject).getByText('Accepted')).toBeVisible();
-  await expect(reviewCard(page, junkSubject).getByText('Discarded')).toBeVisible();
+  // (the server deletes a decided email's content, so the cards are named by their sender)
+  const accepted = reviewCard(page, 'Email from zillow.com');
+  await expect(accepted.getByText('Accepted', { exact: true })).toBeVisible();
+  await expect(reviewCard(page, 'Email from prizes.example.test').getByText('Discarded', { exact: true })).toBeVisible();
+  await expect(page.getByText('The email itself was deleted once it was decided.')).toHaveCount(2);
 
   // the link opens the new lead
-  await page.getByRole('radio', { name: 'Needs review' }).click();
-  await page.getByRole('radio', { name: 'Decided' }).click();
-  await reviewCard(page, subject).getByRole('link', { name: 'Open the lead' }).click();
+  await accepted.getByRole('link', { name: 'Open the lead' }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'Rae Moss' })).toBeVisible({ timeout: 15_000 });
   test.info().annotations.push({ type: 'taps', description: `nav ${nav.taps}, accept held ${accept.taps}, discard ${discard.taps}` });
 });
