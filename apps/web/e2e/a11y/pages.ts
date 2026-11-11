@@ -61,6 +61,9 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   { path: '/admin/erasure', roles: ADMINS, url: (ids) => `/admin/erasure?contact=${ids.contactId}` },
   { path: '/admin/system', roles: ADMINS, url: at('/admin/system') },
   { path: '/admin/integrations/mls', roles: ADMINS, url: at('/admin/integrations/mls') },
+  // module 41 (lane admin-pages)
+  { path: '/admin/integrations', roles: ADMINS, url: at('/admin/integrations') },
+  { path: '/admin/web-chat', roles: ADMINS, url: at('/admin/web-chat') },
   { path: '/settings/playbooks', roles: NOT_TC, url: at('/settings/playbooks') },
   { path: '/settings/playbooks/:playbookId', roles: NOT_TC, url: (i) => `/settings/playbooks/${i.playbookId}` },
   { path: '/settings/compliance', roles: ADMINS, url: at('/settings/compliance') },

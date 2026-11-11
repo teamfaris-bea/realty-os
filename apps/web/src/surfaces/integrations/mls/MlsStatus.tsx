@@ -85,17 +85,22 @@ function PackEditor({ c, several, editable }: { c: MlsConnection; several: boole
   const [changed, setChanged] = useState<Set<PackKey>>(new Set());
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const review = reviewWords(marks);
+  // the banner says what is SAVED: ticking boxes does not let MLS data reach clients until the pack is saved
+  const [savedMarks, setSavedMarks] = useState<Record<PackKey, boolean>>(c.licensePack.marks);
+  const [dirty, setDirty] = useState(false);
+  const review = reviewWords(savedMarks);
 
   const change = <K extends PackKey>(k: K, v: PackValues[K]) => {
     setValues((old) => ({ ...old, [k]: v }));
     // counsel reviewed the value it had, not this one
     setMarks((old) => ({ ...old, [k]: false }));
     setChanged((old) => new Set(old).add(k));
+    setDirty(true);
     setStatus(null);
   };
   const mark = (k: PackKey, on: boolean) => {
     setMarks((old) => ({ ...old, [k]: on }));
+    setDirty(true);
     setStatus(null);
   };
 
@@ -120,6 +125,8 @@ function PackEditor({ c, several, editable }: { c: MlsConnection; several: boole
     const saved = pickPack((r.data as { licensePack?: unknown } | null)?.licensePack);
     setValues(saved.values);
     setMarks(saved.marks);
+    setSavedMarks(saved.marks);
+    setDirty(false);
     setHours(saved.values.max_staleness_hours === null ? '' : String(saved.values.max_staleness_hours));
     setChanged(new Set());
     setStatus(saved.unreviewedCount === 0 ? 'Licence pack saved. Every value is marked as reviewed by counsel.' : `Licence pack saved. ${saved.unreviewedCount} of ${PACK_KEYS.length} values are not marked as reviewed, so MLS data still cannot reach clients.`);
@@ -150,6 +157,7 @@ function PackEditor({ c, several, editable }: { c: MlsConnection; several: boole
               setHours(e.target.value);
               setMarks((old) => ({ ...old, max_staleness_hours: false }));
               setChanged((old) => new Set(old).add('max_staleness_hours'));
+              setDirty(true);
               setStatus(null);
             }} />
           </Value>
@@ -183,6 +191,7 @@ function PackEditor({ c, several, editable }: { c: MlsConnection; several: boole
         </ul>
         <StatusLine text={status} />
         {error ? <Notice tone="error">{error}</Notice> : null}
+        {editable && dirty ? <p className="text-[15px] font-medium text-ink">Not saved yet. {PACK_KEYS.filter((k) => marks[k]).length} of {PACK_KEYS.length} values are ticked as reviewed by counsel.</p> : null}
         {editable ? (
           <div>
             <Button type="submit" pending={req.pending === 'save'} pendingLabel="Saving">
