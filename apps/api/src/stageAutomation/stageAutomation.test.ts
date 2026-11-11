@@ -107,6 +107,43 @@ describe('R-PAR-16 the auto_enroll_stage setting', () => {
     // nothing changed on the other agent's plan
     expect((await h.su.query('SELECT auto_enroll_stage FROM playbooks WHERE id = $1', [pb.agentBuyer.id])).rows[0].auto_enroll_stage).toBe('active');
   });
+
+  it('R-PAR-16 R-PERM-5 GET shows the saved stage to whoever sees the playbook, and canChange is the same can() as PUT (a playbook the caller cannot see is 404)', async () => {
+    type Got = { playbook: { id: string; name: string; scope: string; autoEnrollStage: string | null }; canChange: boolean };
+    const read = (u: TestClient, id: string) => call<Got>(u, 'GET', `/playbooks/${id}/auto-enroll-stage`);
+    const users: Record<Role, TestClient> = { owner: w.owner, admin, team_lead: tl, agent, isa, tc };
+    const got: Record<string, string> = {};
+    const want: Record<string, string> = {};
+    for (const role of ROLES) {
+      const u = users[role];
+      const actor = { kind: 'user' as const, userId: u.userId!, tenantId: u.tenantId!, role, sessionId: 'x' };
+      // the team "Buyer plan" starts on Active: every member reads it (team playbooks are visible to members)
+      const team = await read(u, pb.buyer.id);
+      got[`${role} team`] = `${team.status} ${team.body.playbook?.autoEnrollStage} ${team.body.canChange}`;
+      want[`${role} team`] = `200 active ${can(actor, 'playbook.auto_enroll_stage', { teamPlaybook: true }).ok}`;
+      // the agent's own "Ana's buyer plan" (also Active): the agent sees it, and so do Owner, Admin and Team
+      // Leads (playbooks_select: app.sees_all_detail()); only the agent may change it
+      const own = await read(u, pb.agentBuyer.id);
+      got[`${role} agent plan`] = own.status === 200 ? `200 ${own.body.playbook.autoEnrollStage} ${own.body.canChange}` : String(own.status);
+      const ownFacts = { own: u.userId === agent.userId, teamPlaybook: false };
+      const seesIt = role === 'owner' || role === 'admin' || role === 'team_lead' || u.userId === agent.userId;
+      want[`${role} agent plan`] = seesIt ? `200 active ${can(actor, 'playbook.auto_enroll_stage', ownFacts).ok}` : '404';
+    }
+    expect(got).toEqual(want);
+    expect(want).toMatchObject({ 'owner team': '200 active true', 'admin team': '200 active true', 'team_lead team': '200 active false', 'agent team': '200 active false', 'tc team': '200 active false', 'agent agent plan': '200 active true', 'owner agent plan': '200 active false', 'team_lead agent plan': '200 active false', 'isa agent plan': '404', 'tc agent plan': '404' });
+    // another agent's plan stays invisible; another tenant sees nothing; an unknown id is 404
+    expect((await read(agent2, pb.agentBuyer.id)).status).toBe(404);
+    const elsewhere = await commsWorld(h, { agents: 1 });
+    expect((await read(elsewhere.owner, pb.buyer.id)).status).toBe(404);
+    expect((await read(w.owner, randomUUID())).status).toBe(404);
+    // a saved change is what the next GET shows; clearing it shows no stage
+    const p = await playbook(w.owner, { scope: 'team', name: `Read back ${randomUUID().slice(0, 4)}` });
+    expect((await read(w.owner, p.id)).body).toEqual({ playbook: { id: p.id, name: expect.any(String), scope: 'team', autoEnrollStage: null }, canChange: true });
+    expect((await setStage(w.owner, p.id, 'lost')).status).toBe(200);
+    expect((await read(admin, p.id)).body.playbook.autoEnrollStage).toBe('lost');
+    expect((await setStage(admin, p.id, null)).status).toBe(200);
+    expect((await read(w.owner, p.id)).body.playbook.autoEnrollStage).toBeNull();
+  });
 });
 
 describe('R-PAR-16 stage entry enrolls only from an approved version, told to the person who changed the stage', () => {

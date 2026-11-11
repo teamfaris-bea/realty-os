@@ -9,7 +9,11 @@
 // - What blocks approval is listed per message in plain words (money, contracts, payment details,
 //   claiming to be a person, ...): those always need a person.
 // - Team playbooks are approved by an Owner or Admin; a personal playbook by its own agent.
-import { useQuery } from '@tanstack/react-query';
+// - "Start this plan when a person enters stage …" (PARITY_PLAN §1 "Action plan on stage change",
+//   R-PAR-16; api/stage-automation GET/PUT /playbooks/:id/auto-enroll-stage): offered exactly to whom the
+//   server's can() allows (team playbooks: Owner/Admin; a personal playbook: its own agent), with the
+//   tenant's stage labels; others read the stage it starts on. Never for the instant reply to new leads.
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type FormEvent, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Button, Card, EmptyState, Notice, TextField } from '../../design/index.js';
@@ -19,9 +23,12 @@ import { useAction, useAnnounce } from '../admin/lib/hooks.js';
 import { ADMIN_MESSAGES } from '../admin/lib/messages.js';
 import type { Playbook, PlaybookStepView, PlaybookVersion } from '../admin/lib/types.js';
 import { Check, ErrorLine, Pill, Section, SelectField, StatusLine, TextArea } from '../admin/lib/ui.js';
-import { type DelayUnit, KIND_LABEL, STATUS_LABEL, TEMPLATES, approvalAttestation, delayText, issueSentence, joinDelay, mayApprove, placeholdersIn, playbookState, revokeAttestation, splitDelay, stepsOf, workingVersion } from './playbooks.js';
+import { LEAD_STAGE_LABEL } from '../people/api.js';
+import { type AutoEnrollSetting, type DelayUnit, KIND_LABEL, STATUS_LABEL, TEMPLATES, approvalAttestation, autoEnrollRefusal, delayText, issueSentence, joinDelay, mayApprove, placeholdersIn, playbookState, revokeAttestation, splitDelay, stepsOf, workingVersion } from './playbooks.js';
 
 const PLAYBOOKS_KEY = ['assistant', 'playbooks'] as const;
+/** The tenant's stage labels (module 57's GET /stage-labels): the same cache Admin → Stage labels refreshes on save. */
+const STAGE_LABELS_KEY = ['settings', 'stage-labels'] as const;
 
 export function PlaybooksPage() {
   const api = useApi();
@@ -122,12 +129,101 @@ export function PlaybookPage() {
             </p>
             {!approver ? <p className="mt-1 text-[14px] text-ink-muted">{p.scope === 'team' ? 'An Owner or Admin approves team playbooks. You can read it here.' : 'Only the agent it belongs to approves this playbook.'}</p> : null}
           </div>
+          <AutoEnrollStage key={p.id} playbook={p} onDone={announce} />
           {working ? <Editor key={working.id} playbook={p} version={working} canEdit={approver} onDone={announce} /> : null}
           {running && approver ? <Revoke playbook={p} version={running} onDone={announce} /> : null}
           <History playbook={p} />
         </>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * "Start this plan when a person enters stage …" (R-PAR-16). The server says whether the viewer may change it
+ * (canChange: its own can() for the PUT); a viewer who may not reads the stage it starts on, if any. The stage
+ * names are the tenant's labels. Refusals come back in plain words: another playbook of the same team (or the
+ * same agent) holds that stage (409, with a link to it), this kind never starts on a stage (422), retired (409).
+ */
+function AutoEnrollStage({ playbook, onDone }: { playbook: Playbook; onDone(t: string): void }) {
+  const api = useApi();
+  const qc = useQueryClient();
+  const key = [...PLAYBOOKS_KEY, playbook.id, 'auto-enroll-stage'];
+  const q = useQuery<AutoEnrollSetting, ApiError>({ queryKey: key, queryFn: ({ signal }) => api.get(`/playbooks/${playbook.id}/auto-enroll-stage`, { signal }) });
+  const labels = useQuery<{ stages: { key: string; label: string }[] }, ApiError>({ queryKey: STAGE_LABELS_KEY, queryFn: ({ signal }) => api.get('/stage-labels', { signal }), staleTime: 60_000 });
+  const save = useAction<{ stage: string | null }, Pick<AutoEnrollSetting, 'playbook'>>('PUT', { invalidate: [key] });
+  const [pick, setPick] = useState<string | null>(null);
+  const stages = labels.data?.stages ?? Object.entries(LEAD_STAGE_LABEL).map(([k, label]) => ({ key: k, label }));
+  const labelOf = (k: string) => stages.find((s) => s.key === k)?.label ?? LEAD_STAGE_LABEL[k] ?? k;
+  if (!q.data) return q.isError && q.error.code !== 'NOT_FOUND' ? <ErrorLine message={messageFor(q.error, ADMIN_MESSAGES)} /> : null;
+  const saved = q.data.playbook.autoEnrollStage;
+  if (!q.data.canChange) {
+    if (!saved) return null;
+    return (
+      <p className="text-[15px] text-ink">
+        Starts on its own when a person enters “{labelOf(saved)}”.{' '}
+        <span className="text-ink-muted">{playbook.scope === 'team' ? 'An Owner or Admin can change this.' : 'Only the agent it belongs to can change this.'}</span>
+      </p>
+    );
+  }
+  if (playbook.kind === 'new_lead_response') {
+    return (
+      <Section title="Start on a stage change">
+        <p className="text-[15px] text-ink-muted">{ADMIN_MESSAGES['AUTO_ENROLL_NOT_ALLOWED']}</p>
+      </Section>
+    );
+  }
+  const value = pick ?? saved ?? '';
+  const dirty = value !== (saved ?? '');
+  const other = save.error?.code === 'AUTO_ENROLL_STAGE_TAKEN' && typeof save.error.details?.['playbookId'] === 'string' ? save.error.details['playbookId'] : null;
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    const stage = value === '' ? null : value;
+    const r = await save.run(`/playbooks/${playbook.id}/auto-enroll-stage`, { stage });
+    if (!r.ok) return;
+    qc.setQueryData<AutoEnrollSetting>(key, { playbook: r.data.playbook, canChange: true });
+    setPick(null);
+    onDone(stage ? `Saved. This playbook now starts when a person enters “${labelOf(stage)}”.` : 'Saved. This playbook no longer starts on a stage change.');
+  };
+  return (
+    <Section
+      id="auto-enroll-stage"
+      title="Start on a stage change"
+      description={`Anyone moved into the stage you pick starts this playbook, but only from its approved version, never while they are in another plan or can't be reached, and never for a stage set by an import.${playbook.scope === 'agent' ? ' It covers only people you own.' : ''}`}
+    >
+      <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-2 sm:flex-row sm:items-end">
+        <SelectField
+          label="Start this plan when a person enters stage"
+          value={value}
+          onChange={(e) => {
+            save.reset();
+            setPick(e.target.value);
+          }}
+          className="sm:flex-1"
+        >
+          <option value="">No stage</option>
+          {stages.map((s) => (
+            <option key={s.key} value={s.key}>
+              {s.label}
+            </option>
+          ))}
+        </SelectField>
+        <Button type="submit" variant="secondary" pending={save.pending} disabled={!dirty}>
+          Save
+        </Button>
+      </form>
+      {save.error ? (
+        <Notice tone="error">
+          <p>{autoEnrollRefusal(save.error.code, { stageLabel: value ? labelOf(value) : null, scope: playbook.scope })}</p>
+          {other ? (
+            <Link to={`/settings/playbooks/${other}`} className="inline-flex min-h-tap items-center font-medium text-accent underline">
+              Open that playbook
+            </Link>
+          ) : null}
+        </Notice>
+      ) : null}
+      {value !== '' && playbook.approvedVersionId === null ? <Notice tone="warn">No version of this playbook is approved yet, so nobody starts it until one is.</Notice> : null}
+    </Section>
   );
 }
 

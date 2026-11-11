@@ -62,7 +62,7 @@ const bulkDraft = (over: Record<string, unknown> = {}) => ({
 const page = (people: PersonView[], o: { nextCursor?: string | null; audienceProtected?: boolean } = {}) => ({ people, nextCursor: o.nextCursor ?? null, sort: 'last_activity_desc', list: null, scope: 'people_you_can_see', audienceProtected: o.audienceProtected ?? false });
 const tags = { tags: [{ id: T_BUYER, name: 'Buyer', color: 'blue', protected: false, createdByKind: 'user', usage: null }, { id: T_VA, name: 'VA buyer', color: null, protected: true, createdByKind: 'user', usage: null }] };
 
-function app(fake: FakeFetch, path = '/people', role: 'agent' | 'owner' | 'tc' = 'agent') {
+function app(fake: FakeFetch, path = '/people', role: 'owner' | 'admin' | 'team_lead' | 'agent' | 'isa' | 'tc' = 'agent') {
   const s = sessionFixture();
   const tenant = { ...s.tenant!, role };
   fake.on('GET /auth/session', { status: 200, body: { ...s, tenant, tenants: [tenant] } });
@@ -238,11 +238,77 @@ describe('People page (module 61)', () => {
     expect(fake.callsTo('POST /bulk-actions')[1]!.body).toMatchObject({ kind: 'email', selection: { contactIds: [id(1)] }, audienceSource: { definition: { v: 1, all: [{ kind: 'tag', op: 'any', tagIds: [T_BUYER] }] } } });
   });
 
-  it('the bulk bar offers no Assign or Start plan until their person and plan pickers exist (no dead-end sheet)', async () => {
-    app(base(), '/people', 'owner');
-    await userEvent.setup().click(await screen.findByRole('checkbox', { name: 'Select Person 1' }));
-    const bar = await screen.findByRole('region', { name: 'Bulk actions' });
-    expect(within(bar).getAllByRole('button').map((b) => b.textContent)).toEqual(['Tag', 'Remove tag', 'Change stage', 'Email', 'Clear']);
+  it('R-PAR-35 DATA_MODEL §12: the bulk bar offers Start plan to every role that runs bulk work, and Assign only to Owner, Admin and Team Lead', async () => {
+    const want = { owner: true, admin: true, team_lead: true, agent: false, isa: false } as const;
+    for (const [role, assigns] of Object.entries(want) as [keyof typeof want, boolean][]) {
+      const { view } = app(base(), '/people', role);
+      await userEvent.setup().click(await screen.findByRole('checkbox', { name: 'Select Person 1' }));
+      const bar = await screen.findByRole('region', { name: 'Bulk actions' });
+      expect(within(bar).getAllByRole('button').map((b) => b.textContent), role).toEqual(['Tag', 'Remove tag', 'Change stage', 'Email', 'Start plan', ...(assigns ? ['Assign'] : []), 'Clear']);
+      view.unmount();
+    }
+  });
+
+  it('R-PAR-35 bulk assign from a list: Select all → Assign → person → Confirm, with the whole list as the selection (4 taps on the page; with People and the list: 6 on a phone, 5 on desktop)', async () => {
+    const assignDraft = bulkDraft({ kind: 'assign', targetCount: 28, preflight: { ALREADY_OWNER: 2 } });
+    const fake = base()
+      .on('GET /team/scoreboard?range=today', { status: 200, body: { range: { key: 'today', from: '', to: '', days: 1, zone: 'UTC' }, members: [{ userId: '01900000-0000-7000-8000-0000000000b1', name: 'Sam Lee' }, { userId: '01900000-0000-7000-8000-0000000000aa', name: 'Ava Agent' }] } })
+      .on('POST /bulk-actions', { status: 201, body: { action: assignDraft } })
+      .on(`POST /bulk-actions/${ACTION}/confirm`, { status: 200, body: { action: { ...assignDraft, status: 'confirmed', confirmedAt: '2026-11-10T10:01:00Z' } } });
+    app(fake, '/people', 'team_lead');
+    const user = userEvent.setup();
+    let taps = 0;
+    await user.click(await screen.findByRole('checkbox', { name: /Select all/ }));
+    taps++;
+    await user.click(within(await screen.findByRole('region', { name: 'Bulk actions' })).getByRole('button', { name: 'Assign' }));
+    taps++;
+    await user.click(within(await screen.findByRole('region', { name: 'Assign to' })).getByRole('button', { name: 'Sam Lee' }));
+    taps++;
+    const sheet = await screen.findByRole('dialog', { name: 'Assign 28 of 30?' });
+    expect(within(sheet).getByRole('region', { name: 'Left out (2)' }).textContent).toContain('2 are already theirs');
+    expect(fake.callsTo('POST /bulk-actions')[0]!.body).toMatchObject({ kind: 'assign', selection: { definition: { v: 1 } }, toUserId: '01900000-0000-7000-8000-0000000000b1' });
+    await user.click(within(sheet).getByRole('button', { name: 'Assign 28 people' }));
+    taps++;
+    await waitFor(() => expect(fake.callsTo(`POST /bulk-actions/${ACTION}/confirm`)).toHaveLength(1));
+    expect(await screen.findByText(/Started: 28 people/)).toBeInTheDocument();
+    expect(taps).toBe(4);
+  });
+
+  it('R-PAR-16 R-PAR-35 Start plan from a list: Select all → Start plan → plan → Confirm, with who is left out and why on the sheet before Confirm', async () => {
+    const approved = { id: 'v1', versionNo: 1, status: 'approved', contentSha256: 'a'.repeat(64), steps: [], tone: {}, issues: [], createdAt: '2026-11-01T00:00:00Z' };
+    const plan = { id: '01900000-0000-7000-8000-0000000000f1', kind: 'nurture', scope: 'team', ownerUserId: null, name: 'Buyer plan', templateKey: null, approvedVersionId: 'v1', versions: [approved] };
+    const enrollDraft = bulkDraft({ kind: 'enroll', targetCount: 27, preflight: { ALREADY_ENROLLED: 2, UNREACHABLE: 1 } });
+    const fake = base()
+      .on('GET /playbooks', { status: 200, body: { playbooks: [plan] } })
+      .on('POST /bulk-actions', { status: 201, body: { action: enrollDraft } })
+      .on(`POST /bulk-actions/${ACTION}/confirm`, { status: 200, body: { action: { ...enrollDraft, status: 'confirmed' } } });
+    app(fake, '/people', 'agent');
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('checkbox', { name: /Select all/ }));
+    await user.click(within(await screen.findByRole('region', { name: 'Bulk actions' })).getByRole('button', { name: 'Start plan' }));
+    await user.click(within(await screen.findByRole('region', { name: 'Plans' })).getByRole('button', { name: /Buyer plan/ }));
+    const sheet = await screen.findByRole('dialog', { name: 'Enroll 27 of 30?' });
+    const left = within(sheet).getByRole('region', { name: 'Left out (3)' });
+    expect(within(left).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['2 are already in a plan', "1 can't be reached by text or email"]);
+    expect(fake.callsTo('POST /bulk-actions')[0]!.body).toMatchObject({ kind: 'enroll', selection: { definition: { v: 1 } }, playbookId: plan.id });
+    expect(fake.callsTo(`POST /bulk-actions/${ACTION}/confirm`)).toHaveLength(0);
+    await user.click(within(sheet).getByRole('button', { name: 'Enroll 27 people' }));
+    await waitFor(() => expect(fake.callsTo(`POST /bulk-actions/${ACTION}/confirm`)).toHaveLength(1));
+  });
+
+  it('R-PAR-8: Start plan for people picked from a list built on a protected tag is refused at once (no plan list, no draft)', async () => {
+    const VA_LIST = '01900000-0000-7000-8000-0000000000e2';
+    const fake = base()
+      .on(`GET /people?list=${VA_LIST}`, { status: 200, body: { ...page([person(1), person(2)], { audienceProtected: true }), list: { id: VA_LIST, name: 'VA list', scope: 'personal' } } })
+      .on(`GET /people/count?list=${VA_LIST}`, { status: 200, body: { count: 2, capped: false } });
+    app(fake, `/people?list=${VA_LIST}`);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('checkbox', { name: 'Select Person 1' }));
+    await user.click(within(await screen.findByRole('region', { name: 'Bulk actions' })).getByRole('button', { name: 'Start plan' }));
+    const refused = await screen.findByRole('dialog', { name: 'Start plan 1 person' });
+    expect(within(refused).getByText(/can't get bulk messages or plans/)).toBeInTheDocument();
+    expect(fake.callsTo('GET /playbooks')).toHaveLength(0);
+    expect(fake.callsTo('POST /bulk-actions')).toHaveLength(0);
   });
 
   it('a TC sees the list but gets no checkboxes and no bulk bar (TCs run no bulk actions)', async () => {

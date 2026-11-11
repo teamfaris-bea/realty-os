@@ -1,11 +1,13 @@
 // The People page (PARITY_PLAN §5, module 61): everyone the viewer can see, or a saved smart list,
 // or an unsaved filter (a tapped tag chip). Phone: list chips across the top (People → list = 2
 // taps); desktop: lists in a left column (1 click). Rows have checkboxes; selecting shows the bulk
-// bar (Tag, Remove tag, Stage, Email), which opens module 64's bulk sheet with the selection (the
-// checked people, or the whole list after "Select all"). Bulk tag 30 from a list: People → list →
-// Select all → Tag → tag = 5 taps to the count sheet with the frozen target, then Confirm in the sheet:
-// 6 to start, one over PARITY_PLAN §5's 5 (an owner decision; ARCHITECTURE, parity gaps). Assign and
-// Start plan join the bar with the person and plan pickers they need; until then they are not offered.
+// bar (Tag, Remove tag, Stage, Email, Start plan, and Assign for Owner/Admin/Team Lead), which opens
+// module 64's bulk sheet with the selection (the checked people, or the whole list after "Select all").
+// Bulk tag 30 from a list: People → list → Select all → Tag → tag = 5 taps to the count sheet with the
+// frozen target, then Confirm in the sheet: 6 to start, one over PARITY_PLAN §5's 5 (an owner decision;
+// ARCHITECTURE, parity gaps). Bulk assign: People → list → Select all → Assign → person → Confirm = 6 on
+// a phone, 5 on desktop (§5); the sheet lists only the people the viewer may assign to. Start plan:
+// the same shape, the sheet listing only approved plans the viewer may start.
 //
 // Honest UI: the page always says "Showing people you can see" (R-PAR-28, E181); a count is exact to
 // 10,000 and then says "10,000+"; a list that uses a protected tag says so before any send, and a bulk
@@ -35,6 +37,7 @@ import {
   usePeople,
   usePeopleCount,
 } from './api.js';
+import { mayBulkAssign, mayBulkEnroll } from '../bulk/index.js';
 import { BULK_LABEL, BulkConfirmSheet, type BulkKind, type BulkRequest } from './bulkSlot.js';
 import { LISTS_ERROR_MESSAGES } from './messages.js';
 import { TagPicker } from './TagPicker.js';
@@ -186,6 +189,9 @@ function Rows(p: {
     setBulk({ kind, selection, count: selCount, countCapped: p.allSelected && (count.data?.capped ?? false), audienceProtected, ...(audienceSource ? { audienceSource } : {}), ...(tag ? { tag: { id: tag.id, name: tag.name, protected: tag.protected } } : {}) });
 
   const canBulk = p.role !== 'tc';
+  // DATA_MODEL §12: bulk.run (Start plan) is every role but the TC; bulk.assign is Owner/Admin/Team Lead only
+  const canEnroll = mayBulkEnroll(p.role);
+  const canAssign = mayBulkAssign(p.role);
   const anySelected = selCount > 0;
 
   return (
@@ -248,7 +254,8 @@ function Rows(p: {
 
       {anySelected ? (
         <div role="region" aria-label="Bulk actions" className="fixed inset-x-0 bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))] z-40 border-t border-line bg-surface px-4 py-2 md:sticky md:bottom-4 md:rounded-2xl md:border md:shadow-lg">
-          <div className="flex items-center gap-2 overflow-x-auto">
+          {/* phone: one row that scrolls sideways; desktop: it wraps, so no action hides behind a scroll */}
+          <div className="flex items-center gap-2 overflow-x-auto md:flex-wrap md:overflow-x-visible">
             <p className="shrink-0 pr-2 text-[15px] font-semibold text-ink">{p.allSelected && count.data?.capped ? `${count.data.count.toLocaleString('en-US')}+` : selCount.toLocaleString('en-US')} selected</p>
             <Button variant="primary" className="shrink-0 whitespace-nowrap" onClick={() => setTagFor('tag')}>
               {BULK_LABEL.tag}
@@ -262,7 +269,17 @@ function Rows(p: {
             <Button variant="secondary" className="shrink-0 whitespace-nowrap" onClick={() => ask('email')}>
               {BULK_LABEL.email}
             </Button>
-            {/* Assign and Start plan need a person or plan picker (module 64 expects the caller to choose); they are offered once one exists */}
+            {/* Start plan and Assign: module 64's sheet asks for the plan or the person (only what this viewer may pick) */}
+            {canEnroll ? (
+              <Button variant="secondary" className="shrink-0 whitespace-nowrap" onClick={() => ask('enroll')}>
+                {BULK_LABEL.enroll}
+              </Button>
+            ) : null}
+            {canAssign ? (
+              <Button variant="secondary" className="shrink-0 whitespace-nowrap" onClick={() => ask('assign')}>
+                {BULK_LABEL.assign}
+              </Button>
+            ) : null}
             <Button
               variant="quiet"
               onClick={() => {

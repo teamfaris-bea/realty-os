@@ -5,6 +5,7 @@ import type { SurfaceModule } from '../../shell/index.js';
 import { BULK_ERROR_MESSAGES } from './api.js';
 
 export { BulkActionSheet, type BulkActionSheetProps, type BulkListSelection } from './BulkActionSheet.js';
+export { mayBulkAssign, mayBulkEnroll } from './choices.js';
 
 const RUNS = ['owner', 'admin', 'team_lead', 'agent', 'isa'] as const;
 

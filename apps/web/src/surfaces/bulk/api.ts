@@ -79,6 +79,17 @@ export function reasonWords(code: string): string {
   return REASON_WORDS[code] ?? `were left out (${code.toLowerCase().replace(/_/g, ' ')})`;
 }
 
+/**
+ * The words for a skip reason in this action: "not permitted" means something specific for an assign (the
+ * person is outside what the creator may reassign: a Team Lead's team, R-OWN-18) and for a personal plan (it
+ * covers only the people its agent owns, R-PAR-16); everything else reads as in reasonWords.
+ */
+export function reasonWordsFor(code: string, ctx: { kind: BulkKind; personalPlan?: boolean }): string {
+  if (code === 'NOT_PERMITTED' && ctx.kind === 'assign') return "aren't yours or your team's to assign";
+  if (code === 'NOT_PERMITTED' && ctx.kind === 'enroll' && ctx.personalPlan) return "aren't yours (a personal plan covers only people you own)";
+  return reasonWords(code);
+}
+
 export const BULK_ERROR_MESSAGES: Record<string, string> = {
   BULK_EMPTY: 'Select at least one person.',
   BULK_TOO_LARGE: 'That is more people than one bulk action can take. Narrow the list.',
@@ -98,4 +109,6 @@ export const BULK_ERROR_MESSAGES: Record<string, string> = {
   SMS_MARKETING_NOT_REGISTERED: 'Batch text needs a texting registration approved for marketing.',
   TEMPLATE_CHANNEL_MISMATCH: 'Pick a template for this kind of message.',
   LIST_TOO_SLOW: 'This list took too long to load. Narrow it with another filter and try again.',
+  // Start plan: the plan was stopped between the list and the draft (the same sentence as Settings → Playbooks)
+  PLAYBOOK_NOT_APPROVED: 'This playbook has no approved version yet.',
 };

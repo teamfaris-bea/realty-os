@@ -44,6 +44,10 @@ export const LEAD_ADMIN_ERROR_MESSAGES: Record<string, string> = {
   PLAYBOOK_VERSION_NOT_DRAFT: 'This version was already approved or replaced.',
   PLAYBOOK_NOT_APPROVED: 'This playbook has no approved version yet.',
   PLAYBOOK_OWNER_MISMATCH: 'Only the playbook’s owner can approve it. Team playbooks are approved by an Owner or Admin.',
+  // the stage whose entry starts a playbook (api/stage-automation, R-PAR-16)
+  AUTO_ENROLL_STAGE_TAKEN: 'Another playbook already starts on that stage. Clear the stage on that playbook first, or pick another one.',
+  AUTO_ENROLL_NOT_ALLOWED: "An instant reply to new leads starts when a lead arrives, so it can't also start on a stage change.",
+  PLAYBOOK_RETIRED: "This playbook was retired, so it can't start on a stage change.",
   // privacy erasure (api/admin erasure, R-DATA-4, E59)
   CONTACT_ON_DEAL: "This person is on a deal, so they can't be erased yet. The deal is a transaction record and stays; the Owner removes them from the deal first.",
   DEAL_STILL_OPEN: 'This person is the primary contact of a deal that is still open. Change the primary contact on the deal first, then remove them here.',

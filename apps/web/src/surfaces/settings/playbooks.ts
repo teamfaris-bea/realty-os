@@ -2,7 +2,29 @@
 // (ARCHITECTURE §11, R-AST-4): a person approves an exact version (bound to its content hash), and the
 // assistant may then send those messages on its own, with opt-outs checked at the moment each one
 // goes out and a pause the moment the client replies.
+import { messageFor } from '../../shell/errorMessages.js'; // the pure lookup itself: the shell index pulls in the app and its registry
+import { ADMIN_MESSAGES } from '../admin/lib/messages.js';
 import type { Playbook, PlaybookStepView, PlaybookVersion } from '../admin/lib/types.js';
+
+/** GET /playbooks/:id/auto-enroll-stage (api/stage-automation, R-PAR-16). */
+export interface AutoEnrollSetting {
+  playbook: { id: string; name: string; scope: 'team' | 'agent'; autoEnrollStage: string | null };
+  /** the caller may change it: the server's own can() for the PUT (team playbooks Owner/Admin; an agent their own) */
+  canChange: boolean;
+}
+
+/**
+ * A refusal of PUT /playbooks/:id/auto-enroll-stage in plain words. The 409 says which stage is taken and by
+ * whose playbook (the one-per-stage rule is per team, or per agent for personal playbooks); the 422s say why
+ * this playbook cannot start on a stage at all, or that the stage was not one of the list.
+ */
+export function autoEnrollRefusal(code: string, ctx: { stageLabel: string | null; scope: 'team' | 'agent' }): string {
+  if (code === 'AUTO_ENROLL_STAGE_TAKEN' && ctx.stageLabel) {
+    return `${ctx.scope === 'team' ? 'Another team playbook' : 'Another of your playbooks'} already starts when a person enters “${ctx.stageLabel}”. Clear the stage on that playbook first, or pick another one.`;
+  }
+  if (code === 'VALIDATION_FAILED') return 'Pick one of the stages in the list, or “No stage”.';
+  return messageFor(code, ADMIN_MESSAGES);
+}
 
 export const KIND_LABEL: Record<string, string> = {
   new_lead_response: 'Instant reply to new leads',
