@@ -31,7 +31,18 @@ import { type ConnectionRow, transitionConnection } from '../../integrations/sta
 import { systemActor } from '../../worker/systemActor.js';
 
 export type SparkAuthScheme = 'Bearer' | 'OAuth';
-export type ValidationResult = 'connected' | 'invalid_credentials' | 'not_licensed_or_role_insufficient' | 'rate_limited' | 'unreachable' | 'live_calls_disabled';
+export type ValidationResult = 'connected' | 'invalid_credentials' | 'replication_endpoint_required' | 'not_licensed_or_role_insufficient' | 'rate_limited' | 'busy' | 'unreachable' | 'live_calls_disabled';
+export const VALIDATION_RESULTS: readonly ValidationResult[] = ['connected', 'invalid_credentials', 'replication_endpoint_required', 'not_licensed_or_role_insufficient', 'rate_limited', 'busy', 'unreachable', 'live_calls_disabled'];
+
+/** The Owner's plain-words reading of the last validation code (never Spark's own text). */
+export const RESULT_SENTENCE: Readonly<Record<string, string>> = Object.freeze({
+  REPLICATION_ENDPOINT_REQUIRED: "This key only works on Spark's replication endpoint. Set the replication address in the deployment settings.",
+  BUSY: 'Spark was busy. Try again in a minute.',
+  RATE_LIMITED: 'Spark asked us to slow down. Try again in a few minutes.',
+  INVALID_CREDENTIALS: 'Spark did not accept this key. Check that it is the CRM key and save it again.',
+  NOT_LICENSED_OR_ROLE_INSUFFICIENT: 'Spark refused this key for MLS listings. Check the key\'s licence and role with Spark.',
+  LIVE_CALLS_DISABLED: 'Live MLS calls are turned off on this deployment, so the key was not tried.',
+});
 
 export interface SparkDeps {
   db: Database;
@@ -98,10 +109,12 @@ export function deploymentSentence(mls: Config['mls']): string {
 function connectionSentence(r: repo.ConnectionDbRow, credentialSaved: boolean): string {
   if (r.status === 'not_configured') {
     if (!credentialSaved) return 'Not connected yet. No key is saved and nothing is read.';
-    const last = r.last_error_code ? ` Last validation: ${r.last_error_code}.` : '';
+    const last = r.last_error_code ? ` Last validation: ${RESULT_SENTENCE[r.last_error_code] ?? 'Spark could not be reached.'}` : '';
     return `A key is saved but not validated yet. Nothing is read until validation succeeds.${last}`;
   }
-  return statusSentence(r.status, r.status_reason, serviceOf('mls_feed')!, { disconnectedAt: iso(r.disconnected_at) });
+  const base = statusSentence(r.status, r.status_reason, serviceOf('mls_feed')!, { disconnectedAt: iso(r.disconnected_at) });
+  const hint = r.last_error_code ? RESULT_SENTENCE[r.last_error_code] : undefined;
+  return hint ? `${base} ${hint}` : base;
 }
 
 async function connectionView(tx: Tx, r: repo.ConnectionDbRow): Promise<SparkConnectionView> {
@@ -189,10 +202,14 @@ export function resultOf(code: SparkErrorCode): { result: ValidationResult; revo
       return { result: 'live_calls_disabled', revoke: false };
     case 'INVALID_CREDENTIALS':
       return { result: 'invalid_credentials', revoke: true };
+    case 'REPLICATION_ENDPOINT_REQUIRED':
+      return { result: 'replication_endpoint_required', revoke: false };
     case 'NOT_LICENSED_OR_ROLE_INSUFFICIENT':
       return { result: 'not_licensed_or_role_insufficient', revoke: false };
     case 'RATE_LIMITED':
       return { result: 'rate_limited', revoke: false };
+    case 'BUSY':
+      return { result: 'busy', revoke: false };
     default:
       // 404, 5xx, network, timeout, a redirect, an unreadable body, a refused host/path: Spark was not usable
       return { result: 'unreachable', revoke: false };
@@ -259,10 +276,13 @@ export async function validateSpark(deps: SparkDeps, actor: UserActor): Promise<
       const row = await repo.getConnection(tx, pre.connectionId, { forUpdate: true });
       if (!row || row.credential_id !== pre.credentialId || row.status === 'disconnected') throw new AppError('CONNECTION_NOT_CONNECTABLE', { status: row?.status ?? 'missing' });
       const before = toRow(row);
+      // a busy Spark (finding 7) says nothing about the key: the status does not move, only the code is recorded
       const next =
         code === null
           ? transitionConnection(before, { type: 'key_validated', capabilities: { ...SPARK_CAPABILITIES }, at: new Date(deps.now()).toISOString() })
-          : transitionConnection(before, { type: 'key_rejected', code, revoke: outcome.revoke });
+          : code === 'BUSY'
+            ? { ...before, lastErrorCode: code }
+            : transitionConnection(before, { type: 'key_rejected', code, revoke: outcome.revoke });
       await repo.applyKeyValidation(tx, row.id, { status: next.status, statusReason: next.statusReason, capabilities: next.capabilities, lastErrorCode: next.lastErrorCode, connected: next.status === 'connected' });
       await audit(tx, sys, {
         action: 'integration.validated',

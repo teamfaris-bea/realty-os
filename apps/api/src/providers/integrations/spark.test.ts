@@ -1,8 +1,8 @@
 // Read-only Spark RESO adapter against a mock Spark server only (R-INT-1). A network tripwire fails any
 // real outbound call. Nothing here talks to Spark.
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { SPARK_PATHS, SparkConfigError, SparkError, SparkResoClient, SparkResoMlsFeed, type SparkOptions, checkSparkBaseUrl, decodeCursor, toResoListing } from './spark.js';
-import { CANARY_TOKEN, type MockSpark, type Tripwire, installNetworkTripwire, mockSpark, property } from './spark.testing.js';
+import { SPARK_PATHS, SparkConfigError, SparkError, SparkResoClient, SparkResoMlsFeed, type SparkOptions, checkSparkBaseUrl, decodeCursor, mediaOf, permissionGrantsRead, sanitizeRecord, toResoListing } from './spark.js';
+import { CANARY_KEY_ID, CANARY_TOKEN, type MockSpark, REPLICATION_HOST, type Tripwire, installNetworkTripwire, liveProperty, liveSpark, mockSpark, property } from './spark.testing.js';
 
 let wire: Tripwire;
 beforeAll(() => {
@@ -140,7 +140,7 @@ describe('Spark adapter: status mapping and backoff', () => {
       [429, 'RATE_LIMITED'],
       [500, 'UNREACHABLE'],
       [502, 'UNREACHABLE'],
-      [503, 'UNREACHABLE'],
+      [503, 'BUSY'],
       [400, 'BAD_RESPONSE'],
     ];
     for (const [status, code] of cases) {
@@ -272,12 +272,14 @@ describe('Spark adapter: paging and the ModificationTimestamp cursor', () => {
     expect(m.calls).toHaveLength(0);
   });
 
-  it('media: the Media resource, https photo URLs only, ordered; the licence pack stays the strictest placeholder', async () => {
-    const m = mockSpark(() => ({ status: 200, body: { value: [{ MediaURL: 'https://cdn.example/b.jpg', Order: 2, MimeType: 'image/jpeg' }, { MediaURL: 'http://insecure.example/a.jpg', Order: 1 }, { MediaURL: 'https://cdn.example/a.jpg', Order: 1 }] } }));
+  it('media: $expand=Media on the Property request (no Media entity set), https photo URLs only, ordered; the licence pack stays the strictest placeholder', async () => {
+    const m = mockSpark(() => ({ status: 200, body: { value: [{ ListingKey: 'LK0001', Media: [{ MediaURL: 'https://cdn.example/b.jpg', Order: 2, MimeType: 'image/jpeg' }, { MediaURL: 'http://insecure.example/a.jpg', Order: 1 }, { MediaURL: 'https://cdn.example/a.jpg', Order: '1' }] }] } }));
     const { feed } = make(m);
     expect((await feed.media('LK0001')).map((x) => x.url)).toEqual(['https://cdn.example/a.jpg', 'https://cdn.example/b.jpg']);
-    expect(m.calls[0]!.url.pathname).toBe('/Reso/OData/Media');
-    expect(m.calls[0]!.url.searchParams.get('$filter')).toBe("ResourceRecordKey eq 'LK0001'");
+    expect(m.calls).toHaveLength(1);
+    expect(m.calls[0]!.url.pathname).toBe('/Reso/OData/Property');
+    expect(m.calls[0]!.url.searchParams.get('$filter')).toBe("ListingKey eq 'LK0001'");
+    expect(m.calls[0]!.url.searchParams.get('$expand')).toBe('Media');
     expect(feed.describeLicense()).toMatchObject({ reviewed: false, rules: { displayToPublic: false, displayToClients: false } });
   });
 });
@@ -302,7 +304,127 @@ describe('Spark adapter: MLS_LIVE_CALLS kill switch', () => {
     expect(ok.calls).toHaveLength(1);
     expect(`${ok.calls[0]!.url.pathname}${ok.calls[0]!.url.search}`).toBe('/Reso/OData/Property?$top=1&$select=ListingKey%2CModificationTimestamp');
     const busy = mockSpark(() => ({ status: 503 }));
-    expect(await codeOf(make(busy).feed.probe())).toBe('UNREACHABLE');
+    expect(await codeOf(make(busy).feed.probe())).toBe('BUSY');
     expect(busy.calls).toHaveLength(1);
+  });
+});
+
+describe('Spark adapter: the live shape (findings 1-9, against a mock that reproduces it)', () => {
+  const REPL = `https://${REPLICATION_HOST}`;
+  const live = (m: MockSpark, o: Partial<SparkOptions> = {}) => make(m, { baseUrl: REPL, allowedHosts: [REPLICATION_HOST], ...o });
+
+  it('finding 1: a replication key on the standard host is REPLICATION_ENDPOINT_REQUIRED (its own code, not unauthorized); the replication host works', async () => {
+    const m = liveSpark({ records: () => [liveProperty(1)] });
+    expect(await codeOf(make(m, { allowedHosts: ['sparkapi.com', REPLICATION_HOST] }).feed.probe())).toBe('REPLICATION_ENDPOINT_REQUIRED');
+    expect(m.calls).toHaveLength(1); // a 403 is never retried
+    // a generic 403 stays NOT_LICENSED_OR_ROLE_INSUFFICIENT
+    expect(await codeOf(make(mockSpark(() => ({ status: 403, body: { error: { code: 403, message: 'Forbidden' } } }))).feed.probe())).toBe('NOT_LICENSED_OR_ROLE_INSUFFICIENT');
+    await live(m).feed.probe();
+    expect(m.calls.at(-1)!.url.hostname).toBe(REPLICATION_HOST);
+  });
+
+  it('finding 1: every nextLink stays on an allowed host (a replication nextLink with only the standard host allowed is refused)', async () => {
+    const recs = Array.from({ length: 5 }, (_, i) => liveProperty(i + 1));
+    const m = liveSpark({ records: () => recs, pageSize: 2 });
+    const ok = await live(m).feed.records(null, 5);
+    expect(ok.records).toHaveLength(5);
+    expect(new Set(m.calls.map((c) => c.url.hostname))).toEqual(new Set([REPLICATION_HOST]));
+    const evil = mockSpark(() => ({ status: 200, body: { value: [liveProperty(1)], '@odata.nextLink': 'https://sparkapi.com.evil.example/Reso/OData/Property?$skip=1' } }));
+    expect(await codeOf(live(evil).feed.records(null, 5))).toBe('HOST_NOT_ALLOWED');
+    expect(evil.calls).toHaveLength(1);
+  });
+
+  it('finding 2: there is no Media entity set; photos come from $expand=Media on the Property page request (no extra request per listing)', async () => {
+    expect(SPARK_PATHS as readonly string[]).not.toContain('/Reso/OData/Media');
+    const m = liveSpark({ records: () => [liveProperty(1), liveProperty(2)] });
+    const { feed } = live(m);
+    const meta = await feed.metadata();
+    expect(meta).not.toMatch(/EntitySet Name="Media"/);
+    expect((meta.match(/<EntitySet /g) ?? []).length).toBe(5);
+    expect(await codeOf(feed.client.request('GET', `${REPL}/Reso/OData/Media`))).toBe('PATH_NOT_ALLOWED');
+    m.calls.length = 0;
+    const page = await feed.records(null, 10);
+    expect(m.calls).toHaveLength(1);
+    expect(m.calls[0]!.url.searchParams.get('$expand')).toBe('Media');
+    expect(mediaOf(page.records[0]!).map((x) => x.url)).toEqual(['https://photos.example.invalid/LK0001/1.jpg', 'https://photos.example.invalid/LK0001/2.jpg']);
+  });
+
+  it('finding 2 (VERIFY): $select inside $expand is opt-in; either way the request count stays bounded by maxPages', async () => {
+    const recs = Array.from({ length: 30 }, (_, i) => liveProperty(i + 1));
+    for (const honour of [false, true]) {
+      const m = liveSpark({ records: () => recs, pageSize: 2, honourExpandSelect: honour });
+      const page = await live(m, { expandSelect: true, maxPages: 3, pageSize: 100 }).feed.records(null, 1000);
+      expect(m.calls).toHaveLength(3);
+      expect(m.calls[0]!.url.searchParams.get('$expand')).toMatch(/^Media\(\$select=MediaKey,MediaURL,Order/);
+      expect(page.records).toHaveLength(6);
+      expect(page.more).toBe(true);
+      expect(mediaOf(page.records[0]!)).toHaveLength(2);
+    }
+  });
+
+  it('finding 3: Media fields as served; Order is Edm.Int64 (number or string), photos ordered by it', () => {
+    const rec = sanitizeRecord({ ListingKey: 'LK1', Media: [{ MediaURL: 'https://p.example.invalid/3.jpg', Order: '3' }, { MediaURL: 'https://p.example.invalid/1.jpg', Order: 1 }, { MediaURL: 'https://p.example.invalid/x.jpg', Order: 'x' }] });
+    expect(mediaOf(rec).map((x) => x.order)).toEqual([1, 3, Number.MAX_SAFE_INTEGER]);
+  });
+
+  it('finding 4: unknown keys are ignored, annotation keys never fail the parse, and a field whose permission withholds it is removed', async () => {
+    const m = liveSpark({ records: () => [liveProperty(1), liveProperty(2, { 'ListOfficeName@Core.Permissions': 'None' })] });
+    const page = await live(m).feed.records(null, 10);
+    const r = page.records[0]!;
+    expect(Object.keys(r).some((k) => k.includes('@'))).toBe(false);
+    expect(r['PublicRemarks']).toBeUndefined(); // withheld by its annotation
+    expect(JSON.stringify(page.records)).not.toContain('WITHHELD-REMARKS-MARKER');
+    expect(r['ZZ_SyntheticLocalFlag']).toBe('Y'); // granted Read
+    expect(r['ListPrice']).toBe(400001);
+    // the second record's brokerage is withheld, so it cannot be stored (required, R-MLS-1): skipped, cursor still advances
+    const changes = await live(m).feed.changes(null, 10);
+    expect(changes.listings.map((l) => l.listingKey)).toEqual(['LK0001']);
+    expect(changes.skipped).toBe(1);
+    expect(decodeCursor(changes.cursor!).key).toBe('LK0002');
+    for (const v of ['Read', 'ReadWrite', 'Read,Write', ['Read'], 'Org.OData.Core.V1.Permission/Read']) expect(permissionGrantsRead(v), JSON.stringify(v)).toBe(true);
+    for (const v of ['None', 'Write', '', null, 1, {}, ['None'], 'read']) expect(permissionGrantsRead(v), JSON.stringify(v)).toBe(false);
+  });
+
+  it('finding 5: there is no LivingArea; the size is BuildingAreaTotal; an empty AboveGradeFinishedArea is not used', () => {
+    const l = toResoListing(liveProperty(3, { BuildingAreaTotal: 2100 }))!;
+    expect(l.livingAreaSqft).toBe(2100);
+    expect(toResoListing(liveProperty(3, { BuildingAreaTotal: null, LivingArea: 999 }))!.livingAreaSqft).toBeNull();
+  });
+
+  it('finding 6: StandardStatus is free text from the Lookup resource; known values map, unknown ones are skipped; YN flags are JSON booleans', () => {
+    expect(toResoListing(liveProperty(4, { StandardStatus: 'Active Under Contract' }))!.standardStatus).toBe('Pending');
+    expect(toResoListing(liveProperty(4, { StandardStatus: 'Hold' }))).toBeNull();
+    expect(sanitizeRecord(liveProperty(4))['InternetEntireListingDisplayYN']).toBe(true);
+  });
+
+  it('finding 7: a transient 503 is BUSY; the sync read retries it inside its budget; the probe (no retry) reports BUSY', async () => {
+    const m = liveSpark({ records: () => [liveProperty(1)], busyNext: 1 });
+    expect(await codeOf(live(m).feed.probe())).toBe('BUSY');
+    expect(m.calls).toHaveLength(1);
+    m.opts.busyNext = 2;
+    const { feed, sleeps } = live(m);
+    expect((await feed.records(null, 5)).records).toHaveLength(1);
+    expect(sleeps).toHaveLength(2);
+    m.opts.busyNext = 100;
+    expect(await codeOf(live(m, { retry: { budget: 2 } }).feed.records(null, 5))).toBe('BUSY');
+  });
+
+  it('finding 8: the X-Api-Key response header is never read into a result or an error', async () => {
+    const m = liveSpark({ records: () => [liveProperty(1)] });
+    const { feed } = live(m);
+    const page = await feed.records(null, 5);
+    expect(JSON.stringify(page)).not.toContain(CANARY_KEY_ID);
+    const e = await feed.client.request('GET', `${REPL}/Reso/OData/Media`).catch((x: unknown) => x);
+    expect(JSON.stringify(e) + String(e)).not.toContain(CANARY_KEY_ID);
+    const e403 = await make(m, { allowedHosts: ['sparkapi.com'] }).feed.probe().catch((x: unknown) => x);
+    expect(JSON.stringify(e403) + String(e403)).not.toContain(CANARY_KEY_ID);
+    expect(JSON.stringify(e403)).not.toContain('restricted');
+  });
+
+  it('finding 9: the one-record probe has no nextLink and no count, and that is a success', async () => {
+    const m = liveSpark({ records: () => [liveProperty(1), liveProperty(2)] });
+    await live(m).feed.probe();
+    const c = m.calls[0]!;
+    expect(Object.fromEntries(c.url.searchParams)).toEqual({ $top: '1', $select: 'ListingKey,ModificationTimestamp' });
   });
 });

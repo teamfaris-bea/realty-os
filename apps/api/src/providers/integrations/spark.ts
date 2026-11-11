@@ -1,7 +1,8 @@
 // Read-only Spark RESO Web API adapter (docs/DEPLOY.md and docs/SECURITY.md "Spark MLS (read-only)").
 //
 //   const feed = new SparkResoMlsFeed({ baseUrl, allowedHosts, authScheme, liveCalls, accessToken });
-//   await feed.changes(cursor, 200)     incremental by ModificationTimestamp (ties by ListingKey)
+//   await feed.records(cursor, 200)     sanitized raw RESO records (Media expanded) for core normalizeMlsListing
+//   await feed.changes(cursor, 200)     the same records as the ResoListing shape
 //   await feed.media(listingKey)        photo references (URLs only; never re-hosted here, R-MLS-4)
 //   await feed.probe()                  the single validation request (no retry)
 //
@@ -16,18 +17,42 @@
 //  - The access token is only ever placed in the Authorization header. Errors carry codes and HTTP status
 //    only: never the token, a header, a URL with a query, or a response body.
 //
-// VERIFY with Spark (public docs as read by the owner; nothing here was tried against a live account):
+// Live shape (a read-only check with the CRM's own key on 2026-11-11, docs/SECURITY.md §5.3; the mock in
+// spark.testing.ts reproduces each point):
+//  1. A replication key is refused on the standard host with a 403 naming the replication endpoint:
+//     REPLICATION_ENDPOINT_REQUIRED (its own status, never "unauthorized"). The base URL is set through
+//     SPARK_API_BASE_URL / SPARK_ALLOWED_HOSTS; every nextLink must stay on an allowed host.
+//  2. The service has no Media entity set: photos come from $expand=Media on the Property request.
+//  3. Media.Order is Edm.Int64 (a JSON number, or a string under IEEE754Compatible).
+//  4. Records carry many fields $metadata does not declare and `<Field>@Core.Permissions` annotations:
+//     unknown keys are ignored, every annotation key is dropped, and a field whose annotation does not
+//     grant Read is removed before anything reads it (sanitizeRecord).
+//  5. No LivingArea: the size is read from BuildingAreaTotal (SPARK_FIELD_MAPPING).
+//  6. StandardStatus is a string whose values come from the Lookup resource (not an OData enum).
+//  7. A transient 503 ("took too long") is BUSY: retried by the sync inside its budget; the single
+//     validation probe reports it as its own result.
+//  8. Every response echoes an X-Api-Key header: no response header but Content-Length and Retry-After
+//     is ever read, and none is logged, stored, audited or returned.
+//  9. The one-record probe returns no @odata.nextLink and no @odata.count.
+// VERIFY with Spark:
 //  - the Authorization scheme ("Bearer" or "OAuth"; SPARK_AUTH_SCHEME, default Bearer);
-//  - whether a full background sync must use Spark's separate replication endpoint (SPARK_API_BASE_URL);
-//  - the largest $top Spark accepts, $orderby on ListingKey, and the composite $filter used for the cursor;
-//  - how Media is exposed (a Media resource filtered by ResourceRecordKey vs. $expand=Media on Property);
-//  - which RESO fields each MLS actually populates (records missing a required field are skipped).
+//  - the largest $top Spark accepts with $expand=Media, $orderby on ListingKey, and the composite $filter
+//    used for the cursor; whether $select inside $expand is honoured (off by default: expandSelect);
+//  - which value of Core.Permissions withholds a field (anything but an explicit Read withholds it here);
+//  - which field is the finished living area for each MLS (BuildingAreaTotal is mapped; AboveGradeFinishedArea
+//    was present but empty) and which RESO fields each MLS actually populates.
 import { priceToCents } from '@realty/core/listings';
 import { ProviderError } from '../types.js';
 import type { LicensePack, MediaRef, MlsFeed, MlsPage, ResoListing } from './types.js';
 
-/** The only paths the adapter may request (exact match). Member/Office/OpenHouse are not needed by core/listings. */
-export const SPARK_PATHS = ['/Reso/OData/$metadata', '/Reso/OData/Property', '/Reso/OData/Media'] as const;
+/**
+ * The only paths the adapter may request (exact match). Member/Office/OpenHouse/Lookup are not needed by
+ * core/listings, and there is no Media entity set (photos come from $expand=Media on Property).
+ */
+export const SPARK_PATHS = ['/Reso/OData/$metadata', '/Reso/OData/Property'] as const;
+
+/** Per-MLS field overrides for core normalizeMlsListing (finding 5). VERIFY WITH MLS: the finished living area field. */
+export const SPARK_FIELD_MAPPING = Object.freeze({ sqft: 'BuildingAreaTotal' } as const);
 
 export const SPARK_ERROR_CODES = [
   'LIVE_CALLS_DISABLED',
@@ -36,9 +61,11 @@ export const SPARK_ERROR_CODES = [
   'HOST_NOT_ALLOWED',
   'REDIRECT_REFUSED',
   'INVALID_CREDENTIALS',
+  'REPLICATION_ENDPOINT_REQUIRED',
   'NOT_LICENSED_OR_ROLE_INSUFFICIENT',
   'NOT_FOUND',
   'RATE_LIMITED',
+  'BUSY',
   'UNREACHABLE',
   'BAD_RESPONSE',
 ] as const;
@@ -51,9 +78,11 @@ const KIND: Record<SparkErrorCode, ProviderError['kind']> = {
   HOST_NOT_ALLOWED: 'rejected',
   REDIRECT_REFUSED: 'rejected',
   INVALID_CREDENTIALS: 'rejected',
+  REPLICATION_ENDPOINT_REQUIRED: 'rejected',
   NOT_LICENSED_OR_ROLE_INSUFFICIENT: 'rejected',
   NOT_FOUND: 'rejected',
   RATE_LIMITED: 'unavailable',
+  BUSY: 'unavailable',
   UNREACHABLE: 'unavailable',
   BAD_RESPONSE: 'unavailable',
 };
@@ -89,8 +118,12 @@ export interface SparkOptions {
   maxBytes?: number;
   /** attempts per request incl. the first (default 4) and retries per operation across pages (default 8) */
   retry?: { attempts?: number; budget?: number; baseDelayMs?: number; maxDelayMs?: number };
-  /** $top per page (default 200; VERIFY Spark's maximum) */
+  /** $top per page (default 100 with $expand=Media; VERIFY Spark's maximum with $expand) */
   pageSize?: number;
+  /** pages read per operation at most (default 20): bounds the request count whatever page size Spark honours */
+  maxPages?: number;
+  /** send $expand=Media($select=...) instead of $expand=Media (default false; VERIFY whether Spark honours it) */
+  expandSelect?: boolean;
   sleep?: (ms: number) => Promise<void>;
   random?: () => number;
 }
@@ -149,7 +182,19 @@ function retryAfterMs(res: Response): number | null {
   return Number(v.trim()) * 1000;
 }
 
-const isRetryable = (c: SparkErrorCode) => c === 'RATE_LIMITED' || c === 'UNREACHABLE';
+const isRetryable = (c: SparkErrorCode) => c === 'RATE_LIMITED' || c === 'BUSY' || c === 'UNREACHABLE';
+
+/** The marker of Spark's "use the replication endpoint" 403 (finding 1). Only this test is made on the body. */
+const REPLICATION_HINT = /replication\.sparkapi\.com|use\s+replication/i;
+
+/** A small error body as text, read only to classify a 403; never stored, logged or returned. */
+async function peekErrorText(res: Response): Promise<string> {
+  try {
+    return Buffer.from(await readCapped(res, 8 * 1024)).toString('utf8');
+  } catch {
+    return '';
+  }
+}
 
 /** The low-level, GET-only, allow-listed Spark client. */
 export class SparkResoClient {
@@ -227,10 +272,10 @@ export class SparkResoClient {
         }
         const s = res.status;
         if (s >= 200 && s < 300) return await readCapped(res, this.maxBytes);
+        if (s === 403) throw new SparkError(REPLICATION_HINT.test(await peekErrorText(res)) ? 'REPLICATION_ENDPOINT_REQUIRED' : 'NOT_LICENSED_OR_ROLE_INSUFFICIENT', s);
         await res.body?.cancel().catch(() => undefined);
         if (s === 0 || (s >= 300 && s < 400)) throw new SparkError('REDIRECT_REFUSED', s || null);
         if (s === 401) throw new SparkError('INVALID_CREDENTIALS', s);
-        if (s === 403) throw new SparkError('NOT_LICENSED_OR_ROLE_INSUFFICIENT', s);
         if (s === 404) throw new SparkError('NOT_FOUND', s);
         if (s === 429) {
           wait = retryAfterMs(res);
@@ -238,7 +283,7 @@ export class SparkResoClient {
         }
         if (s >= 500) {
           wait = retryAfterMs(res);
-          throw new SparkError('UNREACHABLE', s);
+          throw new SparkError(s === 503 ? 'BUSY' : 'UNREACHABLE', s);
         }
         throw new SparkError('BAD_RESPONSE', s);
       } catch (e) {
@@ -269,7 +314,7 @@ export class SparkResoClient {
   }
 }
 
-// ---- RESO record → ResoListing -------------------------------------------------------------------------
+// ---- RESO record → sanitized record / ResoListing ---------------------------------------------------
 
 const STATUS: Record<string, ResoListing['standardStatus']> = {
   active: 'Active',
@@ -285,6 +330,45 @@ const STATUS: Record<string, ResoListing['standardStatus']> = {
 
 const text = (v: unknown): string | null => (typeof v === 'string' && v.trim() !== '' ? v.trim() : typeof v === 'number' && Number.isFinite(v) ? String(v) : null);
 const nonNeg = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+/** Edm.Int64: a JSON number, or a decimal string under IEEE754Compatible (finding 3). */
+const int64 = (v: unknown): number | null => {
+  if (typeof v === 'number') return Number.isSafeInteger(v) && v >= 0 ? v : null;
+  if (typeof v === 'string' && /^\d{1,15}$/.test(v.trim())) return Number(v.trim());
+  return null;
+};
+
+const PERMISSIONS_SUFFIX = '@Core.Permissions';
+
+/**
+ * Whether a RESO `Core.Permissions` annotation value grants Read. The OData vocabulary's members are
+ * None, Read, Write, ReadWrite (also sent as a flags string "Read,Write" or a list). Anything else, or an
+ * unreadable value, withholds the field (strictest). VERIFY with Spark / the MLS.
+ */
+export function permissionGrantsRead(v: unknown): boolean {
+  const parts = Array.isArray(v) ? v : typeof v === 'string' ? v.split(/[\s,|]+/) : [];
+  return parts.some((p) => typeof p === 'string' && /^(?:Org\.OData\.Core\.V1\.Permission\/|Core\.Permission\/)?(Read|ReadWrite)$/.test(p.trim()));
+}
+
+/**
+ * One record as core/listings may read it (finding 4): every annotation key (`@odata.*`, `<Field>@...`) is
+ * dropped, and a field whose `<Field>@Core.Permissions` annotation does not grant Read is removed, so it is
+ * never displayed or sent. Unknown fields are kept as data and ignored by the normalizer. Media entries are
+ * sanitized the same way.
+ */
+export function sanitizeRecord(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const rec = raw as Record<string, unknown>;
+  const withheld = new Set<string>();
+  for (const [k, v] of Object.entries(rec)) {
+    if (k.endsWith(PERMISSIONS_SUFFIX) && !permissionGrantsRead(v)) withheld.add(k.slice(0, -PERMISSIONS_SUFFIX.length));
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(rec)) {
+    if (k.includes('@') || withheld.has(k) || k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
+    out[k] = k === 'Media' && Array.isArray(v) ? v.map(sanitizeRecord) : v;
+  }
+  return out;
+}
 
 /** The record's cursor position, or null when it has no usable ModificationTimestamp / ListingKey. */
 export function positionOf(raw: Record<string, unknown>): { ts: string; key: string } | null {
@@ -297,11 +381,13 @@ export function positionOf(raw: Record<string, unknown>): { ts: string; key: str
 }
 
 /**
- * One RESO Property record as the existing ResoListing shape, or null when a required field is missing
- * (the sync skips it; core/listings normalizeMlsListing and applyDisplayRules still decide what any audience
- * may see). Required: ListingKey, ModificationTimestamp, StandardStatus, ListPrice, ListOfficeName (R-MLS-1).
+ * One RESO Property record (sanitized) as the existing ResoListing shape, or null when a required field is
+ * missing (the sync skips it; core/listings normalizeMlsListing and applyDisplayRules still decide what any
+ * audience may see). Required: ListingKey, ModificationTimestamp, StandardStatus, ListPrice, ListOfficeName
+ * (R-MLS-1). The size is BuildingAreaTotal (finding 5; there is no LivingArea in this feed).
  */
-export function toResoListing(raw: Record<string, unknown>): ResoListing | null {
+export function toResoListing(raw0: Record<string, unknown>): ResoListing | null {
+  const raw = sanitizeRecord(raw0);
   const pos = positionOf(raw);
   const statusText = text(raw['StandardStatus']);
   const status = statusText ? STATUS[statusText.toLowerCase().replace(/[\s_-]+/g, '')] : undefined;
@@ -312,7 +398,7 @@ export function toResoListing(raw: Record<string, unknown>): ResoListing | null 
   const unit = text(raw['UnitNumber']);
   const beds = nonNeg(raw['BedroomsTotal']);
   const baths = nonNeg(raw['BathroomsTotalInteger']);
-  const area = nonNeg(raw['LivingArea']);
+  const area = nonNeg(raw[SPARK_FIELD_MAPPING.sqft]);
   return {
     listingKey: pos.key,
     listingId: text(raw['ListingId']) ?? pos.key,
@@ -329,6 +415,20 @@ export function toResoListing(raw: Record<string, unknown>): ResoListing | null 
     listOfficeName: office,
     modificationTimestamp: pos.ts,
   };
+}
+
+/** Photo references of a sanitized record's expanded Media (https only, ordered by Order then feed order). */
+export function mediaOf(rec: Record<string, unknown>): MediaRef[] {
+  const media = rec['Media'];
+  if (!Array.isArray(media)) return [];
+  const out: (MediaRef & { i: number })[] = [];
+  media.forEach((m: unknown, i) => {
+    const r = sanitizeRecord(m);
+    const url = text(r['MediaURL']);
+    if (url === null || !/^https:\/\/\S+$/i.test(url)) return;
+    out.push({ order: int64(r['Order']) ?? Number.MAX_SAFE_INTEGER, url, contentType: text(r['MimeType']) ?? 'application/octet-stream', i });
+  });
+  return out.sort((a, b) => a.order - b.order || a.i - b.i).map(({ i: _i, ...m }) => m);
 }
 
 // ---- cursor ----------------------------------------------------------------------------------------------
@@ -348,10 +448,22 @@ export function decodeCursor(c: string): { ts: string; key: string } {
 
 const odataString = (s: string) => `'${s.replace(/'/g, "''")}'`;
 const q = (pairs: [string, string][]) => pairs.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+/** The Media fields read (finding 3), for $expand=Media($select=...) when expandSelect is on. */
+const MEDIA_SELECT = 'MediaKey,MediaURL,Order,MediaCategory,Permission,ResourceRecordKey';
 
 export interface SparkPage extends MlsPage {
   /** records skipped because a required field was missing or invalid */
   skipped: number;
+}
+
+export interface SparkRecordPage {
+  /** sanitized records (Media expanded), in feed order; every one advanced the cursor */
+  records: Record<string, unknown>[];
+  cursor: string | null;
+  /** records without a usable ListingKey / ModificationTimestamp (they cannot be stored) */
+  unpositioned: number;
+  /** true when the read stopped at the limit or the page bound: more may be waiting */
+  more: boolean;
 }
 
 /** The read-only MlsFeed over Spark's RESO Web API. */
@@ -359,15 +471,20 @@ export class SparkResoMlsFeed implements MlsFeed {
   readonly access = 'available' as const;
   readonly client: SparkResoClient;
   private readonly pageSize: number;
+  private readonly maxPages: number;
+  private readonly expand: string;
 
   constructor(o: SparkOptions) {
     this.client = new SparkResoClient(o);
-    this.pageSize = Math.max(1, Math.min(1000, o.pageSize ?? 200));
+    this.pageSize = Math.max(1, Math.min(1000, o.pageSize ?? 100));
+    this.maxPages = Math.max(1, Math.min(200, o.maxPages ?? 20));
+    this.expand = o.expandSelect ? `Media($select=${MEDIA_SELECT})` : 'Media';
   }
 
   /**
    * The validation probe: exactly one GET /Reso/OData/Property?$top=1&$select=ListingKey,ModificationTimestamp,
-   * no retry. Resolves when Spark answered 2xx with an OData collection; throws SparkError otherwise.
+   * no retry. Resolves when Spark answered 2xx with an OData collection (no nextLink or count is expected,
+   * finding 9); throws SparkError otherwise.
    */
   async probe(): Promise<void> {
     const body = await this.client.json(this.client.url('/Reso/OData/Property', q([['$top', '1'], ['$select', 'ListingKey,ModificationTimestamp']])), { retries: { left: 0 } });
@@ -379,60 +496,67 @@ export class SparkResoMlsFeed implements MlsFeed {
     return Buffer.from(await this.client.request('GET', this.client.url('/Reso/OData/$metadata'), { accept: 'application/xml' })).toString('utf8');
   }
 
-  async changes(cursor: string | null, limit: number): Promise<SparkPage> {
+  /**
+   * Up to `limit` sanitized Property records after the cursor, with Media expanded, in ModificationTimestamp
+   * then ListingKey order. At most `maxPages` requests (plus retries inside the shared budget).
+   */
+  async records(cursor: string | null, limit: number): Promise<SparkRecordPage> {
     const want = Math.max(0, Math.floor(limit));
-    if (want === 0) return { listings: [], cursor, skipped: 0 };
+    if (want === 0) return { records: [], cursor, unpositioned: 0, more: false };
     const after = cursor === null ? null : decodeCursor(cursor);
     const pairs: [string, string][] = [];
     if (after) pairs.push(['$filter', `ModificationTimestamp gt ${after.ts} or (ModificationTimestamp eq ${after.ts} and ListingKey gt ${odataString(after.key)})`]);
-    pairs.push(['$orderby', 'ModificationTimestamp asc,ListingKey asc'], ['$top', String(Math.min(want, this.pageSize))]);
+    pairs.push(['$orderby', 'ModificationTimestamp asc,ListingKey asc'], ['$top', String(Math.min(want, this.pageSize))], ['$expand', this.expand]);
     const retries = this.client.newRetryBudget();
-    const listings: ResoListing[] = [];
-    let skipped = 0;
+    const records: Record<string, unknown>[] = [];
+    let unpositioned = 0;
     let last = after;
     let seen = 0;
+    let pages = 0;
     let next: string | null = this.client.url('/Reso/OData/Property', q(pairs));
-    while (next !== null && seen < want) {
+    while (next !== null && seen < want && pages < this.maxPages) {
+      pages += 1;
       const body = await this.client.json(next, { retries });
       const value = body['value'];
       if (!Array.isArray(value)) throw new SparkError('BAD_RESPONSE');
       for (const r of value) {
         if (seen >= want) break;
         seen += 1;
-        const rec = (r && typeof r === 'object' && !Array.isArray(r) ? r : {}) as Record<string, unknown>;
+        const rec = sanitizeRecord(r);
         const pos = positionOf(rec);
         // never move the cursor backwards (an out-of-order record is skipped, not re-read forever)
         if (pos && (!last || pos.ts > last.ts || (pos.ts === last.ts && pos.key > last.key))) last = pos;
-        const l = toResoListing(rec);
-        if (l) listings.push(l);
-        else skipped += 1;
+        if (pos) records.push(rec);
+        else unpositioned += 1;
       }
       const link = body['@odata.nextLink'];
       next = value.length > 0 && typeof link === 'string' && link !== '' ? this.client.checkTarget(link) : null;
     }
-    return { listings, cursor: last ? encodeCursor(last) : cursor, skipped };
+    return { records, cursor: last ? encodeCursor(last) : cursor, unpositioned, more: next !== null };
   }
 
+  async changes(cursor: string | null, limit: number): Promise<SparkPage> {
+    const page = await this.records(cursor, limit);
+    const listings: ResoListing[] = [];
+    let skipped = page.unpositioned;
+    for (const r of page.records) {
+      const l = toResoListing(r);
+      if (l) listings.push(l);
+      else skipped += 1;
+    }
+    return { listings, cursor: page.cursor, skipped };
+  }
+
+  /** Photos of one listing: the Property record with $expand=Media (there is no Media entity set, finding 2). One request. */
   async media(listingKey: string): Promise<MediaRef[]> {
     if (!KEY_RE.test(listingKey)) throw new SparkError('BAD_RESPONSE');
-    const retries = this.client.newRetryBudget();
-    const out: MediaRef[] = [];
-    let next: string | null = this.client.url('/Reso/OData/Media', q([['$filter', `ResourceRecordKey eq ${odataString(listingKey)}`], ['$orderby', 'Order asc']]));
-    for (let pages = 0; next !== null && pages < 20; pages++) {
-      const body = await this.client.json(next, { retries });
-      const value = body['value'];
-      if (!Array.isArray(value)) throw new SparkError('BAD_RESPONSE');
-      for (const r of value) {
-        const rec = (r && typeof r === 'object' ? r : {}) as Record<string, unknown>;
-        const url = text(rec['MediaURL']);
-        if (url === null || !/^https:\/\/\S+$/i.test(url)) continue;
-        const order = nonNeg(rec['Order']) ?? out.length + 1;
-        out.push({ order, url, contentType: text(rec['MimeType']) ?? 'application/octet-stream' });
-      }
-      const link = body['@odata.nextLink'];
-      next = value.length > 0 && typeof link === 'string' && link !== '' ? this.client.checkTarget(link) : null;
-    }
-    return out.sort((a, b) => a.order - b.order);
+    const body = await this.client.json(
+      this.client.url('/Reso/OData/Property', q([['$filter', `ListingKey eq ${odataString(listingKey)}`], ['$select', 'ListingKey'], ['$expand', this.expand], ['$top', '1']])),
+      { retries: this.client.newRetryBudget() },
+    );
+    const value = body['value'];
+    if (!Array.isArray(value)) throw new SparkError('BAD_RESPONSE');
+    return value.length === 0 ? [] : mediaOf(sanitizeRecord(value[0]));
   }
 
   /** Strictest placeholder: nothing is displayable until a counsel-reviewed licence pack is entered (VERIFY per MLS). */
