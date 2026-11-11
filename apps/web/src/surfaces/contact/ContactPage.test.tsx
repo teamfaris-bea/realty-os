@@ -152,6 +152,14 @@ describe('Contact: full view', () => {
     expect(await screen.findByRole('timer')).toHaveTextContent(/^(9|10):\d\d left$/);
   });
 
+  it('the first-contact countdown is announced politely as it crosses a milestone, naming the contact', async () => {
+    const c = fullContact();
+    const fake = fullFake({ ...c, ownership: { ...c.ownership, firstTouchAt: null, firstTouchDueAt: iso(31_500) } });
+    agentApp(fake, `/contacts/${IDS.jane}`);
+    await screen.findByRole('timer');
+    await waitFor(() => expect(screen.getByTestId('announcer')).toHaveTextContent('First contact with Jane Doe: 30 seconds left'), { timeout: 3000 });
+  });
+
   it('an invisible or missing contact reads as not available, the same either way', async () => {
     const fake = new FakeFetch().on(`GET /contacts/${IDS.pat}`, err(404, 'NOT_FOUND'));
     agentApp(fake, `/contacts/${IDS.pat}`);
