@@ -68,6 +68,7 @@ export function isUnder(d: string, base: string): boolean {
 export function domainOf(address: string | null): string | null {
   if (!address) return null;
   const a = address.trim();
+  // eslint-disable-next-line no-control-regex -- rejecting control characters is the point of this check
   if (/[\s<>,;"\\\u0000-\u001f\u007f]/.test(a)) return null;
   const at = a.lastIndexOf('@');
   if (at <= 0 || a.indexOf('@') !== at) return null;

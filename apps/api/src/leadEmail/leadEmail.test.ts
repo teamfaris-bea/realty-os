@@ -3,6 +3,8 @@
 // routing, first response to the LEAD's own points, D1), and the Needs review list (accept / discard).
 import { ROLES, type Role, can } from '@realty/core/foundation';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { z } from 'zod';
+import { LEAD_EMAIL_RESPONSE_SCHEMAS } from './routes.js';
 import { freshReauth } from '../admin/testing.js';
 import { type AssistantWorld, approvedPlaybook, assistantWorld, call, messagesOf, randomPhone, runJobs } from '../assistant/testing.js';
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
@@ -239,5 +241,25 @@ describe('R-PERM-1 lead_email.review_* route × role matrix (DATA_MODEL §8 lead
     }
     expect(got).toEqual(want);
     expect(want).toMatchObject({ 'owner view': 'allowed', 'team_lead decide': 'allowed', 'agent view': 'NOT_FOUND', 'tc decide': 'NOT_FOUND' });
+  });
+});
+
+describe('R-AST-13 R-TEN-3 response and request schemas', () => {
+  it('R-AST-13 R-TEN-3: lead-email response schemas have no confidence* fields and no tenant id fields (snapshot)', () => {
+    const shapes: Record<string, unknown> = {};
+    for (const [name, schema] of Object.entries(LEAD_EMAIL_RESPONSE_SCHEMAS)) {
+      const json = z.toJSONSchema(schema);
+      const text = JSON.stringify(json);
+      expect(text).not.toMatch(/confidence/i);
+      expect(text).not.toMatch(/"tenant_id"|"tenantId"/);
+      shapes[name] = json;
+    }
+    expect(shapes).toMatchSnapshot();
+  });
+
+  it('R-TEN-3: a tenant id in a request body is refused (strict schemas)', async () => {
+    await freshReauth(h, w.owner);
+    const r = await call(w.owner, 'PUT', `/lead-sources/${w.sourceId}/lead-email/sender-domains`, { domains: ['zillow.com'], tenantId: w.tenantId });
+    expect([r.status, r.code]).toEqual([422, 'VALIDATION_FAILED']);
   });
 });

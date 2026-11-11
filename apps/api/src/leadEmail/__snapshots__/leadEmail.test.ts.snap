@@ -1,0 +1,889 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`R-AST-13 R-TEN-3 response and request schemas > R-AST-13 R-TEN-3: lead-email response schemas have no confidence* fields and no tenant id fields (snapshot) 1`] = `
+{
+  "InboxResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "inbox": {
+        "additionalProperties": false,
+        "properties": {
+          "address": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "addressCreatedAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "allowedSenderDomains": {
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "connectionId": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "enabled": {
+            "type": "boolean",
+          },
+          "inboundDomainConfigured": {
+            "type": "boolean",
+          },
+          "leadSourceId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "status": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "suggestedSenderDomains": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "domain": {
+                  "type": "string",
+                },
+                "label": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "domain",
+                "label",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+        },
+        "required": [
+          "leadSourceId",
+          "enabled",
+          "connectionId",
+          "status",
+          "address",
+          "addressCreatedAt",
+          "allowedSenderDomains",
+          "suggestedSenderDomains",
+          "inboundDomainConfigured",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "inbox",
+    ],
+    "type": "object",
+  },
+  "ReviewDecisionResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "contactId": {
+        "anyOf": [
+          {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          {
+            "type": "null",
+          },
+        ],
+      },
+      "review": {
+        "additionalProperties": false,
+        "properties": {
+          "canAccept": {
+            "type": "boolean",
+          },
+          "contactId": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "decidedAt": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "dkimPassDomains": {
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "fields": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "emails": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "span": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "end": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer",
+                            },
+                            "start": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer",
+                            },
+                          },
+                          "required": [
+                            "start",
+                            "end",
+                          ],
+                          "type": "object",
+                        },
+                        "value": {
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "value",
+                        "span",
+                      ],
+                      "type": "object",
+                    },
+                    "type": "array",
+                  },
+                  "leadType": {
+                    "type": "string",
+                  },
+                  "listingId": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "span": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "end": {
+                                "maximum": 9007199254740991,
+                                "minimum": -9007199254740991,
+                                "type": "integer",
+                              },
+                              "start": {
+                                "maximum": 9007199254740991,
+                                "minimum": -9007199254740991,
+                                "type": "integer",
+                              },
+                            },
+                            "required": [
+                              "start",
+                              "end",
+                            ],
+                            "type": "object",
+                          },
+                          "value": {
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "value",
+                          "span",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "message": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "span": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "end": {
+                                "maximum": 9007199254740991,
+                                "minimum": -9007199254740991,
+                                "type": "integer",
+                              },
+                              "start": {
+                                "maximum": 9007199254740991,
+                                "minimum": -9007199254740991,
+                                "type": "integer",
+                              },
+                            },
+                            "required": [
+                              "start",
+                              "end",
+                            ],
+                            "type": "object",
+                          },
+                          "value": {
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "value",
+                          "span",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "name": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "span": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "end": {
+                                "maximum": 9007199254740991,
+                                "minimum": -9007199254740991,
+                                "type": "integer",
+                              },
+                              "start": {
+                                "maximum": 9007199254740991,
+                                "minimum": -9007199254740991,
+                                "type": "integer",
+                              },
+                            },
+                            "required": [
+                              "start",
+                              "end",
+                            ],
+                            "type": "object",
+                          },
+                          "value": {
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "value",
+                          "span",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "phones": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "span": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "end": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer",
+                            },
+                            "start": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer",
+                            },
+                          },
+                          "required": [
+                            "start",
+                            "end",
+                          ],
+                          "type": "object",
+                        },
+                        "value": {
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "value",
+                        "span",
+                      ],
+                      "type": "object",
+                    },
+                    "type": "array",
+                  },
+                  "property": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "span": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "end": {
+                                "maximum": 9007199254740991,
+                                "minimum": -9007199254740991,
+                                "type": "integer",
+                              },
+                              "start": {
+                                "maximum": 9007199254740991,
+                                "minimum": -9007199254740991,
+                                "type": "integer",
+                              },
+                            },
+                            "required": [
+                              "start",
+                              "end",
+                            ],
+                            "type": "object",
+                          },
+                          "value": {
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "value",
+                          "span",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                },
+                "required": [
+                  "name",
+                  "phones",
+                  "emails",
+                  "message",
+                  "property",
+                  "listingId",
+                  "leadType",
+                ],
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+          },
+          "holdCode": {
+            "type": "string",
+          },
+          "holdSentence": {
+            "type": "string",
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "leadSourceId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string",
+          },
+          "leadSourceName": {
+            "type": "string",
+          },
+          "parserKind": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "receivedAt": {
+            "type": "string",
+          },
+          "senderDomain": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "status": {
+            "enum": [
+              "needs_review",
+              "accepted",
+              "discarded",
+            ],
+            "type": "string",
+          },
+          "subject": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "text": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+        },
+        "required": [
+          "id",
+          "receivedAt",
+          "leadSourceId",
+          "leadSourceName",
+          "status",
+          "holdCode",
+          "holdSentence",
+          "senderDomain",
+          "dkimPassDomains",
+          "parserKind",
+          "subject",
+          "text",
+          "fields",
+          "canAccept",
+          "contactId",
+          "decidedAt",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "review",
+      "contactId",
+    ],
+    "type": "object",
+  },
+  "ReviewsResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "items": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "canAccept": {
+              "type": "boolean",
+            },
+            "contactId": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "decidedAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "dkimPassDomains": {
+              "items": {
+                "type": "string",
+              },
+              "type": "array",
+            },
+            "fields": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "emails": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "span": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "end": {
+                                "maximum": 9007199254740991,
+                                "minimum": -9007199254740991,
+                                "type": "integer",
+                              },
+                              "start": {
+                                "maximum": 9007199254740991,
+                                "minimum": -9007199254740991,
+                                "type": "integer",
+                              },
+                            },
+                            "required": [
+                              "start",
+                              "end",
+                            ],
+                            "type": "object",
+                          },
+                          "value": {
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "value",
+                          "span",
+                        ],
+                        "type": "object",
+                      },
+                      "type": "array",
+                    },
+                    "leadType": {
+                      "type": "string",
+                    },
+                    "listingId": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "span": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "end": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": -9007199254740991,
+                                  "type": "integer",
+                                },
+                                "start": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": -9007199254740991,
+                                  "type": "integer",
+                                },
+                              },
+                              "required": [
+                                "start",
+                                "end",
+                              ],
+                              "type": "object",
+                            },
+                            "value": {
+                              "type": "string",
+                            },
+                          },
+                          "required": [
+                            "value",
+                            "span",
+                          ],
+                          "type": "object",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                    "message": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "span": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "end": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": -9007199254740991,
+                                  "type": "integer",
+                                },
+                                "start": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": -9007199254740991,
+                                  "type": "integer",
+                                },
+                              },
+                              "required": [
+                                "start",
+                                "end",
+                              ],
+                              "type": "object",
+                            },
+                            "value": {
+                              "type": "string",
+                            },
+                          },
+                          "required": [
+                            "value",
+                            "span",
+                          ],
+                          "type": "object",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                    "name": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "span": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "end": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": -9007199254740991,
+                                  "type": "integer",
+                                },
+                                "start": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": -9007199254740991,
+                                  "type": "integer",
+                                },
+                              },
+                              "required": [
+                                "start",
+                                "end",
+                              ],
+                              "type": "object",
+                            },
+                            "value": {
+                              "type": "string",
+                            },
+                          },
+                          "required": [
+                            "value",
+                            "span",
+                          ],
+                          "type": "object",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                    "phones": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "span": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "end": {
+                                "maximum": 9007199254740991,
+                                "minimum": -9007199254740991,
+                                "type": "integer",
+                              },
+                              "start": {
+                                "maximum": 9007199254740991,
+                                "minimum": -9007199254740991,
+                                "type": "integer",
+                              },
+                            },
+                            "required": [
+                              "start",
+                              "end",
+                            ],
+                            "type": "object",
+                          },
+                          "value": {
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "value",
+                          "span",
+                        ],
+                        "type": "object",
+                      },
+                      "type": "array",
+                    },
+                    "property": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "span": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "end": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": -9007199254740991,
+                                  "type": "integer",
+                                },
+                                "start": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": -9007199254740991,
+                                  "type": "integer",
+                                },
+                              },
+                              "required": [
+                                "start",
+                                "end",
+                              ],
+                              "type": "object",
+                            },
+                            "value": {
+                              "type": "string",
+                            },
+                          },
+                          "required": [
+                            "value",
+                            "span",
+                          ],
+                          "type": "object",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                  },
+                  "required": [
+                    "name",
+                    "phones",
+                    "emails",
+                    "message",
+                    "property",
+                    "listingId",
+                    "leadType",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "holdCode": {
+              "type": "string",
+            },
+            "holdSentence": {
+              "type": "string",
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "leadSourceId": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string",
+            },
+            "leadSourceName": {
+              "type": "string",
+            },
+            "parserKind": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "receivedAt": {
+              "type": "string",
+            },
+            "senderDomain": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "status": {
+              "enum": [
+                "needs_review",
+                "accepted",
+                "discarded",
+              ],
+              "type": "string",
+            },
+            "subject": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "text": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+          },
+          "required": [
+            "id",
+            "receivedAt",
+            "leadSourceId",
+            "leadSourceName",
+            "status",
+            "holdCode",
+            "holdSentence",
+            "senderDomain",
+            "dkimPassDomains",
+            "parserKind",
+            "subject",
+            "text",
+            "fields",
+            "canAccept",
+            "contactId",
+            "decidedAt",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+      "pendingCount": {
+        "maximum": 9007199254740991,
+        "minimum": -9007199254740991,
+        "type": "integer",
+      },
+    },
+    "required": [
+      "items",
+      "pendingCount",
+    ],
+    "type": "object",
+  },
+  "WebhookResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "ok": {
+        "const": true,
+        "type": "boolean",
+      },
+      "outcome": {
+        "enum": [
+          "lead_created",
+          "needs_review",
+          "duplicate",
+          "unrouted",
+        ],
+        "type": "string",
+      },
+    },
+    "required": [
+      "ok",
+      "outcome",
+    ],
+    "type": "object",
+  },
+}
+`;
