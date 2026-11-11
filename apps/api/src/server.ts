@@ -21,6 +21,7 @@
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import { PUBLIC_CHAT_PREFIX } from './channels/publicPaths.js';
+import { registerPublicListingPages } from './marketing/publicPage.js';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import type { Clock, IdGenerator } from '@realty/core/foundation';
@@ -268,6 +269,9 @@ export function buildServer(cfg: Config, deps: ServerDeps): FastifyInstance {
     },
     errorResponseBuilder: (_req, ctx) => Object.assign(new AppError('RATE_LIMITED', { retryAfterSeconds: Math.ceil(ctx.ttl / 1000) }), { statusCode: 429 }),
   });
+
+  // module 29: the public listing pages are documents, served outside /api (marketing/publicPage.ts; R-MKT-7)
+  registerPublicListingPages(app);
 
   const modules = deps.routeModules ?? defaultRouteModules;
   app.register(

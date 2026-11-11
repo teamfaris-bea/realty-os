@@ -38,6 +38,8 @@ export interface ComposeInput {
   bulkActionId?: string | undefined;
   /** parity module 63: a bulk send is always marketing (R-PAR-39); absent = classified as today */
   purposeOverride?: 'marketing' | undefined;
+  /** module 29: an open-house invite (email, marketing; R-MKT-8: one gated message per recipient, linked to the piece) */
+  marketingPieceId?: string | undefined;
 }
 
 export interface MessageView {
@@ -231,6 +233,7 @@ export async function composeHumanMessage(actor: UserActor, contactId: string, i
       occurredAt: scheduledFor ?? now,
       bulkActionId: input.bulkActionId ?? null,
       integrationConnectionId: d.chat?.connectionId ?? null,
+      marketingPieceId: input.marketingPieceId ?? null,
     });
     if (!inserted) {
       // the same command raced in (double tap, network retry): it is that command's message

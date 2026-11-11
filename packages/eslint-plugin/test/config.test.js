@@ -101,6 +101,15 @@ describe('eslint.config.js architecture wiring', () => {
     expect(await lint('apps/api/src/providers/fake/telephony.test.ts', code)).toEqual([]);
   });
 
+  it('R-GATE-15: only marketing/publish.ts may call publishPost / postReviewReply (module 29)', async () => {
+    const code =
+      'type S = { publishPost(p: unknown): Promise<void>; postReviewReply(p: unknown): Promise<void> };\n' +
+      'export async function f(social: S, p: unknown) { await social.publishPost(p); await social.postReviewReply(p); }\n';
+    expect(await lint('apps/api/src/marketing/routes.ts', code)).toContain('realty/no-provider-outbound');
+    expect(await lint('apps/api/src/marketing/handlers.ts', code)).toContain('realty/no-provider-outbound');
+    expect(await lint('apps/api/src/marketing/publish.ts', code)).toEqual([]);
+  });
+
   it("Actor { kind: 'system' } is constructed only in apps/api/src/worker/**", async () => {
     const code = "export const actor = { kind: 'system' as const, tenantId: 't', via: 'timer' as const };\n";
     expect(await lint('apps/api/src/leads/intake.ts', code)).toContain('realty/no-system-actor');

@@ -289,6 +289,13 @@ export const AUDIT_ACTIONS = [
   'webchat.widget_created', // module 22: an Owner/Admin created a website chat widget (its key is shown once)
   'webchat.widget_key_rotated', // module 22: the widget key was replaced; the old embed stops working at once
   'webchat.widget_origins_changed', // module 22: the websites a widget may run on changed
+  'marketing.approved', // module 29: a person approved a marketing piece version (bound to its content hash)
+  'marketing.page_published', // module 29: a listing page went live (or moved to a newer approved version)
+  'marketing.publish_requested', // module 29: a person tapped Publish to a Facebook Page / Instagram account (TX1)
+  'marketing.publication_recorded', // module 29: the system recorded the provider's outcome of a publication (TX2, reconcile)
+  'marketing.exported', // module 29: a piece was handed to the agent (export; never a claim that it was posted)
+  'marketing.retracted', // module 29: a page taken down, or an external post deleted after the provider confirmed it
+  'marketing.invites_sent', // module 29: open-house invites sent as per-recipient gated emails (counts only)
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

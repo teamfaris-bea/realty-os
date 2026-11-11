@@ -48,7 +48,8 @@ export default tseslint.config(
 
   // ---- R-GATE-2 allowlist: the only dispatch path, and the provider implementations/fakes themselves
   {
-    files: ['apps/api/src/comms/dispatch.ts', 'apps/api/src/comms/dial.ts', 'apps/api/src/providers/**'],
+    // module 29: marketing/publish.ts is the single publishing path (publishPost / postReviewReply, R-GATE-15)
+    files: ['apps/api/src/comms/dispatch.ts', 'apps/api/src/comms/dial.ts', 'apps/api/src/marketing/publish.ts', 'apps/api/src/providers/**'],
     rules: { 'realty/no-provider-outbound': 'off' },
   },
 

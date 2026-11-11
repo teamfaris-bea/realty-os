@@ -229,9 +229,34 @@ export interface PublishRequest {
 
 export type PublishResult = { kind: 'published'; providerRef: string; url: string | null } | { kind: 'rejected'; code: string };
 
+/** Module 29 (additive): find a post whose publish answer was lost (timeout), by the piece and content it carried. */
+export interface LookupRequest {
+  externalAccountId: string;
+  accessToken: string;
+  target: PublishRequest['target'];
+  pieceId: string;
+  contentSha256: string;
+}
+/** `unsupported`: the provider cannot find a post without its id (VERIFY per provider); 'unknown' then stays unknown. */
+export type LookupResult = { kind: 'found'; providerRef: string } | { kind: 'not_found' } | { kind: 'unsupported' };
+
+/** Module 29 (additive): delete a post the provider confirmed. */
+export interface DeleteRequest {
+  externalAccountId: string;
+  accessToken: string;
+  target: PublishRequest['target'];
+  providerRef: string;
+}
+/** `unsupported`: the API cannot delete it (VERIFY: Instagram); the agent removes it themselves. */
+export type DeleteResult = { kind: 'deleted' } | { kind: 'unsupported' } | { kind: 'failed'; code: string };
+
 export interface SocialPublisher {
-  /** RESERVED (R-GATE-15): only marketing/publish.ts calls it. */
+  /** RESERVED (R-GATE-15): only marketing/publish.ts calls it. A timeout is thrown as ProviderError('timeout'). */
   publishPost(p: PublishRequest): Promise<PublishResult>;
+  /** Only marketing/publish.ts calls it: reconcile an 'unknown' publication by lookup, never by posting again (E227). */
+  lookupPost(p: LookupRequest): Promise<LookupResult>;
+  /** Only marketing/publish.ts calls it: a retraction is recorded only after this confirmed the deletion. */
+  deletePost(p: DeleteRequest): Promise<DeleteResult>;
 }
 
 // ---- Showing service (adapter + fake only until partner access, PHASE2_3_PLAN §3) -------------------
@@ -258,7 +283,8 @@ export interface RenderedPdf {
 }
 
 export interface DocumentRenderer {
-  renderPdf(i: { templateKey: string; fields: Record<string, string>; imageCount: number }): Promise<RenderedPdf>;
+  /** module 29 (additive): `images` are the piece's image bytes (PNG/JPEG) in order, when the caller has them */
+  renderPdf(i: { templateKey: string; fields: Record<string, string>; imageCount: number; images?: Uint8Array[] }): Promise<RenderedPdf>;
 }
 
 /** The Phase 2 adapter bag (`Providers.integrations`). */

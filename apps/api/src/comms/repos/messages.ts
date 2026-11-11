@@ -158,6 +158,8 @@ export interface OutboundInsert {
   bulkActionId?: string | null;
   /** module 22: a web-chat message's widget connection (messages_platform_sender); absent = none */
   integrationConnectionId?: string | null;
+  /** module 29: an open-house invite recipient (R-MKT-8; the dispatch guard sends it only from an approved invite version) */
+  marketingPieceId?: string | null;
 }
 
 /**
@@ -168,12 +170,12 @@ export async function insertOutbound(tx: Tx, m: OutboundInsert): Promise<boolean
   const r = await sql<{ id: string }>`
     INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, email_identity_id, from_address,
       to_address, subject, body, status, initiator, initiated_by_user_id, purpose, action_category, assistant_action_id, playbook_step_run_id,
-      pinned_inbound_seq, idempotency_key, scheduled_for, occurred_at, bulk_action_id, integration_connection_id)
+      pinned_inbound_seq, idempotency_key, scheduled_for, occurred_at, bulk_action_id, integration_connection_id, marketing_piece_id)
     VALUES (app.tenant_id(), ${m.id}, ${m.conversationId}, ${m.contactId}, ${m.channel}, 'outbound', ${m.phoneNumberId}, ${m.emailIdentityId},
       ${m.fromAddress}, ${m.toAddress}, ${m.subject}, ${m.body}, ${m.status}, ${m.initiator}, ${m.initiatedByUserId}, ${m.purpose},
       ${m.actionCategory}, ${m.assistantActionId}, ${m.playbookStepRunId}, ${m.pinnedInboundSeq}, ${m.idempotencyKey},
       ${m.scheduledFor === null ? null : toIso(m.scheduledFor)}::timestamptz, ${toIso(m.occurredAt)}::timestamptz, ${m.bulkActionId ?? null}::uuid,
-      ${m.integrationConnectionId ?? null}::uuid)
+      ${m.integrationConnectionId ?? null}::uuid, ${m.marketingPieceId ?? null}::uuid)
     ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING RETURNING id`.execute(tx);
   return r.rows.length === 1;
 }
