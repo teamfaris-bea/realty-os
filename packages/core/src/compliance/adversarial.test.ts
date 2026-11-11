@@ -9,7 +9,9 @@ import { classifyInbound, planInboundEffects } from './inbound.js';
 import { parseJurisdictionPack } from './policy.js';
 import { decideRecording } from './recording.js';
 import { consentKey } from './types.js';
-import { H1, H2, H3, NOW, assistantInput, ev, gateInput, grantRow, policy, spec } from './testing/fixtures.js';
+import { H1, H2, H3, NOW, assistantInput, dmInput, ev, gateInput, grantRow, policy, revokedRow as revokedOn, spec } from './testing/fixtures.js';
+import { ChannelUnknownError, gateChannelForMessage } from './types.js';
+import { optOutFanout } from './fanout.js';
 
 const K = policy().keywords;
 const revokedRow = () => grantRow({ status: 'revoked', level: 'none' });
@@ -297,5 +299,47 @@ describe('invisible characters do not hide a keyword (R-CONSENT-7)', () => {
   }
   it('R-CONSENT-8: zero-width characters inside opt-out language do not hide it', () => {
     expect(classifyInbound('stop​ texting me', K).kind).toBe('opt_out_language');
+  });
+});
+
+// ---- core-compliance/3.0.0 (module 19): attempts to get a chat reply past an opt-out ---------------------------
+describe('adversarial v3: the new channel cannot reopen an opt-out', () => {
+  it('R-GATE-13 hostile channel strings are refused, never mapped (prototype keys, case, padding, out-of-scope DMs)', () => {
+    for (const c of ['__proto__', 'constructor', 'toString', 'WEB_CHAT', 'sms ', '', 'fax', 'whatsapp', 'messenger', 'instagram']) {
+      expect(() => gateChannelForMessage(c)).toThrow(ChannelUnknownError);
+      expect(() => canContact(gateInput({ recipient: { kind: 'contact', addressHmac: H1, channel: c as never } }))).toThrow(ChannelUnknownError);
+    }
+  });
+  it('the keyword exemption cannot reach a chat, a different phone, a marketing message or a human/assistant send', () => {
+    const optedOut = { consent: [revokedOn()], personDoNotContact: true };
+    expect(canContact(dmInput('web_chat', { consent: [revokedOn({ channel: 'web_chat' })], initiator: 'system', category: 'opt_out_confirmation', keywordSenders: [H1] })).outcome).toBe('deny');
+    expect(canContact(gateInput({ ...optedOut, initiator: 'system', category: 'opt_out_confirmation', keywordSenders: [H2] })).outcome).toBe('deny');
+    expect(canContact(gateInput({ ...optedOut, initiator: 'system', category: 'opt_out_confirmation', purpose: 'marketing', keywordSenders: [H1] })).outcome).toBe('deny');
+    expect(canContact(gateInput({ ...optedOut, initiator: 'human', category: 'opt_out_confirmation', keywordSenders: [H1] })).outcome).toBe('deny');
+    expect(canContact(gateInput({ ...optedOut, initiator: 'assistant', category: 'help_reply', keywordSenders: [H1] })).outcome).toBe('deny');
+  });
+  it('malformed operational facts fail closed: an unknown connection status, a truthy non-boolean do-not-contact', () => {
+    expect(canContact(dmInput('web_chat', { connection: { status: 'CONNECTED' as never } })).reasons).toContain('CHANNEL_NOT_CONNECTED');
+    expect(canContact(dmInput('web_chat', { connection: {} as never })).reasons).toContain('CHANNEL_NOT_CONNECTED');
+    expect(canContact(dmInput('web_chat', { personDoNotContact: 1 as never })).reasons).toContain('PERSON_DO_NOT_CONTACT');
+  });
+  it('a grant on chat (form, provider, first contact) never lifts a person-level do-not-contact or a chat opt-out', () => {
+    const grants = [grantRow({ channel: 'web_chat', level: 'express_written' }), grantRow({ channel: 'web_chat', purpose: 'marketing', level: 'express_written' })];
+    expect(canContact(dmInput('web_chat', { consent: [...grants, revokedOn({ channel: 'web_chat', addressHmac: H2 })] })).reasons).toContain('CONSENT_REVOKED');
+    expect(canContact(dmInput('web_chat', { consent: grants, personDoNotContact: true })).reasons).toContain('PERSON_DO_NOT_CONTACT');
+  });
+  it("E155 an anonymous chat visitor can only silence the session's own contact: the fan-out writes only the points it is given", () => {
+    const visitor = [{ kind: 'web_chat' as const, hmac: H3, hint: 'Website chat' }];
+    const s = optOutFanout(visitor, 'language', 'web_chat', { occurredAt: NOW, contactId: 'c-session', messageId: 'm', actor: { kind: 'system' }, ids: sequentialIds() });
+    expect(s.map((e) => e.addressHmac)).toEqual([H3]);
+    expect(s.every((e) => e.contactId === 'c-session')).toBe(true);
+  });
+  it('a chat "STOP" disguised with invisible characters is still an opt-out (person-scoped)', () => {
+    expect(classifyInbound('S​TOP', policy().keywords, 'web_chat')).toMatchObject({ kind: 'opt_out_language', scope: 'person' });
+  });
+  it('the fair-housing count cannot be gamed into an allow for marketing', () => {
+    const r = { containsBrokerageName: true, containsOptOutHint: true, paymentInstructions: false };
+    expect(canContact(gateInput({ purpose: 'marketing', rendered: { ...r, fairHousingHardMatches: 3 } })).reasons).toContain('FAIR_HOUSING_TERMS');
+    expect(canContact(assistantInput({ rendered: { ...r, fairHousingHardMatches: 1 } })).reasons).toContain('FAIR_HOUSING_TERMS');
   });
 });

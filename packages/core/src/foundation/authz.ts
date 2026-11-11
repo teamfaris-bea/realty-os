@@ -124,6 +124,8 @@ export const ACTIONS = [
   'support.revoke',
   'system.view', // lane ops-observability: the System page (failed/dead jobs, stuck messages, late timers, connection health)
   'system.jobs', // lane ops-observability: retry or cancel a failed job from the System page (audited)
+  'integration.view', // api/integrations: the Integrations admin page (Phase 2, DATA_MODEL §8)
+  'integration.manage', // api/integrations: create, rename, connect (OAuth start), disconnect (DATA_MODEL §8: ✅ 🔒 | ✅ 🔒)
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -229,6 +231,11 @@ export const AUDIT_ACTIONS = [
   'assistant.output_flagged', // lane prompt-injection: a model draft needs a check (human claim, unsourced link/phone/email, hidden characters); codes only
   'job.retried', // lane ops-observability: an Owner/Admin retried a failed or dead job from the System page
   'job.cancelled', // lane ops-observability: an Owner/Admin cancelled a waiting job from the System page
+  'integration.connect_started', // api/integrations: an Owner/Admin started an OAuth connect (R-INT-3)
+  'integration.connected', // api/integrations: the provider callback proved control and linked the account (system)
+  'integration.connect_refused', // api/integrations: the callback refused (E160 account not managed, live elsewhere, stale state)
+  'integration.disconnected', // api/integrations: an Owner/Admin disconnected; credential revoked in the same tx (R-INT-5)
+  'integration.changed', // api/integrations: rename or lead source of a connection
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -469,6 +476,10 @@ const MATRIX: Record<Action, ActionRule> = {
   // access stays out (fail closed); job commands only ever re-run or stop the tenant's own idempotent jobs.
   'system.view': { roles: { owner: ALL, admin: ALL } },
   'system.jobs': { roles: { owner: ALL, admin: ALL } },
+  // Phase 2 integrations (DATA_MODEL §8): Owner/Admin read; create, rename, connect and disconnect are 🔒.
+  // Linking an external account is never an Action: only the provider callback does it, as the system.
+  'integration.view': { roles: { owner: ALL, admin: ALL } },
+  'integration.manage': { roles: { owner: ALL_REAUTH, admin: ALL_REAUTH } },
 };
 
 const DENY_NOT_FOUND: CanResult = { ok: false, code: 'NOT_FOUND' };

@@ -12,6 +12,7 @@ import { assistantHandlers } from '../../assistant/handlers.js';
 import { importHandlers } from '../../imports/handlers.js';
 import { workspaceHandlers } from '../../workspace/handlers.js';
 import { accountabilityHandlers } from '../../accountability/handlers.js';
+import { integrationHandlers } from '../../integrations/handlers.js';
 
 export const handlers: JobHandler<unknown>[] = [
   ...workerHandlers,
@@ -21,5 +22,6 @@ export const handlers: JobHandler<unknown>[] = [
   ...importHandlers,
   ...workspaceHandlers,
   ...accountabilityHandlers,
+  ...integrationHandlers,
   // registry: add new entries above this line
 ];

@@ -95,6 +95,8 @@ export function gateInput(o: Partial<GateInput> = {}): GateInput {
     tenant: { suspended: false, brokerageNamePresent: true, postalAddressPresent: true },
     rendered: { containsBrokerageName: true, containsOptOutHint: true, paymentInstructions: false },
     policy: policy(),
+    personDoNotContact: false,
+    connection: null,
     ...o,
   };
 }
@@ -167,4 +169,15 @@ export const days = (n: number): number => n * 86_400_000;
 
 export function zonesOf(...z: IanaZone[]): { zones: IanaZone[]; source: 'explicit' } {
   return { zones: z, source: 'explicit' };
+}
+
+/** A clean human informational website-chat reply through a connected widget. */
+export function dmInput(channel: 'web_chat' = 'web_chat', o: Partial<GateInput> = {}): GateInput {
+  return gateInput({
+    recipient: { kind: 'contact', addressHmac: H1, channel },
+    consent: [],
+    sender: null,
+    connection: { status: 'connected' },
+    ...o,
+  });
 }

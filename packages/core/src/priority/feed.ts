@@ -15,7 +15,7 @@
 //
 // Only human touches answer a client or satisfy an SLA: assistant, system and imported messages
 // never do (R-AST-15, R-IMPORT-6), and imported inbound history never creates an item.
-import type { Channel } from '../compliance/index.js';
+import type { PhoneEmailChannel as Channel } from '../compliance/index.js'; // the feed's actions are Phase 1 channels
 import { formatEvidence } from '../assistant/index.js';
 import {
   type AssistantActionId,

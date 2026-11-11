@@ -363,6 +363,8 @@ export function assistantGateInput(o: Partial<GateInput> = {}): GateInput {
     sender: { kind: 'phone', registration: 'ready' },
     tenant: { suspended: false, brokerageNamePresent: true, postalAddressPresent: true },
     policy,
+    personDoNotContact: false,
+    connection: null,
     ...o,
   };
 }

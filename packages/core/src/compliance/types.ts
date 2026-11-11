@@ -8,8 +8,56 @@
 // hex string (`addressHmac`).
 import type { Instant } from '../foundation/index.js';
 
-export type Channel = 'sms' | 'voice' | 'email';
-export const CHANNELS: readonly Channel[] = ['sms', 'voice', 'email'];
+/**
+ * Consent channels (core-compliance/3.0.0, R-GATE-13). Owner scope change D2: Facebook Messenger and
+ * Instagram direct messages are out of scope, so they are NOT core channels even though 0018's CHECKs
+ * still list them (a later migration narrows those; the DB guard refuses them until counsel review, and
+ * core refuses them outright as unknown channels). The architecture test (packages/db/test/
+ * channels_architecture.test.ts) asserts core = the DB lists minus exactly those two.
+ */
+export type Channel = 'sms' | 'voice' | 'email' | 'web_chat';
+export const CHANNELS: readonly Channel[] = ['sms', 'voice', 'email', 'web_chat'];
+
+/** DB channel values that exist in 0018 but are out of scope (D2): never mapped, always refused by core. */
+export const OUT_OF_SCOPE_CHANNELS: readonly string[] = ['messenger', 'instagram'];
+
+/** The Phase 1 channels (phone and email addresses). */
+export type PhoneEmailChannel = 'sms' | 'voice' | 'email';
+export const PHONE_EMAIL_CHANNELS: readonly PhoneEmailChannel[] = ['sms', 'voice', 'email'];
+
+/** Chat channels: the sender identity is an `integration_connections` row (R-INBOX-3). */
+export type PlatformChannel = 'web_chat';
+export const PLATFORM_CHANNELS: readonly PlatformChannel[] = ['web_chat'];
+export function isPlatformChannel(c: Channel): c is PlatformChannel {
+  return c === 'web_chat';
+}
+
+/**
+ * Stored message channels core sends on and the consent channel each maps to: the explicit map of
+ * `messages_dispatch_guard` (MMS is a text) minus the out-of-scope DM channels. Anything else is
+ * `CHANNEL_UNKNOWN` (R-GATE-13, E80): there is no fallthrough.
+ */
+export type MessageChannel = 'sms' | 'mms' | 'email' | 'web_chat';
+export const MESSAGE_CHANNEL_MAP: Readonly<Record<MessageChannel, Exclude<Channel, 'voice'>>> = Object.freeze({
+  sms: 'sms',
+  mms: 'sms',
+  email: 'email',
+  web_chat: 'web_chat',
+});
+export const MESSAGE_CHANNELS: readonly MessageChannel[] = Object.keys(MESSAGE_CHANNEL_MAP) as MessageChannel[];
+
+export class ChannelUnknownError extends Error {
+  readonly code = 'CHANNEL_UNKNOWN';
+  constructor(readonly channel: string) {
+    super(`CHANNEL_UNKNOWN: no opt-out mapping for channel ${channel}`);
+  }
+}
+
+/** The consent channel a stored message channel is gated on; throws `ChannelUnknownError` for anything else. */
+export function gateChannelForMessage(channel: string): Exclude<Channel, 'voice'> {
+  if (!Object.prototype.hasOwnProperty.call(MESSAGE_CHANNEL_MAP, channel)) throw new ChannelUnknownError(channel);
+  return MESSAGE_CHANNEL_MAP[channel as MessageChannel];
+}
 
 export type Purpose = 'marketing' | 'informational';
 export const PURPOSES: readonly Purpose[] = ['marketing', 'informational'];
@@ -116,7 +164,37 @@ export type ConsentSource =
   | 'import_csv'
   | 'system_expiry';
 
+/** Phase 1 address kinds (phones and emails: imports, intake). */
 export type AddressKind = 'phone' | 'email';
+
+/** Contact-point kinds core works with: 0018's `contact_points.kind` minus the out-of-scope DM kinds (D2). */
+export type PointKind = AddressKind | 'web_chat';
+export const POINT_KINDS: readonly PointKind[] = ['phone', 'email', 'web_chat'];
+
+/** The kind of contact point a channel reaches: texts and calls a phone, email an email, chat its session identity. */
+export function pointKindOf(channel: Channel): PointKind {
+  switch (channel) {
+    case 'sms':
+    case 'voice':
+      return 'phone';
+    case 'email':
+      return 'email';
+    default:
+      return channel;
+  }
+}
+
+/** The consent channels a point of `kind` carries (a platform identity carries only its own, 0018 CHECK). */
+export function channelsOfKind(kind: PointKind): Channel[] {
+  switch (kind) {
+    case 'phone':
+      return ['sms', 'voice'];
+    case 'email':
+      return ['email'];
+    default:
+      return [kind];
+  }
+}
 
 /** The status of one `consent_state` row. */
 export type ConsentStatus = 'granted' | 'revoked' | 'none';
@@ -152,7 +230,8 @@ export type SuppressionReason =
   | 'admin_block'
   | 'wrong_number'
   | 'provider_opt_out'
-  | 'import_dnc';
+  | 'import_dnc'
+  | 'platform_blocked';
 
 /** A `suppressions` row for the recipient's address. Lifted rows are ignored by the gate. */
 export interface SuppressionRow {

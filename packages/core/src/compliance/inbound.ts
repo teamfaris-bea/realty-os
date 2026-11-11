@@ -15,7 +15,8 @@
 import type { IdGenerator, Instant } from '../foundation/index.js';
 import type { ConsentEventSpec } from './consent.js';
 import type { ResolvedPolicy } from './policy.js';
-import type { AddressKind, Channel, Keywords } from './types.js';
+import { type PointKind, CHANNELS, type Channel, type Keywords, channelsOfKind, pointKindOf } from './types.js';
+import { RESUBSCRIBE_CHANNELS } from './consent.js';
 
 export type InboundKind = 'stop' | 'start' | 'help' | 'wrong_number' | 'opt_out_language' | 'none';
 
@@ -23,6 +24,13 @@ export interface InboundClassification {
   kind: InboundKind;
   matched?: string;
   needsReview: boolean;
+  /**
+   * core-compliance/3.0.0: what the opt-out reaches. `person` (opt-out language on any channel,
+   * D-OPTOUT-LANG, R-CHAN-3) sets the person-level do-not-contact; `channel` (an exact keyword) revokes
+   * that channel on the contact's points of its kind (R-CONSENT-7); `address` (wrong number)
+   * the sending address only. Absent for START/HELP/none.
+   */
+  scope?: 'person' | 'channel' | 'address';
 }
 
 /**
@@ -134,21 +142,24 @@ function keywordWithCourtesy(body: readonly string[], list: readonly string[]): 
  * Classifies an inbound message body. Precedence: STOP keywords, START, HELP, wrong number, opt-out
  * language. Only exact keywords skip review.
  */
-export function classifyInbound(body: string, k: Keywords): InboundClassification {
+export function classifyInbound(body: string, k: Keywords, channel: Channel = 'sms'): InboundClassification {
   const t = tokens(body);
   const stop = exactKeyword(t, k.optOut);
-  if (stop !== null) return { kind: 'stop', matched: stop, needsReview: false };
+  // Website chat has no keyword protocol (no carrier, no START): a bare STOP typed into chat is the
+  // visitor asking to stop, so it is opt-out language for the session's own contact (R-CHAN-3, E155).
+  if (stop !== null && channel === 'web_chat') return { kind: 'opt_out_language', matched: stop.toLowerCase(), needsReview: true, scope: 'person' };
+  if (stop !== null) return { kind: 'stop', matched: stop, needsReview: false, scope: 'channel' };
   const start = exactKeyword(t, k.resubscribe);
-  if (start !== null) return { kind: 'start', matched: start, needsReview: false };
+  if (start !== null && (RESUBSCRIBE_CHANNELS.has(channel) || channel === 'email')) return { kind: 'start', matched: start, needsReview: false };
   const help = exactKeyword(t, k.help);
-  if (help !== null) return { kind: 'help', matched: help, needsReview: false };
+  if (help !== null && channel !== 'web_chat') return { kind: 'help', matched: help, needsReview: false };
   const text = lowerText(body);
   const wrong = firstMatch(text, WRONG_NUMBER);
-  if (wrong !== null) return { kind: 'wrong_number', matched: wrong, needsReview: true };
+  if (wrong !== null) return { kind: 'wrong_number', matched: wrong, needsReview: true, scope: 'address' };
   const lang = firstMatch(text, OPT_OUT_LANGUAGE);
-  if (lang !== null) return { kind: 'opt_out_language', matched: lang, needsReview: true };
+  if (lang !== null) return { kind: 'opt_out_language', matched: lang, needsReview: true, scope: 'person' };
   const polite = keywordWithCourtesy(t, k.optOut);
-  if (polite !== null) return { kind: 'opt_out_language', matched: polite.toLowerCase(), needsReview: true };
+  if (polite !== null) return { kind: 'opt_out_language', matched: polite.toLowerCase(), needsReview: true, scope: 'person' };
   return { kind: 'none', needsReview: false };
 }
 
@@ -163,10 +174,10 @@ export function channelsNamed(matched: string, inbound: Channel): Channel[] {
 
 // ---- effects ------------------------------------------------------------------------------------
 
-const CHANNEL_ORDER: readonly Channel[] = ['sms', 'voice', 'email'];
+const CHANNEL_ORDER: readonly Channel[] = CHANNELS;
 
 export interface InboundAddress {
-  kind: AddressKind;
+  kind: PointKind;
   hmac: string;
   hint: string;
   /**
@@ -186,6 +197,14 @@ export interface InboundEffects {
   notifyOwner: boolean;
   /** The one system reply to send (consent-exempt), or none when the provider sends it. */
   reply: 'opt_out_confirmation' | 'help_reply' | 'none';
+  /** core-compliance/3.0.0: queued/scheduled messages to cancel per channel and address (texts included). */
+  cancelQueued: { channel: Channel; hmac: string }[];
+  /**
+   * Opt-out language on any channel (R-CHAN-3, D-OPTOUT-LANG): record the person-level do-not-contact
+   * on the inbound contact (from web chat: the session's own contact) with needs_review, and fan out with
+   * `optOutFanout(points, 'language', channel)`.
+   */
+  personDoNotContact: boolean;
 }
 
 /**
@@ -211,6 +230,8 @@ export function planInboundEffects(i: {
   otherPhones: readonly InboundAddress[];
   /** The contact's other email addresses: opt-out language naming email ("do not email me") reaches them. */
   otherEmails?: readonly InboundAddress[];
+  /** Web chat: the contact's other chat identities (opt-out language reaches them). */
+  otherPointsOfKind?: readonly InboundAddress[];
   occurredAt: Instant;
   contactId: string | null;
   messageId: string | null;
@@ -219,7 +240,7 @@ export function planInboundEffects(i: {
 }): InboundEffects {
   const c = i.classification;
   const platform = i.policy.optOutConfirmationSender === 'platform';
-  const fx: InboundEffects = { consentEvents: [], cancelQueuedSmsTo: [], markWrongNumber: false, notifyOwner: false, reply: 'none' };
+  const fx: InboundEffects = { consentEvents: [], cancelQueuedSmsTo: [], markWrongNumber: false, notifyOwner: false, reply: 'none', cancelQueued: [], personDoNotContact: false };
   const event = (a: InboundAddress, channel: Channel, eventType: 'revoke' | 'resubscribe', source: ConsentEventSpec['source'], needsReview: boolean): ConsentEventSpec => ({
     id: i.ids.next<'ConsentEventId'>(),
     addressKind: a.kind,
@@ -250,12 +271,13 @@ export function planInboundEffects(i: {
     for (const a of [i.address, ...i.otherPhones.filter((p) => p.hmac !== i.address.hmac)].filter((p) => p.kind === 'phone')) {
       fx.consentEvents.push(event(a, 'sms', 'revoke', source, needsReview));
       fx.cancelQueuedSmsTo.push(a.hmac);
+      fx.cancelQueued.push({ channel: 'sms', hmac: a.hmac });
     }
   };
-  const channelsOf = (a: InboundAddress): Channel[] => (a.kind === 'phone' ? ['sms', 'voice'] : ['email']);
+  const channelsOf = (a: InboundAddress): Channel[] => channelsOfKind(a.kind);
   /** The inbound address (when of `kind`) plus the contact's other addresses of that kind, deduplicated. */
-  const allOfKind = (kind: AddressKind): InboundAddress[] => {
-    const others = kind === 'phone' ? i.otherPhones : (i.otherEmails ?? []);
+  const allOfKind = (kind: PointKind): InboundAddress[] => {
+    const others = kind === 'phone' ? i.otherPhones : kind === 'email' ? (i.otherEmails ?? []) : (i.otherPointsOfKind ?? []);
     const out = new Map<string, InboundAddress>();
     for (const a of [i.address, ...others]) if (a.kind === kind && !out.has(a.hmac)) out.set(a.hmac, a);
     return [...out.values()];
@@ -269,6 +291,7 @@ export function planInboundEffects(i: {
         fx.reply = platform ? 'opt_out_confirmation' : 'none';
       } else {
         fx.consentEvents.push(event(i.address, i.channel, 'revoke', 'inbound_keyword', false));
+        fx.cancelQueued.push({ channel: i.channel, hmac: i.address.hmac });
       }
       break;
     case 'start':
@@ -279,9 +302,9 @@ export function planInboundEffects(i: {
       // number's STOP) stays revoked until that number texts START (outbound-4: carriers, too, take
       // START only from the number that sent STOP). The fold undoes keyword revokes only, so an
       // opt-out-language, wrong-number or provider revoke stays in force either way.
-      if (i.channel === 'sms') {
-        for (const a of allOfKind('phone')) {
-          if (a.hmac === i.address.hmac || a.keywordRevokedBySender === true) fx.consentEvents.push(event(a, 'sms', 'resubscribe', 'inbound_keyword', false));
+      if (RESUBSCRIBE_CHANNELS.has(i.channel)) {
+        for (const a of allOfKind(pointKindOf(i.channel))) {
+          if (a.hmac === i.address.hmac || a.keywordRevokedBySender === true) fx.consentEvents.push(event(a, i.channel, 'resubscribe', 'inbound_keyword', false));
         }
       }
       break;
@@ -293,16 +316,23 @@ export function planInboundEffects(i: {
       fx.markWrongNumber = true;
       for (const ch of channelsOf(i.address)) fx.consentEvents.push(event(i.address, ch, 'revoke', 'wrong_number', true));
       if (i.address.kind === 'phone') fx.cancelQueuedSmsTo.push(i.address.hmac);
+      for (const ch of channelsOf(i.address)) fx.cancelQueued.push({ channel: ch, hmac: i.address.hmac });
       break;
     case 'opt_out_language': {
       fx.notifyOwner = true;
+      fx.personDoNotContact = true;
       // The inbound channel is always revoked too (strictest); the agent can review it back.
       // A phrase naming another channel ("do not email me" sent by text, "stop calling" sent by
       // email) reaches that channel on the contact's addresses of that kind, not just the sender's.
       const named = new Set([i.channel, ...channelsNamed(c.matched ?? '', i.channel)]);
       for (const ch of CHANNEL_ORDER.filter((x) => named.has(x))) {
         if (ch === 'sms') revokeSms('inbound_language', true);
-        else for (const a of allOfKind(ch === 'email' ? 'email' : 'phone')) fx.consentEvents.push(event(a, ch, 'revoke', 'inbound_language', true));
+        else {
+          for (const a of allOfKind(pointKindOf(ch))) {
+            fx.consentEvents.push(event(a, ch, 'revoke', 'inbound_language', true));
+            if (ch !== 'voice') fx.cancelQueued.push({ channel: ch, hmac: a.hmac });
+          }
+        }
       }
       break;
     }

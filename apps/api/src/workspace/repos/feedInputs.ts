@@ -28,7 +28,7 @@ import type {
   TaskFacts,
   TouchFacts,
 } from '@realty/core/priority';
-import type { Channel } from '@realty/core/compliance';
+import type { PhoneEmailChannel as Channel } from '@realty/core/compliance'; // the feed's blocked-channel hint covers Phase 1 channels
 import type { ContactId, Instant, UserActor, UserId } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';

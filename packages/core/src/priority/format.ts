@@ -1,7 +1,7 @@
 // Small, deterministic wording helpers for feed reasons and exception evidence. Labels never carry a
 // client's name, number or address; relative times are computed from the injected `now`.
 import { DAY_MS, HOUR_MS, MINUTE_MS } from '../foundation/index.js';
-import type { Channel } from '../compliance/index.js';
+import type { PhoneEmailChannel as Channel } from '../compliance/index.js'; // Phase 1 channels
 import type { ForeignFeedItemType } from './types.js';
 
 /** "less than a minute", "12 min", "5 h" (under 48 h), "3 d". Negative values count as 0. */

@@ -142,6 +142,12 @@ export const ERROR_STATUS = {
   JOB_NOT_RETRYABLE: 409, // the job is neither dead nor waiting after a failure (it finished, runs now, or was cancelled)
   JOB_ALREADY_QUEUED: 409, // a newer job for the same work is already queued or running: retrying this one would duplicate it
   JOB_NOT_CANCELLABLE: 409, // only a waiting job can be cancelled; a running one finishes or is reaped
+  // ---- api/integrations (module 21) ----
+  INTEGRATION_NOT_CONNECTABLE: 409, // this kind is not connected by OAuth (partner, keyed, or a later phase)
+  INTEGRATION_NOT_CONFIGURED: 409, // no platform app is configured for this provider on this deployment
+  CONNECTION_NOT_CONNECTABLE: 409, // the connection's status does not allow a (re)connect or change
+  CONNECTION_ACCOUNT_MISMATCH: 409, // a different external account is a new connection (R-INT-3)
+  LEAD_SOURCE_REQUIRED: 422, // an inbound channel needs a lead source before it can go live
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 
