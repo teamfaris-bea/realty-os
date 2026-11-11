@@ -1,6 +1,8 @@
 // The agent's one-tap flows that need a sheet, shared by every agent page (feed, contact, thread,
 // tasks, approvals): tap-to-call with the post-call outcome sheet, the appointment outcome sheet, and
-// a polite status announcer.
+// a toast. The sheets are design/Dialog (a bottom sheet on a phone, the rest of the page inert while
+// open). The toast is seen in place and heard through design/Announce's one polite live region, so
+// the app never has two live regions saying the same thing.
 //
 // Tap-to-call (ARCHITECTURE §9 path 3): Call → POST /contacts/:id/calls, which runs the dial-time
 // check before the provider bridges the client leg; the agent's own phone rings first. The post-call
@@ -9,12 +11,11 @@
 // server's sentence and nothing else: there is no "call anyway" (owner decision, core-compliance/2.0.0;
 // an opt-out is never overridden).
 import { type ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, GateBadge, Notice } from '../../../design/index.js';
+import { Button, Dialog, GateBadge, Notice, announce as speak } from '../../../design/index.js';
 import { REACHABILITY_KEY, useChannelState } from '../../../reasons/index.js';
 import { useApi } from '../../../shell/index.js';
 import { APPOINTMENT_RESULTS, CALL_OUTCOMES, firstName, formatDateTime } from './format.js';
 import { useMutate } from './hooks.js';
-import { Sheet } from './Sheet.js';
 import type { AppointmentResult, AppointmentView, CallOutcome, CallOutcomeResponse, CallResponse, ComposeResponse, DecisionView } from './types.js';
 
 export interface AgentSheets {
@@ -41,6 +42,7 @@ export function AgentSheetsProvider({ children }: { children: ReactNode }) {
   const [toast, setToast] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const announce = useCallback((text: string) => {
+    speak(text);
     setToast(text);
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => setToast(null), 5000);
@@ -58,12 +60,22 @@ export function AgentSheetsProvider({ children }: { children: ReactNode }) {
   return (
     <Ctx.Provider value={value}>
       {children}
-      <div role="status" aria-live="polite" className="pointer-events-none fixed inset-x-0 bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom)+12px)] z-50 flex justify-center px-4 md:bottom-6">
+      {/* seen here, heard through announce(): aria-hidden so a screen reader does not meet it twice */}
+      <div aria-hidden="true" data-testid="toast" className="pointer-events-none fixed inset-x-0 bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom)+12px)] z-50 flex justify-center px-4 md:bottom-6">
         {toast ? <p className="pointer-events-auto max-w-md rounded-xl bg-ink px-4 py-3 text-[15px] font-medium text-surface shadow-lg">{toast}</p> : null}
       </div>
       {open?.kind === 'call' ? <CallSheet contact={open.contact} onClose={close} announce={announce} /> : null}
       {open?.kind === 'appointment' ? <AppointmentSheet appointmentId={open.appointmentId} label={open.label} onClose={close} announce={announce} /> : null}
     </Ctx.Provider>
+  );
+}
+
+/** A visible way out of a sheet (Escape and the backdrop close it too): a phone has no Escape key. */
+function CloseButton({ onClose }: { onClose: () => void }) {
+  return (
+    <Button variant="secondary" block onClick={onClose}>
+      Close
+    </Button>
   );
 }
 
@@ -121,7 +133,7 @@ function CallSheet({ contact, onClose, announce }: { contact: { id: string; name
   };
 
   return (
-    <Sheet title={`Call ${contact.name}`} onClose={onClose}>
+    <Dialog title={`Call ${contact.name}`} onClose={onClose} footer={<CloseButton onClose={onClose} />}>
       {state.step === 'dialing' ? <p className="text-[16px] text-ink-muted">Checking you can call {who} now…</p> : null}
       {state.step === 'gate' ? (
         <div className="flex flex-col gap-3">
@@ -150,7 +162,7 @@ function CallSheet({ contact, onClose, announce }: { contact: { id: string; name
           {outcome.error ? <Notice tone="error">{outcome.error.message}</Notice> : null}
         </div>
       ) : null}
-    </Sheet>
+    </Dialog>
   );
 }
 
@@ -166,7 +178,7 @@ function AppointmentSheet({ appointmentId, label, onClose, announce }: { appoint
     announce('Outcome saved.');
   };
   return (
-    <Sheet title={label ?? 'How did it go?'} onClose={onClose}>
+    <Dialog title={label ?? 'How did it go?'} onClose={onClose} footer={<CloseButton onClose={onClose} />}>
       <div className="flex flex-col gap-4">
         <fieldset>
           <legend className="mb-2 text-[15px] font-semibold text-ink">Outcome</legend>
@@ -184,7 +196,7 @@ function AppointmentSheet({ appointmentId, label, onClose, announce }: { appoint
         </label>
         {m.error ? <Notice tone="error">{m.error.message}</Notice> : null}
       </div>
-    </Sheet>
+    </Dialog>
   );
 }
 

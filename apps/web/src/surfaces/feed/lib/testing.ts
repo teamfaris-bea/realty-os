@@ -1,6 +1,8 @@
 // Fixtures for the web/agent component tests (imported by *.test.tsx only). Shapes follow the API
 // response schemas (api/workspace, api/leads, api/comms, api/assistant). The app is mounted whole
 // (shell providers, routes from a page table holding every agent surface) on a scripted fetch.
+import { screen, waitFor, within } from '@testing-library/react';
+import { expect } from 'vitest';
 import { FakeFetch, renderApp, sessionFixture, tableWith } from '../../../shell/testing/fakeApi.js';
 import { surface as approvalsSurface } from '../../approvals/index.js';
 import { surface as composeSurface } from '../../compose/index.js';
@@ -212,4 +214,14 @@ function channelReach(reasons: ReachReason[] = []): ChannelReach {
 /** A summary: pass the reasons that block each channel (none = reachable). */
 export function reachability(contactId: string = IDS.jane, blocks: Partial<Record<'sms' | 'voice' | 'email', ReachReason[]>> = {}): Reachability {
   return { contactId, purposeNow: 'informational', channels: { sms: channelReach(blocks.sms), voice: channelReach(blocks.voice), email: channelReach(blocks.email) } };
+}
+
+/**
+ * A toast was shown AND said: the visible toast holds `text`, and the app's one polite live region
+ * (design/Announce) announced it. Resolves to the visible toast line.
+ */
+export async function findToast(text: string | RegExp): Promise<HTMLElement> {
+  const line = await within(screen.getByTestId('toast')).findByText(text);
+  await waitFor(() => expect(screen.getByTestId('announcer').textContent ?? '').toMatch(text));
+  return line;
 }

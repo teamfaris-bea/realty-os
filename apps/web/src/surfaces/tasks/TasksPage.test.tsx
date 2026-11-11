@@ -4,7 +4,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import { FakeFetch, IDS, agentApp, iso } from '../feed/lib/testing.js';
+import { FakeFetch, findToast, IDS, agentApp, iso } from '../feed/lib/testing.js';
 import type { AppointmentView, TaskView } from '../feed/lib/types.js';
 import { groupOf } from './TasksPage.js';
 
@@ -48,7 +48,7 @@ describe('Tasks', () => {
     const fake = tasksFake([task()]).on(`PATCH /tasks/${IDS.task}`, { status: 200, body: { task: task({ status: 'done' }) } });
     agentApp(fake, '/tasks');
     await userEvent.setup().click(await screen.findByRole('button', { name: 'Done' }));
-    expect(await screen.findByText('Done: Send the disclosures')).toBeInTheDocument();
+    expect(await findToast('Done: Send the disclosures')).toBeInTheDocument();
     expect(fake.callsTo(`PATCH /tasks/${IDS.task}`)[0]!.body).toEqual({ status: 'done' });
     await waitFor(() => expect(fake.callsTo('GET /tasks?status=open&limit=200').length).toBeGreaterThanOrEqual(2));
   });
@@ -73,7 +73,7 @@ describe('Tasks', () => {
     const u = userEvent.setup();
     await u.click(await screen.findByRole('button', { name: 'Log outcome' }));
     await u.click(await screen.findByRole('button', { name: 'Follow up' }));
-    expect(await screen.findByText('Outcome saved.')).toBeInTheDocument();
+    expect(await findToast('Outcome saved.')).toBeInTheDocument();
     expect(fake.callsTo(`POST /appointments/${IDS.appt}/outcome`)[0]!.body).toEqual({ result: 'follow_up' });
   });
 

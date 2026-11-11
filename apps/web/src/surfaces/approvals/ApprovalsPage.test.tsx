@@ -7,7 +7,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import axe from 'axe-core';
 import { describe, expect, it } from 'vitest';
-import { FakeFetch, IDS, agentApp, decision, draftAction, err, reachability, stopReason } from '../feed/lib/testing.js';
+import { FakeFetch, findToast, IDS, agentApp, decision, draftAction, err, reachability, stopReason } from '../feed/lib/testing.js';
 import type { ActionView, SavedSearchView } from '../feed/lib/types.js';
 
 const user = () => userEvent.setup();
@@ -69,7 +69,7 @@ describe('Approvals inbox', () => {
     const fake = inbox([draftAction()]).on(`POST /assistant/actions/${IDS.draft}/approve`, { status: 200, body: { actionId: IDS.draft, status: 'approved', result: 'sent', messageId: IDS.message, decision: decision({}) } });
     agentApp(fake, '/approvals');
     await user().click(await screen.findByRole('button', { name: 'Send' }));
-    expect(await screen.findByText('Sent to Jane Doe.')).toBeInTheDocument();
+    expect(await findToast('Sent to Jane Doe.')).toBeInTheDocument();
     expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(1);
   });
 
@@ -83,7 +83,7 @@ describe('Approvals inbox', () => {
     expect(await screen.findByText('Jane replied since this was drafted')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Read it' })).toHaveAttribute('href', `/contacts/${IDS.jane}/thread?compose=draft&draft=${IDS.draft}`);
     await u.click(screen.getByRole('button', { name: 'Send anyway' }));
-    expect(await screen.findByText('Sent to Jane Doe.')).toBeInTheDocument();
+    expect(await findToast('Sent to Jane Doe.')).toBeInTheDocument();
     expect((fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)[1]!.body as { reviewedInboundSeq: number }).reviewedInboundSeq).toBe(12);
   });
 
@@ -92,7 +92,7 @@ describe('Approvals inbox', () => {
     const fake = inbox([hb]).on(`POST /assistant/actions/${IDS.handback}/approve`, { status: 200, body: { actionId: IDS.handback, status: 'approved', result: 'acknowledged', messageId: null, decision: null } });
     const { router } = agentApp(fake, '/approvals');
     await user().click(await screen.findByRole('button', { name: 'Mark handled' }));
-    expect(await screen.findByText('Marked as handled.')).toBeInTheDocument();
+    expect(await findToast('Marked as handled.')).toBeInTheDocument();
     await user().click(screen.getByRole('button', { name: 'Reply' }));
     await waitFor(() => expect(router.state.location.pathname).toBe(`/contacts/${IDS.jane}/thread`));
   });
