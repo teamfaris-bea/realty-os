@@ -21,6 +21,7 @@ import { accountabilityRoutes } from './accountability/routes.js';
 import { healthRoutes } from './health.js';
 import { systemRoutes } from './observability/systemRoutes.js';
 import { integrationsRoutes } from './integrations/routes.js';
+import { duplicatesRoutes } from './duplicates/routes.js';
 
 export interface RouteModule {
   name: string;
@@ -40,5 +41,6 @@ export const routeModules: RouteModule[] = [
   healthRoutes,
   systemRoutes,
   integrationsRoutes,
+  duplicatesRoutes,
   // registry: add new entries above this line
 ];

@@ -104,10 +104,15 @@ const routes = {
       steps: [{ stepKey: 'market_note', channel: 'email', delay: { anchor: 'enrollment', offsetSeconds: 3 * DAY }, purpose: 'marketing', category: 'nurture_step', intent: 'market_update', subject: 'A quick market note', template: 'Hi {{first_name}},\n\nHomes near you are still moving. Reply and I will send a short list.', personalization: 'none', slots: ['first_name'], maxLength: 2000, stopIf: ['appointment_booked', 'deal_opened'] }],
     }), 'playbook');
     const csv = 'First Name,Last Name,Email,Phone\nNora,Bell,nora.bell@example.test,4155550111\nLiam,Ford,liam.ford@example.test,4155550122\n';
+    // module 66: two records of one person (same email; the second kept apart with confirmDistinct)
+    const dupEmail = randomEmail();
+    const dupA = must(await call(agent, 'POST', '/contacts', { commandId: randomUUID(), firstName: 'Dana', lastName: 'Fox', phones: [phone()], emails: [dupEmail] }), 'dup a').contact.id;
+    const dupB = must(await call(agent, 'POST', '/contacts', { commandId: randomUUID(), firstName: 'Dana', lastName: 'Fox', phones: [phone()], emails: [dupEmail], confirmDistinct: true }), 'dup b').contact.id;
+    const dup = (await h.su.query('SELECT id FROM contact_duplicate_candidates WHERE contact_a_id = LEAST($1::uuid, $2::uuid) AND contact_b_id = GREATEST($1::uuid, $2::uuid)', [dupA, dupB])).rows[0].id;
     const imp = must(await call(w.owner, 'POST', '/imports', { source: 'csv', fileName: 'open-house.csv', fileBase64: Buffer.from(csv).toString('base64') }), 'import');
     for (const [role, c] of Object.entries(people)) if (c.totpSecret) secrets.set(c.email, c.totpSecret);
     const users = Object.fromEntries(Object.entries(people).map(([role, c]) => [role, { email: c.email, password: TEST_PASSWORD, mfa: Boolean(c.totpSecret) }]));
-    return { users, ids: { contactId: jane, optedOutContactId: owen, longThreadContactId: rosa, dealId: deal.deal.id, listingId: listing.listing.id, playbookId: pb.playbook.id, importId: imp.batch.id } };
+    return { users, ids: { contactId: jane, optedOutContactId: owen, longThreadContactId: rosa, dealId: deal.deal.id, listingId: listing.listing.id, playbookId: pb.playbook.id, importId: imp.batch.id, duplicateId: dup } };
   },
   /** clock fixture: the user's password proof is an hour old, so the next sensitive action asks again */
   async '/stale-reauth'(b) {
@@ -157,6 +162,7 @@ export interface SeedIds {
   listingId: string;
   playbookId: string;
   importId: string;
+  duplicateId: string;
 }
 
 export interface World {

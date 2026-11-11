@@ -12,6 +12,7 @@ export interface SweepIds {
   listingId: string;
   playbookId: string;
   importId: string;
+  duplicateId: string;
 }
 
 export interface SweepPage {
@@ -42,6 +43,8 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   { path: '/search', roles: ALL, url: at('/search?q=jane') },
   { path: '/tasks', roles: ALL, url: at('/tasks') },
   { path: '/pond', roles: NOT_TC, url: at('/pond') },
+  { path: '/duplicates', roles: NOT_TC, url: at('/duplicates') },
+  { path: '/duplicates/:duplicateId', roles: NOT_TC, url: (i) => `/duplicates/${i.duplicateId}` },
   { path: '/deals', roles: ALL, url: at('/deals') },
   { path: '/deals/:dealId', roles: ALL, url: (i) => `/deals/${i.dealId}` },
   { path: '/listings', roles: ALL, url: at('/listings') },

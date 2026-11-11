@@ -714,6 +714,14 @@ Kept against the critic, with reasons:
 - The DB 200-recipient ceiling on batch text stays. It is a hard backstop under an unreviewed legal exposure; a lower tenant setting may follow.
 - The contact_tags provenance kind stays (S7).
 
+#### Parity module 66 (api/duplicates) security note
+Lane par-import-duplicates adds one migration (`0025_api_duplicates.sql`, renumbered at merge). Review items:
+- **New SECURITY DEFINER trigger `app.contacts_merge_children()`** (owner `app_definer`, pinned `search_path`, EXECUTE revoked from PUBLIC; fires `AFTER UPDATE OF merged_into_contact_id` only when it goes from NULL to a contact). It acts only on the row the ownership engine just merged, inside that row's tenant, and only between the loser and its survivor. A caller cannot invoke it directly, so it cannot be used to copy one person's data onto another: the only way in is `applyOwnershipCommand`'s merge (locks, role rules, ledger, audit).
+- **What it moves.** Points are *copied* (R-PAR-11 keeps a point's contact immutable) with their status, removal time and removal reason, so the dispatch guards' "any of the contact's phones" fan-out (R-PAR-12) sees a STOP on any of the loser's numbers, live or removed: a STOP on either person blocks the merged person (D1). It never writes consent, suppressions or `do_not_contact_*` (0018's `contacts_dnc_follow_merge` already moves the person-level opt-out); adding points can only make the guards refuse more. Tags, custom values (the survivor's value wins), relationships (self-pairs dropped, deduped) and notes move; stage history is copied (append-only). A row the survivor cannot take (100-tag cap, archived field or option) stays on the loser: a merge is never aborted by it.
+- **`app.notes_edit_guard()` replaced** verbatim except one condition: a note's `contact_id` may change only when `current_user = 'app_definer'` and the old contact is merged into the new one. app_user still can never re-parent a note (tested).
+- **Grants to `app_definer`** (least privilege for the trigger): INSERT on `contact_points`, `contact_tags`, `contact_field_values`, `contact_relationships`; DELETE on the last three; UPDATE on `notes` and `contact_duplicate_candidates`; SELECT on the tables it reads.
+- **API.** `GET /duplicates`, `GET /duplicates/:id`, `POST /duplicates/:id/{dismiss,restore}` run under the caller's RLS (`dup_candidates`: both people's detail visible), 404 for a TC and for any pair with a hidden side (R-PERM-5/12). Dismiss and restore are audited (`duplicate.dismissed` / `duplicate.restored`). The page merges only through the existing `POST /leads/:id/merge`.
+
 ## 21. Phase 2-3 architecture
 Authoritative for Phases 2 and 3; the build order, decisions and owner needs are in `docs/PHASE2_3_PLAN.md`, tables and rules in `docs/DATA_MODEL.md` Part 2. Everything in §1–§20 still holds.
 ### 21.1 Principals and entry points

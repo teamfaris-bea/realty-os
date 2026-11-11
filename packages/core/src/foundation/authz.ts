@@ -236,6 +236,8 @@ export const AUDIT_ACTIONS = [
   'integration.connect_refused', // api/integrations: the callback refused (E160 account not managed, live elsewhere, stale state)
   'integration.disconnected', // api/integrations: an Owner/Admin disconnected; credential revoked in the same tx (R-INT-5)
   'integration.changed', // api/integrations: rename or lead source of a connection
+  'duplicate.dismissed', // api/duplicates: a member marked a duplicate suggestion "not the same person"
+  'duplicate.restored', // api/duplicates: Undo of a dismiss
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
