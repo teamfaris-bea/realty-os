@@ -42,7 +42,8 @@ async function gate(tx: Tx, callId: string, lock = false): Promise<Gate> {
   const rec = facts.recording;
   const e = reviewEligible({
     handledBy: facts.handledBy === 'human' ? 'human' : facts.handledBy === 'voicemail' ? 'voicemail' : 'assistant',
-    agentRole: facts.agentRole === null ? null : isRole(facts.agentRole) ? facts.agentRole : 'tc', // an unknown role is never reviewed
+    // an agent with no membership row, or an unknown role, is never reviewed (counted as a TC)
+    agentRole: facts.agentUserId === null ? null : facts.agentRole !== null && isRole(facts.agentRole) ? facts.agentRole : 'tc',
     imported: facts.imported,
     recording: rec === null || rec.shredded ? null : { source: rec.source as RecordingSource, consentBasis: rec.consentBasis as ConsentBasis },
     hasTranscript: facts.hasTranscript,

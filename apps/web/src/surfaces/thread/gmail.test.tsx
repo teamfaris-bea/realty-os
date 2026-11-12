@@ -273,7 +273,7 @@ describe('b7 sends/F4: Gmail replies are never first contact, and the thread say
     expect(GMAIL_NOT_FIRST_CONTACT).toBe("Replies you send from Gmail don't count as first contact. Reply here to stop the clock.");
   });
 
-  it('b7 sends/F4: not on mail from Jane, not on someone else’s mailbox, and not once the deadline is met', async () => {
+  it('b7 sends/F4: not on mail from Jane, and not on someone else’s mailbox', async () => {
     agentApp(fakeWith([], [mail({ id: mid(5), body: 'From Jane' }), mail({ id: mid(6), sender: 'mailbox', mine: false, body: 'From a colleague mailbox' })], open), `/contacts/${IDS.jane}/thread`);
     await screen.findByText('From a colleague mailbox');
     expect(screen.queryByText(GMAIL_NOT_FIRST_CONTACT)).toBeNull();
@@ -286,9 +286,15 @@ describe('b7 sends/F4: Gmail replies are never first contact, and the thread say
     expect(screen.queryByText(GMAIL_NOT_FIRST_CONTACT)).toBeNull();
   });
 
-  it('b7 sends/F4: after first contact (firstTouchAt set) the sentence is gone', async () => {
-    agentApp(fakeWith([], [mail({ sender: 'mailbox', contactRole: 'to', body: 'Replied from Gmail' })]), `/contacts/${IDS.jane}/thread`);
-    await screen.findByText('Replied from Gmail');
-    expect(screen.queryByText(GMAIL_NOT_FIRST_CONTACT)).toBeNull();
-  });
+  for (const [why, over] of [
+    ['met (firstTouchAt set)', { firstTouchAt: iso(-60_000) }],
+    ['breached (firstTouchBreachedAt set)', { firstTouchBreachedAt: iso(-60_000) }],
+  ] as const) {
+    it(`b7 sends/F4: once the deadline is ${why} the sentence is gone`, async () => {
+      const closed = fullContact({ ownership: { ...open.ownership, ...over } });
+      agentApp(fakeWith([], [mail({ sender: 'mailbox', contactRole: 'to', body: 'Replied from Gmail' })], closed), `/contacts/${IDS.jane}/thread`);
+      await screen.findByText('Replied from Gmail');
+      expect(screen.queryByText(GMAIL_NOT_FIRST_CONTACT)).toBeNull();
+    });
+  }
 });
