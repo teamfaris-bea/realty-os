@@ -28,7 +28,7 @@ import type { Author, SourceText, TranscriptSegment } from './evidence.js';
 import { signOffFor } from './render.js';
 import type { AiPurpose, IdentityFacts } from './types.js';
 
-export const PROMPT_VERSION = 'assistant-prompts/2.0.0';
+export const PROMPT_VERSION = 'assistant-prompts/2.1.0';
 export const MAX_VOICE_SAMPLES = 20;
 
 /** A contact attribute the prompt may see. Protected proxies have no place in this type. */
@@ -48,7 +48,11 @@ export interface ContactBundle {
     attributes: readonly PromptAttribute[];
     inquiry: { type: string; sourceName: string; message: string | null; receivedAt: Instant; vaLoanIndicated: boolean } | null;
   };
-  messages: readonly { id: string; contactId: string; direction: 'inbound' | 'outbound'; channel: 'sms' | 'email'; at: Instant; body: string; author: Author }[];
+  /**
+   * `reaction` (D5b, R-REACT-7): an inbound text linked as a phone's reaction to the team's text `targetId`. The prompt
+   * prints only `phrase` ("loved", "reacted 👍 to") as untrusted data, never the body: the quoted words are the team's.
+   */
+  messages: readonly { id: string; contactId: string; direction: 'inbound' | 'outbound'; channel: 'sms' | 'email'; at: Instant; body: string; author: Author; reaction?: { phrase: string; targetId: string } }[];
   calls: readonly { id: string; contactId: string; startedAt: Instant; direction: 'inbound' | 'outbound'; segments: readonly TranscriptSegment[] }[];
   notes: readonly { id: string; contactId: string; at: Instant; body: string }[];
   /** Deals the contact is on; `contactIds` is used only to check membership, never emitted. */
@@ -261,9 +265,19 @@ export function buildPrompt(i: { purpose: AiPurpose; contact: ContactBundle; ide
   }
 
   if (messages.length > 0) lines.push('', 'CONVERSATION:');
+  // handles first, so a reaction can name its target's handle (D5b, R-REACT-7)
+  const messageHandle = new Map(messages.map((m) => [m.id, handle()] as const));
   for (const m of messages) {
-    const h = handle();
+    const h = messageHandle.get(m.id)!;
     const sourceType = m.channel === 'email' ? 'email' : 'message';
+    if (m.reaction && m.direction === 'inbound') {
+      // the reaction's own words only: the quoted words are the team's stored text (cited by its own handle)
+      const target = messageHandle.get(m.reaction.targetId);
+      sources.push({ kind: 'text', sourceType, sourceId: m.id, handle: h, text: m.reaction.phrase, at: m.at, author: 'client' });
+      lines.push(`[${h}] ${when(m.at)} client (sms reaction to the team's text ${target ? `[${target}]` : '(not shown)'}):`);
+      lines.push(untrusted(m.reaction.phrase));
+      continue;
+    }
     sources.push({ kind: 'text', sourceType, sourceId: m.id, handle: h, text: m.body, at: m.at, author: m.author });
     const who = m.direction === 'inbound' ? 'client' : m.author === 'assistant' ? 'assistant' : 'agent';
     lines.push(`[${h}] ${when(m.at)} ${who} (${m.channel}):`);

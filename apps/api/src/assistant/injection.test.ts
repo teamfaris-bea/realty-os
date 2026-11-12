@@ -374,7 +374,7 @@ describe('prompts carry exactly one contact', () => {
     await draftFor(bob.id);
     expect(ai2.calls[0]!.system).toBe(req.system);
     expect(req.system).not.toMatch(/Janet|Bartholomew|untrusted_[0-9a-f]{12}/);
-    expect((await aiRuns(jane.id)).at(-1)!.prompt_version).toBe('assistant-prompts/2.0.0');
+    expect((await aiRuns(jane.id)).at(-1)!.prompt_version).toBe('assistant-prompts/2.1.0');
   });
 
   it('R-PERM-5: the model cannot be pointed at another agent\'s contact: asking for a draft there is refused before any model call', async () => {

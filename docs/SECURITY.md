@@ -222,7 +222,7 @@ to one must be made to both and must extend the equivalence test.
 
 ### 4.1 Where untrusted content enters a prompt
 
-Every prompt is built by `core.assistant.buildPrompt` (`packages/core/src/assistant/prompt.ts`, `assistant-prompts/2.0.0`). Its input is ONE contact's bundle, read by `apps/api/src/assistant/repos/context.ts`.
+Every prompt is built by `core.assistant.buildPrompt` (`packages/core/src/assistant/prompt.ts`, `assistant-prompts/2.1.0`). Its input is ONE contact's bundle, read by `apps/api/src/assistant/repos/context.ts`.
 
 | Untrusted content | Who controls it | Reaches the model through |
 |---|---|---|

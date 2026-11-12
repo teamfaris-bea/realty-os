@@ -202,10 +202,12 @@ export async function runModel<T>(
 const INTERNAL_KIND: Partial<Record<AiPurpose, string>> = { lead_summary: 'lead_summary', call_summary: 'call_summary', claims_extraction: 'call_summary', pond_summary: 'lead_summary', handback_enrichment: 'next_step' };
 
 async function lastInboundText(tx: Tx, contactId: string): Promise<string | null> {
-  const r = await sql<{ body: string }>`
-    SELECT body FROM messages WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND direction = 'inbound' AND NOT imported
+  // D5b (R-REACT-7): when the latest inbound is a reaction, none (never an older text): its quote is the team's words
+  const r = await sql<{ body: string; reaction: boolean }>`
+    SELECT body, EXISTS (SELECT 1 FROM message_reactions mr WHERE mr.tenant_id = m.tenant_id AND mr.message_id = m.id) AS reaction
+      FROM messages m WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND direction = 'inbound' AND NOT imported
      ORDER BY occurred_at DESC, id DESC LIMIT 1`.execute(tx);
-  return r.rows[0]?.body ?? null;
+  return r.rows[0] && !r.rows[0].reaction ? r.rows[0].body : null;
 }
 
 /**

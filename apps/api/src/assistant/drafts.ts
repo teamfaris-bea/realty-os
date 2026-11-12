@@ -216,7 +216,10 @@ async function unsentApproval(tx: Tx, a: A.ActionRow, sendId: string): Promise<P
 }
 
 async function inboundBody(tx: Tx, messageId: string): Promise<string | null> {
-  const r = await sql<{ body: string }>`SELECT body FROM messages WHERE tenant_id = app.tenant_id() AND id = ${messageId}`.execute(tx);
+  // D5b (R-REACT-7): a reaction's quote is the team's words, never the client's
+  const r = await sql<{ body: string }>`
+    SELECT body FROM messages m WHERE tenant_id = app.tenant_id() AND id = ${messageId}
+       AND NOT EXISTS (SELECT 1 FROM message_reactions mr WHERE mr.tenant_id = m.tenant_id AND mr.message_id = m.id)`.execute(tx);
   return r.rows[0]?.body ?? null;
 }
 
