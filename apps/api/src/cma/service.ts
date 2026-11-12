@@ -43,7 +43,7 @@ import {
   soldCandidates,
   subdivisionKey,
 } from './deps.js';
-import { type ClientShare, type CmaConnections, type NearMatch, agentGate, asOfSentence, clientReadiness, mlsDataAsOf, nearMatches } from './gates.js';
+import { type CmaConnections, agentGate, asOfSentence, clientReadiness, mlsDataAsOf, nearMatches, readinessConnections } from './gates.js';
 import {
   type CmaInspection,
   type CmaPurpose,
@@ -557,34 +557,23 @@ async function viewOf(tx: Tx, actor: UserActor, now: Instant, row: CmaRow) {
   const zone = await zoneOf(tx);
   const listing = (identity: string): RefListing =>
     r.listings[identity] ?? { saleListingId: identity, teamListingId: null, sourceLabel: 'MLS', mlsNumber: null, listingBrokerageName: null, address: { line1: '', line2: null, city: '', region: '', postalCode: '' } };
-  let share: ClientShare;
-  let matches: NearMatch[];
-  try {
-    const conns = await agentGate(tx, now);
-    const x = await clientReadiness(tx, {
-      conns,
-      now,
-      state: s.resolved.state,
-      addressKey: s.resolved.addressKey,
-      addressLine: s.resolved.address.line1,
-      subjectMlsListingId: s.resolved.mlsRecordId ?? s.resolved.mirrorListingId ?? (s.resolved.connectionId && s.resolved.listingId ? s.resolved.listingId : null),
-      compSales: r.comps.map((c) => {
-        const l = listing(c.ref.identity);
-        return { saleListingId: l.saleListingId, teamListingId: l.teamListingId };
-      }),
-      readConnectionIds: [...(r.connectionIds ?? []), ...r.comps.flatMap((c) => c.ref.connectionId ?? []), ...(s.resolved.connectionId ? [s.resolved.connectionId] : [])],
-      nearMatchDismissed: s.nearMatchDismissed,
-      hasValue: row.value_cents !== null,
-    });
-    share = x.share;
-    matches = x.nearMatches;
-  } catch (e) {
-    // the feed was disconnected or its valuation use withdrawn after the CMA was prepared: the stored CMA stays readable,
-    // and nothing may reach a client
-    if (!(e instanceof AppError) || (e.code !== 'CMA_NO_MLS_CONNECTION' && e.code !== 'CMA_VALUATION_NOT_ALLOWED')) throw e;
-    share = { allowed: false, blockers: [{ code: 'MLS_CLIENT_DISPLAY_OFF', sentence: String(e.details?.['sentence'] ?? '') }], estimateSentence: 'This is an estimate, not an appraisal.' };
-    matches = [];
-  }
+  // readiness never needs the agent gate to pass: a feed disconnected or a valuation use withdrawn after the CMA was
+  // prepared is its own blocker beside every other one that holds, and the stored CMA stays readable (gates/F5, api-ui/F1)
+  const { share, nearMatches: matches } = await clientReadiness(tx, {
+    conns: await readinessConnections(tx, now),
+    now,
+    state: s.resolved.state,
+    addressKey: s.resolved.addressKey,
+    addressLine: s.resolved.address.line1,
+    subjectMlsListingId: s.resolved.mlsRecordId ?? s.resolved.mirrorListingId ?? (s.resolved.connectionId && s.resolved.listingId ? s.resolved.listingId : null),
+    compSales: r.comps.map((c) => {
+      const l = listing(c.ref.identity);
+      return { saleListingId: l.saleListingId, teamListingId: l.teamListingId };
+    }),
+    readConnectionIds: [...(r.connectionIds ?? []), ...r.comps.flatMap((c) => c.ref.connectionId ?? []), ...(s.resolved.connectionId ? [s.resolved.connectionId] : [])],
+    nearMatchDismissed: s.nearMatchDismissed,
+    hasValue: row.value_cents !== null,
+  });
   const facts = s.resolved.facts;
   const comp = (c: StoredResult['comps'][number]) => {
     const l = listing(c.ref.identity);

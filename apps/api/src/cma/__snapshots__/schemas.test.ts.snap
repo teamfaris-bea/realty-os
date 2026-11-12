@@ -261,6 +261,8 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
                   "code": {
                     "enum": [
                       "PLATFORM_NOT_CLEARED",
+                      "FEED_DISCONNECTED",
+                      "VALUATION_USE_WITHDRAWN",
                       "MLS_CLIENT_DISPLAY_OFF",
                       "FEED_STALE",
                       "CLIENT_USE_NOT_ALLOWED",

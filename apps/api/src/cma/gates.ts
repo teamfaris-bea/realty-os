@@ -12,7 +12,9 @@
 // (clientView; clientSoldView for a mirrored team sale). V1-A's valuationEligible(…, 'client_cma') is the authority:
 // whatever it refuses is always a blocker here, for every connection the stored CMA was built from (its run's reads,
 // each comp's, the subject record's) as well as those the agent gate admits now, so readiness is never looser than the
-// client gate. VERIFY WITH COUNSEL /
+// client gate. Readiness never needs the agent gate to pass (batch 10 review gates/F5, api-ui/F1): a feed disconnected
+// or a valuation use withdrawn after the CMA was prepared is a blocker of its own (FEED_DISCONNECTED,
+// VALUATION_USE_WITHDRAWN), beside every other one that holds. VERIFY WITH COUNSEL /
 // MLS: every sentence and every condition. V2's share re-checks the same function inside the transaction that queues it.
 import type { DisplayListing } from '@realty/core/listings';
 import { type IanaZone, type Instant } from '@realty/core/foundation';
@@ -41,6 +43,8 @@ export const ESTIMATE_SENTENCE = 'This is an estimate, not an appraisal.';
 
 export const BLOCKER_CODES = [
   'PLATFORM_NOT_CLEARED',
+  'FEED_DISCONNECTED',
+  'VALUATION_USE_WITHDRAWN',
   'MLS_CLIENT_DISPLAY_OFF',
   'FEED_STALE',
   'CLIENT_USE_NOT_ALLOWED',
@@ -87,13 +91,29 @@ export const SENTENCES = {
 
 const NOT_LIVE: ReadonlySet<ValuationRefusal> = new Set(['NO_MLS_CONNECTION', 'MLS_NOT_LIVE']);
 
-/** The agent gate (R-CMA-6): throws in words, or returns the connections the CMA reads. */
-export async function agentGate(tx: Tx, now: Instant): Promise<CmaConnections> {
+/** Every connection's agent verdict now (V1-A's valuationEligible(…, 'agent_cma')). */
+async function agentVerdicts(tx: Tx, now: Instant) {
   const e = await mlsEligibility(tx, now);
   const verdicts = e.connections.map((conn) => ({ conn, v: valuationEligible(e, conn.id, 'agent_cma', null, now) }));
-  if (verdicts.every((x) => !x.v.ok && NOT_LIVE.has(x.v.code))) throw new AppError('CMA_NO_MLS_CONNECTION', { sentence: SENTENCES.noConnection });
   const used = verdicts.filter((x) => x.v.ok).map(({ conn }) => ({ conn, stale: e.staleIds.includes(conn.id) }));
+  return { e, verdicts, used };
+}
+
+/** The agent gate (R-CMA-6): throws in words, or returns the connections the CMA reads. */
+export async function agentGate(tx: Tx, now: Instant): Promise<CmaConnections> {
+  const { e, verdicts, used } = await agentVerdicts(tx, now);
+  if (verdicts.every((x) => !x.v.ok && NOT_LIVE.has(x.v.code))) throw new AppError('CMA_NO_MLS_CONNECTION', { sentence: SENTENCES.noConnection });
   if (used.length === 0) throw new AppError('CMA_VALUATION_NOT_ALLOWED', { sentence: SENTENCES.notAllowed }); // E371
+  return { e, used };
+}
+
+/**
+ * The connections readiness reads: every MLS connection, and those the agent gate admits now (possibly none). Never
+ * refused, so a stored CMA's view lists every blocker that holds after its feed is disconnected or its valuation use
+ * withdrawn (gates/F5, api-ui/F1).
+ */
+export async function readinessConnections(tx: Tx, now: Instant): Promise<CmaConnections> {
+  const { e, used } = await agentVerdicts(tx, now);
   return { e, used };
 }
 
@@ -171,8 +191,8 @@ function clientSale(e: MlsEligibility, sale: ListingRow | undefined, team: Listi
 type PlainBlocker = Exclude<BlockerCode, 'COMPS_HIDDEN' | 'SELLER_WITHHELD' | 'POSSIBLE_LIVE_LISTING'>;
 
 const REFUSAL_BLOCKER: Readonly<Record<ValuationRefusal, PlainBlocker>> = {
-  NO_MLS_CONNECTION: 'MLS_CLIENT_DISPLAY_OFF',
-  MLS_NOT_LIVE: 'MLS_CLIENT_DISPLAY_OFF',
+  NO_MLS_CONNECTION: 'FEED_DISCONNECTED',
+  MLS_NOT_LIVE: 'FEED_DISCONNECTED',
   MLS_NOT_CLIENT_ELIGIBLE: 'MLS_CLIENT_DISPLAY_OFF',
   FEED_STALE: 'FEED_STALE',
   PACK_DOES_NOT_ALLOW: 'CLIENT_USE_NOT_ALLOWED',
@@ -187,6 +207,8 @@ export async function clientReadiness(tx: Tx, i: ReadinessInput): Promise<{ shar
   const has = (code: BlockerCode) => blockers.some((b) => b.code === code);
   const sentence: Record<PlainBlocker, string> = {
     PLATFORM_NOT_CLEARED: 'Client CMAs and seller value ranges wait for counsel review of the in-house CMA wording (platform:cma). Nothing is shown to clients until it is recorded.',
+    FEED_DISCONNECTED: 'An MLS feed this CMA was built from is no longer connected, so nothing from it could be shown to a client.',
+    VALUATION_USE_WITHDRAWN: 'Your MLS licence pack no longer says this feed’s sold data may be used for valuations, so this CMA could not be shown to a client. An Owner or Admin records this from your MLS agreement.',
     MLS_CLIENT_DISPLAY_OFF: 'Your MLS licence pack does not allow showing MLS data to clients yet (it needs counsel review, an attribution and a disclaimer).',
     FEED_STALE: 'The MLS feed is out of date, so nothing from it can be shown to clients until it syncs again.',
     CLIENT_USE_NOT_ALLOWED: 'Your MLS licence pack does not say sold data may be used in CMAs for clients. An Owner or Admin records this from your MLS agreement.',
@@ -214,7 +236,10 @@ export async function clientReadiness(tx: Tx, i: ReadinessInput): Promise<{ shar
     if (conn !== undefined) {
       // every condition that holds, so the agent reads all of them at once (V1-A's parsed pack and freshness). The
       // display pack is judged on its own terms: freshness is FEED_STALE's alone, so a stale feed never hides an
-      // unreviewed pack. A connection that is gone or not live is refused by V1-A's gate below.
+      // unreviewed pack. A connection that is gone or not live is refused by V1-A's gate below (FEED_DISCONNECTED).
+      // Each of these connections gave the CMA data under the agent gate: one whose pack no longer records the agent
+      // use had it withdrawn since.
+      if (!conn.pack.valuation.agentCma) add('VALUATION_USE_WITHDRAWN');
       if (!(packReviewed(conn.pack) && conn.pack.attributionText !== null && conn.pack.disclaimerText !== null)) add('MLS_CLIENT_DISPLAY_OFF');
       if (e.staleIds.includes(id)) add('FEED_STALE');
       if (!conn.pack.valuation.clientCma) add('CLIENT_USE_NOT_ALLOWED');
