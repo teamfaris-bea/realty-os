@@ -20,12 +20,14 @@
 import type { ResourceFacts } from '@realty/core/foundation';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import type { Tx } from '@realty/db';
+import { type Tx, withTenantTx } from '@realty/db';
 import { actorOf, adminTx, platformOf } from '../admin/common.js';
 import { type Limit, enforceLimits } from '../auth/rateLimit.js';
 import { personFacts } from '../lists/repos/catalog.js';
 import { authorize } from '../rbac.js';
 import type { RouteModule } from '../routes.js';
+import { systemActor } from '../worker/systemActor.js';
+import { supersedeCreatorsDraftsAcrossPerson } from './merge.js';
 import { getCma, survivorSeenByCaller } from './repos.js';
 import { CmaListResponse, CmaResponse, IdParams, OneTapBody, PatchBody, PrepareBody } from './schemas.js';
 import { getView, listForContact, oneTap, patch, prepare } from './service.js';
@@ -64,6 +66,18 @@ async function limitRuns(req: FastifyRequest): Promise<void> {
   await enforceLimits(p.db, p.config.sessionSecret, CMA_RUN_LIMITS(a.tenantId, a.userId), p.cmaLimitClock);
 }
 
+/**
+ * F15 across merge chains (batch 10 re-review ownership-data/F4): once a one-tap or prepare stored or kept an open draft
+ * of a contact, its creator's other open drafts for the home on the person's merged-away records are superseded as the
+ * session tenant's system actor, right after the caller's transaction (the caller's RLS cannot trace a record merged
+ * into one that was merged away later; the workspace listing-agent route follows the same pattern). Only the caller's
+ * own drafts, only draft -> superseded, nothing returned (cma/merge.ts).
+ */
+async function oneOpenDraftAcrossPerson(req: FastifyRequest, cma: { id: string; contactId: string | null; status: string }): Promise<void> {
+  if (cma.contactId === null || cma.status !== 'draft') return;
+  await withTenantTx(systemActor(actorOf(req).tenantId, 'worker'), (tx) => supersedeCreatorsDraftsAcrossPerson(tx, cma.id), { db: platformOf(req).db, retries: 2 });
+}
+
 async function register(app: FastifyInstance): Promise<void> {
   const r = app.withTypeProvider<ZodTypeProvider>();
   const auth = { auth: 'cma.prepare' as const };
@@ -77,12 +91,14 @@ async function register(app: FastifyInstance): Promise<void> {
   r.post('/cma', { config: auth, preHandler: onBody, bodyLimit: 64 * 1024, schema: { body: PrepareBody, response: { 201: CmaResponse } } }, async (req, reply) => {
     await limitRuns(req);
     const cma = await adminTx(req, (tx, now, actor) => prepare(tx, actor, now, req.body));
+    await oneOpenDraftAcrossPerson(req, cma);
     return reply.code(201).send({ cma });
   });
 
   r.post('/contacts/:id/cma', { config: auth, preHandler: onContact, bodyLimit: 16 * 1024, schema: { params: IdParams, body: OneTapBody.optional(), response: { 200: CmaResponse, 201: CmaResponse } } }, async (req, reply) => {
     await limitRuns(req);
     const x = await adminTx(req, (tx, now, actor) => oneTap(tx, actor, now, req.params.id, req.body ?? {}));
+    await oneOpenDraftAcrossPerson(req, x.view);
     return reply.code(x.created ? 201 : 200).send({ cma: x.view });
   });
 

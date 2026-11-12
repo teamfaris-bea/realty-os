@@ -405,7 +405,9 @@ async function assertContact(tx: Tx, contactId: string): Promise<void> {
 /**
  * F15 across a merge (ownership-data/F4): once the caller stores or keeps a draft for a home on `contactId`, their open
  * drafts for the same home (address key) on records merged into it are superseded (a merged-away record's draft takes
- * no edit any more, and the person keeps one open draft per creator and home).
+ * no edit any more, and the person keeps one open draft per creator and home). In the caller's transaction, as far as
+ * their RLS traces the person; routes.ts then completes it past a closed middle record as the system (cma/merge.ts
+ * supersedeCreatorsDraftsAcrossPerson; re-review ownership-data/F4).
  */
 async function supersedeMergedAwayDrafts(tx: Tx, contactId: string, w: CmaWrite): Promise<void> {
   const key = (w.subject as StoredSubject).resolved.addressKey;

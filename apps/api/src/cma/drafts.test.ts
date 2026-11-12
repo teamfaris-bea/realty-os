@@ -172,4 +172,43 @@ describe('R-CMA-8: a merged-away record\'s CMAs (db-public/F1, db-public/F2, own
     await leadsWorker(h).drain();
     expect([(await statusOf(tLoser.body.cma.id)).status, (await statusOf(tKept.body.cma.id)).status]).toEqual(['superseded', 'draft']);
   });
+
+  /** The open drafts of `creator` for the home on any of `records` (the person's records), oldest first. */
+  const creatorsOpen = async (creator: string, records: string[]) =>
+    (await h.su.query<{ id: string }>("SELECT id FROM cma_reports WHERE contact_id = ANY ($1::uuid[]) AND created_by_user_id = $2 AND status = 'draft' ORDER BY created_at, id", [records, creator])).rows.map((x) => x.id);
+
+  it('F15 R-CMA-8: across two merges (A into B, then B into C) a tap on C supersedes the creator\'s draft of A, which their own RLS cannot trace past the closed B, and the person lists one open draft of theirs for the home (re-review ownership-data/F4)', async () => {
+    const a = await seller();
+    const b = await duplicate(a.line1);
+    const c = await duplicate(a.line1);
+    const dA = await oneTap(w.agents[0]!, a.c);
+    expect(dA.status).toBe(201);
+    await merge(b, a.c);
+    await merge(c, b);
+    expect((await statusOf(dA.body.cma.id)).status).toBe('draft'); // nothing collided: the merges move nothing
+    // the agent's own list stops at B (db-public/F1's residual): their draft of A is not in it
+    expect((await list(w.agents[0]!, c)).body.cmas.map((x) => x.id)).not.toContain(dA.body.cma.id);
+    const dC = await oneTap(w.agents[0]!, c);
+    expect(dC.status).toBe(201);
+    expect((await statusOf(dA.body.cma.id)).status).toBe('superseded');
+    expect(await creatorsOpen(w.agents[0]!.userId!, [a.c, b, c])).toEqual([dC.body.cma.id]);
+    const owners = await list(w.owner, c);
+    expect(owners.body.cmas.filter((x) => x.status === 'draft').map((x) => x.id)).toEqual([dC.body.cma.id]);
+    expect(owners.body.cmas.find((x) => x.id === dA.body.cma.id)).toMatchObject({ status: 'superseded', fromMergedRecord: true, canEdit: false });
+  });
+
+  it('F15 R-CMA-8: a merge supersedes an open draft on a record merged into the loser earlier when its creator holds one for the home on the survivor; a draft of that record no one else holds stays (re-review ownership-data/F4)', async () => {
+    const a = await seller();
+    const b = await duplicate(a.line1);
+    const c = await duplicate(a.line1);
+    const dA = await oneTap(w.agents[0]!, a.c);
+    const dC = await oneTap(w.agents[0]!, c);
+    const teamLeads = await oneTap(w.teamLead, a.c);
+    await merge(b, a.c);
+    expect((await statusOf(dA.body.cma.id)).status).toBe('draft'); // B holds no draft of theirs: nothing collided
+    await merge(c, b);
+    expect([(await statusOf(dA.body.cma.id)).status, (await statusOf(dC.body.cma.id)).status, (await statusOf(teamLeads.body.cma.id)).status]).toEqual(['superseded', 'draft', 'draft']);
+    expect(await creatorsOpen(w.agents[0]!.userId!, [a.c, b, c])).toEqual([dC.body.cma.id]);
+    expect((await list(w.owner, c)).body.cmas.filter((x) => x.status === 'draft').map((x) => x.id).sort()).toEqual([dC.body.cma.id, teamLeads.body.cma.id].sort());
+  });
 });
