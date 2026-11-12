@@ -11,6 +11,7 @@
 //
 //   regenerate: pnpm --filter @realty/api exec tsx --conditions=@realty/source src/capabilityPaths.ts --write
 import { randomBytes } from 'node:crypto';
+import type { FastifyInstance } from 'fastify';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { RouteTableEntry } from './rbac.js';
@@ -90,7 +91,7 @@ export const capabilityPathsText = (table: readonly Pick<RouteTableEntry, 'metho
  * The live route table: the server registers every route module (routes.ts) and nothing listens. Registering routes
  * reads no row, so the database handle is never connected.
  */
-async function withLiveServer<T>(fn: (app: import('fastify').FastifyInstance) => T): Promise<T> {
+async function withLiveServer<T>(fn: (app: FastifyInstance) => T): Promise<T> {
   const [{ instant, uuidv7Generator }, { createDatabase }, { testConfig }, { createFakeProviders }, { buildServer }] = await Promise.all([
     import('@realty/core/foundation'),
     import('@realty/db'),
