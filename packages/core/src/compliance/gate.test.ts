@@ -324,8 +324,8 @@ describe('check details', () => {
     expectDecision(decide(gateInput({ ...toAgent, contactPoint: { status: 'invalid', lineType: 'mobile' } })), 'deny', 'CONTACT_POINT_INVALID');
     expectDecision(decide(gateInput({ ...toAgent, tenant: { suspended: true, brokerageNamePresent: true, postalAddressPresent: true } })), 'deny', 'TENANT_SUSPENDED');
   });
-  it('RULES_VERSION is a stable versioned string, bumped to 3.0.0 for the Phase 2 channels', () => {
-    expect(RULES_VERSION).toBe('core-compliance/3.0.0');
+  it('RULES_VERSION is a stable versioned string, bumped to 3.0.0 for the Phase 2 channels and to 3.1.0 for the AI ISA checks 0, 8 and 12 (D12 proposed; sends-gates/F4)', () => {
+    expect(RULES_VERSION).toBe('core-compliance/3.1.0');
   });
 });
 

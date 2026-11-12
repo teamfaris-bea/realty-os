@@ -48,6 +48,11 @@
 //      f shared address and active client; g sold-derived facts need the seller-data packs
 // D1's checks 5, 6 and 9 run first and unchanged for them. Every other category ignores `input.aiIsa`
 // (non-interference, property-tested in gate_ai_isa.test.ts). VERIFY WITH COUNSEL: every AI ISA parameter.
+// These checks are core-compliance/3.1.0 (sends-gates/F4). A decision for any other category is the same as
+// under 3.0.0; only the label changed.
+//
+// A reason code appears at most once in a decision (R-GATE-5). Checks 0 and 12a can both find ISA_NOT_AUTHORIZED,
+// and `add` keeps only the first.
 //
 // Every new input only ever adds reasons (monotonic denial, property-tested). An unknown channel throws
 // ChannelUnknownError (R-GATE-13): it is refused, never mapped.
@@ -78,8 +83,11 @@ import {
   type SuppressionRow,
 } from './types.js';
 
-/** Stored in gate_decisions.core_rules_version. Bump on any change to a decision rule. */
-export const RULES_VERSION = 'core-compliance/3.0.0';
+/**
+ * Stored in gate_decisions.core_rules_version. Bump on any change to a decision rule. 3.1.0 added the AI ISA
+ * checks 0, 8 and 12 (D12 proposed, ISA-1). No AI ISA decision is ever stored under 3.0.0 (sends-gates/F4).
+ */
+export const RULES_VERSION = 'core-compliance/3.1.0';
 
 /**
  * Channels whose system STOP/HELP reply may reach the identity that sent the keyword (the DB guard's
@@ -175,7 +183,8 @@ export function canContact(input: GateInput): GateDecision {
   const platform = isPlatformChannel(ch);
   const reasons: ReasonCode[] = [];
   const add = (r: ReasonCode): void => {
-    reasons.push(r); // each check adds a distinct code at most once
+    // a code appears at most once (R-GATE-5): checks 0 and 12a can both find ISA_NOT_AUTHORIZED (sends-gates/F4)
+    if (!reasons.includes(r)) reasons.push(r);
   };
   const automated = input.initiator !== 'human';
   const toUser = recipient.kind === 'user';

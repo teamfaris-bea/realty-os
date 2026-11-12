@@ -128,6 +128,34 @@ describe('R-ISA-8 non-interference: checks 0, 8 and 12 never touch a category ou
   });
 });
 
+// sends-gates/F4: check 0 and check 12a both find ISA_NOT_AUTHORIZED (a human or system send with an AI ISA
+// category and a failed chain link); the decision names it once, as R-GATE-5 asks of every decision.
+describe('R-GATE-5 R-ISA-8 a reason code appears at most once in an AI ISA decision (sends-gates/F4)', () => {
+  it('property: no AI ISA decision repeats a reason code, for any initiator, channel, recipient and facts (or none)', () => {
+    fc.assert(
+      fc.property(inputArb, fc.constantFrom(...AI_ISA_CATEGORIES), fc.option(factsArb, { nil: undefined }), (input, category, facts) => {
+        const d = canContact({ ...input, category, aiIsa: facts });
+        expect(new Set(d.reasons).size).toBe(d.reasons.length);
+        expect(d.outcome === 'deny').toBe(d.reasons.length > 0);
+      }),
+      { numRuns: runs(3000) },
+    );
+  });
+  it('a human or system send with an AI ISA category and a failed chain link is ISA_NOT_AUTHORIZED once (checks 0 and 12a)', () => {
+    for (const initiator of ['human', 'system'] as const) {
+      const d = canContact(aiIsaInput({ initiator }, { chainFailures: ['platform:ai_isa'] }));
+      expect(d.outcome).toBe('deny');
+      expect(d.reasons.filter((r) => r === 'ISA_NOT_AUTHORIZED')).toEqual(['ISA_NOT_AUTHORIZED']);
+    }
+    // the assistant with a failed link: check 12a alone reports it
+    expect(canContact(aiIsaInput({}, { chainFailures: ['platform:ai_isa'] })).reasons).toEqual(['ISA_NOT_AUTHORIZED']);
+  });
+  it('every decision carries core-compliance/3.1.0, the first rules version with checks 0, 8 and 12 for the AI ISA categories', () => {
+    expect(canContact(aiIsaInput()).rulesVersion).toBe('core-compliance/3.1.0');
+    expect(canContact(gateInput()).rulesVersion).toBe('core-compliance/3.1.0');
+  });
+});
+
 describe('R-ISA-8 R-ISA-31 D1 first: opt-outs block every AI ISA message, whatever its facts', () => {
   it('property: a revoke, a suppression or a person-level do-not-contact always denies with the D1 code', () => {
     fc.assert(
