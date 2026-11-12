@@ -1,7 +1,9 @@
 // The county HTTP client (R-HOME-10; E572, E579). GET only, redirects refused (redirect: 'manual', any 3xx is
 // rejected), a 15 s timeout, a 2 MiB streamed body cap (the spark.ts readCapped pattern, copied), `f=json`, and a
 // generic User-Agent that names no tenant, user or contact. One limiter per provider instance, shared across
-// tenants: requests at least 1000 ms apart (VERIFY with the county), at most 3 requests per lookup.
+// tenants: requests at least 1000 ms apart (VERIFY with the county), at most 3 requests per lookup. The spacing is PER
+// PROCESS: every worker process builds its own providers, so N workers can reach the county up to N times as often
+// (verify_items 8; docs/DEPLOY.md "Before any live county call" confirms a polite rate with the county for that count).
 // Errors: ArcGIS `{"error": ...}` at 200, a 5xx, non-JSON or an oversized body is `unavailable`; a 3xx or 4xx is
 // `rejected`; an abort is `timeout`. Nothing from a response is logged or put in an error.
 import { ProviderError } from '../types.js';

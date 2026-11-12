@@ -15,6 +15,7 @@ export const HOMEOWNER_FIELDS = [
   'tax_year',
   'exemption_legal_residence',
   'exemption_homestead',
+  // VERIFY WITH COUNSEL (verify_items 11): whether to keep the owner's tax-mail address at all, and the 12-month ceiling
   'owner_mailing_address',
 ] as const;
 export type HomeownerField = (typeof HOMEOWNER_FIELDS)[number];

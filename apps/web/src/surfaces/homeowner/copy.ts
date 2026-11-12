@@ -52,6 +52,12 @@ export function reasonsText(reasons: { reason: string; since: string | null }[])
   return `Shown because this person is ${parts.join(', ')}.`;
 }
 
+/**
+ * VERIFY (verify_items 7): South Carolina assesses at 4% (legal residence) or 6% of market value, so "Assessed value"
+ * is the county's assessment, not a market value, and "County market value" is the county's appraisal, not a sale
+ * price; whether the labels read right to an agent, and whether the homestead exemption is on any bulk layer at all
+ * (expected: no, so its row normally says "Not available").
+ */
 export const FIELD_LABELS: Record<string, string> = {
   last_transfer_date: 'Last transfer',
   last_transfer_price_cents: 'Last transfer price',
