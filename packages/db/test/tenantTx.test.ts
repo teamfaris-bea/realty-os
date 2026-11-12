@@ -124,7 +124,7 @@ describe('withTenantTx', () => {
           FROM jurisdiction_packs`.execute(tx);
       return { n, t, packs: Number(pack.rows[0]!.n), platformPacks: Number(pack.rows[0]!.p), reviewed: Number(pack.rows[0]!.reviewed) };
     }, { db: h.app });
-    expect(r).toEqual({ n: 0, t: 0, packs: 1, platformPacks: 8, reviewed: 0 });
+    expect(r).toEqual({ n: 0, t: 0, packs: 1, platformPacks: 9, reviewed: 0 }); // 9 with platform:public_records_outreach (D10)
   });
 
   it('support actors are read-only (RESTRICTIVE support_read_only_* policies)', async () => {
