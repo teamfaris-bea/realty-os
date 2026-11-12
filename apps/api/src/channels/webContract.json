@@ -1666,7 +1666,8 @@
     "MEDIA_TOO_LARGE": 422,
     "MEDIA_LOCATION_NOT_REMOVED": 422,
     "MEDIA_UPLOAD_GONE": 409,
-    "MEDIA_UPLOAD_LIMIT": 409
+    "MEDIA_UPLOAD_LIMIT": 409,
+    "CONTACT_MERGED": 409
   },
   "webChat": {
     "widgetKey": "^wk_[0-9a-f]{40}$",

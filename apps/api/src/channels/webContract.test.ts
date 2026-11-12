@@ -65,6 +65,10 @@ describe('the web contract of module 22 (webContract.json)', () => {
   it('carries the status of every error code it names, as errors.ts answers it', () => {
     for (const [code, status] of Object.entries(webContract().errors)) expect(status, code).toBe(ERROR_STATUS[code as keyof typeof ERROR_STATUS]);
   });
+
+  it('R-OWN-24 E559: webContract lists CONTACT_MERGED with 409', () => {
+    expect(webContract().errors).toMatchObject({ CONTACT_MERGED: 409 });
+  });
 });
 
 // Rules a handler or a Zod transform applies that a JSON Schema cannot carry (finding F3): the contract names them,
