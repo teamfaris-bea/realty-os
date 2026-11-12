@@ -137,7 +137,7 @@ describe('Settings → Gmail: not connected', () => {
   it('R-GMAIL-13 (b7 ownership-data/F4): a suspended member\'s link is paused, not disconnected, and the page says so', async () => {
     mount(new FakeFetch().on('GET /me/mail-link', { status: 200, body: view({ link: link({ statusSentence: 'Paused while your account is suspended.' }) }) }));
     expect(await screen.findByText('Paused while your account is suspended.')).toBeVisible();
-    expect(screen.queryByText(/membership on this team ended/)).toBeNull();
+    expect(screen.queryByText(/disconnected/i)).toBeNull();
   });
 
   it('after Disconnect, it says so and offers Connect Gmail again', async () => {

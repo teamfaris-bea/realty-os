@@ -263,7 +263,7 @@ describe('revocation, reassignment, merge, erasure (R-GMAIL-6, -13)', () => {
     expect(await copiesOf(h, { linkId: link.id })).toEqual([]);
   });
 
-  it('E27 R-GMAIL-10 R-AST-6 (b7 sends/F3): a fresh Gmail reply moves the conversation\'s inbound counter, so a text scheduled before it is held for a re-tap', async () => {
+  it('E27 R-GMAIL-10 R-AST-6 (b7 sends/F3): a fresh Gmail reply moves the conversation\'s inbound counter (not last_inbound_at, D1), so a text scheduled before it is held for a re-tap', async () => {
     const { a, box, c } = await connected();
     const r = await sendText(a, c.id, 'Following up on the house', { scheduleAt: new Date(Date.now() + 3600_000).toISOString() });
     expect(r.body.message).toBeTruthy();
@@ -273,7 +273,9 @@ describe('revocation, reassignment, merge, erasure (R-GMAIL-6, -13)', () => {
     await runMailSync(h, w.tenantId);
     const after = await seq();
     expect(after.s).toBe(before.s + 1);
-    expect(after.at).not.toBeNull();
+    // D1: last_inbound_at does not move, so the reply never makes a free-form send "informational" past an unsubscribe
+    expect(after.at).toEqual(before.at);
+    expect((await h.su.query('SELECT last_inbound_at FROM contacts WHERE id = $1', [c.id])).rows[0]!.last_inbound_at).toBeNull();
     // still never a messages row (R-GMAIL-14): the counter moved, nothing else
     expect((await h.su.query("SELECT 1 FROM messages WHERE contact_id = $1 AND direction = 'inbound'", [c.id])).rowCount).toBe(0);
     await h.su.query("UPDATE messages SET scheduled_for = now() - interval '1 second' WHERE id = $1", [r.body.message!.id]);

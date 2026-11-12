@@ -134,12 +134,14 @@ export async function liveRoutesOutsideApi(): Promise<{ path: string; methods: s
     const stack: string[] = [];
     for (const line of app.printRoutes({ commonPrefix: false }).split('\n')) {
       const m = /^((?:│ {3}| {4})*)(?:├── |└── )(\S+)(?: \(([^)]*)\))?/.exec(line);
+      // a line this parser cannot place (e.g. a second handler set on one path) is refused, never skipped
+      if (!m && /\(([A-Z]+(, )?)+\)/.test(line)) throw new Error(`capabilityPaths: cannot read the route line ${JSON.stringify(line)}`);
       if (!m) continue;
       const depth = m[1]!.length / 4;
       stack.length = depth;
       stack.push(m[2]!);
       const path = stack.join('');
-      if (m[3] && !path.startsWith('/api')) out.push({ path, methods: m[3].split(',').map((x) => x.trim()).sort() });
+      if (m[3] && path !== '/api' && !path.startsWith('/api/')) out.push({ path, methods: m[3].split(',').map((x) => x.trim()).sort() });
     }
     return out.sort((a, b) => a.path.localeCompare(b.path));
   });

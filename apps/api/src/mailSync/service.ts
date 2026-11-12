@@ -87,7 +87,8 @@ export interface OwnLinkRow {
 
 const REVOKE_SENTENCE: Record<string, string> = {
   USER_DISCONNECTED: 'Disconnected. Your copies were removed from Realty OS.',
-  MEMBER_INACTIVE: 'Disconnected because your membership ended.',
+  // true of a removal and of a link revoked by a suspension before suspension became a pause (b7 review)
+  MEMBER_INACTIVE: 'Disconnected because your account was not active on this team.',
   SYNC_TURNED_OFF: 'Disconnected because Gmail sync was turned off for your team.',
   PLATFORM_NOT_CLEARED: 'Disconnected because Gmail sync is not available right now.',
   PROVIDER_REVOKED: 'Google access was removed: connect again.',

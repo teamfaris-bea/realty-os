@@ -97,8 +97,10 @@ describe('module 68 architecture (R-GMAIL-14)', () => {
     expect(fn.length).toBeGreaterThan(500);
     expect(fn).not.toMatch(/enrich_handback|enqueueJob|INSERT INTO messages|insertInbound|classifyInbound|planInboundEffects|\.body\b|snippet: [^N]/);
     expect(fn).toMatch(/'mail_message'/);
-    // b7 sends/F3: it counts the reply on the conversation (E27, R-AST-6); a counter is not a messages row
-    expect(fn).toMatch(/msgs\.bumpInbound\(tx, conversationId, contactId,/);
+    // b7 sends/F3: it counts the reply on the conversation (E27, R-AST-6); a counter is not a messages row, and it never
+    // moves last_inbound_at (that would loosen R-CONSENT-5's purpose and so a marketing-only unsubscribe, D1)
+    expect(fn).toMatch(/msgs\.bumpInboundSeq\(tx, conversationId\)/);
+    expect(fn).not.toMatch(/bumpInbound\(|last_inbound_at/);
   });
 
   it('R-GMAIL-14: no code path writes a messages row, a touch, a speed-to-lead or an ownership event from synced mail', () => {

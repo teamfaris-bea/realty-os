@@ -32,8 +32,8 @@ export function resultWords(code: string | null): { tone: 'ok' | 'info' | 'error
 const REVOKE_WORDS: Record<RevokeReason, string> = {
   PROVIDER_REVOKED: COPY.providerRevoked,
   USER_DISCONNECTED: 'Gmail is disconnected. Your copies were removed from Realty OS.',
-  // only removal revokes (R-GMAIL-13); a suspension pauses the link instead
-  MEMBER_INACTIVE: 'Gmail was disconnected because your membership on this team ended.',
+  // only removal revokes now (R-GMAIL-13; a suspension pauses), but older rows were revoked by a suspension: true of both
+  MEMBER_INACTIVE: "Gmail was disconnected because your account isn't active on this team.",
   SYNC_TURNED_OFF: 'Gmail was disconnected because Gmail sync was turned off for your team.',
   PLATFORM_NOT_CLEARED: "Gmail was disconnected because Gmail sync isn't available right now.",
 };

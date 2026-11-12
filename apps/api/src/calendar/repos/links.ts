@@ -147,7 +147,8 @@ export async function pendingPushesOf(tx: Tx, userId: string): Promise<{ id: str
  * connected link that the calendar does not have at their current version. A push that ran while the member was
  * suspended or deactivating paused (member_inactive) and nothing else re-enqueues it, so the hourly reconcile
  * does once they are active again. Same selection as pendingPushesOf, minus what can never be pushed (a
- * canceled or rescheduled appointment that never reached the calendar). Degraded links are left to their own
+ * canceled or rescheduled appointment that never reached THIS calendar: no event, or one on another provider;
+ * push.ts returns not_pushable for it and records nothing, so it would be re-enqueued every hour). Degraded links are left to their own
  * recovery path (the next in-app write), so a failing provider is not retried hourly.
  */
 export async function pendingPushesOfActiveLinks(tx: Tx): Promise<{ id: string; sync_version: number }[]> {
@@ -157,7 +158,8 @@ export async function pendingPushesOfActiveLinks(tx: Tx): Promise<{ id: string; 
         JOIN memberships m ON m.tenant_id = a.tenant_id AND m.user_id = a.user_id AND m.status = 'active'
       WHERE a.tenant_id = app.tenant_id() AND a.external_sync_status <> 'detached' AND a.ends_at > clock_timestamp()
         AND (a.external_pushed_version IS NULL OR a.external_pushed_version < a.sync_version)
-        AND NOT (a.external_event_ref IS NULL AND a.status IN ('canceled','rescheduled'))
+        AND NOT (a.status IN ('canceled','rescheduled')
+                 AND split_part(COALESCE(a.external_event_ref, ''), ':', 1) <> CASE l.provider WHEN 'microsoft_calendar' THEN 'microsoft' ELSE 'google' END)
       ORDER BY a.starts_at LIMIT 500`.execute(tx)
   ).rows;
 }
