@@ -5,8 +5,12 @@
 // reaches a client. The editor says so, and changing a value clears its mark (counsel reviewed the old value).
 // Every value is VERIFY WITH COUNSEL / MLS; nothing here encodes a particular MLS's rules.
 
-/** Fields a licence pack can allow per audience (packages/core listings DISPLAY_FIELDS; the server drops unknown ones). */
-export const DISPLAY_FIELDS = ['mlsNumber', 'status', 'listPrice', 'beds', 'baths', 'sqft', 'propertyType', 'description', 'listDate', 'address', 'locality', 'photos'] as const;
+/**
+ * Fields a licence pack can allow per audience: packages/core listings DISPLAY_FIELDS, in its order (pack.test.ts checks
+ * they are equal). Restated, not imported, so the phone bundle does not pull core's runtime in (as design/Evidence.tsx).
+ * A field missing here would be dropped from a stored pack on the next save, so the D9 sold fields are listed too.
+ */
+export const DISPLAY_FIELDS = ['mlsNumber', 'status', 'listPrice', 'beds', 'baths', 'sqft', 'propertyType', 'description', 'listDate', 'address', 'locality', 'photos', 'closePrice', 'closeDate', 'yearBuilt', 'lotSize', 'subdivision'] as const;
 export const LISTING_STATUSES = ['coming_soon', 'active', 'pending', 'sold', 'withdrawn', 'expired'] as const;
 export const PACK_KEYS = ['max_staleness_hours', 'attribution_text', 'disclaimer_text', 'allow_rehost_photos', 'require_listing_brokerage', 'client_fields', 'client_statuses', 'public_fields', 'public_statuses'] as const;
 export type PackKey = (typeof PACK_KEYS)[number];
@@ -24,6 +28,11 @@ export const FIELD_WORDS: Record<string, string> = {
   address: 'Street address',
   locality: 'City, state and ZIP',
   photos: 'Photos',
+  closePrice: 'Sold price',
+  closeDate: 'Sold date',
+  yearBuilt: 'Year built',
+  lotSize: 'Lot size',
+  subdivision: 'Subdivision',
 };
 export const STATUS_WORDS: Record<string, string> = { coming_soon: 'Coming soon', active: 'Active', pending: 'Pending', sold: 'Sold', withdrawn: 'Withdrawn', expired: 'Expired' };
 

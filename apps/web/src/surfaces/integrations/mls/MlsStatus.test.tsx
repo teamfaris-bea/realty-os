@@ -169,6 +169,26 @@ describe('MLS page: sync and licence pack', () => {
     expect(within(s).getByText(/2 of 9 values are not marked yet/)).toBeInTheDocument();
   });
 
+  it('D9: re-saving a stored pack keeps its sold fields (sold price and date, year built, lot size, subdivision) and sends no valuation section', async () => {
+    const sold = ['closePrice', 'closeDate', 'yearBuilt', 'lotSize', 'subdivision'];
+    const stored = mls({ marked: PACK_KEYS });
+    stored.connections[0]!.licensePack = { ...pack(PACK_KEYS, { client_fields: ['status', 'listPrice', ...sold], client_statuses: ['active', 'sold'] }) };
+    const fake = fakeWith(stored).on(PUT, (c) => {
+      const body = c.body as Record<PackKey, { counselReviewed: boolean }>;
+      return { status: 200, body: { licensePack: pack(PACK_KEYS.filter((k) => body[k].counselReviewed)) } };
+    });
+    mount(fake, PATH);
+    const s = await editor();
+    const group = within(s).getByRole('group', { name: 'What clients may see' });
+    for (const label of ['Sold price', 'Sold date', 'Year built', 'Lot size', 'Subdivision']) expect(within(group).getByRole('checkbox', { name: label })).toBeChecked();
+    await userEvent.type(within(s).getByLabelText('Attribution'), ' Updated.');
+    await userEvent.click(within(s).getByRole('button', { name: 'Save licence pack' }));
+    await within(s).findByText(/^Licence pack saved\./);
+    const body = fake.callsTo(PUT)[0]!.body as Record<string, { value: unknown; counselReviewed: boolean }>;
+    expect(body['client_fields']).toEqual({ value: ['status', 'listPrice', ...sold], counselReviewed: true });
+    expect('valuation' in body).toBe(false);
+  });
+
   it('a bad number of hours is caught before any request', async () => {
     const fake = fakeWith(mls());
     mount(fake, PATH);
