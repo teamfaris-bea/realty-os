@@ -17,6 +17,7 @@ import { createWorker } from '../worker/loop.js';
 import { HandlerRegistry } from '../worker/registry.js';
 import { DEFAULT_AI_ISA_CONTENT } from './coreSeam.js';
 import { makeIsaHandlers } from './handlers.js';
+import { ownershipFollowupHandler } from '../worker/handlers/followup.js';
 
 export { call, freshReauth };
 
@@ -90,14 +91,14 @@ export async function startCare(agent: TestClient, contactId: string, body: Reco
 /** A worker over the comms, assistant and AI ISA handlers on the harness database and fakes. */
 export function isaWorker(h: ApiHarness) {
   const deps = depsFromPlatform(h.app.platform);
-  const registry = new HandlerRegistry().registerAll([...makeCommsHandlers(() => deps), ...makeAssistantHandlers(() => deps), ...makeIsaHandlers(() => deps)]);
+  const registry = new HandlerRegistry().registerAll([...makeCommsHandlers(() => deps), ...makeAssistantHandlers(() => deps), ...makeIsaHandlers(() => deps), ownershipFollowupHandler({ ids: deps.ids }) as never]);
   return createWorker({ db: h.database, registry, providers: h.providers, queues: ['realtime', 'default'], concurrency: 1, worker: `isa-test-${randomUUID().slice(0, 8)}`, idleMs: 10, log: silentLogger });
 }
 
 /** Makes every pending AI ISA and dispatch job due and drains, `rounds` times. */
 export async function runIsa(h: ApiHarness, tenantId: string, rounds = 4): Promise<void> {
   for (let i = 0; i < rounds; i += 1) {
-    await h.su.query(`UPDATE jobs SET run_at = now() - interval '1 second' WHERE tenant_id = $1 AND status = 'pending' AND (kind LIKE 'ai_isa.%' OR kind = 'comms.dispatch') AND kind NOT IN ('ai_isa.sweep','ai_isa.sla')`, [tenantId]);
+    await h.su.query(`UPDATE jobs SET run_at = now() - interval '1 second' WHERE tenant_id = $1 AND status = 'pending' AND (kind LIKE 'ai_isa.%' OR kind IN ('comms.dispatch','ownership.followup')) AND kind NOT IN ('ai_isa.sweep','ai_isa.sla')`, [tenantId]);
     // the debounce reads conversations.last_inbound_at: age it so a due turn runs now
     await h.su.query(`UPDATE conversations SET last_inbound_at = last_inbound_at - interval '1 minute' WHERE tenant_id = $1 AND last_inbound_at > now() - interval '1 minute'`, [tenantId]);
     await h.su.query(`UPDATE messages SET created_at = created_at - interval '3 minutes' WHERE tenant_id = $1 AND direction = 'inbound' AND created_at > now() - interval '3 minutes'`, [tenantId]);

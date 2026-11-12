@@ -16,7 +16,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { recordConsentEvent } from '../src/consent.js';
 import { withTenantTx } from '../src/tenantTx.js';
-import { createHarness, createWorld, type Harness, selfCreated, suFixture, suRows, uuid, type World } from './world.js';
+import { cmd, createHarness, createWorld, drainFollowups, type Harness, selfCreated, suFixture, suRows, uuid, type World } from './world.js';
 import {
   closedZone, dispatchCode, hmacHex, inbound, type IsaWorld, type Lead, leadUnderCare, markSent, queueAi, setupIsaWorld, sha, startCare,
 } from './rls_smoke_ai_isa.fixture.js';
@@ -615,5 +615,22 @@ describe('appointments: the booking lock before the row, and no assistant overla
     const l = await leadUnderCare(x);
     await appt(x.agent.actor, { startsMin: 600, contactId: l.contactId });
     expect(await errOf(appt(x.agent.actor, { startsMin: 610, contactId: l.contactId }))).toBe('ok');
+  });
+});
+
+describe('merge (R-ISA-16; E526)', () => {
+  it('R-ISA-16 E526: a merge with care live on the loser and an AI message queued: the message is withdrawn, both records get a merged stop signal, the guard refuses it', async () => {
+    const l = await leadUnderCare(x);
+    await inbound(x, l);
+    const m = await queueAi(x, l);
+    const survivor = await selfCreated(h.app, w, x.agent, 'Survivor Lead');
+    const r = await cmd(h.app, w.owner.actor, survivor, { kind: 'merge', survivorId: survivor, loserId: l.contactId as never, ownerChoice: null });
+    expect(r.outcome.ok, JSON.stringify(r.outcome)).toBe(true);
+    await drainFollowups(h, w);
+    const sig = await suRows<{ reason: string; contact_id: string }>(h.su, `SELECT reason, contact_id FROM ai_isa_stop_signals WHERE tenant_id = $1 AND reason = 'merged'`, [w.tenantId]);
+    expect(sig.map((s) => s.contact_id)).toContain(l.contactId);
+    const [a] = await suRows<{ status: string }>(h.su, `SELECT status FROM assistant_actions WHERE id = $1`, [m.actionId]);
+    expect(a!.status).toBe('invalidated');
+    expect(await dispatchCode(x, m.messageId)).toMatch(/ASSISTANT_ACTION_WITHDRAWN|ISA_STOPPED|RECIPIENT/);
   });
 });

@@ -121,6 +121,24 @@ describe('non-turn inbounds pause care (R-ISA-3, R-ISA-14; E497)', () => {
   });
 });
 
+describe('ownership (R-ISA-16)', () => {
+  it('R-ISA-16 E525: a reassignment stops care in the ownership effects transaction (stop signal owner_change); the job ends it with one handoff', async () => {
+    const { runOwnershipCommand } = await import('../leads/ownership.js');
+    const { depsFromPlatform } = await import('../comms/runtime.js');
+    const l = await isaLead(h, w.agents[0]!);
+    await startCare(w.agents[0]!, l.id);
+    await runIsa(h, w.tenantId);
+    const r = await runOwnershipCommand(w.owner.actor(), l.id as never, { kind: 'reassign', toUserId: w.agents[1]!.userId as never, reason: 'MANUAL_REASSIGN' } as never, crypto.randomUUID(), undefined, { db: h.database, ids: depsFromPlatform(h.app.platform).ids });
+    expect(r.ok).toBe(true);
+    await runIsa(h, w.tenantId, 1);
+    const sig = await h.su.query(`SELECT reason FROM ai_isa_stop_signals WHERE contact_id = $1`, [l.id]);
+    expect(sig.rows.map((x) => x.reason)).toContain('owner_change');
+    await runIsa(h, w.tenantId);
+    expect((await assignmentOf(h, l.id))!.end_reason).toBe('owner_change');
+    expect((await handoffOf(h, l.id)).length).toBe(1);
+  });
+});
+
 describe('represented elsewhere (R-ISA-26)', () => {
   it('R-ISA-26: "we are already working with a realtor" pauses care with a Check this card for the owner (never ends by itself)', async () => {
     const l = await isaLead(h, w.agents[0]!);
