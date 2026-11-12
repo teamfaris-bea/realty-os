@@ -18,12 +18,10 @@
 //     row is authoritative (R-MLS-5) and the engine combines it with the mirror's close price.
 import type { Tx } from '@realty/db';
 import { addressKey, streetOfKey } from '@realty/core/listings';
+import { CMA_DEFAULTS } from '@realty/core/valuation';
 import { sql } from 'kysely';
 import { LISTING_COLS, type ListingRow } from './eligibility.js';
 
-/** Rows per tier read and for the rate pool. VERIFY (engineering): replaced by core/valuation CMA_DEFAULTS at merge (lane V1-B). */
-export const SOLD_TIER_LIMIT = 300;
-export const SOLD_RATE_POOL_LIMIT = 600;
 /** Distinct spellings a loose scan returns at most (a bound on the work, not a product rule). */
 const MAX_SPELLINGS = 20_000;
 
@@ -59,7 +57,9 @@ export interface SoldCandidates {
   reads: { tier: SoldTier; rows: number; limitReached: boolean }[];
 }
 
-const DEFAULT_LIMIT: Record<SoldTier, number> = { subdivision: SOLD_TIER_LIMIT, cells_1mi: SOLD_TIER_LIMIT, postal_code: SOLD_TIER_LIMIT, cells_3mi: SOLD_TIER_LIMIT, city: SOLD_TIER_LIMIT, rate_pool: SOLD_RATE_POOL_LIMIT };
+/** Rows per tier read and for the rate pool: the engine's own limits, one source (core/valuation CMA_DEFAULTS; VERIFY). */
+const TIER = CMA_DEFAULTS.tierLimit;
+const DEFAULT_LIMIT: Record<SoldTier, number> = { subdivision: TIER, cells_1mi: TIER, postal_code: TIER, cells_3mi: TIER, city: TIER, rate_pool: CMA_DEFAULTS.ratePoolLimit };
 
 /** Stored spellings of a text column among sold MLS rows that equal `wanted` case- and space-insensitively (loose index scan). */
 async function soldSpellings(tx: Tx, column: 'subdivision_name' | 'city', wanted: readonly string[]): Promise<string[]> {
