@@ -227,6 +227,7 @@ Every prompt is built by `core.assistant.buildPrompt` (`packages/core/src/assist
 | Untrusted content | Who controls it | Reaches the model through |
 |---|---|---|
 | Inbound SMS and email bodies | the client, or anyone who knows their number or address | `CONVERSATION` (drafts, handbacks, summaries) |
+| Reaction texts (D5b: Loved “…”, 👍 to “…”) | the client's phone | `CONVERSATION` as `client (sms reaction to the team's text [Sn])` with only the reaction as untrusted data. The quoted words of the inbound body are never printed as anyone's words, and the reaction's evidence source holds only its own words, so a model cannot cite the team's words as the client's (R-REACT-7) |
 | Outbound message bodies (imported ones, or ones that quote the client) | the client, by quoting; import files | `CONVERSATION` |
 | Call transcripts | anyone on the call | `CALL` (call pipeline: summary, promise tasks, search proposal) |
 | Notes, including imported FUB notes | third-party systems, import files | `AGENT NOTES` |
@@ -843,3 +844,9 @@ Security review items of the migration (CONVENTIONS §4):
   saved search now stays `active` but never alerts; moving it to the survivor, or pausing it at the merge, is a product
   decision. The contact page's reachability summary for a merged-away record (seen only by tenant-wide roles and the
   loser's collaborators) still describes that record's own points, though every send from it is refused.
+
+## 9. Texting reactions (lane sms-reactions, D5b)
+
+- Recognition: an anchored parse of the whole body, with no text allowed before or after. The quote must equal a stored non-imported outbound text sent from the same number to the same phone on the same contact within 30 days, and the DB guard `app.message_reactions_guard` re-checks the same bounds. Anything else is classified exactly as before, so an opt-out the person writes always counts (R-REACT-1…3, R-REACT-5).
+- Assistant: a linked reaction reaches a prompt only as `client (sms reaction to the team's text [Sn])`, with its own words as untrusted data. Its evidence source holds only those words, and draft categories ignore the quote, so a model cannot cite the team's words as the client's (R-REACT-7).
+- Review trail: each narrowed reading is audited `consent.reaction_quote_not_read` (reason: the reading it replaced), and each refused link is audited `consent.reaction_link_refused`. The notification and the thread say so, and the thread offers the person-level do-not-contact. All of this is kept for counsel review (VERIFY WITH COUNSEL).

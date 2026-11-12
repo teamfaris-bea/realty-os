@@ -45,6 +45,7 @@ Frequency is a judgement about an agent's day: several times an hour, several ti
 | 20 | **FUB import of the above** | once per team | — | People, notes, texts, emails, calls, users; tags and stages weakly; custom fields as text; **not**: relationships, collaborators, typed custom fields, important dates, smart lists, templates, action plans (C/import/fub.ts:21, 231-499) | **partial**: stage mapping, tag catalog, typed fields |
 | 21 | **Calls: click-to-call and the call outcome** | hourly | Dialer in app; call outcome and notes | **Exists**: POST /contacts/:id/calls, outcome sheet (A/comms/routes.ts:152-158; W/surfaces/feed/lib/AgentSheets.tsx:99-162). Gap: a note with the outcome (#2) | covered by #1/#2 |
 | 22 | **One-off text/email** | hourly | Composer | **Exists**, with preview and D1 opt-out checks (A/comms/routes.ts:122-125; A/comms/dispatch.ts) | covered |
+| 23 | **Reactions to a text** (a client's phone sends Loved “…” or 👍 to “…” as a text) | daily (VERIFY) | VERIFY: no source found on how FUB shows reaction texts | Before D5: stored and classified as ordinary texts (A/comms/inbound.ts:235); the quoted words could read as the client's opt-out or wrong-number reply (C/compliance/inbound.ts:145-164) | **D5(b)**: recognised and shown on the reacted-to text; the team's own quoted words are never read as the client's (R-REACT-1…7) |
 
 ## 3. What the design does about each gap
 
@@ -65,6 +66,7 @@ The model is in `docs/DATA_MODEL.md` Part 3 and the build in `docs/PARITY_PLAN.m
 13. **Stage-entry enrollment**: `playbooks.auto_enroll_stage` (approved versions only, one live enrollment per person).
 14. **Merge**: a candidates review list, plus moving the new child rows (tags, values, relationships, mentions follow their notes) inside the existing merge transaction.
 15. **Import**: Admin stage mapping, the tag catalog, and FUB custom fields mapped to typed definitions.
+16. **Reactions (D5b)**: `message_reactions` links a reaction text to the team's text it quotes word for word (same phone, same number, same contact, 30 days). Only the reaction's own words are classified. The thread shows the reaction on that text, with the raw text one tap away.
 
 ## 4. What we are not building (and why)
 
