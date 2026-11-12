@@ -1,7 +1,6 @@
 // b7 review findings on merges (sends/F2, ownership-data/F1): a trigger message queued before a merge is never sent,
 // the dispatch guard refuses a within-playbook message whose action is no longer proposed, and listing / deal roles
 // follow the merged person so their home anniversary and listing alerts keep firing. Real Postgres as app_user.
-import { randomUUID } from 'node:crypto';
 import { withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
