@@ -11,6 +11,7 @@ import { type ApiHarness, type TestClient, createApiHarness } from '../auth/test
 import { contactState, importedUnassigned, jobs, ledger } from '../leads/testing.js';
 import { contactCount, contactsWith, enableInbox, labelledBody, leadAddress, messageRows, outcomeOf, postLeadEmail } from './testing.js';
 import { HOLD_SENTENCES } from './trust.js';
+import { LEADMETA_HEAD_HTML, forwardedByHand } from './parse/fixtures.js';
 
 let h: ApiHarness;
 let w: AssistantWorld;
@@ -290,5 +291,224 @@ describe('R-AST-13 R-TEN-3 response and request schemas', () => {
     await freshReauth(h, w.owner);
     const r = await call(w.owner, 'PUT', `/lead-sources/${w.sourceId}/lead-email/sender-domains`, { domains: ['zillow.com'], tenantId: w.tenantId });
     expect([r.status, r.code]).toEqual([422, 'VALIDATION_FAILED']);
+  });
+});
+
+// ---- R-LEM-9..12: personal mailboxes, forwarding, portal catalog, lead metadata (SYNTHETIC fixtures) ------------
+
+let gmailSeq = 0;
+/** A consumer-domain address that can never be a real mailbox ('_' and '-' are not allowed in a Gmail account name). */
+const syntheticGmail = (who: string) => `synthetic_${who}-${Date.now().toString(36)}-${++gmailSeq}@gmail.com`;
+const FORWARDER = `synthetic_forwarder-${Date.now().toString(36)}@gmail.com`;
+const handForward = (text: string, from = FORWARDER) => ({ to: address, from: `Agent Sample <${from}>`, subject: 'Fwd: New lead', dkim: [{ domain: 'gmail.com', result: 'pass' }], text });
+type Item = { id: string; holdCode: string; holdSentence: string; canAccept: boolean; text: string | null; fields: { name: { value: string } | null; emails: { value: string }[]; phones: { value: string }[] } | null };
+const reviewItem = async (id: string): Promise<Item> => (await call<{ items: Item[] }>(w.owner, 'GET', '/lead-email/reviews')).body.items.find((x) => x.id === id)!;
+const pointsOf = async (contactId: string) => (await h.su.query<{ address: string }>('SELECT address FROM contact_points WHERE contact_id = $1 ORDER BY address', [contactId])).rows.map((r) => r.address);
+const inboxOf = async () => (await call<{ inbox: { allowedSenderDomains: string[]; ignoredSenderDomains: string[]; suggestedSenderDomains: unknown[]; portalCatalog: { portal: string; domain: string; label: string; preTicked: boolean }[] } }>(w.owner, 'GET', `/lead-sources/${w.sourceId}/lead-email`)).body.inbox;
+
+describe('R-LEM-11 personal mailboxes (hand forwards)', () => {
+  it('R-LEM-11 E326: a lead forwarded by hand from gmail.com is held PERSONAL_MAILBOX; only the forwarded block is read; the lead’s own gmail address is kept; Accept needs no retyping', async () => {
+    const lead = syntheticGmail('lead');
+    const phone = randomPhone();
+    const before = await contactCount(h, w.tenantId);
+    expect(outcomeOf(await postLeadEmail(h, handForward(forwardedByHand('gmail', { lead, phone }))))).toBe('needs_review');
+    expect(await contactCount(h, w.tenantId)).toBe(before);
+    const row = (await messageRows(h, w.tenantId)).at(-1)!;
+    expect(row).toMatchObject({ status: 'needs_review', hold_code: 'PERSONAL_MAILBOX', parser_kind: 'generic', sender_domain: 'gmail.com', contact_id: null });
+    const it = await reviewItem(row.id);
+    expect(it.holdSentence).toBe(HOLD_SENTENCES.PERSONAL_MAILBOX);
+    expect(it.canAccept).toBe(true);
+    expect(it.fields?.name?.value).toBe('Sam Lead'); // not the forwarder's note above the marker
+    expect(it.fields?.emails.map((e) => e.value)).toEqual([lead]);
+    expect(it.text).toContain('FYI see below'); // the reviewer still sees the whole email
+    const r = await call<{ contactId: string }>(w.owner, 'POST', `/lead-email/reviews/${row.id}/accept`, {});
+    expect(r.status).toBe(200);
+    expect(await pointsOf(r.body.contactId)).toEqual([phone, lead].sort());
+    expect((await jobs(h, w.tenantId, 'assistant.first_response')).filter((j) => j.payload.contactId === r.body.contactId)).toHaveLength(0);
+  });
+
+  it('R-LEM-11 E327: allowlisting gmail.com is refused (reason consumer_mailbox); an older saved entry is ignored by the rule and listed in ignoredSenderDomains', async () => {
+    await freshReauth(h, w.owner);
+    for (const d of ['gmail.com', 'Outlook.com', 'mail.yahoo.com']) {
+      const r = await call<{ error: { details?: { reason?: string } } }>(w.owner, 'PUT', `/lead-sources/${w.sourceId}/lead-email/sender-domains`, { domains: ['zillow.com', d] });
+      expect([d, r.status, r.code, r.body.error.details?.reason]).toEqual([d, 422, 'LEAD_EMAIL_DOMAIN_INVALID', 'consumer_mailbox']);
+    }
+    const saved = (await inboxOf()).allowedSenderDomains;
+    expect(saved).not.toContain('gmail.com');
+    expect((await inboxOf()).ignoredSenderDomains).toEqual([]);
+    // an entry saved before the rule (written directly, as an old row would be)
+    await h.su.query("UPDATE integration_connections SET allowed_sender_domains = array_append(allowed_sender_domains, 'gmail.com') WHERE tenant_id = $1 AND kind = 'lead_email' AND lead_source_id = $2", [w.tenantId, w.sourceId]);
+    try {
+      const inbox = await inboxOf();
+      expect(inbox.allowedSenderDomains).toContain('gmail.com');
+      expect(inbox.ignoredSenderDomains).toEqual(['gmail.com']);
+      // a gmail.com email with gmail.com's own DKIM pass is still not a lead
+      expect(outcomeOf(await postLeadEmail(h, { to: address, from: syntheticGmail('sender'), dkim: [{ domain: 'gmail.com', result: 'pass' }], text: labelledBody({ name: 'Gail Mail', email: leadAddress() }) }))).toBe('needs_review');
+      expect((await messageRows(h, w.tenantId)).at(-1)!.hold_code).toBe('PERSONAL_MAILBOX');
+    } finally {
+      await h.su.query('UPDATE integration_connections SET allowed_sender_domains = $3::text[] WHERE tenant_id = $1 AND kind = $4 AND lead_source_id = $2', [w.tenantId, w.sourceId, saved, 'lead_email']);
+    }
+  });
+
+  it('R-LEM-11 E344: the forwarder’s From address, a member’s account email and alert phone, and a team number are never kept; two accepted forwards of different leads ⇒ two contacts', async () => {
+    const agent = w.agents[0]!;
+    const memberEmail = (await h.su.query<{ email: string }>('SELECT email::text AS email FROM users WHERE id = $1', [agent.userId])).rows[0]!.email;
+    const alert = randomPhone();
+    await h.su.query('UPDATE memberships SET alert_phone_e164 = $1, alert_phone_verified_at = now() WHERE tenant_id = $2 AND user_id = $3', [alert, w.tenantId, agent.userId]);
+    const forward = (lead: string, phone: string, name: string) =>
+      [
+        'see below',
+        '---------- Forwarded message ---------',
+        'From: Zillow <leads@zillow.com>',
+        '',
+        `Name: ${name}`,
+        `Email: ${FORWARDER}`,
+        `Email: ${memberEmail.toUpperCase()}`,
+        `Email: ${lead}`,
+        `Phone: ${alert}`,
+        `Phone: ${w.mainNumber}`,
+        `Phone: ${phone}`,
+      ].join('\n');
+    const contacts: string[] = [];
+    for (const name of ['Lee One', 'Lee Two']) {
+      const lead = syntheticGmail('lead');
+      const phone = randomPhone();
+      expect(outcomeOf(await postLeadEmail(h, handForward(forward(lead, phone, name))))).toBe('needs_review');
+      const row = (await messageRows(h, w.tenantId)).at(-1)!;
+      const it = await reviewItem(row.id);
+      expect(it.fields?.emails.map((e) => e.value)).toEqual([lead]);
+      expect(it.fields?.phones.map((p) => p.value)).toEqual([phone]);
+      const r = await call<{ contactId: string }>(w.owner, 'POST', `/lead-email/reviews/${row.id}/accept`, {});
+      expect(r.status).toBe(200);
+      expect(await pointsOf(r.body.contactId)).toEqual([phone, lead].sort());
+      contacts.push(r.body.contactId);
+    }
+    expect(new Set(contacts).size).toBe(2);
+    for (const a of [FORWARDER, memberEmail, alert, w.mainNumber]) expect(await contactsWith(h, w.tenantId, a), a).toEqual([]);
+    // the auto-create path drops them too (a verified portal email listing the team's own addresses)
+    const lead = leadAddress();
+    const text = ['New lead from Zillow', 'Name: Lou Auto', `Email: ${memberEmail}`, `Email: ${lead}`, `Phone: ${w.mainNumber}`, `Phone: ${alert}`].join('\n');
+    expect(outcomeOf(await postLeadEmail(h, { to: address, from: 'leads@zillow.com', dkim: [{ domain: 'zillow.com', result: 'pass' }], text }))).toBe('lead_created');
+    const [cid] = await contactsWith(h, w.tenantId, lead);
+    expect(await pointsOf(cid!)).toEqual([lead]);
+    // only team points ⇒ nothing to reach the person by: held, never a lead
+    const only = ['New lead from Zillow', 'Name: Lou Team', `Email: ${memberEmail}`, `Phone: ${alert}`].join('\n');
+    expect(outcomeOf(await postLeadEmail(h, { to: address, from: 'leads@zillow.com', dkim: [{ domain: 'zillow.com', result: 'pass' }], text: only }))).toBe('needs_review');
+    expect((await messageRows(h, w.tenantId)).at(-1)!.hold_code).toBe('NO_CONTACT_POINT');
+    // a point the reviewer types is kept, even a team number
+    const held = (await messageRows(h, w.tenantId)).at(-1)!;
+    const typed = await call<{ contactId: string }>(w.owner, 'POST', `/lead-email/reviews/${held.id}/accept`, { phone: alert });
+    expect(typed.status).toBe(200);
+    expect(await pointsOf(typed.body.contactId)).toEqual([alert]);
+  });
+});
+
+describe('R-LEM-12 forwarding', () => {
+  const confirmation = (o: { dkim?: { domain: string; result: string }[]; subject?: string; from?: string } = {}) => ({
+    to: address,
+    from: o.from ?? 'Gmail Team <forwarding-noreply@google.com>',
+    subject: o.subject ?? '(#123456789) Gmail Forwarding Confirmation - Receive Mail from someone@example.com',
+    dkim: o.dkim ?? [{ domain: 'google.com', result: 'pass' }],
+    text: ['someone@example.com has requested to automatically forward mail to your email address.', 'Confirmation code: 123456789', '', 'Name: Not A Lead', `Email: ${leadAddress()}`].join('\n'),
+  });
+
+  it('R-LEM-12 E328: a Gmail forwarding confirmation is held FORWARDING_CONFIRMATION naming the requester, never a lead; its code is readable; a forged copy without the aligned pass gets the ordinary hold', async () => {
+    const before = await contactCount(h, w.tenantId);
+    expect(outcomeOf(await postLeadEmail(h, confirmation()))).toBe('needs_review');
+    const row = (await messageRows(h, w.tenantId)).at(-1)!;
+    expect(row).toMatchObject({ hold_code: 'FORWARDING_CONFIRMATION', parser_kind: null, contact_id: null, sender_domain: 'google.com' });
+    expect(row.content_enc!.toString('latin1')).not.toContain('123456789'); // encrypted at rest
+    const it = await reviewItem(row.id);
+    expect(it.holdSentence).toBe("someone@example.com asked Gmail to forward its mail here. If you don't know that address, discard this. If you do, give that person the confirmation code in the email below, then discard this email.");
+    expect(it.canAccept).toBe(false);
+    expect(it.fields).toBeNull();
+    expect(it.text).toContain('Confirmation code: 123456789');
+    expect(await contactCount(h, w.tenantId)).toBe(before);
+    // a subdomain sender with an aligned pass is one too; a subject without the requester has the general sentence
+    expect(outcomeOf(await postLeadEmail(h, confirmation({ from: 'forwarding-noreply@mail.google.com', dkim: [{ domain: 'google.com', result: 'pass' }], subject: 'Gmail Forwarding Confirmation' })))).toBe('needs_review');
+    const sub = (await messageRows(h, w.tenantId)).at(-1)!;
+    expect(sub.hold_code).toBe('FORWARDING_CONFIRMATION');
+    expect((await reviewItem(sub.id)).holdSentence).toBe(HOLD_SENTENCES.FORWARDING_CONFIRMATION);
+    // forged: no aligned google.com pass ⇒ whatever the trust rule says
+    for (const [dkim, code] of [
+      [[{ domain: 'attacker.test', result: 'pass' }], 'DKIM_UNALIGNED'],
+      [[{ domain: 'gmail.com', result: 'pass' }], 'DKIM_UNALIGNED'],
+      [[{ domain: 'google.com', result: 'fail' }], 'DKIM_FAILED'],
+      [[], 'DKIM_MISSING'],
+    ] as const) {
+      expect(outcomeOf(await postLeadEmail(h, confirmation({ dkim: [...dkim] })))).toBe('needs_review');
+      expect((await messageRows(h, w.tenantId)).at(-1)!.hold_code).toBe(code);
+    }
+    expect(outcomeOf(await postLeadEmail(h, confirmation({ from: 'forwarding-noreply@google.com.evil.test', dkim: [{ domain: 'google.com.evil.test', result: 'pass' }] })))).toBe('needs_review');
+    expect((await messageRows(h, w.tenantId)).at(-1)!.hold_code).toBe('SENDER_NOT_ALLOWED');
+    expect(await contactCount(h, w.tenantId)).toBe(before);
+  });
+
+  it('R-LEM-12 E353: accepting a forwarding confirmation, even with a typed phone, is 409 LEAD_EMAIL_NOT_A_LEAD; Discard works', async () => {
+    expect(outcomeOf(await postLeadEmail(h, confirmation()))).toBe('needs_review');
+    const row = (await messageRows(h, w.tenantId)).at(-1)!;
+    const before = await contactCount(h, w.tenantId);
+    for (const body of [{}, { phone: randomPhone(), name: 'Typed Person' }]) {
+      const r = await call(w.owner, 'POST', `/lead-email/reviews/${row.id}/accept`, body);
+      expect([r.status, r.code]).toEqual([409, 'LEAD_EMAIL_NOT_A_LEAD']);
+    }
+    expect(await contactCount(h, w.tenantId)).toBe(before);
+    expect((await h.su.query('SELECT status FROM lead_email_messages WHERE id = $1', [row.id])).rows[0].status).toBe('needs_review');
+    const d = await call<{ review: { status: string } }>(w.owner, 'POST', `/lead-email/reviews/${row.id}/discard`);
+    expect([d.status, d.body.review.status]).toEqual([200, 'discarded']);
+  });
+
+  it('R-LEM-12 E329: an auto-forwarded portal email (To: the agent; our address only in the generic `to` array) routes; signature intact ⇒ lead; broken ⇒ DKIM_FAILED', async () => {
+    const lead = leadAddress();
+    const fwd = (dkim: { domain: string; result: string }[], email: string) => ({ to: ['agent.sample@example.test', address], from: 'Zillow <leads@zillow.com>', dkim, text: labelledBody({ name: 'Ari Auto', email }) });
+    expect(outcomeOf(await postLeadEmail(h, fwd([{ domain: 'zillow.com', result: 'pass' }], lead)))).toBe('lead_created');
+    expect(await contactsWith(h, w.tenantId, lead)).toHaveLength(1);
+    expect(outcomeOf(await postLeadEmail(h, fwd([{ domain: 'zillow.com', result: 'fail' }], leadAddress())))).toBe('needs_review');
+    expect((await messageRows(h, w.tenantId)).at(-1)!.hold_code).toBe('DKIM_FAILED');
+    expect(outcomeOf(await postLeadEmail(h, { ...fwd([{ domain: 'zillow.com', result: 'pass' }], leadAddress()), to: ['agent.sample@example.test'] }))).toBe('unrouted');
+  });
+});
+
+describe('R-LEM-7 R-LEM-9 R-LEM-10 the portal catalog and lead metadata', () => {
+  it('R-LEM-7 R-LEM-9: the inbox lists the portal catalog (only Zillow and Realtor.com pre-ticked; suggestedSenderDomains unchanged); no VERIFY in the response', async () => {
+    const inbox = await inboxOf();
+    expect(inbox.suggestedSenderDomains).toEqual([
+      { domain: 'zillow.com', label: 'Zillow' },
+      { domain: 'realtor.com', label: 'Realtor.com' },
+    ]);
+    expect(inbox.portalCatalog).toEqual([
+      { portal: 'zillow', domain: 'zillow.com', label: 'Zillow', preTicked: true },
+      { portal: 'realtor', domain: 'realtor.com', label: 'Realtor.com', preTicked: true },
+      { portal: 'redfin', domain: 'redfin.com', label: 'Redfin', preTicked: false },
+      { portal: 'homes', domain: 'homes.com', label: 'Homes.com', preTicked: false },
+      { portal: 'homes', domain: 'homesnap.com', label: 'Homes.com', preTicked: false },
+      { portal: 'trulia', domain: 'trulia.com', label: 'Trulia', preTicked: false },
+      { portal: 'opcity', domain: 'opcity.com', label: 'Opcity', preTicked: false },
+    ]);
+    expect(JSON.stringify(inbox)).not.toMatch(/VERIFY/);
+  });
+
+  it('R-LEM-9: a redfin.com labelled email with redfin.com allowed and an aligned DKIM pass becomes a lead (parser generic)', async () => {
+    await freshReauth(h, w.owner);
+    const saved = (await inboxOf()).allowedSenderDomains;
+    expect((await call(w.owner, 'PUT', `/lead-sources/${w.sourceId}/lead-email/sender-domains`, { domains: [...saved, 'redfin.com'] })).status).toBe(200);
+    const lead = leadAddress();
+    expect(outcomeOf(await postLeadEmail(h, { to: address, from: 'Redfin <leads@redfin.com>', dkim: [{ domain: 'redfin.com', result: 'pass' }], text: labelledBody({ name: 'Rae Redfin', email: lead }) }))).toBe('lead_created');
+    const [cid] = await contactsWith(h, w.tenantId, lead);
+    expect((await messageRows(h, w.tenantId)).find((m) => m.contact_id === cid)).toMatchObject({ status: 'lead_created', parser_kind: 'generic', sender_domain: 'redfin.com' });
+    expect(await contactsWith(h, w.tenantId, 'leads@redfin.com')).toEqual([]);
+  });
+
+  it('R-LEM-10: a verified email carrying leadmetadata.org tags becomes a lead with parser_kind leadmetadata; lead_source never changes the lead source', async () => {
+    const lead = leadAddress();
+    const html = LEADMETA_HEAD_HTML.replace('Avery.Sample@Example.test', lead).replace('(555) 010-2030', randomPhone());
+    expect(outcomeOf(await postLeadEmail(h, { to: address, from: 'leads@portal.test', dkim: [{ domain: 'portal.test', result: 'pass' }], html }))).toBe('lead_created');
+    const [cid] = await contactsWith(h, w.tenantId, lead);
+    expect((await messageRows(h, w.tenantId)).find((m) => m.contact_id === cid)).toMatchObject({ parser_kind: 'leadmetadata' });
+    const inq = (await h.su.query('SELECT lead_source_id, parse_evidence, property_text FROM lead_inquiries WHERE contact_id = $1', [cid])).rows;
+    expect(inq).toHaveLength(1);
+    expect(inq[0]).toMatchObject({ lead_source_id: w.sourceId, property_text: '5 Birch Ln, Fairview, OR 97024' });
+    expect(inq[0].parse_evidence.format).toBe('leadmetadata');
+    expect(JSON.stringify(inq[0])).not.toContain('Some Other Portal');
   });
 });

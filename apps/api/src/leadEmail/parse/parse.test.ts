@@ -2,15 +2,27 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { isValidEmail } from './fields.js';
+import { isOwnAddress } from './extract.js';
+import { isConsumerMailboxDomain } from '../trust.js';
 import {
+  CATALOG_PORTAL_DOMAINS,
   GENERIC,
   GENERIC_HTML,
+  LEADMETA_BODY_HTML,
+  LEADMETA_DUPLICATE_HTML,
+  LEADMETA_ESCAPED_HTML,
+  LEADMETA_HEAD_HTML,
+  LEADMETA_HOSTILE_HTML,
+  LEADMETA_UNKNOWN_VERSION_HTML,
   NEWSLETTER_TEXT,
   REALTOR,
   REALTOR_HTML,
   ZILLOW,
   ZILLOW_CHANGED_TEXT,
   ZILLOW_HTML,
+  catalogLabelled,
+  catalogUnlabelled,
+  forwardedByHand,
 } from './fixtures.js';
 import {
   type Field,
@@ -22,6 +34,7 @@ import {
   cleanField,
   normalizeBody,
   parseLeadEmail,
+  scanLeadMetadata,
 } from './index.js';
 
 // eslint-disable-next-line no-control-regex -- the property under test is the absence of control characters
@@ -420,7 +433,9 @@ const inputArb: fc.Arbitrary<ParseInput> = fc.record({
 const isOwn = (email: string, sender: string | null) => {
   const d = email.slice(email.lastIndexOf('@') + 1);
   const s = (sender ?? '').trim().toLowerCase().replace(/\.+$/, '');
-  return [s, ...PORTAL_DOMAINS].some((b) => b !== '' && (d === b || d.endsWith('.' + b)));
+  const under = (b: string) => b !== '' && (d === b || d.endsWith('.' + b));
+  // R-LEM-11: the sender's own domain only when it is not a consumer mailbox domain
+  return PORTAL_DOMAINS.some(under) || (!isConsumerMailboxDomain(s) && under(s));
 };
 
 describe('properties (fast-check)', () => {
@@ -500,5 +515,181 @@ describe('performance', () => {
       expect(text.length).toBeGreaterThanOrEqual(5_000_000);
       expect(time(() => parseLeadEmail({ subject: 'New lead for ' + 'x'.repeat(100_000), text, html: null, senderDomain: 'zillow.com' }))).toBeLessThan(1000);
     }
+  });
+});
+
+// ---- R-LEM-9 R-LEM-10 R-LEM-11 (SYNTHETIC fixtures) -------------------------------------------------------------
+
+const html = (h: string, senderDomain: string | null = 'unknown-sender.test', text: string | null = null): ParseInput => ({ subject: 'New lead', text, html: h, senderDomain });
+
+describe('R-LEM-9 catalog portals without a vendor parser', () => {
+  it('R-LEM-9 E332: a labelled email from each catalog portal parses as generic; unlabelled is held UNKNOWN_FORMAT; their own addresses are never a lead’s', () => {
+    for (const d of CATALOG_PORTAL_DOMAINS) {
+      expect(PORTAL_DOMAINS, d).toContain(d);
+      const r = parseLeadEmail(catalogLabelled(d));
+      const l = okLead(r);
+      expect([d, l.format]).toEqual([d, 'generic']);
+      expect(l.name?.value).toBe('Morgan Sample');
+      expect(l.emails.map((e) => e.value)).toEqual(['morgan.sample@example.test']);
+      expect(l.phones.map((p) => p.value)).toEqual(['555-010-7788']);
+      expectSpans(r);
+      expect(parseLeadEmail(catalogUnlabelled(d)), d).toMatchObject({ ok: false, reason: 'UNKNOWN_FORMAT', partial: null });
+      // a portal address on an Email: line, whoever sent it, is never a lead's
+      const own = parseLeadEmail(generic(`Name: A B\nEmail: leads@${d}\nEmail: x@mail.${d}\nPhone: 555-010-1212`, 'forms.agent-site.test'));
+      expect(okLead(own).emails, d).toEqual([]);
+    }
+  });
+});
+
+describe('R-LEM-10 leadmetadata.org meta tags', () => {
+  it('R-LEM-10 E330: tags in the head are read for any sender; values decoded and cleaned; prepended as lead_* lines with spans into the normalized body; lead_source is not a field', () => {
+    const r = parseLeadEmail(html(LEADMETA_HEAD_HTML));
+    const l = okLead(r);
+    expect(l.format).toBe('leadmetadata');
+    expect(l.name?.value).toBe('Avery Sample');
+    expect(l.emails.map((e) => e.value)).toEqual(['avery.sample@example.test']);
+    expect(l.phones.map((p) => p.value)).toEqual(['(555) 010-2030']);
+    expect(l.property?.value).toBe('5 Birch Ln, Fairview, OR 97024');
+    expect(l.postalCode).toBe('97024');
+    expect(l.message?.value).toBe("I'd like a tour & the HOA fees.");
+    expect(l.leadType).toBe('buy');
+    expect(r.text.startsWith('lead_name: Avery Sample\nlead_email: avery.sample@example.test\n')).toBe(true);
+    expect(r.text).toContain('lead_source: Some Other Portal\n');
+    expect(r.text).toContain('You have a new lead.');
+    expect(normalizeBody(html(LEADMETA_HEAD_HTML))).toBe(r.text);
+    expectSpans(r);
+    for (const [, f] of fieldsOf(l)) expect(r.text.slice(f.span.start, f.span.end).toLowerCase()).toBe(f.value.toLowerCase());
+    // any sender, even a vendor's or none (trust decides elsewhere)
+    expect(okLead(parseLeadEmail(html(LEADMETA_HEAD_HTML, 'mail.zillow.com'))).format).toBe('leadmetadata');
+    expect(okLead(parseLeadEmail(html(LEADMETA_HEAD_HTML, null))).format).toBe('leadmetadata');
+    // the raw HTML part is read even when a text part exists (the text part is the body after the prefix)
+    const both = parseLeadEmail(html(LEADMETA_HEAD_HTML, 'x.test', 'Plain part of the email'));
+    expect(okLead(both).format).toBe('leadmetadata');
+    expect(both.text.endsWith('\n\nPlain part of the email')).toBe(true);
+    expectSpans(both);
+  });
+
+  it('R-LEM-10 E330: tags in the body are read (case-insensitive names, unquoted and reordered attributes)', () => {
+    const r = parseLeadEmail(html(LEADMETA_BODY_HTML));
+    const l = okLead(r);
+    expect(l.format).toBe('leadmetadata');
+    expect(l.name?.value).toBe('Robin Example');
+    expect(l.emails.map((e) => e.value)).toEqual(['robin@example.test']);
+    expectSpans(r);
+  });
+
+  it('R-LEM-10 E330: an unknown version is not read; a text/plain part with meta tags is never read', () => {
+    expect(scanLeadMetadata(LEADMETA_UNKNOWN_VERSION_HTML).declared).toBe(false);
+    expect(parseLeadEmail(html(LEADMETA_UNKNOWN_VERSION_HTML))).toMatchObject({ ok: false, reason: 'UNKNOWN_FORMAT', partial: null });
+    const plain = '<meta name="lead_information_version" content="1.0">\n<meta name="lead_email" content="plain@example.test">';
+    const r = parseLeadEmail({ subject: null, text: plain, html: null, senderDomain: 'x.test' });
+    expect(r).toMatchObject({ ok: false, reason: 'UNKNOWN_FORMAT' });
+    expect(r.text.startsWith('lead_')).toBe(false);
+  });
+
+  it('E350: a lead_* name twice with different values holds the email PARTIAL_FORMAT (the conflicting field stays empty); the same value twice is fine', () => {
+    const r = parseLeadEmail(html(LEADMETA_DUPLICATE_HTML));
+    expect(r).toMatchObject({ ok: false, reason: 'PARTIAL_FORMAT', partial: { format: 'leadmetadata', name: { value: 'Drew Twice' }, emails: [] } });
+    expect(r.text).not.toContain('other@example.test');
+    expectSpans(r);
+    const same = LEADMETA_DUPLICATE_HTML.replace('other@example.test', 'DREW@example.test');
+    expect(okLead(parseLeadEmail(html(same))).emails.map((e) => e.value)).toEqual(['drew@example.test']);
+    // a contradicted version declaration is a conflict too
+    const versions = LEADMETA_HEAD_HTML.replace('<meta charset="utf-8">', '<meta name="lead_information_version" content="2.0">');
+    expect(parseLeadEmail(html(versions))).toMatchObject({ ok: false, reason: 'PARTIAL_FORMAT' });
+  });
+
+  it('E331: escaped tags, comments, script, style, textarea, title and attribute values are never read; decoded content cannot inject a header', () => {
+    const esc = parseLeadEmail(html(LEADMETA_ESCAPED_HTML));
+    expect(esc).toMatchObject({ ok: false, reason: 'UNKNOWN_FORMAT', partial: null });
+    expect(scanLeadMetadata(LEADMETA_ESCAPED_HTML).declared).toBe(false);
+    const r = parseLeadEmail(html(LEADMETA_HOSTILE_HTML));
+    expect(r).toMatchObject({ ok: false, reason: 'NO_CONTACT_POINT', partial: { format: 'leadmetadata', name: { value: 'Quinn Real' }, emails: [], phones: [] } });
+    expect(scanLeadMetadata(LEADMETA_HOSTILE_HTML).values.map((v) => v.name)).toEqual(['lead_name', 'lead_phone']);
+    for (const v of scanLeadMetadata(LEADMETA_HOSTILE_HTML).values) expect(v.value).not.toMatch(FORBIDDEN);
+    expect(r.text).not.toMatch(/(comment|script|style|title|textarea|attr|glued)@attacker/);
+    expectSpans(r);
+  });
+
+  it('E331: at most 64 lead_* tags are read; a value is capped at 2,000 characters', () => {
+    const many = '<meta name="lead_x" content="y">'.repeat(64) + '<meta name="lead_information_version" content="1.0"><meta name="lead_email" content="late@example.test">';
+    expect(scanLeadMetadata(many).declared).toBe(false);
+    const long = `<meta name="lead_information_version" content="1.0"><meta name="lead_message" content="${'m'.repeat(5000)}"><meta name="lead_email" content="a@example.test">`;
+    const r = parseLeadEmail(html(long));
+    expect(okLead(r).message?.value).toHaveLength(2000);
+    expectSpans(r);
+  });
+
+  it('E331: fuzz: never throws, spans hold, no attacker value is read from markup around real tags', () => {
+    const piece = fc.oneof(
+      fc.constantFrom('<meta name="lead_information_version" content="1.0">', '<meta name="lead_email" content="ok@example.test">', '<!--', '-->', '<script>', '</script>', '<title>', '</title>', '<textarea>', '</textarea>', '<style>', '</style>', '"', "'", '<', '>', '&lt;meta name="lead_email" content="attacker@example.test"&gt;', '<meta name="lead_phone" content="', '&#10;', '&amp;', '<meta ', 'content=', '='),
+      fc.string({ unit: 'binary', maxLength: 12 }),
+    );
+    fc.assert(
+      fc.property(fc.array(piece, { maxLength: 30 }), fc.boolean(), (xs, fwd) => {
+        const input: ParseInput = { subject: null, text: null, html: xs.join(''), senderDomain: 'x.test', forwardedOnly: fwd };
+        const r = parseLeadEmail(input);
+        expect(typeof r.ok).toBe('boolean');
+        expectSpans(r);
+        const l = leadOf(r);
+        for (const e of l?.emails ?? []) expect(e.value).not.toContain('attacker');
+        for (const [, f] of l ? fieldsOf(l) : []) expect(f.value).not.toMatch(FORBIDDEN);
+      }),
+      { numRuns: 500 },
+    );
+  });
+
+  it('E331: the scanner is linear: a 10 MB hostile body finishes well under 2 s', () => {
+    const bodies = [
+      '<meta name="lead_x" content="'.repeat(350_000),
+      '<'.repeat(10_000_000),
+      '<meta '.repeat(1_700_000),
+      '<!--' + '<meta name="lead_email" content="a@b.test">'.repeat(230_000),
+      '<script>' + '</scrip'.repeat(1_400_000),
+      `<meta name="lead_information_version" content="1.0"><meta a=${'x'.repeat(10_000_000)}`,
+      '<meta name="lead_information_version" content="1.0">' + '<meta name="lead_name" content="Ann">'.repeat(270_000),
+    ];
+    for (const b of bodies) {
+      expect(b.length).toBeGreaterThanOrEqual(9_000_000);
+      const t0 = performance.now();
+      parseLeadEmail({ subject: null, text: null, html: b, senderDomain: 'x.test' });
+      scanLeadMetadata(b);
+      expect(performance.now() - t0).toBeLessThan(2000);
+    }
+  });
+});
+
+describe('R-LEM-11 personal mailboxes and hand forwards', () => {
+  it('R-LEM-11: isOwnAddress drops portal addresses always, and the sender’s domain only when it is not a consumer mailbox domain', () => {
+    expect(isOwnAddress('synthetic_lead-sam@gmail.com', 'gmail.com')).toBe(false);
+    expect(isOwnAddress('leads@zillow.com', 'gmail.com')).toBe(true);
+    expect(isOwnAddress('x@redfin.com', 'gmail.com')).toBe(true);
+    expect(isOwnAddress('forms@agent-site.test', 'agent-site.test')).toBe(true);
+    expect(isOwnAddress('a@b.outlook.com', 'outlook.com')).toBe(false);
+    const r = parseLeadEmail({ subject: null, text: 'Name: Sam Lead\nEmail: synthetic_lead-sam@gmail.com', html: null, senderDomain: 'gmail.com' });
+    expect(okLead(r).emails.map((e) => e.value)).toEqual(['synthetic_lead-sam@gmail.com']);
+  });
+
+  it('R-LEM-11 E326: forwardedOnly reads only the forwarded block (Gmail, Outlook, Apple Mail markers), spans into the whole body', () => {
+    for (const m of ['gmail', 'outlook', 'apple'] as const) {
+      const text = forwardedByHand(m);
+      const r = parseLeadEmail({ subject: 'Fwd: New lead', text, html: null, senderDomain: 'gmail.com', forwardedOnly: true });
+      const l = okLead(r);
+      expect([m, l.format, l.name?.value]).toEqual([m, 'generic', 'Sam Lead']);
+      expect(l.emails.map((e) => e.value)).toEqual(['synthetic_lead-sam@gmail.com']);
+      expect(l.phones.map((p) => p.value)).toEqual(['555-010-3344']);
+      expect(l.name!.span.start).toBeGreaterThan(text.indexOf('From: Zillow'));
+      expectSpans(r);
+      // without forwardedOnly the forwarder's own note is read first
+      expect(okLead(parseLeadEmail({ subject: null, text, html: null, senderDomain: 'gmail.com' })).name?.value).toBe('Not The Lead');
+    }
+  });
+
+  it('R-LEM-11: forwardedOnly with no marker pre-fills nothing; lead metadata is not read from a hand forward', () => {
+    const r = parseLeadEmail({ subject: null, text: 'Name: Sam Lead\nEmail: synthetic_lead-sam@gmail.com\nPhone: 555-010-3344', html: null, senderDomain: 'gmail.com', forwardedOnly: true });
+    expect(r).toMatchObject({ ok: false, reason: 'UNKNOWN_FORMAT', partial: null });
+    const meta = parseLeadEmail({ subject: null, text: null, html: LEADMETA_HEAD_HTML, senderDomain: 'gmail.com', forwardedOnly: true });
+    expect(meta).toMatchObject({ ok: false, partial: null });
+    expect(meta.text.startsWith('lead_')).toBe(false);
   });
 });

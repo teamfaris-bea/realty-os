@@ -1,6 +1,7 @@
 // Types of the lead-email parser (re-exported by ./index.ts).
 
-export type LeadFormat = 'zillow' | 'realtor' | 'generic';
+/** 'leadmetadata': the leadmetadata.org <meta name="lead_*"> convention (./leadmetadata.ts), for any sender */
+export type LeadFormat = 'zillow' | 'realtor' | 'generic' | 'leadmetadata';
 export type LeadType = 'buy' | 'sell' | 'rent' | 'value' | 'general';
 /** UTF-16 offsets into ParseInput.text AFTER normalizeBody (i.e. into the `text` the result returns) */
 export interface Span {
@@ -38,4 +39,9 @@ export interface ParseInput {
   html: string | null;
   /** lowercased domain of the trusted sender (e.g. 'zillow.com', 'mail.zillow.com'); null if unknown */
   senderDomain: string | null;
+  /**
+   * A lead forwarded by hand (PERSONAL_MAILBOX, R-LEM-11): read only the forwarded block, i.e. after the first
+   * forwarded-message marker of the normalized body; with no marker nothing is read. Spans still index the whole body.
+   */
+  forwardedOnly?: boolean;
 }
