@@ -5,7 +5,8 @@
 //   - pause wins: the survivor's conversation is paused if either side was, keeping the EARLIEST
 //     automation_paused_at and its paused_by_message_id;
 //   - the loser's live enrollment is stopped ('merged'); the survivor's continues, and is paused if
-//     the loser's side was paused (one live enrollment per contact always holds);
+//     the loser's side was paused (one live enrollment per contact always holds); the loser's scheduled
+//     trigger firings (module 26, no enrollment) are skipped as CONTACT_REMOVED;
 //   - the loser's open handbacks and drafts move to the survivor; handbacks go to the surviving
 //     owner (or the Team Lead / an Admin when unowned); drafts bound to the loser's period are
 //     invalidated.
@@ -89,6 +90,15 @@ export async function mergeCommunication(
            pause_reason = NULL, paused_at = NULL, updated_at = now()
      WHERE tenant_id = app.tenant_id() AND contact_id = ${loserId} AND state IN ('active', 'paused')`.execute(tx);
   moved += Number(stopped.numAffectedRows ?? 0);
+  // Module 26 trigger firings (R-NURT-1) have no enrollment, so stopping enrollments leaves them: the loser's
+  // still-scheduled firings are skipped here, visibly, as a firing of a merged-away record is when it executes
+  // (CONTACT_REMOVED). A message one of them already queued moved to the survivor above; its autonomous action is
+  // invalidated below and dispatch refuses it (ASSISTANT_ACTION_WITHDRAWN, b7 sends/F2).
+  await sql`
+    UPDATE playbook_step_runs SET status = 'skipped_ineligible', updated_at = now(),
+           trigger_ref = trigger_ref || jsonb_build_object('skip', jsonb_build_object('reason', 'CONTACT_REMOVED',
+                                                            'text', 'This contact was merged into another record or removed.'))
+     WHERE tenant_id = app.tenant_id() AND contact_id = ${loserId} AND enrollment_id IS NULL AND status = 'scheduled'`.execute(tx);
   // Pausing the survivor's enrollment belongs to the first application only: on a re-run (nothing
   // left to move) a human may already have resumed it, and a resume must not be undone. The
   // survivor CONVERSATION pause above is idempotent (earliest pause kept) and still blocks

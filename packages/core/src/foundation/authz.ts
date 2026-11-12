@@ -101,6 +101,7 @@ export const ACTIONS = [
   'deal.financials', // Commission fields (deal_financials)
   'listing.view',
   'listing.edit',
+  'listing.reassign', // Change a team listing's agent (b7 ownership-data/F2; DATA_MODEL §8)
   'import.run', // CSV / FUB import (approve, commit, verify, revert)
   'settings.routing', // Routing rules, ponds, teams, lead timers
   'settings.numbers', // Phone numbers (acquire), sending domains
@@ -249,6 +250,7 @@ export const AUDIT_ACTIONS = [
   'enrollment.changed', // api/assistant: a human enrolled / paused / stopped a contact in a playbook (the assistant then sends on their behalf)
   'saved_search.approved', // api/assistant: a human approved (or activated) saved-search criteria; alerts follow (R-AST-10)
   'deal.financials_changed', // api/workspace: commission fields of a deal written by a human (A7d, R-PERM-10)
+  'listing.agent_changed', // api/workspace: an Owner/Admin handed a team listing to another active member (b7 ownership-data/F2)
   'exception.reopened', // api/accountability: a handled exception put back in the live queue (R-ACC-3)
   'session.revoked_all', // api/platform: "log out of all sessions" revoked every live session of the user
   'mfa.recovery_codes_regenerated', // api/platform: the user replaced their MFA recovery codes
@@ -523,6 +525,8 @@ const MATRIX: Record<Action, ActionRule> = {
   // Listings view / edit: ✅/✅ | ✅/✅ | ✅/✅ | ✅/own | ✅/— | ✅/—
   'listing.view': { roles: { owner: ALL, admin: ALL, team_lead: ALL, agent: ALL, isa: ALL, tc: ALL }, system: ALL_VIAS, support: true },
   'listing.edit': { roles: { owner: ALL, admin: ALL, team_lead: ALL, agent: OWN } },
+  // b7 ownership-data/F2: a listing keeps its agent when the member leaves; an Owner/Admin hands it to an active member
+  'listing.reassign': { roles: { owner: ALL, admin: ALL } },
   // Imports (CSV, FUB): ✅ 🔒 | ✅ 🔒 | — …
   'import.run': { roles: { owner: ALL_REAUTH, admin: ALL_REAUTH } },
   // Routing, ponds, teams, numbers, domains: ✅ | ✅ | — …  (number release is 🔒 per R-PERM-13)

@@ -199,9 +199,10 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
       const facts = await contactFacts(tx, m.contactId);
       const ok = facts !== null && can(c.actor, 'comms.send', { ...facts, purpose }).ok;
       if (!ok && !extra.includes('SENDER_NOT_AUTHORIZED')) extra.push('SENDER_NOT_AUTHORIZED');
-      // parity module 63 (R-PAR-37): a bulk send is never a touch. Owner decision D8 (2026-11-12): a reply in the
+      // parity module 63 (R-PAR-37): a bulk send is never a touch, and neither is an open-house invite (module 29,
+      // R-MKT-8: a mass send to up to 1000 people in all but name; D8). Owner decision D8 (2026-11-12): a reply in the
       // website chat is a touch like a text or an email (core touch via 'chat', touchViaOf), so it is first contact.
-      touch = ok && facts !== null && (facts.own === true || facts.collaborator === true) && m.bulkActionId === null;
+      touch = ok && facts !== null && (facts.own === true || facts.collaborator === true) && m.bulkActionId === null && m.marketingPieceId === null;
     }
   } else if (m.initiator === 'assistant') {
     const a = m.assistantActionId ? await auto.actionFacts(tx, m.assistantActionId) : null;
@@ -214,7 +215,10 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
       else if (a.ownerUserId !== owner.ownerUserId || a.boundOwnershipSeq !== owner.periodSeq) extra.push('ASSISTANT_ACTION_STALE');
     } else if (a.autonomy === 'within_playbook') {
       gateInitiator = 'assistant';
-      extra.push(...(await playbookReasons(tx, m, a, owner, channel, policy.autonomous, tenant, conv?.id ?? null)));
+      // b7 sends/F2: an autonomous message goes out only while its action is still 'proposed' (it becomes 'executed'
+      // in TX2). A merge or an ownership change that invalidated it withdrew the message, whatever the seqs say.
+      if (a.status !== 'proposed') extra.push('ASSISTANT_ACTION_WITHDRAWN');
+      else extra.push(...(await playbookReasons(tx, m, a, owner, channel, policy.autonomous, tenant, conv?.id ?? null)));
     } else extra.push('ASSISTANT_ACTION_NOT_APPROVED');
   }
 

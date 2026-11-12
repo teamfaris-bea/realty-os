@@ -3,9 +3,13 @@
 // system could not take an external post down (R-MKT-4, R-MKT-9, R-MKT-12). Written by the SYSTEM in its own
 // transaction (a Team Lead or Owner acting on an agent's listing may not write the agent's feed under RLS). The
 // scorer never produces this key family, so it never updates or closes these rows (workspace/feed.ts).
+// b7 ownership-data/F2: a listing whose agent is not an active member (a removed or suspended member keeps their
+// listings) gets no review card for that agent; the Owners/Admins get one "no active listing agent" card naming the
+// listing instead (workspace/listingAgent.ts), and a post the system could not take down is reported to them.
 import type { IdGenerator } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
+import { activeOwnersAndAdmins, listingAgentFacts, raiseListingAgentInactiveCard } from '../workspace/listingAgent.js';
 import { targetWord } from './decide.js';
 
 const KIND_WORD: Record<string, string> = {
@@ -47,8 +51,10 @@ export async function syncReviewCards(tx: Tx, ids: IdGenerator, listingId: strin
     SELECT mp.id, mp.kind, mp.status, l.listing_agent_user_id AS agent FROM marketing_pieces mp
       JOIN listings l ON l.tenant_id = mp.tenant_id AND l.id = mp.listing_id
      WHERE mp.tenant_id = app.tenant_id() AND mp.listing_id = ${listingId}`.execute(tx);
+  const agent = await listingAgentFacts(tx, listingId);
+  if (agent && !agent.agentActive && r.rows.some((p) => p.status === 'draft')) await raiseListingAgentInactiveCard(tx, ids, { listingId, address: agent.address });
   for (const p of r.rows) {
-    if (p.status === 'draft' && p.agent) {
+    if (p.status === 'draft' && p.agent && agent?.agentActive) {
       await upsertCard(tx, ids, { userId: p.agent, pieceId: p.id, score: 40, reasons: [{ code: 'MARKETING_TO_REVIEW', text: `A ${KIND_WORD[p.kind] ?? 'piece'} is ready for you to review and approve` }] });
     } else if (p.status !== 'draft') {
       await closeReviewCard(tx, p.id);
@@ -65,23 +71,22 @@ export async function closeReviewCard(tx: Tx, pieceId: string): Promise<void> {
 
 /** The system could not take an external post down: tell the listing agent to remove it themselves. Idempotent. */
 export async function raiseRemoveYourselfCard(tx: Tx, deps: { ids: IdGenerator }, c: { pieceId: string; publicationId: string; targetKind: string; targetName: string }): Promise<void> {
-  const r = await sql<{ agent: string | null }>`SELECT l.listing_agent_user_id AS agent FROM marketing_pieces mp JOIN listings l ON l.tenant_id = mp.tenant_id AND l.id = mp.listing_id
-     WHERE mp.tenant_id = app.tenant_id() AND mp.id = ${c.pieceId}`.execute(tx);
-  const agent = r.rows[0]?.agent;
-  if (!agent) return;
+  const r = await sql<{ listing_id: string }>`SELECT mp.listing_id FROM marketing_pieces mp WHERE mp.tenant_id = app.tenant_id() AND mp.id = ${c.pieceId}`.execute(tx);
+  const listing = r.rows[0] ? await listingAgentFacts(tx, r.rows[0].listing_id) : null;
+  if (!listing) return;
+  // the listing agent, or (b7 ownership-data/F2) every active Owner/Admin when the agent is not an active member
+  const users = listing.agentActive && listing.agentUserId ? [listing.agentUserId] : await activeOwnersAndAdmins(tx);
+  if (users.length === 0) return;
   const code = `REMOVE_POST_YOURSELF:${c.publicationId}`;
   const seen = await sql<{ n: number }>`SELECT count(*)::int AS n FROM priority_feed_items f, jsonb_array_elements(f.reasons) x
      WHERE f.tenant_id = app.tenant_id() AND f.dedupe_key = ${`marketing:${c.pieceId}`} AND x->>'code' = ${code}`.execute(tx);
   if ((seen.rows[0]?.n ?? 0) > 0) return;
   const word = targetWord(c.targetKind);
+  const text = listing.agentActive
+    ? `Remove the post from your ${word} "${c.targetName}" yourself: we could not take it down from here`
+    : `Remove the post about ${listing.address} from the ${word} "${c.targetName}" yourself: we could not take it down from here, and the listing has no active agent`;
   // a review card that is still open for this piece is replaced by the remove card (the piece is no longer a draft)
-  await upsertCard(tx, deps.ids, {
-    userId: agent,
-    pieceId: c.pieceId,
-    score: 70,
-    reasons: [{ code, text: `Remove the post from your ${word} "${c.targetName}" yourself: we could not take it down from here` }],
-    merge: true,
-  });
+  for (const userId of users) await upsertCard(tx, deps.ids, { userId, pieceId: c.pieceId, score: 70, reasons: [{ code, text }], merge: true });
 }
 
 /** Whether a remove-it-yourself card was ever raised for this publication (the reconcile handler asks once). */

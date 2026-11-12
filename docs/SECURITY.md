@@ -922,3 +922,21 @@ instead of its text draft); the review of these fixes found it and it is correct
   chatFanoutSql`): a function scan per contact, then that person's points by `contact_id`, the same rows as the
   gate's per-contact read; `comms/chatFanout.perf.test.ts` asserts the plan shape and a time bound with 3,000 chat
   identities, so the honest-UI summary cannot time out into "unknown" (which disables nothing).
+
+## 10. Batch 7 interaction review: merges, sends and listings (migration `b7_review_sends_merges`, lane number 0053)
+
+Fixes of the batch 7 review (group "merges, sends and listings"; ARCHITECTURE §21.16). Each change only refuses, blocks,
+counts less or says more; no opt-out check (D1, R-PAR-12), policy or tenant boundary is weakened, and the ownership
+engine still makes every ownership change.
+- **sends/F1.** An open-house invite is never a touch (D8, R-OWN-14): dispatch TX1 records no first touch for a
+  `marketing_piece_id` row, so an invite cannot stop a first-contact breach or auto-release; the scoreboard definers,
+  the rollup mark and the waiting-client check skip it, like a bulk send (R-PAR-37).
+- **sends/F2.** An autonomous message is sent only while its action is `proposed` (TX1 and `messages_dispatch_guard`):
+  an action a merge or an ownership change invalidated can no longer be sent because two unrelated period numbers
+  happen to match. A merge also skips the loser's scheduled trigger firings.
+- **ownership-data/F1.** Listing roles, deal roles and a deal's primary person follow a merge (new definer
+  `app.contacts_merge_roles`, reviewed in ARCHITECTURE §21.16); no access widens: the same policies decide who reads them.
+- **ownership-data/F2.** A listing whose agent left is held and reported to Owners/Admins; `PATCH /listings/:id/agent`
+  (Owner/Admin, audited) hands it on. Member deactivation still does not move listings (left for a later change).
+- **ownership-data/F5.** The weekly plan never suggests work on a person who asked not to be contacted through any of
+  their records.

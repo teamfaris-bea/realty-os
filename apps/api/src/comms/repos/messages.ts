@@ -32,6 +32,8 @@ export interface MessageRow {
   imported: boolean;
   /** the bulk action of a bulk send (parity module 63; never a touch, R-PAR-37); null otherwise */
   bulkActionId: string | null;
+  /** module 29: the open-house invite this message is (R-MKT-8; a mass send: never a touch, R-OWN-14); null otherwise */
+  marketingPieceId: string | null;
   /** module 22: the widget connection a web-chat message goes through (messages_platform_sender); null otherwise */
   integrationConnectionId: string | null;
 }
@@ -63,12 +65,13 @@ interface Raw {
   provider_message_ref: string | null;
   imported: boolean;
   bulk_action_id: string | null;
+  marketing_piece_id: string | null;
   integration_connection_id: string | null;
 }
 
 const COLS = sql`id, conversation_id, contact_id, channel, direction, status, status_reason, initiator, initiated_by_user_id, purpose,
   action_category, assistant_action_id, playbook_step_run_id, phone_number_id, email_identity_id, from_address, to_address, subject,
-  body, pinned_inbound_seq, scheduled_for, dispatched_at, gate_decision_id, provider_message_ref, imported, bulk_action_id, integration_connection_id`;
+  body, pinned_inbound_seq, scheduled_for, dispatched_at, gate_decision_id, provider_message_ref, imported, bulk_action_id, marketing_piece_id, integration_connection_id`;
 
 function row(x: Raw): MessageRow {
   return {
@@ -98,6 +101,7 @@ function row(x: Raw): MessageRow {
     providerMessageRef: x.provider_message_ref,
     imported: x.imported,
     bulkActionId: x.bulk_action_id,
+    marketingPieceId: x.marketing_piece_id,
     integrationConnectionId: x.integration_connection_id,
   };
 }

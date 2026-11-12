@@ -47,6 +47,16 @@ export interface StoredPlan extends WeeklyPlan {
 const lit = (v: unknown) => v as never;
 
 /** The member's own pipeline facts for planWeek (run as the system actor: tenant-wide, filtered to the member). */
+/**
+ * R-PLAN-3 (b7 ownership-data/F5): whether any record of the person of contact row `alias` carries the person-level
+ * do-not-contact: the record, the record it was merged into, and every duplicate merged into either (0043
+ * app.contact_person_ids, read under the caller's RLS like comms/repos/gate.ts personDoNotContact). False for no contact.
+ */
+function personDnc(alias: string) {
+  return sql.raw(`(${alias}.id IS NOT NULL AND EXISTS (SELECT 1 FROM contacts pd WHERE pd.tenant_id = ${alias}.tenant_id AND pd.do_not_contact_at IS NOT NULL
+                     AND pd.id = ANY (app.contact_person_ids(${alias}.tenant_id, ${alias}.id))))`);
+}
+
 export async function planInputs(tx: Tx, userId: string, zone: IanaZone, now: Instant, weekEnd: Instant) {
   const goalsR = await sql<{ id: string; user_id: string; period_kind: AgentGoal['periodKind']; period_start: string; metric: AgentGoal['metric']; target: number }>`
     SELECT id, user_id, period_kind, period_start::text AS period_start, metric, target FROM agent_goals
@@ -59,22 +69,25 @@ export async function planInputs(tx: Tx, userId: string, zone: IanaZone, now: In
   const pace = [];
   for (const g of goals) pace.push(goalPace(g, { actual: await goalActual(tx, g, zone, now) }, now, zone));
 
-  const live = (alias: string) => sql.raw(`(${alias}.id IS NULL OR ${alias}.deleted_at IS NULL)`);
+  // b7 ownership-data/F5 (R-PLAN-3, R-OWN-24): a merged-away record is not work (the person lives on the survivor), and
+  // the do-not-contact is the whole person's (app.contact_person_ids, as comms/repos/gate.ts personDoNotContact)
+  const live = (alias: string) => sql.raw(`(${alias}.id IS NULL OR (${alias}.deleted_at IS NULL AND ${alias}.merged_into_contact_id IS NULL))`);
+  const dnc = (alias: string) => personDnc(alias);
   const tasks = await sql<{ id: string; kind: string; contact_id: string | null; deal_id: string | null; title: string; due_at: Date | null; dnc: boolean }>`
-    SELECT t.id, t.kind, t.contact_id, t.deal_id, t.title, t.due_at, (c.do_not_contact_at IS NOT NULL) AS dnc
+    SELECT t.id, t.kind, t.contact_id, t.deal_id, t.title, t.due_at, ${dnc('c')} AS dnc
       FROM tasks t LEFT JOIN contacts c ON c.tenant_id = t.tenant_id AND c.id = t.contact_id
      WHERE t.tenant_id = app.tenant_id() AND t.assignee_user_id = ${userId} AND t.status = 'open' AND NOT t.needs_review
        AND (t.due_at IS NULL OR t.due_at < ${toIso(weekEnd)}::timestamptz) AND ${live('c')}
      ORDER BY t.due_at NULLS LAST, t.id LIMIT 100`.execute(tx);
   const appts = await sql<{ id: string; contact_id: string | null; starts_at: Date; dnc: boolean }>`
-    SELECT a.id, a.contact_id, a.starts_at, (c.do_not_contact_at IS NOT NULL) AS dnc
+    SELECT a.id, a.contact_id, a.starts_at, ${dnc('c')} AS dnc
       FROM appointments a LEFT JOIN contacts c ON c.tenant_id = a.tenant_id AND c.id = a.contact_id
      WHERE a.tenant_id = app.tenant_id() AND a.user_id = ${userId} AND a.outcome IS NULL AND a.status IN ('scheduled','held')
        AND a.ends_at < ${toIso(now)}::timestamptz AND a.ends_at >= ${toIso(now)}::timestamptz - make_interval(days => ${APPT_LOOKBACK_DAYS})
        AND ${live('c')}
      ORDER BY a.starts_at, a.id LIMIT 50`.execute(tx);
   const slow = await sql<{ deal_id: string; name: string; contact_id: string; stage: string; dwell_days: string; team_median_days: string; sample_size: number; dnc: boolean }>`
-    SELECT m.deal_id, d.name, d.primary_contact_id AS contact_id, m.stage, m.dwell_days, m.team_median_days, m.sample_size, (c.do_not_contact_at IS NOT NULL) AS dnc
+    SELECT m.deal_id, d.name, d.primary_contact_id AS contact_id, m.stage, m.dwell_days, m.team_median_days, m.sample_size, ${dnc('c')} AS dnc
       FROM v_pipeline_momentum m
       JOIN deals d ON d.tenant_id = m.tenant_id AND d.id = m.deal_id
       LEFT JOIN contacts c ON c.tenant_id = d.tenant_id AND c.id = d.primary_contact_id
@@ -191,8 +204,9 @@ async function renderFilter(tx: Tx, actor: UserActor, items: readonly PlanItem[]
        AND d.stage NOT IN ('closed','lost')`.execute(tx);
   // a contact the member can no longer see is dropped too: it is not in the visible set below
   const c = await sql<{ id: string; dnc: boolean }>`
-    SELECT c.id, (c.do_not_contact_at IS NOT NULL) AS dnc FROM contacts c
-     WHERE c.tenant_id = app.tenant_id() AND c.id = ANY (${contacts}::uuid[]) AND c.deleted_at IS NULL`.execute(tx);
+    SELECT c.id, ${personDnc('c')} AS dnc FROM contacts c
+     WHERE c.tenant_id = app.tenant_id() AND c.id = ANY (${contacts}::uuid[]) AND c.deleted_at IS NULL
+       AND c.merged_into_contact_id IS NULL`.execute(tx);
   const visibleContacts = new Set(c.rows.map((x) => x.id));
   const dnc = new Set(c.rows.filter((x) => x.dnc).map((x) => x.id));
   for (const id of contacts) if (!visibleContacts.has(id)) dnc.add(id);
