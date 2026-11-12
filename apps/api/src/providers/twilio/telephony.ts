@@ -136,9 +136,29 @@ export class TwilioTelephony implements TelephonyProvider {
 
   async sendSms(r: SmsRequest) {
     const c = this.creds(r.account);
+    // D5a (R-MMS-6): one MediaUrl key per item, in order; an https/http URL only, at most 10. A photo-only text has no
+    // Body. No ValidityPeriod, SmartEncoded, SendAsMms, ContentRetention or AddressRetention is ever sent.
+    const media = r.mediaUrls ?? [];
+    if (media.length > 10) throw new ProviderError('rejected', 'TWILIO_MEDIA_URL_INVALID');
+    for (const u of media) {
+      let ok = false;
+      try {
+        const x = new URL(u);
+        ok = x.protocol === 'https:' || x.protocol === 'http:';
+      } catch {
+        ok = false;
+      }
+      if (!ok) throw new ProviderError('rejected', 'TWILIO_MEDIA_URL_INVALID');
+    }
     const res = await this.http.request(c, 'POST', this.acct(c.sid, 'Messages.json'), {
       submit: true,
-      form: { From: e164(r.from, 'TWILIO_FROM_INVALID'), To: e164(r.to, 'TWILIO_TO_INVALID'), Body: r.body, StatusCallback: r.statusCallbackUrl },
+      form: {
+        From: e164(r.from, 'TWILIO_FROM_INVALID'),
+        To: e164(r.to, 'TWILIO_TO_INVALID'),
+        Body: media.length > 0 && r.body === '' ? undefined : r.body,
+        ...(media.length > 0 ? { MediaUrl: [...media] } : {}),
+        StatusCallback: r.statusCallbackUrl,
+      },
     });
     const sid = String(res?.json?.sid ?? '');
     // the submit was accepted even if the response is odd: report unknown so it is reconciled, never resent
@@ -267,6 +287,39 @@ export class TwilioTelephony implements TelephonyProvider {
   async deleteMedia(account: TelephonyAccount, ref: MediaRef) {
     const c = this.creds(account);
     await this.http.request(c, 'DELETE', this.acct(c.sid, `Messages/${assertSid('SM', ref.messageRef)}/Media/${assertSid('ME', ref.mediaRef)}.json`), { allow404: true });
+  }
+
+  /** D5a (R-MMS-7): Messages/{MM…}/Media.json → the validated ME… SIDs of `media_list[].sid`. A 404 is an empty list. */
+  async listMessageMedia(account: TelephonyAccount, messageRef: string): Promise<string[]> {
+    const c = this.creds(account);
+    const r = await this.http.request(c, 'GET', this.acct(c.sid, `Messages/${assertSid('SM', messageRef)}/Media.json?PageSize=20`), { allow404: true });
+    const list = Array.isArray(r?.json?.media_list) ? (r!.json!.media_list as Record<string, unknown>[]) : [];
+    return list.map((m) => String(m.sid ?? '')).filter((sid) => isSid('ME', sid));
+  }
+
+  /**
+   * D5a (E298): outbound messages with media sent from `from` and created inside the window. Twilio filters by
+   * date only (DateSent>, DateSent<: VERIFY 6), so the window is narrowed on date_created here, paged with a cap.
+   */
+  async listOutboundMediaMessages(account: TelephonyAccount, q: { from: string; createdFrom: number; createdTo: number }): Promise<{ refs: string[]; complete: boolean }> {
+    const c = this.creds(account);
+    const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+    const params = new URLSearchParams({ From: e164(q.from, 'TWILIO_FROM_INVALID'), 'DateSent>': day(q.createdFrom), 'DateSent<': day(q.createdTo), PageSize: '100' });
+    let url: string | null = `${this.acct(c.sid, 'Messages.json')}?${params.toString()}`;
+    const refs: string[] = [];
+    const MAX_PAGES = 5;
+    for (let page = 0; url !== null && page < MAX_PAGES; page++) {
+      const res = await this.http.request(c, 'GET', url);
+      const list = Array.isArray(res?.json?.messages) ? (res!.json!.messages as Record<string, unknown>[]) : [];
+      for (const m of list) {
+        const t = Date.parse(String(m.date_created ?? ''));
+        const sid = String(m.sid ?? '');
+        if (Number.isFinite(t) && t >= q.createdFrom && t <= q.createdTo && m.direction !== 'inbound' && Number(m.num_media ?? 0) > 0 && /^MM[0-9a-f]{32}$/.test(sid)) refs.push(sid);
+      }
+      const next = typeof res?.json?.next_page_uri === 'string' && res.json.next_page_uri.startsWith('/2010-04-01/Accounts/') ? `${this.api}${res.json.next_page_uri}` : null;
+      url = next;
+    }
+    return { refs, complete: url === null };
   }
 
   async deliverVerificationCode(r: { to: string; code: string }) {

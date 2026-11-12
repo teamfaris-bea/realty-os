@@ -261,6 +261,11 @@ export const ERROR_STATUS = {
   CHANNEL_NOT_CONNECTED: 409, // module 22: the web-chat widget is not connected (disconnected, revoked or never switched on; R-INBOX-7)
   WEBCHAT_DISCLOSURE_STALE: 409, // module 22: the chat must start after the visitor saw the widget's current disclosure (R-INBOX-5)
   WEBCHAT_SESSION_CLOSED: 410, // module 22: the chat session ended (idle 30 min or closed, E77); start a new chat
+  MEDIA_NOT_ALLOWED: 422, // D5a: not a photo or video a text can carry (type, brand or bytes do not match; a file the metadata pass cannot walk)
+  MEDIA_TOO_LARGE: 422, // D5a: details {limitBytes, scope: 'item'|'total'} (decimal bytes; R-MMS-3, R-MMS-2)
+  MEDIA_LOCATION_NOT_REMOVED: 422, // D5a: metadata or a location survived the cleaning pass, so the file is refused (R-MMS-4, E295)
+  MEDIA_UPLOAD_GONE: 409, // D5a: details {uploadId}; the same answer when missing, someone else's, another person's or tenant's, expired, removed or already sent (E291)
+  MEDIA_UPLOAD_LIMIT: 409, // D5a: 20 unsent photos or videos waiting for this user (R-MMS-3)
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

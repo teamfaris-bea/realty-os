@@ -1557,6 +1557,19 @@ export interface NotificationsTable {
   expires_at: Timestamp | null;
 }
 
+/** public.outbound_media_uploads (table) */
+export interface OutboundMediaUploadsTable {
+  tenant_id: string;
+  id: string;
+  contact_id: string;
+  uploaded_by_user_id: string;
+  object_id: string;
+  content_type: string;
+  byte_size: Int8;
+  created_at: Generated<Timestamp>;
+  expires_at: Timestamp;
+}
+
 /** public.ownership_command_rejections (table) */
 export interface OwnershipCommandRejectionsTable {
   tenant_id: string;
@@ -2588,6 +2601,7 @@ export interface DB {
   notification_deliveries: NotificationDeliveriesTable;
   notification_preferences: NotificationPreferencesTable;
   notifications: NotificationsTable;
+  outbound_media_uploads: OutboundMediaUploadsTable;
   ownership_command_rejections: OwnershipCommandRejectionsTable;
   phone_numbers: PhoneNumbersTable;
   playbook_approvals: PlaybookApprovalsTable;
@@ -2741,6 +2755,7 @@ export const TABLE_NAMES = [
   'notification_deliveries',
   'notification_preferences',
   'notifications',
+  'outbound_media_uploads',
   'ownership_command_rejections',
   'phone_numbers',
   'playbook_approvals',
