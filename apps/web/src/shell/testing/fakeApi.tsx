@@ -76,7 +76,7 @@ export function tableWith(...extra: SurfaceModule[]): PageTable {
 }
 
 /** Mounts the whole app at `path` with a fake API. */
-export function renderApp(o: { fake: FakeFetch; path?: string; table?: PageTable }): { router: ReturnType<typeof createMemoryRouter>; api: ApiClient; view: ReturnType<typeof render> } {
+export function renderApp(o: { fake: FakeFetch; path?: string; table?: PageTable }): { router: ReturnType<typeof createMemoryRouter>; api: ApiClient; view: ReturnType<typeof render>; qc: ReturnType<typeof createQueryClient> } {
   const api = new ApiClient({ fetch: o.fake.fetch });
   const table = o.table ?? tableWith();
   const router = createMemoryRouter(buildRoutes(table), { initialEntries: [o.path ?? '/'] });
@@ -90,5 +90,6 @@ export function renderApp(o: { fake: FakeFetch; path?: string; table?: PageTable
       </StrictMode>
     ) as ReactElement,
   );
-  return { router, api, view };
+  // qc: a test can stand in for a timer-driven refetch (the thread's 15 s summary refresh) without waiting for it
+  return { router, api, view, qc };
 }

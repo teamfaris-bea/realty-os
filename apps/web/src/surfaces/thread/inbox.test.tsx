@@ -4,7 +4,7 @@
 // web-chat first response shown as automatic (R-INBOX-4). Web chat is offered from the reachability summary's
 // web_chat entry (module 22); its sends go through compose/channelApi.ts on the real routes, answered here with
 // the responses the real API sends (compose/channelApi.contract.test.tsx checks those against the API's schemas).
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { FakeFetch, IDS, agentApp, chatEndedReply, decision, dncReason, draftAction, findToast, fullContact, iso, reachability, stopReason, timelineItem, withDoNotContact } from '../feed/lib/testing.js';
@@ -221,6 +221,49 @@ describe('module 37: compose on the client\'s last open channel', () => {
     expect(document.body.textContent).not.toContain('Replying in web chat');
     await waitFor(() => expect(f.callsTo(`GET /contacts/${IDS.jane}/reachability`).length).toBeGreaterThan(asked));
     // nothing was sent anywhere
+    expect(f.callsTo(`POST /contacts/${IDS.jane}/messages`)).toEqual([]);
+  });
+
+  it('review ui-compose/F6: when the summary, asked again while the chat is live, says the chat ended as the agent types, the box says so in a status message and announces it, keeps the text and says where Send goes now; the agent\'s own tap to Text announces nothing', async () => {
+    let ended = false;
+    const f = fake().on(`GET /contacts/${IDS.jane}/reachability`, () => summary(ended ? 'ended' : 'open'));
+    const { qc } = agentApp(f, `/contacts/${IDS.jane}/thread`);
+    const chat = await screen.findByRole('radio', { name: 'Web chat' });
+    await waitFor(() => expect(chat).toBeChecked());
+    // the agent's own taps move the box: nothing to announce
+    await user().click(screen.getByRole('radio', { name: 'Text' }));
+    await user().click(screen.getByRole('radio', { name: 'Web chat' }));
+    expect(screen.queryByRole('status', { name: '' })?.textContent ?? '').not.toMatch(/chat has ended/);
+    await user().type(screen.getByRole('textbox', { name: 'Web chat message' }), 'Are you still on the page?');
+    // Jane left the page: the summary's next refresh (every 15 s while the chat is live) says so
+    ended = true;
+    await act(() => qc.invalidateQueries({ queryKey: ['reachability'] }));
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Text' })).toBeChecked());
+    const said = "The chat has ended: they left the page, so this can't go there. Your text is still here. Send now sends it by text.";
+    expect(screen.getByText(said)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId('announcer')).toHaveTextContent(said));
+    expect(screen.getByRole('textbox', { name: 'Text message' })).toHaveValue('Are you still on the page?');
+    expect(f.callsTo(`POST /contacts/${IDS.jane}/messages`)).toEqual([]);
+  });
+
+  it('review ui-compose/F5: "Ask the assistant for a draft" while replying in an open web chat keeps the box on web chat: the draft loads there, and Send approves it as a chat reply', async () => {
+    const asked = draftAction({ draft: { channel: 'sms', subject: null, body: 'Hi Jane, yes: 10 to 12 on Saturday.' } });
+    const f = fake()
+      .on(`GET /contacts/${IDS.jane}/reachability`, summary('open'))
+      .on(`POST /contacts/${IDS.jane}/drafts`, { status: 201, body: { action: asked } })
+      .on(`GET /assistant/actions/${IDS.draft}`, { status: 200, body: { action: asked } })
+      .on(`POST /assistant/actions/${IDS.draft}/approve`, { status: 200, body: { actionId: IDS.draft, status: 'approved', result: 'sent', messageId: IDS.message, decision: decision({}) } });
+    agentApp(f, `/contacts/${IDS.jane}/thread`);
+    const chat = await screen.findByRole('radio', { name: 'Web chat' });
+    await waitFor(() => expect(chat).toBeChecked());
+    await user().click(screen.getByRole('button', { name: 'Ask the assistant for a draft' }));
+    const box = await screen.findByRole('textbox', { name: 'Web chat message' });
+    await waitFor(() => expect(box).toHaveValue('Hi Jane, yes: 10 to 12 on Saturday.'));
+    expect(screen.getByRole('radio', { name: 'Web chat' })).toBeChecked();
+    expect(screen.getByTestId('channel-why')).toHaveTextContent('Replying in web chat, where Jane wrote last.');
+    await user().click(screen.getByRole('button', { name: 'Send' }));
+    expect(await findToast('Sent to Jane.')).toBeInTheDocument();
+    expect(f.callsTo(`POST /assistant/actions/${IDS.draft}/approve`).map((c) => c.body)).toEqual([expect.objectContaining({ editedPayload: { channel: 'web_chat', body: 'Hi Jane, yes: 10 to 12 on Saturday.' } })]);
     expect(f.callsTo(`POST /contacts/${IDS.jane}/messages`)).toEqual([]);
   });
 
