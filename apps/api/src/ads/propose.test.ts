@@ -1,4 +1,4 @@
-// The weekly proposal (module 52; R-ADS-2, R-ADS-6, R-ADS-10; E123). Real Postgres as app_user; FakeAds on a manual clock;
+// The weekly proposal (module 52; R-ADS-2, R-ADS-4, R-ADS-6, R-ADS-9; E123, E458). Real Postgres as app_user; FakeAds on a manual clock;
 // the network tripwire is installed.
 import { DAY_MS } from '@realty/core/foundation';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -48,8 +48,8 @@ async function world(o: { cheapAgreements?: number; costlyAgreements?: number; c
 const monday = thisMonday();
 const at = (w: AdsWorld, ms: number) => depsOf(h, w, { now: () => ms as never });
 
-describe('the weekly proposal (R-ADS-6, R-ADS-10)', () => {
-  it('R-ADS-10: once per local Monday: another weekday builds nothing, a second Monday wake finds it; the proposal is ownerless and contactless, money, requiring approval', async () => {
+describe('the weekly proposal (R-ADS-6, R-ADS-9)', () => {
+  it('R-ADS-9: once per local Monday: another weekday builds nothing, a second Monday wake finds it; the proposal is ownerless and contactless, money, requiring approval', async () => {
     await withAdsCleared(h, async () => {
       const { w } = await world();
       expect((await runWeeklyProposal(at(w, monday + DAY_MS), w.tenantId)).outcome).toBe('not_proposal_day');
@@ -83,7 +83,7 @@ describe('the weekly proposal (R-ADS-6, R-ADS-10)', () => {
     });
   });
 
-  it('R-ADS-10: a new week\'s result supersedes the pending proposal', async () => {
+  it('R-ADS-9: a new week\'s result supersedes the pending proposal (Q-ADS-5)', async () => {
     await withAdsCleared(h, async () => {
       const { w } = await world();
       const last = await runWeeklyProposal(at(w, monday - 7 * DAY_MS), w.tenantId);
@@ -106,6 +106,64 @@ describe('the weekly proposal (R-ADS-6, R-ADS-10)', () => {
       const other = await world({ refPrefix: 'other:' });
       const p = await runWeeklyProposal(at(other.w, monday), other.w.tenantId);
       expect(p.outcome).toBe('held');
+    });
+  });
+
+  it('E458 R-ADS-4 R-FH-4: a linked campaign whose Google Ads targeting does not map, or maps to a radius the validator refuses, is kept with TARGETING_REFUSED and the validator\'s field names; never moved, nothing written back', async () => {
+    await withAdsCleared(h, async () => {
+      const { w, accountId } = await world();
+      // an age range does not map (stored {}); a 5-mile radius maps but is below the validator's minimum
+      w.fake.addCampaign(accountId, { externalCampaignId: 'fake-c-age', dailyBudgetCents: 3000, targeting: { proximity: { radiusMiles: 20 }, ageRange: [25, 34] } });
+      w.fake.addCampaign(accountId, { externalCampaignId: 'fake-c-near', dailyBudgetCents: 3000, targeting: { proximity: { radiusMiles: 5 } } });
+      await runReconcile(depsOf(h, w), w.tenantId);
+      const ids: Record<string, string> = {};
+      for (const ext of ['fake-c-age', 'fake-c-near']) {
+        const c = (await campaignOf(h, w.tenantId, ext))!;
+        ids[ext] = c.id;
+        expect((await call(w.owner, 'PATCH', `/ads/campaigns/${c.id}`, { listingId: w.listingId, creativePieceId: w.pieceId })).status).toBe(200);
+        spendHistory(w, accountId, ext, 1000);
+        await dealsFor(h, w, `gads:${ext}`, 9);
+      }
+      await runReconcile(depsOf(h, w), w.tenantId);
+      expect((await campaignOf(h, w.tenantId, 'fake-c-age'))!.targeting).toEqual({});
+      const p = await runWeeklyProposal(at(w, monday), w.tenantId);
+      expect(p.outcome).toBe('proposed');
+      const payload = (await actionOf(h, p.actionId!))!.payload as { changes: { campaign_id: string }[]; rows: { campaignId: string; changed: boolean; blockers: string[]; targetingIssues: string[] }[] };
+      const row = (ext: string) => payload.rows.find((x) => x.campaignId === ids[ext])!;
+      expect(row('fake-c-age')).toMatchObject({ changed: false, blockers: expect.arrayContaining(['TARGETING_REFUSED']) });
+      expect(row('fake-c-age').targetingIssues.map((i) => i.split(':')[0])).toEqual(['geo', 'radiusMiles']);
+      expect(row('fake-c-near')).toMatchObject({ changed: false, blockers: expect.arrayContaining(['TARGETING_REFUSED']) });
+      expect(row('fake-c-near').targetingIssues).toEqual([expect.stringMatching(/^radiusMiles: must be between \d+ and \d+$/)]);
+      expect(payload.changes.some((c) => c.campaign_id === ids['fake-c-age'] || c.campaign_id === ids['fake-c-near'])).toBe(false);
+      // field names only, never the platform's values
+      expect(JSON.stringify(row('fake-c-age').targetingIssues)).not.toMatch(/25|34/);
+      expect(w.fake.calls.filter((c) => c.op === 'applyBudgetChange' || c.op === 'pauseCampaign')).toEqual([]);
+    });
+  });
+
+  it('R-ADS-9 (b11 ads-11): an ownerless proposal and an ownerless hold reach no one\'s assistant inbox or feed; only GET /ads shows them', async () => {
+    await withAdsCleared(h, async () => {
+      const { w } = await world({ costlyAgreements: 3 });
+      const hold = await runWeeklyProposal(at(w, monday - 7 * DAY_MS), w.tenantId);
+      expect(hold.outcome).toBe('held');
+      await dealsFor(h, w, 'gads:fake-c-costly', 2);
+      const prop = await runWeeklyProposal(at(w, monday), w.tenantId);
+      expect(prop.outcome).toBe('proposed');
+      expect((await actionOf(h, hold.actionId!))!.status).toBe('blocked');
+      for (const c of [w.owner, w.admin, w.teamLead, w.agent]) {
+        const inbox = await call<{ items: { id: string }[] }>(c, 'GET', '/assistant/inbox');
+        expect(inbox.status).toBe(200);
+        expect(inbox.body.items.map((i) => i.id)).not.toEqual(expect.arrayContaining([hold.actionId]));
+        expect(inbox.body.items.map((i) => i.id)).not.toEqual(expect.arrayContaining([prop.actionId]));
+        const feed = await call(c, 'GET', '/feed');
+        expect(feed.status).toBe(200);
+        expect(JSON.stringify(feed.body)).not.toContain(hold.actionId!);
+        expect(JSON.stringify(feed.body)).not.toContain(prop.actionId!);
+      }
+      // the feed's dirty marks name an owner and a contact; these actions have neither
+      expect((await h.su.query('SELECT count(*)::int AS n FROM assistant_actions WHERE id = ANY($1::uuid[]) AND (owner_user_id IS NOT NULL OR contact_id IS NOT NULL)', [[hold.actionId, prop.actionId]])).rows[0].n).toBe(0);
+      const ov = (await call<{ pendingProposal: { id: string } | null }>(w.owner, 'GET', '/ads')).body;
+      expect(ov.pendingProposal?.id).toBe(prop.actionId);
     });
   });
 

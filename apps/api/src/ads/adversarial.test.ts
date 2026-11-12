@@ -62,8 +62,8 @@ const ROUTES = (ids: { actionId: string; campaignId: string }) => [
   ['POST', `/ads/proposals/${ids.actionId}/reject`, undefined],
 ] as const;
 
-describe('roles, support and tenancy (R-ADS-10, R-PERM-5, R-TEN-1)', () => {
-  it('R-PERM-5 R-ADS-10: agents and Team Leads get 404 on every /ads route; a support actor is refused every ads action; ads tables show them no rows', async () => {
+describe('roles, support and tenancy (R-ADS-9, R-PERM-5, R-TEN-1)', () => {
+  it('R-PERM-5 R-ADS-9: agents and Team Leads get 404 on every /ads route; a support actor is refused every ads action; ads tables show them no rows', async () => {
     await withAdsCleared(h, async () => {
       const w = await adsWorld(h);
       const ids = await pending(w);
@@ -89,7 +89,7 @@ describe('roles, support and tenancy (R-ADS-10, R-PERM-5, R-TEN-1)', () => {
     });
   });
 
-  it('R-ADS-1 R-ADS-10 R-AST-21: the ads actions by role: Owner all (the cap re-authenticated); Admin all but the cap; every other role and the system none', () => {
+  it('R-ADS-1 R-ADS-9 R-AST-21: the ads actions by role: Owner all (the cap re-authenticated); Admin all but the cap; every other role and the system none', () => {
     const now = instant(Date.now());
     const fresh = { reauth: { reauthenticatedAt: now, now } };
     const stale = { reauth: { reauthenticatedAt: instant(Date.now() - 3_600_000), now } };
@@ -104,7 +104,7 @@ describe('roles, support and tenancy (R-ADS-10, R-PERM-5, R-TEN-1)', () => {
     expect(can(user('owner'), 'ads.cap_set', stale)).toMatchObject({ ok: false, code: 'REAUTH_REQUIRED' });
   });
 
-  it('R-ADS-10: a support session under the Owner\'s grant reads the ownerless ad_reallocation (read-only, as documented) and no ads table row; it cannot change it', async () => {
+  it('R-ADS-9: a support session under the Owner\'s grant reads the ownerless ad_reallocation (read-only, as documented) and no ads table row; it cannot change it', async () => {
     await withAdsCleared(h, async () => {
       const w = await adsWorld(h);
       const ids = await pending(w);

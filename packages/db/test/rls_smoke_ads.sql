@@ -1,12 +1,13 @@
 -- =============================================================================
 -- Smoke proof of the ads platform pack and its two gates (PHASE2_3_PLAN module 52; owner decisions D2, D7, D-ADS;
--- DATA_MODEL R-ADS-7, R-ADS-8, R-ADS-9; E440, E441, E443, E444, E455):
+-- DATA_MODEL R-ADS-7, R-ADS-8, R-ADS-9, R-ADS-10; E440, E441, E442, E443, E444, E455):
 --   * platform:ads ships published, unreviewed and uncleared;
 --   * while it is not cleared (and with counsel review alone), nobody records a planned ledger row or approves an
 --     ad_reallocation: not the Owner, not an Admin, not the system;
 --   * once cleared, 0018's deferred cap check decides as before;
 --   * a planned row needs a Google Ads campaign the caller sees on a live connection (ads_meta and revoked refused);
---   * outcomes (applied, failed, paused) and finishing a run (executed, trigger_ref) are never gated;
+--   * outcomes (applied, failed, paused) and finishing a run (executed, trigger_ref) are never gated (E442);
+--   * a pack bumped to an unreviewed version is dark from the next statement: a pending proposal is not approved (E443);
 --   * an approved budget shift is never edited and keeps its kind; message drafts are unaffected;
 --   * the counsel-review command's vendor-check scan lists platform:ads.
 -- Same shape as rls_smoke_p23.sql: ONE transaction, rolled back; every application step runs as app_user; clearing
@@ -296,7 +297,7 @@ SELECT pg_temp.ctx(:tA, :agA1, 'user');
 SELECT pg_temp.ok(pg_temp.try(pg_temp.approve_sql(:actD)) = 'OK', 'the ads gate leaves other kinds alone: an agent''s message draft is approved as before');
 
 -- =============================================================================
--- 7. Withdrawn mid-flight: outcomes and finishing a run are never gated (E443)
+-- 7. Withdrawn mid-flight: outcomes and finishing a run are never gated (E442, R-ADS-10)
 -- =============================================================================
 RESET ROLE;
 UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL, rules = rules - 'vendor_ready_at' WHERE key = 'platform:ads';
@@ -304,15 +305,15 @@ SET LOCAL ROLE app_user;
 SELECT pg_temp.ok(NOT app.platform_cleared('platform:ads', true), 'counsel withdrew platform:ads after the plan');
 SELECT pg_temp.ctx(:tA, NULL, 'system');
 SELECT pg_temp.ok(pg_temp.try(pg_temp.outcome_sql('applied', :run1, :cG1, :cap1, 3000, 3500, 'APPLIED')) = 'OK',
-                  'E443: while dark the system still records the applied outcome of a plan made while cleared');
+                  'E442 R-ADS-10: while dark the system still records the applied outcome of a plan made while cleared (a sent call is recorded as it resolves)');
 SELECT pg_temp.ok(pg_temp.try(pg_temp.outcome_sql('failed', :run1, :cG1, :cap1, 3000, 3500, 'PACK_WITHDRAWN')) = 'OK',
-                  'E443: while dark the system still records a failed outcome (PACK_WITHDRAWN)');
+                  'E442 R-ADS-10: while dark the system still records a failed outcome (PACK_WITHDRAWN)');
 SELECT pg_temp.ok(pg_temp.try(pg_temp.outcome_sql('paused', gen_random_uuid(), :cG2, :cap1, 1500, 0, 'MONTHLY_CAP_REACHED')) = 'OK',
-                  'E443: a pause (it only lowers spend) is recorded while dark');
+                  'E442: a pause (it only lowers spend) is recorded while dark');
 SELECT pg_temp.ok(pg_temp.try(format($q$UPDATE assistant_actions SET trigger_ref = trigger_ref || '{"reapplied": ["a0000000-0000-7000-8000-00000000cb01"]}'::jsonb WHERE id = %L$q$, :act1)) = 'OK',
-                  'E443: while dark the system marks a re-apply on the approved action (trigger_ref)');
+                  'E442 R-ADS-10: while dark the system marks a re-apply on the approved action (trigger_ref)');
 SELECT pg_temp.ok(pg_temp.try(format($q$UPDATE assistant_actions SET status = 'executed' WHERE id = %L$q$, :act1)) = 'OK',
-                  'E443: while dark the system finishes the run it started (executed)');
+                  'E442 R-ADS-10: while dark the system finishes the run it started (executed)');
 SELECT pg_temp.expect_error(pg_temp.planned_sql(gen_random_uuid(), :cG2, :cap1, :act2, 1500, 2000),
   'R-ADS-7 E440: withdrawn again, the next planned row is refused although the approval was given while cleared', 'ADS_NOT_CLEARED%');
 SELECT pg_temp.ctx(:tA, :ownA, 'user');
@@ -320,6 +321,33 @@ SELECT pg_temp.expect_error(format($q$UPDATE assistant_actions SET edited_payloa
   'R-ADS-9 E444: an executed budget shift is not edited either', 'AD_APPROVAL_FROZEN%');
 SELECT pg_temp.ok((SELECT count(*) FROM ad_allocation_events WHERE event_kind = 'planned') = 1,
                   'exactly one planned row exists: the one approved while cleared');
+
+-- =============================================================================
+-- 8. A published bump to an unreviewed version (E443): one published row per key (0001), so the gates read the new
+--    version from the next statement; a proposal still pending cannot be approved and nothing is planned
+-- =============================================================================
+RESET ROLE;
+UPDATE jurisdiction_packs SET reviewed_by_counsel_at = now(), rules = rules || '{"vendor_ready_at": "2026-11-01T00:00:00Z"}' WHERE key = 'platform:ads';
+SET LOCAL ROLE app_user;
+SELECT pg_temp.ok(app.platform_cleared('platform:ads', true), 'E443: platform:ads 2026.11.0 is cleared again before the bump');
+RESET ROLE;
+UPDATE jurisdiction_packs SET status = 'retired' WHERE key = 'platform:ads' AND version = '2026.11.0';
+-- the new version keeps rules.vendor_ready_at: counsel review of it alone is missing
+INSERT INTO jurisdiction_packs (key, version, status, rules, reviewed_by_counsel_at, notes)
+SELECT key, '2026.11.1', 'published', rules, NULL, 'Smoke bump: not reviewed by counsel.' FROM jurisdiction_packs WHERE key = 'platform:ads' AND version = '2026.11.0';
+SET LOCAL ROLE app_user;
+SELECT pg_temp.ok(NOT app.platform_cleared('platform:ads', true) AND NOT app.platform_cleared('platform:ads', false),
+                  'R-ADS-7 E443: after a bump to the unreviewed 2026.11.1 (vendor check carried over), platform:ads is not cleared from the next statement');
+SELECT pg_temp.ok((SELECT status FROM assistant_actions WHERE id = :act3) = 'proposed', 'E443: act3 is still a pending proposal');
+SELECT pg_temp.ctx(:tA, :ownA, 'user');
+SELECT pg_temp.expect_error(pg_temp.approve_sql(:act3), 'R-ADS-7 E443: after the bump the Owner''s approval of a pending proposal is refused', 'ADS_NOT_CLEARED%');
+SELECT pg_temp.ctx(:tA, :admA, 'user');
+SELECT pg_temp.expect_error(pg_temp.approve_sql(:act3), 'R-ADS-7 E443: after the bump an Admin''s approval of a pending proposal is refused', 'ADS_NOT_CLEARED%');
+SELECT pg_temp.ctx(:tA, NULL, 'system');
+SELECT pg_temp.expect_error(pg_temp.planned_sql(gen_random_uuid(), :cG2, :cap1, :act2, 1500, 2000),
+  'R-ADS-7 E443: after the bump no planned row is written, although the approval was given while cleared', 'ADS_NOT_CLEARED%');
+SELECT pg_temp.ok((SELECT count(*) FROM ad_allocation_events WHERE event_kind = 'planned') = 1 AND (SELECT status FROM assistant_actions WHERE id = :act3) = 'proposed',
+                  'E443: nothing was recorded after the bump');
 
 SELECT pg_temp.ok(true, 'ALL ADS PACK SMOKE CHECKS PASSED');
 ROLLBACK;

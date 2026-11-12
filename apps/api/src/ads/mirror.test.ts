@@ -69,7 +69,7 @@ describe('connect (R-ADS-13, R-INT-1, E160)', () => {
     expect(createProviders({ ...testConfig(), env: 'production', allowFakeProviders: true }, { clock: { now: () => Date.now() } as never }).ads).toBeInstanceOf(FakeAds);
   });
 
-  it('R-INT-6: change_budget waits for counsel review of platform:ads, then for its vendor check; read_spend works at once (Q-ADS-1)', async () => {
+  it('R-INT-6 R-ADS-7 E441: change_budget waits for counsel review of platform:ads, then for its vendor check ("it also waits for the vendor check"); read_spend works at once (Q-ADS-1)', async () => {
     const w = await adsWorld(h);
     const { connectionId } = await connectAds(h, w);
     type Caps = { services: { kind: string; connections: { id: string; capabilities: { name: string; available: boolean; reason: string | null }[] }[] }[] };
@@ -78,6 +78,9 @@ describe('connect (R-ADS-13, R-INT-1, E160)', () => {
     try {
       await setAdsPack(h, { reviewed: true, vendor: false });
       expect((await caps())[0]!.reason).toBe('Waits for the vendor check of platform:ads.');
+      const ov = await overview(w);
+      expect(ov.state).toBe('not_cleared');
+      expect(ov.packSentence).toMatch(/^Changing Google Ads budgets stays off: counsel reviewed it on \d{4}-\d{2}-\d{2}; it also waits for the vendor check \(pack 2026\.11\.0\)\.$/);
     } finally {
       await resetAdsPack(h);
     }
@@ -145,7 +148,7 @@ describe('the mirror (R-ADS-12, R-ADS-4)', () => {
     expect(why('fake-c-nohousing')).toBe('Google Ads did not report it as a housing campaign with its own budget in US dollars at the last sync.');
   });
 
-  it('E456: a shared budget is stored as 0, shown as "shared budget", and never managed', async () => {
+  it('E456 R-ADS-12: a shared budget is stored as 0, shown as "shared budget", and never managed', async () => {
     const w = await adsWorld(h);
     await connectAds(h, w, undefined, { campaigns: [{ externalCampaignId: 'fake-c-shared', sharedBudget: true, dailyBudgetCents: 5000 }, { externalCampaignId: 'fake-c-none', dailyBudgetCents: null }] });
     await runReconcile(depsOf(h, w), w.tenantId);
@@ -182,7 +185,7 @@ describe('the mirror (R-ADS-12, R-ADS-4)', () => {
     expect((await campaignOf(h, w.tenantId, 'fake-c-empty'))!.name).toBe('Campaign fake-c-empty');
   });
 
-  it('E455 D2: an ads_meta connection made before D2 is never mirrored, read or proposed for', async () => {
+  it('E455 R-ADS-8 D2: an ads_meta connection made before D2 is never mirrored, read, proposed for or paused', async () => {
     const w = await adsWorld(h);
     w.fake.addAccount('fake-meta-ads-1');
     w.fake.addCampaign('fake-meta-ads-1', { externalCampaignId: 'fake-m-1' });
@@ -228,7 +231,7 @@ describe('reads while dark (Q-ADS-1)', () => {
 });
 
 describe('connection states (R-INT-2; E453, E454)', () => {
-  it('E453: a non-USD account is degraded ADS_CURRENCY_UNSUPPORTED: nothing is managed or costed, overspend is unchecked and the "not checked" alert fires', async () => {
+  it('E453 R-ADS-13: a non-USD account is degraded ADS_CURRENCY_UNSUPPORTED (an honest limit state): nothing is managed or costed, overspend is unchecked and the "not checked" alert fires', async () => {
     const w = await adsWorld(h);
     const { connectionId, accountId } = await connectAds(h, w, undefined, { currency: 'CAD', campaigns: [{ externalCampaignId: 'fake-c-cad' }] });
     w.fake.addSpend(accountId, 'fake-c-cad', w.clock.now() - HOUR_MS, 5000);
@@ -267,7 +270,7 @@ describe('connection states (R-INT-2; E453, E454)', () => {
     expect(await conn(connectionId)).toMatchObject({ status: 'connected', status_reason: null });
   });
 
-  it('E454: a token revoked at Google revokes the connection; the page says the account is not connected; nothing is applied', async () => {
+  it('E454 R-ADS-8 R-ADS-13: a token revoked at Google revokes the connection (an honest state); the page says the account is no longer connected; nothing is applied', async () => {
     const w = await adsWorld(h);
     const { connectionId, accountId } = await connectAds(h, w, undefined, { campaigns: [{ externalCampaignId: 'fake-c-r' }] });
     w.fake.revoke(accountId);

@@ -71,7 +71,7 @@ async function propose(r: Ready): Promise<string> {
 }
 
 describe('one tap: planned → applied (R-ADS-2, R-ADS-3, D-ADS)', () => {
-  it('R-ADS-2 R-ADS-3 R-ADS-10: the Owner approves a proposal in one tap; the ledger shows planned → applied with reasons, the system updates the mirror, the action is executed', async () => {
+  it('R-ADS-2 R-ADS-3 R-ADS-9 R-ADS-10: the Owner approves a proposal in one tap (approval and plan in one transaction); the ledger shows planned → applied with reasons, the system updates the mirror, the action is executed', async () => {
     await withAdsCleared(h, async () => {
       const r = await ready();
       const id = await propose(r);
@@ -100,7 +100,7 @@ describe('one tap: planned → applied (R-ADS-2, R-ADS-3, D-ADS)', () => {
     });
   });
 
-  it('R-AST-21 R-ADS-10: an Admin approves; an agent and a Team Lead get 404; the generic assistant approve and reject routes 404 for an ownerless ad_reallocation', async () => {
+  it('R-AST-21 R-ADS-9: an Admin approves; an agent and a Team Lead get 404; the generic assistant approve and reject routes 404 for an ownerless ad_reallocation', async () => {
     await withAdsCleared(h, async () => {
       const r = await ready();
       const id = await propose(r);
@@ -143,7 +143,30 @@ describe('the pack gate (R-ADS-7, D7)', () => {
     expect(r.w.fake.calls.filter((c) => c.op === 'applyBudgetChange')).toEqual([]);
   });
 
-  it('E442: the pack withdrawn after the tap (mid-flight): the planned rows fail PACK_WITHDRAWN and no budget call is made', async () => {
+  it('R-ADS-7 E443: a published bump of platform:ads to an unreviewed version is dark at once: a pending proposal\'s tap is 409 ADS_NOT_CLEARED and nothing is recorded', async () => {
+    await withAdsCleared(h, async () => {
+      const r = await ready();
+      const id = await propose(r);
+      const before = await moneyRows(h, r.w.tenantId);
+      try {
+        // the platform publishes 2026.11.1 (one published row per key, 0001); counsel has not reviewed it
+        await h.su.query("UPDATE jurisdiction_packs SET status = 'retired' WHERE key = 'platform:ads' AND version = '2026.11.0'");
+        await h.su.query("INSERT INTO jurisdiction_packs (key, version, status, rules, reviewed_by_counsel_at, notes) SELECT key, '2026.11.1', 'published', rules, NULL, 'Test bump: not reviewed by counsel.' FROM jurisdiction_packs WHERE key = 'platform:ads' AND version = '2026.11.0'");
+        const tap = await call(r.w.owner, 'POST', `/ads/proposals/${id}/approve`);
+        expect(tap.status).toBe(409);
+        expect(tap.code).toBe('ADS_NOT_CLEARED');
+        expect((await call(r.w.admin, 'POST', `/ads/proposals/${id}/approve`)).code).toBe('ADS_NOT_CLEARED');
+      } finally {
+        await h.su.query("DELETE FROM jurisdiction_packs WHERE key = 'platform:ads' AND version = '2026.11.1'");
+        await h.su.query("UPDATE jurisdiction_packs SET status = 'published' WHERE key = 'platform:ads' AND version = '2026.11.0'");
+      }
+      expect(await moneyRows(h, r.w.tenantId)).toEqual(before);
+      expect((await actionOf(h, id))!.status).toBe('proposed');
+      expect(r.w.fake.calls.filter((c) => c.op === 'applyBudgetChange')).toEqual([]);
+    });
+  });
+
+  it('E442 R-ADS-10: the pack withdrawn after the tap (mid-flight): the planned rows fail PACK_WITHDRAWN and no budget call is made', async () => {
     await withAdsCleared(h, async () => {
       const r = await ready();
       const id = await propose(r);
@@ -167,19 +190,27 @@ describe('the pack gate (R-ADS-7, D7)', () => {
 const STALE = 11 * MINUTE_MS;
 
 describe('stale proposals (E445, E446, E124)', () => {
-  it('E445 E124: the Owner lowered the cap after the proposal: the tap is ADS_PROPOSAL_STALE, the proposal is superseded, nothing is planned', async () => {
+  it('R-ADS-9 E445 E124: the Owner lowered the cap after the proposal: the tap is ADS_PROPOSAL_STALE, the proposal is superseded, nothing is planned; the next weekly run uses the new cap version', async () => {
     await withAdsCleared(h, async () => {
       const r = await ready();
       const id = await propose(r);
-      expect((await setCapVia(h, r.w.owner, 2_000_000, 8_000)).status).toBe(201);
+      const v2 = await setCapVia(h, r.w.owner, 2_000_000, 8_000);
+      expect(v2.status).toBe(201);
       const res = await call(r.w.owner, 'POST', `/ads/proposals/${id}/approve`);
       expect(res.code).toBe('ADS_PROPOSAL_STALE');
       expect((await actionOf(h, id))!.status).toBe('superseded');
       expect((await moneyRows(h, r.w.tenantId)).events).toBe(0);
+      // the following week's proposal cites the version now in force, and its tap plans under it
+      const next = await runWeeklyProposal(depsOf(h, r.w, { now: () => (thisMonday() + 7 * DAY_MS) as never }), r.w.tenantId);
+      expect(next.outcome).toBe('proposed');
+      expect((await actionOf(h, next.actionId!))!.payload).toMatchObject({ cap_version_id: v2.body.cap.id, cap_version_no: v2.body.cap.versionNo });
+      const tap = await call<{ status: string }>(r.w.owner, 'POST', `/ads/proposals/${next.actionId}/approve`);
+      expect(tap.body.status).toBe('executed');
+      expect(new Set((await ledgerOf(h, r.w.tenantId)).map((e) => e.cap_version_id))).toEqual(new Set([v2.body.cap.id]));
     });
   });
 
-  it('E446: a budget changed in the Google Ads interface after the proposal: ADS_PROPOSAL_STALE (the mirror took the new amount)', async () => {
+  it('R-ADS-9 E446: a budget changed in the Google Ads interface after the proposal: ADS_PROPOSAL_STALE (the mirror took the new amount)', async () => {
     await withAdsCleared(h, async () => {
       const r = await ready();
       const id = await propose(r);
@@ -193,7 +224,7 @@ describe('stale proposals (E445, E446, E124)', () => {
 });
 
 describe('unknown outcomes resolved by readback (E447), partial failure (E448)', () => {
-  it('E447: a timeout that applied anyway is read back as applied (READBACK); never a second plan', async () => {
+  it('R-ADS-10 E447: a timeout that applied anyway writes nothing until the readback records it applied (READBACK); never a second plan', async () => {
     await withAdsCleared(h, async () => {
       const r = await ready();
       const id = await propose(r);
@@ -209,7 +240,7 @@ describe('unknown outcomes resolved by readback (E447), partial failure (E448)',
     });
   });
 
-  it('E447: a timeout that did not apply is re-applied once (marked first in trigger_ref.reapplied), then applied', async () => {
+  it('R-ADS-10 E447: a timeout that did not apply is re-applied once (marked first in trigger_ref.reapplied, only while cleared), then applied', async () => {
     await withAdsCleared(h, async () => {
       const r = await ready();
       const id = await propose(r);
@@ -226,7 +257,7 @@ describe('unknown outcomes resolved by readback (E447), partial failure (E448)',
     });
   });
 
-  it('E447: a re-apply that times out again waits; after 24 hours the plan fails OUTCOME_UNKNOWN and is never re-applied twice', async () => {
+  it('R-ADS-10 E447: a re-apply that times out again waits; after 24 hours the plan fails OUTCOME_UNKNOWN and is never re-applied twice', async () => {
     await withAdsCleared(h, async () => {
       const r = await ready();
       const id = await propose(r);
@@ -247,7 +278,7 @@ describe('unknown outcomes resolved by readback (E447), partial failure (E448)',
     });
   });
 
-  it('E447: the platform shows a third amount after a timeout: failed PLATFORM_CHANGED and the mirror takes it', async () => {
+  it('R-ADS-10 E447: the platform shows a third amount after a timeout: failed PLATFORM_CHANGED and the mirror takes it', async () => {
     await withAdsCleared(h, async () => {
       const r = await ready();
       const id = await propose(r);
@@ -264,7 +295,7 @@ describe('unknown outcomes resolved by readback (E447), partial failure (E448)',
     });
   });
 
-  it('E448: one change applied and the other rejected by the platform: both outcomes recorded, the run executed, the mirror moved only where applied', async () => {
+  it('R-ADS-3 R-ADS-10 E448: one change applied and the other rejected by the platform: both outcomes recorded, the run executed, the mirror moved only where applied', async () => {
     await withAdsCleared(h, async () => {
       const r = await ready();
       const id = await propose(r);
@@ -278,7 +309,7 @@ describe('unknown outcomes resolved by readback (E447), partial failure (E448)',
 });
 
 describe('replays and concurrency (E145, E161, E457)', () => {
-  it('E145 E161: a double tap returns the run state; a replay of the approval the next day plans nothing (the DB refuses a second planned row per approval)', async () => {
+  it('R-ADS-10 E145 E161: a double tap returns the run state; a replay of the approval the next day plans nothing (the DB refuses a second planned row per approval)', async () => {
     await withAdsCleared(h, async () => {
       const r = await ready();
       const id = await propose(r);
@@ -302,7 +333,7 @@ describe('replays and concurrency (E145, E161, E457)', () => {
     });
   });
 
-  it('E457: an Owner and an Admin tap at the same moment: exactly one plan, the other is told it was handled', async () => {
+  it('R-ADS-9 E457: an Owner and an Admin tap at the same moment: exactly one plan, the other is told it was handled', async () => {
     await withAdsCleared(h, async () => {
       const r = await ready();
       const id = await propose(r);
@@ -314,7 +345,7 @@ describe('replays and concurrency (E145, E161, E457)', () => {
     });
   });
 
-  it('E444: an ad_reallocation approved outside the ads path is never planned (ADS_APPROVAL_NOT_FROM_ADS), and a reject is the person\'s decision, audited', async () => {
+  it('R-ADS-9 E444: an ad_reallocation approved outside the ads path is never planned (ADS_APPROVAL_NOT_FROM_ADS), and a reject is the person\'s decision, audited', async () => {
     await withAdsCleared(h, async () => {
       const r = await ready();
       const id = await propose(r);
@@ -405,7 +436,7 @@ describe('grant revoked, then disconnected (E454)', () => {
 });
 
 describe('resume (R-ADS-5: resuming is a tap)', () => {
-  it('E459: resume is refused at the monthly cap; below it one tap plans RESUMED and applies with resume', async () => {
+  it('R-ADS-9 E459: resume is refused at the monthly cap; below it one tap plans RESUMED and applies with resume', async () => {
     await withAdsCleared(h, async () => {
       const r = await ready();
       // E124: the Owner lowers the cap below month-to-date spend: a reconcile pass is queued at once and pauses both
@@ -443,6 +474,36 @@ describe('resume (R-ADS-5: resuming is a tap)', () => {
       expect((await ledgerOf(h, r.w.tenantId)).filter((e) => e.campaign_id === r.costly && e.event_kind === 'applied').map((e) => e.reason_code)).toEqual(['READBACK']);
       // an agent cannot resume
       expect((await call(r.w.agent, 'POST', `/ads/campaigns/${r.costly}/resume`)).status).toBe(404);
+    });
+  });
+
+  it('R-ADS-10 R-ADS-5: TX2 never undoes a recorded pause: a cap pause recorded between a resume\'s plan and its outcome keeps the campaign paused', async () => {
+    await withAdsCleared(h, async () => {
+      const r = await ready();
+      // paused in Google Ads and mirrored as paused
+      r.w.fake.setStatus(r.accountId, 'fake-c-cheap', 'paused');
+      await runReconcile(depsOf(h, r.w), r.w.tenantId);
+      expect((await campaignOf(h, r.w.tenantId, 'fake-c-cheap'))!.status).toBe('paused');
+      // recorded month-to-date spend is under the new cap; spend Google Ads reports since is not recorded yet
+      const month = `${new Date(r.w.clock.now()).toISOString().slice(0, 7)}-01`;
+      const recorded = Number((await h.su.query("SELECT COALESCE(sum(amount_cents), 0) AS n FROM lead_source_costs WHERE tenant_id = $1 AND origin = 'ads_sync' AND month = $2::date", [r.w.tenantId, month])).rows[0].n);
+      expect((await setCapVia(h, r.w.owner, recorded + 500_000, 10_000)).status).toBe(201);
+      r.w.fake.addSpend(r.accountId, 'fake-c-costly', r.w.clock.now() - HOUR_MS, 1_000_000);
+      // the resume's budget call answers; before its outcome is recorded, the hourly pass pauses at the cap
+      let once = false;
+      r.w.fake.afterChange = async (op) => {
+        if (op !== 'applyBudgetChange' || once) return;
+        once = true;
+        await runReconcile(depsOf(h, r.w), r.w.tenantId);
+      };
+      const ok = await call<{ status: string; rows: { reasonCode: string; outcome: string }[] }>(r.w.owner, 'POST', `/ads/campaigns/${r.cheap}/resume`);
+      expect(ok.status).toBe(200);
+      expect(ok.body.rows).toEqual([expect.objectContaining({ reasonCode: 'RESUMED', outcome: 'applied' })]);
+      expect(once).toBe(true);
+      const cheap = (await ledgerOf(h, r.w.tenantId)).filter((e) => e.campaign_id === r.cheap);
+      expect(cheap.map((e) => e.event_kind)).toEqual(['planned', 'paused', 'applied']);
+      expect((await campaignOf(h, r.w.tenantId, 'fake-c-cheap'))!.status).toBe('paused');
+      expect(r.w.fake.statusOf(r.accountId, 'fake-c-cheap')).toBe('paused');
     });
   });
 });

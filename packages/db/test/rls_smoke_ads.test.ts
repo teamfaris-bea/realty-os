@@ -10,7 +10,7 @@ import { createTestDb, runPsqlScript, type TestDb } from '../src/testing/index.j
 const SMOKE_SQL = readFileSync(fileURLToPath(new URL('./rls_smoke_ads.sql', import.meta.url)), 'utf8');
 
 /** Each rule and edge case the script proves, named in at least one passing check. */
-const IDS = ['R-ADS-7', 'R-ADS-8', 'R-ADS-9', 'E440', 'E441', 'E443', 'E444', 'E455'];
+const IDS = ['R-ADS-7', 'R-ADS-8', 'R-ADS-9', 'R-ADS-10', 'E440', 'E441', 'E442', 'E443', 'E444', 'E455'];
 
 describe('rls_smoke_ads.sql (platform:ads and its gates)', () => {
   let db: TestDb;
@@ -23,7 +23,7 @@ describe('rls_smoke_ads.sql (platform:ads and its gates)', () => {
     await db?.drop();
   });
 
-  it('passes every ads pack check: R-ADS-7 R-ADS-8 R-ADS-9 E440 E441 E443 E444 E455', () => {
+  it('passes every ads pack check: R-ADS-7 R-ADS-8 R-ADS-9 R-ADS-10 E440 E441 E442 E443 E444 E455', () => {
     expect(notices.filter((n) => n.startsWith('FAIL'))).toEqual([]);
     const passes = notices.filter((n) => n.startsWith('PASS'));
     expect(passes.length).toBeGreaterThanOrEqual(40);

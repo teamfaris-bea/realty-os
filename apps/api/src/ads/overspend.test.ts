@@ -82,7 +82,7 @@ describe('pause at the monthly cap (R-ADS-5)', () => {
     });
   });
 
-  it('E452: while dark the cap only alerts ("pause them in Google Ads"): no provider write, no pause row', async () => {
+  it('E452 R-ADS-7 R-ADS-5: while dark the cap only alerts ("pause them in Google Ads"): no provider write, no pause row', async () => {
     const w = await adsWorld(h);
     const { accountId } = await spending(w);
     await setCapVia(h, w.owner, 500, 500);
