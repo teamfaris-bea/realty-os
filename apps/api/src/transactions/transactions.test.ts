@@ -2,6 +2,7 @@
 // the real server as app_user; the reconcile runs as the system actor, as the 5-minute job does; messages go through
 // module 26 (executeTriggerRun) and comms/dispatch.ts to the fake email provider only.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { ianaZone } from '@realty/core/foundation';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { queue, recompute } from '../accountability/testing.js';
 import { reconcileAndRun } from '../nurture/testing.js';
@@ -50,7 +51,8 @@ describe('R-TXN-1 R-TXN-2 the one confirm path', () => {
     expect(row).toMatchObject({ status: 'confirmed', source: 'manual', due_on: dueOn, due_version: 1, confirmed_by_user_id: w.agents[0]!.userId });
     expect(row.confirmed_at).not.toBeNull();
     expect(wall(row.due_at!, w.zone)).toBe(`${dueOn} 23:59:59`);
-    expect(row.basis).toMatchObject({ kind: 'manual', zone: w.zone, dueRule: 'end_of_local_day', reminderRule: null });
+    // the basis records the zone in its canonical IANA spelling (core ianaZone: 'Etc/UTC' is recorded as 'UTC')
+    expect(row.basis).toMatchObject({ kind: 'manual', zone: ianaZone(w.zone), dueRule: 'end_of_local_day', reminderRule: null });
     expect(row.reminder_at).toBeNull(); // the deal screen sets no reminder: no update until someone asks for one
   });
 
@@ -97,7 +99,7 @@ describe('R-TXN-1 R-TXN-2 the one confirm path', () => {
       await reconcile(h, w.tenantId);
       const after = await dateRow(h, r.body.date.id);
       expect(after.due_at!.getTime()).toBe(before.due_at!.getTime());
-      expect(after.basis['zone']).toBe(w.zone);
+      expect(after.basis['zone']).toBe(ianaZone(w.zone));
     } finally {
       await h.su.query('UPDATE tenant_settings SET default_timezone = $2 WHERE tenant_id = $1', [w.tenantId, w.zone]);
     }
