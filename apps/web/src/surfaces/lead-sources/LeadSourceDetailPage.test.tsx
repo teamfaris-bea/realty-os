@@ -359,7 +359,7 @@ describe('A lead source: lead email refreshes the Lead sources list (b9 ui/F1)',
   });
   const withEmail = (address: string | null) => source({ paths: { email: address ? { state: 'on', address, lastEmailAt: null } : { state: 'off', address: null, lastEmailAt: null } } });
 
-  it('E590 b9 ui/F1: after Get a new address, All lead sources then Copy writes the NEW address, never the dead one', async () => {
+  it('R-LEM-1 R-LSRC-1 b9 ui/F1: after Get a new address, All lead sources then Copy writes the NEW address, never the dead one', async () => {
     let current = OLD;
     const fake = sourcesFake(overview([withEmail(OLD)]))
       .on('GET /lead-sources/overview', () => ({ status: 200, body: overview([withEmail(current)]) }))
@@ -380,7 +380,7 @@ describe('A lead source: lead email refreshes the Lead sources list (b9 ui/F1)',
     expect(write).not.toHaveBeenCalledWith(OLD);
   });
 
-  it('E590 b9 ui/F1: turning lead email on flips the path summary from Not set up to On', async () => {
+  it('R-LEM-1 R-LSRC-1 b9 ui/F1: turning lead email on flips the path summary from Not set up to On', async () => {
     let current: string | null = null;
     const fake = sourcesFake(overview([withEmail(null)]))
       .on('GET /lead-sources/overview', () => ({ status: 200, body: overview([withEmail(current)]) }))

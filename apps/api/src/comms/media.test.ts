@@ -76,7 +76,7 @@ async function inboundMms(from: string, items: { type: string; bytes?: Uint8Arra
 }
 
 describe('inbound MMS media', () => {
-  it('R-MMS-2 R-TWL-1 b9 ui/F7: with the kill switch off a photo is refused as LIVE_REQUESTS_OFF (our switch, not the carrier) and no request is made', async () => {
+  it('R-TWL-1 b9 ui/F7: with the kill switch off a photo is refused as LIVE_REQUESTS_OFF (our switch, not the carrier) and no request is made', async () => {
     const owner = w.agents[0]!;
     const c = await ownedContact(owner);
     const { messageId } = await inboundMms(c.phone, [{ type: 'image/png', bytes: FAKE_PNG }]);
