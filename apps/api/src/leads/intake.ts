@@ -429,7 +429,8 @@ export async function registerIntakeRoutes(app: FastifyInstance): Promise<void> 
   r.post(
     '/intake/:sourceToken',
     {
-      config: { auth: 'webhook', webhookProvider: 'lead' },
+      // the source's own signing secret when it has one, else the deployment secret (R-LSRC-3; leads/webhookAuth.ts)
+      config: { auth: 'webhook', webhookProvider: 'lead', webhookAuth: 'lead_source' },
       schema: { params: z.object({ sourceToken: z.string().max(200) }), body: IntakeBody, response: { 200: IntakeResponse, 201: IntakeResponse } },
     },
     async (req, reply) => {
