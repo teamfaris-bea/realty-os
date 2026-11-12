@@ -51,6 +51,16 @@ describe('Contact: card view', () => {
 });
 
 describe('Contact: full view', () => {
+  // Batch 6 review ui-compose/F7: a merged-away record offered Call, Text and Email, which the API refuses
+  // (CONTACT_MERGED), and only its history said "Merged into another contact", with no way to the person.
+  it('R-OWN-24: a record merged into another says so with a link to the current record, and offers no Call, Text or Email', async () => {
+    const merged = fullContact({ mergedIntoContactId: IDS.pat });
+    agentApp(fullFake(merged).on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: reachability(IDS.jane) } }), `/contacts/${IDS.jane}`);
+    expect(await screen.findByText(/This record was merged into another contact\./)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open the current record' })).toHaveAttribute('href', `/contacts/${IDS.pat}`);
+    for (const name of ['Call', 'Text', 'Email']) expect(screen.queryByRole('button', { name })).toBeNull();
+  });
+
   it('Owen: STOP disables Text with "Texted STOP on Nov 10"; Email and Call stay enabled; no stand-in preview is sent', async () => {
     const fake = fullFake().on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: reachability(IDS.jane, { sms: [stopReason()] }) } });
     agentApp(fake, `/contacts/${IDS.jane}`);

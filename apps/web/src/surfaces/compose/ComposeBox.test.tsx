@@ -331,6 +331,30 @@ describe('Thread', () => {
     expect(screen.getByText('Read it before sending.')).toBeInTheDocument();
   });
 
+  // Batch 6 review ui-compose/F7: a merged-away record was a dead end: its thread offered the box, the send was refused
+  // (CONTACT_MERGED) with "Open the person's current record ..." and no link, although the API names that record.
+  it('R-OWN-24: a record merged into another says so with a link to the current record, and offers no box to write in', async () => {
+    const fake = new FakeFetch()
+      .on(`GET /contacts/${IDS.jane}`, { status: 200, body: { contact: fullContact({ mergedIntoContactId: IDS.pat }) } })
+      .on(`GET /contacts/${IDS.jane}/timeline?limit=100`, { status: 200, body: { items: [timelineItem()], nextCursor: null } });
+    agentApp(fake, `/contacts/${IDS.jane}/thread?compose=sms`);
+    expect(await screen.findByText(/This record was merged into another contact\./)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open the current record' })).toHaveAttribute('href', `/contacts/${IDS.pat}`);
+    expect(screen.queryByRole('textbox', { name: 'Text message' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
+    expect(fake.calls.some((c) => c.path.endsWith('/messages/preview'))).toBe(false);
+  });
+
+  it('R-OWN-24: a send refused because the record was merged meanwhile links to the record the person lives on now', async () => {
+    const fake = threadFake().on(`POST /contacts/${IDS.jane}/messages`, err(409, 'CONTACT_MERGED', { mergedInto: IDS.pat }));
+    agentApp(fake, `/contacts/${IDS.jane}/thread?compose=sms`);
+    const u = user();
+    await u.type(await screen.findByRole('textbox', { name: 'Text message' }), 'Hi');
+    await u.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText(/This record was merged into another one, so nothing was done here\./)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open their current record' })).toHaveAttribute('href', `/contacts/${IDS.pat}/thread?compose=sms`);
+  });
+
   it('a pond or offer card has no thread until it is the agent’s lead', async () => {
     const fake = new FakeFetch().on(`GET /contacts/${IDS.pat}`, { status: 200, body: { contact: { id: IDS.pat, view: 'card', displayName: 'Pat L.', intent: null, source: null, createdAt: iso(-1000), pondSummary: null, ownership: { state: 'in_pond', pondId: IDS.pond, pondName: 'Team', offerId: null, offerExpiresAt: null, offeredToMe: false, seq: 1 } } } });
     agentApp(fake, `/contacts/${IDS.pat}/thread`);

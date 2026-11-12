@@ -397,6 +397,7 @@ Each rule has at least one test. Where the rule is enforced is given in brackets
   - The loser's live enrollment is stopped (`stop_reason='merged'`); the survivor's continues, and is paused if the loser's side was paused. One live enrollment per contact therefore always holds.
   - The loser's open handbacks and drafts move to the survivor and to the surviving owner; drafts bound to the loser's ownership period are invalidated.
   - Afterwards nothing new is addressed to the loser (F1, F2): a text, email, call or enrollment of it is refused (409 `CONTACT_MERGED`), the step runner stops an enrollment live on it anyway (`merged`), the post-closing path and saved-search alerts skip it, and a send that reaches it anyway is judged as the whole person (R-CHAN-2).
+  - The web says where the person went (batch 6 review F7): the loser's contact and thread pages say "This record was merged into another contact." with a link to the record it was merged into, and offer no Call, Text, Email or compose box; a send refused `CONTACT_MERGED` links to `details.mergedInto` (the record the person lives on now, when the caller may see it); the import's ownership report links a person merged away since to that record.
 
   [core + db merge test, E69]
 - **R-OWN-25** Dedup for intake and manual create:
