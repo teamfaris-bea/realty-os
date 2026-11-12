@@ -49,7 +49,8 @@ export default tseslint.config(
   // ---- R-GATE-2 allowlist: the only dispatch path, and the provider implementations/fakes themselves
   {
     // module 29: marketing/publish.ts is the single publishing path (publishPost / postReviewReply, R-GATE-15)
-    files: ['apps/api/src/comms/dispatch.ts', 'apps/api/src/comms/dial.ts', 'apps/api/src/marketing/publish.ts', 'apps/api/src/providers/**'],
+    // module 52: ads/dispatch.ts is the single budget and pause path (applyBudgetChange / pauseCampaign); ads/provider.ts is the adapter
+    files: ['apps/api/src/comms/dispatch.ts', 'apps/api/src/comms/dial.ts', 'apps/api/src/marketing/publish.ts', 'apps/api/src/ads/dispatch.ts', 'apps/api/src/ads/provider.ts', 'apps/api/src/providers/**'],
     rules: { 'realty/no-provider-outbound': 'off' },
   },
 

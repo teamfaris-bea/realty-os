@@ -110,6 +110,16 @@ describe('eslint.config.js architecture wiring', () => {
     expect(await lint('apps/api/src/marketing/publish.ts', code)).toEqual([]);
   });
 
+  it('R-GATE-15 R-ADS-3: only ads/dispatch.ts may call applyBudgetChange / pauseCampaign (module 52)', async () => {
+    const code =
+      'type A = { applyBudgetChange(c: unknown): Promise<void>; pauseCampaign(p: unknown): Promise<void> };\n' +
+      'export async function f(ads: A, c: unknown) { await ads.applyBudgetChange(c); await ads.pauseCampaign(c); }\n';
+    expect(await lint('apps/api/src/ads/mirror.ts', code)).toContain('realty/no-provider-outbound');
+    expect(await lint('apps/api/src/ads/handlers.ts', code)).toContain('realty/no-provider-outbound');
+    expect(await lint('apps/api/src/ads/routes.ts', code)).toContain('realty/no-provider-outbound');
+    expect(await lint('apps/api/src/ads/dispatch.ts', code)).toEqual([]);
+  });
+
   it("Actor { kind: 'system' } is constructed only in apps/api/src/worker/**", async () => {
     const code = "export const actor = { kind: 'system' as const, tenantId: 't', via: 'timer' as const };\n";
     expect(await lint('apps/api/src/leads/intake.ts', code)).toContain('realty/no-system-actor');
