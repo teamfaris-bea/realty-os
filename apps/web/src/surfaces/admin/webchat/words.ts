@@ -1,5 +1,4 @@
 // Plain words and pure helpers for the Website chat page.
-import type { Embed } from './types.js';
 
 export const WEBCHAT_PATH = '/admin/web-chat';
 export const MAX_WEBSITES = 10;
@@ -40,11 +39,13 @@ export function websitesWords(origins: readonly string[]): string {
 const attr = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 /**
- * The embed snippet (src/widget/config.ts reads exactly these attributes). The script is served by this app's
- * own origin at /widget/chat.js; the widget's API base defaults to that origin + /api.
+ * The embed snippet: the widget key only (src/widget/config.ts reads `data-widget-key`, and `data-api` when a
+ * deployment overrides the API base). The team name and the current consent disclosure come from the server
+ * (GET /public/chat/:key), so a changed notice never goes stale inside a customer's website (batch 7 review ui/F4).
+ * The script is served by this app's own origin at /widget/chat.js; the widget's API base defaults to that origin + /api.
  */
-export function embedSnippet(appOrigin: string, key: string, e: Embed & { disclosure: NonNullable<Embed['disclosure']> }): string {
-  return `<script src="${attr(appOrigin)}/widget/chat.js" defer data-widget-key="${attr(key)}" data-brokerage="${attr(e.brokerage)}" data-disclosure-id="${attr(e.disclosure.id)}" data-disclosure="${attr(e.disclosure.text)}"></script>`;
+export function embedSnippet(appOrigin: string, key: string): string {
+  return `<script src="${attr(appOrigin)}/widget/chat.js" defer data-widget-key="${attr(key)}"></script>`;
 }
 
 export const STATUS_LABEL: Record<string, { label: string; tone: 'ok' | 'warn' | 'neutral' }> = {

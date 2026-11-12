@@ -139,7 +139,8 @@ test('Website chat: the Owner adds a widget and gets the embed code once; a relo
   expect(key).toMatch(/^wk_[0-9a-f]{40}$/);
   const code = await panel.getByLabel('Embed code').inputValue();
   expect(code).toContain(`data-widget-key="${key}"`);
-  expect(code).toMatch(/data-disclosure-id="[0-9a-f-]{36}"/);
+  // b7 ui/F4: the key only; the widget fetches the team name and the current disclosure itself
+  expect(code).not.toMatch(/data-brokerage|data-disclosure/);
   expect(code).toContain('/widget/chat.js');
   await t.tap(panel.getByRole('button', { name: 'Copy embed code' }));
   await expect(panel.getByText(/Embed code copied\.|Couldn't copy automatically/)).toBeVisible();
