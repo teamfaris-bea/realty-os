@@ -221,7 +221,7 @@ export interface CmaBody {
     comps: { listingId: string; saleListingId: string; adjustments: { feature: string; amountCents: number }[]; adjustedPriceCents: number; weightBps: number; why: string[]; labels: string[]; includedByAgent: boolean; distanceM: number | null; sourceLabel: string; closePriceCents: number | null; saleConditions: string[]; facts: { beds: number | null; sqft: number | null; sizeSource: string | null } }[];
     notUsed: { listingId: string; reason: string; sentence: string; includable: boolean }[];
     subjectSales: { listingId: string }[];
-    subject: { kind: string; facts: Record<string, { value: unknown; source: string | null }>; saleHistory: { listingId: string }[]; sizeSentence: string; nearMatchDismissed: string[]; include: string[] };
+    subject: { kind: string; facts: Record<string, { value: unknown; source: string | null }>; saleHistory: { listingId: string }[]; sizeSentence: string; factSentences: string[]; nearMatchDismissed: string[]; include: string[]; exclude: string[] };
     clientShare: { allowed: boolean; blockers: { code: string; sentence: string; count?: number; listingIds?: string[] }[] };
     nearMatches: { listingId: string; dismissed: boolean; avmDisplayAllowed: boolean }[];
     area: { tier: string | null; tiersSkipped: string[]; reads: { tier: string; ran: boolean; rows: number; limitReached: boolean }[]; recordsLeftOut: number; sentences: string[] };

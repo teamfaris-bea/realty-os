@@ -90,7 +90,7 @@ describe('stored values beyond the engine\'s bounds', () => {
     const post = await call<CmaBody>(wb.agents[0]!, 'POST', '/cma', { subject: { kind: 'contact_address', contactAddressId: addr }, contactId: c, purpose: 'other' });
     for (const r of [tap, post]) {
       expect(r.status).toBe(201);
-      const s = r.body.cma.subject as CmaBody['cma']['subject'] & { factSentences: string[] };
+      const s = r.body.cma.subject;
       for (const k of ['lotSqft', 'garageSpacesX10', 'subdivision', 'beds']) expect([k, s.facts[k]]).toEqual([k, { value: null, source: null }]);
       expect(s.facts['sqft']).toEqual({ value: 1500, source: 'mls' });
       expect(s.factSentences).toEqual([
