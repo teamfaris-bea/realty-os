@@ -416,12 +416,14 @@ describe('home values (wave 2C): a home-value firing is only ever what it says (
     const c = await ownedContact(w.agents[0]!);
     const deal = await closedDeal(h, w.tenantId, c.id, w.agents[0]!.userId!, new Date());
     await h.su.query("UPDATE deals SET stage = 'under_contract', closed_at = NULL WHERE id = $1", [deal]);
+    // module 31 (R-TXN-4): the recipient is on the deal in a role the approved step names (fixture)
+    await h.su.query("INSERT INTO deal_contacts (tenant_id, deal_id, contact_id, role) VALUES ($1, $2, $3, 'buyer') ON CONFLICT (tenant_id, deal_id, contact_id) DO UPDATE SET role = 'buyer'", [w.tenantId, deal, c.id]);
     const dd = randomUUID();
     const dueAt = new Date(Date.now() + 5 * 86_400_000);
     // a person confirms the date as themselves (the DB requires it)
     await withTenantTx(w.owner.actor(), (tx) => sql`INSERT INTO deal_dates (tenant_id, id, deal_id, kind, label, due_on, status, confirmed_by_user_id, confirmed_at, due_at)
         VALUES (app.tenant_id(), ${dd}, ${deal}, 'inspection', 'Inspection', ${dueAt.toISOString()}::date, 'confirmed', ${w.owner.userId}, now(), ${dueAt.toISOString()}::timestamptz)`.execute(tx), { db: h.database });
-    await withTenantTx(systemActor(w.tenantId, 'assistant'), (tx, now) => recordFactInTx(tx, depsOf(h), { kind: 'deal_date_upcoming', dealId: deal, dealDateId: dd, dueVersion: 1, dueAt: dueAt.getTime() as never, label: 'Inspection', contactIds: [c.id], at: now }, [{ contactId: c.id, ownerUserId: w.agents[0]!.userId!, relation: { kind: 'contact' } }]), { db: h.database });
+    await withTenantTx(systemActor(w.tenantId, 'assistant'), (tx, now) => recordFactInTx(tx, depsOf(h), { kind: 'deal_date_upcoming', dealId: deal, dealDateId: dd, dueVersion: 1, dueAt: dueAt.getTime() as never, label: 'Inspection', contactIds: [c.id], at: now }, [{ contactId: c.id, ownerUserId: w.agents[0]!.userId!, relation: { kind: 'contact' }, dealRoles: ['buyer'] }]), { db: h.database }); // module 31 (R-TXN-4): a deal-date fact fires only for a deal role the step names
     const [run] = await triggerRuns(h, c.id);
     expect(run).toBeDefined();
     const r = await call<{ runs: { trigger: string; fact: { source: string; text: string } | null }[] }>(w.agents[0]!, 'GET', `/contacts/${c.id}/trigger-runs`);

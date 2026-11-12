@@ -85,7 +85,7 @@ export async function remindersInTx(tx: Tx, deps: Pick<NurtureDeps, 'ids'>, now:
     if (!decision.fire) reason = decision.reason;
     else if (!approved) reason = 'NO_APPROVED_PLAYBOOK';
     else {
-      planned = await recordFactInTx(tx, deps, decision.fact, decision.rels, TRANSACTION_UPDATES);
+      planned = await recordFactInTx(tx, deps, decision.fact, decision.rels, { only: TRANSACTION_UPDATES });
       firings += planned;
     }
     // read once per (date, version): reminder_at cleared, fenced on the version read (the guard allows the system this

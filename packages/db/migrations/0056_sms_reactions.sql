@@ -1,5 +1,5 @@
 -- =============================================================================
--- 0070 Texting reactions (owner decision D5b, 2026-11-11; R-REACT-2, R-REACT-5; E300–E309). Renumbered at merge.
+-- 0056 Texting reactions (owner decision D5b, 2026-11-11; R-REACT-2, R-REACT-5; E300–E309).
 --
 -- A phone that reacts to a text from a sender not on iMessage/RCS sends a text such as `Loved “See you at 3”`. The
 -- inbound transaction (apps/api/src/comms/reactions.ts) recognises it only when the whole body is one template form

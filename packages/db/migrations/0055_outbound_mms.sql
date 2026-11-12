@@ -217,13 +217,13 @@ BEGIN
                     AND pg_get_userbyid(p.proowner) = 'app_retention'
                     AND p.proconfig @> ARRAY['search_path=pg_catalog, public']
                     AND NOT has_function_privilege('public', p.oid, 'EXECUTE')) THEN
-    RAISE EXCEPTION '0060 self-check: app.outbound_media_upload_shred must be an app_retention definer with a pinned search_path and no PUBLIC EXECUTE';
+    RAISE EXCEPTION '0055 self-check: app.outbound_media_upload_shred must be an app_retention definer with a pinned search_path and no PUBLIC EXECUTE';
   END IF;
   FOREACH f IN ARRAY ARRAY['messages_mms_channel_fixed','messages_mms_has_media','outbound_media_uploads_stamp','message_media_outbound_guard'] LOOP
     IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
                     WHERE n.nspname = 'app' AND p.proname = f AND NOT p.prosecdef
                       AND p.proconfig @> ARRAY['search_path=pg_catalog, public']) THEN
-      RAISE EXCEPTION '0060 self-check: app.% must be an invoker with a pinned search_path', f;
+      RAISE EXCEPTION '0055 self-check: app.% must be an invoker with a pinned search_path', f;
     END IF;
   END LOOP;
 END $$;

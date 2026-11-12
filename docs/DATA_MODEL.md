@@ -785,7 +785,7 @@ No full-text column on `mail_messages`: Phase 1 search does not index synced mai
 
 `integration_connections` (0018): a `lead_email` row is one per lead source (partial UQ `integration_connections_lead_email_source`), keyed (no external account), switched on by Owner/Admin; `allowed_sender_domains` is the DKIM allowlist. `lead_inquiries.parse_status = 'parsed'` and `parse_evidence` (each field's source span) are written for lead email.
 
-### 6.4 Photo and video texts (owner decision D5; migration `0060_outbound_mms.sql`, renumbered at merge)
+### 6.4 Photo and video texts (owner decision D5; migration `0055_outbound_mms.sql`, renumbered at merge)
 
 | Table | Purpose | Key fields | Invariants | Access (RLS) | Field classes |
 |---|---|---|---|---|---|
