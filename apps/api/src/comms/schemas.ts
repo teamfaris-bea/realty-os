@@ -300,7 +300,7 @@ export const AttachmentsResponse = z.object({
   messages: z.array(z.object({
     messageId: z.uuid(),
     media: z.array(z.object({ position: z.number().int(), contentType: z.string(), byteSize: z.number().int(), inline: z.boolean(), url: z.string() })),
-    /** media the platform did not keep, with why (TYPE_NOT_ALLOWED, TOO_LARGE, TOO_MANY, CONTENT_MISMATCH, FETCH_FAILED) */
+    /** media the platform did not keep, with why (TYPE_NOT_ALLOWED, TOO_LARGE, TOO_MANY, CONTENT_MISMATCH, FETCH_FAILED, LIVE_REQUESTS_OFF: the kill switch) */
     skipped: z.array(z.object({ position: z.number().int(), reason: z.string() })),
     /** R-TWL-11: MMS text/plain parts: read ones as plain text, pending ones without text (a skipped part is in `skipped`) */
     textParts: z.array(z.object({ position: z.number().int(), status: z.enum(['read', 'pending']), text: z.string().nullable() })),

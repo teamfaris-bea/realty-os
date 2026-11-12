@@ -30,7 +30,7 @@ import { queueOutboundInTx } from './compose.js';
 import { hint } from './dispatch.js';
 import { resolvedPolicy } from './gateInput.js';
 import { systemReplyText } from './inbound.js';
-import { PLATFORM_CONFIRMS_PART_STOP, type TextPartJob, UNREADABLE_PART_NOTICE, decodeTextPart } from './mmsText.js';
+import { LIVE_OFF_PART_DETAIL, LIVE_OFF_PART_NOTICE, PLATFORM_CONFIRMS_PART_STOP, type TextPartJob, UNREADABLE_PART_NOTICE, decodeTextPart } from './mmsText.js';
 import * as g from './repos/gate.js';
 import { telephonyAccount } from './repos/credentials.js';
 import * as msgs from './repos/messages.js';
@@ -40,7 +40,7 @@ import { SYSTEM_NOTICE, type CommsDeps } from './types.js';
 
 const REVOKING: ReadonlySet<InboundClassification['kind']> = new Set(['stop', 'opt_out_language', 'wrong_number']);
 
-type Fetched = { ok: true; text: string } | { ok: false; reason: 'TOO_LARGE' | 'CONTENT_MISMATCH' | 'FETCH_FAILED' };
+type Fetched = { ok: true; text: string } | { ok: false; reason: 'TOO_LARGE' | 'CONTENT_MISMATCH' | 'FETCH_FAILED' | 'LIVE_REQUESTS_OFF' };
 
 async function fetchPart(deps: CommsDeps, account: TelephonyAccount | null, messageRef: string, ref: string | null): Promise<Fetched> {
   if (!ref || !account || !/^(SM|MM)[0-9a-f]{32}$/.test(messageRef)) return { ok: false, reason: 'FETCH_FAILED' };
@@ -49,7 +49,9 @@ async function fetchPart(deps: CommsDeps, account: TelephonyAccount | null, mess
     got = await deps.providers.telephony.fetchMedia(account, { messageRef, mediaRef: ref });
   } catch (e) {
     // refused (gone, not allowed, or the kill switch): a refused part; unavailable / timeout: the job retries
-    if (e instanceof ProviderError && (e.kind === 'rejected' || e.kind === 'not_configured' || e.providerCode === TELEPHONY_LIVE_OFF)) return { ok: false, reason: 'FETCH_FAILED' };
+    // b9 ui/F7: the kill switch is recorded as itself (LIVE_REQUESTS_OFF), so nothing blames the carrier
+    if (e instanceof ProviderError && e.providerCode === TELEPHONY_LIVE_OFF) return { ok: false, reason: 'LIVE_REQUESTS_OFF' };
+    if (e instanceof ProviderError && (e.kind === 'rejected' || e.kind === 'not_configured')) return { ok: false, reason: 'FETCH_FAILED' };
     throw e;
   }
   return decodeTextPart(got.bytes);
@@ -121,7 +123,7 @@ async function applyPart(tx: Tx, actor: SystemActor, deps: CommsDeps, messageId:
     const h = await handlerOf(tx, m.contact_id);
     if (h.userId) {
       const label = (await contactLabel(tx, m.contact_id)) ?? 'a client';
-      await notifyUser(tx, deps.ids, { userId: h.userId, kind: SYSTEM_NOTICE, priority: 'high', title: UNREADABLE_PART_NOTICE(label), body: null, subjectType: 'message', subjectId: messageId, dedupeKey: `text_part_unreadable:${messageId}` }, now);
+      await notifyUser(tx, deps.ids, { userId: h.userId, kind: SYSTEM_NOTICE, priority: 'high', title: f.reason === 'LIVE_REQUESTS_OFF' ? LIVE_OFF_PART_NOTICE(label) : UNREADABLE_PART_NOTICE(label), body: f.reason === 'LIVE_REQUESTS_OFF' ? LIVE_OFF_PART_DETAIL : null, subjectType: 'message', subjectId: messageId, dedupeKey: `text_part_unreadable:${messageId}` }, now);
     }
     return 'skipped';
   }

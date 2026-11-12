@@ -5,6 +5,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { FAKE_PNG } from '../providers/fake/telephony.js';
+import { TwilioTelephony } from '../providers/twilio/telephony.js';
+import type { TelephonyProvider } from '../providers/types.js';
 import { systemActor } from '../worker/systemActor.js';
 import { MAX_MEDIA_BYTES, allowedType, checkMedia, copyInboundMedia, mediaItemsOf } from './media.js';
 import { type CommsWorld, call, commsWorld, ownedContact, runJobs, sid, telephonyWebhook } from './testing.js';
@@ -74,6 +76,26 @@ async function inboundMms(from: string, items: { type: string; bytes?: Uint8Arra
 }
 
 describe('inbound MMS media', () => {
+  it('R-MMS-2 R-TWL-1 b9 ui/F7: with the kill switch off a photo is refused as LIVE_REQUESTS_OFF (our switch, not the carrier) and no request is made', async () => {
+    const owner = w.agents[0]!;
+    const c = await ownedContact(owner);
+    const { messageId } = await inboundMms(c.phone, [{ type: 'image/png', bytes: FAKE_PNG }]);
+    const calls: string[] = [];
+    const real = new TwilioTelephony({ accountSid: 'AC' + '0'.repeat(32), authToken: 'fake', publicBaseUrl: h.config.publicBaseUrl, fetch: (async (u: string) => { calls.push(String(u)); throw new Error('no request may leave'); }) as unknown as typeof fetch });
+    const providers = h.app.platform.providers as { telephony: TelephonyProvider };
+    const fake = providers.telephony;
+    providers.telephony = real;
+    try {
+      await runJobs(h, w.tenantId, ['comms.media_copy']);
+    } finally {
+      providers.telephony = fake;
+    }
+    expect(calls).toEqual([]);
+    expect((await h.su.query('SELECT position, reason FROM message_media_skipped WHERE message_id = $1', [messageId])).rows).toEqual([{ position: 0, reason: 'LIVE_REQUESTS_OFF' }]);
+    const list = await call<{ messages: { messageId: string; skipped: { position: number; reason: string }[] }[] }>(owner, 'GET', `/contacts/${c.id}/attachments`);
+    expect(list.body.messages.find((m) => m.messageId === messageId)!.skipped).toEqual([{ position: 0, reason: 'LIVE_REQUESTS_OFF' }]);
+  });
+
   it('stores allowed media encrypted and linked to the message; refuses the rest with a reason; deletes the provider copies; a re-run changes nothing', async () => {
     const owner = w.agents[0]!;
     const c = await ownedContact(owner);

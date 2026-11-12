@@ -38,6 +38,8 @@ const SKIP_SENTENCE: Record<string, string> = {
   TOO_MANY: 'only the first 10 attachments of a message are kept',
   CONTENT_MISMATCH: "the file wasn't what it said it was",
   FETCH_FAILED: "it couldn't be downloaded from the carrier",
+  // R-TWL-1 (b9 ui/F7): our own kill switch refused it; the carrier did send it
+  LIVE_REQUESTS_OFF: "it wasn't downloaded: live texting and calling are off on this deployment",
 };
 
 export function skippedSentence(reason: string): string {

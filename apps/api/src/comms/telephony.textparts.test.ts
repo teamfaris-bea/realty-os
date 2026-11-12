@@ -17,7 +17,7 @@ import { TwilioTelephony } from '../providers/twilio/telephony.js';
 import { systemActor } from '../worker/systemActor.js';
 import { queueOutboundInTx } from './compose.js';
 import { dispatchOutbound } from './dispatch.js';
-import { PENDING_PART_SENTENCE, TEXT_PART_MAX_BYTES, UNREADABLE_PART_NOTICE, decodeTextPart } from './mmsText.js';
+import { LIVE_OFF_PART_DETAIL, LIVE_OFF_PART_NOTICE, PENDING_PART_SENTENCE, TEXT_PART_MAX_BYTES, UNREADABLE_PART_NOTICE, decodeTextPart } from './mmsText.js';
 import { readTextParts } from './mmsTextJob.js';
 import { type CommsWorld, call, commsWorld, ownedContact, randomPhone, sendText, telephonyWebhook } from './testing.js';
 
@@ -181,8 +181,8 @@ describe('R-TWL-11 E387 unreadable, oversized and refused parts', () => {
     expect(view.textParts).toEqual([]);
   });
 
-  it('R-TWL-11 R-TWL-1: with the kill switch off the part is refused (FETCH_FAILED) and no request is made', async () => {
-    const c = await ownedContact(w.agents[0]!);
+  it('R-TWL-11 R-TWL-1 b9 ui/F7: with the kill switch off the part is refused as LIVE_REQUESTS_OFF (not the carrier), the notice says the switch, and no request is made', async () => {
+    const c = await ownedContact(w.agents[0]!, { firstName: 'Avery' });
     const { messageId } = await mms(c.phone, w.mainNumber, '', [{ bytes: utf8('STOP') }]);
     const calls: string[] = [];
     const real = new TwilioTelephony({ accountSid: 'AC' + '0'.repeat(32), authToken: 'fake', publicBaseUrl: h.config.publicBaseUrl, fetch: (async (u: string) => { calls.push(String(u)); throw new Error('no request may leave'); }) as unknown as typeof fetch });
@@ -195,7 +195,12 @@ describe('R-TWL-11 E387 unreadable, oversized and refused parts', () => {
       providers.telephony = fake;
     }
     expect(calls).toEqual([]);
-    expect((await h.su.query('SELECT reason FROM message_media_skipped WHERE message_id = $1', [messageId])).rows).toEqual([{ reason: 'FETCH_FAILED' }]);
+    expect((await h.su.query('SELECT reason FROM message_media_skipped WHERE message_id = $1', [messageId])).rows).toEqual([{ reason: 'LIVE_REQUESTS_OFF' }]);
+    // the one notice still reaches the handler (the unreadable-part safeguard), in the switch's words
+    const notes = (await h.su.query('SELECT title, body FROM notifications WHERE tenant_id = $1 AND dedupe_key = $2', [w.tenantId, `text_part_unreadable:${messageId}`])).rows;
+    expect(notes).toEqual([{ title: LIVE_OFF_PART_NOTICE('Avery D.'), body: LIVE_OFF_PART_DETAIL }]);
+    expect(LIVE_OFF_PART_NOTICE('Avery D.').length).toBeLessThanOrEqual(120);
+    expect(notes[0]!.title).not.toMatch(/carrier/);
   });
 });
 

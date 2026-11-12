@@ -94,4 +94,9 @@ describe('thread attachments', () => {
     for (const r of ['TYPE_NOT_ALLOWED', 'TOO_LARGE', 'TOO_MANY', 'CONTENT_MISMATCH', 'FETCH_FAILED', 'SOMETHING_NEW']) expect(skippedSentence(r)).toMatch(/\w/);
     expect(formatBytes(512)).toBe('512 B');
   });
+
+  it('R-TWL-1 b9 ui/F7: a photo or text part the kill switch refused is said as the switch, never the carrier', () => {
+    expect(skippedSentence('LIVE_REQUESTS_OFF')).toBe("it wasn't downloaded: live texting and calling are off on this deployment");
+    expect(skippedSentence('LIVE_REQUESTS_OFF')).not.toMatch(/carrier/);
+  });
 });
