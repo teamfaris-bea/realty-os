@@ -963,3 +963,12 @@ Threat model:
 - Recognition: an anchored parse of the whole body, with no text allowed before or after. The quote must equal a stored non-imported outbound text sent from the same number to the same phone on the same contact within 30 days, and the DB guard `app.message_reactions_guard` re-checks the same bounds. Anything else is classified exactly as before, so an opt-out the person writes always counts (R-REACT-1…3, R-REACT-5).
 - Assistant: a linked reaction reaches a prompt only as `client (sms reaction to the team's text [Sn])`, with its own words as untrusted data. Its evidence source holds only those words, and draft categories ignore the quote, so a model cannot cite the team's words as the client's (R-REACT-7).
 - Review trail: each narrowed reading is audited `consent.reaction_quote_not_read` (reason: the reading it replaced), and each refused link is audited `consent.reaction_link_refused`. The notification and the thread say so, and the thread offers the person-level do-not-contact. All of this is kept for counsel review (VERIFY WITH COUNSEL).
+
+## 11. Batch 8 interaction review: deal recipients, home values and merges (migration `b8_review_deals`, lane number 0059)
+
+The orchestrator renumbers this section at merge. Trust decisions that changed (details in ARCHITECTURE §21.25):
+- **The other side of a deal is not the team's client.** Milestone updates and home-value notes go only to the client roles of the side `deals.side` says the team represents (lease: none). Checked when planned and again, live, when the message is built. An approved playbook step cannot widen this.
+- **Home values only for a home the client bought through the team**, never a house they sold through the team, re-checked under the contact lock and at send time; at most one a month per person and house across a merge.
+- **`home_valuations` is written only by the system** (RESTRICTIVE insert and update policies). Members who see the contact still read it; a valuation row drives automatic client notes under the source's name, so a person can no longer change a value, a provider or `display_allowed`.
+- **A merge keeps the stronger deal role** (definer `app.contacts_merge_roles`, replaced from 0053 with every earlier rule kept) and a planned milestone update follows the person once; nothing already sent to a merged record is sent again. D1 opt-outs are unchanged: every re-planned update still goes through `comms/dispatch.ts`, which judges the whole person.
+- **Gap:** no retention purge for `home_valuations` yet (R-DATA-6).
