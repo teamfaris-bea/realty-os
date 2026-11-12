@@ -40,6 +40,8 @@ import { surface as mailSettingsSurface } from '../surfaces/settings/mail/index.
 import { surface as adminMailSurface } from '../surfaces/admin/mail/index.js';
 import { surface as marketingSurface } from '../surfaces/marketing/index.js';
 import { surface as calendarSettingsSurface } from '../surfaces/settings/calendar/index.js';
+import { surface as adminIntegrationsSurface } from '../surfaces/admin/integrations/index.js';
+import { surface as adminWebChatSurface } from '../surfaces/admin/webchat/index.js';
 
 export type { NavSection, PageDef, PageNav, SurfaceModule } from './types.js';
 
@@ -72,5 +74,7 @@ export const surfaces: SurfaceModule[] = [
   adminMailSurface,
   marketingSurface,
   calendarSettingsSurface,
+  adminIntegrationsSurface,
+  adminWebChatSurface,
   // registry: add new entries above this line
 ];

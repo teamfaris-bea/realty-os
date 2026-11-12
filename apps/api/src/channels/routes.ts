@@ -14,6 +14,7 @@
 //   POST /admin/web-chat/widgets                     create for a lead source; the key is returned ONCE            integration.manage 🔒
 //   POST /admin/web-chat/widgets/:id/rotate          a new key (returned once); the old embed stops at once        integration.manage 🔒
 //   PUT  /admin/web-chat/widgets/:id/origins         the websites it may run on                                    integration.manage 🔒
+//   GET  /admin/web-chat/widgets/:id/embed           brokerage name + disclosure for the embed snippet (no key)    integration.view
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -23,7 +24,7 @@ import { authorize } from '../rbac.js';
 import type { RouteModule } from '../routes.js';
 import type { Platform } from '../server.js';
 import { type WebChatDeps, MESSAGE_MAX, NAME_MAX, normalizeOrigin, pollSession, postVisitorMessage, startChat, widgetConfig } from './webchat.js';
-import { createWidget, listWidgets, rotateWidgetKey, setWidgetOrigins } from './widgets.js';
+import { createWidget, listWidgets, rotateWidgetKey, setWidgetOrigins, widgetEmbed } from './widgets.js';
 
 /** A chat body is a few kilobytes at most; anything larger is 413 before parsing. */
 export const PUBLIC_CHAT_BODY_LIMIT = 16_384;
@@ -70,9 +71,10 @@ const Widget = z.object({ id: z.uuid(), displayName: z.string(), status: z.strin
 export const WidgetsResponse = z.object({ widgets: z.array(Widget) });
 export const WidgetResponse = z.object({ widget: Widget });
 export const WidgetKeyResponse = z.object({ widget: Widget, widgetKey: z.string() });
+export const WidgetEmbedResponse = z.object({ brokerage: z.string(), disclosure: z.object({ id: z.uuid(), text: z.string() }).nullable() });
 
 /** Response schemas, for the R-AST-13 / R-TEN-3 snapshot test (no tenant id, no confidence field). */
-export const CHANNEL_RESPONSE_SCHEMAS = { ConfigResponse, StartResponse, MessageResponse, PollResponse, WidgetsResponse, WidgetResponse, WidgetKeyResponse };
+export const CHANNEL_RESPONSE_SCHEMAS = { ConfigResponse, StartResponse, MessageResponse, PollResponse, WidgetsResponse, WidgetResponse, WidgetKeyResponse, WidgetEmbedResponse };
 
 const originOf = (req: FastifyRequest) => normalizeOrigin(typeof req.headers.origin === 'string' ? req.headers.origin : undefined);
 
@@ -112,6 +114,7 @@ async function register(app: FastifyInstance): Promise<void> {
   r.put('/admin/web-chat/widgets/:id/origins', { ...manage, schema: { params: Params, body: z.strictObject({ allowedOrigins: Origins }), response: { 200: WidgetResponse } } }, async (req) => ({
     widget: await setWidgetOrigins(deps(req), actorOf(req), req.params.id, req.body.allowedOrigins),
   }));
+  r.get('/admin/web-chat/widgets/:id/embed', { ...view, schema: { params: Params, response: { 200: WidgetEmbedResponse } } }, async (req) => widgetEmbed(deps(req), actorOf(req), req.params.id));
 }
 
 export const channelRoutes: RouteModule = { name: 'channels', register };

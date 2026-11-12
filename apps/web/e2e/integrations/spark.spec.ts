@@ -33,14 +33,14 @@ async function signInOwner(page: Page) {
   await expect(page.getByRole('heading', { level: 1, name: 'Home' })).toBeVisible();
 }
 
-test('the Owner opens Connect MLS from navigation and is told live MLS calls are off', async ({ page }) => {
+test('the Owner opens MLS from navigation and is told live MLS calls are off', async ({ page }) => {
   await signInOwner(page);
   if (isPhone(page)) {
     await page.getByRole('navigation', { name: 'Main tabs' }).getByRole('link', { name: 'More' }).tap();
-    await page.getByRole('link', { name: 'Connect MLS', exact: true }).tap();
-  } else await page.getByRole('navigation', { name: 'Main', exact: true }).getByRole('link', { name: 'Connect MLS', exact: true }).click();
+    await page.getByRole('link', { name: 'MLS', exact: true }).tap();
+  } else await page.getByRole('navigation', { name: 'Main', exact: true }).getByRole('link', { name: 'MLS', exact: true }).click();
 
-  await expect(page.getByRole('heading', { level: 1, name: 'Connect MLS (Spark)' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'MLS' })).toBeVisible();
   await expect(page.getByRole('heading', { level: 2, name: 'This deployment' })).toBeVisible();
   await expect(page.getByText(/Live MLS calls are turned off on this deployment/).first()).toBeVisible();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
