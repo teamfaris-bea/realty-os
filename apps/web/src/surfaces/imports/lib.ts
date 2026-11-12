@@ -174,8 +174,11 @@ export interface UnassignedView {
   contactIds: string[];
   /** where they are now, in the server's words (every number a count) */
   summary: string[];
-  /** `mergedIntoContactId`: a person merged into another contact since lives on that one (review F7: linked there) */
-  people: { contactId: string; name: string; sentence: string; stillUnassigned: boolean; now: UnassignedNow; nowSentence: string | null; mergedIntoContactId?: string | null }[];
+  /**
+   * `mergedIntoContactId`: a person merged into another contact since lives on that one (review F7: linked there);
+   * `askedAgainSentence`: owner decision D8, when they asked again and to whom the routing offered them (server words)
+   */
+  people: { contactId: string; name: string; sentence: string; stillUnassigned: boolean; now: UnassignedNow; nowSentence: string | null; mergedIntoContactId?: string | null; askedAgainSentence?: string | null }[];
 }
 
 /** The verification with what the approval expected and the outcomes the commit documented (each with a sentence). */

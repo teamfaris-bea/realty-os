@@ -17,8 +17,11 @@
 //   5 new person ⇒ ownership command `create via intake` (routing as the system actor: the offer, its
 //     timer, the offer notification and its delivery rows commit in THIS transaction); the contact's
 //     first-touch attribution (original_*) is copied from this inquiry and is immutable afterwards
-//     attach ⇒ the inquiry row first, then `reinquiry` (R-OWN-20: an owned lead never changes owner;
-//     a pond lead follows its pond setting; offered/unassigned only attach; closed stays closed)
+//     attach ⇒ the contact lock (global lock order step 2), the inquiry row, then `reinquiry` where core's
+//     reinquiryOutcome says the engine acts on it (R-OWN-20: an owned lead never changes owner; a pond lead
+//     follows its pond setting; closed stays closed; an unassigned lead with no route due, which an import left
+//     so and nothing would ever route, is routed like a returning lead: owner decision D8, 2026-11-12); on offer,
+//     or unassigned awaiting the router, the inquiry is only attached and the router routes it once
 //   6 the 60-second first response job (R-AST-16) is enqueued in this transaction for a new contact;
 //     api/assistant's handler decides at send time whether anything may go out (approved playbook,
 //     speed_to_lead_reply enabled, the lead has not opted out) and never counts as a touch (R-AST-15).
@@ -40,8 +43,9 @@ import {
   inquiryDuplicate,
   inquiryFingerprint,
   matchContacts,
+  reinquiryOutcome,
 } from '@realty/core/ownership';
-import { type Database, type Tx, applyOwnershipCommandInTx, derivedCommandId, enqueueJob, lockAddresses, withPreTenant, withTenantTx } from '@realty/db';
+import { type Database, type Tx, applyOwnershipCommandInTx, derivedCommandId, enqueueJob, lockAddresses, lockContact, withPreTenant, withTenantTx } from '@realty/db';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { sql } from 'kysely';
@@ -344,23 +348,29 @@ async function ingestInTx(tx: Tx, actor: SystemActor, i: InquiryInput, now: Inst
     return { contactId, outcome: 'new_contact', inquiryId };
   }
 
-  // attach to the earliest exact match (E18)
+  // attach to the earliest exact match (E18). The contact lock first (global lock order step 2, after the addresses):
+  // every ownership change takes it, so the state read here is the one the engine decides on below, and a second
+  // inquiry of the same person by another address waits here and sees what this one did (one routing, E342)
   const contactId = decision.contactId;
+  await lockContact(tx, contactId);
   const st = await repo.contactState(tx, contactId);
   if (!st) throw new AppError('INTERNAL_ERROR');
-  const reinquiry = st.ownership_state === 'owned' || st.ownership_state === 'in_pond' || st.ownership_state === 'closed';
+  // R-OWN-20 / owner decision D8: core says whether the engine acts on it or the inquiry is only attached
+  const outcome = reinquiryOutcome({ state: st.ownership_state, routeDueAt: st.route_due_at === null ? null : instantOf(st.route_due_at) });
+  const reinquiry = outcome === 'reinquiry';
   const inquiryId = ids.next<'LeadInquiryId'>();
   await addPoints(contactId);
-  await repo.insertInquiry(tx, await inquiryRow(inquiryId, contactId, reinquiry ? 'reinquiry' : 'attached', disclosure?.id ?? null));
+  await repo.insertInquiry(tx, await inquiryRow(inquiryId, contactId, outcome, disclosure?.id ?? null));
   await recordConsent(contactId, inquiryId);
   await addCandidates(contactId);
   if (st.ownership_state !== 'owned' && st.ownership_state !== 'closed') await repo.setPondSummary(tx, contactId, summary);
   if (reinquiry) {
+    // routing (a pond re-route, an unassigned lead with no route due) matches the rules on this inquiry's row
     const r = await applyOwnershipCommandInTx(tx, actor, contactId, { kind: 'reinquiry', inquiryId }, { commandId: derivedCommandId('intake.reinquiry', inquiryId), ids });
     // CONTACT_MERGED cannot happen (merged-away contacts are never matched); anything else is a bug
     if (!r.outcome.ok) throw new AppError('INTERNAL_ERROR');
   }
-  return { contactId, outcome: reinquiry ? 'reinquiry' : 'attached', inquiryId };
+  return { contactId, outcome, inquiryId };
 }
 
 async function dbNowAfterLocks(tx: Tx, fallback: Instant): Promise<Instant> {

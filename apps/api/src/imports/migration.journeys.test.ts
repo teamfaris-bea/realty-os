@@ -21,6 +21,8 @@ import type { Category } from '@realty/core/import';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { makeBulkHandlers } from '../bulk/handlers.js';
 import { depsFromPlatform } from '../comms/runtime.js';
+import { enableInbox, labelledBody, outcomeOf, postLeadEmail } from '../leadEmail/testing.js';
+import { intake } from '../leads/testing.js';
 import { createWorker } from '../worker/loop.js';
 import { silentLogger } from '../worker/observability.js';
 import { HandlerRegistry } from '../worker/registry.js';
@@ -166,7 +168,7 @@ type UnassignedView = {
   stillUnassigned: number;
   contactIds: string[];
   summary: string[];
-  people: { contactId: string; name: string; sentence: string; stillUnassigned: boolean; now: string; nowSentence: string | null; mergedIntoContactId?: string | null }[];
+  people: { contactId: string; name: string; sentence: string; stillUnassigned: boolean; now: string; nowSentence: string | null; mergedIntoContactId?: string | null; askedAgainSentence?: string | null }[];
 };
 type ReportView = {
   categories: { category: Category; status: string; phase: string; imported: number; rejected: number; lines: string[]; unassigned: UnassignedView | null }[];
@@ -583,8 +585,8 @@ describe('M2: a member suspended between the ownership approval and its commit (
       contactIds: [omar, quin],
       summary: [stillLine],
       people: [
-        { contactId: omar, name: 'Omar Optout4', sentence: why, stillUnassigned: true, now: 'unassigned', nowSentence: null, mergedIntoContactId: null },
-        { contactId: quin, name: 'Quin Notext4', sentence: why, stillUnassigned: true, now: 'unassigned', nowSentence: null, mergedIntoContactId: null },
+        { contactId: omar, name: 'Omar Optout4', sentence: why, stillUnassigned: true, now: 'unassigned', nowSentence: null, mergedIntoContactId: null, askedAgainSentence: null },
+        { contactId: quin, name: 'Quin Notext4', sentence: why, stillUnassigned: true, now: 'unassigned', nowSentence: null, mergedIntoContactId: null, askedAgainSentence: null },
       ],
     });
     // review F8: the "still unassigned" sentence is said once, next to the button it names (the people card's summary),
@@ -797,6 +799,132 @@ describe('review F3: people merged, or given an owner, between the contacts comm
     const ownRep = (await report(w, b.id)).categories.find((c) => c.category === 'ownership')!;
     expect(ownRep.unassigned).toMatchObject({ total: 1, stillUnassigned: 1, contactIds: [ids.jane] });
     expect(ownRep.unassigned!.people).toMatchObject([{ contactId: ids.jane, sentence: merged, now: 'unassigned' }]);
+  });
+});
+
+// ---- owner decision D8 (2026-11-12): a person an import left unassigned asks again --------------------------------
+
+type LedgerRow = { type: string; reason_code: string; actor_kind: string; offered_to_user_id: string | null; payload: { candidates?: { userId: string; eligible: boolean; skipReason?: string }[] } };
+const ledgerOf = (contactId: string) => q<LedgerRow>('SELECT type, reason_code, actor_kind, offered_to_user_id, payload FROM lead_ownership_events WHERE contact_id = $1 ORDER BY seq', [contactId]);
+const pointOf = async (contactId: string, kind: 'phone' | 'email') => (await q<{ address: string }>('SELECT address FROM contact_points WHERE contact_id = $1 AND kind = $2 AND removed_at IS NULL ORDER BY is_primary DESC, address LIMIT 1', [contactId, kind]))[0]!.address;
+/** When a person asked again (the D8 re-inquiry's instant), as the report says it: in the team's time zone. */
+async function askedAt(w: ImportWorld, contactId: string): Promise<string> {
+  const zone = (await q<{ z: string }>('SELECT default_timezone AS z FROM tenant_settings WHERE tenant_id = $1', [w.tenantId]))[0]!.z;
+  const t = (await q<{ t: Date }>("SELECT occurred_at AS t FROM lead_ownership_events WHERE contact_id = $1 AND type = 'reinquiry' AND reason_code = 'REINQUIRY_ROUTE'", [contactId]))[0]!.t;
+  return new Intl.DateTimeFormat('en-US', { timeZone: zone, month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(t).replace(/[\u202f\u00a0]/g, ' ');
+}
+
+// Batch 6 review ownership-sla/F4. B4 leaves a suspended member's people unassigned and never routed until the Owner
+// assigns them from the report. When one of them inquired again (a portal, a partner feed, a lead email, the generic
+// intake), R-OWN-20's attach-only rule for `unassigned` attached the inquiry and nothing else happened: no routing,
+// offer, SLA, notification or feed card, while the report kept offering them for "Assign these people". Owner decision
+// D8: route that new inquiry to an agent so it gets followed up.
+describe('owner decision D8: people B4 brought in unassigned inquire again', () => {
+  const key = 'fub-d8-' + randomUUID().slice(0, 8);
+  let w: ImportWorld;
+  let b: BatchView;
+  const ids = {} as Record<'Jane' | 'Omar' | 'Pia' | 'Quin', string>;
+
+  it('E341 R-OWN-20: the generic intake routes one of them like a returning lead, to a member who can hold leads and never the suspended one: one offer with its notification and card, and the accept starts their own first-touch period; one contact', async () => {
+    ({ w, b } = await ownershipApproved(key, 8200, 2, ALL_TO_AGENT1));
+    const [agent0, agent1] = [w.agents[0]!.userId as string, w.agents[1]!.userId as string];
+    await suspend(w, agent1);
+    expect((await commitStage(ih, w.admin, b.id, 'ownership')).status).toBe('committed');
+    for (const first of ['Jane', 'Omar', 'Pia', 'Quin'] as const) ids[first] = await contactOf(b.id, first);
+    // B4 as decided: unassigned, never routed (no route due), nothing since the import
+    expect(await q('SELECT ownership_state, ownership_seq::int AS seq, route_due_at FROM contacts WHERE id = $1', [ids.Quin])).toEqual([{ ownership_state: 'unassigned', seq: 1, route_due_at: null }]);
+    const r = await intake(ih.h, w, { fullName: 'Quin Notext2', phones: [await pointOf(ids.Quin, 'phone')], inquiryType: 'sell', postalCode: '62701' });
+    expect([r.status, r.outcome, r.contactId]).toEqual([200, 'reinquiry', ids.Quin]);
+    expect(await q('SELECT count(*)::int AS n FROM contacts WHERE tenant_id = $1 AND display_name = $2', [w.tenantId, 'Quin Notext2'])).toEqual([{ n: 1 }]);
+    const ev = await ledgerOf(ids.Quin);
+    expect(ev.map((e) => [e.type, e.reason_code, e.actor_kind, e.offered_to_user_id])).toEqual([
+      ['imported', 'IMPORTED', 'import', null],
+      ['reinquiry', 'REINQUIRY_ROUTE', 'provider', null],
+      ['offered', 'ROUND_ROBIN', 'provider', agent0],
+    ]);
+    // B4 holds: the suspended member is considered by the rule and skipped (R-OWN-11), never offered or given anyone
+    expect(ev[2]!.payload.candidates).toEqual(expect.arrayContaining([{ userId: agent1, eligible: false, skipReason: 'MEMBERSHIP_INACTIVE' }, { userId: agent0, eligible: true }]));
+    expect(await q('SELECT e.type FROM lead_ownership_events e JOIN contacts c ON c.id = e.contact_id AND c.tenant_id = e.tenant_id WHERE c.import_batch_id = $1 AND (e.offered_to_user_id = $2 OR e.owner_user_id = $2)', [b.id, agent1])).toEqual([]);
+    // the offer's notification and card reach the agent it went to
+    expect(await q('SELECT kind, priority FROM notifications WHERE user_id = $1 AND subject_id = $2', [agent0, ids.Quin])).toEqual([{ kind: 'lead_offer', priority: 'critical' }]);
+    expect(await q('SELECT item_type, band FROM priority_feed_items WHERE user_id = $1 AND contact_id = $2', [agent0, ids.Quin])).toEqual([{ item_type: 'lead_offer', band: 'pinned' }]);
+    // the accept starts their own ownership period with a first-touch SLA (R-OWN-13), unlike an imported assignment
+    const offerId = (await q<{ offer_id: string }>('SELECT offer_id FROM contacts WHERE id = $1', [ids.Quin]))[0]!.offer_id;
+    expect((await call(w.agents[0]!, 'POST', `/leads/${ids.Quin}/accept`, { commandId: randomUUID(), offerId })).status).toBe(200);
+    expect(await q('SELECT ownership_state, owner_user_id, first_touch_due_at IS NOT NULL AS sla FROM contacts WHERE id = $1', [ids.Quin])).toEqual([{ ownership_state: 'owned', owner_user_id: agent0, sla: true }]);
+    expect(await q("SELECT item_type FROM priority_feed_items WHERE user_id = $1 AND contact_id = $2 AND item_type = 'first_touch_due'", [agent0, ids.Quin])).toHaveLength(1);
+  });
+
+  it('E341 R-OWN-20: a lead email from another of them (a verified portal lead) routes them the same way, through the same intake', async () => {
+    const inbox = await enableInbox(ih.h, w.owner, w.sourceId);
+    const email = await pointOf(ids.Omar, 'email');
+    const r = await postLeadEmail(ih.h, { to: inbox.address!, from: 'Zillow Leads <leads@zillow.com>', dkim: [{ domain: 'zillow.com', result: 'pass' }], text: labelledBody({ name: 'Omar Optout2', email, property: '9 Elm St, Springfield, IL 62701' }) });
+    expect(outcomeOf(r)).toBe('lead_created');
+    expect((await ledgerOf(ids.Omar)).map((e) => [e.type, e.reason_code, e.offered_to_user_id])).toEqual([
+      ['imported', 'IMPORTED', null],
+      ['reinquiry', 'REINQUIRY_ROUTE', null],
+      ['offered', 'ROUND_ROBIN', w.agents[0]!.userId],
+    ]);
+    expect(await q("SELECT outcome FROM lead_inquiries WHERE contact_id = $1", [ids.Omar])).toEqual([{ outcome: 'reinquiry' }]);
+  });
+
+  it('E341 E231: the report says who asked again, when and to whom, and "Assign these people" selects only those still unassigned (never someone with an owner or an offer now)', async () => {
+    const own = (await report(w, b.id)).categories.find((c) => c.category === 'ownership')!;
+    const u = own.unassigned!;
+    expect([u.total, u.stillUnassigned, u.contactIds]).toEqual([4, 2, [ids.Jane, ids.Pia]]);
+    const alex = (await memberOf(w, w.agents[0]!.userId as string)).displayName;
+    expect(u.people.map((p) => [p.name.split(' ')[0], p.now, p.askedAgainSentence, p.nowSentence, p.stillUnassigned])).toEqual([
+      ['Jane', 'unassigned', null, null, true],
+      ['Omar', 'offered', `Asked again on ${await askedAt(w, ids.Omar)} and was offered to ${alex}.`, 'On offer to an agent now, with no owner yet.', false],
+      ['Pia', 'unassigned', null, null, true],
+      ['Quin', 'owned', `Asked again on ${await askedAt(w, ids.Quin)} and was offered to ${alex}.`, 'Has an owner now.', false],
+    ]);
+    // said once among the category's lines, after what the import itself did; where they are now is the people card's
+    expect(own.lines.slice(-2)).toEqual(['Nothing was assigned to them, and the import started no offer, timer or routing.', '2 of them asked again after the import and were routed by your routing rules.']);
+    expect(u.summary).toEqual(['After the import, 1 was given an owner and 1 was offered to an agent.', '2 people are still unassigned: use "Assign these people" to give them an owner.']);
+  });
+});
+
+// Owner decision D8 between the contacts commit and the ownership commit: the person is in the import's creation state
+// (unassigned, never routed), so a new inquiry routes them then, and the ownership commit can no longer assign them.
+describe('owner decision D8: a person asks again between the contacts commit and the ownership commit', () => {
+  it('E343 R-IMPORT-5: routed then; the ownership commit documents what it could not assign (kept as already here once someone owns them, else brought in unassigned), the stage verifies, and the report says when they asked again and to whom', async () => {
+    const { w, b } = await ownershipApproved('fub-d8b-' + randomUUID().slice(0, 8), 8300, 3);
+    const ids = { jane: await contactOf(b.id, 'Jane'), omar: await contactOf(b.id, 'Omar') };
+    // Jane asks again and is routed; the agent it is offered to accepts, so she has an owner now
+    const j = await intake(ih.h, w, { fullName: 'Jane Many3', phones: [await pointOf(ids.jane, 'phone')], inquiryType: 'sell' });
+    expect([j.outcome, j.contactId]).toEqual(['reinquiry', ids.jane]);
+    const js = (await q<{ offered_to_user_id: string; offer_id: string }>('SELECT offered_to_user_id, offer_id FROM contacts WHERE id = $1', [ids.jane]))[0]!;
+    const taker = w.agents.find((a) => a.userId === js.offered_to_user_id)!;
+    expect((await call(taker, 'POST', `/leads/${ids.jane}/accept`, { commandId: randomUUID(), offerId: js.offer_id })).status).toBe(200);
+    // Omar asks again and is still on offer when the owners are imported
+    const o = await intake(ih.h, w, { fullName: 'Omar Optout3', phones: [], emails: [await pointOf(ids.omar, 'email')], inquiryType: 'buy' });
+    expect([o.outcome, o.contactId]).toEqual(['reinquiry', ids.omar]);
+    const offeree = (await q<{ offered_to_user_id: string }>('SELECT offered_to_user_id FROM contacts WHERE id = $1', [ids.omar]))[0]!.offered_to_user_id;
+    const s = await commitStage(ih, w.admin, b.id, 'ownership');
+    expect(s.status).toBe('committed');
+    const own = await records(w.admin, b.id, 'ownership');
+    const rec = (ref: string) => own.find((x) => x.sourceRef === ref)!;
+    expect([rec('fub:people/8301').outcome, rec('fub:people/8301').issues.map((i) => i.code)]).toEqual(['duplicate', ['OWNER_KEPT']]);
+    expect([rec('fub:people/8302').outcome, rec('fub:people/8302').targetId, rec('fub:people/8302').issues.map((i) => i.code)]).toEqual(['rejected', ids.omar, ['PERSON_CHANGED']]);
+    // the import changes neither: Jane keeps the agent who accepted her, Omar stays on offer (R-IMPORT-7, R-OWN-21)
+    expect(await q('SELECT first_name, ownership_state, owner_user_id, offered_to_user_id FROM contacts WHERE id = ANY ($1) ORDER BY first_name', [[ids.jane, ids.omar]])).toEqual([
+      { first_name: 'Jane', ownership_state: 'owned', owner_user_id: taker.userId, offered_to_user_id: null },
+      { first_name: 'Omar', ownership_state: 'offered', owner_user_id: null, offered_to_user_id: offeree },
+    ]);
+    // documented outcomes, never a mismatch: the stage verifies and the later stages may commit (R-IMPORT-3)
+    const v = await verify(w.admin, b.id, 'ownership');
+    expect(v.res.status, JSON.stringify(v.res.body)).toBe(200);
+    expect([v.view.matches, v.view.approved, v.view.expected]).toEqual([true, { source: 7, imported: 4, needs_review: 0, rejected: 2, duplicate: 1 }, { source: 7, imported: 2, needs_review: 0, rejected: 3, duplicate: 2 }]);
+    expect(v.view.documented.map((d) => [d.code, d.count])).toEqual([['PERSON_CHANGED', 1], ['OWNER_KEPT', 1]]);
+    // the report lists Omar, whom nobody holds, with when he asked again and to whom; he is on offer, so not selected
+    const ownRep = (await report(w, b.id)).categories.find((c) => c.category === 'ownership')!;
+    const name = (await memberOf(w, offeree)).displayName;
+    expect(ownRep.unassigned).toMatchObject({ total: 1, stillUnassigned: 0, contactIds: [] });
+    expect(ownRep.unassigned!.people.map((p) => [p.contactId, p.now, p.askedAgainSentence, p.nowSentence])).toEqual([
+      [ids.omar, 'offered', `Asked again on ${await askedAt(w, ids.omar)} and was offered to ${name}.`, 'On offer to an agent now, with no owner yet.'],
+    ]);
+    expect(ownRep.lines).toContain('1 of them asked again after the import and was routed by your routing rules.');
   });
 });
 

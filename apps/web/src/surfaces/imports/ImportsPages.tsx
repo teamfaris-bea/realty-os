@@ -752,7 +752,8 @@ function Report({ batch }: { batch: ImportBatch }) {
  * the server's words (review B4-R1: "has an owner" only of someone owned; closed, deleted, merged away, in a pond or
  * on offer are said so). A deleted person is named, not linked: their contact is gone from the book. A person merged
  * away since is linked to the record they live on now (review F7). Where they are now (`summary`) is said here, next to
- * the button it names, and nowhere else on the page (review F8).
+ * the button it names, and nowhere else on the page (review F8). Owner decision D8 (2026-11-12): a person who asked
+ * again since was routed like a returning lead; the server's sentence says when and to whom, before where they are now.
  */
 function UnassignedPeople({ view, onClosed }: { view: UnassignedView; onClosed(): void }) {
   const { session } = useSession();
@@ -775,6 +776,7 @@ function UnassignedPeople({ view, onClosed }: { view: UnassignedView; onClosed()
                 </Link>
               )}{' '}
               {p.sentence}
+              {p.askedAgainSentence ? <span> {p.askedAgainSentence}</span> : null}
               {p.nowSentence ? <span className="text-ink-muted"> {p.nowSentence}</span> : null}
             </li>
           ))}

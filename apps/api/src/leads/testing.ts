@@ -6,7 +6,8 @@
 // and the timer job's fence are shifted together so fold(ledger) still equals the projection), and
 // inserts rows that have no application path yet (assistant drafts/handbacks, enrollments, deals).
 import { randomUUID } from 'node:crypto';
-import type { Role } from '@realty/core/foundation';
+import type { ContactId, Role } from '@realty/core/foundation';
+import { applyOwnershipCommandInTx, derivedCommandId, setOwnershipCommand, withTenantTx } from '@realty/db';
 import type { LightMyRequestResponse } from 'fastify';
 import { type ApiHarness, TEST_ORIGIN, type TestClient } from '../auth/testHarness.js';
 import { call, freshReauth, registerPush, res } from '../admin/testing.js';
@@ -15,8 +16,11 @@ import { ownershipFollowupHandler } from '../worker/handlers/followup.js';
 import { type Worker, createWorker } from '../worker/loop.js';
 import { silentLogger } from '../worker/observability.js';
 import { HandlerRegistry } from '../worker/registry.js';
+import { systemActor } from '../worker/systemActor.js';
 import type { JobHandler } from '../worker/types.js';
 import { leadsHandlers } from './handlers.js';
+import { identifiersOf } from './intake.js';
+import { addPoint } from './repos/contacts.js';
 
 export { call, freshReauth, registerPush, res };
 
@@ -235,6 +239,36 @@ export async function jobs(h: ApiHarness, tenantId: string, kind?: string): Prom
 /** Ownership command through the API. */
 export async function command<T = Record<string, unknown>>(c: TestClient, contactId: string, verb: string, body: Record<string, unknown> = {}) {
   return call<T>(c, 'POST', `/leads/${contactId}/${verb}`, { commandId: randomUUID(), ...body });
+}
+
+/**
+ * A person exactly as an import's contacts stage leaves them (R-IMPORT-8): created by the engine's own `import_assign`
+ * → 'unassigned' as the import actor (one `imported` ledger event: unassigned, never routed, route_due_at NULL), with
+ * their phones and emails keyed the way intake keys them. It is the command and the actor the import commit runs
+ * (imports/commit.ts applyContact), without the file or FUB parsing around it. A FUB person with no owner, a CSV row,
+ * and a person whose mapped member could not hold leads (owner decision B4) stay so until someone assigns them.
+ */
+export async function importedUnassigned(h: ApiHarness, tenantId: string, o: { firstName: string; lastName: string; phones?: string[]; emails?: string[] }): Promise<string> {
+  const actor = systemActor(tenantId, 'import');
+  const { ids, envelope } = h.app.platform;
+  const contactId = ids.next<'ContactId'>() as ContactId;
+  await withTenantTx(
+    actor,
+    async (tx) => {
+      const r = await applyOwnershipCommandInTx(tx, actor, contactId, { kind: 'import_assign', target: 'unassigned' }, {
+        commandId: derivedCommandId('test.import_contact', contactId),
+        ids,
+        newContact: { displayName: `${o.firstName} ${o.lastName}`, firstName: o.firstName, lastName: o.lastName, originalSourceDetail: { import_system: 'csv' } },
+      });
+      if (!r.outcome.ok) throw new Error(`import_assign: ${r.outcome.code}`);
+      await setOwnershipCommand(tx, null);
+      const keyed = await identifiersOf(tx, envelope, actor.tenantId, o.phones ?? [], o.emails ?? []);
+      for (const p of keyed.phones) await addPoint(tx, { id: ids.next(), contactId, kind: 'phone', address: p.e164, hmacHex: p.hmac });
+      for (const e of keyed.emails) await addPoint(tx, { id: ids.next(), contactId, kind: 'email', address: e.email, hmacHex: e.hmac });
+    },
+    { db: h.database },
+  );
+  return contactId;
 }
 
 export { TEST_ORIGIN };

@@ -8,7 +8,7 @@ import { LEAD_EMAIL_RESPONSE_SCHEMAS } from './routes.js';
 import { freshReauth } from '../admin/testing.js';
 import { type AssistantWorld, approvedPlaybook, assistantWorld, call, messagesOf, randomPhone, runJobs } from '../assistant/testing.js';
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
-import { contactState, jobs } from '../leads/testing.js';
+import { contactState, importedUnassigned, jobs, ledger } from '../leads/testing.js';
 import { contactCount, contactsWith, enableInbox, labelledBody, leadAddress, messageRows, outcomeOf, postLeadEmail } from './testing.js';
 import { HOLD_SENTENCES } from './trust.js';
 
@@ -117,6 +117,24 @@ describe('R-LEM-3 R-INBOX-9 a verified lead email becomes a lead through the exi
     expect(ids).toHaveLength(1);
     expect((await h.su.query('SELECT count(*)::int AS n FROM lead_inquiries WHERE contact_id = $1', [ids[0]])).rows[0].n).toBe(2);
     expect((await jobs(h, w.tenantId, 'assistant.first_response')).filter((j) => j.payload.contactId === ids[0])).toHaveLength(1);
+  });
+
+  // Owner decision D8 (2026-11-12; batch 6 review ownership-sla/F4): an import leaves people unassigned and never
+  // routed (no owner in the source, a CSV row, owner decision B4); their next portal lead attached and reached nobody.
+  it('R-OWN-20 E341: a lead email from a person an import left unassigned (never routed) routes them like a returning lead through the same intake: the inquiry on them, one offer, no second contact, no first response', async () => {
+    const email = leadAddress();
+    const id = await importedUnassigned(h, w.tenantId, { firstName: 'Ida', lastName: 'Imported', emails: [email] });
+    expect(outcomeOf(await postLeadEmail(h, verified({ name: 'Ida Imported', email, property: '4 Oak St, Springfield, IL 62701', message: 'Still looking, can we talk?' })))).toBe('lead_created');
+    expect(await contactsWith(h, w.tenantId, email)).toEqual([id]);
+    expect((await h.su.query('SELECT outcome, parse_status, lead_source_id FROM lead_inquiries WHERE contact_id = $1', [id])).rows).toEqual([{ outcome: 'reinquiry', parse_status: 'parsed', lead_source_id: w.sourceId }]);
+    expect((await ledger(h, id)).map((e) => [e.type, e.reason_code])).toEqual([['imported', 'IMPORTED'], ['reinquiry', 'REINQUIRY_ROUTE'], ['offered', 'ROUND_ROBIN']]);
+    const c = await contactState(h, id);
+    expect(c.ownership_state).toBe('offered');
+    expect(w.agents.map((a) => a.userId)).toContain(c.offered_to_user_id);
+    expect((await h.su.query("SELECT kind FROM notifications WHERE subject_id = $1 AND kind = 'lead_offer'", [id])).rows).toHaveLength(1);
+    expect((await jobs(h, w.tenantId, 'assistant.first_response')).filter((j) => j.payload.contactId === id)).toEqual([]);
+    const row = (await messageRows(h, w.tenantId)).find((m) => m.contact_id === id)!;
+    expect(row).toMatchObject({ status: 'lead_created', hold_code: null });
   });
 
   it('R-LEM-4 R-AST-16: the first response goes once to the LEAD’s own phone, never to the portal’s sender address', async () => {

@@ -258,6 +258,15 @@ export interface UnassignedPersonRow {
   now: UnassignedNow;
   /** `merged`: the live record the person was merged into since (followed to the end), where the report links */
   merged_into_contact_id: string | null;
+  /**
+   * Owner decision D8 (E341): when the person first asked again and was routed like a returning lead (the engine's
+   * `reinquiry` event REINQUIRY_ROUTE on them), else null; and the ledger event right after it, which says where that
+   * routing took them: `offered` (to `asked_again_offered_to`), `sent_to_pond` (`asked_again_pond`), or none yet
+   */
+  asked_again_at: Date | null;
+  asked_again_next: string | null;
+  asked_again_offered_to: string | null;
+  asked_again_pond: string | null;
 }
 
 /**
@@ -266,7 +275,8 @@ export interface UnassignedPersonRow {
  * another contact is `merged`, with the live contact it went to; any other is its ownership state (contacts CHECK: only
  * `owned` has an owner). Batch 6 review F3: also the people who left the import's creation state before the owners were
  * imported and whom nobody held (PERSON_MERGED / PERSON_CHANGED): documented at the commit (the target is the person),
- * or already planned so by the dry run (the record's match is the person).
+ * or already planned so by the dry run (the record's match is the person). Owner decision D8 (E341): when one of them
+ * asked again and was routed like a returning lead, and where the routing took them (their own ledger).
  */
 export async function unassignedPeople(tx: Tx, stageId: string): Promise<UnassignedPersonRow[]> {
   return (
@@ -277,7 +287,9 @@ export async function unassignedPeople(tx: Tx, stageId: string): Promise<Unassig
              CASE WHEN c.id IS NULL OR c.deleted_at IS NOT NULL THEN 'deleted'
                   WHEN c.merged_into_contact_id IS NOT NULL THEN 'merged'
                   ELSE c.ownership_state END AS now,
-             s.id AS merged_into_contact_id
+             s.id AS merged_into_contact_id,
+             ask.occurred_at AS asked_again_at, nx.type AS asked_again_next, nx.offered_to_user_id AS asked_again_offered_to,
+             pd.name AS asked_again_pond
         FROM import_records r
         CROSS JOIN LATERAL (SELECT COALESCE(r.target_id, r.match_contact_id) AS id) p
         LEFT JOIN contacts c ON c.tenant_id = r.tenant_id AND c.id = p.id
@@ -289,6 +301,15 @@ export async function unassignedPeople(tx: Tx, stageId: string): Promise<Unassig
             SELECT x.id, x.merged_into_contact_id, up.depth + 1 FROM up JOIN contacts x ON x.tenant_id = r.tenant_id AND x.id = up.next WHERE up.depth < 8)
           SELECT up.id FROM up JOIN contacts x ON x.tenant_id = r.tenant_id AND x.id = up.id
            WHERE up.depth > 0 AND up.next IS NULL AND x.deleted_at IS NULL LIMIT 1) s ON c.merged_into_contact_id IS NOT NULL
+        -- D8: the first re-inquiry that routed them (core decideReinquiry, reason REINQUIRY_ROUTE), then the event after it
+        LEFT JOIN LATERAL (
+          SELECT q.seq, q.occurred_at FROM lead_ownership_events q
+           WHERE q.tenant_id = r.tenant_id AND q.contact_id = p.id AND q.type = 'reinquiry' AND q.reason_code = 'REINQUIRY_ROUTE'
+           ORDER BY q.seq LIMIT 1) ask ON true
+        LEFT JOIN LATERAL (
+          SELECT x.type, x.offered_to_user_id, x.pond_id FROM lead_ownership_events x
+           WHERE x.tenant_id = r.tenant_id AND x.contact_id = p.id AND x.seq = ask.seq + 1) nx ON ask.seq IS NOT NULL
+        LEFT JOIN ponds pd ON pd.tenant_id = r.tenant_id AND pd.id = nx.pond_id AND nx.type = 'sent_to_pond'
        WHERE r.tenant_id = app.tenant_id() AND r.stage_id = ${stageId} AND r.outcome = 'rejected'
          AND (r.target_table = 'contacts' OR (r.target_table IS NULL AND r.dry_run_outcome = 'rejected'))
          AND p.id IS NOT NULL

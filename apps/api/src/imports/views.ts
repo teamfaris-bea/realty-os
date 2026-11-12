@@ -398,11 +398,55 @@ export interface UnassignedReport {
   summary: string[];
   /**
    * the first UNASSIGNED_LISTED people, with the reason in words and what is true of them now; `mergedIntoContactId`:
-   * a person merged into another contact since lives on that one (review F7: the report links there)
+   * a person merged into another contact since lives on that one (review F7: the report links there);
+   * `askedAgainSentence`: owner decision D8 (E341), when they asked again and where the routing took them, else null
    */
-  people: { contactId: string; name: string; sentence: string; stillUnassigned: boolean; now: UnassignedNow; nowSentence: string | null; mergedIntoContactId: string | null }[];
+  people: {
+    contactId: string;
+    name: string;
+    sentence: string;
+    stillUnassigned: boolean;
+    now: UnassignedNow;
+    nowSentence: string | null;
+    mergedIntoContactId: string | null;
+    askedAgainSentence: string | null;
+  }[];
 }
 export const UNASSIGNED_LISTED = 50;
+
+/** "Nov 12, 2026, 3:04 PM EST": an instant as the team's clock shows it (tenant_settings.default_timezone). */
+function teamTime(at: Date, zone: string): string {
+  // newer ICU builds put a narrow no-break space before AM/PM: one plain space, the same on every runtime
+  const f = (timeZone: string) =>
+    new Intl.DateTimeFormat('en-US', { timeZone, month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(at).replace(/[\u202f\u00a0]/g, ' ');
+  try {
+    return f(zone);
+  } catch {
+    return f('UTC'); // a zone the runtime does not know: still a true instant, said in UTC
+  }
+}
+
+/**
+ * Owner decision D8 (2026-11-12, E341): one of these people asked again (a portal, a partner feed, a lead email, the
+ * generic intake) and was routed like a returning lead. When (the team's time), and where that routing took them, as
+ * their own ledger says: the agent it was offered to, or the pond. Null when they have not asked again.
+ */
+export function askedAgainSentence(r: UnassignedPersonRow, names: MemberNames = NO_NAMES, zone = 'UTC'): string | null {
+  if (r.asked_again_at === null) return null;
+  const when = `Asked again on ${teamTime(r.asked_again_at, zone)}`;
+  switch (r.asked_again_next) {
+    case 'offered': {
+      const name = r.asked_again_offered_to === null ? '' : (names.get(r.asked_again_offered_to)?.name.trim() ?? '');
+      return `${when} and was offered to ${name === '' ? 'an agent' : name}.`;
+    }
+    case 'sent_to_pond':
+      return `${when} and was put in ${r.asked_again_pond?.trim() || 'a pond'}.`;
+    case null:
+      return `${when} and is waiting to be routed.`;
+    default:
+      return `${when}.`; // someone acted on them before any routing (the line about now says where they are)
+  }
+}
 
 /** What is true of one of these people now (review B4-R1): only someone owned "has an owner". */
 const NOW_SENTENCE: Record<UnassignedNow, string | null> = {
@@ -446,8 +490,11 @@ function cameInIssue(r: UnassignedPersonRow): CameInUnassignedIssue | null {
   return asUnassigned(r.issue ?? { code: '' }) ?? asPerson(r.issue);
 }
 
-/** The report's listing of the people brought in unassigned, and its plain lines (every number is a count). */
-export function unassignedReport(rows: readonly UnassignedPersonRow[], names: MemberNames): { view: UnassignedReport; lines: string[] } | null {
+/**
+ * The report's listing of the people brought in unassigned, and its plain lines (every number is a count). `zone`: the
+ * team's time zone, for when a person asked again (owner decision D8).
+ */
+export function unassignedReport(rows: readonly UnassignedPersonRow[], names: MemberNames, zone = 'UTC'): { view: UnassignedReport; lines: string[] } | null {
   // one line per person: two records live on one person once a merge joined them (batch 6 review F3)
   const seen = new Set<string>();
   const valid = rows.filter((r) => {
@@ -468,6 +515,10 @@ export function unassignedReport(rows: readonly UnassignedPersonRow[], names: Me
   }
   const lines = [...groups.values()].map((g) => `${plural(g.n, 'person', 'people')} came in unassigned because ${g.clause}.`);
   lines.push('Nothing was assigned to them, and the import started no offer, timer or routing.');
+  // owner decision D8 (E341): a new inquiry from one of them routes them like a returning lead; each listed person says
+  // when and to whom. Counted once the routing took them somewhere (an offer or a pond), never while it is still due.
+  const routed = valid.filter((r) => r.asked_again_at !== null && (r.asked_again_next === 'offered' || r.asked_again_next === 'sent_to_pond')).length;
+  if (routed > 0) lines.push(`${routed.toLocaleString('en-US')} of them asked again after the import and ${routed === 1 ? 'was' : 'were'} routed by your routing rules.`);
   const summary = nowLines(valid);
   lines.push(...summary);
   return {
@@ -487,6 +538,7 @@ export function unassignedReport(rows: readonly UnassignedPersonRow[], names: Me
           now: r.now,
           nowSentence: NOW_SENTENCE[r.now] ?? null,
           mergedIntoContactId: r.now === 'merged' ? r.merged_into_contact_id : null,
+          askedAgainSentence: askedAgainSentence(r, names, zone),
         };
       }),
     },
@@ -495,11 +547,11 @@ export function unassignedReport(rows: readonly UnassignedPersonRow[], names: Me
 }
 
 /** GET /imports/:id/report: per category source | imported | needs review | rejected | duplicate, plus plain lines. */
-export function reportView(b: BatchRow, stages: readonly StageRow[], extra: { unassigned?: readonly UnassignedPersonRow[]; names?: MemberNames } = {}) {
+export function reportView(b: BatchRow, stages: readonly StageRow[], extra: { unassigned?: readonly UnassignedPersonRow[]; names?: MemberNames; zone?: string } = {}) {
   const name = sourceName(b);
   // owner decision B4 (E231): the ownership stage's report lists the people it brought in unassigned while it stands
   const ownership = stages.find((s) => s.category === 'ownership');
-  const unassigned = ownership && ['committed', 'verified'].includes(ownership.status) ? unassignedReport(extra.unassigned ?? [], extra.names ?? NO_NAMES) : null;
+  const unassigned = ownership && ['committed', 'verified'].includes(ownership.status) ? unassignedReport(extra.unassigned ?? [], extra.names ?? NO_NAMES, extra.zone) : null;
   const rows = stages
     .filter((s) => s.count_source !== null)
     .map((s) => {

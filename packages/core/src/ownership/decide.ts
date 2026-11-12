@@ -774,6 +774,21 @@ function decideTouch(state: OwnershipProjection, cmd: Cmd<'touch'>, ctx: Decisio
   return accepted(b, null);
 }
 
+/**
+ * R-OWN-20: what a new inquiry from an existing contact does, by the contact's ownership state (read under the
+ * contact lock). `reinquiry` where the engine acts on it: owned (the owner hears; a quiet period starts a new SLA),
+ * in a pond (the pond's setting), closed (it stays closed), and, owner decision D8 (2026-11-12), unassigned with no
+ * route due, which nothing will ever route (an import left it so: no owner in the source, a CSV row, B4's suspended
+ * member, a merge or an undo before the owners came in), so it is routed like a returning lead. `attached` where the
+ * inquiry is only attached: on offer, or unassigned awaiting the router (a route due), which routes it once. Intake
+ * records this as the inquiry's outcome and sends the `reinquiry` command only for `reinquiry`.
+ */
+export function reinquiryOutcome(p: Pick<OwnershipProjection, 'state' | 'routeDueAt'>): 'reinquiry' | 'attached' {
+  if (p.state === 'offered') return 'attached';
+  if (p.state === 'unassigned') return p.routeDueAt === null ? 'reinquiry' : 'attached';
+  return 'reinquiry';
+}
+
 function decideReinquiry(state: OwnershipProjection, cmd: Cmd<'reinquiry'>, ctx: DecisionContext): Decision {
   if (!isSystem(ctx.actor, 'provider', 'worker')) return rejection(state, cmd, ctx, 'NOT_FOUND');
   const b = new Builder(state, ctx.contactId, ctx);
@@ -812,8 +827,17 @@ function decideReinquiry(state: OwnershipProjection, cmd: Cmd<'reinquiry'>, ctx:
       return accepted(b, null);
     }
     case 'offered':
-    case 'unassigned':
       return noop(state); // the inquiry is attached only
+    case 'unassigned': {
+      // awaiting the router (a decline, an expiry, a reopen, an intake): attached only; the router routes it once
+      if (reinquiryOutcome(state) === 'attached') return noop(state);
+      // Owner decision D8 (2026-11-12; batch 6 review ownership-sla/F4): no route is due, so nothing would ever route
+      // it and the inquiry would reach nobody. Routed like a returning pond lead: due now, routed here by the system
+      // actor (an offer with its timer, notification and card, or a pond) or, without a routing snapshot, by the follow-up.
+      b.emit('reinquiry', 'unassigned', { reasonCode: 'REINQUIRY_ROUTE', payload: { inquiryId: cmd.inquiryId, routeDueAt: ctx.now } });
+      routeIfPossible(b);
+      return accepted(b, null);
+    }
     case 'closed': {
       if (state.closedReason === 'merged') return rejection(state, cmd, ctx, 'CONTACT_MERGED'); // redirect along merged_into first
       for (const a of [...(ctx.people?.admins ?? [])].sort()) b.notify(a, 'system', 'normal', `reinquiry:${cmd.inquiryId}`, 'REINQUIRY_CLOSED');

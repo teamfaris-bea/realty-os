@@ -292,6 +292,12 @@ export async function memberNames(tx: Tx, userIds: readonly string[]): Promise<M
   return new Map(r.rows.map((x) => [x.user_id, { name: x.display_name, status: x.status, role: x.role }]));
 }
 
+/** The team's IANA zone (tenant_settings.default_timezone): the report says when a person asked again in it (D8). */
+export async function tenantZone(tx: Tx): Promise<string> {
+  const r = await sql<{ z: string }>`SELECT default_timezone AS z FROM tenant_settings WHERE tenant_id = app.tenant_id()`.execute(tx);
+  return r.rows[0]?.z ?? 'UTC';
+}
+
 // ---- FUB credential (R-IMPORT-11, R-DATA-1) ---------------------------------------------------------
 
 export async function insertCredential(tx: Tx, id: string, secretEnc: Uint8Array, keyVersion: number): Promise<void> {

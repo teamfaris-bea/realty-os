@@ -14,7 +14,7 @@ import { emailWebhook, playbookFixture } from '../comms/testing.js';
 import { makeCommsHandlers } from '../comms/handlers.js';
 import { depsFromPlatform } from '../comms/runtime.js';
 import { enableInbox, labelledBody } from '../leadEmail/testing.js';
-import { command, intake } from '../leads/testing.js';
+import { command, contactState, importedUnassigned, intake, ledger } from '../leads/testing.js';
 import { createWorker } from '../worker/loop.js';
 import { silentLogger } from '../worker/observability.js';
 import { HandlerRegistry } from '../worker/registry.js';
@@ -133,6 +133,23 @@ describe('R-INBOX-9 E79 partner lead feeds (leads.feed_poll, fakes only)', () =>
     await h.su.query('UPDATE integration_connections SET next_sync_at = now() - interval \'1 second\' WHERE id = $1', [connId]);
     await runFeedPoll();
     expect((await h.su.query('SELECT count(*)::int AS n FROM lead_inquiries WHERE contact_id = $1', [viaFeed[0]!.contact_id])).rows[0].n).toBe(2);
+  });
+
+  // Owner decision D8 (2026-11-12; batch 6 review ownership-sla/F4): an import leaves people unassigned and never
+  // routed (no owner in the source, a CSV row, owner decision B4); their next partner-feed lead attached and reached nobody.
+  it('R-OWN-20 E341: a partner-feed lead from a person an import left unassigned (never routed) routes them like a returning lead through the same intake: the inquiry on them, one offer, no second contact', async () => {
+    const phone = randomPhone();
+    const id = await importedUnassigned(h, w.tenantId, { firstName: 'Fern', lastName: 'Feedback', phones: [phone] });
+    await feedConnection('realtor_feed', w.sourceId);
+    h.providers.integrations.leadFeeds.realtor.leads.push({ externalLeadId: `r-${randomUUID()}`, receivedAt: new Date().toISOString(), name: 'Fern Feedback', phone, email: null, message: 'Is 12 Harbor Way still available?', listingRef: 'FAKE-MLS-1001' });
+    await runFeedPoll();
+    expect((await h.su.query<{ contact_id: string }>('SELECT DISTINCT contact_id FROM contact_points WHERE tenant_id = $1 AND address = $2', [w.tenantId, phone])).rows.map((x) => x.contact_id)).toEqual([id]);
+    expect((await h.su.query('SELECT outcome, source_detail FROM lead_inquiries WHERE contact_id = $1', [id])).rows).toEqual([{ outcome: 'reinquiry', source_detail: { channel: 'partner_feed', feed: 'realtor', listing_ref: 'FAKE-MLS-1001' } }]);
+    expect((await ledger(h, id)).map((e) => [e.type, e.reason_code, e.actor_kind])).toEqual([['imported', 'IMPORTED', 'import'], ['reinquiry', 'REINQUIRY_ROUTE', 'provider'], ['offered', 'ROUND_ROBIN', 'provider']]);
+    const c = await contactState(h, id);
+    expect(c.ownership_state).toBe('offered');
+    expect(w.agents.map((a) => a.userId)).toContain(c.offered_to_user_id);
+    expect((await h.su.query("SELECT kind FROM notifications WHERE subject_id = $1 AND kind = 'lead_offer'", [id])).rows).toHaveLength(1);
   });
 
   it('R-INBOX-9: with no partner access (the production adapter) a feed connection stays honestly needs_partner_access and nothing is polled', async () => {
