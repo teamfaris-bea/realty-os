@@ -194,6 +194,8 @@ export const AUDIT_ACTIONS = [
   'consent.recorded',
   'consent.opt_out_received',
   'consent.not_opt_out_marked', // R-CONSENT-8
+  'consent.reaction_quote_not_read', // R-REACT-3 (D5b)
+  'consent.reaction_link_refused', // R-REACT-5 (D5b)
   'suppression.lifted',
   // recordings
   'recording.play',
