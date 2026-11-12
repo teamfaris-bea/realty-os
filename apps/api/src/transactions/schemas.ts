@@ -75,6 +75,8 @@ export const MilestonesResponse = z.object({
   updates: z.object({ approved: z.boolean(), roles: z.array(Role), /** K1: the step roles this deal's side can reach (the team's side only; none on a lease deal) */ teamRoles: z.array(Role), side: z.enum(['buy', 'sell', 'dual', 'lease']) }),
   dates: z.array(MilestoneDateSchema),
   riskItems: z.array(z.object({ id: uuid, dedupeKey: z.string(), dealDateId: z.string().nullable(), conditionCleared: z.boolean(), detectedAt: z.string(), text: z.string() })),
+  /** b8 deals ui/F4: can(caller, 'milestone.confirm', the deal's facts): whether plan, Confirm and Done are offered */
+  canConfirm: z.boolean(),
 });
 
 export const PlanResponse = z.object({
@@ -109,6 +111,8 @@ export const BoardResponse = z.object({
       ownerUserId: uuid,
       proposed: z.number().int(),
       atRisk: z.number().int(),
+      /** b8 deals ui/F4: can(caller, 'milestone.confirm', this deal's facts) */
+      canConfirm: z.boolean(),
       dates: z.array(
         z.object({
           id: uuid,

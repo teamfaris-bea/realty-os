@@ -11,7 +11,7 @@
 //                      upcoming and at-risk dates, in one query; at risk from milestoneRisk, not from exception_items.
 // Everything is read under the caller's own RLS. No confidence, score or tenant id fields.
 import { formatDue, triggerStepFor } from '@realty/core/assistant';
-import { type Instant, instantFromDate } from '@realty/core/foundation';
+import { type Instant, type ResourceFacts, instantFromDate } from '@realty/core/foundation';
 import { type DealSide, type MilestoneRisk, drivesUpdates, milestoneRisk, otherSideRoles, reachableStepRoles, teamClientRoles, updateRoles } from '@realty/core/transactions';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
@@ -258,11 +258,17 @@ export type DealMilestones = NonNullable<Awaited<ReturnType<typeof milestonesOfD
 export const BOARD_UPCOMING_DAYS = 14;
 
 /** The TC board, in one query: the caller's open deals (RLS) with proposed, upcoming and at-risk dates. */
-export async function board(tx: Tx, now: Instant) {
+/**
+ * b8 deals ui/F4: `confirmable` is the routes' can(actor, 'milestone.confirm', facts) over each deal's dealFacts (own, team,
+ * member, read in the same query); the board says per deal whether its Confirm is offered.
+ */
+export async function board(tx: Tx, now: Instant, confirmable: (facts: ResourceFacts) => boolean = () => false) {
   const nowIso = new Date(now).toISOString();
-  const r = await sql<{ deal_id: string; deal_name: string; side: string; stage: string; owner_user_id: string; id: string; kind: R.DateRow['kind']; label: string | null; due_on: string; status: R.DateRow['status']; due_at: Date | null; completed_at: Date | null; responsible: R.DateRow['responsible']; due_version: number; source: R.DateRow['source']; basis: Record<string, unknown> }>`
+  const r = await sql<{ deal_id: string; deal_name: string; side: string; stage: string; owner_user_id: string; id: string; kind: R.DateRow['kind']; label: string | null; due_on: string; status: R.DateRow['status']; due_at: Date | null; completed_at: Date | null; responsible: R.DateRow['responsible']; due_version: number; source: R.DateRow['source']; basis: Record<string, unknown>; f_own: boolean; f_team: boolean; f_member: boolean }>`
     SELECT d.id AS deal_id, d.name AS deal_name, d.side, d.stage, d.owner_user_id, dd.id, dd.kind, dd.label, dd.due_on::text AS due_on, dd.status, dd.due_at,
-           dd.completed_at, dd.responsible, dd.due_version, dd.source, dd.basis
+           dd.completed_at, dd.responsible, dd.due_version, dd.source, dd.basis,
+           d.owner_user_id = app.user_id() AS f_own, d.owner_user_id = ANY (app.my_team_member_ids()) AS f_team,
+           EXISTS (SELECT 1 FROM deal_members m WHERE m.tenant_id = d.tenant_id AND m.deal_id = d.id AND m.user_id = app.user_id()) AS f_member
       FROM deals d JOIN deal_dates dd ON dd.tenant_id = d.tenant_id AND dd.deal_id = d.id
      WHERE d.tenant_id = app.tenant_id() AND d.stage NOT IN ('closed','lost') AND dd.completed_at IS NULL
        AND (dd.status = 'proposed'
@@ -270,9 +276,9 @@ export async function board(tx: Tx, now: Instant) {
      ORDER BY d.expected_close_date NULLS LAST, d.id, dd.due_on, dd.id
      LIMIT 1000`.execute(tx);
   type BoardDate = { id: string; kind: string; label: string; status: R.DateRow['status']; dueOn: string; dueAt: string | null; responsible: R.DateRow['responsible']; rule: string | null; nonBusinessDayNote: string | null; risk: RiskView | null };
-  const deals = new Map<string, { id: string; name: string; side: string; stage: string; ownerUserId: string; proposed: number; atRisk: number; dates: BoardDate[] }>();
+  const deals = new Map<string, { id: string; name: string; side: string; stage: string; ownerUserId: string; proposed: number; atRisk: number; dates: BoardDate[]; canConfirm: boolean }>();
   for (const x of r.rows) {
-    const deal = deals.get(x.deal_id) ?? { id: x.deal_id, name: x.deal_name, side: x.side, stage: x.stage, ownerUserId: x.owner_user_id, proposed: 0, atRisk: 0, dates: [] };
+    const deal = deals.get(x.deal_id) ?? { id: x.deal_id, name: x.deal_name, side: x.side, stage: x.stage, ownerUserId: x.owner_user_id, proposed: 0, atRisk: 0, dates: [], canConfirm: confirmable({ own: x.f_own === true, team: x.f_team === true, deal: x.f_member === true }) };
     const risk = riskView(milestoneRisk({ id: x.id as never, status: x.status, completedAt: null, dueAt: x.due_at ? instantFromDate(x.due_at) : null, dueVersion: x.due_version, responsible: x.responsible, label: x.label ?? KIND_TEXT[x.kind] }, now));
     if (x.status === 'proposed') deal.proposed += 1;
     if (risk) deal.atRisk += 1;

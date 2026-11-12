@@ -68,6 +68,8 @@ export interface DealMilestones {
   updates: { approved: boolean; roles: string[]; teamRoles: string[]; side: 'buy' | 'sell' | 'dual' | 'lease' };
   dates: MilestoneDate[];
   riskItems: { id: string; dedupeKey: string; dealDateId: string | null; conditionCleared: boolean; detectedAt: string; text: string }[];
+  /** b8 deals ui/F4: the server's can(milestone.confirm) on this deal: plan, Confirm and Done are offered only when true */
+  canConfirm: boolean;
 }
 
 export interface BoardDate {
@@ -91,8 +93,17 @@ export interface BoardDeal {
   ownerUserId: string;
   proposed: number;
   atRisk: number;
+  /** b8 deals ui/F4: the server's can(milestone.confirm) on this deal */
+  canConfirm: boolean;
   dates: BoardDate[];
 }
+
+/**
+ * b8 deals ui/F4: shown instead of plan / Confirm / Done to a viewer the server would refuse. Who core authz grants
+ * milestone.confirm: Owner/Admin any deal, a Team Lead their team's deals, an agent own deals or deals they are on, a TC
+ * deals they are on; an ISA never.
+ */
+export const CONFIRM_WHO = "Only the deal's agent or TC, their Team Lead, or an Owner/Admin can confirm dates.";
 
 export const ROLE_LABEL: Record<string, string> = {
   buyer: 'buyer',

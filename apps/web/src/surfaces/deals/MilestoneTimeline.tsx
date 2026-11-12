@@ -2,7 +2,8 @@
 // date, the template, the proposed list with a Confirm chip per date (1 tap), each date's rule, non-business-day note
 // and "not reviewed by counsel" where true, each recipient's update status, each date's risk status, and the Team
 // Lead queue's risk cards for callers who may read them. It replaces Phase 1's "Contract dates" and keeps its Done.
-// Nothing here decides a date: the server plans, confirms and computes; the screen shows what it stored.
+// Nothing here decides a date: the server plans, confirms and computes; the screen shows what it stored. The plan form,
+// Confirm and Done show only when the server's canConfirm says it accepts them from this caller (b8 deals ui/F4).
 import { useQuery } from '@tanstack/react-query';
 import { type FormEvent, type ReactNode, useId, useState } from 'react';
 import { Button, Card, Notice } from '../../design/index.js';
@@ -10,7 +11,7 @@ import { type ApiError, messageFor, useApi } from '../../shell/index.js';
 import { formatDateTime, formatLocalDate } from '../feed/lib/format.js';
 import { useMutate } from '../feed/lib/hooks.js';
 import { AGENT_ERROR_MESSAGES } from '../feed/lib/messages.js';
-import { type DealMilestones, type MilestoneDate, MILESTONE_ERROR_MESSAGES, RESPONSIBLE_LABEL, ROLE_LABEL, reviewWarnings, statusLabel, timelineOrder, updatesLine } from './milestones.js';
+import { CONFIRM_WHO, type DealMilestones, type MilestoneDate, MILESTONE_ERROR_MESSAGES, RESPONSIBLE_LABEL, ROLE_LABEL, reviewWarnings, statusLabel, timelineOrder, updatesLine } from './milestones.js';
 
 const MESSAGES = { ...AGENT_ERROR_MESSAGES, ...MILESTONE_ERROR_MESSAGES };
 
@@ -65,7 +66,9 @@ export function MilestoneTimeline({ dealId }: { dealId: string }) {
   return (
     <Section title="Milestones">
       <p className="text-[15px] text-ink-muted">{updatesLine(m.updates)}</p>
-      {m.templates.length === 0 ? (
+      {!m.canConfirm ? (
+        <p className="text-[15px] text-ink-muted">{CONFIRM_WHO}</p>
+      ) : m.templates.length === 0 ? (
         <p className="text-[15px] text-ink-muted">No milestone templates for this deal yet. An Owner or Admin adds them under Milestone templates; you can still enter dates one by one.</p>
       ) : (
         <form onSubmit={submit} className="flex flex-col gap-2" aria-label="Propose dates from a template">
@@ -120,6 +123,7 @@ export function MilestoneTimeline({ dealId }: { dealId: string }) {
           <DateRow
             key={d.id}
             d={d}
+            canConfirm={m.canConfirm}
             confirming={confirm.pending}
             completing={done.pending}
             onConfirm={() => void confirm.run(`/deal-dates/${d.id}/confirm`, {})}
@@ -133,7 +137,7 @@ export function MilestoneTimeline({ dealId }: { dealId: string }) {
   );
 }
 
-function DateRow({ d, confirming, completing, onConfirm, onDone }: { d: MilestoneDate; confirming: boolean; completing: boolean; onConfirm: () => void; onDone: () => void }) {
+function DateRow({ d, canConfirm, confirming, completing, onConfirm, onDone }: { d: MilestoneDate; canConfirm: boolean; confirming: boolean; completing: boolean; onConfirm: () => void; onDone: () => void }) {
   const chip = statusLabel(d);
   const headId = useId();
   return (
@@ -143,12 +147,12 @@ function DateRow({ d, confirming, completing, onConfirm, onDone }: { d: Mileston
           {d.label} · {formatLocalDate(d.dueOn)}
         </span>
         <span className={`rounded-lg px-2 py-0.5 text-[13px] ${d.status === 'proposed' ? 'bg-warn-soft text-ink' : d.completedAt ? 'bg-ok-soft text-ink' : 'bg-surface-2 text-ink-muted'}`}>{chip}</span>
-        {d.status === 'proposed' && !d.completedAt ? (
+        {canConfirm && d.status === 'proposed' && !d.completedAt ? (
           <Button variant="primary" disabled={confirming} onClick={onConfirm} aria-label={`Confirm ${d.label} on ${formatLocalDate(d.dueOn)}`}>
             Confirm
           </Button>
         ) : null}
-        {d.status === 'confirmed' && !d.completedAt ? (
+        {canConfirm && d.status === 'confirmed' && !d.completedAt ? (
           <Button variant="secondary" disabled={completing} onClick={onDone} aria-label={`Mark ${d.label} done`}>
             Done
           </Button>

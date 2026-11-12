@@ -46,6 +46,7 @@ function milestones(over: Partial<DealMilestones> = {}): DealMilestones {
     updates: { approved: false, roles: [], teamRoles: [], side: 'buy' },
     dates: [],
     riskItems: [],
+    canConfirm: true,
     ...over,
   };
 }
