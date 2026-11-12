@@ -168,6 +168,47 @@ describe('Priority Feed', () => {
     expect(fake.calls.some((x) => x.path.endsWith('/send'))).toBe(false);
   });
 
+  it('R-INBOX-4 (review ui-compose/F3): Send on a web-chat draft is judged by the chat: a STOP on their phone does not disable it; once the chat ended it is disabled with the summary\'s reason', async () => {
+    const c = card({ itemType: 'assistant_draft', assistantActionId: IDS.draft, reasons: [{ code: 'DRAFT_READY', label: 'Chat reply drafted for you' }], primaryAction: { kind: 'send_draft', label: 'Send', actionId: IDS.draft } });
+    const chatDraft = draftAction({ draft: { channel: 'web_chat', subject: null, body: 'Happy to help with Elm!' } });
+    for (const [chat, disabled, why] of [['open', false, null], ['ended', true, 'The chat has ended: they left the page']] as const) {
+      const fake = new FakeFetch()
+        .on('GET /feed', { status: 200, body: feed([], [c]) })
+        .on('GET /assistant/inbox', { status: 200, body: { items: [chatDraft] } })
+        .on(`GET /reachability?contactIds=${IDS.jane}`, { status: 200, body: { reachability: [reachability(IDS.jane, { sms: [stopReason()] }, chat)] } });
+      const { view } = agentApp(fake);
+      const send = await screen.findByRole('button', { name: 'Send' });
+      await waitFor(() => expect(fake.callsTo('GET /assistant/inbox').length).toBeGreaterThan(0));
+      if (disabled) {
+        await waitFor(() => expect(send).toBeDisabled());
+        expect(send).toHaveAccessibleDescription(why!);
+      } else {
+        await new Promise((r) => setTimeout(r, 50));
+        expect(send).toBeEnabled();
+        expect(document.body.textContent).not.toContain('Texted STOP');
+      }
+      view.unmount();
+    }
+  });
+
+  it('review chat-R2 of batch 6: Send of a suggested text to a lead with no phone on file (a chat-only lead) is disabled before the tap and says why; the approval is never sent', async () => {
+    const c = card({ itemType: 'handback', assistantActionId: IDS.draft, reasons: [{ code: 'HANDBACK', label: 'Replied to the assistant; follow-ups paused' }], primaryAction: { kind: 'send_draft', label: 'Send', actionId: IDS.draft }, alternatives: [{ kind: 'edit_draft', label: 'Edit', actionId: IDS.draft }] });
+    const hb = draftAction({ kind: 'handback', draft: { channel: 'sms', subject: null, body: 'Does tomorrow afternoon work for a quick call?' } });
+    const none = { hasAddress: false, defaultPointId: null, blocked: false, reasons: [], points: [] };
+    const open = reachability(IDS.jane, {}, 'open');
+    const fake = new FakeFetch()
+      .on('GET /feed', { status: 200, body: feed([], [c]) })
+      .on('GET /assistant/inbox', { status: 200, body: { items: [hb] } })
+      .on(`GET /reachability?contactIds=${IDS.jane}`, { status: 200, body: { reachability: [{ ...open, channels: { ...open.channels, sms: none, voice: none, email: none } }] } })
+      .on(`POST /assistant/actions/${IDS.draft}/approve`, err(422, 'CONTACT_POINT_MISSING'));
+    agentApp(fake);
+    const send = await screen.findByRole('button', { name: 'Send' });
+    await waitFor(() => expect(send).toBeDisabled());
+    expect(send).toHaveAccessibleDescription("There's no phone number on file to text");
+    await user().click(send);
+    expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(0);
+  });
+
   it('texting a lead is 2 taps: Text → the thread opens with the assistant draft prefilled → Send', async () => {
     const c = card({ primaryAction: { kind: 'text', label: 'Text', contactId: IDS.jane, draftActionId: IDS.draft } });
     const fake = new FakeFetch()
@@ -393,6 +434,17 @@ describe('Priority Feed: opt-outs said before the tap (lane optout-visibility)',
     const reply = await screen.findByRole('button', { name: 'Reply' });
     await waitFor(() => expect(reply).toBeDisabled());
     expect(reply).toHaveAccessibleDescription('The chat has ended: they left the page');
+  });
+
+  it('review ui-compose/F2: Reply on a card whose summary has no chat to answer is disabled before the tap and says why; it never opens a text box in its place', async () => {
+    const c = card({ primaryAction: { kind: 'reply_chat', label: 'Reply', contactId: IDS.jane } });
+    const fake = new FakeFetch()
+      .on('GET /feed', { status: 200, body: feed([], [c]) })
+      .on(`GET /reachability?contactIds=${IDS.jane}`, { status: 200, body: { reachability: [reachability(IDS.jane, {}, 'none')] } });
+    agentApp(fake);
+    const reply = await screen.findByRole('button', { name: 'Reply' });
+    await waitFor(() => expect(reply).toBeDisabled());
+    expect(reply).toHaveAccessibleDescription("This website chat can't be answered from this record");
   });
 });
 

@@ -27,6 +27,35 @@ const callClaim = {
 };
 
 describe('Approvals inbox', () => {
+  it('R-INBOX-4 (review ui-compose/F3): each draft is captioned by the channel it goes out on, a web-chat reply as a chat reply, never as an email', async () => {
+    const chat = draftAction({ id: IDS.draft, draft: { channel: 'web_chat', subject: null, body: 'Happy to help with Elm!' } });
+    const text = draftAction({ id: '01900000-0000-7000-8000-0000000d0f02', draft: { channel: 'sms', subject: null, body: 'Saturday works.' } });
+    const mail = draftAction({ id: '01900000-0000-7000-8000-0000000d0f03', draft: { channel: 'email', subject: 'The house', body: 'Attached.' } });
+    agentApp(inbox([chat, text, mail]), '/approvals');
+    expect(await screen.findByText('Chat reply the assistant drafted')).toBeInTheDocument();
+    expect(screen.getByText('Text the assistant drafted')).toBeInTheDocument();
+    expect(screen.getAllByText('Email the assistant drafted')).toHaveLength(1);
+  });
+
+  it('R-INBOX-4 (review ui-compose/F3): Send on a web-chat draft is judged by the chat, never by the texts: a STOP on their phone leaves it enabled; a chat that ended disables it, with the reason', async () => {
+    const chat = draftAction({ draft: { channel: 'web_chat', subject: null, body: 'Happy to help with Elm!' } });
+    for (const [state, disabled] of [['open', false], ['ended', true]] as const) {
+      const fake = inbox([chat]).on(`GET /reachability?contactIds=${IDS.jane}`, { status: 200, body: { reachability: [reachability(IDS.jane, { sms: [stopReason()] }, state)] } });
+      const { view } = agentApp(fake, '/approvals');
+      const send = await screen.findByRole('button', { name: 'Send' });
+      await waitFor(() => expect(fake.callsTo(`GET /reachability?contactIds=${IDS.jane}`).length).toBeGreaterThan(0));
+      if (disabled) {
+        await waitFor(() => expect(send).toBeDisabled());
+        expect(send).toHaveAccessibleDescription('The chat has ended: they left the page');
+      } else {
+        await new Promise((r) => setTimeout(r, 50));
+        expect(send).toBeEnabled();
+      }
+      expect(document.body.textContent).not.toContain('Texted STOP');
+      view.unmount();
+    }
+  });
+
   it('a card shows the explanation and each claim with its evidence; tapping the evidence opens the source', async () => {
     const fake = inbox([draftAction({ claims: [callClaim] })]);
     const { router } = agentApp(fake, '/approvals');

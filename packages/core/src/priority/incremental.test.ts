@@ -30,6 +30,7 @@ const gate: fc.Arbitrary<GateSummary> = fc.record(
     sms: fc.record({ outcome: fc.constantFrom('deny' as const, 'unavailable' as const), explanation: text }),
     voice: fc.record({ outcome: fc.constantFrom('deny' as const, 'unavailable' as const), explanation: text }),
     email: fc.record({ outcome: fc.constantFrom('deny' as const, 'unavailable' as const), explanation: text }),
+    web_chat: fc.record({ outcome: fc.constant('deny' as const), explanation: text }),
   },
   { requiredKeys: [] },
 );
@@ -75,11 +76,12 @@ const inputsA: fc.Arbitrary<FeedInputs> = fc
         n: fc.integer({ min: 0, max: 1 }),
         ownerUserId: users,
         inboundMessageId: fc.constant(msg(40)),
-        inboundChannel: fc.constantFrom('sms' as const, 'email' as const, 'voice' as const, null),
+        inboundChannel: fc.constantFrom('sms' as const, 'email' as const, 'voice' as const, 'web_chat' as const, null),
         receivedAt: when,
         withDraft: fc.boolean(),
+        draftChannel: fc.constantFrom('sms' as const, 'email' as const, 'web_chat' as const, null),
         createdAt: when,
-      }).map(({ n, withDraft, ...h }) => ({ ...h, actionId: action(n), contactId: owns(n), replyDraftActionId: withDraft ? action(n) : null })),
+      }).map(({ n, withDraft, draftChannel, ...h }) => ({ ...h, actionId: action(n), contactId: owns(n), replyDraftActionId: withDraft ? action(n) : null, replyDraftChannel: withDraft ? draftChannel : null })),
       { maxLength: 2 },
     ),
     drafts: fc.array(

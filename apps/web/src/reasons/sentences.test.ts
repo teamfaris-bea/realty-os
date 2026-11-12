@@ -25,7 +25,11 @@ function reason(o: Partial<ReachReason>): ReachReason {
 }
 
 describe('reachSentence: the exact words for each opt-out source', () => {
-  it.each<[string, Partial<ReachReason>, 'sms' | 'voice' | 'email', string]>([
+  it.each<[string, Partial<ReachReason>, 'sms' | 'voice' | 'email' | 'web_chat', string]>([
+    // R-CHAN-2 (review optouts/F1): the person-level do-not-contact has its own sentence, the same on every channel
+    ['the person asked not to be contacted (recorded by an agent)', { code: 'PERSON_DO_NOT_CONTACT', source: 'agent_recorded', keyword: null, addressHint: null, at: OCT3, recordedBy: { userId: 'u', displayName: 'Avery Brooks' } }, 'sms', 'Asked not to be contacted at all (recorded by Avery Brooks on Oct 3)'],
+    ['the person asked not to be contacted, in words', { code: 'PERSON_DO_NOT_CONTACT', source: 'opt_out_language', keyword: null, addressHint: null }, 'web_chat', 'Asked not to be contacted at all on Nov 10'],
+    ['the person asked not to be contacted (ledger not visible)', { code: 'PERSON_DO_NOT_CONTACT', source: 'other', keyword: null, addressHint: null, at: null }, 'email', 'Asked not to be contacted at all'],
     ['STOP texted', {}, 'sms', 'Texted STOP on Nov 10'],
     ['another keyword', { keyword: 'UNSUBSCRIBE' }, 'sms', 'Texted UNSUBSCRIBE on Nov 10'],
     // the masked number never breaks across lines (non-breaking hyphens)

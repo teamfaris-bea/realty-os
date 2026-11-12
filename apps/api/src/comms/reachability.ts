@@ -7,10 +7,17 @@
 // message, call or suppression each block rests on, who recorded it and when. The web turns that into
 // one plain sentence ("Texted STOP on Nov 10"); no raw code is shown.
 //
+// The person-level do-not-contact (R-CHAN-2, canContact check 9; review optouts/F1 of batch 6): of any record of the
+// person (repos/gate.ts personDoNotContact's set, app.contact_person_ids, so one a merge carried counts), it blocks
+// every channel on every point, the website chat included, also a point that carries no revoke of its own (a merge
+// survivor's own phone, a point added later, the chat after "stop texting me"). Every such point carries the reason
+// PERSON_DO_NOT_CONTACT with the do-not-contact's own evidence, and `doNotContact` names it once for the person.
+//
 // Web chat (module 22): `channels.web_chat` says whether a reply in the contact's website chat can go out now.
 // Its point is the chat identity a reply goes to (compose's own choice, channels/repos/webchat.ts chatRoutes: the
-// open session's identity first), never anything the visitor typed. Besides the opt-outs on the chat identities
-// (pointBlocks, as for texts), `session` carries what the send-time gate's check 10 reads for a chat reply: the
+// open session's identity first), never anything the visitor typed. Besides the opt-outs on the chat identities of
+// the person (pointBlocks over the gate's own fan-out, repos/gate.ts chatFanoutHmacs, review optouts/F4) and the
+// person-level do-not-contact, `session` carries what the send-time gate's check 10 reads for a chat reply: the
 // session is still open (the visitor was seen in the last 30 minutes, E77) and its widget is connected or degraded
 // (R-INBOX-7); either one false is the gate's CHANNEL_NOT_CONNECTED. channels/chatReachability.test.ts proves the
 // entry agrees with the gate.
@@ -112,13 +119,26 @@ export interface ReachabilityView {
   contactId: string;
   /** what a human one-to-one message would be classified as right now (R-CONSENT-5 rules) */
   purposeNow: Purpose;
+  /**
+   * The person-level do-not-contact (R-CHAN-2), with its evidence; null when the person has none. It blocks every
+   * channel, so every point's reasons carry it too; this names it once for the screens that say it of the person
+   * (compose's typed-in-chat note, review optouts/F3), whatever points the record has.
+   */
+  doNotContact: ReasonView | null;
   channels: Record<'sms' | 'voice' | 'email', ChannelReachView> & { web_chat: ChatReachView };
 }
 
 /** What a chat identity is called wherever an address hint would be shown (never its wc: value). */
 export const CHAT_POINT_HINT = 'Website chat';
 
-const ORDER: ReachabilityReason[] = ['CONSENT_REVOKED', 'SUPPRESSED', 'WRONG_NUMBER', 'CONTACT_POINT_INVALID', 'LANDLINE_NO_SMS'];
+/** Most telling first: the person asked not to be contacted at all (nothing on this point would lift that), then the point's own. */
+const ORDER: ReachabilityReason[] = ['PERSON_DO_NOT_CONTACT', 'CONSENT_REVOKED', 'SUPPRESSED', 'WRONG_NUMBER', 'CONTACT_POINT_INVALID', 'LANDLINE_NO_SMS'];
+
+/** What reasonsFor needs to name the person-level do-not-contact: its ledger event (if the caller sees it) and instant. */
+interface PersonDnc {
+  eventId: string | null;
+  at: Date;
+}
 
 function sourceOf(e: rr.RevokeEventFacts): ReasonSource {
   if (e.imported) return 'imported';
@@ -161,6 +181,23 @@ export function revokeReason(e: rr.RevokeEventFacts | undefined, row: ConsentSta
   };
 }
 
+/**
+ * The person-level do-not-contact as a reason (R-CHAN-2): who recorded it and when, from its ledger event when the
+ * caller sees it (an agent's one-tap, a close as do-not-contact, opt-out language, an import), else only when it was set.
+ */
+export function personReason(e: rr.RevokeEventFacts | undefined, dnc: PersonDnc, purposes: Purpose[]): ReasonView {
+  const base = { ...emptyReason('PERSON_DO_NOT_CONTACT', purposes), source: 'other' as ReasonSource, at: dnc.at.toISOString(), evidence: { consentEventId: dnc.eventId, inboundMessageId: null, callId: null, suppressionId: null } };
+  if (!e) return base;
+  return {
+    ...base,
+    source: sourceOf(e),
+    at: e.occurredAt.toISOString(),
+    recordedBy: e.actorUserId && !e.imported ? { userId: e.actorUserId, displayName: e.actorName } : null,
+    importBatchId: e.importBatchId,
+    evidence: { consentEventId: e.id, inboundMessageId: e.evidenceMessageId, callId: e.evidenceCallId, suppressionId: null },
+  };
+}
+
 export function suppressionReason(s: rr.SuppressionFacts | undefined, fallback: SuppressionRow, purposes: Purpose[]): ReasonView {
   const base = { ...emptyReason('SUPPRESSED', purposes), source: (fallback.reason === 'import_dnc' ? 'imported' : 'suppression') as ReasonSource, suppressionReason: fallback.reason };
   if (!s) return base;
@@ -173,7 +210,7 @@ function bestRow(rows: readonly ConsentStateRow[], pointHmac: string, events: Re
   return [...rows].sort((a, b) => Number(b.addressHmac === pointHmac) - Number(a.addressHmac === pointHmac) || t(b) - t(a))[0]!;
 }
 
-function reasonsFor(blocks: Record<Purpose, ReachBlock[]>, point: ReachPoint, events: ReadonlyMap<string, rr.RevokeEventFacts>, sups: ReadonlyMap<string, rr.SuppressionFacts>, removed: ReadonlySet<string>): ReasonView[] {
+function reasonsFor(blocks: Record<Purpose, ReachBlock[]>, point: ReachPoint, events: ReadonlyMap<string, rr.RevokeEventFacts>, sups: ReadonlyMap<string, rr.SuppressionFacts>, removed: ReadonlySet<string>, dnc: PersonDnc | null): ReasonView[] {
   const byKey = new Map<string, ReasonView>();
   for (const purpose of ['informational', 'marketing'] as const) {
     for (const b of blocks[purpose]) {
@@ -181,6 +218,8 @@ function reasonsFor(blocks: Record<Purpose, ReachBlock[]>, point: ReachPoint, ev
       if (b.reason === 'CONSENT_REVOKED') {
         const row = bestRow(b.revokedRows, point.addressHmac, events);
         v = revokeReason(row.basisEventId ? events.get(row.basisEventId) : undefined, row, point.addressHmac, [purpose], removed);
+      } else if (b.reason === 'PERSON_DO_NOT_CONTACT' && dnc) {
+        v = personReason(dnc.eventId ? events.get(dnc.eventId) : undefined, dnc, [purpose]);
       } else if (b.reason === 'SUPPRESSED') {
         const s = [...b.suppressions].sort((x, y) => (sups.get(y.id)?.createdAt.getTime() ?? 0) - (sups.get(x.id)?.createdAt.getTime() ?? 0))[0]!;
         v = suppressionReason(sups.get(s.id), s, [purpose]);
@@ -216,10 +255,14 @@ export async function reachabilityFor(tx: Tx, contactIds: readonly string[], now
   const byContact = await rr.pointsForContacts(tx, ids);
   // R-PAR-12: removed phones whose opt-out still blocks the person (never listed, never a default point)
   const removed = await rr.removedFanoutPhones(tx, ids);
+  // R-CHAN-4: every chat identity of the person (the gate's chat fan-out, review optouts/F4)
+  const chatFanout = await rr.chatFanoutFor(tx, ids);
+  // R-CHAN-2: the person-level do-not-contact of any record of the person (review optouts/F1)
+  const dncs = await rr.personDoNotContactFor(tx, ids);
   const hmacs = [...new Set([...byContact.values()].flat().map((p) => p.hmac))];
-  const consent = await rr.consentStateFor(tx, [...new Set([...hmacs, ...[...removed.values()].flat()])]);
+  const consent = await rr.consentStateFor(tx, [...new Set([...hmacs, ...[...removed.values()].flat(), ...[...chatFanout.values()].flat()])]);
   const sups = await rr.suppressionsFor(tx, hmacs);
-  const events = await rr.revokeEvents(tx, consent.filter((r) => r.status === 'revoked' && r.basisEventId !== null).map((r) => r.basisEventId!));
+  const events = await rr.revokeEvents(tx, [...consent.filter((r) => r.status === 'revoked' && r.basisEventId !== null).map((r) => r.basisEventId!), ...[...dncs.values()].flatMap((d) => (d.eventId ? [d.eventId] : []))]);
   const supById = new Map(sups.map((s) => [s.id, s]));
   // module 22: the chat a reply would go to, for every contact at once, in compose's own order
   const chats = await chatRoutesFor(tx, ids);
@@ -234,53 +277,63 @@ export async function reachabilityFor(tx: Tx, contactIds: readonly string[], now
     const keys = new Set([...own, ...removedPhoneHmacs]);
     // a removed phone whose number is not also live on the person: its opt-out is said as a removed number's
     const removedOnly = new Set(removedPhoneHmacs.filter((x) => !own.has(x)));
-    const input = {
+    const dnc = dncs.get(contactId) ?? null;
+    const input: ReachabilityInput = {
       points: pts.map((p): ReachPoint => ({ id: p.id, kind: p.kind, addressHmac: p.hmac, status: p.status, lineType: p.lineType })),
       removedPhoneHmacs,
       consent: consent.filter((r) => keys.has(r.addressHmac)),
       suppressions: sups.filter((s) => own.has(s.addressHmac)).map((s): ReachSuppression => ({ id: s.id, addressHmac: s.addressHmac, channel: s.channel, reason: s.reason, liftedAt: s.liftedAt ? instantFromDate(s.liftedAt) : null })),
+      personDoNotContact: dnc !== null,
     };
     const channel = (ch: 'sms' | 'voice' | 'email'): ChannelReachView => {
       const kind = ch === 'email' ? 'email' : 'phone';
       const points = input.points.filter((p) => p.kind === kind).map((p): PointReachView => {
         const blocks = { informational: pointBlocks(input, p, ch, 'informational'), marketing: pointBlocks(input, p, ch, 'marketing') };
         const address = pts.find((x) => x.id === p.id)!.address;
-        return { pointId: p.id, addressHint: hint(address), blocked: blocks[purposeNow].length > 0, reasons: reasonsFor(blocks, p, events, supById, removedOnly) };
+        return { pointId: p.id, addressHint: hint(address), blocked: blocks[purposeNow].length > 0, reasons: reasonsFor(blocks, p, events, supById, removedOnly, dnc) };
       });
       const def = defaultPoint(pts, ch);
       const dp = def ? (points.find((p) => p.pointId === def.id) ?? null) : null;
       return { hasAddress: points.length > 0, defaultPointId: def?.id ?? null, blocked: dp?.blocked ?? false, reasons: dp ? dp.reasons.filter((r) => r.purposes.includes(purposeNow)) : [], points };
     };
     const chatPoints = (byContact.get(contactId) ?? []).filter((p) => p.kind === 'web_chat');
-    const web_chat = chatChannel(chatPoints, chats.get(contactId) ?? [], consent, sups, purposeNow, events, supById);
-    out.set(contactId, { contactId, purposeNow, channels: { sms: channel('sms'), voice: channel('voice'), email: channel('email'), web_chat } });
+    const web_chat = chatChannel(chatPoints, chatFanout.get(contactId) ?? [], chats.get(contactId) ?? [], consent, sups, purposeNow, events, supById, dnc);
+    const doNotContact = dnc ? personReason(dnc.eventId ? events.get(dnc.eventId) : undefined, dnc, ['informational', 'marketing']) : null;
+    out.set(contactId, { contactId, purposeNow, doNotContact, channels: { sms: channel('sms'), voice: channel('voice'), email: channel('email'), web_chat } });
   }
   return out;
 }
 
 /**
  * The web_chat entry (module 22). The default point is the identity compose sends a reply to (`routes[0]`: the open
- * session first); its opt-outs are pointBlocks over every chat identity of the contact (an opt-out on any of them
- * blocks all of them, R-CHAN-4, as the gate's chatFanoutHmacs); and the session decides check 10.
+ * session first); its opt-outs are pointBlocks over every chat identity of the person (an opt-out on any of them
+ * blocks all of them, R-CHAN-4: the gate's own chatFanoutHmacs set, review optouts/F4), with the person-level
+ * do-not-contact (R-CHAN-2, review optouts/F1); and the session decides check 10.
  */
 function chatChannel(
   chatPoints: readonly { id: string; hmac: string; status: ReachPoint['status']; lineType: ReachPoint['lineType'] }[],
+  fanout: readonly string[],
   routes: readonly ChatRoute[],
   consent: readonly ConsentStateRow[],
   sups: readonly rr.SuppressionFacts[],
   purposeNow: Purpose,
   events: ReadonlyMap<string, rr.RevokeEventFacts>,
   supById: ReadonlyMap<string, rr.SuppressionFacts>,
+  dnc: PersonDnc | null,
 ): ChatReachView {
   const own = new Set(chatPoints.map((p) => p.hmac));
+  const others = fanout.filter((h) => !own.has(h));
+  const keys = new Set([...own, ...others]);
   const input: ReachabilityInput = {
     points: chatPoints.map((p): ReachPoint => ({ id: p.id, kind: 'web_chat', addressHmac: p.hmac, status: p.status, lineType: p.lineType })),
-    consent: consent.filter((r) => own.has(r.addressHmac)),
+    otherChatHmacs: others,
+    consent: consent.filter((r) => keys.has(r.addressHmac)),
     suppressions: sups.filter((s) => own.has(s.addressHmac)).map((s): ReachSuppression => ({ id: s.id, addressHmac: s.addressHmac, channel: s.channel, reason: s.reason, liftedAt: s.liftedAt ? instantFromDate(s.liftedAt) : null })),
+    personDoNotContact: dnc !== null,
   };
   const points = input.points.map((p): PointReachView => {
     const blocks = { informational: pointBlocks(input, p, 'web_chat', 'informational'), marketing: pointBlocks(input, p, 'web_chat', 'marketing') };
-    return { pointId: p.id, addressHint: CHAT_POINT_HINT, blocked: blocks[purposeNow].length > 0, reasons: reasonsFor(blocks, p, events, supById, new Set()) };
+    return { pointId: p.id, addressHint: CHAT_POINT_HINT, blocked: blocks[purposeNow].length > 0, reasons: reasonsFor(blocks, p, events, supById, new Set(), dnc) };
   });
   const route = routes[0] ?? null;
   const dp = route ? (points.find((p) => p.pointId === route.pointId) ?? null) : null;

@@ -24,6 +24,11 @@ beforeAll(async () => {
   w = await assistantWorld(h, { agents: 2 });
   src = await chatSource(h, w.owner, w.tenantId);
   widget = await createWidget(h, w.owner, src.sourceId);
+  // the two agents take every chat lead of this file, none contacted (the default cap of 5 would send the later ones
+  // to the pond): the Owner raises the cap in settings
+  const s = await call<{ settings: { version: number } }>(w.owner, 'GET', '/settings');
+  const cap = await call(w.owner, 'PATCH', '/settings', { version: s.body.settings.version, uncontactedCapacityCap: 50 });
+  if (cap.status !== 200) throw new Error(`settings: ${cap.status} ${JSON.stringify(cap.body)}`);
 }, 180_000);
 afterAll(async () => {
   await h?.close();
@@ -98,6 +103,30 @@ describe('R-INBOX-2 a visitor message runs the Phase 1 ingestion transaction', (
     expect(thread.filter((m) => m.direction === 'inbound').map((m) => m.channel)).toEqual(['web_chat', 'web_chat', 'web_chat']);
     const feed = (await h.su.query("SELECT item_type FROM priority_feed_items WHERE contact_id = $1 AND state = 'open'", [c.contactId])).rows.map((x) => x.item_type);
     expect(feed).toContain('handback');
+  });
+
+  it('R-INBOX-4 (review ui-compose/F3, chat-R2 of batch 6): the handback of a chat-only lead who answered the assistant in the chat offers Reply in the chat on the feed, never "Can\'t reach them right now", and never a one-tap Send of the suggested text to a number that does not exist', async () => {
+    const c = await openChat(h, widget.key, src.disclosureId, { name: 'Hal Handback' });
+    await runJobs(h, w.tenantId, FR);
+    const agent = await acceptLead(h, w.agents, c.contactId);
+    expect((await chatMessage(h, c.token, { message: 'Can we see it Saturday?', clientMessageId: randomUUID() })).statusCode).toBe(200);
+    const hb = (await h.su.query<{ id: string }>("SELECT id FROM assistant_actions WHERE contact_id = $1 AND kind = 'handback' AND status = 'proposed'", [c.contactId])).rows;
+    expect(hb).toHaveLength(1);
+    // the assistant adds its suggested reply, bound to a text (the server picks sms or email, sms with no number at all)
+    await runJobs(h, w.tenantId, ['assistant.enrich_handback']);
+    const payload = (await h.su.query("SELECT payload FROM assistant_actions WHERE id = $1", [hb[0]!.id])).rows[0].payload;
+    expect(payload.draft).toMatchObject({ channel: 'sms' });
+    type Card = { itemType: string; contact: { id: string } | null; primaryAction: { kind: string }; alternatives: { kind: string }[]; reasons: { code: string; label: string }[] };
+    const feed = await call<{ pinned: Card[]; scored: Card[] }>(agent, 'GET', '/feed');
+    const card = [...feed.body.pinned, ...feed.body.scored].find((x) => x.itemType === 'handback' && x.contact?.id === c.contactId);
+    expect(card, JSON.stringify(feed.body)).toBeDefined();
+    expect(card!.primaryAction.kind).toBe('reply_chat');
+    expect(card!.alternatives.map((a) => a.kind)).not.toContain('send_draft');
+    expect(card!.alternatives.map((a) => a.kind)).toContain('edit_draft');
+    expect(card!.reasons.map((r) => r.code)).not.toContain('CANT_CONTACT');
+    // what the card withholds is what the approval refuses: there is no phone to text
+    const ap = await call(agent, 'POST', `/assistant/actions/${hb[0]!.id}/approve`, { commandId: randomUUID() });
+    expect([ap.status, ap.code]).toEqual([422, 'CONTACT_POINT_MISSING']);
   });
 
   it('replay: the same clientMessageId posted twice stores one message', async () => {
@@ -269,6 +298,25 @@ describe('E138 E137 what the visitor types is never trusted', () => {
     const after = await call<Full>(agent, 'GET', `/contacts/${c.contactId}`);
     expect(after.body.contact.emails.map((e) => e.address)).toEqual([typed.toLowerCase()]);
     expect(after.body.contact.typedInChat).toEqual([]);
+  });
+
+  it('module 57 (review tenancy-public/F3): the points routes refuse the chat identity like an unknown point (it is no phone or email a person edits), so it cannot be removed out from under its chat, and the Details of a chat lead never answer 500, even with a removed chat identity', async () => {
+    const c = await openChat(h, widget.key, src.disclosureId, { name: 'Dot Details' });
+    const agent = await acceptLead(h, w.agents, c.contactId);
+    const chatId = (await h.su.query<{ id: string }>("SELECT id FROM contact_points WHERE contact_id = $1 AND kind = 'web_chat'", [c.contactId])).rows[0]!.id;
+    const base = `/contacts/${c.contactId}/points/${chatId}`;
+    for (const [method, path, body] of [['POST', `${base}/remove`, { reason: 'old' }], ['POST', `${base}/primary`, {}], ['PATCH', base, { label: 'other' }], ['POST', `${base}/replace`, { address: randomEmail() }]] as const) {
+      const r = await call(agent, method, path, body);
+      expect([method, path, r.status, r.code]).toEqual([method, path, 404, 'NOT_FOUND']);
+    }
+    expect((await h.su.query('SELECT removed_at FROM contact_points WHERE id = $1', [chatId])).rows[0].removed_at).toBeNull();
+    // the chat can still be answered
+    expect((await call<{ reachability: { channels: { web_chat: { hasAddress: boolean } } } }>(agent, 'GET', `/contacts/${c.contactId}/reachability`)).body.reachability.channels.web_chat.hasAddress).toBe(true);
+    expect((await call(agent, 'GET', `/contacts/${c.contactId}/details`)).status).toBe(200);
+    // a chat identity removed before this fix (a fixture: no route removes one now) is no removed phone or email of the Details
+    await h.su.query("UPDATE contact_points SET status = 'removed', removed_at = now(), removed_reason = 'old' WHERE id = $1", [chatId]);
+    const d = await call<{ details: { removedPoints: unknown[] } }>(agent, 'GET', `/contacts/${c.contactId}/details`);
+    expect([d.status, d.body.details?.removedPoints]).toEqual([200, []]);
   });
 
   it('E138 (finding UXA-5): a returning visitor who types the same email in a new chat, under another name, raises a duplicate suggestion between the two chat leads ("typed in chat, not verified" to the first one\'s agent)', async () => {

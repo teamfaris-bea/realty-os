@@ -14,7 +14,9 @@
 //   it cannot be used. The agent's own tap always wins among the usable ones.
 // - A channel that cannot be used is never offered: it is shown, disabled, with the reason in the exact
 //   words of the reachability summary (reasons/sentences.ts), instead of being hidden.
-// - Whenever the box is not on the channel the client wrote on last, `why` says why in plain words.
+// - Whenever the box is not on the channel the client wrote on last, `why` says why in plain words. That includes a
+//   chat the summary has nothing to reply to although the box was opened to reply there (the feed's Reply) or the
+//   client wrote last there (review ui-compose/F2): the box never moves to Text silently.
 //
 // D2: there is no Messenger or Instagram channel and no messaging-window rule anywhere here.
 import { type ChannelState, type Reachability, reachSentence } from '../../reasons/index.js';
@@ -36,6 +38,8 @@ export interface WebChatState extends ChannelState {
   offered: boolean;
   /** completes "Writing by text: …" when the box left web chat because of it */
   left: string;
+  /** the summary is in and has no chat to reply to (none was ever there, or none can be answered from this record) */
+  missing: boolean;
 }
 
 export interface ChoiceInput {
@@ -81,6 +85,12 @@ export const CHAT_SESSION_ENDED = 'The chat has ended: they left the page';
 /** channels.web_chat.session.widgetConnected is false (R-INBOX-7) */
 export const CHAT_TURNED_OFF = 'The website chat was turned off';
 const ENDED_LEFT = 'the web chat has ended';
+/**
+ * The summary has no chat to reply to although a Reply asked for one or the client wrote last in web chat (review
+ * ui-compose/F2: a record a chat cannot be answered from, the box had moved to Text and said nothing).
+ */
+export const CHAT_NOT_HERE = "This website chat can't be answered from this record";
+const NOT_HERE_LEFT = "this website chat can't be answered from this record";
 
 /**
  * Web chat from the reachability summary (module 22's channels.web_chat). `seenInThread`: the thread shows web-chat
@@ -88,15 +98,26 @@ const ENDED_LEFT = 'the web chat has ended';
  */
 export function webChatState(r: Reachability | null, seenInThread: boolean): WebChatState {
   const wc = r?.channels.web_chat;
-  const open = (offered: boolean): WebChatState => ({ offered, blocked: false, sentence: null, note: null, left: ENDED_LEFT });
+  const open = (offered: boolean, missing = false): WebChatState => ({ offered, blocked: false, sentence: null, note: null, left: ENDED_LEFT, missing });
   if (!wc) return open(seenInThread);
-  if (!wc.hasAddress || !wc.session) return open(false);
+  if (!wc.hasAddress || !wc.session) return open(false, true);
+  const closed = (sentence: string, left: string): WebChatState => ({ offered: true, blocked: true, sentence, note: null, left, missing: false });
   const optOut = wc.reasons[0];
-  if (optOut) return { offered: true, blocked: true, sentence: reachSentence(optOut, 'web_chat'), note: null, left: 'web chat is blocked' };
-  if (!wc.session.widgetConnected) return { offered: true, blocked: true, sentence: CHAT_TURNED_OFF, note: null, left: 'the website chat was turned off' };
-  if (!wc.session.open) return { offered: true, blocked: true, sentence: CHAT_SESSION_ENDED, note: null, left: ENDED_LEFT };
-  if (wc.blocked) return { offered: true, blocked: true, sentence: "This chat can't take a reply right now", note: null, left: 'web chat is blocked' };
+  if (optOut) return closed(reachSentence(optOut, 'web_chat'), 'web chat is blocked');
+  if (!wc.session.widgetConnected) return closed(CHAT_TURNED_OFF, 'the website chat was turned off');
+  if (!wc.session.open) return closed(CHAT_SESSION_ENDED, ENDED_LEFT);
+  if (wc.blocked) return closed("This chat can't take a reply right now", 'web chat is blocked');
   return open(true);
+}
+
+/**
+ * The feed's Reply (a reply in the website chat): disabled with the reason whenever the summary says the chat cannot
+ * take one, and also when the summary has no chat to answer at all (review ui-compose/F2: it had stayed enabled and
+ * opened a text box with no word about the chat). Unknown summary: nothing is disabled.
+ */
+export function replyChatState(r: Reachability | null): ChannelState {
+  const s = webChatState(r, true);
+  return s.missing ? { blocked: true, sentence: CHAT_NOT_HERE, note: null } : { blocked: s.blocked, sentence: s.sentence, note: s.note };
 }
 
 /** The channel of an inbound timeline message ("sms:inbound" → sms); null for anything compose cannot answer on. */
@@ -160,7 +181,12 @@ export function chooseChannel(i: ChoiceInput): Choice {
         c !== null && options.some((o) => o.channel === c),
     ) ?? null;
   let why: string | null = null;
-  if (meant !== null && meant !== channel) {
+  // asked to reply in web chat (a Reply tap, the agent's own tap) or the client wrote last there, and the summary has
+  // no chat to reply to: say so, unless the box left another channel it was meant to be on (that reason comes first)
+  const chatAsked = [i.picked, i.requested, i.lastInbound].includes('web_chat');
+  if (i.webChat.missing && chatAsked && channel !== 'web_chat' && (meant === null || meant === channel)) {
+    why = `Writing ${BY[channel]}: ${NOT_HERE_LEFT}.`;
+  } else if (meant !== null && meant !== channel) {
     why = `Writing ${BY[channel]}: ${blockedWhy[meant]}.`;
   } else if (i.lastInbound !== null && channel === i.lastInbound) {
     why = `Replying ${BY[channel]}, where ${i.firstName} wrote last.`;

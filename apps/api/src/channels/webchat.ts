@@ -1,7 +1,7 @@
 // Website chat (module 22; PHASE2_3_PLAN §5.4 #22; DATA_MODEL R-INBOX-1/2/5/7, R-TEN-12, R-CHAN-3; E77, E137, E138,
 // E154, E155).
 //
-// Visitors are not principals (R-TEN-12). Every public request resolves its tenant ONLY through a 0042 definer
+// Visitors are not principals (R-TEN-12). Every public request resolves its tenant ONLY through a 0044_channels_inbox definer
 // (the widget key: app.resolve_webchat_widget; the session token: app.webchat_session; reads: app.webchat_poll), then
 // writes as the system actor of THAT tenant. Nothing in a request body ever names a tenant, a contact or an address.
 //

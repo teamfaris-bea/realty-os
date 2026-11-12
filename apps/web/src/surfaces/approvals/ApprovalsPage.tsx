@@ -13,7 +13,8 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useId, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Button, Card, ClaimLine, EmptyState, GateBadge, Notice } from '../../design/index.js';
-import { ReachabilityBatch, ReasonCaption, useChannelState } from '../../reasons/index.js';
+import { type ChannelState, ReachabilityBatch, ReasonCaption, channelState, useReachability } from '../../reasons/index.js';
+import { replyChatState } from '../compose/channelChoice.js';
 import { type ApiError, messageFor, useApi, useCommand } from '../../shell/index.js';
 import { AgentSheetsProvider, SendOutcome, sentResult, useAgentSheets } from '../feed/lib/AgentSheets.js';
 import { claimView, firstName, relativeTime } from '../feed/lib/format.js';
@@ -48,6 +49,13 @@ const KIND_LABEL: Record<string, string> = {
 export function kindLabel(kind: string): string {
   return KIND_LABEL[kind] ?? 'From the assistant';
 }
+
+/** What the assistant drafted, by the channel it goes out on (a web-chat reply is never captioned as an email, ui-compose/F3). */
+export const DRAFT_CAPTION: Record<NonNullable<ActionView['draft']>['channel'], string> = {
+  sms: 'Text the assistant drafted',
+  email: 'Email the assistant drafted',
+  web_chat: 'Chat reply the assistant drafted',
+};
 
 export default function ApprovalsPage() {
   return (
@@ -104,10 +112,12 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
   const name = action.contactName ?? 'this contact';
   const sendable = action.primaryAction === 'send' && action.draft !== null;
   const threadHref = action.contactId ? `/contacts/${action.contactId}/thread?compose=draft&draft=${action.id}` : null;
-  // whether the draft's channel is blocked at all (an opt-out, a suppression) comes from the summary;
-  // the draft's own words are still previewed for the rules that depend on them
-  // (a web-chat draft's chat state is the thread's to show; here the send-time check decides)
-  const reach = useChannelState(sendable ? action.contactId : null, action.draft?.channel === 'web_chat' ? null : (action.draft?.channel ?? null));
+  // whether the draft's channel is blocked at all (an opt-out, a suppression) comes from the summary; a web-chat draft
+  // is judged by the chat (ended, turned off, opted out, the person's do-not-contact; review ui-compose/F3), never by
+  // the texts. The draft's own words are still previewed for the rules that depend on them
+  const summary = useReachability(sendable ? action.contactId : null);
+  const draftChannel = action.draft?.channel ?? null;
+  const reach: ChannelState = draftChannel === 'web_chat' ? replyChatState(summary) : draftChannel ? channelState(summary, draftChannel) : { blocked: false, sentence: null, note: null };
   const reasonId = useId();
   const check = useSendCheck({ contactId: action.contactId ?? '', channel: action.draft?.channel ?? 'sms', body: action.draft?.body ?? '', subject: action.draft?.subject ?? '', enabled: sendable && action.contactId !== null && !reach.blocked });
 
@@ -152,7 +162,7 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
       </div>
       {action.draft ? (
         <figure className="flex flex-col gap-1">
-          <figcaption className="text-[13px] font-medium text-ink-muted">{action.draft.channel === 'sms' ? 'Text' : 'Email'} the assistant drafted</figcaption>
+          <figcaption className="text-[13px] font-medium text-ink-muted">{DRAFT_CAPTION[action.draft.channel]}</figcaption>
           {action.draft.subject ? <p className="text-[15px] font-semibold text-ink">{action.draft.subject}</p> : null}
           <blockquote className="whitespace-pre-wrap rounded-xl bg-surface-2 px-3.5 py-2.5 text-[16px] text-ink">{action.draft.body}</blockquote>
         </figure>

@@ -92,7 +92,7 @@ export function answersClient(t: TouchFacts, since: Instant): boolean {
 
 const BLOCK_CODE: Record<Channel, FeedReasonCode> = { sms: 'TEXT_BLOCKED', voice: 'CALL_BLOCKED', email: 'EMAIL_BLOCKED' };
 
-function isBlocked(g: GateSummary | undefined, ch: Channel): boolean {
+function isBlocked(g: GateSummary | undefined, ch: Channel | 'web_chat'): boolean {
   return g?.[ch] !== undefined;
 }
 
@@ -113,6 +113,13 @@ interface ContactPlan {
   open: OneTapAction;
   /** Demotion reasons (none when the preferred channel works). */
   demotion: FeedReason[];
+  /** The gate's explanations of the blocked channels, in preference order (what "Can't reach them" says). */
+  why: string[];
+}
+
+function cantContact(f: LabelFormat, why: readonly string[]): FeedReason {
+  const said = [...new Set(why.filter((s) => s.length > 0))];
+  return reason('CANT_CONTACT', said.length > 0 ? `Can't reach them right now: ${f.text(said.join(' · '), 200)}` : undefined);
 }
 
 /**
@@ -125,25 +132,46 @@ function planContact(f: LabelFormat, contactId: ContactId, prefs: readonly Chann
   const open: OneTapAction = { kind: 'open_contact', label: 'Open', contactId };
   const first = prefs[0] as Channel;
   const demotion: FeedReason[] = [];
+  const why = prefs.map((ch) => g?.[ch]?.explanation).filter((s): s is string => s !== undefined && s.length > 0);
   if (usable.length === 0) {
-    const why = [...new Set(prefs.map((ch) => g?.[ch]?.explanation).filter((s): s is string => s !== undefined && s.length > 0))];
-    demotion.push(reason('CANT_CONTACT', why.length > 0 ? `Can't reach them right now: ${f.text(why.join(' · '), 200)}` : undefined));
+    demotion.push(cantContact(f, why));
   } else if (isBlocked(g, first)) {
-    const why = g?.[first]?.explanation;
-    demotion.push(reason(BLOCK_CODE[first], why ? `Can't ${CHANNEL_VERB[first]}: ${f.text(why, 160)}` : undefined));
+    const said = g?.[first]?.explanation;
+    demotion.push(reason(BLOCK_CODE[first], said ? `Can't ${CHANNEL_VERB[first]}: ${f.text(said, 160)}` : undefined));
   }
-  return { usable, open, demotion };
+  return { usable, open, demotion, why };
 }
 
 /**
  * The client wrote last in the website chat (module 22): a Reply in the chat comes first, ahead of the other channels.
  * Such a lead often has no phone or email at all (the chat is its only identity), which is not "can't reach them":
  * the chat is how to answer, so the plan's demotion goes. Whether the chat is still open is the reachability
- * summary's to say on the button (the web disables it with the reason); the send-time check decides the rest.
+ * summary's to say on the button (the web disables it with the reason); the send-time check decides the rest. A chat
+ * the gate summary blocks (the person asked not to be contacted, R-CHAN-2, or opted out of the chat) is no way to
+ * answer: no Reply, and the card says the chat's own reason (sayChatBlocked, review optouts/F1 and chat-R3 of batch 6).
  */
-function withChatReply(plan: ContactPlan, contactId: ContactId, chat: boolean): ContactPlan {
+function withChatReply(f: LabelFormat, plan: ContactPlan, contactId: ContactId, chat: boolean, g: GateSummary | undefined): ContactPlan {
   if (!chat) return plan;
-  return { usable: [{ kind: 'reply_chat', label: 'Reply', contactId }, ...plan.usable], open: plan.open, demotion: [] };
+  if (isBlocked(g, 'web_chat')) return sayChatBlocked(f, plan, g);
+  return { usable: [{ kind: 'reply_chat', label: 'Reply', contactId }, ...plan.usable], open: plan.open, demotion: [], why: plan.why };
+}
+
+/** "Can't reply in the chat: Marked as a wrong number" (informational: the chat is never a scored preference). */
+function chatBlockedReason(f: LabelFormat, why: string): FeedReason {
+  return reason('CHAT_BLOCKED', why.length > 0 ? `Can't reply in the chat: ${f.text(why, 160)}` : undefined);
+}
+
+/**
+ * A card that would answer in the chat, whose chat the gate summary blocks (review chat-R3 of batch 6): the card says
+ * the chat's own reason, never only the missing phone and email (which would read as if adding one were the fix).
+ * Nothing else works: "Can't reach them right now", the chat's reason first. Another channel works: the card opens with
+ * it, and a CHAT_BLOCKED reason says why there is no Reply in the chat.
+ */
+function sayChatBlocked(f: LabelFormat, plan: ContactPlan, g: GateSummary | undefined): ContactPlan {
+  const why = g?.web_chat?.explanation;
+  if (why === undefined) return plan;
+  if (plan.usable.length === 0) return { ...plan, demotion: [...plan.demotion.filter((r) => r.code !== 'CANT_CONTACT'), cantContact(f, [why, ...plan.why])] };
+  return { ...plan, demotion: [...plan.demotion, chatBlockedReason(f, why)] };
 }
 
 function contactCard(plan: ContactPlan, extra: OneTapAction[] = []): { primaryAction: OneTapAction; alternatives: OneTapAction[] } {
@@ -315,7 +343,7 @@ export function scoreFeed(i: FeedInputs, opts: ScoreFeedOptions = {}): FeedItem[
         : reason('FIRST_TOUCH_DUE', `First contact due ${f.in(s.firstTouchDueAt)}`),
     ];
     if (s.releaseDueAt != null && s.releaseDueAt > now) reasons.push(reason('RELEASE_SOON', `Goes back to the pond ${f.in(s.releaseDueAt)} if not contacted`));
-    const plan = withChatReply(planContact(f, s.contactId, CALL_FIRST, gateOf(s.contactId)), s.contactId, chatLatest(s.contactId));
+    const plan = withChatReply(f, planContact(f, s.contactId, CALL_FIRST, gateOf(s.contactId)), s.contactId, chatLatest(s.contactId), gateOf(s.contactId));
     const d: Draft = {
       itemType: 'first_touch_due',
       band: 'pinned',
@@ -397,19 +425,26 @@ export function scoreFeed(i: FeedInputs, opts: ScoreFeedOptions = {}): FeedItem[
     handbackContacts.add(h.contactId);
     const g = gateOf(h.contactId);
     const prefs = prefsFor(h.inboundChannel);
-    const replyCh: 'sms' | 'email' | null = h.inboundChannel === 'email' ? 'email' : h.inboundChannel === 'voice' ? null : 'sms';
+    // they answered in the website chat: Reply there is offered (module 22, R-INBOX-4)
+    const chat = h.inboundChannel === 'web_chat';
+    // the one-tap Send is judged by the channel its draft goes out on (review chat-R2 of batch 6): the assistant binds a
+    // handback's reply to a text or email (sms even with no number at all), so a chat handback's draft is a text, not a
+    // chat reply. After a voicemail the call back comes first: no one-tap Send of a text.
+    const draftCh = h.inboundChannel === 'voice' ? null : (h.replyDraftChannel ?? null);
     const reasons: FeedReason[] = [reason('HANDBACK'), ...waitingReasons(now, h.receivedAt)];
     const review: OneTapAction = { kind: 'review_handback', label: 'See what they said', actionId: h.actionId };
     let primaryAction: OneTapAction;
     let alternatives: OneTapAction[];
     const draftId = h.replyDraftActionId ?? null;
     if (draftId !== null) handbackDrafts.add(draftId);
-    if (draftId !== null && replyCh !== null && !isBlocked(g, replyCh)) {
+    if (draftId !== null && draftCh !== null && !isBlocked(g, draftCh)) {
       primaryAction = { kind: 'send_draft', label: 'Send', actionId: draftId };
       const plan = planContact(f, h.contactId, prefs, g);
-      alternatives = [{ kind: 'edit_draft', label: 'Edit', actionId: draftId }, ...plan.usable.filter((a) => a.kind === 'call'), review, plan.open];
+      const chatReply: OneTapAction[] = chat && !isBlocked(g, 'web_chat') ? [{ kind: 'reply_chat', label: 'Reply', contactId: h.contactId }] : [];
+      if (chat && g?.web_chat !== undefined) reasons.push(chatBlockedReason(f, g.web_chat.explanation));
+      alternatives = [{ kind: 'edit_draft', label: 'Edit', actionId: draftId }, ...chatReply, ...plan.usable.filter((a) => a.kind === 'call'), review, plan.open];
     } else {
-      const plan = planContact(f, h.contactId, prefs, g);
+      const plan = withChatReply(f, planContact(f, h.contactId, prefs, g), h.contactId, chat, g);
       reasons.push(...plan.demotion);
       const extra: OneTapAction[] = draftId !== null ? [{ kind: 'edit_draft', label: 'Edit draft', actionId: draftId }, review] : [review];
       ({ primaryAction, alternatives } = contactCard(plan, extra));
@@ -464,12 +499,15 @@ export function scoreFeed(i: FeedInputs, opts: ScoreFeedOptions = {}): FeedItem[
     const reasons: FeedReason[] = [missed ? reason('MISSED_CALL', what) : reason('CLIENT_WAITING', what)];
     if (msgs.length > 1) reasons.push(reason('MORE_WAITING', `${msgs.length} messages or calls waiting`));
     reasons.push(...waitingReasons(now, first.at));
+    // a chat reply the assistant drafted (R-INBOX-4) is the chat's: Reply opens the thread on web chat, which adopts it
+    const chatDraft = replyDraft?.channel === 'web_chat';
     if (replyDraft !== undefined) {
-      reasons.push(reason('REPLY_DRAFTED', replyDraft.channel === 'email' ? 'Reply email drafted for you' : 'Reply text drafted for you'));
+      reasons.push(reason('REPLY_DRAFTED', replyDraft.channel === 'email' ? 'Reply email drafted for you' : chatDraft ? 'Chat reply drafted for you' : 'Reply text drafted for you'));
       if (replyDraft.needsReview) reasons.push(reason('CHECK_THIS', 'Check this: a detail needs your OK'));
     }
-    const replyPrefs = replyDraft !== undefined ? (replyDraft.channel === 'email' ? EMAIL_FIRST : TEXT_FIRST) : prefsFor(missed ? 'voice' : latest.channel);
-    const plan = withChatReply(planContact(f, contactId, replyPrefs, gateOf(contactId), replyDraft && { channel: replyDraft.channel, actionId: replyDraft.actionId }), contactId, !missed && replyDraft === undefined && latest.channel === 'web_chat');
+    const textDraft = replyDraft !== undefined && replyDraft.channel !== 'web_chat' ? { channel: replyDraft.channel, actionId: replyDraft.actionId } : undefined;
+    const replyPrefs = textDraft !== undefined ? (textDraft.channel === 'email' ? EMAIL_FIRST : TEXT_FIRST) : prefsFor(missed ? 'voice' : latest.channel);
+    const plan = withChatReply(f, planContact(f, contactId, replyPrefs, gateOf(contactId), textDraft), contactId, !missed && (chatDraft || (replyDraft === undefined && latest.channel === 'web_chat')), gateOf(contactId));
     reasons.push(...plan.demotion);
     out.push({
       itemType: missed ? 'missed_call' : 'unanswered_inbound',
@@ -491,7 +529,7 @@ export function scoreFeed(i: FeedInputs, opts: ScoreFeedOptions = {}): FeedItem[
     if (d.ownerUserId !== userId || handbackDrafts.has(d.actionId) || foldedDrafts.has(d.actionId)) continue;
     const g = gateOf(d.contactId);
     const reasons: FeedReason[] = [
-      reason('DRAFT_READY', d.channel === 'email' ? 'Email drafted for you' : 'Text drafted for you'),
+      reason('DRAFT_READY', d.channel === 'email' ? 'Email drafted for you' : d.channel === 'web_chat' ? 'Chat reply drafted for you' : 'Text drafted for you'),
       reason('ASSISTANT_NOTE', f.text(d.explanation, 140)),
     ];
     if (d.needsReview) reasons.push(reason('CHECK_THIS', 'Check this: a detail needs your OK'));
@@ -504,7 +542,10 @@ export function scoreFeed(i: FeedInputs, opts: ScoreFeedOptions = {}): FeedItem[
       primaryAction = d.needsReview ? edit : send;
       alternatives = d.needsReview ? [{ kind: 'open_contact', label: 'Open', contactId: d.contactId }] : [edit, { kind: 'open_contact', label: 'Open', contactId: d.contactId }];
     } else {
-      const plan = planContact(f, d.contactId, d.channel === 'email' ? EMAIL_FIRST : TEXT_FIRST, g);
+      // a blocked chat (the person asked not to be contacted, or opted out of the chat) is no way to send it: the card
+      // says the chat's own reason (review chat-R3 of batch 6)
+      const base = planContact(f, d.contactId, d.channel === 'email' ? EMAIL_FIRST : d.channel === 'web_chat' ? CALL_FIRST : TEXT_FIRST, g);
+      const plan = d.channel === 'web_chat' ? sayChatBlocked(f, base, g) : base;
       reasons.push(...plan.demotion);
       ({ primaryAction, alternatives } = contactCard(plan, [edit]));
     }

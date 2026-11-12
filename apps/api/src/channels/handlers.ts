@@ -2,7 +2,7 @@
 //
 //   leads.feed_poll         per-tenant reconcile handler (every 60 s): partner lead feeds through LeadFeedProvider (feedPoll.ts)
 //   channels.webchat_purge  per tenant, hourly: contact-less chat sessions past purge_after are deleted (R-INBOX-5)
-//                           through app.purge_webchat_sessions (0042 definer owned by app_retention)
+//                           through app.purge_webchat_sessions (0044_channels_inbox definer owned by app_retention)
 import type { z } from 'zod';
 import { commsRuntime } from '../comms/runtime.js';
 import { jobPayload } from '../worker/payload.js';

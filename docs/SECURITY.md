@@ -843,3 +843,35 @@ Security review items of the migration (CONVENTIONS §4):
   saved search now stays `active` but never alerts; moving it to the survivor, or pausing it at the merge, is a product
   decision. The contact page's reachability summary for a merged-away record (seen only by tenant-wide roles and the
   loser's collaborators) still describes that record's own points, though every send from it is refused.
+
+## 9. Batch 6 interaction review: web chat and opt-out honesty (migration `webchat_sessions_follow_merge`, lane number 0046)
+
+Fixes of the batch 6 review (group "chat"; ARCHITECTURE §21.13). Each change only refuses, blocks or says more; no
+opt-out check, guard, policy or grant is weakened (D1), and each is proved by a test that failed before the fix. One
+earlier change of this group did offer more than the send allows (a chat handback's one-tap Send judged by the chat
+instead of its text draft); the review of these fixes found it and it is corrected below (chat-R2).
+
+- **New SECURITY DEFINER trigger `app.webchat_sessions_follow_merge()`** (owner `app_definer`, `search_path =
+  pg_catalog, public`, EXECUTE revoked from PUBLIC; column grant `UPDATE (contact_id, contact_point_id)` on
+  `webchat_sessions` to `app_definer`). It fires only on the ownership engine's merge (`merged_into_contact_id` from
+  NULL to a contact), within that row's tenant, after 0027's point copy, and re-points only the merged-away record's
+  chat sessions to the survivor's copy of the same chat identity. It writes no opt-out state; a person still cannot
+  write a session (0018 `webchat_system`), and a staff user reads one only with the survivor's detail (0018
+  `webchat_staff_read`), as they read the messages the merge moved. The migration's self-check and
+  `packages/db/test/webchat_follow_merge.test.ts` assert the shape, the trigger order and the backfill.
+- **canContact's web-chat fan-out reads the whole person** (`comms/repos/gate.ts chatFanoutHmacs`), the set the 0043
+  guard reads, so a chat reply to a merged-away record is refused by the gate first, with its evidence
+  (`comms/guardEquivalence.test.ts`, R-INBOX-3 case).
+- **The person-level do-not-contact is said before every tap** (reachability summary, feed hint, compose, Details),
+  web chat included; the points routes refuse the chat identity (404 `NOT_FOUND`) so it cannot be removed from under
+  its chat. Read paths only; everything stays under the caller's RLS.
+- **A handback's one-tap Send is judged by its draft's own channel** (review chat-R2): the assistant binds a
+  handback's suggested reply to a text or email (sms even with no number), so the feed offers Send only when that
+  channel is open (`HandbackFacts.replyDraftChannel`, read from `payload.draft.channel` as the approval reads it), and
+  offers Reply in the chat beside it; the web disables a Send of a text or email to a lead with no number or address,
+  with the reason. A chat the gate summary blocks is said on the card with its source (review chat-R3). Read paths
+  only: the send-time gate and the guards are unchanged.
+- **The summary's batched chat fan-out reads each person once** (review chat-R1, `comms/repos/reachability.ts
+  chatFanoutSql`): a function scan per contact, then that person's points by `contact_id`, the same rows as the
+  gate's per-contact read; `comms/chatFanout.perf.test.ts` asserts the plan shape and a time bound with 3,000 chat
+  identities, so the honest-UI summary cannot time out into "unknown" (which disables nothing).

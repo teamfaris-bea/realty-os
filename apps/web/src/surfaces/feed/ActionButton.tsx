@@ -4,7 +4,8 @@
 //   call                                   tap-to-call with the post-call outcome sheet
 //   text / email / edit_draft              the thread with the compose box (assistant draft prefilled)
 //   reply_chat                             the thread with the box on web chat, where the client wrote last (module 22);
-//                                          disabled before the tap once the chat ended, with the summary's reason
+//                                          disabled before the tap once the chat ended, with the summary's reason, and
+//                                          when the summary has no chat to answer (review ui-compose/F2)
 //   send_draft                             approve the assistant's draft as is → send (1 tap)
 //   review_handback                        the approvals inbox at that handback
 //   complete_task / complete_deal_date     mark done
@@ -27,7 +28,7 @@ import { type ReactNode, useId } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, type ButtonVariant, type IconName } from '../../design/index.js';
 import { type ChannelState, ReasonCaption, channelState, useChannelState, useReachability } from '../../reasons/index.js';
-import { webChatState } from '../compose/channelChoice.js';
+import { replyChatState } from '../compose/channelChoice.js';
 import { useCommand } from '../../shell/index.js';
 import { useInbox } from '../approvals/ApprovalsPage.js';
 import { sendOutcomeText, sentResult, useAgentSheets } from './lib/AgentSheets.js';
@@ -63,6 +64,9 @@ export interface ActionButtonProps {
 }
 
 const FEED_KEYS = [['feed'], ['inbox']];
+
+/** A draft on a channel the lead has no number or address for (the approval answers CONTACT_POINT_MISSING). */
+const NO_ADDRESS: Readonly<Record<'sms' | 'email', string>> = { sms: "There's no phone number on file to text", email: "There's no email address on file" };
 
 export function ActionButton(p: ActionButtonProps) {
   switch (p.action.kind) {
@@ -130,8 +134,19 @@ function OwnershipButton({ action, card, variant = 'primary', expired, block, cl
 function SendDraftButton({ action, card, variant = 'primary', block, className }: ActionButtonProps & { action: Extract<OneTapAction, { kind: 'send_draft' }> }) {
   const sheets = useAgentSheets();
   const draftChannel = useInbox().data?.items.find((a) => a.id === action.actionId)?.draft?.channel ?? null;
-  // (a web-chat draft's chat state is the thread's to show; here the send-time check decides)
-  const reach = useChannelState(card?.contact?.id, draftChannel === 'web_chat' ? null : draftChannel);
+  // judged by the channel the draft goes out on: a web-chat draft by the chat (ended, turned off, opted out, the person's
+  // do-not-contact: review ui-compose/F3), never by the texts; a text or email to a lead with no number or address on
+  // file (a chat-only lead's suggested text) is refused CONTACT_POINT_MISSING, so it is disabled with that reason first
+  // (review chat-R2 of batch 6)
+  const summary = useReachability(card?.contact?.id);
+  const reach: ChannelState =
+    draftChannel === 'web_chat'
+      ? replyChatState(summary)
+      : draftChannel && summary && !summary.channels[draftChannel].hasAddress
+        ? { blocked: true, sentence: NO_ADDRESS[draftChannel], note: null }
+        : draftChannel
+          ? channelState(summary, draftChannel)
+          : { blocked: false, sentence: null, note: null };
   const reasonId = useId();
   const navigate = useNavigate();
   const cmd = useCommand<Record<string, unknown>, ApproveResponse>(`/assistant/actions/${action.actionId}/approve`, { invalidate: [...FEED_KEYS, ['timeline']] });
@@ -250,7 +265,7 @@ function NavButton({ action, card, variant = 'primary', block, className }: Acti
   const channel = action.kind === 'text' ? 'sms' : action.kind === 'email' ? 'email' : null;
   const chat = action.kind === 'reply_chat';
   const summary = useReachability((channel || chat) && 'contactId' in action ? action.contactId : null);
-  const reach: ChannelState = chat ? webChatState(summary, true) : channel ? channelState(summary, channel) : { blocked: false, sentence: null, note: null };
+  const reach: ChannelState = chat ? replyChatState(summary) : channel ? channelState(summary, channel) : { blocked: false, sentence: null, note: null };
   const reasonId = useId();
   return (
     <Wrap note={note} block={block} reach={reach} reasonId={reasonId}>

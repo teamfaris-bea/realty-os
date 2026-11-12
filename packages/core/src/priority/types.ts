@@ -76,8 +76,11 @@ export interface ChannelBlock {
 /**
  * Per-contact summary of blocked channels for the feed (contacts absent from the map have no known
  * block). It is a display hint only: every send is re-checked by canContact at send time (R-GATE-1).
+ * `web_chat` (module 22): a reply in the website chat is blocked whatever the chat's session says, by the
+ * person-level do-not-contact (R-CHAN-2) or an opt-out on any chat identity of the person (R-CHAN-4); whether
+ * the session is still open is the reachability summary's to say on the button (review optouts/F1 of batch 6).
  */
-export type GateSummary = Partial<Record<Channel, ChannelBlock>>;
+export type GateSummary = Partial<Record<Channel | 'web_chat', ChannelBlock>>;
 
 // ---- feed inputs ---------------------------------------------------------------------------------
 
@@ -152,10 +155,18 @@ export interface HandbackFacts {
   contactId: ContactId;
   /** The inbound message that paused automation (R-AST-9). */
   inboundMessageId: MessageId | null;
-  inboundChannel: 'sms' | 'mms' | 'email' | 'voice' | null;
+  /** 'web_chat' (module 22): the client answered in the website chat; the card offers the chat (review ui-compose/F3) */
+  inboundChannel: 'sms' | 'mms' | 'email' | 'voice' | 'web_chat' | null;
   receivedAt: Instant;
   /** A proposed reply draft attached to the handback, if the assistant wrote one. */
   replyDraftActionId?: AssistantActionId | null;
+  /**
+   * The channel that draft goes out on (payload.draft.channel, read as the approval reads it): the one-tap Send is
+   * judged by it, never by where they wrote (review chat-R2 of batch 6). The assistant binds a handback's reply to a
+   * text or email (sms when there is no number at all), so a chat handback's draft is usually not a chat draft.
+   * null with no draft, or a draft whose channel is not known: no one-tap Send.
+   */
+  replyDraftChannel?: 'sms' | 'email' | 'web_chat' | null;
   createdAt: Instant;
 }
 
@@ -164,7 +175,8 @@ export interface DraftFacts {
   actionId: AssistantActionId;
   ownerUserId: UserId;
   contactId: ContactId;
-  channel: 'sms' | 'email';
+  /** 'web_chat' (module 22, R-INBOX-4): a reply drafted for the website chat, judged by the chat (review ui-compose/F3) */
+  channel: 'sms' | 'email' | 'web_chat';
   category: ActionCategory | 'internal';
   /** assistant_actions.explanation: the one-line "why", verbatim (1..300 chars). */
   explanation: string;

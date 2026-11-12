@@ -27,7 +27,10 @@
 //   summary's web_chat entry says the chat is open (module 22), and otherwise shown with its reason (the chat
 //   ended, E77; the website chat was turned off, R-INBOX-7; an opt-out). Web-chat replies and approvals go through
 //   channelApi.ts on the one send path, previewed like a text (never scheduled); a reply to a chat that ended
-//   between the summary and the tap is not sent and says so.
+//   between the summary and the tap is not sent and says so. When the summary (asked again every 15 s while a chat is
+//   live) says the chat ended, the box says so in a status message, as the preview path does (review ui-compose/F6). An assistant draft asked for while replying in an open chat loads in the chat
+//   (review ui-compose/F5); a draft opened with ?compose=draft keeps the draft's channel even when every channel is
+//   blocked (review ui-compose/F4).
 //   D2: no Messenger or Instagram compose and no messaging-window copy.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
@@ -37,7 +40,7 @@ import { REACHABILITY_KEY, ReasonCaption, channelState, useReachabilityQuery } f
 import { type ApiError, useApi, useCommand } from '../../shell/index.js';
 import { SendOutcome, WENT_OUT, sendOutcomeText, sentResult, useAgentSheets } from '../feed/lib/AgentSheets.js';
 import { CHANNEL_NOT_CONNECTED, type ComposeChannel, useWebChatApprove, useWebChatSend } from './channelApi.js';
-import { chooseChannel, webChatState } from './channelChoice.js';
+import { CHAT_NOT_HERE, chooseChannel, webChatState } from './channelChoice.js';
 import { firstName, formatPhone } from '../feed/lib/format.js';
 import { useSendCheck } from '../feed/lib/sendCheck.js';
 import type { ActionView, ApproveResponse, ComposeResponse, TypedInChat } from '../feed/lib/types.js';
@@ -58,11 +61,19 @@ export interface ComposeContact {
 
 /**
  * Nothing can be sent to them (E77: a chat-only lead whose chat ended), but they typed a phone or email in the chat:
- * say so, unverified, and where the agent may add it by hand to call, text or email (finding UXA-5).
+ * say so, unverified, and where the agent may add it by hand to call, text or email (finding UXA-5). Never for a person
+ * who asked not to be contacted (R-CHAN-2/3, the summary's person-level do-not-contact, also one a merge carried):
+ * nobody may call, text or email them, so the note says that instead (review optouts/F3 of batch 6).
  */
-function TypedInChatNote({ contact }: { contact: ComposeContact }) {
+function TypedInChatNote({ contact, doNotContact }: { contact: ComposeContact; doNotContact: boolean }) {
   const typed = contact.typedInChat ?? [];
   if (typed.length === 0) return null;
+  if (doNotContact)
+    return (
+      <p data-testid="typed-in-chat" className="text-[14px] leading-snug text-ink">
+        {firstName(contact.name)} asked not to be contacted. Nobody on the team can text, email or call them.
+      </p>
+    );
   const shown = typed.map((t) => (t.kind === 'phone' ? formatPhone(t.address) : t.address)).join(' and ');
   return (
     <p data-testid="typed-in-chat" className="text-[14px] leading-snug text-ink">
@@ -129,6 +140,9 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
   // parity module 64 (R-PAR-25): "Send later" exposes the existing scheduleAt (one-to-one only)
   const [later, setLater] = useState<string | null>(null);
   const loadedDraft = useRef<string | null>(null);
+  // a draft the agent asked for while replying in an open web chat loads in the chat (review ui-compose/F5): the
+  // assistant drafts a requested reply for texts or email only, and loading it must not move the box under the agent
+  const keepChat = useRef(false);
 
   const draftQ = useQuery<{ action: ActionView }, ApiError>({
     queryKey: ['action', draftId],
@@ -146,8 +160,9 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
     if (a.draft) {
       setBody(a.draft.body);
       setSubject(a.draft.subject ?? '');
-      setChannel(a.draft.channel);
+      setChannel(keepChat.current ? 'web_chat' : a.draft.channel);
     }
+    keepChat.current = false;
     if (a.status !== 'proposed') setNotice({ tone: 'warn', text: 'This draft was already handled. You can still send your own message.' });
   }, [draftQ.data]);
 
@@ -182,11 +197,12 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
     picked,
   };
   const choice = chooseChannel(choiceInput);
-  // With no usable channel the box still names one, so its reason is shown and Send stays disabled: the one it was
-  // opened on (a Text or Email tap), else the client's last channel, else the first. Opened from Email for a person
-  // blocked on both, it says why email is blocked, never only why texting is (e2e journeys M3.1).
+  // With no usable channel the box still names one, so its reason is shown and Send stays disabled: the agent's own
+  // (or the opened draft's) channel, else the one it was opened on (a Text or Email tap), else the client's last
+  // channel, else the first. Opened from Email for a person blocked on both, it says why email is blocked, never only
+  // why texting is (e2e journeys M3.1); an email draft opened from Edit stays the Email box (review ui-compose/F4).
   const listed = (c: ComposeChannel | null | undefined): ComposeChannel | null => (c && choice.options.some((o) => o.channel === c) ? c : null);
-  const channel: ComposeChannel = choice.channel ?? listed(initialChannel) ?? listed(lastInboundChannel) ?? choice.options[0]?.channel ?? 'sms';
+  const channel: ComposeChannel = choice.channel ?? listed(picked) ?? listed(initialChannel) ?? listed(lastInboundChannel) ?? choice.options[0]?.channel ?? 'sms';
   const isChat = channel === 'web_chat';
 
   // grow with the text (up to about 12 lines) so a prefilled draft is readable without scrolling
@@ -219,6 +235,23 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
     setNotice({ tone: 'warn', text: `The chat has ended (${firstName(contact.name)} left the page, or the chat was turned off), so this can't go there. Your text is still here.${next === 'sms' ? ' Send now sends it by text.' : next === 'email' ? ' Send now sends it by email.' : ''}` });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once, when the preview first says the chat ended
   }, [previewEnded, webChatEnded, qc]);
+
+  // The summary (asked again every 15 s while a chat is live) closed the chat the box was on: the box moves, so it says
+  // where Send goes now in a status Notice (role="status", a live region: WCAG 4.1.3), exactly as the preview path above
+  // does (review ui-compose/F6). The agent's own tap is no surprise and says nothing.
+  const lastChannel = useRef<ComposeChannel | null>(null);
+  useEffect(() => {
+    const prev = lastChannel.current;
+    if (!settled) return;
+    lastChannel.current = channel;
+    if (prev !== 'web_chat' || channel === 'web_chat' || webChatEnded || picked === channel) return;
+    const chatOption = choice.options.find((o) => o.channel === 'web_chat');
+    if (!chatOption || chatOption.open || !chatOption.reason) return;
+    const next = choice.channel;
+    const text = `${chatOption.reason}, so this can't go there.${body.trim() !== '' ? ' Your text is still here.' : ''}${next === 'sms' ? ' Send now sends it by text.' : next === 'email' ? ' Send now sends it by email.' : ''}`;
+    setNotice({ tone: 'warn', text });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per move of the box's channel
+  }, [channel, settled]);
 
   const human = useCommand<Record<string, unknown>, ComposeResponse>(`/contacts/${contact.id}/messages`, { idKey: 'idempotencyKey', invalidate: [['feed'], ['timeline', contact.id], [...REACHABILITY_KEY]] });
   const approve = useCommand<Record<string, unknown>, ApproveResponse>(`/assistant/actions/${draftId ?? 'none'}/approve`, { invalidate: [['feed'], ['inbox'], ['timeline', contact.id], [...REACHABILITY_KEY]] });
@@ -311,8 +344,10 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
   const askDraft = useCommand<Record<string, unknown>, { action: ActionView }>(`/contacts/${contact.id}/drafts`, {});
   const requestDraft = async () => {
     const r = await askDraft.run({});
-    if (r.ok) setDraftId(r.data.action.id);
-    else setNotice({ tone: 'error', text: r.message });
+    if (r.ok) {
+      keepChat.current = isChat && choice.channel === 'web_chat';
+      setDraftId(r.data.action.id);
+    } else setNotice({ tone: 'error', text: r.message });
   };
 
   const decision = preview.decision;
@@ -322,17 +357,25 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
   // the text exactly as it will go out, when the send adds to what was typed (never for older text)
   const finalText = !blockedNow.blocked && outcome === null && previewBody === body.trim() && preview.final !== null && preview.final.trim() !== body.trim() ? preview.final : null;
   const needsReview = draft?.claims.some((c) => c.needsReview) ?? false;
+  // the reason under Send (ReasonCaption) is on the page (exactly its render condition): Send and the box's own closed
+  // option point at it only then (review ui-compose/F9: an option's "not offered" line is not rendered for the box's own
+  // channel, the reason is said once, under Send; after a send's outcome the caption gives way to it)
+  const reasonShown = settled && outcome === null && ((blockedNow.blocked && !!blockedNow.sentence) || !!blockedNow.note);
   const noChannel = choice.options.length === 0;
   const fieldLabel = !settled ? 'Message' : channel === 'sms' ? 'Text message' : channel === 'email' ? 'Email message' : 'Web chat message';
   const placeholder = !settled ? `Message ${firstName(contact.name)}` : channel === 'sms' ? `Text ${firstName(contact.name)}` : channel === 'email' ? `Email ${firstName(contact.name)}` : `Reply to ${firstName(contact.name)} in web chat`;
 
   // nothing to write on at all, or nothing that can take a message now: no template and no draft (nothing could send them)
   const nothingSends = settled && choice.channel === null;
+  // the person-level do-not-contact (R-CHAN-2): the summary names it once for the person (review optouts/F3)
+  const personDnc = (reach?.doNotContact ?? null) !== null;
+  // asked to reply in a chat the summary has nothing to reply to (review ui-compose/F2): said, never left out
+  const chatNotHere = choiceInput.webChat.missing && [initialChannel, lastInboundChannel].includes('web_chat');
   if (settled && noChannel)
     return (
       <div className="flex flex-col gap-2">
-        <Notice tone="info">There's no phone number or email on file to message.</Notice>
-        <TypedInChatNote contact={contact} />
+        <Notice tone="info">There's no phone number or email on file to message.{chatNotHere ? ` ${CHAT_NOT_HERE}.` : ''}</Notice>
+        <TypedInChatNote contact={contact} doNotContact={personDnc} />
       </div>
     );
 
@@ -354,7 +397,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
               role="radio"
               aria-checked={channel === o.channel}
               disabled={!o.open}
-              aria-describedby={o.open ? undefined : `${id}-not-${o.channel}`}
+              aria-describedby={o.open ? undefined : o.channel !== channel ? (o.reason ? `${id}-not-${o.channel}` : undefined) : reasonShown ? `${id}-reason` : undefined}
               onClick={() => setChannel(o.channel)}
               className={`min-h-tap rounded-lg px-3 text-[15px] font-medium disabled:cursor-not-allowed disabled:line-through ${channel === o.channel ? 'bg-surface text-ink shadow-sm' : 'text-ink-muted'}`}
             >
@@ -410,7 +453,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
           placeholder={placeholder}
           className="min-h-tap flex-1 resize-y rounded-xl border border-line bg-surface px-3.5 py-2.5 text-[17px] text-ink placeholder:text-ink-muted"
         />
-        <Button type="submit" pending={pending} pendingLabel="Sending" disabled={!settled || body.trim().length === 0 || blockedNow.blocked} aria-describedby={settled && (blockedNow.blocked || blockedNow.note) ? `${id}-reason` : undefined}>
+        <Button type="submit" pending={pending} pendingLabel="Sending" disabled={!settled || body.trim().length === 0 || blockedNow.blocked} aria-describedby={reasonShown ? `${id}-reason` : undefined}>
           {later ? 'Schedule' : 'Send'}
         </Button>
       </div>
@@ -449,7 +492,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
         </div>
       ) : null}
       {settled && outcome === null ? <ReasonCaption id={`${id}-reason`} state={blockedNow} /> : null}
-      {nothingSends ? <TypedInChatNote contact={contact} /> : null}
+      {nothingSends ? <TypedInChatNote contact={contact} doNotContact={personDnc} /> : null}
       {finalText !== null ? (
         <figure aria-label={`What ${firstName(contact.name)} will get`} className="flex flex-col gap-1 rounded-xl bg-surface-2 px-3 py-2 text-[14px] text-ink">
           <figcaption className="font-medium text-ink-muted">What {firstName(contact.name)} will get</figcaption>

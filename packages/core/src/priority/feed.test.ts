@@ -145,6 +145,120 @@ describe('scoreFeed: item types and reasons', () => {
     expect(FeedItemSchema.safeParse(both).success).toBe(true);
   });
 
+  it('R-CHAN-2 (review optouts/F1): a lead waiting in the website chat whose person asked not to be contacted gets no Reply: the card keeps "Can\'t reach them right now" with the reason, and opens the contact', () => {
+    const dnc = { outcome: 'deny' as const, explanation: 'Asked not to be contacted at all' };
+    const blocked = new Map([[contact(3), { sms: dnc, voice: dnc, email: dnc, web_chat: dnc }]]);
+    const waiting = one(feedInputs({ unansweredInbound: [inbound({ channel: 'web_chat', at: t(-min(1)) })], blockedChannels: blocked }));
+    expect(waiting.primaryAction).toEqual({ kind: 'open_contact', label: 'Open', contactId: contact(3) });
+    expect([waiting.primaryAction, ...waiting.alternatives].map((a) => a.kind)).not.toContain('reply_chat');
+    expect(waiting.reasons.find((r) => r.code === 'CANT_CONTACT')?.label).toBe("Can't reach them right now: Asked not to be contacted at all");
+    // the first-touch card too
+    const ft = scoreFeed(feedInputs({ slas: [sla()], unansweredInbound: [inbound({ contactId: contact(2), channel: 'web_chat', at: t(-min(1)) })], blockedChannels: new Map([[contact(2), { sms: dnc, voice: dnc, email: dnc, web_chat: dnc }]]) })).find((x) => x.itemType === 'first_touch_due')!;
+    expect(ft.primaryAction.kind).toBe('open_contact');
+    expect(codes(ft)).toContain('CANT_CONTACT');
+    // a chat that only opted out (the person did not ask about every channel): no Reply in it, the other channels stay
+    const chatOnly = new Map([[contact(3), { web_chat: { outcome: 'deny' as const, explanation: 'Asked in the chat to stop being contacted' } }]]);
+    const other = one(feedInputs({ unansweredInbound: [inbound({ channel: 'web_chat' })], blockedChannels: chatOnly }));
+    expect([other.primaryAction.kind, ...other.alternatives.map((a) => a.kind)]).toEqual(['call', 'text', 'email', 'open_contact']);
+  });
+
+  it('R-INBOX-4 (review ui-compose/F3): web-chat drafts are said and judged as web chat: "Chat reply drafted for you", Reply in the chat first, never demoted for the texts', () => {
+    const noPhoneNoEmail = { sms: { outcome: 'unavailable' as const, explanation: 'No working phone number' }, voice: { outcome: 'unavailable' as const, explanation: 'No working phone number' }, email: { outcome: 'unavailable' as const, explanation: 'No email address' } };
+    // a chat-only lead waiting, with the assistant's chat reply drafted: Reply in the chat (the thread adopts the draft)
+    const waiting = one(feedInputs({ unansweredInbound: [inbound({ channel: 'web_chat', at: t(-min(1)) })], drafts: [draft({ contactId: contact(3), channel: 'web_chat' })], blockedChannels: new Map([[contact(3), noPhoneNoEmail]]) }));
+    expect(waiting.reasons.map((r) => r.label)).toContain('Chat reply drafted for you');
+    expect(waiting.reasons.map((r) => r.label).join(' ')).not.toMatch(/text drafted|Can't reach them/i);
+    expect(waiting.primaryAction).toEqual({ kind: 'reply_chat', label: 'Reply', contactId: contact(3) });
+    // its own card: Send in one tap, and a STOP on their phone does not demote a reply in the chat
+    const stopped = new Map([[contact(5), { sms: { outcome: 'deny' as const, explanation: 'Opted out of texts' } }]]);
+    const own = one(feedInputs({ drafts: [draft({ channel: 'web_chat' })], blockedChannels: stopped }));
+    expect(own.reasons[0]).toMatchObject({ code: 'DRAFT_READY', label: 'Chat reply drafted for you' });
+    expect(codes(own)).not.toContain('TEXT_BLOCKED');
+    expect(own.primaryAction).toEqual({ kind: 'send_draft', label: 'Send', actionId: action(2) });
+    // a chat the person blocked (they asked not to be contacted): no Send, "can't reach them" with the reason
+    const dnc = { outcome: 'deny' as const, explanation: 'Asked not to be contacted at all' };
+    const blocked = one(feedInputs({ drafts: [draft({ channel: 'web_chat' })], blockedChannels: new Map([[contact(5), { sms: dnc, voice: dnc, email: dnc, web_chat: dnc }]]) }));
+    expect(blocked.primaryAction.kind).not.toBe('send_draft');
+    expect(blocked.reasons.find((r) => r.code === 'CANT_CONTACT')?.label).toBe("Can't reach them right now: Asked not to be contacted at all");
+    // a text draft is still a text draft
+    expect(one(feedInputs({ drafts: [draft()] })).reasons[0]?.label).toBe('Text drafted for you');
+  });
+
+  it('R-INBOX-4 (review chat-R2 of batch 6): a handback after a chat reply offers Reply in the chat; its suggested reply is a text or email, judged by its own channel, never by the chat', () => {
+    const noPhoneNoEmail = new Map([[contact(4), { sms: { outcome: 'unavailable' as const, explanation: 'No working phone number' }, voice: { outcome: 'unavailable' as const, explanation: 'No working phone number' }, email: { outcome: 'unavailable' as const, explanation: 'No email address' } }]]);
+    const optedOut = { outcome: 'deny' as const, explanation: 'Opted out of texts' };
+    const kinds = (x: FeedItem) => [x.primaryAction.kind, ...x.alternatives.map((a) => a.kind)];
+    const plain = one(feedInputs({ handbacks: [handback({ inboundChannel: 'web_chat' })], blockedChannels: noPhoneNoEmail }));
+    expect(plain.primaryAction).toEqual({ kind: 'reply_chat', label: 'Reply', contactId: contact(4) });
+    expect(codes(plain)).not.toContain('CANT_CONTACT');
+    // a chat-only lead: the assistant's suggested reply is a text to a number that does not exist. No Send (the approval
+    // would answer CONTACT_POINT_MISSING); Reply in the open chat first, the draft still there to edit
+    const drafted = one(feedInputs({ handbacks: [handback({ inboundChannel: 'web_chat', replyDraftActionId: action(1), replyDraftChannel: 'sms' })], blockedChannels: noPhoneNoEmail }));
+    expect(drafted.primaryAction).toEqual({ kind: 'reply_chat', label: 'Reply', contactId: contact(4) });
+    expect(kinds(drafted)).not.toContain('send_draft');
+    expect(kinds(drafted)).toContain('edit_draft');
+    expect(codes(drafted)).not.toContain('CANT_CONTACT');
+    // a STOP on their phone: the text draft is not sendable, whatever the chat's state
+    const stopped = one(feedInputs({ handbacks: [handback({ inboundChannel: 'web_chat', replyDraftActionId: action(1), replyDraftChannel: 'sms' })], blockedChannels: new Map([[contact(4), { sms: optedOut }]]) }));
+    expect(stopped.primaryAction).toEqual({ kind: 'reply_chat', label: 'Reply', contactId: contact(4) });
+    expect(kinds(stopped)).not.toContain('send_draft');
+    expect(kinds(stopped)).toContain('edit_draft');
+    // a phone that works: Send the text in one tap, Reply in the chat right after it
+    const sendable = one(feedInputs({ handbacks: [handback({ inboundChannel: 'web_chat', replyDraftActionId: action(1), replyDraftChannel: 'sms' })] }));
+    expect(sendable.primaryAction).toEqual({ kind: 'send_draft', label: 'Send', actionId: action(1) });
+    expect(sendable.alternatives.slice(0, 2).map((a) => a.kind)).toEqual(['edit_draft', 'reply_chat']);
+    // a draft bound to the chat is judged by the chat: a STOP on the phone does not block it
+    const chatDraft = one(feedInputs({ handbacks: [handback({ inboundChannel: 'web_chat', replyDraftActionId: action(1), replyDraftChannel: 'web_chat' })], blockedChannels: new Map([[contact(4), { sms: optedOut }]]) }));
+    expect(chatDraft.primaryAction).toEqual({ kind: 'send_draft', label: 'Send', actionId: action(1) });
+    // the person asked not to be contacted: nothing to send or reply with
+    const dnc = { outcome: 'deny' as const, explanation: 'Asked not to be contacted at all' };
+    const blocked = one(feedInputs({ handbacks: [handback({ inboundChannel: 'web_chat', replyDraftActionId: action(1), replyDraftChannel: 'web_chat' })], blockedChannels: new Map([[contact(4), { sms: dnc, voice: dnc, email: dnc, web_chat: dnc }]]) }));
+    expect(kinds(blocked)).not.toContain('send_draft');
+    expect(kinds(blocked)).not.toContain('reply_chat');
+    expect(blocked.reasons.find((r) => r.code === 'CANT_CONTACT')?.label).toBe("Can't reach them right now: Asked not to be contacted at all");
+  });
+
+  it('a handback with a suggested reply but no known channel for it, or after a voicemail, offers no one-tap Send (the draft stays to edit)', () => {
+    const unknown = one(feedInputs({ handbacks: [handback({ replyDraftActionId: action(1), replyDraftChannel: null })] }));
+    expect(unknown.primaryAction.kind).toBe('text');
+    expect(unknown.alternatives.map((a) => a.kind)).toContain('edit_draft');
+    const voicemail = one(feedInputs({ handbacks: [handback({ inboundChannel: 'voice', replyDraftActionId: action(1), replyDraftChannel: 'sms' })] }));
+    expect(voicemail.primaryAction.kind).toBe('call');
+    expect(voicemail.alternatives.map((a) => a.kind)).not.toContain('send_draft');
+  });
+
+  it("review chat-R3 of batch 6: a chat card whose chat alone is blocked says the chat's own reason, never only the missing phone and email", () => {
+    const wrong = { outcome: 'deny' as const, explanation: 'Marked as a wrong number' };
+    const chatOnlyLead = { sms: { outcome: 'unavailable' as const, explanation: 'No working phone number' }, voice: { outcome: 'unavailable' as const, explanation: 'No working phone number' }, email: { outcome: 'unavailable' as const, explanation: 'No email address' }, web_chat: wrong };
+    const label = (x: FeedItem, code: string) => x.reasons.find((r) => r.code === code)?.label;
+    // waiting in the chat, nothing else on file: "can't reach them", the chat's reason first
+    const waiting = one(feedInputs({ unansweredInbound: [inbound({ channel: 'web_chat' })], blockedChannels: new Map([[contact(3), chatOnlyLead]]) }));
+    expect(waiting.primaryAction.kind).toBe('open_contact');
+    expect(label(waiting, 'CANT_CONTACT')).toBe("Can't reach them right now: Marked as a wrong number · No working phone number · No email address");
+    // first touch of the same lead
+    const ft = scoreFeed(feedInputs({ slas: [sla()], unansweredInbound: [inbound({ contactId: contact(2), channel: 'web_chat' })], blockedChannels: new Map([[contact(2), chatOnlyLead]]) })).find((x) => x.itemType === 'first_touch_due')!;
+    expect(ft.primaryAction.kind).toBe('open_contact');
+    expect(label(ft, 'CANT_CONTACT')).toBe("Can't reach them right now: Marked as a wrong number · No working phone number · No email address");
+    // a lead with a working phone: Call first, and the card says why there is no Reply in the chat (the score is unchanged)
+    const withPhone = one(feedInputs({ unansweredInbound: [inbound({ channel: 'web_chat' })], blockedChannels: new Map([[contact(3), { web_chat: wrong }]]) }));
+    expect(withPhone.primaryAction.kind).toBe('call');
+    expect(label(withPhone, 'CHAT_BLOCKED')).toBe("Can't reply in the chat: Marked as a wrong number");
+    expect(withPhone.score).toBe(one(feedInputs({ unansweredInbound: [inbound({ channel: 'web_chat' })] })).score);
+    // the assistant's chat draft, blocked by a chat opt-out only: no Send, and the reason says why
+    const asked = { outcome: 'deny' as const, explanation: 'Asked in the chat to stop being contacted' };
+    const d = one(feedInputs({ drafts: [draft({ channel: 'web_chat' })], blockedChannels: new Map([[contact(5), { web_chat: asked }]]) }));
+    expect(d.primaryAction.kind).toBe('call');
+    expect(label(d, 'CHAT_BLOCKED')).toBe("Can't reply in the chat: Asked in the chat to stop being contacted");
+    const dOnly = one(feedInputs({ drafts: [draft({ channel: 'web_chat' })], blockedChannels: new Map([[contact(5), { ...chatOnlyLead, web_chat: asked }]]) }));
+    expect(dOnly.primaryAction.kind).toBe('open_contact');
+    expect(label(dOnly, 'CANT_CONTACT')).toBe("Can't reach them right now: Asked in the chat to stop being contacted · No working phone number · No email address");
+    // a handback in a chat that opted out, with a sendable text draft: Send, and why there is no Reply in the chat
+    const hb = one(feedInputs({ handbacks: [handback({ inboundChannel: 'web_chat', replyDraftActionId: action(1), replyDraftChannel: 'sms' })], blockedChannels: new Map([[contact(4), { web_chat: asked }]]) }));
+    expect(hb.primaryAction.kind).toBe('send_draft');
+    expect(hb.alternatives.map((a) => a.kind)).not.toContain('reply_chat');
+    expect(label(hb, 'CHAT_BLOCKED')).toBe("Can't reply in the chat: Asked in the chat to stop being contacted");
+  });
+
   it('first-touch SLA (finding UXA-3): a new lead who wrote in the website chat gets a Reply in the chat first', () => {
     const unreachable = new Map([[contact(2), { sms: { outcome: 'unavailable' as const, explanation: 'No working phone number' }, voice: { outcome: 'unavailable' as const, explanation: 'No working phone number' }, email: { outcome: 'unavailable' as const, explanation: 'No email address' } }]]);
     const out = scoreFeed(feedInputs({ slas: [sla()], unansweredInbound: [inbound({ contactId: contact(2), channel: 'web_chat', at: t(-min(1)) })], blockedChannels: unreachable }));
@@ -197,7 +311,7 @@ describe('scoreFeed: item types and reasons', () => {
   it('handback: one card for the conversation; with a reply draft, Send is one tap', () => {
     const items = scoreFeed(
       feedInputs({
-        handbacks: [handback({ contactId: contact(3), replyDraftActionId: action(9) })],
+        handbacks: [handback({ contactId: contact(3), replyDraftActionId: action(9), replyDraftChannel: 'sms' })],
         unansweredInbound: [inbound({ contactId: contact(3) })],
         drafts: [draft({ actionId: action(9), contactId: contact(3) })],
       }),
@@ -380,6 +494,7 @@ describe('scoreFeed: item types and reasons', () => {
       }),
       feedInputs({ dealDates: [dealDateF({ dueOn: localDate('2026-11-12') }), dealDateF({ dealDateId: 'p' as never, dueOn: localDate('2026-11-01') })] }),
       feedInputs({ appointments: [apptF({ endsAt: t(-hours(3)) })], reinquiries: [reinq()], searchProposals: [proposal()] }),
+      feedInputs({ unansweredInbound: [inbound({ channel: 'web_chat', contactId: contact(40) })], blockedChannels: new Map([[contact(40), { web_chat: { outcome: 'deny' as const, explanation: 'Opted out of chat messages' } }]]) }),
     ];
     const seen = new Set(fixtures.flatMap((f) => scoreFeed(f).flatMap((x) => codes(x))));
     expect(FEED_REASON_CODES.filter((c) => !seen.has(c))).toEqual([]);
@@ -413,7 +528,7 @@ describe('scoreFeed: gate summary (blocked channels)', () => {
   });
 
   it('a blocked reply channel on a handback with a draft falls back to the other channels', () => {
-    const h = one(feedInputs({ handbacks: [handback({ replyDraftActionId: action(9) })], blockedChannels: new Map([[contact(4), { sms: optedOut }]]) }));
+    const h = one(feedInputs({ handbacks: [handback({ replyDraftActionId: action(9), replyDraftChannel: 'sms' })], blockedChannels: new Map([[contact(4), { sms: optedOut }]]) }));
     expect(h.primaryAction.kind).toBe('call');
     expect(h.alternatives.map((a) => a.kind)).toEqual(['email', 'edit_draft', 'review_handback', 'open_contact']);
   });

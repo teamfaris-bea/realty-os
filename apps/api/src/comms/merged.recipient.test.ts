@@ -9,7 +9,7 @@
 //     before anything is created (409 CONTACT_MERGED, the survivor named only to whoever sees it), and its saved
 //     searches send no alert (a merge moves none);
 //   - and whatever reaches one anyway (a message composed while the merge committed) is judged as the whole person, in
-//     core canContact and in both DB dispatch guards (migration 0041: app.contact_person_ids), so it is blocked by the
+//     core canContact and in both DB dispatch guards (migration 0043_merged_person_opt_outs: app.contact_person_ids), so it is blocked by the
 //     person's opt-outs and never sent (guardEquivalence.test.ts proves the two layers agree case by case).
 // Real Postgres, the real server, fake providers only.
 import { randomUUID } from 'node:crypto';

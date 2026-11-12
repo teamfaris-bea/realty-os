@@ -80,9 +80,17 @@ const SUPPRESSION: Record<string, (r: ReachReason, ch: SayChannel, now?: Date) =
   import_dnc: (r, _c, now) => `Marked do-not-contact in your previous system${r.at ? ` (imported ${shortDate(r.at, now)})` : ' (imported)'}`,
 };
 
+/**
+ * The person-level do-not-contact (R-CHAN-2, review optouts/F1): one sentence on every channel, so it never reads as an
+ * opt-out of that channel alone ("Asked not to be contacted at all (recorded by Ava Agent on Nov 10)").
+ */
+export const PERSON_DNC = 'Asked not to be contacted at all';
+
 /** Why `ch` is blocked, in one sentence ("Texted STOP on Nov 10"). */
 export function reachSentence(r: ReachReason, ch: SayChannel, now?: Date): string {
   switch (r.code) {
+    case 'PERSON_DO_NOT_CONTACT':
+      return `${PERSON_DNC}${r.source === 'imported' ? ` in your previous system${on(r.at, now)} (imported)` : recorded(r, now)}`;
     case 'CONSENT_REVOKED':
       return optOutSentence(r, ch, now);
     case 'SUPPRESSED':

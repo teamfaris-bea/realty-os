@@ -4,10 +4,10 @@
 // web-chat first response shown as automatic (R-INBOX-4). Web chat is offered from the reachability summary's
 // web_chat entry (module 22); its sends go through compose/channelApi.ts on the real routes, answered here with
 // the responses the real API sends (compose/channelApi.contract.test.tsx checks those against the API's schemas).
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import { FakeFetch, IDS, agentApp, chatEndedReply, decision, draftAction, findToast, fullContact, iso, reachability, stopReason, timelineItem } from '../feed/lib/testing.js';
+import { FakeFetch, IDS, agentApp, chatEndedReply, decision, dncReason, draftAction, findToast, fullContact, iso, reachability, stopReason, timelineItem, withDoNotContact } from '../feed/lib/testing.js';
 import { lastInboundChannel, liveChat } from './ThreadPage.js';
 
 const user = () => userEvent.setup();
@@ -224,6 +224,50 @@ describe('module 37: compose on the client\'s last open channel', () => {
     expect(f.callsTo(`POST /contacts/${IDS.jane}/messages`)).toEqual([]);
   });
 
+  it('review ui-compose/F6: when the summary, asked again while the chat is live, says the chat ended as the agent types, the box says so in a status message (a live region), keeps the text and says where Send goes now; the agent\'s own tap to Text says nothing', async () => {
+    let ended = false;
+    const f = fake().on(`GET /contacts/${IDS.jane}/reachability`, () => summary(ended ? 'ended' : 'open'));
+    const { qc } = agentApp(f, `/contacts/${IDS.jane}/thread`);
+    const chat = await screen.findByRole('radio', { name: 'Web chat' });
+    await waitFor(() => expect(chat).toBeChecked());
+    // the agent's own taps move the box: nothing to say
+    await user().click(screen.getByRole('radio', { name: 'Text' }));
+    await user().click(screen.getByRole('radio', { name: 'Web chat' }));
+    const form = screen.getByRole('form', { name: 'Message Jane Doe' });
+    expect(within(form).queryAllByRole('status').map((n) => n.textContent).join(' ')).not.toMatch(/chat has ended/);
+    await user().type(screen.getByRole('textbox', { name: 'Web chat message' }), 'Are you still on the page?');
+    // Jane left the page: the summary's next refresh (every 15 s while the chat is live) says so
+    ended = true;
+    await act(() => qc.invalidateQueries({ queryKey: ['reachability'] }));
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Text' })).toBeChecked());
+    const said = "The chat has ended: they left the page, so this can't go there. Your text is still here. Send now sends it by text.";
+    // said in a status region of the box (role="status": announced without moving focus), as the preview path says it
+    expect(within(form).getAllByRole('status').map((n) => n.textContent)).toContain(said);
+    expect(screen.getByRole('textbox', { name: 'Text message' })).toHaveValue('Are you still on the page?');
+    expect(f.callsTo(`POST /contacts/${IDS.jane}/messages`)).toEqual([]);
+  });
+
+  it('review ui-compose/F5: "Ask the assistant for a draft" while replying in an open web chat keeps the box on web chat: the draft loads there, and Send approves it as a chat reply', async () => {
+    const asked = draftAction({ draft: { channel: 'sms', subject: null, body: 'Hi Jane, yes: 10 to 12 on Saturday.' } });
+    const f = fake()
+      .on(`GET /contacts/${IDS.jane}/reachability`, summary('open'))
+      .on(`POST /contacts/${IDS.jane}/drafts`, { status: 201, body: { action: asked } })
+      .on(`GET /assistant/actions/${IDS.draft}`, { status: 200, body: { action: asked } })
+      .on(`POST /assistant/actions/${IDS.draft}/approve`, { status: 200, body: { actionId: IDS.draft, status: 'approved', result: 'sent', messageId: IDS.message, decision: decision({}) } });
+    agentApp(f, `/contacts/${IDS.jane}/thread`);
+    const chat = await screen.findByRole('radio', { name: 'Web chat' });
+    await waitFor(() => expect(chat).toBeChecked());
+    await user().click(screen.getByRole('button', { name: 'Ask the assistant for a draft' }));
+    const box = await screen.findByRole('textbox', { name: 'Web chat message' });
+    await waitFor(() => expect(box).toHaveValue('Hi Jane, yes: 10 to 12 on Saturday.'));
+    expect(screen.getByRole('radio', { name: 'Web chat' })).toBeChecked();
+    expect(screen.getByTestId('channel-why')).toHaveTextContent('Replying in web chat, where Jane wrote last.');
+    await user().click(screen.getByRole('button', { name: 'Send' }));
+    expect(await findToast('Sent to Jane.')).toBeInTheDocument();
+    expect(f.callsTo(`POST /assistant/actions/${IDS.draft}/approve`).map((c) => c.body)).toEqual([expect.objectContaining({ editedPayload: { channel: 'web_chat', body: 'Hi Jane, yes: 10 to 12 on Saturday.' } })]);
+    expect(f.callsTo(`POST /contacts/${IDS.jane}/messages`)).toEqual([]);
+  });
+
   it('finding UXA-8: while the summary is still loading the box picks no channel and says nothing it may take back: no "Replying in web chat" for a chat that ended, and for a chat-only lead no "no phone or email on file"; the message field is there from the start', async () => {
     for (const [contact, items] of [
       [fullContact(), chatThenText()],
@@ -253,13 +297,32 @@ describe('module 37: compose on the client\'s last open channel', () => {
     }
   });
 
-  it('E155 R-CHAN-3: after "stop contacting me" in the chat the summary blocks the chat with that opt-out, in words', async () => {
-    const said = stopReason({ source: 'opt_out_language', keyword: null, addressHint: 'web chat' });
-    agentApp(fake().on(`GET /contacts/${IDS.jane}/reachability`, summary({ reasons: [said] })), `/contacts/${IDS.jane}/thread`);
+  it('R-INBOX-3: an opt-out on the chat alone (the visitor said it was the wrong person: no person-level do-not-contact) blocks the chat, in words, and the box writes by text', async () => {
+    const wrong = stopReason({ source: 'wrong_number', keyword: null, addressHint: 'web chat' });
+    agentApp(fake().on(`GET /contacts/${IDS.jane}/reachability`, summary({ reasons: [wrong] })), `/contacts/${IDS.jane}/thread`);
     const web = await screen.findByRole('radio', { name: 'Web chat' });
     await waitFor(() => expect(web).toBeDisabled());
-    expect(web).toHaveAccessibleDescription('Web chat not offered: Asked in the chat to stop being contacted on Nov 10');
+    expect(web).toHaveAccessibleDescription('Web chat not offered: Marked as a wrong number on Nov 10');
     expect(screen.getByTestId('channel-why')).toHaveTextContent('Writing by text: web chat is blocked.');
+  });
+
+  it('E155 R-CHAN-2 (review optouts/F1): after "please stop contacting me" in the chat, the summary blocks texts and email as well as the chat, with the person-level do-not-contact in its own words: nothing is offered, nothing is previewed, Send stays disabled', async () => {
+    const said = stopReason({ source: 'opt_out_language', keyword: null, addressHint: 'web chat' });
+    const asked = withDoNotContact(reachability(IDS.jane, {}, { reasons: [said] }), dncReason({ source: 'opt_out_language', recordedBy: null }));
+    const f = fake().on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: asked } });
+    agentApp(f, `/contacts/${IDS.jane}/thread`);
+    const text = await screen.findByRole('radio', { name: 'Text' });
+    await waitFor(() => expect(text).toBeDisabled());
+    expect(text).toHaveAccessibleDescription('Text not offered: Asked not to be contacted at all on Nov 10');
+    expect(screen.getByRole('radio', { name: 'Email' })).toHaveAccessibleDescription('Email not offered: Asked not to be contacted at all on Nov 10');
+    expect(screen.getByRole('radio', { name: 'Web chat' })).toBeDisabled();
+    expect(screen.queryByTestId('channel-why')).toBeNull();
+    await user().type(screen.getByRole('textbox', { name: 'Web chat message' }), 'Hello?');
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send' })).toHaveAccessibleDescription('Asked not to be contacted at all on Nov 10');
+    expect(document.body.textContent).not.toMatch(/Writing by text|Replying in web chat/);
+    expect(f.callsTo(`POST /contacts/${IDS.jane}/messages/preview`)).toEqual([]);
+    expect(f.callsTo(`POST /contacts/${IDS.jane}/messages`)).toEqual([]);
   });
 
   it('a lead who only ever chatted, once the chat ended, has nothing to write on: the reason is shown and Send stays disabled', async () => {
@@ -290,10 +353,37 @@ describe('module 37: compose on the client\'s last open channel', () => {
     expect(screen.queryByRole('button', { name: /Templates/ })).toBeNull();
   });
 
+  it('R-CHAN-2 E155 (review optouts/F3): a chat-only lead who asked not to be contacted: the box says so, and never invites adding what they typed to call, text or email them', async () => {
+    const sam = fullContact({ phones: [], emails: [], typedInChat: [{ kind: 'email', address: 'sam.rivera@example.com', typedAt: iso(-3_600_000) }] });
+    const said = stopReason({ source: 'opt_out_language', keyword: null, addressHint: 'web chat' });
+    const asked = withDoNotContact(reachability(IDS.jane, {}, { reasons: [said] }), dncReason({ source: 'opt_out_language', recordedBy: null }));
+    const f = new FakeFetch()
+      .on(`GET /contacts/${IDS.jane}`, { status: 200, body: { contact: sam } })
+      .on(`GET /contacts/${IDS.jane}/timeline?limit=100`, { status: 200, body: { items: chatThenText().slice(0, 2), nextCursor: null } })
+      .on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: asked } });
+    agentApp(f, `/contacts/${IDS.jane}/thread`);
+    const note = await screen.findByTestId('typed-in-chat');
+    expect(note).toHaveTextContent('Jane asked not to be contacted. Nobody on the team can text, email or call them.');
+    expect(note.textContent).not.toMatch(/sam\.rivera@example\.com|Add it|to call, text or email/);
+    expect(screen.queryByRole('link', { name: /their details/ })).toBeNull();
+  });
+
   it('no web chat is offered when the summary says there is no chat to reply to, whatever the thread shows', async () => {
     agentApp(fake().on(`GET /contacts/${IDS.jane}/reachability`, summary('none')), `/contacts/${IDS.jane}/thread`);
     await waitFor(() => expect(screen.getByRole('radio', { name: 'Email' })).toBeInTheDocument());
     await waitFor(() => expect(screen.queryByRole('radio', { name: 'Web chat' })).toBeNull());
+    // Jane wrote last in a chat nobody can answer from here: the box says so instead of moving to Text silently
+    expect(screen.getByTestId('channel-why')).toHaveTextContent("Writing by text: this website chat can't be answered from this record.");
+  });
+
+  it('review ui-compose/F2: opened from Reply (?compose=web_chat) when the summary has no chat to answer, the box never falls silently to Text: it says why it writes by text', async () => {
+    const items = [timelineItem({ id: ids(7), detail: 'sms:inbound', preview: 'thanks', occurredAt: iso(-3_600_000) }), ...chatThenText().slice(1)];
+    agentApp(fake(items).on(`GET /contacts/${IDS.jane}/reachability`, summary('none')), `/contacts/${IDS.jane}/thread?compose=web_chat`);
+    const text = await screen.findByRole('radio', { name: 'Text' });
+    await waitFor(() => expect(text).toBeChecked());
+    expect(screen.queryByRole('radio', { name: 'Web chat' })).toBeNull();
+    // Jane texted last, but the agent tapped Reply in the chat: the line says why the box is on Text, not "where Jane wrote last"
+    expect(screen.getByTestId('channel-why')).toHaveTextContent("Writing by text: this website chat can't be answered from this record.");
   });
 
   it('D1: Jane texted last but texting is blocked: the box writes by email, says why, and Text shows the exact reason', async () => {

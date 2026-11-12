@@ -726,32 +726,42 @@
                   "informational"
                 ]
               },
+              "doNotContact": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "channels": {
                 "type": "object",
                 "properties": {
                   "sms": {
-                    "$ref": "#/$defs/__schema0"
+                    "$ref": "#/$defs/__schema1"
                   },
                   "voice": {
-                    "$ref": "#/$defs/__schema0"
+                    "$ref": "#/$defs/__schema1"
                   },
                   "email": {
-                    "$ref": "#/$defs/__schema0"
+                    "$ref": "#/$defs/__schema1"
                   },
                   "web_chat": {
                     "type": "object",
                     "properties": {
                       "hasAddress": {
-                        "$ref": "#/$defs/__schema1"
-                      },
-                      "defaultPointId": {
                         "$ref": "#/$defs/__schema2"
                       },
-                      "blocked": {
+                      "defaultPointId": {
                         "$ref": "#/$defs/__schema3"
                       },
-                      "reasons": {
+                      "blocked": {
                         "$ref": "#/$defs/__schema4"
+                      },
+                      "reasons": {
+                        "$ref": "#/$defs/__schema5"
                       },
                       "points": {
                         "$ref": "#/$defs/__schema6"
@@ -803,6 +813,7 @@
             "required": [
               "contactId",
               "purposeNow",
+              "doNotContact",
               "channels"
             ],
             "additionalProperties": false
@@ -816,61 +827,10 @@
           "__schema0": {
             "type": "object",
             "properties": {
-              "hasAddress": {
-                "$ref": "#/$defs/__schema1"
-              },
-              "defaultPointId": {
-                "$ref": "#/$defs/__schema2"
-              },
-              "blocked": {
-                "$ref": "#/$defs/__schema3"
-              },
-              "reasons": {
-                "$ref": "#/$defs/__schema4"
-              },
-              "points": {
-                "$ref": "#/$defs/__schema6"
-              }
-            },
-            "required": [
-              "hasAddress",
-              "defaultPointId",
-              "blocked",
-              "reasons",
-              "points"
-            ],
-            "additionalProperties": false
-          },
-          "__schema1": {
-            "type": "boolean"
-          },
-          "__schema2": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid",
-                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "__schema3": {
-            "type": "boolean"
-          },
-          "__schema4": {
-            "type": "array",
-            "items": {
-              "$ref": "#/$defs/__schema5"
-            }
-          },
-          "__schema5": {
-            "type": "object",
-            "properties": {
               "code": {
                 "type": "string",
                 "enum": [
+                  "PERSON_DO_NOT_CONTACT",
                   "CONSENT_REVOKED",
                   "SUPPRESSED",
                   "WRONG_NUMBER",
@@ -1051,6 +1011,58 @@
             ],
             "additionalProperties": false
           },
+          "__schema1": {
+            "type": "object",
+            "properties": {
+              "hasAddress": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "defaultPointId": {
+                "$ref": "#/$defs/__schema3"
+              },
+              "blocked": {
+                "$ref": "#/$defs/__schema4"
+              },
+              "reasons": {
+                "$ref": "#/$defs/__schema5"
+              },
+              "points": {
+                "$ref": "#/$defs/__schema6"
+              }
+            },
+            "required": [
+              "hasAddress",
+              "defaultPointId",
+              "blocked",
+              "reasons",
+              "points"
+            ],
+            "additionalProperties": false
+          },
+          "__schema2": {
+            "type": "boolean"
+          },
+          "__schema3": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "__schema4": {
+            "type": "boolean"
+          },
+          "__schema5": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/__schema0"
+            }
+          },
           "__schema6": {
             "type": "array",
             "items": {
@@ -1070,7 +1082,7 @@
                 "reasons": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/$defs/__schema5"
+                    "$ref": "#/$defs/__schema0"
                   }
                 }
               },
@@ -1124,32 +1136,42 @@
                     "informational"
                   ]
                 },
+                "doNotContact": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "channels": {
                   "type": "object",
                   "properties": {
                     "sms": {
-                      "$ref": "#/$defs/__schema0"
+                      "$ref": "#/$defs/__schema1"
                     },
                     "voice": {
-                      "$ref": "#/$defs/__schema0"
+                      "$ref": "#/$defs/__schema1"
                     },
                     "email": {
-                      "$ref": "#/$defs/__schema0"
+                      "$ref": "#/$defs/__schema1"
                     },
                     "web_chat": {
                       "type": "object",
                       "properties": {
                         "hasAddress": {
-                          "$ref": "#/$defs/__schema1"
-                        },
-                        "defaultPointId": {
                           "$ref": "#/$defs/__schema2"
                         },
-                        "blocked": {
+                        "defaultPointId": {
                           "$ref": "#/$defs/__schema3"
                         },
-                        "reasons": {
+                        "blocked": {
                           "$ref": "#/$defs/__schema4"
+                        },
+                        "reasons": {
+                          "$ref": "#/$defs/__schema5"
                         },
                         "points": {
                           "$ref": "#/$defs/__schema6"
@@ -1201,6 +1223,7 @@
               "required": [
                 "contactId",
                 "purposeNow",
+                "doNotContact",
                 "channels"
               ],
               "additionalProperties": false
@@ -1215,61 +1238,10 @@
           "__schema0": {
             "type": "object",
             "properties": {
-              "hasAddress": {
-                "$ref": "#/$defs/__schema1"
-              },
-              "defaultPointId": {
-                "$ref": "#/$defs/__schema2"
-              },
-              "blocked": {
-                "$ref": "#/$defs/__schema3"
-              },
-              "reasons": {
-                "$ref": "#/$defs/__schema4"
-              },
-              "points": {
-                "$ref": "#/$defs/__schema6"
-              }
-            },
-            "required": [
-              "hasAddress",
-              "defaultPointId",
-              "blocked",
-              "reasons",
-              "points"
-            ],
-            "additionalProperties": false
-          },
-          "__schema1": {
-            "type": "boolean"
-          },
-          "__schema2": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid",
-                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "__schema3": {
-            "type": "boolean"
-          },
-          "__schema4": {
-            "type": "array",
-            "items": {
-              "$ref": "#/$defs/__schema5"
-            }
-          },
-          "__schema5": {
-            "type": "object",
-            "properties": {
               "code": {
                 "type": "string",
                 "enum": [
+                  "PERSON_DO_NOT_CONTACT",
                   "CONSENT_REVOKED",
                   "SUPPRESSED",
                   "WRONG_NUMBER",
@@ -1450,6 +1422,58 @@
             ],
             "additionalProperties": false
           },
+          "__schema1": {
+            "type": "object",
+            "properties": {
+              "hasAddress": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "defaultPointId": {
+                "$ref": "#/$defs/__schema3"
+              },
+              "blocked": {
+                "$ref": "#/$defs/__schema4"
+              },
+              "reasons": {
+                "$ref": "#/$defs/__schema5"
+              },
+              "points": {
+                "$ref": "#/$defs/__schema6"
+              }
+            },
+            "required": [
+              "hasAddress",
+              "defaultPointId",
+              "blocked",
+              "reasons",
+              "points"
+            ],
+            "additionalProperties": false
+          },
+          "__schema2": {
+            "type": "boolean"
+          },
+          "__schema3": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "__schema4": {
+            "type": "boolean"
+          },
+          "__schema5": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/__schema0"
+            }
+          },
           "__schema6": {
             "type": "array",
             "items": {
@@ -1469,7 +1493,7 @@
                 "reasons": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/$defs/__schema5"
+                    "$ref": "#/$defs/__schema0"
                   }
                 }
               },

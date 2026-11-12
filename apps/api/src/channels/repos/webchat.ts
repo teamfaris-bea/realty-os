@@ -1,4 +1,4 @@
-// Queries of module 22's web chat. Pre-tenant reads go ONLY through the three 0042 definers
+// Queries of module 22's web chat. Pre-tenant reads go ONLY through the three 0044_channels_inbox definers
 // (app.resolve_webchat_widget, app.webchat_session, app.webchat_poll); every write runs as the system actor of the
 // tenant a definer returned (webchat_sessions: the 0018 webchat_system policy), or of the session's tenant after the
 // person's role was re-read under the system actor (widget settings).
@@ -14,7 +14,7 @@ export interface ResolvedWidget {
   allowedOrigins: string[];
 }
 
-/** app.resolve_webchat_widget (pre-tenant definer, security review item in 0042). null = unknown key. */
+/** app.resolve_webchat_widget (pre-tenant definer, security review item in 0044_channels_inbox). null = unknown key. */
 export async function resolveWidget(db: Database, keyHash: Buffer): Promise<ResolvedWidget | null> {
   return withPreTenant(
     async (tx) => {

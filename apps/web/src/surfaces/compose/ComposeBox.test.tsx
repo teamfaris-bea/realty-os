@@ -142,6 +142,8 @@ describe('Thread', () => {
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Send' })).toHaveAccessibleDescription(/^Unsubscribed from email/);
     expect(screen.getByRole('radio', { name: 'Text' })).toHaveAccessibleDescription('Text not offered: Texted STOP on Nov 10');
+    // review ui-compose/F9: the checked, disabled option of the box's own channel is described too, by an element that exists
+    expect(screen.getByRole('radio', { name: 'Email' })).toHaveAccessibleDescription(/^Unsubscribed from email/);
     expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages/preview`)).toEqual([]);
     expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages`)).toEqual([]);
     view.unmount();
@@ -150,6 +152,24 @@ describe('Thread', () => {
     await user().type(await screen.findByRole('textbox', { name: 'Text message' }), 'Saturday?');
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Send' })).toHaveAccessibleDescription('Texted STOP on Nov 10');
+  });
+
+  it('D1 (review ui-compose/F4, F9): Edit of an email draft (?compose=draft) for a person blocked on text and email opens the Email box with the draft\'s subject, never the Text box; Send and the checked Email option both say why', async () => {
+    const unsubscribed = stopReason({ source: 'unsubscribe', keyword: null, addressHint: 'j•••@example.test' });
+    const emailDraft = draftAction({ draft: { channel: 'email', subject: 'Saturday showing', body: 'Hi Jane, Saturday at 11 works.' } });
+    const fake = threadFake()
+      .on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: reachability(IDS.jane, { sms: [stopReason()], email: [unsubscribed] }) } })
+      .on(`GET /assistant/actions/${IDS.draft}`, { status: 200, body: { action: emailDraft } });
+    agentApp(fake, `/contacts/${IDS.jane}/thread?compose=draft&draft=${IDS.draft}`);
+    const box = await screen.findByRole('textbox', { name: 'Email message' });
+    await waitFor(() => expect(box).toHaveValue('Hi Jane, Saturday at 11 works.'));
+    expect(screen.getByRole('radio', { name: 'Email' })).toBeChecked();
+    expect(screen.getByRole('textbox', { name: 'Subject' })).toHaveValue('Saturday showing');
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send' })).toHaveAccessibleDescription(/^Unsubscribed from email/);
+    expect(screen.getByRole('radio', { name: 'Email' })).toHaveAccessibleDescription(/^Unsubscribed from email/);
+    expect(screen.getByRole('radio', { name: 'Text' })).toHaveAccessibleDescription('Text not offered: Texted STOP on Nov 10');
+    expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toEqual([]);
   });
 
   it('an allowed send shows no badge, no consent question and no quiet-hours wait', async () => {
@@ -182,6 +202,28 @@ describe('Thread', () => {
     expect(screen.getByText(/Not sent:/)).toBeInTheDocument();
     expect(box).toHaveValue('Hi');
     expect(screen.queryByRole('button', { name: /anyway/ })).toBeNull();
+  });
+
+  it('review ui-compose/F9: after a send the gate blocked, when the refreshed summary now blocks the channel, every aria-describedby of the box still points at an element on the page', async () => {
+    let stopped = false;
+    // a phone only: once texting is blocked there is no other channel, so the box stays on Text
+    const fake = threadFake()
+      .on(`GET /contacts/${IDS.jane}`, { status: 200, body: { contact: fullContact({ emails: [] }) } })
+      .on(`GET /contacts/${IDS.jane}/reachability`, () => ({ status: 200, body: { reachability: reachability(IDS.jane, stopped ? { sms: [stopReason()] } : {}) } }))
+      .on(`POST /contacts/${IDS.jane}/messages`, () => {
+        stopped = true; // Jane's STOP landed while the agent was typing: the send is refused and the summary asked again
+        return { status: 200, body: { message: null, decision: decision({ outcome: 'deny', explanation: 'Opted out of texts' }), result: 'not_created' } };
+      });
+    agentApp(fake, `/contacts/${IDS.jane}/thread?compose=sms`);
+    const u = user();
+    await u.type(await screen.findByRole('textbox', { name: 'Text message' }), 'Hi');
+    await u.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText(/Not sent:/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled());
+    const form = screen.getByRole('form', { name: 'Message Jane Doe' });
+    for (const el of form.querySelectorAll('[aria-describedby]')) {
+      for (const ref of (el.getAttribute('aria-describedby') ?? '').split(/\s+/).filter(Boolean)) expect(document.getElementById(ref), `${el.outerHTML.slice(0, 80)} -> #${ref}`).not.toBeNull();
+    }
   });
 
   it('when the preview already said why and the send is blocked, the reason is shown once, not twice', async () => {

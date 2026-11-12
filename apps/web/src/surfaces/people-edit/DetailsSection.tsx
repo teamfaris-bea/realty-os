@@ -348,7 +348,8 @@ export function DetailsSection({ contact, details }: { contact: ContactFullView;
           </ul>
         )}
         {/* E77, E154: what the visitor typed in the website chat. Nothing automated ever goes to it; adding it as a phone
-            or email is the agent's own decision, and only then can it be called, texted or emailed */}
+            or email is the agent's own decision, and only then can it be called, texted or emailed. Never offered for a
+            person who asked not to be contacted (R-CHAN-2/3, review optouts/F3): the notice below says nobody can */}
         {(contact.typedInChat ?? []).length > 0 ? (
           <ul className="flex flex-col gap-1 text-[16px] text-ink" aria-label="Typed in the website chat">
             {(contact.typedInChat ?? []).map((t) => {
@@ -358,7 +359,7 @@ export function DetailsSection({ contact, details }: { contact: ContactFullView;
                   <span>
                     {shown} <span className="text-ink-muted">· typed in chat, not verified</span>
                   </span>
-                  {details.canEdit ? (
+                  {details.canEdit && !details.doNotContact ? (
                     <Button
                       variant="quiet"
                       aria-label={`Add ${shown} as ${t.kind === 'phone' ? 'a phone number' : 'an email'}`}
