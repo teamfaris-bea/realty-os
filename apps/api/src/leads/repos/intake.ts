@@ -194,6 +194,8 @@ export interface DisclosureInsert {
   bodySha256: string;
   namesSeller: string;
   sourceKind: DisclosureRow['source_kind'];
+  /** AI ISA (D12, R-ISA-9): whether the source stated the channel and purpose scope (null on older rows = refused) */
+  scopeStated?: boolean | null;
 }
 
 /**
@@ -203,9 +205,9 @@ export interface DisclosureInsert {
  */
 export async function upsertDisclosure(tx: Tx, d: DisclosureInsert): Promise<DisclosureRow> {
   await sql`
-    INSERT INTO consent_disclosures (tenant_id, id, channel_scope, purpose_scope, body, body_sha256, names_seller, source_kind)
+    INSERT INTO consent_disclosures (tenant_id, id, channel_scope, purpose_scope, body, body_sha256, names_seller, source_kind, scope_stated)
     VALUES (app.tenant_id(), ${d.id}::uuid, ${[...d.channelScope]}::text[], ${[...d.purposeScope]}::text[], ${d.body}, ${d.bodySha256},
-            ${d.namesSeller}, ${d.sourceKind})
+            ${d.namesSeller}, ${d.sourceKind}, ${d.scopeStated ?? null})
     ON CONFLICT (tenant_id, body_sha256) DO NOTHING`.execute(tx);
   const r = await sql<DisclosureRow>`
     SELECT id, channel_scope, purpose_scope, names_seller, source_kind FROM consent_disclosures

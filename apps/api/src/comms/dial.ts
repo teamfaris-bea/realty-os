@@ -15,6 +15,7 @@
 //     'ringing' + provider ref, or 'failed'. Never re-dials a call that already has a provider ref.
 //   applyCallStatus (provider callbacks): forward-only status; an announcement that failed to play
 //     turns recording OFF for the call before it can be marked in progress (E47, DB CHECK).
+import { takeoverInTx } from '../isa/ingest.js';
 import { classifyHumanPurpose, decideRecording, recordingMayStart } from '@realty/core/compliance';
 import type { ContactId, Instant, SystemActor, TenantId, UserActor } from '@realty/core/foundation';
 import { MINUTE_MS, can, toIso } from '@realty/core/foundation';
@@ -105,6 +106,7 @@ export async function startCall(actor: UserActor, contactId: string, input: { to
       direction: 'outbound',
       enabled: policy.recordingEnabled,
     });
+    await takeoverInTx(tx, deps.ids, actor, contactId, txNow); // 0190 (D12, R-ISA-3): a human dial pauses live AI care
     await sql`
       INSERT INTO calls (tenant_id, id, conversation_id, contact_id, direction, phone_number_id, agent_user_id, client_address, initiator, status,
         started_at, recording_mode, recording_decision)

@@ -1,4 +1,5 @@
 // Shared vocabulary of api/comms (BUILD_PLAN module 12).
+import type { AiIsaGateFacts } from '@realty/core/compliance';
 import type { ActionCategory, Channel, GateDecision, Initiator, Purpose } from '@realty/core/compliance';
 import type { IdGenerator, Instant } from '@realty/core/foundation';
 import type { Database } from '@realty/db';
@@ -23,6 +24,8 @@ export interface CommsDeps {
    * adapter is configured (TELEPHONY_PROVIDER=twilio); the deterministic fake leaves it off unless a test turns it on.
    */
   telephonyDailyCap?: boolean;
+  /** R-ISA-25: AI_ISA_LIVE_SENDS=false refuses AI ISA messages on a non-fake adapter of that channel (fakes are unaffected). */
+  aiIsaLiveOff?: { sms: boolean; email: boolean };
 }
 
 /** What a send-time gate evaluation is about (buildGateInput). Never carries a plaintext address. */
@@ -37,6 +40,8 @@ export interface OutboundIntent {
   body: string | null;
   /** web chat (module 22): the sending widget's state for the gate (core check 10); absent/null on other channels */
   connection?: { status: 'connected' | 'degraded' | 'other' } | null;
+  /** 0190 (D12): the AI ISA facts for core checks 0/8/12 (AI ISA categories only; isa/send.ts aiIsaGateFacts) */
+  aiIsa?: AiIsaGateFacts;
 }
 
 /**

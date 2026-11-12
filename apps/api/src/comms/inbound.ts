@@ -42,11 +42,14 @@ import * as msgs from './repos/messages.js';
 import { adminUserIds, contactLabel, handlerOf, notifyUser, upsertFeedItem } from './repos/notify.js';
 import { LEDGER_SYSTEM, SYSTEM_NOTICE, type CommsDeps } from './types.js';
 import { emailHandbackKey, messageIdHeader, rfcMessageIdSha256 } from '../channels/rfcMessageId.js';
+import { dkimAligned, ingestForAiIsaInTx, pauseForSyncedMailInTx } from '../isa/ingest.js';
+import { clientOwnText, isAcknowledgementOnly } from '../isa/coreSeam.js';
+import type { DkimVerdict } from '../leadEmail/trust.js';
 import { type InquiryInput, ingestInquiryInTx, intakeLockKeys } from '../leads/intake.js';
 
 export type InboundEvent =
   | { kind: 'sms'; providerRef: string; from: string; to: string; body: string; mediaCount?: number; occurredAt?: Instant; optOutType?: string; textParts?: TextPartRef[] }
-  | { kind: 'email'; providerRef: string; from: string; to: string; subject: string | null; text: string; headers: Record<string, string>; conversationId: string; occurredAt?: Instant }
+  | { kind: 'email'; providerRef: string; from: string; to: string; subject: string | null; text: string; headers: Record<string, string>; conversationId: string; occurredAt?: Instant; dkim?: readonly DkimVerdict[] }
   | { kind: 'call'; providerRef: string; from: string; to: string; status: 'ringing' | 'no_answer' | 'voicemail' | 'completed' | 'busy'; occurredAt?: Instant }
   | ChannelInboundEvent;
 
@@ -409,10 +412,22 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
     if (await auto.pauseConversation(tx, conv, reason, messageId, now)) paused = true;
   }
   const pausedEnrollments = await auto.pauseEnrollments(tx, sharing, reason, messageId, now);
-  const canceledAssistant = await msgs.cancelQueuedAssistant(tx, sharing, 'CLIENT_REPLIED');
+  const canceledAssistant = await msgs.cancelQueuedAssistant(tx, sharing, 'CLIENT_REPLIED', { keepPostHandoff: isAcknowledgementOnly(clientOwnText(body, e.kind === 'email' ? 'email' : 'sms').text, rx !== null) });
   // R-NURT-5 / R-INBOX-2 (module 22): the scheduled trigger runs of every contact on the address, too
   // (module 26's executeTriggerRun also re-checks the pause)
   const canceledTriggerRuns = await msgs.cancelScheduledTriggerRuns(tx, sharing);
+
+  // 0190 (D12 proposed, R-ISA-3/-28): the AI ISA branch, after step 6 (unchanged for everyone). A turn under live care
+  // skips steps 7 and 8 (one activity row, one debounced turn, the backstop); anything else under live care pauses it
+  // and continues below exactly as today (R-AST-9, the E61 card included).
+  const dkimOk = e.kind === 'email' ? dkimAligned(from, e.dkim ?? []) : null;
+  if (e.kind === 'email' && messageId) await sql`UPDATE messages SET email_dkim_aligned = ${dkimOk} WHERE tenant_id = app.tenant_id() AND id = ${messageId}`.execute(tx);
+  const isa = await ingestForAiIsaInTx(tx, { db: deps.db, ids, providers: deps.providers, aiIsaLiveOff: deps.aiIsaLiveOff }, actor, {
+    contactId: target, messageId, channel: e.kind === 'sms' ? ((e.mediaCount ?? 0) > 0 ? 'mms' : 'sms') : e.kind, fromAddress: from, isAutoReply: autoReply !== null,
+    classification: classification.kind, dkimAligned: dkimOk, mediaCount: e.kind === 'sms' ? (e.mediaCount ?? 0) : 0,
+    textParts: e.kind === 'sms' ? (e.textParts?.length ?? 0) : 0, inboundSeq,
+  }, now);
+  if (isa.kind === 'turn') return { kind: 'stored', contactId: target, messageId, callId, sharedContactIds: sharing, classification: classification.kind, paused, handbackId: null, created };
 
   // 7 handback for the replying contact when the assistant was running (or about to run) its thread
   const h = await handlerOf(tx, target);
@@ -626,6 +641,8 @@ export async function ingestSyncedMailInTx(tx: Tx, contactId: string, mailMessag
   const sharing = [...new Set([contactId, ...(await msgs.hmacPoints(tx, hmac)).map((p) => p.contactId)])].sort();
   await lockContacts(tx, sharing as ContactId[]);
   const now = (await sql<{ now: Date }>`SELECT clock_timestamp() AS now`.execute(tx)).rows[0]!.now.getTime() as Instant;
+  // 0190 (D12, R-GMAIL-14, R-ISA-3): synced mail is never an AI ISA turn; it only pauses live care (synced_mail)
+  for (const c of sharing) await pauseForSyncedMailInTx(tx, ids, c, now);
 
   const reason = pauseReasonOf(classification);
   let paused = false;

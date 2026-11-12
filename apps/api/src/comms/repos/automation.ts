@@ -68,7 +68,7 @@ export async function resumeAutomation(tx: Tx, contactId: string, userId: string
 export interface ActionFacts {
   id: string;
   kind: string;
-  autonomy: 'requires_approval' | 'within_playbook' | 'internal';
+  autonomy: 'requires_approval' | 'within_playbook' | 'internal' | 'ai_isa_mandate';
   status: string;
   ownerUserId: string | null;
   boundOwnershipSeq: number | null;

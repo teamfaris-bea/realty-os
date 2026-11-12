@@ -155,6 +155,7 @@ qualification, native apps and anything else VISION.md lists for later phases.
 These are open. Each module's report has the full list.
 
 - **Not automatable here, pending:**
+  - counsel review of the AI ISA defaults (D12 proposed, docs/AI_ISA.md §14 C-ISA-1…12: AI-composed texts as marketing, consent evidence, quiet hours, caps, the AI disclosure, DNC freshness); `AI_ISA_LIVE_SENDS` stays false;
   - counsel review of every VERIFY WITH COUNSEL default (jurisdiction packs, recording announcements, attestation wording, opt-out and footer text), and of owner decision D1: relying on third-party consent with no consent minimums, DNC registry check, quiet hours or frequency caps may conflict with state mini-TCPA laws such as Florida's FTSA (ARCHITECTURE §19). The UI says plainly that the US pack has not been reviewed;
   - the Phase 1 load test (3 tenants × 250k contacts × 50 agents). Only smaller smoke proxies run;
   - Lighthouse runs on real devices, and usability sessions with agents against their FUB baseline;

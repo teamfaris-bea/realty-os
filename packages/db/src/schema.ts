@@ -75,6 +75,239 @@ export interface AgentGoalsTable {
   created_at: Generated<Timestamp>;
 }
 
+/** public.ai_isa_agent_optins (table) */
+export interface AiIsaAgentOptinsTable {
+  tenant_id: string;
+  id: string;
+  user_id: string;
+  playbook_version_id: string;
+  attestation: string;
+  attestation_sha256: string;
+  capabilities: string[];
+  channels: string[];
+  timezone: string;
+  availability: Generated<Json>;
+  booking: Generated<Json>;
+  status: Generated<string>;
+  revoked_at: Timestamp | null;
+  revoked_by_user_id: string | null;
+  created_at: Generated<Timestamp>;
+}
+
+/** public.ai_isa_area_code_zones (table) */
+export interface AiIsaAreaCodeZonesTable {
+  area_code: string;
+  zone: string;
+}
+
+/** public.ai_isa_assignments (table) */
+export interface AiIsaAssignmentsTable {
+  tenant_id: string;
+  id: string;
+  contact_id: string;
+  owner_user_id: string;
+  optin_id: string;
+  playbook_version_id: string;
+  bound_ownership_seq: Int8;
+  bound_points: Json;
+  side: string;
+  state: Generated<string>;
+  machine: Generated<Json>;
+  awaiting_agent: Generated<Json>;
+  epoch: Generated<number>;
+  started_by_user_id: string;
+  started_at: Generated<Timestamp>;
+  from_handback_id: string | null;
+  continued_from_assignment_id: string | null;
+  paused_at: Timestamp | null;
+  paused_by_kind: string | null;
+  paused_by_user_id: string | null;
+  pause_reason: string | null;
+  ended_at: Timestamp | null;
+  end_reason: string | null;
+  ended_by_kind: string | null;
+  ended_by_user_id: string | null;
+  consent_snapshot: Generated<Json>;
+  messages_sent: Generated<number>;
+  unanswered_initiated: Generated<number>;
+  undelivered_streak: Generated<number>;
+  last_inbound_seq: Generated<Int8>;
+  next_follow_up_at: Timestamp | null;
+  finalize_at: Timestamp | null;
+  finalize_kind: string | null;
+  updated_at: Generated<Timestamp>;
+}
+
+/** public.ai_isa_controls (table) */
+export interface AiIsaControlsTable {
+  tenant_id: string;
+  id: string;
+  assignment_id: string;
+  contact_id: string;
+  kind: string;
+  by_kind: string;
+  by_user_id: string | null;
+  reason: string;
+  created_at: Generated<Timestamp>;
+}
+
+/** public.ai_isa_daily_counts (table) */
+export interface AiIsaDailyCountsTable {
+  tenant_id: string;
+  local_day: string;
+  n: number;
+}
+
+/** public.ai_isa_handoffs (table) */
+export interface AiIsaHandoffsTable {
+  tenant_id: string;
+  id: string;
+  assignment_id: string;
+  contact_id: string;
+  reason: string;
+  basis: Generated<Json>;
+  assistant_action_id: string;
+  appointment_id: string | null;
+  package: Json;
+  package_sha256: string;
+  pending_message_id: string | null;
+  confirmation_status: Generated<string>;
+  sla_class: string;
+  sla_due_at: Timestamp;
+  sla_met_at: Timestamp | null;
+  sla_escalated_at: Timestamp | null;
+  sla_escalation_level: Generated<number>;
+  recipient_user_id: string | null;
+  acknowledged_at: Timestamp | null;
+  acknowledged_by_user_id: string | null;
+  created_at: Generated<Timestamp>;
+}
+
+/** public.ai_isa_person_blocks (table) */
+export interface AiIsaPersonBlocksTable {
+  tenant_id: string;
+  id: string;
+  contact_id: string;
+  assignment_id: string | null;
+  reason: string;
+  created_at: Generated<Timestamp>;
+  lifted_at: Timestamp | null;
+  lifted_by_user_id: string | null;
+  lift_inbound_message_id: string | null;
+  lift_attestation: string | null;
+}
+
+/** public.ai_isa_shared_facts (table) */
+export interface AiIsaSharedFactsTable {
+  tenant_id: string;
+  id: string;
+  assignment_id: string;
+  contact_id: string;
+  turn_id: string | null;
+  message_id: string | null;
+  status: Generated<string>;
+  fact_kind: string;
+  listing_id: string | null;
+  mls_connection_id: string | null;
+  price_kind: string | null;
+  price_cents: Int8 | null;
+  status_at_build: string | null;
+  as_of: Timestamp | null;
+  display_rules_version: string | null;
+  gate: Generated<Json>;
+  method_version: string | null;
+  valuation_date: string | null;
+  tier: string | null;
+  comp_set_hash: string | null;
+  line_sha256: string;
+  created_at: Generated<Timestamp>;
+}
+
+/** public.ai_isa_slot_offers (table) */
+export interface AiIsaSlotOffersTable {
+  tenant_id: string;
+  id: string;
+  assignment_id: string;
+  contact_id: string;
+  turn_id: string | null;
+  organizer_user_id: string;
+  kind: string;
+  slots: Json;
+  zones: string[];
+  availability_link_id: string;
+  read_at: Timestamp;
+  expires_at: Timestamp;
+  offered_message_id: string | null;
+  status: Generated<string>;
+  accepted_slot: number | null;
+  accepted_message_id: string | null;
+  accepted_quote: string | null;
+  appointment_id: string | null;
+  refusal_code: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
+/** public.ai_isa_state_zones (table) */
+export interface AiIsaStateZonesTable {
+  state: string;
+  zone: string;
+}
+
+/** public.ai_isa_stop_signals (table) */
+export interface AiIsaStopSignalsTable {
+  tenant_id: string;
+  id: Generated<string>;
+  address_hmac: Buffer | null;
+  contact_id: string | null;
+  reason: string;
+  source_table: string;
+  source_id: string | null;
+  created_at: Generated<Timestamp>;
+}
+
+/** public.ai_isa_turns (table) */
+export interface AiIsaTurnsTable {
+  tenant_id: string;
+  id: string;
+  assignment_id: string;
+  contact_id: string;
+  seq: number;
+  epoch: number;
+  attempt: Generated<number>;
+  trigger_kind: string;
+  trigger_key: string;
+  pinned_inbound_seq: Int8;
+  state_before: string;
+  state_after: string | null;
+  status: Generated<string>;
+  ai_run_id: string | null;
+  assistant_action_id: string | null;
+  message_id: string | null;
+  channel: string | null;
+  purpose: Generated<string>;
+  message_kind: string | null;
+  basis_kind: string | null;
+  consent_event_id: string | null;
+  basis_message_id: string | null;
+  dnc_check_id: string | null;
+  zones: string[] | null;
+  zone_source: string | null;
+  icu_tz_version: string | null;
+  pg_tzdata_version: string | null;
+  window_start: string | null;
+  window_end: string | null;
+  not_before: Timestamp | null;
+  body_sha256: string | null;
+  decision: Generated<Json>;
+  denied: Generated<Json>;
+  rules_version: string;
+  policy_version: string;
+  prompt_version: string;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
 /** public.ai_runs (table) */
 export interface AiRunsTable {
   tenant_id: string;
@@ -148,6 +381,8 @@ export interface AssistantActionsTable {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
   decided_by_role: string | null;
+  ai_isa_turn_id: string | null;
+  epoch: number | null;
 }
 
 /** public.assistant_claims (table) */
@@ -387,6 +622,7 @@ export interface ConsentDisclosuresTable {
   names_seller: string;
   source_kind: string;
   created_at: Generated<Timestamp>;
+  scope_stated: boolean | null;
 }
 
 /** public.consent_events (table) */
@@ -1633,6 +1869,7 @@ export interface MessagesTable {
   marketing_piece_id: string | null;
   bulk_action_id: string | null;
   rfc_message_id_sha256: Buffer | null;
+  email_dkim_aligned: boolean | null;
 }
 
 /** public.mfa_recovery_codes (table) */
@@ -1839,6 +2076,7 @@ export interface PlaybookVersionsTable {
   created_by_user_id: string;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+  narrows_previous: boolean | null;
 }
 
 /** public.playbooks (table) */
@@ -2155,6 +2393,7 @@ export interface SavedSearchesTable {
   last_alerted_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+  origin: Generated<string>;
 }
 
 /** public.scoreboard_activity_daily (table) */
@@ -2495,6 +2734,10 @@ export interface TenantSettingsTable {
   mail_sync_enabled: Generated<boolean>;
   mail_backfill_days: Generated<number>;
   telephony_daily_cap: Generated<number>;
+  ai_isa_enabled: Generated<boolean>;
+  ai_isa_enabled_by: string | null;
+  ai_isa_enabled_at: Timestamp | null;
+  ai_isa_daily_cap: Generated<number>;
 }
 
 /** public.tenants (table) */
@@ -2702,6 +2945,18 @@ export interface DB {
   ad_budget_caps: AdBudgetCapsTable;
   ad_campaigns: AdCampaignsTable;
   agent_goals: AgentGoalsTable;
+  ai_isa_agent_optins: AiIsaAgentOptinsTable;
+  ai_isa_area_code_zones: AiIsaAreaCodeZonesTable;
+  ai_isa_assignments: AiIsaAssignmentsTable;
+  ai_isa_controls: AiIsaControlsTable;
+  ai_isa_daily_counts: AiIsaDailyCountsTable;
+  ai_isa_handoffs: AiIsaHandoffsTable;
+  ai_isa_person_blocks: AiIsaPersonBlocksTable;
+  ai_isa_shared_facts: AiIsaSharedFactsTable;
+  ai_isa_slot_offers: AiIsaSlotOffersTable;
+  ai_isa_state_zones: AiIsaStateZonesTable;
+  ai_isa_stop_signals: AiIsaStopSignalsTable;
+  ai_isa_turns: AiIsaTurnsTable;
   ai_runs: AiRunsTable;
   appointments: AppointmentsTable;
   assistant_actions: AssistantActionsTable;
@@ -2867,6 +3122,18 @@ export const TABLE_NAMES = [
   'ad_budget_caps',
   'ad_campaigns',
   'agent_goals',
+  'ai_isa_agent_optins',
+  'ai_isa_area_code_zones',
+  'ai_isa_assignments',
+  'ai_isa_controls',
+  'ai_isa_daily_counts',
+  'ai_isa_handoffs',
+  'ai_isa_person_blocks',
+  'ai_isa_shared_facts',
+  'ai_isa_slot_offers',
+  'ai_isa_state_zones',
+  'ai_isa_stop_signals',
+  'ai_isa_turns',
   'ai_runs',
   'appointments',
   'assistant_actions',

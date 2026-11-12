@@ -146,13 +146,13 @@ describe('R-PERM-13 re-authentication on sensitive actions', () => {
     // the Phase 1 list: imports, role/member changes, erasure, export, number release, support grant,
     // brokerage identity, compliance loosening
     expect(new Set(sensitive.map(([, a]) => a))).toEqual(
-      new Set(['import.run', 'number.release', 'settings.compliance', 'settings.identity', 'member.invite', 'member.role', 'member.suspend', 'member.remove', 'contact.erase', 'data.export', 'support.grant', 'integration.manage', 'settings.batch_text', 'mail_sync.manage', 'source_cost.edit', 'coaching.settings', 'ads.cap_set']), // module 68: Gmail sync; module 33: a closed month's cost (absent closedPeriod = closed); module 36: coaching settings; module 52: the ad cap
+      new Set(['import.run', 'number.release', 'settings.compliance', 'settings.identity', 'member.invite', 'member.role', 'member.suspend', 'member.remove', 'contact.erase', 'data.export', 'support.grant', 'integration.manage', 'settings.batch_text', 'mail_sync.manage', 'source_cost.edit', 'coaching.settings', 'ads.cap_set', 'settings.ai_isa', 'ai_isa.optin']), // module 68: Gmail sync; module 33: a closed month's cost (absent closedPeriod = closed); module 36: coaching settings; module 52: the ad cap; module 75 (D12): the AI ISA switch and the opt-in (loosening)
     );
     for (const role of new Set(sensitive.map(([r]) => r))) {
       await h.su.query("UPDATE sessions SET reauthenticated_at = now() - interval '16 minutes' WHERE user_id = $1 AND revoked_at IS NULL", [users[role].userId]);
     }
     for (const [role, action] of sensitive) {
-      const facts = action === 'settings.compliance' || action === 'settings.batch_text' || action === 'coaching.settings' ? { ...FULL, loosening: true } : FULL; // parity L3: batch text on is "loosening"; module 36: coaching on
+      const facts = action === 'settings.compliance' || action === 'settings.batch_text' || action === 'coaching.settings' || action === 'settings.ai_isa' || action === 'ai_isa.optin' ? { ...FULL, loosening: true } : FULL; // parity L3: batch text on is "loosening"; module 36: coaching on
       const got = await call(users[role], action, facts);
       expect({ role, action, ...got }).toEqual({ role, action, status: 401, code: 'REAUTH_REQUIRED' });
     }
@@ -165,7 +165,7 @@ describe('R-PERM-13 re-authentication on sensitive actions', () => {
       expect((await c.post('/api/auth/reauth', body)).statusCode).toBe(200);
     }
     for (const [role, action] of sensitive) {
-      const facts = action === 'settings.compliance' || action === 'settings.batch_text' || action === 'coaching.settings' ? { ...FULL, loosening: true } : FULL;
+      const facts = action === 'settings.compliance' || action === 'settings.batch_text' || action === 'coaching.settings' || action === 'settings.ai_isa' || action === 'ai_isa.optin' ? { ...FULL, loosening: true } : FULL;
       expect({ role, action, ...(await call(users[role], action, facts)) }).toEqual({ role, action, status: 200, code: null });
     }
   });
@@ -242,6 +242,12 @@ describe('route table', () => {
         "GET /api/me/weekly-plans/:week → self",
         "HEAD /api/me/weekly-plans/:week → self",
         "POST /api/me/weekly-plans/:week/accept → self",
+        "GET /api/me/ai-isa → self",
+        "HEAD /api/me/ai-isa → self",
+        "PUT /api/me/ai-isa/opt-in → ai_isa.optin",
+        "POST /api/me/ai-isa/opt-in/revoke → ai_isa.optin",
+        "POST /api/me/ai-isa/pause-all → ai_isa.optin",
+        "POST /api/me/ai-isa/re-attest → ai_isa.optin",
       ]
     `);
   });

@@ -380,6 +380,31 @@ export const ERROR_STATUS = {
   ADS_NO_LEAD_SOURCE: 409, // the Google Ads connection has no lead source, so its spend is not recorded: no budget moves (b11 sends-gates/F2)
   AD_CAP_CHANGED: 409, // another cap version was saved at the same time; reload and try again
   AD_CAP_INVALID: 422, // the daily ceiling is above the monthly cap
+  // ---- module 75: AI ISA (D12 proposed; docs/AI_ISA.md §9.1) ----
+  AI_ISA_OFF: 409, // the tenant switch or ai_enabled is off
+  AI_ISA_NOT_CLEARED: 409, // platform:ai_isa is not counsel-cleared
+  AI_ISA_POLICY_NOT_APPROVED: 409, // no approved ai_isa team policy version
+  AI_ISA_NO_OPTIN: 409, // the owner has no active opt-in on the current version
+  AI_ISA_NOT_OWNER: 404, // only the lead's current owner, as themselves (404 when invisible, R-PERM-5)
+  AI_ISA_ALREADY_ACTIVE: 409, // care is already live for this person
+  AI_ISA_NO_CHANNEL: 409, // no bindable point passes reply-tier evidence
+  AI_ISA_SHARED_ADDRESS: 409, // a point is shared with another live person
+  AI_ISA_ACTIVE_CLIENT: 409, // a party to an open deal or active team listing
+  AI_ISA_LISTED_ELSEWHERE: 409, // a live listing at the property by another brokerage
+  AI_ISA_NOT_ROOT: 409, // a merged-away record
+  AI_ISA_CALENDAR_REQUIRED: 409, // book_appointments needs a live calendar
+  AI_ISA_FIRST_TOUCH_PENDING: 409, // the human first touch is not recorded yet
+  AI_ISA_PERSON_DECLINED: 409, // a person block (opt-out, complaint, declined AI)
+  AI_ISA_HANDBACK_STALE: 409, // the handback is no longer current or its reply was queued
+  AI_ISA_UNDO_EXPIRED: 409, // the 10-second undo window has passed
+  AI_ISA_NOT_LIVE: 409, // no live or paused assignment to control
+  AI_ISA_NOT_PAUSED: 409, // resume needs a paused assignment
+  AI_ISA_DO_NOT_CONTACT: 409, // the person asked not to be contacted
+  AI_ISA_ATTESTATION_REQUIRED: 422, // turning on or widening needs the typed attestation
+  AI_ISA_ROLE_NOT_ELIGIBLE: 403, // TC and the human ISA role cannot opt in (Q-ISA-8)
+  AI_ISA_BLOCK_NOT_LIFTABLE: 409, // a block lifts only after a new message from the person
+  SUBJECT_UNCONFIRMED: 409, // seller facts need an agent-confirmed subject (ISA-3)
+  CAPABILITY_NOT_AVAILABLE: 422, // a reserved or unavailable capability
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

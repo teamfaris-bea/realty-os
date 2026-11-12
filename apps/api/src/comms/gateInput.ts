@@ -100,6 +100,7 @@ async function gateContext(tx: Tx, m: OutboundIntent, now: Instant): Promise<{ i
     // connected, E77); absent ⇒ a chat reply is refused (CHANNEL_NOT_CONNECTED).
     personDoNotContact: m.contactId && !toUser ? await g.personDoNotContact(tx, m.contactId) : false,
     connection: m.connection ?? null,
+    ...(m.aiIsa ? { aiIsa: m.aiIsa } : {}),
   };
   return { input, policy, tenant };
 }
@@ -141,6 +142,30 @@ export const DISPATCH_DENY_SENTENCES = {
   // R-TWL-1 (b9 review ownership-data/F4): the kill switch, refused in TX1 so a refused text or call is never a touch;
   // telephonySafeguards.ts TELEPHONY_LIVE_OFF_SENTENCE
   TELEPHONY_LIVE_OFF: 'Live texting and calling are off on this deployment.',
+  // 0190 (D12 proposed): the AI ISA's own refusals (isa/send.ts ISA_GUARD_REASONS and the TX1 checks); codes only in the row
+  AI_ISA_LIVE_OFF: 'AI assistant sending is off on this deployment.',
+  ISA_OFFSET_MISMATCH: 'The time-zone data disagreed, so the AI assistant waited.',
+  ISA_NOT_AUTHORIZED: 'The AI assistant is not authorized for this person right now, so it did not send this.',
+  ISA_PURPOSE_MISMATCH: 'AI assistant messages are sent as marketing only.',
+  ISA_CHANNEL_NOT_ALLOWED: 'The AI assistant texts and emails only, with no media.',
+  ISA_BODY_CHANGED: 'The message changed after it was checked, so it did not go out.',
+  ISA_UNBOUND_RECIPIENT: 'AI assistant messages go only to the address bound when AI care started.',
+  ISA_STOPPED: 'An opt-out or do-not-contact stopped AI care.',
+  ISA_PAUSED: 'AI care is paused, so the AI assistant did not send this.',
+  ISA_STALE_EPOCH: 'AI care was paused and resumed after this was written, so it did not go out.',
+  ISA_STALE_REPLY: 'The person wrote again after this was written; the AI assistant will answer both.',
+  ISA_HANDOFF_CLOSED: 'AI care handed back; only its pending confirmation may go.',
+  ISA_SHARED_ADDRESS: 'Another person shares this address, so AI care stopped.',
+  ISA_ACTIVE_CLIENT: 'This person is a client on an open deal or listing, so AI care stopped.',
+  ISA_UNREAD_PART: 'A part of their message has not been read yet, so the AI assistant waited.',
+  ISA_SELLER_DATA_NOT_CLEARED: 'Recent sales wait on counsel review.',
+  ISA_CONSENT_EVIDENCE_MISSING: 'The consent the AI assistant needs for this is not on file.',
+  ISA_REPLY_WINDOW_CLOSED: 'The 24-hour reply window of their own message closed.',
+  ISA_DNC_UNVERIFIED: 'An initiated AI text needs a fresh national Do Not Call result.',
+  ISA_ZONE_UNRESOLVED: 'Their time zones could not all be resolved, so the AI assistant waited.',
+  ISA_QUIET_HOURS: 'It is outside quiet hours in one of their time zones; the AI assistant waits.',
+  ISA_MIN_GAP: 'AI assistant messages are spaced at least two minutes apart.',
+  ISA_CAP_REACHED: 'The daily limit of AI assistant messages is reached.',
 } as const;
 export type DispatchDenyReason = keyof typeof DISPATCH_DENY_SENTENCES;
 

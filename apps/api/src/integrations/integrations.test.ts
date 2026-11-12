@@ -68,9 +68,9 @@ describe('GET /admin/integrations: honest status for every service (R-INT-2, R-I
     }
     expect(v.services.find((s) => s.kind === 'zillow_feed')!.sentence).toMatch(/^Needs partner access|Demo data only/);
     expect((v as unknown as { perUser: { key: string }[] }).perUser.map((x) => x.key)).toEqual(['google_calendar', 'microsoft_calendar']);
-    // D2 (migration 0025) adds platform:gmail, D9's schema step platform:cma, module 52 platform:ads and D10 platform:public_records_outreach, unreviewed like the rest
+    // D2 (migration 0025) adds platform:gmail, D9's schema step platform:cma, module 52 platform:ads and D10 platform:public_records_outreach, unreviewed like the rest (and the AI ISA migration, D12 proposed, platform:ai_isa and platform:ai_isa_seller_data)
     expect(v.platformPacks.map((p) => p.key)).toEqual(
-      ['platform:ads', 'platform:avm', 'platform:cma', 'platform:coaching', 'platform:fair_housing', 'platform:gmail', 'platform:meta', 'platform:portal', 'platform:public_records_outreach', 'platform:review_requests', 'platform:voice'],
+      ['platform:ads', 'platform:ai_isa', 'platform:ai_isa_seller_data', 'platform:avm', 'platform:cma', 'platform:coaching', 'platform:fair_housing', 'platform:gmail', 'platform:meta', 'platform:portal', 'platform:public_records_outreach', 'platform:review_requests', 'platform:voice'],
     );
     for (const p of v.platformPacks) {
       expect(p.reviewed, p.key).toBe(false);

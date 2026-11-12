@@ -29,6 +29,7 @@ import { transactionHandlers } from '../../transactions/handlers.js';
 import { documentHandlers } from '../../documents/handlers.js';
 import { adsHandlers } from '../../ads/handlers.js';
 import { homeownerHandlers } from '../../homeowner/handlers.js';
+import { isaHandlers } from '../../isa/handlers.js';
 
 export const handlers: JobHandler<unknown>[] = [
   ...workerHandlers,
@@ -55,5 +56,6 @@ export const handlers: JobHandler<unknown>[] = [
   ...documentHandlers,
   ...adsHandlers,
   ...homeownerHandlers,
+  ...isaHandlers,
   // registry: add new entries above this line
 ];

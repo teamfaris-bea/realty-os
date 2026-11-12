@@ -8,7 +8,7 @@ import { sql } from 'kysely';
 
 export interface NotifySpec {
   userId: string;
-  kind: 'handback' | 'handback_hot' | 'inbound_message' | 'missed_call' | 'opt_out' | 'system' | 'exception';
+  kind: 'handback' | 'handback_hot' | 'inbound_message' | 'missed_call' | 'opt_out' | 'system' | 'exception' | 'ai_isa_handoff' | 'ai_isa_handoff_hot' | 'ai_isa_escalation' | 'ai_isa_ended' | 'ai_isa_paused' | 'ai_isa_handoff_overdue';
   priority: 'critical' | 'high' | 'normal' | 'low';
   title: string;
   body?: string | null;
@@ -52,7 +52,7 @@ export async function notifyUser(tx: Tx, ids: IdGenerator, n: NotifySpec, now: I
 
 export interface FeedSpec {
   userId: string;
-  itemType: 'handback' | 'unanswered_inbound' | 'missed_call' | 'assistant_draft';
+  itemType: 'handback' | 'unanswered_inbound' | 'missed_call' | 'assistant_draft' | 'ai_isa_handoff' | 'ai_isa_activity' | 'ai_isa_escalation';
   band: 'pinned' | 'scored';
   contactId: string | null;
   subjectType: string;

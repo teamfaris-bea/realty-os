@@ -156,6 +156,9 @@ export default tseslint.config(
       'apps/api/src/leads/routing*/**/*.{ts,tsx}',
       'apps/web/src/portal/**/*.{ts,tsx}',
       'apps/api/src/cma/**/*.{ts,tsx}', // D9 module 71: valuations read no prediction (R-PRED-4, R-CMA-2)
+      // D12 (AI ISA, R-PRED-4): the AI ISA never reads a prediction
+      'apps/api/src/isa/**/*.{ts,tsx}',
+      'packages/core/src/isa/**/*.{ts,tsx}',
     ],
     rules: { 'realty/no-prediction-import': 'error' },
   },
@@ -176,7 +179,8 @@ export default tseslint.config(
     rules: { 'realty/mail-sync-boundary': ['error', { mode: 'outside', allowInFunctions: ['ingestSyncedMailInTx'] }] },
   },
   {
-    files: ['apps/api/src/assistant/**/*.ts', 'apps/api/src/providers/anthropic.ts'],
+    files: ['apps/api/src/assistant/**/*.ts', 'apps/api/src/providers/anthropic.ts', 'apps/api/src/isa/**/*.ts', 'packages/core/src/isa/**/*.ts',
+      'apps/api/src/providers/fake/isaAi.ts', 'apps/api/src/providers/fake/hostileIsaAi.ts'],
     ignores: TEST_FILES,
     rules: { 'realty/mail-sync-boundary': ['error', { mode: 'no-import' }] },
   },
