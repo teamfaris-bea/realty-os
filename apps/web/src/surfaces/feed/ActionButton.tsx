@@ -26,7 +26,7 @@
 // the tap when the contact cannot be reached on that channel, with the exact reason under the button
 // ("Texted STOP on Nov 10"; reasons/useReachability, loaded once per feed). Every send is still checked
 // again when it goes out, and a blocked one says why.
-import { type ReactNode, useId } from 'react';
+import { type ReactNode, useId, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, type ButtonVariant, type IconName } from '../../design/index.js';
 import { type ChannelState, ReasonCaption, channelState, useChannelState, useReachability } from '../../reasons/index.js';
@@ -35,6 +35,7 @@ import { useCommand } from '../../shell/index.js';
 import { useInbox } from '../approvals/ApprovalsPage.js';
 import { sendOutcomeText, sentResult, useAgentSheets } from './lib/AgentSheets.js';
 import { useMutate } from './lib/hooks.js';
+import { dealDateStaleWords } from './lib/messages.js';
 import type { ApproveResponse, FeedCard, OneTapAction, OwnershipResultResponse } from './lib/types.js';
 
 export const ACTION_ICON: Partial<Record<OneTapAction['kind'], IconName>> = {
@@ -155,9 +156,16 @@ function SendDraftButton({ action, card, variant = 'primary', block, className }
   const navigate = useNavigate();
   const cmd = useCommand<Record<string, unknown>, ApproveResponse>(`/assistant/actions/${action.actionId}/approve`, { invalidate: [...FEED_KEYS, ['timeline']] });
   const name = card?.contact?.name ?? 'them';
+  // E142: the deal date the update cites changed; no thread jump (re-reading does not clear it), the card says why
+  const [dateStale, setDateStale] = useState<string | null>(null);
   const run = async () => {
     const r = await cmd.run({});
     if (!r.ok) {
+      const dated = r.code === 'DRAFT_STALE' ? dealDateStaleWords(r.details, 'feed') : null;
+      if (dated !== null) {
+        setDateStale(dated);
+        return;
+      }
       // the client wrote since the draft was made: read it first (R-AST-6), in the thread
       if (r.code === 'DRAFT_STALE' && card?.contact) navigate(`/contacts/${card.contact.id}/thread?compose=draft&draft=${action.actionId}`);
       return;
@@ -170,7 +178,7 @@ function SendDraftButton({ action, card, variant = 'primary', block, className }
     else sheets.announce(r.data.decision?.explanation ? `Not sent: ${r.data.decision.explanation}` : 'Not sent.');
   };
   return (
-    <Wrap note={action.note} error={cmd.error && cmd.error.code !== 'DRAFT_STALE' ? cmd.error.message : null} block={block} reach={reach} reasonId={reasonId}>
+    <Wrap note={action.note} error={dateStale ?? (cmd.error && cmd.error.code !== 'DRAFT_STALE' ? cmd.error.message : null)} block={block} reach={reach} reasonId={reasonId}>
       <Button variant={variant} icon="message" pending={cmd.pending} pendingLabel="Sending" block={block} className={className} disabled={reach.blocked} aria-describedby={reach.blocked ? reasonId : undefined} onClick={() => void run()}>
         {action.label}
       </Button>
