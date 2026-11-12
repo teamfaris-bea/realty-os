@@ -20,6 +20,7 @@ import { ASSISTANT_JOBS } from '../assistant/types.js';
 import { audit, redactDiff } from '../audit.js';
 import { AppError } from '../errors.js';
 import { assertAssignable, iso, isoOrNull } from './common.js';
+import { OPEN_LISTING_STATUSES } from './listingAgent.js';
 import type { CreateListingBody, CreateShowingBody, FeedbackBody, ListingDetailSchema, ListingSchema, ListingsQuery, ShowingSchema, UpdateListingBody } from './schemas.js';
 import { assertRefsVisible } from './tasks.js';
 import { enqueueTeamListingChange } from '../nurture/detect.js';
@@ -199,12 +200,15 @@ export async function changeListingAgent(tx: Tx, actor: UserActor, listingId: st
  * The one audited writer of a team listing's agent (R-OWN-22, E545): PATCH /listings/:id/agent (above) and the staged
  * member deactivation (leads/deactivation.ts, as the system worker) both go through it. It locks the listing and
  * writes only while it is a team listing whose agent is still `fromUserId` (and the new agent differs), so a write
- * that lost a race with another change is a fenced no-op: false, nothing audited. The caller checks eligibility.
+ * that lost a race with another change is a fenced no-op: false, nothing audited. With `openOnly` (the deactivation)
+ * the locked row must also still be open (OPEN_LISTING_STATUSES): a listing marked sold, withdrawn or expired after the
+ * job listed it keeps its agent (R-OWN-22). The caller checks eligibility.
  */
-export async function setListingAgentInTx(tx: Tx, actor: Actor, listingId: string, fromUserId: string, toUserId: string, reason?: string): Promise<boolean> {
+export async function setListingAgentInTx(tx: Tx, actor: Actor, listingId: string, fromUserId: string, toUserId: string, reason?: string, o: { openOnly?: boolean } = {}): Promise<boolean> {
   if (toUserId === fromUserId) return false;
+  const open = o.openOnly ? sql`AND status IN ${OPEN_LISTING_STATUSES}` : sql``;
   const r = await sql<{ id: string }>`
-    SELECT id FROM listings WHERE tenant_id = app.tenant_id() AND id = ${listingId} AND source = 'team' AND listing_agent_user_id = ${fromUserId} FOR UPDATE`.execute(tx);
+    SELECT id FROM listings WHERE tenant_id = app.tenant_id() AND id = ${listingId} AND source = 'team' AND listing_agent_user_id = ${fromUserId} ${open} FOR UPDATE`.execute(tx);
   if (!r.rows[0]) return false;
   await sql`UPDATE listings SET listing_agent_user_id = ${toUserId}, updated_at = now() WHERE tenant_id = app.tenant_id() AND id = ${listingId}`.execute(tx);
   await audit(tx, actor, {

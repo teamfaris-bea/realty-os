@@ -17,9 +17,10 @@
 //          UPDATE, re-checks that nothing is held (including anything handed to the member while
 //          stage 1 committed), and marks it `removed` (+ removed_at), audited as member.removed.
 //          Before the contacts, each pass moves the member's open team listings (coming soon, active, pending) to
-//          the Team Lead, else the Owner/Admin who ran it while still active, else the first active Owner/Admin: one
+//          the Team Lead, else the Owner/Admin who ran it while still active, else the first active Owner: one
 //          transaction each, audited listing.agent_changed (system, OWNER_DEACTIVATED), review cards re-synced. Sold,
-//          withdrawn, expired and MLS listings are never touched; open deals are counted, never moved.
+//          withdrawn, expired and MLS listings are never touched (re-checked under the listing's row lock); open deals
+//          are counted, never moved.
 import type { IdGenerator, Role, UserId } from '@realty/core/foundation';
 import { can } from '@realty/core/foundation';
 import { deactivationCommandId } from '@realty/core/ownership';
@@ -78,8 +79,9 @@ export function deactivationHandler(ids: IdGenerator = defaultIds()): Standalone
           await ctx.withTx(async (tx) => {
             const to = await repo.listingDestination(tx, userId, p.fallbackUserId);
             if (!to) throw new DeactivationNotConvergedError('no active Team Lead, Owner or Admin to take the listing');
-            // fenced: a change committed meanwhile (an Owner's PATCH, E545) leaves the writer a no-op
-            if (await setListingAgentInTx(tx, ctx.actor, listingId, userId, to, 'OWNER_DEACTIVATED')) await syncReviewCards(tx, ids, listingId);
+            // fenced: a change committed meanwhile (an Owner's PATCH, E545) leaves the writer a no-op, and so does a
+            // listing marked sold, withdrawn or expired since it was listed (openOnly: those keep their agent)
+            if (await setListingAgentInTx(tx, ctx.actor, listingId, userId, to, 'OWNER_DEACTIVATED', { openOnly: true })) await syncReviewCards(tx, ids, listingId);
           });
         }
         const held = await ctx.withTx((tx) => repo.heldContactIds(tx, userId, BATCH));

@@ -2,6 +2,7 @@
 // (tenant-wide); the later stages run as the system worker actor of the same tenant.
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
+import { OPEN_LISTING_STATUSES } from '../../workspace/listingAgent.js';
 
 export interface DeactivationMemberRow {
   user_id: string;
@@ -107,9 +108,6 @@ export async function heldContactIds(tx: Tx, userId: string, limit: number): Pro
   return r.rows.map((x) => x.id);
 }
 
-/** A listing in these statuses is still on the market or under contract: the deactivation moves it (R-OWN-22). */
-const OPEN_LISTING_STATUSES = sql`('coming_soon', 'active', 'pending')`;
-
 /** The member's open team listings (they are the listing agent), ascending id. MLS rows are never ours to move. */
 export async function openListingIds(tx: Tx, userId: string, limit: number): Promise<string[]> {
   const r = await sql<{ id: string }>`
@@ -120,9 +118,10 @@ export async function openListingIds(tx: Tx, userId: string, limit: number): Pro
 }
 
 /**
- * Where the member's listing goes: the active Team Lead, else `fallbackUserId` (the Owner/Admin who ran the
- * deactivation) while that member is still active and may own leads, else the first active Owner/Admin (Owner first).
- * null when there is nobody at all.
+ * Where the member's listing goes (owner question Q2, R-OWN-22, E541): the active Team Lead, else `fallbackUserId` (the
+ * Owner/Admin who ran the deactivation) while that member is still active and may own leads, else the first active
+ * Owner (an Admin only as the one who ran it). R-PERM-2 keeps one active Owner other than the member (LAST_OWNER, 0006),
+ * so null, "nobody at all" (the job retries), is defensive.
  */
 export async function listingDestination(tx: Tx, userId: string, fallbackUserId: string): Promise<string | null> {
   const tl = await teamLeadOf(tx, userId);
@@ -130,9 +129,9 @@ export async function listingDestination(tx: Tx, userId: string, fallbackUserId:
   const r = await sql<{ user_id: string }>`
     SELECT user_id FROM memberships
      WHERE tenant_id = app.tenant_id() AND status = 'active' AND user_id <> ${userId}::uuid
-       AND (user_id = ${fallbackUserId}::uuid OR role IN ('owner', 'admin'))
+       AND (user_id = ${fallbackUserId}::uuid OR role = 'owner')
        AND role <> 'tc' -- canOwnLeads (R-PERM-15)
-     ORDER BY user_id = ${fallbackUserId}::uuid DESC, role = 'owner' DESC, user_id LIMIT 1`.execute(tx);
+     ORDER BY user_id = ${fallbackUserId}::uuid DESC, user_id LIMIT 1`.execute(tx);
   return r.rows[0]?.user_id ?? null;
 }
 

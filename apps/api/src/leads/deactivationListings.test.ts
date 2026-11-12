@@ -198,6 +198,48 @@ describe('R-OWN-22 deactivation moves open team listings', () => {
     expect(await statusOf(w.tenantId, a.userId)).toBe('removed');
   });
 
+  it('R-OWN-22 E540 (closed meanwhile): a listing marked sold or withdrawn after the job listed it keeps its agent; no move, no audit; the open one still moves', async () => {
+    const w = await leadsWorld(h, { agents: 1, teamLead: true, push: false });
+    const a = w.agents[0]!;
+    const sold = await teamListing(a, { status: 'active' });
+    const withdrawn = await teamListing(a, { status: 'pending' });
+    const open = await teamListing(a, { status: 'coming_soon' });
+    await freshReauth(h, w.owner);
+    const run = await call(w.owner, 'POST', `/members/${a.userId}/deactivate`, { mode: 'run', destination: 'default_pond' });
+    expect(run.status).toBe(202);
+    const job = (await jobs(h, w.tenantId, 'leads.deactivate'))[0]!;
+    const handler = deactivationHandler();
+    const actor = systemActor(w.tenantId, 'worker');
+    let calls = 0;
+    const ctx = {
+      actor,
+      now: Date.now() as never,
+      providers: h.providers,
+      job: { id: 1n, kind: handler.kind, queue: handler.queue, attempts: 1 },
+      log: silentLogger,
+      alerts: memoryAlerts(),
+      withTx: async <T>(fn: (tx: never, now: never) => Promise<T>) => {
+        calls += 1;
+        if (calls === 2) {
+          // the job listed all three as open; the Owner closes two of them before the job's moves run
+          for (const [id, status] of [[sold, 'sold'], [withdrawn, 'withdrawn']] as const) {
+            const p = await call(w.owner, 'PATCH', `/listings/${id}`, { status });
+            expect(p.status, JSON.stringify(p.body)).toBe(200);
+          }
+        }
+        return withTenantTx(actor, fn as never, { db: h.database }) as Promise<T>;
+      },
+    };
+    await handler.run(ctx as never, job.payload as DeactivatePayload);
+    for (const id of [sold, withdrawn]) {
+      expect(await agentOf(id)).toBe(a.userId);
+      expect(await agentAudits(id)).toHaveLength(0);
+    }
+    expect(await agentOf(open)).toBe(w.teamLead!.userId);
+    expect(await agentAudits(open)).toHaveLength(1);
+    expect(await statusOf(w.tenantId, a.userId)).toBe('removed');
+  });
+
   it("R-OWN-22 R-SELL-1 E540: the moved listing's seller-update card closes on the next reconcile and the period is drafted for the new agent", async () => {
     const w = await leadsWorld(h, { agents: 1, teamLead: true, push: false });
     const a = w.agents[0]!;

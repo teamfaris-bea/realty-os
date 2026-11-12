@@ -3,6 +3,7 @@
 import type { Role } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
+import { OPEN_LISTING_STATUSES } from '../../workspace/listingAgent.js';
 
 export interface MemberRow {
   user_id: string;
@@ -109,11 +110,11 @@ export async function heldLeads(tx: Tx, userId: string): Promise<{ owned: number
   return r.rows[0] ?? { owned: 0, offered: 0 };
 }
 
-/** Open team listings (coming soon / active / pending) with the member as listing agent (R-OWN-22, R-PERM-15). */
+/** Open team listings (OPEN_LISTING_STATUSES, the deactivation's own definition) with the member as listing agent (R-OWN-22, R-PERM-15). */
 export async function openListings(tx: Tx, userId: string): Promise<number> {
   const r = await sql<{ n: number }>`
     SELECT count(*)::int AS n FROM listings
-     WHERE tenant_id = app.tenant_id() AND source = 'team' AND listing_agent_user_id = ${userId}::uuid AND status IN ('coming_soon', 'active', 'pending')`.execute(tx);
+     WHERE tenant_id = app.tenant_id() AND source = 'team' AND listing_agent_user_id = ${userId}::uuid AND status IN ${OPEN_LISTING_STATUSES}`.execute(tx);
   return r.rows[0]?.n ?? 0;
 }
 

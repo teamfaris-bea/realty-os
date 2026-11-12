@@ -19,6 +19,14 @@ export const AGENT_INACTIVE_KEY_PART = 'agent-inactive';
 
 export const listingAgentInactiveKey = (listingId: string): string => sellerUpdateFeedKey(listingId as never, AGENT_INACTIVE_KEY_PART);
 
+/**
+ * SQL list of the open listing statuses (owner question Q1, R-OWN-22): still on the market or under contract. The one
+ * definition the staged deactivation's job, its preview count, its stage-4 re-check, the plain removal / make-TC refusal
+ * (MEMBER_HAS_LISTINGS, admin/repos/members.ts) and the job's fenced write (workspace/listings.ts setListingAgentInTx)
+ * all read; sold, withdrawn and expired listings keep their agent. Use as `status IN ${OPEN_LISTING_STATUSES}`.
+ */
+export const OPEN_LISTING_STATUSES = sql`('coming_soon', 'active', 'pending')`;
+
 /** SQL: the listing `l` has a listing agent who is an active member of the tenant. */
 export const LISTING_AGENT_ACTIVE = sql`EXISTS (SELECT 1 FROM memberships ms WHERE ms.tenant_id = l.tenant_id AND ms.user_id = l.listing_agent_user_id AND ms.status = 'active')`;
 
