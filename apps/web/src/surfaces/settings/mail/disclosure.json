@@ -1,0 +1,12 @@
+{
+  "$comment": "The Gmail connect disclosure (module 69, PHASE2_3_PLAN §5.4 #69). The connect request carries the SHA-256 of `paragraphs` joined by two newlines; the API accepts only hashes listed in apps/api/src/mailSync/disclosure.ts (a test there reads this file). Changing any word changes the hash: update both, and the copy snapshot. VERIFY WITH COUNSEL (C14).",
+  "title": "Connect your Gmail (read-only)",
+  "paragraphs": [
+    "Read-only: Realty OS never sends, labels or deletes in your Gmail.",
+    "What is copied: only mail between you and the clients you confirm on the next screen. Personal mail is never copied.",
+    "Who can read it: anyone who may see that client's timeline in Realty OS, including Team Leads, Admins and the Owner.",
+    "What Google will show: Google will show that Realty OS can read your email. Realty OS checks the sender and recipients of each new message and copies only mail with your clients.",
+    "Nothing is sent to an AI model. Synced mail is never used to write messages.",
+    "You stay in control: remove any thread from Realty OS, stop syncing an address, or disconnect at any time. Disconnecting removes your copies from Realty OS within a few minutes; backup copies expire on their own schedule."
+  ]
+}

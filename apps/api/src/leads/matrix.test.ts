@@ -112,7 +112,8 @@ describe('route table and schemas', () => {
   // leads' own routes only: /contacts/:id/{messages,calls,consent,automation} are api/comms', /contacts/:id/{drafts,enrollments,saved-searches} api/assistant's
   // FUB parity: /contacts/:id/{details,stage,points,addresses,collaborators,relationships,notes,mention-candidates,activities,do-not-contact} are api/people's
   // FUB parity: /contacts/:id/{tags,fields} are api/lists'
-  const leadsUrls = /^\/api\/(intake|lead-sources|contacts(?!\/:id\/(messages|automation|calls|consent|drafts|enrollments|saved-searches|erasure|erase|deals|details|stage|points|addresses|collaborators|relationships|notes|mention-candidates|activities|do-not-contact|tags|fields))|leads|ponds\/:id\/cards|me\/ponds|members\/:userId\/deactivate)/;
+  // D2: /contacts/:id/mail-messages is module 68's (api/mail-sync)
+  const leadsUrls = /^\/api\/(intake|lead-sources|contacts(?!\/:id\/(messages|automation|calls|consent|drafts|enrollments|saved-searches|erasure|erase|deals|details|stage|points|addresses|collaborators|relationships|notes|mention-candidates|activities|do-not-contact|tags|fields|mail-messages))|leads|ponds\/:id\/cards|me\/ponds|members\/:userId\/deactivate)/;
 
   it('every leads route declares its authorization and carries authorize(<that action>) (snapshot); intake is a signed webhook', () => {
     const rows = h.app.platform.routeTable.filter((r) => leadsUrls.test(r.url) && !(r.method === 'PATCH' && r.url === '/api/contacts/:id'));

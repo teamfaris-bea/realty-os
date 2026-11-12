@@ -32,6 +32,7 @@ import type { ComposeChannel } from '../compose/channelApi.js';
 import { composeChannelOf } from '../compose/channelChoice.js';
 import { RowAttachments } from './Attachments.js';
 import { MergedAwayNotice, isMergedAway } from '../contact/MergedAway.js';
+import { GmailEntry, MailCoverage, type MailMessageView, mergeByTime, useSyncedMail } from './gmail.js'; // module 69 (flagged edit)
 import { useContact } from '../contact/useContact.js';
 import { AgentSheetsProvider, sendOutcomeText, useAgentSheets } from '../feed/lib/AgentSheets.js';
 import { firstName, formatDateTime } from '../feed/lib/format.js';
@@ -79,6 +80,7 @@ function Thread() {
   const full = c.data?.contact.view === 'full' ? c.data.contact : null;
   usePageTitle(c.data?.contact.displayName ?? null);
   const t = useTimeline(contactId, full !== null);
+  const mail = useSyncedMail(contactId, full !== null); // module 69: synced Gmail (read-only), merged by time
   // opened to write (Text / Email) without a named draft: a pending assistant reply for this
   // contact prefills the box, so Text → Send is 2 taps from anywhere
   const inbox = useInbox();
@@ -108,9 +110,10 @@ function Thread() {
   return (
     <div className="mx-auto flex w-full max-w-2xl md:mx-0 flex-col gap-3">
       <ThreadHeader contact={full} />
+      <MailCoverage data={mail.data} />
       {t.isError ? <Notice tone="error">{messageFor(t.error, AGENT_ERROR_MESSAGES)}</Notice> : null}
-      {t.data && items.length === 0 ? <p className="py-6 text-center text-[15px] text-ink-muted">No messages or calls yet.</p> : null}
-      <Messages items={items} contact={{ id: full.id, name: full.displayName }} />
+      {t.data && items.length === 0 && !mail.data?.items.length ? <p className="py-6 text-center text-[15px] text-ink-muted">No messages or calls yet.</p> : null}
+      <Messages items={items} mail={mail.data?.items ?? []} contact={{ id: full.id, name: full.displayName }} />
       {/* review F7: nothing can be sent to a merged-away record (CONTACT_MERGED); say where the person went instead */}
       {isMergedAway(full) ? (
         <MergedAwayNotice to={full.mergedIntoContactId} />
@@ -156,17 +159,16 @@ function ThreadHeader({ contact }: { contact: ContactFullView }) {
   );
 }
 
-function Messages({ items, contact }: { items: TimelineItem[]; contact: { id: string; name: string } }) {
+function Messages({ items, mail = [], contact }: { items: TimelineItem[]; mail?: MailMessageView[]; contact: { id: string; name: string } }) {
+  const rows = mergeByTime(items, mail); // module 69
   const end = useRef<HTMLLIElement>(null);
-  const last = items[items.length - 1]?.id;
+  const last = rows[rows.length - 1]?.item.id;
   useEffect(() => {
     end.current?.scrollIntoView?.({ block: 'end' });
   }, [last]);
   return (
     <ol className="flex flex-col gap-2" aria-label="Conversation">
-      {items.map((i) => (
-        <MessageRow key={i.id} item={i} contact={contact} />
-      ))}
+      {rows.map((r) => (r.kind === 'gmail' ? <GmailEntry key={`gmail-${r.item.id}`} item={r.item} contact={contact} /> : <MessageRow key={r.item.id} item={r.item} contact={contact} />))}
       <li ref={end} aria-hidden="true" />
     </ol>
   );

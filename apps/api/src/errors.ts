@@ -261,6 +261,14 @@ export const ERROR_STATUS = {
   CHANNEL_NOT_CONNECTED: 409, // module 22: the web-chat widget is not connected (disconnected, revoked or never switched on; R-INBOX-7)
   WEBCHAT_DISCLOSURE_STALE: 409, // module 22: the chat must start after the visitor saw the widget's current disclosure (R-INBOX-5)
   WEBCHAT_SESSION_CLOSED: 410, // module 22: the chat session ended (idle 30 min or closed, E77); start a new chat
+  // ---- module 68 api/mail-sync (D2) ----
+  MAIL_SYNC_OFF: 409, // module 68: Gmail sync is off for this team, or platform:gmail is not cleared (R-GMAIL-1)
+  MAIL_SYNC_NOT_CLEARED: 409, // module 68: the Owner cannot turn Gmail sync on before platform:gmail is cleared (counsel + Google verification)
+  MAIL_PROVIDER_NOT_CONFIGURED: 409, // module 68: this platform has no reviewed Google client yet (honest status)
+  MAIL_ALREADY_CONNECTED: 409, // module 68: one live Gmail link per user; disconnect first
+  MAIL_NOT_CONNECTED: 404, // module 68: the caller has no live Gmail link
+  MAIL_DISCLOSURE_STALE: 409, // module 68: the connect request must carry the hash of the current disclosure text
+  MAIL_POINT_NOT_ALLOWED: 422, // module 68: an address that is not a current email of a client you own, collaborate on or share a deal with, or is a team mailbox (S-D2-1)
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

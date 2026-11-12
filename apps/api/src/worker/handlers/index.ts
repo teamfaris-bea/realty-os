@@ -18,6 +18,7 @@ import { stageAutomationHandlers } from '../../stageAutomation/handlers.js';
 import { mlsHandlers } from '../../mls/handlers.js';
 import { channelHandlers } from '../../channels/handlers.js';
 import { nurtureHandlers } from '../../nurture/handlers.js';
+import { mailSyncHandlers } from '../../mailSync/handlers.js';
 
 export const handlers: JobHandler<unknown>[] = [
   ...workerHandlers,
@@ -33,5 +34,6 @@ export const handlers: JobHandler<unknown>[] = [
   ...mlsHandlers,
   ...channelHandlers,
   ...nurtureHandlers,
+  ...mailSyncHandlers,
   // registry: add new entries above this line
 ];
