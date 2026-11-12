@@ -45,6 +45,12 @@ Frequency is a judgement about an agent's day: several times an hour, several ti
 | 20 | **FUB import of the above** | once per team | — | People, notes, texts, emails, calls, users; tags and stages weakly; custom fields as text; **not**: relationships, collaborators, typed custom fields, important dates, smart lists, templates, action plans (C/import/fub.ts:21, 231-499) | **partial**: stage mapping, tag catalog, typed fields |
 | 21 | **Calls: click-to-call and the call outcome** | hourly | Dialer in app; call outcome and notes | **Exists**: POST /contacts/:id/calls, outcome sheet (A/comms/routes.ts:152-158; W/surfaces/feed/lib/AgentSheets.tsx:99-162). Gap: a note with the outcome (#2) | covered by #1/#2 |
 | 22 | **One-off text/email** | hourly | Composer | **Exists**, with preview and D1 opt-out checks (A/comms/routes.ts:122-125; A/comms/dispatch.ts) | covered |
+| 24 | **Lead Flow: lead sources setup** | Admin, rare | FUB creates a source on the first lead it receives; Lead Flow rules per source (VERIFY) | Lead sources page `/admin/lead-sources` (module 22, 2026-11-12): every path per source, in words, with the routing preview. Ours are made by the Owner, by design (no source appears from a stranger's post) | covered |
+| 25 | **Portal email intake** | hourly (passive) | Inbox "Lead Processing" parses portal emails (VERIFY) | Generic labelled format + leadmetadata.org v1.0 + per-portal sender domains and forwarding (R-LEM-9..12). Vendor parsers for Redfin, Homes.com, Trulia, Opcity wait for samples and counsel. Gmail sync never creates leads (R-GMAIL-14) | **partial** |
+| 26 | **Google Ads lead forms** | passive | Lead form integrations (VERIFY) | Webhook with a per-source key (R-GADS-1..4); fakes only until a deployed test (D2: no Meta lead ads) | covered (fake) |
+| 27 | **Calls to a tracking number credited to a source** | daily (passive) | No number-to-source setting found (VERIFY); LSA via a labelled Team Inbox number | A live tracking number tied to one source: new callers become leads credited to it (R-TRK-1..3); the ring target is unchanged until module 48 | covered (fake) |
+| 28 | **Per-agent routing address** | Admin, rare | Per-agent lead email (VERIFY) | Agent forwarding: a "Forwarded by <name>" source, its inbox and a direct rule, with the preview (R-LSRC-5) | covered |
+| 29 | **Website / IDX posts** | passive | FUB `/v1/events` API (VERIFY) | Signed per-source webhook (`/intake/:token`, its own secret, R-LSRC-3) | covered |
 
 ## 3. What the design does about each gap
 
