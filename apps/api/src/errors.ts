@@ -328,6 +328,12 @@ export const ERROR_STATUS = {
   MILESTONE_TEMPLATE_NOT_FOUND: 422, // no template with this id and version for the deal's side and the tenant's jurisdictions
   MILESTONE_PLAN_OPEN: 409, // another template's proposals are still open on this deal (details.templateId)
   MILESTONE_TEMPLATES_INVALID: 422, // PUT milestone templates: invalid entries by index (details.invalid)
+  // ---- api/cma (module 71, D9; R-CMA-6, R-CMA-8) ----
+  CMA_VALUATION_NOT_ALLOWED: 409, // the MLS licence pack does not record that sold data may be used for valuations (valuation.agent_cma; E371; details.sentence)
+  CMA_NO_MLS_CONNECTION: 409, // no live MLS feed, so there are no sold homes to compare (details.sentence)
+  CMA_SUBJECT_INCOMPLETE: 422, // the subject lacks its property type or size, or the contact has no address (details.missing, details.sentence; E373)
+  CMA_SUBJECT_TYPE_NOT_SUPPORTED: 422, // land is not valued in V1 (owner question (g); details.propertyType)
+  CMA_NOT_DRAFT: 409, // a shared or superseded CMA never changes; prepare a new draft (details.status; E377)
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 
