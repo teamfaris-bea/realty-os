@@ -44,8 +44,8 @@ export const KIND_LABEL: Record<string, string> = {
  * read-only: no editor, no approval, no stop, no stage.
  */
 export const READ_ONLY_KINDS: readonly string[] = ['trigger', 'voice_answering'];
-export const ALERTS_HEADING = 'Alerts (read-only here)';
-export const READ_ONLY_ALERTS = "Alerts can't be changed, approved or stopped on this page yet.";
+export const ALERTS_HEADING = 'Alerts and call answering (read-only here)';
+export const READ_ONLY_ALERTS = "These playbooks can't be changed, approved or stopped on this page yet.";
 
 export function isReadOnlyPlaybook(p: Pick<Playbook, 'kind'>): boolean {
   return READ_ONLY_KINDS.includes(p.kind);

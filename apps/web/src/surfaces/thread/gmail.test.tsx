@@ -279,6 +279,13 @@ describe('b7 sends/F4: Gmail replies are never first contact, and the thread say
     expect(screen.queryByText(GMAIL_NOT_FIRST_CONTACT)).toBeNull();
   });
 
+  it('b7 sends/F4: not to a mailbox owner who does not own the lead (their reply here would not stop the clock)', async () => {
+    const notMine = fullContact({ ownership: { ...open.ownership, ownedByMe: false, ownerUserId: IDS.jane } });
+    agentApp(fakeWith([], [mail({ sender: 'mailbox', contactRole: 'to', body: 'Replied from Gmail' })], notMine), `/contacts/${IDS.jane}/thread`);
+    await screen.findByText('Replied from Gmail');
+    expect(screen.queryByText(GMAIL_NOT_FIRST_CONTACT)).toBeNull();
+  });
+
   it('b7 sends/F4: after first contact (firstTouchAt set) the sentence is gone', async () => {
     agentApp(fakeWith([], [mail({ sender: 'mailbox', contactRole: 'to', body: 'Replied from Gmail' })]), `/contacts/${IDS.jane}/thread`);
     await screen.findByText('Replied from Gmail');

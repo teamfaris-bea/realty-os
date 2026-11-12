@@ -376,7 +376,7 @@ function KeyOnce({ fresh, onDone }: { fresh: Fresh; onDone(): void }) {
           </label>
           <textarea id={snipId} aria-describedby={`${snipId}-hint`} readOnly value={snippet} rows={5} spellCheck={false} className="w-full rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 font-mono text-[14px] text-ink" onFocus={(ev) => ev.currentTarget.select()} />
           <p id={`${snipId}-hint`} className="text-[14px] text-ink-muted">
-            Paste it just before the closing body tag of each page that should show the chat. It shows your team name and your consent disclosure before the first message, both kept up to date by Realty OS: nothing in the code changes when they do.
+            Paste it just before the closing body tag of each page that should show the chat. It shows your team name (or brokerage name) and your consent disclosure before the first message, both kept up to date by Realty OS: nothing in the code changes when they do.
           </p>
         </div>
       ) : null}

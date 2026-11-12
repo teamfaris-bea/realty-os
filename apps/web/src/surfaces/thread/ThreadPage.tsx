@@ -113,7 +113,9 @@ function Thread() {
   // the mail has answered (or failed, or is not asked for): until then "no messages" may be false (review ui/F6)
   const mailSettled = mail.isSuccess || mail.isError; // never on a merged-away record: its notice says where the person went
   // a first-contact deadline is running: a Gmail reply does not stop it (R-GMAIL-14; review sends/F4)
-  const firstContactOpen = full.ownership.firstTouchDueAt !== null && full.ownership.firstTouchAt === null && full.ownership.firstTouchBreachedAt === null;
+  // only the owner's reply here stops it (core decideTouch also counts a collaborator, but the view does not say who
+  // collaborates, so the line is not shown to them rather than risk telling a non-collaborator so)
+  const firstContactOpen = full.ownership.ownedByMe && full.ownership.firstTouchDueAt !== null && full.ownership.firstTouchAt === null && full.ownership.firstTouchBreachedAt === null;
   return (
     <div className="mx-auto flex w-full max-w-2xl md:mx-0 flex-col gap-3">
       <ThreadHeader contact={full} />
