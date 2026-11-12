@@ -130,7 +130,7 @@ export function parsePostmarkInbound(body: unknown): NormalizedInbound | null {
     }
   }
   const text = str(b.TextBody) || htmlToText(str(b.HtmlBody));
-  return { eventId: `postmark:${messageId}`, from, recipients, subject: str(b.Subject) || null, text: text.slice(0, MAX_TEXT), headers, authResults };
+  return { eventId: `postmark:${messageId}`, from, recipients, subject: str(b.Subject) || null, text: text.slice(0, MAX_TEXT), headers, ...(authResults.length > 0 ? { authResults } : {}) };
 }
 
 const POSTMARK_HARD = new Set(['HardBounce', 'BadEmailAddress', 'ManuallyDeactivated']);
