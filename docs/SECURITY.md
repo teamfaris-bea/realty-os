@@ -847,7 +847,9 @@ Security review items of the migration (CONVENTIONS §4):
 ## 9. Batch 6 interaction review: web chat and opt-out honesty (migration `webchat_sessions_follow_merge`, lane number 0046)
 
 Fixes of the batch 6 review (group "chat"; ARCHITECTURE §21.13). Each change only refuses, blocks or says more; no
-opt-out check, guard, policy or grant is weakened (D1), and each is proved by a test that failed before the fix.
+opt-out check, guard, policy or grant is weakened (D1), and each is proved by a test that failed before the fix. One
+earlier change of this group did offer more than the send allows (a chat handback's one-tap Send judged by the chat
+instead of its text draft); the review of these fixes found it and it is corrected below (chat-R2).
 
 - **New SECURITY DEFINER trigger `app.webchat_sessions_follow_merge()`** (owner `app_definer`, `search_path =
   pg_catalog, public`, EXECUTE revoked from PUBLIC; column grant `UPDATE (contact_id, contact_point_id)` on
@@ -863,3 +865,13 @@ opt-out check, guard, policy or grant is weakened (D1), and each is proved by a 
 - **The person-level do-not-contact is said before every tap** (reachability summary, feed hint, compose, Details),
   web chat included; the points routes refuse the chat identity (404 `NOT_FOUND`) so it cannot be removed from under
   its chat. Read paths only; everything stays under the caller's RLS.
+- **A handback's one-tap Send is judged by its draft's own channel** (review chat-R2): the assistant binds a
+  handback's suggested reply to a text or email (sms even with no number), so the feed offers Send only when that
+  channel is open (`HandbackFacts.replyDraftChannel`, read from `payload.draft.channel` as the approval reads it), and
+  offers Reply in the chat beside it; the web disables a Send of a text or email to a lead with no number or address,
+  with the reason. A chat the gate summary blocks is said on the card with its source (review chat-R3). Read paths
+  only: the send-time gate and the guards are unchanged.
+- **The summary's batched chat fan-out reads each person once** (review chat-R1, `comms/repos/reachability.ts
+  chatFanoutSql`): a function scan per contact, then that person's points by `contact_id`, the same rows as the
+  gate's per-contact read; `comms/chatFanout.perf.test.ts` asserts the plan shape and a time bound with 3,000 chat
+  identities, so the honest-UI summary cannot time out into "unknown" (which disables nothing).

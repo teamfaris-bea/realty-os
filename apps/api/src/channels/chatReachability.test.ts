@@ -26,9 +26,11 @@ beforeAll(async () => {
   w = await assistantWorld(h, { agents: 1 });
   src = await chatSource(h, w.owner, w.tenantId);
   widget = await createWidget(h, w.owner, src.sourceId);
-  // fixture: one agent takes every chat lead of this file (none is contacted, so the default cap of 5 would send the
-  // later ones to the pond)
-  await h.su.query('UPDATE tenant_settings SET uncontacted_capacity_cap = 50 WHERE tenant_id = $1', [w.tenantId]);
+  // one agent takes every chat lead of this file (none is contacted, so the default cap of 5 would send the later
+  // ones to the pond): the Owner raises the cap in settings
+  const s = await call<{ settings: { version: number } }>(w.owner, 'GET', '/settings');
+  const cap = await call(w.owner, 'PATCH', '/settings', { version: s.body.settings.version, uncontactedCapacityCap: 50 });
+  if (cap.status !== 200) throw new Error(`settings: ${cap.status} ${JSON.stringify(cap.body)}`);
 }, 180_000);
 afterAll(async () => {
   await h?.close();
@@ -207,6 +209,24 @@ describe('the web_chat entry of the reachability summary agrees with the send-ti
     for (const card of cards) {
       expect([card.primaryAction.kind, ...card.alternatives.map((a) => a.kind)]).not.toContain('reply_chat');
       expect(card.reasons.find((r) => r.code === 'CANT_CONTACT')?.label).toBe("Can't reach them right now: Asked not to be contacted at all");
+    }
+  });
+
+  it('review chat-R3 of batch 6: "Sorry, wrong person" in the chat of a chat-only lead blocks the chat by that reason, and the feed cards say it, never only the missing phone and email', async () => {
+    const c = await openChat(h, widget.key, src.disclosureId, { name: 'Wes Wrong' });
+    const agent = await acceptLead(h, w.agents, c.contactId);
+    expect((await chatMessage(h, c.token, { message: 'Sorry, wrong person', clientMessageId: randomUUID() })).statusCode).toBe(200);
+    const wc = await expectChatAgrees(agent, c.contactId);
+    expect(wc.blocked).toBe(true);
+    expect(wc.reasons).toContainEqual(expect.objectContaining({ code: 'CONSENT_REVOKED', source: 'wrong_number' }));
+    expect((await reach(agent, c.contactId)).doNotContact).toBeNull();
+    type Card = { itemType: string; contact: { id: string } | null; primaryAction: { kind: string }; alternatives: { kind: string }[]; reasons: { code: string; label: string }[] };
+    const feed = await call<{ pinned: Card[]; scored: Card[] }>(agent, 'GET', '/feed');
+    const cards = [...feed.body.pinned, ...feed.body.scored].filter((x) => x.contact?.id === c.contactId);
+    expect(cards.length, JSON.stringify(feed.body)).toBeGreaterThan(0);
+    for (const card of cards) {
+      expect([card.primaryAction.kind, ...card.alternatives.map((a) => a.kind)], card.itemType).not.toContain('reply_chat');
+      expect(card.reasons.find((r) => r.code === 'CANT_CONTACT')?.label, card.itemType).toBe("Can't reach them right now: Marked as a wrong number · No working phone number · No email address");
     }
   });
 

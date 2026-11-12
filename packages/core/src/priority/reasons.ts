@@ -53,6 +53,10 @@ export const FEED_REASONS = {
   CALL_BLOCKED: { points: -15, label: "Can't call right now" },
   EMAIL_BLOCKED: { points: -15, label: "Can't email right now" },
   CANT_CONTACT: { points: -30, label: "Can't reach them right now" },
+  // informational (no points, so SCORE_VERSION is unchanged): why a card that would answer in the website chat offers
+  // no Reply there while another channel works (review chat-R3 of batch 6). The chat is never a scored preference
+  // (a chat card's channels are call-first), so a blocked chat never demoted a card and still does not.
+  CHAT_BLOCKED: { points: null, label: "Can't reply in the chat right now" },
 } as const satisfies Record<string, { points: number | null; label: string }>;
 
 export type FeedReasonCode = keyof typeof FEED_REASONS;

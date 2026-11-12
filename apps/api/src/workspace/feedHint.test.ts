@@ -86,12 +86,12 @@ describe('the person-level do-not-contact on the card hint (R-CHAN-2, review opt
     expect(await hint(r.contactId)).toEqual({ sms: dnc, voice: dnc, email: dnc, web_chat: dnc });
   });
 
-  it('review optouts/F1: an opt-out in the website chat blocks a reply in the chat only (the person did not ask about every channel)', async () => {
+  it('review optouts/F1, chat-R3 of batch 6: an opt-out in the website chat blocks a reply in the chat only (the person did not ask about every channel), said by its source', async () => {
     const src = await chatSource(h, w.owner, w.tenantId, 'Website chat (hint)');
     const widget = await createWidget(h, w.owner, src.sourceId, [SITE]);
     const c = await openChat(h, widget.key, src.disclosureId, { name: 'Wes Wrong', email: randomEmail() });
     expect((await chatMessage(h, c.token, { message: 'Sorry, wrong person', clientMessageId: randomUUID() })).statusCode).toBe(200);
-    expect(await hint(c.contactId)).toMatchObject({ web_chat: { outcome: 'deny', explanation: 'Opted out of chat messages' } });
+    expect(await hint(c.contactId)).toMatchObject({ web_chat: { outcome: 'deny', explanation: 'Marked as a wrong number' } });
     expect((await hint(c.contactId)).sms).toEqual({ outcome: 'unavailable', explanation: 'No working phone number' });
   });
 });

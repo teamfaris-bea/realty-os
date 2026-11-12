@@ -24,9 +24,11 @@ beforeAll(async () => {
   w = await assistantWorld(h, { agents: 2 });
   src = await chatSource(h, w.owner, w.tenantId);
   widget = await createWidget(h, w.owner, src.sourceId);
-  // fixture: the two agents take every chat lead of this file, none contacted (the default cap of 5 would send the
-  // later ones to the pond)
-  await h.su.query('UPDATE tenant_settings SET uncontacted_capacity_cap = 50 WHERE tenant_id = $1', [w.tenantId]);
+  // the two agents take every chat lead of this file, none contacted (the default cap of 5 would send the later ones
+  // to the pond): the Owner raises the cap in settings
+  const s = await call<{ settings: { version: number } }>(w.owner, 'GET', '/settings');
+  const cap = await call(w.owner, 'PATCH', '/settings', { version: s.body.settings.version, uncontactedCapacityCap: 50 });
+  if (cap.status !== 200) throw new Error(`settings: ${cap.status} ${JSON.stringify(cap.body)}`);
 }, 180_000);
 afterAll(async () => {
   await h?.close();
@@ -103,18 +105,28 @@ describe('R-INBOX-2 a visitor message runs the Phase 1 ingestion transaction', (
     expect(feed).toContain('handback');
   });
 
-  it('R-INBOX-4 (review ui-compose/F3): the handback of a chat-only lead who answered the assistant in the chat offers the chat on the feed, never "Can\'t reach them right now"', async () => {
+  it('R-INBOX-4 (review ui-compose/F3, chat-R2 of batch 6): the handback of a chat-only lead who answered the assistant in the chat offers Reply in the chat on the feed, never "Can\'t reach them right now", and never a one-tap Send of the suggested text to a number that does not exist', async () => {
     const c = await openChat(h, widget.key, src.disclosureId, { name: 'Hal Handback' });
     await runJobs(h, w.tenantId, FR);
     const agent = await acceptLead(h, w.agents, c.contactId);
     expect((await chatMessage(h, c.token, { message: 'Can we see it Saturday?', clientMessageId: randomUUID() })).statusCode).toBe(200);
-    expect((await h.su.query("SELECT count(*)::int AS n FROM assistant_actions WHERE contact_id = $1 AND kind = 'handback' AND status = 'proposed'", [c.contactId])).rows[0].n).toBe(1);
+    const hb = (await h.su.query<{ id: string }>("SELECT id FROM assistant_actions WHERE contact_id = $1 AND kind = 'handback' AND status = 'proposed'", [c.contactId])).rows;
+    expect(hb).toHaveLength(1);
+    // the assistant adds its suggested reply, bound to a text (the server picks sms or email, sms with no number at all)
+    await runJobs(h, w.tenantId, ['assistant.enrich_handback']);
+    const payload = (await h.su.query("SELECT payload FROM assistant_actions WHERE id = $1", [hb[0]!.id])).rows[0].payload;
+    expect(payload.draft).toMatchObject({ channel: 'sms' });
     type Card = { itemType: string; contact: { id: string } | null; primaryAction: { kind: string }; alternatives: { kind: string }[]; reasons: { code: string; label: string }[] };
     const feed = await call<{ pinned: Card[]; scored: Card[] }>(agent, 'GET', '/feed');
     const card = [...feed.body.pinned, ...feed.body.scored].find((x) => x.itemType === 'handback' && x.contact?.id === c.contactId);
     expect(card, JSON.stringify(feed.body)).toBeDefined();
-    expect(['reply_chat', 'send_draft']).toContain(card!.primaryAction.kind);
+    expect(card!.primaryAction.kind).toBe('reply_chat');
+    expect(card!.alternatives.map((a) => a.kind)).not.toContain('send_draft');
+    expect(card!.alternatives.map((a) => a.kind)).toContain('edit_draft');
     expect(card!.reasons.map((r) => r.code)).not.toContain('CANT_CONTACT');
+    // what the card withholds is what the approval refuses: there is no phone to text
+    const ap = await call(agent, 'POST', `/assistant/actions/${hb[0]!.id}/approve`, { commandId: randomUUID() });
+    expect([ap.status, ap.code]).toEqual([422, 'CONTACT_POINT_MISSING']);
   });
 
   it('replay: the same clientMessageId posted twice stores one message', async () => {

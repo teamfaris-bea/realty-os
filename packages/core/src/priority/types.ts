@@ -160,6 +160,13 @@ export interface HandbackFacts {
   receivedAt: Instant;
   /** A proposed reply draft attached to the handback, if the assistant wrote one. */
   replyDraftActionId?: AssistantActionId | null;
+  /**
+   * The channel that draft goes out on (payload.draft.channel, read as the approval reads it): the one-tap Send is
+   * judged by it, never by where they wrote (review chat-R2 of batch 6). The assistant binds a handback's reply to a
+   * text or email (sms when there is no number at all), so a chat handback's draft is usually not a chat draft.
+   * null with no draft, or a draft whose channel is not known: no one-tap Send.
+   */
+  replyDraftChannel?: 'sms' | 'email' | 'web_chat' | null;
   createdAt: Instant;
 }
 

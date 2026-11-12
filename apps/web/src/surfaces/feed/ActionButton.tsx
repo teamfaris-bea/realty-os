@@ -65,6 +65,9 @@ export interface ActionButtonProps {
 
 const FEED_KEYS = [['feed'], ['inbox']];
 
+/** A draft on a channel the lead has no number or address for (the approval answers CONTACT_POINT_MISSING). */
+const NO_ADDRESS: Readonly<Record<'sms' | 'email', string>> = { sms: "There's no phone number on file to text", email: "There's no email address on file" };
+
 export function ActionButton(p: ActionButtonProps) {
   switch (p.action.kind) {
     case 'accept_offer':
@@ -132,9 +135,18 @@ function SendDraftButton({ action, card, variant = 'primary', block, className }
   const sheets = useAgentSheets();
   const draftChannel = useInbox().data?.items.find((a) => a.id === action.actionId)?.draft?.channel ?? null;
   // judged by the channel the draft goes out on: a web-chat draft by the chat (ended, turned off, opted out, the person's
-  // do-not-contact: review ui-compose/F3), never by the texts
+  // do-not-contact: review ui-compose/F3), never by the texts; a text or email to a lead with no number or address on
+  // file (a chat-only lead's suggested text) is refused CONTACT_POINT_MISSING, so it is disabled with that reason first
+  // (review chat-R2 of batch 6)
   const summary = useReachability(card?.contact?.id);
-  const reach: ChannelState = draftChannel === 'web_chat' ? replyChatState(summary) : draftChannel ? channelState(summary, draftChannel) : { blocked: false, sentence: null, note: null };
+  const reach: ChannelState =
+    draftChannel === 'web_chat'
+      ? replyChatState(summary)
+      : draftChannel && summary && !summary.channels[draftChannel].hasAddress
+        ? { blocked: true, sentence: NO_ADDRESS[draftChannel], note: null }
+        : draftChannel
+          ? channelState(summary, draftChannel)
+          : { blocked: false, sentence: null, note: null };
   const reasonId = useId();
   const navigate = useNavigate();
   const cmd = useCommand<Record<string, unknown>, ApproveResponse>(`/assistant/actions/${action.actionId}/approve`, { invalidate: [...FEED_KEYS, ['timeline']] });

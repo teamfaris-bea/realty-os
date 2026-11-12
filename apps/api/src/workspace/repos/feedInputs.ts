@@ -341,7 +341,8 @@ export async function loadFeedInputsScoped(tx: Tx, actor: UserActor, envelope: E
   for (const m of inboundOut) contactIds.add(m.contactId);
   const handbacksOut: HandbackFacts[] = handbacks.rows.map((h) => {
     contactIds.add(h.contact_id);
-    const draft = h.payload.draft as { body?: unknown } | undefined;
+    const draft = h.payload.draft as { body?: unknown; channel?: unknown } | undefined;
+    const hasDraft = draft !== undefined && typeof draft.body === 'string' && draft.body.trim() !== '';
     const viaCall = typeof h.payload.inboundCallId === 'string' && h.payload.inboundCallId.length > 0 && h.m_channel === null;
     return {
       actionId: h.id as never,
@@ -351,7 +352,10 @@ export async function loadFeedInputsScoped(tx: Tx, actor: UserActor, envelope: E
       inboundChannel: h.m_channel ?? (viaCall ? 'voice' : null),
       receivedAt: ms(h.m_at ?? h.created_at),
       // the handback carries its own reply draft: approving the handback sends it (one tap, A1)
-      replyDraftActionId: draft && typeof draft.body === 'string' && draft.body.trim() !== '' ? (h.id as never) : null,
+      replyDraftActionId: hasDraft ? (h.id as never) : null,
+      // the channel that reply goes out on, read as the approval reads it (assistant/drafts.ts mergedDraft): the feed
+      // judges the one-tap Send by it, never by where they wrote (review chat-R2 of batch 6)
+      replyDraftChannel: hasDraft ? (draft.channel === 'email' ? 'email' : draft.channel === 'web_chat' || draft.channel === 'inbound_channel' ? 'web_chat' : 'sms') : null,
       createdAt: ms(h.created_at),
     };
   });
@@ -478,6 +482,20 @@ const SUPPRESSION_SENTENCE: Record<string, string> = {
 export const PERSON_DNC_SENTENCE = 'Asked not to be contacted at all';
 
 /**
+ * The feed's words for an opt-out of the website chat, by the source of its ledger event (consent_events.source, or
+ * 'imported' / 'other' when the caller does not see it), said as the web's reachSentence says them for web_chat
+ * (reasons/sentences.ts optOutSentence; review chat-R3 of batch 6).
+ */
+const CHAT_OPT_OUT_SENTENCE: Readonly<Record<string, string>> = {
+  wrong_number: 'Marked as a wrong number',
+  inbound_keyword: 'Asked in the chat to stop being contacted',
+  inbound_language: 'Asked in the chat to stop being contacted',
+  agent_revoke: 'Asked not to be contacted in the chat',
+  imported: 'Opted out of chat messages in your previous system (imported)',
+};
+const chatOptOutSentence = (source: string): string => CHAT_OPT_OUT_SENTENCE[source] ?? 'Opted out of chat messages';
+
+/**
  * Per-contact channel hint for the feed (core GateSummary). A channel is `unavailable` when the contact
  * has no working address for it, and `deny` when every working address is suppressed or opted out.
  * The person-level do-not-contact (R-CHAN-2, review optouts/F1 of batch 6) denies every channel, the website chat
@@ -490,19 +508,24 @@ export const PERSON_DNC_SENTENCE = 'Asked not to be contacted at all';
 export async function gateSummaries(tx: Tx, contactIds: readonly string[]): Promise<Map<ContactId, GateSummary>> {
   const out = new Map<ContactId, GateSummary>();
   if (contactIds.length === 0) return out;
-  const person = await sql<{ contact_id: string; dnc: boolean; chat_revoked: boolean }>`
+  const person = await sql<{ contact_id: string; dnc: boolean; chat_revokes: string[] }>`
     SELECT c.id AS contact_id,
            EXISTS (SELECT 1 FROM contacts x WHERE x.tenant_id = c.tenant_id AND x.do_not_contact_at IS NOT NULL AND x.id = ANY (r.person)) AS dnc,
-           EXISTS (SELECT 1 FROM contact_points p JOIN consent_state cs ON cs.tenant_id = p.tenant_id AND cs.address_hmac = p.address_hmac
-                                                                       AND cs.channel = 'web_chat' AND cs.status = 'revoked'
-                    WHERE p.tenant_id = c.tenant_id AND p.kind = 'web_chat' AND p.contact_id = ANY (r.person)
-                      AND (p.removed_at IS NULL OR p.removed_reason IS DISTINCT FROM 'wrong_number')) AS chat_revoked
+           -- the source of each chat opt-out (its ledger event, when the caller sees it), to say why (review chat-R3)
+           ARRAY(SELECT DISTINCT CASE WHEN e.imported THEN 'imported' ELSE COALESCE(e.source, 'other') END
+                   FROM contact_points p
+                   JOIN consent_state cs ON cs.tenant_id = p.tenant_id AND cs.address_hmac = p.address_hmac
+                                        AND cs.channel = 'web_chat' AND cs.status = 'revoked'
+                   LEFT JOIN consent_events e ON e.tenant_id = cs.tenant_id AND e.id = cs.basis_event_id
+                  WHERE p.tenant_id = c.tenant_id AND p.kind = 'web_chat' AND p.contact_id = ANY (r.person)
+                    AND (p.removed_at IS NULL OR p.removed_reason IS DISTINCT FROM 'wrong_number')
+                  ORDER BY 1) AS chat_revokes
       FROM contacts c
       CROSS JOIN LATERAL (SELECT CASE WHEN c.merged_into_contact_id IS NULL THEN ARRAY[c.id]
                                       ELSE app.contact_person_ids(c.tenant_id, c.id) END AS person) r
      WHERE c.tenant_id = app.tenant_id() AND c.id = ANY (${[...contactIds]}::uuid[])`.execute(tx);
   const dnc = new Set(person.rows.filter((x) => x.dnc).map((x) => x.contact_id));
-  const chatOut = new Set(person.rows.filter((x) => x.chat_revoked).map((x) => x.contact_id));
+  const chatOut = new Map(person.rows.filter((x) => x.chat_revokes.length > 0).map((x) => [x.contact_id, [...new Set(x.chat_revokes.map(chatOptOutSentence))].join(' · ')]));
   const r = await sql<{ contact_id: string; kind: 'phone' | 'email'; line_type: string; sup_sms: string | null; sup_voice: string | null; sup_email: string | null; rev_sms: boolean; rev_voice: boolean; rev_email: boolean }>`
     SELECT p.contact_id, p.kind, p.line_type,
            (SELECT s.reason FROM suppressions s WHERE s.tenant_id = p.tenant_id AND s.address_hmac = p.address_hmac AND s.lifted_at IS NULL AND s.channel IN ('sms','all') LIMIT 1) AS sup_sms,
@@ -516,7 +539,7 @@ export async function gateSummaries(tx: Tx, contactIds: readonly string[]): Prom
        -- phones and emails only: a website-chat identity (kind web_chat, wc:<hex>) is no email address (finding UXA-3)
        AND p.kind IN ('phone','email')`.execute(tx);
   // The opt-out fan-out of the send gate (comms/repos/gate.ts optOutFanoutPhoneHmacs, the `others` set of the
-  // 0021 dispatch guards): every phone of the contact, live or removed, except one removed as a confirmed
+  // 0043_merged_person_opt_outs dispatch guards): every phone of the contact, live or removed, except one removed as a confirmed
   // wrong number. A STOP (or "do not call me") on any of them blocks texting (calling) every phone of the
   // person (R-CONSENT-7, outbound-3, R-PAR-12), so the card never offers a channel the composer refuses.
   const fan = await sql<{ contact_id: string; rev_sms: boolean; rev_voice: boolean }>`
@@ -578,7 +601,8 @@ export async function gateSummaries(tx: Tx, contactIds: readonly string[]): Prom
         : { outcome: 'unavailable', explanation: ch === 'email' ? 'No email address' : 'No working phone number' };
       g[ch] = block;
     }
-    if (chatOut.has(id)) g.web_chat = { outcome: 'deny', explanation: 'Opted out of chat messages' };
+    const chat = chatOut.get(id);
+    if (chat !== undefined) g.web_chat = { outcome: 'deny', explanation: chat };
     if (Object.keys(g).length > 0) out.set(id as ContactId, g);
   }
   return out;

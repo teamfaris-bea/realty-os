@@ -191,6 +191,24 @@ describe('Priority Feed', () => {
     }
   });
 
+  it('review chat-R2 of batch 6: Send of a suggested text to a lead with no phone on file (a chat-only lead) is disabled before the tap and says why; the approval is never sent', async () => {
+    const c = card({ itemType: 'handback', assistantActionId: IDS.draft, reasons: [{ code: 'HANDBACK', label: 'Replied to the assistant; follow-ups paused' }], primaryAction: { kind: 'send_draft', label: 'Send', actionId: IDS.draft }, alternatives: [{ kind: 'edit_draft', label: 'Edit', actionId: IDS.draft }] });
+    const hb = draftAction({ kind: 'handback', draft: { channel: 'sms', subject: null, body: 'Does tomorrow afternoon work for a quick call?' } });
+    const none = { hasAddress: false, defaultPointId: null, blocked: false, reasons: [], points: [] };
+    const open = reachability(IDS.jane, {}, 'open');
+    const fake = new FakeFetch()
+      .on('GET /feed', { status: 200, body: feed([], [c]) })
+      .on('GET /assistant/inbox', { status: 200, body: { items: [hb] } })
+      .on(`GET /reachability?contactIds=${IDS.jane}`, { status: 200, body: { reachability: [{ ...open, channels: { ...open.channels, sms: none, voice: none, email: none } }] } })
+      .on(`POST /assistant/actions/${IDS.draft}/approve`, err(422, 'CONTACT_POINT_MISSING'));
+    agentApp(fake);
+    const send = await screen.findByRole('button', { name: 'Send' });
+    await waitFor(() => expect(send).toBeDisabled());
+    expect(send).toHaveAccessibleDescription("There's no phone number on file to text");
+    await user().click(send);
+    expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(0);
+  });
+
   it('texting a lead is 2 taps: Text → the thread opens with the assistant draft prefilled → Send', async () => {
     const c = card({ primaryAction: { kind: 'text', label: 'Text', contactId: IDS.jane, draftActionId: IDS.draft } });
     const fake = new FakeFetch()
