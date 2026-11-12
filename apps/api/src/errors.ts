@@ -261,6 +261,13 @@ export const ERROR_STATUS = {
   CHANNEL_NOT_CONNECTED: 409, // module 22: the web-chat widget is not connected (disconnected, revoked or never switched on; R-INBOX-7)
   WEBCHAT_DISCLOSURE_STALE: 409, // module 22: the chat must start after the visitor saw the widget's current disclosure (R-INBOX-5)
   WEBCHAT_SESSION_CLOSED: 410, // module 22: the chat session ended (idle 30 min or closed, E77); start a new chat
+  // ---- module 22 lead intake expansion (Lead sources page, Google lead forms, tracking numbers) ----
+  NUMBER_NOT_TRACKING: 422, // module 22: only a live number with purpose tracking may be tied to a lead source (R-TRK-1)
+  LEAD_SOURCE_OFF: 409, // module 22: the lead source is turned off; turn it on before setting up a path for it (R-LSRC-2)
+  GOOGLE_LEAD_FORM_NOT_AVAILABLE: 409, // module 22: this deployment has no public https address for Google to post to (R-GADS-4)
+  GOOGLE_LEAD_FORM_ALREADY_ON: 409, // module 22: the source's Google lead form is already on (current state in details; R-GADS-4)
+  LEAD_EMAIL_NOT_A_LEAD: 409, // module 22: a held forwarding confirmation is never a lead; it can only be discarded (R-LEM-12)
+  WEBHOOK_UNAVAILABLE: 503, // module 22: the webhook could not be checked (database unavailable); the provider should retry (R-GADS-1)
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

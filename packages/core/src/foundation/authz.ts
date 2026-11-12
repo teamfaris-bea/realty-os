@@ -289,6 +289,12 @@ export const AUDIT_ACTIONS = [
   'webchat.widget_created', // module 22: an Owner/Admin created a website chat widget (its key is shown once)
   'webchat.widget_key_rotated', // module 22: the widget key was replaced; the old embed stops working at once
   'webchat.widget_origins_changed', // module 22: the websites a widget may run on changed
+  'lead_source.webhook_rotated', // module 22: a lead source's intake URL token and signing secret were replaced (both shown once)
+  'google_lead_form.enabled', // module 22: an Owner/Admin turned on a source's Google Ads lead form webhook (key made by the system)
+  'google_lead_form.key_rotated', // module 22: the Google lead form key was replaced; the old key is retired forever
+  'google_lead_form.changed', // module 22: the Google lead form's inquiry type or consent setting changed
+  'google_lead_form.disabled', // module 22: the Google lead form was turned off; its key is retired forever
+  'number.lead_source_changed', // module 22: a tracking number was tied to, moved between or untied from lead sources (R-TRK-1)
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
