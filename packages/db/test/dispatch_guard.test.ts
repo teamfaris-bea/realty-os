@@ -459,8 +459,9 @@ describe('0018: the shared opt-out case table (R-CHAN-5, F17)', () => {
       if (c.mergedDuplicateDoNotContact) {
         const dup = await contactWith([]);
         await markDoNotContact(dup.contactId);
-        await withTenantTx(w.owner.actor, (tx) => sql`
-          UPDATE contacts SET merged_into_contact_id = ${s.contactId} WHERE tenant_id = app.tenant_id() AND id = ${dup.contactId}`.execute(tx), { db: h.app });
+        // the record merged away as a fixture: a superuser UPDATE with no tenant context (contacts_guard lets only the
+        // ownership engine set the column under a tenant, R-OWN-24), triggers on, so contacts_dnc_follow_merge runs
+        await h.su.query('UPDATE contacts SET merged_into_contact_id = $1 WHERE tenant_id = $2 AND id = $3', [s.contactId, w.tenantId, dup.contactId]);
       }
       if (c.mergedIntoDoNotContact || c.survivorPhoneRevoked.length > 0) {
         // F1: the recipient record is merged away into a survivor that asked, or whose own phone opted out, before the merge
@@ -468,8 +469,8 @@ describe('0018: the shared opt-out case table (R-CHAN-5, F17)', () => {
         const survivor = await contactWith(survivorPhone ? [{ kind: 'phone', address: survivorPhone }] : []);
         for (const r of c.survivorPhoneRevoked) await revokeRow('phone', survivorPhone!, r, survivor.contactId);
         if (c.mergedIntoDoNotContact) await markDoNotContact(survivor.contactId);
-        await withTenantTx(w.owner.actor, (tx) => sql`
-          UPDATE contacts SET merged_into_contact_id = ${survivor.contactId} WHERE tenant_id = app.tenant_id() AND id = ${s.contactId}`.execute(tx), { db: h.app });
+        // fixture merge: superuser, no tenant context, triggers on (see above)
+        await h.su.query('UPDATE contacts SET merged_into_contact_id = $1 WHERE tenant_id = $2 AND id = $3', [survivor.contactId, w.tenantId, s.contactId]);
       }
       if (c.keywordWithin24h) {
         await withTenantTx(w.system('provider'), (tx) => sql`
