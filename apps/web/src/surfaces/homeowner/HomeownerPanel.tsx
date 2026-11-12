@@ -47,6 +47,19 @@ function Row({ row }: { row: ViewRow }) {
   );
 }
 
+type Missing = Exclude<ViewRow, { state: 'value' } | { state: 'pending_d9' }>;
+/** The missing values grouped by why (one line each, so a phone is not a wall of repeated sentences). */
+function missingGroups(rows: ViewRow[]): { why: string; row: Missing; labels: string[] }[] {
+  const out = new Map<string, { why: string; row: Missing; labels: string[] }>();
+  for (const r of rows) {
+    if (r.state !== 'not_available') continue;
+    const g = out.get(r.why) ?? { why: r.why, row: r, labels: [] };
+    g.labels.push(T.FIELD_LABELS[r.key] ?? r.key);
+    out.set(r.why, g);
+  }
+  return [...out.values()];
+}
+
 function Home({ home, firstName, index }: { home: HomeView; firstName: string | null; index: number }) {
   const check = T.checkText(home.check);
   const outcome = T.outcomeText(home, firstName);
@@ -73,8 +86,22 @@ function Home({ home, firstName, index }: { home: HomeView; firstName: string | 
       {home.mailingDiffers !== null ? <p className="text-[15px] text-ink">{home.mailingDiffers ? T.TAX_MAIL_ELSEWHERE : T.TAX_MAIL_HERE}</p> : null}
       {home.outcome !== 'outside_area' ? (
         <ul aria-label={`Values for ${home.address}`} className="divide-y divide-line">
-          {rows.map((r) => (
+          {rows.filter((r) => r.state !== 'not_available').map((r) => (
             <Row key={r.key} row={r} />
+          ))}
+          {missingGroups(rows).map((g) => (
+            <li key={g.why} className="flex flex-col py-2">
+              <span className="text-[13px] text-ink-muted">{g.labels.join(', ')}</span>
+              <span className="text-[15px] text-ink-muted">
+                {T.whyText(g.row)}
+                {g.row.link ? (
+                  <>
+                    {' · look in '}
+                    <ExternalLink label={g.row.link.label} url={g.row.link.url} />
+                  </>
+                ) : null}
+              </span>
+            </li>
           ))}
         </ul>
       ) : null}
