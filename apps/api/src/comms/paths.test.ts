@@ -219,6 +219,9 @@ describe('owner decision: no caps, no quiet hours, nothing deferred', () => {
     const m1 = await queue(c.id, { body, category: 'speed_to_lead_reply', purpose: 'informational', initiator: 'assistant', assistantActionId: pb1.actionId, playbookStepRunId: pb1.stepRunId });
     expect((await dispatchOutbound(m1, w.deps, { tenantId: w.tenantId })).kind).toBe('sent');
     const run2 = randomUUID();
+    // each autonomous message has its own proposed action in production (assistant/steps.ts); this fixture reuses
+    // pb1's, which the first send executed, and an executed action is never sent again (b7 sends/F2)
+    await h.su.query("UPDATE assistant_actions SET status = 'proposed' WHERE id = $1", [pb1.actionId]);
     await h.su.query("INSERT INTO playbook_step_runs (tenant_id, id, enrollment_id, playbook_version_id, step_key, status, scheduled_for) VALUES ($1,$2,$3,$4,'second','scheduled',now())", [w.tenantId, run2, pb1.enrollmentId, pb1.versionId]);
     const m2 = await queue(c.id, { body: body.replace(`${brokerage}`, '').replace(/Reply STOP to opt out\.?/, '').trim() || body, category: 'speed_to_lead_reply', purpose: 'informational', initiator: 'assistant', assistantActionId: pb1.actionId, playbookStepRunId: run2 });
     expect((await dispatchOutbound(m2, w.deps, { tenantId: w.tenantId })).kind).toBe('sent');

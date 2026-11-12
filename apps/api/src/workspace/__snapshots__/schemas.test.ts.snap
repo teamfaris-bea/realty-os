@@ -5079,6 +5079,7 @@ exports[`api/workspace route table and schemas > every workspace route declares 
   "PATCH /api/deal-dates/:id deal.edit authorize(deal.edit)",
   "PATCH /api/deals/:id deal.edit authorize(deal.edit)",
   "PATCH /api/listings/:id listing.edit authorize(listing.edit)",
+  "PATCH /api/listings/:id/agent listing.reassign authorize(listing.reassign)",
   "PATCH /api/showings/:id listing.edit authorize(listing.edit)",
   "PATCH /api/tasks/:id self",
   "POST /api/appointments self",

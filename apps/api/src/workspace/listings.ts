@@ -17,6 +17,7 @@ import { enqueueJob, type Tx } from '@realty/db';
 import { sql } from 'kysely';
 import type { z } from 'zod';
 import { ASSISTANT_JOBS } from '../assistant/types.js';
+import { audit, redactDiff } from '../audit.js';
 import { AppError } from '../errors.js';
 import { assertAssignable, iso, isoOrNull } from './common.js';
 import type { CreateListingBody, CreateShowingBody, FeedbackBody, ListingDetailSchema, ListingSchema, ListingsQuery, ShowingSchema, UpdateListingBody } from './schemas.js';
@@ -176,6 +177,23 @@ export async function updateListing(tx: Tx, id: string, b: z.infer<typeof Update
   if (priceChanged || statusChanged) await enqueueMatch(tx, id);
   // module 26 (flagged): a price decrease or a return to market on a followed home is a trigger fact (R-NURT-2)
   await enqueueTeamListingChange(tx, { listingId: id, before: { status: c.status as ListingStatus, priceCents: c.list_price_cents === null ? null : Number(c.list_price_cents) }, priceChanged, statusChanged });
+}
+
+/**
+ * PATCH /listings/:id/agent (listing.reassign; b7 ownership-data/F2): an Owner/Admin hands a team listing to another
+ * active member who may own leads (not a TC). Audited. The listing's open seller-update draft of the previous agent is
+ * retired by the next seller-update reconcile (changed agent: invalidated, the same period drafted for the new agent),
+ * and its "no active listing agent" card closes there too. Sellers and other listing roles are not touched.
+ */
+export async function changeListingAgent(tx: Tx, actor: UserActor, listingId: string, agentUserId: string): Promise<void> {
+  const cur = await sql<{ source: string; agent: string | null }>`
+    SELECT source, listing_agent_user_id AS agent FROM listings WHERE tenant_id = app.tenant_id() AND id = ${listingId} FOR UPDATE`.execute(tx);
+  const c = cur.rows[0];
+  if (!c || c.source !== 'team') throw new AppError('NOT_FOUND'); // MLS rows have no listing agent of ours
+  if (c.agent === agentUserId) return;
+  await assertAssignable(tx, actor, agentUserId, { canOwnLeads: true });
+  await sql`UPDATE listings SET listing_agent_user_id = ${agentUserId}, updated_at = now() WHERE tenant_id = app.tenant_id() AND id = ${listingId}`.execute(tx);
+  await audit(tx, actor, { action: 'listing.agent_changed', entity: { type: 'listing', id: listingId }, changes: redactDiff({ listing_agent_user_id: c.agent }, { listing_agent_user_id: agentUserId }) });
 }
 
 export async function addListingContact(tx: Tx, listingId: string, contactId: string, role: string): Promise<void> {

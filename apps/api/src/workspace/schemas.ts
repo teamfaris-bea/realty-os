@@ -302,6 +302,8 @@ export const UpdateListingBody = z.strictObject({
   listDate: localDate.nullable().optional(),
 });
 export const ListingContactBody = z.strictObject({ contactId: uuid, role: z.enum(['seller', 'co_seller', 'interested']) });
+/** PATCH /listings/:id/agent (listing.reassign, Owner/Admin; b7 ownership-data/F2): an active member who may own leads. */
+export const ListingAgentBody = z.strictObject({ listingAgentUserId: uuid });
 
 export const ShowingSchema = z.object({
   id: uuid,

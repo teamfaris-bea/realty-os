@@ -9,7 +9,7 @@
 //   deals          GET/POST /deals · GET/PATCH /deals/:id · POST /deals/:id/stage · GET/PUT /deals/:id/financials
 //                  POST /deals/:id/dates · PATCH /deal-dates/:id · POST /deals/:id/members · DELETE /deals/:id/members/:userId
 //                  POST /deals/:id/contacts
-//   listings       GET/POST /listings · GET/PATCH /listings/:id · POST /listings/:id/contacts
+//   listings       GET/POST /listings · GET/PATCH /listings/:id · PATCH /listings/:id/agent · POST /listings/:id/contacts
 //   showings       GET/POST /listings/:id/showings · PATCH /showings/:id · POST /showings/:id/feedback
 //   search         GET /search?q=
 //   notifications  GET /notifications · POST /notifications/read · GET/PUT /notification-preferences
@@ -17,7 +17,10 @@ import type { Instant } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { withTenantTx } from '@realty/db';
 import { contactFacts } from '../comms/repos/contacts.js';
+import { syncReviewCards } from '../marketing/cards.js';
+import { systemActor } from '../worker/systemActor.js';
 import { authorize } from '../rbac.js';
 import type { RouteModule } from '../routes.js';
 import { appointmentById, createAppointment, listAppointments, logOutcome, updateAppointment } from './appointments.js';
@@ -42,6 +45,7 @@ import { actOnFeedItem, getFeed } from './feed.js';
 import {
   addFeedback,
   addListingContact,
+  changeListingAgent,
   createListing,
   createShowing,
   listListings,
@@ -230,6 +234,24 @@ async function register(app: FastifyInstance): Promise<void> {
       return listingById(tx, req.params.id);
     }),
   }));
+  // b7 ownership-data/F2: an Owner/Admin hands a listing to an active member (audited); the new agent's marketing review
+  // cards are written as the system right after (a feed row of another user is not writable under the caller's RLS)
+  r.patch(
+    '/listings/:id/agent',
+    {
+      config: { auth: 'listing.reassign' },
+      preHandler: authorize('listing.reassign', (req) => facts(req, (tx) => listingFacts(tx, idOf(req)))),
+      schema: { params: S.IdParams, body: S.ListingAgentBody, response: { 200: S.ListingResponse } },
+    },
+    async (req) => {
+      const listing = await wsTx(req, async (tx, _n, actor) => {
+        await changeListingAgent(tx, actor, req.params.id, req.body.listingAgentUserId);
+        return listingById(tx, req.params.id);
+      });
+      await withTenantTx(systemActor(actorOf(req).tenantId, 'worker'), (t) => syncReviewCards(t, app.platform.ids, req.params.id), { db: app.platform.db, retries: 2 });
+      return { listing };
+    },
+  );
   r.post('/listings/:id/contacts', { config: { auth: 'listing.edit' }, preHandler: listingEdit, schema: { params: S.IdParams, body: S.ListingContactBody, response: { 200: S.ListingResponse } } }, async (req) => ({
     listing: await wsTx(req, async (tx) => {
       await addListingContact(tx, req.params.id, req.body.contactId, req.body.role);

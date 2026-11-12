@@ -127,6 +127,7 @@ export const DISPATCH_DENY_SENTENCES = {
   SENDER_NOT_AUTHORIZED: 'You no longer handle this contact, so this message was not sent.',
   ASSISTANT_ACTION_NOT_APPROVED: 'This draft was not approved, so it was not sent.',
   ASSISTANT_ACTION_STALE: 'The lead moved to someone else after this was drafted, so it was not sent.',
+  ASSISTANT_ACTION_WITHDRAWN: 'This automatic message was withdrawn before it went out (the lead was merged, reassigned, closed or started a new inquiry period), so it was not sent.',
   PLAYBOOK_NOT_APPROVED: 'The playbook is no longer approved, so the assistant did not send this.',
   PLAYBOOK_OWNER_NOT_CONTACT_OWNER: 'This playbook belongs to an agent who no longer owns the lead, so the assistant did not send this.',
   ENROLLMENT_NOT_ACTIVE: 'The playbook for this contact is paused or stopped, so the assistant did not send this.',

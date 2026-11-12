@@ -7,10 +7,15 @@
 //              covers the last cadence days);
 //   2. disarm  a listing that is no longer active, has no seller contact left, or a tenant with cadence 0
 //              loses its instant (nothing is assembled for it);
-//   3. retire  an unsent draft whose listing is no longer active is superseded, one whose listing changed
-//              agent is invalidated (only the listing's own agent sends its update); their cards close; for a
-//              changed agent the period's key is freed and the listing woken at the period's end, so the new
-//              agent gets the same period's draft in step 4;
+//   3. retire  an unsent draft whose listing is no longer active, or has no seller contact left, is superseded
+//              (b7 ownership-data/F1: its explanation says why, it never stays "ready" with nobody to send to); one
+//              whose listing changed agent, or whose agent is no longer an active member, is invalidated (only the
+//              listing's own agent sends its update); their cards close; for a changed or inactive agent the
+//              period's key is freed and the listing woken at the period's end, so the next agent gets the same
+//              period's draft in step 4;
+//   hold       (b7 ownership-data/F2) a due listing whose agent is not an active member is skipped, not drafted and
+//              not advanced, and every active Owner/Admin gets one card naming it (workspace/listingAgent.ts) until
+//              an Owner/Admin changes its agent (PATCH /listings/:id/agent); the card closes once it has one;
 //   resume     an approved update whose per-seller messages were never queued (the process stopped after the
 //              tap) is queued now, each message with its dispatch job (the gate still decides each one);
 //   4. due     each listing whose instant is due gets the draft of the period ending at that instant (missed
@@ -26,6 +31,7 @@ import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 import type { EnvelopeService } from '../crypto/envelope.js';
 import { assemble, nextDueAfter, periodEndingAt, sellerContacts, tenantCadence } from './assembly.js';
+import { LISTING_AGENT_ACTIVE, closeResolvedAgentInactiveCards, raiseListingAgentInactiveCard } from '../workspace/listingAgent.js';
 import { channelFor } from './recipients.js';
 import { queueApprovedSends } from './service.js';
 import { closeDraft, insertDraft, upsertCard } from './store.js';
@@ -45,7 +51,12 @@ export interface ReconcileResult {
   drafted: number;
   /** messages queued for approved updates that never got that far */
   resumed: number;
+  /** due listings held because their agent is not an active member (b7 ownership-data/F2) */
+  held: number;
 }
+
+const NO_SELLER_NOTE = ' Not sent: no seller is linked to this listing any more.';
+const AGENT_INACTIVE_NOTE = " Not sent: the listing's agent is no longer active on the team.";
 
 const HAS_SELLER = sql`EXISTS (SELECT 1 FROM listing_contacts lc JOIN contacts c ON c.tenant_id = lc.tenant_id AND c.id = lc.contact_id
                                WHERE lc.tenant_id = l.tenant_id AND lc.listing_id = l.id AND lc.role IN ('seller','co_seller')
@@ -68,16 +79,23 @@ export async function reconcileSellerUpdates(tx: Tx, env: ReconcileEnv, now: Ins
     RETURNING l.id`.execute(tx);
 
   // unsent drafts that no longer apply
-  const stale = await sql<{ id: string; why: 'superseded' | 'invalidated' }>`
-    SELECT a.id, CASE WHEN l.listing_agent_user_id IS DISTINCT FROM a.owner_user_id THEN 'invalidated' ELSE 'superseded' END AS why
+  const stale = await sql<{ id: string; why: 'superseded' | 'invalidated'; note: string | null }>`
+    SELECT a.id, CASE WHEN l.status = 'active' AND (l.listing_agent_user_id IS DISTINCT FROM a.owner_user_id OR NOT ${LISTING_AGENT_ACTIVE}) THEN 'invalidated' ELSE 'superseded' END AS why,
+           CASE WHEN l.status <> 'active' THEN NULL
+                WHEN l.listing_agent_user_id IS NOT DISTINCT FROM a.owner_user_id AND NOT ${LISTING_AGENT_ACTIVE} THEN ${AGENT_INACTIVE_NOTE}::text
+                WHEN l.listing_agent_user_id IS NOT DISTINCT FROM a.owner_user_id AND NOT ${HAS_SELLER} THEN ${NO_SELLER_NOTE}::text END AS note
       FROM assistant_actions a
       JOIN listings l ON l.tenant_id = a.tenant_id AND l.id = (a.trigger_ref->>'listing_id')::uuid
      WHERE a.tenant_id = app.tenant_id() AND a.kind = 'seller_update_draft' AND a.trigger_ref ? 'listing_id'
        -- unsent drafts, and drafts the send path already invalidated whose period key is not yet freed (recent only)
        AND (a.status = 'proposed' OR (a.status = 'invalidated' AND a.dedupe_key NOT LIKE '%:invalidated:%'
                                       AND a.created_at > ${nowIso}::timestamptz - make_interval(days => GREATEST(${cad.cadenceDays}, 1))))
-       AND (l.status <> 'active' OR l.listing_agent_user_id IS DISTINCT FROM a.owner_user_id)`.execute(tx);
+       AND (l.status <> 'active' OR l.listing_agent_user_id IS DISTINCT FROM a.owner_user_id OR NOT ${LISTING_AGENT_ACTIVE} OR NOT ${HAS_SELLER})`.execute(tx);
   for (const s of stale.rows) {
+    if (s.note !== null) {
+      await sql`UPDATE assistant_actions SET explanation = left(explanation || ${s.note}::text, 300), updated_at = now()
+                 WHERE tenant_id = app.tenant_id() AND id = ${s.id} AND status = 'proposed'`.execute(tx);
+    }
     await closeDraft(tx, s.id, s.why, now);
     if (s.why === 'invalidated') {
       // the listing changed agent: free the period's key and wake the listing at that period's end, so the due
@@ -108,11 +126,28 @@ export async function reconcileSellerUpdates(tx: Tx, env: ReconcileEnv, now: Ins
   let resumed = 0;
   for (const u of unsent.rows) resumed += (await queueApprovedSends(tx, env, u.parent, now)).filter((q) => q.created).length;
 
+  // b7 ownership-data/F2: a listing that has an active agent again closes its "no active agent" card
+  await closeResolvedAgentInactiveCards(tx, now);
+
   let drafted = 0;
+  let held = 0;
   if (cad.cadenceDays > 0) {
+    // due listings whose agent is not an active member: held (no draft for someone who cannot send it, no advance),
+    // and the Owners/Admins are told which listing (one card each, kept until the agent changes)
+    const holds = await sql<{ id: string; address_line1: string }>`
+      SELECT l.id, l.address_line1 FROM listings l
+       WHERE l.tenant_id = app.tenant_id() AND l.seller_update_next_due_at IS NOT NULL AND l.seller_update_next_due_at <= ${nowIso}::timestamptz
+         AND NOT ${LISTING_AGENT_ACTIVE}
+       -- listings nobody has been told about yet first, so more than a batch of held listings all get their card
+       ORDER BY EXISTS (SELECT 1 FROM priority_feed_items f WHERE f.tenant_id = l.tenant_id AND f.item_type = 'seller_update' AND f.subject_type = 'listing'
+                         AND f.subject_id = l.id AND f.dedupe_key LIKE '%:agent-inactive' AND f.state IN ('open','snoozed')),
+                l.seller_update_next_due_at, l.id LIMIT ${RECONCILE_BATCH}`.execute(tx);
+    for (const l of holds.rows) await raiseListingAgentInactiveCard(tx, env.ids, { listingId: l.id, address: l.address_line1 });
+    held = holds.rows.length;
     const due = await sql<{ id: string; address_line1: string; listing_agent_user_id: string; due: Date }>`
       SELECT l.id, l.address_line1, l.listing_agent_user_id, l.seller_update_next_due_at AS due FROM listings l
        WHERE l.tenant_id = app.tenant_id() AND l.seller_update_next_due_at IS NOT NULL AND l.seller_update_next_due_at <= ${nowIso}::timestamptz
+         AND ${LISTING_AGENT_ACTIVE}
        ORDER BY l.seller_update_next_due_at, l.id LIMIT ${RECONCILE_BATCH} FOR UPDATE OF l SKIP LOCKED`.execute(tx);
     for (const l of due.rows) {
       const stored = l.due.getTime() as Instant;
@@ -138,5 +173,5 @@ export async function reconcileSellerUpdates(tx: Tx, env: ReconcileEnv, now: Ins
                  WHERE tenant_id = app.tenant_id() AND id = ${l.id} AND seller_update_next_due_at = ${toIso(stored)}::timestamptz`.execute(tx);
     }
   }
-  return { armed: armed.rows.length, disarmed: disarmed.rows.length, retired: stale.rows.length, drafted, resumed };
+  return { armed: armed.rows.length, disarmed: disarmed.rows.length, retired: stale.rows.length, drafted, resumed, held };
 }

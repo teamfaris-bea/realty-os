@@ -144,8 +144,17 @@ export const InviteResponse = z.object({
   blocked: z.number(),
   noEmail: z.number(),
   alreadyInvited: z.number(),
+  merged: z.number(),
   text: z.string(),
-  recipients: z.array(z.object({ contactId: z.uuid(), outcome: z.enum(['sent', 'opted_out', 'blocked', 'no_email', 'already_invited']), messageId: z.uuid().nullable() })),
+  recipients: z.array(
+    z.object({
+      contactId: z.uuid(),
+      outcome: z.enum(['sent', 'opted_out', 'blocked', 'no_email', 'already_invited', 'merged']),
+      messageId: z.uuid().nullable(),
+      // b7 sends/F5: a merged-away recipient names the record the person lives on now, only to a caller who sees it
+      mergedInto: z.object({ contactId: z.uuid(), name: z.string() }).nullable().optional(),
+    }),
+  ),
 });
 export const AssetResponse = z.object({ objectId: z.uuid() });
 
