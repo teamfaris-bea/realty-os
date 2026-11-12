@@ -277,7 +277,11 @@ export function qualValueQuoted(field: QualField, value: QualValue, quote: strin
     case 'areas': {
       if (!Array.isArray(value) || value.length === 0 || !value.every((v) => typeof v === 'string' && v.trim() !== '')) return false;
       const snippets = [normalizeForQuote(quote).text];
-      return (value as string[]).every((v) => (/^\d{5}$/.test(v) ? criterionQuoted('postalCodes', [v], snippets) : criterionQuoted('cities', [{ city: v }], snippets)));
+      return (value as string[]).every((v) => {
+        const quoted = /^\d{5}$/.test(v) ? criterionQuoted('postalCodes', [v], snippets) : criterionQuoted('cities', [{ city: v }], snippets);
+        const i = q.indexOf(lowerFold(v).trim());
+        return quoted && i >= 0 && !negatedBefore(own.slice(0, at + i));
+      });
     }
     case 'property_type': {
       if (typeof value !== 'string' || !(PROPERTY_TYPES as readonly string[]).includes(value)) return false;

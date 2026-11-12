@@ -99,6 +99,7 @@ describe('R-ISA-12 R-ISA-27 qualValueQuoted', () => {
     expect(qualValueQuoted('beds_min', 4, '3 bedrooms', ctx('we need 3 bedrooms'))).toBe(false);
     expect(qualValueQuoted('areas', ['Springfield', '62701'], 'Springfield or 62701', ctx('looking in Springfield or 62701'))).toBe(true);
     expect(qualValueQuoted('areas', ['Shelbyville'], 'Springfield or 62701', ctx('looking in Springfield or 62701'))).toBe(false);
+    expect(qualValueQuoted('areas', ['Springfield'], 'not Springfield', ctx("not Springfield, it's too far"))).toBe(false);
     expect(qualValueQuoted('property_type', 'townhouse', 'a townhouse', ctx('a townhouse would be great'))).toBe(true);
     expect(qualValueQuoted('property_type', 'condo', 'a townhouse', ctx('a townhouse would be great'))).toBe(false);
   });
