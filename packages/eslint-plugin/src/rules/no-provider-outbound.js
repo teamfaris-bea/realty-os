@@ -6,13 +6,15 @@
 //   - any reference to a reserved outbound method name: `x.sendSms`, `x.sendEmail`, `x.dialCall`,
 //     `x.deliverChannelMessage` (module 22: the web-chat transport, R-GATE-15; only comms/dispatch.ts),
 //     `x.publishPost` / `x.postReviewReply` (module 29: publishing, R-GATE-15, R-MKT-12; only marketing/publish.ts)
+//     `x.applyBudgetChange` / `x.pauseCampaign` (module 52: Google Ads budgets and pauses, R-GATE-15, R-ADS-3; only
+//     ads/dispatch.ts, besides the adapter itself in ads/provider.ts)
 //     (calls, references passed as callbacks, destructuring `const { sendSms } = ...`)
 //   - a `send` / `dial` member on a provider object, e.g. `providers.telephony.send(...)`,
 //     `telephony.dial(...)` (Fastify's `reply.send()` is not affected)
 
 /** @typedef {import('eslint').Rule.RuleModule} RuleModule */
 
-const DEFAULT_RESERVED = ['sendSms', 'sendEmail', 'dialCall', 'deliverChannelMessage', 'publishPost', 'postReviewReply'];
+const DEFAULT_RESERVED = ['sendSms', 'sendEmail', 'dialCall', 'deliverChannelMessage', 'publishPost', 'postReviewReply', 'applyBudgetChange', 'pauseCampaign'];
 const DEFAULT_PROVIDER_IDS = ['providers', 'telephony', 'email', 'telephonyProvider', 'emailProvider'];
 
 /**

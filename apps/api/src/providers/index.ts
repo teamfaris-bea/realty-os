@@ -39,6 +39,7 @@ import { InProcessWebChat, type WebChatTransport } from '../channels/transport.j
 import { FakeGmail, type GmailProvider, UnconfiguredGmail } from '../mailSync/provider.js';
 import { FakePublicRecords, type PublicRecordsProvider, UnconfiguredPublicRecords } from '../predict/provider.js';
 import { type DocumentTextExtractor, FakeScanner, FakeTextExtractor, type MalwareScanner, UnconfiguredScanner, UnconfiguredTextExtractor } from '../documents/provider.js';
+import { type AdsProvider, FakeAds, UnconfiguredAds } from '../ads/provider.js';
 
 export * from './types.js';
 export { FakeAi, FAKE_BAD_QUOTE, parseFakeSources } from './fake/ai.js';
@@ -77,6 +78,8 @@ export interface Providers {
   scanner: MalwareScanner;
   /** module 42: the PDF text-layer reader for contract dates (deterministic fake; production: unconfigured, N17) */
   textExtractor: DocumentTextExtractor;
+  /** module 52 (D2): Google Ads only (deterministic fake; production: unconfigured until a real, checked adapter exists, N14) */
+  ads: AdsProvider;
 }
 
 /** The fakes with their concrete types, so tests can inspect outboxes and inject failures. */
@@ -98,6 +101,7 @@ export interface FakeProviders extends Providers {
   publicRecords: FakePublicRecords;
   scanner: FakeScanner;
   textExtractor: FakeTextExtractor;
+  ads: FakeAds;
 }
 
 export function createFakeProviders(opts: { clock?: Clock } = {}): FakeProviders {
@@ -120,6 +124,7 @@ export function createFakeProviders(opts: { clock?: Clock } = {}): FakeProviders
     publicRecords: new FakePublicRecords(),
     scanner: new FakeScanner(),
     textExtractor: new FakeTextExtractor(),
+    ads: new FakeAds(opts.clock),
   };
 }
 
@@ -195,5 +200,7 @@ export function createProviders(config: Config, opts: { clock: Clock; fetch?: ty
   // module 42: no scanner (N11) or PDF reader (N17) is procured; production never gets the fakes, which pass every file
   const scanner: MalwareScanner = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredScanner() : fakes.scanner;
   const textExtractor: DocumentTextExtractor = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredTextExtractor() : fakes.textExtractor;
-  return { ...fakes, telephony, carrier, email, accountMail, ai, push, storage, integrations, gmail, publicRecords, scanner, textExtractor };
+  // module 52: no Google Ads adapter, developer token or OAuth client in this build (N14); production reads and changes nothing
+  const ads: AdsProvider = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredAds() : fakes.ads;
+  return { ...fakes, telephony, carrier, email, accountMail, ai, push, storage, integrations, gmail, publicRecords, scanner, textExtractor, ads };
 }

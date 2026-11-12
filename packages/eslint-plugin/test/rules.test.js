@@ -43,6 +43,11 @@ describe('realty/no-provider-outbound (provider send/dial only in comms dispatch
       { code: 'await deps.providers.integrations.social.publishPost(p)', errors: [{ messageId: 'outbound' }] },
       { code: 'const { publishPost } = social', errors: [{ messageId: 'outbound' }] },
       { code: "social['postReviewReply'](r)", errors: [{ messageId: 'outbound' }] },
+      // R-GATE-15 (module 52): Google Ads budget changes and pauses, only in ads/dispatch.ts
+      { code: 'await deps.ads.applyBudgetChange(c)', errors: [{ messageId: 'outbound' }] },
+      { code: 'await providers.ads.pauseCampaign(p)', errors: [{ messageId: 'outbound' }] },
+      { code: 'const { applyBudgetChange, pauseCampaign } = ads', errors: [{ messageId: 'outbound' }, { messageId: 'outbound' }] },
+      { code: "ads['pauseCampaign'](p)", errors: [{ messageId: 'outbound' }] },
     ],
   });
 });

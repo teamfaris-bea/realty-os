@@ -438,6 +438,7 @@ describe('R-PERM-1 generated can() matrix: one case per DATA_MODEL §3 cell', ()
     PHASE_2_3.push('cma.prepare'); // module 71 (D9): DATA_MODEL §8 row, tested in apps/api/src/cma/authz.test.ts (role × route vs can())
     PHASE_2_3.push('document.upload', 'document.upload_listing', 'document.upload_contact', 'document.view', 'document.download', 'document.share', 'document.hold'); // module 42: tested in apps/api/src/documents/authz.test.ts (role × route vs can())
     PHASE_2_3.push('listing.reassign'); // b7 review ownership-data/F2: DATA_MODEL §8 row, tested in apps/api/src/workspace/listingAgent.test.ts (role × route vs can())
+    PHASE_2_3.push('ads.view', 'ads.cap_set', 'ads.shift_decide', 'ads.campaign_manage'); // module 52: DATA_MODEL §8 ads rows, tested in apps/api/src/ads/adversarial.test.ts (role × action vs can()) and the ads route tests
     const PARITY_LISTS: Action[] = ['contact.edit', 'tag.create', 'tag.manage', 'custom_field.manage', 'smart_list.personal', 'smart_list.team_manage'];
     expect(notInMatrix.filter((a) => !PHASE_2_3.includes(a) && !PARITY_LISTS.includes(a)).sort()).toEqual(['data.export', 'number.release', 'support.revoke', 'system.jobs', 'system.view']);
   });

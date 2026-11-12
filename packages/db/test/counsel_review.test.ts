@@ -101,8 +101,8 @@ afterAll(async () => {
 describe('counsel-review: recording counsel review of platform packs (R-INT-6, D11)', () => {
   it('R-INT-6: every platform pack still ships unreviewed (the code default is unchanged)', () => {
     const platform = snapshot.filter((p) => p.key.startsWith('platform:') && p.status === 'published');
-    // D9 S0 adds platform:cma (client CMAs and seller-update value ranges), which D11 does not list (F8)
-    expect(platform.map((p) => p.key).sort()).toEqual([...D11_KEYS, 'platform:meta', 'platform:cma'].sort());
+    // D9 S0 adds platform:cma (client CMAs and seller-update value ranges) and module 52 adds platform:ads; D11 lists neither (F8)
+    expect(platform.map((p) => p.key).sort()).toEqual([...D11_KEYS, 'platform:meta', 'platform:cma', 'platform:ads'].sort());
     for (const p of snapshot) expect(p.reviewed_by_counsel_at, p.key).toBeNull();
     for (const p of platform) expect(p.rules, p.key).not.toHaveProperty('vendor_ready_at');
   });

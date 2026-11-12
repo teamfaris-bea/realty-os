@@ -358,6 +358,25 @@ export const ERROR_STATUS = {
   EXTRACTION_CLAIM_NEEDS_REVIEW: 409, // not found in the document as quoted: never a date (R-AST-1, E131)
   EXTRACTION_CLAIM_DECIDED: 409, // the claim was already rejected or corrected
   EXTRACTION_TARGET_KIND: 409, // the existing date is another kind of milestone
+  // ---- module 52 api/ads (the same codes the DB raises; R-ADS-1..13) ----
+  ADS_NOT_CLEARED: 409, // platform:ads is not cleared (counsel review AND the vendor check): no approval, no plan (R-ADS-7)
+  ADS_GOOGLE_ONLY: 409, // D2: only a Google Ads campaign the caller sees is planned (R-ADS-8)
+  ADS_CONNECTION_NOT_LIVE: 409, // the Google Ads connection is not connected or degraded (R-ADS-8)
+  AD_APPROVAL_FROZEN: 409, // an approved budget shift is not edited; propose a new one (R-ADS-9)
+  AD_CAP_EXCEEDED: 409, // the plan would take the tenant-wide daily total above the cap's daily ceiling (R-ADS-2)
+  AD_CAP_VERSION_STALE: 409, // a plan cites a cap version that is no longer in force (R-ADS-2)
+  AD_SHIFT_NOT_IN_APPROVAL: 409, // the approval does not name this campaign and amount (R-ADS-2)
+  AD_SHIFT_NOT_APPROVED: 409, // nobody approved this shift (R-ADS-2)
+  AD_CREATIVE_NOT_APPROVED: 409, // a campaign runs only an approved or published piece of its own listing (R-ADS-4)
+  AD_BUDGET_THROUGH_LEDGER: 409, // budgets change only through an approved, applied ledger change (R-ADS-3)
+  AD_APPLY_WITHOUT_PLAN: 409, // an outcome that matches no planned row (R-ADS-3)
+  ADS_PROPOSAL_STALE: 409, // the proposal no longer matches the cap in force or a campaign's budget; it was superseded (details.reason)
+  ADS_APPROVAL_NOT_FROM_ADS: 409, // an ad_reallocation approved outside the ads path is never planned (E444)
+  ADS_MONTHLY_CAP_REACHED: 409, // month-to-date spend is at or over the monthly cap: resuming waits for next month or a higher cap (E459)
+  ADS_CAMPAIGN_NOT_ELIGIBLE: 409, // the campaign cannot be resumed here (details.blockers); unmanaged campaigns are resumed in Google Ads
+  ADS_NO_CAP: 409, // no ad cap is in force yet
+  AD_CAP_CHANGED: 409, // another cap version was saved at the same time; reload and try again
+  AD_CAP_INVALID: 422, // the daily ceiling is above the monthly cap
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

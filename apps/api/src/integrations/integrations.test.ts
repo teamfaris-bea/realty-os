@@ -9,7 +9,7 @@ import { auditRows, call, freshReauth, inviteViaApi, staleReauth } from '../admi
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
 import { CONNECTION_KINDS } from '../providers/integrations/types.js';
 import { systemActor } from '../worker/systemActor.js';
-import { FORBIDDEN_SCOPES, GOOGLE_GBP_SCOPES, META_PUBLISH_SCOPES, NEVER_CLEARED_PACKS, OUT_OF_SCOPE_KINDS, SERVICES, VENDOR_CHECKED_PACKS } from './catalog.js';
+import { FORBIDDEN_SCOPES, GOOGLE_ADS_SCOPES, GOOGLE_GBP_SCOPES, META_PUBLISH_SCOPES, NEVER_CLEARED_PACKS, OUT_OF_SCOPE_KINDS, SERVICES, VENDOR_CHECKED_PACKS } from './catalog.js';
 import { makeIntegrationHandlers } from './handlers.js';
 import { type OAuthState, pkceChallengeOf, pkceVerifier, signState } from './oauthState.js';
 import { callback, connectFlow, connectionRow, leadSource, startFlow } from './testing.js';
@@ -60,17 +60,17 @@ describe('GET /admin/integrations: honest status for every service (R-INT-2, R-I
       ['ads_google', 'ads_meta', 'facebook_page', 'gbp_location', 'instagram_account', 'instagram_business', 'lead_email', 'meta_lead_ads', 'messenger_page', 'mls_feed', 'realtor_feed', 'showing_service', 'web_chat_widget', 'zillow_feed'].sort(),
     );
     for (const s of v.services) expect(s.sentence.length).toBeGreaterThan(10);
-    expect(v.services.filter((s) => s.canConnect).map((s) => s.kind).sort()).toEqual(['facebook_page', 'gbp_location', 'instagram_business']);
-    expect(v.services.find((s) => s.kind === 'ads_google')!.sentence).toMatch(/cannot be connected yet/); // D2: ads are Google Ads only, Phase 3
+    expect(v.services.filter((s) => s.canConnect).map((s) => s.kind).sort()).toEqual(['ads_google', 'facebook_page', 'gbp_location', 'instagram_business']);
+    expect(v.services.find((s) => s.kind === 'ads_google')!.sentence).toBe('Test adapter: connects to a simulated account only.'); // D2: ads are Google Ads only (module 52)
     // D2: Messenger and Instagram DMs, Meta Lead Ads and Meta ads are out of scope; Meta connects for publishing only
     for (const kind of ['messenger_page', 'instagram_account', 'meta_lead_ads', 'ads_meta']) {
       expect(v.services.find((s) => s.kind === kind), kind).toMatchObject({ connect: 'out_of_scope', canConnect: false, sentence: 'Not offered: the owner has taken this out of scope.' });
     }
     expect(v.services.find((s) => s.kind === 'zillow_feed')!.sentence).toMatch(/^Needs partner access|Demo data only/);
     expect((v as unknown as { perUser: { key: string }[] }).perUser.map((x) => x.key)).toEqual(['google_calendar', 'microsoft_calendar']);
-    // D2 (migration 0025) adds platform:gmail, and D9's schema step adds platform:cma, unreviewed like the rest
+    // D2 (migration 0025) adds platform:gmail, D9's schema step platform:cma and module 52 platform:ads, unreviewed like the rest
     expect(v.platformPacks.map((p) => p.key)).toEqual(
-      ['platform:avm', 'platform:cma', 'platform:coaching', 'platform:fair_housing', 'platform:gmail', 'platform:meta', 'platform:portal', 'platform:review_requests', 'platform:voice'],
+      ['platform:ads', 'platform:avm', 'platform:cma', 'platform:coaching', 'platform:fair_housing', 'platform:gmail', 'platform:meta', 'platform:portal', 'platform:review_requests', 'platform:voice'],
     );
     for (const p of v.platformPacks) {
       expect(p.reviewed, p.key).toBe(false);
@@ -118,7 +118,7 @@ describe('GET /admin/integrations: honest status for every service (R-INT-2, R-I
     }
   });
 
-  it('the packs the API treats as vendor-checked are exactly those the database clears with app.platform_cleared(key, true) (0018 voice, 0025 Gmail)', async () => {
+  it('the packs the API treats as vendor-checked are exactly those the database clears with app.platform_cleared(key, true) (0018 voice, 0025 Gmail, module 52 ads)', async () => {
     const calls = String.raw`platform_cleared\('(platform:[a-z_]+)',\s*true\)`;
     const keys = (await h.su.query<{ key: string }>("SELECT DISTINCT m[1] AS key FROM pg_proc p CROSS JOIN LATERAL regexp_matches(p.prosrc, $1, 'g') AS m", [calls])).rows.map((r) => r.key);
     expect(keys.sort()).toEqual([...VENDOR_CHECKED_PACKS].sort());
@@ -222,6 +222,28 @@ describe('connect through the provider callback (R-INT-3)', () => {
     expect(metaScopes.filter((s) => notPublishing.test(s))).toEqual([]);
   });
 
+  it('R-ADS-13: the Google Ads connect asks for exactly GOOGLE_ADS_SCOPES and completes on the fake provider; reading spend works at once, changing budgets waits for counsel review and then for the vendor check of platform:ads', async () => {
+    expect([...GOOGLE_ADS_SCOPES]).toEqual(['https://www.googleapis.com/auth/adwords']);
+    expect(SERVICES.find((s) => s.kind === 'ads_google')).toMatchObject({ connect: 'oauth', oauthProvider: 'google', needsLeadSource: false, usedBy: 'Google Ads budget proposals and spend', scopes: GOOGLE_ADS_SCOPES });
+    const f = await connectFlow(h, owner, 'ads_google', { externalAccountId: 'fake-ads-scope', leadSourceId: src }, [{ id: 'fake-ads-scope' }]);
+    expect(new URL(f.authorizeUrl).searchParams.get('scope')!.split(' ')).toEqual([...GOOGLE_ADS_SCOPES]);
+    expect(f.cb.result).toBe('CONNECTED');
+    expect(await connectionRow(h, f.connectionId)).toMatchObject({ status: 'connected', external_account_id: 'fake-ads-scope', lead_source_id: src });
+    const caps = async () => (await list()).services.find((s) => s.kind === 'ads_google')!.connections.find((c) => c.id === f.connectionId)!.capabilities;
+    expect(await caps()).toEqual([
+      { name: 'change_budget', available: false, reason: 'Waits for counsel review of platform:ads.' },
+      { name: 'read_spend', available: true, reason: null },
+    ]);
+    try {
+      await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = now() WHERE key = 'platform:ads' AND status = 'published'");
+      expect((await caps())[0]).toEqual({ name: 'change_budget', available: false, reason: 'Waits for the vendor check of platform:ads.' });
+      await h.su.query(`UPDATE jurisdiction_packs SET rules = rules || '{"vendor_ready_at": "2026-11-01T00:00:00Z"}' WHERE key = 'platform:ads' AND status = 'published'`);
+      expect((await caps())[0]).toEqual({ name: 'change_budget', available: true, reason: null });
+    } finally {
+      await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL, rules = rules - 'vendor_ready_at' WHERE key = 'platform:ads' AND status = 'published'");
+    }
+  });
+
   it('R-INT-3 D2: a publishing kind never takes a lead source: the API refuses one on connect and on rename, and the 0025 CHECK refuses a direct write', async () => {
     // DATA_MODEL §6.3; 0025 CHECK integration_connections_publishing_no_source (E228, R-MKT-12)
     // D2: a publishing-only account is never an inbound channel, so its connect needs no lead source
@@ -254,7 +276,7 @@ describe('connect through the provider callback (R-INT-3)', () => {
   });
 
   it('partner and later kinds are not connectable; unknown kinds too', async () => {
-    for (const kind of ['zillow_feed', 'mls_feed', 'web_chat_widget', 'ads_google', 'ads_meta', 'meta_lead_ads', 'bogus']) {
+    for (const kind of ['zillow_feed', 'mls_feed', 'web_chat_widget', 'ads_meta', 'meta_lead_ads', 'bogus']) {
       expect((await startFlow(owner, kind, { externalAccountId: 'x' }, { reauth: h })).code).toBe('INTEGRATION_NOT_CONNECTABLE');
     }
   });

@@ -213,7 +213,7 @@ SELECT pg_temp.ok((SELECT status = 'not_configured' FROM integration_connections
 -- the OAuth callback (system) proves control, stores the credential and connects
 SELECT pg_temp.ctx(:tA, NULL, 'system');
 INSERT INTO provider_credentials (tenant_id, id, provider, secret_enc, key_version) VALUES
-  (:tA, :credA, 'meta', '\x01', 1), (:tA, :credM, 'mls', '\x01', 1), (:tA, :credAd, 'meta', '\x01', 1);
+  (:tA, :credA, 'meta', '\x01', 1), (:tA, :credM, 'mls', '\x01', 1), (:tA, :credAd, 'google', '\x01', 1);
 SELECT pg_temp.expect_error(format($q$UPDATE integration_connections SET status = 'connected', connected_at = now(), external_account_id = '1001',
   lead_source_id = %L WHERE id = %L$q$, :srcA, :icA),
   'a live external account needs the credential the callback stored', '%check constraint%');
@@ -779,6 +779,12 @@ SELECT pg_temp.ok((SELECT count(*) FROM priority_feed_items WHERE item_type = 'l
 -- =============================================================================
 -- 10. Ads: Owner cap versions; every planned shift approved, single-use and under the ceiling in force (R-ADS-1/2, S6, S7)
 -- =============================================================================
+-- platform:ads (the module 52 pack migration) keeps ads dark until counsel review and the vendor check; this section
+-- proves 0018's checks behind it, so it clears the pack here and withdraws it at the section end (rolled back anyway).
+RESET ROLE;
+UPDATE jurisdiction_packs SET reviewed_by_counsel_at = now(), rules = rules || '{"vendor_ready_at": "2026-11-01T00:00:00Z"}'
+ WHERE key = 'platform:ads';
+SET LOCAL ROLE app_user;
 SELECT pg_temp.ctx(:tA, :agA1, 'user');
 SELECT pg_temp.expect_error(format($q$INSERT INTO ad_budget_caps (tenant_id, id, version_no, monthly_cap_cents, daily_ceiling_cents, effective_from,
   approved_by_user_id, attestation) VALUES (%L, gen_random_uuid(), 1, 100000, 5000, now(), %L, 'I approve this cap.')$q$, :tA, :agA1),
@@ -791,7 +797,7 @@ SELECT pg_temp.expect_error($q$UPDATE ad_budget_caps SET monthly_cap_cents = 999
 -- the ads account (callback) and an approved creative of 12 Oak St
 SELECT pg_temp.ctx(:tA, NULL, 'system');
 INSERT INTO integration_connections (tenant_id, id, kind, status, display_name, external_account_id, credential_id, connected_at)
-VALUES (:tA, :adsA, 'ads_meta', 'connected', 'Meta Ads', 'act_1', :credAd, now());
+VALUES (:tA, :adsA, 'ads_google', 'connected', 'Google Ads', 'fake-ads-1', :credAd, now());
 SELECT pg_temp.ctx(:tA, :agA1, 'user');
 INSERT INTO marketing_pieces (tenant_id, id, listing_id, kind, version_no, prose, template_key, guard_result, created_by_user_id)
 VALUES (:tA, 'a0000000-0000-7000-8000-00000000f303', :lA, 'social_post', 1, '{"text": "Open house Sunday at 12 Oak St"}', 'social/1',
@@ -901,6 +907,9 @@ SELECT pg_temp.ok(true, 'R-ADS-3: the provider result is recorded against its pl
 SELECT pg_temp.ctx(:tA, :agA1, 'user');
 SELECT pg_temp.ok((SELECT count(*) FROM ad_budget_caps) + (SELECT count(*) FROM ad_allocation_events) + (SELECT count(*) FROM ad_campaigns) = 0,
                   'agents see no ad money');
+RESET ROLE;
+UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL, rules = rules - 'vendor_ready_at' WHERE key = 'platform:ads';
+SET LOCAL ROLE app_user;
 
 -- =============================================================================
 -- 11. Documents: quarantined until the scan, never moved, held and retained; erasure respects both (R-DOC-1..4, S5, S11, S12)

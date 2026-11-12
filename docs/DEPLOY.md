@@ -565,6 +565,8 @@ docker compose -f docker-compose.prod.yml --env-file .env.owner run --rm --no-de
 | The likely-to-move models (C4) | none | not recorded here: each `prediction_models` version still needs `counsel_reviewed_at` and the platform back-test at its own approval |
 | Using public-record personal information for outreach (South Carolina privacy law) | none | not recorded here: owner decision D10's lane carries it |
 
+`platform:ads` (Google Ads budget changes and pauses, module 52) is **not** part of D11. It stays dark on every deployment until counsel review is recorded for it (the counsel-review command, per deployment) **and** a separate platform step sets `rules.vendor_ready_at` once a real Google Ads adapter has passed its check against the team's account at the deployment's API access level (**VERIFY**, N14). Until both are set, spend is still read and shown, and nothing changes money.
+
 Rehearsed against throwaway test databases only (the pinned D11 command through the package script: dry run, `--apply`, a re-run that reported `nothing to change: 7 already recorded`, and after a fair-housing pack bump the same command refused); the compose form above has not been run against a compose stack.
 
 ## 11. Spark MLS (read-only)
