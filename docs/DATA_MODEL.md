@@ -582,6 +582,7 @@ Each rule has at least one test. Where the rule is enforced is given in brackets
 - **R-IMPORT-10** Reversal, per batch or per stage in reverse order:
   - Rows untouched since import are deleted, or compensated for append-only tables.
   - Touched rows (edited, messaged, reassigned; a person who has inquired since, review D8-R1) are listed for a human decision and never auto-deleted.
+  - D9 (batch 10 review ownership-data/F2): a person a CMA (`cma_reports`, any status) was prepared for since the import, and an imported address a CMA cites, are listed for a human with the reason `CMA_PREPARED` and kept with the rest of what the stage wrote for them: the soft delete would hide the CMA from everyone not tenant-wide, and deleting the address would null the CMA's `contact_address_id`. The report says so in words ("1 person has a CMA prepared since the import, so they stay, with the address it cites, for your decision.").
   - Consent: imported grants are voided by `import_revert`; imported revocations and DNC flags stay.
   - Ownership: the ledger rows stay; an untouched import assignment is compensated by an `import_unassign` (import actor, fenced on the import's own seq) that puts the lead back to unassigned with no routing, SLA or notice. A lead whose ledger moved on since is listed for a human.
 
