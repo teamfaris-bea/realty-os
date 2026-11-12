@@ -652,6 +652,12 @@ export function overspend(hourly: HourlySpend[], cap: Cap): CampaignId[];
 - **54:** `app.coaching_trends(user_ids, weeks)` aggregate-only definer; R-COACH-7.
 - **55:** voice settings (disclosure preview, test call against the fake, Owner attestation, the pack's review state), voice handback cards, ads page, documents, likely-to-move list (bands + reasons + back-test), GBP, trends. Accept: every number shows its denominator; no confidence anywhere.
 
+#### 77. core/homeowner, 78. api/homeowner, 79. web/homeowner (owner decision D10)
+- **77** `packages/core/src/homeowner/**`: recognition (`reasonsFrom`), subjects (`subjectsFor`), the platform county table (`countyOf`, `connectorZips`, links), the strict parser (`parseHomeownerRecord`), the entity-owner filter (`personOwnerNames`), `yearsOwned` and the panel view (`homeownerView`). Pure; callers pass `today`.
+- **78** `apps/api/src/homeowner/**`: the nightly `homeowner.refresh` job (standalone, hourly at :41, local night 02:00-05:00, a per-local-date budget, fenced writes, purge), the read route `GET /api/contacts/:id/homeowner` (`contact.view_detail`, the viewer's RLS) and its repos. The Beaufort County connector is `apps/api/src/providers/publicRecords/**` (fixtures only; `PUBLIC_RECORDS_LIVE_CALLS=false`), on module 50's one `PublicRecordsProvider` (`lookupHomeowner`; its property `lookup` answers not configured).
+- **79** `apps/web/src/surfaces/homeowner/**`: the person-page panel (contact section `homeowner`, order 30), every state in words, no outreach control.
+- Rules R-HOME-1..10, edge cases E560-E589 (DATA_MODEL Part 2). Depends on 50 (interface), 26 (K2 `avmQualifies`), 58 (sections). Builds nothing on D9 (MLS sale history and the in-house value are slots that read nothing).
+
 ## 6. Exit criteria
 
 ### Phase 2

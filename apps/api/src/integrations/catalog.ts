@@ -135,6 +135,7 @@ export const PACK_GATES: Record<string, string> = {
   'platform:gmail': 'Gmail inbox sync',
   'platform:cma': 'Client CMAs and seller value ranges', // module 71 (D9, F8): platform:avm keeps gating home-value notes
   'platform:ads': 'Changing Google Ads budgets',
+  'platform:public_records_outreach': 'Outreach using public-record data (not built)',
 };
 
 /**

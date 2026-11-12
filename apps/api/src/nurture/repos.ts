@@ -421,7 +421,7 @@ const LKEY = (t: string) => addrKey(t, 'address_line1', 'postal_code');
 const MONTH_START = `(date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')`;
 
 /** K2: the address row `a` of contact `c` is a home this team's buy-side client bought (aliases are SQL names). */
-const avmQualifies = (c: string, a: string) =>
+export const avmQualifies = (c: string, a: string) =>
   sql.raw(`(
     NOT EXISTS (SELECT 1 FROM deals sd
                   JOIN deal_contacts sdc ON sdc.tenant_id = sd.tenant_id AND sdc.deal_id = sd.id AND sdc.contact_id = ${c}.id AND sdc.role IN ('seller','co_seller')

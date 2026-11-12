@@ -194,6 +194,14 @@ export const ConfigSchema = z.object({
       authScheme: z.enum(['Bearer', 'OAuth']),
     }),
   }),
+  /** homeowner profile (D10): county public records, platform configuration (R-INT-1). No credential exists. */
+  publicRecords: z.object({
+    provider: z.enum(['fake', 'county']),
+    /** kill switch: false (the default everywhere) means the county connector makes no network call at all */
+    liveCalls: z.boolean(),
+    /** the app's SSRF list for county service hosts (not the sandbox network) */
+    allowedHosts: z.array(z.string()).min(1),
+  }),
   /**
    * Telephony kill switch (TELEPHONY_LIVE_REQUESTS; docs/DEPLOY.md "Telephony kill switch", R-TWL-1). false, the default
    * in every environment, production included: the Twilio adapter refuses every outbound REST request before making it
@@ -310,6 +318,26 @@ function mlsSettings(env: NodeJS.ProcessEnv, invalid: string[]) {
   return { provider, liveCalls, spark: { baseUrl, allowedHosts, authScheme } };
 }
 
+/** The county GIS host (VERIFY); providers/publicRecords/fields.ts BEAUFORT_DEFAULT_HOSTS matches. */
+const PUBLIC_RECORDS_DEFAULT_HOSTS = ['gis.beaufortcountysc.gov'];
+
+/**
+ * PUBLIC_RECORDS_PROVIDER (fake | county), PUBLIC_RECORDS_LIVE_CALLS (true | false, default false everywhere) and
+ * PUBLIC_RECORDS_ALLOWED_HOSTS (owner decision D10; SSRF guard). The county service URLs are code constants, checked
+ * against the allow-list when the connector is built (providers/publicRecords/http.ts checkCountyBaseUrl), which
+ * refuses start-up. Problems are pushed by key, never value. No setting here is ever a credential.
+ */
+function publicRecordsSettings(env: NodeJS.ProcessEnv, invalid: string[]) {
+  const provider = pick('PUBLIC_RECORDS_PROVIDER', env.PUBLIC_RECORDS_PROVIDER, ['fake', 'county'] as const, 'fake');
+  const live = (env.PUBLIC_RECORDS_LIVE_CALLS ?? '').trim().toLowerCase();
+  if (live !== '' && live !== 'true' && live !== 'false') invalid.push('PUBLIC_RECORDS_LIVE_CALLS must be true or false');
+  const liveCalls = live === 'true';
+  const hosts = [...new Set(list(env.PUBLIC_RECORDS_ALLOWED_HOSTS))];
+  if (hosts.some((h) => !isPublicDnsName(h))) invalid.push('PUBLIC_RECORDS_ALLOWED_HOSTS must list lowercase public host names only (no scheme, port, path or wildcard)');
+  const allowedHosts = hosts.length > 0 ? hosts : [...PUBLIC_RECORDS_DEFAULT_HOSTS];
+  return { provider, liveCalls, allowedHosts };
+}
+
 /**
  * Builds the Config from an environment map (default: process.env). Throws ConfigError, whose message names
  * the offending variables and never their values. Choosing a real vendor adapter without its credentials
@@ -414,6 +442,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   const fub = fubSettings(env, missing, invalid);
   const mls = mlsSettings(env, invalid);
+  const publicRecords = publicRecordsSettings(env, invalid);
   // R-TWL-1: the telephony kill switch, like MLS_LIVE_CALLS: false unless set to exactly true
   const telLive = (env.TELEPHONY_LIVE_REQUESTS ?? '').trim().toLowerCase();
   if (telLive !== '' && telLive !== 'true' && telLive !== 'false') invalid.push('TELEPHONY_LIVE_REQUESTS must be true or false');
@@ -482,6 +511,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       authservId: env.LEAD_EMAIL_AUTHSERV_ID || null,
     },
     mls,
+    publicRecords,
     telephonyLiveRequests: telLive === 'true',
     globalRateLimitPerMinute: env.GLOBAL_RATE_LIMIT_PER_MINUTE || undefined,
     databasePoolMax: env.DB_POOL_MAX || undefined,
@@ -523,5 +553,6 @@ export function redactConfig(c: Config): Record<string, unknown> {
     s3Endpoint: c.s3?.endpoint,
     telephonyLiveRequests: c.telephonyLiveRequests,
     mls: { provider: c.mls.provider, liveCalls: c.mls.liveCalls, sparkBaseUrl: c.mls.spark.baseUrl, sparkAuthScheme: c.mls.spark.authScheme },
+    publicRecords: { provider: c.publicRecords.provider, liveCalls: c.publicRecords.liveCalls, allowedHosts: c.publicRecords.allowedHosts },
   };
 }

@@ -40,6 +40,7 @@ import { FakeGmail, type GmailProvider, UnconfiguredGmail } from '../mailSync/pr
 import { FakePublicRecords, type PublicRecordsProvider, UnconfiguredPublicRecords } from '../predict/provider.js';
 import { type DocumentTextExtractor, FakeScanner, FakeTextExtractor, type MalwareScanner, UnconfiguredScanner, UnconfiguredTextExtractor } from '../documents/provider.js';
 import { type AdsProvider, FakeAds, UnconfiguredAds } from '../ads/provider.js';
+import { BeaufortGisRecords } from './publicRecords/beaufort.js';
 
 export * from './types.js';
 export { FakeAi, FAKE_BAD_QUOTE, parseFakeSources } from './fake/ai.js';
@@ -196,7 +197,7 @@ export function createProviders(config: Config, opts: { clock: Clock; fetch?: ty
   // module 68: no Google OAuth client is configured in this build (fakes only, VERIFY before any real adapter)
   const gmail: GmailProvider = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredGmail() : fakes.gmail;
   // module 50: no public-records vendor is procured (N13); production looks nothing up unless fakes are allowed
-  const publicRecords: PublicRecordsProvider = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredPublicRecords() : fakes.publicRecords;
+  const publicRecords: PublicRecordsProvider = config.publicRecords.provider === 'county' ? new BeaufortGisRecords({ liveCalls: config.publicRecords.liveCalls, allowedHosts: config.publicRecords.allowedHosts, clock: opts.clock, ...(opts.fetch ? { fetch: opts.fetch } : {}) }) : config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredPublicRecords() : fakes.publicRecords;
   // module 42: no scanner (N11) or PDF reader (N17) is procured; production never gets the fakes, which pass every file
   const scanner: MalwareScanner = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredScanner() : fakes.scanner;
   const textExtractor: DocumentTextExtractor = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredTextExtractor() : fakes.textExtractor;

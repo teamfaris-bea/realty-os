@@ -44,6 +44,7 @@ import { transactionRoutes } from './transactions/routes.js';
 import { cmaRoutes } from './cma/routes.js';
 import { documentRoutes } from './documents/routes.js';
 import { adsRoutes } from './ads/routes.js';
+import { homeownerRoutes } from './homeowner/routes.js';
 
 export interface RouteModule {
   name: string;
@@ -86,5 +87,6 @@ export const routeModules: RouteModule[] = [
   cmaRoutes,
   documentRoutes,
   adsRoutes,
+  homeownerRoutes,
   // registry: add new entries above this line
 ];

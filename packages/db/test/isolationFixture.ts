@@ -25,6 +25,9 @@ const OVERRIDES: Record<string, Record<string, string>> = {
   lead_email_messages: { parser_kind: "'generic'" },
   // D5b texting reactions: a CHECK-valid tapback row (the guard does not fire for the fixture writer)
   message_reactions: { action: "'add'", reaction: "'love'" },
+  // homeowner profile (D10): a 'matched' profile and one owner_mailing_address fact satisfy the CHECKs
+  homeowner_profiles: { status: "'matched'", recognized_by: "'{seller_intent}'", county_key: "'sc-beaufort'", checked_at: 'now()', retention_until: 'now()' },
+  homeowner_profile_facts: { field: "'owner_mailing_address'", text_value: "'fixture'", source: "'Fixture source'" },
   // lane telephony-safeguards (R-TWL-11): a pending MMS text part carries no body yet (CHECK status/body)
   message_text_parts: { body: 'NULL' },
   '*': {

@@ -1,0 +1,372 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`homeownerView (R-HOME-8) > R-HOME-4: no score, confidence, percentage, estimate, balance, equity or owner-name key exists in any state (snapshot) 1`] = `
+{
+  "homes": [
+    {
+      "address": "10 Sample Lane, Exampleton, SC 29902",
+      "check": {
+        "checkedOn": "2026-11-10",
+        "nextCheckOn": "2026-12-10",
+        "state": "checked",
+      },
+      "county": {
+        "key": "sc-beaufort",
+        "mode": "connector",
+        "name": "Beaufort County",
+      },
+      "loansLink": {
+        "label": "Beaufort County Register of Deeds",
+        "url": "https://www.beaufortcountysc.gov/register-of-deeds/",
+      },
+      "lookupLinks": [],
+      "mailingDiffers": true,
+      "matchDetail": null,
+      "outcome": "matched",
+      "providerNote": null,
+      "rows": [
+        {
+          "asOf": null,
+          "key": "last_transfer_date",
+          "readOn": "2026-11-10",
+          "source": "Beaufort County GIS parcel layer",
+          "state": "value",
+          "value": "2015-06-01",
+        },
+        {
+          "asOf": "2026-10-01",
+          "key": "last_transfer_price_cents",
+          "readOn": null,
+          "source": "Beaufort County GIS parcel layer",
+          "state": "value",
+          "value": 25000000,
+        },
+        {
+          "key": "county_market_value_cents",
+          "link": {
+            "label": "Beaufort County Assessor",
+            "url": "https://www.beaufortcountysc.gov/assessor/",
+          },
+          "state": "not_available",
+          "why": "not_in_record",
+        },
+        {
+          "key": "assessed_value_cents",
+          "link": {
+            "label": "Beaufort County Assessor",
+            "url": "https://www.beaufortcountysc.gov/assessor/",
+          },
+          "state": "not_available",
+          "why": "not_in_record",
+        },
+        {
+          "key": "annual_tax_cents",
+          "link": {
+            "label": "Beaufort County Assessor",
+            "url": "https://www.beaufortcountysc.gov/assessor/",
+          },
+          "state": "not_available",
+          "why": "not_in_record",
+        },
+        {
+          "key": "tax_year",
+          "link": {
+            "label": "Beaufort County Assessor",
+            "url": "https://www.beaufortcountysc.gov/assessor/",
+          },
+          "state": "not_available",
+          "why": "not_in_record",
+        },
+        {
+          "key": "exemption_legal_residence",
+          "link": {
+            "label": "Beaufort County Assessor",
+            "url": "https://www.beaufortcountysc.gov/assessor/",
+          },
+          "state": "not_available",
+          "why": "not_in_record",
+        },
+        {
+          "key": "exemption_homestead",
+          "link": {
+            "label": "Beaufort County Assessor",
+            "url": "https://www.beaufortcountysc.gov/assessor/",
+          },
+          "state": "not_available",
+          "why": "not_in_record",
+        },
+        {
+          "asOf": null,
+          "key": "owner_mailing_address",
+          "readOn": "2026-11-10",
+          "source": "Beaufort County GIS parcel layer",
+          "state": "value",
+          "value": "PO BOX 1, EXAMPLETON SC 29902",
+        },
+        {
+          "key": "mls_sale_history",
+          "state": "pending_d9",
+          "why": "pending_d9",
+        },
+        {
+          "key": "in_house_value",
+          "state": "pending_d9",
+          "why": "pending_d9",
+        },
+      ],
+      "yearsOwned": {
+        "asOf": null,
+        "since": "2015-06-01",
+        "source": "Beaufort County GIS parcel layer",
+        "years": 11,
+      },
+    },
+    {
+      "address": "10 Sample Lane, Exampleton, SC 29910",
+      "check": {
+        "checkedOn": "2026-11-10",
+        "nextCheckOn": "2026-12-10",
+        "state": "checked",
+      },
+      "county": {
+        "key": "sc-beaufort",
+        "mode": "shared",
+        "name": "Beaufort County",
+      },
+      "loansLink": {
+        "label": "Beaufort County Register of Deeds",
+        "url": "https://www.beaufortcountysc.gov/register-of-deeds/",
+      },
+      "lookupLinks": [],
+      "mailingDiffers": null,
+      "matchDetail": "owner_name_mismatch",
+      "outcome": "not_matched",
+      "providerNote": null,
+      "rows": [
+        {
+          "key": "last_transfer_date",
+          "link": {
+            "label": "Beaufort County Assessor",
+            "url": "https://www.beaufortcountysc.gov/assessor/",
+          },
+          "state": "not_kept",
+          "why": "not_kept",
+        },
+        {
+          "key": "last_transfer_price_cents",
+          "link": {
+            "label": "Beaufort County Assessor",
+            "url": "https://www.beaufortcountysc.gov/assessor/",
+          },
+          "state": "not_kept",
+          "why": "not_kept",
+        },
+        {
+          "key": "county_market_value_cents",
+          "link": {
+            "label": "Beaufort County Assessor",
+            "url": "https://www.beaufortcountysc.gov/assessor/",
+          },
+          "state": "not_kept",
+          "why": "not_kept",
+        },
+        {
+          "key": "assessed_value_cents",
+          "link": {
+            "label": "Beaufort County Assessor",
+            "url": "https://www.beaufortcountysc.gov/assessor/",
+          },
+          "state": "not_kept",
+          "why": "not_kept",
+        },
+        {
+          "key": "annual_tax_cents",
+          "link": {
+            "label": "Beaufort County Assessor",
+            "url": "https://www.beaufortcountysc.gov/assessor/",
+          },
+          "state": "not_kept",
+          "why": "not_kept",
+        },
+        {
+          "key": "tax_year",
+          "link": {
+            "label": "Beaufort County Assessor",
+            "url": "https://www.beaufortcountysc.gov/assessor/",
+          },
+          "state": "not_kept",
+          "why": "not_kept",
+        },
+        {
+          "key": "exemption_legal_residence",
+          "link": {
+            "label": "Beaufort County Assessor",
+            "url": "https://www.beaufortcountysc.gov/assessor/",
+          },
+          "state": "not_kept",
+          "why": "not_kept",
+        },
+        {
+          "key": "exemption_homestead",
+          "link": {
+            "label": "Beaufort County Assessor",
+            "url": "https://www.beaufortcountysc.gov/assessor/",
+          },
+          "state": "not_kept",
+          "why": "not_kept",
+        },
+        {
+          "key": "owner_mailing_address",
+          "link": {
+            "label": "Beaufort County Assessor",
+            "url": "https://www.beaufortcountysc.gov/assessor/",
+          },
+          "state": "not_kept",
+          "why": "not_kept",
+        },
+        {
+          "key": "mls_sale_history",
+          "state": "pending_d9",
+          "why": "pending_d9",
+        },
+        {
+          "key": "in_house_value",
+          "state": "pending_d9",
+          "why": "pending_d9",
+        },
+      ],
+      "yearsOwned": null,
+    },
+    {
+      "address": "10 Sample Lane, Exampleton, SC 29936",
+      "check": {
+        "state": "links_only",
+      },
+      "county": {
+        "key": "sc-jasper",
+        "mode": "links",
+        "name": "Jasper County",
+      },
+      "loansLink": {
+        "label": "Jasper County Register of Deeds",
+        "url": "https://www.jaspercountysc.gov/",
+      },
+      "lookupLinks": [
+        {
+          "label": "Jasper County Assessor",
+          "url": "https://www.jaspercountysc.gov/",
+        },
+      ],
+      "mailingDiffers": null,
+      "matchDetail": null,
+      "outcome": "links_only",
+      "providerNote": null,
+      "rows": [
+        {
+          "key": "last_transfer_date",
+          "link": {
+            "label": "Jasper County Assessor",
+            "url": "https://www.jaspercountysc.gov/",
+          },
+          "state": "not_available",
+          "why": "links_only",
+        },
+        {
+          "key": "last_transfer_price_cents",
+          "link": {
+            "label": "Jasper County Assessor",
+            "url": "https://www.jaspercountysc.gov/",
+          },
+          "state": "not_available",
+          "why": "links_only",
+        },
+        {
+          "key": "county_market_value_cents",
+          "link": {
+            "label": "Jasper County Assessor",
+            "url": "https://www.jaspercountysc.gov/",
+          },
+          "state": "not_available",
+          "why": "links_only",
+        },
+        {
+          "key": "assessed_value_cents",
+          "link": {
+            "label": "Jasper County Assessor",
+            "url": "https://www.jaspercountysc.gov/",
+          },
+          "state": "not_available",
+          "why": "links_only",
+        },
+        {
+          "key": "annual_tax_cents",
+          "link": {
+            "label": "Jasper County Assessor",
+            "url": "https://www.jaspercountysc.gov/",
+          },
+          "state": "not_available",
+          "why": "links_only",
+        },
+        {
+          "key": "tax_year",
+          "link": {
+            "label": "Jasper County Assessor",
+            "url": "https://www.jaspercountysc.gov/",
+          },
+          "state": "not_available",
+          "why": "links_only",
+        },
+        {
+          "key": "exemption_legal_residence",
+          "link": {
+            "label": "Jasper County Assessor",
+            "url": "https://www.jaspercountysc.gov/",
+          },
+          "state": "not_available",
+          "why": "links_only",
+        },
+        {
+          "key": "exemption_homestead",
+          "link": {
+            "label": "Jasper County Assessor",
+            "url": "https://www.jaspercountysc.gov/",
+          },
+          "state": "not_available",
+          "why": "links_only",
+        },
+        {
+          "key": "owner_mailing_address",
+          "link": {
+            "label": "Jasper County Assessor",
+            "url": "https://www.jaspercountysc.gov/",
+          },
+          "state": "not_available",
+          "why": "links_only",
+        },
+        {
+          "key": "mls_sale_history",
+          "state": "pending_d9",
+          "why": "pending_d9",
+        },
+        {
+          "key": "in_house_value",
+          "state": "pending_d9",
+          "why": "pending_d9",
+        },
+      ],
+      "yearsOwned": null,
+    },
+  ],
+  "outreach": {
+    "built": false,
+    "clearanceOn": null,
+  },
+  "reasons": [
+    {
+      "reason": "past_buyer",
+      "since": "2024-05-01",
+    },
+  ],
+  "recognized": true,
+}
+`;

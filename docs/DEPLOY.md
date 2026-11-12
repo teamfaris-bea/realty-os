@@ -58,7 +58,7 @@ Give the orchestrator a stop grace period of at least `SHUTDOWN_DRAIN_MS + SHUTD
 
 **Start-up refusals.** The API **and the worker** refuse to start, exit 1, and print one JSON line on stderr (`{"level":"fatal","msg":"api failed to start" | "worker failed to start","type":…,"detail":…}`) naming the problem by key, never by value, when:
 
-- the configuration is incomplete or unsafe (§4). Rehearsed refusals: `KEK_BASE64` missing, not base64 or not 32 bytes; `KEK_REF` missing; fake providers without `ALLOW_FAKE_PROVIDERS=true`; a non-https `PUBLIC_BASE_URL` or `WEB_ORIGIN` entry; `SESSION_COOKIE_SECURE=false`; the KEK equal to the session secret; with `MLS_PROVIDER=spark`, a Spark base URL that is http, has a path, a port or credentials, or a host missing from `SPARK_ALLOWED_HOSTS`, and a wildcard or internal name in that list; an unknown `MLS_PROVIDER` or `MLS_LIVE_CALLS` value;
+- the configuration is incomplete or unsafe (§4). Rehearsed refusals: `KEK_BASE64` missing, not base64 or not 32 bytes; `KEK_REF` missing; fake providers without `ALLOW_FAKE_PROVIDERS=true`; a non-https `PUBLIC_BASE_URL` or `WEB_ORIGIN` entry; `SESSION_COOKIE_SECURE=false`; the KEK equal to the session secret; with `MLS_PROVIDER=spark`, a Spark base URL that is http, has a path, a port or credentials, or a host missing from `SPARK_ALLOWED_HOSTS`, and a wildcard or internal name in that list; an unknown `MLS_PROVIDER` or `MLS_LIVE_CALLS` value; an unknown `PUBLIC_RECORDS_PROVIDER` or `PUBLIC_RECORDS_LIVE_CALLS` value, a wildcard or internal name in `PUBLIC_RECORDS_ALLOWED_HOSTS`, and with `PUBLIC_RECORDS_PROVIDER=county` a county service host missing from that list;
 - `DATABASE_URL` logs in as a superuser or a `BYPASSRLS` role;
 - with `NODE_ENV=production`, a database owner credential is in the process environment at all: `MIGRATION_DATABASE_URL`, `POSTGRES_OWNER_PASSWORD` or `POSTGRES_PASSWORD` (checked first, before anything else is read; the line names the variables, never their values). The batch 5 review found the compose file giving the internet-facing api and worker the owner's superuser URL and password; an environment leak or code execution there would have been a superuser login (every guard, the append-only and audit tables, `COPY … TO PROGRAM` on the database host).
 
@@ -214,6 +214,14 @@ Choosing a real vendor without its credentials fails in every environment. The f
 | `SPARK_ALLOWED_HOSTS` | no | comma-separated lowercase public host names (no scheme, port, path or wildcard); default `sparkapi.com` |
 | `SPARK_AUTH_SCHEME` | no | `Bearer` (default) or `OAuth`: the default scheme in the `Authorization` header (**VERIFY**, §11) |
 | `MLS_LIVE_CALLS` | no | `false` (default in every environment) or `true`. The kill switch: while `false`, the Spark adapter makes no network call at all. |
+
+**County public records (homeowner profile, owner decision D10)** (`PUBLIC_RECORDS_PROVIDER=county`; procedure below in "Before any live county call"). No credential exists; the county service URLs are code constants.
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `PUBLIC_RECORDS_PROVIDER` | no | `fake` (default; production without `ALLOW_FAKE_PROVIDERS` then looks nothing up) or `county` (the Beaufort County GIS connector) |
+| `PUBLIC_RECORDS_LIVE_CALLS` | no | `false` (default in every environment) or `true`. The kill switch: while `false`, the county connector builds no request at all and the panel says live lookups are off. |
+| `PUBLIC_RECORDS_ALLOWED_HOSTS` | no | comma-separated lowercase public host names; default `gis.beaufortcountysc.gov` (**VERIFY**). The app's SSRF list for the county service host, not a network allow-list. |
 
 ## 5. Telephony: Twilio
 
@@ -507,6 +515,14 @@ A KMS-backed KEK (wrap and unwrap as KMS calls) is a drop-in for the same interf
 - [ ] Phase 2, Gmail inbox sync (owner decision D2): ships dark. `platform:gmail` stays uncleared until it has both `reviewed_by_counsel_at` (counsel item C14, recorded with §10.1; owner decision D11 reports it cleared) and `rules.vendor_ready_at` (which §10.1 never sets), that is until Google's verification of the restricted `gmail.readonly` scope plus its security assessment (N19, **VERIFY** current requirements and renewal) have passed; the Google OAuth client requests that scope only. Until then no tenant can turn sync on (DB). Rollout precondition (pack notes, R-GMAIL-12): set `vendor_ready_at` only after module 22 has written `messages.rfc_message_id_sha256` on platform email for at least 90 days (the largest backfill window), or after its one-time repair; the database refuses a Gmail duplicate only of platform email that carries the hash.
 - [ ] MLS: `MLS_LIVE_CALLS=false` unless every step of §11 "Before any live call" is done and signed off.
 - [ ] Telephony: `TELEPHONY_LIVE_REQUESTS=false` until the written pilot approval (§5.1). The start-up log of the API and the worker shows its value.
+- [ ] County public records (owner decision D10): `PUBLIC_RECORDS_LIVE_CALLS=false` unless every step of "Before any live county call" below is done and signed off.
+
+  **Before any live county call** (each step signed off by the owner; nothing here is done in this build):
+  1. Confirm with Beaufort County the services root, each layer and field in `apps/api/src/providers/publicRecords/fields.ts` (**VERIFY** every one), how empty values are written, the usage terms, the rate limit (the connector waits at least 1 s between requests) and whether automated lookups are allowed at all.
+  2. Confirm the ZIP-to-county table in `packages/core/src/homeowner/counties.ts` and the county links (**VERIFY**).
+  3. Counsel confirms the retention ceiling (12 months, R-DATA-6) and that an internal profile from these records is permitted (**VERIFY WITH COUNSEL**). Outreach stays unbuilt whatever `platform:public_records_outreach` says.
+  4. Run the connector against a county test address with `PUBLIC_RECORDS_PROVIDER=county` and `PUBLIC_RECORDS_LIVE_CALLS=false` first: the panel must say live lookups are off and no request may leave (the worker logs `homeowner.refresh pass` with `lookups: 0`).
+  5. Only then set `PUBLIC_RECORDS_LIVE_CALLS=true` on that deployment and redeploy; watch the P2 `PUBLIC_RECORDS_SOURCE_FAILING` alert. On any failure or doubt set it back to `false` and redeploy before anyone investigates.
 - [ ] Owner decision D8 (a person's reply in the website chat is first contact), on a database that already ran batch 6's website chat: before the D8 release, as the owner (§3), list the untouched-lead items a recompute can still reach whose lead someone answered in the chat by the deadline. Before D8 such a reply was no touch, and the new evidence words ("No human call, text, email or chat reply from the agent or a collaborator …") would be untrue for an agent's reply (DATA_MODEL R-ACC-2, D8). Resolve each row the agent or a collaborator answered with a note saying so (R-ACC-3). A database that never served the chat has nothing to check.
 
   ```sql
@@ -563,7 +579,16 @@ docker compose -f docker-compose.prod.yml --env-file .env.owner run --rm --no-de
 | Review requests | `platform:review_requests` | cleared |
 | The client portal | `platform:portal` | cleared |
 | The likely-to-move models (C4) | none | not recorded here: each `prediction_models` version still needs `counsel_reviewed_at` and the platform back-test at its own approval |
-| Using public-record personal information for outreach (South Carolina privacy law) | none | not recorded here: owner decision D10's lane carries it |
+| Using public-record personal information for outreach (South Carolina privacy law) | `platform:public_records_outreach` | not recorded by the seven-key command: recorded only by its own command below (owner question 1). It gates nothing in this build (no outreach path exists); the homeowner panel shows whether it is recorded |
+
+The D10 outreach clearance is recorded on its own, only once the owner confirms it (owner question 1; dry run first, then `--apply`):
+
+```sh
+docker compose -f docker-compose.prod.yml --env-file .env.owner run --rm --no-deps release \
+  node packages/db/dist/scripts/counsel-review.js \
+  --keys platform:public_records_outreach@2026.11.0 \
+  --reviewed-on 2026-11-12 --reference "counsel review reported by the owner, 2026-11-12 (owner decisions D10, D11)"
+```
 
 `platform:ads` (Google Ads budget changes and pauses, module 52) is **not** part of D11. It stays dark on every deployment until counsel review is recorded for it (the counsel-review command, per deployment) **and** a separate platform step sets `rules.vendor_ready_at` once a real Google Ads adapter has passed its check against the team's account at the deployment's API access level (**VERIFY**, N14). Until both are set, spend is still read and shown, and nothing changes money.
 

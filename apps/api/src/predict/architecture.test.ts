@@ -40,9 +40,16 @@ describe('R-PRED-4: prediction reaches nothing but its feed card', () => {
     expect(RUNTIME.length).toBeGreaterThan(200);
   });
 
-  it('R-PRED-4: only worker/handlers/index.ts and providers/index.ts import predict/** (outside the module and its tests)', () => {
-    const importers = RUNTIME.filter((f) => !rel(f).startsWith('predict/') && importsOf(f).some((s) => resolvesInto(f, s, PREDICT))).map(rel);
+  it('R-PRED-4: only worker/handlers/index.ts and providers/index.ts import predict/** (outside the module and its tests); predict/provider.ts alone is also imported by providers/publicRecords/** and homeowner/** (D10)', () => {
+    const PROVIDER = join(PREDICT, 'provider.ts');
+    const LANE = /^(providers\/publicRecords|homeowner)\//;
+    const importers = RUNTIME.filter((f) => !rel(f).startsWith('predict/') && !LANE.test(rel(f)) && importsOf(f).some((s) => resolvesInto(f, s, PREDICT))).map(rel);
     expect(importers.sort()).toEqual(['providers/index.ts', 'worker/handlers/index.ts']);
+    // the homeowner lane imports predict/provider.ts (the shared interface) and no other predict file
+    const isProvider = (f: string, s: string) => resolve(dirname(f), s).replace(/\.js$/, '.ts') === PROVIDER;
+    for (const f of RUNTIME.filter((x) => LANE.test(rel(x)))) {
+      expect(importsOf(f).filter((s) => resolvesInto(f, s, PREDICT) && !isProvider(f, s)), rel(f)).toEqual([]);
+    }
   });
 
   it('R-PRED-4: predict/** imports nothing from comms, channels, leads, assistant, ownership, ads, portal, nurture or marketing, and names no send, dial, publish, budget or ownership command', () => {

@@ -17,6 +17,7 @@ const PACK_NAMES: Record<string, string> = {
   'platform:portal': 'Client portal sign-in',
   'platform:gmail': 'Gmail inbox sync',
   'platform:ads': 'Google Ads budget changes',
+  'platform:public_records_outreach': 'Outreach using public-record data (not built)',
 };
 
 export function packName(key: string): string {

@@ -21,6 +21,8 @@
 // VERIFY with each data source (N13; county connectors per D10): field names and formats (owner names, co-owners,
 // trusts, permits), whether "not available" can be told apart from a failure, licence and caching terms, refresh
 // frequency, cost, rate limits.
+// The homeowner-profile lane (D10) adds `lookupHomeowner` on this same interface (the closed field list of core/homeowner, each value with its source and as-of date); module 50 never calls it (R-PRED-2).
+import { parseHomeownerRecord, type HomeownerLookup } from '@realty/core/homeowner';
 import { normalizeAddress, type PostalAddress, type PropertyRecordCandidate } from '@realty/core/predict';
 import { ProviderError } from '../providers/types.js';
 
@@ -57,6 +59,8 @@ export interface PublicRecordsProvider {
   readonly statusText: string;
   /** One address; no tenant context, no contact data. Throws ProviderError on a failure. */
   lookup(address: PostalAddress): Promise<PublicRecordLookup>;
+  /** D10: one address; the homeowner record (core/homeowner's closed field list). Throws ProviderError on a failure. */
+  lookupHomeowner(address: PostalAddress): Promise<HomeownerLookup>;
 }
 
 export const PUBLIC_RECORDS_NOT_SET_UP = 'Public records are not set up on this platform';
@@ -66,6 +70,9 @@ export class UnconfiguredPublicRecords implements PublicRecordsProvider {
   readonly configured = false;
   readonly statusText = PUBLIC_RECORDS_NOT_SET_UP;
   async lookup(): Promise<never> {
+    throw new ProviderError('not_configured', 'PUBLIC_RECORDS_NOT_CONFIGURED');
+  }
+  async lookupHomeowner(): Promise<never> {
     throw new ProviderError('not_configured', 'PUBLIC_RECORDS_NOT_CONFIGURED');
   }
 }
@@ -154,5 +161,20 @@ export class FakePublicRecords implements PublicRecordsProvider {
     this.calls.push(k);
     if (this.beforeAnswer) await this.beforeAnswer(k);
     return this.#records.has(k) ? parsePublicRecord(this.#records.get(k)) : { status: 'not_available' };
+  }
+
+  /** D10: each homeowner lookup's address (normalized; nothing else is recorded) */
+  readonly homeownerCalls: string[] = [];
+  /** the date the parser bounds dates by (tests set it) */
+  today: () => string = () => new Date().toISOString().slice(0, 10);
+
+  async lookupHomeowner(a: PostalAddress): Promise<HomeownerLookup> {
+    const extra = Object.keys(a).filter((k) => !['line1', 'line2', 'city', 'region', 'postalCode'].includes(k));
+    if (extra.length > 0) throw new Error(`FakePublicRecords.lookupHomeowner: only an address may be sent (got ${extra.join(', ')})`);
+    const k = normalizeAddress(a);
+    if (k === null) throw new ProviderError('rejected', 'ADDRESS_INVALID');
+    this.homeownerCalls.push(k);
+    if (this.beforeAnswer) await this.beforeAnswer(k);
+    return this.#records.has(k) ? parseHomeownerRecord(this.#records.get(k), { today: this.today() }) : { status: 'not_available', detail: 'no_record' };
   }
 }

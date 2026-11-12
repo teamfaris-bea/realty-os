@@ -2593,5 +2593,7 @@ exports[`route table and schemas > every leads route declares its authorization 
   "POST /api/contacts/:id/documents → document.upload_contact",
   "GET /api/contacts/:id/documents → document.view",
   "HEAD /api/contacts/:id/documents → document.view",
+  "GET /api/contacts/:id/homeowner → contact.view_detail",
+  "HEAD /api/contacts/:id/homeowner → contact.view_detail",
 ]
 `;
