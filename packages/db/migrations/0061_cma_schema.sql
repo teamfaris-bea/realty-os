@@ -1,8 +1,8 @@
 -- =============================================================================
 -- D9 S0: the CMA schema (owner decision D9, 2026-11-12: sellers and past clients get an automated value range and a
 -- CMA built from the team's own MLS sold data, never a third-party AVM; an estimate, never an appraisal; behind the MLS
--- licence pack and counsel review). The number is a placeholder: the orchestrator assigns the next free number at
--- merge (before lane V1-A's), and nothing in code or tests names this file. 0001-0053 are not edited.
+-- licence pack and counsel review). Numbered 0061 at the CMA base (after batch 8's 0055-0060), before lane V1-A's;
+-- nothing in code or tests names this file. 0001-0060 are not edited.
 -- docs/DATA_MODEL.md §6.x "D9 CMA (S0 migration)"; proof: packages/db/test/rls_smoke_cma.sql.
 --
 -- 1. listings: MLS sale and property facts (R-CMA-1, the storage part). All nullable unless stated, written only by the
