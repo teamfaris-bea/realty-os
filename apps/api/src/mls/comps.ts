@@ -2,7 +2,7 @@
 // R-TEN-1. SECURITY NOTE (ARCHITECTURE §21.8b):
 //   - Every read runs under the CALLER's RLS (any member may read listings), with plain-column predicates only: int4
 //     geo cells, text postal codes and spellings, date windows, uuid connection ids. They are leakproof on PG16, so
-//     under FORCE RLS they stay index conditions on the migration's partial indexes (0101 placeholder). No definer,
+//     under FORCE RLS they stay index conditions on the migration's partial indexes (0068_cma_mls_data). No definer,
 //     no function on row data.
 //   - Candidates are closed MLS sales only: source 'mls', status 'sold', not a lease, a close date inside the window.
 //     `close_date IS NOT NULL` matters: close_date DESC sorts NULLs first, so rows the backfill has not filled would

@@ -995,7 +995,7 @@ adapter with a fetch that fails the test if it is ever called; nothing reaches T
   The check sits at the one choke point of every Twilio REST request (`TwilioHttp.request`) and again before an
   account, SID or number is even looked at (`TwilioTelephony.creds`). It fails closed: an adapter built without the
   option is off. A refusal is `ProviderError('not_configured', 'TELEPHONY_LIVE_OFF')`: never an opt-out (no consent
-  event), never retried (sends are `failed`, alert deliveries `suppressed`, media `FETCH_FAILED`), never reconciled
+  event), never retried (sends are `failed`, alert deliveries `suppressed`, media and text parts `LIVE_REQUESTS_OFF` since the batch 9 review, earlier rows `FETCH_FAILED`), never reconciled
   (no `dispatch_unknown`). Tests: `providers/twilio/killswitch.test.ts`, `comms/telephony.safeguards.test.ts`.
 - **Daily cap (R-TWL-2).** `telephony_daily_usage` has FORCE RLS, the tenant policies and the `support_read_only`
   statement trigger; members (and the system) may insert and update their own tenant's row because a human send's
@@ -1018,14 +1018,31 @@ adapter with a fetch that fails the test if it is ever called; nothing reaches T
   (`comms/webhooks.redaction.test.ts`).
 - **Opt-out signals from Twilio (R-TWL-7 to R-TWL-11).** Every one only ever adds an opt-out or makes a sender less
   ready; none lifts anything. `OptOutType=STOP` revokes once (our own revoking classification takes precedence);
-  21610 on an alert text revokes the agent's alert texts the way their own STOP does; 30032/30034 mark the number's
-  registration not ready in the same transaction as the event. MMS text parts are fetched only by validated SID
+  21610 on an alert text revokes the agent's alert texts the way their own STOP does; 30032/30034 mark THAT number
+  not ready to text in the same transaction as the event (never its shared registration, b9 review sends/F1); a
+  STOP confirmation or HELP reply for a number that cannot text may go from the team main number, still only to the
+  phone that texted the keyword (ARCHITECTURE §21.28). MMS text parts are fetched only by validated SID
   through the adapter (no URL from the webhook is fetched, no SSRF), capped at 16 KiB, decoded as strict UTF-8 (a NUL
   or invalid byte is unreadable), applied under the address lock then the contact locks (concurrent runs apply a part
   once), shown in the thread as plain text only, and never placed in an assistant prompt (only the text-part modules
   and the thread view read `message_text_parts`). The one definer change is the narrow MMS keyword-reply exemption of
   `app.messages_dispatch_guard` (ARCHITECTURE §21.27).
 
-## 15. CMA reports (D9, modules 70 and 71; S0 migration `*_cma_schema`)
+## 15. Batch 9 interaction review: web UI and copy (migration `0067_b9_review_ui`)
 
-A data-class note for `cma_reports`. **What it holds:** the subject's address and property facts (each with its source: MLS, team or agent), the comps' MLS references and their sold facts, the method version and valuation date, the value and range, the agent's notes and the disclosure fields. Nothing about a person beyond the contact link and the address: no school, demographic, crime or listing-text field can reach the engine (strict schemas, R-CMA-2). **Who reads it:** RLS, staff only: its creator (an active member), whoever sees the contact's detail, and tenant-wide roles; support through RLS only; a client principal reads nothing. A person stores a CMA as themselves; shared and superseded rows never change (the guard trigger, which also refuses the table owner's direct edit). **Erasure:** a contact's erasure deletes its CMAs (the foreign key cascades; `cma.test.ts` R-CMA-8 R-DATA-4); merge moves none. **Retention** beyond erasure is not built (**VERIFY WITH COUNSEL**, C13). **Sharing:** nothing is shared in V1 (no comms path is called); client readiness is computed on every view and never stored (ARCHITECTURE §21.28). V2 (planned in its lane brief): the PDF is served as an attachment with `nosniff`.
+- **Telephony state shown to Owner/Admin (ui/F3).** GET /numbers (`settings.numbers`) and GET /lead-sources/overview
+  (`settings.routing`) now carry `telephony`: `live`, `off` or `simulated`, derived only from TELEPHONY_PROVIDER and
+  TELEPHONY_LIVE_REQUESTS (`apps/api/src/comms/telephonyMode.ts`). It reveals deployment configuration, never a
+  credential, account SID or tenant fact, and only to roles that already manage numbers or sources. The kill switch
+  stays default off and is still enforced in the adapter; the field changes no behaviour, it only lets the UI say
+  before the tap what the adapter would refuse.
+- **Kill-switch refusals recorded as such (ui/F7).** `message_media_skipped.reason` gains `LIVE_REQUESTS_OFF`. Only
+  the CHECK widens; FORCE RLS, the tenant and `support_read_only` policies and the grants are unchanged, no row is
+  rewritten. Opt-outs (D1) are unchanged: a refused text part stays skipped (R-TWL-11), it still notifies the handler,
+  and the notice now says the part stays unread and may carry a STOP.
+- No SECURITY DEFINER function, policy or grant is added.
+
+
+## 16. CMA reports (D9, modules 70 and 71; S0 migration `*_cma_schema`)
+
+A data-class note for `cma_reports`. **What it holds:** the subject's address and property facts (each with its source: MLS, team or agent), the comps' MLS references and their sold facts, the method version and valuation date, the value and range, the agent's notes and the disclosure fields. Nothing about a person beyond the contact link and the address: no school, demographic, crime or listing-text field can reach the engine (strict schemas, R-CMA-2). **Who reads it:** RLS, staff only: its creator (an active member), whoever sees the contact's detail, and tenant-wide roles; support through RLS only; a client principal reads nothing. A person stores a CMA as themselves; shared and superseded rows never change (the guard trigger, which also refuses the table owner's direct edit). **Erasure:** a contact's erasure deletes its CMAs (the foreign key cascades; `cma.test.ts` R-CMA-8 R-DATA-4); merge moves none. **Retention** beyond erasure is not built (**VERIFY WITH COUNSEL**, C13). **Sharing:** nothing is shared in V1 (no comms path is called); client readiness is computed on every view and never stored (ARCHITECTURE §21.30). V2 (planned in its lane brief): the PDF is served as an attachment with `nosniff`.

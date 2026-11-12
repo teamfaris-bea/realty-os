@@ -14,5 +14,9 @@ export function useMembers(enabled = true) {
   return useQuery<MembersResponse, ApiError>({ queryKey: MEMBERS_KEY, queryFn: ({ signal }) => api.get<MembersResponse>('/members', { signal }), enabled });
 }
 
-/** The query keys a change to a source refreshes (this surface's and the admin pages' copies). */
-export const SOURCE_KEYS = [[...OVERVIEW_KEY], ['admin', 'lead-sources']];
+/**
+ * The query keys a change to a source refreshes (this surface's and the admin pages' copies). ['admin', 'web-chat']
+ * covers the Website chat page's widgets and its consent checks (b9 ui/F5); its lead-sources query sits under
+ * ['admin', 'lead-sources'].
+ */
+export const SOURCE_KEYS = [[...OVERVIEW_KEY], ['admin', 'lead-sources'], ['admin', 'web-chat']];

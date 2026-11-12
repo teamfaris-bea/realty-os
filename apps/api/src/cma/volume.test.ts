@@ -1,7 +1,7 @@
 // Volume check for module 71 (PHASE2_3_PLAN §6, owner budget "POST /cma p95 < 2 s", VERIFY budget) on lane V1-A's 500k
 // skewed fixture (mls/testing.ts mlsVolumeFixture: 250k active/pending and 250k sold rows; one postal code with 40,000
 // sales in a 2 x 2 mi grid, one city with 120,000, one subdivision with 5,000, the rest spread far apart), under app_user
-// and FORCE RLS, through the real route, V1-A's soldCandidates (its 0101 indexes) and V1-B's engine. The fixture is a
+// and FORCE RLS, through the real route, V1-A's soldCandidates (its 0068_cma_mls_data indexes) and V1-B's engine. The fixture is a
 // superuser bulk load, not an application path: V1-A's sync writes at most SYNC_BATCH (500) records a run, so it cannot
 // load this volume in a test. Its sold rows close over the 730 days before today, so the main run's 24-month reach is
 // full. The read reaches 30 months back for the back-test (service.ts); the fixture holds no older rows, and each tier

@@ -19,9 +19,9 @@
 // the agent keyword path does (telephonySafeguards.ts recordAgentAlertOptOut).
 // Parts never reach an assistant prompt: nothing here writes messages.body, and only this module and the thread view
 // read message_text_parts (architecture test).
-import { type InboundAddress, type InboundClassification, classifyInbound, planInboundEffects } from '@realty/core/compliance';
+import { type InboundAddress, type InboundClassification, classifyInbound, parseReaction, planInboundEffects } from '@realty/core/compliance';
 import type { ContactId, Instant, SystemActor, TenantId } from '@realty/core/foundation';
-import { type Tx, lockAddresses, lockContacts, recordConsentEvent, withTenantTx } from '@realty/db';
+import { type Tx, lockAddresses, lockContacts, recordConsentEvent, setOwnershipCommand, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { audit } from '../audit.js';
 import { TELEPHONY_LIVE_OFF } from '../providers/twilio/http.js';
@@ -29,8 +29,9 @@ import { ProviderError, type TelephonyAccount } from '../providers/types.js';
 import { queueOutboundInTx } from './compose.js';
 import { hint } from './dispatch.js';
 import { resolvedPolicy } from './gateInput.js';
-import { systemReplyText } from './inbound.js';
-import { PLATFORM_CONFIRMS_PART_STOP, type TextPartJob, UNREADABLE_PART_NOTICE, decodeTextPart } from './mmsText.js';
+import { sourceStillOn, systemReplyText } from './inbound.js';
+import { type InquiryInput, ingestInquiryInTx, intakeLockKeys } from '../leads/intake.js';
+import { LIVE_OFF_PART_DETAIL, LIVE_OFF_PART_NOTICE, LIVE_OFF_TRACKED_PART_DETAIL, PLATFORM_CONFIRMS_PART_STOP, type TextPartJob, UNREADABLE_PART_NOTICE, UNREADABLE_TRACKED_PART_BODY, decodeTextPart } from './mmsText.js';
 import * as g from './repos/gate.js';
 import { telephonyAccount } from './repos/credentials.js';
 import * as msgs from './repos/messages.js';
@@ -40,7 +41,7 @@ import { SYSTEM_NOTICE, type CommsDeps } from './types.js';
 
 const REVOKING: ReadonlySet<InboundClassification['kind']> = new Set(['stop', 'opt_out_language', 'wrong_number']);
 
-type Fetched = { ok: true; text: string } | { ok: false; reason: 'TOO_LARGE' | 'CONTENT_MISMATCH' | 'FETCH_FAILED' };
+type Fetched = { ok: true; text: string } | { ok: false; reason: 'TOO_LARGE' | 'CONTENT_MISMATCH' | 'FETCH_FAILED' | 'LIVE_REQUESTS_OFF' };
 
 async function fetchPart(deps: CommsDeps, account: TelephonyAccount | null, messageRef: string, ref: string | null): Promise<Fetched> {
   if (!ref || !account || !/^(SM|MM)[0-9a-f]{32}$/.test(messageRef)) return { ok: false, reason: 'FETCH_FAILED' };
@@ -49,7 +50,9 @@ async function fetchPart(deps: CommsDeps, account: TelephonyAccount | null, mess
     got = await deps.providers.telephony.fetchMedia(account, { messageRef, mediaRef: ref });
   } catch (e) {
     // refused (gone, not allowed, or the kill switch): a refused part; unavailable / timeout: the job retries
-    if (e instanceof ProviderError && (e.kind === 'rejected' || e.kind === 'not_configured' || e.providerCode === TELEPHONY_LIVE_OFF)) return { ok: false, reason: 'FETCH_FAILED' };
+    // b9 ui/F7: the kill switch is recorded as itself (LIVE_REQUESTS_OFF), so nothing blames the carrier
+    if (e instanceof ProviderError && e.providerCode === TELEPHONY_LIVE_OFF) return { ok: false, reason: 'LIVE_REQUESTS_OFF' };
+    if (e instanceof ProviderError && (e.kind === 'rejected' || e.kind === 'not_configured')) return { ok: false, reason: 'FETCH_FAILED' };
     throw e;
   }
   return decodeTextPart(got.bytes);
@@ -76,11 +79,16 @@ async function readMessageParts(actor: SystemActor, messageId: string, j: TextPa
        ORDER BY t.position`.execute(tx);
     return { messageRef: m.rows[0].provider_message_ref ?? j.messageRef, pending: pending.rows };
   }, { db: deps.db });
-  if (!pre || pre.pending.length === 0) return out;
+  if (!pre) return out;
+  if (pre.pending.length === 0) {
+    // a retried job whose parts were all handled: the tracked re-inquiry may still be due (idempotent by external id)
+    if (j.trackedLeadSourceId) await trackedInquiryAfterParts(actor, messageId, pre.messageRef, j.trackedLeadSourceId, deps);
+    return out;
+  }
   const account = await withTenantTx(actor, (tx) => telephonyAccount(tx, deps.envelope, tenantId), { db: deps.db });
   for (const part of pre.pending) {
     const f = await fetchPart(deps, account, pre.messageRef, part.provider_media_ref);
-    const applied = await withTenantTx(actor, (tx, now) => applyPart(tx, actor, deps, messageId, part.position, f, now), { db: deps.db, retries: 3 });
+    const applied = await withTenantTx(actor, (tx, now) => applyPart(tx, actor, deps, messageId, part.position, f, now, j.trackedLeadSourceId !== undefined), { db: deps.db, retries: 3 });
     if (applied === 'read') out.read++;
     else if (applied === 'skipped') out.skipped++;
     else if (applied !== 'noop') {
@@ -91,11 +99,55 @@ async function readMessageParts(actor: SystemActor, messageId: string, j: TextPa
       await deps.providers.telephony.deleteMedia(account, { messageRef: pre.messageRef, mediaRef: part.provider_media_ref }).catch(() => undefined);
     }
   }
+  if (j.trackedLeadSourceId) await trackedInquiryAfterParts(actor, messageId, pre.messageRef, j.trackedLeadSourceId, deps);
   return out;
 }
 
+/**
+ * b9 review sends/F2 (R-TRK-3, E595 with R-TWL-11): an MMS with declared text parts to a tracking number makes its
+ * re-inquiry HERE, once every part is read, never at ingestion. Only when the Body and every part read as nothing
+ * (classification 'none'), none of them looks like a reaction (E595: a reply, never an inquiry), no part was unreadable
+ * or refused (then no inquiry at all; the handler's notice says so), Twilio did not report an opt-out, the source is
+ * still on (read FOR SHARE, ownership-data/F5) and the person is still in a pond or unassigned. The same locks as
+ * ingestion (address + the intake's keys in one sorted call, then the contacts), the same input and external id
+ * (tracking:sms:<sid>), so a re-run or a concurrent run makes at most one inquiry. It attaches to the message's own
+ * contact (ownership-data/F2) and keeps the pond card (ownership-data/F6). The inquiry is late by the job's delay.
+ */
+async function trackedInquiryAfterParts(actor: SystemActor, messageId: string, messageRef: string, leadSourceId: string, deps: CommsDeps): Promise<boolean> {
+  const tenantId = actor.tenantId as TenantId;
+  return withTenantTx(actor, async (tx, txNow) => {
+    const m = (await sql<{ contact_id: string; from_address: string; body: string; opt_out_keyword: string | null; phone_number_id: string | null }>`
+      SELECT contact_id, from_address, body, opt_out_keyword, phone_number_id FROM messages WHERE tenant_id = app.tenant_id() AND id = ${messageId} AND direction = 'inbound'`.execute(tx)).rows[0];
+    if (!m || !m.phone_number_id) return false;
+    const input: InquiryInput = {
+      leadSourceId,
+      externalId: `tracking:sms:${messageRef}`.slice(0, 200),
+      phones: [m.from_address],
+      inquiryType: 'general',
+      sourceDetail: { channel: 'tracking_number', via: 'sms', phone_number_id: m.phone_number_id },
+    };
+    const hmac = Buffer.from(await deps.envelope.inTx(tx, tenantId).hmacAddress(tenantId, m.from_address)).toString('hex');
+    await lockAddresses(tx, [hmac, ...(await intakeLockKeys(tx, deps.envelope, tenantId, input))]);
+    const sharing = [...new Set([m.contact_id, ...(await msgs.hmacPoints(tx, hmac)).map((p) => p.contactId)])].sort();
+    await lockContacts(tx, sharing as ContactId[]);
+    const partsRead = (await sql<{ status: string; body: string | null; classification: string | null; skipped: boolean }>`
+      SELECT t.status, t.body, t.classification,
+             EXISTS (SELECT 1 FROM message_media_skipped s WHERE s.tenant_id = t.tenant_id AND s.message_id = t.message_id AND s.position = t.position) AS skipped
+        FROM message_text_parts t WHERE t.tenant_id = app.tenant_id() AND t.message_id = ${messageId}`.execute(tx)).rows;
+    if (partsRead.length === 0 || partsRead.some((p) => p.skipped || p.status !== 'read' || p.classification !== 'none' || parseReaction(p.body ?? '') !== null)) return false;
+    const { policy } = await resolvedPolicy(tx);
+    if (m.opt_out_keyword !== null || classifyInbound(m.body, policy.keywords, 'sms').kind !== 'none' || (m.body.trim() !== '' && parseReaction(m.body) !== null)) return false;
+    if (!(await sourceStillOn(tx, leadSourceId))) return false;
+    const st = (await sql<{ ownership_state: string }>`SELECT ownership_state FROM contacts WHERE tenant_id = app.tenant_id() AND id = ${m.contact_id}`.execute(tx)).rows[0];
+    if (st?.ownership_state !== 'in_pond' && st?.ownership_state !== 'unassigned') return false;
+    await ingestInquiryInTx(tx, actor, input, txNow, { envelope: deps.envelope, ids: deps.ids, db: deps.db }, { firstResponse: false, disclosure: 'none', attachTo: m.contact_id, keepPondSummary: true });
+    await setOwnershipCommand(tx, null);
+    return true;
+  }, { db: deps.db, retries: 3 });
+}
+
 /** One part in one transaction. Returns 'noop' (already handled), 'skipped', 'read', or the revoking kind it applied. */
-async function applyPart(tx: Tx, actor: SystemActor, deps: CommsDeps, messageId: string, position: number, f: Fetched, now0: Instant): Promise<'noop' | 'skipped' | 'read' | InboundClassification['kind']> {
+async function applyPart(tx: Tx, actor: SystemActor, deps: CommsDeps, messageId: string, position: number, f: Fetched, now0: Instant, tracked = false): Promise<'noop' | 'skipped' | 'read' | InboundClassification['kind']> {
   const tenantId = actor.tenantId as TenantId;
   const m = (await sql<{ contact_id: string; conversation_id: string; from_address: string; body: string; opt_out_keyword: string | null; phone_number_id: string | null }>`
     SELECT contact_id, conversation_id, from_address, body, opt_out_keyword, phone_number_id FROM messages
@@ -121,7 +173,13 @@ async function applyPart(tx: Tx, actor: SystemActor, deps: CommsDeps, messageId:
     const h = await handlerOf(tx, m.contact_id);
     if (h.userId) {
       const label = (await contactLabel(tx, m.contact_id)) ?? 'a client';
-      await notifyUser(tx, deps.ids, { userId: h.userId, kind: SYSTEM_NOTICE, priority: 'high', title: UNREADABLE_PART_NOTICE(label), body: null, subjectType: 'message', subjectId: messageId, dedupeKey: `text_part_unreadable:${messageId}` }, now);
+      // b9 review sends/F2: on a tracking number, a pond / unassigned person's text with an unreadable part is no inquiry
+      const st = tracked ? (await sql<{ ownership_state: string }>`SELECT ownership_state FROM contacts WHERE tenant_id = app.tenant_id() AND id = ${m.contact_id}`.execute(tx)).rows[0]?.ownership_state : undefined;
+      const noInquiry = st === 'in_pond' || st === 'unassigned';
+      // b9 review ui/F7: a part the kill switch refused is said as the switch, never the carrier
+      const liveOff = f.reason === 'LIVE_REQUESTS_OFF';
+      const body = liveOff ? (noInquiry ? LIVE_OFF_TRACKED_PART_DETAIL : LIVE_OFF_PART_DETAIL) : noInquiry ? UNREADABLE_TRACKED_PART_BODY : null;
+      await notifyUser(tx, deps.ids, { userId: h.userId, kind: SYSTEM_NOTICE, priority: 'high', title: liveOff ? LIVE_OFF_PART_NOTICE(label) : UNREADABLE_PART_NOTICE(label), body, subjectType: 'message', subjectId: messageId, dedupeKey: `text_part_unreadable:${messageId}` }, now);
     }
     return 'skipped';
   }
@@ -174,7 +232,7 @@ async function applyPart(tx: Tx, actor: SystemActor, deps: CommsDeps, messageId:
   if (c.kind === 'stop' && PLATFORM_CONFIRMS_PART_STOP && keywordPoint && m.phone_number_id) {
     await queueOutboundInTx(tx, deps, {
       contactId: target, channel: 'sms', body: systemReplyText('opt_out_confirmation', tenant.brokerageLegalName), initiator: 'system', purpose: 'informational',
-      category: 'opt_out_confirmation', phoneNumberId: m.phone_number_id, toPointId: keywordPoint.id, idempotencyKey: `opt_out_confirmation:${messageId}`,
+      category: 'opt_out_confirmation', phoneNumberId: await g.keywordReplySender(tx, m.phone_number_id), toPointId: keywordPoint.id, idempotencyKey: `opt_out_confirmation:${messageId}`,
     }, now);
   }
   return c.kind;

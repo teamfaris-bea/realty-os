@@ -79,6 +79,11 @@ export async function startCall(actor: UserActor, contactId: string, input: { to
     let verdict = verdictOf(evaluated.decision, guardDeny);
     // R-TWL-2: an allowed call through the real adapter claims a unit of today's cap in this transaction
     const deny: DispatchDenyReason[] = [...guardDeny];
+    // R-TWL-1 (b9 review ownership-data/F4, D8): the kill switch refuses the call here, before the cap and the touch
+    if (verdict.outcome === 'allow' && n && deps.providers.telephony.liveRequestsOff?.() === true) {
+      deny.push('TELEPHONY_LIVE_OFF');
+      verdict = verdictOf(evaluated.decision, deny);
+    }
     if (verdict.outcome === 'allow' && n && deps.telephonyDailyCap === true && !(await claimTelephonySend(tx))) {
       deny.push('DAILY_SEND_CAP_REACHED');
       verdict = verdictOf(evaluated.decision, deny);

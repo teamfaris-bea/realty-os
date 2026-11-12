@@ -208,6 +208,19 @@ export interface IngestOptions {
    * text, so the inquiry cites none (consent_disclosure_id NULL) and no grant is recorded (R-CONSENT-4; history only, D1).
    */
   disclosure?: 'none';
+  /**
+   * Module 22 tracked numbers, matched path (R-TRK-3; b9 review ownership-data/F2): the contact the inbound call or text
+   * was threaded on (conversation affinity among the records sharing the caller's phone). The inquiry attaches to
+   * exactly that contact, never to the earliest exact match, so the record the gate checked (in a pond / unassigned) is
+   * the record credited and routed. The caller already holds its address lock; the intake takes its contact lock.
+   */
+  attachTo?: string;
+  /**
+   * Module 22 tracked numbers (b9 review ownership-data/F6, R-PERM-6): the inquiry carries no structured facts (a
+   * call or a text to a tracking number), so an attach keeps the contact's existing pond_summary instead of
+   * replacing it with "General inquiry".
+   */
+  keepPondSummary?: boolean;
 }
 
 /**
@@ -334,7 +347,20 @@ async function ingestInTx(tx: Tx, actor: SystemActor, i: InquiryInput, now: Inst
   }
   const matched: DedupOutcome = matchContacts(person, existing);
   // web chat: an unseen identity never attaches (a name match is only a suggestion, R-INBOX-1)
-  const decision: DedupOutcome = opts.webChat && matched.kind !== 'create' ? { kind: 'create', duplicates: matched.duplicates } : matched;
+  const decision: DedupOutcome = opts.webChat && matched.kind !== 'create'
+    ? { kind: 'create', duplicates: matched.duplicates }
+    : opts.attachTo
+      ? {
+          kind: 'attach',
+          contactId: opts.attachTo as ContactId,
+          matchedBy: ['phone'],
+          // the other records sharing the phone stay suggested as duplicates, as the earliest-match attach suggested them
+          duplicates: [
+            ...matched.duplicates.filter((d) => d.contactId !== opts.attachTo),
+            ...(matched.kind === 'attach' && matched.contactId !== opts.attachTo && !matched.duplicates.some((d) => d.contactId === matched.contactId) ? [{ contactId: matched.contactId, reason: 'shared_phone' as const }] : []),
+          ],
+        }
+      : matched;
 
   let isNewCaller = false;
   const addPoints = async (contactId: string) => {
@@ -422,7 +448,8 @@ async function ingestInTx(tx: Tx, actor: SystemActor, i: InquiryInput, now: Inst
   await repo.insertInquiry(tx, await inquiryRow(inquiryId, contactId, outcome, disclosure?.id ?? null));
   await recordConsent(contactId, inquiryId);
   await addCandidates(contactId);
-  if (st.ownership_state !== 'owned' && st.ownership_state !== 'closed') await repo.setPondSummary(tx, contactId, summary);
+  if (st.ownership_state !== 'owned' && st.ownership_state !== 'closed' && !opts.keepPondSummary) await repo.setPondSummary(tx, contactId, summary);
+  else if (st.ownership_state !== 'owned' && st.ownership_state !== 'closed') await repo.setPondSummary(tx, contactId, summary, { onlyIfEmpty: true });
   if (reinquiry) {
     // routing (a pond re-route, an unassigned lead with no route due) matches the rules on this inquiry's row
     const r = await applyOwnershipCommandInTx(tx, actor, contactId, { kind: 'reinquiry', inquiryId }, { commandId: derivedCommandId('intake.reinquiry', inquiryId), ids });

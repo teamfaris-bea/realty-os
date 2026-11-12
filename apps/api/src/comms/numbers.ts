@@ -20,6 +20,7 @@ import { adminUserIds, notifyUser } from './repos/notify.js';
 import { asUser } from './runtime.js';
 import { SYSTEM_NOTICE, type CommsDeps } from './types.js';
 import { TELEPHONY_LIVE_OFF } from '../providers/twilio/http.js';
+import { clearSenderNotVerified } from './telephonySafeguards.js';
 
 /** R-TWL-1: the kill switch refused the provider request: answered with its own sentence (TELEPHONY_LIVE_OFF). */
 function liveOffOr(e: unknown, code: 'PROVIDER_UNAVAILABLE' | 'NUMBER_UNAVAILABLE'): AppError {
@@ -38,11 +39,13 @@ export interface NumberView {
   voiceCapable: boolean;
   releasedAt: string | null;
   leadSourceId: string | null;
+  /** b9 review sends/F1 (R-TWL-9): the carrier reported this number unverified for texting; null when it may text */
+  textingPausedDetail: string | null;
 }
 
 async function listNumbersTx(tx: Tx): Promise<NumberView[]> {
-  const r = await sql<{ id: string; e164: string; purpose: string; number_type: string; assigned_user_id: string | null; registration_id: string | null; status: string | null; sms_capable: boolean; voice_capable: boolean; released_at: Date | null; lead_source_id: string | null }>`
-    SELECT n.id, n.e164, n.purpose, n.number_type, n.assigned_user_id, n.registration_id, r.status, n.sms_capable, n.voice_capable, n.released_at, n.lead_source_id
+  const r = await sql<{ id: string; e164: string; purpose: string; number_type: string; assigned_user_id: string | null; registration_id: string | null; status: string | null; sms_capable: boolean; voice_capable: boolean; released_at: Date | null; lead_source_id: string | null; sender_not_verified_detail: string | null }>`
+    SELECT n.id, n.e164, n.purpose, n.number_type, n.assigned_user_id, n.registration_id, r.status, n.sms_capable, n.voice_capable, n.released_at, n.lead_source_id, n.sender_not_verified_detail
       FROM phone_numbers n LEFT JOIN sender_registrations r ON r.tenant_id = n.tenant_id AND r.id = n.registration_id
      WHERE n.tenant_id = app.tenant_id() ORDER BY n.acquired_at, n.id`.execute(tx);
   return r.rows.map((n) => ({
@@ -57,6 +60,7 @@ async function listNumbersTx(tx: Tx): Promise<NumberView[]> {
     voiceCapable: n.voice_capable,
     releasedAt: n.released_at ? n.released_at.toISOString() : null,
     leadSourceId: n.lead_source_id,
+    textingPausedDetail: n.sender_not_verified_detail,
   }));
 }
 
@@ -145,8 +149,13 @@ export async function releaseNumber(actor: UserActor, numberId: string, deps: Co
 
 export async function attachRegistration(actor: UserActor, numberId: string, registrationId: string | null, deps: CommsDeps): Promise<NumberView> {
   return asUser(deps, actor, async (tx) => {
+    const before = await sql<{ registration_id: string | null }>`SELECT registration_id FROM phone_numbers WHERE tenant_id = app.tenant_id() AND id = ${numberId} AND released_at IS NULL FOR UPDATE`.execute(tx);
+    if (!before.rows[0]) throw new AppError('NOT_FOUND');
     const r = await sql`UPDATE phone_numbers SET registration_id = ${registrationId} WHERE tenant_id = app.tenant_id() AND id = ${numberId} AND released_at IS NULL`.execute(tx);
     if (Number(r.numAffectedRows ?? 0n) !== 1) throw new AppError('NOT_FOUND');
+    // b9 review sends/F1: a DIFFERENT registration is new facts (the flag is re-learned from the next error); attaching
+    // the same one again never clears it (only the carrier read in "Check registration status" does)
+    if (before.rows[0].registration_id !== registrationId) await clearSenderNotVerified(tx, { phoneNumberId: numberId });
     await audit(tx, actor, { action: 'sender_registration.changed', entity: { type: 'phone_number', id: numberId }, changes: redactSnapshot({ registrationId }, { entity: 'phone_number' }), reason: 'NUMBER_REGISTRATION_ATTACHED' });
     return (await listNumbersTx(tx)).find((n) => n.id === numberId)!;
   });
@@ -223,6 +232,12 @@ export async function refreshRegistration(actor: UserActor, registrationId: stri
       await sql`UPDATE sender_registrations SET status = ${mapped}, status_detail = NULL, status_changed_at = ${toIso(now)}::timestamptz WHERE tenant_id = app.tenant_id() AND id = ${registrationId}`.execute(tx);
       await audit(tx, actor, { action: 'sender_registration.changed', entity: { type: 'sender_registration', id: registrationId }, changes: redactSnapshot({ status: mapped }, { entity: 'sender_registration' }), reason: 'REGISTRATION_STATUS' });
       if (mapped === 'suspended' || mapped === 'rejected') await alertAdmins(tx, deps, registrationId, mapped, now);
+    }
+    // b9 review sends/F1 (R-TWL-9): the carrier reports the campaign approved: its numbers' unverified-sender flags clear
+    if (mapped === 'approved') {
+      for (const id of await clearSenderNotVerified(tx, { registrationId })) {
+        await audit(tx, actor, { action: 'sender_registration.changed', entity: { type: 'phone_number', id }, reason: 'SENDER_VERIFIED_AGAIN' });
+      }
     }
     return registrationView(tx, registrationId);
   });

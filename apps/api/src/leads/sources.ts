@@ -33,6 +33,7 @@ import { systemActor } from '../worker/systemActor.js';
 import { actorOf, leadsTx, platformOf } from './common.js';
 import { disclosureSourceKind, storeDisclosure } from './intakeConsent.js';
 import { OnOffResponse, OverviewResponse, PatchBody, PreviewBody, PreviewResponse, SourceResponse, WebhookRotatedResponse } from './sourcesSchemas.js';
+import { type TelephonyMode, telephonyMode } from '../comms/telephonyMode.js';
 
 
 export interface SourcesDeps {
@@ -41,6 +42,8 @@ export interface SourcesDeps {
   ids: IdGenerator;
   publicBaseUrl: string;
   inboundDomain: string | null;
+  /** R-TWL-1: whether texts and calls reach a phone (comms/telephonyMode.ts); 'simulated' when not given */
+  telephony?: TelephonyMode;
 }
 
 const sha256 = (s: string) => createHash('sha256').update(s, 'utf8').digest();
@@ -189,7 +192,7 @@ export async function overview(deps: SourcesDeps, actor: UserActor): Promise<z.i
         hasConsentText: s.has_disclosure,
       });
     }
-    return { sources, deployment: { inboundEmail: deps.inboundDomain !== null, publicHttps: https } };
+    return { sources, deployment: { inboundEmail: deps.inboundDomain !== null, publicHttps: https, telephony: deps.telephony ?? 'simulated' } };
   });
 }
 
@@ -351,7 +354,7 @@ export async function preview(tx: Tx, id: string, body: z.infer<typeof PreviewBo
 
 export function sourcesDeps(req: FastifyRequest): SourcesDeps {
   const p = platformOf(req);
-  return { db: p.db, envelope: p.envelope, ids: p.ids, publicBaseUrl: p.config.publicBaseUrl, inboundDomain: p.config.leadEmail.inboundDomain };
+  return { db: p.db, envelope: p.envelope, ids: p.ids, publicBaseUrl: p.config.publicBaseUrl, inboundDomain: p.config.leadEmail.inboundDomain, telephony: telephonyMode(p.config) };
 }
 
 async function register(app: FastifyInstance): Promise<void> {

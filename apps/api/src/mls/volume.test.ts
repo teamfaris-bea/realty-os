@@ -6,7 +6,7 @@
 //   - D9 (lane V1-A): half the rows are sold history over 24 months (coordinates and subdivisions populated, 2 % leases,
 //     5 % unfilled version-1 rows with null close dates), skewed: one postal code with 40,000 sold rows, one city with
 //     120,000 and one subdivision with 5,000 (the real mix is VERIFY V2). soldCandidates stays under 1.5 s p95 per tier,
-//     skewed areas included, on a 0101 index with no Seq Scan; below its limit a tier's 12-month count equals the
+//     skewed areas included, on a 0068_cma_mls_data index with no Seq Scan; below its limit a tier's 12-month count equals the
 //     unlimited count; a backfill page of 500 completes inside one sync run's budget.
 // Within each postal code prices run from $300k to $800k and beds from 1 to 5. Rows are bulk-inserted by the superuser (a load fixture, not an application path); every measured read and
 // the delta sync run as app_user through the module's own functions and routes. Timings are printed; the
@@ -149,7 +149,7 @@ describe('RLS volume benchmark: 500k MLS rows per tenant', () => {
     ['postal code (typical)', { tier: 'postal_code', postalCodes: ['94007'] }],
   ];
 
-  it('R-CMA-2 (D9): soldCandidates p95 < 1.5 s per tier over 500k rows, skewed areas included; each tier plan uses a 0101 index with no Seq Scan', async () => {
+  it('R-CMA-2 (D9): soldCandidates p95 < 1.5 s per tier over 500k rows, skewed areas included; each tier plan uses a 0068_cma_mls_data index with no Seq Scan', async () => {
     for (const [name, tier] of TIERS) {
       const times: number[] = [];
       let rows = 0;

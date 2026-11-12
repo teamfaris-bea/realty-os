@@ -512,3 +512,33 @@ describe('R-LEM-7 R-LEM-9 R-LEM-10 the portal catalog and lead metadata', () => 
     expect(JSON.stringify(inq[0])).not.toContain('Some Other Portal');
   });
 });
+
+describe('b9 comms ownership-data/F3: a forwarder who is no longer active', () => {
+  it('b9 comms ownership-data/F3 R-LEM-11 E590 E60: a suspended (or removed) forwarder’s account email and alert phone are still never kept; two accepted forwards ⇒ two contacts', async () => {
+    for (const status of ['suspended', 'removed'] as const) {
+      const agent = await h.invite(w.owner, 'agent');
+      const memberEmail = (await h.su.query<{ email: string }>('SELECT email::text AS email FROM users WHERE id = $1', [agent.userId])).rows[0]!.email;
+      const alert = randomPhone();
+      await h.su.query('UPDATE memberships SET alert_phone_e164 = $1, alert_phone_verified_at = now() WHERE tenant_id = $2 AND user_id = $3', [alert, w.tenantId, agent.userId]);
+      const version = (await h.su.query<{ version: number }>('SELECT version FROM memberships WHERE tenant_id = $1 AND user_id = $2', [w.tenantId, agent.userId])).rows[0]!.version;
+      await freshReauth(h, w.owner);
+      const p = await call(w.owner, 'PATCH', `/members/${agent.userId}`, { status, version: Number(version) });
+      expect(p.status, JSON.stringify(p.body)).toBe(200);
+      expect((await h.su.query<{ status: string }>('SELECT status FROM memberships WHERE tenant_id = $1 AND user_id = $2', [w.tenantId, agent.userId])).rows[0]!.status).not.toBe('active');
+      const contacts: string[] = [];
+      for (const name of [`Sue ${status} One`, `Sue ${status} Two`]) {
+        const lead = syntheticGmail('lead');
+        const phone = randomPhone();
+        const text = ['see below', '---------- Forwarded message ---------', 'From: Zillow <leads@zillow.com>', '', `Name: ${name}`, `Email: ${memberEmail}`, `Email: ${lead}`, `Phone: ${alert}`, `Phone: ${phone}`].join('\n');
+        expect(outcomeOf(await postLeadEmail(h, handForward(text)))).toBe('needs_review');
+        const row = (await messageRows(h, w.tenantId)).at(-1)!;
+        const r = await call<{ contactId: string }>(w.owner, 'POST', `/lead-email/reviews/${row.id}/accept`, {});
+        expect(r.status).toBe(200);
+        expect(await pointsOf(r.body.contactId), status).toEqual([phone, lead].sort());
+        contacts.push(r.body.contactId);
+      }
+      expect(new Set(contacts).size, status).toBe(2);
+      for (const a of [memberEmail, alert]) expect(await contactsWith(h, w.tenantId, a), `${status} ${a}`).toEqual([]);
+    }
+  });
+});

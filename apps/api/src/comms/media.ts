@@ -28,7 +28,8 @@ export const MAX_MEDIA_ITEMS = 10;
 export const MAX_MEDIA_BYTES = 5 * 1024 * 1024;
 export const MEDIA_COPY_JOB = { kind: 'comms.media_copy', queue: 'default' as const, dedupeKey: (messageId: string) => `comms.media_copy:${messageId}` };
 
-export type SkipReason = 'TYPE_NOT_ALLOWED' | 'TOO_LARGE' | 'TOO_MANY' | 'CONTENT_MISMATCH' | 'FETCH_FAILED';
+/** LIVE_REQUESTS_OFF (R-TWL-1, b9 ui/F7): our own kill switch refused the fetch; the carrier sent the item. */
+export type SkipReason = 'TYPE_NOT_ALLOWED' | 'TOO_LARGE' | 'TOO_MANY' | 'CONTENT_MISMATCH' | 'FETCH_FAILED' | 'LIVE_REQUESTS_OFF';
 
 /** Allowed types → how to recognise their bytes and whether a browser may show them inline. */
 const ALLOWED: Record<string, { sniff: (b: Uint8Array) => boolean; inline: boolean; ext: string }> = {
@@ -151,8 +152,10 @@ export async function copyInboundMedia(actor: SystemActor, messageId: string, it
       try {
         got = await deps.providers.telephony.fetchMedia(account, { messageRef: pre.messageRef, mediaRef: it.ref });
       } catch (e) {
-        // R-TWL-1: the kill switch refused the fetch: a refused part, never a job retry loop
-        if (e instanceof ProviderError && (e.kind === 'rejected' || e.providerCode === TELEPHONY_LIVE_OFF)) return { reason: 'FETCH_FAILED' };
+        // R-TWL-1: the kill switch refused the fetch: a refused item recorded as the switch's (never the carrier's),
+        // never a job retry loop; a provider refusal stays FETCH_FAILED
+        if (e instanceof ProviderError && e.providerCode === TELEPHONY_LIVE_OFF) return { reason: 'LIVE_REQUESTS_OFF' };
+        if (e instanceof ProviderError && e.kind === 'rejected') return { reason: 'FETCH_FAILED' };
         throw e; // unavailable / timeout: retried by the job
       }
       // the declared type must be allowed, and the bytes must be that type (the served type is not trusted)

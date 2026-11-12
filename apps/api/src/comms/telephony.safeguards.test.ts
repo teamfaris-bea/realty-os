@@ -56,14 +56,14 @@ const jobsFor = async (kind: string, messageId: string) => Number((await h.su.qu
 const consentEventsFor = async (contactId: string) => Number((await h.su.query<{ n: string }>(`SELECT count(*) AS n FROM consent_events WHERE contact_id = $1 AND event_type = 'revoke'`, [contactId])).rows[0]!.n);
 
 describe('R-TWL-1 kill switch through the single send path (real adapter, switch off)', () => {
-  it('R-TWL-1: a text fails with "Live texting and calling are off on this deployment." and is never an opt-out, retried or reconciled; no request is made', async () => {
+  it('R-TWL-1 b9 comms ownership-data/F4: a text is refused in TX1 with "Live texting and calling are off on this deployment." (no touch) and is never an opt-out, retried or reconciled; no request is made', async () => {
     const agent = w.agents[0]!;
     const c = await ownedContact(agent);
     const r = await withLiveOff(() => sendText(agent, c.id, 'Hi Jane, checking in about Saturday.'));
     expect(r.status).toBe(200);
-    expect(r.body.result).toBe('failed');
+    expect(r.body.result).toBe('blocked');
     const m = await messageRow(h, r.body.message!.id);
-    expect(m.status).toBe('failed');
+    expect(m.status).toBe('blocked');
     expect(m.status_reason).toBe(TELEPHONY_LIVE_OFF);
     expect(TELEPHONY_LIVE_OFF_SENTENCE).toBe('Live texting and calling are off on this deployment.');
     // not an opt-out: no revoke, the next send is gated normally (and still allowed by the gate)
@@ -75,13 +75,13 @@ describe('R-TWL-1 kill switch through the single send path (real adapter, switch
     expect((await sendText(agent, c.id, 'Second try')).body.result).toBe('sent');
   });
 
-  it('R-TWL-1: click-to-call answers with the same sentence and dials nothing', async () => {
+  it('R-TWL-1 b9 comms ownership-data/F4: click-to-call is refused at the gate with the same reason and dials nothing', async () => {
     const agent = w.agents[1]!;
     await verifiedAlertPhone(agent);
     const c = await ownedContact(agent, { consent: false });
     const r = await withLiveOff(() => call<{ result: string; reason: string | null }>(agent, 'POST', `/contacts/${c.id}/calls`, {}));
     expect(r.status).toBe(200);
-    expect(r.body).toMatchObject({ result: 'failed', reason: TELEPHONY_LIVE_OFF });
+    expect(r.body).toMatchObject({ result: 'gate', decision: { reasons: [TELEPHONY_LIVE_OFF] } });
     expect(await consentEventsFor(c.id)).toBe(0);
   });
 

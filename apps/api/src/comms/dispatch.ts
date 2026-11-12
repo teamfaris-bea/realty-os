@@ -236,6 +236,12 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
   };
   const evaluated = await evaluateGate(tx, intent, now);
   let verdict = verdictOf(evaluated.decision, extra);
+  // R-TWL-1 (b9 review ownership-data/F4, D8, R-OWN-14): the kill switch refuses every text, so it is refused HERE, before
+  // the cap unit and before the touch: a text that cannot leave is never a touch or a first touch
+  if (verdict.outcome === 'allow' && channel === 'sms' && c.deps.providers.telephony.liveRequestsOff?.() === true) {
+    extra.push('TELEPHONY_LIVE_OFF');
+    verdict = verdictOf(evaluated.decision, extra);
+  }
   // R-TWL-2: an allowed text through the real adapter claims a unit of today's cap in THIS transaction (a rollback
   // returns it); the platform's STOP confirmation / HELP reply is exempt (E381). Over the cap ⇒ a recorded deny.
   if (verdict.outcome === 'allow' && channel === 'sms' && c.deps.telephonyDailyCap === true && countsTowardDailyCap(m.actionCategory) && !(await claimTelephonySend(tx))) {
@@ -265,7 +271,11 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
     if (t.rows[0]?.at && t.rows[0].at.getTime() >= now) dispatchedAt = t.rows[0].at.getTime() as Instant;
   }
   await msgs.markDispatching(tx, m.id, dispatchedAt);
-  await msgs.touchConversationOutbound(tx, m.conversationId, m.phoneNumberId, dispatchedAt);
+  // b9 review sends/F1: a system keyword reply (STOP confirmation, HELP reply) from a tracking number never makes it the
+  // conversation's sticky sender, so the agents' later texts keep going from the team's own numbers
+  const keywordReply = m.initiator === 'system' && (m.actionCategory === 'opt_out_confirmation' || m.actionCategory === 'help_reply');
+  const stickyFrom = keywordReply && m.phoneNumberId !== null && (await g.numberFacts(tx, m.phoneNumberId))?.purpose === 'tracking' ? null : m.phoneNumberId;
+  await msgs.touchConversationOutbound(tx, m.conversationId, stickyFrom, dispatchedAt);
   let emailFrom: SendPlan['emailFrom'] = null;
   let replyTo: string | null = null;
   let headers: Record<string, string> | null = null;

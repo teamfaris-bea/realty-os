@@ -240,6 +240,7 @@ exports[`R-AUDIT-4 redacted diffs > R-AUDIT-4: generated field classification â€
     "search_tsv",
     "sender",
     "sender_domain",
+    "sender_not_verified_detail",
     "sends",
     "sha256",
     "shared_to_portal",

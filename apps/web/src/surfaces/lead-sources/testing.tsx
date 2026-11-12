@@ -43,7 +43,7 @@ export function source(over: Omit<Partial<SourceOverview>, 'paths'> & { paths?: 
 }
 
 export function overview(sources: SourceOverview[], deployment: Partial<OverviewResponse['deployment']> = {}): OverviewResponse {
-  return { sources, deployment: { inboundEmail: true, publicHttps: true, ...deployment } };
+  return { sources, deployment: { inboundEmail: true, publicHttps: true, telephony: 'live', ...deployment } };
 }
 
 export function googleForm(over: Partial<GoogleLeadForm> = {}): GoogleLeadForm {

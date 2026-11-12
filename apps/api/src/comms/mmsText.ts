@@ -16,6 +16,20 @@ export const MMS_TEXT_JOB = { kind: 'comms.mms_text', queue: 'default' as const,
 
 /** The one notice an unreadable part gets (E387). `{name}` is the contact's label. */
 export const UNREADABLE_PART_NOTICE = (name: string) => `Part of a text from ${name} couldn't be read. Check the conversation before you text them.`;
+/** b9 review sends/F2: the notice's body when that text came to a tracking number from a pond / unassigned person. */
+export const UNREADABLE_TRACKED_PART_BODY = "Because part of it couldn't be read, this text to a tracking number was not counted as a new inquiry.";
+/**
+ * R-TWL-1 (b9 ui/F7): the notice when the kill switch refused the part. Said as the switch, never the carrier; the
+ * part stays skipped (R-TWL-11), so the handler is told to treat it as unread.
+ */
+export const LIVE_OFF_PART_NOTICE = (name: string) => `Part of a text from ${name} wasn't read (live texting is off). Check the conversation before you text them.`;
+/** The notice's body (titles are cut at 120 characters). */
+export const LIVE_OFF_PART_DETAIL = "Live texting and calling are off on this deployment, so that part wasn't downloaded and stays unread, even after they are turned on. Treat it as unread (it may say STOP) before you text them.";
+/**
+ * Both at once (merge of b9 sends/F2 and ui/F7): the kill switch refused the part of a pond / unassigned person's
+ * text to a tracking number. One body under the notifications CHECK (length(body) <= 240) that says both.
+ */
+export const LIVE_OFF_TRACKED_PART_DETAIL = "Live texting and calling are off, so that part wasn't downloaded and stays unread, even after they are turned on. Treat it as unread (it may say STOP). This text to a tracking number was not counted as a new inquiry.";
 /** What the thread shows for a part that has not been read yet. */
 export const PENDING_PART_SENTENCE = "Part of this text hasn't been read yet.";
 
@@ -52,6 +66,11 @@ export interface TextPartJob {
   /** the provider message SID the parts belong to */
   messageRef: string;
   parts: { position: number; ref: string | null }[];
+  /**
+   * b9 review sends/F2 (R-TRK-3, E595): the message came to a tracking number of this ON lead source from a known
+   * person. The R-TRK-3 re-inquiry is decided by the job, once every part is read, never at ingestion.
+   */
+  trackedLeadSourceId?: string;
 }
 
 /**
@@ -72,7 +91,7 @@ export async function enqueueTextParts(tx: Tx, j: TextPartJob): Promise<void> {
   await enqueueJob(tx, {
     queue: MMS_TEXT_JOB.queue,
     kind: MMS_TEXT_JOB.kind,
-    payload: { ...(j.messageId ? { messageId: j.messageId } : {}), ...(j.agentUserId ? { agentUserId: j.agentUserId } : {}), messageRef: j.messageRef.slice(0, 64), parts },
+    payload: { ...(j.messageId ? { messageId: j.messageId } : {}), ...(j.agentUserId ? { agentUserId: j.agentUserId } : {}), messageRef: j.messageRef.slice(0, 64), parts, ...(j.messageId && j.trackedLeadSourceId ? { trackedLeadSourceId: j.trackedLeadSourceId } : {}) },
     dedupeKey: MMS_TEXT_JOB.dedupeKey(key),
   });
 }

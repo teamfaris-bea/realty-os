@@ -91,15 +91,17 @@ export async function activeRole(tx: Tx, userId: string): Promise<string | null>
 }
 
 /**
- * The team's own addresses (R-LEM-11 E590): active members' account emails and alert phones, and the tenant's live
- * numbers. As the system actor (memberships: members_read via app.is_member(); users: co-members; phone_numbers:
- * tenant isolation).
+ * The team's own addresses (R-LEM-11 E590): members' account emails and alert phones, and the tenant's live numbers.
+ * b9 review ownership-data/F3: every member who ever joined (active, suspended, deactivating, removed; only an
+ * 'invited' row that never joined is not the team's), because a suspended or removed agent's mailbox keeps forwarding
+ * and their own signature must still never become a lead's point (E590, and E60's alert-phone path). As the system
+ * actor (memberships: members_read via app.is_member(); users: co-members; phone_numbers: tenant isolation).
  */
 export async function teamAddresses(tx: Tx): Promise<{ emails: string[]; phones: string[] }> {
   const members = (
     await sql<{ email: string | null; alert_phone_e164: string | null }>`
       SELECT u.email::text AS email, m.alert_phone_e164 FROM memberships m JOIN users u ON u.id = m.user_id
-       WHERE m.tenant_id = app.tenant_id() AND m.status = 'active'`.execute(tx)
+       WHERE m.tenant_id = app.tenant_id() AND m.status <> 'invited'`.execute(tx)
   ).rows;
   const numbers = (await sql<{ e164: string }>`SELECT e164 FROM phone_numbers WHERE tenant_id = app.tenant_id() AND released_at IS NULL`.execute(tx)).rows;
   return {
