@@ -286,6 +286,30 @@ While it is `false`, the Twilio adapter (`providers/twilio/http.ts`, the one pla
 
 **Where the pilot credentials will live.** When the pilot is approved, the team's Twilio credentials live only in the encrypted `provider_credentials` store (field-encrypted under the tenant key, like every subaccount token). This release adds no way to enter them, and no change to any number, Messaging Service or webhook configuration at Twilio.
 
+### 5.2 Telephony webhook endpoints: the stable public contract (R-TWL-3)
+
+These paths are a **public contract**: provider configuration points at them and they never move. `{base}` is `PUBLIC_BASE_URL` exactly as Twilio calls it (scheme and host, no trailing slash). Every one is `POST`, form-encoded (`application/x-www-form-urlencoded`), and:
+
+- **verifies `X-Twilio-Signature`** before anything else (HMAC-SHA1 over `{base}` + the path and query + the sorted form parameters, keyed by the auth token of the account named by `AccountSid`; with the fake, by `TELEPHONY_WEBHOOK_SECRET`). The URL is built from `PUBLIC_BASE_URL`, **never the Host header**. A bad or missing signature is `403 WEBHOOK_SIGNATURE_INVALID`, a tenant-less rejected row and no tenant write;
+- **is idempotent** on the provider id named below: a retried or replayed delivery is recorded once (`webhook_events`, then the downstream unique keys) and changes nothing the second time; TwiML endpoints answer the same TwiML from stored state.
+
+`webhooks.contract.test.ts` fails if a path below disappears from the route table, stops verifying its signature, or stops being idempotent.
+
+| Path | Parameters (form; query) | Answers | Idempotent on |
+|---|---|---|---|
+| `{base}/api/webhooks/telephony/sms` | `MessageSid`, `From`, `To` required; `Body`, `NumMedia`, `MediaUrl{n}`, `MediaContentType{n}`, `OptOutType` | empty TwiML `<Response></Response>` (`text/xml`) | `MessageSid` |
+| `{base}/api/webhooks/telephony/status` | `MessageSid` required; `MessageStatus`, `ErrorCode`, `From` (optional: R-TWL-4); query `m` = our message id | `200 {"ok":true}` (also for an unknown status or an unrouted callback) | `MessageSid` + `MessageStatus` |
+| `{base}/api/webhooks/telephony/voice` | `CallSid`, `From`, `To` required; `CallStatus`, `Direction`, `ParentCallSid`, `CallDuration`, `Timestamp`, `AnnouncementStatus` | TwiML: for a new inbound call the ring/voicemail plan, otherwise empty TwiML | `CallSid` + `CallStatus` (+ announcement); the stored plan answers a retried fetch |
+| `{base}/api/webhooks/telephony/voice/screen` | query `c` (our signed call ref); form as Twilio sends it | TwiML: the agent's whisper ("press 1"), or hang up | the call's stored state (same answer every time) |
+| `{base}/api/webhooks/telephony/voice/accept` | query `c`; `Digits` | TwiML: bridge on `1`, else hang up | the call's stored state (accepted once) |
+| `{base}/api/webhooks/telephony/voice/dial-result` | query `c`; `DialCallStatus` | TwiML: voicemail when unanswered, else hang up | the call's stored state |
+| `{base}/api/webhooks/telephony/voice/voicemail-done` | query `c` | TwiML: the closing sentence, hang up | stateless |
+| `{base}/api/webhooks/telephony/recording` | `CallSid`, `RecordingSid` required; `RecordingDuration`, `From`; query `vm` (signed voicemail ref) | `200 {"ok":true}` | `RecordingSid` |
+| `{base}/api/webhooks/telephony/answer` | query `c` (signed); `CallSid`, `ParentCallSid` | TwiML: the recording announcement when owed, else empty TwiML | `ParentCallSid` (else `CallSid`) |
+
+**The app never re-points a number.** Numbers bought through the app get these URLs once, at purchase (the only code that writes `SmsUrl`, `VoiceUrl` or a number's `StatusCallback`; R-TWL-5, architecture test). Nothing updates an existing number at Twilio, and the team's existing numbers stay routed exactly as they are.
+
+
 ## 6. Email: SMTP, DNS and inbound
 
 **Sending.** Any SMTP relay works, over STARTTLS (587) or implicit TLS (465), with AUTH PLAIN or LOGIN.

@@ -958,3 +958,17 @@ adapter with a fetch that fails the test if it is ever called; nothing reaches T
   TX1 runs as that human (R-TEN-3), and a trigger lets a day's count only grow, so no transaction can reopen a
   budget. No SECURITY DEFINER function is added. The claim is one `INSERT … ON CONFLICT DO UPDATE … WHERE sends < cap`
   in TX1, so concurrent sends at cap-1 let exactly one through (E380, tested with concurrent transactions).
+- **Stable webhook contract (R-TWL-3, R-TWL-4).** DEPLOY §5.2 is the public contract of the nine telephony paths.
+  `comms/webhooks.contract.test.ts` reads that table and fails if a path leaves the route table (or an undocumented
+  one appears), if a path accepts an unsigned or mis-signed request, if the signed URL is taken from the Host header
+  instead of `PUBLIC_BASE_URL`, or if a retried delivery is processed twice. A status callback without `From` is no
+  longer a 422: its tenant is only ever the one the signature guard resolved from the signing subaccount, otherwise
+  the delivery is recorded unrouted (no tenant row, `WEBHOOK_UNROUTED`); a callback can never pick its tenant.
+- **No number is re-pointed (R-TWL-5).** `providers/twilio/numberConfig.architecture.test.ts` proves by source scan
+  and by driving every adapter operation that nothing POSTs to `IncomingPhoneNumbers/{sid}` and that `SmsUrl`,
+  `VoiceUrl`, fallbacks, application SIDs and a number's `StatusCallback` are written only at purchase (blocked by
+  the kill switch while it is off).
+- **Signature redaction (R-TWL-6).** `X-Twilio-Signature` is an HMAC keyed by the account's auth token; a leaked one
+  allows replaying that exact request. `server.ts LOG_REDACT_PATHS` (one exported list) censors it on request,
+  response and bare header objects, on top of the serializers that already log no headers
+  (`comms/webhooks.redaction.test.ts`).

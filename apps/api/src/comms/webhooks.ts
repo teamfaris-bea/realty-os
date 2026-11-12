@@ -161,9 +161,11 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
   r.post('/webhooks/telephony/status', { ...tel, schema: { body: Form, querystring: z.object({ m: z.uuid().optional() }) } }, async (req) => {
     const b = req.body;
     const mapped = mapTelephonyStatus(b.MessageStatus ?? '');
-    if (!b.MessageSid || !b.From) throw new AppError('VALIDATION_FAILED');
+    // R-TWL-4 (E382): MessageSid stays required; a missing From is accepted. Its tenant is the one the signature guard
+    // resolved (Twilio subaccount); otherwise run() records one unrouted row with a WEBHOOK_UNROUTED log and we answer 200
+    if (!b.MessageSid) throw new AppError('VALIDATION_FAILED');
     const p = req.server.platform;
-    const tenantId = await telephonyTenant(req, b.From);
+    const tenantId = b.From ? await telephonyTenant(req, b.From) : (req.webhookTenantId ?? null);
     if (!mapped) return { ok: true };
     const ref = `status:${b.MessageSid}:${b.MessageStatus}`;
     await run(req, 'telephony', ref, tenantId, { sid: b.MessageSid, status: b.MessageStatus }, () =>
