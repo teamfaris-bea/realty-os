@@ -21,7 +21,7 @@ const rows = () => h.app.platform.routeTable.filter((r) => PREFIXES.some((p) => 
 describe('api/workspace route table and schemas', () => {
   it('every workspace route declares its authorization; Action routes carry authorize(<that action>) (snapshot)', () => {
     const table = rows().map((r) => `${r.method} ${r.url} ${r.auth}${r.authorizes ? ` authorize(${r.authorizes})` : ''}`);
-    expect(table.length).toBe(39); // + GET /listings/:id/competing (module 24, mls/routes.ts)
+    expect(table.length).toBe(42); // + GET /listings/:id/competing (module 24, mls/routes.ts); + module 31: GET /deals/:id/milestones, POST /deals/:id/milestones/plan, POST /deal-dates/:id/confirm
     for (const r of rows()) if (r.auth !== 'self') expect(r.authorizes).toBe(r.auth);
     expect(table.sort()).toMatchSnapshot();
   });

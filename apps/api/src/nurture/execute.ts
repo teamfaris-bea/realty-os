@@ -52,6 +52,7 @@ import { LISTING_COLS, type ListingRow, type MlsEligibility, clientView, mlsElig
 import { DIGEST_SUBJECT, type RunSkipReason, apiSkip, decideBatch, digestTemplate, draftExplanation, firingOfRow, literal } from './decide.js';
 import * as R from './repos.js';
 import type { NurtureDeps } from './types.js';
+import { KIND_TEXT } from '../transactions/types.js';
 
 export type TriggerOutcome =
   | { kind: 'queued'; messageId: string; actionId: string; runIds: string[] }
@@ -67,7 +68,7 @@ interface Item {
   listing?: { row: ListingRow; view: ReturnType<typeof clientView> };
   deal?: { address: string; closedAt: Instant | null };
   /** deal-date firings (module 31): the date as stored now and the recipient's roles on the deal */
-  dealDate?: { completed: boolean; label: string | null; dueAt: Instant | null; zone: IanaZone | null; roles: string[] };
+  dealDate?: { completed: boolean; label: string; dueAt: Instant | null; zone: IanaZone | null; roles: string[] };
 }
 
 async function listingRow(tx: Tx, id: string): Promise<ListingRow | null> {
@@ -104,8 +105,8 @@ async function currentFact(tx: Tx, f: Firing, e: MlsEligibility): Promise<Pick<I
       // module 31: also completed_at (a date marked done after planning sends nothing: DATE_COMPLETED), the contract
       // date's zone (the slot shows the contract date, not the instant in the recipient's zone) and the recipient's
       // current roles on the deal (removed, or no longer in a named role: NOT_A_PARTY)
-      const q = await sql<{ due_version: number; status: string; confirmed_by_user_id: string | null; due_at: Date | null; completed_at: Date | null; label: string | null; zone: string | null; roles: string[] }>`
-        SELECT dd.due_version, dd.status, dd.confirmed_by_user_id, dd.due_at, dd.completed_at, dd.label, dd.basis->>'zone' AS zone,
+      const q = await sql<{ due_version: number; status: string; confirmed_by_user_id: string | null; due_at: Date | null; completed_at: Date | null; label: string | null; kind: keyof typeof KIND_TEXT; zone: string | null; roles: string[] }>`
+        SELECT dd.due_version, dd.status, dd.confirmed_by_user_id, dd.due_at, dd.completed_at, dd.label, dd.kind, dd.basis->>'zone' AS zone,
                ARRAY(SELECT dc.role FROM deal_contacts dc WHERE dc.tenant_id = dd.tenant_id AND dc.deal_id = dd.deal_id AND dc.contact_id = ${f.contactId}) AS roles
           FROM deal_dates dd WHERE dd.tenant_id = app.tenant_id() AND dd.id = ${r.dealDateId} AND dd.deal_id = ${r.dealId}`.execute(tx);
       const x = q.rows[0];
@@ -113,7 +114,8 @@ async function currentFact(tx: Tx, f: Firing, e: MlsEligibility): Promise<Pick<I
       const dueAt = x.due_at ? (x.due_at.getTime() as Instant) : null;
       return {
         current: { kind: 'deal_date', dueVersion: x.due_version, confirmed: x.status === 'confirmed' && x.confirmed_by_user_id !== null, dueAt },
-        dealDate: { completed: x.completed_at !== null, label: x.label, dueAt, zone: x.zone === null ? null : ianaZone(x.zone), roles: x.roles },
+        // the date's stored label (or its kind's wording), never the copy in the run (a forged run cannot inject text)
+        dealDate: { completed: x.completed_at !== null, label: x.label ?? KIND_TEXT[x.kind] ?? KIND_TEXT.custom, dueAt, zone: x.zone === null ? null : ianaZone(x.zone), roles: x.roles },
       };
     }
     case 'home_value':
@@ -141,7 +143,7 @@ function itemText(it: Item, zone: IanaZone): { line: string; slots: SlotValues }
   const r = it.firing.ref;
   // the MLS number is left out of client lines (the content guard reads a long digit run as an account number)
   const mlsPrice = it.listing?.row.source === 'mls' ? currentPrice(it) : undefined;
-  const shown: Firing = { ...it.firing, ref: { ...r, address: where, ...(r.kind === 'price_drop' || r.kind === 'back_on_market' ? { mlsNumber: null } : {}), ...(r.kind === 'back_on_market' && mlsPrice !== undefined ? { priceCents: mlsPrice } : {}) } as Firing['ref'] };
+  const shown: Firing = { ...it.firing, ref: { ...r, address: where, ...(r.kind === 'price_drop' || r.kind === 'back_on_market' ? { mlsNumber: null } : {}), ...(r.kind === 'back_on_market' && mlsPrice !== undefined ? { priceCents: mlsPrice } : {}), ...(r.kind === 'deal_date_upcoming' && it.dealDate ? { label: literal(it.dealDate.label) } : {}) } as Firing['ref'] };
   let line = alertItemLine(shown, it.current);
   const broker = it.listing?.row.source === 'mls' ? it.listing.view?.listingBrokerageName : null;
   if (broker) line = `${line}. Listed by ${literal(broker)}`;

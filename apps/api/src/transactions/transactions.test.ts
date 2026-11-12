@@ -3,7 +3,8 @@
 // module 26 (executeTriggerRun) and comms/dispatch.ts to the fake email provider only.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
-import { firingsDue, reconcileAndRun } from '../nurture/testing.js';
+import { queue, recompute } from '../accountability/testing.js';
+import { reconcileAndRun } from '../nurture/testing.js';
 import {
   type TxnWorld,
   approveUpdates,
@@ -11,8 +12,6 @@ import {
   confirmDueSoon,
   dateRow,
   deal,
-  dealContact,
-  drain,
   enterDate,
   legacyDate,
   localDay,
@@ -35,8 +34,6 @@ beforeAll(async () => {
 afterAll(async () => {
   await h?.close();
 });
-
-const DAY = 86_400_000;
 
 /** The local wall time (YYYY-MM-DD HH:MM:SS) of an instant in a zone. */
 function wall(at: Date, zone: string): string {
@@ -242,4 +239,26 @@ describe('R-TXN-4 updates go out only through module 26 (finding 1: at the store
   });
 });
 
-export { DAY, firingsDue, drain, dealContact };
+describe('R-TXN-3 risks from stored fields', () => {
+  it('R-TXN-3: an overdue confirmed date reaches the Team Lead queue and the deal\'s risk status; a proposed one never does; a TC sees the status, not the queue item', async () => {
+    const d = await deal(h, w, w.agents[0]!);
+    const yesterday = localDay(w.zone, -1);
+    const over = await enterDate(w.tc, d.dealId, 'inspection', yesterday);
+    expect(over.status).toBe(201);
+    const prop = await enterDate(w.tc, d.dealId, 'appraisal', yesterday);
+    await h.su.query("UPDATE deal_dates SET source = 'template', status = 'proposed', due_at = NULL WHERE id = $1", [prop.body.date.id]);
+    await recompute(h, w.tenantId);
+    const q = await queue(w.teamLead!, '?type=milestone_at_risk');
+    expect(q.items.map((i) => i.dedupeKey)).toContain(`milestone:${over.body.date.id}:1`);
+    expect(q.items.map((i) => i.dedupeKey)).not.toContain(`milestone:${prop.body.date.id}:1`);
+    const tc = await milestones(w.tc, d.dealId);
+    expect(tc.body.dates.find((x) => x.id === over.body.date.id)!.risk).toMatchObject({ state: 'overdue', text: 'Overdue, nobody responsible' });
+    expect(tc.body.dates.find((x) => x.id === prop.body.date.id)!.risk).toBeNull();
+    expect(tc.body.riskItems).toEqual([]); // exceptions_select: a TC reads no exception_items (not widened)
+    const tl = await milestones(w.teamLead!, d.dealId);
+    expect(tl.body.riskItems.map((i) => i.dealDateId)).toEqual([over.body.date.id]);
+    const board = await call<{ deals: { id: string; atRisk: number; proposed: number }[] }>(w.tc, 'GET', '/transactions/board');
+    expect(board.body.deals.find((x) => x.id === d.dealId)).toMatchObject({ atRisk: 1, proposed: 1 });
+  });
+});
+
