@@ -20,6 +20,8 @@ describe('R-ISA-7 E506 a hostile model is blocked, with the class line as fallba
     ['Your home is worth a lot right now.', 'VALUATION_TERM', 'pricing'],
     ['Prices are rising in your area.', 'MARKET_CLAIM', 'pricing'],
     ["It's a seller's market, a good time to sell.", 'MARKET_CLAIM', 'pricing'],
+    ['A home nearby just sold for more than asking.', 'MARKET_CLAIM', 'pricing'],
+    ['The one on your street closed at a great number.', 'MARKET_CLAIM', 'pricing'],
     ['That house is bigger than yours.', 'COMPARATIVE_CLAIM', 'pricing'],
     ['This is a great deal.', 'COMPARATIVE_CLAIM', 'pricing'],
     ["You're booked for Tuesday!", 'COMMITMENT_TERM', 'holding'],

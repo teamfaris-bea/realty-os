@@ -60,6 +60,9 @@ export const ISA_GUARD_LEXICON: Readonly<Record<'VALUATION_TERM' | 'MARKET_CLAIM
     /\bmarket\s+is\s+\w+/u,
     /\binventory\s+is\b/u,
     /\b(?:high|low|strong|weak)\s+demand\b/u,
+    // sold-event paraphrases (§6.3: a sale reaches a seller only through the server's comps email, never the model)
+    /\b(?:just\s+|recently\s+)?sold\b|\bsales?\s+prices?\b|\bclosed\s+(?:for|at)\b/u,
+    /\b(?:more|less)\s+than\s+(?:the\s+)?(?:asking|list(?:ing)?\s+price)\b|\b(?:above|over|under|below)\s+(?:the\s+)?(?:asking|list)\b/u,
   ],
   COMPARATIVE_CLAIM: [
     /\bmore\s+than\s+yours\b/u,

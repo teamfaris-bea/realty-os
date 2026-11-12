@@ -4,7 +4,7 @@ import { type Instant, at, instant } from '../foundation/index.js';
 import { canonicalJson, sha256Hex } from './digest.js';
 import { type GateDecision, type GateInput, RULES_VERSION, canContact, gateInputsRecord, optedOut } from './gate.js';
 import { OPT_OUT_REASONS, REASON_CODES, type ReasonCode, reasonSentence } from './reasons.js';
-import { H1, H2, H3, NOW, assistantInput, days, dmInput, gateInput, grantRow, minutes, policy, revokedRow } from './testing/fixtures.js';
+import { H1, H2, H3, NOW, aiIsaInput, assistantInput, days, dmInput, gateInput, grantRow, minutes, policy, revokedRow } from './testing/fixtures.js';
 import { CHANNELS, ChannelUnknownError } from './types.js';
 import type { ConsentStateRow } from './types.js';
 
@@ -480,6 +480,37 @@ describe('explanations', () => {
     expect(decide(gateInput({ ...voice, consent: [revoked({ channel: 'voice' })] })).explanation).toBe('Opted out of calls');
     expect(decide(gateInput({ ...email, consent: [revoked({ channel: 'email' })] })).explanation).toBe('Opted out of email');
     expect(decide(gateInput({ ...email, sender: { kind: 'email', registration: 'blocked' } })).explanation).toBe('The sending email identity is turned off');
+  });
+});
+
+// ---- D12 (proposed, docs/AI_ISA.md §5.4): checks 0, 8 and 12 for the AI ISA categories only -------------------
+describe('R-ISA-8 AI ISA checks 0, 8 and 12 (the AI ISA categories only; property tests in gate_ai_isa.test.ts)', () => {
+  it('a clean AI ISA message to the bound point is allowed', () => expect(decide(aiIsaInput()).outcome).toBe('allow'));
+  it('check 0: a human or system sender, or no AI ISA facts ⇒ ISA_NOT_AUTHORIZED', () => {
+    expectDecision(decide(aiIsaInput({ initiator: 'human' })), 'deny', 'ISA_NOT_AUTHORIZED');
+    expectDecision(decide(aiIsaInput({ aiIsa: undefined })), 'deny', 'ISA_NOT_AUTHORIZED');
+  });
+  const isa = (name: string, f: Parameters<typeof aiIsaInput>[1], r: ReasonCode, o: Parameters<typeof aiIsaInput>[0] = {}) => it(`check ${name} ⇒ ${r}`, () => expectDecision(decide(aiIsaInput(o, f)), 'deny', r));
+  isa('8 paused', { paused: true }, 'ISA_PAUSED');
+  isa('8 stale pinned seq', { pinnedSeqCurrent: false }, 'ISA_STALE_REPLY');
+  isa('8 stale epoch', { epochCurrent: false }, 'ISA_STALE_EPOCH');
+  isa('12a chain', { chainFailures: ['platform:ai_isa'] }, 'ISA_NOT_AUTHORIZED');
+  isa('12a unbound recipient', { boundRecipientHmac: H2 }, 'ISA_UNBOUND_RECIPIENT');
+  isa('12a purpose', {}, 'ISA_PURPOSE_MISMATCH', { purpose: 'informational' });
+  isa('12b channel', { allowedChannels: ['email'] }, 'ISA_CHANNEL_NOT_ALLOWED');
+  isa('12c evidence', { consentMissing: ['evidence'] }, 'ISA_CONSENT_EVIDENCE_MISSING');
+  isa('12c reply window', { consentMissing: ['reply_window'] }, 'ISA_REPLY_WINDOW_CLOSED');
+  isa('12c DNC', { consentMissing: ['dnc'] }, 'ISA_DNC_UNVERIFIED');
+  isa('12d quiet hours', { zones: ['America/Los_Angeles'] }, 'ISA_QUIET_HOURS');
+  isa('12d zone', { zones: [] }, 'ISA_ZONE_UNRESOLVED');
+  isa('12e cap', { counts: { ai24h: 3, automated24h: 3, initiated24h: 0, initiated7d: 0, lastAiOutboundAt: null } }, 'ISA_CAP_REACHED');
+  isa('12e gap', { counts: { ai24h: 1, automated24h: 1, initiated24h: 0, initiated7d: 0, lastAiOutboundAt: instant(NOW - 60_000) } }, 'ISA_MIN_GAP');
+  isa('12f shared address', { sharedAddress: true }, 'ISA_SHARED_ADDRESS');
+  isa('12f active client', { activeClient: true }, 'ISA_ACTIVE_CLIENT');
+  isa('12g seller data', { soldDerivedFact: true }, 'ISA_SELLER_DATA_NOT_CLEARED', { recipient: { kind: 'contact', addressHmac: H1, channel: 'email' }, sender: { kind: 'email', registration: 'ready', domainVerified: true } });
+  it('D1 runs first and unchanged: an opt-out still blocks an AI ISA message whatever its facts', () => {
+    expectDecision(decide(aiIsaInput({ consent: [revoked({ purpose: 'marketing' })] })), 'deny', 'CONSENT_REVOKED');
+    expectDecision(decide(aiIsaInput({ personDoNotContact: true })), 'deny', 'PERSON_DO_NOT_CONTACT');
   });
 });
 

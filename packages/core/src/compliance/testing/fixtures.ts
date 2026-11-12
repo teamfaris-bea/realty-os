@@ -10,7 +10,7 @@ import {
   parseJurisdictionPack,
   resolvePolicy,
 } from '../policy.js';
-import type { ConsentStateRow } from '../types.js';
+import type { AiIsaGateFacts, ConsentStateRow } from '../types.js';
 
 export const H1 = '1'.repeat(64);
 export const H2 = '2'.repeat(64);
@@ -180,4 +180,40 @@ export function dmInput(channel: 'web_chat' = 'web_chat', o: Partial<GateInput> 
     connection: { status: 'connected' },
     ...o,
   });
+}
+
+/**
+ * D12 (proposed): the facts of an AI ISA message that passes check 12 at NOW (Tue 10:00 ET) to the bound point H1.
+ * Additive fixture for gate_ai_isa.test.ts and the ISA rows of gate.test.ts.
+ */
+export function aiIsaFacts(o: Partial<AiIsaGateFacts> = {}): AiIsaGateFacts {
+  return {
+    chainFailures: [],
+    paused: false,
+    pinnedSeqCurrent: true,
+    epochCurrent: true,
+    conversationPauseReason: null,
+    boundRecipientHmac: H1,
+    allowedChannels: ['sms', 'email'],
+    hasMedia: false,
+    consentMissing: [],
+    zones: ['America/New_York'],
+    windowStartSec: 9 * 3600,
+    windowEndSec: 20 * 3600,
+    initiated: false,
+    initiatedDays: [1, 2, 3, 4, 5, 6],
+    holidays: [],
+    counts: { ai24h: 0, automated24h: 0, initiated24h: 0, initiated7d: 0, lastAiOutboundAt: null },
+    caps: { ai24h: 3, automated24h: 3, initiated24h: 1, initiated7d: 3, minGapSeconds: 120 },
+    sharedAddress: false,
+    activeClient: false,
+    soldDerivedFact: false,
+    sellerPacksCleared: false,
+    ...o,
+  };
+}
+
+/** An AI ISA message (assistant, marketing, ai_isa_message) with passing facts. */
+export function aiIsaInput(o: Partial<GateInput> = {}, f: Partial<AiIsaGateFacts> = {}): GateInput {
+  return gateInput({ initiator: 'assistant', category: 'ai_isa_message', purpose: 'marketing', aiIsa: aiIsaFacts(f), ...o });
 }
