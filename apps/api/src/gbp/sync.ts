@@ -56,7 +56,8 @@ const codeOf = (e: unknown) => {
   return CODE_RE.test(c) ? c.slice(0, 60) : 'GBP_SYNC_FAILED';
 };
 
-async function tokenOf(tx: Tx, envelope: EnvelopeService, tenantId: TenantId, credentialId: string): Promise<string | null> {
+/** The location's access token, decrypted as the system in memory only (R-INT-4). */
+export async function tokenOf(tx: Tx, envelope: EnvelopeService, tenantId: TenantId, credentialId: string): Promise<string | null> {
   const secret = await R.credentialSecret(tx, credentialId);
   if (!secret) return null;
   const pt = await envelope.inTx(tx, tenantId).decrypt(tenantId, { table: 'provider_credentials', column: 'secret_enc', rowId: credentialId }, new Uint8Array(secret));

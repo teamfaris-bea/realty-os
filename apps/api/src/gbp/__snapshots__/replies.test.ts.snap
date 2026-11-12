@@ -1,0 +1,483 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`the one tap (R-GBP-1, R-GBP-4) > R-GBP-1: every review response is snapshotted: no tenant id, no confidence, no contact > ReplyResponse 1`] = `
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "outcome": {
+      "enum": [
+        "replied",
+        "failed",
+        "unknown",
+      ],
+      "type": "string",
+    },
+    "review": {
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "connectionId": {
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "type": "string",
+        },
+        "draft": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "actionId": {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                "byAssistant": {
+                  "type": "boolean",
+                },
+                "guard": {
+                  "items": {
+                    "enum": [
+                      "REVIEWER_NAME",
+                      "MONEY",
+                      "ADDRESS",
+                      "DATE",
+                      "CONTACT",
+                      "DEAL",
+                      "FAIR_HOUSING",
+                      "LENGTH",
+                    ],
+                    "type": "string",
+                  },
+                  "type": "array",
+                },
+                "text": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "actionId",
+                "text",
+                "guard",
+                "byAssistant",
+              ],
+              "type": "object",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+        "id": {
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "type": "string",
+        },
+        "rating": {
+          "anyOf": [
+            {
+              "maximum": 5,
+              "minimum": 1,
+              "type": "integer",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+        "reviewedAt": {
+          "type": "string",
+        },
+        "reviewerDisplay": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "state": {
+          "enum": [
+            "needs_reply",
+            "draft_waiting",
+            "posting",
+            "checking",
+            "replied",
+            "replied_outside",
+            "removed",
+          ],
+          "type": "string",
+        },
+        "stateLabel": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "id",
+        "connectionId",
+        "rating",
+        "body",
+        "reviewerDisplay",
+        "reviewedAt",
+        "state",
+        "stateLabel",
+        "draft",
+      ],
+      "type": "object",
+    },
+    "sentence": {
+      "type": "string",
+    },
+  },
+  "required": [
+    "review",
+    "outcome",
+    "sentence",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`the one tap (R-GBP-1, R-GBP-4) > R-GBP-1: every review response is snapshotted: no tenant id, no confidence, no contact > ReviewResponse 1`] = `
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "review": {
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "connectionId": {
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "type": "string",
+        },
+        "draft": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "actionId": {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+                "byAssistant": {
+                  "type": "boolean",
+                },
+                "guard": {
+                  "items": {
+                    "enum": [
+                      "REVIEWER_NAME",
+                      "MONEY",
+                      "ADDRESS",
+                      "DATE",
+                      "CONTACT",
+                      "DEAL",
+                      "FAIR_HOUSING",
+                      "LENGTH",
+                    ],
+                    "type": "string",
+                  },
+                  "type": "array",
+                },
+                "text": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "actionId",
+                "text",
+                "guard",
+                "byAssistant",
+              ],
+              "type": "object",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+        "id": {
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "type": "string",
+        },
+        "rating": {
+          "anyOf": [
+            {
+              "maximum": 5,
+              "minimum": 1,
+              "type": "integer",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+        "reviewedAt": {
+          "type": "string",
+        },
+        "reviewerDisplay": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "state": {
+          "enum": [
+            "needs_reply",
+            "draft_waiting",
+            "posting",
+            "checking",
+            "replied",
+            "replied_outside",
+            "removed",
+          ],
+          "type": "string",
+        },
+        "stateLabel": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "id",
+        "connectionId",
+        "rating",
+        "body",
+        "reviewerDisplay",
+        "reviewedAt",
+        "state",
+        "stateLabel",
+        "draft",
+      ],
+      "type": "object",
+    },
+  },
+  "required": [
+    "review",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`the one tap (R-GBP-1, R-GBP-4) > R-GBP-1: every review response is snapshotted: no tenant id, no confidence, no contact > ReviewsResponse 1`] = `
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "reviews": {
+      "additionalProperties": false,
+      "properties": {
+        "reviews": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "body": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "connectionId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+              "draft": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "actionId": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string",
+                      },
+                      "byAssistant": {
+                        "type": "boolean",
+                      },
+                      "guard": {
+                        "items": {
+                          "enum": [
+                            "REVIEWER_NAME",
+                            "MONEY",
+                            "ADDRESS",
+                            "DATE",
+                            "CONTACT",
+                            "DEAL",
+                            "FAIR_HOUSING",
+                            "LENGTH",
+                          ],
+                          "type": "string",
+                        },
+                        "type": "array",
+                      },
+                      "text": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "actionId",
+                      "text",
+                      "guard",
+                      "byAssistant",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
+              "id": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+              "rating": {
+                "anyOf": [
+                  {
+                    "maximum": 5,
+                    "minimum": 1,
+                    "type": "integer",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
+              "reviewedAt": {
+                "type": "string",
+              },
+              "reviewerDisplay": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "state": {
+                "enum": [
+                  "needs_reply",
+                  "draft_waiting",
+                  "posting",
+                  "checking",
+                  "replied",
+                  "replied_outside",
+                  "removed",
+                ],
+                "type": "string",
+              },
+              "stateLabel": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "id",
+              "connectionId",
+              "rating",
+              "body",
+              "reviewerDisplay",
+              "reviewedAt",
+              "state",
+              "stateLabel",
+              "draft",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "sentence": {
+          "type": "string",
+        },
+        "state": {
+          "enum": [
+            "not_cleared",
+            "ready",
+          ],
+          "type": "string",
+        },
+      },
+      "required": [
+        "state",
+        "sentence",
+        "reviews",
+      ],
+      "type": "object",
+    },
+  },
+  "required": [
+    "reviews",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`the one tap (R-GBP-1, R-GBP-4) > R-GBP-1: every review response is snapshotted: no tenant id, no confidence, no contact > StatusResponse 1`] = `
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "additionalProperties": false,
+      "properties": {
+        "locations": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "connectionId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+              "displayName": {
+                "type": "string",
+              },
+              "sentence": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "connectionId",
+              "displayName",
+              "sentence",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "sentence": {
+          "type": "string",
+        },
+        "state": {
+          "enum": [
+            "not_cleared",
+            "not_set_up",
+            "not_connected",
+            "connected",
+          ],
+          "type": "string",
+        },
+      },
+      "required": [
+        "state",
+        "sentence",
+        "locations",
+      ],
+      "type": "object",
+    },
+  },
+  "required": [
+    "status",
+  ],
+  "type": "object",
+}
+`;

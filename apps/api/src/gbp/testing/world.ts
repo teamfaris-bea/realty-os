@@ -84,6 +84,9 @@ export function resetFake(f: FakeGbp): void {
   f.nextPublish = 'published';
   f.deletion = 'supported';
   f.beforeReply = null;
+  f.replies.length = 0;
+  f.calls.length = 0;
+  f.listed.length = 0;
 }
 
 /** another tenant (Owner only) */

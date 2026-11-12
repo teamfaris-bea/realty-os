@@ -82,6 +82,8 @@ export class FakeAi implements AiProvider {
 
   private answer(r: AiRequest): string {
     if (r.templateKey === 'coaching.call_review') return fakeCallReview(r.user);
+    // module 53 (additive): a deterministic public reply to a Google review that names nobody and nothing
+    if (r.templateKey === 'gbp.review_reply') return JSON.stringify({ reply: 'Thank you for taking the time to share this. We appreciate your feedback.' });
     const purpose = r.templateKey.replace(/^assistant\./, '');
     const sources = parseFakeSources(r.user);
     // the sign-off is in the server-written <request> block of the user turn (assistant-prompts/2)
