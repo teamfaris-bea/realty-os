@@ -262,11 +262,12 @@ it, and the packs still ship unreviewed.
 
 ### 4.1 Where untrusted content enters a prompt
 
-Every prompt is built by `core.assistant.buildPrompt` (`packages/core/src/assistant/prompt.ts`, `assistant-prompts/2.0.0`). Its input is ONE contact's bundle, read by `apps/api/src/assistant/repos/context.ts`.
+Every prompt is built by `core.assistant.buildPrompt` (`packages/core/src/assistant/prompt.ts`, `assistant-prompts/2.1.0`). Its input is ONE contact's bundle, read by `apps/api/src/assistant/repos/context.ts`.
 
 | Untrusted content | Who controls it | Reaches the model through |
 |---|---|---|
 | Inbound SMS and email bodies | the client, or anyone who knows their number or address | `CONVERSATION` (drafts, handbacks, summaries) |
+| Reaction texts (D5b: Loved “…”, 👍 to “…”) | the client's phone | `CONVERSATION` as `client (sms reaction to the team's text [Sn])` with only the reaction as untrusted data. The quoted words of the inbound body are never printed as anyone's words, and the reaction's evidence source holds only its own words, so a model cannot cite the team's words as the client's (R-REACT-7) |
 | Outbound message bodies (imported ones, or ones that quote the client) | the client, by quoting; import files | `CONVERSATION` |
 | Call transcripts | anyone on the call | `CALL` (call pipeline: summary, promise tasks, search proposal) |
 | Notes, including imported FUB notes | third-party systems, import files | `AGENT NOTES` |
@@ -958,3 +959,7 @@ Threat model:
 | Only the sender attaches, while the message is queued or scheduled, their own uploads for the same person, ≤ 10 items, ≤ 5 MB with the text; each upload attached once (claimed by DELETE … RETURNING); an outbound `mms` exists only as a one-to-one human text | 0060 CHECK + `app.message_media_outbound_guard`; compose.ts | outbound_mms.test.ts |
 | Provider fetch, GET /api/mms/media?token= (a safe method, so not a `capabilityUrl` route): MAC (link secret, purpose `mms-media`) over tenant, message, position and expiry (dispatch + 36,000 s + 20 min); served only for an outbound mms in dispatching, dispatch_unknown or sent; byte-exact, nosniff, attachment, no-store, sandbox CSP; one 404 for every refusal (same status, code and headers; the body differs only in its request id); no Zod query schema (no 422); the global per-IP limiter is off (the provider's shared addresses), and 12 fetches per item per hour, counted after the MAC, is the budget; the token rides in the query string, which the API never logs and nginx's access log drops (nginx's error log and the TLS terminator: §3), and is in no job, audit row or response | comms/outboundMedia.ts | outboundMedia.fetch.test.ts |
 | Provider copies deleted 24 h after dispatch; for a submit whose outcome stayed unknown, by sending number and time, with a P2 alert when none is found | comms.mms_provider_cleanup | outboundMedia.cleanup.test.ts |
+## 9. Texting reactions (lane sms-reactions, D5b)
+- Recognition: an anchored parse of the whole body, with no text allowed before or after. The quote must equal a stored non-imported outbound text sent from the same number to the same phone on the same contact within 30 days, and the DB guard `app.message_reactions_guard` re-checks the same bounds. Anything else is classified exactly as before, so an opt-out the person writes always counts (R-REACT-1…3, R-REACT-5).
+- Assistant: a linked reaction reaches a prompt only as `client (sms reaction to the team's text [Sn])`, with its own words as untrusted data. Its evidence source holds only those words, and draft categories ignore the quote, so a model cannot cite the team's words as the client's (R-REACT-7).
+- Review trail: each narrowed reading is audited `consent.reaction_quote_not_read` (reason: the reading it replaced), and each refused link is audited `consent.reaction_link_refused`. The notification and the thread say so, and the thread offers the person-level do-not-contact. All of this is kept for counsel review (VERIFY WITH COUNSEL).

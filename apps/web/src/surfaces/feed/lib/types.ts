@@ -168,6 +168,23 @@ export interface TimelineItem {
   providerErrorCode?: string | null;
   /** blocked messages only: the opt-out the send-time decision rested on */
   blockedBy?: ReachReason | null;
+  /** D5b: this inbound text is a phone's reaction to the team's text `targetMessageId` (R-REACT-6) */
+  reaction?: TimelineReaction | null;
+  /** D5b: the reaction in force on this team text (R-REACT-6) */
+  reactedWith?: { reaction: TimelineReaction['reaction']; emoji: string | null; at: string } | null;
+}
+
+export interface TimelineReaction {
+  action: 'add' | 'remove';
+  reaction: 'love' | 'like' | 'dislike' | 'laugh' | 'emphasize' | 'question' | 'sticker' | 'emoji';
+  emoji: string | null;
+  targetMessageId: string;
+  /** the team text's first 120 code points, "…" when cut */
+  quote: string;
+  /** what the phone sent, verbatim (at most 1,600 characters) */
+  raw: string;
+  /** the whole text would have read as an opt-out or a wrong number; it was not */
+  narrowed: boolean;
 }
 
 export interface TimelineResponse {

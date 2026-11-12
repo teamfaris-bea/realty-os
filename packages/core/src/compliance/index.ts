@@ -5,6 +5,7 @@ export * from './types.js';
 export * from './policy.js';
 export * from './consent.js';
 export * from './inbound.js';
+export * from './reactions.js';
 export * from './recording.js';
 export * from './sender.js';
 export * from './content.js';
