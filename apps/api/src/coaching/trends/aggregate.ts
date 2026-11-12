@@ -146,7 +146,6 @@ const WORD: Record<Exclude<TrendDirection, 'not_enough_data'>, string> = { impro
 /** "Improving: met in 6 of 8, then 9 of 10" or why there is nothing to compare yet (the later window's n). */
 export function itemSentence(d: TrendDirection, b: WindowCounts, a: WindowCounts, weeks: number): string {
   if (d !== 'not_enough_data' && b.met !== null && a.met !== null) return `${WORD[d]}: met in ${b.met} of ${b.scored}, then ${a.met} of ${a.scored}`;
-  const thin = b.scored < TREND_FLOOR || a.scored < TREND_FLOOR;
-  if (thin) return `Not enough reviewed calls yet (${a.scored} ${period(weeks)})`;
-  return `Not shown: a week with only a few reviewed calls stays private (${a.scored} ${period(weeks)})`;
+  // E473: below the floor, or withheld for a small week inside (the n is still shown)
+  return `Not enough reviewed calls yet (${a.scored} ${period(weeks)})`;
 }

@@ -117,13 +117,18 @@ describe('the one tap (R-GBP-1, R-GBP-4)', () => {
     expect((await reply(r2.id, d2.actionId, d2.text, w.admin)).body.outcome).toBe('replied');
   });
 
-  it('E469 R-GBP-1: a final text naming the reviewer, a price, an address, a date, contact details or deal terms is refused with the codes; nothing is posted', async () => {
+  it('E469 R-GBP-1: a final text naming the reviewer, a price, an address, a date, contact details or deal terms, or with a hard fair-housing term, is refused with each code and span; nothing is posted', async () => {
     const r = await aReview({ reviewer: 'Reviewer Quill' });
     const d = (await draft(r.id, { mode: 'manual', text: 'Thank you!' })).body.review.draft!;
-    for (const [text, code] of [['Thanks Quill!', 'REVIEWER_NAME'], ['Glad it sold for $1.2 million.', 'MONEY'], ['Enjoy 7 Oak Street.', 'ADDRESS'], ['See you June 4.', 'DATE'], ['Call 555 010 0199.', 'CONTACT'], ['Great closing!', 'DEAL']] as const) {
+    for (const [text, code] of [['Thanks Quill!', 'REVIEWER_NAME'], ['Glad it sold for $1.2 million.', 'MONEY'], ['Enjoy 7 Oak Street.', 'ADDRESS'], ['See you June 4.', 'DATE'], ['Call 555 010 0199.', 'CONTACT'], ['Great closing!', 'DEAL'], ['Perfect for young families!', 'FAIR_HOUSING']] as const) {
       const res = await reply(r.id, d.actionId, text);
       expect([res.status, res.code], text).toEqual([422, 'REPLY_PRIVACY']);
-      expect((res.body as unknown as { error: { details: { codes: string[] } } }).error.details.codes).toContain(code);
+      const details = (res.body as unknown as { error: { details: { codes: string[]; spans: { code: string; start: number; end: number }[] } } }).error.details;
+      expect(details.codes).toContain(code);
+      const span = details.spans.find((s) => s.code === code)!;
+      expect(span.end).toBeGreaterThan(span.start);
+      expect(span.end).toBeLessThanOrEqual(text.length);
+      expect(JSON.stringify(details)).not.toContain(text); // spans point into the text; the text is never echoed
     }
     expect(fake().replies).toEqual([]);
     expect((await actionRow(d.actionId)).status).toBe('proposed');
@@ -190,7 +195,7 @@ describe('the one tap (R-GBP-1, R-GBP-4)', () => {
     expect(fake().replies.filter((x) => x.text === d2.text)).toHaveLength(1);
   });
 
-  it('E466 R-GBP-5: a review edited at Google after the draft is refused (REPLY_STALE); nothing is posted', async () => {
+  it('E466 R-GBP-4: a review edited at Google after the draft is refused (REPLY_STALE); nothing is posted', async () => {
     const r = await aReview({ comment: 'Good.' });
     const d = (await draft(r.id, { mode: 'manual', text: 'Thank you.' })).body.review.draft!;
     const ext = (await h.su.query<{ e: string }>('SELECT external_review_id AS e FROM gbp_reviews WHERE id = $1', [r.id])).rows[0]!.e;

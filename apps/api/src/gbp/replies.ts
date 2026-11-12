@@ -228,7 +228,8 @@ export async function postReply(deps: ReplyDeps, actor: UserActor, reviewId: str
     if (a.status !== 'proposed') throw new AppError('NOT_FOUND');
     const identity = await identityOf(tx);
     const g = guardReply(text, { reviewerDisplay: review.reviewer_display, fairHousing: await fairHousingPack(tx, identity.jurisdictions) });
-    if (text === '' || g.codes.length > 0) throw new AppError('REPLY_PRIVACY', { codes: text === '' ? ['LENGTH'] : g.codes });
+    // E469: each code and its span (offsets into the person's own text; never the text itself)
+    if (text === '' || g.codes.length > 0) throw new AppError('REPLY_PRIVACY', { codes: text === '' ? ['LENGTH'] : g.codes, spans: g.spans });
     // E466: the review changed at Google after the draft was written
     if (review.rating === null || a.payload.review_sha256 !== reviewSha256(review)) throw new AppError('REPLY_STALE');
     if (!pack.fairHousingCleared) throw new AppError('PLATFORM_NOT_CLEARED', { pack: 'platform:fair_housing' });

@@ -277,7 +277,7 @@ describe('M54 app.coaching_trends: aggregate-only weekly trends (R-COACH-7, R-CO
     await resetPacks();
   });
 
-  it('R-COACH-7 R-COACH-8: counts only per member, window and item: scored = met + missed, met, distinct reviewed calls; only this version, live recordings, this tenant, whole past weeks', async () => {
+  it('E474 R-COACH-7 R-COACH-8: counts only per member, window and item: scored = met + missed, met, distinct reviewed calls; only this version, live recordings, this tenant, whole past weeks', async () => {
     const rows = await trends(X.actor, [X.id]);
     expect(cell(rows, X.id, 'after', 'asked_timeline')).toMatchObject({ scored: 6, met: 4, calls: 6 });
     // needs_review leaves the n (R-COACH-2): the item has calls but nothing scored
@@ -350,7 +350,7 @@ describe('M54 app.coaching_trends: aggregate-only weekly trends (R-COACH-7, R-CO
     expect(g).toEqual({ pub: false, app: true });
   });
 
-  it('R-COACH-7 R-INT-6: zero rows while platform:coaching is uncleared or call scoring is off', async () => {
+  it('E474 R-COACH-7 R-INT-6: zero rows while platform:coaching is uncleared or call scoring is off', async () => {
     await review(['platform:coaching'], false);
     expect(await trends(w.owner.actor, [X.id])).toEqual([]);
     expect(await trends(X.actor, [X.id])).toEqual([]);
@@ -361,7 +361,7 @@ describe('M54 app.coaching_trends: aggregate-only weekly trends (R-COACH-7, R-CO
     expect((await trends(w.owner.actor, [X.id])).length).toBeGreaterThan(0);
   });
 
-  it('E474 R-COACH-7: windows are whole local weeks from Monday 00:00, across a DST change and a year boundary', async () => {
+  it('R-COACH-7: windows are whole local weeks from Monday 00:00, across a DST change and a year boundary', async () => {
     const bounds = (now: string, zone: string, weeks: number) =>
       suRows<{ window_kind: string; starts_at: Date; ends_at: Date; first_day: string; last_day: string }>(h.su,
         `SELECT window_kind, starts_at, ends_at, to_char(first_day, 'YYYY-MM-DD') AS first_day, to_char(last_day, 'YYYY-MM-DD') AS last_day FROM app.coaching_trend_bounds($1::timestamptz, $2, $3) ORDER BY window_kind DESC`, [now, zone, weeks]);

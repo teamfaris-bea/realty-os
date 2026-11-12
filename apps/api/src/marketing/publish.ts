@@ -330,7 +330,10 @@ export async function retractPublication(deps: PublishDeps, tenantId: string, pu
                               AND (retract_claim_id IS NULL OR retract_claimed_at < now() - app.marketing_retract_claim_window())`.execute(tx);
     if (Number(took.numAffectedRows ?? 0) === 0) return 'in_progress' as const;
     const c = await repo.targetById(tx, p.connection_id);
-    const token = c?.credential_id ? await tokenFor(deps, tx, tenantId, c.credential_id).catch(() => null) : null;
+    // module 53 (R-GBP-3): while platform:gbp is uncleared, Google is called only to take down a post whose listing must
+    // come down (the system's retraction, requestedBy null); a person's own retraction gets the "remove it yourself" card
+    const gbpHeld = c?.kind === 'gbp_location' && requestedBy !== null && !(await repo.platformCleared(tx, 'platform:gbp'));
+    const token = c?.credential_id && !gbpHeld ? await tokenFor(deps, tx, tenantId, c.credential_id).catch(() => null) : null;
     return { p, c, token, claimId };
   });
   if (!pub) return { outcome: 'not_live' };

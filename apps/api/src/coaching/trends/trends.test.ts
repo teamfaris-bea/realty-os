@@ -82,7 +82,7 @@ afterAll(async () => {
 });
 
 describe('states in words, no numbers while off (R-COACH-7, R-INT-6)', () => {
-  it('R-COACH-7: with platform:coaching uncleared or call scoring off, every caller gets the state in words and no numbers', async () => {
+  it('E474 R-COACH-7: with platform:coaching uncleared or call scoring off, every caller gets the state in words and no numbers', async () => {
     for (const c of [A, w.owner]) {
       expect((await own(c)).body.trends).toMatchObject({ state: 'not_cleared', sentence: 'Call reviews are off until counsel reviews them.', items: [] });
     }
@@ -121,7 +121,7 @@ describe('ready (R-COACH-7, R-COACH-8)', () => {
     expect(item(a.items, 'asked_timeline')).toMatchObject({ before: { met: 5 }, after: { met: 9 }, direction: 'improving' });
     expect(item(b.items, 'asked_timeline')).toMatchObject({ before: { scored: 6, met: 0 }, after: { scored: 3, met: null }, direction: 'not_enough_data' });
     // the team's last week holds B's 3: withheld, so the team minus A says nothing about B
-    expect(item(t.team, 'asked_timeline')).toMatchObject({ after: { calls: 13, scored: 13, met: null }, direction: 'not_enough_data', sentence: 'Not shown: a week with only a few reviewed calls stays private (13 last week)' });
+    expect(item(t.team, 'asked_timeline')).toMatchObject({ after: { calls: 13, scored: 13, met: null }, direction: 'not_enough_data', sentence: 'Not enough reviewed calls yet (13 last week)' });
     expect(item(t.team, 'asked_timeline').before).toEqual({ calls: 14, scored: 14, met: 5 });
     // members who take reviews only, the Owner and Team Lead included
     expect(t.members.map((m) => m.userId).sort()).toEqual([w.owner.userId, A.userId, B.userId, tl.userId].sort());

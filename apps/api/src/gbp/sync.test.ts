@@ -64,7 +64,7 @@ describe('GBP stays dark until platform:gbp is reviewed (R-GBP-3)', () => {
     }
   });
 
-  it('R-GBP-3 R-INT-1: with platform:gbp reviewed but no adapter on the platform (production), nothing is called and the status says it is not set up', async () => {
+  it('E461 R-GBP-3 R-INT-1: with platform:gbp reviewed but no adapter on the platform (production), nothing is called and the status says it is not set up', async () => {
     await setPacks(h, ['platform:gbp'], true);
     try {
       expect(await sync(w.tenantId, new UnconfiguredGbp())).toMatchObject({ locations: 0 });
@@ -114,7 +114,7 @@ describe('review sync with platform:gbp reviewed (R-GBP-5)', () => {
     expect((await reviewRows(h, w.location.connectionId)).find((r) => r.external_review_id === 'e-1')).toMatchObject({ rating: 1, body: 'Changed my mind.', reviewer_display: 'Reviewer B' });
   });
 
-  it('E461 R-GBP-4: a review answered at Google outside Realty OS is marked replied (no action) and its waiting draft is superseded; nothing is posted', async () => {
+  it('E468 R-GBP-5: a review answered at Google outside Realty OS is marked replied (no action) and its waiting draft is superseded; nothing is posted', async () => {
     fake().seed(w.location.accountId, [rawReview('o-1')]);
     await sync();
     const row = (await reviewRows(h, w.location.connectionId)).find((r) => r.external_review_id === 'o-1')!;
@@ -127,7 +127,7 @@ describe('review sync with platform:gbp reviewed (R-GBP-5)', () => {
     expect(fake().calls).not.toContain('postReviewReply');
   });
 
-  it('E468 R-GBP-4: an owner reply deleted at Google brings the review back to "needs a reply"', async () => {
+  it('R-GBP-5: an owner reply deleted at Google brings the review back to "needs a reply"', async () => {
     fake().seed(w.location.accountId, [rawReview('d-1', { reply: 'Thanks!' })]);
     await sync();
     expect((await reviewRows(h, w.location.connectionId)).find((r) => r.external_review_id === 'd-1')!.reply_status).toBe('replied');

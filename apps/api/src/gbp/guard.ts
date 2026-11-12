@@ -60,7 +60,10 @@ const RULES: { code: GuardCode; re: RegExp }[] = [
   { code: 'DEAL', re: word(DEAL_TERMS) },
 ];
 
-/** The reviewer's display name as words (length >= 2), folded. */
+/**
+ * The reviewer's display name as words (length >= 2), folded. VERIFY: a display name made of common words ("Happy
+ * Customer") also refuses those words in a reply; the refusal copy must say which word and why (module 55).
+ */
 export function nameWords(display: string | null): string[] {
   if (!display) return [];
   return [...new Set(fold(display).split(/[^\p{L}\p{N}]+/u).filter((w) => [...w].length >= 2))];

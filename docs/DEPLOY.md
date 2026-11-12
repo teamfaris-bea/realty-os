@@ -564,6 +564,8 @@ docker compose -f docker-compose.prod.yml --env-file .env.owner run --rm --no-de
 | The likely-to-move models (C4) | none | not recorded here: each `prediction_models` version still needs `counsel_reviewed_at` and the platform back-test at its own approval |
 | Using public-record personal information for outreach (South Carolina privacy law) | none | not recorded here: owner decision D10's lane carries it |
 
+`platform:gbp` (Google Business Profile, module 53) is **not** covered by D11: never add it to the command above. Record it only after its own counsel review (PHASE2_3_PLAN §7 C15), pinned to the version counsel reviewed, with the same dry run and `--apply`.
+
 Rehearsed against throwaway test databases only (the pinned D11 command through the package script: dry run, `--apply`, a re-run that reported `nothing to change: 7 already recorded`, and after a fair-housing pack bump the same command refused); the compose form above has not been run against a compose stack.
 
 ## 11. Spark MLS (read-only)

@@ -845,7 +845,7 @@ describe('module 53: a GBP post publishes through publishPost to a GBP location 
     expect(s.publishOptions.some((o) => o.connectionId === loc.connectionId)).toBe(false);
   });
 
-  it('E462 R-GBP-2: a post Google does not take (the rendered text is over its limit, VERIFY) is failed with the code, never "Posted"; the piece stays approved', async () => {
+  it('R-GBP-2: a post Google does not take (the rendered text is over its limit, VERIFY) is failed with the code, never "Posted"; the piece stays approved', async () => {
     await packs(['platform:gbp'], true);
     const l = await teamListing(w.agent, {});
     const d = (await generateAll(w.agent, l, { kinds: ['gbp_post'] })).gbp_post!;
@@ -859,7 +859,7 @@ describe('module 53: a GBP post publishes through publishPost to a GBP location 
     expect((await getPiece(w.agent, p.id)).status).toBe('approved');
   });
 
-  it('E227 R-GBP-4: a timed-out GBP post is unknown ("Check your Google Business Profile"), never re-posted; the reconcile lookup goes through deps.gbp, and only while platform:gbp is cleared', async () => {
+  it('E462 E227 R-GBP-2: a timed-out GBP post is unknown ("Check your Google Business Profile"), never re-posted; the reconcile lookup goes through deps.gbp, and only while platform:gbp is cleared', async () => {
     await packs(['platform:gbp'], true);
     const p = await approvedGbpPost();
     gbp().nextPublish = 'timeout';
@@ -887,7 +887,7 @@ describe('module 53: a GBP post publishes through publishPost to a GBP location 
     expect(gbp().published.length).toBe(n + 1);
   });
 
-  it('R-GBP-3 R-MKT-12: a live GBP post is taken down through deps.gbp, even after platform:gbp went uncleared; an API that cannot delete it raises "remove it yourself"', async () => {
+  it('R-GBP-3 R-MKT-12: the system takes a live GBP post down through deps.gbp, even after platform:gbp went uncleared; an API that cannot delete it raises "remove it yourself"', async () => {
     await packs(['platform:gbp'], true);
     const p = await approvedGbpPost();
     await publish(p.id, loc.connectionId);
@@ -902,7 +902,43 @@ describe('module 53: a GBP post publishes through publishPost to a GBP location 
     expect(await retractPublication(publishDepsOf(h.app.platform), w.tenantId, (await getPiece(w.agent, q.id)).publications[0]!.id, null)).toEqual({ outcome: 'remove_yourself' });
   });
 
-  it('E463 R-GBP-3: with no Google Business Profile adapter on the platform (production), publishing answers GBP_NOT_CONFIGURED before anything is inserted; nothing is looked up or deleted', async () => {
+  it('E463 R-MKT-12 R-GBP-3: a listing that goes off market takes its live GBP post down through deps.gbp once Google confirms, even while platform:gbp is uncleared; a person\'s own retraction then calls nothing; an API that cannot delete it raises "remove it yourself"', async () => {
+    await packs(['platform:gbp'], true);
+    const p = await approvedGbpPost();
+    await publish(p.id, loc.connectionId);
+    const pub = (await getPiece(w.agent, p.id)).publications[0]!;
+    await packs(['platform:gbp'], false);
+    // a person's retraction while platform:gbp is uncleared: no provider call (R-GBP-3), the card instead
+    const before = gbp().deletions.length;
+    const mine = await call<{ removeYourself?: number }>(w.agent, 'POST', `/marketing-pieces/${p.id}/retract`, { publicationId: pub.id });
+    expect(mine.status).toBe(200);
+    expect(gbp().deletions.length).toBe(before);
+    expect((await h.su.query('SELECT status FROM marketing_publications WHERE id = $1', [pub.id])).rows[0]).toEqual({ status: 'published' });
+    // the listing must come down: the system's pass deletes it at Google and records it only after Google confirmed
+    // (a post the agent already holds a "remove it yourself" card for is left to them, as in module 29: another post)
+    await packs(['platform:gbp'], true);
+    const p2 = await approvedGbpPost();
+    await publish(p2.id, loc.connectionId);
+    const pub2 = (await getPiece(w.agent, p2.id)).publications[0]!;
+    await packs(['platform:gbp'], false);
+    const l = (await h.su.query<{ listing_id: string }>('SELECT listing_id FROM marketing_pieces WHERE id = $1', [p2.id])).rows[0]!.listing_id;
+    expect((await call(w.agent, 'PATCH', `/listings/${l}`, { status: 'sold' })).status).toBe(200);
+    const s = await reconcileMarketing(jobCtx(), publishDepsOf(h.app.platform));
+    expect(s.retracted).toBeGreaterThanOrEqual(1);
+    expect(gbp().deletions.at(-1)).toMatchObject({ target: 'gbp_location', externalAccountId: loc.accountId });
+    expect((await h.su.query('SELECT status FROM marketing_publications WHERE id = $1', [pub2.id])).rows[0]).toEqual({ status: 'retracted' });
+    // Google cannot delete it: "remove it yourself"
+    await packs(['platform:gbp'], true);
+    const q = await approvedGbpPost();
+    await publish(q.id, loc.connectionId);
+    gbp().deletion = 'unsupported';
+    const ql = (await h.su.query<{ listing_id: string }>('SELECT listing_id FROM marketing_pieces WHERE id = $1', [q.id])).rows[0]!.listing_id;
+    expect((await call(w.agent, 'PATCH', `/listings/${ql}`, { status: 'sold' })).status).toBe(200);
+    expect((await reconcileMarketing(jobCtx(), publishDepsOf(h.app.platform))).removeYourself).toBeGreaterThanOrEqual(1);
+    expect((await getPiece(w.agent, q.id)).publications[0]!.label).toMatch(/remove it on your Google Business Profile yourself/);
+  });
+
+  it('E461 R-GBP-3: with no Google Business Profile adapter on the platform (production), publishing answers GBP_NOT_CONFIGURED before anything is inserted; nothing is looked up or deleted', async () => {
     await packs(['platform:gbp'], true);
     const p = await approvedGbpPost();
     await publish(p.id, loc.connectionId);
