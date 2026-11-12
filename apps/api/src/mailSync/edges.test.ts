@@ -10,6 +10,7 @@ import { type CommsWorld, commsWorld, ownedContact, pointId, randomEmail } from 
 import { command } from '../leads/testing.js';
 import { gmailMessageRef } from './match.js';
 import { GMAIL_READONLY_SCOPE } from './provider.js';
+import { getOwnLink, linkView } from './service.js';
 import { asSystem, clearGmailPack, confirmAddresses, connectGmail, copiesOf, enableMailSync, linkOf, runMailSync } from './testing.js';
 
 let h: ApiHarness;
@@ -212,14 +213,49 @@ describe('opt-outs (R-GMAIL-9, D1)', () => {
 });
 
 describe('revocation, reassignment, merge, erasure (R-GMAIL-6, -13)', () => {
-  it('E215: the agent leaves the team: the link is revoked (MEMBER_INACTIVE), the token deleted, copies hidden at once and deleted', async () => {
+  it('E215 R-GMAIL-13 R-INT-5 (b7 ownership-data/F4): suspending the agent pauses the link: kept with its token, copies hidden but not deleted, the page says it is paused; reactivation resumes it', async () => {
     const { a, box, c, link } = await connected();
     h.providers.gmail.deliver(box, { from: c.email, to: [box], text: 'Hi', internalDate: Date.now() });
     await runMailSync(h, w.tenantId);
     expect(await copiesOf(h, { linkId: link.id })).toHaveLength(1);
+    const patch = async (status: string) => {
+      const version = (await h.su.query('SELECT version FROM memberships WHERE user_id = $1', [a.userId])).rows[0]!.version;
+      await freshReauth(h, w.owner);
+      expect((await call(w.owner, 'PATCH', `/members/${a.userId}`, { status, version })).status).toBe(200);
+    };
+    await patch('suspended');
+    expect((await call<{ items: unknown[] }>(w.owner, 'GET', `/contacts/${c.id}/mail-messages`)).body.items).toEqual([]);
+    h.providers.gmail.deliver(box, { from: c.email, to: [box], text: 'While suspended', internalDate: Date.now() + 1 });
+    await runMailSync(h, w.tenantId);
+    const kept = await linkOf(h, a.userId!);
+    expect(kept).toMatchObject({ status: 'connected', revoke_reason: null });
+    expect(kept!.refresh_enc).not.toBeNull();
+    expect((await copiesOf(h, { linkId: link.id })).map((x) => x.body)).toEqual(['Hi']); // kept, not synced further
+    // a suspended member cannot sign in and RLS (is_member) hides the link from them; the view of the paused state
+    // is still honest wherever it is rendered
+    const row = { id: link.id, status: 'connected' as const, mailbox_address: box, connected_at: new Date(), last_synced_at: new Date(), last_error_code: null, revoke_reason: null, backfill_requested_at: null, backfill_done_at: null };
+    expect(linkView({ ...row, member_status: 'suspended' }).statusSentence).toBe('Paused while your account is suspended.');
+    expect(linkView({ ...row, member_status: 'active' }).statusSentence).toMatch(/^Connected: /);
+    await patch('active');
+    // back in: connected, never "your membership ended"
+    const view = await withTenantTx(a.actor(), (tx) => getOwnLink(tx, h.providers.gmail), { db: h.database });
+    expect(view.link).toMatchObject({ status: 'connected', revokeReason: null });
+    expect(view.link!.statusSentence).toMatch(/^Connected: /);
+    expect((await call<{ items: { body: string }[] }>(w.owner, 'GET', `/contacts/${c.id}/mail-messages`)).body.items.map((i) => i.body)).toEqual(['Hi']);
+    await runMailSync(h, w.tenantId);
+    expect((await copiesOf(h, { linkId: link.id })).map((x) => x.body).sort()).toEqual(['Hi', 'While suspended']);
+  });
+
+  it('E215 R-GMAIL-13 (b7 ownership-data/F4): the agent leaves the team (removed): the link is revoked (MEMBER_INACTIVE), the token deleted, copies hidden at once and deleted', async () => {
+    const { a, box, c, link } = await connected();
+    h.providers.gmail.deliver(box, { from: c.email, to: [box], text: 'Hi', internalDate: Date.now() });
+    await runMailSync(h, w.tenantId);
+    expect(await copiesOf(h, { linkId: link.id })).toHaveLength(1);
+    // removal needs the member to hold no leads (admin/members.ts): the Owner reassigns the contact first
+    expect((await command(w.owner, c.id, 'reassign', { toUserId: w.owner.userId })).status).toBe(200);
     const version = (await h.su.query('SELECT version FROM memberships WHERE user_id = $1', [a.userId])).rows[0]!.version;
     await freshReauth(h, w.owner);
-    const rm = await call(w.owner, 'PATCH', `/members/${a.userId}`, { status: 'suspended', version });
+    const rm = await call(w.owner, 'PATCH', `/members/${a.userId}`, { status: 'removed', version });
     expect(rm.status).toBe(200);
     expect((await call<{ items: unknown[] }>(w.owner, 'GET', `/contacts/${c.id}/mail-messages`)).body.items).toEqual([]);
     await runMailSync(h, w.tenantId);
