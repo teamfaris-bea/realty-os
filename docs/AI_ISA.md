@@ -633,6 +633,11 @@ Notes on counting:
 
 New reason codes go into `ReasonCode` and `explain`, with sentences.
 
+**Rules version and repeated codes (sends-gates/F4).**
+- ISA-1 added checks 0, 8 and 12 under `RULES_VERSION = 'core-compliance/3.1.0'` (gate.ts), which goes into `gate_decisions.core_rules_version`. Decisions for every other category are the same as under 3.0.0 (non-interference, property-tested); only the label changed. So no AI ISA decision is stored under the pre-ISA label 3.0.0.
+- ISA-2's migration makes the AI ISA categories storable (`gate_decisions.action_category`, §8.1). It changes no gate rule, so it keeps 3.1.0. Any later change to checks 0, 8 or 12, or to any other decision rule, bumps the version in that same change.
+- A reason code appears at most once in a decision (R-GATE-5). Check 0 and check 12a both report ISA_NOT_AUTHORIZED for a human or system send that has a failed chain link; the decision names it once.
+
 ### 5.5 Live switches (R-ISA-25)
 - TELEPHONY_LIVE_REQUESTS=false fails a message with "Live texting and calling are off on this deployment." It is never an opt-out and never retried (lane S1).
 - The AI ISA treats the kill switch, AI_ISA_LIVE_SENDS and the daily caps as a **hold** (§3.1): one deployment or tenant banner, no per-lead card, no pause, no self-retry of that message. Turns are deferred, and they resume when the hold clears without anyone clearing a pause.
