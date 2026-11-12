@@ -47,6 +47,13 @@ describe('Phone and email', () => {
     expect(screen.getByRole('button', { name: 'Check registration status' })).toBeInTheDocument();
   });
 
+  it('b9 comms sends/F1: a paused number whose registration is suspended says the registration is suspended (not "other numbers are not affected")', async () => {
+    leadAdminApp(numbersFake([num({ registrationStatus: 'suspended', textingPausedDetail: 'SENDER_NOT_VERIFIED: provider error 30034 on a local number ending 0100' })]), '/admin/numbers', 'admin');
+    expect(await screen.findByText('(415) 555-0100')).toBeInTheDocument();
+    expect(screen.queryByText('Texting paused for this number')).not.toBeInTheDocument();
+    expect(screen.queryByText(/other numbers are not affected/)).not.toBeInTheDocument();
+  });
+
   it('with no numbers it says nobody can call or text clients yet', async () => {
     leadAdminApp(numbersFake([]), '/admin/numbers', 'owner');
     expect(await screen.findByText('There are no numbers yet, so nobody can call or text clients from the app.')).toBeInTheDocument();

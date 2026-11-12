@@ -90,7 +90,9 @@ function NumberRow({ number, assignee, registrations, sources, onDone }: { numbe
   const attach = useAction<{ registrationId: string | null }, { number: PhoneNumber }>('PATCH', { invalidate: [[...NUMBERS_KEY]] });
   const tie = useAction<{ leadSourceId: string | null }, { number: PhoneNumber }>('PATCH', { invalidate: [[...NUMBERS_KEY], ['admin', 'lead-sources'], ['lead-sources', 'overview']] });
   // b9 review sends/F1 (honest UI): an approved registration does not mean THIS number may text when the carrier paused it
-  const reg = number.textingPausedDetail ? { text: 'Texting paused for this number', tone: 'danger' as const } : registrationWords(number.registrationStatus);
+  // (only over an approved registration, as the gate reads it: a suspended or rejected one says so itself)
+  const paused = !!number.textingPausedDetail && number.registrationStatus === 'approved';
+  const reg = paused ? { text: 'Texting paused for this number', tone: 'danger' as const } : registrationWords(number.registrationStatus);
   const failure = release.error ?? refresh.error ?? attach.error ?? tie.error;
   // the live sources, plus the one it credits now even if that one was turned off
   const choices = sources.filter((x) => x.active || x.id === number.leadSourceId);
@@ -107,7 +109,7 @@ function NumberRow({ number, assignee, registrations, sources, onDone }: { numbe
         </div>
         <Pill tone={reg.tone}>{reg.text}</Pill>
       </div>
-      {number.textingPausedDetail ? (
+      {paused ? (
         <p className="text-[14px] text-ink-muted">Texts from this number are paused: the carrier reports it isn&apos;t verified for texting. Calls still work, and other numbers are not affected.</p>
       ) : null}
       {number.purpose === 'tracking' ? (
@@ -133,7 +135,7 @@ function NumberRow({ number, assignee, registrations, sources, onDone }: { numbe
         </SelectField>
       ) : null}
       <div className="flex flex-wrap gap-2">
-        {number.registrationId && (number.registrationStatus !== 'approved' || number.textingPausedDetail) ? (
+        {number.registrationId && (number.registrationStatus !== 'approved' || paused) ? (
           <Button variant="secondary" pending={refresh.pending} onClick={async () => (await refresh.run(`/sender-registrations/${number.registrationId}/refresh`, {})).ok && onDone('Registration status checked')}>
             Check registration status
           </Button>

@@ -65,6 +65,10 @@ describe('b9 comms sends/F1: sender health is per number (R-TWL-9)', () => {
     expect(n.length).toBeGreaterThan(0);
     expect(n[0]!.body).toContain(tracking.e164.slice(-4));
     expect(n[0]!.body).toMatch(/Other team numbers are not affected/);
+    // attaching the SAME registration again never clears it (only the carrier read does)
+    await freshReauth(h, w.owner);
+    expect((await call(w.owner, 'PATCH', `/numbers/${tracking.id}/registration`, { registrationId: w.registrationId })).status).toBe(200);
+    expect((await flag(tracking.id)).flagged).toBe(true);
     // "Check registration status" clears the number's flag
     await freshReauth(h, w.owner);
     expect((await call(w.owner, 'POST', `/sender-registrations/${w.registrationId}/refresh`)).status).toBe(200);

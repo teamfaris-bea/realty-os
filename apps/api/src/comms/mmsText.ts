@@ -17,7 +17,7 @@ export const MMS_TEXT_JOB = { kind: 'comms.mms_text', queue: 'default' as const,
 /** The one notice an unreadable part gets (E387). `{name}` is the contact's label. */
 export const UNREADABLE_PART_NOTICE = (name: string) => `Part of a text from ${name} couldn't be read. Check the conversation before you text them.`;
 /** b9 review sends/F2: the notice's body when that text came to a tracking number from a pond / unassigned person. */
-export const UNREADABLE_TRACKED_PART_BODY = 'It came to a tracking number, so it was not counted as a new inquiry.';
+export const UNREADABLE_TRACKED_PART_BODY = "Because part of it couldn't be read, this text to a tracking number was not counted as a new inquiry.";
 /** What the thread shows for a part that has not been read yet. */
 export const PENDING_PART_SENTENCE = "Part of this text hasn't been read yet.";
 

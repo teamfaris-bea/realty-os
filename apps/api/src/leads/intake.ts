@@ -350,7 +350,16 @@ async function ingestInTx(tx: Tx, actor: SystemActor, i: InquiryInput, now: Inst
   const decision: DedupOutcome = opts.webChat && matched.kind !== 'create'
     ? { kind: 'create', duplicates: matched.duplicates }
     : opts.attachTo
-      ? { kind: 'attach', contactId: opts.attachTo as ContactId, matchedBy: ['phone'], duplicates: [] }
+      ? {
+          kind: 'attach',
+          contactId: opts.attachTo as ContactId,
+          matchedBy: ['phone'],
+          // the other records sharing the phone stay suggested as duplicates, as the earliest-match attach suggested them
+          duplicates: [
+            ...matched.duplicates.filter((d) => d.contactId !== opts.attachTo),
+            ...(matched.kind === 'attach' && matched.contactId !== opts.attachTo && !matched.duplicates.some((d) => d.contactId === matched.contactId) ? [{ contactId: matched.contactId, reason: 'shared_phone' as const }] : []),
+          ],
+        }
       : matched;
 
   let isNewCaller = false;

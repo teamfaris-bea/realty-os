@@ -8,7 +8,7 @@
 -- sender_registrations row, which is normally shared by every team number (the Numbers page attaches the first
 -- registration to each purchase), so one misconfigured tracking number stopped texting for the whole team.
 -- "Check registration status" (numbers.ts refreshRegistration) clears the flag on the registration's numbers when the
--- carrier reports the campaign approved; attaching a registration to the number clears it too (new facts).
+-- carrier reports the campaign approved; attaching a different registration to the number clears it too (new facts).
 --
 -- The columns are written by the system in the status event's / dispatch TX2 transaction and by an Owner/Admin's
 -- refresh, both through the existing tenant policies on phone_numbers (FORCE RLS, composite keys unchanged). No new

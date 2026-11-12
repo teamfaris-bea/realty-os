@@ -149,10 +149,13 @@ export async function releaseNumber(actor: UserActor, numberId: string, deps: Co
 
 export async function attachRegistration(actor: UserActor, numberId: string, registrationId: string | null, deps: CommsDeps): Promise<NumberView> {
   return asUser(deps, actor, async (tx) => {
+    const before = await sql<{ registration_id: string | null }>`SELECT registration_id FROM phone_numbers WHERE tenant_id = app.tenant_id() AND id = ${numberId} AND released_at IS NULL FOR UPDATE`.execute(tx);
+    if (!before.rows[0]) throw new AppError('NOT_FOUND');
     const r = await sql`UPDATE phone_numbers SET registration_id = ${registrationId} WHERE tenant_id = app.tenant_id() AND id = ${numberId} AND released_at IS NULL`.execute(tx);
     if (Number(r.numAffectedRows ?? 0n) !== 1) throw new AppError('NOT_FOUND');
-    // b9 review sends/F1: a new registration is new facts; an unverified-sender flag is re-learned from the next error
-    await clearSenderNotVerified(tx, { phoneNumberId: numberId });
+    // b9 review sends/F1: a DIFFERENT registration is new facts (the flag is re-learned from the next error); attaching
+    // the same one again never clears it (only the carrier read in "Check registration status" does)
+    if (before.rows[0].registration_id !== registrationId) await clearSenderNotVerified(tx, { phoneNumberId: numberId });
     await audit(tx, actor, { action: 'sender_registration.changed', entity: { type: 'phone_number', id: numberId }, changes: redactSnapshot({ registrationId }, { entity: 'phone_number' }), reason: 'NUMBER_REGISTRATION_ATTACHED' });
     return (await listNumbersTx(tx)).find((n) => n.id === numberId)!;
   });

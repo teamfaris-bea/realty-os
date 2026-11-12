@@ -124,6 +124,9 @@ describe('b9 comms ownership-data/F2: a shared phone on a tracked number', () =>
     expect(await inquiriesOf(b.id)).toEqual([[yard.id, 'reinquiry']]);
     expect((await contactState(h, a.id)).owner_user_id).toBe(w.agents[0]!.userId);
     expect((await contactState(h, b.id)).ownership_state).toBe('offered');
+    // the record it did not attach to is still suggested as a duplicate of the one it did (as the earliest-match attach did)
+    const pair = (await h.su.query("SELECT match_reason FROM contact_duplicate_candidates WHERE (contact_a_id = $1 AND contact_b_id = $2) OR (contact_a_id = $2 AND contact_b_id = $1)", [a.id, b.id])).rows;
+    expect(pair.length).toBeGreaterThan(0);
   });
 });
 
