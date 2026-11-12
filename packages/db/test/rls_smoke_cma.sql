@@ -4,12 +4,14 @@
 -- index), the MLS sale and property columns on listings, the backfill state on integration_connections, and the
 -- platform:cma clearance pack. docs/DATA_MODEL.md §6.x "D9 CMA (S0 migration)".
 --   R-CMA-1  the listings columns and their database bounds (the coordinates pair, the sale-condition vocabulary,
---            the generated geo_cell; the geoCell() parity runs in rls_smoke_cma.test.ts);
---   R-CMA-6  a stored CMA is readable only by its creator, by people who see the contact's detail and by tenant-wide
---            roles (the database part);
+--            the generated geo_cell; the geoCell() parity runs in rls_smoke_cma.test.ts), and that only the MLS sync
+--            (the system actor) writes them and the backfill state;
+--   R-CMA-6  a stored CMA is readable only by its creator (an active member), by people who see the contact's detail
+--            and by tenant-wide roles (the database part);
 --   R-CMA-7  the platform:cma pack exists, published and unreviewed (the pack part only);
---   R-CMA-8  a draft is edited by its creator or a tenant-wide role; a shared or superseded CMA never changes except
---            links nulled by deletion; a person shares as themselves; a contact's CMAs are erased with the contact.
+--   R-CMA-8  a draft is edited by its creator or a tenant-wide role and keeps its contact; a shared or superseded CMA
+--            never changes except links nulled by deletion; a person shares as themselves, linking an outbound email
+--            they see; a contact's CMAs are erased with the contact.
 -- Same shape as rls_smoke_gmail_review.sql: ONE transaction, rolled back; every application step runs as app_user;
 -- platform maintenance steps (deleting an MLS listing or a message, which no application path does yet) run as the
 -- owner role between RESET ROLE and SET LOCAL ROLE. Run by packages/db/test/rls_smoke_cma.test.ts.
@@ -168,16 +170,26 @@ GRANT ALL ON pg_temp.snap TO PUBLIC;
 \set rEd    '''a9000000-0000-7000-8000-00000000c3af'''
 \set rOwn   '''a9000000-0000-7000-8000-00000000c3b0'''
 \set rB     '''b9000000-0000-7000-8000-00000000c3a1'''
+\set rA3    '''a9000000-0000-7000-8000-00000000c3b3'''
 \set dN     '''a9000000-0000-7000-8000-00000000c3d1'''
 \set dX     '''a9000000-0000-7000-8000-00000000c3d2'''
+\set eid    '''a9000000-0000-7000-8000-00000000e1d0'''
+\set cv3    '''a9000000-0000-7000-8000-00000000cc03'''
+\set mS     '''a9000000-0000-7000-8000-000000007131'''
+\set mIn    '''a9000000-0000-7000-8000-000000007130'''
+\set m3     '''a9000000-0000-7000-8000-000000007103'''
+\set aX     '''a9000000-0000-7000-8000-00000000aa99'''
+\set mlsA   '''a9000000-0000-7000-8000-00000000ab01'''
+\set lM     '''a9000000-0000-7000-8000-0000000011a9'''
 \set PH     '''$argon2id$v=19$m=65536,t=3,p=1$c2FsdA$aGFzaA'''
 INSERT INTO pg_temp.fx (name, id) VALUES
   ('tA', :tA), ('tB', :tB), ('ownA', :ownA), ('agA1', :agA1), ('agA2', :agA2), ('tlA', :tlA), ('agA3', :agA3), ('admA', :admA),
   ('ownB', :ownB), ('supU', :supU), ('pondA', :pondA), ('c1', :c1), ('c2', :c2), ('c3', :c3), ('cE', :cE), ('cB', :cB),
-  ('a1', :a1), ('a1b', :a1b), ('a2', :a2), ('a3', :a3), ('aE', :aE), ('aB', :aB), ('lA', :lA), ('lDel', :lDel), ('lB', :lB),
-  ('cv1', :cv1), ('m1', :m1), ('m2', :m2), ('mDel', :mDel), ('mE', :mE), ('mB', :mB),
+  ('a1', :a1), ('a1b', :a1b), ('a2', :a2), ('a3', :a3), ('aE', :aE), ('aB', :aB), ('aX', :aX), ('lA', :lA), ('lDel', :lDel), ('lB', :lB),
+  ('lM', :lM), ('mlsA', :mlsA),
+  ('cv1', :cv1), ('m1', :m1), ('m2', :m2), ('m3', :m3), ('mS', :mS), ('mIn', :mIn), ('mDel', :mDel), ('mE', :mE), ('mB', :mB),
   ('rR', :rR), ('r1', :r1), ('r2', :r2), ('r3', :r3), ('r4', :r4), ('rS', :rS), ('rC3', :rC3), ('rE', :rE), ('rEd', :rEd),
-  ('rOwn', :rOwn), ('rB', :rB), ('dN', :dN), ('dX', :dX);
+  ('rOwn', :rOwn), ('rB', :rB), ('rA3', :rA3), ('dN', :dN), ('dX', :dX);
 
 -- =============================================================================
 -- 0. Fixture. Tenant A: an Owner, an Admin, a Team Lead (team: agent 1) and three agents; a platform support user with
@@ -236,15 +248,33 @@ INSERT INTO contact_addresses (tenant_id, id, contact_id, kind, line1, city, reg
 VALUES (:tB, :aB, :cB, 'property', '1 Prairie Rd', 'Plainfield', 'IL', '60500');
 INSERT INTO listings (tenant_id, id, source, status, address_line1, city, region, postal_code, listing_agent_user_id)
 VALUES (:tB, :lB, 'team', 'active', '1 Prairie Rd', 'Plainfield', 'IL', '60500', :ownB);
--- the messages a share links to (platform inbound, written by the system: any message row serves the foreign key)
+-- the conversations (platform inbound, written by the system) and one inbound email from Alice
+SELECT pg_temp.ctx(:tA, :ownA, 'user');
+INSERT INTO email_identities (tenant_id, id, from_address, display_name) VALUES (:tA, :eid, 'team@a-realty.test', 'Team A');
 SELECT pg_temp.ctx(:tA, NULL, 'system');
-INSERT INTO conversations (tenant_id, id, contact_id) VALUES (:tA, :cv1, :c1), (:tA, :cvE, :cE), (:tA, :cv2, :c2);
+INSERT INTO conversations (tenant_id, id, contact_id) VALUES (:tA, :cv1, :c1), (:tA, :cvE, :cE), (:tA, :cv2, :c2), (:tA, :cv3, :c3);
 INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, from_address, to_address, body, status,
-       initiator, occurred_at) VALUES
-  (:tA, :m1, :cv1, :c1, 'email', 'inbound', 'alice@example.test', 'r+a@in.example.test', 'What is my home worth?', 'received', 'client', now()),
-  (:tA, :mDel, :cv1, :c1, 'email', 'inbound', 'alice@example.test', 'r+a@in.example.test', 'Thanks for the numbers', 'received', 'client', now()),
-  (:tA, :mE, :cvE, :cE, 'email', 'inbound', 'erin@example.test', 'r+a@in.example.test', 'Please send the CMA', 'received', 'client', now()),
-  (:tA, :m2, :cv2, :c2, 'email', 'inbound', 'bob@example.test', 'r+a@in.example.test', 'Is now a good time to sell?', 'received', 'client', now());
+       initiator, occurred_at)
+VALUES (:tA, :mIn, :cv1, :c1, 'email', 'inbound', 'alice@example.test', 'r+a@in.example.test', 'What is my home worth?', 'received', 'client', now());
+-- the share emails: queued outbound informational emails, one per share (agent 1 for Alice, Erin and Bob; agent 2 for Cara)
+SELECT pg_temp.ctx(:tA, :agA1, 'user');
+INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, email_identity_id, from_address, to_address,
+       subject, body, status, initiator, initiated_by_user_id, purpose, occurred_at) VALUES
+  (:tA, :m1, :cv1, :c1, 'email', 'outbound', :eid, 'team@a-realty.test', 'alice@example.test', 'Your home', 'The range and its comps', 'queued', 'human', :agA1, 'informational', now()),
+  (:tA, :mDel, :cv1, :c1, 'email', 'outbound', :eid, 'team@a-realty.test', 'alice@example.test', 'Your home', 'The updated range', 'queued', 'human', :agA1, 'informational', now()),
+  (:tA, :mS, :cv1, :c1, 'email', 'outbound', :eid, 'team@a-realty.test', 'alice@example.test', 'Your home', 'The range again', 'queued', 'human', :agA1, 'informational', now()),
+  (:tA, :mE, :cvE, :cE, 'email', 'outbound', :eid, 'team@a-realty.test', 'erin@example.test', 'Your home', 'The range and its comps', 'queued', 'human', :agA1, 'informational', now()),
+  (:tA, :m2, :cv2, :c2, 'email', 'outbound', :eid, 'team@a-realty.test', 'bob@example.test', 'Your home', 'The range and its comps', 'queued', 'human', :agA1, 'informational', now());
+SELECT pg_temp.ctx(:tA, :agA2, 'user');
+INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, email_identity_id, from_address, to_address,
+       subject, body, status, initiator, initiated_by_user_id, purpose, occurred_at)
+VALUES (:tA, :m3, :cv3, :c3, 'email', 'outbound', :eid, 'team@a-realty.test', 'cara@example.test', 'Your home', 'The range and its comps', 'queued', 'human', :agA2, 'informational', now());
+-- an MLS feed and one MLS listing, written by the system (the MLS sync)
+SELECT pg_temp.ctx(:tA, NULL, 'system');
+INSERT INTO integration_connections (tenant_id, id, kind, display_name) VALUES (:tA, :mlsA, 'mls_feed', 'MLS feed');
+INSERT INTO listings (tenant_id, id, source, mls_number, status, address_line1, city, region, postal_code, mls_connection_id,
+       mls_modified_at, listing_brokerage_name)
+VALUES (:tA, :lM, 'mls', 'C-200', 'active', '14 Harbor Way', 'Seaside', 'SC', '29900', :mlsA, now(), 'Other Brokerage');
 SELECT pg_temp.ctx(:tB, NULL, 'system');
 INSERT INTO conversations (tenant_id, id, contact_id) VALUES (:tB, :cvB, :cB);
 INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, from_address, to_address, body, status,
@@ -299,10 +329,43 @@ BEGIN
   IF (SELECT count(*) FROM pg_constraint c WHERE c.conrelid = rel AND c.contype = 'f') <> 6 THEN
     f := f || ('expected 6 foreign keys, found ' || (SELECT count(*) FROM pg_constraint c WHERE c.conrelid = rel AND c.contype = 'f'));
   END IF;
+  -- the address foreign key carries the contact, so the address stays one of the CMA's contact's from either side
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid = rel AND c.contype = 'f' AND c.confrelid = 'public.contact_addresses'::regclass
+                    AND c.confdeltype = 'n'
+                    AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY k(n, o) JOIN pg_attribute a ON a.attrelid = rel AND a.attnum = k.n ORDER BY k.o)
+                        = ARRAY['tenant_id','contact_id','contact_address_id']
+                    AND ARRAY(SELECT a.attname::text FROM unnest(c.confkey) WITH ORDINALITY k(n, o) JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = k.n ORDER BY k.o)
+                        = ARRAY['tenant_id','contact_id','id']) THEN
+    f := f || 'the address foreign key is not (tenant_id, contact_id, contact_address_id) -> contact_addresses (tenant_id, contact_id, id) ON DELETE SET NULL'::text;
+  END IF;
+  -- each SET NULL link has an index for its foreign-key action (no scan of the tenant's CMAs per deleted row); one CMA per share email
+  IF NOT EXISTS (SELECT 1 FROM pg_index i JOIN pg_class x ON x.oid = i.indexrelid WHERE i.indrelid = rel AND x.relname = 'cma_reports_share_message'
+                    AND i.indisunique AND pg_get_indexdef(i.indexrelid) LIKE '%(tenant_id, shared_message_id) WHERE (shared_message_id IS NOT NULL)') THEN
+    f := f || 'no UNIQUE cma_reports_share_message (tenant_id, shared_message_id) WHERE shared_message_id IS NOT NULL'::text;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_index i JOIN pg_class x ON x.oid = i.indexrelid WHERE i.indrelid = rel AND x.relname = 'cma_reports_address_idx'
+                    AND pg_get_indexdef(i.indexrelid) LIKE '%(tenant_id, contact_address_id) WHERE (contact_address_id IS NOT NULL)') THEN
+    f := f || 'no cma_reports_address_idx (tenant_id, contact_address_id) WHERE contact_address_id IS NOT NULL'::text;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_index i JOIN pg_class x ON x.oid = i.indexrelid WHERE i.indrelid = rel AND x.relname = 'cma_reports_listing_idx'
+                    AND pg_get_indexdef(i.indexrelid) LIKE '%(tenant_id, listing_id) WHERE (listing_id IS NOT NULL)') THEN
+    f := f || 'no cma_reports_listing_idx (tenant_id, listing_id) WHERE listing_id IS NOT NULL'::text;
+  END IF;
+  -- the S0 columns of listings and integration_connections are system-written through invoker guards
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
+                  WHERE t.tgrelid = 'public.listings'::regclass AND t.tgname = 'listings_valuation_facts_guard' AND NOT p.prosecdef AND p.proconfig IS NULL) THEN
+    f := f || 'listings_valuation_facts_guard is missing or is a definer / has a SET clause'::text;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
+                  WHERE t.tgrelid = 'public.integration_connections'::regclass AND t.tgname = 'integration_connections_backfill_guard'
+                    AND NOT p.prosecdef AND p.proconfig IS NULL) THEN
+    f := f || 'integration_connections_backfill_guard is missing or is a definer / has a SET clause'::text;
+  END IF;
   PERFORM pg_temp.check(f,
     'R-CMA-8 R-TEN-1 R-PERM-11: cma_reports forces RLS with the staff-only tenant policy, the support_read_only policies and '
-    || 'statement trigger, an invoker guard (no definer names the table), six composite tenant-first foreign keys, and '
-    || 'SELECT/INSERT/UPDATE for app_user with no DELETE');
+    || 'statement trigger, an invoker guard (no definer names the table), six composite tenant-first foreign keys (the address '
+    || 'one through the contact), an index per SET NULL link (one CMA per share email), and SELECT/INSERT/UPDATE for app_user '
+    || 'with no DELETE; the listings and backfill columns have invoker guards');
 END $$;
 SET LOCAL ROLE app_user;
 
@@ -556,6 +619,40 @@ BEGIN
     || 'Team Lead); created_by_user_id never changes (CMA_CREATOR_IMMUTABLE); nobody deletes a CMA');
 END $$;
 
+-- the creator's access needs an active membership as a user actor, like every other staff path (contacts_select)
+SELECT pg_temp.ctx(:tA, :agA3, 'user');
+SELECT pg_temp.ok(pg_temp.try(pg_temp.cma_sql(:rA3, NULL, NULL, NULL)) = 'OK', 'R-CMA-8: agent 3 stores a research CMA');
+DO $$
+DECLARE f text[] := '{}'; r text; n bigint;
+BEGIN
+  -- agent 1's user id with no actor kind: no read, no write, no insert of their own CMAs
+  PERFORM pg_temp.ctx(pg_temp.id('tA'), pg_temp.id('agA1'), NULL);
+  SELECT count(*) INTO n FROM cma_reports;
+  IF n <> 0 THEN f := f || ('agent 1 with no actor kind reads ' || n || ' CMAs'); END IF;
+  r := pg_temp.rows(format($q$UPDATE cma_reports SET agent_notes = 'no actor' WHERE id = %L$q$, pg_temp.id('rR')));
+  IF r <> '0' THEN f := f || ('agent 1 with no actor kind edits their research CMA: ' || r); END IF;
+  r := pg_temp.try(pg_temp.cma_sql(gen_random_uuid(), NULL, NULL, NULL, pg_temp.id('agA1')));
+  IF r !~ 'row-level security' THEN f := f || ('agent 1 with no actor kind stores a CMA: ' || r); END IF;
+  -- a suspended agent 3: their own research CMA is no longer theirs to read, edit or add to
+  PERFORM pg_temp.ctx(pg_temp.id('tA'), pg_temp.id('ownA'), 'user');
+  UPDATE memberships SET status = 'suspended' WHERE tenant_id = pg_temp.id('tA') AND user_id = pg_temp.id('agA3');
+  PERFORM pg_temp.ctx(pg_temp.id('tA'), pg_temp.id('agA3'), 'user');
+  SELECT count(*) INTO n FROM cma_reports;
+  IF n <> 0 THEN f := f || ('the suspended agent 3 reads ' || n || ' CMAs'); END IF;
+  r := pg_temp.rows(format($q$UPDATE cma_reports SET agent_notes = 'suspended' WHERE id = %L$q$, pg_temp.id('rA3')));
+  IF r <> '0' THEN f := f || ('the suspended agent 3 edits their research CMA: ' || r); END IF;
+  r := pg_temp.try(pg_temp.cma_sql(gen_random_uuid(), NULL, NULL, NULL));
+  IF r !~ 'row-level security' THEN f := f || ('the suspended agent 3 stores a CMA: ' || r); END IF;
+  -- reactivated, they read it again
+  PERFORM pg_temp.ctx(pg_temp.id('tA'), pg_temp.id('ownA'), 'user');
+  UPDATE memberships SET status = 'active' WHERE tenant_id = pg_temp.id('tA') AND user_id = pg_temp.id('agA3');
+  PERFORM pg_temp.ctx(pg_temp.id('tA'), pg_temp.id('agA3'), 'user');
+  IF NOT EXISTS (SELECT 1 FROM cma_reports WHERE id = pg_temp.id('rA3')) THEN f := f || 'the reactivated agent 3 does not read their CMA'::text; END IF;
+  PERFORM pg_temp.check(f,
+    'R-CMA-6 R-CMA-8: the creator reads, edits and stores CMAs only with an active membership as a user actor (no actor '
+    || 'kind, or a suspended member: nothing)');
+END $$;
+
 -- =============================================================================
 -- 4. The guard: addresses, sharing, status transitions and the immutability of shared and superseded rows
 -- =============================================================================
@@ -569,7 +666,7 @@ BEGIN
   r := pg_temp.rows(format($q$UPDATE cma_reports SET contact_address_id = %L WHERE id = %L$q$, pg_temp.id('aE'), pg_temp.id('r3')));
   IF r !~ 'CMA_ADDRESS_NOT_OF_CONTACT' THEN f := f || ('a draft moved to Erin''s address: ' || r); END IF;
   r := pg_temp.rows(format($q$UPDATE cma_reports SET contact_id = %L WHERE id = %L$q$, pg_temp.id('cE'), pg_temp.id('r4')));
-  IF r !~ 'CMA_ADDRESS_NOT_OF_CONTACT' THEN f := f || ('a draft moved to Erin keeping Alice''s address: ' || r); END IF;
+  IF r !~ 'CMA_CONTACT_IMMUTABLE' THEN f := f || ('a draft moved to Erin keeping Alice''s address: ' || r); END IF;
   -- the Owner sees every address; Cara's address on Alice is still refused
   PERFORM pg_temp.ctx(pg_temp.id('tA'), pg_temp.id('ownA'), 'user');
   r := pg_temp.try(pg_temp.cma_sql(gen_random_uuid(), pg_temp.id('c1'), pg_temp.id('a3'), NULL));
@@ -581,8 +678,34 @@ BEGIN
   r := pg_temp.rows(format($q$UPDATE cma_reports SET contact_address_id = %L WHERE id = %L$q$, pg_temp.id('a3'), pg_temp.id('rC3')));
   IF r <> '1' THEN f := f || ('and takes it again: ' || r); END IF;
   PERFORM pg_temp.check(f,
-    'R-CMA-8: contact_address_id must be an address of the CMA''s contact, on insert and on every change of either column '
+    'R-CMA-8: contact_address_id must be an address of the CMA''s contact, on insert and on every change '
     || '(CMA_ADDRESS_NOT_OF_CONTACT), whoever writes it');
+END $$;
+
+-- a CMA stays with the contact it was prepared for: the insert policy checked that contact's detail, and no update moves
+-- it (onto a contact whose detail the caller does not see, or one that does not exist: no foreign-key oracle either)
+DO $$
+DECLARE f text[] := '{}'; r text;
+BEGIN
+  PERFORM pg_temp.ctx(pg_temp.id('tA'), pg_temp.id('agA1'), 'user');
+  IF app.contact_detail_visible(pg_temp.id('tA'), pg_temp.id('c3')) THEN f := f || 'fixture: agent 1 sees Cara''s detail'::text; END IF;
+  r := pg_temp.rows(format($q$UPDATE cma_reports SET contact_id = %L WHERE id = %L$q$, pg_temp.id('c3'), pg_temp.id('rR')));
+  IF r !~ 'CMA_CONTACT_IMMUTABLE' THEN f := f || ('agent 1 moves their research CMA onto Cara, hidden from them: ' || r); END IF;
+  r := pg_temp.rows(format($q$UPDATE cma_reports SET contact_id = gen_random_uuid() WHERE id = %L$q$, pg_temp.id('rR')));
+  IF r !~ 'CMA_CONTACT_IMMUTABLE' THEN f := f || ('agent 1 probes a contact id that does not exist: ' || r); END IF;
+  r := pg_temp.rows(format($q$UPDATE cma_reports SET contact_id = %L WHERE id = %L$q$, pg_temp.id('cE'), pg_temp.id('rR')));
+  IF r !~ 'CMA_CONTACT_IMMUTABLE' THEN f := f || ('agent 1 moves their research CMA onto their own Erin: ' || r); END IF;
+  r := pg_temp.rows(format($q$UPDATE cma_reports SET contact_id = NULL WHERE id = %L$q$, pg_temp.id('r3')));
+  IF r !~ 'CMA_CONTACT_IMMUTABLE' THEN f := f || ('agent 1 detaches Alice''s draft from her: ' || r); END IF;
+  PERFORM pg_temp.ctx(pg_temp.id('tA'), pg_temp.id('ownA'), 'user');
+  r := pg_temp.rows(format($q$UPDATE cma_reports SET contact_id = %L WHERE id = %L$q$, pg_temp.id('c1'), pg_temp.id('rOwn')));
+  IF r !~ 'CMA_CONTACT_IMMUTABLE' THEN f := f || ('the Owner moves their research CMA onto Alice: ' || r); END IF;
+  -- agent 2 (Cara's owner) still reads no CMA of agent 1
+  PERFORM pg_temp.ctx(pg_temp.id('tA'), pg_temp.id('agA2'), 'user');
+  IF EXISTS (SELECT 1 FROM cma_reports WHERE id = pg_temp.id('rR')) THEN f := f || 'agent 2 reads agent 1''s research CMA'::text; END IF;
+  PERFORM pg_temp.check(f,
+    'R-CMA-6 R-CMA-8: a CMA keeps its contact (CMA_CONTACT_IMMUTABLE): no update moves a CMA onto a contact the caller does '
+    || 'not see, onto an id that does not exist, onto another contact or off its contact, for the creator or the Owner');
 END $$;
 
 -- sharing: one UPDATE, by a user actor as themselves, with shared_at and the share message
@@ -603,9 +726,6 @@ BEGIN
   -- all three share fields in the same UPDATE
   r := pg_temp.rows(format($q$UPDATE cma_reports SET status = 'shared', shared_by_user_id = app.user_id(), shared_at = now() WHERE id = %L$q$, pg_temp.id('r1')));
   IF r !~ 'CMA_SHARE_AS_SELF' THEN f := f || ('a share without its message: ' || r); END IF;
-  r := pg_temp.rows(format($q$UPDATE cma_reports SET status = 'shared', shared_by_user_id = app.user_id(), shared_message_id = %L WHERE id = %L$q$,
-         pg_temp.id('m1'), pg_temp.id('r1')));
-  IF r !~ 'CMA_SHARE_AS_SELF|cma_reports_shared_state' THEN f := f || ('a share without shared_at: ' || r); END IF;
   r := pg_temp.rows(format($q$UPDATE cma_reports SET status = 'shared', shared_at = now(), shared_message_id = %L WHERE id = %L$q$,
          pg_temp.id('m1'), pg_temp.id('r1')));
   IF r !~ 'CMA_SHARE_AS_SELF' THEN f := f || ('a share without shared_by: ' || r); END IF;
@@ -614,22 +734,32 @@ BEGIN
   IF r !~ 'CMA_SHARE_FIELDS' THEN f := f || ('a draft linked to a message: ' || r); END IF;
   r := pg_temp.rows(format($q$UPDATE cma_reports SET shared_at = now(), shared_by_user_id = app.user_id() WHERE id = %L$q$, pg_temp.id('r1')));
   IF r !~ 'CMA_SHARE_FIELDS' THEN f := f || ('a draft stamped as shared: ' || r); END IF;
-  -- a share message of another tenant is refused by the composite foreign key
+  -- the share message is an outbound email the sharer sees: not another tenant's, not an inbound one, not one hidden by RLS
   r := pg_temp.rows(pg_temp.share_sql(pg_temp.id('r1'), pg_temp.id('mB')));
-  IF r !~ 'foreign key' THEN f := f || ('a share linking tenant B''s message: ' || r); END IF;
-  -- agent 1 shares r1 (Alice, address a1, listing lDel, message mDel), r4 (Alice, a1b, m1), rS-less r3 stays a draft,
-  -- and Erin's rE (aE, mE)
-  r := pg_temp.rows(pg_temp.share_sql(pg_temp.id('r1'), pg_temp.id('mDel')));  IF r <> '1' THEN f := f || ('share r1: ' || r); END IF;
-  r := pg_temp.rows(pg_temp.share_sql(pg_temp.id('r4'), pg_temp.id('m1')));    IF r <> '1' THEN f := f || ('share r4: ' || r); END IF;
+  IF r !~ 'CMA_SHARE_MESSAGE|foreign key' THEN f := f || ('a share linking tenant B''s message: ' || r); END IF;
+  r := pg_temp.rows(pg_temp.share_sql(pg_temp.id('r1'), pg_temp.id('mIn')));
+  IF r !~ 'CMA_SHARE_MESSAGE' THEN f := f || ('a share linking Alice''s inbound email: ' || r); END IF;
+  IF EXISTS (SELECT 1 FROM messages WHERE id = pg_temp.id('m3')) THEN f := f || 'fixture: agent 1 sees Cara''s email'::text; END IF;
+  r := pg_temp.rows(pg_temp.share_sql(pg_temp.id('r1'), pg_temp.id('m3')));
+  IF r !~ 'CMA_SHARE_MESSAGE' THEN f := f || ('a share linking Cara''s email, hidden from agent 1: ' || r); END IF;
+  -- agent 1 shares r1 (Alice, address a1, listing lDel, message mDel) with a back-dated shared_at, r4 (Alice, a1b, m1) without
+  -- one, and Erin's rE (aE, mE); r3 stays a draft. The database stamps shared_at with its own clock.
+  r := pg_temp.rows(format($q$UPDATE cma_reports SET status = 'shared', shared_by_user_id = app.user_id(), shared_at = now() - interval '3 days',
+         shared_message_id = %L WHERE id = %L$q$, pg_temp.id('mDel'), pg_temp.id('r1')));
+  IF r <> '1' THEN f := f || ('share r1: ' || r); END IF;
+  r := pg_temp.rows(format($q$UPDATE cma_reports SET status = 'shared', shared_by_user_id = app.user_id(), shared_message_id = %L WHERE id = %L$q$,
+         pg_temp.id('m1'), pg_temp.id('r4')));
+  IF r <> '1' THEN f := f || ('share r4 without shared_at: ' || r); END IF;
   r := pg_temp.rows(pg_temp.share_sql(pg_temp.id('rE'), pg_temp.id('mE')));    IF r <> '1' THEN f := f || ('share rE: ' || r); END IF;
-  IF (SELECT count(*) FROM cma_reports WHERE status = 'shared' AND shared_by_user_id = pg_temp.id('agA1') AND shared_at IS NOT NULL
+  IF (SELECT count(*) FROM cma_reports WHERE status = 'shared' AND shared_by_user_id = pg_temp.id('agA1') AND shared_at = now()
          AND shared_message_id IS NOT NULL) <> 4 THEN
-    f := f || 'the four shared rows (r2 shared earlier) do not carry their share fields'::text;
+    f := f || 'the four shared rows (r2 shared earlier) do not carry their share fields with shared_at = the database clock'::text;
   END IF;
   PERFORM pg_temp.check(f,
-    'R-CMA-8: draft -> shared is one UPDATE by a user actor as themselves (shared_by = app.user_id()) that sets shared_at and '
-    || 'the share message; the system actor and a person in someone else''s name cannot share (CMA_SHARE_AS_SELF); share '
-    || 'fields never appear on a draft (CMA_SHARE_FIELDS); a share message of another tenant is refused (foreign key)');
+    'R-CMA-8: draft -> shared is one UPDATE by a user actor as themselves (shared_by = app.user_id()) that links the share '
+    || 'message, and the database stamps shared_at; the system actor and a person in someone else''s name cannot share '
+    || '(CMA_SHARE_AS_SELF); share fields never appear on a draft (CMA_SHARE_FIELDS); the share message is an outbound email '
+    || 'the sharer sees, never another tenant''s, an inbound one or one hidden from them (CMA_SHARE_MESSAGE)');
 END $$;
 -- a shared CMA with no address: the contact change case below
 SELECT pg_temp.ctx(:tA, :agA1, 'user');
@@ -637,8 +767,33 @@ SELECT pg_temp.ok(pg_temp.try(pg_temp.cma_sql(:rS, :c1, NULL, :lA)) ~ 'cma_repor
        'R-CMA-8 (F15): a second open draft of agent 1 for Alice with no address (r3 is open) is refused (cma_reports_one_open_draft)');
 SELECT pg_temp.rows(format($q$UPDATE cma_reports SET status = 'superseded' WHERE id = %L$q$, :r3));
 SELECT pg_temp.ok(pg_temp.try(pg_temp.cma_sql(:rS, :c1, NULL, :lA)) = 'OK'
-                  AND pg_temp.rows(pg_temp.share_sql(:rS, :m1)) = '1',
-       'R-CMA-8: once the open draft is superseded, a new draft for the same contact and address is stored, and shared');
+                  AND pg_temp.rows(pg_temp.share_sql(:rS, :m1)) ~ 'cma_reports_share_message'
+                  AND pg_temp.rows(pg_temp.share_sql(:rS, :mS)) = '1',
+       'R-CMA-8: once the open draft is superseded, a new draft for the same contact and address is stored, and shared; '
+       || 'its share email is its own (r4''s email is refused: cma_reports_share_message)');
+
+-- the address stays the CMA's contact's from the address side too: an address a CMA names never moves to another contact
+DO $$
+DECLARE f text[] := '{}'; r text;
+BEGIN
+  PERFORM pg_temp.ctx(pg_temp.id('tA'), pg_temp.id('ownA'), 'user');
+  r := pg_temp.rows(format($q$UPDATE contact_addresses SET contact_id = %L WHERE id = %L$q$, pg_temp.id('cE'), pg_temp.id('a1')));
+  IF r !~ 'foreign key' THEN f := f || ('the Owner moves Alice''s address a1 (the shared r1 names it) to Erin: ' || r); END IF;
+  r := pg_temp.rows(format($q$UPDATE contact_addresses SET contact_id = %L WHERE id = %L$q$, pg_temp.id('c1'), pg_temp.id('a3')));
+  IF r !~ 'foreign key' THEN f := f || ('the Owner moves Cara''s address a3 (agent 2''s draft names it) to Alice: ' || r); END IF;
+  -- an address no CMA names moves as before
+  INSERT INTO contact_addresses (tenant_id, id, contact_id, kind, line1, city, region, postal_code)
+  VALUES (pg_temp.id('tA'), pg_temp.id('aX'), pg_temp.id('c1'), 'mailing', '2 Spare Ln', 'Seaside', 'SC', '29900');
+  r := pg_temp.rows(format($q$UPDATE contact_addresses SET contact_id = %L WHERE id = %L$q$, pg_temp.id('cE'), pg_temp.id('aX')));
+  IF r <> '1' THEN f := f || ('the Owner moves an address no CMA names: ' || r); END IF;
+  IF (SELECT contact_id FROM contact_addresses WHERE id = pg_temp.id('a1')) IS DISTINCT FROM pg_temp.id('c1')
+     OR (SELECT contact_id FROM contact_addresses WHERE id = pg_temp.id('a3')) IS DISTINCT FROM pg_temp.id('c3') THEN
+    f := f || 'a named address changed its contact'::text;
+  END IF;
+  PERFORM pg_temp.check(f,
+    'R-CMA-8: an address a CMA names (shared or draft) cannot move to another contact, even for the Owner (the address '
+    || 'foreign key carries the contact); an address no CMA names still can');
+END $$;
 SELECT pg_temp.ok((SELECT status FROM cma_reports WHERE id = :r3) = 'superseded', 'R-CMA-8: draft -> superseded is allowed');
 
 -- the shared rows as they are now (owner role: RLS bypassed), for the unchanged checks below
@@ -647,7 +802,7 @@ INSERT INTO pg_temp.snap (name, j)
 SELECT f.name, to_jsonb(c) - 'updated_at' FROM public.cma_reports c JOIN pg_temp.fx f ON f.id = c.id WHERE f.name IN ('r1','r4','rS','r3');
 SET LOCAL ROLE app_user;
 
--- a shared or superseded CMA never changes (E377, the database part)
+-- a shared or superseded CMA never changes
 DO $$
 DECLARE f text[] := '{}'; r text; col record;
 BEGIN
@@ -663,11 +818,11 @@ BEGIN
     -- as the creator, on the shared row with no address (rS); a contact change there is not also an address mismatch
     PERFORM pg_temp.ctx(pg_temp.id('tA'), pg_temp.id('agA1'), 'user');
     r := pg_temp.rows(format('UPDATE cma_reports SET %I = %s WHERE id = %L', col.c, col.e, pg_temp.id('rS')));
-    IF r !~ 'CMA_NOT_DRAFT|CMA_SHARE_FIELDS' THEN f := f || (col.c || ' on a shared row: ' || r); END IF;
+    IF r !~ 'CMA_NOT_DRAFT|CMA_SHARE_FIELDS|CMA_CONTACT_IMMUTABLE' THEN f := f || (col.c || ' on a shared row: ' || r); END IF;
     -- as the Owner, on the superseded draft r3
     PERFORM pg_temp.ctx(pg_temp.id('tA'), pg_temp.id('ownA'), 'user');
     r := pg_temp.rows(format('UPDATE cma_reports SET %I = %s WHERE id = %L', col.c, col.e, pg_temp.id('r3')));
-    IF r !~ 'CMA_NOT_DRAFT|CMA_SHARE_FIELDS|CMA_ADDRESS_NOT_OF_CONTACT|cma_reports_shared_state' THEN f := f || (col.c || ' on a superseded row: ' || r); END IF;
+    IF r !~ 'CMA_NOT_DRAFT|CMA_SHARE_FIELDS|CMA_CONTACT_IMMUTABLE|CMA_ADDRESS_NOT_OF_CONTACT|cma_reports_shared_state' THEN f := f || (col.c || ' on a superseded row: ' || r); END IF;
   END LOOP;
   -- the links never move to another target on a shared row, and are nulled only by the deletion of their target
   PERFORM pg_temp.ctx(pg_temp.id('tA'), pg_temp.id('agA1'), 'user');
@@ -695,7 +850,7 @@ BEGIN
   r := pg_temp.rows(format($q$UPDATE cma_reports SET shared_message_id = NULL WHERE id = %L$q$, pg_temp.id('r2')));
   IF r !~ 'CMA_NOT_DRAFT|CMA_SHARE_FIELDS' THEN f := f || ('the creator unlinks the message of Bob''s shared CMA, hidden from them: ' || r); END IF;
   PERFORM pg_temp.check(f,
-    'R-CMA-8 E377: a shared or superseded CMA never changes: none of its content columns (contact, subject, result, '
+    'R-CMA-8: a shared or superseded CMA never changes: none of its content columns (contact, subject, result, '
     || 'value/low/high, notes, purpose, inspection and date, the five SoP 11-1 items, method version, valuation date, MLS '
     || 'date, digest), its share fields, created_at or id, for the creator, the Owner or the system (CMA_NOT_DRAFT); a '
     || 'listing, address or message link is not nulled or moved by a direct UPDATE, even when the link''s target is '
@@ -734,7 +889,7 @@ SELECT pg_temp.ok(
   (SELECT bool_and((to_jsonb(c) - 'updated_at' - 'status') = (s.j - 'status'))
      FROM public.cma_reports c JOIN pg_temp.fx f ON f.id = c.id JOIN pg_temp.snap s ON s.name = f.name)
   AND (SELECT count(*) FROM pg_temp.snap) = 4,
-  'R-CMA-8 E377: after every refused change, the shared and superseded rows hold exactly what they held (status aside: r4 was superseded)');
+  'R-CMA-8: after every refused change, the shared and superseded rows hold exactly what they held (status aside: r4 was superseded)');
 SET LOCAL ROLE app_user;
 
 -- =============================================================================
@@ -754,8 +909,15 @@ SELECT pg_temp.ok(pg_temp.rows(format($q$DELETE FROM contact_addresses WHERE id 
 SELECT pg_temp.ok((SELECT status = 'superseded' AND contact_address_id IS NULL FROM cma_reports WHERE id = :dX)
   AND (SELECT status = 'draft' AND contact_address_id IS NULL FROM cma_reports WHERE id = :dN)
   AND (SELECT status = 'superseded' AND contact_address_id IS NULL FROM cma_reports WHERE id = :r4),
-  'R-CMA-8 (F9, F15): deleting an address nulls it on a superseded CMA, and an open draft prepared for it is superseded '
-  || '(never a second open no-address draft beside dN)');
+  'R-CMA-8 (F9, F15): deleting an address nulls it on a superseded CMA, and an open draft prepared for it that would '
+  || 'collide with the creator''s open no-address draft (dN) is superseded instead');
+-- with no such collision the draft stays open: agent 2 deletes Cara's address a3, which their draft rC3 names (agent 2 has no
+-- other open draft for Cara)
+SELECT pg_temp.ctx(:tA, :agA2, 'user');
+SELECT pg_temp.ok(pg_temp.rows(format($q$DELETE FROM contact_addresses WHERE id = %L$q$, :a3)) = '1',
+       'R-CMA-8 (F9, F15): agent 2 deletes Cara''s address a3 while their open draft names it');
+SELECT pg_temp.ok((SELECT status = 'draft' AND contact_address_id IS NULL FROM cma_reports WHERE id = :rC3),
+  'R-CMA-8 (F9, F15): deleting the address of a draft that collides with no open draft keeps the draft open, its address nulled');
 -- platform maintenance (no application path deletes an MLS listing or a message yet): the listing and the message
 RESET ROLE;
 DELETE FROM public.listings WHERE tenant_id = :tA AND id = :lDel;
@@ -770,6 +932,26 @@ SELECT pg_temp.ok(
 -- the owner role itself cannot null a link whose target still exists (the allowance is the foreign-key action only)
 SELECT pg_temp.ok(pg_temp.rows(format($q$UPDATE public.cma_reports SET listing_id = NULL WHERE id = %L$q$, :rS)) ~ 'CMA_NOT_DRAFT',
        'R-CMA-8 (F9): a direct UPDATE nulling a shared row''s live listing is refused even for the table owner');
+-- each foreign-key action finds its rows through an index on the link (not a scan of the tenant's CMAs)
+CREATE FUNCTION pg_temp.plan_of(p_sql text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE l text; out text := '';
+BEGIN
+  FOR l IN EXECUTE 'EXPLAIN ' || p_sql LOOP out := out || l || ' / '; END LOOP;
+  RETURN out;
+END $$;
+DO $$
+DECLARE f text[] := '{}'; plan text; t uuid := pg_temp.id('tA');
+BEGIN
+  SET LOCAL enable_seqscan = off;
+  plan := pg_temp.plan_of(format('UPDATE ONLY public.cma_reports SET listing_id = NULL WHERE tenant_id = %L AND listing_id = %L', t, pg_temp.id('lA')));
+  IF plan !~ 'cma_reports_listing_idx' THEN f := f || ('listing: ' || plan); END IF;
+  plan := pg_temp.plan_of(format('UPDATE ONLY public.cma_reports SET shared_message_id = NULL WHERE tenant_id = %L AND shared_message_id = %L', t, pg_temp.id('m1')));
+  IF plan !~ 'cma_reports_share_message' THEN f := f || ('message: ' || plan); END IF;
+  plan := pg_temp.plan_of(format('UPDATE ONLY public.cma_reports SET contact_address_id = NULL WHERE tenant_id = %L AND contact_address_id = %L', t, pg_temp.id('a2')));
+  IF plan !~ 'cma_reports_address_idx' THEN f := f || ('address: ' || plan); END IF;
+  SET LOCAL enable_seqscan = on;
+  PERFORM pg_temp.check(f, 'R-CMA-8 (F9): the listing, address and share-message foreign-key actions each find their rows through the link''s index');
+END $$;
 SET LOCAL ROLE app_user;
 
 -- =============================================================================
@@ -782,11 +964,12 @@ BEGIN
   -- tenant B's listing
   r := pg_temp.try(pg_temp.cma_sql(gen_random_uuid(), NULL, NULL, pg_temp.id('lB')));
   IF r !~ 'foreign key' THEN f := f || ('a CMA of tenant A on tenant B''s listing: ' || r); END IF;
-  -- a user of tenant B (no membership in A) storing a CMA under tenant A's context
+  -- a user of tenant B (no membership in A) storing a CMA under tenant A's context: no active membership, so the insert
+  -- policy refuses it first (the foreign key on the creator is proven below with RLS bypassed)
   PERFORM pg_temp.ctx(pg_temp.id('tA'), pg_temp.id('ownB'), 'user');
   r := pg_temp.try(pg_temp.cma_sql(gen_random_uuid(), NULL, NULL, NULL));
-  IF r !~ 'foreign key' THEN f := f || ('a CMA created by a non-member: ' || r); END IF;
-  PERFORM pg_temp.check(f, 'R-TEN-1: a CMA cannot name another tenant''s listing or share message, nor a creator who is not a member (composite foreign keys)');
+  IF r !~ 'row-level security|foreign key' THEN f := f || ('a CMA created by a non-member: ' || r); END IF;
+  PERFORM pg_temp.check(f, 'R-TEN-1: a CMA cannot name another tenant''s listing, nor be stored by a user who is not a member of the tenant');
 END $$;
 -- as the owner role (RLS bypassed, triggers on): tenant B's contact, and tenant B's address on a tenant A contact
 RESET ROLE;
@@ -801,7 +984,11 @@ BEGIN
          valuation_date, subject, result, content_sha256, created_by_user_id) VALUES (%L, gen_random_uuid(), %L, %L, 'other', 'cma/1',
          current_date, '{}', '{}', repeat('ab', 32), %L)$q$, pg_temp.id('tA'), pg_temp.id('c1'), pg_temp.id('aB'), pg_temp.id('agA1')));
   IF r !~ 'foreign key|CMA_ADDRESS_NOT_OF_CONTACT' THEN f := f || ('tenant B''s address: ' || r); END IF;
-  PERFORM pg_temp.check(f, 'R-TEN-1: even with RLS bypassed, a tenant A CMA cannot name tenant B''s contact or address');
+  r := pg_temp.try(format($q$INSERT INTO public.cma_reports (tenant_id, id, purpose, method_version, valuation_date, subject, result,
+         content_sha256, created_by_user_id) VALUES (%L, gen_random_uuid(), 'other', 'cma/1', current_date, '{}', '{}', repeat('ab', 32), %L)$q$,
+         pg_temp.id('tA'), pg_temp.id('ownB')));
+  IF r !~ 'foreign key' THEN f := f || ('a creator who is not a member of tenant A: ' || r); END IF;
+  PERFORM pg_temp.check(f, 'R-TEN-1: even with RLS bypassed, a tenant A CMA cannot name tenant B''s contact or address, nor a creator who is not a member (composite foreign keys)');
 END $$;
 SET LOCAL ROLE app_user;
 
@@ -851,14 +1038,15 @@ SELECT pg_temp.ok(
 SET LOCAL ROLE app_user;
 
 -- =============================================================================
--- 8. listings: the MLS sale and property columns (R-CMA-1)
+-- 8. listings: the MLS sale and property columns (R-CMA-1), written by the MLS sync (the system actor) only
 -- =============================================================================
 DO $$
 DECLARE f text[] := '{}'; r text; base text; v record;
 BEGIN
-  PERFORM pg_temp.ctx(pg_temp.id('tA'), pg_temp.id('agA1'), 'user');
-  base := $q$INSERT INTO listings (tenant_id, id, source, status, address_line1, city, region, postal_code, listing_agent_user_id, %s)
-              VALUES (app.tenant_id(), gen_random_uuid(), 'team', 'sold', '8 Tern Pl', 'Seaside', 'SC', '29900', app.user_id(), %s)$q$;
+  PERFORM pg_temp.ctx(pg_temp.id('tA'), NULL, 'system');
+  base := format($q$INSERT INTO listings (tenant_id, id, source, status, address_line1, city, region, postal_code, mls_connection_id,
+                    mls_modified_at, listing_brokerage_name, %%s) VALUES (app.tenant_id(), gen_random_uuid(), 'mls', 'sold', '8 Tern Pl',
+                    'Seaside', 'SC', '29900', %L, now(), 'Other Brokerage', %%s)$q$, pg_temp.id('mlsA'));
   FOR v IN SELECT * FROM (VALUES
       ('latitude_e6', '32776500', 'coordinates_pair', 'latitude without longitude'),
       ('longitude_e6', '-79931100', 'coordinates_pair', 'longitude without latitude'),
@@ -916,11 +1104,65 @@ BEGIN
     || 'automated valuations');
 END $$;
 
+-- a person never writes them: not on a team listing they store or own, and not by relabelling an MLS row as a team one
+DO $$
+DECLARE f text[] := '{}'; r text; ins text; v record;
+  sets text[] := ARRAY['close_price_cents = 41250000', 'close_date = current_date', 'purchase_contract_date = current_date',
+    'original_list_price_cents = 1', 'concessions_cents = 1', $s$sale_conditions = ARRAY['standard']$s$, 'days_on_market = 3',
+    'latitude_e6 = 1, longitude_e6 = 1', 'year_built = 1990', 'lot_sqft = 100', $s$subdivision_name = 'Marsh Point'$s$,
+    'garage_spaces_x10 = 20', 'stories_x10 = 10', 'pool_private = false', $s$size_source = 'LivingArea'$s$, 'is_lease = true',
+    'avm_display_allowed = true', $s$address_key = '12 harbor way|29900|sc'$s$, 'mls_normalize_version = 2'];
+  s text;
+BEGIN
+  PERFORM pg_temp.ctx(pg_temp.id('tA'), pg_temp.id('agA1'), 'user');
+  ins := $q$INSERT INTO listings (tenant_id, id, source, status, address_line1, city, region, postal_code, listing_agent_user_id, %s)
+             VALUES (app.tenant_id(), gen_random_uuid(), 'team', 'active', '8 Tern Pl', 'Seaside', 'SC', '29900', app.user_id(), %s)$q$;
+  FOREACH s IN ARRAY sets LOOP
+    -- the insert form of the same assignment: "a = 1, b = 2" -> columns "a, b" and values "1, 2"
+    r := pg_temp.try(format(ins, regexp_replace(s, ' = [^,]+', '', 'g'), regexp_replace(s, '[a-z_0-9]+ = ', '', 'g')));
+    IF r !~ 'LISTING_VALUATION_FACTS_SYSTEM' THEN f := f || ('agent 1 stores a team listing with ' || s || ': ' || r); END IF;
+    r := pg_temp.rows(format('UPDATE listings SET %s WHERE id = %L', s, pg_temp.id('lA')));
+    IF r !~ 'LISTING_VALUATION_FACTS_SYSTEM' THEN f := f || ('agent 1 sets ' || s || ' on their team listing: ' || r); END IF;
+  END LOOP;
+  -- a person's team listing without them, and its other columns, are written as before
+  r := pg_temp.try(format(ins, 'mls_number', $s$'T-2001'$s$));
+  IF r <> 'OK' THEN f := f || ('agent 1 stores a plain team listing: ' || r); END IF;
+  r := pg_temp.rows(format('UPDATE listings SET list_price_cents = 41000000, beds = 3, sqft = 1850 WHERE id = %L', pg_temp.id('lA')));
+  IF r <> '1' THEN f := f || ('agent 1 edits their team listing''s price, beds and size: ' || r); END IF;
+  -- the Owner (tenant-wide) is a person too
+  PERFORM pg_temp.ctx(pg_temp.id('tA'), pg_temp.id('ownA'), 'user');
+  r := pg_temp.rows(format('UPDATE listings SET avm_display_allowed = true WHERE id = %L', pg_temp.id('lA')));
+  IF r !~ 'LISTING_VALUATION_FACTS_SYSTEM' THEN f := f || ('the Owner allows automated valuations on a team listing: ' || r); END IF;
+  -- relabelling an MLS row as a team listing (0001's update policy admits the Team Lead and tenant-wide roles on MLS rows,
+  -- and its WITH CHECK needs source = 'team'): refused, with or without new sale facts
+  FOR v IN SELECT * FROM (VALUES ('tlA', ''), ('tlA', ', close_price_cents = 1, avm_display_allowed = true'), ('ownA', '')) AS t(who, extra) LOOP
+    PERFORM pg_temp.ctx(pg_temp.id('tA'), pg_temp.id(v.who), 'user');
+    r := pg_temp.rows(format($q$UPDATE listings SET source = 'team', mls_connection_id = NULL, listing_agent_user_id = app.user_id()%s
+                               WHERE id = %L$q$, v.extra, pg_temp.id('lM')));
+    IF r !~ 'LISTING_MLS_ROW_SYSTEM_ONLY' THEN f := f || (v.who || ' relabels the MLS row' || v.extra || ': ' || r); END IF;
+  END LOOP;
+  -- the system (the MLS sync) writes them on its own row
+  PERFORM pg_temp.ctx(pg_temp.id('tA'), NULL, 'system');
+  r := pg_temp.rows(format($q$UPDATE listings SET close_price_cents = 41000000, avm_display_allowed = true, address_key = '14 harbor way|29900|sc',
+         mls_normalize_version = 2 WHERE id = %L$q$, pg_temp.id('lM')));
+  IF r <> '1' THEN f := f || ('the system fills the MLS row: ' || r); END IF;
+  IF NOT EXISTS (SELECT 1 FROM listings WHERE id = pg_temp.id('lM') AND source = 'mls' AND mls_connection_id = pg_temp.id('mlsA')
+                    AND close_price_cents = 41000000 AND avm_display_allowed)
+     OR EXISTS (SELECT 1 FROM listings WHERE id = pg_temp.id('lA') AND (avm_display_allowed OR close_price_cents IS NOT NULL)) THEN
+    f := f || 'the MLS row is not the system''s, or the team listing carries sale facts'::text;
+  END IF;
+  PERFORM pg_temp.check(f,
+    'R-CMA-1 R-MLS-1: the sale and property facts (and avm_display_allowed, address_key, mls_normalize_version) are written '
+    || 'by the MLS sync only: a person, the Owner included, never stores or changes them on a team listing '
+    || '(LISTING_VALUATION_FACTS_SYSTEM) and never relabels an MLS row as a team listing (LISTING_MLS_ROW_SYSTEM_ONLY); the '
+    || 'other team-listing columns are written as before');
+END $$;
+
 -- the price-history trigger fires only on a list-price change; the new columns are outside listings_mls_shape
 DO $$
 DECLARE f text[] := '{}'; r text; lid uuid; shape text;
 BEGIN
-  PERFORM pg_temp.ctx(pg_temp.id('tA'), pg_temp.id('agA1'), 'user');
+  PERFORM pg_temp.ctx(pg_temp.id('tA'), NULL, 'system');
   SELECT id INTO lid FROM listings WHERE mls_number = 'T-1001';
   r := pg_temp.rows(format($q$UPDATE listings SET close_price_cents = 41000000, close_date = current_date - 19, days_on_market = 32,
          original_list_price_cents = 43000000 WHERE id = %L$q$, lid));
@@ -938,29 +1180,59 @@ BEGIN
 END $$;
 
 -- =============================================================================
--- 9. integration_connections: the backfill state (F14)
+-- 9. integration_connections: the backfill state (F14), written by the MLS sync (the system actor) only
 -- =============================================================================
 DO $$
-DECLARE f text[] := '{}'; r text;
+DECLARE f text[] := '{}'; r text; c2 uuid := gen_random_uuid(); feed uuid := pg_temp.id('mlsA');
 BEGIN
   PERFORM pg_temp.ctx(pg_temp.id('tA'), pg_temp.id('ownA'), 'user');
-  r := pg_temp.try($q$INSERT INTO integration_connections (tenant_id, id, kind, display_name) VALUES (app.tenant_id(), gen_random_uuid(), 'mls_feed', 'MLS feed')$q$);
-  IF r <> 'OK' THEN f := f || ('an unconfigured MLS feed: ' || r); END IF;
-  IF NOT EXISTS (SELECT 1 FROM integration_connections WHERE kind = 'mls_feed' AND NOT mls_backfill_pending AND mls_backfill_cursor IS NULL) THEN
+  r := pg_temp.try(format($q$INSERT INTO integration_connections (tenant_id, id, kind, display_name) VALUES (app.tenant_id(), %L, 'mls_feed', 'MLS feed 2')$q$, c2));
+  IF r <> 'OK' THEN f := f || ('the Owner adds an unconfigured MLS feed: ' || r); END IF;
+  IF NOT EXISTS (SELECT 1 FROM integration_connections WHERE id = c2 AND NOT mls_backfill_pending AND mls_backfill_cursor IS NULL) THEN
     f := f || 'defaults: not pending, no cursor'::text;
   END IF;
-  r := pg_temp.try($q$INSERT INTO integration_connections (tenant_id, id, kind, display_name, mls_backfill_cursor)
-                      VALUES (app.tenant_id(), gen_random_uuid(), 'mls_feed', 'MLS feed 2', '2026-11-01T00:00:00Z|L-1')$q$);
-  IF r !~ 'integration_connections_backfill_cursor_pending' THEN f := f || ('a cursor without a pending backfill: ' || r); END IF;
+  r := pg_temp.rows(format($q$UPDATE integration_connections SET display_name = 'MLS feed (renamed)' WHERE id = %L$q$, c2));
+  IF r <> '1' THEN f := f || ('the Owner renames the feed: ' || r); END IF;
+  -- the Owner never writes the backfill state
+  r := pg_temp.try($q$INSERT INTO integration_connections (tenant_id, id, kind, display_name, mls_backfill_pending)
+                      VALUES (app.tenant_id(), gen_random_uuid(), 'mls_feed', 'MLS feed 3', true)$q$);
+  IF r !~ 'CONNECTION_BACKFILL_SYSTEM' THEN f := f || ('the Owner adds a feed with a pending backfill: ' || r); END IF;
+  r := pg_temp.try($q$INSERT INTO integration_connections (tenant_id, id, kind, display_name, mls_backfill_pending, mls_backfill_cursor)
+                      VALUES (app.tenant_id(), gen_random_uuid(), 'mls_feed', 'MLS feed 4', true, '2026-11-01T00:00:00Z|L-1')$q$);
+  IF r !~ 'CONNECTION_BACKFILL_SYSTEM' THEN f := f || ('the Owner adds a feed with a backfill cursor: ' || r); END IF;
+  r := pg_temp.rows(format($q$UPDATE integration_connections SET mls_backfill_pending = true WHERE id = %L$q$, c2));
+  IF r !~ 'CONNECTION_BACKFILL_SYSTEM' THEN f := f || ('the Owner starts a backfill: ' || r); END IF;
+  -- the system starts one, with its cursor; a cursor exists only while a backfill is pending
   PERFORM pg_temp.ctx(pg_temp.id('tA'), NULL, 'system');
-  r := pg_temp.rows($q$UPDATE integration_connections SET mls_backfill_pending = true, mls_backfill_cursor = '2026-11-01T00:00:00Z|L-1' WHERE kind = 'mls_feed'$q$);
+  r := pg_temp.try($q$INSERT INTO integration_connections (tenant_id, id, kind, display_name, mls_backfill_cursor)
+                      VALUES (app.tenant_id(), gen_random_uuid(), 'mls_feed', 'MLS feed 5', '2026-11-01T00:00:00Z|L-1')$q$);
+  IF r !~ 'integration_connections_backfill_cursor_pending' THEN f := f || ('a cursor without a pending backfill: ' || r); END IF;
+  r := pg_temp.rows(format($q$UPDATE integration_connections SET mls_backfill_pending = true, mls_backfill_cursor = '2026-11-01T00:00:00Z|L-1' WHERE id = %L$q$, feed));
   IF r <> '1' THEN f := f || ('the system starts a backfill with its cursor: ' || r); END IF;
-  r := pg_temp.rows($q$UPDATE integration_connections SET mls_backfill_pending = false WHERE kind = 'mls_feed'$q$);
+  -- the Owner moves neither the cursor nor the end
+  PERFORM pg_temp.ctx(pg_temp.id('tA'), pg_temp.id('ownA'), 'user');
+  r := pg_temp.rows(format($q$UPDATE integration_connections SET mls_backfill_cursor = '2020-01-01T00:00:00Z|L-0' WHERE id = %L$q$, feed));
+  IF r !~ 'CONNECTION_BACKFILL_SYSTEM' THEN f := f || ('the Owner moves the cursor: ' || r); END IF;
+  r := pg_temp.rows(format($q$UPDATE integration_connections SET mls_backfill_pending = false, mls_backfill_cursor = NULL WHERE id = %L$q$, feed));
+  IF r !~ 'CONNECTION_BACKFILL_SYSTEM' THEN f := f || ('the Owner ends the backfill: ' || r); END IF;
+  PERFORM pg_temp.ctx(pg_temp.id('tA'), NULL, 'system');
+  r := pg_temp.rows(format($q$UPDATE integration_connections SET mls_backfill_pending = false WHERE id = %L$q$, feed));
   IF r !~ 'integration_connections_backfill_cursor_pending' THEN f := f || ('ending the backfill but keeping the cursor: ' || r); END IF;
-  r := pg_temp.rows($q$UPDATE integration_connections SET mls_backfill_pending = false, mls_backfill_cursor = NULL WHERE kind = 'mls_feed'$q$);
-  IF r <> '1' THEN f := f || ('ending the backfill: ' || r); END IF;
-  PERFORM pg_temp.check(f, 'R-CMA-1 (F14): integration_connections carries the backfill state; a cursor exists only while a backfill is pending');
+  r := pg_temp.rows(format($q$UPDATE integration_connections SET mls_backfill_pending = false, mls_backfill_cursor = NULL WHERE id = %L$q$, feed));
+  IF r <> '1' THEN f := f || ('the system ends the backfill: ' || r); END IF;
+  PERFORM pg_temp.check(f,
+    'R-CMA-1 (F14): integration_connections carries the backfill state, written by the MLS sync only: the Owner adds and '
+    || 'renames a feed but never starts, moves or ends a backfill (CONNECTION_BACKFILL_SYSTEM); a cursor exists only while a '
+    || 'backfill is pending');
 END $$;
+-- the migration that starts the backfill (lane V1-A's, run as the table owner) may set it, whatever the session's actor
+SELECT pg_temp.ctx(:tA, :ownA, 'user');
+RESET ROLE;
+SELECT pg_temp.ok(
+  pg_temp.rows(format($q$UPDATE public.integration_connections SET mls_backfill_pending = true, mls_backfill_cursor = NULL WHERE tenant_id = %L AND kind = 'mls_feed'$q$, :tA)) = '2'
+  AND pg_temp.rows(format($q$UPDATE public.integration_connections SET mls_backfill_pending = false WHERE tenant_id = %L AND kind = 'mls_feed'$q$, :tA)) = '2',
+  'R-CMA-1 (F14): the table owner (a migration) starts and clears the backfill state');
+SET LOCAL ROLE app_user;
 
 -- =============================================================================
 -- 10. The platform:cma pack (R-CMA-7, the pack part; R-INT-6)

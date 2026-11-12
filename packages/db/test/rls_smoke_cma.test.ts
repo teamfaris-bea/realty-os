@@ -79,10 +79,10 @@ describe('rls_smoke_cma.sql (D9 S0: the CMA schema)', () => {
     }
   }
 
-  it('passes every S0 smoke check: R-CMA-1 R-CMA-6 R-CMA-7 R-CMA-8 R-TEN-1 R-PERM-11 R-PORTAL-1 R-INT-6 R-DATA-7 R-MLS-1 E377', () => {
+  it('passes every S0 smoke check: R-CMA-1 R-CMA-6 R-CMA-7 R-CMA-8 R-TEN-1 R-PERM-11 R-PORTAL-1 R-INT-6 R-DATA-7 R-MLS-1', () => {
     expect(notices.filter((n) => n.startsWith('FAIL'))).toEqual([]);
     const passes = notices.filter((n) => n.startsWith('PASS'));
-    expect(passes.length).toBeGreaterThanOrEqual(36);
+    expect(passes.length).toBeGreaterThanOrEqual(45);
     expect(passes.at(-1)).toBe('PASS  ALL CMA S0 SMOKE CHECKS PASSED');
   });
 
