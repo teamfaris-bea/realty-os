@@ -53,6 +53,7 @@ exports[`R-AUDIT-4 redacted diffs > R-AUDIT-4: generated field classification â€
     "card",
     "changes",
     "channel_scope",
+    "cites_source_disclosure",
     "city",
     "claimed_address",
     "client_address",
