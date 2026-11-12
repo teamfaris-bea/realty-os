@@ -2575,5 +2575,17 @@ exports[`route table and schemas > every leads route declares its authorization 
   "POST /api/lead-sources/:id/google-lead-form/off → integration.manage",
   "GET /api/contacts/:id/trigger-runs → contact.view_detail",
   "HEAD /api/contacts/:id/trigger-runs → contact.view_detail",
+  "GET /api/contacts/:id/ai-isa → ai_isa.view",
+  "HEAD /api/contacts/:id/ai-isa → ai_isa.view",
+  "GET /api/contacts/:id/ai-isa/turns → ai_isa.view",
+  "HEAD /api/contacts/:id/ai-isa/turns → ai_isa.view",
+  "POST /api/contacts/:id/ai-isa/start → ai_isa.start",
+  "POST /api/contacts/:id/ai-isa/pause → ai_isa.pause",
+  "POST /api/contacts/:id/ai-isa/resume → ai_isa.resume",
+  "POST /api/contacts/:id/ai-isa/take-over → ai_isa.control",
+  "POST /api/contacts/:id/ai-isa/end → ai_isa.control",
+  "POST /api/contacts/:id/ai-isa/undo → ai_isa.control",
+  "POST /api/contacts/:id/ai-isa/continue → ai_isa.start",
+  "POST /api/contacts/:id/ai-isa/lift-block → ai_isa.start",
 ]
 `;

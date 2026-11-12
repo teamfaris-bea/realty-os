@@ -14,6 +14,7 @@
 //     stays pending until that resolves (the job comes back for it);
 //   - a bulk message must match a PENDING item at exactly its frozen address (messages_bulk_guard).
 // Every send goes through compose → dispatchOutbound (D1: canContact and both DB guards, no bulk exemption).
+import { liveAssignmentOf } from '../isa/repo.js';
 import { type ContactId, type Instant, type UserActor, MINUTE_MS, plusMs } from '@realty/core/foundation';
 import { type ItemOutcome, bulkPreflight, bulkSendKey, derivedCommandId, itemOutcomeForDispatch, itemOutcomeForMessageStatus, skipForGateReasons, tally } from '@realty/core/parity/bulk';
 import { type Tx, applyOwnershipCommandInTx, lockContact, setOwnershipCommand, withTenantTx } from '@realty/db';
@@ -164,6 +165,12 @@ async function sendItem(deps: CommsDeps, tenantId: string, creator: UserActor, a
     const s = await sendFacts(tx, a, ctx, it.contactId, p, null, now, it.addressHmac);
     if (s.point === null) {
       await B.finishItem(tx, a.id, it.contactId, 'skipped', 'NO_ADDRESS'); // the frozen address was removed since
+      return { kind: 'skip' };
+    }
+    // 0190 (D12, Q-ISA-23): people under live AI care are skipped by default ("Skip people under AI care" is on unless
+    // the creator turned it off); if sent, a bulk message counts toward their 24-hour budget and never pauses AI care
+    if (a.params['includeAiCare'] !== true && (await liveAssignmentOf(tx, it.contactId)) !== null) {
+      await B.finishItem(tx, a.id, it.contactId, 'skipped', 'UNDER_AI_CARE');
       return { kind: 'skip' };
     }
     const r = bulkPreflight(a.kind, person, s.facts, { actor: creator, now });

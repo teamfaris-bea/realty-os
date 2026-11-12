@@ -242,6 +242,12 @@ describe('route table', () => {
         "GET /api/me/weekly-plans/:week → self",
         "HEAD /api/me/weekly-plans/:week → self",
         "POST /api/me/weekly-plans/:week/accept → self",
+        "GET /api/me/ai-isa → self",
+        "HEAD /api/me/ai-isa → self",
+        "PUT /api/me/ai-isa/opt-in → ai_isa.optin",
+        "POST /api/me/ai-isa/opt-in/revoke → ai_isa.optin",
+        "POST /api/me/ai-isa/pause-all → ai_isa.optin",
+        "POST /api/me/ai-isa/re-attest → ai_isa.optin",
       ]
     `);
   });
