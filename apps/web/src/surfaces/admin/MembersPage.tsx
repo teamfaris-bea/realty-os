@@ -274,7 +274,7 @@ function RemoveMember({ member, onCancel, onDone }: { member: Member; onCancel()
               <p className="text-[15px] text-ink">
                 They're the listing agent on {plural(held.openListings, 'open listing')}; those go to {toWhom}.
               </p>
-              {/* VERIFY WITH COUNSEL (V11): the listing agreement itself is outside Realty OS */}
+              {/* VERIFY WITH COUNSEL (V11): the listing agreement itself is outside Realty OS; and must the sellers be told? (nothing notifies them; ARCHITECTURE §21.33) */}
               <p className="text-[14px] text-ink-muted">This changes who handles the listing in Realty OS, not the listing agreement.</p>
             </>
           ) : null}
