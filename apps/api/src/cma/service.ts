@@ -538,6 +538,7 @@ async function viewOf(tx: Tx, actor: UserActor, now: Instant, row: CmaRow) {
         const l = listing(c.ref.identity);
         return { saleListingId: l.saleListingId, teamListingId: l.teamListingId };
       }),
+      readConnectionIds: [...(r.connectionIds ?? []), ...r.comps.flatMap((c) => c.ref.connectionId ?? []), ...(s.resolved.connectionId ? [s.resolved.connectionId] : [])],
       nearMatchDismissed: s.nearMatchDismissed,
       hasValue: row.value_cents !== null,
     });

@@ -9,7 +9,9 @@
 // blocker holds. Every blocker that holds is listed, each in one plain sentence, read from V1-A's parsed licence pack
 // (LicensePack.valuation, valuationStatement), V1-A's connection eligibility and freshness, and V1-A's client renderings
 // (clientView; clientSoldView for a mirrored team sale). V1-A's valuationEligible(…, 'client_cma') is the authority:
-// whatever it refuses is always a blocker here, so readiness is never looser than the client gate. VERIFY WITH COUNSEL /
+// whatever it refuses is always a blocker here, for every connection the stored CMA was built from (its run's reads,
+// each comp's, the subject record's) as well as those the agent gate admits now, so readiness is never looser than the
+// client gate. VERIFY WITH COUNSEL /
 // MLS: every sentence and every condition. V2's share re-checks the same function inside the transaction that queues it.
 import type { DisplayListing } from '@realty/core/listings';
 import { type IanaZone, type Instant } from '@realty/core/foundation';
@@ -120,6 +122,11 @@ export interface ReadinessInput {
   /** the subject listing's MLS mirror, or an MLS subject listing itself */
   subjectMlsListingId: string | null;
   compSales: CompSale[];
+  /**
+   * The MLS connections the stored CMA was built from: those its run read (comps and rate pool), each comp's, and the
+   * subject record's. Readiness checks each of them, besides the ones the agent gate admits now.
+   */
+  readConnectionIds: readonly string[];
   nearMatchDismissed: readonly string[];
   hasValue: boolean;
 }
@@ -190,25 +197,35 @@ export async function clientReadiness(tx: Tx, i: ReadinessInput): Promise<{ shar
   };
 
   if (!(await platformCleared(tx, CMA_PLATFORM_PACK))) add('PLATFORM_NOT_CLEARED');
-  for (const { conn, stale } of used) {
-    // every condition that holds, so the agent reads all of them at once (V1-A's parsed pack and freshness). The display
-    // pack is judged on its own terms: freshness is FEED_STALE's alone, so a stale feed never hides an unreviewed pack.
-    // (Every `used` connection is live: V1-A's agent_cma gate requires it.)
-    if (!(packReviewed(conn.pack) && conn.pack.attributionText !== null && conn.pack.disclaimerText !== null)) add('MLS_CLIENT_DISPLAY_OFF');
-    if (stale) add('FEED_STALE');
-    if (!conn.pack.valuation.clientCma) add('CLIENT_USE_NOT_ALLOWED');
-    if (conn.pack.valuation.reviewedByCounselAt === null) add('VALUATION_NOT_REVIEWED');
-    if (valuationStatement(conn.pack, i.state) === null) add('NO_VALUATION_STATEMENT');
-    // V1-A's client gate is the authority: its refusal is always listed
-    const v = valuationEligible(e, conn.id, 'client_cma', i.state, i.now);
+  const rows = await listingRows(tx, [...new Set(i.compSales.flatMap((c) => (c.teamListingId === null ? [c.saleListingId] : [c.saleListingId, c.teamListingId])))]);
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  // Every connection the CMA's data came from, not only the ones the agent gate admits now: a connection whose valuation
+  // use was withdrawn after the CMA was prepared still shaped its comps or its market rates, so its client gate holds.
+  const ids = new Set<string>([
+    ...used.map((u) => u.conn.id),
+    ...i.readConnectionIds,
+    ...i.compSales.flatMap((c) => byId.get(c.saleListingId)?.mls_connection_id ?? []),
+  ]);
+  for (const id of [...ids].sort()) {
+    const conn = e.connections.find((x) => x.id === id);
+    if (conn !== undefined) {
+      // every condition that holds, so the agent reads all of them at once (V1-A's parsed pack and freshness). The
+      // display pack is judged on its own terms: freshness is FEED_STALE's alone, so a stale feed never hides an
+      // unreviewed pack. A connection that is gone or not live is refused by V1-A's gate below.
+      if (!(packReviewed(conn.pack) && conn.pack.attributionText !== null && conn.pack.disclaimerText !== null)) add('MLS_CLIENT_DISPLAY_OFF');
+      if (e.staleIds.includes(id)) add('FEED_STALE');
+      if (!conn.pack.valuation.clientCma) add('CLIENT_USE_NOT_ALLOWED');
+      if (conn.pack.valuation.reviewedByCounselAt === null) add('VALUATION_NOT_REVIEWED');
+      if (valuationStatement(conn.pack, i.state) === null) add('NO_VALUATION_STATEMENT');
+    }
+    // V1-A's client gate is the authority: its refusal is always listed (a deleted connection: NO_MLS_CONNECTION)
+    const v = valuationEligible(e, id, 'client_cma', i.state, i.now);
     if (!v.ok) add(REFUSAL_BLOCKER[v.code]);
   }
   // keep the canonical order of the codes so far (the order they were added may differ across connections)
   blockers.sort((a, b) => BLOCKER_CODES.indexOf(a.code) - BLOCKER_CODES.indexOf(b.code));
 
   // comps: each must reach a client with its sold price and date (a mirrored pair through clientSoldView)
-  const rows = await listingRows(tx, [...new Set(i.compSales.flatMap((c) => (c.teamListingId === null ? [c.saleListingId] : [c.saleListingId, c.teamListingId])))]);
-  const byId = new Map(rows.map((r) => [r.id, r]));
   const hidden = i.compSales.filter((c) => clientSale(e, byId.get(c.saleListingId), c.teamListingId === null ? undefined : byId.get(c.teamListingId)) === null).map((c) => c.saleListingId);
   if (hidden.length > 0) {
     blockers.push({ code: 'COMPS_HIDDEN', count: hidden.length, listingIds: [...hidden].sort(), sentence: `${hidden.length} of these sales can’t be shown to clients under your MLS licence. Remove ${hidden.length === 1 ? 'it' : 'them'} to share.` });

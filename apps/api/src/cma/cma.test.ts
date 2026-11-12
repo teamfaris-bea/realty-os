@@ -4,6 +4,7 @@
 import { CMA_METHOD_VERSION } from '@realty/core/valuation';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
+import { mlsConnection } from '../mls/testing.js';
 import { type CmaBody, type CmaWorld, address, call, cmaPack, cmaWorld, codes, contact, daysAgo, feedLastSyncedAt, localSales, mlsSale, oneTap, teamListing } from './testing.js';
 
 let h: ApiHarness;
@@ -370,6 +371,43 @@ describe('gates and readiness (R-CMA-6, R-CMA-7)', () => {
     }
     const after = await oneTap(wa.agents[0]!, c);
     expect(codes(after.body)).toEqual(['PLATFORM_NOT_CLEARED']); // readiness is computed on every view, never stored
+  });
+
+  it('R-CMA-7: readiness checks every MLS connection the CMA was built from: withdrawing one connection\'s valuation use after the CMA was prepared blocks sharing, for its comps and for its rate-pool sales alike', async () => {
+    const withdrawn = JSON.stringify(cmaPack({ valuation: { agent_cma: false, client_cma: false } }));
+    // A and B both fully allowed; B's sales are comps in the first CMA, and only rate-pool sales (too large to compare) in the second
+    const wa = await cmaWorld(h);
+    const b = { h, tenantId: wa.tenantId, mls: await mlsConnection(h, wa.tenantId, wa.owner.userId!, { pack: cmaPack(), lastSyncedAt: new Date() }) };
+    await localSales(wa, 4);
+    await localSales(b, 4);
+    const first = await seller({ world: wa });
+    const r1 = await oneTap(wa.agents[0]!, first.c);
+    const compConns = (await h.su.query<{ c: string }>('SELECT DISTINCT mls_connection_id AS c FROM listings WHERE id = ANY ($1::uuid[])', [r1.body.cma.comps.map((x) => x.saleListingId)])).rows.map((x) => x.c);
+    expect(compConns.sort()).toEqual([wa.mls, b.mls].sort());
+    const wv = await cmaWorld(h);
+    const bv = { h, tenantId: wv.tenantId, mls: await mlsConnection(h, wv.tenantId, wv.owner.userId!, { pack: cmaPack(), lastSyncedAt: new Date() }) };
+    await localSales(wv, 6);
+    await localSales(bv, 6, { sqft: 3000 });
+    const second = await seller({ world: wv });
+    const r2 = await oneTap(wv.agents[0]!, second.c);
+    const compConns2 = (await h.su.query<{ c: string }>('SELECT DISTINCT mls_connection_id AS c FROM listings WHERE id = ANY ($1::uuid[])', [r2.body.cma.comps.map((x) => x.saleListingId)])).rows.map((x) => x.c);
+    expect(compConns2).toEqual([wv.mls]);
+    await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = now() WHERE key = 'platform:cma'");
+    try {
+      for (const [client, id] of [[wa.agents[0]!, r1.body.cma.id], [wv.agents[0]!, r2.body.cma.id]] as const) {
+        expect((await call<CmaBody>(client, 'GET', `/cma/${id}`)).body.cma.clientShare).toMatchObject({ allowed: true, blockers: [] });
+      }
+      // an Admin withdraws B's valuation use; B stays live and its display pack stays reviewed
+      for (const conn of [b.mls, bv.mls]) await h.su.query('UPDATE integration_connections SET license_pack = $2::jsonb WHERE id = $1', [conn, withdrawn]);
+      for (const [client, id] of [[wa.agents[0]!, r1.body.cma.id], [wv.agents[0]!, r2.body.cma.id]] as const) {
+        const v = await call<CmaBody>(client, 'GET', `/cma/${id}`);
+        expect(v.status).toBe(200);
+        expect(v.body.cma.clientShare.allowed).toBe(false);
+        expect(codes(v.body)).toContain('CLIENT_USE_NOT_ALLOWED');
+      }
+    } finally {
+      await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL WHERE key = 'platform:cma'");
+    }
   });
 });
 
