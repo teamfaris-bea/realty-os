@@ -18,6 +18,8 @@ import { formatDateTime } from '../feed/lib/format.js';
 import { useAgentSheets } from '../feed/lib/AgentSheets.js';
 import { useMutate } from '../feed/lib/hooks.js';
 import type { TimelineItem } from '../feed/lib/types.js';
+import type { ComposeChannel } from '../compose/channelApi.js';
+import { composeChannelOf } from '../compose/channelChoice.js';
 
 export interface MailAttachmentView {
   name: string;
@@ -57,6 +59,12 @@ export const NO_TEXT = 'No text to show; open it in Gmail.';
 export const THREAD_CAPPED = 'Older messages stay in Gmail.';
 export const THREAD_REMOVED = 'Thread removed from Realty OS';
 export const OLDER_GMAIL = 'Older Gmail stays in Gmail.';
+/**
+ * R-GMAIL-14: synced mail is never a touch, so an agent's own Gmail reply does not stop a first-contact deadline
+ * (batch 7 review sends/F4). Shown on the mailbox owner's own Gmail entries while that deadline is open, and in
+ * the connect disclosure.
+ */
+export const GMAIL_NOT_FIRST_CONTACT = "Replies you send from Gmail don't count as first contact. Reply here to stop the clock.";
 
 /** The synced Gmail copies of one contact (newest first, as the API sends them). Disabled with enabled=false. */
 export function useSyncedMail(contactId: string, enabled = true) {
@@ -68,6 +76,24 @@ export function useSyncedMail(contactId: string, enabled = true) {
     retry: false,
     refetchInterval: 60_000,
   });
+}
+
+/**
+ * Where the client wrote last, across the timeline (newest first) and the synced Gmail (batch 7 review ui/F1): a
+ * Gmail copy the contact sent counts as email when it is newer than their latest timeline message. With no email
+ * address to reply to, a newer Gmail makes the answer null (the box then makes no claim) rather than a false
+ * "wrote last by text".
+ */
+export function lastInboundAcross(timelineNewestFirst: readonly TimelineItem[], mailItems: readonly MailMessageView[], canEmail: boolean): ComposeChannel | null {
+  const inbound = timelineNewestFirst.find((i) => i.type === 'message' && (i.detail ?? '').split(':')[1] === 'inbound');
+  const at = (iso: string) => {
+    const n = Date.parse(iso);
+    return Number.isNaN(n) ? -Infinity : n;
+  };
+  const newestMail = mailItems.filter((m) => m.sender === 'contact').reduce<number>((max, m) => Math.max(max, at(m.internalAt)), -Infinity);
+  const mailNewer = newestMail > -Infinity && (inbound === undefined || newestMail > at(inbound.occurredAt));
+  if (mailNewer) return canEmail ? 'email' : null;
+  return inbound ? composeChannelOf(inbound.detail) : null;
 }
 
 export type ThreadEntry = { kind: 'timeline'; at: number; item: TimelineItem } | { kind: 'gmail'; at: number; item: MailMessageView };
@@ -145,7 +171,7 @@ function formatSince(iso: string): string {
 }
 
 /** One synced Gmail message in the conversation (an <li> of the "Conversation" list). Read-only: no reply. */
-export function GmailEntry({ item, contact }: { item: MailMessageView; contact: { id: string; name: string } }) {
+export function GmailEntry({ item, contact, firstContactOpen = false }: { item: MailMessageView; contact: { id: string; name: string }; firstContactOpen?: boolean }) {
   const fromMailbox = item.sender === 'mailbox';
   return (
     <li id={`gmail-${item.id}`} data-gmail-entry={item.id} className={`flex max-w-[85%] flex-col gap-0.5 ${fromMailbox ? 'self-end items-end' : 'self-start items-start'}`}>
@@ -175,6 +201,7 @@ export function GmailEntry({ item, contact }: { item: MailMessageView; contact: 
         </span>
       </p>
       {item.threadCapped ? <p className="px-1 text-[13px] text-ink-muted">{THREAD_CAPPED}</p> : null}
+      {fromMailbox && item.mine && firstContactOpen ? <p className="px-1 text-[13px] font-medium text-warn">{GMAIL_NOT_FIRST_CONTACT}</p> : null}
       {item.mine ? <RemoveThread threadId={item.threadId} contactId={contact.id} /> : null}
     </li>
   );
