@@ -307,7 +307,7 @@ describe('a first-touch window ends however the lead leaves its owner (R-ACC-2, 
     await recompute(h, w.tenantId, { contactId: a.contactId });
     const row = (await itemRow(h, key))!;
     expect(row.condition_cleared_at).toBeNull();
-    expect(explanations(row.evidence)).toEqual(['No human call, text or email by the first-contact deadline; the lead later left this agent', 'Lead became theirs']);
+    expect(explanations(row.evidence)).toEqual(['No human call, text, email or chat reply from the agent or a collaborator by the first-contact deadline; the lead later left this agent', 'Lead became theirs']);
     const tl = (await queue(w.teamLead!)).items.find((i) => i.dedupeKey === key)!;
     expect(tl).toMatchObject({ live: true, conditionClearedAt: null, owner: { userId: a.owner.userId }, period: { current: false, movedOn: true } });
   });
