@@ -31,7 +31,7 @@ import { hint } from './dispatch.js';
 import { resolvedPolicy } from './gateInput.js';
 import { sourceStillOn, systemReplyText } from './inbound.js';
 import { type InquiryInput, ingestInquiryInTx, intakeLockKeys } from '../leads/intake.js';
-import { PLATFORM_CONFIRMS_PART_STOP, type TextPartJob, UNREADABLE_PART_NOTICE, UNREADABLE_TRACKED_PART_BODY, decodeTextPart } from './mmsText.js';
+import { LIVE_OFF_PART_DETAIL, LIVE_OFF_PART_NOTICE, LIVE_OFF_TRACKED_PART_DETAIL, PLATFORM_CONFIRMS_PART_STOP, type TextPartJob, UNREADABLE_PART_NOTICE, UNREADABLE_TRACKED_PART_BODY, decodeTextPart } from './mmsText.js';
 import * as g from './repos/gate.js';
 import { telephonyAccount } from './repos/credentials.js';
 import * as msgs from './repos/messages.js';
@@ -41,7 +41,7 @@ import { SYSTEM_NOTICE, type CommsDeps } from './types.js';
 
 const REVOKING: ReadonlySet<InboundClassification['kind']> = new Set(['stop', 'opt_out_language', 'wrong_number']);
 
-type Fetched = { ok: true; text: string } | { ok: false; reason: 'TOO_LARGE' | 'CONTENT_MISMATCH' | 'FETCH_FAILED' };
+type Fetched = { ok: true; text: string } | { ok: false; reason: 'TOO_LARGE' | 'CONTENT_MISMATCH' | 'FETCH_FAILED' | 'LIVE_REQUESTS_OFF' };
 
 async function fetchPart(deps: CommsDeps, account: TelephonyAccount | null, messageRef: string, ref: string | null): Promise<Fetched> {
   if (!ref || !account || !/^(SM|MM)[0-9a-f]{32}$/.test(messageRef)) return { ok: false, reason: 'FETCH_FAILED' };
@@ -50,7 +50,9 @@ async function fetchPart(deps: CommsDeps, account: TelephonyAccount | null, mess
     got = await deps.providers.telephony.fetchMedia(account, { messageRef, mediaRef: ref });
   } catch (e) {
     // refused (gone, not allowed, or the kill switch): a refused part; unavailable / timeout: the job retries
-    if (e instanceof ProviderError && (e.kind === 'rejected' || e.kind === 'not_configured' || e.providerCode === TELEPHONY_LIVE_OFF)) return { ok: false, reason: 'FETCH_FAILED' };
+    // b9 ui/F7: the kill switch is recorded as itself (LIVE_REQUESTS_OFF), so nothing blames the carrier
+    if (e instanceof ProviderError && e.providerCode === TELEPHONY_LIVE_OFF) return { ok: false, reason: 'LIVE_REQUESTS_OFF' };
+    if (e instanceof ProviderError && (e.kind === 'rejected' || e.kind === 'not_configured')) return { ok: false, reason: 'FETCH_FAILED' };
     throw e;
   }
   return decodeTextPart(got.bytes);
@@ -173,8 +175,11 @@ async function applyPart(tx: Tx, actor: SystemActor, deps: CommsDeps, messageId:
       const label = (await contactLabel(tx, m.contact_id)) ?? 'a client';
       // b9 review sends/F2: on a tracking number, a pond / unassigned person's text with an unreadable part is no inquiry
       const st = tracked ? (await sql<{ ownership_state: string }>`SELECT ownership_state FROM contacts WHERE tenant_id = app.tenant_id() AND id = ${m.contact_id}`.execute(tx)).rows[0]?.ownership_state : undefined;
-      const body = st === 'in_pond' || st === 'unassigned' ? UNREADABLE_TRACKED_PART_BODY : null;
-      await notifyUser(tx, deps.ids, { userId: h.userId, kind: SYSTEM_NOTICE, priority: 'high', title: UNREADABLE_PART_NOTICE(label), body, subjectType: 'message', subjectId: messageId, dedupeKey: `text_part_unreadable:${messageId}` }, now);
+      const noInquiry = st === 'in_pond' || st === 'unassigned';
+      // b9 review ui/F7: a part the kill switch refused is said as the switch, never the carrier
+      const liveOff = f.reason === 'LIVE_REQUESTS_OFF';
+      const body = liveOff ? (noInquiry ? LIVE_OFF_TRACKED_PART_DETAIL : LIVE_OFF_PART_DETAIL) : noInquiry ? UNREADABLE_TRACKED_PART_BODY : null;
+      await notifyUser(tx, deps.ids, { userId: h.userId, kind: SYSTEM_NOTICE, priority: 'high', title: liveOff ? LIVE_OFF_PART_NOTICE(label) : UNREADABLE_PART_NOTICE(label), body, subjectType: 'message', subjectId: messageId, dedupeKey: `text_part_unreadable:${messageId}` }, now);
     }
     return 'skipped';
   }

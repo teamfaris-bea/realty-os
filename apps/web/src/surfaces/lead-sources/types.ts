@@ -1,6 +1,7 @@
 // Response shapes of the Lead sources API (apps/api/src/leads/sourcesSchemas.ts OverviewResponse, OnOffResponse,
 // WebhookRotatedResponse, PreviewResponse; leads/schemas.ts LeadSourceCreatedResponse) and of the Google Ads lead
 // form API (apps/api/src/leadForms/routes.ts). Plain types: apps/web imports no @realty/api code.
+import type { TelephonyMode } from '../admin/lib/telephony.js';
 
 export type PathState = 'on' | 'off' | 'not_available';
 
@@ -39,7 +40,8 @@ export interface SourceOverview {
 
 export interface OverviewResponse {
   sources: SourceOverview[];
-  deployment: { inboundEmail: boolean; publicHttps: boolean };
+  /** telephony (R-TWL-1): whether texts and calls reach a phone on this deployment */
+  deployment: { inboundEmail: boolean; publicHttps: boolean; telephony?: TelephonyMode };
 }
 
 export interface SourceView {

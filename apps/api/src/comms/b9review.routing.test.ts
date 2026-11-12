@@ -11,6 +11,9 @@ import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { identifiersOf } from '../leads/intake.js';
 import { command, contactState, intake } from '../leads/testing.js';
 import { systemActor } from '../worker/systemActor.js';
+import type { TelephonyProvider } from '../providers/types.js';
+import { TwilioTelephony } from '../providers/twilio/telephony.js';
+import { LIVE_OFF_PART_NOTICE, LIVE_OFF_TRACKED_PART_DETAIL, UNREADABLE_TRACKED_PART_BODY } from './mmsText.js';
 import { readTextParts } from './mmsTextJob.js';
 import { type CommsWorld, call, commsWorld, freshReauth, inboundSms, ownedContact, randomPhone, sendText, sid, telephonyWebhook } from './testing.js';
 
@@ -99,6 +102,33 @@ describe('b9 comms sends/F2: text parts on a tracked number (R-TRK-3, R-TWL-11, 
     expect(n).toHaveLength(1);
     expect(n[0]!.body).toMatch(/tracking number/i);
     expect(n[0]!.body).toMatch(/not counted as a new inquiry/i);
+  });
+
+  it('b9 merge (sends/F2 + ui/F7) R-TRK-3 R-TWL-1 R-TWL-11 E387: with the kill switch off, a pond person\'s tracked text part is refused as the switch; one notice says both, within the body limit', async () => {
+    const p = await pondPerson();
+    const messageId = await mms(p.phone, tracking.e164, '', ['harmless text']);
+    const calls: string[] = [];
+    const real = new TwilioTelephony({ accountSid: 'AC' + '0'.repeat(32), authToken: 'fake', publicBaseUrl: h.config.publicBaseUrl, fetch: (async (u: string) => { calls.push(String(u)); throw new Error('no request may leave'); }) as unknown as typeof fetch });
+    const providers = h.app.platform.providers as { telephony: TelephonyProvider };
+    const fake = providers.telephony;
+    providers.telephony = real;
+    try {
+      expect(await runPartJob(messageId)).toMatchObject({ skipped: 1 });
+    } finally {
+      providers.telephony = fake;
+    }
+    expect(calls).toEqual([]);
+    expect(await inquiriesOf(p.id)).toEqual([[w.sourceId, 'new_contact']]);
+    expect((await h.su.query('SELECT reason FROM message_media_skipped WHERE message_id = $1', [messageId])).rows).toEqual([{ reason: 'LIVE_REQUESTS_OFF' }]);
+    const n = (await h.su.query<{ title: string; body: string | null }>('SELECT title, body FROM notifications WHERE dedupe_key = $1', [`text_part_unreadable:${messageId}`])).rows;
+    expect(n).toEqual([{ title: LIVE_OFF_PART_NOTICE('Pond P.'), body: LIVE_OFF_TRACKED_PART_DETAIL }]);
+    // notifications.body CHECK (length(body) <= 240): the combined body fits, and says the switch, the unread part and the missing inquiry
+    expect(LIVE_OFF_TRACKED_PART_DETAIL.length).toBeLessThanOrEqual(240);
+    expect(LIVE_OFF_TRACKED_PART_DETAIL).toMatch(/off/);
+    expect(LIVE_OFF_TRACKED_PART_DETAIL).toMatch(/unread/);
+    expect(LIVE_OFF_TRACKED_PART_DETAIL).toMatch(/STOP/);
+    expect(LIVE_OFF_TRACKED_PART_DETAIL).toMatch(/not counted as a new inquiry/);
+    expect(UNREADABLE_TRACKED_PART_BODY.length).toBeLessThanOrEqual(240);
   });
 
   it('b9 comms sends/F2: an owned client\'s MMS on a tracked number is only threaded (no deferred inquiry either)', async () => {

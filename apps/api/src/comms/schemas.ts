@@ -1,6 +1,7 @@
 // Zod request/response schemas of api/comms. No input schema carries tenant_id (R-TEN-3); no response
 // carries a confidence field (R-AST-13) — both asserted by schemas.test.ts.
 import { z } from 'zod';
+import { TelephonyMode } from './telephonyMode.js';
 
 /**
  * A send-time (or preview) gate decision (core-compliance/2.0.0): allow | deny with the reasons and a
@@ -188,7 +189,8 @@ const NumberSchema = z.object({
 });
 /** notice (module 22, E352): said in words when a number was bought but could not be tied to its lead source */
 export const NumberResponse = z.object({ number: NumberSchema, notice: z.string().optional() });
-export const NumbersResponse = z.object({ numbers: z.array(NumberSchema) });
+/** telephony (R-TWL-1, b9 ui/F3): whether texts and calls on these numbers reach a phone on this deployment */
+export const NumbersResponse = z.object({ numbers: z.array(NumberSchema), telephony: TelephonyMode });
 export const AcquireBody = z.strictObject({
   purpose: z.enum(['team_main', 'agent_direct', 'pond', 'tracking']),
   areaCode: z.string().regex(/^[2-9][0-9]{2}$/).optional(),
@@ -300,7 +302,7 @@ export const AttachmentsResponse = z.object({
   messages: z.array(z.object({
     messageId: z.uuid(),
     media: z.array(z.object({ position: z.number().int(), contentType: z.string(), byteSize: z.number().int(), inline: z.boolean(), url: z.string() })),
-    /** media the platform did not keep, with why (TYPE_NOT_ALLOWED, TOO_LARGE, TOO_MANY, CONTENT_MISMATCH, FETCH_FAILED) */
+    /** media the platform did not keep, with why (TYPE_NOT_ALLOWED, TOO_LARGE, TOO_MANY, CONTENT_MISMATCH, FETCH_FAILED, LIVE_REQUESTS_OFF: the kill switch) */
     skipped: z.array(z.object({ position: z.number().int(), reason: z.string() })),
     /** R-TWL-11: MMS text/plain parts: read ones as plain text, pending ones without text (a skipped part is in `skipped`) */
     textParts: z.array(z.object({ position: z.number().int(), status: z.enum(['read', 'pending']), text: z.string().nullable() })),

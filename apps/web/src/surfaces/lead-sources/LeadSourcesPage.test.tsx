@@ -8,6 +8,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defaultPageTable, navFor, pagesFor, tapsTo } from '../../shell/index.js';
 import { ADDR, S1, S2, err, overview, source, sourcesApp, sourcesFake } from './testing.js';
+import { TELEPHONY_OFF_SETUP } from '../admin/lib/telephony.js';
 import { ago, statusSentence } from './words.js';
 
 const NOW = Date.now();
@@ -110,6 +111,19 @@ describe('Lead sources list', () => {
 });
 
 describe('Add a source', () => {
+  it('R-TWL-1 b9 ui/F3: "A tracking phone number" says live texting and calling are off before anything is made (switch off or simulated), and nothing when live', async () => {
+    for (const telephony of ['off', 'simulated', 'live'] as const) {
+      const { view } = sourcesApp(sourcesFake(overview([zillow], { telephony })), '/admin/lead-sources', 'owner');
+      const u = userEvent.setup();
+      await u.click(await screen.findByRole('button', { name: 'Add a source' }));
+      const dialog = within(screen.getByRole('dialog', { name: 'Add a source' }));
+      await u.click(dialog.getByLabelText('A tracking phone number'));
+      if (telephony === 'live') expect(dialog.queryByText((t) => t.startsWith(TELEPHONY_OFF_SETUP))).toBeNull();
+      else expect(dialog.getByText((t) => t.startsWith(TELEPHONY_OFF_SETUP))).toBeInTheDocument();
+      view.unmount();
+    }
+  });
+
   it('"Google Ads lead form" defaults the kind to Ads (which can be changed); it creates the source and opens its Google setup', async () => {
     const fake = sourcesFake(overview([zillow])).on('POST /lead-sources', (c) => ({ status: 201, body: { source: { id: S2, name: (c.body as { name: string }).name, kind: 'ads', active: true, hasToken: true, createdAt: '' }, ingestToken: 't', intakePath: '/api/intake/t' } }));
     const { router } = sourcesApp(fake, '/admin/lead-sources', 'owner');

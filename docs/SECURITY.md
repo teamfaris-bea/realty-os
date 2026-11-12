@@ -990,7 +990,7 @@ adapter with a fetch that fails the test if it is ever called; nothing reaches T
   The check sits at the one choke point of every Twilio REST request (`TwilioHttp.request`) and again before an
   account, SID or number is even looked at (`TwilioTelephony.creds`). It fails closed: an adapter built without the
   option is off. A refusal is `ProviderError('not_configured', 'TELEPHONY_LIVE_OFF')`: never an opt-out (no consent
-  event), never retried (sends are `failed`, alert deliveries `suppressed`, media `FETCH_FAILED`), never reconciled
+  event), never retried (sends are `failed`, alert deliveries `suppressed`, media and text parts `LIVE_REQUESTS_OFF` since the batch 9 review, earlier rows `FETCH_FAILED`), never reconciled
   (no `dispatch_unknown`). Tests: `providers/twilio/killswitch.test.ts`, `comms/telephony.safeguards.test.ts`.
 - **Daily cap (R-TWL-2).** `telephony_daily_usage` has FORCE RLS, the tenant policies and the `support_read_only`
   statement trigger; members (and the system) may insert and update their own tenant's row because a human send's
@@ -1022,3 +1022,18 @@ adapter with a fetch that fails the test if it is ever called; nothing reaches T
   once), shown in the thread as plain text only, and never placed in an assistant prompt (only the text-part modules
   and the thread view read `message_text_parts`). The one definer change is the narrow MMS keyword-reply exemption of
   `app.messages_dispatch_guard` (ARCHITECTURE §21.27).
+
+## 15. Batch 9 interaction review: web UI and copy (migration `b9_review_ui`; placeholder 0066)
+
+- **Telephony state shown to Owner/Admin (ui/F3).** GET /numbers (`settings.numbers`) and GET /lead-sources/overview
+  (`settings.routing`) now carry `telephony`: `live`, `off` or `simulated`, derived only from TELEPHONY_PROVIDER and
+  TELEPHONY_LIVE_REQUESTS (`apps/api/src/comms/telephonyMode.ts`). It reveals deployment configuration, never a
+  credential, account SID or tenant fact, and only to roles that already manage numbers or sources. The kill switch
+  stays default off and is still enforced in the adapter; the field changes no behaviour, it only lets the UI say
+  before the tap what the adapter would refuse.
+- **Kill-switch refusals recorded as such (ui/F7).** `message_media_skipped.reason` gains `LIVE_REQUESTS_OFF`. Only
+  the CHECK widens; FORCE RLS, the tenant and `support_read_only` policies and the grants are unchanged, no row is
+  rewritten. Opt-outs (D1) are unchanged: a refused text part stays skipped (R-TWL-11), it still notifies the handler,
+  and the notice now says the part stays unread and may carry a STOP.
+- No SECURITY DEFINER function, policy or grant is added.
+

@@ -1196,3 +1196,8 @@ Proof: `apps/api/src/comms/b9review.routing.test.ts`, `b9review.senders.test.ts`
 - **Alert-phone keywords are idempotent (sends/F4).** The agent keyword path keys its consent event on the provider MessageSid (`evidence.providerRef`) and its Admin notice on it, so an R4 re-armed delivery writes nothing twice and cannot re-revoke after a later START.
 - **Kill switch before the touch (ownership-data/F4).** The adapter reports `liveRequestsOff()`; dispatch and dial refuse in TX1 with `TELEPHONY_LIVE_OFF` (a recorded gate deny) before the cap unit and the touch. The adapter's own refusal stays as defence in depth; the switch's default stays off.
 - **Team addresses (ownership-data/F3).** The lead-email team-point filter reads every member who joined (not only active ones), so a suspended or removed member's account email and alert phone never become a lead's point (and so never disable E60's alert-phone path).
+
+### 21.29 Security notes: batch 9 review fixes, web UI and copy (migration `0067_b9_review_ui`)
+- **No new SECURITY DEFINER function, policy or grant.** The migration only widens `message_media_skipped_reason_check` with `LIVE_REQUESTS_OFF` (ui/F7); the table keeps FORCE RLS and its 0019 policies.
+- **Trust decision (ui/F3).** `telephony` (`live`/`off`/`simulated`) on GET /numbers and the Lead sources overview is computed from configuration only (`comms/telephonyMode.ts`) and shown to Owner/Admin; the kill switch is still enforced in the Twilio adapter, never by the UI.
+- Proof: `apps/api/src/leads/sources.test.ts` (b9 ui/F3), `apps/api/src/comms/media.test.ts` and `telephony.textparts.test.ts` (b9 ui/F7), on real Postgres via `createTestDb()`.

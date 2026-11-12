@@ -6,6 +6,7 @@ import { Link } from 'react-router-dom';
 import { type ApiError, useApi } from '../../../shell/index.js';
 import { EmailIntake } from '../../lead-email/EmailIntake.js';
 import { INBOX_KEY, type InboxResponse } from '../../lead-email/types.js';
+import { SOURCE_KEYS } from '../hooks.js';
 import type { SourceOverview } from '../types.js';
 import { Muted, Steps } from '../ui.js';
 import { BEST_STEP, HAND_FORWARD_LINE, PAGES, type PortalId, READABLE_FORMATS_SENTENCE, portalStep, portalsOf } from '../words.js';
@@ -19,7 +20,7 @@ export function EmailPath({ source }: { source: SourceOverview }) {
   if (!source.active) return <Muted>This source is off, so it takes no leads by email. Turn it on to set this up.</Muted>;
   return (
     <>
-      <EmailIntake source={source} />
+      <EmailIntake source={source} alsoRefresh={SOURCE_KEYS} />
       {inbox?.enabled ? (
         <section aria-label="Where this address goes" className="flex flex-col gap-2 border-t border-line pt-3">
           <h3 className="text-[17px] font-semibold text-ink">Where this address goes</h3>

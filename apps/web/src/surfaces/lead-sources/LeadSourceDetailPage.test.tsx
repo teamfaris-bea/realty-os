@@ -6,10 +6,11 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { sessionFixture } from '../../shell/testing/fakeApi.js';
 import { GOOGLE_STEPS } from './paths/GooglePath.js';
-import { PARTNER_SENTENCE } from './paths/OtherPaths.js';
+import { CHAT_NO_CONSENT, PARTNER_SENTENCE } from './paths/OtherPaths.js';
 import { INTAKE_FIELDS, SHOWN_ONCE } from './paths/WebhookPath.js';
 import { firstResponseWords } from './Preview.js';
 import { GKEY, HOOK_URL, S1, err, googleForm, overview, phone, source, sourcesApp, sourcesFake } from './testing.js';
+import { TELEPHONY_OFF_SETUP, TELEPHONY_SIMULATED } from '../admin/lib/telephony.js';
 import { OFF_SENTENCE, TRACKING_SENTENCE } from './words.js';
 
 // the same user and team as the signed-in fixture (a different one would clear the page's data, as a real switch does)
@@ -148,6 +149,25 @@ describe('A lead source: webhook, phone numbers, partner feeds', () => {
     expect(fake.callsTo('PATCH /numbers/n2/lead-source')[0]!.body).toEqual({ leadSourceId: S1 });
   });
 
+  it('R-TWL-1 b9 ui/F3: with the kill switch off, the phone path says so before the tap and does not offer to buy a number; tying one you have still works', async () => {
+    const fake = sourcesFake(overview([source()], { telephony: 'off' })).on('GET /numbers', { status: 200, body: { numbers: [phone({ id: 'n2', e164: '+14155550122' })], telephony: 'off' } });
+    sourcesApp(fake, page('phone'), 'owner');
+    const p = await section('Tracking phone numbers');
+    expect(await p.findByText(TELEPHONY_OFF_SETUP)).toBeInTheDocument();
+    expect(TELEPHONY_OFF_SETUP).toBe('Live texting and calling are off on this deployment: numbers can be set up but nothing reaches a phone yet.');
+    expect(p.getByRole('button', { name: 'Get a tracking number' })).toBeDisabled();
+    expect(p.getByLabelText('Use one of your tracking numbers')).toBeEnabled();
+    expect(fake.callsTo('POST /numbers')).toHaveLength(0);
+  });
+
+  it('R-TWL-1 b9 ui/F3: with a simulated provider, the phone path says nothing reaches a phone and that its numbers are test numbers', async () => {
+    const fake = sourcesFake(overview([source()], { telephony: 'simulated' })).on('GET /numbers', { status: 200, body: { numbers: [], telephony: 'simulated' } });
+    sourcesApp(fake, page('phone'), 'owner');
+    const p = await section('Tracking phone numbers');
+    expect(await p.findByText(TELEPHONY_OFF_SETUP)).toBeInTheDocument();
+    expect(p.getByText(TELEPHONY_SIMULATED)).toBeInTheDocument();
+  });
+
   it('a number bought but not tied says the server’s notice as is', async () => {
     const fake = sourcesFake(overview([source()])).on('POST /numbers', { status: 201, body: { number: phone({ id: 'n9', leadSourceId: null }), notice: 'Bought, but not tied to Zillow: that source was turned off.' } });
     sourcesApp(fake, page('phone'), 'owner');
@@ -173,6 +193,43 @@ describe('A lead source: webhook, phone numbers, partner feeds', () => {
     const t = await section('Typed in or imported');
     expect(t.getByRole('link', { name: 'Add a person' })).toHaveAttribute('href', '/people/new');
     expect(t.getByRole('link', { name: 'Import' })).toHaveAttribute('href', '/imports');
+  });
+});
+
+describe('A lead source: website chat agrees with the Website chat page (b9 ui/F5)', () => {
+  const chatSummary = () => screen.getByRole('heading', { level: 2, name: 'Website chat' }).closest('summary')!;
+
+  it('R-LSRC-1 b9 ui/F5: a live widget on a source with no consent text is "Not working", and the path says why and where to add it', async () => {
+    sourcesApp(sourcesFake(overview([source({ hasConsentText: false, paths: { webChats: [{ status: 'connected' }] } })])), page(), 'owner');
+    const c = await section('Website chat');
+    expect(chatSummary().textContent).toMatch(/Not working: no consent text/);
+    expect(chatSummary().textContent).not.toMatch(/\bOn\b/);
+    expect(c.getByText(CHAT_NO_CONSENT)).toBeInTheDocument();
+  });
+
+  it('R-LSRC-1 b9 ui/F5: a widget the Website chat page calls live (connected, or live with problems) is On when the source has consent text', async () => {
+    for (const status of ['connected', 'degraded']) {
+      const { view } = sourcesApp(sourcesFake(overview([source({ hasConsentText: true, paths: { webChats: [{ status }] } })])), page(), 'owner');
+      await section('Website chat');
+      expect(chatSummary().textContent).toMatch(/On/);
+      expect(screen.queryByText(CHAT_NO_CONSENT)).toBeNull();
+      view.unmount();
+    }
+  });
+
+  it('R-LSRC-2 b9 ui/F5: saving consent text refreshes the Website chat queries (its widgets, embed checks and lead sources)', async () => {
+    const fake = sourcesFake(overview([source({ hasConsentText: false, paths: { webChats: [{ status: 'connected' }] } })])).on(`PATCH /lead-sources/${S1}`, { status: 200, body: { source: { id: S1, name: 'Zillow', kind: 'portal', active: true, hasToken: true, createdAt: '' } } });
+    const { qc } = sourcesApp(fake, page(), 'owner', fresh);
+    for (const key of [['admin', 'web-chat', 'widgets'], ['admin', 'web-chat', 'embed', 'w1'], ['admin', 'lead-sources', 'web-chat']]) qc.setQueryData(key, []);
+    const u = userEvent.setup();
+    await u.click(await screen.findByRole('button', { name: 'Add consent text' }));
+    await u.type(screen.getByLabelText('New consent text'), 'By sending this you agree we may call and text you.');
+    await u.type(screen.getByLabelText('Who it names as the seller'), 'A Team');
+    await u.click(screen.getByRole('button', { name: 'Save consent text' }));
+    await waitFor(() => expect(fake.callsTo(`PATCH /lead-sources/${S1}`)).toHaveLength(1));
+    await waitFor(() => {
+      for (const key of [['admin', 'web-chat', 'widgets'], ['admin', 'web-chat', 'embed', 'w1'], ['admin', 'lead-sources', 'web-chat']]) expect(qc.getQueryState(key)!.isInvalidated).toBe(true);
+    });
   });
 });
 
@@ -281,5 +338,63 @@ describe('A lead source: preview, rename, off', () => {
   it('a source that does not exist (or is not visible) says so', async () => {
     sourcesApp(sourcesFake(overview([])), page(), 'owner');
     expect(await screen.findByText("This lead source doesn't exist, or you can't see it.")).toBeInTheDocument();
+  });
+});
+
+describe('A lead source: lead email refreshes the Lead sources list (b9 ui/F1)', () => {
+  const OLD = `leads+${'ab'.repeat(20)}@leads.realty-os.invalid`;
+  const NEW = `leads+${'cd'.repeat(20)}@leads.realty-os.invalid`;
+  const inboxOf = (address: string | null) => ({
+    leadSourceId: S1,
+    enabled: address !== null,
+    connectionId: address ? '01900000-0000-7000-8000-00000000c0aa' : null,
+    status: address ? 'connected' : null,
+    address,
+    addressCreatedAt: address ? '2026-11-10T17:00:00.000Z' : null,
+    allowedSenderDomains: address ? ['zillow.com'] : [],
+    suggestedSenderDomains: [{ domain: 'zillow.com', label: 'Zillow' }],
+    ignoredSenderDomains: [],
+    portalCatalog: [{ portal: 'zillow', domain: 'zillow.com', label: 'Zillow', preTicked: true }],
+    inboundDomainConfigured: true,
+  });
+  const withEmail = (address: string | null) => source({ paths: { email: address ? { state: 'on', address, lastEmailAt: null } : { state: 'off', address: null, lastEmailAt: null } } });
+
+  it('R-LEM-1 R-LSRC-1 b9 ui/F1: after Get a new address, All lead sources then Copy writes the NEW address, never the dead one', async () => {
+    let current = OLD;
+    const fake = sourcesFake(overview([withEmail(OLD)]))
+      .on('GET /lead-sources/overview', () => ({ status: 200, body: overview([withEmail(current)]) }))
+      .on(`GET /lead-sources/${S1}/lead-email`, () => ({ status: 200, body: { inbox: inboxOf(current) } }))
+      .on(`POST /lead-sources/${S1}/lead-email/rotate`, () => ((current = NEW), { status: 200, body: { inbox: inboxOf(NEW) } }));
+    sourcesApp(fake, page('email'), 'owner', fresh);
+    const u = userEvent.setup();
+    const box = within(await screen.findByRole('region', { name: 'Email intake for Zillow' }));
+    await u.click(await box.findByRole('button', { name: 'Get a new address' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Get a new address?' });
+    await u.click(within(dialog).getByRole('button', { name: 'Get a new address now' }));
+    await waitFor(() => expect(box.getByLabelText('Inbound address for Zillow')).toHaveValue(NEW));
+    await u.click(screen.getAllByRole('link', { name: 'All lead sources' })[0]!);
+    const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined);
+    await u.click(await screen.findByRole('button', { name: 'Copy the lead-email address of Zillow' }));
+    await waitFor(() => expect(write).toHaveBeenCalled());
+    expect(write).toHaveBeenLastCalledWith(NEW);
+    expect(write).not.toHaveBeenCalledWith(OLD);
+  });
+
+  it('R-LEM-1 R-LSRC-1 b9 ui/F1: turning lead email on flips the path summary from Not set up to On', async () => {
+    let current: string | null = null;
+    const fake = sourcesFake(overview([withEmail(null)]))
+      .on('GET /lead-sources/overview', () => ({ status: 200, body: overview([withEmail(current)]) }))
+      .on(`GET /lead-sources/${S1}/lead-email`, () => ({ status: 200, body: { inbox: inboxOf(current) } }))
+      .on(`POST /lead-sources/${S1}/lead-email`, () => ((current = OLD), { status: 200, body: { inbox: inboxOf(OLD) } }));
+    sourcesApp(fake, page('email'), 'owner', fresh);
+    const u = userEvent.setup();
+    const summary = () => screen.getByRole('heading', { level: 2, name: 'Lead email' }).closest('summary')!;
+    await screen.findByRole('heading', { level: 2, name: 'Lead email' });
+    expect(summary().textContent).toMatch(/Not set up/);
+    const box = within(await screen.findByRole('region', { name: 'Email intake for Zillow' }));
+    await u.click(await box.findByRole('button', { name: 'Turn on lead email' }));
+    await waitFor(() => expect(box.getByLabelText('Inbound address for Zillow')).toHaveValue(OLD));
+    await waitFor(() => expect(summary().textContent).toMatch(/On/));
+    expect(summary().textContent).not.toMatch(/Not set up/);
   });
 });

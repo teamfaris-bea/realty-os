@@ -29,7 +29,7 @@ interface Overview {
       webChats: { status: string }[];
     };
   }[];
-  deployment: { inboundEmail: boolean; publicHttps: boolean };
+  deployment: { inboundEmail: boolean; publicHttps: boolean; telephony: string };
 }
 
 beforeAll(async () => {
@@ -57,7 +57,7 @@ describe('R-LSRC-1 the overview', () => {
     await intake(h, w);
     const inbox = await enableInbox(h, w.owner, w.sourceId);
     const o = await overviewOf();
-    expect(o.deployment).toEqual({ inboundEmail: true, publicHttps: true });
+    expect(o.deployment).toEqual({ inboundEmail: true, publicHttps: true, telephony: 'simulated' });
     const s = o.sources.find((x) => x.id === w.sourceId)!;
     expect(s.lastLeadAt).not.toBeNull();
     expect(s.leadsLast30Days).toBe(1);
@@ -81,13 +81,47 @@ describe('R-LSRC-1 the overview', () => {
     try {
       const w2 = await leadsWorld(h2, { agents: 1, rule: false });
       const o = (await call<Overview>(w2.owner, 'GET', '/lead-sources/overview')).body;
-      expect(o.deployment).toEqual({ inboundEmail: false, publicHttps: false });
+      expect(o.deployment).toEqual({ inboundEmail: false, publicHttps: false, telephony: 'simulated' });
       expect(o.sources[0]!.paths.email.state).toBe('not_available');
       expect(o.sources[0]!.paths.googleLeadForm.state).toBe('not_available');
     } finally {
       await h2.close();
     }
   }, 120_000);
+});
+
+describe('R-LSRC-1 R-TWL-1 the telephony state (b9 ui/F3)', () => {
+  /** Runs `fn` with the platform's telephony configuration swapped (restored after). */
+  async function withTelephony<T>(provider: 'fake' | 'twilio', live: boolean, fn: () => Promise<T>): Promise<T> {
+    const cfg = h.app.platform.config as { providers: { telephony: string }; telephonyLiveRequests: boolean };
+    const before = { provider: cfg.providers.telephony, live: cfg.telephonyLiveRequests };
+    cfg.providers = { ...cfg.providers, telephony: provider };
+    cfg.telephonyLiveRequests = live;
+    try {
+      return await fn();
+    } finally {
+      cfg.providers = { ...cfg.providers, telephony: before.provider };
+      cfg.telephonyLiveRequests = before.live;
+    }
+  }
+  const numbersOf = async () => (await call<{ telephony: string }>(w.owner, 'GET', '/numbers')).body;
+
+  it('R-TWL-1 b9 ui/F3: the overview and GET /numbers say whether texts and calls reach a phone: off (switch off), simulated (fake provider), live', async () => {
+    expect((await overviewOf()).deployment.telephony).toBe('simulated');
+    expect((await numbersOf()).telephony).toBe('simulated');
+    // the fake provider is simulated whatever the switch says: nothing it makes reaches a phone
+    await withTelephony('fake', true, async () => {
+      expect((await overviewOf()).deployment.telephony).toBe('simulated');
+    });
+    await withTelephony('twilio', false, async () => {
+      expect((await overviewOf()).deployment.telephony).toBe('off');
+      expect((await numbersOf()).telephony).toBe('off');
+    });
+    await withTelephony('twilio', true, async () => {
+      expect((await overviewOf()).deployment.telephony).toBe('live');
+      expect((await numbersOf()).telephony).toBe('live');
+    });
+  });
 });
 
 describe('R-LSRC-2 rename, consent text, off and on', () => {

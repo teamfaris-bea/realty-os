@@ -8,6 +8,7 @@ export const LEAD_EMAIL_ERROR_MESSAGES: Record<string, string> = {
   LEAD_EMAIL_NOT_PENDING: 'Someone already decided this email. The list below is up to date.',
   LEAD_EMAIL_NO_CONTACT_POINT: 'A lead needs a phone number or an email address. Type one in, then accept again.',
   LEAD_EMAIL_DOMAIN_INVALID: "One of those sender domains can't be used. Enter the portal's own domain, like zillow.com: no wildcards, no web addresses, and not a bare ending like com or co.uk.",
+  LEAD_EMAIL_NOT_A_LEAD: "This is Gmail's forwarding confirmation, not a lead: give the code to the person who asked for it, then discard it.",
   LEAD_EMAIL_NOT_CONFIGURED: "Lead email isn't set up on this server yet, so no address can be made. Ask whoever runs Realty OS for your team to set up the inbound email domain.",
 };
 

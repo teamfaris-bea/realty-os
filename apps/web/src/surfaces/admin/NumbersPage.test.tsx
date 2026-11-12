@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { FakeFetch, leadAdminApp, member } from './lib/testing.js';
 import type { PhoneNumber } from './lib/types.js';
 import { registrationWords } from './NumbersPage.js';
+import { TELEPHONY_OFF_DETAIL, TELEPHONY_OFF_SETUP, TELEPHONY_SIMULATED } from './lib/telephony.js';
 
 const num = (over: Partial<PhoneNumber> = {}): PhoneNumber => ({ id: 'n1', e164: '+14155550100', purpose: 'team_main', numberType: 'local', assignedUserId: null, registrationId: 'reg-1', registrationStatus: 'submitted', smsCapable: true, voiceCapable: true, releasedAt: null, leadSourceId: null, ...over });
 
@@ -14,9 +15,9 @@ const SOURCES = [
   { id: 'src-2', name: 'Old ads', kind: 'ads', active: false, hasToken: true, createdAt: '' },
 ];
 
-function numbersFake(numbers: PhoneNumber[] = [num()]) {
+function numbersFake(numbers: PhoneNumber[] = [num()], telephony: 'live' | 'off' | 'simulated' = 'live') {
   return new FakeFetch()
-    .on('GET /numbers', { status: 200, body: { numbers } })
+    .on('GET /numbers', { status: 200, body: { numbers, telephony } })
     .on('GET /members', { status: 200, body: { members: [member()], invites: [] } })
     .on('GET /lead-sources', { status: 200, body: { sources: SOURCES } });
 }
@@ -52,6 +53,27 @@ describe('Phone and email', () => {
     expect(await screen.findByText('(415) 555-0100')).toBeInTheDocument();
     expect(screen.queryByText('Texting paused for this number')).not.toBeInTheDocument();
     expect(screen.queryByText(/other numbers are not affected/)).not.toBeInTheDocument();
+  });
+
+  it('R-TWL-1 b9 ui/F3: with the kill switch off, the page says so at the top and does not offer to get a number', async () => {
+    const fake = numbersFake([num()], 'off');
+    leadAdminApp(fake, '/admin/numbers', 'owner');
+    expect(await screen.findByText(TELEPHONY_OFF_SETUP)).toBeInTheDocument();
+    expect(screen.getByText(TELEPHONY_OFF_DETAIL)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Get number' })).toBeDisabled();
+  });
+
+  it('R-TWL-1 b9 ui/F3: with a simulated provider, the page says nothing reaches a phone and its numbers are test numbers; getting one stays possible', async () => {
+    leadAdminApp(numbersFake([num()], 'simulated'), '/admin/numbers', 'owner');
+    expect(await screen.findByText(TELEPHONY_OFF_SETUP)).toBeInTheDocument();
+    expect(screen.getByText(TELEPHONY_SIMULATED)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Get number' })).toBeEnabled();
+  });
+
+  it('R-TWL-1 b9 ui/F3: live telephony shows no notice', async () => {
+    leadAdminApp(numbersFake([num()], 'live'), '/admin/numbers', 'owner');
+    expect(await screen.findByText('(415) 555-0100')).toBeInTheDocument();
+    expect(screen.queryByText(TELEPHONY_OFF_SETUP)).toBeNull();
   });
 
   it('with no numbers it says nobody can call or text clients yet', async () => {

@@ -11,6 +11,9 @@
 // - A tracking number can credit one lead source (module 22, R-TRK-1): a "Lead source" select on each live
 //   tracking number (PATCH /numbers/:id/lead-source) and on "Get a number" when the purpose is tracking. A
 //   number bought but not tied (the source was turned off meanwhile) comes with the server's notice, said as is.
+// - R-TWL-1 (b9 ui/F3): GET /numbers says whether texts and calls reach a phone (lib/telephony.ts). With the kill
+//   switch off or a simulated provider a notice at the top says so before any tap; with the switch off "Get number"
+//   is not offered, since the purchase can only be refused.
 import { useQuery } from '@tanstack/react-query';
 import { type FormEvent, useState } from 'react';
 import { Button, Card, Notice, TextField } from '../../design/index.js';
@@ -20,6 +23,7 @@ import { formatDate, roleLabel } from './lib/format.js';
 import { useAction, useAnnounce } from './lib/hooks.js';
 import { ADMIN_MESSAGES } from './lib/messages.js';
 import { IncomingCallsSettings } from './IncomingCallsSettings.js';
+import { type TelephonyMode, canBuyNumber, telephonyNotice } from './lib/telephony.js';
 import type { EmailIdentity, LeadSource, MembersResponse, PhoneNumber, Registration, SendingDomain } from './lib/types.js';
 import { ErrorLine, Pill, Section, SelectField, StatusLine, TextArea } from './lib/ui.js';
 
@@ -52,7 +56,9 @@ export function registrationWords(status: string | null): { text: string; tone: 
 export default function NumbersPage() {
   const api = useApi();
   const [status, announce] = useAnnounce();
-  const numbers = useQuery<{ numbers: PhoneNumber[] }, ApiError>({ queryKey: NUMBERS_KEY, queryFn: ({ signal }) => api.get('/numbers', { signal }) });
+  const numbers = useQuery<{ numbers: PhoneNumber[]; telephony?: TelephonyMode }, ApiError>({ queryKey: NUMBERS_KEY, queryFn: ({ signal }) => api.get('/numbers', { signal }) });
+  const mode = numbers.data?.telephony;
+  const notice = telephonyNotice(mode);
   const members = useQuery<MembersResponse, ApiError>({ queryKey: ['admin', 'members'], queryFn: ({ signal }) => api.get('/members', { signal }) });
   const people = (members.data?.members ?? []).filter((m) => m.status === 'active');
   const nameOf = (id: string | null) => (id ? (people.find((m) => m.userId === id)?.displayName ?? 'a former member') : null);
@@ -63,6 +69,15 @@ export default function NumbersPage() {
   return (
     <div className="flex w-full flex-col gap-8">
       <StatusLine text={status} />
+      {notice.length > 0 ? (
+        <Notice tone="warn">
+          {notice.map((t) => (
+            <span key={t} className="block">
+              {t}
+            </span>
+          ))}
+        </Notice>
+      ) : null}
       <Section title="Phone numbers" description="Calls and texts to and from clients use these numbers.">
         {numbers.isError ? <Notice tone="error">{messageFor(numbers.error, ADMIN_MESSAGES)}</Notice> : null}
         {numbers.data && live.length === 0 ? <Notice tone="warn">There are no numbers yet, so nobody can call or text clients from the app.</Notice> : null}
@@ -73,7 +88,7 @@ export default function NumbersPage() {
             </li>
           ))}
         </ul>
-        <AcquireForm people={people.filter((m) => m.role !== 'tc').map((m) => ({ id: m.userId, label: `${m.displayName} · ${roleLabel(m.role)}` }))} registrations={registrations} sources={sources.filter((x) => x.active)} onDone={announce} />
+        <AcquireForm people={people.filter((m) => m.role !== 'tc').map((m) => ({ id: m.userId, label: `${m.displayName} · ${roleLabel(m.role)}` }))} registrations={registrations} sources={sources.filter((x) => x.active)} canBuy={canBuyNumber(mode)} onDone={announce} />
       </Section>
       <IncomingCallsSettings onDone={announce} />
       <RegistrationForm onCreated={(r) => (setRegistrations((x) => [r, ...x]), announce('Registration saved'))} />
@@ -166,7 +181,7 @@ function NumberRow({ number, assignee, registrations, sources, onDone }: { numbe
   );
 }
 
-function AcquireForm({ people, registrations, sources, onDone }: { people: { id: string; label: string }[]; registrations: Registration[]; sources: LeadSource[]; onDone(t: string): void }) {
+function AcquireForm({ people, registrations, sources, canBuy, onDone }: { people: { id: string; label: string }[]; registrations: Registration[]; sources: LeadSource[]; canBuy: boolean; onDone(t: string): void }) {
   const [purpose, setPurpose] = useState<string>('team_main');
   const [area, setArea] = useState('');
   const [user, setUser] = useState('');
@@ -216,7 +231,7 @@ function AcquireForm({ people, registrations, sources, onDone }: { people: { id:
         </SelectField>
       ) : null}
       <TextField label="Area code (optional)" inputMode="numeric" maxLength={3} value={area} onChange={(e) => setArea(e.target.value.replace(/\D/g, ''))} className="md:w-48" />
-      <Button type="submit" pending={a.pending} disabled={(area !== '' && !/^[2-9]\d{2}$/.test(area)) || (purpose === 'agent_direct' && !user)}>
+      <Button type="submit" pending={a.pending} disabled={!canBuy || (area !== '' && !/^[2-9]\d{2}$/.test(area)) || (purpose === 'agent_direct' && !user)}>
         Get number
       </Button>
       <ErrorLine message={a.error?.message} />

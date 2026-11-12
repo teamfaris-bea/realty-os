@@ -52,6 +52,7 @@ import { VOICEMAIL_NOTICE, getVoiceSettings, updateVoiceSettings } from './voice
 import { contactAttachments, messageContact, readMedia } from './media.js';
 import { deleteOutboundMedia, serveProviderMedia, uploadOutboundMedia } from './outboundMedia.js';
 import { refuseContentEncoding } from '../imports/routes.js';
+import { telephonyMode } from './telephonyMode.js';
 
 const IdParams = z.object({ id: z.uuid() });
 
@@ -257,7 +258,7 @@ async function register(app: FastifyInstance): Promise<void> {
 
   // ---- numbers, registrations, domains, identities (Owner/Admin) ----
   const admin = { config: { auth: 'settings.numbers' as const }, preHandler: authorize('settings.numbers', () => ({})) };
-  r.get('/numbers', { ...admin, schema: { response: { 200: S.NumbersResponse } } }, async (req) => ({ numbers: await listNumbers(actorOf(req), deps()) }));
+  r.get('/numbers', { ...admin, schema: { response: { 200: S.NumbersResponse } } }, async (req) => ({ numbers: await listNumbers(actorOf(req), deps()), telephony: telephonyMode(app.platform.config) }));
   r.post('/numbers', { ...admin, schema: { body: S.AcquireBody, response: { 201: S.NumberResponse } } }, async (req, reply) => {
     const { notice, ...n } = await acquireNumber(actorOf(req), req.body, deps());
     reply.status(201);

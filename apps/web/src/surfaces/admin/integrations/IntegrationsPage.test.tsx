@@ -6,7 +6,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { FakeFetch, ID, NOT_ADMINS, err, integrations, mount, reauthOk, violations } from './testing.js';
-import { PAGE_PATH } from './words.js';
+import { GOOGLE_ADS_HINT, PAGE_PATH, PARTNER_FEED_HINT } from './words.js';
 
 const OUT_OF_SCOPE_NAMES = ['Facebook Messenger', 'Instagram direct messages', 'Meta Lead Ads', 'Meta ads account'];
 
@@ -87,8 +87,27 @@ describe('Integrations page', () => {
   it('the keyed and key-based services link to where they are set up', async () => {
     mount(new FakeFetch().on('GET /admin/integrations', { status: 200, body: integrations() }), PAGE_PATH);
     expect(await screen.findByRole('link', { name: 'Set up website chat' })).toHaveAttribute('href', '/admin/web-chat');
-    expect(screen.getByRole('link', { name: 'Open Lead sources' })).toHaveAttribute('href', '/admin/lead-sources');
+    // lead email, Google Ads (its lead forms) and the two partner feeds (b9 ui/F8)
+    const toSources = screen.getAllByRole('link', { name: 'Open Lead sources' });
+    expect(toSources).toHaveLength(4);
+    for (const l of toSources) expect(l).toHaveAttribute('href', '/admin/lead-sources');
     expect(screen.getByRole('link', { name: 'Open MLS' })).toHaveAttribute('href', '/admin/integrations/mls');
+  });
+
+  it('R-GADS-1 b9 ui/F8: Google Ads points to the lead form on Lead sources (where it says whether the deployment can take them) and says the account itself is not connected; the partner feeds point there too', async () => {
+    mount(new FakeFetch().on('GET /admin/integrations', { status: 200, body: integrations() }), PAGE_PATH);
+    const card = async (name: string) => within((await screen.findByRole('heading', { level: 3, name })).closest('li')!);
+    const ads = await card('Google Ads account');
+    expect(ads.getByRole('link', { name: 'Open Lead sources' })).toHaveAttribute('href', '/admin/lead-sources');
+    expect(ads.getByText(GOOGLE_ADS_HINT)).toBeInTheDocument();
+    // never "works now": a deployment without public https cannot take them, and Lead sources says so
+    expect(GOOGLE_ADS_HINT).not.toMatch(/work now/);
+    expect(GOOGLE_ADS_HINT).toMatch(/account itself is not connected/);
+    for (const name of ['Zillow lead feed', 'realtor.com lead feed']) {
+      const c = await card(name);
+      expect(c.getByRole('link', { name: 'Open Lead sources' })).toHaveAttribute('href', '/admin/lead-sources');
+      expect(c.getByText(PARTNER_FEED_HINT)).toBeInTheDocument();
+    }
   });
 
   it('a live pre-D2 row is listed only to be disconnected; re-auth is asked and the same request is sent again', async () => {
