@@ -86,7 +86,7 @@ async function register(app: FastifyInstance): Promise<void> {
 
   r.get('/nurture/triggers', { config: { auth: 'self' }, schema: { response: { 200: S.TriggerKindsResponse } } }, async (req) => ({
     triggers: await triggerKinds(app, req),
-    templates: BUILT_IN_TEMPLATES.filter((t) => t.content !== undefined).map((t) => ({ key: t.key, name: t.name, scope: t.scope, triggers: t.content!.triggers.map((x) => x.trigger) })),
+    templates: BUILT_IN_TEMPLATES.flatMap((t) => (t.content?.kind === 'triggers' ? [{ key: t.key, name: t.name, scope: t.scope, triggers: t.content.triggers.map((x) => x.trigger) }] : [])),
   }));
 
   r.get(

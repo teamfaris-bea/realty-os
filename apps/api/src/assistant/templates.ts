@@ -23,8 +23,8 @@ export interface BuiltInTemplate {
   name: string;
   /** step playbooks: the steps (empty for trigger templates, whose content is `content`) */
   steps: PlaybookStep[];
-  /** trigger templates (module 26): the one content object stored as the version's content */
-  content?: Extract<PlaybookContent, { kind: 'triggers' }>;
+  /** trigger templates (module 26) and the voice template (module 48): the one content object stored as the version's content */
+  content?: Extract<PlaybookContent, { kind: 'triggers' }> | Extract<PlaybookContent, { kind: 'voice' }>;
   /** bumped when a template's wording or steps change (existing playbooks keep their own versions) */
   templateVersion?: number;
 }
@@ -214,6 +214,26 @@ export const BUILT_IN_TEMPLATES: readonly BuiltInTemplate[] = [
   { key: 'behavior_alerts', kind: 'trigger', scope: 'agent', name: 'Behavior alerts', steps: [], content: { kind: 'triggers', triggers: [PRICE_DROP, BACK_ON_MARKET], digestWindowMinutes: 120 } },
   { key: 'after_closing_alerts', kind: 'trigger', scope: 'agent', name: 'After-closing alerts', steps: [], content: { kind: 'triggers', triggers: [ANNIVERSARY, HOME_VALUE], digestWindowMinutes: 0 }, templateVersion: 2 },
   { key: 'transaction_updates', kind: 'trigger', scope: 'team', name: 'Milestone updates', steps: [], content: { kind: 'triggers', triggers: [DEAL_DATE], digestWindowMinutes: 0 }, templateVersion: 2 },
+  // module 48 (flagged edit, PLAN:306): AI answering for missed calls. Team only, a draft the Owner/Admin approves once;
+  // it runs only once platform:voice is cleared and the Owner turns it on (R-VOICE-9). No share_listing_facts: it maps
+  // to no ledger tool (core/voice known gap (a)). VERIFY WITH COUNSEL (C2): the disclosure and announcement wording.
+  {
+    key: 'voice_answering',
+    kind: 'voice_answering',
+    scope: 'team',
+    name: 'AI answering for missed calls',
+    steps: [],
+    content: {
+      kind: 'voice',
+      voice: {
+        disclosure: "Hi, you've reached the team's automated assistant. I'm an AI, not a person, and I'm answering because your agent couldn't pick up.",
+        recordingAnnouncement: 'This call is recorded and transcribed by the assistant.',
+        tools: ['book_appointment', 'take_message', 'transfer_to_owner'],
+        maxCallSeconds: 300,
+        transferHoldSeconds: 20,
+      },
+    },
+  },
 ];
 
 /**

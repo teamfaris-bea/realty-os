@@ -363,6 +363,17 @@ export async function busy(deps: CalendarDeps, actor: UserActor, range: { from: 
   );
 }
 
+/**
+ * Module 48 (flagged one-place export, O10): the busy times bookSlot reads for `userId` (live free/busy plus the
+ * person's in-app appointments), as the system actor inside the caller's transaction. Read now, kept nowhere
+ * (R-CAL-3). `calendar: 'unavailable'` means the calendar did not answer: offer nothing (bookSlot would refuse too).
+ */
+export async function busyForBooking(deps: CalendarDeps, tx: Tx, tenantId: TenantId, userId: string, range: { start: string; end: string }): Promise<{ calendar: BusyView['calendar']; busy: Busy[] }> {
+  const p = await providerBusy(deps, tx, tenantId, userId, range);
+  const own = (await repo.busyAppointments(tx, userId, range.start, range.end)).map((a) => ({ start: a.starts_at.toISOString(), end: a.ends_at.toISOString() }));
+  return { calendar: p.calendar, busy: mergeBusy([...p.busy, ...own]) };
+}
+
 // ---- booking under the person's advisory lock (E151) --------------------------------------------------------
 
 export interface BookInput {

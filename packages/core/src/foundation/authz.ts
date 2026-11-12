@@ -390,6 +390,10 @@ export const AUDIT_ACTIONS = [
   'ai_isa.escalation_resolved', // module 75 (D12 proposed): codes only, never content
   'ai_isa.hold_started', // module 75 (D12 proposed): codes only, never content
   'ai_isa.hold_ended', // module 75 (D12 proposed): codes only, never content
+  'voice.answering_changed', // module 48: the Owner turned AI answering on (attested) or an Owner/Admin turned it off (codes only)
+  'voice.session_ended', // module 48: an AI-answered call ended in its one handback (outcome and end reason codes only)
+  'voice.test_call', // module 48: a scripted test call against the fake (in memory; nothing placed or saved)
+  'voice.handback_recovered', // module 48: voice.reconcile wrote the recovery handback of a call whose session was lost
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

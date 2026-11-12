@@ -3,6 +3,7 @@
 // Real Postgres (app_user, RLS), the deterministic fake AVM (settable per-address answers) and fake email/texting.
 // R-AVM-1..3, R-NURT-1/2/4/5/7/8, R-GATE-14, R-INT-1, R-INT-6, R-AST-20; E98, E99.
 import { randomUUID } from 'node:crypto';
+import type { PlaybookContent } from '@realty/core/assistant';
 import { withTenantTx } from '@realty/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
@@ -14,6 +15,8 @@ import { systemActor } from '../worker/systemActor.js';
 import { avmRefresh } from './avm.js';
 import { executeTriggerRunInTx } from './execute.js';
 import { type NurtureWorld, type PastClient, approveTemplate, avmCallsFor, avmPass, beforeThisMonth, firingsDue, nurtureWorld, pastClient, reconcileAndRun, triggerRuns, valuationsOf, withAvmCleared } from './testing.js';
+
+type TriggersContent = Extract<PlaybookContent, { kind: 'triggers' }>;
 
 let h: ApiHarness;
 let w: NurtureWorld;
@@ -398,7 +401,7 @@ describe('F7 one sender; R-AST-20 the reworded template', () => {
     const t = templateByKey('after_closing_alerts')!;
     expect(t.templateVersion).toBe(2);
     expect(validatePlaybookContent(t.content!, { kind: 'trigger' })).toEqual([]);
-    const hv = t.content!.triggers.find((x) => x.trigger === 'home_value')!;
+    const hv = (t.content as TriggersContent).triggers.find((x) => x.trigger === 'home_value')!;
     expect(hv.template).not.toMatch(/unchanged/i);
     // the approved version (beforeAll) carries the reworded template exactly
     const stored = (await h.su.query<{ steps: { triggers: { trigger: string; template: string }[] } }>('SELECT steps FROM playbook_versions WHERE id = $1', [alerts.versionId])).rows[0]!.steps;

@@ -41,6 +41,8 @@ import { FakePublicRecords, type PublicRecordsProvider, UnconfiguredPublicRecord
 import { type DocumentTextExtractor, FakeScanner, FakeTextExtractor, type MalwareScanner, UnconfiguredScanner, UnconfiguredTextExtractor } from '../documents/provider.js';
 import { type AdsProvider, FakeAds, UnconfiguredAds } from '../ads/provider.js';
 import { BeaufortGisRecords } from './publicRecords/beaufort.js';
+import { FakeVoiceAgent } from '../voice/fake.js';
+import { UnconfiguredVoiceAgent, type VoiceAgentProvider } from '../voice/provider.js';
 
 export * from './types.js';
 export { FakeAi, FAKE_BAD_QUOTE, parseFakeSources } from './fake/ai.js';
@@ -81,6 +83,8 @@ export interface Providers {
   textExtractor: DocumentTextExtractor;
   /** module 52 (D2): Google Ads only (deterministic fake; production: unconfigured until a real, checked adapter exists, N14) */
   ads: AdsProvider;
+  /** module 48: the voice agent (deterministic fake; production: unconfigured, no vendor yet, N12) */
+  voiceAgent: VoiceAgentProvider;
 }
 
 /** The fakes with their concrete types, so tests can inspect outboxes and inject failures. */
@@ -103,6 +107,7 @@ export interface FakeProviders extends Providers {
   scanner: FakeScanner;
   textExtractor: FakeTextExtractor;
   ads: FakeAds;
+  voiceAgent: FakeVoiceAgent;
 }
 
 export function createFakeProviders(opts: { clock?: Clock } = {}): FakeProviders {
@@ -126,6 +131,7 @@ export function createFakeProviders(opts: { clock?: Clock } = {}): FakeProviders
     scanner: new FakeScanner(),
     textExtractor: new FakeTextExtractor(),
     ads: new FakeAds(opts.clock),
+    voiceAgent: new FakeVoiceAgent(opts.clock),
   };
 }
 
@@ -203,5 +209,7 @@ export function createProviders(config: Config, opts: { clock: Clock; fetch?: ty
   const textExtractor: DocumentTextExtractor = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredTextExtractor() : fakes.textExtractor;
   // module 52: no Google Ads adapter, developer token or OAuth client in this build (N14); production reads and changes nothing
   const ads: AdsProvider = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredAds() : fakes.ads;
-  return { ...fakes, telephony, carrier, email, accountMail, ai, push, storage, integrations, gmail, publicRecords, scanner, textExtractor, ads };
+  // module 48: no voice vendor is procured (N12); production answers nothing unless fakes are allowed
+  const voiceAgent: VoiceAgentProvider = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredVoiceAgent() : fakes.voiceAgent;
+  return { ...fakes, telephony, carrier, email, accountMail, ai, push, storage, integrations, gmail, publicRecords, scanner, textExtractor, ads, voiceAgent };
 }

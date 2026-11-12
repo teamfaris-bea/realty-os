@@ -46,6 +46,7 @@ import { documentRoutes } from './documents/routes.js';
 import { adsRoutes } from './ads/routes.js';
 import { homeownerRoutes } from './homeowner/routes.js';
 import { isaRoutes } from './isa/routes.js';
+import { voiceRoutes } from './voice/routes.js';
 
 export interface RouteModule {
   name: string;
@@ -90,5 +91,6 @@ export const routeModules: RouteModule[] = [
   adsRoutes,
   homeownerRoutes,
   isaRoutes,
+  voiceRoutes,
   // registry: add new entries above this line
 ];

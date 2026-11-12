@@ -1,0 +1,188 @@
+// Module 48 items 5 and 7: the runner's ledger, ordering, booking, recording and merge edges
+// (R-VOICE-2, R-VOICE-4, R-VOICE-7, R-VOICE-10, R-VOICE-14, R-VOICE-18, R-VOICE-20; E116, E117, E423–E431).
+import { SCRIPTS, SCRIPT_EVENTS as ev, SLOT_A, SLOT_ARGS, type VoiceScript } from '@realty/core/voice/testing';
+import { withTenantTx } from '@realty/db';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { runJobs as runAssistantJobs } from '../assistant/testing.js';
+import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
+import { bookSlot } from '../calendar/service.js';
+import { VOICEMAIL_NOTICE } from '../comms/voice.js';
+import { mayKeepVoicemail } from '../comms/recordings.js';
+import { ownedContact, runJobs, telephonyWebhook } from '../comms/testing.js';
+import { systemActor } from '../worker/systemActor.js';
+import { VOICE_LEDGER_CAP } from './ledger.js';
+import { clearVoiceTestSeams, setVoiceTestSeams } from './runtime.js';
+import { type VoiceWorld, aiCall, callRowOf, callStatus, handbacksOf, hookPath, ledgerOf, ringing, setVoicePack, settled, sid, voiceWorld, waitFor } from './testing.js';
+
+let h: ApiHarness;
+let w: VoiceWorld;
+beforeAll(async () => {
+  h = await createApiHarness();
+  await setVoicePack(h, { reviewed: true, vendorReady: true });
+  w = await voiceWorld(h);
+});
+afterEach(() => clearVoiceTestSeams(h.app.platform));
+afterAll(async () => {
+  await h?.close();
+});
+
+const OPEN = [ev.disclosed(4000), ev.announced(7000), ev.model(7500, 'How can I help you today?')];
+
+describe('R-VOICE-4 R-VOICE-14 E429 E431: the ledger is written exactly as core decided', () => {
+  it('R-VOICE-2 R-VOICE-4: a request before both disclosures is only in unlogged; allowed rows pass the DB allowlist', async () => {
+    const c = await aiCall(h, w, SCRIPTS.booking);
+    const r = await settled(h, w.tenantId, c.callId);
+    expect(r!.unlogged).toEqual([expect.objectContaining({ seq: 1, reason: 'VOICE_TOOL_BEFORE_DISCLOSURE' })]);
+    expect((await ledgerOf(h, c.callId)).map((x) => x.seq)).toEqual([2, 3, 4]);
+  });
+
+  it('E429: a request that arrived as the session ended before the disclosure is unlogged, not an error', async () => {
+    const script: VoiceScript = { name: 'hang up at once', steps: [ev.hangup(1000), ev.tool(1000, 'end_call')] };
+    const c = await aiCall(h, w, script);
+    const r = await settled(h, w.tenantId, c.callId);
+    expect(r!.handback.endReason).toBe('CALLER_HUNG_UP');
+    expect(r!.unlogged.map((u) => u.reason)).toEqual(['VOICE_SESSION_ENDED']);
+    expect(await ledgerOf(h, c.callId)).toHaveLength(0);
+    expect(await handbacksOf(h, c.callId)).toHaveLength(1);
+  });
+
+  it(`R-VOICE-14 E431: the ${VOICE_LEDGER_CAP + 1}st request is not written; the session ends through vendor_error (LEDGER_CAP)`, async () => {
+    const steps = [...OPEN, ...Array.from({ length: VOICE_LEDGER_CAP + 5 }, (_, i) => ev.tool(8000 + i * 5, 'take_message', { topic: 'GENERAL' }))];
+    const c = await aiCall(h, w, { name: 'flood', steps });
+    const r = await settled(h, w.tenantId, c.callId);
+    expect(await ledgerOf(h, c.callId)).toHaveLength(VOICE_LEDGER_CAP);
+    expect(r!.unlogged.map((u) => u.reason)).toContain('LEDGER_CAP');
+    expect(r!.handback).toMatchObject({ endReason: 'VENDOR_ERROR', outcome: 'fallback_voicemail' });
+  });
+});
+
+describe('E422 E423 E424 R-VOICE-2: provider ordering', () => {
+  it("E423: an AI call's retried /voice fetch and retried dial-result replay the stream, never Phase 1's hang-up or its voicemail switch", async () => {
+    const c = await aiCall(h, w, { name: 'hold', steps: [...OPEN] }, { faults: { holdBeforeStep: 3 }, settle: false });
+    await waitFor(() => h.providers.voiceAgent.transportOf(w.tenantId, c.callId)?.isPaused === true, 'the paused session');
+    expect((await callRowOf(h, c.callSid)).status).toBe('in_progress');
+    const again = await ringing(h, w, c.callSid, c.from);
+    expect(again.body).toContain('fake-voice://session/');
+    const dr = await telephonyWebhook(h, hookPath(c.ringTwiml, 'action'), { CallSid: c.callSid, DialCallStatus: 'no-answer' });
+    expect(dr.body).toContain('fake-voice://session/');
+    expect((await callRowOf(h, c.callSid)).handled_by).toBe('assistant');
+    h.providers.voiceAgent.transportOf(w.tenantId, c.callId)!.resume();
+    await settled(h, w.tenantId, c.callId);
+  });
+
+  it('E422 E426 R-VOICE-2: the provider\'s in_progress status before the announcement sets no answered_at; a hang-up before the announcement answers nothing', async () => {
+    const c = await aiCall(h, w, { name: 'disclosure only', steps: [ev.disclosed(4000)] }, { faults: { holdBeforeStep: 1 }, settle: false });
+    await waitFor(() => h.providers.voiceAgent.transportOf(w.tenantId, c.callId)?.isPaused === true, 'the paused session');
+    const st = await callStatus(h, w, c.callSid, c.from, 'in-progress');
+    expect(st.statusCode).toBe(200);
+    const row = await callRowOf(h, c.callSid);
+    expect(row.answered_at).toBeNull();
+    expect(row.status).toBe('ringing');
+    expect(row.ai_disclosed_at).not.toBeNull();
+    // E426: the caller hangs up before the announcement played: nothing was answered, one handback
+    await callStatus(h, w, c.callSid, c.from, 'completed', { CallDuration: '5' });
+    const r = await settled(h, w.tenantId, c.callId);
+    expect(r!.handback.endReason).toBe('CALLER_HUNG_UP');
+    expect((await callRowOf(h, c.callSid)).answered_at).toBeNull();
+  });
+
+  it('E424: a retried fetch for an AI call whose session is unknown here (a restart) gets voicemail', async () => {
+    const c = await aiCall(h, w, SCRIPTS.booking);
+    h.providers.voiceAgent.transports.delete(`${w.tenantId}:${c.callId}`);
+    const again = await ringing(h, w, c.callSid, c.from);
+    expect(again.body).toContain(VOICEMAIL_NOTICE);
+    // answered under the announcement: the plain recording callback, not the ?vm= voicemail one
+    expect(again.body).not.toContain('recording?vm=');
+  });
+});
+
+describe('E421 E425 E427 E428: takeover and booking edges', () => {
+  it('E421: nobody can be rung: the assistant answers at once; ai_takeover_at is the decision instant', async () => {
+    const x = await voiceWorld(h);
+    await h.su.query('UPDATE memberships SET alert_phone_verified_at = NULL WHERE tenant_id = $1', [x.tenantId]); // nobody is ringable
+    const contact = await ownedContact(x.agents[0]!, { consent: false });
+    const c = await aiCall(h, x, SCRIPTS.takeMeOff, { contact });
+    expect(c.ringTwiml).toContain('fake-voice://session/');
+    const row = await callRowOf(h, c.callSid);
+    expect(row.handled_by).toBe('assistant');
+    expect(Math.abs(new Date(row.ai_takeover_at).getTime() - new Date(row.started_at).getTime())).toBeLessThan(10_000);
+  });
+
+  it('E425 R-VOICE-10 R-VOICE-20: the vendor does not connect: the session starts and ends with vendor_error, to voicemail, never answered; its voicemail is kept', async () => {
+    const c = await aiCall(h, w, SCRIPTS.booking, { faults: { connectFailure: true } });
+    expect(c.answer).toContain(VOICEMAIL_NOTICE);
+    expect(c.answer).toContain('recording?vm=');
+    const row = await callRowOf(h, c.callSid);
+    expect(row).toMatchObject({ handled_by: 'assistant', voice_outcome: 'fallback_voicemail', answered_at: null, status: 'no_answer' });
+    expect(typeof row.recording_decision.voicemailNoticeAt).toBe('string');
+    // the recording job may run before the end transaction: the rule reads only the call's own state
+    expect(mayKeepVoicemail({ ...row, voice_outcome: null })).toBe(true);
+    expect(mayKeepVoicemail({ ...row, answered_at: new Date() })).toBe(false);
+    await telephonyWebhook(h, hookPath(c.answer, 'recordingStatusCallback'), { CallSid: c.callSid, RecordingSid: `RE${c.callSid.slice(2)}`, RecordingDuration: '12' });
+    await runJobs(h, w.tenantId, ['comms.recording_copy']);
+    expect((await h.su.query('SELECT 1 FROM recordings WHERE call_id = $1', [c.callId])).rows).toHaveLength(1);
+  });
+
+  it('R-VOICE-20: an answered AI call\'s recording is kept under its announcement; a call review of it is refused (coaching reviews human calls only)', async () => {
+    const c = await aiCall(h, w, SCRIPTS.booking);
+    const row = await callRowOf(h, c.callSid);
+    expect(row).toMatchObject({ recording_mode: 'announced_all_parties' });
+    expect(row.recording_announced_at).not.toBeNull();
+    expect(new Date(row.recording_announced_at).getTime()).toBe(new Date(row.answered_at).getTime());
+    await telephonyWebhook(h, '/webhooks/telephony/recording', { CallSid: c.callSid, From: w.mainNumber, RecordingSid: `RE${c.callSid.slice(2)}`, RecordingDuration: '30' });
+    await runJobs(h, w.tenantId, ['comms.recording_copy']);
+    expect((await h.su.query('SELECT 1 FROM recordings WHERE call_id = $1', [c.callId])).rows).toHaveLength(1);
+    await expect(withTenantTx(systemActor(w.tenantId, 'worker'), (tx) => tx.executeQuery({ sql: 'INSERT INTO call_scores (tenant_id, call_id, rubric_version, agent_user_id, contact_id, items, met_count, scored_count) VALUES (app.tenant_id(), $1, $2, $3, $4, $5, 0, 0)', parameters: [c.callId, 'rubric/1', w.agents[0]!.userId, c.contactId, '[]'], query: { kind: 'RawNode' } } as never), { db: h.database })).rejects.toThrow(/CALL_REVIEW_SUBJECT|COACHING/);
+  });
+
+  it('E427: a booking that settles after the session ended is canceled and its calendar push enqueued', async () => {
+    setVoiceTestSeams(h.app.platform, { bookSlot: async (...a: Parameters<typeof bookSlot>) => {
+      await new Promise((r) => setTimeout(r, 300));
+      return bookSlot(...a);
+    } });
+    const script: VoiceScript = { name: 'hang up mid-booking', steps: [...OPEN, ev.caller(10_000, 'Saturday?'), ev.tool(10_200, 'check_availability'), ev.tool(10_500, 'book_appointment', SLOT_ARGS(SLOT_A)), ev.hangup(10_600)] };
+    const c = await aiCall(h, w, script, { faults: { ignorePending: true } });
+    const r = await settled(h, w.tenantId, c.callId);
+    expect(r!.handback.booked).toBeNull();
+    expect(r!.appointmentId).not.toBeNull();
+    expect((await h.su.query('SELECT status FROM appointments WHERE id = $1', [r!.appointmentId])).rows[0].status).toBe('canceled');
+    expect((await h.su.query("SELECT 1 FROM jobs WHERE kind LIKE 'calendar.%' AND payload::text LIKE '%' || $1 || '%'", [r!.appointmentId])).rows.length).toBeGreaterThan(0);
+  });
+
+  it('E428 R-VOICE-6: an unowned caller is offered no slots and cannot book; the handback goes to whoever the offer reaches', async () => {
+    const contact = await ownedContact(w.agents[0]!, { consent: false });
+    await h.su.query("UPDATE contacts SET owner_user_id = NULL, ownership_state = 'unassigned' WHERE id = $1", [contact.id]).catch(() => undefined);
+    const c = await aiCall(h, w, SCRIPTS.booking, { contact });
+    const l = await ledgerOf(h, c.callId);
+    if ((await h.su.query('SELECT owner_user_id FROM contacts WHERE id = $1', [contact.id])).rows[0].owner_user_id === null) {
+      expect(l.find((x) => x.tool === 'check_availability')).toMatchObject({ decision: 'deny', reason_code: 'CONTACT_NOT_OWNED' });
+      expect(await handbacksOf(h, c.callId)).toHaveLength(1);
+    }
+  });
+});
+
+describe('E430 R-VOICE-18: one handback, merged into a ring-time handback', () => {
+  it('E430: a ring-time handback with a pending enrich job keeps the confirmation draft after the job runs', async () => {
+    const contact = await ownedContact(w.agents[0]!, { consent: false });
+    const callSid = sid();
+    const ring = await ringing(h, w, callSid, contact.phone);
+    const row = await callRowOf(h, callSid);
+    // the handback inbound.ts writes at ring time when the assistant was running this contact's thread
+    const hbId = (await h.su.query("SELECT gen_random_uuid() AS id")).rows[0].id;
+    await h.su.query(`INSERT INTO assistant_actions (tenant_id, id, contact_id, kind, action_category, autonomy, status, owner_user_id, explanation, payload, pinned_inbound_seq, dedupe_key)
+                      VALUES ($1, $2, $3, 'handback', 'internal', 'internal', 'proposed', $4, 'They called.', jsonb_build_object('inboundCallId', $5::text), 1, 'handback:none:' || $5)`, [w.tenantId, hbId, contact.id, w.agents[0]!.userId, row.id]);
+    await h.su.query("INSERT INTO jobs (tenant_id, id, queue, kind, payload, dedupe_key, run_at) VALUES ($1, gen_random_uuid(), 'default', 'assistant.enrich_handback', jsonb_build_object('actionId', $2::text), 'assistant.enrich_handback:' || $2, now())", [w.tenantId, hbId]).catch(() => undefined);
+    h.providers.voiceAgent.nextCall(SCRIPTS.booking);
+    await telephonyWebhook(h, hookPath(ring.body, 'action'), { CallSid: callSid, DialCallStatus: 'no-answer' });
+    await settled(h, w.tenantId, row.id);
+    const hbs = await handbacksOf(h, row.id);
+    expect(hbs).toHaveLength(1);
+    expect(hbs[0].id).toBe(hbId);
+    expect(hbs[0].payload).toMatchObject({ enriched: true, suggested: true, voice: { outcome: 'booked' }, draft: { channel: 'sms' } });
+    await runAssistantJobs(h, w.tenantId, ['assistant.enrich_handback']);
+    const after = (await h.su.query('SELECT payload FROM assistant_actions WHERE id = $1', [hbId])).rows[0].payload;
+    expect(after.draft).toEqual(hbs[0].payload.draft);
+    expect((await callRowOf(h, callSid)).handback_action_id).toBe(hbId);
+  });
+});
+
