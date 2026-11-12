@@ -40,6 +40,7 @@ import { verifyMailgunSignature } from './email/mailgun.js';
 import { snsVerifier } from './email/ses.js';
 import { tagGuard } from '../rbac.js';
 import { verifyLeadSourceRequest } from '../leads/webhookAuth.js';
+import { verifyGoogleLeadKey } from '../leadForms/auth.js';
 import { systemActor } from '../worker/systemActor.js';
 
 export type WebhookProvider = 'telephony' | 'email' | 'lead';
@@ -54,6 +55,8 @@ declare module 'fastify' {
     rawBody?: string;
     /** TELEPHONY_PROVIDER=twilio: the tenant whose subaccount signed this request (null: the master account) */
     webhookTenantId?: string | null;
+    /** webhookAuth 'google_lead_key': the hook the body's google_key resolved to (leadForms/auth.ts) */
+    googleLeadHook?: { tenantId: string; hookId: string; leadSourceId: string };
   }
 }
 
@@ -172,6 +175,8 @@ export async function verifyRequest(provider: WebhookProvider, req: FastifyReque
   if (provider === 'telephony' && p.config.providers.telephony === 'twilio') return verifyTwilioAccount(req);
   // module 22: a lead source's own signing secret (R-LSRC-3); without one, the deployment secret below
   if (provider === 'lead' && auth === 'lead_source') return verifyLeadSourceRequest(req);
+  // module 22: a Google Ads lead form's key in the body (R-GADS-1); a lookup that throws is WEBHOOK_UNAVAILABLE
+  if (provider === 'lead' && auth === 'google_lead_key') return verifyGoogleLeadKey(req);
   return verifyWebhook(provider, req);
 }
 

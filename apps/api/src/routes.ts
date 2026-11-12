@@ -32,6 +32,7 @@ import { leadEmailRoutes } from './leadEmail/routes.js';
 import { mlsRoutes } from './mls/routes.js';
 import { channelRoutes } from './channels/routes.js';
 import { leadSourcesRoutes } from './leads/sources.js';
+import { leadFormsRoutes } from './leadForms/routes.js';
 
 export interface RouteModule {
   name: string;
@@ -62,5 +63,6 @@ export const routeModules: RouteModule[] = [
   mlsRoutes,
   channelRoutes,
   leadSourcesRoutes,
+  leadFormsRoutes,
   // registry: add new entries above this line
 ];

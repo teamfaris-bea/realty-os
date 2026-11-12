@@ -13,7 +13,12 @@ export const LEAD_EMAIL_ERROR_MESSAGES: Record<string, string> = {
 
 export const LEAD_EMAIL_MESSAGES: Record<string, string> = { ...ADMIN_MESSAGES, ...LEAD_EMAIL_ERROR_MESSAGES };
 
+/** 422 LEAD_EMAIL_DOMAIN_INVALID with details.reason 'consumer_mailbox' (R-LEM-11): a personal mailbox domain. */
+export const CONSUMER_MAILBOX_SENTENCE =
+  "A personal mailbox domain like gmail.com or outlook.com can't be an allowed sender: anyone can send from it. Enter the portal's own domain. Leads forwarded by hand wait in Needs review.";
+
 /** The sentence for a failure (never the code). */
 export function sentenceFor(e: { code: string; details?: Record<string, unknown> | null } | string): string {
+  if (typeof e !== 'string' && e.code === 'LEAD_EMAIL_DOMAIN_INVALID' && e.details?.reason === 'consumer_mailbox') return CONSUMER_MAILBOX_SENTENCE;
   return messageFor(e, LEAD_EMAIL_MESSAGES);
 }
