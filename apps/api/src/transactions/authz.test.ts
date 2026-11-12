@@ -66,6 +66,25 @@ describe('R-PERM-5 role × route against can()', () => {
     }
   });
 
+  it('b8 deals ui/F4: canConfirm on GET /deals/:id/milestones and on each board deal is can(milestone.confirm): an ISA member false, the deal agent, its TC and the Owner true', async () => {
+    const d = await deal(h, w, w.agents[0]!); // the TC is a member
+    expect((await call(w.owner, 'POST', `/deals/${d.dealId}/members`, { userId: w.isa.userId, role: 'isa' })).status).toBe(200);
+    await enterDate(w.agents[0]!, d.dealId, 'closing', localDay(w.zone, 5));
+    for (const [name, client, expected] of [
+      ['isa (member)', w.isa, false],
+      ['agent (own deal)', w.agents[0]!, true],
+      ['tc (member)', w.tc, true],
+      ['owner', w.owner, true],
+    ] as const) {
+      const allowed = can(client.actor(), 'milestone.confirm', { tenantId: client.actor().tenantId, ...(name === 'isa (member)' || name === 'tc (member)' ? { deal: true } : name === 'agent (own deal)' ? { own: true } : {}) }).ok;
+      expect([name, allowed]).toEqual([name, expected]);
+      const m = await call<{ canConfirm?: boolean }>(client, 'GET', `/deals/${d.dealId}/milestones`);
+      expect([name, m.status, m.body.canConfirm]).toEqual([name, 200, expected]);
+      const b = await call<{ deals: { id: string; canConfirm?: boolean }[] }>(client, 'GET', '/transactions/board');
+      expect([name, b.body.deals.find((x) => x.id === d.dealId)?.canConfirm]).toEqual([name, expected]);
+    }
+  });
+
   it('milestone_template.manage: Owner/Admin only; everyone else 404', async () => {
     for (const c of [w.owner, w.admin, w.teamLead!, w.agents[0]!, w.isa, w.tc]) {
       const allowed = can(c.actor(), 'milestone_template.manage', {}).ok;

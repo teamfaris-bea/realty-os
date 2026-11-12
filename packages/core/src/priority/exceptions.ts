@@ -326,7 +326,8 @@ export function missingOutcome(a: ApptFacts, now: Instant, s: Required<Exception
   };
 }
 
-const DATE_NAME: Record<DealDateFacts['kind'], string> = {
+/** How a milestone item names its date when the date has no label (its evidence lines and, b8 deals ui/F7, the queue card). */
+export const MILESTONE_DATE_NAME: Readonly<Record<DealDateFacts['kind'], string>> = {
   acceptance: 'Acceptance date',
   inspection: 'Inspection deadline',
   appraisal: 'Appraisal date',
@@ -351,7 +352,7 @@ export function milestoneAtRisk(d: MilestoneDateFacts, now: Instant): DerivedExc
   const key = milestoneKey(d.dealDateId, d.dueVersion);
   if (d.status !== 'confirmed' || d.dueAt === null) return { kind: 'clear', key };
   const due = d.dueAt;
-  const name = DATE_NAME[d.kind ?? 'custom'];
+  const name = MILESTONE_DATE_NAME[d.kind ?? 'custom'];
   const unassignedFrom = instant(due - MILESTONE_UNASSIGNED_WINDOW_MS);
   const nobody = d.responsible === null;
 

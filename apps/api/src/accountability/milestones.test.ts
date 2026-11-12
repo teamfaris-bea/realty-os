@@ -59,6 +59,19 @@ describe('R-ACC-6 milestone_at_risk', () => {
     expect(counts.byType.milestone_at_risk).toBeGreaterThanOrEqual(1);
   });
 
+  it('b8 deals ui/F7: a milestone_at_risk item carries its deal (id and name) and the date (label and due date), as a contact item carries its contact', async () => {
+    const { dealId, dateId } = await dealDate({ dueInMs: -3 * HOUR });
+    await h.su.query(`UPDATE deals SET name = 'Test Lane purchase' WHERE id = $1`, [dealId]);
+    const due = (await h.su.query<{ due_on: string }>(`SELECT due_on::text AS due_on FROM deal_dates WHERE id = $1`, [dateId])).rows[0]!.due_on;
+    await recompute(h, w.tenantId);
+    const item = (await queue(w.teamLead!, '?type=milestone_at_risk')).items.find((i) => i.dedupeKey === key(dateId))!;
+    expect(item.deal).toEqual({ id: dealId, name: 'Test Lane purchase', dateLabel: 'Inspection deadline', dueOn: due });
+    const one = await call<{ item: { deal: unknown } }>(w.teamLead!, 'GET', `/team/exceptions/${encodeURIComponent(key(dateId))}`);
+    expect(one.body.item.deal).toEqual(item.deal);
+    // a contact item has no deal
+    expect((await queue(w.teamLead!)).items.filter((i) => i.itemType !== 'milestone_at_risk').every((i) => i.deal === null)).toBe(true);
+  });
+
   it('E157 / R-ACC-6: a confirmed appraisal date 36 h away with no responsible party is milestone_at_risk (unassigned); with a responsible party it is not', async () => {
     const open = await dealDate({ kind: 'appraisal', dueInMs: 36 * HOUR, responsible: null });
     const covered = await dealDate({ kind: 'appraisal', dueInMs: 36 * HOUR, responsible: 'lender' });

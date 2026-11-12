@@ -43,9 +43,10 @@ function milestones(over: Partial<DealMilestones> = {}): DealMilestones {
     acceptanceDate: null,
     templates: [],
     calendar: { note: 'Business days: Monday to Friday; holidays are not counted. Not reviewed by counsel.', reviewed: false },
-    updates: { approved: false, roles: [] },
+    updates: { approved: false, roles: [], teamRoles: [], side: 'buy' },
     dates: [],
     riskItems: [],
+    canConfirm: true,
     ...over,
   };
 }

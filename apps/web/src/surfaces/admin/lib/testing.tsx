@@ -42,6 +42,7 @@ export function exceptionItem(over: Partial<ExceptionItem> = {}): ExceptionItem 
     subjectType: 'contact',
     subjectId: ID.pat,
     contact: { id: ID.pat, name: 'Pat Lead' },
+    deal: null,
     owner: { userId: ID.ava, name: 'Ava Agent' },
     detectedAt: new Date(Date.now() - 3 * 3_600_000).toISOString(),
     dueAt: new Date(Date.now() - 3 * 3_600_000).toISOString(),

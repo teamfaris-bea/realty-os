@@ -11,6 +11,8 @@ import { type DealMilestones, type MilestoneDate, reviewWarnings, statusLabel, u
 
 const D1 = '01900000-0000-7000-8000-0000000dd101';
 const D2 = '01900000-0000-7000-8000-0000000dd102';
+/** b8 deals ui/F4: who core authz grants milestone.confirm (owner/admin ALL, team_lead T, agent own/deal, tc deal; no isa) */
+const CONFIRM_WHO = "Only the deal's agent or TC, their Team Lead, or an Owner/Admin can confirm dates.";
 
 function deal(): DealDetailView {
   return {
@@ -36,14 +38,15 @@ function milestones(over: Partial<DealMilestones> = {}): DealMilestones {
     acceptanceDate: '2027-03-01',
     templates: [{ id: 't', version: 1, name: 'Purchase', side: 'buy', jurisdiction: 'US', reviewed: false }],
     calendar: { note: 'Business days: Monday to Friday; holidays are not counted. Not reviewed by counsel.', reviewed: false },
-    updates: { approved: true, roles: ['buyer', 'seller'] },
+    updates: { approved: true, roles: ['buyer', 'seller'], teamRoles: ['buyer', 'seller'], side: 'dual' },
     dates: [date()],
     riskItems: [],
+    canConfirm: true,
     ...over,
   };
 }
 
-function app(m: DealMilestones, role: 'agent' | 'tc' | 'team_lead' = 'tc') {
+function app(m: DealMilestones, role: 'agent' | 'tc' | 'team_lead' | 'isa' = 'tc') {
   const fake = new FakeFetch()
     .on(`GET /deals/${IDS.deal}`, { status: 200, body: { deal: deal() } })
     .on(`GET /deals/${IDS.deal}/financials`, err(404, 'NOT_FOUND'))
@@ -108,20 +111,56 @@ describe('milestone timeline', () => {
     expect(screen.getByText('Inspection deadline has passed and is not marked done')).toBeInTheDocument();
   });
 
+  it('b8 deals ui/F4: an ISA deal member (canConfirm false) sees the dates but no plan form, no Confirm and no Done, and one line saying who can confirm', async () => {
+    const fake = app(milestones({ canConfirm: false, dates: [date(), date({ id: D2, status: 'confirmed', label: 'Closing', kind: 'closing', dueOn: '2027-03-30' })] }), 'isa');
+    expect(await screen.findByRole('listitem', { name: /Inspection · Mar 6, 2027/ })).toBeInTheDocument();
+    expect(screen.getByRole('listitem', { name: /Closing · Mar 30, 2027/ })).toBeInTheDocument();
+    expect(screen.getByText(CONFIRM_WHO)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Acceptance date')).toBeNull();
+    expect(screen.queryByRole('form', { name: 'Propose dates from a template' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Propose dates|Update proposed dates/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Confirm / })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Mark .* done$/ })).toBeNull();
+    expect(fake.callsTo(`POST /deal-dates/${D1}/confirm`)).toHaveLength(0);
+  });
+
+  it('b8 deals ui/F4: with canConfirm true the plan form, Confirm and Done show and the who-can-confirm line does not', async () => {
+    app(milestones({ dates: [date(), date({ id: D2, status: 'confirmed', label: 'Closing', kind: 'closing', dueOn: '2027-03-30' })] }), 'agent');
+    expect(await screen.findByRole('button', { name: 'Confirm Inspection on Mar 6, 2027' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Mark Closing done' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Acceptance date')).toBeInTheDocument();
+    expect(screen.queryByText(CONFIRM_WHO)).toBeNull();
+  });
+
   it('pure helpers: status chips, the updates line, review warnings', () => {
     expect(statusLabel({ status: 'confirmed', completedAt: iso(-1) })).toBe('Done');
     expect(statusLabel({ status: 'proposed', completedAt: null })).toBe('Proposed');
-    expect(updatesLine({ approved: false, roles: [] })).toMatch(/not approved, so no update is sent/);
-    expect(updatesLine({ approved: true, roles: ['buyer', 'co_buyer'] })).toBe("Client updates go to the buyer, co-buyer when a confirmed date's reminder comes due.");
+    expect(updatesLine({ approved: false, roles: [], teamRoles: [], side: 'buy' })).toMatch(/not approved, so no update is sent/);
+    expect(updatesLine({ approved: true, roles: ['buyer', 'co_buyer'], teamRoles: ['buyer', 'co_buyer'], side: 'buy' })).toBe(
+      "Client updates go to the buyer, co-buyer when a confirmed date's reminder comes due. The seller side is not this team's client on a buy deal, so they get none.",
+    );
     expect(reviewWarnings(milestones(), 't')).toHaveLength(2);
     expect(reviewWarnings(milestones({ templates: [{ id: 't', version: 1, name: 'P', side: 'buy', jurisdiction: 'US', reviewed: true }] }), 't')).toEqual(['Business days: Monday to Friday; holidays are not counted. Not reviewed by counsel.']);
   });
 });
 
 describe('TC board', () => {
+  it('b8 deals ui/F4: an ISA deal member sees the board deal (canConfirm false) with no Confirm button and the who-can-confirm line', async () => {
+    const fake = new FakeFetch()
+      .on('GET /transactions/board', { status: 200, body: { upcomingDays: 14, deals: [{ id: IDS.deal, name: 'Jane Doe · buy', side: 'buy', stage: 'under_contract', ownerUserId: IDS.me, proposed: 1, atRisk: 0, canConfirm: false, dates: [
+        { id: D1, kind: 'inspection', label: 'Inspection', status: 'proposed', dueOn: '2027-03-06', dueAt: null, responsible: 'buyer', rule: '5 days after acceptance (2027-03-01)', nonBusinessDayNote: null, risk: null },
+      ] }] } });
+    agentApp(fake, '/transactions', 'isa');
+    const link = await screen.findByRole('link', { name: 'Jane Doe · buy' });
+    const card = link.closest('li')!;
+    expect(within(card).getByText('Inspection')).toBeInTheDocument();
+    expect(within(card).getByText(CONFIRM_WHO)).toBeInTheDocument();
+    expect(within(card).queryByRole('button', { name: /^Confirm / })).toBeNull();
+  });
+
   it('lists open deals with their dates; a proposed date is confirmed from the board in 1 tap', async () => {
     const fake = new FakeFetch()
-      .on('GET /transactions/board', { status: 200, body: { upcomingDays: 14, deals: [{ id: IDS.deal, name: 'Jane Doe · buy', side: 'buy', stage: 'under_contract', ownerUserId: IDS.me, proposed: 1, atRisk: 1, dates: [
+      .on('GET /transactions/board', { status: 200, body: { upcomingDays: 14, deals: [{ id: IDS.deal, name: 'Jane Doe · buy', side: 'buy', stage: 'under_contract', ownerUserId: IDS.me, proposed: 1, atRisk: 1, canConfirm: true, dates: [
         { id: D1, kind: 'inspection', label: 'Inspection', status: 'proposed', dueOn: '2027-03-06', dueAt: null, responsible: 'buyer', rule: '5 days after acceptance (2027-03-01)', nonBusinessDayNote: null, risk: null },
         { id: D2, kind: 'closing', label: 'Closing', status: 'confirmed', dueOn: '2027-03-01', dueAt: iso(-1), responsible: null, rule: null, nonBusinessDayNote: null, risk: { state: 'overdue', text: 'Overdue, nobody responsible', evidence: '…' } },
       ] }] } })
@@ -133,5 +172,16 @@ describe('TC board', () => {
     expect(screen.getByText('Overdue, nobody responsible')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Confirm Inspection on Mar 6, 2027' }));
     await waitFor(() => expect(fake.callsTo(`POST /deal-dates/${D1}/confirm`)).toHaveLength(1));
+  });
+});
+
+describe('b8 deals ui/F1-K1 R-TXN-4: the updates line names only the team\'s side and says why the other side gets none', () => {
+  it('sell, dual and lease', () => {
+    expect(updatesLine({ approved: true, roles: ['buyer', 'seller', 'co_buyer', 'co_seller'], teamRoles: ['seller', 'co_seller'], side: 'sell' })).toBe(
+      "Client updates go to the seller, co-seller when a confirmed date's reminder comes due. The buyer side is not this team's client on a sell deal, so they get none.",
+    );
+    expect(updatesLine({ approved: true, roles: ['buyer', 'seller'], teamRoles: ['buyer', 'seller'], side: 'dual' })).toMatch(/represents both sides/);
+    expect(updatesLine({ approved: true, roles: ['buyer', 'seller'], teamRoles: [], side: 'lease' })).toBe('No automatic client updates on lease deals: nobody on this deal is sent milestone updates.');
+    expect(updatesLine({ approved: true, roles: ['lender'], teamRoles: ['lender'], side: 'buy' })).toMatch(/^Updates go to the lender .* The team's clients on this deal get none/);
   });
 });

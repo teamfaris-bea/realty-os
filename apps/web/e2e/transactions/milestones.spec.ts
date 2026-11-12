@@ -143,6 +143,10 @@ test('module 31 + 18a: an overdue confirmed milestone appears in the Team Lead q
   await tap(page, page.getByRole('radio', { name: /^Dates at risk/ }));
   await expect(page.getByText('Milestone at risk').first()).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText('Inspection deadline has passed and is not marked done').first()).toBeVisible();
+  // b8 deals ui/F7: the card's heading names the deal (linked to it) and the date (the template labels it "Inspection")
+  const heading = page.getByRole('heading', { level: 2 }).filter({ hasText: `Milestone at risk · ${deal.name} · Inspection, ` });
+  await expect(heading).toHaveCount(1);
+  await expect(heading.getByRole('link', { name: deal.name })).toHaveAttribute('href', `/deals/${deal.dealId}`);
   await shot(page, info, 'm31', '4-tl-queue');
   // the item's deal evidence opens the deal (evidenceRoutes.deal)
   await tap(page, page.getByRole('link', { name: 'The deal this date belongs to' }).first());

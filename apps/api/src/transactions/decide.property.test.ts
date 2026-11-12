@@ -55,7 +55,7 @@ function simulate(ops: readonly Op[], now: Instant) {
     } else if (o.kind === 'waive') {
       d = { ...d, status: 'waived', reminderAt: null };
     } else {
-      const dec = reminderFact(d, recipients, instant(now + 365 * 86_400_000));
+      const dec = reminderFact(d, recipients, instant(now + 365 * 86_400_000), 'dual');
       if (dec.fire) {
         expect(drivesUpdates(d)).toBe(true);
         for (const f of detectFirings(dec.fact, dec.rels.map((c) => ({ contactId: c.contactId, ownerUserId: c.ownerUserId, relation: c.relation, playbook: TEAM })))) {
@@ -76,7 +76,7 @@ describe('module 31 decisions (property)', () => {
     fc.assert(
       fc.property(fc.constantFrom<'proposed' | 'confirmed' | 'waived'>('proposed', 'confirmed', 'waived'), fc.boolean(), fc.boolean(), fc.option(fc.integer({ min: -5, max: 5 }), { nil: null }), (status, completed, hasDue, rem) => {
         const d = { id: 'dd' as DealDate['id'], dealId: 'd', kind: 'closing' as const, label: null, dueOn: day(10), source: 'manual' as const, status, dueVersion: 1, dueAt: hasDue ? instant(T0 + 10 * 86_400_000) : null, reminderAt: rem === null ? null : instant(T0 + rem * 3_600_000), completedAt: completed ? instant(T0) : null, responsible: null, basis: {} };
-        const dec = reminderFact(d, recipients, instant(T0));
+        const dec = reminderFact(d, recipients, instant(T0), 'dual');
         if (dec.fire) expect(drivesUpdates(d)).toBe(true);
         if (!drivesUpdates(d)) expect(dec.fire).toBe(false);
       }),
@@ -121,5 +121,24 @@ describe('finding 1 and 4: deal_date_upcoming step validation', () => {
     expect(validatePlaybookContent(withStep({ ...step, roles: ['buyer', 'buyer'] }), { kind: 'trigger' })).toEqual([expect.objectContaining({ code: 'SCHEMA', detail: 'roles duplicate' })]);
     const anniversary = { trigger: 'home_anniversary', stepKey: 'a', channel: 'email', offsetSeconds: 0, purpose: 'marketing', category: 'nurture_step', intent: 'home_anniversary', subject: 's', template: 'Hi {{first_name}}', slots: ['first_name'], maxLength: 2000, roles: ['buyer'] };
     expect(validatePlaybookContent({ kind: 'triggers', digestWindowMinutes: 0, triggers: [anniversary] }, { kind: 'trigger' })).toEqual([expect.objectContaining({ code: 'SCHEMA', detail: 'roles' })]);
+  });
+});
+
+describe('b8 deals sends/F1 K1 R-TXN-4 (property): a reminder never reaches the other side of the deal', () => {
+  it('K1: for any side and roles, every candidate keeps only roles the team represents on that side (none of a lease deal\'s client roles)', () => {
+    const ROLES = ['buyer', 'seller', 'co_buyer', 'co_seller', 'other', 'lender', 'title', 'attorney'] as const;
+    const TEAM = { buy: ['buyer', 'co_buyer'], sell: ['seller', 'co_seller'], dual: ['buyer', 'seller', 'co_buyer', 'co_seller'], lease: [] } as Record<string, string[]>;
+    fc.assert(
+      fc.property(fc.constantFrom('buy', 'sell', 'dual', 'lease' as const), fc.array(fc.subarray([...ROLES], { minLength: 1 }), { minLength: 1, maxLength: 4 }), (side, roleSets) => {
+        const rs: Recipient[] = roleSets.map((roles, i) => ({ contactId: `c-${i}`, ownerUserId: 'u-1', live: true, roles }));
+        const d = { id: 'dd' as DealDate['id'], dealId: 'd', kind: 'closing' as const, label: null, dueOn: day(10), source: 'manual' as const, status: 'confirmed' as const, dueVersion: 1, dueAt: instant(T0 + 10 * 86_400_000), reminderAt: instant(T0 - 1), completedAt: null, responsible: null, basis: {} };
+        const dec = reminderFact(d, rs, instant(T0), side);
+        if (!dec.fire) return;
+        for (const r of dec.rels) {
+          expect(r.dealRoles.length).toBeGreaterThan(0);
+          for (const role of r.dealRoles) expect(['buyer', 'seller', 'co_buyer', 'co_seller'].includes(role) ? TEAM[side]!.includes(role) : true).toBe(true);
+        }
+      }),
+    );
   });
 });

@@ -401,11 +401,59 @@ export interface AvmCandidate {
   month: string;
 }
 
+// ---- K2 (b8 deals sends/F2, db-public/F4, ownership-data/F2-K2, ui/F2-K2; R-AVM-3) ------------------------------
+// Who gets a home value, and for which house:
+//   * only the team's buy-side clients: buyer or co_buyer on a deal of side buy or dual that closed before this UTC
+//     month. Never through deals.primary_contact_id alone, never a lease deal, never the other side's client;
+//   * the house is the purchased property: the deal's listing address when it is known and matches one of the
+//     contact's current addresses (that address row, of any kind); otherwise the contact's current kind 'home';
+//   * never an address that matches a property the person sold through the team (seller or co_seller on a closed
+//     sell or dual deal), whenever that sale closed.
+// Addresses compare on a normalized key (line 1, city, region, first five of the postal code; case and spacing
+// ignored). The same predicate is the TX1 candidate filter, the TX2 re-check and the send-time re-check (execute.ts).
+
+/** The normalized comparison key of an address (`line1`, `city`, `region`, `postal` are SQL column references). */
+const addrKey = (t: string, line1: string, postal: string) =>
+  `(lower(regexp_replace(btrim(COALESCE(${t}.${line1}, '')), '\\s+', ' ', 'g')) || '|' || lower(btrim(COALESCE(${t}.city, ''))) || '|' ||
+    lower(btrim(COALESCE(${t}.region, ''))) || '|' || left(regexp_replace(COALESCE(${t}.${postal}, ''), '\\s', '', 'g'), 5))`;
+const AKEY = (t: string) => addrKey(t, 'line1', 'postal_code');
+const LKEY = (t: string) => addrKey(t, 'address_line1', 'postal_code');
+const MONTH_START = `(date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')`;
+
+/** K2: the address row `a` of contact `c` is a home this team's buy-side client bought (aliases are SQL names). */
+const avmQualifies = (c: string, a: string) =>
+  sql.raw(`(
+    NOT EXISTS (SELECT 1 FROM deals sd
+                  JOIN deal_contacts sdc ON sdc.tenant_id = sd.tenant_id AND sdc.deal_id = sd.id AND sdc.contact_id = ${c}.id AND sdc.role IN ('seller','co_seller')
+                  JOIN listings sl ON sl.tenant_id = sd.tenant_id AND sl.id = sd.listing_id
+                 WHERE sd.tenant_id = ${c}.tenant_id AND sd.stage = 'closed' AND sd.side IN ('sell','dual') AND ${LKEY('sl')} = ${AKEY(a)})
+    AND EXISTS (SELECT 1 FROM deals bd
+                  JOIN deal_contacts bdc ON bdc.tenant_id = bd.tenant_id AND bdc.deal_id = bd.id AND bdc.contact_id = ${c}.id AND bdc.role IN ('buyer','co_buyer')
+                  LEFT JOIN listings bl ON bl.tenant_id = bd.tenant_id AND bl.id = bd.listing_id
+                 WHERE bd.tenant_id = ${c}.tenant_id AND bd.stage = 'closed' AND bd.closed_at IS NOT NULL AND bd.closed_at < ${MONTH_START}
+                   AND bd.side IN ('buy','dual')
+                   AND CASE WHEN bl.id IS NOT NULL AND EXISTS (SELECT 1 FROM contact_addresses ma WHERE ma.tenant_id = ${c}.tenant_id AND ma.contact_id = ${c}.id
+                                                                 AND ${AKEY('ma')} = ${LKEY('bl')})
+                            THEN ${AKEY(a)} = ${LKEY('bl')}
+                            ELSE ${a}.kind = 'home' END))`);
+
 /**
- * avm.refresh TX1 (R-AVM-3): complete kind 'home' addresses of live, owned contacts who are a party of a deal that
- * closed before the current UTC month (closedDealsOn's party set: primary contact, buyer, seller, co_buyer,
- * co_seller), with no ok or unavailable valuation and no avm:{address}:{yyyy-mm} firing yet this UTC month. One page
- * in address id order; the caller applies the playbook and send-time preview checks.
+ * K2, ownership-data/F4: an ok or unavailable answer, or an avm firing, already exists this UTC month for the same
+ * house of the same person (every record of the person, app.contact_person_ids, on the normalized address key), so a
+ * merge of duplicates holding one address never values or notes it twice in a month.
+ */
+const avmAlreadyThisMonth = (c: string, a: string, month: string) =>
+  sql.raw(`(
+    EXISTS (SELECT 1 FROM home_valuations v JOIN contact_addresses va ON va.tenant_id = v.tenant_id AND va.id = v.contact_address_id
+             WHERE v.tenant_id = ${a}.tenant_id AND v.contact_id = ANY (app.contact_person_ids(${a}.tenant_id, ${c}.id)) AND v.status IN ('ok','unavailable')
+               AND to_char(v.valued_at AT TIME ZONE 'UTC', 'YYYY-MM') = ${month} AND ${AKEY('va')} = ${AKEY(a)})
+    OR EXISTS (SELECT 1 FROM contact_addresses ra JOIN playbook_step_runs r ON r.tenant_id = ra.tenant_id AND r.trigger_key = 'avm:' || ra.id::text || ':' || ${month}
+                WHERE ra.tenant_id = ${a}.tenant_id AND ra.contact_id = ANY (app.contact_person_ids(${a}.tenant_id, ${c}.id)) AND ${AKEY('ra')} = ${AKEY(a)}))`);
+
+/**
+ * avm.refresh TX1 (R-AVM-3, K2): complete addresses that qualify (avmQualifies) of live, owned contacts, with nothing
+ * recorded or fired for the same house of the same person this UTC month. One page in address id order; the caller
+ * applies the playbook and send-time preview checks.
  */
 export async function avmCandidates(tx: Tx, afterAddressId: string | null, limit: number): Promise<AvmCandidate[]> {
   const r = await sql<RawAddress & { owner_user_id: string; month: string }>`
@@ -413,22 +461,22 @@ export async function avmCandidates(tx: Tx, afterAddressId: string | null, limit
            to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM') AS month
       FROM contact_addresses a
       JOIN contacts c ON c.tenant_id = a.tenant_id AND c.id = a.contact_id
-     WHERE a.tenant_id = app.tenant_id() AND a.kind = 'home'
+     WHERE a.tenant_id = app.tenant_id()
        AND btrim(COALESCE(a.line1, '')) <> '' AND btrim(COALESCE(a.city, '')) <> '' AND btrim(COALESCE(a.region, '')) <> '' AND btrim(COALESCE(a.postal_code, '')) <> ''
        AND c.deleted_at IS NULL AND c.merged_into_contact_id IS NULL AND c.owner_user_id IS NOT NULL
-       AND EXISTS (SELECT 1 FROM deals d
-                    WHERE d.tenant_id = c.tenant_id AND d.stage = 'closed' AND d.closed_at IS NOT NULL
-                      AND d.closed_at < (date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')
-                      AND (d.primary_contact_id = c.id OR EXISTS (SELECT 1 FROM deal_contacts dc WHERE dc.tenant_id = d.tenant_id AND dc.deal_id = d.id
-                                                                    AND dc.contact_id = c.id AND dc.role IN ('buyer','seller','co_buyer','co_seller'))))
-       AND NOT EXISTS (SELECT 1 FROM home_valuations v
-                        WHERE v.tenant_id = a.tenant_id AND v.contact_address_id = a.id AND v.status IN ('ok','unavailable')
-                          AND date_trunc('month', v.valued_at AT TIME ZONE 'UTC') = date_trunc('month', now() AT TIME ZONE 'UTC'))
-       AND NOT EXISTS (SELECT 1 FROM playbook_step_runs r
-                        WHERE r.tenant_id = a.tenant_id AND r.trigger_key = 'avm:' || a.id::text || ':' || to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM'))
+       AND ${avmQualifies('c', 'a')}
+       AND NOT ${avmAlreadyThisMonth('c', 'a', "to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM')")}
        AND (${afterAddressId}::uuid IS NULL OR a.id > ${afterAddressId}::uuid)
      ORDER BY a.id LIMIT ${limit}`.execute(tx);
   return r.rows.map((x) => ({ address: addressOf(x), ownerUserId: x.owner_user_id, month: x.month }));
+}
+
+/** K2: the TX2 and send-time re-check: the address is still the contact's and still a home they bought through the team. */
+export async function avmAddressQualifies(tx: Tx, contactId: string, addressId: string): Promise<boolean> {
+  const r = await sql<{ x: boolean }>`
+    SELECT EXISTS (SELECT 1 FROM contact_addresses a JOIN contacts c ON c.tenant_id = a.tenant_id AND c.id = a.contact_id
+                    WHERE a.tenant_id = app.tenant_id() AND a.id = ${addressId} AND a.contact_id = ${contactId} AND ${avmQualifies('c', 'a')}) AS x`.execute(tx);
+  return r.rows[0]?.x === true;
 }
 
 export async function addressById(tx: Tx, id: string): Promise<HomeAddressRow | null> {
@@ -438,11 +486,15 @@ export async function addressById(tx: Tx, id: string): Promise<HomeAddressRow | 
   return r.rows[0] ? addressOf(r.rows[0]) : null;
 }
 
-/** Whether an ok or unavailable answer, or the avm firing, already exists for the address and UTC month (R-AVM-3). */
+/**
+ * Whether an ok or unavailable answer, or an avm firing, already exists this UTC month for the house (R-AVM-3), for
+ * any record of the person and any of their address rows with the same normalized address (ownership-data/F4).
+ */
 export async function avmRecordedThisMonth(tx: Tx, addressId: string, month: string): Promise<boolean> {
+  if (!/^\d{4}-\d{2}$/.test(month)) throw new Error('month');
   const r = await sql<{ x: boolean }>`
-    SELECT EXISTS (SELECT 1 FROM home_valuations v WHERE v.tenant_id = app.tenant_id() AND v.contact_address_id = ${addressId} AND v.status IN ('ok','unavailable')
-                     AND to_char(v.valued_at AT TIME ZONE 'UTC', 'YYYY-MM') = ${month})
+    SELECT EXISTS (SELECT 1 FROM contact_addresses a JOIN contacts c ON c.tenant_id = a.tenant_id AND c.id = a.contact_id
+                    WHERE a.tenant_id = app.tenant_id() AND a.id = ${addressId} AND ${avmAlreadyThisMonth('c', 'a', `'${month}'`)})
         OR EXISTS (SELECT 1 FROM playbook_step_runs r WHERE r.tenant_id = app.tenant_id() AND r.trigger_key = ${`avm:${addressId}:${month}`}) AS x`.execute(tx);
   return r.rows[0]?.x === true;
 }
@@ -476,11 +528,19 @@ export async function valuationById(tx: Tx, id: string): Promise<ValuationRow | 
   return r.rows[0] ? valuationOf(r.rows[0]) : null;
 }
 
-/** The latest ok valuation of the address recorded before `before` (other than `exceptId`): the prior estimate. */
+/**
+ * The latest ok valuation of the house recorded before `before` (other than `exceptId`): the prior estimate. The house
+ * is the address row and every address row of the same person with the same normalized address (ownership-data/F4: a
+ * merged duplicate's history counts, so the jump check is not skipped after a merge).
+ */
 export async function priorOkValuation(tx: Tx, addressId: string, before: Instant | null, exceptId: string | null): Promise<ValuationRow | null> {
   const r = await sql<RawValuation>`
     SELECT ${VAL_COLS} FROM home_valuations v
-     WHERE v.tenant_id = app.tenant_id() AND v.contact_address_id = ${addressId} AND v.status = 'ok'
+     WHERE v.tenant_id = app.tenant_id() AND v.status = 'ok'
+       AND v.contact_address_id IN (SELECT pa.id FROM contact_addresses a JOIN contact_addresses pa ON pa.tenant_id = a.tenant_id
+                                     WHERE a.tenant_id = app.tenant_id() AND a.id = ${addressId}
+                                       AND pa.contact_id = ANY (app.contact_person_ids(a.tenant_id, a.contact_id))
+                                       AND ${sql.raw(`${AKEY('pa')} = ${AKEY('a')}`)})
        AND (${before === null ? null : iso(before)}::timestamptz IS NULL OR v.valued_at < ${before === null ? null : iso(before)}::timestamptz)
        AND (${exceptId}::uuid IS NULL OR v.id <> ${exceptId}::uuid)
      ORDER BY v.valued_at DESC, v.id DESC LIMIT 1`.execute(tx);

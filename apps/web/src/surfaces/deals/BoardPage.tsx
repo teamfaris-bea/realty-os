@@ -1,6 +1,6 @@
 // The TC board (module 39): the caller's open deals (the server's RLS decides: a TC sees the deals they are on) with
 // their proposed, upcoming and at-risk dates, in one request. Desktop-first table; on a phone each deal is a card.
-// A proposed date is confirmed from here in one tap. At-risk is the server's milestoneRisk over stored fields, not
+// A proposed date is confirmed from here in one tap, by a caller the server lets confirm (canConfirm; b8 deals ui/F4). At-risk is the server's milestoneRisk over stored fields, not
 // the Team Lead queue (a TC reads no queue items).
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
@@ -9,7 +9,7 @@ import { type ApiError, messageFor, useApi } from '../../shell/index.js';
 import { formatLocalDate } from '../feed/lib/format.js';
 import { useMutate } from '../feed/lib/hooks.js';
 import { AGENT_ERROR_MESSAGES } from '../feed/lib/messages.js';
-import { type BoardDeal, MILESTONE_ERROR_MESSAGES, RESPONSIBLE_LABEL } from './milestones.js';
+import { type BoardDeal, CONFIRM_WHO, MILESTONE_ERROR_MESSAGES, RESPONSIBLE_LABEL } from './milestones.js';
 
 const MESSAGES = { ...AGENT_ERROR_MESSAGES, ...MILESTONE_ERROR_MESSAGES };
 
@@ -40,6 +40,7 @@ export default function BoardPage() {
                   {[d.proposed > 0 ? `${d.proposed} proposed` : null, d.atRisk > 0 ? `${d.atRisk} at risk` : null].filter(Boolean).join(' · ') || 'On track'}
                 </span>
               </div>
+              {!d.canConfirm ? <p className="border-b border-line px-4 py-2 text-[14px] text-ink-muted">{CONFIRM_WHO}</p> : null}
               <table className="w-full text-left text-[15px]">
                 <caption className="sr-only">Dates of {d.name}</caption>
                 <thead className="hidden text-[13px] text-ink-muted md:table-header-group">
@@ -63,7 +64,7 @@ export default function BoardPage() {
                       <td className="text-ink-muted md:px-4 md:py-2">{x.responsible ? (RESPONSIBLE_LABEL[x.responsible] ?? x.responsible) : 'Nobody named'}</td>
                       <td className={`md:px-4 md:py-2 ${x.risk ? 'font-medium text-danger' : 'text-ink-muted'}`}>{x.risk ? x.risk.text : x.status === 'proposed' ? 'Proposed' : 'Upcoming'}</td>
                       <td className="md:px-4 md:py-2">
-                        {x.status === 'proposed' ? (
+                        {d.canConfirm && x.status === 'proposed' ? (
                           <Button disabled={confirm.pending} onClick={() => void confirm.run(`/deal-dates/${x.id}/confirm`, {})} aria-label={`Confirm ${x.label} on ${formatLocalDate(x.dueOn)}`}>
                             Confirm
                           </Button>
