@@ -246,7 +246,7 @@ describe('an Admin\'s coaching settings (E283: only the Owner turns call reviews
       .on('PUT /admin/coaching', () => ({ status: 200, body: { settings: { ...start.settings, scoringEnabled: false, scoringSentence: OFF_SENTENCE } } }));
     app(fake, '/admin/coaching', 'admin');
     expect(await screen.findByRole('heading', { name: 'Call reviews are on' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { level: 1, name: 'Coaching' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: 'Coaching settings' })).toBeInTheDocument();
     const off = screen.getByRole('button', { name: 'Turn call reviews off' });
     expect(off).toBeEnabled();
     expect(off).toHaveAccessibleDescription('Only the Owner can turn them on again.');

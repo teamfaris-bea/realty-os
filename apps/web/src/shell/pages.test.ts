@@ -34,6 +34,20 @@ describe('the real registry', () => {
     }
   });
 
+  it('b7 ui/F7: the phone More list has no ambiguous near-duplicate labels (it is long for an Owner)', () => {
+    const table = buildPageTable(surfaces, homeFallback);
+    for (const role of ROLES) {
+      const labels = navFor(pagesFor(table, role)).more.map((i) => i.label);
+      expect(new Set(labels.map((l) => l.toLowerCase())).size, role).toBe(labels.length);
+      // the pairs only the desktop section headings told apart
+      expect(labels, role).not.toContain('Gmail');
+      expect(labels, role).not.toContain('Gmail sync');
+      expect(labels, role).not.toContain('Coaching');
+    }
+    const owner = navFor(pagesFor(table, 'owner')).more.map((i) => i.label);
+    expect(owner).toEqual(expect.arrayContaining(['Coaching tip', 'Coaching settings', 'Gmail sync (team)', 'My Gmail']));
+  });
+
   it('home is the shell fallback only while no surface registers "/"', () => {
     expect(buildPageTable([shellSurface], homeFallback).pages.find((p) => p.path === '/')).toBe(homeFallback);
     const feed = page('/', tab(0));

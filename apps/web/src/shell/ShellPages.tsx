@@ -1,9 +1,11 @@
 // Pages the shell itself provides: Account, the phone More list, the home fallback (shown only
 // while no surface registers '/'), and Not found.
+import { useId } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Card, EmptyState, Icon } from '../design/index.js';
 import { useSession } from './context.js';
 import { ROLE_LABEL, useNav } from './Layout.js';
+import type { NavItem } from './pages.js';
 
 export function AccountPage() {
   const { session, signOut } = useSession();
@@ -50,26 +52,43 @@ export function AccountPage() {
   );
 }
 
-/** The phone More tab: every page that is not a bottom tab. */
+/** Phone More headings, in the desktop sidebar's section order (batch 7 review ui/F7: 30+ rows need their sections). */
+const MORE_SECTIONS: readonly { section: NavItem['section']; label: string }[] = [
+  { section: 'work', label: 'Work' },
+  { section: 'team', label: 'Team' },
+  { section: 'admin', label: 'Admin' },
+  { section: 'account', label: 'Account' },
+];
+
+/** The phone More tab: every page that is not a bottom tab, grouped by section under headings. */
 export function MorePage() {
   const nav = useNav();
+  const id = useId();
+  const groups = MORE_SECTIONS.map((g) => ({ ...g, items: nav.more.filter((i) => i.section === g.section) })).filter((g) => g.items.length > 0);
   return (
-    <nav aria-label="More">
-      <ul className="overflow-hidden rounded-2xl border border-line bg-surface">
-        {nav.more.map((i, idx) => (
-          <li key={i.path} className={idx > 0 ? 'border-t border-line' : ''}>
-            <Link to={i.path} className="flex min-h-[52px] items-center gap-3 px-4 text-[17px] text-ink active:bg-surface-2">
-              <span className="text-accent">
-                <Icon name={i.icon} size={22} />
-              </span>
-              <span className="flex-1">{i.label}</span>
-              <span className="text-ink-muted">
-                <Icon name="chevron" size={18} />
-              </span>
-            </Link>
-          </li>
-        ))}
-      </ul>
+    <nav aria-label="More" className="flex flex-col gap-4">
+      {groups.map((g) => (
+        <section key={g.section} className="flex flex-col gap-1.5">
+          <h2 id={`${id}-${g.section}`} className="px-1 text-[13px] font-semibold uppercase tracking-wide text-ink-muted">
+            {g.label}
+          </h2>
+          <ul aria-labelledby={`${id}-${g.section}`} className="overflow-hidden rounded-2xl border border-line bg-surface">
+            {g.items.map((i, idx) => (
+              <li key={i.path} className={idx > 0 ? 'border-t border-line' : ''}>
+                <Link to={i.path} className="flex min-h-[52px] items-center gap-3 px-4 text-[17px] text-ink active:bg-surface-2">
+                  <span className="text-accent">
+                    <Icon name={i.icon} size={22} />
+                  </span>
+                  <span className="flex-1">{i.label}</span>
+                  <span className="text-ink-muted">
+                    <Icon name="chevron" size={18} />
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
     </nav>
   );
 }

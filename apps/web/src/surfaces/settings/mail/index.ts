@@ -11,9 +11,9 @@ export const surface: SurfaceModule = {
   pages: [
     {
       path: MAIL_SETTINGS_PATH,
-      title: 'Gmail',
+      title: 'My Gmail',
       roles: ['owner', 'admin', 'team_lead', 'agent', 'isa', 'tc'],
-      nav: { phone: 'more', desktop: 'sidebar', icon: 'inbox', label: 'Gmail', order: 9_000, section: 'account' },
+      nav: { phone: 'more', desktop: 'sidebar', icon: 'inbox', label: 'My Gmail', order: 9_000, section: 'account' },
       component: lazy(() => import('./MailSettingsPage.js')),
     },
   ],

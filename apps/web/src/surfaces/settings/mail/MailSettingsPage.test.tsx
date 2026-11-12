@@ -74,7 +74,7 @@ async function violations(): Promise<string[]> {
   return r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`);
 }
 
-const heading = () => screen.findByRole('heading', { level: 1, name: 'Gmail' });
+const heading = () => screen.findByRole('heading', { level: 1, name: 'My Gmail' });
 
 afterEach(() => vi.restoreAllMocks());
 
