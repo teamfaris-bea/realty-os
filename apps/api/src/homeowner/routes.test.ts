@@ -27,8 +27,8 @@ afterAll(async () => {
 
 const get = (who: { userId: string | null }, id: string) => call<HomeownerResponseT>(who as never, 'GET', `/contacts/${id}/homeowner`);
 
-describe('GET /api/contacts/:id/homeowner (R-HOME-8)', () => {
-  it('R-HOME-8 E585: a contact the viewer cannot see is 404, as is an unknown id; a contact that is not recognised is { recognized: false, homes: [] }', async () => {
+describe('GET /api/contacts/:id/homeowner (R-HOME-7)', () => {
+  it('R-HOME-7 E585: a contact the viewer cannot see is 404, as is an unknown id; a contact that is not recognised is { recognized: false, homes: [] }', async () => {
     const c = await homeowner(h, w, w.agents[0]!, records);
     expect((await get(w.agents[1]!, c.id)).status).toBe(404);
     expect((await get(w.agents[0]!, '01900000-0000-7000-8000-000000000000')).status).toBe(404);
@@ -39,7 +39,7 @@ describe('GET /api/contacts/:id/homeowner (R-HOME-8)', () => {
     expect(r.body).toEqual({ recognized: false, reasons: [], homes: [], mergedRecords: false, outreach: { built: false, clearanceOn: null } });
   });
 
-  it('R-HOME-8 R-HOME-4 E561: a matched home shows each value with its source and date; the response is strict and names no owner, score or estimate', async () => {
+  it('R-HOME-4 R-HOME-7: a matched home shows each value with its source and date; the response is strict and names no owner, score or estimate', async () => {
     const c = await homeowner(h, w, w.agents[0]!, records);
     const before = await get(w.agents[0]!, c.id);
     expect(before.body.homes[0]).toMatchObject({ outcome: 'pending', check: { state: 'not_checked' } });
@@ -79,14 +79,14 @@ describe('GET /api/contacts/:id/homeowner (R-HOME-8)', () => {
     expect(r.body.homes.map((x) => x.providerNote)).toEqual([PUBLIC_RECORDS_TEST_TEXT, PUBLIC_RECORDS_TEST_TEXT]);
   });
 
-  it('R-HOME-8: the Team Lead reads it too; another tenant\'s user gets 404', async () => {
+  it('R-HOME-7 E589: the Team Lead reads it too; another tenant\'s user gets 404', async () => {
     const c = await homeowner(h, w, w.agents[0]!, records);
     expect((await get(w.teamLead!, c.id)).status).toBe(200);
     const other = await workspaceWorld(h, { agents: 1 });
     expect((await get(other.agents[0]!, c.id)).status).toBe(404);
   }, 120_000);
 
-  it('R-HOME-8: a past buyer\'s closing date is shown only to a viewer who can see the deal', async () => {
+  it('R-HOME-7: a past buyer\'s closing date is shown only to a viewer who can see the deal', async () => {
     const c = await ownedContact(w.agents[0]!, { firstName: 'Pat', consent: false });
     const a = nextBeaufortAddress();
     await addAddress(w.agents[0]!, c.id, a);
@@ -171,7 +171,7 @@ describe('GET /api/contacts/:id/homeowner (R-HOME-8)', () => {
     }
   });
 
-  it('R-HOME-10: the outreach line is never built; the counsel clearance shows only once recorded', async () => {
+  it('R-HOME-8: the outreach line is never built; the counsel clearance shows only once recorded', async () => {
     const c = await homeowner(h, w, w.agents[0]!, records);
     expect((await get(w.agents[0]!, c.id)).body.outreach).toEqual({ built: false, clearanceOn: null });
     await h.su.query(`UPDATE jurisdiction_packs SET reviewed_by_counsel_at = '2026-11-12T12:00:00Z' WHERE key = 'platform:public_records_outreach' AND status = 'published'`);
@@ -182,7 +182,7 @@ describe('GET /api/contacts/:id/homeowner (R-HOME-8)', () => {
     }
   });
 
-  it('R-HOME-2 E576: a Jasper home is links only, never looked up', async () => {
+  it('R-HOME-5 E575: a Jasper home is links only, never looked up', async () => {
     const c = await homeowner(h, w, w.agents[0]!, records, { address: { postalCode: '29936' } });
     const calls = records.homeownerCalls.length;
     await refresh(h, w.tenantId, { publicRecords: records });
@@ -201,7 +201,7 @@ describe('GET /api/contacts/:id/homeowner (R-HOME-8)', () => {
     expect(JSON.stringify(home)).not.toContain('SOMEONE');
   });
 
-  it('R-HOME-8: it writes nothing: no audit row, no profile, no job', async () => {
+  it('R-HOME-7: it writes nothing: no audit row, no profile, no job', async () => {
     const c = await homeowner(h, w, w.agents[0]!, records);
     const count = async () => (await h.su.query(`SELECT (SELECT count(*) FROM audit_log WHERE tenant_id = $1) + (SELECT count(*) FROM homeowner_profiles WHERE tenant_id = $1) + (SELECT count(*) FROM jobs WHERE tenant_id = $1) AS n`, [w.tenantId])).rows[0].n;
     const before = await count();

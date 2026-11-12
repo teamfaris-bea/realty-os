@@ -1,5 +1,5 @@
 // The homeowner.refresh pass (module 78; D10) on real Postgres as app_user, with the deterministic public-records
-// fake only (no county is called). R-HOME-1, R-HOME-2, R-HOME-3, R-HOME-7, R-HOME-9, R-HOME-10.
+// fake only (no county is called). R-HOME-1, R-HOME-2, R-HOME-3, R-HOME-6, R-HOME-8, R-HOME-9 (the brief's numbering).
 import { randomUUID } from 'node:crypto';
 import { withTenantTx } from '@realty/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -14,6 +14,7 @@ import { closedDeal, beforeThisMonth } from '../nurture/testing.js';
 import { HOMEOWNER_JOBS, homeownerHandlers, makeHomeownerHandlers } from './handlers.js';
 import { addAddress, countyRecord, homeowner, nextBeaufortAddress, profileOf, recognise, refresh, sideEffects } from './testing.js';
 import { ownedContact } from '../comms/testing.js';
+import { call } from '../leads/testing.js';
 
 let h: ApiHarness;
 beforeAll(async () => {
@@ -47,7 +48,7 @@ describe('recognition builds a profile (R-HOME-1, R-HOME-3)', () => {
     w = await world();
   }, 120_000);
 
-  it('R-HOME-1 E561: each of the four reasons builds a matched profile with every value, its source and date; an unrecognised contact gets no lookup', async () => {
+  it('R-HOME-1 R-HOME-3 R-HOME-4: each of the four reasons builds a matched profile with every value, its source and date; an unrecognised contact gets no lookup', async () => {
     const records = fake();
     const made = [];
     for (const reason of ['seller_intent', 'seller_inquiry', 'homeowner_tag', 'past_buyer'] as const) made.push({ reason, ...(await homeowner(h, w, w.agents[0]!, records, { reason })) });
@@ -83,13 +84,27 @@ describe('recognition builds a profile (R-HOME-1, R-HOME-3)', () => {
     expect(facts).toEqual([]);
   });
 
-  it('R-HOME-3 E563: a county record at a different address keeps nothing (address_mismatch)', async () => {
+  it('R-HOME-3: a county record at a different address keeps nothing (address_mismatch)', async () => {
     const records = fake();
     const c = await homeowner(h, w, w.agents[0]!, null);
     records.put(c.address, countyRecord({ ...c.address, line1: '999 Other Road' }, [`${c.first.toUpperCase()} DOE`]));
     await refresh(h, w.tenantId, { publicRecords: records });
     expect((await profileOf(h, c.addressId)).profile).toMatchObject({ status: 'not_matched', match_detail: 'address_mismatch' });
     expect((await profileOf(h, c.addressId)).facts).toEqual([]);
+  });
+
+  // b11 reconciliation homeowner-2: the brief's E563 (verify_items 14: owner-name formats are VERIFY on the real layer)
+  it('R-HOME-3 E563: "OWNER A & OWNER B" matches the contact who is one of them; "LAST FIRST & FIRST2" does not match FIRST2', async () => {
+    const records = fake();
+    const second = await homeowner(h, w, w.agents[0]!, records, { owners: (f) => [`SAMPLE OWNER A & ${f.toUpperCase()} DOE`] });
+    const first = await homeowner(h, w, w.agents[0]!, records, { owners: (f) => [`${f.toUpperCase()} DOE & SAMPLE OWNER B`] });
+    // the county writes the shared last name once: the second part is the bare first name, which is not the contact's name
+    const bare = await homeowner(h, w, w.agents[0]!, records, { owners: (f) => [`DOE SAMPLE & ${f.toUpperCase()}`] });
+    await refresh(h, w.tenantId, { publicRecords: records });
+    expect((await profileOf(h, second.addressId)).profile).toMatchObject({ status: 'matched' });
+    expect((await profileOf(h, first.addressId)).profile).toMatchObject({ status: 'matched' });
+    expect((await profileOf(h, bare.addressId)).profile).toMatchObject({ status: 'not_matched', match_detail: 'owner_name_mismatch' });
+    expect((await profileOf(h, bare.addressId)).facts).toEqual([]);
   });
 
   it('R-HOME-3 E564: entity owners are dropped before attach: only an LLC or a trust is missing_data; a person beside an entity matches', async () => {
@@ -101,7 +116,7 @@ describe('recognition builds a profile (R-HOME-1, R-HOME-3)', () => {
     expect((await profileOf(h, both.addressId)).profile).toMatchObject({ status: 'matched' });
   });
 
-  it('E565: no record is not_available and several are ambiguous; neither keeps a value', async () => {
+  it('R-HOME-3 E565: no record is not_available and several are ambiguous; neither keeps a value', async () => {
     const records = fake();
     const none = await homeowner(h, w, w.agents[0]!, null);
     const many = await homeowner(h, w, w.agents[0]!, null);
@@ -124,7 +139,7 @@ describe('recognition builds a profile (R-HOME-1, R-HOME-3)', () => {
     expect(after.facts).toEqual([]);
   });
 
-  it('R-HOME-2 E560: a past buyer\'s K2 mailing row is a subject; other mailing and interest rows never are', async () => {
+  it('R-HOME-2: a past buyer\'s K2 mailing row is a subject; other mailing and interest rows never are', async () => {
     const records = fake();
     const c = await ownedContact(w.agents[0]!, { firstName: 'Kim', consent: false });
     const bought = nextBeaufortAddress();
@@ -154,7 +169,7 @@ describe('recognition builds a profile (R-HOME-1, R-HOME-3)', () => {
     expect(Number((await h.su.query('SELECT count(*)::int AS n FROM homeowner_profiles WHERE contact_id = $1', [c.id])).rows[0].n)).toBe(0);
   });
 
-  it('R-HOME-10 R-HOME-7: a pass sends, enqueues, notifies, cards and writes nothing else: no message, job, feed card, task, notification, enrollment, audit row, address, tag or deal', async () => {
+  it('R-HOME-8 R-HOME-6: a pass sends, enqueues, notifies, cards and writes nothing else: no message, job, feed card, task, notification, enrollment, audit row, address, tag or deal', async () => {
     const records = fake();
     await homeowner(h, w, w.agents[0]!, records);
     const before = await sideEffects(h, w.tenantId);
@@ -164,13 +179,13 @@ describe('recognition builds a profile (R-HOME-1, R-HOME-3)', () => {
   });
 });
 
-describe('fences and purges (R-HOME-7, R-HOME-9)', () => {
+describe('fences and purges (R-HOME-6, R-HOME-9)', () => {
   let w: WorkspaceWorld;
   beforeAll(async () => {
     w = await world();
   }, 120_000);
 
-  it('R-HOME-7 E566: an address edited while the county answers is not written; the next pass checks the new address', async () => {
+  it('R-HOME-6 E566: an address edited while the county answers is not written; the next pass checks the new address', async () => {
     const records = fake();
     const c = await homeowner(h, w, w.agents[0]!, records);
     records.beforeAnswer = async () => {
@@ -185,7 +200,7 @@ describe('fences and purges (R-HOME-7, R-HOME-9)', () => {
     expect((await profileOf(h, c.addressId)).profile).toMatchObject({ status: 'matched' });
   });
 
-  it('R-HOME-7 E567: a contact marked do-not-contact, or no longer recognised, while the county answers gets nothing written', async () => {
+  it('R-HOME-1 R-HOME-6 E567: a contact marked do-not-contact, or no longer recognised, while the county answers gets nothing written', async () => {
     const records = fake();
     const dnc = await homeowner(h, w, w.agents[0]!, records);
     const gone = await homeowner(h, w, w.agents[0]!, records);
@@ -199,7 +214,7 @@ describe('fences and purges (R-HOME-7, R-HOME-9)', () => {
     expect((await profileOf(h, gone.addressId)).profile).toBeNull();
   });
 
-  it('R-HOME-9 E568: a contact no longer recognised (intent changed, tag removed) loses the profile on the next pass', async () => {
+  it('R-HOME-1 R-HOME-9: a contact no longer recognised (intent changed, tag removed) loses the profile on the next pass', async () => {
     const records = fake();
     const a = await homeowner(h, w, w.agents[0]!, records);
     const t = await homeowner(h, w, w.agents[0]!, records, { reason: 'homeowner_tag' });
@@ -214,7 +229,7 @@ describe('fences and purges (R-HOME-7, R-HOME-9)', () => {
     expect((await profileOf(h, t.addressId)).profile).toBeNull();
   });
 
-  it('R-HOME-9 E569: a contact marked do-not-contact or merged away loses the profile', async () => {
+  it('R-HOME-9 E568 E569: a contact marked do-not-contact or merged away loses the profile', async () => {
     const records = fake();
     const cs = [await homeowner(h, w, w.agents[0]!, records), await homeowner(h, w, w.agents[0]!, records)];
     await refresh(h, w.tenantId, { publicRecords: records });
@@ -245,7 +260,7 @@ describe('fences and purges (R-HOME-7, R-HOME-9)', () => {
     expect(own.rows.map((r) => r.contact_address_id)).toEqual([survivor.addressId]);
   });
 
-  it('R-HOME-9 E587 E574: expired profiles are purged even when public records are not configured, and nothing is written or looked up', async () => {
+  it('R-HOME-6 R-HOME-9 E587 E574: expired profiles are purged even when public records are not configured, and nothing is written or looked up', async () => {
     const records = fake();
     const c = await homeowner(h, w, w.agents[0]!, records);
     await refresh(h, w.tenantId, { publicRecords: records });
@@ -262,19 +277,26 @@ describe('fences and purges (R-HOME-7, R-HOME-9)', () => {
   it('R-HOME-9: a profile whose address is deleted cascades (E571), and erasure takes the contact\'s profiles (E570)', async () => {
     const records = fake();
     const a = await homeowner(h, w, w.agents[0]!, records);
+    const e = await homeowner(h, w, w.agents[0]!, records);
     await refresh(h, w.tenantId, { publicRecords: records });
     await h.su.query('DELETE FROM contact_addresses WHERE id = $1', [a.addressId]);
     expect((await profileOf(h, a.addressId)).profile).toBeNull();
+    // b11 retitle check: the title names erasure too, so the test now erases a person with a matched profile
+    const before = await profileOf(h, e.addressId);
+    expect(before.facts.length).toBeGreaterThan(0);
+    expect((await call(w.owner, 'POST', `/contacts/${e.id}/erase`, { reason: 'PRIVACY_REQUEST' })).status).toBe(200);
+    expect((await profileOf(h, e.addressId)).profile).toBeNull();
+    expect((await h.su.query('SELECT count(*)::int AS n FROM homeowner_profile_facts WHERE profile_id = $1', [before.profile.id])).rows[0].n).toBe(0);
   });
 });
 
-describe('failures, budget, schedule (R-HOME-7)', () => {
+describe('failures, budget, schedule (R-HOME-6)', () => {
   let w: WorkspaceWorld;
   beforeAll(async () => {
     w = await world();
   }, 120_000);
 
-  it('R-HOME-7 E572: a failure keeps the values, checked_at and retention, retries after one day, and alerts when failures reach the threshold with no success', async () => {
+  it('R-HOME-6 E572: a failure keeps the values, checked_at and retention, retries after one day, and alerts when failures reach the threshold with no success', async () => {
     const records = fake();
     const c = await homeowner(h, w, w.agents[0]!, records);
     await refresh(h, w.tenantId, { publicRecords: records });
@@ -296,7 +318,7 @@ describe('failures, budget, schedule (R-HOME-7)', () => {
     expect(JSON.stringify(alerts.alerts)).not.toMatch(/Sample|DOE|Exampleton/);
   });
 
-  it('R-HOME-7 E572: a timeout before any read writes a failed row with no values', async () => {
+  it('R-HOME-6 E572: a timeout before any read writes a failed row with no values', async () => {
     const records = fake();
     const c = await homeowner(h, w, w.agents[0]!, records);
     records.beforeAnswer = () => {
@@ -309,7 +331,7 @@ describe('failures, budget, schedule (R-HOME-7)', () => {
     expect(facts).toEqual([]);
   });
 
-  it('R-HOME-7 E578: ADDRESS_INVALID is retried only after 30 days', async () => {
+  it('R-HOME-10 R-HOME-6 E578: ADDRESS_INVALID is retried after an address edit or 30 days, and not before', async () => {
     const records = fake();
     const c = await homeowner(h, w, w.agents[0]!, records);
     records.beforeAnswer = () => {
@@ -323,9 +345,16 @@ describe('failures, budget, schedule (R-HOME-7)', () => {
     const calls = records.homeownerCalls.length;
     await refresh(h, w.tenantId, { publicRecords: records });
     expect(records.homeownerCalls.length - calls).toBe(0);
+    // b11 reconciliation homeowner-6: an edit brings it back at once (the brief's "after an edit or 30 days")
+    await h.su.query(`UPDATE contact_addresses SET line2 = 'Unit 5' WHERE id = $1`, [c.addressId]);
+    const edited = { ...c.address, line2: 'Unit 5' };
+    records.put(edited, countyRecord(edited, [`${c.first.toUpperCase()} DOE`]));
+    await refresh(h, w.tenantId, { publicRecords: records });
+    expect(records.homeownerCalls.length - calls).toBe(1);
+    expect((await profileOf(h, c.addressId)).profile).toMatchObject({ status: 'matched', last_failure_code: null });
   });
 
-  it('R-HOME-7: not_configured mid-pass stops the pass and writes no row', async () => {
+  it('R-HOME-6 R-HOME-10: not_configured mid-pass stops the pass and writes no row', async () => {
     const records = fake();
     const c = await homeowner(h, w, w.agents[0]!, records);
     records.beforeAnswer = () => {
@@ -337,7 +366,7 @@ describe('failures, budget, schedule (R-HOME-7)', () => {
     expect((await profileOf(h, c.addressId)).profile).toBeNull();
   });
 
-  it('R-HOME-7: a crash between a lookup and its write leaves no duplicate; the re-run completes', async () => {
+  it('R-HOME-6: a crash between a lookup and its write leaves no duplicate; the re-run completes', async () => {
     const records = fake();
     const cs = [await homeowner(h, w, w.agents[1]!, records), await homeowner(h, w, w.agents[1]!, records)];
     let n = 0;
@@ -353,7 +382,7 @@ describe('failures, budget, schedule (R-HOME-7)', () => {
     }
   });
 
-  it('R-HOME-7 E586: lookups are budgeted per local date; a re-run on the same date looks up nothing already checked, and the 30-day refresh comes due', async () => {
+  it('R-HOME-6 E586: lookups are budgeted per local date; a re-run on the same date looks up nothing already checked, and the 30-day refresh comes due', async () => {
     const w2 = await world();
     const records = fake();
     const cs = [await homeowner(h, w2, w2.agents[0]!, records), await homeowner(h, w2, w2.agents[0]!, records), await homeowner(h, w2, w2.agents[0]!, records)];
@@ -372,7 +401,7 @@ describe('failures, budget, schedule (R-HOME-7)', () => {
     expect(near((await profileOf(h, cs[0]!.addressId)).profile.checked_at, Date.now())).toBe(true);
   }, 120_000);
 
-  it('R-HOME-7: the handler acts only in the local night window [02:00, 05:00); registered once, hourly at :41, standalone, 3 attempts; logs carry counts only', async () => {
+  it('R-HOME-6: the handler acts only in the local night window [02:00, 05:00); registered once, hourly at :41, standalone, 3 attempts; logs carry counts only', async () => {
     const records = fake();
     const c = await homeowner(h, w, w.agents[0]!, records);
     const h1 = makeHomeownerHandlers(() => ({ publicRecords: records }))[0]!;
@@ -406,7 +435,7 @@ describe('failures, budget, schedule (R-HOME-7)', () => {
 });
 
 describe('tenant isolation (R-TEN-1)', () => {
-  it('R-TEN-1 R-HOME-7: a pass of tenant B neither reads nor writes tenant A', async () => {
+  it('R-TEN-1 R-HOME-7 E589: a pass of tenant B neither reads nor writes tenant A', async () => {
     const a = await world();
     const b = await world();
     const records = fake();

@@ -1,4 +1,4 @@
-// The homeowner.refresh pass (module 78; owner decision D10; R-HOME-1, R-HOME-2, R-HOME-3, R-HOME-7, R-HOME-9).
+// The homeowner.refresh pass (module 78; owner decision D10; R-HOME-1, R-HOME-2, R-HOME-3, R-HOME-6, R-HOME-9).
 //
 //   0. one system transaction: the tenant's local date and hour (the pass acts only in the night window), then the
 //      bounded purge: expired profiles; contacts deleted, merged away, closed or do-not-contact; contacts no longer
@@ -14,7 +14,7 @@
 //      only when core attachPropertyRecord matches the exact address and a PERSON owner (entity owners dropped
 //      first); otherwise the profile says why and keeps nothing (R-HOME-3). Nothing about other owners is stored,
 //      hashed or logged.
-// Nothing here sends, notifies, enqueues, makes a feed card, a task or an enrollment (R-HOME-10).
+// Nothing here sends, notifies, enqueues, makes a feed card, a task or an enrollment (R-HOME-8).
 import { randomFillSync } from 'node:crypto';
 import { type IdGenerator, type Instant, instant, uuidv7Generator } from '@realty/core/foundation';
 import {

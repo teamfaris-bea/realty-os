@@ -1,4 +1,4 @@
-// The panel view (R-HOME-8; honest UI). homeownerView turns what the read route loaded under the viewer's RLS into
+// The panel view (R-HOME-4, R-HOME-5, R-HOME-7; honest UI). homeownerView turns what the read route loaded under the viewer's RLS into
 // the panel's states: per home the county and mode, the check state, one row per value (a value with its source and
 // date, or why it is missing and where to look), years owned, whether tax mail goes elsewhere, the loans link and the
 // D9 slots. There is no score, confidence, percentage, estimate or owner-name field anywhere in this shape (a snapshot

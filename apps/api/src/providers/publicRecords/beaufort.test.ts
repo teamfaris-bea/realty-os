@@ -31,8 +31,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('Beaufort connector: live calls off (R-HOME-6)', () => {
-  it('R-HOME-6 E573: with live calls off it builds no request and throws not_configured; the status says lookups are off', async () => {
+describe('Beaufort connector: live calls off (R-HOME-10)', () => {
+  it('R-HOME-10 E573: with live calls off it builds no request and throws not_configured; the status says lookups are off', async () => {
     const m = mockCounty();
     const c = manualClock();
     const p = new BeaufortGisRecords({ liveCalls: false, clock: c.clock, fetch: m.fetch });
@@ -44,13 +44,13 @@ describe('Beaufort connector: live calls off (R-HOME-6)', () => {
     expect(p.requests).toBe(0);
   });
 
-  it('R-HOME-6: the mock county refuses any call while PUBLIC_RECORDS_LIVE_CALLS is unset (a full run makes zero outbound requests)', async () => {
+  it('R-HOME-10: the mock county refuses any call while PUBLIC_RECORDS_LIVE_CALLS is unset (a full run makes zero outbound requests)', async () => {
     expect(process.env.PUBLIC_RECORDS_LIVE_CALLS ?? '').not.toBe('true');
     const m = mockCounty();
     await expect(m.fetch('https://gis.beaufortcountysc.gov/x', { method: 'GET', headers: {}, redirect: 'manual', signal: new AbortController().signal })).rejects.toThrow(/PUBLIC_RECORDS_LIVE_CALLS is off/);
   });
 
-  it('R-PRED-2 E588: the property lookup (module 50) is never served by the county connector and makes no request, live or not', async () => {
+  it('R-HOME-2 R-HOME-10 R-PRED-2 E588: the property lookup (module 50) is never served by the county connector and makes no request, live or not', async () => {
     for (const liveCalls of [false, true]) {
       const m = mockCounty({ allowCalls: true });
       const p = new BeaufortGisRecords({ liveCalls, allowedHosts: HOSTS, clock: manualClock().clock, fetch: m.fetch });
@@ -60,19 +60,19 @@ describe('Beaufort connector: live calls off (R-HOME-6)', () => {
   });
 });
 
-describe('Beaufort connector: host and URL checks (R-HOME-6, R-INT-1)', () => {
-  it('R-HOME-6: service URLs must be https on the default port without credentials, query or fragment, on a listed host', () => {
+describe('Beaufort connector: host and URL checks (R-HOME-10, R-INT-1)', () => {
+  it('R-HOME-10: service URLs must be https on the default port without credentials, query or fragment, on a listed host', () => {
     expect(checkCountyBaseUrl('https://gis.beaufortcountysc.gov/server/rest/services', HOSTS)).toBe('https://gis.beaufortcountysc.gov/server/rest/services');
     for (const bad of ['http://gis.beaufortcountysc.gov/s', 'https://gis.beaufortcountysc.gov:8443/s', 'https://u:p@gis.beaufortcountysc.gov/s', 'https://gis.beaufortcountysc.gov/s?x=1', 'https://gis.beaufortcountysc.gov/s#f', 'https://evil.example/s', 'not a url']) {
       expect(() => checkCountyBaseUrl(bad, HOSTS), bad).toThrow(CountyConfigError);
     }
   });
 
-  it('R-HOME-6: the connector refuses to build (start-up) when its host is not on PUBLIC_RECORDS_ALLOWED_HOSTS', () => {
+  it('R-HOME-10: the connector refuses to build (start-up) when its host is not on PUBLIC_RECORDS_ALLOWED_HOSTS', () => {
     expect(() => new BeaufortGisRecords({ liveCalls: false, allowedHosts: ['gis.example.org'], clock: manualClock().clock })).toThrow(CountyConfigError);
   });
 
-  it('R-HOME-6 R-INT-1: config: fake by default, live calls false by default everywhere; a bad switch value or a non-public host refuses start-up naming the key, never the value', () => {
+  it('R-HOME-10 R-INT-1: config: fake by default, live calls false by default everywhere; a bad switch value or a non-public host refuses start-up naming the key, never the value', () => {
     const base = { DATABASE_URL: 'postgres://app_user:pw@db/realty', KEK_BASE64: Buffer.alloc(32, 1).toString('base64'), SESSION_SECRET_BASE64: Buffer.alloc(32, 2).toString('base64') };
     const c = loadConfig(base);
     expect(c.publicRecords).toEqual({ provider: 'fake', liveCalls: false, allowedHosts: ['gis.beaufortcountysc.gov'] });
@@ -87,7 +87,7 @@ describe('Beaufort connector: host and URL checks (R-HOME-6, R-INT-1)', () => {
     expect(() => loadConfig({ ...base, PUBLIC_RECORDS_PROVIDER: 'scraper' })).toThrow(/PUBLIC_RECORDS_PROVIDER/);
   });
 
-  it('R-HOME-6: providers: county builds the connector (live off by default, so not configured); otherwise the fake in dev', () => {
+  it('R-HOME-10: providers: county builds the connector (live off by default, so not configured); otherwise the fake in dev', () => {
     const base = { DATABASE_URL: 'postgres://app_user:pw@db/realty', KEK_BASE64: Buffer.alloc(32, 1).toString('base64'), SESSION_SECRET_BASE64: Buffer.alloc(32, 2).toString('base64') };
     const clock = manualClock().clock;
     const county = createProviders(loadConfig({ ...base, PUBLIC_RECORDS_PROVIDER: 'county' }), { clock }).publicRecords;
@@ -97,8 +97,8 @@ describe('Beaufort connector: host and URL checks (R-HOME-6, R-INT-1)', () => {
   });
 });
 
-describe('Beaufort connector: requests (R-HOME-6)', () => {
-  it('R-HOME-6 E575: a unique match: GET only, no redirects, f=json, a generic User-Agent, two requests (the Gisfile step is off), the query strings', async () => {
+describe('Beaufort connector: requests (R-HOME-10)', () => {
+  it('R-HOME-10: a unique match: GET only, no redirects, f=json, a generic User-Agent, two requests (the Gisfile step is off), the query strings', async () => {
     const { p, m } = live();
     const r = await p.lookupHomeowner(HOME);
     expect(m.calls).toHaveLength(2);
@@ -121,7 +121,7 @@ describe('Beaufort connector: requests (R-HOME-6)', () => {
     expect(JSON.stringify(r)).not.toMatch(/61|5555550100|SAMPLE BANK/);
   });
 
-  it('R-HOME-6: with useGisfileTable the third request adds the sale date and price', async () => {
+  it('R-HOME-10: with useGisfileTable the third request adds the sale date and price', async () => {
     const { p, m } = live({}, { useGisfileTable: true });
     const r = await p.lookupHomeowner(HOME);
     expect(m.calls).toHaveLength(3);
@@ -129,7 +129,7 @@ describe('Beaufort connector: requests (R-HOME-6)', () => {
     expect(r.status === 'found' && r.record.facts.last_transfer_price_cents?.value).toBe(25_000_000);
   });
 
-  it('R-HOME-6 E565: zero address matches is no_record (one request); several are ambiguous; several parcels are ambiguous', async () => {
+  it('R-HOME-10 E565: zero address matches is no_record (one request); several are ambiguous; several parcels are ambiguous', async () => {
     const none = live({ Addresses: [{ fixture: 'address_none' }] });
     expect(await none.p.lookupHomeowner(HOME)).toEqual({ status: 'not_available', detail: 'no_record' });
     expect(none.m.calls).toHaveLength(1);
@@ -140,7 +140,7 @@ describe('Beaufort connector: requests (R-HOME-6)', () => {
     expect(await parcels.p.lookupHomeowner(HOME)).toEqual({ status: 'not_available', detail: 'ambiguous' });
   });
 
-  it('R-HOME-6 E578: an address whose tokens fail the strict patterns is ADDRESS_INVALID before any request; quotes never reach the query', async () => {
+  it('R-HOME-10 E578: an address whose tokens fail the strict patterns is ADDRESS_INVALID before any request; quotes never reach the query', async () => {
     for (const line1 of ['Sample Lane', '1234567 Sample Ln', `10 ${'Long'.repeat(20)} Ln`, '']) {
       const { p, m } = live();
       expect(await rejection(p.lookupHomeowner({ ...HOME, line1 })), line1).toMatch(/^rejected:ADDRESS_INVALID$/);
@@ -156,7 +156,7 @@ describe('Beaufort connector: requests (R-HOME-6)', () => {
     expect(where).toContain("STREETNAME = 'OR 1 1 SAMPLE'");
   });
 
-  it('R-HOME-2 E576 E577: a shared ZIP is tried at Beaufort; a Jasper ZIP or an address outside the table is not available with no request', async () => {
+  it('R-HOME-2 R-HOME-5 E575 E576 E577: a shared ZIP is tried at Beaufort; a Jasper ZIP or an address outside the table is not available with no request', async () => {
     const shared = live();
     expect((await shared.p.lookupHomeowner({ ...HOME, postalCode: '29910' })).status).toBe('found');
     expect(shared.m.calls.length).toBeGreaterThan(0);
@@ -170,7 +170,7 @@ describe('Beaufort connector: requests (R-HOME-6)', () => {
   });
 });
 
-describe('Beaufort connector: failures (R-HOME-6; E572, E579)', () => {
+describe('Beaufort connector: failures (R-HOME-10; E572, E579)', () => {
   const cases: [string, MockAnswer, string][] = [
     ['an ArcGIS error at 200', { fixture: 'arcgis_error' }, 'unavailable:COUNTY_ARCGIS_ERROR'],
     ['a 5xx', { status: 503, body: 'busy' }, 'unavailable:COUNTY_HTTP_503'],
@@ -183,18 +183,18 @@ describe('Beaufort connector: failures (R-HOME-6; E572, E579)', () => {
     ['a network error', { throws: new TypeError('fetch failed') }, 'unavailable:COUNTY_UNREACHABLE'],
   ];
   for (const [label, answer, expected] of cases) {
-    it(`R-HOME-6 E572 E579: ${label} is ${expected}`, async () => {
+    it(`R-HOME-10 E572 E579: ${label} is ${expected}`, async () => {
       const { p } = live({ Addresses: [answer] });
       expect(await rejection(p.lookupHomeowner(HOME))).toBe(expected);
     });
   }
 
-  it('R-HOME-6 E572: a hung county times out (the timeout is configurable; 15 s by default)', async () => {
+  it('R-HOME-10 E572: a hung county times out (the timeout is configurable; 15 s by default)', async () => {
     const { p } = live({ Addresses: [{ hang: true }] }, { timeoutMs: 20 });
     expect(await rejection(p.lookupHomeowner(HOME))).toBe('timeout:COUNTY_TIMEOUT');
   });
 
-  it('R-TEN-7: nothing is logged and no error carries the address, an owner, the PIN or the payload', async () => {
+  it('R-HOME-10 R-TEN-7: nothing is logged and no error carries the address, an owner, the PIN or the payload', async () => {
     const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((k) => vi.spyOn(console, k).mockImplementation(() => undefined));
     const errors: string[] = [];
     await live().p.lookupHomeowner(HOME);
@@ -211,8 +211,8 @@ describe('Beaufort connector: failures (R-HOME-6; E572, E579)', () => {
   });
 });
 
-describe('the county rate limiter (R-HOME-6)', () => {
-  it('R-HOME-6: requests of one instance are at least 1000 ms apart across lookups (shared by all tenants)', async () => {
+describe('the county rate limiter (R-HOME-10)', () => {
+  it('R-HOME-10: requests of one instance are at least 1000 ms apart across lookups (shared by all tenants)', async () => {
     const { p, m, c } = live();
     await p.lookupHomeowner(HOME);
     await p.lookupHomeowner(HOME);
@@ -220,7 +220,7 @@ describe('the county rate limiter (R-HOME-6)', () => {
     expect(c.sleeps).toEqual([1000, 1000, 1000]);
   });
 
-  it('R-HOME-6: no wait when the interval has already passed; waits are served in order', async () => {
+  it('R-HOME-10: no wait when the interval has already passed; waits are served in order', async () => {
     const c = manualClock();
     const l = new CountyRateLimiter(() => c.clock.now(), c.sleep, 1000);
     await l.acquire();
@@ -271,7 +271,7 @@ describe('module 50\'s fake and the shared interface (R-PRED-2)', () => {
     await expect(f.lookupHomeowner({ ...HOME, contactId: 'x' } as never)).rejects.toThrow(/only an address may be sent/);
   });
 
-  it('R-HOME-6: the unconfigured stand-in throws not_configured for both methods', async () => {
+  it('R-HOME-6 E574: the unconfigured stand-in throws not_configured for both methods', async () => {
     const u = new UnconfiguredPublicRecords();
     expect(await rejection(u.lookupHomeowner())).toBe('not_configured:PUBLIC_RECORDS_NOT_CONFIGURED');
     expect(await rejection(u.lookup())).toBe('not_configured:PUBLIC_RECORDS_NOT_CONFIGURED');

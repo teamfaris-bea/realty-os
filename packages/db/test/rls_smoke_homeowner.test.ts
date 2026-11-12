@@ -21,7 +21,7 @@ describe('rls_smoke_homeowner.sql (homeowner profiles, D10)', () => {
     await db?.drop();
   });
 
-  it('passes every homeowner smoke check: R-HOME-1 R-HOME-2 R-HOME-3 R-HOME-4 R-HOME-7 R-HOME-8 R-HOME-9 E570 E571 E583 E584 E587 E589', () => {
+  it('passes every homeowner smoke check: R-HOME-1 R-HOME-2 R-HOME-3 R-HOME-4 R-HOME-7 R-HOME-9 R-TEN-1 E570 E571 E583 E584 E587 E589', () => {
     expect(notices.filter((n) => n.startsWith('FAIL'))).toEqual([]);
     const passes = notices.filter((n) => n.startsWith('PASS'));
     expect(passes.length).toBeGreaterThanOrEqual(45);
@@ -29,7 +29,7 @@ describe('rls_smoke_homeowner.sql (homeowner profiles, D10)', () => {
   });
 
   it('E583: the client principal check ran and found rows that exist', () => {
-    expect(notices.some((n) => n.startsWith('PASS  R-HOME-8 E583'))).toBe(true);
+    expect(notices.some((n) => n.startsWith('PASS  R-HOME-7 E583'))).toBe(true);
     expect(notices.some((n) => n.startsWith('PASS  E583: the rows the client could not read do exist'))).toBe(true);
   });
 
@@ -37,7 +37,7 @@ describe('rls_smoke_homeowner.sql (homeowner profiles, D10)', () => {
     expect(SMOKE_SQL.match(/RAISE EXCEPTION 'FAIL/g)).toHaveLength(1);
   });
 
-  it('R-HOME-10: the outreach pack ships unreviewed, and the migration leaves no row behind the script', async () => {
+  it('R-HOME-8: the outreach pack ships unreviewed, and the migration leaves no row behind the script', async () => {
     const c = new pg.Client({ connectionString: db.ownerUrl });
     await c.connect();
     try {

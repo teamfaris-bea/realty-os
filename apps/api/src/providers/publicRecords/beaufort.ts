@@ -1,4 +1,4 @@
-// The Beaufort County connector (owner decision D10; R-HOME-6; E565, E573, E575-E579, E588). It fills module 50's
+// The Beaufort County connector (owner decision D10; R-HOME-10; E565, E573, E575-E579, E588). It fills module 50's
 // source-neutral PublicRecordsProvider (apps/api/src/predict/provider.ts): there is no second records adapter.
 //
 //  - `lookup` (the property lookup module 50's pass makes for every owned home) always throws not_configured

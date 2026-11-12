@@ -1,6 +1,6 @@
 // SQL of module 78 api/homeowner (owner decision D10). Every write names homeowner_profiles or
 // homeowner_profile_facts only (architecture test), runs as the tenant's system actor (the migration's write
-// policies) and never touches contacts, addresses, tags, deals, intent, stage or ownership (R-HOME-7). Names are read
+// policies) and never touches contacts, addresses, tags, deals, intent, stage or ownership (R-HOME-6, R-HOME-7). Names are read
 // for the in-memory attach decision only: never written, hashed or logged.
 import type { Tx } from '@realty/db';
 import { sql, type RawBuilder } from 'kysely';
@@ -227,7 +227,7 @@ export async function writeFailure(tx: Tx, w: FailureWrite): Promise<void> {
       recognized_by = EXCLUDED.recognized_by`.execute(tx);
 }
 
-// ---- the read route (under the VIEWER's RLS: R-HOME-8) ----------------------------------------------------
+// ---- the read route (under the VIEWER's RLS: R-HOME-7) ----------------------------------------------------
 
 export interface ViewReasonsRow {
   tz: string;

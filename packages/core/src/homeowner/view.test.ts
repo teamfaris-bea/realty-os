@@ -39,14 +39,14 @@ const MATCHED = profile({
   },
 });
 
-describe('homeownerView (R-HOME-8)', () => {
-  it('R-HOME-8 E585: a contact that is not recognised gives { recognized: false, homes: [] }', () => {
+describe('homeownerView (R-HOME-4, R-HOME-5, R-HOME-7)', () => {
+  it('R-HOME-1 R-HOME-7: a contact that is not recognised gives { recognized: false, homes: [] }', () => {
     const v = homeownerView(input([{ address: BEAUFORT, kind: 'home', profile: MATCHED }], { reasons: [] }));
     expect(v.recognized).toBe(false);
     expect(v.homes).toEqual([]);
   });
 
-  it('R-HOME-8 R-HOME-4 E561: a matched home shows every kept value with its source and as-of date (or the check date), and why each other value is missing', () => {
+  it('R-HOME-4 R-HOME-5: a matched home shows every kept value with its source and as-of date (or the check date), and why each other value is missing', () => {
     const h = one({ address: BEAUFORT, kind: 'home', profile: MATCHED });
     expect(h.outcome).toBe('matched');
     expect(h.check).toEqual({ state: 'checked', checkedOn: '2026-11-10', nextCheckOn: '2026-12-10' });
@@ -61,7 +61,7 @@ describe('homeownerView (R-HOME-8)', () => {
     expect(h.rows.filter((r) => r.state === 'pending_d9').map((r) => r.key)).toEqual(['mls_sale_history', 'in_house_value']);
   });
 
-  it('R-HOME-3 E562 E563 E564: not matched (each detail) and ambiguous keep nothing', () => {
+  it('R-HOME-3 E562 E564 E565: not matched (each detail) and ambiguous keep nothing', () => {
     for (const matchDetail of ['owner_name_mismatch', 'address_mismatch', 'missing_data'] as const) {
       const h = one({ address: BEAUFORT, kind: 'home', profile: profile({ status: 'not_matched', matchDetail }) });
       expect(h.outcome).toBe('not_matched');
@@ -93,13 +93,13 @@ describe('homeownerView (R-HOME-8)', () => {
     expect(one({ address: BEAUFORT, kind: 'home', profile: noTransfer }).yearsOwned).toBeNull();
   });
 
-  it('E565: not available says the county record has none and where to look', () => {
+  it('R-HOME-5 E565: not available says the county record has none and where to look', () => {
     const h = one({ address: BEAUFORT, kind: 'home', profile: profile({ status: 'not_available' }) });
     expect(h.outcome).toBe('not_available');
     expect(h.rows[0]).toMatchObject({ state: 'not_available', why: 'not_in_record' });
   });
 
-  it('R-HOME-7 E572: a failure after a read shows both dates and keeps the values; a failure before any read says nothing was read', () => {
+  it('R-HOME-6 E572: a failure after a read shows both dates and keeps the values; a failure before any read says nothing was read', () => {
     const later = one({ address: BEAUFORT, kind: 'home', profile: { ...MATCHED, lastFailureOn: '2026-11-11', lastFailureCode: 'timeout' } });
     expect(later.check).toEqual({ state: 'failed', failedOn: '2026-11-11', lastReadOn: '2026-11-10' });
     expect(later.rows.filter((r) => r.state === 'value')).toHaveLength(3);
@@ -108,7 +108,7 @@ describe('homeownerView (R-HOME-8)', () => {
     expect(never.outcome).toBe('failed');
   });
 
-  it('E573 E574: an unprofiled home says it is checked overnight, or shows the platform status text when not configured', () => {
+  it('R-HOME-6 R-HOME-10 E573 E574: an unprofiled home says it is checked overnight, or shows the platform status text when not configured', () => {
     expect(one({ address: BEAUFORT, kind: 'home', profile: null }).check).toEqual({ state: 'not_checked' });
     const off = one({ address: BEAUFORT, kind: 'home', profile: null }, { configured: false, statusText: 'Public records are not set up on this platform' });
     expect(off.check).toEqual({ state: 'not_configured', text: 'Public records are not set up on this platform' });
@@ -132,7 +132,7 @@ describe('homeownerView (R-HOME-8)', () => {
     expect(homeownerView(input(homes)).homes.map((h) => h.providerNote)).toEqual(homes.map(() => null));
   });
 
-  it('R-HOME-2 E576: a Jasper home is links only; a shared ZIP with no Beaufort record also offers the Jasper lookup', () => {
+  it('R-HOME-5 E575 E576: a Jasper home is links only; a shared ZIP with no Beaufort record also offers the Jasper lookup', () => {
     const j = one({ address: JASPER, kind: 'home', profile: null });
     expect(j.outcome).toBe('links_only');
     expect(j.county).toEqual({ key: 'sc-jasper', name: 'Jasper County', mode: 'links' });
@@ -145,7 +145,7 @@ describe('homeownerView (R-HOME-8)', () => {
 
   // b11 reconciliation homeowner-11 (verify_items 6): the Jasper links went to the county homepage, Beaufort's to
   // pages other than the brief's, and no millage link existed where tax values are shown
-  it('R-HOME-5 E575 E576: the county pages are the brief\'s (each VERIFY); Beaufort homes add the millage page; no link carries the address', () => {
+  it('R-HOME-5: the county pages are the brief\'s (each VERIFY); Beaufort homes add the millage page; no link carries the address', () => {
     const b = one({ address: BEAUFORT, kind: 'home', profile: MATCHED });
     expect(b.rows.find((r) => r.key === 'assessed_value_cents')).toMatchObject({ link: { url: 'https://sc-beaufort.publicaccessnow.com/' } });
     expect(b.loansLink).toEqual({ label: 'Beaufort County Register of Deeds', url: 'https://www.beaufortcountysc.gov/register-of-deeds/index.html' });
@@ -163,7 +163,7 @@ describe('homeownerView (R-HOME-8)', () => {
     }
   });
 
-  it('R-HOME-2 E577: an address outside the table has no county and no links', () => {
+  it('R-HOME-5 E577: an address outside the table has no county and no links', () => {
     const o = one({ address: OTHER, kind: 'home', profile: null });
     expect(o.outcome).toBe('outside_area');
     expect(o.county).toBeNull();
@@ -176,7 +176,7 @@ describe('homeownerView (R-HOME-8)', () => {
     expect(homeownerView(input([], { reasons: [], mergedRecords: true }))).toMatchObject({ recognized: false, mergedRecords: true });
   });
 
-  it('R-HOME-10: the outreach line is never built and carries the recorded clearance date or null', () => {
+  it('R-HOME-8: the outreach line is never built and carries the recorded clearance date or null', () => {
     expect(homeownerView(input([])).outreach).toEqual({ built: false, clearanceOn: null });
     expect(homeownerView(input([], { outreachClearanceOn: '2026-11-12' })).outreach).toEqual({ built: false, clearanceOn: '2026-11-12' });
   });

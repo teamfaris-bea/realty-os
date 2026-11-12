@@ -3,7 +3,7 @@
 //                                 the check state, each value with its source and date or why it is missing, years
 //                                 owned, whether tax mail goes elsewhere, the loans link, the D9 slots, and the
 //                                 outreach line                                                  contact.view_detail
-// Read-only, under the viewer's RLS (R-HOME-8): profiles and facts follow the contact's detail visibility; a past
+// Read-only, under the viewer's RLS (R-HOME-7): profiles and facts follow the contact's detail visibility; a past
 // buyer's date is shown only when the viewer can see the deal; a contact the viewer cannot see is 404 (R-PERM-5).
 // No audit row, no new error code, no home_valuations read (decision (d)), no write of any kind.
 import type { UserActor } from '@realty/core/foundation';

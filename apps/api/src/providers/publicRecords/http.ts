@@ -1,4 +1,4 @@
-// The county HTTP client (R-HOME-6; E572, E579). GET only, redirects refused (redirect: 'manual', any 3xx is
+// The county HTTP client (R-HOME-10; E572, E579). GET only, redirects refused (redirect: 'manual', any 3xx is
 // rejected), a 15 s timeout, a 2 MiB streamed body cap (the spark.ts readCapped pattern, copied), `f=json`, and a
 // generic User-Agent that names no tenant, user or contact. One limiter per provider instance, shared across
 // tenants: requests at least 1000 ms apart (VERIFY with the county), at most 3 requests per lookup.

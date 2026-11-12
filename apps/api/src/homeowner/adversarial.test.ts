@@ -36,8 +36,8 @@ async function storedText(tenantId: string): Promise<string> {
   return rows.rows.map((r) => r.t).join('\n');
 }
 
-describe('homeowner lane: adversarial (R-HOME-3, R-HOME-5, R-HOME-7, R-HOME-8, R-HOME-10)', () => {
-  it('R-HOME-3 R-HOME-5 E580: a hostile county payload stores only the closed field list: no co-owner, age, phone, lender, instruments or other owners\' addresses; owner names are stored, hashed or logged nowhere', async () => {
+describe('homeowner lane: adversarial (R-HOME-1, R-HOME-3, R-HOME-6, R-HOME-7, R-HOME-8)', () => {
+  it('R-HOME-3 E580: a hostile county payload stores only the closed field list: no co-owner, age, phone, lender, instruments or other owners\' addresses; owner names are stored, hashed or logged nowhere', async () => {
     const records = fake();
     const secret = `ZQX${randomUUID().slice(0, 6).toUpperCase()}`;
     const c = await homeowner(h, a, a.agents[0]!, records, {
@@ -68,7 +68,7 @@ describe('homeowner lane: adversarial (R-HOME-3, R-HOME-5, R-HOME-7, R-HOME-8, R
     for (const x of [llc, extra]) expect((await profileOf(h, x.addressId)).facts).toEqual([]);
   });
 
-  it('R-HOME-1: a protected-proxy tag never recognises a homeowner, even when it is named like the homeowner tag key', async () => {
+  it('R-HOME-1 E561: a protected-proxy tag never recognises a homeowner, even when it is named like the homeowner tag key', async () => {
     const records = fake();
     const c = await homeowner(h, b, b.agents[0]!, records, { reason: 'homeowner_tag' });
     await h.su.query(`UPDATE tags SET protected_proxy = true WHERE tenant_id = $1 AND name_key = 'homeowner'`, [b.tenantId]);
@@ -78,7 +78,7 @@ describe('homeowner lane: adversarial (R-HOME-3, R-HOME-5, R-HOME-7, R-HOME-8, R
     expect(records.homeownerCalls).toEqual([]);
   });
 
-  it('R-HOME-7 R-PAR-12 R-CHAN-3: a person-level do-not-contact is never looked up; a STOP on a phone changes nothing here because nothing is ever sent', async () => {
+  it('R-HOME-1 R-HOME-9 R-PAR-12 R-CHAN-3 E568: a person-level do-not-contact is never looked up and gets no profile; a STOP on a phone changes nothing here because nothing is ever sent', async () => {
     const records = fake();
     const dnc = await homeowner(h, a, a.agents[0]!, records);
     const r = await call(a.agents[0]!, 'POST', `/contacts/${dnc.id}/do-not-contact`, { reason: 'other' });
@@ -92,7 +92,7 @@ describe('homeowner lane: adversarial (R-HOME-3, R-HOME-5, R-HOME-7, R-HOME-8, R
     expect({ ...after, contactsChanged: 0 }).toEqual({ ...before, contactsChanged: 0 });
   });
 
-  it('R-INT-1: the adapter receives one postal address and nothing else (the fake refuses any other key; its log holds addresses only)', async () => {
+  it('R-HOME-2 R-INT-1: the adapter receives one postal address and nothing else (the fake refuses any other key; its log holds addresses only)', async () => {
     const records = fake();
     const c = await homeowner(h, a, a.agents[1]!, records);
     await refresh(h, a.tenantId, { publicRecords: records });
@@ -100,7 +100,7 @@ describe('homeowner lane: adversarial (R-HOME-3, R-HOME-5, R-HOME-7, R-HOME-8, R
     expect(records.homeownerCalls.join('\n')).not.toMatch(new RegExp(`${c.first}|${c.id}|${a.tenantId}`, 'i'));
   });
 
-  it('R-TEN-1 R-HOME-8: another tenant\'s Owner and another agent get 404; the panel route never accepts a tenant id', async () => {
+  it('R-TEN-1 R-HOME-7 E585 E589: another tenant\'s Owner and another agent get 404; the panel route never accepts a tenant id', async () => {
     const records = fake();
     const c = await homeowner(h, a, a.agents[0]!, records);
     await refresh(h, a.tenantId, { publicRecords: records });
@@ -110,7 +110,7 @@ describe('homeowner lane: adversarial (R-HOME-3, R-HOME-5, R-HOME-7, R-HOME-8, R
     expect((await call(b.owner, 'GET', `/contacts/${c.id}/homeowner?tenantId=${a.tenantId}`)).status).toBe(404);
   });
 
-  it('R-HOME-10: there is no write route: POST, PUT, PATCH and DELETE on the panel path do not exist', async () => {
+  it('R-HOME-7 R-HOME-8: there is no write route: POST, PUT, PATCH and DELETE on the panel path do not exist', async () => {
     const c = await homeowner(h, a, a.agents[0]!, null);
     for (const m of ['POST', 'PUT', 'PATCH', 'DELETE'] as const) {
       const r = await call(a.agents[0]!, m, `/contacts/${c.id}/homeowner`, {});
@@ -118,7 +118,7 @@ describe('homeowner lane: adversarial (R-HOME-3, R-HOME-5, R-HOME-7, R-HOME-8, R
     }
   });
 
-  it('R-HOME-7 R-OWN-1: a pass never changes ownership, stage, intent, tags or addresses', async () => {
+  it('R-HOME-6 R-OWN-1: a pass never changes ownership, stage, intent, tags or addresses', async () => {
     const records = fake();
     const c = await homeowner(h, a, a.agents[0]!, records);
     const snap = async () => JSON.stringify((await h.su.query(`SELECT c.ownership_state, c.owner_user_id, c.stage, c.intent, c.ownership_seq, (SELECT json_agg(row_to_json(x) ORDER BY x.id) FROM contact_addresses x WHERE x.contact_id = c.id) AS addrs FROM contacts c WHERE c.id = $1`, [c.id])).rows);

@@ -1,4 +1,4 @@
-// The homeowner panel (module 79; D10; R-HOME-8, R-HOME-10): each sentence, safe links, hidden when not recognised,
+// The homeowner panel (module 79; D10; R-HOME-4, R-HOME-5, R-HOME-7, R-HOME-8): each sentence, safe links, hidden when not recognised,
 // no export or send control, and axe. The fixtures are core homeownerView outputs (what the API serializes).
 import { homeownerView, type HomeownerView, type ViewInput, type ViewProfile } from '@realty/core/homeowner';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -48,12 +48,12 @@ function mount(body: unknown, status = 200) {
 }
 const panel = () => screen.findByRole('heading', { name: T.HEADER });
 
-describe('the homeowner panel (R-HOME-8)', () => {
-  it('R-HOME-8: registered once on the full contact view, id homeowner, order 30', () => {
+describe('the homeowner panel (R-HOME-4, R-HOME-5, R-HOME-7)', () => {
+  it('R-HOME-7: registered once on the full contact view, id homeowner, order 30', () => {
     expect(contactSections.filter((s) => s.id === 'homeowner')).toEqual([{ id: 'homeowner', order: 30, component: HomeownerPanel }]);
   });
 
-  it('R-HOME-8 R-HOME-4 E561: a matched home says it is internal, why it is shown, and each value with its source and date', async () => {
+  it('R-HOME-4 R-HOME-5 R-HOME-7: a matched home says it is internal, why it is shown, and each value with its source and date', async () => {
     mount(view([{ address: BEAUFORT, kind: 'home', profile: MATCHED }], { reasons: [{ reason: 'seller_intent', since: null }, { reason: 'past_buyer', since: '2024-05-01' }] }));
     await panel();
     expect(screen.getByText(T.INTERNAL)).toBeTruthy();
@@ -99,7 +99,7 @@ describe('the homeowner panel (R-HOME-8)', () => {
     expect(screen.getByText("Owned 5 years: since the team's closing on Mar 15, 2021 (source: the team's closed deal in this CRM)")).toBeTruthy();
   });
 
-  it('R-HOME-3 E562 E563 E564: each not-matched detail and ambiguous say so in words', async () => {
+  it('R-HOME-3 E562 E564 E565: each not-matched detail and ambiguous say so in words', async () => {
     mount(view([
       { address: BEAUFORT, kind: 'home', profile: profile({ status: 'not_matched', matchDetail: 'owner_name_mismatch' }) },
       { address: { ...BEAUFORT, line1: '11 Sample Lane' }, kind: 'home', profile: profile({ status: 'not_matched', matchDetail: 'missing_data' }) },
@@ -113,7 +113,7 @@ describe('the homeowner panel (R-HOME-8)', () => {
     expect(screen.getByText('More than one county record matches this address; nothing was kept.')).toBeTruthy();
   });
 
-  it('R-HOME-7 E572 E573 E574: failures, not checked yet and not configured are said in words', async () => {
+  it('R-HOME-6 E572 E573 E574: failures, not checked yet and not configured are said in words', async () => {
     mount(view([
       { address: BEAUFORT, kind: 'home', profile: { ...MATCHED, lastFailureOn: '2026-11-11', lastFailureCode: 'timeout' } },
       { address: { ...BEAUFORT, line1: '11 Sample Lane' }, kind: 'home', profile: profile({ status: 'failed', checkedOn: null, lastFailureOn: '2026-11-11', lastFailureCode: 'unavailable' }) },
@@ -125,7 +125,7 @@ describe('the homeowner panel (R-HOME-8)', () => {
     expect(screen.getByText(T.NOT_CHECKED)).toBeTruthy();
   });
 
-  it('E574: when public records are not set up the platform status text is shown verbatim', async () => {
+  it('R-HOME-6 E574: when public records are not set up the platform status text is shown verbatim', async () => {
     mount(view([{ address: BEAUFORT, kind: 'home', profile: null }], { configured: false, statusText: 'Public records are not set up on this platform' }));
     await panel();
     expect(screen.getByText('Public records are not set up on this platform')).toBeTruthy();
@@ -141,7 +141,7 @@ describe('the homeowner panel (R-HOME-8)', () => {
     expect(screen.getAllByText(TEST)).toHaveLength(2);
   });
 
-  it('R-HOME-2 E576: a Jasper home offers the county lookup; links open in a new tab with noopener noreferrer, and an unsafe URL is never a link', async () => {
+  it('R-HOME-5 E575: a Jasper home offers the county lookup; links open in a new tab with noopener noreferrer, and an unsafe URL is never a link', async () => {
     const v = view([{ address: { ...BEAUFORT, postalCode: '29936' }, kind: 'home', profile: null }]);
     const home = v.homes[0]!;
     mount({ ...v, homes: [{ ...home, loansLink: { label: 'Bad link', url: 'javascript:alert(1)' } }] });
@@ -156,7 +156,7 @@ describe('the homeowner panel (R-HOME-8)', () => {
     expect(screen.getByText('Bad link')).toBeTruthy();
   });
 
-  it('R-HOME-10: no copy-all, export, send, list or check-now control exists; the outreach clearance date shows once recorded', async () => {
+  it('R-HOME-7 R-HOME-8: no copy-all, export, send, list or check-now control exists; the outreach clearance date shows once recorded', async () => {
     mount(view([{ address: BEAUFORT, kind: 'home', profile: MATCHED }], { outreachClearanceOn: '2026-11-12' }));
     await panel();
     expect(screen.queryAllByRole('button')).toEqual([]);
@@ -181,7 +181,7 @@ describe('the homeowner panel (R-HOME-8)', () => {
     expect(screen.queryByText(/not read automatically/)).toBeNull();
   });
 
-  it('R-HOME-8 E585: hidden when the person is not recognised or the viewer cannot read it', async () => {
+  it('R-HOME-7 E585: hidden when the person is not recognised or the viewer cannot read it', async () => {
     const a = mount(view([], { reasons: [] }));
     await waitFor(() => expect(a.container.querySelector('main')!.childElementCount).toBe(0));
     a.unmount();

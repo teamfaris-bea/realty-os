@@ -8,3 +8,12 @@ exports[`Beaufort connector: requests (R-HOME-6) > R-HOME-6 E575: a unique match
 `;
 
 exports[`Beaufort connector: requests (R-HOME-6) > R-HOME-6 E578: an address whose tokens fail the strict patterns is ADDRESS_INVALID before any request; quotes never reach the query 1`] = `"STREETNUM = '1' AND (PREDIRECT IS NULL OR PREDIRECT = '') AND STREETNAME = 'OR 1 1 SAMPLE' AND TYPE = 'LN' AND (POSTDIRECT IS NULL OR POSTDIRECT = '')"`;
+
+exports[`Beaufort connector: requests (R-HOME-10) > R-HOME-10 E578: an address whose tokens fail the strict patterns is ADDRESS_INVALID before any request; quotes never reach the query 1`] = `"STREETNUM = '1' AND (PREDIRECT IS NULL OR PREDIRECT = '') AND STREETNAME = 'OR 1 1 SAMPLE' AND TYPE = 'LN' AND (POSTDIRECT IS NULL OR POSTDIRECT = '')"`;
+
+exports[`Beaufort connector: requests (R-HOME-10) > R-HOME-10: a unique match: GET only, no redirects, f=json, a generic User-Agent, two requests (the Gisfile step is off), the query strings 1`] = `
+[
+  "https://gis.beaufortcountysc.gov/server/rest/services/Addresses/MapServer/0/query?where=STREETNUM = '10' AND (PREDIRECT IS NULL OR PREDIRECT = '') AND STREETNAME = 'SAMPLE' AND TYPE = 'LN' AND (POSTDIRECT IS NULL OR POSTDIRECT = '')&outFields=STREETNUM,PREDIRECT,STREETNAME,TYPE,POSTDIRECT,UNITNUM&returnGeometry=true&outSR=4326&f=json",
+  "https://gis.beaufortcountysc.gov/server/rest/services/EnerGov/MapServer/1/query?geometry=-80.70001,32.40001&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=GisFile_PIN,GisFile_Owner1,GisFile_Owner2,GisFile_MailingAdd&returnGeometry=false&f=json",
+]
+`;

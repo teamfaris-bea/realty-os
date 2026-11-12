@@ -1,4 +1,4 @@
-// Boundary test of the homeowner-profile lane (modules 77-79; owner decision D10; R-HOME-10, R-HOME-7, R-PRED-2,
+// Boundary test of the homeowner-profile lane (modules 77-79; owner decision D10; R-HOME-7, R-HOME-8, R-PRED-2,
 // R-PRED-4): the county data reaches the agents' panel and nothing else. Predict-style source scans over apps/api
 // and apps/web (comments are stripped where a rule names a table or a function).
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -31,7 +31,7 @@ function importsOf(file: string): string[] {
 }
 const target = (file: string, spec: string) => (spec.startsWith('.') ? rel(resolve(dirname(file), spec)).replace(/\.js$/, '.ts') : spec);
 
-describe('R-HOME-10: the homeowner lane reaches only the agents\' panel', () => {
+describe('R-HOME-7 R-HOME-8: the homeowner lane reaches only the agents\' panel', () => {
   it('the scans are not vacuous', () => {
     expect(LANE.map((f) => rel(f)).sort()).toEqual([
       'homeowner/handlers.ts', 'homeowner/refresh.ts', 'homeowner/repos.ts', 'homeowner/routes.ts', 'homeowner/schemas.ts', 'homeowner/settings.ts',
@@ -40,7 +40,7 @@ describe('R-HOME-10: the homeowner lane reaches only the agents\' panel', () => 
     expect(RUNTIME.length).toBeGreaterThan(200);
   });
 
-  it('R-HOME-10: homeowner/** and providers/publicRecords/** import nothing from messaging, leads, the assistant, ownership, ads, the portal, marketing, seller updates, mail sync, bulk, lists, coaching or documents (comms/repos/contacts.ts and nurture/repos.ts excepted)', () => {
+  it('R-HOME-8: homeowner/** and providers/publicRecords/** import nothing from messaging, leads, the assistant, ownership, ads, the portal, marketing, seller updates, mail sync, bulk, lists, coaching or documents (comms/repos/contacts.ts and nurture/repos.ts excepted)', () => {
     const FORBIDDEN = /^(comms|channels|leads|assistant|ownership|ads|portal|marketing|sellerUpdates|mailSync|bulk|lists|coaching|documents|nurture)\//;
     const ALLOWED = new Set(['comms/repos/contacts.ts', 'nurture/repos.ts']);
     const SPECS = /(@realty\/core\/(ownership|routing|ads|portal|assistant|coaching|marketing|texting)|@realty\/db\/.*ownership)/;
@@ -50,7 +50,7 @@ describe('R-HOME-10: the homeowner lane reaches only the agents\' panel', () => 
     }
   });
 
-  it('R-HOME-10: they name no send, dial, enqueue, notification, publish, AI provider or ownership command', () => {
+  it('R-HOME-8: they name no send, dial, enqueue, notification, publish, AI provider or ownership command', () => {
     const NAMES = /\b(dispatchOutbound|dialOutbound|deliverChannelMessage|sendSms|sendEmail|dialCall|enqueueTyped|enqueue|createNotification|notify|publishPost|postReviewReply|applyBudgetChange|applyOwnershipCommand|priority_feed_items|tasks|playbook_enrollments|notifications)\b/;
     for (const f of LANE) {
       expect(code(f).match(NAMES)?.[0] ?? null, rel(f)).toBeNull();
@@ -58,7 +58,7 @@ describe('R-HOME-10: the homeowner lane reaches only the agents\' panel', () => 
     }
   });
 
-  it('R-HOME-7: the lane\'s SQL writes only homeowner_profiles and homeowner_profile_facts', () => {
+  it('R-HOME-6 R-HOME-7: the lane\'s SQL writes only homeowner_profiles and homeowner_profile_facts', () => {
     const writes = new Set<string>();
     for (const f of LANE) for (const m of code(f).matchAll(/\b(INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+([a-z_.]+)/g)) writes.add(m[2]!);
     expect([...writes].sort()).toEqual(['homeowner_profile_facts', 'homeowner_profiles']);
@@ -95,7 +95,7 @@ describe('R-HOME-10: the homeowner lane reaches only the agents\' panel', () => 
     expect(web.filter((f) => importsOf(f).some((x) => SPEC.test(x))).map((f) => rel(f, WEB_SRC))).toEqual(['surfaces/homeowner/api.ts']);
   });
 
-  it('R-PRED-2 E588: predict/** other than provider.ts never names lookupHomeowner or a homeowner table; lookupHomeowner is called only by homeowner/refresh.ts', () => {
+  it('R-HOME-2 R-PRED-2 E588: predict/** other than provider.ts never names lookupHomeowner or a homeowner table; lookupHomeowner is called only by homeowner/refresh.ts', () => {
     for (const f of RUNTIME.filter((x) => rel(x).startsWith('predict/') && rel(x) !== 'predict/provider.ts')) {
       expect(/lookupHomeowner|homeowner_profile/.test(code(f)), rel(f)).toBe(false);
     }
@@ -103,7 +103,7 @@ describe('R-HOME-10: the homeowner lane reaches only the agents\' panel', () => 
     expect(callers).toEqual(['homeowner/refresh.ts']);
   });
 
-  it('R-HOME-10: in the web app only surfaces/homeowner/** and contact/sections.ts reference the panel; the widget and portal bundles never do', () => {
+  it('R-HOME-7 R-HOME-8: in the web app only surfaces/homeowner/** and contact/sections.ts reference the panel; the widget and portal bundles never do', () => {
     const web = sourceFiles(WEB_SRC).filter((f) => !isTest(rel(f, WEB_SRC)));
     const refs = web.filter((f) => !rel(f, WEB_SRC).startsWith('surfaces/homeowner/') && /HomeownerPanel|surfaces\/homeowner|\.\.\/homeowner\//.test(readFileSync(f, 'utf8'))).map((f) => rel(f, WEB_SRC));
     expect(refs).toEqual(['surfaces/contact/sections.ts']);

@@ -1,4 +1,4 @@
-// County routing and links (R-HOME-2; E575, E576, E577). A PLATFORM table: which county a subject address is in,
+// County routing and links (R-HOME-2, R-HOME-5; E575, E576, E577). A PLATFORM table: which county a subject address is in,
 // whether the county has a connector (Beaufort: fixtures only, live calls off) or links only (Jasper), and the public
 // county pages an agent can open to look further. Links come from this table only and never carry the address or any
 // other contact datum. Every ZIP list and URL is VERIFY (ZIP codes cross county lines; county sites move).

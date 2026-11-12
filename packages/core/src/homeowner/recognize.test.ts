@@ -16,7 +16,7 @@ describe('recognition and subjects (R-HOME-1, R-HOME-2)', () => {
     expect(reasonsFrom({ sellerIntent: false, sellerInquiry: false, homeownerTag: true, pastBuyer: false })).toEqual(['homeowner_tag']);
   });
 
-  it('R-HOME-2 E560: K2\'s address of any kind first, then home, then property, oldest first; never a mailing or interest address otherwise; at most three', () => {
+  it('R-HOME-2: K2\'s address of any kind first, then home, then property, oldest first; never a mailing or interest address otherwise; at most three', () => {
     const a = [
       addr('m1', 'mailing', '2020-01-01'),
       addr('i1', 'interest', '2020-01-01'),
@@ -31,26 +31,26 @@ describe('recognition and subjects (R-HOME-1, R-HOME-2)', () => {
     expect(subjectsFor([], a, ['k2'])).toEqual([]);
   });
 
-  it('R-HOME-2 E560: an incomplete address is never a subject; ties break by id', () => {
+  it('R-HOME-2 E560: an incomplete address is never a subject, so a person with only incomplete ones has none; ties break by id', () => {
     const a = [addr('hb', 'home', '2021-01-01'), addr('ha', 'home', '2021-01-01'), addr('hx', 'home', '2020-01-01', false)];
     expect(subjectsFor(['homeowner_tag'], a, []).map((x) => x.id)).toEqual(['ha', 'hb']);
   });
 });
 
-describe('county routing (R-HOME-2)', () => {
-  it('R-HOME-2 E575: a Beaufort ZIP routes to the connector', () => {
+describe('county routing (R-HOME-2, R-HOME-5)', () => {
+  it('R-HOME-2: a Beaufort ZIP routes to the connector', () => {
     expect(countyOf({ region: 'SC', postalCode: '29902' })).toEqual({ key: 'sc-beaufort', mode: 'connector' });
     expect(countyOf({ region: 'SC', postalCode: '29902-1234' })).toEqual({ key: 'sc-beaufort', mode: 'connector' });
   });
 
-  it('R-HOME-2 E576: a shared ZIP tries Beaufort and also names Jasper; a Jasper ZIP is links only', () => {
+  it('R-HOME-2 R-HOME-5 E575 E576: a shared ZIP tries Beaufort and also names Jasper; a Jasper ZIP is links only', () => {
     expect(countyOf({ region: 'SC', postalCode: '29910' })).toEqual({ mode: 'shared', try: 'sc-beaufort', also: 'sc-jasper' });
     expect(countyOf({ region: 'SC', postalCode: '29936' })).toEqual({ key: 'sc-jasper', mode: 'links' });
     expect(connectorCountyOf(countyOf({ region: 'SC', postalCode: '29910' }))).toBe('sc-beaufort');
     expect(connectorCountyOf(countyOf({ region: 'SC', postalCode: '29936' }))).toBeNull();
   });
 
-  it('R-HOME-2 E577: "South Carolina" and "S.C." count as SC; another state, an unlisted or malformed ZIP is null', () => {
+  it('R-HOME-2 R-HOME-5 E577: another state, an unlisted or malformed ZIP has no county; "South Carolina" and "S.C." count as SC', () => {
     expect(isSouthCarolina('South Carolina')).toBe(true);
     expect(isSouthCarolina('s.c.')).toBe(true);
     expect(countyOf({ region: 'South Carolina', postalCode: '29902' })).toEqual({ key: 'sc-beaufort', mode: 'connector' });
@@ -76,6 +76,17 @@ describe('the entity-owner filter (R-HOME-3)', () => {
     expect(isEntityOwner('SAMPLE INCE')).toBe(false); // whole words only
   });
 
+  // b11 reconciliation homeowner-2: the brief's E563 (name formats on the real layer are verify_items 14)
+  it('R-HOME-3 E563: "SAMPLE OWNER A & SAMPLE OWNER B" matches either owner; "DOE JOHN & JANE" does not match Jane Doe', () => {
+    const address = { line1: '1 Sample Way', city: 'Exampleton', region: 'SC', postalCode: '29902' };
+    const record = (owner: string) => ({ address, ownerNames: personOwnerNames([owner]) });
+    expect(personOwnerNames(['SAMPLE OWNER A & SAMPLE OWNER B'])).toEqual(['SAMPLE OWNER A', 'SAMPLE OWNER B']);
+    expect(attachPropertyRecord(record('SAMPLE OWNER A & SAMPLE OWNER B'), { address, names: ['Sample Owner B'] })).toEqual({ attach: true, ownerNameMatch: true });
+    expect(attachPropertyRecord(record('SAMPLE OWNER A & SAMPLE OWNER B'), { address, names: ['Owner A Sample'] })).toEqual({ attach: true, ownerNameMatch: true });
+    expect(attachPropertyRecord(record('DOE JOHN & JANE'), { address, names: ['John Doe'] })).toEqual({ attach: true, ownerNameMatch: true });
+    expect(attachPropertyRecord(record('DOE JOHN & JANE'), { address, names: ['Jane Doe'] })).toEqual({ attach: false, reason: 'needs_review', detail: 'owner_name_mismatch' });
+  });
+
   it('R-HOME-3 E564: a record naming only entities attaches to no one (missing_data)', () => {
     const address = { line1: '1 Sample Way', city: 'Exampleton', region: 'SC', postalCode: '29902' };
     const d = attachPropertyRecord({ address, ownerNames: personOwnerNames(['SAMPLE OWNER A LLC']) }, { address, names: ['Sample Owner A LLC', 'Sample Owner A'] });
@@ -83,13 +94,13 @@ describe('the entity-owner filter (R-HOME-3)', () => {
   });
 });
 
-describe('years owned', () => {
+describe('years owned (R-HOME-4)', () => {
   const t = (value: string) => ({ value, source: 'Beaufort County GIS parcel layer', asOf: null });
-  it('E582: whole years by floor(days / 365.25), naming its date and source', () => {
+  it('R-HOME-4: whole years by floor(days / 365.25), naming its date and source', () => {
     expect(yearsOwned(t('2015-06-01'), '2026-11-12')).toEqual({ years: 11, since: '2015-06-01', basis: 'county_transfer', source: 'Beaufort County GIS parcel layer', asOf: null });
     expect(yearsOwned(t('2026-11-12'), '2026-11-12')?.years).toBe(0);
   });
-  it('E582: leap days: a 2020-02-29 transfer is 4 years on 2024-02-29 and 3 the day before', () => {
+  it('R-HOME-4: leap days: a 2020-02-29 transfer is 4 years on 2024-02-29 and 3 the day before', () => {
     expect(yearsOwned(t('2020-02-29'), '2024-02-29')?.years).toBe(4);
     expect(yearsOwned(t('2020-02-29'), '2024-02-28')?.years).toBe(3);
   });
@@ -103,7 +114,7 @@ describe('years owned', () => {
     expect(yearsOwned(null, '2026-11-12', 'not a date')).toBeNull();
     expect(yearsOwned(null, '2026-11-12', null)).toBeNull();
   });
-  it('E582: a future date, more than 150 years back, or no date gives null', () => {
+  it('R-HOME-4: a future date, more than 150 years back, or no date gives null', () => {
     expect(yearsOwned(t('2026-11-13'), '2026-11-12')).toBeNull();
     expect(yearsOwned(t('1850-01-01'), '2026-11-12')).toBeNull();
     expect(yearsOwned(null, '2026-11-12')).toBeNull();

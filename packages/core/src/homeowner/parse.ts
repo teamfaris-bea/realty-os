@@ -1,4 +1,4 @@
-// The strict homeowner-record parser (R-HOME-5; E580, E581). It mirrors module 50's parsePublicRecord
+// The strict homeowner-record parser (R-HOME-3, R-HOME-4; E580, E581). It mirrors module 50's parsePublicRecord
 // (apps/api/src/predict/provider.ts): the record is built field by field from an untrusted payload, so a datum the
 // closed field list cannot hold (age, phone, email, lender, recorded instruments, other owners' addresses, ...) never
 // passes, even if a source sends it. Values sit in the payload's `homeowner` block (module 50's property parser

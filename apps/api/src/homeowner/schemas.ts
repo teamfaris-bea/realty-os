@@ -1,4 +1,4 @@
-// The strict response schema of GET /api/contacts/:id/homeowner (module 78; R-HOME-4, R-HOME-8). It mirrors core
+// The strict response schema of GET /api/contacts/:id/homeowner (module 78; R-HOME-4, R-HOME-7). It mirrors core
 // homeownerView exactly: every object is strict (an unknown key fails the response), and there is no score,
 // confidence, percentage, estimate, balance, equity or owner-name field anywhere.
 import { z } from 'zod';

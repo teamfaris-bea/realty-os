@@ -1,6 +1,6 @@
 -- =============================================================================
 -- RLS / integrity smoke test for the homeowner-profile migration (owner decision D10; modules 77-79;
--- R-HOME-3, R-HOME-4, R-HOME-7, R-HOME-8, R-HOME-9; E570, E571, E583, E584, E587, E589).
+-- R-HOME-1, R-HOME-2, R-HOME-3, R-HOME-4, R-HOME-7, R-HOME-9 in the brief's numbering; E570, E571, E583, E584, E587, E589).
 -- Same shape as rls_smoke_p23.sql: ONE transaction, rolled back; every application step runs as app_user; a
 -- failed expectation raises 'FAIL ...'. Run by packages/db/test/rls_smoke_homeowner.test.ts. The migration's
 -- file name is not named here (the orchestrator renumbers it at merge). Every address and name is fictional.
@@ -196,28 +196,28 @@ SELECT pg_temp.ok((SELECT count(*) FROM homeowner_profiles) = 6 AND (SELECT coun
                   'R-HOME-7: the system writes profiles and facts (tenant-wide)');
 
 -- =============================================================================
--- 1. Reads (R-HOME-8)
+-- 1. Reads (R-HOME-7: readable by contact-detail viewers, read-only for support, nothing for a client)
 -- =============================================================================
 SELECT pg_temp.ctx(:tA, :agA1, 'user');
-SELECT pg_temp.ok(pg_temp.seen(:p1) = 3, 'R-HOME-8: agent A reads their contact''s profile and both facts');
-SELECT pg_temp.ok(pg_temp.seen(:p2) = 0 AND pg_temp.seen(:p4) = 0 AND pg_temp.seen(:p3) = 0, 'R-HOME-8: agent A reads 0 rows of another agent''s contacts');
+SELECT pg_temp.ok(pg_temp.seen(:p1) = 3, 'R-HOME-7: agent A reads their contact''s profile and both facts');
+SELECT pg_temp.ok(pg_temp.seen(:p2) = 0 AND pg_temp.seen(:p4) = 0 AND pg_temp.seen(:p3) = 0, 'R-HOME-7: agent A reads 0 rows of another agent''s contacts');
 SELECT pg_temp.ctx(:tA, :agA2, 'user');
-SELECT pg_temp.ok(pg_temp.seen(:p1) = 0 AND pg_temp.seen(:p2) = 3, 'R-HOME-8: agent B reads 0 rows of agent A''s profile and reads their own');
+SELECT pg_temp.ok(pg_temp.seen(:p1) = 0 AND pg_temp.seen(:p2) = 3, 'R-HOME-7: agent B reads 0 rows of agent A''s profile and reads their own');
 SELECT pg_temp.ctx(:tA, :tlA, 'user');
-SELECT pg_temp.ok(pg_temp.seen(:p1) = 3, 'R-HOME-8: a Team Lead reads their team''s profile');
+SELECT pg_temp.ok(pg_temp.seen(:p1) = 3, 'R-HOME-7: a Team Lead reads their team''s profile');
 SELECT pg_temp.ctx(:tA, :tcA, 'user');
-SELECT pg_temp.ok(pg_temp.seen(:p4) = 3 AND pg_temp.seen(:p1) = 0, 'R-HOME-8: a TC reads the profile of a contact on their deal, and nothing else');
+SELECT pg_temp.ok(pg_temp.seen(:p4) = 3 AND pg_temp.seen(:p1) = 0, 'R-HOME-7: a TC reads the profile of a contact on their deal, and nothing else');
 SELECT pg_temp.ctx(:tA, :isaA, 'user');
-SELECT pg_temp.ok(pg_temp.seen(:p3) = 3 AND pg_temp.seen(:p1) = 0, 'R-HOME-8: an ISA reads their own contact''s profile');
+SELECT pg_temp.ok(pg_temp.seen(:p3) = 3 AND pg_temp.seen(:p1) = 0, 'R-HOME-7: an ISA reads their own contact''s profile');
 SELECT pg_temp.ctx(:tA, :ownA, 'user');
-SELECT pg_temp.ok((SELECT count(*) FROM homeowner_profiles) = 6, 'R-HOME-8: the Owner reads every profile of the tenant');
+SELECT pg_temp.ok((SELECT count(*) FROM homeowner_profiles) = 6, 'R-HOME-7: the Owner reads every profile of the tenant');
 SELECT pg_temp.ctx(:tB, :ownB, 'user');
 SELECT pg_temp.ok((SELECT count(*) FROM homeowner_profiles) = 0 AND (SELECT count(*) FROM homeowner_profile_facts) = 0,
-                  'R-HOME-8 R-TEN-1: tenant B''s Owner reads 0 tenant A rows');
+                  'R-HOME-7 R-TEN-1 E589: tenant B''s Owner reads 0 tenant A rows');
 
 -- support reads under the Owner's grant, and writes nothing (RLS and the statement trigger)
 SELECT pg_temp.ctx(:tA, :supU, 'support');
-SELECT pg_temp.ok(pg_temp.seen(:p1) = 3, 'R-HOME-8: a support actor under the Owner''s grant reads the profile');
+SELECT pg_temp.ok(pg_temp.seen(:p1) = 3, 'R-HOME-7: a support actor under the Owner''s grant reads the profile');
 SELECT pg_temp.refused(format('UPDATE homeowner_profiles SET next_refresh_at = now() WHERE id = %L', :p1), 'R-HOME-7: support cannot update a profile', 'SUPPORT_READ_ONLY');
 SELECT pg_temp.refused(format('DELETE FROM homeowner_profile_facts WHERE profile_id = %L', :p1), 'R-HOME-7: support cannot delete a fact', 'SUPPORT_READ_ONLY');
 SELECT pg_temp.refused(pg_temp.fact_sql(:p1, 'tax_year', 'int_value', '2025'), 'R-HOME-7: support cannot insert a fact', 'SUPPORT_READ_ONLY');
@@ -225,7 +225,7 @@ SELECT pg_temp.refused(pg_temp.fact_sql(:p1, 'tax_year', 'int_value', '2025'), '
 -- E583: the client principal reads nothing while rows exist
 SELECT pg_temp.client(:tA, gen_random_uuid());
 SELECT pg_temp.ok((SELECT count(*) FROM homeowner_profiles) = 0 AND (SELECT count(*) FROM homeowner_profile_facts) = 0,
-                  'R-HOME-8 E583: a client-portal session reads 0 profile and fact rows while they exist');
+                  'R-HOME-7 E583: a client-portal session reads 0 profile and fact rows while they exist');
 SELECT pg_temp.ctx(:tA, NULL, 'system');
 SELECT pg_temp.ok((SELECT count(*) FROM homeowner_profiles) = 6, 'E583: the rows the client could not read do exist');
 
@@ -263,13 +263,13 @@ SELECT pg_temp.ok(pg_temp.rows_affected(format('DELETE FROM homeowner_profile_fa
 
 -- E589: a cross-tenant reference is refused (composite foreign keys; tenant B's system names tenant A's rows)
 SELECT pg_temp.ctx(:tB, NULL, 'system');
-SELECT pg_temp.refused(pg_temp.profile_sql(gen_random_uuid(), :c1, :h1), 'R-HOME-9 E589: tenant B''s system cannot profile tenant A''s contact and address',
+SELECT pg_temp.refused(pg_temp.profile_sql(gen_random_uuid(), :c1, :h1), 'R-HOME-7 R-TEN-1 E589: tenant B''s system cannot profile tenant A''s contact and address',
                        'foreign key|HOMEOWNER_ADDRESS_NOT_CONTACTS');
-SELECT pg_temp.refused(pg_temp.fact_sql(:p1, 'tax_year', 'int_value', '2025'), 'R-HOME-9 E589: tenant B''s system cannot attach a fact to tenant A''s profile',
+SELECT pg_temp.refused(pg_temp.fact_sql(:p1, 'tax_year', 'int_value', '2025'), 'R-HOME-7 R-TEN-1 E589: tenant B''s system cannot attach a fact to tenant A''s profile',
                        'foreign key|HOMEOWNER_FACT_NOT_MATCHED');
 SELECT pg_temp.refused(format($q$INSERT INTO homeowner_profiles (tenant_id, id, contact_id, contact_address_id, county_key, status, recognized_by,
     checked_at, address_updated_at, next_refresh_at, retention_until) VALUES (%L, gen_random_uuid(), %L, %L, 'sc-beaufort', 'not_available',
-    '{seller_intent}', now(), now(), now(), now())$q$, :tA, :c1, :h1), 'R-HOME-9 E589: tenant B''s system cannot write a tenant A row', 'row-level security');
+    '{seller_intent}', now(), now(), now(), now())$q$, :tA, :c1, :h1), 'R-HOME-7 R-TEN-1 E589: tenant B''s system cannot write a tenant A row', 'row-level security');
 
 -- =============================================================================
 -- 3. Guards (R-HOME-3; E584)

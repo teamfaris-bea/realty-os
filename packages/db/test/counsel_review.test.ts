@@ -387,7 +387,7 @@ describe('counsel-review: recording counsel review of platform packs (R-INT-6, D
     expect(v.out).toContain('after:  reviewed by counsel on 2026-11-12; cleared');
   });
 
-  it('R-HOME-10 R-INT-6 D11: platform:public_records_outreach ships unreviewed with {"states":["SC"]}; the seven-key D11 run leaves it alone, and only its own command run records it', async () => {
+  it('R-HOME-8 R-INT-6 D11: platform:public_records_outreach ships unreviewed with {"states":["SC"]}; the seven-key D11 run leaves it alone, and only its own command run records it', async () => {
     const before = await published('platform:public_records_outreach');
     expect(before.reviewed_by_counsel_at).toBeNull();
     expect(before.rules).toEqual({ states: ['SC'] });

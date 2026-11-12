@@ -1,4 +1,4 @@
-// Every county service path and field name the Beaufort connector uses (owner decision D10; R-HOME-6). Code
+// Every county service path and field name the Beaufort connector uses (owner decision D10; R-HOME-10). Code
 // constants, never configuration: an operator cannot point the connector at another host or path. EVERY value below
 // is VERIFY with the county before any live call (docs/DEPLOY.md "Before any live county call"): the service root,
 // each layer number, each field name and type, how the county writes empty values, and its usage terms.
