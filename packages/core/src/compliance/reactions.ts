@@ -48,7 +48,7 @@ export function isSingleEmoji(s: string): boolean {
 
 /** NFC; U+200B, U+200C, U+2060, U+FEFF removed; whitespace (U+200A included) collapsed to one space; trimmed. */
 export function normalizeReactionBody(body: string): string {
-  return body.normalize('NFC').replace(/[​‌⁠﻿]/gu, '').replace(/\s+/gu, ' ').trim();
+  return body.normalize('NFC').replace(/[\u200B\u200C\u2060\uFEFF]/gu, '').replace(/\s+/gu, ' ').trim();
 }
 
 const TAPBACKS: readonly ReactionName[] = ['love', 'like', 'dislike', 'laugh', 'emphasize', 'question'];
