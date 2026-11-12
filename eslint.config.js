@@ -149,6 +149,7 @@ export default tseslint.config(
   {
     files: [
       'packages/core/src/{ownership,priority,ads,portal}/**/*.{ts,tsx}',
+      'packages/core/src/valuation/**/*.{ts,tsx}', // D9 module 70: prediction never feeds pricing (lane V1-B)
       'apps/api/src/{ownership,comms,ads,portal}/**/*.{ts,tsx}',
       'apps/api/src/leads/routing*',
       'apps/api/src/leads/routing*/**/*.{ts,tsx}',

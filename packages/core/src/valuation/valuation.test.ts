@@ -398,6 +398,25 @@ describe('adjustments (R-CMA-3)', () => {
   });
 });
 
+describe('regression: the size monotonicity counterexample (F12)', () => {
+  it('R-CMA-4 F12: with the comps pinned, 1 more sq ft never lowers the value (seed 14 once lost $13,521 with size in the weights)', () => {
+    const market = linearMarket({ n: 120, seed: 14, trendCentsPerMonth: 30, poolCents: 2_000_000, bedCents: 900_000, noise: 0.05, radiusMiles: 0.9 });
+    const first = run({ candidates: market, subject: subject({ sqft: 2_094 }) });
+    const pinned = first.comps.map((c) => c.ref.identity);
+    const exclude = market.map((c) => c.ref.identity).filter((id) => !pinned.includes(id));
+    const a = available(run({ candidates: market, subject: subject({ sqft: 2_094 }), include: pinned, exclude }));
+    const b = available(run({ candidates: market, subject: subject({ sqft: 2_095 }), include: pinned, exclude }));
+    expect(a.market.rates.find((x) => x.feature === 'size')?.applied).toBe(true);
+    expect(b.valueCents).toBeGreaterThanOrEqual(a.valueCents);
+    // The weights read every adjustment except size, so they do not move with the subject's size.
+    expect(b.comps.map((c) => c.weightBps)).toEqual(a.comps.map((c) => c.weightBps));
+    for (const c of a.comps) {
+      const nonSize = c.adjustments.filter((x) => x.feature !== 'size').reduce((t, x) => t + Math.abs(x.amountCents), 0);
+      expect(c.weightBasisBps).toBe(Math.floor((nonSize * 10_000) / (c.sale.closePriceCents as number)));
+    }
+  });
+});
+
 describe('determinism and the method version (R-CMA-5)', () => {
   it('R-CMA-5: CMA_DEFAULTS is pinned to CMA_METHOD_VERSION: changing a default needs a new method version', () => {
     const PINNED: Record<string, string> = { 'cma/1': '18067304' };
