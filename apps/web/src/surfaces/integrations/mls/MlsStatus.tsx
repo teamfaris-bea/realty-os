@@ -2,7 +2,9 @@
 //
 //   GET /admin/mls                                  each MLS connection: status, last sync, "MLS data as of",
 //                                                   whether MLS data may reach clients and why not, its licence pack
-//   PUT /admin/mls/connections/:id/license-pack     the whole pack, each value with "counsel reviewed it" (re-auth)
+//   PUT /admin/mls/connections/:id/license-pack     the whole pack, each value with "counsel reviewed it" (re-auth);
+//                                                   the valuation section (D9, its own counsel stamp) is saved apart:
+//                                                   the stored display pack as it stands, plus `valuation`
 //
 // R-MLS-2: the pack is counsel-reviewed only when every value is marked; until then the page says MLS data cannot
 // reach clients. Changing a value clears its mark: counsel reviewed the value it had, not the new one.
@@ -11,8 +13,11 @@ import { type FormEvent, type ReactNode, useId, useState } from 'react';
 import { Button, Card, Notice, TextField } from '../../../design/index.js';
 import { type ApiError, messageFor, useApi } from '../../../shell/index.js';
 import { useRequest } from '../../admin/integrations/request.js';
-import { Check, Pill, StatusLine, TextArea } from '../../admin/lib/ui.js';
+import { Check, Pill, SelectField, StatusLine, TextArea } from '../../admin/lib/ui.js';
 import {
+  AVM_SCOPES,
+  AVM_SCOPE_WORDS,
+  type AvmScope,
   DISPLAY_FIELDS,
   FIELD_WORDS,
   KEY_WORDS,
@@ -23,10 +28,20 @@ import {
   type PackKey,
   type PackValues,
   STATUS_WORDS,
+  USPS_REGIONS,
+  VALUATION_ERROR_MESSAGES,
+  VALUATION_KEYS,
+  VALUATION_NOT_SHARED,
+  VALUATION_WORDS,
+  type ValuationKey,
+  type ValuationValues,
+  type ValuationView,
   packBody,
   pickMls,
   pickPack,
   reviewWords,
+  statementsValid,
+  valuationBody,
 } from './pack.js';
 
 export const MLS_KEY = ['integrations', 'mls', 'admin'] as const;
@@ -71,7 +86,187 @@ function ConnectionBlock({ c, several }: { c: MlsConnection; several: boolean })
         </Notice>
       </Section>
       <PackEditor key={c.id} c={c} several={several} editable={c.status !== 'disconnected'} />
+      <ValuationEditor key={`${c.id}:valuation`} c={c} several={several} editable={c.status !== 'disconnected'} />
     </>
+  );
+}
+
+type StatementRow = { region: string; text: string; size: string };
+const rowsOf = (v: ValuationView): StatementRow[] => v.values.statements.map((x) => ({ region: x.region, text: x.text, size: String(x.minPointSize) }));
+const REGION_CODES = Object.keys(USPS_REGIONS);
+const STATEMENTS_INVALID = 'Nothing was saved: every state statement needs a state (each state once), a text and a type size from 6 to 36 points.';
+
+/**
+ * The licence pack's valuation section (D9; R-CMA-6, R-CMA-7; batch 10 review api-ui/F2): the Owner/Admin records from
+ * the MLS agreement whether sold data may be used for valuations, with its own counsel marks and stamp. Saved apart from
+ * the display pack: the PUT carries the display pack exactly as the server last returned it (so its review stamp is
+ * kept), plus `valuation`. Strictest values when nothing is stored; nothing is ever ticked for the Owner. V1 shares
+ * nothing built from MLS sales, whatever is recorded (the client uses say so).
+ */
+function ValuationEditor({ c, several, editable }: { c: MlsConnection; several: boolean; editable: boolean }) {
+  const qc = useQueryClient();
+  const req = useRequest(VALUATION_ERROR_MESSAGES);
+  const [values, setValues] = useState<ValuationValues>(c.licensePack.valuation.values);
+  const [rows, setRows] = useState<StatementRow[]>(rowsOf(c.licensePack.valuation));
+  const [marks, setMarks] = useState<Record<ValuationKey, boolean>>(c.licensePack.valuation.marks);
+  const [saved, setSaved] = useState<ValuationView>(c.licensePack.valuation);
+  const [changed, setChanged] = useState<Set<ValuationKey>>(new Set());
+  const [dirty, setDirty] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const allMarked = saved.unreviewedCount === 0 && saved.reviewedByCounselAt !== null;
+
+  const touch = (k: ValuationKey) => {
+    // counsel reviewed the value it had, not this one
+    setMarks((old) => ({ ...old, [k]: false }));
+    setChanged((old) => new Set(old).add(k));
+    setDirty(true);
+    setStatus(null);
+  };
+  const change = <K extends Exclude<ValuationKey, 'statements'>>(k: K, v: ValuationValues[K]) => {
+    setValues((old) => ({ ...old, [k]: v }));
+    touch(k);
+  };
+  const editRows = (next: StatementRow[]) => {
+    setRows(next);
+    touch('statements');
+  };
+  const mark = (k: ValuationKey, on: boolean) => {
+    setMarks((old) => ({ ...old, [k]: on }));
+    setDirty(true);
+    setStatus(null);
+  };
+
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setStatus(null);
+    const statements = rows.map((r) => ({ region: r.region, text: r.text.trim(), minPointSize: r.size.trim() === '' ? Number.NaN : Number(r.size) }));
+    if (!statementsValid(statements)) {
+      setError(STATEMENTS_INVALID);
+      return;
+    }
+    // the display pack as the server last returned it: unchanged values and marks keep its review stamp
+    const body = { ...packBody(c.licensePack.values, c.licensePack.marks), valuation: valuationBody({ ...values, statements }, marks) };
+    const r = await req.run<unknown>('save-valuation', 'PUT', `/admin/mls/connections/${encodeURIComponent(c.id)}/license-pack`, body);
+    if (!r.ok) {
+      setError(r.message);
+      return;
+    }
+    const v = pickPack((r.data as { licensePack?: unknown } | null)?.licensePack).valuation;
+    setValues(v.values);
+    setRows(rowsOf(v));
+    setMarks(v.marks);
+    setSaved(v);
+    setChanged(new Set());
+    setDirty(false);
+    setStatus(v.unreviewedCount === 0 ? 'Valuation use saved. Every valuation value is marked as reviewed by counsel.' : `Valuation use saved. ${v.unreviewedCount} of ${VALUATION_KEYS.length} valuation values are not marked as reviewed by counsel.`);
+    void qc.invalidateQueries({ queryKey: MLS_KEY });
+  };
+
+  const markRow = (k: ValuationKey) => (
+    <Check
+      label={
+        <>
+          Counsel reviewed this valuation value <span className="sr-only">({VALUATION_WORDS[k].label})</span>
+        </>
+      }
+      hint={changed.has(k) && !marks[k] ? 'Changed: mark it again once counsel has reviewed the new value.' : undefined}
+      checked={marks[k]}
+      disabled={!editable}
+      onChange={(on) => mark(k, on)}
+    />
+  );
+  const fallback = `${saved.unreviewedCount} of ${VALUATION_KEYS.length} valuation values are not marked as reviewed by counsel. ${VALUATION_NOT_SHARED}`;
+
+  return (
+    <Section
+      title={several ? `Valuation use: ${c.displayName}` : 'Valuation use'}
+      description="What your MLS agreement allows for sold data used in valuations (CMAs). It has its own counsel review, apart from the display rules above: have counsel review each value and mark it here."
+    >
+      <Notice tone={allMarked ? 'ok' : 'warn'} title={allMarked ? 'Every valuation value is marked as reviewed by counsel' : 'Not reviewed by counsel'}>
+        {saved.sentence || fallback}
+        {allMarked && saved.reviewedByCounselAt && changed.size === 0 ? ` Marked complete on ${day(saved.reviewedByCounselAt)}.` : ''}
+      </Notice>
+      {!editable ? <p className="text-[15px] text-ink-muted">This connection is disconnected, so its valuation use cannot be changed.</p> : null}
+      <form className="flex flex-col gap-4" noValidate onSubmit={(e) => void save(e)}>
+        <ul className="flex flex-col gap-3">
+          {(['agent_cma', 'client_cma', 'automated_notes'] as const).map((k) => (
+            <ValuationValue key={k} k={k} reviewed={marks[k]} mark={markRow(k)}>
+              <Check label={VALUATION_WORDS[k].label} hint={VALUATION_WORDS[k].hint} checked={values[k]} disabled={!editable} onChange={(on) => change(k, on)} />
+            </ValuationValue>
+          ))}
+          <ValuationValue k="avm_flag_scope" reviewed={marks.avm_flag_scope} mark={markRow('avm_flag_scope')}>
+            <SelectField label={VALUATION_WORDS.avm_flag_scope.label} hint={VALUATION_WORDS.avm_flag_scope.hint} value={values.avm_flag_scope} disabled={!editable} onChange={(e) => change('avm_flag_scope', e.target.value as AvmScope)}>
+              {AVM_SCOPES.map((o) => (
+                <option key={o} value={o}>
+                  {AVM_SCOPE_WORDS[o]}
+                </option>
+              ))}
+            </SelectField>
+          </ValuationValue>
+          <ValuationValue k="statements" reviewed={marks.statements} mark={markRow('statements')}>
+            <fieldset className="flex flex-col gap-3">
+              <legend className="text-[15px] font-medium text-ink">{VALUATION_WORDS.statements.label}</legend>
+              <p className="text-[14px] text-ink-muted">{VALUATION_WORDS.statements.hint}</p>
+              {rows.length === 0 ? <p className="text-[15px] text-ink">No state statement yet.</p> : null}
+              {rows.map((r, i) => (
+                <fieldset key={i} className="flex flex-col gap-2 rounded-xl border border-line p-3">
+                  <legend className="px-1 text-[14px] font-medium text-ink">{r.region && USPS_REGIONS[r.region] ? `Statement for ${USPS_REGIONS[r.region]}` : `Statement ${i + 1}`}</legend>
+                  <SelectField label="State" value={r.region} disabled={!editable} onChange={(e) => editRows(rows.map((x, j) => (j === i ? { ...x, region: e.target.value } : x)))}>
+                    <option value="">Choose a state</option>
+                    {REGION_CODES.map((code) => (
+                      <option key={code} value={code} disabled={code !== r.region && rows.some((x) => x.region === code)}>
+                        {USPS_REGIONS[code]} ({code})
+                      </option>
+                    ))}
+                  </SelectField>
+                  <TextArea label="Statement text" value={r.text} maxLength={4000} disabled={!editable} onChange={(e) => editRows(rows.map((x, j) => (j === i ? { ...x, text: e.target.value } : x)))} />
+                  <TextField label="Smallest type size (points)" hint="From 6 to 36." inputMode="decimal" value={r.size} disabled={!editable} onChange={(e) => editRows(rows.map((x, j) => (j === i ? { ...x, size: e.target.value } : x)))} />
+                  {editable ? (
+                    <div>
+                      <Button variant="quiet" onClick={() => editRows(rows.filter((_x, j) => j !== i))}>
+                        Remove this statement
+                      </Button>
+                    </div>
+                  ) : null}
+                </fieldset>
+              ))}
+              {editable && rows.length < REGION_CODES.length ? (
+                <div>
+                  <Button variant="secondary" onClick={() => editRows([...rows, { region: '', text: '', size: '' }])}>
+                    Add a state statement
+                  </Button>
+                </div>
+              ) : null}
+            </fieldset>
+          </ValuationValue>
+        </ul>
+        <StatusLine text={status} />
+        {error ? <Notice tone="error">{error}</Notice> : null}
+        {editable && dirty ? <p className="text-[15px] font-medium text-ink">Not saved yet. {VALUATION_KEYS.filter((k) => marks[k]).length} of {VALUATION_KEYS.length} valuation values are ticked as reviewed by counsel.</p> : null}
+        {editable ? (
+          <div>
+            <Button type="submit" pending={req.pending === 'save-valuation'} pendingLabel="Saving">
+              Save valuation use
+            </Button>
+          </div>
+        ) : null}
+      </form>
+    </Section>
+  );
+}
+
+function ValuationValue({ k, reviewed, mark, children }: { k: ValuationKey; reviewed: boolean; mark: ReactNode; children: ReactNode }) {
+  return (
+    <Card as="li" className="flex flex-col gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="sr-only">{VALUATION_WORDS[k].label}:</span>
+        <Pill tone={reviewed ? 'ok' : 'warn'}>{reviewed ? 'Reviewed by counsel' : 'Not reviewed by counsel'}</Pill>
+      </div>
+      {children}
+      <div className="border-t border-line pt-1">{mark}</div>
+    </Card>
   );
 }
 

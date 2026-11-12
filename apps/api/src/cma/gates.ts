@@ -37,6 +37,7 @@ import {
   streetOfKey,
   valuationEligible,
   valuationStatement,
+  VALUATION_USE_WHERE,
 } from './deps.js';
 import { listingRows, platformCleared } from './repos.js';
 
@@ -95,7 +96,7 @@ export const LIVE_STATUSES: readonly string[] = ['coming_soon', 'active', 'pendi
 
 export const SENTENCES = {
   noConnection: 'No MLS feed is connected, so there are no sold homes to compare.',
-  notAllowed: 'Your MLS licence pack does not say MLS sold data may be used for valuations. An Owner or Admin records this from your MLS agreement.',
+  notAllowed: `Your MLS licence pack does not say MLS sold data may be used for valuations. ${VALUATION_USE_WHERE}`,
 } as const;
 
 const NOT_LIVE: ReadonlySet<ValuationRefusal> = new Set(['NO_MLS_CONNECTION', 'MLS_NOT_LIVE']);
@@ -241,10 +242,10 @@ export async function clientReadiness(tx: Tx, i: ReadinessInput): Promise<{ shar
   const sentence: Record<PlainBlocker, string> = {
     PLATFORM_NOT_CLEARED: 'Client CMAs and seller value ranges wait for counsel review of the in-house CMA wording (platform:cma), which is not recorded.',
     FEED_DISCONNECTED: 'An MLS feed this CMA was built from is no longer connected, so nothing from it could be shown to a client.',
-    VALUATION_USE_WITHDRAWN: 'Your MLS licence pack no longer says this feed’s sold data may be used for valuations, so this CMA could not be shown to a client. An Owner or Admin records this from your MLS agreement.',
+    VALUATION_USE_WITHDRAWN: `Your MLS licence pack no longer says this feed’s sold data may be used for valuations, so this CMA could not be shown to a client. ${VALUATION_USE_WHERE}`,
     MLS_CLIENT_DISPLAY_OFF: 'Your MLS licence pack does not allow showing MLS data to clients yet (it needs counsel review, an attribution and a disclaimer).',
     FEED_STALE: 'The MLS feed is out of date, so nothing from it could be shown to a client until it syncs again.',
-    CLIENT_USE_NOT_ALLOWED: 'Your MLS licence pack does not say sold data may be used in CMAs for clients. An Owner or Admin records this from your MLS agreement.',
+    CLIENT_USE_NOT_ALLOWED: `Your MLS licence pack does not say sold data may be used in CMAs for clients. ${VALUATION_USE_WHERE}`,
     VALUATION_NOT_REVIEWED: 'The valuation part of your MLS licence pack has not been reviewed by counsel.',
     NO_VALUATION_STATEMENT: i.state === null ? 'The home’s state is not known, so no valuation statement applies.' : `No valuation statement is recorded for ${i.state}.`,
     SUBJECT_ADDRESS_UNKNOWN: 'The home’s full address (street, city, state and ZIP code) is not known, so its own MLS listings and live listings that may be this home could not be checked. To check them, prepare a new CMA with the home’s full address.',

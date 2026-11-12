@@ -46,7 +46,7 @@ describe('R-CMA-7: readiness without the agent gate (gates/F5, api-ui/F1)', () =
     const withdrawn = await view(w, r.body.cma.id);
     expect(withdrawn.status).toBe(200);
     expect(codes(withdrawn.body)).toEqual(['PLATFORM_NOT_CLEARED', 'VALUATION_USE_WITHDRAWN', 'POSSIBLE_LIVE_LISTING']);
-    expect(sentenceOf(withdrawn.body, 'VALUATION_USE_WITHDRAWN')).toBe('Your MLS licence pack no longer says this feed’s sold data may be used for valuations, so this CMA could not be shown to a client. An Owner or Admin records this from your MLS agreement.');
+    expect(sentenceOf(withdrawn.body, 'VALUATION_USE_WITHDRAWN')).toBe('Your MLS licence pack no longer says this feed’s sold data may be used for valuations, so this CMA could not be shown to a client. An Owner or Admin records this from your MLS agreement on the MLS admin page, under Valuation use.');
     expect(withdrawn.body.cma.nearMatches.map((x) => x.listingId)).toEqual([near]);
     expect((withdrawn.body.cma.clientShare as { estimateSentence?: string }).estimateSentence).toBe(ESTIMATE_SENTENCE);
 

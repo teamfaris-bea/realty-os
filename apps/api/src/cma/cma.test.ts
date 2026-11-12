@@ -412,7 +412,8 @@ describe('gates and readiness (R-CMA-6, R-CMA-7)', () => {
     await address(h, wn.tenantId, c);
     const r = await oneTap(wn.agents[0]!, c);
     const e = r.body as unknown as { error: { details: { sentence: string } } };
-    expect([r.status, r.code, e.error.details.sentence]).toEqual([409, 'CMA_VALUATION_NOT_ALLOWED', 'Your MLS licence pack does not say MLS sold data may be used for valuations. An Owner or Admin records this from your MLS agreement.']);
+    // b10 review api-ui/F2: the refusal names the page where an Owner or Admin records the use (module 41's MLS page)
+    expect([r.status, r.code, e.error.details.sentence]).toEqual([409, 'CMA_VALUATION_NOT_ALLOWED', 'Your MLS licence pack does not say MLS sold data may be used for valuations. An Owner or Admin records this from your MLS agreement on the MLS admin page, under Valuation use.']);
     const pack = (await h.su.query('SELECT license_pack FROM integration_connections WHERE id = $1', [wn.mls])).rows[0].license_pack;
     expect(pack.reviewed_by_counsel_at).toBe('2026-11-01T00:00:00Z');
   });
