@@ -527,3 +527,93 @@ async function agentKeyword(tx: Tx, actor: SystemActor, ids: IdGenerator, body: 
   }
   return { kind: 'agent_keyword', userId, classification: c.kind };
 }
+
+// ---- module 68 (D2): synced Gmail (ONE flagged edit of this file, after module 22; PHASE2_3_PLAN §5.3) -------------
+
+export interface SyncedMailIngestDeps {
+  ids: IdGenerator;
+}
+
+export interface SyncedMailIngestResult {
+  paused: boolean;
+  handbackId: string | null;
+}
+
+/**
+ * R-GMAIL-10, E201, E226: a FRESH live Gmail message from a client (module 68 calls this only for a stored live copy
+ * whose Gmail internalDate is at most 1 hour old at fetch, in the same system transaction that stored it). The Phase 1
+ * lock (address, then every contact on it), the pause of every contact on the address (conversation and enrollments),
+ * the cancel of queued assistant messages and scheduled trigger runs (R-NURT-5), and at most ONE handback "replied in
+ * Gmail" for the contact's handler when the assistant was running its thread, citing the mail_message by id and time
+ * only (evidence source_type 'mail_message', no snippet: evidence_refs_mail_not_quoted). The handback dedupe key is
+ * email:{contact}:{rfc_message_id_sha256} when the Message-ID hash is known, the SAME key platform inbound email uses,
+ * so a Reply-All that reaches both paths hands back once whichever lands first; else one per Gmail message.
+ * It bumps the replying contact's conversation inbound_seq only (E27, R-AST-6: a counter, not a row; never last_inbound_at, D1).
+ * It writes no messages row (synced mail is never a channel, a touch, speed-to-lead or an ownership event, R-GMAIL-14),
+ * does not classify again (module 68 classified once with classifyInbound, R-GMAIL-9: `classification` only picks the
+ * pause reason), quotes nothing and enqueues no assistant.enrich_handback job (never sent to a model).
+ */
+export async function ingestSyncedMailInTx(tx: Tx, contactId: string, mailMessageId: string, classification: InboundClassification['kind'], deps: SyncedMailIngestDeps): Promise<SyncedMailIngestResult> {
+  const ids = deps.ids;
+  const copy = (
+    await sql<{ contact_address_hmac: Buffer; rfc_message_id_sha256: Buffer | null; gmail_message_id: string; internal_at: Date; sender: string }>`
+      SELECT contact_address_hmac, rfc_message_id_sha256, gmail_message_id, internal_at, sender FROM mail_messages
+       WHERE tenant_id = app.tenant_id() AND id = ${mailMessageId}::uuid AND contact_id = ${contactId}::uuid`.execute(tx)
+  ).rows[0];
+  if (!copy || copy.sender !== 'contact') return { paused: false, handbackId: null };
+  const hmac = copy.contact_address_hmac.toString('hex');
+  await lockAddresses(tx, [hmac]);
+  const sharing = [...new Set([contactId, ...(await msgs.hmacPoints(tx, hmac)).map((p) => p.contactId)])].sort();
+  await lockContacts(tx, sharing as ContactId[]);
+  const now = (await sql<{ now: Date }>`SELECT clock_timestamp() AS now`.execute(tx)).rows[0]!.now.getTime() as Instant;
+
+  const reason = pauseReasonOf(classification);
+  let paused = false;
+  const conversationId = await msgs.ensureConversation(tx, ids.next<'ConversationId'>(), contactId, null);
+  for (const c of sharing) {
+    const conv = c === contactId ? conversationId : await msgs.ensureConversation(tx, ids.next<'ConversationId'>(), c, null);
+    if (await auto.pauseConversation(tx, conv, reason, null, now)) paused = true;
+  }
+  // the replying contact's conversation counts the reply (inbound_seq only), so E27's re-tap and R-AST-6 DRAFT_STALE
+  // see it; a counter is not a messages row (R-GMAIL-14). last_inbound_at is NOT moved: it would reclassify free-form
+  // sends as informational and step around a marketing-only unsubscribe (D1)
+  await msgs.bumpInboundSeq(tx, conversationId);
+  const pausedEnrollments = await auto.pauseEnrollments(tx, sharing, reason, null, now);
+  const canceledAssistant = await msgs.cancelQueuedAssistant(tx, sharing, 'CLIENT_REPLIED');
+  const canceledTriggerRuns = await msgs.cancelScheduledTriggerRuns(tx, sharing);
+
+  const h = await handlerOf(tx, contactId);
+  const enrollment = pausedEnrollments.find((x) => x.contactId === contactId) ?? (await auto.liveEnrollment(tx, contactId));
+  const inFlight = await auto.messagesInFlight(tx, contactId, now);
+  const assistantWasActive = pausedEnrollments.some((x) => x.contactId === contactId) || canceledAssistant.length > 0 || inFlight.length > 0 || canceledTriggerRuns.length > 0;
+  if (!assistantWasActive || !h.userId) return { paused: paused || pausedEnrollments.length > 0, handbackId: null };
+
+  const seq = (await sql<{ s: string }>`SELECT inbound_seq::text AS s FROM conversations WHERE tenant_id = app.tenant_id() AND id = ${conversationId}::uuid`.execute(tx)).rows[0]?.s ?? '0';
+  const who = h.firstName ?? 'They';
+  const at = copy.internal_at.toISOString();
+  const dedupeKey = copy.rfc_message_id_sha256 ? emailHandbackKey(contactId, copy.rfc_message_id_sha256) : `gmail:${contactId}:${copy.gmail_message_id}`;
+  const handbackId = ids.next<'AssistantActionId'>();
+  const ins = await sql<{ id: string }>`
+    INSERT INTO assistant_actions (tenant_id, id, contact_id, kind, action_category, autonomy, status, owner_user_id, explanation, payload,
+      pinned_inbound_seq, bound_ownership_seq, dedupe_key)
+    VALUES (app.tenant_id(), ${handbackId}::uuid, ${contactId}::uuid, 'handback', 'internal', 'internal', 'proposed', ${h.userId}::uuid,
+      ${`${who} replied in Gmail, so the assistant paused and handed the conversation back to you.`.slice(0, 300)},
+      ${JSON.stringify({ channel: 'synced_gmail', mailMessageId, internalAt: copy.internal_at.toISOString(), enrollmentId: enrollment?.id ?? null, canceledMessageIds: canceledAssistant, ...(canceledTriggerRuns.length > 0 ? { canceledTriggerRunIds: canceledTriggerRuns } : {}) })}::jsonb,
+      ${Number(seq)}, ${h.periodSeq}, ${dedupeKey})
+    ON CONFLICT (tenant_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING RETURNING id`.execute(tx);
+  if (ins.rows.length === 0) return { paused: true, handbackId: null };
+  const claimId = ids.next();
+  await sql`
+    INSERT INTO assistant_claims (tenant_id, id, action_id, ordinal, claim_kind, text, needs_review)
+    VALUES (app.tenant_id(), ${claimId}::uuid, ${handbackId}::uuid, 0, 'fact', ${`${who} replied in Gmail (read-only copy in the timeline).`}, true)`.execute(tx);
+  // cited by id and time, never quoted (R-GMAIL-14, CHECK evidence_refs_mail_not_quoted): a citation that is never
+  // verbatim-verified, so the claim carries needs_review (R-AST-1: only a verified quote clears it)
+  await sql`
+    INSERT INTO evidence_refs (tenant_id, id, claim_id, source_type, source_id, locator, snippet, verbatim_verified)
+    VALUES (app.tenant_id(), ${ids.next()}::uuid, ${claimId}::uuid, 'mail_message', ${mailMessageId}::uuid, ${JSON.stringify({ kind: 'mail_message', internalAt: at })}::jsonb, NULL, false)`.execute(tx);
+  const label = await contactLabel(tx, contactId);
+  const hot = h.stage === 'new' || h.stage === 'attempting';
+  await upsertFeedItem(tx, ids, { userId: h.userId, itemType: 'handback', band: 'pinned', contactId, subjectType: 'assistant_action', subjectId: handbackId, assistantActionId: handbackId, score: hot ? 95 : 80, reasons: [{ code: 'CLIENT_REPLIED', text: 'Replied in Gmail; the assistant paused and handed back' }], dedupeKey: `handback:${handbackId}` });
+  await notifyUser(tx, ids, { userId: h.userId, kind: hot ? 'handback_hot' : 'handback', priority: hot ? 'critical' : 'high', title: `${label ?? 'A client'} replied in Gmail`, body: null, subjectType: 'assistant_action', subjectId: handbackId, dedupeKey: `handback:${handbackId}` }, now);
+  return { paused: true, handbackId };
+}

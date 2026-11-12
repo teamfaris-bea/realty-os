@@ -2467,5 +2467,7 @@ exports[`route table and schemas > every leads route declares its authorization 
   "POST /api/lead-sources/:id/google-lead-form/rotate → integration.manage",
   "PATCH /api/lead-sources/:id/google-lead-form → settings.routing",
   "POST /api/lead-sources/:id/google-lead-form/off → integration.manage",
+  "GET /api/contacts/:id/trigger-runs → contact.view_detail",
+  "HEAD /api/contacts/:id/trigger-runs → contact.view_detail",
 ]
 `;

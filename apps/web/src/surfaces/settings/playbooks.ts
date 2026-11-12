@@ -33,7 +33,23 @@ export const KIND_LABEL: Record<string, string> = {
   booking_confirmation: 'Appointment confirmation',
   reminder: 'Appointment reminder',
   document_chase: 'Document reminders',
+  // module 26 (batch 7 review ui/F2): kept read-only on this page until module 26 has its own editor
+  trigger: 'Alerts',
+  voice_answering: 'Call answering',
 };
+
+/**
+ * Batch 7 review ui/F2: module 26's trigger playbooks (and voice answering) keep one content object in `steps`, not
+ * a list of messages, and this page has no editor for them. They are listed under their own heading and open
+ * read-only: no editor, no approval, no stop, no stage.
+ */
+export const READ_ONLY_KINDS: readonly string[] = ['trigger', 'voice_answering'];
+export const ALERTS_HEADING = 'Alerts and call answering (read-only here)';
+export const READ_ONLY_ALERTS = "These playbooks can't be changed, approved or stopped on this page yet.";
+
+export function isReadOnlyPlaybook(p: Pick<Playbook, 'kind'>): boolean {
+  return READ_ONLY_KINDS.includes(p.kind);
+}
 
 /** The built-in starting points (api/assistant templates.ts) and who may create each. */
 export const TEMPLATES: readonly { key: string; name: string; scope: 'team' | 'agent' }[] = [
@@ -116,6 +132,7 @@ export function delayText(d: PlaybookStepView['delay']): string {
 
 /** Steps as editable views (unknown shapes are kept as-is by the editor and never rewritten). */
 export function stepsOf(v: PlaybookVersion): PlaybookStepView[] {
+  if (!Array.isArray(v.steps)) return []; // object content (module 26 triggers): no messages to edit here
   return v.steps.filter((s): s is PlaybookStepView => typeof s === 'object' && s !== null && 'stepKey' in s && 'template' in s);
 }
 
@@ -127,7 +144,8 @@ export function workingVersion(p: Playbook): PlaybookVersion | null {
 
 /** The exact sentence the approver confirms; it is stored verbatim with the approval. */
 export function approvalAttestation(p: Pick<Playbook, 'name'>, v: Pick<PlaybookVersion, 'versionNo' | 'steps'>): string {
-  const n = v.steps.length;
+  const n = Array.isArray(v.steps) ? v.steps.length : 0;
+  if (n === 0) return `I reviewed “${p.name}” version ${v.versionNo}. The assistant may act on it on its own for contacts who have not opted out, signed as the assistant, and must stop when a client replies.`;
   return `I reviewed the ${n === 1 ? 'message' : `${n} messages`} in “${p.name}” version ${v.versionNo}. The assistant may send ${n === 1 ? 'it' : 'them'} on its own to contacts who have not opted out, signed as the assistant, and must stop when a client replies.`;
 }
 

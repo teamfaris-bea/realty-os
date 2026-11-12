@@ -33,6 +33,13 @@ import { mlsRoutes } from './mls/routes.js';
 import { channelRoutes } from './channels/routes.js';
 import { leadSourcesRoutes } from './leads/sources.js';
 import { leadFormsRoutes } from './leadForms/routes.js';
+import { nurtureRoutes } from './nurture/routes.js';
+import { mailSyncRoutes } from './mailSync/routes.js';
+import { marketingRoutes } from './marketing/routes.js';
+import { sellerUpdatesRoutes } from './sellerUpdates/routes.js';
+import { calendarRoutes } from './calendar/routes.js';
+import { insightsRoutes } from './insights/routes.js';
+import { coachingRoutes } from './coaching/routes.js';
 
 export interface RouteModule {
   name: string;
@@ -64,5 +71,12 @@ export const routeModules: RouteModule[] = [
   channelRoutes,
   leadSourcesRoutes,
   leadFormsRoutes,
+  nurtureRoutes,
+  mailSyncRoutes,
+  marketingRoutes,
+  sellerUpdatesRoutes,
+  calendarRoutes,
+  insightsRoutes,
+  coachingRoutes,
   // registry: add new entries above this line
 ];

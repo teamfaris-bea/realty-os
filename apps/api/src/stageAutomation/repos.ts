@@ -93,7 +93,7 @@ export async function candidatePlaybooks(tx: Tx, stageEventId: string, ownerUser
            (SELECT v.id FROM playbook_versions v WHERE v.tenant_id = p.tenant_id AND v.playbook_id = p.id AND v.status = 'approved') AS approved
       FROM contact_stage_events e
       JOIN playbooks p ON p.tenant_id = e.tenant_id AND p.auto_enroll_stage = e.to_stage AND p.updated_at <= e.occurred_at
-     WHERE e.tenant_id = app.tenant_id() AND e.id = ${stageEventId} AND p.status = 'active' AND p.kind <> 'new_lead_response'
+     WHERE e.tenant_id = app.tenant_id() AND e.id = ${stageEventId} AND p.status = 'active' AND p.kind NOT IN ('new_lead_response','trigger','voice_answering')
        AND (p.scope = 'team' OR (p.scope = 'agent' AND p.owner_user_id = ${ownerUserId}::uuid))
      ORDER BY p.id`.execute(tx);
   return r.rows.map((x) => ({ id: x.id, name: x.name, scope: x.scope, ownerUserId: x.owner_user_id, approvedVersionId: x.approved }));

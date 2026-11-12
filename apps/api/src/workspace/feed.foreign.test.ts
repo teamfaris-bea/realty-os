@@ -96,9 +96,9 @@ describe('Phase 2/3 cards: the key-family extension point', () => {
       const by = (id: string) => f.all.find((c) => c.id === id)!;
       expect(by(ids.seller_update)).toMatchObject({ itemType: 'seller_update', primaryAction: { kind: 'open_listing', label: 'Open listing', listingId }, contact: { id: seller.id } });
       expect(by(ids.marketing_review)).toMatchObject({ itemType: 'marketing_review', primaryAction: { kind: 'open_listing', listingId }, contact: null });
-      expect(by(ids.weekly_plan)).toMatchObject({ itemType: 'weekly_plan', primaryAction: { kind: 'show_details', label: 'See the plan' }, alternatives: [] });
+      expect(by(ids.weekly_plan)).toMatchObject({ itemType: 'weekly_plan', primaryAction: { kind: 'open_plan', label: 'See the plan', week: '2026-W46' }, alternatives: [] });
       expect(by(ids.weekly_plan).reasons.map((r) => r.label)).toEqual(['Call back the 3 leads from last weekend', 'Log outcomes for 2 consults']);
-      expect(by(ids.coaching_fix)).toMatchObject({ itemType: 'coaching_fix', primaryAction: { kind: 'show_details', label: 'See the tip' } });
+      expect(by(ids.coaching_fix)).toMatchObject({ itemType: 'coaching_fix', primaryAction: { kind: 'open_coaching_fix', label: 'See the tip' } }); // module 40: the card links to the daily fix page
       expect(by(ids.likely_to_move)).toMatchObject({ itemType: 'likely_to_move', primaryAction: { kind: 'open_contact', label: 'Open contact', contactId: lena.id }, alternatives: [] });
       expect(JSON.stringify(f)).not.toMatch(/confidence|probability|"score"|"points"/i);
     }

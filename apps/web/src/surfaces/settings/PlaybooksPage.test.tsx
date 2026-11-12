@@ -10,7 +10,7 @@ import { ID, FakeFetch, leadAdminApp } from '../admin/lib/testing.js';
 import type { Playbook, PlaybookStepView, PlaybookVersion } from '../admin/lib/types.js';
 import { err } from '../../shell/testing/fakeApi.js';
 import { applyDraft } from './PlaybooksPage.js';
-import { approvalAttestation, autoEnrollRefusal, delayText, mayApprove, placeholdersIn, playbookState, splitDelay, workingVersion } from './playbooks.js';
+import { ALERTS_HEADING, KIND_LABEL, READ_ONLY_ALERTS, isReadOnlyPlaybook, stepsOf, approvalAttestation, autoEnrollRefusal, delayText, mayApprove, placeholdersIn, playbookState, splitDelay, workingVersion } from './playbooks.js';
 
 const SHA = 'a'.repeat(64);
 const step: PlaybookStepView = {
@@ -262,5 +262,42 @@ describe('R-PAR-16 "Start this plan when a person enters stage …" (PARITY_PLAN
     expect(autoEnrollRefusal('AUTO_ENROLL_STAGE_TAKEN', { stageLabel: 'Active', scope: 'agent' })).toBe('Another of your playbooks already starts when a person enters “Active”. Clear the stage on that playbook first, or pick another one.');
     expect(autoEnrollRefusal('AUTO_ENROLL_STAGE_TAKEN', { stageLabel: null, scope: 'team' })).toBe('Another playbook already starts on that stage. Clear the stage on that playbook first, or pick another one.');
     for (const code of ['AUTO_ENROLL_NOT_ALLOWED', 'PLAYBOOK_RETIRED', 'VALIDATION_FAILED', 'NOT_FOUND', 'SOMETHING_NEW']) expect(autoEnrollRefusal(code, { stageLabel: 'Lost', scope: 'team' })).not.toMatch(/[A-Z]{2,}_[A-Z_]+/);
+  });
+});
+
+// ---- batch 7 interaction review ui/F2: module 26 trigger playbooks (object content, no web editor yet) ----------
+
+const triggerContent = { kind: 'triggers', triggers: [{ key: 'price_drop' }], digestWindowMinutes: 120 };
+const triggerPlaybook = (over: Partial<Playbook> = {}): Playbook =>
+  playbook({ id: 'pbT', kind: 'trigger', name: 'Behavior alerts', templateKey: 'behavior_alerts', versions: [version({ id: 'vT', steps: triggerContent as unknown as unknown[] })], ...over });
+
+describe('b7 ui/F2: trigger playbooks are read-only here (R-AST-4)', () => {
+  it('b7 ui/F2: stepsOf and approvalAttestation never throw or say "undefined" on object content', () => {
+    const v = version({ steps: triggerContent as unknown as unknown[] });
+    expect(stepsOf(v)).toEqual([]);
+    expect(approvalAttestation({ name: 'Behavior alerts' }, v)).not.toMatch(/undefined/);
+    expect(KIND_LABEL['trigger']).toBeTruthy();
+    expect(isReadOnlyPlaybook(triggerPlaybook())).toBe(true);
+    expect(isReadOnlyPlaybook(playbook({ kind: 'voice_answering' }))).toBe(true);
+    expect(isReadOnlyPlaybook(playbook())).toBe(false);
+  });
+
+  it('b7 ui/F2: opening a trigger playbook shows it read-only, with no editor, approve, stop or stage', async () => {
+    const p = triggerPlaybook();
+    leadAdminApp(fakeFor(p), '/settings/playbooks/pbT', 'agent');
+    expect(await screen.findByRole('heading', { name: 'Behavior alerts' })).toBeInTheDocument();
+    expect(screen.getByText(READ_ONLY_ALERTS)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Approve and run' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Save/ })).toBeNull();
+    expect(document.body.textContent).not.toMatch(/undefined|\btrigger\b/);
+  });
+
+  it('b7 ui/F2: the list puts trigger playbooks under their own read-only heading with a label, never the raw kind', async () => {
+    const fake = new FakeFetch().on('GET /playbooks', { status: 200, body: { playbooks: [playbook(), triggerPlaybook()] } });
+    leadAdminApp(fake, '/settings/playbooks', 'agent');
+    const alerts = await screen.findByRole('heading', { name: ALERTS_HEADING });
+    expect(alerts).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Behavior alerts/ })).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/\btrigger\b/);
   });
 });

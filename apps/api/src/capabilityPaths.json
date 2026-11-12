@@ -59,6 +59,16 @@
       "secrets": [
         "token"
       ]
+    },
+    {
+      "path": "/api/public/marketing-assets/:assetToken",
+      "methods": [
+        "GET",
+        "HEAD"
+      ],
+      "secrets": [
+        "assetToken"
+      ]
     }
   ]
 }

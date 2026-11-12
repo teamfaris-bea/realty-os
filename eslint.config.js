@@ -48,7 +48,8 @@ export default tseslint.config(
 
   // ---- R-GATE-2 allowlist: the only dispatch path, and the provider implementations/fakes themselves
   {
-    files: ['apps/api/src/comms/dispatch.ts', 'apps/api/src/comms/dial.ts', 'apps/api/src/providers/**'],
+    // module 29: marketing/publish.ts is the single publishing path (publishPost / postReviewReply, R-GATE-15)
+    files: ['apps/api/src/comms/dispatch.ts', 'apps/api/src/comms/dial.ts', 'apps/api/src/marketing/publish.ts', 'apps/api/src/providers/**'],
     rules: { 'realty/no-provider-outbound': 'off' },
   },
 
@@ -162,6 +163,24 @@ export default tseslint.config(
     files: ['apps/web/src/widget/**/*.{ts,tsx}'],
     ignores: TEST_FILES,
     rules: { 'realty/isolated-bundle': ['error', { dir: 'widget' }] },
+  },
+
+  // ---- R-GMAIL-14 (module 68): synced Gmail SQL only in apps/api/src/mailSync/** (plus the flagged ingestSyncedMailInTx);
+  //      the assistant and the model provider never import mailSync; mailSync imports no model provider and never sends
+  {
+    files: ['apps/api/src/**/*.ts'],
+    ignores: [...TEST_FILES, 'apps/api/src/mailSync/**'],
+    rules: { 'realty/mail-sync-boundary': ['error', { mode: 'outside', allowInFunctions: ['ingestSyncedMailInTx'] }] },
+  },
+  {
+    files: ['apps/api/src/assistant/**/*.ts', 'apps/api/src/providers/anthropic.ts'],
+    ignores: TEST_FILES,
+    rules: { 'realty/mail-sync-boundary': ['error', { mode: 'no-import' }] },
+  },
+  {
+    files: ['apps/api/src/mailSync/**/*.ts'],
+    ignores: TEST_FILES,
+    rules: { 'realty/mail-sync-boundary': ['error', { mode: 'inside' }] },
   },
 
   // ---- packages/db depends on core only (never api/web)

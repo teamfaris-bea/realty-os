@@ -858,7 +858,46 @@ exports[`core/priority schemas > FeedItemSchema has no confidence fields and no 
             "additionalProperties": false,
             "properties": {
               "kind": {
+                "const": "open_plan",
+                "type": "string",
+              },
+              "label": {
+                "type": "string",
+              },
+              "week": {
+                "pattern": "^\\d{4}-W\\d{2}$",
+                "type": "string",
+              },
+            },
+            "required": [
+              "kind",
+              "label",
+              "week",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
                 "const": "show_details",
+                "type": "string",
+              },
+              "label": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "kind",
+              "label",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "open_coaching_fix",
                 "type": "string",
               },
               "label": {
@@ -1395,7 +1434,46 @@ exports[`core/priority schemas > FeedItemSchema has no confidence fields and no 
           "additionalProperties": false,
           "properties": {
             "kind": {
+              "const": "open_plan",
+              "type": "string",
+            },
+            "label": {
+              "type": "string",
+            },
+            "week": {
+              "pattern": "^\\d{4}-W\\d{2}$",
+              "type": "string",
+            },
+          },
+          "required": [
+            "kind",
+            "label",
+            "week",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
               "const": "show_details",
+              "type": "string",
+            },
+            "label": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "kind",
+            "label",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "open_coaching_fix",
               "type": "string",
             },
             "label": {
@@ -1961,7 +2039,46 @@ exports[`core/priority schemas > OneTapActionSchema has no confidence fields and
       "additionalProperties": false,
       "properties": {
         "kind": {
+          "const": "open_plan",
+          "type": "string",
+        },
+        "label": {
+          "type": "string",
+        },
+        "week": {
+          "pattern": "^\\d{4}-W\\d{2}$",
+          "type": "string",
+        },
+      },
+      "required": [
+        "kind",
+        "label",
+        "week",
+      ],
+      "type": "object",
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
           "const": "show_details",
+          "type": "string",
+        },
+        "label": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "kind",
+        "label",
+      ],
+      "type": "object",
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "open_coaching_fix",
           "type": "string",
         },
         "label": {

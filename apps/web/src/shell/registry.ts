@@ -37,6 +37,16 @@ import { surface as bulkSurface } from '../surfaces/bulk/index.js';
 import { surface as batchTextSurface } from '../surfaces/settings/batch-text/index.js';
 import { surface as leadEmailSurface } from '../surfaces/lead-email/index.js';
 import { surface as leadSourcesSurface } from '../surfaces/lead-sources/index.js';
+import { surface as mailSettingsSurface } from '../surfaces/settings/mail/index.js';
+import { surface as adminMailSurface } from '../surfaces/admin/mail/index.js';
+import { surface as marketingSurface } from '../surfaces/marketing/index.js';
+import { surface as calendarSettingsSurface } from '../surfaces/settings/calendar/index.js';
+import { surface as adminIntegrationsSurface } from '../surfaces/admin/integrations/index.js';
+import { surface as adminWebChatSurface } from '../surfaces/admin/webchat/index.js';
+import { surface as ownerSurface } from '../surfaces/owner/index.js';
+import { surface as goalsSurface } from '../surfaces/goals/index.js';
+import { surface as coachingSurface } from '../surfaces/coaching/index.js';
+import { surface as adminCoachingSurface } from '../surfaces/admin/coaching/index.js';
 
 export type { NavSection, PageDef, PageNav, SurfaceModule } from './types.js';
 
@@ -66,5 +76,15 @@ export const surfaces: SurfaceModule[] = [
   batchTextSurface,
   leadEmailSurface,
   leadSourcesSurface,
+  mailSettingsSurface,
+  adminMailSurface,
+  marketingSurface,
+  calendarSettingsSurface,
+  adminIntegrationsSurface,
+  adminWebChatSurface,
+  ownerSurface,
+  goalsSurface,
+  coachingSurface,
+  adminCoachingSurface,
   // registry: add new entries above this line
 ];

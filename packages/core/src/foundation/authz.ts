@@ -101,6 +101,7 @@ export const ACTIONS = [
   'deal.financials', // Commission fields (deal_financials)
   'listing.view',
   'listing.edit',
+  'listing.reassign', // Change a team listing's agent (b7 ownership-data/F2; DATA_MODEL §8)
   'import.run', // CSV / FUB import (approve, commit, verify, revert)
   'settings.routing', // Routing rules, ponds, teams, lead timers
   'settings.numbers', // Phone numbers (acquire), sending domains
@@ -146,6 +147,14 @@ export const ACTIONS = [
   'playbook.auto_enroll_stage', // parity module 67: the stage whose entry enrolls (team: Owner/Admin; an agent: own agent playbook)
   'lead_email_review.view', // module 22 lead-email slice: the "Needs review" list of held lead emails (Owner/Admin/Team Lead; support read-only)
   'lead_email_review.decide', // module 22 lead-email slice: accept a held lead email as a lead (same intake path) or discard it
+  'mail_sync.manage', // module 68 (D2): the Owner turns Gmail sync on (only while platform:gmail is cleared) and sets the window; an Admin may only turn it off (DB guard; DATA_MODEL §8)
+  'owner_view.view', // module 33: the owner view (dollars by source, costs, velocity, forecast): human Owner/Admin only (R-OWNER-1, DATA_MODEL §8)
+  'source_cost.edit', // module 33: manual lead-source costs (Owner/Admin as themselves; re-auth for a closed month, R-OWNER-5)
+  'goal.view', // module 33: goals and pace (DATA_MODEL agent_goals: self, TL of the user, Owner/Admin)
+  'goal.manage', // module 33: create, change or remove a goal (Owner/Admin any member; TL their team)
+  'coaching.view', // module 36: the caller's own daily fix and its quotes (R-COACH-3, R-COACH-4; Call reviews row: own calls)
+  'coaching.team_view', // module 36: a team's current fixes (Owner/Admin; a Team Lead only while the Owner's tl_sees_call_scores is on, DB-enforced)
+  'coaching.settings', // module 36: call scoring on/off, Team Lead visibility, rubric items (Owner; an Admin may only turn call reviews off; widening needs 🔒)
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -241,6 +250,7 @@ export const AUDIT_ACTIONS = [
   'enrollment.changed', // api/assistant: a human enrolled / paused / stopped a contact in a playbook (the assistant then sends on their behalf)
   'saved_search.approved', // api/assistant: a human approved (or activated) saved-search criteria; alerts follow (R-AST-10)
   'deal.financials_changed', // api/workspace: commission fields of a deal written by a human (A7d, R-PERM-10)
+  'listing.agent_changed', // api/workspace: an Owner/Admin handed a team listing to another active member (b7 ownership-data/F2)
   'exception.reopened', // api/accountability: a handled exception put back in the live queue (R-ACC-3)
   'session.revoked_all', // api/platform: "log out of all sessions" revoked every live session of the user
   'mfa.recovery_codes_regenerated', // api/platform: the user replaced their MFA recovery codes
@@ -295,6 +305,28 @@ export const AUDIT_ACTIONS = [
   'google_lead_form.changed', // module 22: the Google lead form's inquiry type or consent setting changed
   'google_lead_form.disabled', // module 22: the Google lead form was turned off; its key is retired forever
   'number.lead_source_changed', // module 22: a tracking number was tied to, moved between or untied from lead sources (R-TRK-1)
+  'mail.link_connected', // module 68 (D2): the Gmail OAuth callback (system) linked a user's own mailbox (no address, no content)
+  'mail.link_disconnected', // module 68: the user disconnected their Gmail (token deleted, copies hidden at once)
+  'mail.link_revoked', // module 68: the sync revoked a link (member inactive, switch off, pack uncleared, provider revoked)
+  'mail.import_again', // module 68: the user asked to re-run the backfill window (R-GMAIL-8)
+  'mail.thread_excluded', // module 68: the mailbox owner removed a thread from Realty OS (R-GMAIL-7; no content)
+  'mail.sync_points_confirmed', // module 68: the mailbox owner confirmed client addresses for sync (S-D2-1; counts only)
+  'mail.sync_point_removed', // module 68: the mailbox owner stopped syncing an address (S-D2-2)
+  'mail.settings_changed', // module 68: the Owner switch or the backfill window changed (R-GMAIL-1, -8)
+  'marketing.approved', // module 29: a person approved a marketing piece version (bound to its content hash)
+  'marketing.page_published', // module 29: a listing page went live (or moved to a newer approved version)
+  'marketing.publish_requested', // module 29: a person tapped Publish to a Facebook Page / Instagram account (TX1)
+  'marketing.publication_recorded', // module 29: the system recorded the provider's outcome of a publication (TX2, reconcile)
+  'marketing.exported', // module 29: a piece was handed to the agent (export; never a claim that it was posted)
+  'marketing.retract_requested', // module 29: a person asked to take an external post down (TX1; recorded before any provider call)
+  'marketing.retracted', // module 29: a page taken down, or an external post deleted after the provider confirmed it
+  'marketing.invites_sent', // module 29: open-house invites sent as per-recipient gated emails (counts only)
+  'calendar.connected', // module 34: a person's own calendar linked after they approved at the provider (system; no token, no calendar id)
+  'calendar.disconnected', // module 34: the person disconnected their calendar; token purged in the same tx (R-INT-5)
+  'calendar.link_revoked', // module 34: the system revoked and purged a link (GRANT_REVOKED E102, MEMBER_REMOVED R-INT-5)
+  'source_cost.changed', // module 33: a manual lead-source cost entered or changed (amounts in cents, the month; closed months need re-auth)
+  'goal.changed', // module 33: a goal created, changed or removed (member, period, metric, target)
+  'coaching.settings_changed', // module 36: the Owner changed call scoring, Team Lead visibility or the rubric items, or an Admin turned call reviews off (values only)
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -347,6 +379,8 @@ export interface ResourceFacts {
   datesOnly?: boolean;
   /** Tenant settings that widen a cell. Absent = off (fail closed). */
   settings?: { teamLeadRecordingAccess?: boolean; tcRecordingAccess?: boolean; agentConsentEntryAllowed?: boolean };
+  /** Source-cost edit: the month has ended in the tenant's zone (a closed month). Absent = closed (fail closed). */
+  closedPeriod?: boolean;
   /** Session re-authentication state, required for 🔒 actions. Absent = not re-authenticated. */
   reauth?: { reauthenticatedAt: Instant | null; now: Instant };
 }
@@ -385,8 +419,8 @@ interface Grant {
   checks?: readonly Check[];
   /** The cell needs a setting that is on (e.g. agent consent entry). */
   setting?: SettingKey;
-  /** 🔒: 'always', or only when the compliance change is loosening. */
-  reauth?: 'always' | 'when_loosening';
+  /** 🔒: 'always', only when the compliance change is loosening, or only for a closed period (source costs). */
+  reauth?: 'always' | 'when_loosening' | 'when_closed_period';
 }
 
 type ActionCheck = 'liftable' | 'target_can_own';
@@ -497,6 +531,8 @@ const MATRIX: Record<Action, ActionRule> = {
   // Listings view / edit: ✅/✅ | ✅/✅ | ✅/✅ | ✅/own | ✅/— | ✅/—
   'listing.view': { roles: { owner: ALL, admin: ALL, team_lead: ALL, agent: ALL, isa: ALL, tc: ALL }, system: ALL_VIAS, support: true },
   'listing.edit': { roles: { owner: ALL, admin: ALL, team_lead: ALL, agent: OWN } },
+  // b7 ownership-data/F2: a listing keeps its agent when the member leaves; an Owner/Admin hands it to an active member
+  'listing.reassign': { roles: { owner: ALL, admin: ALL } },
   // Imports (CSV, FUB): ✅ 🔒 | ✅ 🔒 | — …
   'import.run': { roles: { owner: ALL_REAUTH, admin: ALL_REAUTH } },
   // Routing, ponds, teams, numbers, domains: ✅ | ✅ | — …  (number release is 🔒 per R-PERM-13)
@@ -539,6 +575,17 @@ const MATRIX: Record<Action, ActionRule> = {
   // Linking an external account is never an Action: only the provider callback does it, as the system.
   'integration.view': { roles: { owner: ALL, admin: ALL } },
   'integration.manage': { roles: { owner: ALL_REAUTH, admin: ALL_REAUTH } },
+  // module 68 (D2): Owner turns Gmail sync on and sets the window; Admin turns it off only (enforced by the 0025 tenant_settings guard). 🔒 both.
+  'mail_sync.manage': { roles: { owner: ALL_REAUTH, admin: ALL_REAUTH } },
+  // Module 33 (DATA_MODEL §8): Owner view ✅ | ✅ | — …; Source costs ✅ | ✅ (re-auth for closed months) | — ….
+  // Human actors only: no system via and no support (R-OWNER-1: the system never reads financials or manual costs).
+  // The closed-month re-auth applies to both Owner and Admin (PHASE2_3_PLAN §5.4 states it for the route).
+  'owner_view.view': { roles: { owner: ALL, admin: ALL } },
+  'source_cost.edit': { roles: { owner: { scopes: ['all'], reauth: 'when_closed_period' }, admin: { scopes: ['all'], reauth: 'when_closed_period' } } },
+  // Goals (agent_goals RLS: self, the user's TL, tenant-wide): view self / TL own+team / Owner, Admin all; manage:
+  // Owner/Admin any member, a TL the members of a team they lead (RLS goals_write decides the row set).
+  'goal.view': { roles: { owner: ALL, admin: ALL, team_lead: { scopes: ['own', 'team'] }, agent: OWN, isa: OWN, tc: OWN } },
+  'goal.manage': { roles: { owner: ALL, admin: ALL, team_lead: { scopes: ['team'] } } },
   // Module 22 lead-email slice (DATA_MODEL §8 lead-email row, R-LEM-6): the held-email list. Team Leads triage it too;
   // support reads it (read-only) and never decides. The system never "decides" (it holds or creates on arrival).
   'lead_email_review.view': { roles: { owner: ALL, admin: ALL, team_lead: ALL }, support: true },
@@ -578,6 +625,16 @@ const MATRIX: Record<Action, ActionRule> = {
   'settings.batch_text': { roles: { owner: { scopes: ['all'], checks: ['attest_when_loosening'], reauth: 'when_loosening' }, admin: { scopes: ['all'], checks: ['not_loosening'] } } },
   // playbook.auto_enroll_stage (R-PAR-16): team ✅ | team ✅ | — | own agent playbook | — | —
   'playbook.auto_enroll_stage': { roles: { owner: { scopes: ['team_playbook'] }, admin: { scopes: ['team_playbook'] }, agent: { scopes: ['own'], checks: ['not_team_playbook'] } } },
+  // Module 36 (DATA_MODEL Part 2 matrix "Call reviews": ✅ | ✅ | T only if tl_sees_call_scores | own calls | own calls | — | —).
+  // coaching.view is the caller's own fix (every role that takes calls). coaching.team_view lets a Team Lead ask; what
+  // they then read is decided by call_scores RLS (only while the Owner's setting is on).
+  'coaching.view': { roles: { owner: OWN, admin: OWN, team_lead: OWN, agent: OWN, isa: OWN } },
+  'coaching.team_view': { roles: { owner: ALL, admin: ALL, team_lead: T } },
+  // Coaching settings (owner decision 2026-11-11, the Gmail sync rule): ✅ 🔒 | off only | — … The Owner changes them;
+  // turning anything on (scoring, Team Lead visibility) is widening and needs re-auth, turning it off does not. An
+  // Admin acts only when nothing loosens, with no re-auth (off only tightens); the API lets an Admin turn call reviews
+  // off and nothing else, and the DB trigger refuses anyone else.
+  'coaching.settings': { roles: { owner: { scopes: ['all'], reauth: 'when_loosening' }, admin: { scopes: ['all'], checks: ['not_loosening'] } } },
 };
 
 const DENY_NOT_FOUND: CanResult = { ok: false, code: 'NOT_FOUND' };
@@ -687,7 +744,10 @@ export function can(actor: Actor, action: Action, resource: ResourceFacts): CanR
   const actionCode = actionChecks(rule, resource);
   if (actionCode) return { ok: false, code: actionCode };
 
-  const needsReauth = grant.reauth === 'always' || (grant.reauth === 'when_loosening' && resource.loosening !== false);
+  const needsReauth =
+    grant.reauth === 'always' ||
+    (grant.reauth === 'when_loosening' && resource.loosening !== false) ||
+    (grant.reauth === 'when_closed_period' && resource.closedPeriod !== false);
   if (needsReauth && !reauthFresh(resource)) return { ok: false, code: 'REAUTH_REQUIRED', reauth: true };
   return ALLOW;
 }
@@ -708,5 +768,5 @@ function finish(rule: ActionRule, f: ResourceFacts): CanResult {
 /** Whether the action is 🔒 for this role in any case (UI: prompt for re-auth before the tap). */
 export function requiresReauth(role: Role, action: Action): boolean {
   const g = MATRIX[action].roles[role];
-  return g?.reauth === 'always' || g?.reauth === 'when_loosening';
+  return g?.reauth === 'always' || g?.reauth === 'when_loosening' || g?.reauth === 'when_closed_period';
 }

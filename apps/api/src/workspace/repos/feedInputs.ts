@@ -263,7 +263,8 @@ export async function loadFeedInputsScoped(tx: Tx, actor: UserActor, envelope: E
 
   // -- touches after the waiting messages (answered by a person?) -----------------------------------------
   // R-PAR-37: a bulk email or batch text is marketing, never a touch and never a reply, so it never answers a
-  // waiting client (the exclusion the exception queue's outbound reads and the scoreboard counts make too).
+  // waiting client (the exclusion the exception queue's outbound reads and the scoreboard counts make too); an
+  // open-house invite (module 29, R-MKT-8) is the same kind of mass send.
   const waitingContacts = [...new Set([...inbound.rows.map((m) => m.contact_id), ...missed.rows.map((c) => c.contact_id)])];
   const touches = new Map<string, TouchFacts[]>();
   if (waitingContacts.length > 0) {
@@ -274,7 +275,7 @@ export async function loadFeedInputsScoped(tx: Tx, actor: UserActor, envelope: E
              COALESCE(m.dispatched_at, m.occurred_at) AS at, m.initiated_by_user_id AS by_user, m.occurred_at AS win_at
         FROM messages m
        WHERE m.tenant_id = app.tenant_id() AND m.contact_id = ANY (${waitingContacts}::uuid[]) AND m.direction = 'outbound'
-         AND m.bulk_action_id IS NULL
+         AND m.bulk_action_id IS NULL AND m.marketing_piece_id IS NULL
          AND m.occurred_at > ${nowIso}::timestamptz - make_interval(days => ${INBOUND_WINDOW_DAYS})
       UNION ALL
       SELECT k.contact_id, 'call', CASE WHEN k.direction = 'outbound' THEN 'outbound' ELSE 'inbound_answered' END,

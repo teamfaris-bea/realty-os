@@ -110,7 +110,7 @@ See §2.9 (import pipeline and storage); that part of the pass is in `apps/api/s
   - PII keys are dropped, and E.164 numbers and emails are masked
   - request logs show the route pattern, never the raw URL, so the intake token and query strings are not logged
   - the error serializer emits masked message and stack only
-  - the `web` image's nginx: its access log writes no query string and `-` for each secret of every path in `apps/api/src/capabilityPaths.json` (the invite, chat session, unsubscribe and intake tokens; generated from the route table), and its error log writes no request (`error_log /dev/null` in the server, since nginx adds the raw request line and the upstream URI to every record about a request)
+  - the `web` image's nginx: its access log writes no query string and `-` for each secret of every path in `apps/api/src/capabilityPaths.json` (the invite, chat session, unsubscribe and intake tokens and module 29's signed marketing image link; generated from the route table), and its error log writes no request (`error_log /dev/null` in the server, since nginx adds the raw request line and the upstream URI to every record about a request)
 
   Tests: `audit.test.ts` (R-TEN-7); for nginx, `apps/api/src/capabilityPaths.test.ts` and `apps/web/src/security-headers.nginx.test.ts`.
 - **Lead intake credentials (module 22):** a source's Google lead form key is envelope-encrypted and re-showable to Owner/Admin only (never to Team Leads, agents or support; never logged, audited or in an error); a source's webhook signing secret is shown once, at rotation, and stored envelope-encrypted in the system-only `lead_source_webhook_secrets`. Rejected Google deliveries are counted per IP only after the key failed to resolve (kind `google_lead_reject_ip`, 20 per 600 s per client IP, constants in `leadForms/auth.ts`; over the limit the answer stays the same 403 with its rejected row and a warning log line `GOOGLE_LEAD_KEY_REJECTS_LIMITED`, no IP and no key; a 429 would need a guard change).
@@ -244,7 +244,7 @@ it, and the packs still ship unreviewed.
 | `'unsafe-eval'` absence is asserted on the header string, not in a browser | Playwright's `evaluate` is exempt from CSP | none needed |
 | The dev server (Vite) runs without CSP | React refresh and CSS injection are inline in dev | none: the build and preview are covered |
 | Recovery codes are unsalted sha256 of 50 random bits | Fine against online guessing (rate limited, single-use); a stolen DB would allow offline cracking of codes | Optionally HMAC them with a server key |
-| The lead intake source token is in the URL path (so are the invite token, the website chat's session token and the unsubscribe ref) | The `web` image's nginx writes each of them as `-` in its access log (`$log_uri`, `deploy/nginx.conf`, every path of `apps/api/src/capabilityPaths.json`) and no request to its error log; a load balancer or CDN in front keeps its own access and error logs | Strip paths under `/api/auth/invites/`, `/api/intake/`, `/api/public/chat/session/` and `/api/email/unsubscribe/`, and query strings, from the edge's logs too; or move the invite token into the request body (as reset confirm does) and the intake token to a header in a future intake API version |
+| The lead intake source token is in the URL path (so are the invite token, the website chat's session token, the unsubscribe ref and the signed marketing image link) | The `web` image's nginx writes each of them as `-` in its access log (`$log_uri`, `deploy/nginx.conf`, every path of `apps/api/src/capabilityPaths.json`) and no request to its error log; a load balancer or CDN in front keeps its own access and error logs | Strip paths under `/api/auth/invites/`, `/api/intake/`, `/api/public/chat/session/`, `/api/email/unsubscribe/` and `/api/public/marketing-assets/`, and query strings, from the edge's logs too; or move the invite token into the request body (as reset confirm does) and the intake token to a header in a future intake API version |
 | Housing-advertiser eligibility for Google lead form assets (module 22) | Google's housing ads policy may restrict lead forms (VERIFY support.google.com/adspolicy/answer/9472930) | Pilot gate: no form is pointed at a deployment until confirmed (PHASE2_3_PLAN N22) |
 | Portal parsers and the US 10,783,530 patent family (module 22) | Not in D11's cleared list; covers parsing listing-lead emails (VERIFY WITH COUNSEL) | Counsel reviews the existing, generic and leadmetadata parsers and any vendor row before it ships |
 | Recording on tracking numbers (module 22) | State all-party consent law (e.g. California) and announcement policy | Recording is unchanged (off for inbound); counsel before any tracked-number recording |
@@ -929,3 +929,21 @@ instead of its text draft); the review of these fixes found it and it is correct
   chatFanoutSql`): a function scan per contact, then that person's points by `contact_id`, the same rows as the
   gate's per-contact read; `comms/chatFanout.perf.test.ts` asserts the plan shape and a time bound with 3,000 chat
   identities, so the honest-UI summary cannot time out into "unknown" (which disables nothing).
+
+## 10. Batch 7 interaction review: merges, sends and listings (migration `b7_review_sends_merges`, lane number 0053)
+
+Fixes of the batch 7 review (group "merges, sends and listings"; ARCHITECTURE §21.16). Each change only refuses, blocks,
+counts less or says more; no opt-out check (D1, R-PAR-12), policy or tenant boundary is weakened, and the ownership
+engine still makes every ownership change.
+- **sends/F1.** An open-house invite is never a touch (D8, R-OWN-14): dispatch TX1 records no first touch for a
+  `marketing_piece_id` row, so an invite cannot stop a first-contact breach or auto-release; the scoreboard definers,
+  the rollup mark and the waiting-client check skip it, like a bulk send (R-PAR-37).
+- **sends/F2.** An autonomous message is sent only while its action is `proposed` (TX1 and `messages_dispatch_guard`):
+  an action a merge or an ownership change invalidated can no longer be sent because two unrelated period numbers
+  happen to match. A merge also skips the loser's scheduled trigger firings.
+- **ownership-data/F1.** Listing roles, deal roles and a deal's primary person follow a merge (new definer
+  `app.contacts_merge_roles`, reviewed in ARCHITECTURE §21.16); no access widens: the same policies decide who reads them.
+- **ownership-data/F2.** A listing whose agent left is held and reported to Owners/Admins; `PATCH /listings/:id/agent`
+  (Owner/Admin, audited) hands it on. Member deactivation still does not move listings (left for a later change).
+- **ownership-data/F5.** The weekly plan never suggests work on a person who asked not to be contacted through any of
+  their records.

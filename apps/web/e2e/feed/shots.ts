@@ -35,9 +35,7 @@ try {
       await page.getByText('Your plan this week', { exact: true }).waitFor();
       await page.screenshot({ path: `${out}/feed-${name}-${scheme}.png`, fullPage: true });
       const plan = page.locator('article').filter({ has: page.getByText('Your plan this week', { exact: true }) }).first();
-      await plan.getByRole('button', { name: 'See the plan' }).click();
-      await plan.getByRole('list', { name: 'Details' }).waitFor();
-      await plan.screenshot({ path: `${out}/plan-open-${name}-${scheme}.png` });
+      await plan.screenshot({ path: `${out}/plan-card-${name}-${scheme}.png` });
       if (scheme === 'light') {
         const seller = page.locator('article').filter({ has: page.getByText('Seller update to review', { exact: true }) }).first();
         await seller.getByRole('button', { name: 'Open listing' }).click();

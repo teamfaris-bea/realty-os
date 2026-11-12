@@ -81,6 +81,7 @@ export class FakeAi implements AiProvider {
   }
 
   private answer(r: AiRequest): string {
+    if (r.templateKey === 'coaching.call_review') return fakeCallReview(r.user);
     const purpose = r.templateKey.replace(/^assistant\./, '');
     const sources = parseFakeSources(r.user);
     // the sign-off is in the server-written <request> block of the user turn (assistant-prompts/2)
@@ -117,4 +118,37 @@ export class FakeAi implements AiProvider {
     out.explanation = `${String(out.explanation)} (ref ${digest})`;
     return JSON.stringify(out);
   }
+}
+
+// ---- module 36: the call review (template coaching.call_review) -------------------------------------
+// Deterministic: for each checklist key in the prompt, the first AGENT line that matches the item's words
+// is quoted word for word as "met"; otherwise the item is "missed", quoting the agent's last line. The
+// recap item, when missed, quotes words that are not in the call (FAKE_BAD_REVIEW_QUOTE), so quote
+// verification (R-COACH-2, E105) is exercised on every review that misses it.
+export const FAKE_BAD_REVIEW_QUOTE = 'so to recap we agreed on everything today';
+const REVIEW_WORDS: Record<string, RegExp> = {
+  introduced_self: /\b(this is|my name is)\b/i,
+  asked_timeline: /\b(when|timeline|moved in|move by)\b/i,
+  asked_financing: /\b(lender|pre-?approv|financ|mortgage)/i,
+  asked_motivation: /\b(what has you|prompting|thinking about a move|why are you)\b/i,
+  confirmed_contact_preference: /\b(text or|call or|email or|prefer)\b/i,
+  proposed_next_step: /\bwould .{1,40} work\b/i,
+  set_follow_up: /\b(see you|i will text you|i'll text you|reminder|confirmed for)\b/i,
+  recapped_call: /\b(to recap|to summari[sz]e)\b/i,
+};
+
+function fakeCallReview(user: string): string {
+  const keys = [...user.matchAll(/^- ([a-z_]+):/gm)].map((m) => m[1]!);
+  const lines = [...user.matchAll(/^\[(S\d+)\] \[\d+-\d+ms\] (agent|lead|speaker): (.*)$/gm)].map((m) => ({ handle: m[1]!, speaker: m[2]!, text: m[3]! }));
+  const agent = lines.filter((l) => l.speaker === 'agent');
+  const last = agent[agent.length - 1];
+  const items = keys.map((key) => {
+    const re = REVIEW_WORDS[key];
+    const hit = re ? agent.find((l) => re.test(l.text)) : undefined;
+    if (hit) return { key, status: 'met', evidence: [{ source: hit.handle, snippet: hit.text }] };
+    if (!last) return { key, status: 'not_applicable', evidence: [] };
+    if (key === 'recapped_call') return { key, status: 'missed', evidence: [{ source: last.handle, snippet: FAKE_BAD_REVIEW_QUOTE }] };
+    return { key, status: 'missed', evidence: [{ source: last.handle, snippet: last.text }] };
+  });
+  return JSON.stringify({ items });
 }

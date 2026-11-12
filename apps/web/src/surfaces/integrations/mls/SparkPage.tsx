@@ -106,8 +106,9 @@ export default function SparkPage() {
     setError(null);
     setStatus(null);
     setChecked(null);
-    const r = await req.run<unknown>('disconnect', 'POST', `/admin/integrations/connections/${encodeURIComponent(id)}/disconnect`, {});
+    // closed first: the shell's password prompt may open next, and two dialogs must never trap focus at once
     setConfirming(false);
+    const r = await req.run<unknown>('disconnect', 'POST', `/admin/integrations/connections/${encodeURIComponent(id)}/disconnect`, {});
     void qc.invalidateQueries({ queryKey: SPARK_KEY });
     if (!r.ok) setError(r.message);
     else setStatus('Disconnected. The saved Spark key was removed for good.');
@@ -245,7 +246,8 @@ function KeyForm({ replacing, defaultScheme, pending, busy, onSave }: { replacin
             ))}
           </select>
           <p id={`${schemeId}-hint`} className="text-[14px] text-ink-muted">
-            VERIFY with Spark: their documentation shows both Bearer and OAuth. Keep the default unless Spark tells you otherwise.
+            {/* VERIFY with Spark which scheme the CRM's key takes (markers stay in comments; the Owner sees plain words) */}
+            Not yet confirmed with Spark: their documentation shows both Bearer and OAuth. Keep the default unless Spark tells you otherwise.
           </p>
         </div>
         <div>

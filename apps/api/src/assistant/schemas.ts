@@ -89,10 +89,11 @@ export const DraftRequestBody = z.strictObject({ commandId: Id });
 
 // ---- playbooks ----
 
-const StepsInput = z.array(z.unknown()).min(1).max(50);
+// module 26 (flagged, additive): a trigger playbook's content is one PlaybookContent object, not a step array
+const StepsInput = z.union([z.array(z.unknown()).min(1).max(50), z.record(z.string(), z.unknown())]);
 export const CreatePlaybookBody = z.strictObject({
   templateKey: z.string().regex(/^[a-z_]{1,64}$/).optional(),
-  kind: z.enum(['new_lead_response', 'nurture', 'post_closing', 'booking_confirmation', 'reminder', 'document_chase']).optional(),
+  kind: z.enum(['new_lead_response', 'nurture', 'post_closing', 'booking_confirmation', 'reminder', 'document_chase', 'trigger']).optional(),
   scope: z.enum(['team', 'agent']).optional(),
   name: z.string().trim().min(1).max(120).optional(),
   steps: StepsInput.optional(),
@@ -109,7 +110,7 @@ export const VersionSchema = z.object({
   versionNo: z.number().int(),
   status: z.string(),
   contentSha256: z.string(),
-  steps: z.array(z.unknown()),
+  steps: z.union([z.array(z.unknown()), z.record(z.string(), z.unknown())]),
   tone: z.record(z.string(), z.unknown()),
   issues: z.array(z.object({ index: z.number().int(), stepKey: z.string().optional(), code: z.string(), detail: z.string().optional() })),
   createdAt: z.string(),

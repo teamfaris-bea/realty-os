@@ -258,7 +258,7 @@ Numbers continue from Phase 1 (1–17; `docs/BUILD_PLAN.md`), all built. Module 
 | 33 | api/insights | `apps/api/src/insights/**`, M33 | 18a, 32 | 15 | **yes** (money visibility) | Owner view, source costs, goals, weekly plan job. |
 | 34 | api/calendar | `apps/api/src/calendar/**` | 21 | 14 | no | OAuth connect, one-way push, live free/busy, booking lock. |
 | 35 | core/coaching | `packages/core/src/coaching/**` | — | 4 | no | Rubric v1, verified scoring, daily fix, trend math. |
-| 36 | api/coaching | `apps/api/src/coaching/**` | 18a, 35 | 13 | **yes** (recording scope) | Call review job, daily fix job, Owner-only coaching settings. |
+| 36 | api/coaching | `apps/api/src/coaching/**` | 18a, 35 | 13 | **yes** (recording scope) | Call review job, daily fix job, coaching settings (the Owner's; an Admin may only turn call reviews off, E283). |
 | 37 | web/inbox | `apps/web/src/surfaces/{thread,compose}/**` (Phase 2 owner), `apps/web/src/widget/**` (separate bundle) | 22 | 17 | **yes** | Channel tags (SMS, email, call, web chat), channel-aware compose, chat widget. D2: no Messenger/Instagram compose or window copy. |
 | 38 | web/listing-marketing | `apps/web/src/surfaces/{listings,marketing}/**`, `apps/web/src/surfaces/approvals/**` (Phase 2 owner of approval card types) | 24, 28, 29 | 17 | no | Seller-update card, marketing tab, MLS badges and attribution. |
 | 39 | web/deals-milestones | `apps/web/src/surfaces/deals/**` | 31 | 17 | no | Milestone timeline with confirm chips, TC board, risk cards. |
@@ -512,14 +512,14 @@ export const RUBRIC_V1: Rubric;   export function scoreFromClaims(claims, rubric
 export function dailyFix(scores, dismissed7d, localDate): Fix | null;   export function trend(scoresA, scoresB): TrendItem[];
 // api: call review job (human-handled calls only), daily fix reconcile (hourly, per user and local date; card coaching_fix:{user}:{date})
 ```
-- **Rules:** R-COACH-1…6. **Tests:** E104–E106; lawful recording basis only; TL visibility only with the Owner setting (DB); scoring stays off until `platform:coaching` is cleared; no score/grade fields (snapshot). **Accept when:** an agent sees one fix a day with two tap-to-play quotes; nothing reaches routing (architecture test).
+- **Rules:** R-COACH-1…6. **Tests:** E104–E106; E283 (an Admin turns call reviews off; on, Team Lead visibility and the checklist stay the Owner's); lawful recording basis only; TL visibility only with the Owner setting (DB); scoring stays off until `platform:coaching` is cleared; no score/grade fields (snapshot). **Accept when:** an agent sees one fix a day with two tap-to-play quotes; nothing reaches routing (architecture test).
 
 #### 37–41. Web (Phase 2)
 - **37 web/inbox:** channel tag per bubble (SMS, email, call, web chat); compose defaults to the client's last open channel and says why another is offered; D2: no Messenger/Instagram compose and no window copy; chat widget bundle with brokerage name, disclosure and "the first reply may come from the team's assistant"; no fake typing. Rules: R-INBOX-4, genuineness (D2: R-INBOX-6 not built). Playwright phone + desktop; widget size budget (≤ 30 kB gzip).
 - **38 web/listing-marketing:** seller-update card (recommendation box, remove per item), marketing tab (one card per piece, Approve, Copy, Download, "Exported: post it yourself"), approval card types. Rules: R-SELL-3, R-MKT-6. Accept: approve a piece in 1 tap from the approvals inbox.
 - **39 web/deals-milestones:** phone timeline with Confirm chips; desktop TC board; risk cards from the exception queue. Accept: confirm a proposed date in 1 tap.
 - **40 web/insights:** owner view (desktop-first table, phone cards), goals, the weekly plan and daily fix pages the feed cards link to (no grades).
-- **41 web/admin-p2:** integrations with status sentences and each platform pack's review state (Facebook Page, Instagram business account, Google Ads, GBP, Zillow/Realtor.com feeds, lead email, web-chat widget, MLS; no Meta DM, lead-ads or Meta-ads kinds; `platform:meta` is not shown as something to clear), MLS pack, marketing templates, milestone templates, coaching settings (Owner-only), each with "not reviewed by counsel" banners where true.
+- **41 web/admin-p2:** integrations with status sentences and each platform pack's review state (Facebook Page, Instagram business account, Google Ads, GBP, Zillow/Realtor.com feeds, lead email, web-chat widget, MLS; no Meta DM, lead-ads or Meta-ads kinds; `platform:meta` is not shown as something to clear), MLS pack, marketing templates, milestone templates, coaching settings (the Owner's; an Admin may only turn call reviews off, E283), each with "not reviewed by counsel" banners where true.
 
 #### 68. `api/mail-sync` (D2)
 ```ts
@@ -698,7 +698,7 @@ export function overspend(hourly: HourlySpend[], cap: Cap): CampaignId[];
 | N13 | Public-records/property data vendor contract | licence | property-based prediction features (module 50); first-party features only otherwise |
 | N14 | Google Ads account and the Google Cloud project's API access level (GA4: no developer token; VERIFY access levels); D2: no Meta ad account | account/partner approval | ad proposals and applying approved shifts (module 52) |
 | N15 | Google Business Profile API access | partner approval | GBP posts and reviews (module 53) |
-| N16 | `pdf-lib` dependency approval | dependency | flyer PDFs (module 29) |
+| N16 | `pdf-lib` dependency approval (**approved by the owner, D6, 2026-11-11**) | dependency | flyer PDFs (module 29) |
 | N17 | A PDF text extractor dependency (for example `pdfjs-dist`) or vendor approval | dependency | contract-date extraction (module 42); manual entry otherwise |
 | N18 | A platform back-test dataset the platform may use for each prediction model (licensed or consented) | licence | approving any prediction model (`prediction_models` requires a back-test) |
 | N19 | Google OAuth app verification for the restricted `gmail.readonly` scope and the annual third-party security assessment (CASA) (VERIFY current requirements; VERIFY whether the assessment expects field encryption of synced bodies, which are plain text at rest like `messages.body`; if so a later migration adds `body_enc`) | partner approval | real Gmail sync (module 68): sets `platform:gmail` `rules.vendor_ready_at`; fake only until then |

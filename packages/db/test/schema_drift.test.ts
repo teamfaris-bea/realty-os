@@ -29,7 +29,7 @@ describe('schema.ts drift', () => {
       expect([...TABLE_NAMES]).toEqual(t.rows.filter((r) => r.k === 'BASE TABLE').map((r) => r.n));
       expect([...VIEW_NAMES]).toEqual(t.rows.filter((r) => r.k === 'VIEW').map((r) => r.n));
       expect(TABLE_NAMES.length).toBeGreaterThanOrEqual(94);
-      expect(VIEW_NAMES.length).toBe(4);
+      expect(VIEW_NAMES.length).toBe(5); // + v_owner_source_dollars (M33, module 33)
     } finally {
       await c.end();
     }

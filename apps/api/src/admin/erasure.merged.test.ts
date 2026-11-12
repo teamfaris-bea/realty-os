@@ -127,7 +127,10 @@ describe('R-DATA-4: erasing a person erases the records merged into them', () =>
     await freshReauth(h, owner);
     expect((await call(owner, 'POST', `/contacts/${survivor}/deals/${d}/remove`, { reason: 'PRIVACY_REQUEST' })).status).toBe(200);
     const removed = (await auditRows(h, w.tenantId, 'deal.contact_removed')).find((a) => a.entity_id === d)!;
-    expect(removed.changes).toEqual({ contact_id: { from: survivor, to: null }, merged_contact_ids: { from: [loser], to: [] }, primary_contact: { changed: true } });
+    // batch 7 review ownership-data/F1: deal roles follow the merge (0053), so the merged record is no longer on the deal
+    // itself; removing the survivor's link takes the person off it
+    expect(removed.changes).toEqual({ contact_id: { from: survivor, to: null }, primary_contact: { changed: true } });
+    expect((await h.su.query('SELECT contact_id FROM deal_contacts WHERE deal_id = $1', [d])).rows).toEqual([]);
     expect((await preview(survivor)).body).toMatchObject({ erasable: true, deals: [] });
     expect((await erase(survivor)).status).toBe(200);
     expect([await rowOf(survivor), await rowOf(loser)]).toEqual([null, null]);

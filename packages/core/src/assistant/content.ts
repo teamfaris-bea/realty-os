@@ -82,8 +82,12 @@ export function storedContent(json: unknown): { kind: 'steps'; steps: unknown[] 
   return r.success ? r.data : null;
 }
 
-/** What `validatePlaybook` sees for a trigger step: the shared template, intent and category checks. */
-function asStep(t: TriggerStep): PlaybookStep {
+/**
+ * What `validatePlaybook` sees for a trigger step: the shared template, intent and category checks.
+ * Exported (module 26, additive) so the send-time re-check in dispatch and the trigger run builder
+ * authorize a trigger message against exactly the step the validator saw.
+ */
+export function triggerStepAsPlaybookStep(t: TriggerStep): PlaybookStep {
   return {
     stepKey: t.stepKey,
     channel: t.channel,
@@ -147,10 +151,23 @@ export function validatePlaybookContent(raw: unknown, opts: { kind: PlaybookKind
     seen.add(t.trigger);
   });
   if (issues.some((i) => i.code === 'SCHEMA')) return issues;
-  return [...issues, ...validatePlaybook(parsed.map(asStep), base)];
+  return [...issues, ...validatePlaybook(parsed.map(triggerStepAsPlaybookStep), base)];
 }
 
 /** The trigger step for a firing's trigger kind, or null when the content has none. */
 export function triggerStepFor(content: Extract<PlaybookContent, { kind: 'triggers' }>, trigger: TriggerKind): TriggerStep | null {
   return content.triggers.find((t) => t.trigger === trigger) ?? null;
+}
+
+/**
+ * The trigger step `stepKey` of stored trigger content (`playbook_versions.steps`), or null when the
+ * content is not trigger content, has no such step, or the step does not parse. Module 26 (additive):
+ * the send-time re-check of a trigger message reads its step here.
+ */
+export function storedTriggerStep(json: unknown, stepKey: string): TriggerStep | null {
+  const c = storedContent(json);
+  if (c === null || c.kind !== 'triggers') return null;
+  const raw = c.triggers.find((t) => typeof t === 'object' && t !== null && (t as { stepKey?: unknown }).stepKey === stepKey);
+  const r = raw === undefined ? null : TriggerStepInner.safeParse(raw);
+  return r !== null && r.success ? r.data : null;
 }

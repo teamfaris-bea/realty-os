@@ -1,4 +1,4 @@
-// The Connect MLS (Spark) page in jsdom on a scripted API: the deployment and connection in words
+// The MLS page's Spark sections (the Spark prep's Connect MLS page) in jsdom on a scripted API: the deployment and connection in words
 // (including "Live MLS calls are turned off on this deployment"), every validate result in words,
 // save / replace / disconnect, re-auth, honest error sentences, Owner/Admin only, no axe violations,
 // and above all: the access token goes out in exactly one request body and is kept nowhere else
@@ -48,6 +48,8 @@ function mount(fake: FakeFetch, role: Role = 'owner', path = SPARK_PAGE_PATH) {
   const s = sessionFixture({ reauthenticatedAt: new Date().toISOString() });
   const tenant = { ...s.tenant!, role };
   fake.on('GET /auth/session', { status: 200, body: { ...s, tenant, tenants: [tenant] } });
+  // module 41 put the MLS sync and licence-pack sections above the Spark sections (MlsStatus.test.tsx covers them)
+  fake.on('GET /admin/mls', { status: 200, body: { connections: [] } });
   const table = tableWith(adminSurface, surface);
   const api = new ApiClient({ fetch: fake.fetch });
   const router = createMemoryRouter(buildRoutes(table), { initialEntries: [path] });
@@ -77,7 +79,7 @@ afterEach(() => vi.restoreAllMocks());
 describe('Connect MLS (Spark) page', () => {
   it('says what the deployment does, the connection, key label and last check, in words', async () => {
     mount(new FakeFetch().on(`GET ${BASE}`, { status: 200, body: overview({ connection: connection({ lastResult: 'INVALID_CREDENTIALS' }) }) }));
-    expect(await screen.findByRole('heading', { level: 1, name: 'Connect MLS (Spark)' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1, name: 'MLS' })).toBeInTheDocument();
     const dep = await screen.findByRole('region', { name: 'This deployment' });
     expect(within(dep).getByText('Spark API')).toBeInTheDocument();
     expect(dep.textContent).toContain(LIVE_CALLS_OFF);
@@ -101,7 +103,7 @@ describe('Connect MLS (Spark) page', () => {
     expect(document.body.textContent).not.toContain(LIVE_CALLS_OFF);
   });
 
-  it('the key form: password input, no autocomplete or spellcheck, no name, Bearer by default, the hint and VERIFY note', async () => {
+  it('the key form: password input, no autocomplete or spellcheck, no name, Bearer by default, the hint and the not-yet-confirmed note', async () => {
     mount(new FakeFetch().on(`GET ${BASE}`, { status: 200, body: overview() }));
     await screen.findByRole('heading', { level: 2, name: 'Save a Spark key' });
     const t = tokenInput();
@@ -113,7 +115,7 @@ describe('Connect MLS (Spark) page', () => {
     const scheme = screen.getByLabelText('Auth scheme') as HTMLSelectElement;
     expect(scheme.value).toBe('Bearer');
     expect(within(scheme).getAllByRole('option').map((o) => o.textContent)).toEqual(['Bearer (default)', 'OAuth']);
-    expect(scheme).toHaveAccessibleDescription(/VERIFY with Spark/);
+    expect(scheme).toHaveAccessibleDescription(/Not yet confirmed with Spark/);
     expect(await violations()).toEqual([]);
   });
 
@@ -261,8 +263,8 @@ describe('Connect MLS (Spark) page', () => {
 
   it('the Admin sees it in the sidebar under Admin', async () => {
     mount(new FakeFetch().on(`GET ${BASE}`, { status: 200, body: overview() }), 'admin');
-    expect(await screen.findByRole('heading', { level: 1, name: 'Connect MLS (Spark)' })).toBeInTheDocument();
-    expect(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Connect MLS' })).toHaveAttribute('href', SPARK_PAGE_PATH);
+    expect(await screen.findByRole('heading', { level: 1, name: 'MLS' })).toBeInTheDocument();
+    expect(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'MLS' })).toHaveAttribute('href', SPARK_PAGE_PATH);
   });
 
   for (const role of ['team_lead', 'agent', 'isa', 'tc'] as const) {
@@ -270,7 +272,7 @@ describe('Connect MLS (Spark) page', () => {
       const fake = new FakeFetch().on(`GET ${BASE}`, { status: 200, body: overview() });
       mount(fake, role);
       expect(await screen.findByText("This page isn't available")).toBeInTheDocument();
-      expect(screen.queryByRole('link', { name: 'Connect MLS' })).toBeNull();
+      expect(screen.queryByRole('link', { name: 'MLS' })).toBeNull();
       expect(screen.queryByLabelText('Access token')).toBeNull();
       expect(fake.callsTo(`GET ${BASE}`)).toHaveLength(0);
     });

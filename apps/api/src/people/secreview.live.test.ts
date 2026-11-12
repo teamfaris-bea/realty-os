@@ -240,7 +240,7 @@ describe('secreview: writes on a contact that is not live', () => {
     }
   });
 
-  it('R-PERM-5 F3: who records a merged-away record’s do-not-contact is whoever still sees its detail and holds contact.edit on it: a collaborator of the loser (200, carried onto a survivor they cannot see, which it then blocks; their other writes stay 404); the TC on the loser’s deal sees it but has no contact.edit (404); the former owner and their Team Lead see nothing (404)', async () => {
+  it('R-PERM-5 F3: who records a merged-away record’s do-not-contact is whoever still sees its detail and holds contact.edit on it: a collaborator of the loser (200, carried onto a survivor they cannot see, which it then blocks; their other writes stay 404); the TC on the loser’s deal follows the deal to the survivor (b7 ownership-data/F1: deal roles follow a merge), so it no longer sees the loser (404); the former owner and their Team Lead see nothing (404)', async () => {
     const s = await ownedContact(agent, { consent: false });
     const l = await ownedContact(agent, { consent: false, confirmDistinct: true });
     expect((await call(agent, 'POST', `/contacts/${l.id}/collaborators`, { userId: agent2.userId, role: 'co_agent' })).status).toBe(200);
@@ -249,14 +249,15 @@ describe('secreview: writes on a contact that is not live', () => {
     expect((await call(agent, 'POST', `/deals/${deal.body.deal.id}/members`, { userId: tc.userId, role: 'tc' })).status).toBe(200);
     await freshReauth(h, w.owner);
     expect((await command(w.owner, s.id, 'merge', { loserId: l.id })).status).toBe(200);
-    // who sees what after the merge: a merge moves neither the loser's collaborators nor its deals
+    // who sees what after the merge: a merge does not move the loser's collaborators; its deals follow the person to the
+    // survivor (b7 review ownership-data/F1), so the deal's TC now sees the survivor and not the loser
     const sees = async (c: TestClient, id: string) => (await call(c, 'GET', `/contacts/${id}`)).status;
     const tl = w.teamLead!;
     expect({ collaborator: [await sees(agent2, l.id), await sees(agent2, s.id)], tc: [await sees(tc, l.id), await sees(tc, s.id)], former: await sees(agent, l.id), teamLead: await sees(tl, l.id) })
-      .toEqual({ collaborator: [200, 404], tc: [200, 404], former: 404, teamLead: 404 });
+      .toEqual({ collaborator: [200, 404], tc: [404, 200], former: 404, teamLead: 404 });
     const ledger = async () => Number((await h.su.query<{ n: string }>('SELECT count(*) AS n FROM consent_events WHERE contact_id = ANY ($1::uuid[])', [[s.id, l.id]])).rows[0]!.n);
     const n = await ledger();
-    // refused: no contact.edit (the TC), or no sight of the record (the former owner, the Team Lead); nothing is recorded
+    // refused: no sight of the record (the TC, the former owner, the Team Lead); nothing is recorded
     for (const [who, c] of [['tc', tc], ['former owner', agent], ['team lead', tl]] as const) {
       const r = await call<{ error: { code: string } }>(c, 'POST', `/contacts/${l.id}/do-not-contact`, { reason: 'asked_on_call' });
       expect({ who, r: [r.status, r.body.error?.code] }).toEqual({ who, r: [404, 'NOT_FOUND'] });

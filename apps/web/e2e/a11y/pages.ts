@@ -49,6 +49,8 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   { path: '/deals/:dealId', roles: ALL, url: (i) => `/deals/${i.dealId}` },
   { path: '/listings', roles: ALL, url: at('/listings') },
   { path: '/listings/:listingId', roles: ALL, url: (i) => `/listings/${i.listingId}` },
+  // module 38 (lane 2C marketing)
+  { path: '/listings/:listingId/marketing', roles: ALL, url: (i) => `/listings/${i.listingId}/marketing` },
   { path: '/contacts/:contactId', roles: ALL, url: (i) => `/contacts/${i.contactId}` },
   { path: '/people/new', roles: NOT_TC, url: at('/people/new') },
   { path: '/contacts/:contactId/thread', roles: ALL, url: (i) => `/contacts/${i.contactId}/thread?compose=sms` },
@@ -65,6 +67,9 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   { path: '/admin/erasure', roles: ADMINS, url: (ids) => `/admin/erasure?contact=${ids.contactId}` },
   { path: '/admin/system', roles: ADMINS, url: at('/admin/system') },
   { path: '/admin/integrations/mls', roles: ADMINS, url: at('/admin/integrations/mls') },
+  // module 41 (lane admin-pages)
+  { path: '/admin/integrations', roles: ADMINS, url: at('/admin/integrations') },
+  { path: '/admin/web-chat', roles: ADMINS, url: at('/admin/web-chat') },
   { path: '/settings/playbooks', roles: NOT_TC, url: at('/settings/playbooks') },
   { path: '/settings/playbooks/:playbookId', roles: NOT_TC, url: (i) => `/settings/playbooks/${i.playbookId}` },
   { path: '/settings/compliance', roles: ADMINS, url: at('/settings/compliance') },
@@ -83,6 +88,20 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   { path: '/admin/tags', roles: ADMINS, url: at('/admin/tags') },
   { path: '/admin/fields', roles: ADMINS, url: at('/admin/fields') },
   { path: '/admin/stage-labels', roles: ADMINS, url: at('/admin/stage-labels') },
+  // module 69 (web/mail-sync, D2)
+  { path: '/settings/mail', roles: ALL, url: at('/settings/mail') },
+  { path: '/admin/mail', roles: ADMINS, url: at('/admin/mail') },
+  // module 41's calendar page (lane calendar)
+  { path: '/settings/calendar', roles: ALL, url: at('/settings/calendar') },
+  // module 40 (lane insights)
+  { path: '/owner', roles: ADMINS, url: at('/owner') },
+  { path: '/plan', roles: ALL, url: at('/plan') },
+  { path: '/plan/:week', roles: ALL, url: at('/plan/2026-W46') },
+  { path: '/goals', roles: ALL, url: at('/goals') },
+  // module 40/41 (coaching): the daily fix page (every role that takes calls) and the coaching settings (the Owner's;
+  // an Admin can only turn call reviews off, E283)
+  { path: '/coaching', roles: NOT_TC, url: at('/coaching') },
+  { path: '/admin/coaching', roles: ADMINS, url: at('/admin/coaching') },
 ];
 
 /** Screens outside the app frame (signed out). */

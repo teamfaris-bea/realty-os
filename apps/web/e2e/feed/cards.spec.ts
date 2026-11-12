@@ -56,8 +56,9 @@ async function axeViolations(page: Page): Promise<string[]> {
 const CARDS = [
   { label: 'Seller update to review', action: 'Open listing', to: () => `/listings/${seed.listingId}` },
   { label: 'Marketing to review', action: 'Open listing', to: () => `/listings/${seed.listingId}` },
-  { label: 'Your plan this week', action: 'See the plan', details: 'Log the outcome of each consult' },
-  { label: "Today's coaching tip", action: 'See the tip', details: 'Ask about their timeline before you talk price' },
+  { label: 'Your plan this week', action: 'See the plan', to: () => '/plan/2026-W46' },
+  // module 40: the coaching tip links to the daily fix page
+  { label: "Today's coaching tip", action: 'See the tip', to: () => '/coaching' },
   { label: 'May be thinking of moving', action: 'Open contact', to: () => `/contacts/${seed.lenaId}` },
 ] as const;
 
@@ -77,12 +78,8 @@ test('each Phase 2/3 card shows its label and a primary action that does its job
     const n = { taps: 0 };
     if (!(await primary.isVisible())) await primary.scrollIntoViewIfNeeded();
     await tap(page, primary, n);
-    if ('to' in c) {
-      await expect(page).toHaveURL(new RegExp(`${c.to()}$`));
-    } else {
-      await expect(primary).toHaveAttribute('aria-expanded', 'true');
-      await expect(card.getByRole('list', { name: 'Details' }).getByText(c.details)).toBeVisible();
-    }
+    // every Phase 2/3 card now opens its own page (the weekly plan: /plan/:week; the coaching tip: /coaching)
+    await expect(page).toHaveURL(new RegExp(`${c.to()}$`));
     expect(n.taps).toBeLessThanOrEqual(2);
   }
   await page.goto(`${stack.webUrl}/`);

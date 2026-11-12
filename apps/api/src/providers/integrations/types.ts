@@ -81,13 +81,20 @@ export interface OAuthConnector {
   readonly configured: boolean;
   /** Authorization URL with PKCE (S256) and the signed state. */
   /** `scopes` come from the catalog (publishing-only for Meta, D2); the adapter never widens them */
-  authorizeUrl(i: { kind: ConnectionKind; state: string; codeChallenge: string; redirectUri: string; scopes: readonly string[] }): string;
+  /** module 34 (additive): `kind` is absent for a per-person calendar connect (no tenant connection kind) */
+  authorizeUrl(i: { kind?: ConnectionKind; state: string; codeChallenge: string; redirectUri: string; scopes: readonly string[] }): string;
   /** Code → token. The code is single-use at the provider; the verifier proves this server started the flow. */
   exchangeCode(i: { code: string; codeVerifier: string; redirectUri: string }): Promise<OAuthToken>;
   /** The accounts this token manages for `kind`: the callback's proof of control (E160). */
   listManagedAccounts(token: OAuthToken, kind: ConnectionKind): Promise<ManagedAccount[]>;
   /** Best effort revocation at the provider (R-INT-5). */
   revoke(token: OAuthToken): Promise<void>;
+  /**
+   * Module 34 (additive): a fresh access token from a refresh token, called lazily inside calendar.push and
+   * the live free/busy read. A grant the person revoked at the provider throws ProviderError('rejected',
+   * 'INVALID_GRANT') (E102). VERIFY each vendor's token endpoint and error shape.
+   */
+  refresh(refreshToken: string): Promise<OAuthToken>;
 }
 
 // ---- Partner lead feeds (Zillow, realtor.com): needs_partner_access until access exists ---------
@@ -197,6 +204,16 @@ export interface CalendarEvent {
   title: string;
   externalEventRef: string | null;
   externalEtag: string | null;
+  /**
+   * Module 34 (additive): a canceled appointment cancels its pushed event; absent means 'confirmed'. The
+   * push is conditional on `externalEtag` (If-Match): an event edited or deleted in the calendar is never
+   * overwritten, the result is `detached` (R-CAL-2, E103). On an etag mismatch the adapter first reads the
+   * event: if it already equals what this push would write (start, end, title, status; our own earlier write
+   * whose acknowledgement was lost to a rollback or timeout), the result is `pushed` with the event's current
+   * etag, since nothing the person did would be overwritten. An update writes only these fields (PATCH), so a
+   * person's notes or attendees are never touched. VERIFY Google/Graph conditional-update shapes.
+   */
+  status?: 'confirmed' | 'cancelled';
 }
 
 export type PushResult =
@@ -229,9 +246,40 @@ export interface PublishRequest {
 
 export type PublishResult = { kind: 'published'; providerRef: string; url: string | null } | { kind: 'rejected'; code: string };
 
+/** Module 29 (additive): find a post whose publish answer was lost (timeout), by the piece and content it carried. */
+export interface LookupRequest {
+  externalAccountId: string;
+  accessToken: string;
+  target: PublishRequest['target'];
+  pieceId: string;
+  contentSha256: string;
+}
+/** `unsupported`: the provider cannot find a post without its id (VERIFY per provider); 'unknown' then stays unknown. */
+export type LookupResult = { kind: 'found'; providerRef: string } | { kind: 'not_found' } | { kind: 'unsupported' };
+
+/** Module 29 (additive): delete a post the provider confirmed. */
+export interface DeleteRequest {
+  externalAccountId: string;
+  accessToken: string;
+  target: PublishRequest['target'];
+  providerRef: string;
+}
+/** `unsupported`: the API cannot delete it (VERIFY: Instagram); the agent removes it themselves. */
+export type DeleteResult = { kind: 'deleted' } | { kind: 'unsupported' } | { kind: 'failed'; code: string };
+
 export interface SocialPublisher {
-  /** RESERVED (R-GATE-15): only marketing/publish.ts calls it. */
+  /** RESERVED (R-GATE-15): only marketing/publish.ts calls it. A timeout is thrown as ProviderError('timeout'). */
   publishPost(p: PublishRequest): Promise<PublishResult>;
+  /** Only marketing/publish.ts calls it: reconcile an 'unknown' publication by lookup, never by posting again (E227). */
+  lookupPost(p: LookupRequest): Promise<LookupResult>;
+  /**
+   * Only marketing/publish.ts calls it: a retraction is recorded only after this confirmed the deletion. It answers,
+   * or throws ProviderError('timeout'), within 30 s (the adapter's own request timeout, AbortSignal.timeout as the other
+   * adapters): one retraction at a time holds the post's 0054 claim, and a claim older than
+   * app.marketing_retract_claim_window() (5 minutes) is taken over. publish.ts stops waiting after
+   * DELETE_POST_TIMEOUT_MS (60 s) either way and counts the call as failed.
+   */
+  deletePost(p: DeleteRequest): Promise<DeleteResult>;
 }
 
 // ---- Showing service (adapter + fake only until partner access, PHASE2_3_PLAN §3) -------------------
@@ -258,7 +306,8 @@ export interface RenderedPdf {
 }
 
 export interface DocumentRenderer {
-  renderPdf(i: { templateKey: string; fields: Record<string, string>; imageCount: number }): Promise<RenderedPdf>;
+  /** module 29 (additive): `images` are the piece's image bytes (PNG/JPEG) in order, when the caller has them */
+  renderPdf(i: { templateKey: string; fields: Record<string, string>; imageCount: number; images?: Uint8Array[] }): Promise<RenderedPdf>;
 }
 
 /** The Phase 2 adapter bag (`Providers.integrations`). */

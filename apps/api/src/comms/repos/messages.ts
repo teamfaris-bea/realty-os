@@ -32,6 +32,8 @@ export interface MessageRow {
   imported: boolean;
   /** the bulk action of a bulk send (parity module 63; never a touch, R-PAR-37); null otherwise */
   bulkActionId: string | null;
+  /** module 29: the open-house invite this message is (R-MKT-8; a mass send: never a touch, R-OWN-14); null otherwise */
+  marketingPieceId: string | null;
   /** module 22: the widget connection a web-chat message goes through (messages_platform_sender); null otherwise */
   integrationConnectionId: string | null;
 }
@@ -63,12 +65,13 @@ interface Raw {
   provider_message_ref: string | null;
   imported: boolean;
   bulk_action_id: string | null;
+  marketing_piece_id: string | null;
   integration_connection_id: string | null;
 }
 
 const COLS = sql`id, conversation_id, contact_id, channel, direction, status, status_reason, initiator, initiated_by_user_id, purpose,
   action_category, assistant_action_id, playbook_step_run_id, phone_number_id, email_identity_id, from_address, to_address, subject,
-  body, pinned_inbound_seq, scheduled_for, dispatched_at, gate_decision_id, provider_message_ref, imported, bulk_action_id, integration_connection_id`;
+  body, pinned_inbound_seq, scheduled_for, dispatched_at, gate_decision_id, provider_message_ref, imported, bulk_action_id, marketing_piece_id, integration_connection_id`;
 
 function row(x: Raw): MessageRow {
   return {
@@ -98,6 +101,7 @@ function row(x: Raw): MessageRow {
     providerMessageRef: x.provider_message_ref,
     imported: x.imported,
     bulkActionId: x.bulk_action_id,
+    marketingPieceId: x.marketing_piece_id,
     integrationConnectionId: x.integration_connection_id,
   };
 }
@@ -158,6 +162,8 @@ export interface OutboundInsert {
   bulkActionId?: string | null;
   /** module 22: a web-chat message's widget connection (messages_platform_sender); absent = none */
   integrationConnectionId?: string | null;
+  /** module 29: an open-house invite recipient (R-MKT-8; the dispatch guard sends it only from an approved invite version) */
+  marketingPieceId?: string | null;
 }
 
 /**
@@ -168,12 +174,12 @@ export async function insertOutbound(tx: Tx, m: OutboundInsert): Promise<boolean
   const r = await sql<{ id: string }>`
     INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, email_identity_id, from_address,
       to_address, subject, body, status, initiator, initiated_by_user_id, purpose, action_category, assistant_action_id, playbook_step_run_id,
-      pinned_inbound_seq, idempotency_key, scheduled_for, occurred_at, bulk_action_id, integration_connection_id)
+      pinned_inbound_seq, idempotency_key, scheduled_for, occurred_at, bulk_action_id, integration_connection_id, marketing_piece_id)
     VALUES (app.tenant_id(), ${m.id}, ${m.conversationId}, ${m.contactId}, ${m.channel}, 'outbound', ${m.phoneNumberId}, ${m.emailIdentityId},
       ${m.fromAddress}, ${m.toAddress}, ${m.subject}, ${m.body}, ${m.status}, ${m.initiator}, ${m.initiatedByUserId}, ${m.purpose},
       ${m.actionCategory}, ${m.assistantActionId}, ${m.playbookStepRunId}, ${m.pinnedInboundSeq}, ${m.idempotencyKey},
       ${m.scheduledFor === null ? null : toIso(m.scheduledFor)}::timestamptz, ${toIso(m.occurredAt)}::timestamptz, ${m.bulkActionId ?? null}::uuid,
-      ${m.integrationConnectionId ?? null}::uuid)
+      ${m.integrationConnectionId ?? null}::uuid, ${m.marketingPieceId ?? null}::uuid)
     ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING RETURNING id`.execute(tx);
   return r.rows.length === 1;
 }
@@ -349,6 +355,17 @@ export async function insertInbound(tx: Tx, m: InboundInsert): Promise<boolean> 
   return r.rows.length === 1;
 }
 
+/**
+ * inbound_seq + 1 ONLY (b7 sends/F3): a fresh synced Gmail reply (ingestSyncedMailInTx). It moves the counter E27 and
+ * R-AST-6 compare, and never last_inbound_at: that would make a free-form message "informational" (R-CONSENT-5) and
+ * so step around a marketing-only unsubscribe (D1). Returns the new seq.
+ */
+export async function bumpInboundSeq(tx: Tx, conversationId: string): Promise<number> {
+  const r = await sql<{ inbound_seq: string }>`
+    UPDATE conversations SET inbound_seq = inbound_seq + 1 WHERE tenant_id = app.tenant_id() AND id = ${conversationId} RETURNING inbound_seq`.execute(tx);
+  return Number(r.rows[0]?.inbound_seq ?? 0);
+}
+
 /** inbound_seq + 1 and last_inbound_at (drafts pin inbound_seq; R-AST-6). Returns the new seq. */
 export async function bumpInbound(tx: Tx, conversationId: string, contactId: string, at: Instant): Promise<number> {
   const r = await sql<{ inbound_seq: string }>`
@@ -385,6 +402,9 @@ export async function cancelScheduledTriggerRuns(tx: Tx, contactIds: readonly st
   const r = await sql<{ id: string }>`
     UPDATE playbook_step_runs SET status = 'canceled_paused', updated_at = now()
      WHERE tenant_id = app.tenant_id() AND enrollment_id IS NULL AND contact_id = ANY (${contactIds}::uuid[]) AND status = 'scheduled'
+       -- module 26 (flagged): a run whose message already left (dispatching, sent, dispatch_unknown) is not canceled
+       AND (message_id IS NULL OR EXISTS (SELECT 1 FROM messages m WHERE m.tenant_id = playbook_step_runs.tenant_id AND m.id = playbook_step_runs.message_id
+                                            AND m.status IN ('queued','scheduled','canceled')))
     RETURNING id`.execute(tx);
   return r.rows.map((x) => x.id);
 }

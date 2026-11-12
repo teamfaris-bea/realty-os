@@ -23,6 +23,8 @@ import { AGENT_ERROR_MESSAGES } from '../feed/lib/messages.js';
 import { useSendCheck } from '../feed/lib/sendCheck.js';
 import type { ActionView, ApproveResponse, ClaimApiView } from '../feed/lib/types.js';
 import { ContactSearches } from './SavedSearchReview.js';
+import { MarketingApprovals } from './MarketingApprovals.js';
+import { SellerUpdateApproval } from './SellerUpdateApproval.js';
 
 export const INBOX_KEY = ['inbox'] as const;
 
@@ -68,31 +70,41 @@ export default function ApprovalsPage() {
 function Approvals() {
   const q = useInbox();
   const { hash } = useLocation();
+  // seller updates sent from this page stay on it with their outcome (they leave the pending inbox when sent)
+  const [kept, setKept] = useState<ActionView[]>([]);
   useEffect(() => {
     if (!hash || !q.data) return;
     document.getElementById(hash.slice(1))?.scrollIntoView?.({ block: 'start' });
   }, [hash, q.data]);
   if (q.isPending) return <p className="py-10 text-center text-[15px] text-ink-muted">Loading</p>;
   if (q.isError) return <Notice tone="error">{messageFor(q.error, AGENT_ERROR_MESSAGES)}</Notice>;
-  const items = q.data.items;
+  const items = [...q.data.items, ...kept.filter((k) => !q.data.items.some((i) => i.id === k.id))];
   if (items.length === 0) {
     return (
-      <EmptyState icon="inbox" title="Nothing to approve">
-        Drafts and replies from the assistant that need you will show up here.
-      </EmptyState>
+      <MarketingApprovals
+        whenEmpty={
+          <EmptyState icon="inbox" title="Nothing to approve">
+            Drafts and replies from the assistant that need you will show up here.
+          </EmptyState>
+        }
+      />
     );
   }
   // one reachability request for every card's contact (not one per card)
   const contactIds = items.flatMap((a) => (a.contactId && a.primaryAction === 'send' && a.draft ? [a.contactId] : []));
+  // a seller update (module 28) belongs to a listing, not a contact: its card loads its own recipients
   return (
     <ReachabilityBatch contactIds={contactIds}>
-      <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        {items.map((a) => (
-          <li key={a.id} id={`action-${a.id}`} className="scroll-mt-20">
-            <ActionCard action={a} />
-          </li>
-        ))}
-      </ul>
+      <div className="flex flex-col gap-4">
+        <MarketingApprovals />
+        <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          {items.map((a) => (
+            <li key={a.id} id={`action-${a.id}`} className="scroll-mt-20">
+              {a.kind === 'seller_update_draft' && a.contactId === null ? <SellerUpdateApproval actionId={a.id} onSent={() => setKept((k) => (k.some((x) => x.id === a.id) ? k : [...k, a]))} /> : <ActionCard action={a} />}
+            </li>
+          ))}
+        </ul>
+      </div>
     </ReachabilityBatch>
   );
 }

@@ -81,7 +81,7 @@ async function register(app: FastifyInstance): Promise<void> {
         const p = await R.playbookSetting(t, req.params.id, { lock: true });
         if (!p) throw new AppError('NOT_FOUND');
         const stage = req.body.stage;
-        if (stage !== null && p.kind === 'new_lead_response') throw new AppError('AUTO_ENROLL_NOT_ALLOWED');
+        if (stage !== null && (p.kind === 'new_lead_response' || p.kind === 'trigger' || p.kind === 'voice_answering')) throw new AppError('AUTO_ENROLL_NOT_ALLOWED');
         if (stage !== null && p.status !== 'active') throw new AppError('PLAYBOOK_RETIRED');
         if (stage !== p.autoEnrollStage) {
           if (stage !== null) {

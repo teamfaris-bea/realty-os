@@ -127,6 +127,10 @@ export const ERROR_STATUS = {
   SAVED_SEARCH_STATE: 409, // wrong state for this saved-search command (details.status)
   SENDER_UNAVAILABLE: 409, // no sending number / email identity for this channel
   SELLER_UPDATE_NEEDS_RECOMMENDATION: 422, // R-AST-17: a seller update goes out only with the agent's own recommendation (an edit)
+  SELLER_UPDATE_STALE: 409, // R-SELL-4: showings, feedback, marketing or competing data changed after assembled_through; reassemble (one tap)
+  SELLER_UPDATE_RECIPIENTS_CHANGED: 409, // R-SELL-5: who the update can reach changed since the agent looked; nothing was sent
+  SELLER_UPDATE_CONFIRM_RECIPIENTS: 409, // R-SELL-5: send from the seller card, which shows who it reaches (the generic approve route cannot)
+  SELLER_UPDATE_NO_RECIPIENT: 422, // R-SELL-5: no seller on the listing can be reached (opted out, no address, not visible)
   DRAFT_OWNER_ONLY: 409, // R-AST-7: reply drafts are made for the lead's owner (only the owner's draft can be sent)
   // ---- api/workspace ----
   FEED_ITEM_PINNED: 409, // a pinned card is a live deadline (offer, first touch, inactivity): it closes by acting on it, never by Done/Snooze/Dismiss
@@ -268,6 +272,54 @@ export const ERROR_STATUS = {
   GOOGLE_LEAD_FORM_ALREADY_ON: 409, // module 22: the source's Google lead form is already on (current state in details; R-GADS-4)
   LEAD_EMAIL_NOT_A_LEAD: 409, // module 22: a held forwarding confirmation is never a lead; it can only be discarded (R-LEM-12)
   WEBHOOK_UNAVAILABLE: 503, // module 22: the webhook could not be checked (database unavailable); the provider should retry (R-GADS-1)
+  // ---- module 68 api/mail-sync (D2) ----
+  MAIL_SYNC_OFF: 409, // module 68: Gmail sync is off for this team, or platform:gmail is not cleared (R-GMAIL-1)
+  MAIL_SYNC_NOT_CLEARED: 409, // module 68: the Owner cannot turn Gmail sync on before platform:gmail is cleared (counsel + Google verification)
+  MAIL_PROVIDER_NOT_CONFIGURED: 409, // module 68: this platform has no reviewed Google client yet (honest status)
+  MAIL_ALREADY_CONNECTED: 409, // module 68: one live Gmail link per user; disconnect first
+  MAIL_NOT_CONNECTED: 404, // module 68: the caller has no live Gmail link
+  MAIL_DISCLOSURE_STALE: 409, // module 68: the connect request must carry the hash of the current disclosure text
+  MAIL_POINT_NOT_ALLOWED: 422, // module 68: an address that is not a current email of a client you own, collaborate on or share a deal with, or is a team mailbox (S-D2-1)
+  // ---- module 29 api/marketing (R-MKT-1..12; DB guard refusals keep their codes) ----
+  MARKETING_TEAM_LISTING_ONLY: 422, // only the team's own listings get marketing (R-MKT-5)
+  MARKETING_FROZEN: 409, // an approved version cannot change; a change is a new version (R-MKT-2)
+  MARKETING_TERMINAL: 409, // retracted / superseded are final
+  MARKETING_APPROVE_FIRST: 409, // nothing is published or exported unapproved (R-MKT-1)
+  MARKETING_HUMAN_APPROVAL: 403, // a person approves, as themselves
+  MARKETING_ASSET_INVALID: 422, // an image that is not a live marketing asset (or not a PNG/JPEG/WebP)
+  MARKETING_IDENTITY_IMMUTABLE: 409,
+  MARKETING_BORN_DRAFT: 409,
+  MARKETING_GUARD_FAILED: 422, // brokerage name, fair-housing wording or a pack rule fails: the reasons are on the piece
+  MARKETING_STALE: 409, // the content changed since the person looked; approve what is shown now
+  MARKETING_NOT_DRAFT: 409,
+  MARKETING_DRAFT_EXISTS: 409, // a newer draft of this kind exists already: edit that one
+  MARKETING_NOT_PUBLISHABLE: 422, // this kind is not published (flyers, Marketplace: export; invites: send)
+  MARKETING_NOT_LIVE: 409,
+  MARKETING_NOT_EXPORTABLE: 422, // an invite is sent, never exported
+  MARKETING_NOT_INVITE: 422,
+  MARKETING_PIECE_NOT_APPROVED: 409, // invites go out only from an approved open-house invite version (R-MKT-8)
+  MARKETING_NOT_FLYER: 422,
+  PLATFORM_NOT_CLEARED: 409, // publishing waits for counsel review of platform:fair_housing (R-INT-6): export instead
+  PUBLISH_TARGET_INVALID: 422, // a social post goes to a Facebook Page or Instagram business account only
+  PUBLISH_NEEDS_IMAGE: 422, // VERIFY: Instagram has no text-only posts
+  PUBLICATION_ALREADY_LIVE: 409, // one live publication per version and account (E227: never re-posted)
+  PUBLICATION_NOT_LIVE: 409,
+  PUBLICATION_RETRACTING: 409, // another retraction of this post is under way; only one asks the provider (R-MKT-12)
+  PUBLICATION_HUMAN_TAP: 403,
+  PUBLICATION_BORN_PUBLISHING: 409,
+  PUBLICATION_SYSTEM_ONLY: 403, // only the system records a provider's outcome
+  PUBLICATION_FORWARD_ONLY: 409,
+  PUBLICATION_IMMUTABLE: 409,
+  PUBLICATION_POST_ID_FINAL: 409,
+  LISTING_OFF_MARKET: 409, // sold / withdrawn / expired: nothing new goes out (R-MKT-9)
+  FAIR_HOUSING_PACK_UNAVAILABLE: 503, // the fair-housing pack is missing or invalid: fail closed
+  CALENDAR_ALREADY_CONNECTED: 409, // module 34: the person already has a calendar connected (one at a time); disconnect it first
+  // ---- module 33 api/insights ----
+  COST_MONTH_IN_FUTURE: 422, // a lead-source cost for a month that has not started yet in the tenant's zone
+  GOAL_PERIOD_START_INVALID: 422, // a goal period must start on a Monday / the 1st / a quarter's or year's first day (details.periodKind)
+  GOAL_EXISTS: 409, // the member already has a goal for this period and metric (details.goalId)
+  PLAN_ALREADY_ACCEPTED: 409, // the weekly plan was already accepted (its tasks exist)
+  COACHING_NOT_CLEARED: 409, // module 36 (R-INT-6): call scoring waits for counsel review of the platform:coaching pack
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

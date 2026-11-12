@@ -1426,7 +1426,46 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                     "additionalProperties": false,
                     "properties": {
                       "kind": {
+                        "const": "open_plan",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                      "week": {
+                        "pattern": "^\\d{4}-W\\d{2}$",
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "week",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
                         "const": "show_details",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "open_coaching_fix",
                         "type": "string",
                       },
                       "label": {
@@ -1943,7 +1982,46 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                   "additionalProperties": false,
                   "properties": {
                     "kind": {
+                      "const": "open_plan",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "week": {
+                      "pattern": "^\\d{4}-W\\d{2}$",
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "week",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
                       "const": "show_details",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "open_coaching_fix",
                       "type": "string",
                     },
                     "label": {
@@ -2479,7 +2557,46 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                     "additionalProperties": false,
                     "properties": {
                       "kind": {
+                        "const": "open_plan",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                      "week": {
+                        "pattern": "^\\d{4}-W\\d{2}$",
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "week",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
                         "const": "show_details",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "open_coaching_fix",
                         "type": "string",
                       },
                       "label": {
@@ -2996,7 +3113,46 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                   "additionalProperties": false,
                   "properties": {
                     "kind": {
+                      "const": "open_plan",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "week": {
+                      "pattern": "^\\d{4}-W\\d{2}$",
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "week",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
                       "const": "show_details",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "open_coaching_fix",
                       "type": "string",
                     },
                     "label": {
@@ -4911,6 +5067,8 @@ exports[`api/workspace route table and schemas > every workspace route declares 
   "GET /api/listings self",
   "GET /api/listings/:id listing.view authorize(listing.view)",
   "GET /api/listings/:id/competing listing.view authorize(listing.view)",
+  "GET /api/listings/:id/marketing listing.view authorize(listing.view)",
+  "GET /api/listings/:id/seller-update listing.view authorize(listing.view)",
   "GET /api/listings/:id/showings listing.view authorize(listing.view)",
   "GET /api/notification-preferences self",
   "GET /api/notifications self",
@@ -4921,6 +5079,7 @@ exports[`api/workspace route table and schemas > every workspace route declares 
   "PATCH /api/deal-dates/:id deal.edit authorize(deal.edit)",
   "PATCH /api/deals/:id deal.edit authorize(deal.edit)",
   "PATCH /api/listings/:id listing.edit authorize(listing.edit)",
+  "PATCH /api/listings/:id/agent listing.reassign authorize(listing.reassign)",
   "PATCH /api/showings/:id listing.edit authorize(listing.edit)",
   "PATCH /api/tasks/:id self",
   "POST /api/appointments self",
@@ -4935,6 +5094,8 @@ exports[`api/workspace route table and schemas > every workspace route declares 
   "POST /api/feed/:id/snooze self",
   "POST /api/listings listing.edit authorize(listing.edit)",
   "POST /api/listings/:id/contacts listing.edit authorize(listing.edit)",
+  "POST /api/listings/:id/marketing/assets listing.edit authorize(listing.edit)",
+  "POST /api/listings/:id/marketing/generate listing.edit authorize(listing.edit)",
   "POST /api/listings/:id/showings listing.edit authorize(listing.edit)",
   "POST /api/notifications/read self",
   "POST /api/showings/:id/feedback listing.edit authorize(listing.edit)",

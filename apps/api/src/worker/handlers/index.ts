@@ -17,6 +17,13 @@ import { bulkHandlers } from '../../bulk/handlers.js';
 import { stageAutomationHandlers } from '../../stageAutomation/handlers.js';
 import { mlsHandlers } from '../../mls/handlers.js';
 import { channelHandlers } from '../../channels/handlers.js';
+import { nurtureHandlers } from '../../nurture/handlers.js';
+import { mailSyncHandlers } from '../../mailSync/handlers.js';
+import { marketingHandlers } from '../../marketing/handlers.js';
+import { sellerUpdateHandlers } from '../../sellerUpdates/handlers.js';
+import { calendarHandlers } from '../../calendar/handlers.js';
+import { insightsHandlers } from '../../insights/handlers.js';
+import { coachingHandlers } from '../../coaching/handlers.js';
 
 export const handlers: JobHandler<unknown>[] = [
   ...workerHandlers,
@@ -31,5 +38,12 @@ export const handlers: JobHandler<unknown>[] = [
   ...stageAutomationHandlers,
   ...mlsHandlers,
   ...channelHandlers,
+  ...nurtureHandlers,
+  ...mailSyncHandlers,
+  ...marketingHandlers,
+  ...sellerUpdateHandlers,
+  ...calendarHandlers,
+  ...insightsHandlers,
+  ...coachingHandlers,
   // registry: add new entries above this line
 ];

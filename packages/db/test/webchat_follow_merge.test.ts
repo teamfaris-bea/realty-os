@@ -120,7 +120,8 @@ describe('a website chat follows a person merge (R-OWN-24)', () => {
     expect(f).toEqual({ secdef: true, owner: 'app_definer', config: ['search_path=pg_catalog, public'] });
     expect((await suRows<{ ok: boolean }>(su, "SELECT has_function_privilege('public', 'app.webchat_sessions_follow_merge()', 'EXECUTE') AS ok"))[0]!.ok).toBe(false);
     const order = await suRows<{ tgname: string }>(su, "SELECT tgname FROM pg_trigger WHERE tgrelid = 'public.contacts'::regclass AND tgname LIKE 'contacts_merge_%' ORDER BY tgname");
-    expect(order.map((t) => t.tgname)).toEqual(['contacts_merge_children', 'contacts_merge_webchat_sessions']);
+    // + contacts_merge_roles (b7 review ownership-data/F1), which reads nothing the other two write
+    expect(order.map((t) => t.tgname)).toEqual(['contacts_merge_children', 'contacts_merge_roles', 'contacts_merge_webchat_sessions']);
     // app_user still writes no session itself (0018 webchat_system: the system actor only)
     await expect(withTenantTx(w.owner.actor, (tx) => sql`UPDATE webchat_sessions SET contact_id = contact_id WHERE tenant_id = app.tenant_id()`.execute(tx), { db: app })
       .then((r) => Number(r.numAffectedRows ?? 0n))).resolves.toBe(0);

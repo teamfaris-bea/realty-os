@@ -8,6 +8,7 @@
 // Until then `createRealIntegrations` is not wired by createProviders; production uses
 // `createUnconfiguredIntegrations` (honest "not set up on this platform yet") unless an explicit staging
 // demo allows the fakes.
+import { PdfLibRenderer } from './pdf.js';
 import { ProviderError } from '../types.js';
 import type {
   AvmProvider,
@@ -59,6 +60,9 @@ export class PlatformOAuth implements OAuthConnector {
   async revoke(): Promise<void> {
     throw notYet(`${this.provider.toUpperCase()}_REVOKE_API`);
   }
+  async refresh(): Promise<never> {
+    throw notYet(`${this.provider.toUpperCase()}_TOKEN_ENDPOINT`);
+  }
 }
 
 /** A partner lead feed we have no agreement for: honest `needs_partner_access`, never polls. */
@@ -100,7 +104,11 @@ const unavailable = {
       throw new ProviderError('not_configured', 'CALENDAR_NOT_CONFIGURED');
     },
   }),
-  social: { publishPost: async () => ({ kind: 'rejected' as const, code: 'NOT_CONFIGURED' }) } satisfies SocialPublisher,
+  social: {
+    publishPost: async () => ({ kind: 'rejected' as const, code: 'NOT_CONFIGURED' }),
+    lookupPost: async () => ({ kind: 'unsupported' as const }),
+    deletePost: async () => ({ kind: 'failed' as const, code: 'NOT_CONFIGURED' }),
+  } satisfies SocialPublisher,
   renderer: {
     renderPdf: async () => {
       throw new ProviderError('not_configured', 'RENDERER_NOT_CONFIGURED');
@@ -123,6 +131,9 @@ class UnconfiguredOAuth implements OAuthConnector {
   async revoke(): Promise<void> {
     throw new ProviderError('not_configured', 'OAUTH_APP_NOT_CONFIGURED');
   }
+  async refresh(): Promise<never> {
+    throw new ProviderError('not_configured', 'OAUTH_APP_NOT_CONFIGURED');
+  }
 }
 
 /**
@@ -139,7 +150,8 @@ export function createUnconfiguredIntegrations(): IntegrationAdapters {
     calendar: { google: unavailable.calendar(), microsoft: unavailable.calendar() },
     social: unavailable.social,
     showing: new PartnerShowingService(),
-    renderer: unavailable.renderer,
+    // module 29: flyers render locally with pdf-lib (no vendor, no network; dependency N16)
+    renderer: new PdfLibRenderer(),
   };
 }
 

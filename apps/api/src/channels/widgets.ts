@@ -12,6 +12,7 @@ import { type Database, type Tx, withTenantTx } from '@realty/db';
 import { audit, redactDiff, redactSnapshot } from '../audit.js';
 import type { IdGenerator } from '@realty/core/foundation';
 import { AppError } from '../errors.js';
+import { tenantFacts } from '../comms/repos/gate.js';
 import { systemActor } from '../worker/systemActor.js';
 import * as repo from './repos/webchat.js';
 import { newWidgetKey, normalizeOrigin, widgetKeyHash } from './webchat.js';
@@ -121,5 +122,21 @@ export async function setWidgetOrigins(deps: WidgetDeps, actor: UserActor, id: s
       reason: 'ORIGINS_CHANGED',
     });
     return view((await repo.widgetRow(tx, id))!);
+  });
+}
+
+/**
+ * What the embed snippet carries besides the key (module 41's web-chat page): the brokerage name and the consent
+ * disclosure the widget shows before the first message (src/widget/config.ts). Read-only; never the key (only its
+ * hash is stored). `disclosure` is null when the lead source has none: the widget then shows nothing on the website.
+ */
+export async function widgetEmbed(deps: WidgetDeps, actor: UserActor, id: string): Promise<{ brokerage: string; disclosure: { id: string; text: string } | null }> {
+  return asManager(deps, actor, async (tx) => {
+    const w = await repo.widgetRow(tx, id);
+    if (!w) throw new AppError('NOT_FOUND');
+    const source = w.lead_source_id ? await repo.leadSourceOf(tx, w.lead_source_id) : null;
+    const d = source?.consent_disclosure_id ? await repo.disclosureBody(tx, source.consent_disclosure_id) : null;
+    const t = await tenantFacts(tx);
+    return { brokerage: t.brokerageLegalName, disclosure: d ? { id: d.id, text: d.body } : null };
   });
 }
