@@ -148,7 +148,9 @@ async function ingestFeedLead(tx: Tx, ctx: StandaloneJobContext, deps: FeedPollD
   // R-LSRC-2 (module 22): a lead for a source that is turned off is skipped, as an off source's lead email is refused.
   // One receipt per lead says so (no lead content: only sha256 of the feed's own id), the page counts them, and the
   // cursor advances with the page, so turning the source back on does not replay them (E597).
-  const src = await sql<{ active: boolean }>`SELECT active FROM lead_sources WHERE tenant_id = app.tenant_id() AND id = ${c.lead_source_id}::uuid`.execute(tx);
+  // b9 review ownership-data/F5: FOR SHARE, so the source cannot be turned off between this check and the intake's own
+  // re-read (which would throw NOT_FOUND and drop the lead with no receipt); turning it off waits for this page
+  const src = await sql<{ active: boolean }>`SELECT active FROM lead_sources WHERE tenant_id = app.tenant_id() AND id = ${c.lead_source_id}::uuid FOR SHARE`.execute(tx);
   if (src.rows[0]?.active !== true) {
     await sql`
       INSERT INTO lead_source_skips (tenant_id, id, lead_source_id, channel, external_ref_sha256, reason)

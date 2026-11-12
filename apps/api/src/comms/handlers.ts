@@ -115,6 +115,8 @@ export const MmsTextPayload = jobPayload({
   agentUserId: zId.optional(),
   messageRef: z.string().regex(/^[A-Za-z0-9_-]{4,64}$/),
   parts: z.array(z.object({ position: z.number().int().min(0).max(99), ref: z.string().regex(/^ME[0-9a-f]{32}$/).nullable() })).min(1).max(100),
+  // b9 review sends/F2: the tracked re-inquiry the job decides once every part is read (R-TRK-3)
+  trackedLeadSourceId: zId.optional(),
 });
 
 export function mmsTextHandler(depsFor: DepsFor = defaultDeps): StandaloneJobHandler<z.infer<typeof MmsTextPayload>> {
@@ -125,7 +127,7 @@ export function mmsTextHandler(depsFor: DepsFor = defaultDeps): StandaloneJobHan
     via: 'provider',
     schema: MmsTextPayload,
     async run(ctx, p) {
-      const r = await readTextParts(ctx.actor, { ...(p.messageId ? { messageId: p.messageId } : {}), ...(p.agentUserId ? { agentUserId: p.agentUserId } : {}), messageRef: p.messageRef, parts: p.parts }, depsFor(ctx.providers));
+      const r = await readTextParts(ctx.actor, { ...(p.messageId ? { messageId: p.messageId } : {}), ...(p.agentUserId ? { agentUserId: p.agentUserId } : {}), messageRef: p.messageRef, parts: p.parts, ...(p.trackedLeadSourceId ? { trackedLeadSourceId: p.trackedLeadSourceId } : {}) }, depsFor(ctx.providers));
       ctx.log.info('mms text', { kind: MMS_TEXT_JOB.kind, jobId: ctx.job.id.toString(), code: `read:${r.read},skipped:${r.skipped},revoked:${r.revoked.length}` });
     },
   };

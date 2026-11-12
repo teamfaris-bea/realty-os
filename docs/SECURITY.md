@@ -1013,8 +1013,10 @@ adapter with a fetch that fails the test if it is ever called; nothing reaches T
   (`comms/webhooks.redaction.test.ts`).
 - **Opt-out signals from Twilio (R-TWL-7 to R-TWL-11).** Every one only ever adds an opt-out or makes a sender less
   ready; none lifts anything. `OptOutType=STOP` revokes once (our own revoking classification takes precedence);
-  21610 on an alert text revokes the agent's alert texts the way their own STOP does; 30032/30034 mark the number's
-  registration not ready in the same transaction as the event. MMS text parts are fetched only by validated SID
+  21610 on an alert text revokes the agent's alert texts the way their own STOP does; 30032/30034 mark THAT number
+  not ready to text in the same transaction as the event (never its shared registration, b9 review sends/F1); a
+  STOP confirmation or HELP reply for a number that cannot text may go from the team main number, still only to the
+  phone that texted the keyword (ARCHITECTURE §21.28). MMS text parts are fetched only by validated SID
   through the adapter (no URL from the webhook is fetched, no SSRF), capped at 16 KiB, decoded as strict UTF-8 (a NUL
   or invalid byte is unreadable), applied under the address lock then the contact locks (concurrent runs apply a part
   once), shown in the thread as plain text only, and never placed in an assistant prompt (only the text-part modules

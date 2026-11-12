@@ -68,6 +68,11 @@ export class TwilioHttp {
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   }
 
+  /** R-TWL-1: true while the kill switch refuses every request (b9 review ownership-data/F4: read by the send-time gate). */
+  get liveOff(): boolean {
+    return !this.live;
+  }
+
   /** R-TWL-1: throws TELEPHONY_LIVE_OFF unless live requests are on (also checked before any input is looked at). */
   assertLive(): void {
     if (!this.live) throw new ProviderError('not_configured', TELEPHONY_LIVE_OFF);

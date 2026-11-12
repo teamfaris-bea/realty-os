@@ -37,6 +37,23 @@ describe('Phone and email', () => {
     await waitFor(() => expect(fake.callsTo('GET /numbers').length).toBeGreaterThanOrEqual(2));
   });
 
+  it('b9 comms sends/F1 R-TWL-9: a number the carrier paused says so (never "Texting approved"), names what still works, and offers "Check registration status"', async () => {
+    const fake = numbersFake([num({ registrationStatus: 'approved', textingPausedDetail: 'SENDER_NOT_VERIFIED: provider error 30034 on a local number ending 0100' })]);
+    leadAdminApp(fake, '/admin/numbers', 'admin');
+    expect(await screen.findByText('(415) 555-0100')).toBeInTheDocument();
+    expect(screen.queryByText('Texting approved')).not.toBeInTheDocument();
+    expect(screen.getByText('Texting paused for this number')).toBeInTheDocument();
+    expect(screen.getByText(/Calls still work, and other numbers are not affected/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Check registration status' })).toBeInTheDocument();
+  });
+
+  it('b9 comms sends/F1: a paused number whose registration is suspended says the registration is suspended (not "other numbers are not affected")', async () => {
+    leadAdminApp(numbersFake([num({ registrationStatus: 'suspended', textingPausedDetail: 'SENDER_NOT_VERIFIED: provider error 30034 on a local number ending 0100' })]), '/admin/numbers', 'admin');
+    expect(await screen.findByText('(415) 555-0100')).toBeInTheDocument();
+    expect(screen.queryByText('Texting paused for this number')).not.toBeInTheDocument();
+    expect(screen.queryByText(/other numbers are not affected/)).not.toBeInTheDocument();
+  });
+
   it('with no numbers it says nobody can call or text clients yet', async () => {
     leadAdminApp(numbersFake([]), '/admin/numbers', 'owner');
     expect(await screen.findByText('There are no numbers yet, so nobody can call or text clients from the app.')).toBeInTheDocument();

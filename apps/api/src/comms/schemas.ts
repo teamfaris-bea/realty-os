@@ -183,6 +183,8 @@ const NumberSchema = z.object({
   releasedAt: z.string().nullable(),
   /** module 22 (R-TRK-1): the lead source a live tracking number credits, or null */
   leadSourceId: z.uuid().nullable(),
+  /** b9 review sends/F1 (R-TWL-9): set while the carrier reports THIS number unverified for texting (its texts are paused) */
+  textingPausedDetail: z.string().nullable(),
 });
 /** notice (module 22, E352): said in words when a number was bought but could not be tied to its lead source */
 export const NumberResponse = z.object({ number: NumberSchema, notice: z.string().optional() });

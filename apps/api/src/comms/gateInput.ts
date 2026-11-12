@@ -138,6 +138,9 @@ export const DISPATCH_DENY_SENTENCES = {
   RECIPIENT_SUPPRESSED: 'This number or address is blocked (bounce, complaint or do-not-contact), so it did not go out.',
   // R-TWL-2 (lane telephony-safeguards): the tenant's daily telephony cap; telephonySafeguards.ts DAILY_CAP_SENTENCE
   DAILY_SEND_CAP_REACHED: "Today's sending limit for this team is reached.",
+  // R-TWL-1 (b9 review ownership-data/F4): the kill switch, refused in TX1 so a refused text or call is never a touch;
+  // telephonySafeguards.ts TELEPHONY_LIVE_OFF_SENTENCE
+  TELEPHONY_LIVE_OFF: 'Live texting and calling are off on this deployment.',
 } as const;
 export type DispatchDenyReason = keyof typeof DISPATCH_DENY_SENTENCES;
 
