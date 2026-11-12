@@ -146,6 +146,8 @@ export const ACTIONS = [
   'playbook.auto_enroll_stage', // parity module 67: the stage whose entry enrolls (team: Owner/Admin; an agent: own agent playbook)
   'lead_email_review.view', // module 22 lead-email slice: the "Needs review" list of held lead emails (Owner/Admin/Team Lead; support read-only)
   'lead_email_review.decide', // module 22 lead-email slice: accept a held lead email as a lead (same intake path) or discard it
+  'milestone.confirm', // module 31 (DATA_MODEL §8 "Confirm or move a milestone date"): plan, confirm, enter, move, complete a deal date
+  'milestone_template.manage', // module 31: tenant milestone templates (not a §8 row: Owner/Admin, flagged; R-TXN-6)
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -572,6 +574,11 @@ const MATRIX: Record<Action, ActionRule> = {
   'settings.batch_text': { roles: { owner: { scopes: ['all'], checks: ['attest_when_loosening'], reauth: 'when_loosening' }, admin: { scopes: ['all'], checks: ['not_loosening'] } } },
   // playbook.auto_enroll_stage (R-PAR-16): team ✅ | team ✅ | — | own agent playbook | — | —
   'playbook.auto_enroll_stage': { roles: { owner: { scopes: ['team_playbook'] }, admin: { scopes: ['team_playbook'] }, agent: { scopes: ['own'], checks: ['not_team_playbook'] } } },
+  // Module 31 (DATA_MODEL §8): Confirm or move a milestone date: ✅ | ✅ | T | O / D | — | D. The agent cell reads as
+  // "own deals or deals they are a member of" (deals have no collaborators); a person only, never the system (R-TXN-1).
+  'milestone.confirm': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: { scopes: ['own', 'deal'] }, tc: DEAL } },
+  // Milestone templates (R-TXN-6; §8 names no role): Owner/Admin, like the other tenant settings. Flagged for the owner.
+  'milestone_template.manage': { roles: { owner: ALL, admin: ALL } },
 };
 
 const DENY_NOT_FOUND: CanResult = { ok: false, code: 'NOT_FOUND' };

@@ -180,7 +180,8 @@ export const DealSchema = z.object({
 export const DealDetailSchema = DealSchema.extend({
   dates: z.array(DealDateSchema),
   members: z.array(z.object({ userId: uuid, role: z.enum(['co_agent', 'tc', 'isa']) })),
-  contacts: z.array(z.object({ contactId: uuid, role: z.enum(['buyer', 'seller', 'co_buyer', 'co_seller', 'other']) })),
+  // module 31 (finding 9): every deal_contacts role 0018 allows, lender, title and attorney included
+  contacts: z.array(z.object({ contactId: uuid, role: z.enum(['buyer', 'seller', 'co_buyer', 'co_seller', 'other', 'lender', 'title', 'attorney']) })),
   history: z.array(z.object({ fromStage: z.string().nullable(), toStage: z.string(), changedAt: z.string(), byUserId: uuid.nullable() })),
 });
 export const DealResponse = z.object({ deal: DealDetailSchema });
@@ -231,7 +232,7 @@ export const DealDateBody = z
 export const UpdateDealDateBody = z.strictObject({ dueOn: localDate.optional(), label: z.string().trim().min(1).max(120).nullable().optional(), completed: z.boolean().optional() });
 export const DealDateResponse = z.object({ date: DealDateSchema });
 export const DealMemberBody = z.strictObject({ userId: uuid, role: z.enum(['co_agent', 'tc', 'isa']) });
-export const DealContactBody = z.strictObject({ contactId: uuid, role: z.enum(['buyer', 'seller', 'co_buyer', 'co_seller', 'other']) });
+export const DealContactBody = z.strictObject({ contactId: uuid, role: z.enum(['buyer', 'seller', 'co_buyer', 'co_seller', 'other', 'lender', 'title', 'attorney']) });
 export const MemberParams = z.object({ id: uuid, userId: uuid });
 
 // ---- listings and showings -------------------------------------------------------------------------------

@@ -119,17 +119,12 @@ async function register(app: FastifyInstance): Promise<void> {
   // ---- deals ----
   const dealView = authorize('deal.view', (req) => facts(req, (tx) => dealFacts(tx, idOf(req))));
   const dealEdit = authorize('deal.edit', (req) => facts(req, (tx) => dealFacts(tx, idOf(req))));
-  const dealDates = authorize('deal.edit', (req) =>
-    facts(req, async (tx) => {
-      const f = await dealFacts(tx, idOf(req));
-      return f && { ...f, datesOnly: true };
-    }),
-  );
-  const dateEdit = authorize('deal.edit', (req) =>
+  // module 31: the date routes authorize the milestone Action ("Confirm or move a milestone date", DATA_MODEL §8)
+  const dealDates = authorize('milestone.confirm', (req) => facts(req, (tx) => dealFacts(tx, idOf(req))));
+  const dateEdit = authorize('milestone.confirm', (req) =>
     facts(req, async (tx) => {
       const dealId = await dealOfDate(tx, idOf(req));
-      const f = dealId ? await dealFacts(tx, dealId) : null;
-      return f && { ...f, datesOnly: true };
+      return dealId ? await dealFacts(tx, dealId) : null;
     }),
   );
   const financials = authorize('deal.financials', (req) => facts(req, (tx) => dealFacts(tx, idOf(req))));
@@ -168,13 +163,13 @@ async function register(app: FastifyInstance): Promise<void> {
   r.put('/deals/:id/financials', { config: { auth: 'deal.financials' }, preHandler: financials, schema: { params: S.IdParams, body: S.FinancialsBody, response: { 200: S.FinancialsResponse } } }, async (req) => ({
     financials: await wsTx(req, (tx, _now, actor) => putFinancials(tx, actor, req.params.id, req.body)),
   }));
-  r.post('/deals/:id/dates', { config: { auth: 'deal.edit' }, preHandler: dealDates, schema: { params: S.IdParams, body: S.DealDateBody, response: { 201: S.DealDateResponse } } }, async (req, reply) => {
-    const date = await wsTx(req, (tx) => addDealDate(tx, app.platform.ids, req.params.id, req.body));
+  r.post('/deals/:id/dates', { config: { auth: 'milestone.confirm' }, preHandler: dealDates, schema: { params: S.IdParams, body: S.DealDateBody, response: { 201: S.DealDateResponse } } }, async (req, reply) => {
+    const date = await wsTx(req, (tx, now, actor) => addDealDate(tx, actor, app.platform.ids, req.params.id, req.body, now));
     reply.code(201);
     return { date };
   });
-  r.patch('/deal-dates/:id', { config: { auth: 'deal.edit' }, preHandler: dateEdit, schema: { params: S.IdParams, body: S.UpdateDealDateBody, response: { 200: S.DealDateResponse } } }, async (req) => ({
-    date: await wsTx(req, (tx, now) => updateDealDate(tx, req.params.id, req.body, now)),
+  r.patch('/deal-dates/:id', { config: { auth: 'milestone.confirm' }, preHandler: dateEdit, schema: { params: S.IdParams, body: S.UpdateDealDateBody, response: { 200: S.DealDateResponse } } }, async (req) => ({
+    date: await wsTx(req, (tx, now, actor) => updateDealDate(tx, actor, app.platform.ids, req.params.id, req.body, now)),
   }));
   r.post('/deals/:id/members', { config: { auth: 'deal.edit' }, preHandler: dealEdit, schema: { params: S.IdParams, body: S.DealMemberBody, response: { 200: S.DealResponse } } }, async (req) => ({
     deal: await wsTx(req, async (tx, _now, actor) => {

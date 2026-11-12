@@ -36,9 +36,10 @@ import {
   signOffFor,
   storedContent,
   triggerStepAsPlaybookStep,
+  triggerStepFor,
 } from '@realty/core/assistant';
 import type { ActionCategory } from '@realty/core/compliance';
-import type { AssistantClaimId, ContactId, IanaZone, Instant } from '@realty/core/foundation';
+import { type AssistantClaimId, type ContactId, type IanaZone, type Instant, ianaZone } from '@realty/core/foundation';
 import { type FactState, type Firing, alertItemLine, planBatch, planTriggerRun } from '@realty/core/nurture';
 import { type Tx, lockContact } from '@realty/db';
 import { sql } from 'kysely';
@@ -65,6 +66,8 @@ interface Item {
   /** the listing row and its client view (listing firings) */
   listing?: { row: ListingRow; view: ReturnType<typeof clientView> };
   deal?: { address: string; closedAt: Instant | null };
+  /** deal-date firings (module 31): the date as stored now and the recipient's roles on the deal */
+  dealDate?: { completed: boolean; label: string | null; dueAt: Instant | null; zone: IanaZone | null; roles: string[] };
 }
 
 async function listingRow(tx: Tx, id: string): Promise<ListingRow | null> {
@@ -73,7 +76,7 @@ async function listingRow(tx: Tx, id: string): Promise<ListingRow | null> {
 }
 
 /** The fact as it stands now (R-NURT-4), read under the contact lock. */
-async function currentFact(tx: Tx, f: Firing, e: MlsEligibility): Promise<Pick<Item, 'current' | 'listing' | 'deal'>> {
+async function currentFact(tx: Tx, f: Firing, e: MlsEligibility): Promise<Pick<Item, 'current' | 'listing' | 'deal' | 'dealDate'>> {
   const r = f.ref;
   switch (r.kind) {
     case 'price_drop':
@@ -98,11 +101,20 @@ async function currentFact(tx: Tx, f: Firing, e: MlsEligibility): Promise<Pick<I
       return { current: { kind: 'deal', status: d.status, contactIsParty: d.contactIsParty }, deal: { address: d.address, closedAt: d.closedAt } };
     }
     case 'deal_date_upcoming': {
-      const q = await sql<{ due_version: number; status: string; confirmed_by_user_id: string | null; due_at: Date | null }>`
-        SELECT due_version, status, confirmed_by_user_id, due_at FROM deal_dates WHERE tenant_id = app.tenant_id() AND id = ${r.dealDateId} AND deal_id = ${r.dealId}`.execute(tx);
+      // module 31: also completed_at (a date marked done after planning sends nothing: DATE_COMPLETED), the contract
+      // date's zone (the slot shows the contract date, not the instant in the recipient's zone) and the recipient's
+      // current roles on the deal (removed, or no longer in a named role: NOT_A_PARTY)
+      const q = await sql<{ due_version: number; status: string; confirmed_by_user_id: string | null; due_at: Date | null; completed_at: Date | null; label: string | null; zone: string | null; roles: string[] }>`
+        SELECT dd.due_version, dd.status, dd.confirmed_by_user_id, dd.due_at, dd.completed_at, dd.label, dd.basis->>'zone' AS zone,
+               ARRAY(SELECT dc.role FROM deal_contacts dc WHERE dc.tenant_id = dd.tenant_id AND dc.deal_id = dd.deal_id AND dc.contact_id = ${f.contactId}) AS roles
+          FROM deal_dates dd WHERE dd.tenant_id = app.tenant_id() AND dd.id = ${r.dealDateId} AND dd.deal_id = ${r.dealId}`.execute(tx);
       const x = q.rows[0];
       if (!x) return { current: { kind: 'gone' } };
-      return { current: { kind: 'deal_date', dueVersion: x.due_version, confirmed: x.status === 'confirmed' && x.confirmed_by_user_id !== null, dueAt: x.due_at ? (x.due_at.getTime() as Instant) : null } };
+      const dueAt = x.due_at ? (x.due_at.getTime() as Instant) : null;
+      return {
+        current: { kind: 'deal_date', dueVersion: x.due_version, confirmed: x.status === 'confirmed' && x.confirmed_by_user_id !== null, dueAt },
+        dealDate: { completed: x.completed_at !== null, label: x.label, dueAt, zone: x.zone === null ? null : ianaZone(x.zone), roles: x.roles },
+      };
     }
     case 'home_value':
       return { current: { kind: 'gone' } }; // wave 2C; apiSkip stops it first (NOT_AVAILABLE_YET)
@@ -141,8 +153,10 @@ function itemText(it: Item, zone: IanaZone): { line: string; slots: SlotValues }
     slots.home_years = `${years} year${years === 1 ? '' : 's'}`;
   }
   if (r.kind === 'deal_date_upcoming') {
-    slots.document_name = literal(r.label);
-    slots.due_date = formatDue(r.dueAt, true, zone);
+    // the current label and the CONTRACT date: the deadline instant shown in the zone it was confirmed in (basis.zone),
+    // so a recipient in a zone east of the tenant's is not told the next day (E143)
+    slots.document_name = literal(it.dealDate?.label ?? r.label);
+    slots.due_date = formatDue(r.dueAt, true, it.dealDate?.zone ?? zone);
   }
   return { line, slots };
 }
@@ -229,6 +243,19 @@ export async function executeTriggerRunInTx(tx: Tx, deps: NurtureDeps, tenantId:
       continue;
     }
     const cur = await currentFact(tx, f, e);
+    if (cur.dealDate !== undefined) {
+      // module 31: a completed date is reported as completed (never as unconfirmed or changed), and a recipient no
+      // longer on the deal in a role the approved step names gets nothing (R-TXN-4)
+      if (cur.dealDate.completed) {
+        skipped.push({ run, reason: 'DATE_COMPLETED' });
+        continue;
+      }
+      const named: readonly string[] = (content === null ? null : triggerStepFor(content, 'deal_date_upcoming'))?.roles ?? [];
+      if (!cur.dealDate.roles.some((x) => named.includes(x))) {
+        skipped.push({ run, reason: 'NOT_A_PARTY' });
+        continue;
+      }
+    }
     const plan = planTriggerRun({
       firing: f,
       current: cur.current,

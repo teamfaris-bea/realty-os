@@ -261,6 +261,16 @@ export const ERROR_STATUS = {
   CHANNEL_NOT_CONNECTED: 409, // module 22: the web-chat widget is not connected (disconnected, revoked or never switched on; R-INBOX-7)
   WEBCHAT_DISCLOSURE_STALE: 409, // module 22: the chat must start after the visitor saw the widget's current disclosure (R-INBOX-5)
   WEBCHAT_SESSION_CLOSED: 410, // module 22: the chat session ended (idle 30 min or closed, E77); start a new chat
+  // ---- api/transactions (module 31; core TransactionErrorCode, R-TXN-1, R-TXN-6) ----
+  DATE_HUMAN_CONFIRMATION: 403, // a person confirms, enters and moves milestone dates, as themselves (R-TXN-1)
+  DATE_COMPLETED: 409, // a completed milestone is not re-confirmed or moved
+  DATE_WAIVED: 409, // a waived milestone is not confirmed again
+  REMINDER_INVALID: 422, // reminderDaysBefore outside 0..60
+  TEMPLATE_INVALID: 422, // the milestone template does not parse (MilestoneTemplateSchema)
+  TEMPLATE_SIDE_MISMATCH: 422, // the template is for another side of the deal
+  MILESTONE_TEMPLATE_NOT_FOUND: 422, // no template with this id and version for the deal's side and the tenant's jurisdictions
+  MILESTONE_PLAN_OPEN: 409, // another template's proposals are still open on this deal (details.templateId)
+  MILESTONE_TEMPLATES_INVALID: 422, // PUT milestone templates: invalid entries by index (details.invalid)
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

@@ -31,6 +31,7 @@ import { AppError } from '../errors.js';
 import { senderSignature } from '../templates/repos/signature.js';
 import * as A from './repos/actions.js';
 import { contactCore } from './repos/context.js';
+import { type DealDateStale, dealDateStaleness } from '../transactions/stale.js';
 import type { AssistantDeps } from './types.js';
 import { type ActionView, actionViews } from './views.js';
 
@@ -101,7 +102,7 @@ const approvalKey = (actionId: string) => `assistant-approve:${actionId}`;
 
 /** POST /assistant/actions/:id/approve */
 export async function approveAction(actor: UserActor, actionId: string, input: ApproveInput, deps: AssistantDeps): Promise<ApproveResult> {
-  type Out = { kind: 'done'; result: ApproveResult } | { kind: 'stale'; inboundSeq: number; pinned: number | null } | { kind: 'invalidated' } | { kind: 'send'; plan: Planned };
+  type Out = { kind: 'done'; result: ApproveResult } | { kind: 'stale'; inboundSeq: number; pinned: number | null } | { kind: 'date_stale'; st: DealDateStale } | { kind: 'invalidated' } | { kind: 'send'; plan: Planned };
   const out: Out = await asUser(deps, actor, async (tx, now) => {
     const peek = await A.actionById(tx, actionId);
     if (!peek || peek.ownerUserId !== actor.userId) throw new AppError('NOT_FOUND');
@@ -118,6 +119,12 @@ export async function approveAction(actor: UserActor, actionId: string, input: A
         if (m) return { kind: 'done', result: { actionId, status: a.status, result: 'noop', messageId: m.id, decision: await storedDecisionView(tx, m.gate_decision_id), messageStatus: m.status } };
         // approved but never queued (the queue transaction failed or the process died after the tap):
         // the re-tap finishes the send instead of reporting it handled
+        // E142 (module 31): unless a deal date its trigger runs cite moved or was completed since: back to proposed, stale
+        const moved = a.status === 'approved' ? await dealDateStaleness(tx, a.id) : null;
+        if (moved) {
+          await revertApproval(tx, a.id, sendId);
+          return { kind: 'date_stale', st: moved };
+        }
         const resume = a.status === 'approved' ? await unsentApproval(tx, a, sendId) : null;
         if (resume === 'invalidated') return { kind: 'invalidated' };
         if (resume) return { kind: 'send', plan: resume };
@@ -126,6 +133,10 @@ export async function approveAction(actor: UserActor, actionId: string, input: A
       throw new AppError('ACTION_NOT_PENDING', { status: a.status });
     }
     if (a.autonomy === 'within_playbook') throw new AppError('ACTION_NOT_PENDING', { status: a.status });
+    // E142 (module 31, R-TXN-5): a draft citing a deal date that moved, was completed or waived is stale; a re-review
+    // re-tap (reviewedInboundSeq) answers only R-AST-6's new reply and never sends it
+    const dateStale = await dealDateStaleness(tx, a.id);
+    if (dateStale) return { kind: 'date_stale', st: dateStale };
     const conv = a.contactId ? await conversationOf(tx, a.contactId) : null;
     if (a.contactId) {
       const c = await contactState(tx, a.contactId);
@@ -195,7 +206,13 @@ export async function approveAction(actor: UserActor, actionId: string, input: A
   if (out.kind === 'done') return out.result;
   if (out.kind === 'invalidated') throw new AppError('DRAFT_INVALIDATED');
   if (out.kind === 'stale') throw new AppError('DRAFT_STALE', { inboundSeq: out.inboundSeq, pinnedInboundSeq: out.pinned });
+  if (out.kind === 'date_stale') throw dateStaleError(out.st);
   return queueAndSend(actor, actionId, out.plan, deps);
+}
+
+/** E142: DRAFT_STALE saying the deal date moved (ids and versions only). */
+function dateStaleError(st: DealDateStale): AppError {
+  return new AppError('DRAFT_STALE', { reason: st.reason, dealDateId: st.dealDateId, boundDueVersion: st.boundVersion, currentDueVersion: st.currentVersion });
 }
 
 /** The send plan of an approved draft whose message was never queued (null: nothing was to be sent). */
@@ -225,12 +242,18 @@ async function queueAndSend(actor: UserActor, actionId: string, plan: Planned, d
   // signature above the brokerage footer (R-PAR-25), as a human one-to-one email and the composer's preview do.
   // It is their own membership row (RLS: self), read as them: the queue transaction below is the system's.
   const signature = plan.channel === 'email' ? await asUser(deps, actor, (tx) => senderSignature(tx)) : null;
-  type Q = { kind: 'stale'; inboundSeq: number } | { kind: 'queued'; messageId: string } | { kind: 'not_queued'; code: string };
+  type Q = { kind: 'stale'; inboundSeq: number } | { kind: 'date_stale'; st: DealDateStale } | { kind: 'queued'; messageId: string } | { kind: 'not_queued'; code: string };
   const q: Q = await asSystem(deps, actor.tenantId, 'assistant', async (tx, now) => {
     await lockContact(tx, plan.contactId as ContactId);
     const conv = await conversationOf(tx, plan.contactId);
     const prior = await messageByKey(tx, plan.messageKey);
     if (prior) return { kind: 'queued', messageId: prior.id };
+    // E142: a deal date moved between the tap and this queue transaction: undo the approval, nothing is queued
+    const dateStale = await dealDateStaleness(tx, actionId);
+    if (dateStale) {
+      await revertApproval(tx, actionId, plan.sendActionId);
+      return { kind: 'date_stale', st: dateStale };
+    }
     if (conv && conv.inboundSeq > plan.pinnedInboundSeq) {
       // a reply arrived between the tap and the queue: undo the approval, the agent re-reviews (R-AST-6)
       await revertApproval(tx, actionId, plan.sendActionId);
@@ -266,6 +289,7 @@ async function queueAndSend(actor: UserActor, actionId: string, plan: Planned, d
     return { kind: 'queued', messageId: r.messageId };
   });
   if (q.kind === 'stale') throw new AppError('DRAFT_STALE', { inboundSeq: q.inboundSeq, pinnedInboundSeq: plan.pinnedInboundSeq });
+  if (q.kind === 'date_stale') throw dateStaleError(q.st);
   if (q.kind === 'not_queued') throw new AppError(q.code === 'CONTACT_POINT_MISSING' || q.code === 'CONTACT_MERGED' ? q.code : 'SENDER_UNAVAILABLE');
   const d = await dispatchOutbound(q.messageId, deps, { tenantId: actor.tenantId });
   const status = await asUser(deps, actor, async (tx) => (await A.actionById(tx, actionId))?.status ?? 'approved');
