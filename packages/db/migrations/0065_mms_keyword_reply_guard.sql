@@ -59,7 +59,7 @@ BEGIN
             AND EXISTS (SELECT 1 FROM public.messages im
                          WHERE im.tenant_id = NEW.tenant_id AND im.conversation_id = NEW.conversation_id
                            AND im.direction = 'inbound' AND im.opt_out_keyword IS NOT NULL
-                           -- 0132 (R-TWL-11): a keyword that arrived by MMS (its Body or a text part) is answered by SMS
+                           -- 0065 (R-TWL-11): a keyword that arrived by MMS (its Body or a text part) is answered by SMS
                            AND (im.channel = NEW.channel OR (NEW.channel = 'sms' AND im.channel = 'mms'))
                            AND im.from_address = NEW.to_address
                            AND im.created_at >= now() - interval '24 hours');

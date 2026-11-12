@@ -785,7 +785,7 @@ No full-text column on `mail_messages`: Phase 1 search does not index synced mai
 
 `integration_connections` (0018): a `lead_email` row is one per lead source (partial UQ `integration_connections_lead_email_source`), keyed (no external account), switched on by Owner/Admin; `allowed_sender_domains` is the DKIM allowlist. `lead_inquiries.parse_status = 'parsed'` and `parse_evidence` (each field's source span) are written for lead email.
 
-### 6.x Lead intake: sources, forms, tracking numbers (module 22 continuation, 2026-11-12; migration `0110_lead_intake.sql`, renumbered at merge)
+### 6.x Lead intake: sources, forms, tracking numbers (module 22 continuation, 2026-11-12; migration `0062_lead_intake.sql`)
 
 | Table | Purpose | Key fields | Invariants | Access (RLS) | Field classes |
 |---|---|---|---|---|---|

@@ -271,7 +271,7 @@ describe('R-TWL-11 the thread, visibility, prompts and erasure', () => {
   });
 });
 
-describe('R-TWL-11 adversarial: the MMS keyword-reply exemption stays narrow (guard 0132)', () => {
+describe('R-TWL-11 adversarial: the MMS keyword-reply exemption stays narrow (guard 0065)', () => {
   it('R-TWL-11 R-PAR-12: after an MMS STOP from one phone, a "confirmation" to the contact\'s OTHER opted-out phone, or any non-exempt system text to the sender, is refused (gate and guard)', async () => {
     const agent = w.agents[0]!;
     const c = await twoPhoneContact(agent);
