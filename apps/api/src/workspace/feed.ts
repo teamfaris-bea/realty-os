@@ -520,6 +520,8 @@ function shownCards(userId: string) {
        -- a managed key the materializer has not scored yet is not a card (as the Phase 1 refresh skipped it)
        AND (f.card IS NOT NULL OR f.dedupe_key !~ ${MANAGED_KEY_SQL})
        -- R-PRED-5: only while the card's own model is approved and still flags the contact (RLS: contact detail)
+       -- R-PRED-6 (module 50): a person-level do-not-contact contact shows no likely_to_move card, at once (merges: 0018 dnc_follow_merge)
+       AND (f.item_type <> 'likely_to_move' OR c.do_not_contact_at IS NULL)
        AND (f.item_type <> 'likely_to_move' OR EXISTS (
              SELECT 1 FROM contact_predictions p JOIN prediction_models m ON m.version = p.model_version
               WHERE p.tenant_id = f.tenant_id AND p.contact_id = f.contact_id AND p.model_version = split_part(f.dedupe_key, ':', 3)

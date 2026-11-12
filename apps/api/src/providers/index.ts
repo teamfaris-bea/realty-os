@@ -36,6 +36,7 @@ import type {
 import { webPushProvider } from './webpush.js';
 import { type FakeIntegrationAdapters, type IntegrationAdapters, createFakeIntegrations, selectIntegrations } from './integrations/index.js';
 import { InProcessWebChat, type WebChatTransport } from '../channels/transport.js';
+import { FakePublicRecords, type PublicRecordsProvider, UnconfiguredPublicRecords } from '../predict/provider.js';
 
 export * from './types.js';
 export { FakeAi, FAKE_BAD_QUOTE, parseFakeSources } from './fake/ai.js';
@@ -66,6 +67,8 @@ export interface Providers {
   integrations: IntegrationAdapters;
   /** module 22: the web-chat transport (in-process; the visitor's poll is the delivery). Absent ⇒ chat sends fail closed. */
   webChat?: WebChatTransport;
+  /** module 50: public property records, platform configuration (deterministic fake; production: unconfigured, no vendor yet, N13) */
+  publicRecords: PublicRecordsProvider;
 }
 
 /** The fakes with their concrete types, so tests can inspect outboxes and inject failures. */
@@ -83,6 +86,7 @@ export interface FakeProviders extends Providers {
   accountMail: FakeAccountMailer;
   integrations: FakeIntegrationAdapters;
   webChat: InProcessWebChat;
+  publicRecords: FakePublicRecords;
 }
 
 export function createFakeProviders(opts: { clock?: Clock } = {}): FakeProviders {
@@ -101,6 +105,7 @@ export function createFakeProviders(opts: { clock?: Clock } = {}): FakeProviders
     accountMail: new FakeAccountMailer(),
     integrations: createFakeIntegrations(),
     webChat: new InProcessWebChat(),
+    publicRecords: new FakePublicRecords(),
   };
 }
 
@@ -169,5 +174,7 @@ export function createProviders(config: Config, opts: { clock: Clock; fetch?: ty
     });
   }
   const integrations = selectIntegrations(config);
-  return { ...fakes, telephony, carrier, email, accountMail, ai, push, storage, integrations };
+  // module 50: no public-records vendor is procured (N13); production looks nothing up unless fakes are allowed
+  const publicRecords: PublicRecordsProvider = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredPublicRecords() : fakes.publicRecords;
+  return { ...fakes, telephony, carrier, email, accountMail, ai, push, storage, integrations, publicRecords };
 }
