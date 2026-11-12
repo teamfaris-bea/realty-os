@@ -18,7 +18,9 @@
 //
 // Read (GET /me/weekly-plans/:week, self): items whose source the member can no longer see AS THEIRS are dropped at
 // render (E111: a deal reassigned since, a task reassigned or closed, an appointment moved to someone else), as are
-// items whose contact became person-level do-not-contact since (R-PLAN-3). Read under the member's own RLS.
+// items whose contact became person-level do-not-contact since (R-PLAN-3). Read under the member's own RLS. An item
+// whose contact was merged away since is shown on the survivor, where the merge moved its task, appointment or deal
+// (R-OWN-24, backlog-gaps), when the member sees the survivor live and not do-not-contact; otherwise it is dropped.
 //
 // Accept (POST /me/weekly-plans/:week/accept, self): one tap adds the chosen items to the member's tasks. Items that
 // already are a task (a promise, a task) are not copied; the others (log an outcome, move a deal) become one task
@@ -191,26 +193,56 @@ async function planRow(tx: Tx, actor: UserActor, week: string, lock = false): Pr
   return r.rows[0] ?? null;
 }
 
-/** Ids of the sources the member can still see AS THEIRS, and the person-level do-not-contact contacts (R-PLAN-3). */
+/**
+ * Ids of the sources the member can still see AS THEIRS, each with its CURRENT contact (a task's or appointment's
+ * contact_id, a deal's primary_contact_id), and the person-level do-not-contact contacts (R-PLAN-3).
+ */
 async function renderFilter(tx: Tx, actor: UserActor, items: readonly PlanItem[]) {
   const ids = (t: string) => items.flatMap((i) => i.evidence.filter((e) => e.sourceType === t).map((e) => e.sourceId));
-  const contacts = items.map((i) => i.contactId).filter((c): c is NonNullable<typeof c> => c !== null);
-  const r = await sql<{ id: string }>`
-    SELECT t.id FROM tasks t WHERE t.tenant_id = app.tenant_id() AND t.id = ANY (${ids('task')}::uuid[]) AND t.assignee_user_id = ${actor.userId} AND t.status = 'open'
+  const r = await sql<{ id: string; contact_id: string | null }>`
+    SELECT t.id, t.contact_id FROM tasks t WHERE t.tenant_id = app.tenant_id() AND t.id = ANY (${ids('task')}::uuid[]) AND t.assignee_user_id = ${actor.userId} AND t.status = 'open'
     UNION ALL
-    SELECT a.id FROM appointments a WHERE a.tenant_id = app.tenant_id() AND a.id = ANY (${ids('appointment')}::uuid[]) AND a.user_id = ${actor.userId}
+    SELECT a.id, a.contact_id FROM appointments a WHERE a.tenant_id = app.tenant_id() AND a.id = ANY (${ids('appointment')}::uuid[]) AND a.user_id = ${actor.userId}
     UNION ALL
-    SELECT d.id FROM deals d WHERE d.tenant_id = app.tenant_id() AND d.id = ANY (${ids('deal')}::uuid[]) AND d.owner_user_id = ${actor.userId}
+    SELECT d.id, d.primary_contact_id FROM deals d WHERE d.tenant_id = app.tenant_id() AND d.id = ANY (${ids('deal')}::uuid[]) AND d.owner_user_id = ${actor.userId}
        AND d.stage NOT IN ('closed','lost')`.execute(tx);
+  const current = new Map(r.rows.map((x) => [x.id, x.contact_id]));
+  // the stored contacts and the evidence rows' current ones (a merge moves the work to the survivor, R-OWN-24)
+  const stored = items.map((i) => i.contactId).filter((c): c is NonNullable<typeof c> => c !== null);
+  const contacts = [...new Set([...stored, ...r.rows.flatMap((x) => (x.contact_id ? [x.contact_id] : []))])];
   // a contact the member can no longer see is dropped too: it is not in the visible set below
   const c = await sql<{ id: string; dnc: boolean }>`
     SELECT c.id, ${personDnc('c')} AS dnc FROM contacts c
      WHERE c.tenant_id = app.tenant_id() AND c.id = ANY (${contacts}::uuid[]) AND c.deleted_at IS NULL
        AND c.merged_into_contact_id IS NULL`.execute(tx);
-  const visibleContacts = new Set(c.rows.map((x) => x.id));
+  const liveContacts = new Set(c.rows.map((x) => x.id));
   const dnc = new Set(c.rows.filter((x) => x.dnc).map((x) => x.id));
-  for (const id of contacts) if (!visibleContacts.has(id)) dnc.add(id);
-  return { visible: new Set(r.rows.map((x) => x.id)), dnc };
+  for (const id of contacts) if (!liveContacts.has(id)) dnc.add(id);
+  return { visible: new Set(current.keys()), current, liveContacts, dnc };
+}
+
+/**
+ * R-OWN-24 / R-PLAN-3 (backlog-gaps): the items as they render now. An item whose stored contact is no longer live (a
+ * merge moved its work to the survivor) is shown on its evidence's CURRENT contact, but only when every visible
+ * evidence row names that one contact and it is visible, live and not do-not-contact under the caller's RLS; otherwise
+ * the item is left as stored, so dropInvisible drops it as before. Each copy keeps its stored index (same position).
+ */
+function rekeyed(items: readonly PlanItem[], f: Awaited<ReturnType<typeof renderFilter>>): PlanItem[] {
+  return items.map((i) => {
+    if (i.contactId === null || f.liveContacts.has(i.contactId)) return i;
+    const now = new Set(i.evidence.filter((e) => f.visible.has(e.sourceId)).map((e) => f.current.get(e.sourceId) ?? null));
+    if (now.size !== 1) return i;
+    const to = [...now][0]!;
+    if (to === null || to === i.contactId || !f.liveContacts.has(to) || f.dnc.has(to)) return i;
+    return { ...i, contactId: to as PlanItem['contactId'] };
+  });
+}
+
+/** The stored items, the view of each at its stored index, and the kept views (dropInvisible, core, unchanged). */
+async function renderItems(tx: Tx, actor: UserActor, all: readonly PlanItem[]) {
+  const f = await renderFilter(tx, actor, all);
+  const view = rekeyed(all, f);
+  return { view, kept: new Set(dropInvisible(view, f.visible, f.dnc)) };
 }
 
 export async function getPlan(tx: Tx, actor: UserActor, week: string) {
@@ -218,8 +250,7 @@ export async function getPlan(tx: Tx, actor: UserActor, week: string) {
   const zone = (await tenantZone(tx)) as string;
   if (!row) return { week, zone, exists: false as const };
   const all = row.payload.items;
-  const f = await renderFilter(tx, actor, all);
-  const kept = new Set(dropInvisible(all, f.visible, f.dnc));
+  const { view, kept } = await renderItems(tx, actor, all);
   const accepted = row.status === 'executed' ? (row.edited_payload ?? {}) : null;
   return {
     week,
@@ -228,7 +259,7 @@ export async function getPlan(tx: Tx, actor: UserActor, week: string) {
     basis: row.payload.basis,
     note: row.payload.note,
     builtAt: row.payload.builtAt,
-    items: all.flatMap((i, index) => (kept.has(i) ? [{ index, item: i, accepted: accepted?.acceptedIndexes?.includes(index) ?? false }] : [])),
+    items: view.flatMap((i, index) => (kept.has(i) ? [{ index, item: i, accepted: accepted?.acceptedIndexes?.includes(index) ?? false }] : [])),
     droppedSinceBuilt: all.length - kept.size,
     accepted: accepted ? { at: row.decided_at!.toISOString(), taskIds: accepted.taskIds ?? [] } : null,
   };
@@ -239,13 +270,13 @@ export async function acceptPlan(tx: Tx, actor: UserActor, ids: IdGenerator, now
   if (!row) throw new AppError('NOT_FOUND');
   if (row.status !== 'proposed') throw new AppError('PLAN_ALREADY_ACCEPTED');
   const all = row.payload.items;
-  const f = await renderFilter(tx, actor, all);
-  const kept = new Set(dropInvisible(all, f.visible, f.dnc));
+  // the items as rendered: a re-keyed item's task is created on its current contact (the merge survivor)
+  const { view, kept } = await renderItems(tx, actor, all);
   const chosen = [...new Set(indexes)].sort((a, b) => a - b);
-  for (const i of chosen) if (!all[i] || !kept.has(all[i])) throw new AppError('NOT_FOUND');
+  for (const i of chosen) if (!view[i] || !kept.has(view[i])) throw new AppError('NOT_FOUND');
   const taskIds: string[] = [];
   for (const i of chosen) {
-    const item = all[i]!;
+    const item = view[i]!;
     const existingTask = item.evidence.find((e) => e.sourceType === 'task');
     if (existingTask) {
       taskIds.push(existingTask.sourceId);
