@@ -32,7 +32,7 @@ const LABELS: Record<keyof typeof TRIGGER_AVAILABILITY, string> = {
   back_on_market: 'A followed home is back on the market',
   home_anniversary: 'Home anniversary (yearly)',
   home_value: 'Monthly home value estimate',
-  deal_date_upcoming: 'A confirmed deal date coming up (not available yet)',
+  deal_date_upcoming: 'A confirmed deal date coming up',
 };
 
 const obj = (x: unknown): Record<string, unknown> | null => (typeof x === 'object' && x !== null && !Array.isArray(x) ? (x as Record<string, unknown>) : null);

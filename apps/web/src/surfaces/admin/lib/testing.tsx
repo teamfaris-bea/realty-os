@@ -61,7 +61,7 @@ export function exceptionItem(over: Partial<ExceptionItem> = {}): ExceptionItem 
 }
 
 export function queue(items: ExceptionItem[], live = items.filter((i) => i.live).length) {
-  const byType = { untouched_lead: 0, overdue_promise: 0, failed_send: 0, missing_outcome: 0 };
+  const byType = { untouched_lead: 0, overdue_promise: 0, failed_send: 0, missing_outcome: 0, milestone_at_risk: 0 };
   for (const i of items) if (i.live) byType[i.itemType] += 1;
   return { items, counts: { live, byType }, generatedAt: new Date().toISOString() };
 }

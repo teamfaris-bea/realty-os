@@ -16,6 +16,8 @@ const iso = (t: number) => new Date(t).toISOString();
 export interface TriggerPlaybook {
   ref: TriggerPlaybookRef;
   name: string;
+  /** playbooks.template_key: the built-in template it was created from (module 31 fires only 'transaction_updates') */
+  templateKey: string | null;
   content: Extract<PlaybookContent, { kind: 'triggers' }>;
 }
 
@@ -24,8 +26,8 @@ export interface TriggerPlaybook {
  * R-AST-4). Only these fire; a draft, superseded or revoked version never does.
  */
 export async function approvedTriggerPlaybooks(tx: Tx): Promise<TriggerPlaybook[]> {
-  const r = await sql<{ id: string; scope: 'team' | 'agent'; owner_user_id: string | null; name: string; version_id: string; status: string; content_sha256: string; steps: unknown; decision: 'approve' | 'revoke' | null; approved_sha: string | null }>`
-    SELECT p.id, p.scope, p.owner_user_id, p.name, v.id AS version_id, v.status, v.content_sha256, v.steps, a.decision, a.content_sha256 AS approved_sha
+  const r = await sql<{ id: string; scope: 'team' | 'agent'; owner_user_id: string | null; name: string; template_key: string | null; version_id: string; status: string; content_sha256: string; steps: unknown; decision: 'approve' | 'revoke' | null; approved_sha: string | null }>`
+    SELECT p.id, p.scope, p.owner_user_id, p.name, p.template_key, v.id AS version_id, v.status, v.content_sha256, v.steps, a.decision, a.content_sha256 AS approved_sha
       FROM playbooks p
       JOIN playbook_versions v ON v.tenant_id = p.tenant_id AND v.playbook_id = p.id AND v.status = 'approved'
       LEFT JOIN LATERAL (SELECT decision, content_sha256 FROM playbook_approvals pa
@@ -39,7 +41,7 @@ export async function approvedTriggerPlaybooks(tx: Tx): Promise<TriggerPlaybook[
     if (c === null || c.kind !== 'triggers') continue;
     const content = c as unknown as Extract<PlaybookContent, { kind: 'triggers' }>;
     const steps = content.triggers.filter((t) => typeof t === 'object' && t !== null).map((t) => ({ trigger: t.trigger, stepKey: t.stepKey, offsetSeconds: t.offsetSeconds }));
-    out.push({ ref: { playbookId: x.id, versionId: x.version_id, scope: x.scope, ownerUserId: x.owner_user_id, steps }, name: x.name, content });
+    out.push({ ref: { playbookId: x.id, versionId: x.version_id, scope: x.scope, ownerUserId: x.owner_user_id, steps }, name: x.name, templateKey: x.template_key, content });
   }
   return out;
 }

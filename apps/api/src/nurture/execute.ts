@@ -36,9 +36,10 @@ import {
   signOffFor,
   storedContent,
   triggerStepAsPlaybookStep,
+  triggerStepFor,
 } from '@realty/core/assistant';
 import type { ActionCategory } from '@realty/core/compliance';
-import type { AssistantClaimId, ContactId, IanaZone, Instant } from '@realty/core/foundation';
+import { type AssistantClaimId, type ContactId, type IanaZone, type Instant, ianaZone } from '@realty/core/foundation';
 import { type AvmDecision, type AvmEstimate, DEFAULT_AVM_JUMP_BPS, DEFAULT_AVM_MAX_AGE_DAYS, type FactState, type Firing, type SkipReason, alertItemLine, avmSendable, homeValueText, planBatch, planTriggerRun } from '@realty/core/nurture';
 import { type Tx, lockContact } from '@realty/db';
 import { sql } from 'kysely';
@@ -53,6 +54,7 @@ import { DIGEST_SUBJECT, type RunSkipReason, apiSkip, decideBatch, digestTemplat
 import { localToday } from './detect.js';
 import * as R from './repos.js';
 import type { NurtureDeps } from './types.js';
+import { KIND_TEXT } from '../transactions/types.js';
 
 export type TriggerOutcome =
   | { kind: 'queued'; messageId: string; actionId: string; runIds: string[] }
@@ -69,6 +71,8 @@ interface Item {
   deal?: { address: string; closedAt: Instant | null };
   /** home_value firings: the cited valuation as core reads it and its R-AVM-1 sentence */
   avm?: { estimate: AvmEstimate; text: string | null; valuationId: string; prior: AvmEstimate | null };
+  /** deal-date firings (module 31): the date as stored now and the recipient's roles on the deal */
+  dealDate?: { completed: boolean; label: string; dueAt: Instant | null; zone: IanaZone | null; roles: string[] };
 }
 
 async function listingRow(tx: Tx, id: string): Promise<ListingRow | null> {
@@ -77,7 +81,7 @@ async function listingRow(tx: Tx, id: string): Promise<ListingRow | null> {
 }
 
 /** The fact as it stands now (R-NURT-4), read under the contact lock. `skip`: the firing cannot be what it says. */
-async function currentFact(tx: Tx, f: Firing, e: MlsEligibility): Promise<Pick<Item, 'current' | 'listing' | 'deal' | 'avm'> & { skip?: SkipReason }> {
+async function currentFact(tx: Tx, f: Firing, e: MlsEligibility): Promise<Pick<Item, 'current' | 'listing' | 'deal' | 'avm' | 'dealDate'> & { skip?: SkipReason }> {
   const r = f.ref;
   switch (r.kind) {
     case 'price_drop':
@@ -102,11 +106,21 @@ async function currentFact(tx: Tx, f: Firing, e: MlsEligibility): Promise<Pick<I
       return { current: { kind: 'deal', status: d.status, contactIsParty: d.contactIsParty }, deal: { address: d.address, closedAt: d.closedAt } };
     }
     case 'deal_date_upcoming': {
-      const q = await sql<{ due_version: number; status: string; confirmed_by_user_id: string | null; due_at: Date | null }>`
-        SELECT due_version, status, confirmed_by_user_id, due_at FROM deal_dates WHERE tenant_id = app.tenant_id() AND id = ${r.dealDateId} AND deal_id = ${r.dealId}`.execute(tx);
+      // module 31: also completed_at (a date marked done after planning sends nothing: DATE_COMPLETED), the contract
+      // date's zone (the slot shows the contract date, not the instant in the recipient's zone) and the recipient's
+      // current roles on the deal (removed, or no longer in a named role: NOT_A_PARTY)
+      const q = await sql<{ due_version: number; status: string; confirmed_by_user_id: string | null; due_at: Date | null; completed_at: Date | null; label: string | null; kind: keyof typeof KIND_TEXT; zone: string | null; roles: string[] }>`
+        SELECT dd.due_version, dd.status, dd.confirmed_by_user_id, dd.due_at, dd.completed_at, dd.label, dd.kind, dd.basis->>'zone' AS zone,
+               ARRAY(SELECT dc.role FROM deal_contacts dc WHERE dc.tenant_id = dd.tenant_id AND dc.deal_id = dd.deal_id AND dc.contact_id = ${f.contactId}) AS roles
+          FROM deal_dates dd WHERE dd.tenant_id = app.tenant_id() AND dd.id = ${r.dealDateId} AND dd.deal_id = ${r.dealId}`.execute(tx);
       const x = q.rows[0];
       if (!x) return { current: { kind: 'gone' } };
-      return { current: { kind: 'deal_date', dueVersion: x.due_version, confirmed: x.status === 'confirmed' && x.confirmed_by_user_id !== null, dueAt: x.due_at ? (x.due_at.getTime() as Instant) : null } };
+      const dueAt = x.due_at ? (x.due_at.getTime() as Instant) : null;
+      return {
+        current: { kind: 'deal_date', dueVersion: x.due_version, confirmed: x.status === 'confirmed' && x.confirmed_by_user_id !== null, dueAt },
+        // the date's stored label (or its kind's wording), never the copy in the run (a forged run cannot inject text)
+        dealDate: { completed: x.completed_at !== null, label: x.label ?? KIND_TEXT[x.kind] ?? KIND_TEXT.custom, dueAt, zone: x.zone === null ? null : ianaZone(x.zone), roles: x.roles },
+      };
     }
     case 'home_value': {
       // the firing's own valuation: same contact, same address, the month of its key; anything else is a forged or
@@ -146,7 +160,7 @@ function itemText(it: Item, zone: IanaZone): { line: string; slots: SlotValues }
   const r = it.firing.ref;
   // the MLS number is left out of client lines (the content guard reads a long digit run as an account number)
   const mlsPrice = it.listing?.row.source === 'mls' ? currentPrice(it) : undefined;
-  const shown: Firing = { ...it.firing, ref: { ...r, address: where, ...(r.kind === 'price_drop' || r.kind === 'back_on_market' ? { mlsNumber: null } : {}), ...(r.kind === 'back_on_market' && mlsPrice !== undefined ? { priceCents: mlsPrice } : {}) } as Firing['ref'] };
+  const shown: Firing = { ...it.firing, ref: { ...r, address: where, ...(r.kind === 'price_drop' || r.kind === 'back_on_market' ? { mlsNumber: null } : {}), ...(r.kind === 'back_on_market' && mlsPrice !== undefined ? { priceCents: mlsPrice } : {}), ...(r.kind === 'deal_date_upcoming' && it.dealDate ? { label: literal(it.dealDate.label) } : {}) } as Firing['ref'] };
   let line = alertItemLine(shown, it.current);
   const broker = it.listing?.row.source === 'mls' ? it.listing.view?.listingBrokerageName : null;
   if (broker) line = `${line}. Listed by ${literal(broker)}`;
@@ -158,8 +172,10 @@ function itemText(it: Item, zone: IanaZone): { line: string; slots: SlotValues }
     slots.home_years = `${years} year${years === 1 ? '' : 's'}`;
   }
   if (r.kind === 'deal_date_upcoming') {
-    slots.document_name = literal(r.label);
-    slots.due_date = formatDue(r.dueAt, true, zone);
+    // the current label and the CONTRACT date: the deadline instant shown in the zone it was confirmed in (basis.zone),
+    // so a recipient in a zone east of the tenant's is not told the next day (E143)
+    slots.document_name = literal(it.dealDate?.label ?? r.label);
+    slots.due_date = formatDue(r.dueAt, true, it.dealDate?.zone ?? zone);
   }
   // R-AVM-1: a home value's line is the estimate sentence itself (provider, range, as-of, "not an appraisal")
   if (r.kind === 'home_value' && it.avm?.text) line = `${where}: ${it.avm.text}`;
@@ -270,6 +286,19 @@ export async function executeTriggerRunInTx(tx: Tx, deps: NurtureDeps, tenantId:
     if (cur.skip !== undefined) {
       skipped.push({ run, reason: cur.skip });
       continue;
+    }
+    if (cur.dealDate !== undefined) {
+      // module 31: a completed date is reported as completed (never as unconfirmed or changed), and a recipient no
+      // longer on the deal in a role the approved step names gets nothing (R-TXN-4)
+      if (cur.dealDate.completed) {
+        skipped.push({ run, reason: 'DATE_COMPLETED' });
+        continue;
+      }
+      const named: readonly string[] = (content === null ? null : triggerStepFor(content, 'deal_date_upcoming'))?.roles ?? [];
+      if (!cur.dealDate.roles.some((x) => named.includes(x))) {
+        skipped.push({ run, reason: 'NOT_A_PARTY' });
+        continue;
+      }
     }
     const plan = planTriggerRun({
       firing: f,

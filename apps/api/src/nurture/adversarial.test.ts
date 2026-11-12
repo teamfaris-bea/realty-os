@@ -267,7 +267,7 @@ describe('tenancy (R-TEN-*): every handler and route stays inside its tenant', (
   it('GET /nurture/triggers says honestly which kinds can fire now (home values fire from avm.refresh, wave 2C)', async () => {
     const r = await call<{ triggers: { trigger: string; availability: string }[]; templates: { key: string }[] }>(w.agents[0]!, 'GET', '/nurture/triggers');
     expect(r.status).toBe(200);
-    expect(Object.fromEntries(r.body.triggers.map((t) => [t.trigger, t.availability]))).toEqual({ price_drop: 'available', back_on_market: 'available', home_anniversary: 'available', home_value: 'available', deal_date_upcoming: 'not_available_yet' });
+    expect(Object.fromEntries(r.body.triggers.map((t) => [t.trigger, t.availability]))).toEqual({ price_drop: 'available', back_on_market: 'available', home_anniversary: 'available', home_value: 'available', deal_date_upcoming: 'available' });
     expect(r.body.templates.map((t) => t.key).sort()).toEqual(['after_closing_alerts', 'behavior_alerts', 'transaction_updates']);
   });
 });

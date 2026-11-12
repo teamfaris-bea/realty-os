@@ -10,7 +10,8 @@
 
 // ---- accountability -----------------------------------------------------------------------------
 
-export type ExceptionType = 'untouched_lead' | 'overdue_promise' | 'failed_send' | 'missing_outcome';
+// module 31 (finding 8): 18a raises milestone_at_risk (R-ACC-6); the queue shows it as a fifth type
+export type ExceptionType = 'untouched_lead' | 'overdue_promise' | 'failed_send' | 'missing_outcome' | 'milestone_at_risk';
 export type ExceptionAction = 'resolved' | 'reassigned' | 'verified' | 'reopened';
 
 export interface Person {

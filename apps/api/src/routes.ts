@@ -38,6 +38,7 @@ import { sellerUpdatesRoutes } from './sellerUpdates/routes.js';
 import { calendarRoutes } from './calendar/routes.js';
 import { insightsRoutes } from './insights/routes.js';
 import { coachingRoutes } from './coaching/routes.js';
+import { transactionRoutes } from './transactions/routes.js';
 
 export interface RouteModule {
   name: string;
@@ -74,5 +75,6 @@ export const routeModules: RouteModule[] = [
   calendarRoutes,
   insightsRoutes,
   coachingRoutes,
+  transactionRoutes,
   // registry: add new entries above this line
 ];

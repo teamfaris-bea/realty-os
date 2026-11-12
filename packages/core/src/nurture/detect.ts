@@ -93,9 +93,13 @@ function evidenceOf(fact: Fact): EvidenceRef[] {
   }
 }
 
-/** Anchor the step offset hangs off: the fact's instant, or the deal date for upcoming dates. */
+/**
+ * Anchor the step offset hangs off: the fact's instant. For an upcoming deal date that instant is the
+ * date's stored `reminder_at` (module 31 sets `fact.at` from it; its step offset is 0), so the update goes
+ * out at the reminder time computed at confirm time; `fact.dueAt` stays the real deadline for the recheck.
+ */
 function anchorOf(fact: Fact): Instant {
-  return fact.kind === 'deal_date_upcoming' ? fact.dueAt : fact.at;
+  return fact.at;
 }
 
 /**
