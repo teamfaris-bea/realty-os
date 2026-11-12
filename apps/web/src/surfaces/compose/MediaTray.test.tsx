@@ -334,6 +334,16 @@ describe('D5a compose: no empty alert, and a failed photo text (b8 texting revie
     expect(box).toHaveValue('The kitchen');
     expect(tiles()).toHaveLength(0);
   });
+  it('R-MMS-8 (b8 texting ui/F6): a photo text whose outcome is unknown is never called "not sent": the box says the photo went with it', async () => {
+    const fake = threadFake().on(`POST /contacts/${IDS.jane}/messages`, { status: 200, body: { ...sentMessage('dispatch_unknown', 'dispatch_unknown').body, message: { ...sentMessage().body.message, status: 'dispatch_unknown' } } });
+    const box = await openText(fake);
+    await user().type(box, 'The kitchen');
+    await attach(photo('a.jpg'));
+    await within(tray()).findByText('Ready');
+    await user().click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText("The photo went with that text, so it isn't in this box any more.")).toBeInTheDocument();
+    expect(screen.queryByText(/wasn't sent/)).toBeNull();
+  });
 });
 
 describe('D5a thread: outbound photos and videos', () => {

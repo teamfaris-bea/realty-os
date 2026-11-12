@@ -289,9 +289,19 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
     // Once a response names a message, its photos belong to it (the uploads were claimed). When that message did not go
     // out (blocked, failed), the words stay in the box but the photos cannot: the box says so plainly, so the next Send
     // is never a words-only text the agent did not mean (b8 texting ui/F6).
-    if (r.message && media.count > 0 && !WENT_OUT.has(sentResult(r))) {
-      const what = media.items.every((i) => i.kind === 'video') ? (media.count === 1 ? 'video' : 'videos') : media.items.every((i) => i.kind === 'photo') ? (media.count === 1 ? 'photo' : 'photos') : 'photos and videos';
-      setNotice({ tone: 'warn', text: `The ${what} stayed with the text that wasn't sent, so ${media.count === 1 ? "it isn't" : "they aren't"} in this box any more. Attach ${media.count === 1 ? 'it' : 'them'} again to send ${media.count === 1 ? 'it' : 'them'}.` });
+    // Only a text known not to have gone out says "wasn't sent"; one whose outcome is unknown may have arrived, so the box
+    // says the photos went with it and never invites a second copy.
+    const result = sentResult(r);
+    if (r.message && media.count > 0 && !WENT_OUT.has(result)) {
+      const one = media.count === 1;
+      const what = media.items.every((i) => i.kind === 'video') ? (one ? 'video' : 'videos') : media.items.every((i) => i.kind === 'photo') ? (one ? 'photo' : 'photos') : 'photos and videos';
+      const notSent = result === 'blocked' || result === 'failed' || result === 'undelivered' || result === 'canceled';
+      setNotice({
+        tone: 'warn',
+        text: notSent
+          ? `The ${what} stayed with the text that wasn't sent, so ${one ? "it isn't" : "they aren't"} in this box any more. Attach ${one ? 'it' : 'them'} again to send ${one ? 'it' : 'them'}.`
+          : `The ${what} went with that text, so ${one ? "it isn't" : "they aren't"} in this box any more.`,
+      });
     }
     if (r.message) media.sent();
     // a replay ('noop', after a lost answer) went out only if its message did (finding F1)
