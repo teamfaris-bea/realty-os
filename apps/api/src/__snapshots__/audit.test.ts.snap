@@ -55,6 +55,7 @@ exports[`R-AUDIT-4 redacted diffs > R-AUDIT-4: generated field classification â€
     "channel_scope",
     "city",
     "claimed_address",
+    "classification",
     "client_address",
     "closed_reason",
     "coaching_rubric_disabled",
