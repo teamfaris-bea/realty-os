@@ -559,8 +559,9 @@ export async function insertValuation(tx: Tx, v: { id: string; contactId: string
 
 /**
  * Retention (R-DATA-6): app.purge_home_valuations deletes this tenant's valuations recorded more than 13 months ago
- * (VERIFY WITH COUNSEL C13, C6) except one a scheduled run or a pending draft still cites. System actor only; the
- * database clock; no argument. Returns how many rows went.
+ * (VERIFY WITH COUNSEL C13 retention defaults, C6 valuation wording; V13: whether 13 months fits D9's in-house
+ * valuation under the MLS licence term) except one a scheduled run or a pending draft still cites, and (0076) strips the
+ * deleted rows' citations of the estimate. System actor only; the database clock; no argument. Returns how many rows went.
  */
 export async function purgeHomeValuations(tx: Tx): Promise<number> {
   const r = await sql<{ valuations_deleted: number }>`SELECT valuations_deleted FROM app.purge_home_valuations()`.execute(tx);
