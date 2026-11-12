@@ -194,6 +194,41 @@ migration reorders it and pins its text, so it is left to that migration.
 **Rule for future edits.** Keep `contact_detail_row` and `contact_detail_visible` identical in meaning. Any change
 to one must be made to both and must extend the equivalence test.
 
+### 2.11 Recording counsel reviews of platform packs (owner command, R-INT-6)
+
+`pnpm --filter @realty/db counsel-review` (in the image: `node packages/db/dist/scripts/counsel-review.js`; runbook
+DEPLOY §10.1) is the only writer of `jurisdiction_packs.reviewed_by_counsel_at`. No route, tool or migration writes
+it, and the packs still ship unreviewed.
+
+- **Who may run it:** whoever holds the database owner credential (`MIGRATION_DATABASE_URL`), as a one-off command,
+  never the api or worker (DEPLOY §3). The command refuses, in a dry run too, any role that cannot update
+  `jurisdiction_packs` or is subject to its row-level security (neither superuser nor `BYPASSRLS`). `app_user` has
+  SELECT only and is refused, and a direct `UPDATE` by it fails with `permission denied`.
+- **Pinned to a version:** each key names the version counsel reviewed (`platform:<name>@<version>`) and is recorded
+  only while that version is the published one. A later version ships unreviewed and turns its capability off again,
+  and replaying an old command (an old pin) after a pack bump is refused, so a review is never stamped onto a version
+  counsel did not see.
+- **What it changes:** for each pinned key, only the published version's `reviewed_by_counsel_at` (00:00 UTC of the
+  stated review date) and one note appended to `notes` (UTC time recorded, database role, version, review date, the
+  reported source). It never writes `rules`, so it never sets `vendor_ready_at`: voice and Gmail stay off until their
+  vendor checks pass. It refuses other keys (`US` and other jurisdiction packs, unknown or unpublished keys,
+  `platform:meta`), a review date before 2026-01-01, before the pinned version's month or after today (UTC, on the
+  client's and the database's clock), a pack already recorded with a different date, and a review set outside the
+  command (no note of its own), which it names instead of reporting it as recorded. It is all or nothing, one
+  transaction, and a dry run by default (the change is made, reported and rolled back); `--apply` with `--dry-run` is
+  refused. `--revoke` withdraws a recorded review with the same safeguards: `reviewed_by_counsel_at` back to NULL and
+  a withdrawal note; it is the supported correction for a mistaken `--apply`.
+- **Effect:** a recorded review lifts that pack's hold on its capability on that deployment at once, and a withdrawal
+  restores it at once. That is a compliance decision, so it is recorded only from the owner's report of counsel's
+  review (`--reference` names the source: one line of plain text, no control, format or line-separator characters).
+  It turns no capability on by itself.
+- **Audit:** there is no platform-level audit table (`audit_log` is per tenant), so the trail is the pack's own
+  `reviewed_by_counsel_at` and notes (readable by `app_user`) plus the printed output, which the operator keeps with
+  the deploy log. A tamper-evident platform log is not built.
+- **Tests:** `packages/db/test/counsel_review.test.ts` (R-INT-6: version pins and a pack bump, published version only,
+  idempotent only for its own record, refusals, dry run, `--revoke`, never `vendor_ready_at`, owner role only, the
+  database clock, the note as the audit trail).
+
 ---
 
 ## 3. What remains (needs the owner, an account, or counsel)
@@ -212,7 +247,7 @@ to one must be made to both and must extend the equivalence test.
 | DNS rebinding on FUB recording URLs and the FUB base URL | A public name that resolves to a private IP is not re-checked at connect time | Worker egress policy (deny private ranges) at deployment |
 | Imported FUB fields (`imported_fields`: source URL, `custom*`) are attacker-controlled | Today they render as text only | Any future link from them, or from contact emails and phones (`mailto:`/`tel:`), goes through `safeUrl` |
 | nginx error pages produced outside a content location carry no web headers | A 502/504 for an unreachable API (in `/api/`, which adds none so the API's own CSP stays the only one) and a 400 for a request refused before location matching are nginx's static HTML with no script | none needed; revisit if custom error pages are added |
-| Gmail inbox sync (Phase 2, owner decision D2; design only, DATA_MODEL §6.3, ARCHITECTURE §21.10) stores agents' refresh tokens and copies of client mail | The restricted scope `gmail.readonly` needs Google's OAuth verification and a third-party security assessment, renewed periodically (**VERIFY** current requirements); team visibility of an agent's client mail needs counsel (C14) | Keep `platform:gmail` uncleared until N19 and C14 pass; refresh tokens envelope-encrypted with row-bound AAD, access tokens in memory only, no bodies or addresses in logs, never sent to a model, never readable by a support actor (RESTRICTIVE policy) |
+| Gmail inbox sync (Phase 2, owner decision D2; design only, DATA_MODEL §6.3, ARCHITECTURE §21.10) stores agents' refresh tokens and copies of client mail | The restricted scope `gmail.readonly` needs Google's OAuth verification and a third-party security assessment, renewed periodically (**VERIFY** current requirements); team visibility of an agent's client mail needs counsel (C14) | Keep `platform:gmail` uncleared until N19 and C14 pass (C14's review is recorded with the owner command of §2.11, which never sets the vendor check `vendor_ready_at`); refresh tokens envelope-encrypted with row-bound AAD, access tokens in memory only, no bodies or addresses in logs, never sent to a model, never readable by a support actor (RESTRICTIVE policy) |
 | CSP coverage of signed-in pages was exercised in error and empty states | E2E data seeding with the API was not in scope | Extend `csp.spec.ts` with a seeded API run |
 
 ---

@@ -27,6 +27,7 @@
     "test": "vitest run --passWithNoTests",
     "migrate": "tsx src/scripts/migrate.ts",
     "setup-dev": "tsx src/scripts/setup-dev.ts",
+    "counsel-review": "tsx src/scripts/counsel-review.ts",
     "gen-schema": "tsx --conditions=@realty/source src/schemaGen.ts"
   },
   "dependencies": {
