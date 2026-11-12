@@ -140,7 +140,7 @@ export type DispatchDenyReason = keyof typeof DISPATCH_DENY_SENTENCES;
 
 /**
  * The dispatch guards' refusals that are a BLOCKED send, never an error (defence in depth, R-PAR-12, R-CHAN-2,
- * D1): every refusal app.messages_dispatch_guard and app.calls_dispatch_guard (latest: migration 0021) raise
+ * D1): every refusal app.messages_dispatch_guard and app.calls_dispatch_guard (latest: migration 0043_merged_person_opt_outs) raise
  * about a contact recipient. The recipient opted out (RECIPIENT_OPTED_OUT), the person asked not to be
  * contacted, also through a duplicate merged into them (PERSON_DO_NOT_CONTACT), the address is suppressed
  * (RECIPIENT_SUPPRESSED), or its opt-out status cannot be checked (RECIPIENT_NOT_A_CONTACT_POINT). canContact

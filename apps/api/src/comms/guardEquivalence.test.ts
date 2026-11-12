@@ -1,6 +1,6 @@
 // R-CHAN-2 and the suppressions at the send-time gate: core canContact (buildGateInput: repos/gate.ts
 // personDoNotContact, optOutFanoutPhoneHmacs, suppressionRows) and the DB dispatch guards (app.messages_dispatch_guard,
-// app.calls_dispatch_guard, migration 0041: both judge a recipient by its whole person, app.contact_person_ids, so a
+// app.calls_dispatch_guard, migration 0043_merged_person_opt_outs: both judge a recipient by its whole person, app.contact_person_ids, so a
 // merged-away record gets the survivor's opt-outs too, F1) must refuse exactly the same texts, calls and emails, so the API's
 // mapping of a guard refusal to a blocked send (gateInput.ts GUARD_DENY_REASONS, guardRefusal.test.ts) is only
 // defence in depth. Each case is arranged through the real paths (the one-tap do-not-contact, the merge

@@ -6,7 +6,7 @@
 //   1 every live point of the contact gets a staff revoke on each of its channels (phone: texts and calls; email;
 //     a web-chat identity: web chat), in HMAC order; the ledger is the evidence
 //   2 queued texts and chat messages to those points are canceled
-//   3 app.record_person_opt_out (0042, invoker) sets contacts.do_not_contact_at citing the first revoke
+//   3 app.record_person_opt_out (0044_channels_inbox, invoker) sets contacts.do_not_contact_at citing the first revoke
 // It only ever refuses more: nothing here can clear an opt-out (the 0018 guard leaves that to a reviewed definer).
 import { type ConsentEventSpec, validateConsentEventSpec } from '@realty/core/compliance';
 import type { IdGenerator, Instant, UserActor } from '@realty/core/foundation';

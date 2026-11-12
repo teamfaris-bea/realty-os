@@ -7,7 +7,7 @@
 // and a call addressed to one are refused before anything is created, and no assistant or system message is queued to
 // one (compose.ts queueOutboundInTx; the saved-search alerts skip it). This is not an opt-out rule: whatever reaches a
 // merged-away record anyway (a message composed while the merge committed) is judged as the whole person, in core
-// canContact (repos/gate.ts) and in both DB dispatch guards (migration 0041, app.contact_person_ids).
+// canContact (repos/gate.ts) and in both DB dispatch guards (migration 0043_merged_person_opt_outs, app.contact_person_ids).
 import type { Tx } from '@realty/db';
 import { AppError } from '../errors.js';
 import { visibleSurvivorOf } from './repos/contacts.js';

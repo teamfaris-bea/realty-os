@@ -148,7 +148,7 @@ export async function contactPoints(tx: Tx, contactId: string): Promise<PointRow
 }
 
 /**
- * The records of the contact's person (migration 0041 app.contact_person_ids, F1): the root survivor reached by
+ * The records of the contact's person (migration 0043_merged_person_opt_outs, app.contact_person_ids, F1): the root survivor reached by
  * following merged_into_contact_id up from the contact, and every record merged into that root. The dispatch guards
  * judge a recipient by exactly this set, so a merged-away record gets the whole person's verdict. Read under the
  * caller's RLS (the guards read it as their definer); one evaluation per statement.
@@ -159,7 +159,7 @@ const personIds = (contactId: string) => sql`(SELECT app.contact_person_ids(app.
  * The phones whose opt-out blocks texting or calling the contact (R-CONSENT-7, outbound-3, R-PAR-12):
  * every phone of the person (F1: every record of it, personIds), live or removed, except one removed as a
  * confirmed wrong number. The WHERE clause is the `others` set of app.messages_dispatch_guard and
- * app.calls_dispatch_guard (migration 0041),
+ * app.calls_dispatch_guard (migration 0043_merged_person_opt_outs),
  *   contact_id = ANY (person) AND kind = 'phone' AND (removed_at IS NULL OR removed_reason IS DISTINCT FROM 'wrong_number')
  * so canContact sees every opt-out the guards see and refuses the send first, with its reason. Only the
  * fan-out reads removed phones: what a send goes to or a call dials still comes from contactPoints.
@@ -237,7 +237,7 @@ export async function keywordSenderHmacs(tx: Tx, conversationId: string, now: In
 /**
  * core-compliance/3.0.0 (R-CHAN-2): whether any record of the contact's person (F1, personIds: the contact, the
  * record it was merged into, and every duplicate merged into either, along merge chains) carries the person-level
- * do-not-contact. Read under the caller's RLS; the DB guard re-checks the same set as a definer (migration 0041).
+ * do-not-contact. Read under the caller's RLS; the DB guard re-checks the same set as a definer (migration 0043_merged_person_opt_outs).
  */
 export async function personDoNotContact(tx: Tx, contactId: string): Promise<boolean> {
   const r = await sql<{ dnc: boolean }>`
