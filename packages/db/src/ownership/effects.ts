@@ -24,6 +24,8 @@ const TITLES: Record<string, string> = {
   FIRST_TOUCH_MISSED: 'A lead went back to the pond (no first touch)',
   REASSIGNED_TO_YOU: 'A lead was assigned to you',
   REASSIGNED_AWAY: 'A lead was reassigned',
+  // R-OWN-18: an assign of a lead on offer withdraws the offer, and the agent it was on offer to is told (batch 6 review R5)
+  OFFER_RESCINDED: 'A lead offered to you was assigned to someone else',
   OWNER_DEACTIVATED: 'A lead was moved to you',
   AUTO_PAUSED: 'Lead offers paused after missed offers',
   NO_ELIGIBLE_AGENT: 'A lead went to the pond: nobody was available',

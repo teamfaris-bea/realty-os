@@ -20,6 +20,7 @@ import { applyOwnershipCommandInTx, lockAddresses, type Tx } from '@realty/db';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { visibleSurvivorOf } from '../comms/repos/contacts.js';
 import { AppError } from '../errors.js';
 import { authorize } from '../rbac.js';
 import { actorOf, leadsTx, platformOf } from './common.js';
@@ -42,7 +43,10 @@ export function seesDetail(req: FastifyRequest, row: repo.ContactRow): boolean {
 
 export async function contactView(tx: Tx, req: FastifyRequest, row: repo.ContactRow) {
   if (!seesDetail(req, row)) return cardOf(row, { masked: row.ownership_state === 'in_pond' });
-  return fullOf(row, await repo.contactPoints(tx, row.id), await repo.contactInquiries(tx, row.id), await repo.chatClaims(tx, row.id));
+  const full = fullOf(row, await repo.contactPoints(tx, row.id), await repo.contactInquiries(tx, row.id), await repo.chatClaims(tx, row.id));
+  // a merged-away record names the record the person lives on now only to whoever may open it (R-PERM-5, review R2),
+  // the same record a CONTACT_MERGED refusal names (comms/merged.ts)
+  return full.merged ? { ...full, mergedIntoContactId: await visibleSurvivorOf(tx, row.id) } : full;
 }
 
 const Params = z.object({ id: z.uuid() });

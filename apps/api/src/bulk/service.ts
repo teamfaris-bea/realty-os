@@ -267,7 +267,9 @@ export async function createDraft(actor: UserActor, input: CreateInput, deps: Bu
         skip(r.reason);
         continue;
       }
-      if (input.kind === 'assign' && p?.ownershipState === 'offered') onOffer += 1;
+      // R-OWN-18: an assign withdraws an offer to someone else, and that agent is told (run.ts finish: never the target,
+      // whose offer becomes theirs, nor whoever runs the action); the sheet counts exactly those (review R5)
+      if (input.kind === 'assign' && p?.ownershipState === 'offered' && p.offeredToUserId !== input.toUserId && p.offeredToUserId !== actor.userId) onOffer += 1;
       items.push({ contactId: cid, addressHmac: isSendKind(input.kind) ? address : null });
     }
     await B.insertItems(tx, actionId, items);

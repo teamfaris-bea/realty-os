@@ -400,6 +400,39 @@ describe('a first-touch window ends however the lead leaves its owner (R-ACC-2, 
     // a tenant scan agrees and writes nothing more
     expect((await recompute(h, w.tenantId)).upserted).toBe(0);
   });
+
+  // Review R6: the withdrawal reached only rows a recompute reads. The tenant scan reads stored rows that are still open,
+  // and periods whose deadline fell in the last 30 days; a rule-2 item already cleared as "fixed late" for an older period
+  // is neither, so it stayed in the live queue as fixed late until something recomputed that one contact.
+  it('R-ACC-1 R-OWN-20: a rule-2 item cleared as "fixed late" for a period a re-inquiry superseded 40 days ago is withdrawn by the tenant scan; the next scan writes nothing (review R6)', async () => {
+    const lead = await acceptedLead(h, w);
+    const key = untouched(lead.contactId, lead.periodSeq);
+    await suFixture(h, [{ text: `UPDATE contacts SET owned_at = now() - interval '8 days' WHERE id = $1`, values: [lead.contactId] }]);
+    expect((await intake(h, w, { phones: [await phoneOf(lead.contactId)], fullName: 'Pat Lead', inquiryType: 'value' })).outcome).toBe('reinquiry');
+    const newerSeq = Number((await contactState(h, lead.contactId)).ownership_period_seq);
+    // the earlier period's deadline fell just after the re-inquiry, and the whole history is 40 days old (clock fixture)
+    await suFixture(h, [
+      {
+        text: `UPDATE lead_ownership_events e SET deadline_at = n.occurred_at + interval '1 millisecond'
+                 FROM lead_ownership_events n WHERE e.contact_id = $1 AND e.seq = $2 AND n.contact_id = e.contact_id AND n.seq = $3`,
+        values: [lead.contactId, lead.periodSeq, newerSeq],
+      },
+      { text: `UPDATE lead_ownership_events SET occurred_at = occurred_at - interval '40 days', deadline_at = deadline_at - interval '40 days' WHERE contact_id = $1`, values: [lead.contactId] },
+    ]);
+    await humanTouch(h, lead.owner, lead.contactId);
+    const touchAt = await lastFirstTouchAt(lead.contactId);
+    // what rule 2 stored and its first recompute (0045) cleared: "fixed late" by the newer period's touch
+    await storedAsBefore(lead.contactId, lead.periodSeq, { version: 2, clearedAt: touchAt, lateTouchAt: touchAt });
+    expect((await queue(w.teamLead!)).items.find((i) => i.dedupeKey === key)).toMatchObject({ live: true, conditionClearedAt: touchAt.toISOString() });
+    await recompute(h, w.tenantId);
+    const row = await withdrawnRow(key);
+    expect(row.withdrawn_at).not.toBeNull();
+    expect([row.condition_cleared_at?.getTime(), row.rule_version]).toEqual([touchAt.getTime(), EXCEPTION_RULE_VERSION]);
+    expect(explanations(row.evidence)).toEqual(["Not a miss: a re-inquiry started this agent's next period before this one was due", 'Lead became theirs', 'Re-inquiry started their next period']);
+    expect(keysOf((await queue(w.teamLead!)).items)).not.toContain(key);
+    const again = await recompute(h, w.tenantId);
+    expect([again.upserted, again.cleared]).toEqual([0, 0]);
+  });
 });
 
 /**

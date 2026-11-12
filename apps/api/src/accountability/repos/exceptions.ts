@@ -77,6 +77,20 @@ export async function storedRowsForScope(tx: Tx, contactId: string | null): Prom
   return r.rows;
 }
 
+/**
+ * Tenant scope (batch 6 review R6): untouched_lead rows an earlier rule version stored that are not withdrawn, open or
+ * cleared. The tenant scan reads open rows and the last 30 days' periods only, so an item an earlier rule cleared as
+ * "fixed late" for an older period the current rules make no item would never be withdrawn; these are re-read once
+ * (any re-read rewrites the row at the current rule version, so the set empties). Index: the catch-up migration's
+ * exception_items_untouched_rule_idx (the predicate's literals match it).
+ */
+export async function untouchedRowsOfEarlierRules(tx: Tx, ruleVersion: number): Promise<StoredItemRow[]> {
+  const r = await sql<StoredItemRow>`SELECT ${ITEM_COLUMNS} FROM exception_items e
+     WHERE e.tenant_id = app.tenant_id() AND e.item_type = 'untouched_lead' AND e.withdrawn_at IS NULL
+       AND e.rule_version < ${ruleVersion}::smallint`.execute(tx);
+  return r.rows;
+}
+
 export async function storedRowsByKeys(tx: Tx, keys: readonly string[]): Promise<StoredItemRow[]> {
   if (keys.length === 0) return [];
   const r = await sql<StoredItemRow>`SELECT ${ITEM_COLUMNS} FROM exception_items e

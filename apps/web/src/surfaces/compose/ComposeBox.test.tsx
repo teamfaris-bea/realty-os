@@ -335,13 +335,27 @@ describe('Thread', () => {
   // (CONTACT_MERGED) with "Open the person's current record ..." and no link, although the API names that record.
   it('R-OWN-24: a record merged into another says so with a link to the current record, and offers no box to write in', async () => {
     const fake = new FakeFetch()
-      .on(`GET /contacts/${IDS.jane}`, { status: 200, body: { contact: fullContact({ mergedIntoContactId: IDS.pat }) } })
+      .on(`GET /contacts/${IDS.jane}`, { status: 200, body: { contact: fullContact({ merged: true, mergedIntoContactId: IDS.pat }) } })
       .on(`GET /contacts/${IDS.jane}/timeline?limit=100`, { status: 200, body: { items: [timelineItem()], nextCursor: null } });
     agentApp(fake, `/contacts/${IDS.jane}/thread?compose=sms`);
     expect(await screen.findByText(/This record was merged into another contact\./)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open the current record' })).toHaveAttribute('href', `/contacts/${IDS.pat}`);
     expect(screen.queryByRole('textbox', { name: 'Text message' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
+    // review R3: nor a Call above it, which the API refuses the same way
+    expect(screen.queryByRole('button', { name: 'Call' })).toBeNull();
+    expect(fake.calls.some((c) => c.path.endsWith('/messages/preview'))).toBe(false);
+  });
+
+  it('R-OWN-24 R-PERM-5: a merged record whose current record the viewer cannot open says so with no link, no box and no Call', async () => {
+    const fake = new FakeFetch()
+      .on(`GET /contacts/${IDS.jane}`, { status: 200, body: { contact: fullContact({ merged: true, mergedIntoContactId: null }) } })
+      .on(`GET /contacts/${IDS.jane}/timeline?limit=100`, { status: 200, body: { items: [timelineItem()], nextCursor: null } });
+    agentApp(fake, `/contacts/${IDS.jane}/thread?compose=sms`);
+    expect(await screen.findByText("This record was merged into another contact you can't open. Ask its owner or an Admin.")).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Open the current record' })).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'Text message' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Call' })).toBeNull();
     expect(fake.calls.some((c) => c.path.endsWith('/messages/preview'))).toBe(false);
   });
 

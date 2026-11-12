@@ -147,6 +147,7 @@ export function fullOf(r: ContactRow, points: readonly PointRow[], inquiries: re
       message: i.message,
       outcome: i.outcome,
     })),
+    merged: r.merged_into_contact_id !== null,
     mergedIntoContactId: r.merged_into_contact_id,
   };
 }

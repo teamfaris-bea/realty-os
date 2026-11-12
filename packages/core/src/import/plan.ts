@@ -350,7 +350,11 @@ function planOwnership(rec: Extract<NormalizedRecord, { category: 'ownership' }>
   if (p.kind === 'linked') {
     const c = p.contact;
     const createdHere = c.importBatchId === existing.batchId;
-    if (createdHere && sameTarget(c, rec.target)) {
+    // Review R4: a person FUB holds unassigned had no assignment to make, so whatever a person did to them since the
+    // contacts stage (closed, released, routed, merged) changed nothing the import would have done: already imported,
+    // never a "came in unassigned" outcome. Someone gave them an owner: kept, below.
+    const nothingToGive = rec.target === 'unassigned' && c.ownershipState !== 'owned';
+    if (createdHere && (sameTarget(c, rec.target) || nothingToGive)) {
       return { ...base, outcome: 'duplicate', action: { kind: 'skip', existingId: c.contactId }, issues: [...issues, { code: 'ALREADY_IMPORTED', severity: 'info' }], matchContactId: c.contactId };
     }
     // Only a contact this batch created, still in its imported `unassigned` creation state, takes

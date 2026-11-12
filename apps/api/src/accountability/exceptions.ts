@@ -45,6 +45,7 @@ import { type Action, type ContactId, DAY_MS, type IdGenerator, type Instant, ty
 import type { OwnershipCommand } from '@realty/core/ownership';
 import {
   DEFAULT_EXCEPTION_SETTINGS,
+  EXCEPTION_RULE_VERSION,
   type ExceptionEvidence,
   type ExceptionType,
   apptKey,
@@ -105,7 +106,16 @@ export async function recomputeExceptions(tx: Tx, scope: RecomputeScope, now: In
   await repo.lockRecompute(tx);
   const contactId = scope === 'tenant' ? null : scope.contactId;
   const stored = await repo.storedRowsForScope(tx, contactId);
-  const input: repo.InputScope = { contactId, now, windowStart: (now - RECOMPUTE_WINDOW_MS) as Instant, extra: extraOf(stored.filter((r) => r.condition_cleared_at === null)) };
+  // review R6: at tenant scope, also the untouched_lead rows an earlier rule stored (open or cleared, not withdrawn):
+  // their periods are re-read once, so one the current rules make no item is withdrawn even when its deadline is older
+  // than the window and it was already cleared ("fixed late"); a contact scope reads every row of the contact anyway
+  const earlier = contactId === null ? await repo.untouchedRowsOfEarlierRules(tx, EXCEPTION_RULE_VERSION) : [];
+  const input: repo.InputScope = {
+    contactId,
+    now,
+    windowStart: (now - RECOMPUTE_WINDOW_MS) as Instant,
+    extra: extraOf([...stored.filter((r) => r.condition_cleared_at === null), ...earlier.filter((r) => r.condition_cleared_at !== null)]),
+  };
   const settings = DEFAULT_EXCEPTION_SETTINGS;
   const [periods, promises, outbound, appointments, milestoneDates] = await Promise.all([
     repo.slaFacts(tx, input),
@@ -122,7 +132,7 @@ export async function recomputeExceptions(tx: Tx, scope: RecomputeScope, now: In
     ...milestoneDates.map((d) => milestoneKey(d.dealDateId, d.dueVersion)),
   ];
   const byKey = new Map<string, repo.StoredItemRow>();
-  for (const r of stored) byKey.set(r.dedupe_key, r);
+  for (const r of [...stored, ...earlier]) byKey.set(r.dedupe_key, r);
   const missing = keys.filter((k) => !byKey.has(k));
   for (const r of await repo.storedRowsByKeys(tx, missing)) byKey.set(r.dedupe_key, r);
 

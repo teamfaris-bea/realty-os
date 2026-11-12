@@ -782,6 +782,10 @@ describe('review F3: people merged, or given an owner, between the contacts comm
     await fullStage(ih, w.admin, b.id, 'contacts');
     expect(stageOf(await batchOf(w.admin, b.id), 'contacts').status).toBe('verified');
     const ids = await mergeAndAssign(w, b.id);
+    // review R4: Rae, whom FUB holds unassigned (no agent, no pond), is closed by the Admin before the dry run. The import
+    // had no owner to give her, so nothing it would have done changed: already imported, never "came in unassigned"
+    const rae = await contactOf(b.id, 'Rae');
+    expect((await lead(w.admin, 'close', rae, { reason: 'not_a_lead' })).status).toBe(200);
     const d = await dryRunStage(ih, w.admin, b.id, 'ownership');
     expect(d.counts).toMatchObject({ source: 7, willImport: 1, rejected: 4, duplicate: 2 });
     const planned = await records(w.admin, b.id, 'ownership');
@@ -790,6 +794,7 @@ describe('review F3: people merged, or given an owner, between the contacts comm
       expect([ref, rec(ref).dryRunOutcome, rec(ref).matchContactId, rec(ref).issues.map((i) => [i.code, i.sentence])]).toEqual([ref, 'rejected', ids.jane, [['PERSON_MERGED', merged]]]);
     }
     expect([rec('fub:people/8004').dryRunOutcome, rec('fub:people/8004').issues.map((i) => i.code)]).toEqual(['duplicate', ['OWNER_KEPT']]);
+    expect([rec('fub:people/8005').dryRunOutcome, rec('fub:people/8005').matchContactId, rec('fub:people/8005').issues.map((i) => i.code)]).toEqual(['duplicate', rae, ['ALREADY_IMPORTED']]);
     expect((await approve(w.admin, b.id, 'ownership', d.dryRunSha256 as string)).status).toBe(200);
     expect((await commitStage(ih, w.admin, b.id, 'ownership')).counts).toMatchObject({ source: 7, imported: 1, rejected: 4, duplicate: 2 });
     const v = await verify(w.admin, b.id, 'ownership');

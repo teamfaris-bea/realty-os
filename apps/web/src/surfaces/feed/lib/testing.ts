@@ -126,6 +126,7 @@ export function fullContact(over: Partial<ContactFullView> = {}): ContactFullVie
     phones: [{ id: '01900000-0000-7000-8000-0000000p0001', address: '+14155550123', label: 'mobile', lineType: 'mobile', status: 'valid', isPrimary: true }],
     emails: [{ id: '01900000-0000-7000-8000-0000000p0002', address: 'jane@example.test', label: 'personal', lineType: 'email', status: 'valid', isPrimary: true }],
     inquiries: [],
+    merged: false,
     mergedIntoContactId: null,
     ...over,
   };

@@ -96,6 +96,39 @@ describe('re-inquiry never lets an open first-touch SLA escape (R-OWN-13, R-OWN-
     expect(eventsOf(o)[0]).toMatchObject({ reasonCode: 'REINQUIRY_SLA', payload: { newPeriod: true } });
   });
 
+  // Review of that fix (R1): the owned_at floor protects a first-touch window, so it applies only to a period that has one
+  // (accept, claim, a re-inquiry period). A reassign, an ISA handoff or an owner-changing merge starts a period with no
+  // first-touch deadline: a lead nobody has touched for 30 days that inquires again the day after still starts a new clock.
+  it('R-OWN-20 E18: a re-inquiry a day after a reassign, an ISA handoff or an owner-changing merge of a lead last touched 30 days ago starts the re-inquiry SLA', () => {
+    const touched = plusMs(T0, 10 * MINUTE_MS);
+    const changed = plusMs(T0, 29 * DAY_MS);
+    const now = plusMs(T0, 30 * DAY_MS);
+    const reinquiry = (p: Parameters<typeof decide>[0], contactId: ContactId = C1) =>
+      decide(p, { kind: 'reinquiry', inquiryId: 'inq-back' }, ctx({ contactId, now, actor: systemActor('provider'), lastHumanTouchAt: touched }));
+
+    const reassigned = ownedLead(U.a);
+    eventsOf(reassigned.run({ kind: 'reassign', toUserId: U.b, reason: 'MANUAL' }, { now: changed, actor: userActor(U.admin), targetMember: member(U.b) }));
+    expect(reassigned.p).toMatchObject({ ownerUserId: U.b, ownedAt: changed, firstTouchDueAt: null });
+
+    const handed = new Lead();
+    handed.run({ kind: 'create', via: 'self' }, { actor: userActor(U.isa) });
+    eventsOf(handed.run({ kind: 'isa_handoff', toUserId: U.a, note: 'Wants Saturday showings' }, { now: changed, actor: userActor(U.isa), targetMember: member(U.a) }));
+    expect(handed.p).toMatchObject({ ownerUserId: U.a, ownedAt: changed, firstTouchDueAt: null });
+
+    const s = ownedBy(C1, U.a);
+    const m = decideMerge(s.p, ownedBy(C2, U.b).p, merge(U.b), ctx({ now: changed, actor: userActor(U.admin) }));
+    if (!m.ok) throw new Error(m.code);
+    expect(m.survivor.next).toMatchObject({ ownerUserId: U.b, ownedAt: changed, firstTouchDueAt: null });
+
+    for (const p of [reassigned.p, handed.p, m.survivor.next]) {
+      const d = reinquiry(p);
+      expect(eventsOf(d)[0]).toMatchObject({ type: 'reinquiry', reasonCode: 'REINQUIRY_SLA', payload: { newPeriod: true } });
+      expect(d.ok && d.next.firstTouchDueAt).not.toBeNull();
+    }
+    // with a touch since the owner change it does not
+    expect(eventsOf(decide(reassigned.p, { kind: 'reinquiry', inquiryId: 'inq-busy' }, ctx({ now, actor: systemActor('provider'), lastHumanTouchAt: plusMs(changed, 1) })))[0]).toMatchObject({ reasonCode: 'REINQUIRY' });
+  });
+
   it('R-OWN-20: a never-touched contact owned more than 7 days ago gets the re-inquiry SLA; one owned yesterday does not', () => {
     const old = new Lead();
     old.run({ kind: 'create', via: 'self' }, { actor: userActor(U.a) });

@@ -173,6 +173,22 @@ describe('R-PAR-35 assign from "Owner is nobody": people on offer and closed peo
     // the closed person stays as they were
     expect((await h.su.query('SELECT ownership_state FROM contacts WHERE id = $1', [closed.id])).rows[0].ownership_state).toBe('closed');
   });
+
+  // Review R5: the sheet promised "assigning withdraws that offer, and the agent is told" also for a lead on offer to the
+  // agent it is being assigned to, whom nothing tells (the lead becomes theirs).
+  it('R-PAR-35 R-OWN-18: a lead on offer to the agent it is assigned to is not counted as an offer to withdraw, and nobody is told one was', async () => {
+    const offered = await intake(h, w, { fullName: 'Otto Offer' });
+    const offeredTo = (await h.su.query<{ s: string; u: string }>('SELECT ownership_state AS s, offered_to_user_id AS u FROM contacts WHERE id = $1', [offered.contactId])).rows[0]!;
+    expect(offeredTo.s).toBe('offered');
+    const d = await draft(w.owner, { kind: 'assign', selection: { contactIds: [offered.contactId] }, toUserId: offeredTo.u });
+    expect(d.status).toBe(201);
+    expect(d.body.action).toMatchObject({ targetCount: 1, onOffer: 0 });
+    await confirm(w.owner, d.body.action.id);
+    expect(await run(d.body.action.id)).toEqual({ kind: 'finished', status: 'completed' });
+    expect((await h.su.query('SELECT ownership_state, owner_user_id FROM contacts WHERE id = $1', [offered.contactId])).rows[0]).toEqual({ ownership_state: 'owned', owner_user_id: offeredTo.u });
+    const withdrawn = (await h.su.query("SELECT title FROM notifications WHERE user_id = $1 AND title LIKE '%withdrawn%' AND subject_id = $2", [offeredTo.u, d.body.action.id])).rows;
+    expect(withdrawn).toEqual([]);
+  });
 });
 
 describe('R-PAR-35 enroll', () => {

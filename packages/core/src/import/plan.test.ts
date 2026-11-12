@@ -187,6 +187,35 @@ describe('contacts matching (R-IMPORT-7, R-OWN-25)', () => {
     expect(plan({ contactId: C1, ownershipState: 'owned', ownerUserId: AGENT_B, ownershipSeq: 2 })).toMatchObject({ outcome: 'duplicate', issues: [{ code: 'OWNER_KEPT', severity: 'info' }] });
   });
 
+  // Review of that fix (R4): a person FUB holds unassigned (no agent, no pond) never had an assignment planned, so a
+  // person who closed, released, routed or merged them since changed nothing the import would have done. They are no
+  // documented "came in unassigned" outcome (PERSON_CHANGED, not imported, listed in the B4 report): the import has no
+  // owner to give, so the record is already imported, as the commit says too.
+  it('E231 E41 a person FUB holds unassigned whom someone closed, released, routed or merged since the contacts stage is already imported, never "came in unassigned"', () => {
+    const own = mapFub('ownership', { ...FUB_EXPORT.people[0]!, assignedUserId: null, assignedPondId: null }, USERS);
+    expect(own).toMatchObject({ record: { target: 'unassigned' } });
+    const plan = (c: Parameters<typeof existingContact>[0], extra: Parameters<typeof existingContact>[0][] = []) =>
+      only(dryRun('ownership', [own], buildExistingIndex(emptyIndexInput({ contacts: [existingContact({ importBatchId: BATCH, ...c }), ...extra.map((x) => existingContact(x))], externalRefs: [{ entityType: 'contact', externalId: '1001', entityId: C1 }] }))));
+    const cases: Parameters<typeof existingContact>[0][] = [
+      { contactId: C1, ownershipState: 'unassigned', ownershipSeq: 1, routeDueAt: null },
+      { contactId: C1, ownershipState: 'closed', closedReason: 'spam', ownershipSeq: 2, routeDueAt: null },
+      { contactId: C1, ownershipState: 'in_pond', ownershipSeq: 3, routeDueAt: null },
+      { contactId: C1, ownershipState: 'offered', ownershipSeq: 3, routeDueAt: null },
+      { contactId: C1, ownershipState: 'unassigned', ownershipSeq: 4, routeDueAt: T0 },
+      { contactId: C1, ownershipState: 'unassigned', ownershipSeq: 2, routeDueAt: null, mergedIn: true },
+    ];
+    for (const c of cases) {
+      const r = plan(c);
+      expect({ state: c.ownershipState, seq: c.ownershipSeq, r }).toMatchObject({ state: c.ownershipState, seq: c.ownershipSeq, r: { outcome: 'duplicate', action: { kind: 'skip', existingId: C1 }, matchContactId: C1, issues: [{ code: 'ALREADY_IMPORTED', severity: 'info' }] } });
+    }
+    // merged into another person this import created, who is in a pond now: the same
+    expect(plan({ contactId: C2, ownershipState: 'in_pond', ownershipSeq: 3, routeDueAt: null, mergedIn: true }, [{ contactId: C1, importBatchId: BATCH, ownershipState: 'closed', closedReason: 'merged', mergedIntoContactId: C2, ownershipSeq: 2 }])).toMatchObject({
+      outcome: 'duplicate', matchContactId: C2, issues: [{ code: 'ALREADY_IMPORTED', severity: 'info' }],
+    });
+    // given an owner by someone since: kept (true: they have one)
+    expect(plan({ contactId: C1, ownershipState: 'owned', ownerUserId: AGENT_B, ownershipSeq: 2 })).toMatchObject({ outcome: 'duplicate', issues: [{ code: 'OWNER_KEPT', severity: 'info' }] });
+  });
+
   it('E39 a deleted contact re-imported from an old CSV becomes a new contact, and the preview says it stays opted out', () => {
     const input = emptyIndexInput({
       contacts: [existingContact({ contactId: C1, ownershipState: 'closed', closedReason: 'deleted', phones: ['+14155550132'] })],
