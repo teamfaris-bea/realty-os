@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import pg from 'pg';
+import { rlsSubjectMessage } from './rolePreflight.js';
 
 export const MIGRATION_FILE_PATTERN = /^(\d{4})_([a-z0-9]+(?:[_-][a-z0-9]+)*)\.sql$/;
 const LOCK_KEY = 1380270413; // arbitrary constant, "realty migrate"
@@ -35,6 +36,8 @@ export interface MigrateResult {
 
 export interface MigrateOptions {
   log?: (line: string) => void;
+  /** pg's ssl option (packages/db/src/tls.ts pgSsl): every production client passes the same one */
+  ssl?: pg.ClientConfig['ssl'];
 }
 
 export class MigrationError extends Error {
@@ -84,10 +87,21 @@ function lineOf(sql: string, position: number | undefined): number | undefined {
 export async function migrate(url: string, dir: string, opts: MigrateOptions = {}): Promise<MigrateResult> {
   const log = opts.log ?? (() => {});
   const files = listMigrations(dir);
-  const client = new pg.Client({ connectionString: url, application_name: 'realty-migrate' });
+  const client = new pg.Client({ connectionString: url, application_name: 'realty-migrate', ...(opts.ssl !== undefined ? { ssl: opts.ssl } : {}) });
   await client.connect();
   try {
     await client.query('SELECT pg_advisory_lock($1)', [LOCK_KEY]);
+    // R-DEPLOY-2 (E475): an owner subject to row-level security would run the backfills against FORCE-RLS tables
+    // and update zero rows without an error. Refused before anything is written; a read-only run (nothing pending)
+    // still works.
+    const owner = (
+      await client.query<{ role: string; bound: boolean; booked: boolean }>(
+        `SELECT current_user::text AS role, NOT (r.rolsuper OR r.rolbypassrls) AS bound,
+                to_regclass('realty_migrations.schema_migrations') IS NOT NULL AS booked
+           FROM pg_roles r WHERE r.rolname = current_user`,
+      )
+    ).rows[0]!;
+    if (owner.bound && !owner.booked) throw new MigrationError(rlsSubjectMessage(owner.role));
     await client.query(`
       CREATE SCHEMA IF NOT EXISTS realty_migrations;
       REVOKE ALL ON SCHEMA realty_migrations FROM PUBLIC;
@@ -122,6 +136,7 @@ export async function migrate(url: string, dir: string, opts: MigrateOptions = {
         );
       }
     }
+    if (owner.bound && pending.length > 0) throw new MigrationError(rlsSubjectMessage(owner.role));
     const done: string[] = [];
     for (const f of pending) {
       const started = Date.now();
