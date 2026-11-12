@@ -27,6 +27,7 @@ export function source(over: Omit<Partial<SourceOverview>, 'paths'> & { paths?: 
     leadsLast30Days: 0,
     heldEmails: 0,
     forwardingConfirmations: 0,
+    skippedWhileOffLast30Days: 0,
     hasConsentText: false,
     ...rest,
     paths: {

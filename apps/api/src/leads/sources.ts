@@ -105,6 +105,7 @@ interface SourceRow {
   confirmations: number;
   last_email_at: Date | null;
   secret_created_at: Date | null;
+  skipped_30d: number;
 }
 
 export async function overview(deps: SourcesDeps, actor: UserActor): Promise<z.infer<typeof OverviewResponse>> {
@@ -122,7 +123,9 @@ export async function overview(deps: SourcesDeps, actor: UserActor): Promise<z.i
                (SELECT count(*)::int FROM lead_email_messages m WHERE m.tenant_id = s.tenant_id AND m.lead_source_id = s.id
                    AND m.status = 'needs_review' AND m.hold_code = 'FORWARDING_CONFIRMATION') AS confirmations,
                (SELECT max(m.received_at) FROM lead_email_messages m WHERE m.tenant_id = s.tenant_id AND m.lead_source_id = s.id) AS last_email_at,
-               (SELECT w.created_at FROM lead_source_webhook_secrets w WHERE w.tenant_id = s.tenant_id AND w.lead_source_id = s.id) AS secret_created_at
+               (SELECT w.created_at FROM lead_source_webhook_secrets w WHERE w.tenant_id = s.tenant_id AND w.lead_source_id = s.id) AS secret_created_at,
+               (SELECT count(*)::int FROM lead_source_skips k WHERE k.tenant_id = s.tenant_id AND k.lead_source_id = s.id
+                   AND k.skipped_at >= now() - interval '30 days') AS skipped_30d
           FROM lead_sources s WHERE s.tenant_id = app.tenant_id() ORDER BY s.name, s.id`.execute(tx)
     ).rows;
     const hooks = (
@@ -166,6 +169,7 @@ export async function overview(deps: SourcesDeps, actor: UserActor): Promise<z.i
         leadsLast30Days: s.leads_30d,
         heldEmails: s.held,
         forwardingConfirmations: s.confirmations,
+        skippedWhileOffLast30Days: s.skipped_30d,
         paths: {
           email: { state: !deps.inboundDomain ? ('not_available' as const) : inboxOn ? ('on' as const) : ('off' as const), address, lastEmailAt: iso(s.last_email_at) },
           webhook: { hasToken: s.has_token, ownSecret: s.secret_created_at !== null, secretCreatedAt: iso(s.secret_created_at) },

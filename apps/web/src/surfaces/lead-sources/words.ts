@@ -53,6 +53,13 @@ export function statusSentence(s: Pick<SourceOverview, 'active' | 'offSince' | '
   return `Last lead ${ago(s.lastLeadAt, now)} · ${s.leadsLast30Days} in the last 30 days`;
 }
 
+/** "3 leads skipped while this source was off (last 30 days)"; null when none (R-LSRC-2). */
+export function skippedSentence(s: Pick<SourceOverview, 'skippedWhileOffLast30Days'>): string | null {
+  const n = s.skippedWhileOffLast30Days ?? 0;
+  if (n <= 0) return null;
+  return `${plural(n, 'lead')} skipped while this source was off (last 30 days)`;
+}
+
 /** "2 emails wait in Needs review", "1 forwarding confirmation waits in Needs review", or both; null when none. */
 export function waitingSentence(s: Pick<SourceOverview, 'heldEmails' | 'forwardingConfirmations'>): string | null {
   const parts: string[] = [];

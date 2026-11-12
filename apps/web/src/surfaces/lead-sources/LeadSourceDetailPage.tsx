@@ -17,7 +17,7 @@ import { WebhookPath } from './paths/WebhookPath.js';
 import { Preview } from './Preview.js';
 import type { SourceOverview } from './types.js';
 import { PathSection } from './ui.js';
-import { type ChipState, PAGES, type PathKey, kindWords, pathChips, statusSentence, waitingSentence } from './words.js';
+import { type ChipState, PAGES, type PathKey, kindWords, pathChips, skippedSentence, statusSentence, waitingSentence } from './words.js';
 
 const ORDER: PathKey[] = ['email', 'google', 'phone', 'webhook', 'partner', 'chat', 'typed'];
 const TITLES: Record<PathKey, string> = {
@@ -99,6 +99,7 @@ export default function LeadSourceDetailPage() {
       <div className="flex flex-col gap-1">
         <p className="text-[15px] text-ink-muted">{kindWords(s.kind)}</p>
         <p className="text-[16px] text-ink">{statusSentence(s, Date.now())}</p>
+        {skippedSentence(s) ? <p className="text-[15px] text-ink">{skippedSentence(s)}</p> : null}
         {waiting ? (
           <p className="text-[15px]">
             <Link to={PAGES.needsReview} className="inline-flex min-h-tap items-center text-accent underline">

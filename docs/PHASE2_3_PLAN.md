@@ -431,6 +431,7 @@ export function ingestChannelInbound(actor: SystemActor, e: ChannelInboundEvent)
 - **Interfaces:** `intakeLockKeys(tx, envelope, tenantId, input)`; `IngestOptions.unknownCaller` and `disclosure: 'none'`; core `previewRouting(rules, inquiry, candidates, cursor, settings)`; db `loadRuleMembers`, `loadRoutingCandidates`; `app.resolve_google_lead_form`, `app.rearm_webhook_event`.
 - **Convention for module 52:** `ad_campaigns.campaign_ref` uses `gads:<campaign_id>`, the form this lane writes on `lead_inquiries.campaign_ref`.
 - **Owner-question defaults (Q-LI-1..9)** live where one setting or branch changes them: see the lane report.
+- **VERIFY (Google retries):** whether Google retries a lead-form webhook answered 4XX (expected: no) or 5XX/429 (expected: yes), how often and for how long. Our answers: 403 for any key that does not resolve and for a source turned off; 503 when the key lookup itself fails; 200 otherwise. A body the server's parser refuses (a NUL character, bad JSON, a non-JSON content type) is 4XX by design, because the key is inside the body and cannot be read; such a lead is lost unless downloaded from Google Ads (30 days). DEPLOY §6.2 has the G5 test step.
 - **Rules:** R-LSRC-1…7, R-LEM-9…12, R-GADS-1…4, R-TRK-1…3; E313–E340, E352–E354, E380–E387 (E344–E351 of the original brief were renumbered E380–E387: batch 8 took E344–E351).
 
 #### 23. `core/listings`

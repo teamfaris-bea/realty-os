@@ -172,3 +172,12 @@ describe('Add a source', () => {
     expect(document.body.textContent).not.toMatch(/VERSION_CONFLICT/);
   });
 });
+
+describe('R-LSRC-2 skipped while off', () => {
+  it('R-LSRC-2 E387: the card says how many partner-feed leads were skipped while the source was off, in words', async () => {
+    const { skippedSentence } = await import('./words.js');
+    expect(skippedSentence({ skippedWhileOffLast30Days: 0 })).toBeNull();
+    expect(skippedSentence({ skippedWhileOffLast30Days: 1 })).toBe('1 lead skipped while this source was off (last 30 days)');
+    expect(skippedSentence({ skippedWhileOffLast30Days: 3 })).toBe('3 leads skipped while this source was off (last 30 days)');
+  });
+});

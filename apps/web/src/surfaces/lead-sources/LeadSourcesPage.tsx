@@ -16,7 +16,7 @@ import { useOverview } from './hooks.js';
 import { sentenceFor } from './messages.js';
 import type { SourceOverview } from './types.js';
 import { copyText } from './ui.js';
-import { PAGES, chipTone, detailPath, kindWords, pathChips, statusSentence, waitingSentence } from './words.js';
+import { PAGES, chipTone, detailPath, kindWords, pathChips, skippedSentence, statusSentence, waitingSentence } from './words.js';
 
 export default function LeadSourcesPage() {
   const q = useOverview();
@@ -73,6 +73,7 @@ export function SourceCard({ source: s, now }: { source: SourceOverview; now: nu
         <p className="text-[14px] text-ink-muted">{kindWords(s.kind)}</p>
       </div>
       <p className={`text-[15px] ${s.active ? 'text-ink' : 'font-medium text-ink'}`}>{statusSentence(s, now)}</p>
+      {skippedSentence(s) ? <p className="text-[15px] text-ink">{skippedSentence(s)}</p> : null}
       {waiting ? (
         <p className="text-[15px]">
           <Link to={PAGES.needsReview} className="inline-flex min-h-tap items-center text-accent underline">

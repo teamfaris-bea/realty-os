@@ -16,6 +16,8 @@ export interface SourceOverview {
   leadsLast30Days: number;
   heldEmails: number;
   forwardingConfirmations: number;
+  /** partner-feed leads skipped because the source was off, last 30 days (R-LSRC-2) */
+  skippedWhileOffLast30Days: number;
   hasConsentText: boolean;
   paths: {
     email: { state: PathState; address: string | null; lastEmailAt: string | null };

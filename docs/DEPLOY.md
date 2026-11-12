@@ -352,6 +352,14 @@ Portal lead notifications (Zillow, Realtor.com, a website form) can be forwarded
 5. **In the app:** an Owner/Admin turns on lead email per lead source (Routing → lead sources), copies the address into the portal's lead-forwarding setting, and checks the allowed sender domains. Send one test lead from each portal and confirm it becomes a lead automatically: only that confirms the portal's sender domain (the page calls the suggested ones unconfirmed until then). One that waits in Needs review did arrive, and its reason says what is wrong (step 4).
 6. **Body limits:** the proxy in front of the API must allow at least 5 MB on `/api/webhooks/lead-email/sendgrid/inbound` (1 MB elsewhere); larger deliveries are refused with 413.
 
+### 6.2 Google Ads lead forms (module 22; OWNER ACTIONS; nothing is configured by the app or this repository)
+
+1. **Gate:** do not point any Google form at a deployment until the team's housing-advertiser eligibility for lead form assets is confirmed (PHASE2_3_PLAN N22; **VERIFY** support.google.com/adspolicy/answer/9472930).
+2. The deployment needs a public https `PUBLIC_BASE_URL`; otherwise the Lead sources page says the form is not available here.
+3. On the Lead sources page, the Owner turns on the source's Google lead form, picks what its leads are about, and copies the webhook URL (`https://app.example.com/api/webhooks/google-ads/lead-form`, one fixed URL) and the key into the lead form asset's webhook integration in Google Ads (**VERIFY** the menu names).
+4. **Pilot step G5:** press Google's "Send test data" there. The page then says "Test lead received <time> (no one was added)". If it does not, Google's test may be sending a placeholder key (**VERIFY**): submit a real lead on the team's own form instead and check "Last lead" on the page. A test lead creates no contact.
+5. Bodies the API's JSON parser refuses (a NUL character, malformed JSON, a non-JSON content type) are answered 4XX before the key can be read: the key travels inside the body, so such a delivery cannot be authenticated, and it is refused like any unsigned request. Google keeps its leads downloadable in Google Ads for 30 days; whether it retries a 4XX (it should not) or a 5XX (it should), how often and for how long, is **VERIFY** (PHASE2_3_PLAN #22 addendum).
+
 ## 7. Object storage
 
 `STORAGE_PROVIDER=s3` works with AWS S3, Cloudflare R2 and MinIO. Requests are signed with AWS Signature V4 (tested against AWS's published vectors). The bucket only ever holds ciphertext: each object has its own DEK, wrapped by the tenant `object` key, and keys are `tenants/<tenant>/…`.

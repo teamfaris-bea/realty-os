@@ -218,3 +218,40 @@ ALTER FUNCTION app.rearm_webhook_event(text, text, timestamptz) OWNER TO app_def
 REVOKE ALL ON FUNCTION app.rearm_webhook_event(text, text, timestamptz) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION app.rearm_webhook_event(text, text, timestamptz) TO app_user;
 GRANT UPDATE ON webhook_events TO app_definer;
+
+-- -----------------------------------------------------------------------------
+-- (i) Leads skipped while their source was off (R-LSRC-2, E387; orchestrator 2026-11-12)
+-- -----------------------------------------------------------------------------
+-- A partner-feed lead that arrives while its lead source is off is skipped (the feed cursor advances, so turning the
+-- source back on does not replay it), and one receipt per lead says so: which source, which path, when, and why.
+-- Nothing of the lead is kept (only sha256 of the feed's own lead id, for idempotency), so a receipt is not a person.
+CREATE TABLE lead_source_skips (
+  tenant_id          uuid NOT NULL REFERENCES tenants(id),
+  id                 uuid NOT NULL,
+  lead_source_id     uuid NOT NULL,
+  channel            text NOT NULL CHECK (channel IN ('partner_feed')),
+  external_ref_sha256 bytea NOT NULL CHECK (octet_length(external_ref_sha256) = 32),
+  reason             text NOT NULL CHECK (reason IN ('SOURCE_OFF')),
+  skipped_at         timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant_id, id),
+  UNIQUE (tenant_id, lead_source_id, channel, external_ref_sha256),
+  FOREIGN KEY (tenant_id, lead_source_id) REFERENCES lead_sources (tenant_id, id)
+);
+CREATE INDEX lead_source_skips_recent_idx ON lead_source_skips (tenant_id, lead_source_id, skipped_at DESC);
+CREATE TRIGGER lead_source_skips_append_only BEFORE UPDATE OR DELETE ON lead_source_skips
+  FOR EACH ROW EXECUTE FUNCTION app.reject_mutation();
+ALTER TABLE lead_source_skips ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lead_source_skips FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON lead_source_skips AS RESTRICTIVE FOR ALL
+  USING (tenant_id = (SELECT app.tenant_id()) AND (SELECT app.principal_type()) = 'staff')
+  WITH CHECK (tenant_id = (SELECT app.tenant_id()) AND (SELECT app.principal_type()) = 'staff');
+CREATE POLICY support_read_only_ins ON lead_source_skips AS RESTRICTIVE FOR INSERT WITH CHECK ((SELECT app.actor_kind()) <> 'support');
+CREATE POLICY support_read_only_upd ON lead_source_skips AS RESTRICTIVE FOR UPDATE USING ((SELECT app.actor_kind()) <> 'support');
+CREATE POLICY support_read_only_del ON lead_source_skips AS RESTRICTIVE FOR DELETE USING ((SELECT app.actor_kind()) <> 'support');
+CREATE TRIGGER support_read_only BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE ON lead_source_skips
+  FOR EACH STATEMENT EXECUTE FUNCTION app.reject_support_write();
+-- read: Owner/Admin and the system (the Lead sources page; support read-only); write: the system only (the feed poll)
+CREATE POLICY lead_source_skips_read ON lead_source_skips FOR SELECT USING ((SELECT app.is_tenant_wide()));
+CREATE POLICY lead_source_skips_insert ON lead_source_skips FOR INSERT WITH CHECK ((SELECT app.actor_kind()) = 'system');
+GRANT SELECT, INSERT ON lead_source_skips TO app_user;
+GRANT SELECT ON lead_source_skips TO app_definer, app_retention;

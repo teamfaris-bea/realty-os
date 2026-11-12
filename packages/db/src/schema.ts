@@ -1199,6 +1199,17 @@ export interface LeadSourceCostsTable {
   updated_at: Generated<Timestamp>;
 }
 
+/** public.lead_source_skips (table) */
+export interface LeadSourceSkipsTable {
+  tenant_id: string;
+  id: string;
+  lead_source_id: string;
+  channel: string;
+  external_ref_sha256: Buffer;
+  reason: string;
+  skipped_at: Generated<Timestamp>;
+}
+
 /** public.lead_source_webhook_secrets (table) */
 export interface LeadSourceWebhookSecretsTable {
   tenant_id: string;
@@ -2636,6 +2647,7 @@ export interface DB {
   lead_inquiries: LeadInquiriesTable;
   lead_ownership_events: LeadOwnershipEventsTable;
   lead_source_costs: LeadSourceCostsTable;
+  lead_source_skips: LeadSourceSkipsTable;
   lead_source_webhook_secrets: LeadSourceWebhookSecretsTable;
   lead_sources: LeadSourcesTable;
   listing_contacts: ListingContactsTable;
@@ -2794,6 +2806,7 @@ export const TABLE_NAMES = [
   'lead_inquiries',
   'lead_ownership_events',
   'lead_source_costs',
+  'lead_source_skips',
   'lead_source_webhook_secrets',
   'lead_sources',
   'listing_contacts',
