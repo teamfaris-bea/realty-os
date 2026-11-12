@@ -414,3 +414,78 @@ export function sessionViolations(run: ScriptRun, guard: (text: string) => boole
   });
   return out;
 }
+
+/** A session in which both disclosures have played (at +4 s and +7 s): ready for caller speech and tools. */
+export function openSession(facts: VoiceFacts = voiceFacts(), start: Instant = SESSION_START): VoiceState {
+  let s = startSession(facts, start).state;
+  s = step(s, { type: 'disclosure_played', at: (start + 4000) as Instant }, facts).state;
+  return step(s, { type: 'announcement_played', at: (start + 7000) as Instant }, facts).state;
+}
+
+/** A request `ms` after session start. */
+export function request(tool: string, args: unknown = {}, ms = 10_000, start: Instant = SESSION_START) {
+  return { tool, args, at: (start + ms) as Instant };
+}
+
+// ---- topic fixtures (R-VOICE-5, R-FH-3): zero false negatives required --------------------------
+
+/** Caller questions that must become a decline and a message, by expected handback category. */
+export const TOPIC_FIXTURES = {
+  money: [
+    'What would the seller take for it?',
+    'How much is the house?',
+    "What's the asking price?",
+    'Is the price negotiable?',
+    'Would they take 450k?',
+    'Would they accept four hundred thousand?',
+    'Can they come down on the price?',
+    "What's it worth?",
+    'What are they asking?',
+    'Is that a good deal?',
+    'Would they do $425,000 cash?',
+    "What's my home value these days?",
+    'How much would it cost per month in fees?',
+  ],
+  offers: ['I want to make an offer.', 'Are there other offers on it?', 'Should we counter?', 'Is there a bidding war?', "What's your highest and best?"],
+  contracts: ['Can you send me the purchase agreement?', 'What contingencies should I put in?', 'Can I back out of the contract?', 'Where do I sign the papers?'],
+  commission: ["What's your commission?", 'Who pays the buyer agent fee?', 'Do you offer a rebate?'],
+  legal: ['Do I need a lawyer?', 'Is there a lien on the property?', 'What are the property taxes?', 'Is it zoned for a duplex?', 'Can I evict the tenant?', 'Is there an easement?'],
+  lending: [
+    'What interest rate can I get?',
+    'Do I need to be pre-approved?',
+    'Can you recommend a lender?',
+    'How much of a down payment do I need?',
+    'Will my credit score be a problem?',
+    'Do they take FHA loans?',
+    'What would my monthly payment be?',
+    'Can I get a mortgage with this income?',
+  ],
+  area: ['Is it a safe neighborhood?', 'What kind of people live there?', 'Who lives on that street?', 'Are there a lot of families?', 'Is there much crime?', 'Is it a diverse area?'],
+} as const;
+
+/** Ordinary caller turns that must NOT be flagged (no decline, no area handback). */
+export const CLEAN_TURNS = [
+  'Does it have a family room?',
+  'How many bedrooms does it have?',
+  'Can I see it on Saturday morning?',
+  'I saw the listing online and I love the kitchen.',
+  "I'm asking about the house on the corner.",
+  'Is the garage attached?',
+  'Is it worth seeing this weekend?',
+  'My name is Sam, I called earlier.',
+  'Is there a big backyard?',
+  "It's about two thousand square feet, right?",
+] as const;
+
+/** Obfuscated variants (zero-width characters, look-alike letters) that must still be caught. */
+export const OBFUSCATED_TURNS = {
+  money: ['What would the sel​ler take?', 'Whаt’s the рrice?', 'Any other o‌ffers?', 'What is your comm­ission?'],
+  area: ['Is it a s​afe neighborhood?', 'Is there much сrime?'],
+  human: ['Are you a re​al person?', 'Am I talking to a rоbot?'],
+  lending: ['What intеrest rate can I get?', 'Do I need a mort​gage?'],
+} as const;
+
+/** A session that has just started (nothing played yet). */
+export function startSessionFacts(facts: VoiceFacts = voiceFacts(), start: Instant = SESSION_START): VoiceState {
+  return startSession(facts, start).state;
+}

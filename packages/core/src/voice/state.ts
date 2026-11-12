@@ -26,7 +26,7 @@ export interface LedgerEntry {
 export type NeedsReviewItem =
   | { code: 'POSSIBLE_OPT_OUT' }
   | { code: 'UNCONFIRMED_SLOT'; slot: OfferedSlot }
-  | { code: 'SLOT_NOT_OFFERED'; slot: OfferedSlot | null }
+  | { code: 'SLOT_NOT_OFFERED'; slot: OfferedSlot }
   | { code: 'CLAIM_NEEDS_REVIEW'; claimId: string };
 
 export interface HeardOptOut {
@@ -53,7 +53,6 @@ export interface VoiceState {
   messageTopics: MessageTopic[];
   categories: (ScopeCategory | 'fair_housing' | 'language')[];
   agentNotes: string[];
-  needsReview: NeedsReviewItem[];
   /** In-call claims (module 48 normalizes them from the transcript). */
   claims: VerifiedClaim[];
   ledger: LedgerEntry[];

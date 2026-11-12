@@ -148,7 +148,6 @@ export function startSession(facts: VoiceFacts, now: Instant): StepResult {
     messageTopics: [],
     categories: [],
     agentNotes: [],
-    needsReview: [],
     claims: [],
     ledger: [],
     outcome: null,
@@ -177,11 +176,12 @@ function promiseTaskOf(claims: readonly VerifiedClaim[]): PromiseTask {
 }
 
 function needsReviewOf(s: VoiceState): NeedsReviewItem[] {
-  const out: NeedsReviewItem[] = [...s.needsReview];
+  const out: NeedsReviewItem[] = [];
   if (s.booking?.status === 'pending') out.push({ code: 'UNCONFIRMED_SLOT', slot: s.booking.slot });
   for (const e of s.ledger) {
     if (e.reason === 'OPT_OUT_NOT_HEARD' && !out.some((x) => x.code === 'POSSIBLE_OPT_OUT')) out.push({ code: 'POSSIBLE_OPT_OUT' });
-    if (e.reason === 'SLOT_NOT_OFFERED') out.push({ code: 'SLOT_NOT_OFFERED', slot: e.row !== null && e.row.tool === 'book_appointment' ? requestedSlot(e.row.args) : null });
+    // SLOT_NOT_OFFERED comes only from a book_appointment with a valid slot, so its row is a booking
+    if (e.reason === 'SLOT_NOT_OFFERED') out.push({ code: 'SLOT_NOT_OFFERED', slot: requestedSlot((e.row as LedgerRow).args) });
   }
   for (const c of s.claims) if (!claimUsable(c)) out.push({ code: 'CLAIM_NEEDS_REVIEW', claimId: c.id });
   return out;
