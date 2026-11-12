@@ -79,6 +79,30 @@ export async function myOpenDraft(tx: Tx, contactId: string, contactAddressId: s
 }
 
 /**
+ * The caller's open drafts for (contact, address), locked, the one linked to the address first: also those whose
+ * address was deleted (S0's F15 keeps such a draft open with contact_address_id NULL) and whose stored subject still
+ * names it, newest first. An Undo of the delete puts the address back under the same id, so these are drafts of the
+ * same home (batch 10 review db-public/F3, ownership-data/F3).
+ */
+export async function myOpenDrafts(tx: Tx, contactId: string, contactAddressId: string | null): Promise<CmaRow[]> {
+  const orphan =
+    contactAddressId === null
+      ? sql`false`
+      : sql`(contact_address_id IS NULL AND subject #>> '{input,kind}' = 'contact_address' AND subject #>> '{input,contactAddressId}' = ${contactAddressId})`;
+  return (
+    await sql<CmaRow>`SELECT ${COLS} FROM cma_reports WHERE tenant_id = app.tenant_id() AND created_by_user_id = app.user_id()
+       AND contact_id = ${contactId}::uuid AND status = 'draft' AND (contact_address_id IS NOT DISTINCT FROM ${contactAddressId}::uuid OR ${orphan})
+     ORDER BY (contact_address_id IS NULL) = (${contactAddressId}::uuid IS NULL) DESC, created_at DESC, id FOR UPDATE`.execute(tx)
+  ).rows;
+}
+
+/** Links an open draft whose address was deleted to that address again, once it is back (its Undo). */
+export async function relinkAddress(tx: Tx, id: string, contactAddressId: string): Promise<void> {
+  await sql`UPDATE cma_reports SET contact_address_id = ${contactAddressId}::uuid
+     WHERE tenant_id = app.tenant_id() AND id = ${id}::uuid AND status = 'draft' AND contact_address_id IS NULL`.execute(tx);
+}
+
+/**
  * Inserts a draft. A contact CMA uses cma_reports_one_open_draft as its arbiter: a concurrent tap that already stored the
  * open draft for (caller, contact, address) wins, and this returns null (the caller re-reads).
  */
@@ -96,10 +120,19 @@ export async function insertDraft(tx: Tx, id: string, w: CmaWrite): Promise<stri
   return r.rows[0]?.id ?? null;
 }
 
-/** Rewrites a draft's content (the policy admits its creator and tenant-wide roles; the guard refuses a non-draft). */
+/**
+ * Rewrites a draft's content (the policy admits its creator and tenant-wide roles; the guard refuses a non-draft). A
+ * draft whose address was deleted and put back (the run resolved it again) is linked to it again, unless its creator
+ * holds another open draft for that address (cma_reports_one_open_draft).
+ */
 export async function updateDraft(tx: Tx, id: string, w: CmaWrite): Promise<boolean> {
   const r = await sql`
-    UPDATE cma_reports SET listing_id = ${w.listingId}::uuid, purpose = ${w.purpose}, inspection = ${w.inspection}, inspected_on = ${w.inspectedOn}::date,
+    UPDATE cma_reports SET contact_address_id = CASE
+             WHEN contact_address_id IS NULL AND ${w.contactAddressId}::uuid IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM cma_reports o WHERE o.tenant_id = cma_reports.tenant_id AND o.created_by_user_id = cma_reports.created_by_user_id
+                                 AND o.contact_id = cma_reports.contact_id AND o.contact_address_id = ${w.contactAddressId}::uuid AND o.status = 'draft' AND o.id <> cma_reports.id)
+             THEN ${w.contactAddressId}::uuid ELSE contact_address_id END,
+           listing_id = ${w.listingId}::uuid, purpose = ${w.purpose}, inspection = ${w.inspection}, inspected_on = ${w.inspectedOn}::date,
            intended_users = ${w.disclosure.intendedUsers}, agent_interest = ${w.disclosure.agentInterest}, conflicts = ${w.disclosure.conflicts},
            value_definition = ${w.disclosure.valueDefinition}, limiting_conditions = ${w.disclosure.limitingConditions}, method_version = ${w.methodVersion},
            valuation_date = ${w.valuationDate}::date, mls_data_as_of = ${w.mlsDataAsOf}, subject = ${JSON.stringify(w.subject)}::jsonb,

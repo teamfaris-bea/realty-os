@@ -342,6 +342,7 @@ export const ERROR_STATUS = {
   CMA_SUBJECT_INCOMPLETE: 422, // the subject lacks its property type or size, the contact has no address, or a street address lacks the city, state or ZIP its MLS key needs (details.missing, details.sentence; E373, E365)
   CMA_SUBJECT_TYPE_NOT_SUPPORTED: 422, // land and 'other' are not valued in V1 (owner question (g), core/valuation CMA_SUPPORTED_TYPES; details.propertyType)
   CMA_NOT_DRAFT: 409, // a shared or superseded CMA never changes; prepare a new draft (details.status; E377)
+  CMA_SUBJECT_ADDRESS_GONE: 409, // the draft's contact address was deleted (S0 keeps the draft open with no address), so it cannot be re-run; prepare a new CMA (details.sentence; F15)
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

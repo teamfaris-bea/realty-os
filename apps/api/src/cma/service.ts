@@ -57,6 +57,8 @@ import {
   getCma,
   insertDraft,
   myOpenDraft,
+  myOpenDrafts,
+  relinkAddress,
   supersede,
   tenantZoneName,
   touchDataDate,
@@ -403,6 +405,9 @@ export async function prepare(tx: Tx, actor: UserActor, now: Instant, b: Prepare
   if (contactId !== null) await assertContact(tx, contactId);
   if (b.subject.kind === 'contact_address' && contactId === null) throw new AppError('VALIDATION_FAILED', { reason: 'CONTACT_REQUIRED' });
   const { write } = await compute(tx, now, { subject: b.subject, contactId, purpose: b.purpose, inspection: b.inspection ?? 'none', inspectedOn: b.inspectedOn ?? null, notes: null, disclosure: NO_DISCLOSURE, include: [], exclude: [], nearMatchDismissed: [] });
+  // an explicit prepare supersedes the caller's open drafts for this contact and address, a draft whose address was
+  // deleted and put back included (F15: one open draft per home)
+  if (contactId !== null) for (const d of await myOpenDrafts(tx, contactId, write.contactAddressId)) await supersede(tx, d.id);
   const id = randomUUID();
   let stored = await insertDraft(tx, id, write);
   if (stored === null) {
@@ -426,7 +431,10 @@ export async function oneTap(tx: Tx, actor: UserActor, now: Instant, contactId: 
     if (b.contactAddressId) throw new AppError('NOT_FOUND');
     throw new AppError('CMA_SUBJECT_INCOMPLETE', { missing: ['address'], sentence: 'Add the home’s address (a property or home address) to prepare a CMA.' });
   }
-  const open = await myOpenDraft(tx, contactId, addr.id);
+  // the caller's open draft for this address; a draft whose address was deleted and put back (its Undo) is the same
+  // home's: it is picked up, and any other is superseded, so one open draft remains (F15, ownership-data/F3)
+  const [open, ...others] = await myOpenDrafts(tx, contactId, addr.id);
+  for (const d of others) await supersede(tx, d.id);
   const stored = open ? (open.subject as unknown as StoredSubject) : null;
   const facts = { ...(stored?.input.kind === 'contact_address' ? stored.input.facts : undefined), ...b.facts };
   const inputs: Inputs = {
@@ -443,6 +451,7 @@ export async function oneTap(tx: Tx, actor: UserActor, now: Instant, contactId: 
   };
   const { write } = await compute(tx, now, inputs);
   if (open && open.content_sha256 === write.contentSha256) {
+    if (open.contact_address_id === null) await relinkAddress(tx, open.id, addr.id);
     if ((open.mls_data_as_of?.getTime() ?? null) !== (write.mlsDataAsOf?.getTime() ?? null)) await touchDataDate(tx, open.id, write.mlsDataAsOf);
     return { created: false, view: await viewOf(tx, actor, now, (await getCma(tx, open.id))!) };
   }
@@ -470,10 +479,28 @@ export interface PatchBody {
   nearMatchDismissed?: string[] | undefined;
 }
 
+/**
+ * The address a draft S0 kept open after its contact address was deleted still names (F15: contact_address_id became
+ * NULL; the stored subject keeps the id), else null. An Undo of the delete puts the address back under that id.
+ */
+function deletedAddressOf(row: CmaRow): string | null {
+  const s = row.subject as unknown as StoredSubject;
+  return row.contact_id !== null && row.contact_address_id === null && s.input.kind === 'contact_address' ? s.input.contactAddressId : null;
+}
+
+/** Whether a draft's address was deleted and is still gone: it cannot be re-run (db-public/F3, ownership-data/F3). */
+async function addressGone(tx: Tx, row: CmaRow): Promise<boolean> {
+  const a = deletedAddressOf(row);
+  return a !== null && (await addressOf(tx, row.contact_id!, a)) === null;
+}
+
 export async function patch(tx: Tx, actor: UserActor, now: Instant, id: string, b: PatchBody): Promise<CmaView> {
   const row = await getCma(tx, id, { lock: true });
   if (!row) throw new AppError('NOT_FOUND');
   if (row.status !== 'draft') throw new AppError('CMA_NOT_DRAFT', { status: row.status });
+  if (await addressGone(tx, row)) {
+    throw new AppError('CMA_SUBJECT_ADDRESS_GONE', { sentence: 'The home’s address was deleted from this contact, so this CMA can’t be re-run. Prepare a new CMA for the home.' });
+  }
   const s = row.subject as unknown as StoredSubject;
   const input: SubjectInput = b.subjectFacts === undefined ? s.input : ({ ...s.input, facts: { ...s.input.facts, ...b.subjectFacts } } as SubjectInput);
   const inspection = b.inspection ?? row.inspection;
@@ -613,7 +640,8 @@ async function viewOf(tx: Tx, actor: UserActor, now: Instant, row: CmaRow) {
     notes: row.agent_notes,
     createdByUserId: row.created_by_user_id,
     mine: row.created_by_user_id === actor.userId,
-    canEdit: row.status === 'draft' && row.created_by_user_id === actor.userId,
+    // never an edit that must fail: not a draft whose address was deleted and is still gone (F15)
+    canEdit: row.status === 'draft' && row.created_by_user_id === actor.userId && !(await addressGone(tx, row)),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
     sharedAt: row.shared_at?.toISOString() ?? null,
