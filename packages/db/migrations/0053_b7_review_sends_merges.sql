@@ -39,7 +39,7 @@
 --     survivor the merge chose. It moves no opt-out state, sends nothing and reveals nothing: who may read a listing
 --     role, a deal role or a deal is unchanged (the existing policies judge the survivor as they judged the loser,
 --     and the merge already made the survivor the person). Least-privilege grants to app_definer:
---     INSERT, DELETE ON listing_contacts; INSERT, DELETE ON deal_contacts; UPDATE (primary_contact_id) ON deals;
+--     INSERT, DELETE, UPDATE (role) ON listing_contacts; INSERT, DELETE ON deal_contacts; UPDATE (primary_contact_id) ON deals;
 --     UPDATE (reasons, updated_at) ON priority_feed_items. app_definer already reads all four (SELECT).
 --   * No table, policy or app_user grant is added.
 -- =============================================================================
@@ -452,6 +452,7 @@ END $$;
 ALTER FUNCTION app.contacts_merge_roles() OWNER TO app_definer;
 REVOKE ALL ON FUNCTION app.contacts_merge_roles() FROM PUBLIC;
 GRANT INSERT, DELETE ON listing_contacts TO app_definer;
+GRANT UPDATE (role) ON listing_contacts TO app_definer;   -- ON CONFLICT DO UPDATE (stronger role kept) needs it
 GRANT INSERT, DELETE ON deal_contacts TO app_definer;
 GRANT UPDATE (primary_contact_id) ON deals TO app_definer;
 GRANT UPDATE (reasons, updated_at) ON priority_feed_items TO app_definer;
