@@ -907,6 +907,24 @@ export interface GbpReviewsTable {
   created_at: Generated<Timestamp>;
 }
 
+/** public.google_lead_form_hooks (table) */
+export interface GoogleLeadFormHooksTable {
+  tenant_id: string;
+  id: string;
+  lead_source_id: string;
+  key_hash: Buffer;
+  key_enc: Buffer;
+  inquiry_type: Generated<string>;
+  cites_source_disclosure: Generated<boolean>;
+  created_by_user_id: string | null;
+  created_at: Generated<Timestamp>;
+  retired_at: Timestamp | null;
+  last_test_at: Timestamp | null;
+  last_unreadable_at: Timestamp | null;
+  unreadable_count: Generated<number>;
+  updated_at: Generated<Timestamp>;
+}
+
 /** public.home_valuations (table) */
 export interface HomeValuationsTable {
   tenant_id: string;
@@ -1181,6 +1199,15 @@ export interface LeadSourceCostsTable {
   updated_at: Generated<Timestamp>;
 }
 
+/** public.lead_source_webhook_secrets (table) */
+export interface LeadSourceWebhookSecretsTable {
+  tenant_id: string;
+  lead_source_id: string;
+  secret_enc: Buffer;
+  created_by_user_id: string | null;
+  created_at: Generated<Timestamp>;
+}
+
 /** public.lead_sources (table) */
 export interface LeadSourcesTable {
   tenant_id: string;
@@ -1192,6 +1219,7 @@ export interface LeadSourcesTable {
   active: Generated<boolean>;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+  active_changed_at: Timestamp | null;
 }
 
 /** public.listing_contacts (table) */
@@ -1592,6 +1620,7 @@ export interface PhoneNumbersTable {
   quarantine_until: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+  lead_source_id: string | null;
 }
 
 /** public.playbook_approvals (table) */
@@ -2495,6 +2524,7 @@ export interface WebhookEventsTable {
   payload_enc: Buffer | null;
   processed_at: Timestamp | null;
   error_code: string | null;
+  last_attempt_at: Timestamp | null;
 }
 
 /** Every table and view in schema public. */
@@ -2551,6 +2581,7 @@ export interface DB {
   feed_groups: FeedGroupsTable;
   gate_decisions: GateDecisionsTable;
   gbp_reviews: GbpReviewsTable;
+  google_lead_form_hooks: GoogleLeadFormHooksTable;
   home_valuations: HomeValuationsTable;
   import_batches: ImportBatchesTable;
   import_records: ImportRecordsTable;
@@ -2565,6 +2596,7 @@ export interface DB {
   lead_inquiries: LeadInquiriesTable;
   lead_ownership_events: LeadOwnershipEventsTable;
   lead_source_costs: LeadSourceCostsTable;
+  lead_source_webhook_secrets: LeadSourceWebhookSecretsTable;
   lead_sources: LeadSourcesTable;
   listing_contacts: ListingContactsTable;
   listing_price_history: ListingPriceHistoryTable;
@@ -2704,6 +2736,7 @@ export const TABLE_NAMES = [
   'feed_groups',
   'gate_decisions',
   'gbp_reviews',
+  'google_lead_form_hooks',
   'home_valuations',
   'import_batches',
   'import_records',
@@ -2718,6 +2751,7 @@ export const TABLE_NAMES = [
   'lead_inquiries',
   'lead_ownership_events',
   'lead_source_costs',
+  'lead_source_webhook_secrets',
   'lead_sources',
   'listing_contacts',
   'listing_price_history',
