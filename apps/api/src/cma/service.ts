@@ -344,8 +344,9 @@ function contentOf(s: StoredSubject, r: StoredResult, i: Pick<Inputs, 'notes' | 
 async function compute(tx: Tx, now: Instant, i: Inputs): Promise<{ write: CmaWrite; conns: CmaConnections; zone: IanaZone }> {
   const conns = await agentGate(tx, now);
   const zone = await zoneOf(tx);
-  const sizeField = await connectionSizeField(tx, conns.used.map((u) => u.conn.id));
-  const resolved = await resolveSubject(tx, i.subject, { contactId: i.contactId, sizeField });
+  const connectionIds = conns.used.map((u) => u.conn.id);
+  const sizeField = await connectionSizeField(tx, connectionIds);
+  const resolved = await resolveSubject(tx, i.subject, { contactId: i.contactId, sizeField, connectionIds });
   const valuationDate = localDateOf(now, zone) as string;
   const { result, offered } = await run(tx, conns, resolved, valuationDate, i.include, i.exclude);
   // only listings that are near matches now may be dismissed (others are ignored; with nothing to dismiss, nothing is read)
@@ -566,7 +567,7 @@ async function viewOf(tx: Tx, actor: UserActor, now: Instant, row: CmaRow) {
       state: s.resolved.state,
       addressKey: s.resolved.addressKey,
       addressLine: s.resolved.address.line1,
-      subjectMlsListingId: s.resolved.mirrorListingId ?? (s.resolved.connectionId && s.resolved.listingId ? s.resolved.listingId : null),
+      subjectMlsListingId: s.resolved.mlsRecordId ?? s.resolved.mirrorListingId ?? (s.resolved.connectionId && s.resolved.listingId ? s.resolved.listingId : null),
       compSales: r.comps.map((c) => {
         const l = listing(c.ref.identity);
         return { saleListingId: l.saleListingId, teamListingId: l.teamListingId };
