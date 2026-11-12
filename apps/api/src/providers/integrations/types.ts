@@ -160,6 +160,8 @@ export interface MlsFeed {
 }
 
 // ---- AVM (platform configuration, not a tenant connection) ------------------------------------------
+// Source-neutral (owner decision D9, 2026-11-12): home values will come from the team's own MLS-based valuation
+// (comparable sales), built behind this interface by a later lane; no third-party vendor's fields, ids or terms.
 
 export interface AddressFacts {
   line1: string;
@@ -168,31 +170,45 @@ export interface AddressFacts {
   postalCode: string;
 }
 
+/** One comparable sale an estimate is based on (its evidence). */
+export interface ComparableSale {
+  /** street address as clients may see it */
+  address: string;
+  /** `YYYY-MM-DD` */
+  soldOn: string;
+  priceCents: number;
+  /** the team's own listings row, when the comparable is one; null otherwise */
+  listingId: string | null;
+}
+
 export interface AvmEstimate {
   available: true;
   valueCents: number;
   lowCents: number;
   highCents: number;
-  /** `YYYY-MM-DD`: the vendor's own as-of date (never the stored valued_at) */
+  /** `YYYY-MM-DD`: the estimate's own as-of date (never the stored valued_at) */
   asOf: string;
-  providerRef: string;
-  /** the provider name clients see (VERIFY against the vendor contract's attribution terms, N8) */
+  /** the basis or method, in plain words (e.g. "comparable sales") */
+  method: string;
+  /** the comparable sales the estimate rests on (evidence; may be empty) */
+  comparables: ComparableSale[];
+  /** the name of the estimate's source that clients see (VERIFY attribution, N8) */
   provider: string;
   /**
-   * Consumer display permission from the vendor licence (N8). Only a literal `true` lets the note reach a
-   * client; the parser (nurture/avm.ts) stores false for anything else and never defaults it to true.
+   * Display permission from the source's licence (N8; for MLS-based comparables, the MLS licence). Only a literal
+   * `true` lets the note reach a client; the parser (nurture/avm.ts) stores false for anything else.
    */
   displayAllowed: boolean;
 }
 
-/** The vendor answered and has no value for the address (E99). A failure is a thrown ProviderError instead. */
+/** The source answered and has no value for the address (E99). A failure is a thrown ProviderError instead. */
 export interface AvmUnavailable {
   available: false;
   provider: string;
 }
 
 export interface AvmProvider {
-  /** whether an AVM vendor is configured on this platform (P2, F10: platform configuration, no tenant connection) */
+  /** whether a home-value source is configured on this platform (P2, F10: platform configuration, no tenant connection) */
   readonly configured: boolean;
   /** throws ProviderError on a vendor failure: nothing is recorded and a later pass retries (no status 'error') */
   estimate(a: AddressFacts): Promise<AvmUnavailable | AvmEstimate>;

@@ -70,7 +70,7 @@ describe('the vendor-answer parser (R-AVM-1, N8, R-AST-13)', () => {
   it('R-AVM-1: an unavailable or unparseable answer never yields a value; display is granted only by a literal true; no confidence or score survives', () => {
     fc.assert(
       fc.property(
-        fc.record({ available: fc.oneof(fc.boolean(), anything), valueCents: fc.oneof(money, anything), lowCents: fc.oneof(money, anything), highCents: fc.oneof(money, anything), asOf: fc.oneof(day, anything), provider: fc.oneof(fc.string(), anything), displayAllowed: fc.oneof(fc.boolean(), fc.constantFrom('true', 1, 'yes'), anything), confidence: anything, score: anything }, { requiredKeys: [] }),
+        fc.record({ available: fc.oneof(fc.boolean(), anything), valueCents: fc.oneof(money, anything), lowCents: fc.oneof(money, anything), highCents: fc.oneof(money, anything), asOf: fc.oneof(day, anything), method: fc.oneof(fc.string(), anything), comparables: anything, provider: fc.oneof(fc.string(), anything), displayAllowed: fc.oneof(fc.boolean(), fc.constantFrom('true', 1, 'yes'), anything), confidence: anything, score: anything }, { requiredKeys: [] }),
         (raw) => {
           const p = parseAvmAnswer(raw);
           if (p === null) return;
@@ -83,14 +83,21 @@ describe('the vendor-answer parser (R-AVM-1, N8, R-AST-13)', () => {
           expect(p.displayAllowed).toBe(raw.displayAllowed === true);
           expect(p.lowCents).toBeLessThanOrEqual(p.highCents);
           expect(p.valueCents).toBeGreaterThan(0);
+          for (const c of p.comparables) expect(Object.keys(c).sort()).toEqual(['address', 'listingId', 'priceCents', 'soldOn']);
         },
       ),
       { numRuns: 2000 },
     );
-    expect(parseAvmAnswer({ available: true, valueCents: 10, lowCents: 9, highCents: 11, asOf: '2026-11-01', provider: 'P', displayAllowed: 'true' })).toMatchObject({ displayAllowed: false });
-    expect(parseAvmAnswer({ available: true, valueCents: 10, lowCents: 9, highCents: 11, asOf: '2026-11-01', provider: 'P' })).toMatchObject({ displayAllowed: false });
+    expect(parseAvmAnswer({ available: true, valueCents: 10, lowCents: 9, highCents: 11, asOf: '2026-11-01', method: 'm', provider: 'P', displayAllowed: 'true' })).toMatchObject({ displayAllowed: false });
+    expect(parseAvmAnswer({ available: true, valueCents: 10, lowCents: 9, highCents: 11, asOf: '2026-11-01', method: 'm', provider: 'P' })).toMatchObject({ displayAllowed: false });
     expect(parseAvmAnswer({ available: false, valueCents: 10, provider: 'P' })).toEqual({ status: 'unavailable', provider: 'P' });
     expect(parseAvmAnswer({ available: true, valueCents: 10, lowCents: 9, highCents: 11, asOf: '2026-02-30', provider: 'P' })).toBeNull();
+  });
+
+  it('D9: the answer is source-neutral: a method and comparable sales as evidence; malformed comparables are dropped', () => {
+    const p = parseAvmAnswer({ available: true, valueCents: 10, lowCents: 9, highCents: 11, asOf: '2026-11-01', method: 'comparable sales', provider: 'P', comparables: [{ address: '2 Elm Ct', soldOn: '2026-10-02', priceCents: 10, listingId: null }, { address: 'x', soldOn: 'nope', priceCents: 1 }, 'junk'] });
+    expect(p).toMatchObject({ status: 'ok', method: 'comparable sales', comparables: [{ address: '2 Elm Ct', soldOn: '2026-10-02', priceCents: 10, listingId: null }] });
+    expect(parseAvmAnswer({ available: true, valueCents: 10, lowCents: 9, highCents: 11, asOf: '2026-11-01', provider: 'P' })).toBeNull(); // no method: not storable
   });
 
   it('vendor strings never carry template markers, line breaks, control or bidi characters into a message', () => {

@@ -340,7 +340,7 @@ describe('home values (wave 2C): a home-value firing is only ever what it says (
     const c = await pastClient(h, w, w.agents[0]!);
     const k = FakeAvmP2.key({ line1: c.line1, postalCode: c.postalCode });
     const fresh = new Date().toISOString().slice(0, 8) + '01';
-    avm().answers.set(k, { kind: 'raw', answer: { available: true, valueCents: 41_000_000, lowCents: 38_000_000, highCents: 44_000_000, asOf: fresh, providerRef: 'ref {{x}}\n', provider: 'Evil {{first_name}}\nValues‮⁦ Inc', displayAllowed: true } });
+    avm().answers.set(k, { kind: 'raw', answer: { available: true, valueCents: 41_000_000, lowCents: 38_000_000, highCents: 44_000_000, asOf: fresh, method: 'comps {{x}}\n', comparables: [{ address: '1 {{x}} Ct\n', soldOn: fresh, priceCents: 1, listingId: null }, { address: 'bad' }], provider: 'Evil {{first_name}}\nValues‮⁦ Inc', displayAllowed: true } });
     await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = now() WHERE key = 'platform:avm'");
     try {
       await avmPass(h, w.tenantId);
@@ -356,8 +356,8 @@ describe('home values (wave 2C): a home-value firing is only ever what it says (
     expect(msg!.body).not.toMatch(/\{\{|\}\}|[‪-‮⁦-⁩]/);
     // answers that cannot be stored: no row, no firing; an unavailable answer that carries a number stores no value
     const bad = [await pastClient(h, w, w.agents[0]!), await pastClient(h, w, w.agents[0]!), await pastClient(h, w, w.agents[0]!)];
-    avm().answers.set(FakeAvmP2.key({ line1: bad[0]!.line1, postalCode: bad[0]!.postalCode }), { kind: 'raw', answer: { available: true, valueCents: -5, lowCents: 1, highCents: 2, asOf: fresh, provider: 'P' } });
-    avm().answers.set(FakeAvmP2.key({ line1: bad[1]!.line1, postalCode: bad[1]!.postalCode }), { kind: 'raw', answer: { available: true, valueCents: 10, lowCents: 20, highCents: 5, asOf: '2026-02-31', provider: 'P' } });
+    avm().answers.set(FakeAvmP2.key({ line1: bad[0]!.line1, postalCode: bad[0]!.postalCode }), { kind: 'raw', answer: { available: true, valueCents: -5, lowCents: 1, highCents: 2, asOf: fresh, method: 'm', provider: 'P' } });
+    avm().answers.set(FakeAvmP2.key({ line1: bad[1]!.line1, postalCode: bad[1]!.postalCode }), { kind: 'raw', answer: { available: true, valueCents: 10, lowCents: 20, highCents: 5, asOf: '2026-02-31', method: 'm', provider: 'P' } });
     avm().answers.set(FakeAvmP2.key({ line1: bad[2]!.line1, postalCode: bad[2]!.postalCode }), { kind: 'raw', answer: { available: false, valueCents: 40_000_000, provider: 'P' } });
     await avmPass(h, w.tenantId);
     expect(await valuationsOf(h, bad[0]!.addressId)).toEqual([]);

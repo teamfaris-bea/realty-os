@@ -199,7 +199,7 @@ export class FakeResoMls implements MlsFeed {
 /** A settable fake AVM answer for one address: an estimate (fields override the deterministic ones), none, or a vendor error. */
 export type FakeAvmAnswer = { kind: 'estimate'; estimate: Partial<Omit<AvmEstimate, 'available'>> } | { kind: 'unavailable' } | { kind: 'error' } | { kind: 'raw'; answer: unknown };
 
-/** The fixture provider name (synthetic; no real vendor is named anywhere). */
+/** The fixture source name (synthetic; no real vendor or MLS is named anywhere). */
 export const FAKE_AVM_PROVIDER = 'Example Home Values (test data)';
 
 /**
@@ -232,7 +232,8 @@ export class FakeAvmP2 implements AvmProvider {
     const valueCents = (250_000 + (n % 500_000)) * 100;
     const now = new Date(this.clock ? this.clock.now() : Date.now());
     const asOf = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-01`;
-    const base: AvmEstimate = { available: true, valueCents, lowCents: Math.round(valueCents * 0.92), highCents: Math.round(valueCents * 1.08), asOf, providerRef: `fake-avm-${n.toString(16)}`, provider: FAKE_AVM_PROVIDER, displayAllowed: true };
+    const comparables = [1, 2, 3].map((k) => ({ address: `${10 * k + (n % 7)} Comparable Ct`, soldOn: `${asOf.slice(0, 7)}-01`, priceCents: Math.round(valueCents * (0.96 + 0.02 * k)), listingId: null }));
+    const base: AvmEstimate = { available: true, valueCents, lowCents: Math.round(valueCents * 0.92), highCents: Math.round(valueCents * 1.08), asOf, method: 'comparable sales', comparables, provider: FAKE_AVM_PROVIDER, displayAllowed: true };
     return set?.kind === 'estimate' ? { ...base, ...set.estimate, available: true } : base;
   }
 }

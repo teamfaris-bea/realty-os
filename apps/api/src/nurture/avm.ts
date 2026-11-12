@@ -46,7 +46,7 @@ export const AVM_PREVIEW_REFUSALS = ['CONSENT_REVOKED', 'SUPPRESSED', 'PERSON_DO
 
 /** A vendor answer after parsing: what TX2 stores. No confidence or score field exists (R-AST-13). */
 export type ParsedAvmAnswer =
-  | { status: 'ok'; valueCents: number; lowCents: number; highCents: number; asOf: string; displayAllowed: boolean; provider: string; providerRef: string | null }
+  | { status: 'ok'; valueCents: number; lowCents: number; highCents: number; asOf: string; displayAllowed: boolean; provider: string; method: string; comparables: { address: string; soldOn: string; priceCents: number; listingId: string | null }[] }
   | { status: 'unavailable'; provider: string };
 
 const isObj = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
@@ -83,7 +83,18 @@ export function parseAvmAnswer(raw: unknown): ParsedAvmAnswer | null {
   const asOf = raw['asOf'];
   if (valueCents === null || valueCents <= 0 || lowCents === null || highCents === null || lowCents > highCents) return null;
   if (typeof asOf !== 'string' || !realDate(asOf)) return null;
-  return { status: 'ok', valueCents, lowCents, highCents, asOf, displayAllowed: raw['displayAllowed'] === true, provider, providerRef: vendorText(raw['providerRef'], 200) };
+  const method = vendorText(raw['method'], 120);
+  if (method === null) return null;
+  // comparables are evidence: malformed entries are dropped, never repaired
+  const comparables = (Array.isArray(raw['comparables']) ? raw['comparables'] : []).slice(0, 20).flatMap((c) => {
+    if (!isObj(c)) return [];
+    const address = vendorText(c['address'], 200);
+    const priceCents = cents(c['priceCents']);
+    const soldOn = typeof c['soldOn'] === 'string' && realDate(c['soldOn']) ? c['soldOn'] : null;
+    const listingId = typeof c['listingId'] === 'string' && /^[0-9a-f-]{36}$/i.test(c['listingId']) ? c['listingId'] : null;
+    return address !== null && priceCents !== null && soldOn !== null ? [{ address, soldOn, priceCents, listingId }] : [];
+  });
+  return { status: 'ok', valueCents, lowCents, highCents, asOf, displayAllowed: raw['displayAllowed'] === true, provider, method, comparables };
 }
 
 /** The stored row as core's AvmEstimate (avmSendable, homeValueText). */
@@ -212,7 +223,7 @@ export async function recordAnswerInTx(tx: Tx, deps: Pick<NurtureDeps, 'ids'>, p
     asOf: est.asOf,
     displayAllowed: est.displayAllowed,
     provider: est.provider,
-    providerRef: answer.status === 'ok' ? answer.providerRef : null,
+    providerRef: null, // source-neutral (D9): no source-specific reference is stored
     changeFromPriorBps: changeFromPriorBps(est, prior ? estimateOfRow(prior) : null),
   });
   const fact: Fact = { kind: 'home_value', contactId: c.id, contactAddressId: addr.id, month, valuationId: id, at: valuedAt, address: addressText(addr) };

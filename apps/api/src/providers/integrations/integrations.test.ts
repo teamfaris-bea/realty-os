@@ -73,7 +73,10 @@ describe('R-INT-1 fakes are the default and deterministic', () => {
     expect(one.calStale).toEqual({ kind: 'stale', syncVersion: 3 }); // sync_version fence
     expect(one.avmNone).toEqual({ available: false, provider: FAKE_AVM_PROVIDER });
     // the fake's answer carries the provider name clients see and its stated licence answer; asOf is the first day of the clock's UTC month
-    expect(one.avm).toMatchObject({ available: true, provider: FAKE_AVM_PROVIDER, displayAllowed: true });
+    expect(one.avm).toMatchObject({ available: true, provider: FAKE_AVM_PROVIDER, displayAllowed: true, method: 'comparable sales' });
+    // D9: source-neutral: comparable sales as evidence, no vendor reference
+    expect((one.avm as { comparables: unknown[] }).comparables).toHaveLength(3);
+    expect(Object.keys(one.avm).sort()).toEqual(['asOf', 'available', 'comparables', 'displayAllowed', 'highCents', 'lowCents', 'method', 'provider', 'valueCents']);
     expect((one.avm as { asOf: string }).asOf).toMatch(/^\d{4}-\d{2}-01$/);
     expect(Object.keys(one.avm).some((k) => /confidence|score/i.test(k))).toBe(false); // R-AST-13
     expect(one.license.rules.displayToPublic).toBe(false); // strictest default until a licence pack is entered
