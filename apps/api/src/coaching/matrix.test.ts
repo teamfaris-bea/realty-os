@@ -27,6 +27,9 @@ afterAll(async () => {
 const ROUTES: { method: 'GET' | 'POST' | 'PUT'; url: string; action: Action; facts: Record<string, unknown>; body?: unknown }[] = [
   { method: 'GET', url: '/coaching/today', action: 'coaching.view', facts: { own: true } },
   { method: 'GET', url: '/coaching/team', action: 'coaching.team_view', facts: { team: true } },
+  // module 54 (additive): the trends routes, same actions
+  { method: 'GET', url: '/coaching/trends', action: 'coaching.view', facts: { own: true } },
+  { method: 'GET', url: '/coaching/trends/team', action: 'coaching.team_view', facts: { team: true } },
   { method: 'GET', url: '/admin/coaching', action: 'coaching.settings', facts: { loosening: false } },
   // the one request every role that may change these settings may make: call reviews off (already off: a no-op)
   { method: 'PUT', url: '/admin/coaching', action: 'coaching.settings', facts: { loosening: false }, body: { scoringEnabled: false } },
@@ -54,6 +57,8 @@ describe('coaching routes × roles', () => {
       'GET /api/admin/coaching → coaching.settings',
       'GET /api/coaching/team → coaching.team_view',
       'GET /api/coaching/today → coaching.view',
+      'GET /api/coaching/trends → coaching.view',
+      'GET /api/coaching/trends/team → coaching.team_view',
       'POST /api/coaching/today/dismiss → coaching.view',
       'PUT /api/admin/coaching → coaching.settings',
     ]);

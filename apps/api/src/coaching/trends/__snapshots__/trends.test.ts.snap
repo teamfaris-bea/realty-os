@@ -1,0 +1,486 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`ready (R-COACH-7, R-COACH-8) > R-COACH-6 R-COACH-7: responses carry counts only: no score, grade, rank, percentage, metRate, quote, call, contact or tenant id, no confidence 1`] = `
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "trends": {
+      "additionalProperties": false,
+      "properties": {
+        "members": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "items": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "after": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "calls": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer",
+                        },
+                        "met": {
+                          "anyOf": [
+                            {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer",
+                            },
+                            {
+                              "type": "null",
+                            },
+                          ],
+                        },
+                        "scored": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer",
+                        },
+                      },
+                      "required": [
+                        "calls",
+                        "scored",
+                        "met",
+                      ],
+                      "type": "object",
+                    },
+                    "before": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "calls": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer",
+                        },
+                        "met": {
+                          "anyOf": [
+                            {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer",
+                            },
+                            {
+                              "type": "null",
+                            },
+                          ],
+                        },
+                        "scored": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer",
+                        },
+                      },
+                      "required": [
+                        "calls",
+                        "scored",
+                        "met",
+                      ],
+                      "type": "object",
+                    },
+                    "direction": {
+                      "enum": [
+                        "improving",
+                        "slipping",
+                        "steady",
+                        "not_enough_data",
+                      ],
+                      "type": "string",
+                    },
+                    "key": {
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "sentence": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "key",
+                    "label",
+                    "before",
+                    "after",
+                    "direction",
+                    "sentence",
+                  ],
+                  "type": "object",
+                },
+                "type": "array",
+              },
+              "name": {
+                "type": "string",
+              },
+              "userId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string",
+              },
+            },
+            "required": [
+              "userId",
+              "name",
+              "items",
+            ],
+            "type": "object",
+          },
+          "maxItems": 200,
+          "type": "array",
+        },
+        "sentence": {
+          "type": "string",
+        },
+        "state": {
+          "enum": [
+            "not_cleared",
+            "scoring_off",
+            "tl_not_allowed",
+            "ready",
+          ],
+          "type": "string",
+        },
+        "team": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "after": {
+                "additionalProperties": false,
+                "properties": {
+                  "calls": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer",
+                  },
+                  "met": {
+                    "anyOf": [
+                      {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "scored": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer",
+                  },
+                },
+                "required": [
+                  "calls",
+                  "scored",
+                  "met",
+                ],
+                "type": "object",
+              },
+              "before": {
+                "additionalProperties": false,
+                "properties": {
+                  "calls": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer",
+                  },
+                  "met": {
+                    "anyOf": [
+                      {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "scored": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer",
+                  },
+                },
+                "required": [
+                  "calls",
+                  "scored",
+                  "met",
+                ],
+                "type": "object",
+              },
+              "direction": {
+                "enum": [
+                  "improving",
+                  "slipping",
+                  "steady",
+                  "not_enough_data",
+                ],
+                "type": "string",
+              },
+              "key": {
+                "type": "string",
+              },
+              "label": {
+                "type": "string",
+              },
+              "sentence": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "key",
+              "label",
+              "before",
+              "after",
+              "direction",
+              "sentence",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "windows": {
+          "additionalProperties": false,
+          "properties": {
+            "after": {
+              "additionalProperties": false,
+              "properties": {
+                "from": {
+                  "type": "string",
+                },
+                "to": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "from",
+                "to",
+              ],
+              "type": "object",
+            },
+            "before": {
+              "additionalProperties": false,
+              "properties": {
+                "from": {
+                  "type": "string",
+                },
+                "to": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "from",
+                "to",
+              ],
+              "type": "object",
+            },
+          },
+          "required": [
+            "before",
+            "after",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "state",
+        "sentence",
+        "windows",
+        "team",
+        "members",
+      ],
+      "type": "object",
+    },
+  },
+  "required": [
+    "trends",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`ready (R-COACH-7, R-COACH-8) > R-COACH-6 R-COACH-7: responses carry counts only: no score, grade, rank, percentage, metRate, quote, call, contact or tenant id, no confidence 2`] = `
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "trends": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "after": {
+                "additionalProperties": false,
+                "properties": {
+                  "calls": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer",
+                  },
+                  "met": {
+                    "anyOf": [
+                      {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "scored": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer",
+                  },
+                },
+                "required": [
+                  "calls",
+                  "scored",
+                  "met",
+                ],
+                "type": "object",
+              },
+              "before": {
+                "additionalProperties": false,
+                "properties": {
+                  "calls": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer",
+                  },
+                  "met": {
+                    "anyOf": [
+                      {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "scored": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer",
+                  },
+                },
+                "required": [
+                  "calls",
+                  "scored",
+                  "met",
+                ],
+                "type": "object",
+              },
+              "direction": {
+                "enum": [
+                  "improving",
+                  "slipping",
+                  "steady",
+                  "not_enough_data",
+                ],
+                "type": "string",
+              },
+              "key": {
+                "type": "string",
+              },
+              "label": {
+                "type": "string",
+              },
+              "sentence": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "key",
+              "label",
+              "before",
+              "after",
+              "direction",
+              "sentence",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "sentence": {
+          "type": "string",
+        },
+        "state": {
+          "enum": [
+            "not_cleared",
+            "scoring_off",
+            "tl_not_allowed",
+            "ready",
+          ],
+          "type": "string",
+        },
+        "windows": {
+          "additionalProperties": false,
+          "properties": {
+            "after": {
+              "additionalProperties": false,
+              "properties": {
+                "from": {
+                  "type": "string",
+                },
+                "to": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "from",
+                "to",
+              ],
+              "type": "object",
+            },
+            "before": {
+              "additionalProperties": false,
+              "properties": {
+                "from": {
+                  "type": "string",
+                },
+                "to": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "from",
+                "to",
+              ],
+              "type": "object",
+            },
+          },
+          "required": [
+            "before",
+            "after",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "state",
+        "sentence",
+        "windows",
+        "items",
+      ],
+      "type": "object",
+    },
+  },
+  "required": [
+    "trends",
+  ],
+  "type": "object",
+}
+`;

@@ -40,6 +40,7 @@ import { insightsRoutes } from './insights/routes.js';
 import { coachingRoutes } from './coaching/routes.js';
 import { transactionRoutes } from './transactions/routes.js';
 import { gbpRoutes } from './gbp/routes.js';
+import { coachingTrendsRoutes } from './coaching/trends/routes.js';
 
 export interface RouteModule {
   name: string;
@@ -78,5 +79,6 @@ export const routeModules: RouteModule[] = [
   coachingRoutes,
   transactionRoutes,
   gbpRoutes,
+  coachingTrendsRoutes,
   // registry: add new entries above this line
 ];
