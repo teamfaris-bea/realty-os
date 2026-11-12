@@ -11,7 +11,8 @@
 //   bookSlot        booking under the person's advisory lock (E151): re-reads in-app appointments and live
 //                   free/busy after taking the lock; a taken slot returns the next free one instead
 import type { IdGenerator, TenantId, UserActor } from '@realty/core/foundation';
-import { type Database, type Tx, withTenantTx } from '@realty/db';
+import { type Database, type Tx, dbNow, withTenantTx } from '@realty/db';
+import { sql } from 'kysely';
 import { randomBytes } from 'node:crypto';
 import { audit, redactDiff, redactSnapshot } from '../audit.js';
 import type { EnvelopeService } from '../crypto/envelope.js';
@@ -315,7 +316,7 @@ export function mergeBusy(xs: readonly Busy[]): Busy[] {
   return out;
 }
 
-type ProviderBusy = { calendar: BusyView['calendar']; provider: CalendarProviderKey | null; busy: Busy[] };
+type ProviderBusy = { calendar: BusyView['calendar']; provider: CalendarProviderKey | null; busy: Busy[]; linkId: string | null };
 
 /** System actor, inside the caller's transaction: the person's live calendar busy times, read now, kept nowhere. */
 async function providerBusy(deps: CalendarDeps, tx: Tx, tenantId: TenantId, userId: string, range: { start: string; end: string }): Promise<ProviderBusy> {
@@ -323,19 +324,19 @@ async function providerBusy(deps: CalendarDeps, tx: Tx, tenantId: TenantId, user
   if (!link) {
     const links = await repo.linksOfUser(tx, userId);
     const revoked = links.find((l) => l.status === 'revoked' && l.last_error_code === 'GRANT_REVOKED');
-    return { calendar: revoked ? 'needs_reconnect' : 'not_connected', provider: revoked?.provider ?? null, busy: [] };
+    return { calendar: revoked ? 'needs_reconnect' : 'not_connected', provider: revoked?.provider ?? null, busy: [], linkId: null };
   }
   const svc = CALENDAR_SERVICES[link.provider];
   try {
     const live = await liveAuth(deps, tx, tenantId, link);
     const busy = await withAuth(live, (a) => deps.adapters.calendar[svc.calendar].freeBusy(a, range));
-    return { calendar: link.status === 'degraded' ? 'degraded' : 'connected', provider: link.provider, busy };
+    return { calendar: link.status === 'degraded' ? 'degraded' : 'connected', provider: link.provider, busy, linkId: link.id };
   } catch (e) {
     if (e instanceof GrantRevokedError) {
       await revokeLinkAsSystem(tx, sys(tenantId), link, 'GRANT_REVOKED');
-      return { calendar: 'needs_reconnect', provider: link.provider, busy: [] };
+      return { calendar: 'needs_reconnect', provider: link.provider, busy: [], linkId: link.id };
     }
-    return { calendar: 'unavailable', provider: link.provider, busy: [] };
+    return { calendar: 'unavailable', provider: link.provider, busy: [], linkId: link.id };
   }
 }
 
@@ -361,6 +362,18 @@ export async function busy(deps: CalendarDeps, actor: UserActor, range: { from: 
     },
     { db: deps.db, retries: 2 },
   );
+}
+
+/**
+ * Module 48 (flagged one-place export, O10; the voice lane's signature) plus `linkId` (ISA-2b, D8a): the busy times
+ * bookSlot reads for `userId` (live free/busy plus the person's in-app appointments), as the system actor inside the
+ * caller's transaction, and the live link they came from. Read now, kept nowhere (R-CAL-3). `calendar: 'unavailable'`
+ * means the calendar did not answer: offer nothing (bookSlot would refuse too).
+ */
+export async function busyForBooking(deps: Pick<CalendarDeps, 'envelope' | 'adapters' | 'now'>, tx: Tx, tenantId: TenantId, userId: string, range: { start: string; end: string }): Promise<{ calendar: BusyView['calendar']; busy: Busy[]; linkId: string | null }> {
+  const p = await providerBusy(deps as CalendarDeps, tx, tenantId, userId, range);
+  const own = (await repo.busyAppointments(tx, userId, range.start, range.end)).map((a) => ({ start: a.starts_at.toISOString(), end: a.ends_at.toISOString() }));
+  return { calendar: p.calendar, busy: mergeBusy([...p.busy, ...own]), linkId: p.linkId };
 }
 
 // ---- booking under the person's advisory lock (E151) --------------------------------------------------------
@@ -392,37 +405,67 @@ const overlaps = (s: number, e: number, b: Busy) => Date.parse(b.start) < e && D
  * risking a double booking. The new appointment enqueues its calendar push in the same transaction.
  */
 export async function bookSlot(deps: CalendarDeps, tenantId: string, input: BookInput): Promise<BookResult> {
+  return withTenantTx(sys(tenantId), (tx) => bookSlotInTx(tx, deps, tenantId, input, { requireLiveCalendar: false }) as Promise<BookResult>, { db: deps.db, retries: 0 });
+}
+
+export interface BookInTxOptions {
+  /** the AI ISA booking (D8a): anything but a connected or degraded calendar refuses CALENDAR_UNAVAILABLE */
+  requireLiveCalendar: boolean;
+  /** the offer's availability link: a different live link refuses SLOT_SOURCE_CHANGED (a new offer follows) */
+  expectLinkId?: string | null;
+  /** busy intervals are widened by this many minutes on each side, as computeOffer does (default 0) */
+  bufferMinutes?: number;
+}
+
+export type BookInTxResult = BookResult | { ok: false; code: 'SLOT_SOURCE_CHANGED' };
+
+/**
+ * bookSlot's body, inside the caller's SYSTEM transaction (ISA-2b, D8a; R-ISA-13, R-CAL-3, E151). Takes the person's
+ * booking lock (lock 5) first, then re-reads the in-app appointments and the live free/busy (the only provider call
+ * under a lock, lock 5 alone). Refusals RETURN (never throw), so a GrantRevoked revoke written by the read persists
+ * in the caller's transaction. The insert runs in a savepoint: the 0190 assistant-overlap trigger's
+ * APPOINTMENT_OVERLAP becomes SLOT_TAKEN with no next slot. bookSlot passes `requireLiveCalendar: false`, so its
+ * behaviour and results are unchanged.
+ */
+export async function bookSlotInTx(tx: Tx, deps: Pick<CalendarDeps, 'envelope' | 'ids' | 'adapters' | 'now'>, tenantId: string, input: BookInput, o: BookInTxOptions): Promise<BookInTxResult> {
   const s = Date.parse(input.startsAt);
   const e = Date.parse(input.endsAt);
   if (!(e > s) || e - s > 12 * 3_600_000) return { ok: false, code: 'SLOT_INVALID' };
-  const actor = sys(tenantId);
-  return withTenantTx(
-    actor,
-    async (tx, now) => {
-      if (s < now) return { ok: false as const, code: 'SLOT_INVALID' as const };
-      await repo.lockPersonBookings(tx, input.userId);
-      if (!(await repo.memberActive(tx, input.userId))) return { ok: false as const, code: 'MEMBER_NOT_ACTIVE' as const };
-      const windowEnd = new Date(e + SEARCH_MS).toISOString();
-      const p = await providerBusy(deps, tx, actor.tenantId, input.userId, { start: new Date(s).toISOString(), end: windowEnd });
-      if (p.calendar === 'unavailable') return { ok: false as const, code: 'CALENDAR_UNAVAILABLE' as const };
-      const own = (await repo.busyAppointments(tx, input.userId, new Date(s).toISOString(), windowEnd)).map((a) => ({ start: a.starts_at.toISOString(), end: a.ends_at.toISOString() }));
-      const taken = mergeBusy([...p.busy, ...own]);
-      if (taken.some((b) => overlaps(s, e, b))) {
-        const len = e - s;
-        let next: { startsAt: string; endsAt: string } | null = null;
-        for (let t = s + STEP_MS; t + len <= e + SEARCH_MS; t += STEP_MS) {
-          if (!taken.some((b) => overlaps(t, t + len, b))) {
-            next = { startsAt: new Date(t).toISOString(), endsAt: new Date(t + len).toISOString() };
-            break;
-          }
-        }
-        return { ok: false as const, code: 'SLOT_TAKEN' as const, nextSlot: next };
+  const now = await dbNow(tx);
+  if (s < now) return { ok: false, code: 'SLOT_INVALID' };
+  await repo.lockPersonBookings(tx, input.userId);
+  if (!(await repo.memberActive(tx, input.userId))) return { ok: false, code: 'MEMBER_NOT_ACTIVE' };
+  const pad = (o.bufferMinutes ?? 0) * 60_000;
+  const windowEnd = new Date(e + SEARCH_MS).toISOString();
+  const p = await providerBusy(deps as CalendarDeps, tx, tenantId as TenantId, input.userId, { start: new Date(s - pad).toISOString(), end: windowEnd });
+  if (p.calendar === 'unavailable') return { ok: false, code: 'CALENDAR_UNAVAILABLE' };
+  if (o.requireLiveCalendar && p.calendar !== 'connected' && p.calendar !== 'degraded') return { ok: false, code: 'CALENDAR_UNAVAILABLE' };
+  if (o.requireLiveCalendar && o.expectLinkId !== undefined && p.linkId !== o.expectLinkId) return { ok: false, code: 'SLOT_SOURCE_CHANGED' };
+  const own = (await repo.busyAppointments(tx, input.userId, new Date(s - pad).toISOString(), windowEnd)).map((a) => ({ start: a.starts_at.toISOString(), end: a.ends_at.toISOString() }));
+  const taken = mergeBusy([...p.busy, ...own].map((b) => (pad === 0 ? b : { start: new Date(Date.parse(b.start) - pad).toISOString(), end: new Date(Date.parse(b.end) + pad).toISOString() })));
+  if (taken.some((b) => overlaps(s, e, b))) {
+    const len = e - s;
+    let next: { startsAt: string; endsAt: string } | null = null;
+    for (let t = s + STEP_MS; t + len <= e + SEARCH_MS; t += STEP_MS) {
+      if (!taken.some((b) => overlaps(t, t + len, b))) {
+        next = { startsAt: new Date(t).toISOString(), endsAt: new Date(t + len).toISOString() };
+        break;
       }
-      const id = deps.ids.next<'AppointmentId'>();
-      await repo.insertBooked(tx, { id, userId: input.userId, contactId: input.contactId ?? null, kind: input.kind, startsAt: new Date(s).toISOString(), endsAt: new Date(e).toISOString(), createdByKind: input.createdByKind, setByUserId: null });
-      await enqueueCalendarPushLocked(tx, id);
-      return { ok: true as const, appointmentId: id };
-    },
-    { db: deps.db, retries: 0 },
-  );
+    }
+    return { ok: false, code: 'SLOT_TAKEN', nextSlot: next };
+  }
+  const id = deps.ids.next<'AppointmentId'>();
+  await sql`SAVEPOINT book_slot`.execute(tx);
+  try {
+    await repo.insertBooked(tx, { id, userId: input.userId, contactId: input.contactId ?? null, kind: input.kind, startsAt: new Date(s).toISOString(), endsAt: new Date(e).toISOString(), createdByKind: input.createdByKind, setByUserId: null });
+  } catch (err) {
+    if (/APPOINTMENT_OVERLAP/.test((err as Error).message ?? '')) {
+      await sql`ROLLBACK TO SAVEPOINT book_slot`.execute(tx);
+      return { ok: false, code: 'SLOT_TAKEN', nextSlot: null };
+    }
+    throw err;
+  }
+  await sql`RELEASE SAVEPOINT book_slot`.execute(tx);
+  await enqueueCalendarPushLocked(tx, id);
+  return { ok: true, appointmentId: id };
 }
