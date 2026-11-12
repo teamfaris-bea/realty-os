@@ -410,6 +410,20 @@ Since D9 the sync also stores each record's sale and property facts as `listings
 
 ---
 
+## 5a. County public records (read-only; homeowner profile, owner decision D10)
+
+A read-only connector to Beaufort County's public ArcGIS services (`apps/api/src/providers/publicRecords/**`, modules 77-79), on module 50's one `PublicRecordsProvider`. It ships dark: fixtures only, `PUBLIC_RECORDS_LIVE_CALLS=false`. Rules: DATA_MODEL R-HOME-1..10; design notes: ARCHITECTURE §21.34; the steps before any live call: DEPLOY "Before any live county call".
+
+- **Kill switch.** `PUBLIC_RECORDS_LIVE_CALLS` is `false` by default in every environment. While it is false the connector reports not configured and builds no request; the nightly pass then only purges (R-HOME-10, E573). Turning it on is a per-deployment step after the DEPLOY checklist, never a code default.
+- **Allow-list and URLs.** The service URLs are code constants (`fields.ts`), never configuration. At start-up each must be https on the default port with no credentials, query or fragment, and its host must be on `PUBLIC_RECORDS_ALLOWED_HOSTS` (public DNS names only; default `gis.beaufortcountysc.gov`), or the process refuses to start naming the key, never the value. Requests are GET only and never follow a redirect (any 3xx is refused). The where clause is built only from normalized address tokens that match a strict whitelist; an address that fails it is refused before any request (E578).
+- **No credential.** The county services are public; no key, token or password exists or is sent. The User-Agent is generic and names no tenant, user or contact.
+- **Input.** One postal address per lookup, nothing else: never a name, a contact id or a tenant id (R-INT-1). Owner names in the answer live in memory for the match only and are never stored, hashed or logged; only the closed field list survives the parser (R-HOME-3, R-HOME-4).
+- **Logging.** Logs, alerts and errors carry counts and codes only: never an address, an owner, a parcel number or any part of a county response (the connector test spies on every console method and searches each error for the fixture's address, owner, PIN and mailing address).
+- **Rate and size.** At most 3 requests per lookup, at least 1 s apart per process (the spacing multiplies with the number of worker processes; DEPLOY checklist step 7), 15 s timeout, 2 MiB streamed body cap; a per-tenant, per-local-date lookup budget (100 by default) on top.
+- **What remains (VERIFY):** every layer, field and the rate with the county; SC Code 30-2-50 and Beaufort's GIS distribution policy inside a multi-tenant CRM (**VERIFY WITH COUNSEL**); retention and keeping owner mailing addresses at all (**VERIFY WITH COUNSEL**). The list is DEPLOY "Before any live county call".
+
+---
+
 ## 6. Performance lane: security review items (lane `perf-misses`)
 
 Every change of this lane that touches who-sees-what, a definer, or a policy is listed here with its proof. None

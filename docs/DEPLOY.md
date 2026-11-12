@@ -517,12 +517,24 @@ A KMS-backed KEK (wrap and unwrap as KMS calls) is a drop-in for the same interf
 - [ ] Telephony: `TELEPHONY_LIVE_REQUESTS=false` until the written pilot approval (§5.1). The start-up log of the API and the worker shows its value.
 - [ ] County public records (owner decision D10): `PUBLIC_RECORDS_LIVE_CALLS=false` unless every step of "Before any live county call" below is done and signed off.
 
-  **Before any live county call** (each step signed off by the owner; nothing here is done in this build):
-  1. Confirm with Beaufort County the services root, each layer and field in `apps/api/src/providers/publicRecords/fields.ts` (**VERIFY** every one), how empty values are written, the usage terms, the rate limit (the connector waits at least 1 s between requests) and whether automated lookups are allowed at all.
-  2. Confirm the ZIP-to-county table in `packages/core/src/homeowner/counties.ts` and the county links (**VERIFY**).
-  3. Counsel confirms the retention ceiling (12 months, R-DATA-6) and that an internal profile from these records is permitted (**VERIFY WITH COUNSEL**). Outreach stays unbuilt whatever `platform:public_records_outreach` says.
-  4. Run the connector against a county test address with `PUBLIC_RECORDS_PROVIDER=county` and `PUBLIC_RECORDS_LIVE_CALLS=false` first: the panel must say live lookups are off and no request may leave (the worker logs `homeowner.refresh pass` with `lookups: 0`).
-  5. Only then set `PUBLIC_RECORDS_LIVE_CALLS=true` on that deployment and redeploy; watch the P2 `PUBLIC_RECORDS_SOURCE_FAILING` alert. On any failure or doubt set it back to `false` and redeploy before anyone investigates.
+  **Before any live county call** (each step signed off by the owner; nothing here is done in this build; the numbers in brackets are the D10 brief's verify_items and owner questions):
+  1. Confirm with Beaufort County the services root, each layer and field in `apps/api/src/providers/publicRecords/fields.ts` (**VERIFY** every one), how empty values are written, the usage terms, the rate limit and whether automated lookups are allowed at all. In particular [verify 1] `EnerGov/MapServer/1` and its `GisFile_PIN`, `Owner1`, `Owner2` and `MailingAdd` fields: the only local source is OpenAddresses `sources/us/sc/beaufort.json`, and its Nov 5, 2026 bulk edit does not prove the fields survived the county's Oct 12 assessor switch; confirm `maxRecordCount`, query support, rate limits, edit-date metadata and the mailing-address format.
+  2. [verify 2] Whether `Addresses/MapServer/0` or the parcel layer carries a site address with city and ZIP (OpenAddresses maps none on the address layer); a site address on the parcel layer would remove the spatial step.
+  3. [verify 3] Whether `SwrAddLookUp/MapServer/1` is public, and its sale date, price, `LEGRES` and tax-district fields. The sale step (`useGisfileTable`) stays off until then [owner question 8].
+  4. [verify 4] Condos and units: whether units have their own parcels and address points (`UNITNUM`), and how often the county's site address differs from the USPS address.
+  5. [verify 5, 6] Confirm the ZIP-to-county table in `packages/core/src/homeowner/counties.ts` against the Census ZCTA-to-county file (which ZIPs are Beaufort, Jasper and shared), and each county link there (**VERIFY**; the Jasper qPublic page is listed by the brief as `http://` and the panel opens https links only).
+  6. [verify 7] South Carolina terms: assessed value (4% or 6% of market value) against the county's market value, the panel's labels (`apps/web/src/surfaces/homeowner/copy.ts`), and whether the homestead exemption is on any bulk layer (expected: no).
+  7. [verify 8] The rate: the connector keeps its requests at least 1 s apart **per process** (at most 3 per lookup), so the rate multiplies with the number of worker processes. Confirm a polite rate with the county for the worker count you run.
+  8. [verify 14] Owner-name formats on the real layer (middle initials, "LAST FIRST & FIRST2", ETAL, JR) against `normalizeOwnerName`'s exact token sets (`packages/core/src/predict/property.ts`): measure the `not_matched` rate on a sample of recognised contacts. Any tolerance is a reviewed module-49 change.
+  9. Counsel (**VERIFY WITH COUNSEL**; outreach stays unbuilt whatever `platform:public_records_outreach` says):
+     - the retention ceiling (12 months, R-DATA-6, R-HOME-9) and whether to keep owner mailing addresses at all [verify 11];
+     - that an internal profile from these records is permitted, under SC Code 30-2-50: internal display on existing contacts, absentee prospecting, vendor data, texts, LLC and out-of-state owners, and whether D11's clearance covered these [verify 9];
+     - Beaufort County's GIS distribution policy ("no passing data on to others") inside a multi-tenant CRM [verify 10]; ask the county's Mapping and Applications Department too. Live calls stay off until counsel answers this [owner question 7];
+     - showing D9's in-house value to agents on this panel (`valuationEligible`, C6) before the D9 slots are wired [verify 12].
+  10. Owner action [verify 13]: email the Jasper County GIS office whether `Parcels/FeatureServer/0` (TaxPIN) holds owner names. Until a reviewed change says otherwise, Jasper stays links only.
+  11. Scope [owner question 6]: per-address lookups for recognised contacts only. Never a county download, bulk copy or mirror.
+  12. Run the connector against a county test address with `PUBLIC_RECORDS_PROVIDER=county` and `PUBLIC_RECORDS_LIVE_CALLS=false` first: the panel must say live lookups are off and no request may leave (the worker logs `homeowner.refresh pass` with `lookups: 0`).
+  13. Only then set `PUBLIC_RECORDS_LIVE_CALLS=true` on that deployment and redeploy; watch the P2 `PUBLIC_RECORDS_SOURCE_FAILING` alert (runbook: `docs/OPERATIONS.md` §4.15). On any failure or doubt set it back to `false` and redeploy before anyone investigates.
 - [ ] Owner decision D8 (a person's reply in the website chat is first contact), on a database that already ran batch 6's website chat: before the D8 release, as the owner (§3), list the untouched-lead items a recompute can still reach whose lead someone answered in the chat by the deadline. Before D8 such a reply was no touch, and the new evidence words ("No human call, text, email or chat reply from the agent or a collaborator …") would be untrue for an agent's reply (DATA_MODEL R-ACC-2, D8). Resolve each row the agent or a collaborator answered with a note saying so (R-ACC-3). A database that never served the chat has nothing to check.
 
   ```sql
@@ -581,14 +593,16 @@ docker compose -f docker-compose.prod.yml --env-file .env.owner run --rm --no-de
 | The likely-to-move models (C4) | none | not recorded here: each `prediction_models` version still needs `counsel_reviewed_at` and the platform back-test at its own approval |
 | Using public-record personal information for outreach (South Carolina privacy law) | `platform:public_records_outreach` | not recorded by the seven-key command: recorded only by its own command below (owner question 1). It gates nothing in this build (no outreach path exists); the homeowner panel shows whether it is recorded |
 
-The D10 outreach clearance is recorded on its own, only once the owner confirms it (owner question 1; dry run first, then `--apply`):
+The D10 outreach clearance is recorded on its own command, never in the seven-key D11 command, and only after the owner confirms that counsel's review covered the brief's verify_items 9 (SC Code 30-2-50: internal display on existing contacts, absentee prospecting, vendor data, texts, LLC and out-of-state owners) and 10 (Beaufort County's GIS distribution policy inside a multi-tenant CRM) (owner question 1; batch 11 reconciliation homeowner-8). The owner's D11 attestation (PHASE2_3_PLAN D11) names this item; if counsel's review covered both questions, its date and reference are the ones to record, otherwise wait for the review that does. Fill in the placeholders from that review (dry run first, then `--apply`):
 
 ```sh
 docker compose -f docker-compose.prod.yml --env-file .env.owner run --rm --no-deps release \
   node packages/db/dist/scripts/counsel-review.js \
   --keys platform:public_records_outreach@2026.11.0 \
-  --reviewed-on 2026-11-12 --reference "counsel review reported by the owner, 2026-11-12 (owner decisions D10, D11)"
+  --reviewed-on <review date, YYYY-MM-DD> --reference "<counsel reference: the review that covered verify_items 9 and 10>"
 ```
+
+Recording it builds nothing: the pack gates no outreach path, and the homeowner panel then says "counsel clearance recorded on <date>" for that deployment.
 
 `platform:ads` (Google Ads budget changes and pauses, module 52) is **not** part of D11. It stays dark on every deployment until counsel review is recorded for it (the counsel-review command, per deployment) **and** a separate platform step sets `rules.vendor_ready_at` once a real Google Ads adapter has passed its check against the team's account at the deployment's API access level (**VERIFY**, N14). Until both are set, spend is still read and shown, nothing changes money, and at the monthly cap the reconcile only alerts every Owner and Admin to pause the campaigns in Google Ads (no automatic pause while dark). The D11 command is unchanged and never names `platform:ads`. What counsel must cover before clearing it is the ads item of PHASE2_3_PLAN C3 (**VERIFY WITH COUNSEL**: Google Ads housing rules and radius limits, the disparate-impact risk of shifting budget by cost per agreement, the cap attestation and overspend copy, auto-pausing at the cap with unmanaged campaigns included, ranking by `gads:` attribution, and what clearing must cover before `vendor_ready_at`).
 

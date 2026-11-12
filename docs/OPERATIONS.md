@@ -246,6 +246,13 @@ timers and provider health, and can retry or cancel a job (audited).
 - **Check / fix by step:** `ready` → §4.1/§4.2. `login`/`mfa` → the check user's password or TOTP secret changed, or sign-in is broken (§4.3). `feed` → §4.3. `send … blocked` → someone opted the test contact out (record it, then use a fresh test number; never lift an opt-out to make the check pass). `accepted … still queued` → workers or the provider (§4.4, §4.9).
 - **Escalate:** when the cause is not the check's own configuration.
 
+### 4.15 PUBLIC_RECORDS_SOURCE_FAILING (P2 `WORKER_ERROR`, homeowner profile, owner decision D10)
+- **Means:** a nightly `homeowner.refresh` pass of one tenant reached the failure threshold with no answered lookup: the county service was unreachable, timed out, answered an ArcGIS error at HTTP 200, a 5xx, a redirect, an oversized or non-JSON body (DATA_MODEL R-HOME-6, R-HOME-10; E572, E579). It can fire only with `PUBLIC_RECORDS_LIVE_CALLS=true`, which is off by default everywhere. Existing profiles keep their values, dates and retention, and the panel says "Couldn't reach the county records on <date>". The alert carries counts and the local date only, never an address, an owner or a county response.
+- **Fix first:** set `PUBLIC_RECORDS_LIVE_CALLS=false` on that deployment and redeploy (DEPLOY "Before any live county call", step 13). With live calls off no request is built and the pass only purges.
+- **Then check:** whether the county moved or changed its service, layer or fields (the services root, `Addresses/MapServer/0`, `EnerGov/MapServer/1` and the field names in `apps/api/src/providers/publicRecords/fields.ts`, each **VERIFY**), whether the county changed its usage terms or rate limit, and whether `PUBLIC_RECORDS_ALLOWED_HOSTS` still names its host. A moved layer or field is a reviewed code change to `fields.ts` and its fixtures, never configuration.
+- **Turn it back on** only after that check, by the same DEPLOY steps (dry run with live calls off first).
+- **Escalate:** to the owner when the county's terms or permission changed; to the D10 lane owner for a code change.
+
 ---
 
 ## 5. Error reporting
