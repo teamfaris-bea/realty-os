@@ -326,6 +326,40 @@ export interface CallsTable {
   ring_user_id: string | null;
 }
 
+/** public.cma_reports (table) */
+export interface CmaReportsTable {
+  tenant_id: string;
+  id: string;
+  contact_id: string | null;
+  contact_address_id: string | null;
+  listing_id: string | null;
+  status: Generated<string>;
+  purpose: string;
+  inspection: Generated<string>;
+  inspected_on: string | null;
+  intended_users: string | null;
+  agent_interest: string | null;
+  conflicts: string | null;
+  value_definition: string | null;
+  limiting_conditions: string | null;
+  method_version: string;
+  valuation_date: string;
+  mls_data_as_of: Timestamp | null;
+  subject: Json;
+  result: Json;
+  value_cents: Int8 | null;
+  low_cents: Int8 | null;
+  high_cents: Int8 | null;
+  agent_notes: string | null;
+  content_sha256: string;
+  created_by_user_id: string;
+  shared_by_user_id: string | null;
+  shared_at: Timestamp | null;
+  shared_message_id: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
 /** public.compliance_policy_versions (table) */
 export interface CompliancePolicyVersionsTable {
   tenant_id: string;
@@ -1049,6 +1083,8 @@ export interface IntegrationConnectionsTable {
   disconnected_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+  mls_backfill_pending: Generated<boolean>;
+  mls_backfill_cursor: string | null;
 }
 
 /** public.invites (table) */
@@ -1283,6 +1319,27 @@ export interface ListingsTable {
   off_market_at: Timestamp | null;
   team_listing_id: string | null;
   seller_update_next_due_at: Timestamp | null;
+  close_price_cents: Int8 | null;
+  close_date: string | null;
+  purchase_contract_date: string | null;
+  original_list_price_cents: Int8 | null;
+  concessions_cents: Int8 | null;
+  sale_conditions: Generated<string[]>;
+  days_on_market: number | null;
+  latitude_e6: number | null;
+  longitude_e6: number | null;
+  geo_cell: GeneratedAlways<number | null>;
+  year_built: number | null;
+  lot_sqft: Int8 | null;
+  subdivision_name: string | null;
+  garage_spaces_x10: number | null;
+  stories_x10: number | null;
+  pool_private: boolean | null;
+  size_source: string | null;
+  is_lease: Generated<boolean>;
+  avm_display_allowed: Generated<boolean>;
+  address_key: string | null;
+  mls_normalize_version: Generated<number>;
 }
 
 /** public.mail_messages (table) */
@@ -2619,6 +2676,7 @@ export interface DB {
   bulk_actions: BulkActionsTable;
   call_scores: CallScoresTable;
   calls: CallsTable;
+  cma_reports: CmaReportsTable;
   compliance_policy_versions: CompliancePolicyVersionsTable;
   consent_disclosures: ConsentDisclosuresTable;
   consent_events: ConsentEventsTable;
@@ -2781,6 +2839,7 @@ export const TABLE_NAMES = [
   'bulk_actions',
   'call_scores',
   'calls',
+  'cma_reports',
   'compliance_policy_versions',
   'consent_disclosures',
   'consent_events',
