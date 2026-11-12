@@ -8,7 +8,7 @@
 //   server's sentence. "Posted" appears only where the server's posted flag is true (lib.ts).
 import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { Button, Card, CheckThis, Notice, announce } from '../../design/index.js';
-import { EXPORTED_POST_IT_YOURSELF, errorText, kindLabel, publicationWords, statusWords, useApprovePiece, useExportPiece, usePieceCommand } from './lib.js';
+import { EXPORTED_POST_IT_YOURSELF, MARKETING_ERROR_MESSAGES, errorText, kindLabel, publicationWords, statusWords, useApprovePiece, useExportPiece, usePieceCommand } from './lib.js';
 import { OpenHouseTime } from './OpenHouseTime.js';
 import type { ExportView, PieceView, PublicationView } from './types.js';
 
@@ -110,6 +110,7 @@ export function PieceCard({ piece, publishingCleared, headingLevel = 2, extra }:
       publication?: PublicationView | null;
       retracted?: number;
       removeYourself?: number;
+      inProgress?: number;
     }
   >();
   const [exported, setExported] = useState<ExportView | null>(null);
@@ -186,6 +187,8 @@ export function PieceCard({ piece, publishingCleared, headingLevel = 2, extra }:
     if (!r.ok) return fail(r);
     if (piece.kind === 'website_page') setSaid('The page is down.');
     else if ((r.data.removeYourself ?? 0) > 0) setSaid("We couldn't take it down from there: remove it on that account yourself.");
+    // another request is taking a post down right now: never "Taken down." before the provider confirmed it
+    else if ((r.data.inProgress ?? 0) > 0) setSaid(MARKETING_ERROR_MESSAGES.PUBLICATION_RETRACTING!);
     else setSaid('Taken down.');
   };
 

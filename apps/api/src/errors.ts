@@ -297,6 +297,7 @@ export const ERROR_STATUS = {
   PUBLISH_NEEDS_IMAGE: 422, // VERIFY: Instagram has no text-only posts
   PUBLICATION_ALREADY_LIVE: 409, // one live publication per version and account (E227: never re-posted)
   PUBLICATION_NOT_LIVE: 409,
+  PUBLICATION_RETRACTING: 409, // another retraction of this post is under way; only one asks the provider (R-MKT-12)
   PUBLICATION_HUMAN_TAP: 403,
   PUBLICATION_BORN_PUBLISHING: 409,
   PUBLICATION_SYSTEM_ONLY: 403, // only the system records a provider's outcome

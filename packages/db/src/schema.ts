@@ -1348,6 +1348,8 @@ export interface MarketingPublicationsTable {
   retracted_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+  retract_claim_id: string | null;
+  retract_claimed_at: Timestamp | null;
 }
 
 /** public.memberships (table) */

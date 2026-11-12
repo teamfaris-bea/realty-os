@@ -305,7 +305,13 @@ export interface SocialPublisher {
   publishPost(p: PublishRequest): Promise<PublishResult>;
   /** Only marketing/publish.ts calls it: reconcile an 'unknown' publication by lookup, never by posting again (E227). */
   lookupPost(p: LookupRequest): Promise<LookupResult>;
-  /** Only marketing/publish.ts calls it: a retraction is recorded only after this confirmed the deletion. */
+  /**
+   * Only marketing/publish.ts calls it: a retraction is recorded only after this confirmed the deletion. It answers,
+   * or throws ProviderError('timeout'), within 30 s (the adapter's own request timeout, AbortSignal.timeout as the other
+   * adapters): one retraction at a time holds the post's 0054 claim, and a claim older than
+   * app.marketing_retract_claim_window() (5 minutes) is taken over. publish.ts stops waiting after
+   * DELETE_POST_TIMEOUT_MS (60 s) either way and counts the call as failed.
+   */
   deletePost(p: DeleteRequest): Promise<DeleteResult>;
 }
 
