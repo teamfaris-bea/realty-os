@@ -12,7 +12,7 @@
 // Everything is read under the caller's own RLS. No confidence, score or tenant id fields.
 import { formatDue, triggerStepFor } from '@realty/core/assistant';
 import { type Instant, instantFromDate } from '@realty/core/foundation';
-import { type MilestoneRisk, drivesUpdates, milestoneRisk } from '@realty/core/transactions';
+import { type DealSide, type MilestoneRisk, drivesUpdates, milestoneRisk, otherSideRoles, reachableStepRoles, teamClientRoles, updateRoles } from '@realty/core/transactions';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 import { storedDecisionView } from '../comms/gateInput.js';
@@ -73,8 +73,18 @@ async function playbookRoles(tx: Tx): Promise<{ approved: boolean; roles: string
 
 const ROLE_TEXT: Record<string, string> = { buyer: 'buyer', seller: 'seller', co_buyer: 'co-buyer', co_seller: 'co-seller', other: 'other', lender: 'lender', title: 'title', attorney: 'attorney' };
 
+const SIDE_TEXT: Record<DealSide, string> = { buy: 'buy', sell: 'sell', dual: 'buy & sell', lease: 'lease' };
+const roleList = (roles: readonly string[]) => roles.map((r) => ROLE_TEXT[r] ?? r).join(' / ');
+
+/** K1 (b8 deals ui/F1-K1): why a contact in a client role of the other side (or of a lease deal) gets nothing. */
+export function notOurClientText(side: DealSide, roles: readonly string[]): string {
+  if (side === 'lease') return `No update: lease deals get no automatic milestone updates, so the ${roleList(roles)} is not sent the team's updates.`;
+  return `No update: the ${roleList(otherSideRoles(side, roles))} is not this team's client on a ${SIDE_TEXT[side]} deal (the team represents the ${roleList(teamClientRoles(side))}).`;
+}
+
 function recipientStatus(
   d: R.DateRow,
+  side: DealSide,
   c: R.DealRecipient,
   pb: { approved: boolean; roles: string[] },
   runs: RunInfo[],
@@ -114,6 +124,7 @@ function recipientStatus(
   }
   if (!pb.approved) return { status: 'not_planned', text: 'No update: the Milestone updates playbook is not approved.', at: null };
   if (!named) return { status: 'not_planned', text: `No update: the Milestone updates playbook does not name the ${c.roles.map((r) => ROLE_TEXT[r] ?? r).join(' / ')} role.`, at: null };
+  if (!updateRoles(side, c.roles).some((r) => pb.roles.includes(r))) return { status: 'not_planned', text: notOurClientText(side, c.roles), at: null };
   if (!c.live) return { status: 'not_planned', text: 'No update: this contact was merged into another record or removed.', at: null };
   if (c.ownerUserId === null) return { status: 'not_planned', text: 'No update: this contact has no owner (updates go only to owned contacts).', at: null };
   if (d.reminder_at !== null) return { status: 'waiting', text: `Update planned for ${formatDue(instantFromDate(d.reminder_at), false, zone)}.`, at: d.reminder_at.toISOString() };
@@ -155,7 +166,8 @@ export async function milestonesOfDeal(tx: Tx, dealId: string, now: Instant) {
     acceptanceDate: acceptance?.due_on ?? anchor,
     templates: offeredTemplates(s.templates, deal.side, s.jurisdictions).map((t) => ({ id: t.id, version: t.version, name: t.name, side: t.side, jurisdiction: t.jurisdiction, reviewed: t.reviewed === true })),
     calendar: { note: DEFAULT_CALENDAR_NOTE, reviewed: false as const },
-    updates: { approved: pb.approved, roles: pb.roles },
+    // K1: the step's roles a deal of this side can reach (the other side's client roles drop out; none on a lease deal)
+    updates: { approved: pb.approved, roles: pb.roles, teamRoles: reachableStepRoles(deal.side, pb.roles) },
     dates: rows.map((d) => {
       const core = R.coreDate(d);
       const rule = d.basis['reminderRule'] as { daysBefore?: unknown } | null | undefined;
@@ -191,7 +203,7 @@ export async function milestonesOfDeal(tx: Tx, dealId: string, now: Instant) {
           contactId: c.contactId,
           name: c.name,
           roles: c.roles,
-          ...recipientStatus(d, c, pb, runs.rows.filter((r) => r.date_id === d.id), decisions, s.zone),
+          ...recipientStatus(d, deal.side, c, pb, runs.rows.filter((r) => r.date_id === d.id), decisions, s.zone),
         })),
       };
     }),

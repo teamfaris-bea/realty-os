@@ -17,7 +17,7 @@ import type { Instant } from '@realty/core/foundation';
 import { type DraftReason, type Firing, type FiringRef, SKIP_REASON_TEXT, type SkipReason } from '@realty/core/nurture';
 
 /** Skips only the API can see (stored in trigger_ref.skip with a visible sentence, never silent). */
-export type ApiSkipReason = 'CONTACT_REMOVED' | 'STEP_REMOVED' | 'NOT_AVAILABLE_YET' | 'NO_LONGER_FOLLOWED' | 'ANNIVERSARY_ALREADY_SENT' | 'NOT_QUEUED' | 'DATE_COMPLETED';
+export type ApiSkipReason = 'CONTACT_REMOVED' | 'STEP_REMOVED' | 'NOT_AVAILABLE_YET' | 'NO_LONGER_FOLLOWED' | 'ANNIVERSARY_ALREADY_SENT' | 'NOT_QUEUED' | 'DATE_COMPLETED' | 'NOT_OUR_CLIENT';
 export type RunSkipReason = SkipReason | ApiSkipReason;
 
 export const API_SKIP_TEXT: Readonly<Record<ApiSkipReason, string>> = {
@@ -29,6 +29,8 @@ export const API_SKIP_TEXT: Readonly<Record<ApiSkipReason, string>> = {
   NOT_QUEUED: 'The message could not be queued (no address or sender to use).',
   // module 31 (R-TXN-2): a milestone marked done after its update was planned sends nothing
   DATE_COMPLETED: 'The date was marked done after this update was planned.',
+  // K1 (b8 deals sends/F1, R-TXN-4): the deal's side says the team does not represent this person
+  NOT_OUR_CLIENT: 'This contact is not this team’s client on the deal (the other side, or a lease deal), so the team’s automatic updates do not go to them.',
 };
 
 export function skipText(r: RunSkipReason): string {

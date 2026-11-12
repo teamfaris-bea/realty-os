@@ -72,7 +72,7 @@ export const MilestonesResponse = z.object({
   acceptanceDate: z.string().nullable(),
   templates: z.array(TemplateRef),
   calendar: z.object({ note: z.string(), reviewed: z.literal(false) }),
-  updates: z.object({ approved: z.boolean(), roles: z.array(Role) }),
+  updates: z.object({ approved: z.boolean(), roles: z.array(Role), /** K1: the step roles this deal's side can reach (the team's side only; none on a lease deal) */ teamRoles: z.array(Role) }),
   dates: z.array(MilestoneDateSchema),
   riskItems: z.array(z.object({ id: uuid, dedupeKey: z.string(), dealDateId: z.string().nullable(), conditionCleared: z.boolean(), detectedAt: z.string(), text: z.string() })),
 });

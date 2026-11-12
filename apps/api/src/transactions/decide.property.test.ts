@@ -55,7 +55,7 @@ function simulate(ops: readonly Op[], now: Instant) {
     } else if (o.kind === 'waive') {
       d = { ...d, status: 'waived', reminderAt: null };
     } else {
-      const dec = reminderFact(d, recipients, instant(now + 365 * 86_400_000));
+      const dec = reminderFact(d, recipients, instant(now + 365 * 86_400_000), 'dual');
       if (dec.fire) {
         expect(drivesUpdates(d)).toBe(true);
         for (const f of detectFirings(dec.fact, dec.rels.map((c) => ({ contactId: c.contactId, ownerUserId: c.ownerUserId, relation: c.relation, playbook: TEAM })))) {
@@ -76,7 +76,7 @@ describe('module 31 decisions (property)', () => {
     fc.assert(
       fc.property(fc.constantFrom<'proposed' | 'confirmed' | 'waived'>('proposed', 'confirmed', 'waived'), fc.boolean(), fc.boolean(), fc.option(fc.integer({ min: -5, max: 5 }), { nil: null }), (status, completed, hasDue, rem) => {
         const d = { id: 'dd' as DealDate['id'], dealId: 'd', kind: 'closing' as const, label: null, dueOn: day(10), source: 'manual' as const, status, dueVersion: 1, dueAt: hasDue ? instant(T0 + 10 * 86_400_000) : null, reminderAt: rem === null ? null : instant(T0 + rem * 3_600_000), completedAt: completed ? instant(T0) : null, responsible: null, basis: {} };
-        const dec = reminderFact(d, recipients, instant(T0));
+        const dec = reminderFact(d, recipients, instant(T0), 'dual');
         if (dec.fire) expect(drivesUpdates(d)).toBe(true);
         if (!drivesUpdates(d)) expect(dec.fire).toBe(false);
       }),

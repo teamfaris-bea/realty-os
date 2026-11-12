@@ -1,17 +1,19 @@
 // avm.refresh (PHASE2_3_PLAN §5.4 #26, wave 2C; P15, R-AVM-1..3, R-NURT-1, R-NURT-2, R-OWN-27, R-INT-1).
 //
 // A per-tenant daily standalone job, shaped like mls.sync (claim, read outside any transaction, fenced write):
-//   TX1  (system)  the due (address, UTC month) pairs, bounded per pass: a complete kind 'home' address of a live,
-//                  owned party of a deal closed before this UTC month; a current approved trigger playbook with a
+//   TX1  (system)  the due (address, UTC month) pairs, bounded per pass: a complete address of a live, owned
+//                  contact that is a home they bought through the team (K2, R.avmAddressQualifies: buyer or co_buyer
+//                  of a buy or dual deal closed before this UTC month; the deal's listing address when it matches one
+//                  of their addresses, else their 'home'; never a house they sold through the team); a current approved trigger playbook with a
 //                  home_value step would fire for the contact (core detectFirings: scope and owner rules); nothing
-//                  recorded for the address this UTC month (no ok or unavailable row, no avm:{address}:{yyyy-mm}
-//                  firing); and the send-time preview (comms evaluateGate on the step's channel, purpose and
+//                  recorded for the same house of the same person this UTC month (no ok or unavailable row, no
+//                  avm:{address}:{yyyy-mm} firing, across every record of a merged person); and the send-time preview (comms evaluateGate on the step's channel, purpose and
 //                  category; never stored) shows none of the recipient refusals below. AUTOMATION_PAUSED is not a
 //                  refusal here (R-NURT-5: the firing becomes a draft); content and sender codes are not judged
 //                  before the text exists. core avmRequest gives the firing key.
 //   vendor        outside any transaction (no contact lock is held while the vendor answers)
-//   TX2  (system)  under lockContact: the address is unchanged and still the contact's, the contact still live and
-//                  owned; the UTC month is recomputed from TX2's now() and re-checked; then one home_valuations row
+//   TX2  (system)  under lockContact: the address is unchanged, still the contact's and still qualifies, the contact
+//                  still live and owned; the UTC month is recomputed from TX2's now() and re-checked; then one home_valuations row
 //                  (valued_at = now(), never the vendor's as_of) and recordFactInTx with the home_value Fact.
 // Idempotent across a crash or a second worker: the TX2 re-check under the contact lock, the unique index
 // home_valuations_one_per_month (ok rows) and the firing's unique trigger_key. A vendor failure (or an answer the
@@ -115,8 +117,9 @@ export function addressFingerprint(a: R.HomeAddressRow): string {
   return JSON.stringify([a.contactId, a.kind, a.line1, a.line2, a.city, a.region, a.postalCode, a.country]);
 }
 
+/** Every field the vendor needs. Which address rows qualify at all (kind, side, purchased house) is R.avmAddressQualifies (K2). */
 function complete(a: R.HomeAddressRow): boolean {
-  return a.kind === 'home' && [a.line1, a.city, a.region, a.postalCode].every((x) => (x ?? '').trim() !== '');
+  return [a.line1, a.city, a.region, a.postalCode].every((x) => (x ?? '').trim() !== '');
 }
 
 function facts(a: R.HomeAddressRow): AddressFacts {
@@ -182,6 +185,7 @@ export async function duePairsInTx(tx: Tx, now: Instant, limit = AVM_REFRESH_BAT
       if (!complete(c.address)) continue;
       const step = wouldFire(playbooks, { contactId: c.address.contactId, ownerUserId: c.ownerUserId }, c.address.id, c.month, addressText(c.address));
       if (step === null) continue;
+      // addressCurrent: the candidate query applied R.avmAddressQualifies to this very row in this transaction (K2)
       const req = avmRequest({ contactAddressId: c.address.id, month: c.month, addressCurrent: true, previewAllows: await previewAllows(tx, c.address.contactId, step, now), alreadyRequestedThisMonth: false });
       if (!req.request) continue;
       out.push({ address: c.address, contactId: c.address.contactId, ownerUserId: c.ownerUserId, month: c.month, triggerKey: req.triggerKey });
@@ -204,7 +208,10 @@ export async function recordAnswerInTx(tx: Tx, deps: Pick<NurtureDeps, 'ids'>, p
   if (!addr || addressFingerprint(addr) !== addressFingerprint(pair.address) || !complete(addr)) return { outcome: 'address_changed' };
   // the month of THIS transaction's clock (a pass that spans a month boundary records under the new month)
   const month = await R.utcMonthNow(tx);
-  const req = avmRequest({ contactAddressId: addr.id, month, addressCurrent: true, previewAllows: true, alreadyRequestedThisMonth: await R.avmRecordedThisMonth(tx, addr.id, month) });
+  // K2: re-checked under the lock: still a home this person bought through the team (never one they sold since)
+  const addressCurrent = await R.avmAddressQualifies(tx, c.id, addr.id);
+  const req = avmRequest({ contactAddressId: addr.id, month, addressCurrent, previewAllows: true, alreadyRequestedThisMonth: await R.avmRecordedThisMonth(tx, addr.id, month) });
+  if (!addressCurrent) return { outcome: 'address_changed' };
   if (!req.request) return { outcome: 'already' };
   const prior = await R.priorOkValuation(tx, addr.id, null, null);
   const est: CoreEstimate =

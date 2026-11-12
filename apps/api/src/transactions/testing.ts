@@ -49,7 +49,7 @@ export interface TestDeal {
 }
 
 /** A deal of `agent` on a new contact they own (role buyer for a buy deal); the TC is a member unless `tc: false`. */
-export async function deal(h: ApiHarness, w: TxnWorld, agent: TestClient, o: { side?: 'buy' | 'sell'; tc?: boolean; firstName?: string } = {}): Promise<TestDeal> {
+export async function deal(h: ApiHarness, w: TxnWorld, agent: TestClient, o: { side?: 'buy' | 'sell' | 'dual' | 'lease'; tc?: boolean; firstName?: string } = {}): Promise<TestDeal> {
   const c = await ownedContact(agent, { consent: false, firstName: o.firstName ?? 'Robin' });
   const d = await call<{ deal: { id: string } }>(agent, 'POST', '/deals', { primaryContactId: c.id, side: o.side ?? 'buy' });
   if (d.status !== 201) throw new Error(`deal: ${d.status} ${JSON.stringify(d.body)}`);

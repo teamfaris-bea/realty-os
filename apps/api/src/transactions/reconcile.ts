@@ -20,7 +20,7 @@
 // date, DATE_CHANGED for another version, DATE_UNCONFIRMED for a date that is no longer confirmed) and cancels their
 // queued messages (cancelStepMessages). Runs already handed to dispatch are left to dispatch.
 import type { ContactId, Instant } from '@realty/core/foundation';
-import { repairInstants } from '@realty/core/transactions';
+import { type DealSide, repairInstants } from '@realty/core/transactions';
 import { type Tx, lockContacts } from '@realty/db';
 import { sql } from 'kysely';
 import { cancelStepMessages } from '../assistant/repos/playbooks.js';
@@ -62,12 +62,13 @@ export async function repairInTx(tx: Tx, now: Instant, limit = RECONCILE_LIMIT):
 
 interface DueReminder extends R.DateRow {
   stage: string;
+  side: DealSide;
 }
 
 /** (b) Reminders: due reminder_at on open deals → deal_date_upcoming firings of the approved transaction_updates playbook. */
 export async function remindersInTx(tx: Tx, deps: Pick<NurtureDeps, 'ids'>, now: Instant, limit = RECONCILE_LIMIT): Promise<{ reminders: number; firings: number }> {
   const r = await sql<DueReminder>`
-    SELECT ${R.DATE_COLS}, d.stage FROM deal_dates dd JOIN deals d ON d.tenant_id = dd.tenant_id AND d.id = dd.deal_id
+    SELECT ${R.DATE_COLS}, d.stage, d.side FROM deal_dates dd JOIN deals d ON d.tenant_id = dd.tenant_id AND d.id = dd.deal_id
      WHERE dd.tenant_id = app.tenant_id() AND dd.reminder_at IS NOT NULL AND dd.reminder_at <= ${iso(now)}::timestamptz
        AND d.stage NOT IN ('closed','lost')
      ORDER BY dd.reminder_at, dd.id LIMIT ${limit}`.execute(tx);
@@ -79,7 +80,7 @@ export async function remindersInTx(tx: Tx, deps: Pick<NurtureDeps, 'ids'>, now:
   let firings = 0;
   let reminders = 0;
   for (const row of r.rows) {
-    const decision = reminderFact({ ...R.coreDate(row), dealId: row.deal_id }, recipients.get(row.deal_id) ?? [], now);
+    const decision = reminderFact({ ...R.coreDate(row), dealId: row.deal_id }, recipients.get(row.deal_id) ?? [], now, row.side);
     let planned = 0;
     let reason: string | null = null;
     if (!decision.fire) reason = decision.reason;

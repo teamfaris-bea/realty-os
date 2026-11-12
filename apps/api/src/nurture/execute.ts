@@ -41,6 +41,7 @@ import {
 import type { ActionCategory } from '@realty/core/compliance';
 import { type AssistantClaimId, type ContactId, type IanaZone, type Instant, ianaZone } from '@realty/core/foundation';
 import { type AvmDecision, type AvmEstimate, DEFAULT_AVM_JUMP_BPS, DEFAULT_AVM_MAX_AGE_DAYS, type FactState, type Firing, type SkipReason, alertItemLine, avmSendable, homeValueText, planBatch, planTriggerRun } from '@realty/core/nurture';
+import { type DealSide, updateRoles } from '@realty/core/transactions';
 import { type Tx, lockContact } from '@realty/db';
 import { sql } from 'kysely';
 import * as A from '../assistant/repos/actions.js';
@@ -72,7 +73,7 @@ interface Item {
   /** home_value firings: the cited valuation as core reads it and its R-AVM-1 sentence */
   avm?: { estimate: AvmEstimate; text: string | null; valuationId: string; prior: AvmEstimate | null };
   /** deal-date firings (module 31): the date as stored now and the recipient's roles on the deal */
-  dealDate?: { completed: boolean; label: string; dueAt: Instant | null; zone: IanaZone | null; roles: string[] };
+  dealDate?: { completed: boolean; label: string; dueAt: Instant | null; zone: IanaZone | null; roles: string[]; side: DealSide };
 }
 
 async function listingRow(tx: Tx, id: string): Promise<ListingRow | null> {
@@ -109,17 +110,20 @@ async function currentFact(tx: Tx, f: Firing, e: MlsEligibility): Promise<Pick<I
       // module 31: also completed_at (a date marked done after planning sends nothing: DATE_COMPLETED), the contract
       // date's zone (the slot shows the contract date, not the instant in the recipient's zone) and the recipient's
       // current roles on the deal (removed, or no longer in a named role: NOT_A_PARTY)
-      const q = await sql<{ due_version: number; status: string; confirmed_by_user_id: string | null; due_at: Date | null; completed_at: Date | null; label: string | null; kind: keyof typeof KIND_TEXT; zone: string | null; roles: string[] }>`
+      // K1 (b8 deals sends/F1): the deal's side, read live with the roles, so the other side's client is never sent to
+      const q = await sql<{ due_version: number; status: string; confirmed_by_user_id: string | null; due_at: Date | null; completed_at: Date | null; label: string | null; kind: keyof typeof KIND_TEXT; zone: string | null; roles: string[]; side: DealSide }>`
         SELECT dd.due_version, dd.status, dd.confirmed_by_user_id, dd.due_at, dd.completed_at, dd.label, dd.kind, dd.basis->>'zone' AS zone,
-               ARRAY(SELECT dc.role FROM deal_contacts dc WHERE dc.tenant_id = dd.tenant_id AND dc.deal_id = dd.deal_id AND dc.contact_id = ${f.contactId}) AS roles
-          FROM deal_dates dd WHERE dd.tenant_id = app.tenant_id() AND dd.id = ${r.dealDateId} AND dd.deal_id = ${r.dealId}`.execute(tx);
+               ARRAY(SELECT dc.role FROM deal_contacts dc WHERE dc.tenant_id = dd.tenant_id AND dc.deal_id = dd.deal_id AND dc.contact_id = ${f.contactId}) AS roles,
+               d.side
+          FROM deal_dates dd JOIN deals d ON d.tenant_id = dd.tenant_id AND d.id = dd.deal_id
+         WHERE dd.tenant_id = app.tenant_id() AND dd.id = ${r.dealDateId} AND dd.deal_id = ${r.dealId}`.execute(tx);
       const x = q.rows[0];
       if (!x) return { current: { kind: 'gone' } };
       const dueAt = x.due_at ? (x.due_at.getTime() as Instant) : null;
       return {
         current: { kind: 'deal_date', dueVersion: x.due_version, confirmed: x.status === 'confirmed' && x.confirmed_by_user_id !== null, dueAt },
         // the date's stored label (or its kind's wording), never the copy in the run (a forged run cannot inject text)
-        dealDate: { completed: x.completed_at !== null, label: x.label ?? KIND_TEXT[x.kind] ?? KIND_TEXT.custom, dueAt, zone: x.zone === null ? null : ianaZone(x.zone), roles: x.roles },
+        dealDate: { completed: x.completed_at !== null, label: x.label ?? KIND_TEXT[x.kind] ?? KIND_TEXT.custom, dueAt, zone: x.zone === null ? null : ianaZone(x.zone), roles: x.roles, side: x.side },
       };
     }
     case 'home_value': {
@@ -132,9 +136,10 @@ async function currentFact(tx: Tx, f: Firing, e: MlsEligibility): Promise<Pick<I
       const prior = v.contactAddressId === null ? null : await R.priorOkValuation(tx, v.contactAddressId, v.valuedAt, v.id);
       const avm = { estimate, text: homeValueText(estimate), valuationId: v.id, prior: prior ? estimateOfRow(prior) : null };
       // R-NURT-4: the address still belongs to the contact and is unchanged since it was valued (a deleted address
-      // sets contact_address_id to NULL, 0037)
+      // sets contact_address_id to NULL, 0037), and it is still a home they bought through the team (K2: not one they
+      // sold through the team since, not the other side's)
       const a = v.contactAddressId === null ? null : await R.addressById(tx, v.contactAddressId);
-      const addressCurrent = a !== null && a.contactId === f.contactId && a.kind === 'home' && a.updatedAt <= v.valuedAt && addressText(a) === r.address;
+      const addressCurrent = a !== null && a.contactId === f.contactId && a.updatedAt <= v.valuedAt && addressText(a) === r.address && (await R.avmAddressQualifies(tx, f.contactId, a.id));
       return { current: { kind: 'home_value', addressCurrent }, avm };
     }
   }
@@ -297,6 +302,11 @@ export async function executeTriggerRunInTx(tx: Tx, deps: NurtureDeps, tenantId:
       const named: readonly string[] = (content === null ? null : triggerStepFor(content, 'deal_date_upcoming'))?.roles ?? [];
       if (!cur.dealDate.roles.some((x) => named.includes(x))) {
         skipped.push({ run, reason: 'NOT_A_PARTY' });
+        continue;
+      }
+      // K1: a named role the team does not represent on this side (the other side's client, any client of a lease deal)
+      if (!updateRoles(cur.dealDate.side, cur.dealDate.roles).some((x) => named.includes(x))) {
+        skipped.push({ run, reason: 'NOT_OUR_CLIENT' });
         continue;
       }
     }

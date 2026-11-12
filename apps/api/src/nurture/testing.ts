@@ -113,9 +113,29 @@ export async function anniversaryScan(h: ApiHarness, tenantId: string, at?: Inst
 }
 
 /** A closed deal (api/workspace has no deal-close path in these tests). */
-export async function closedDeal(h: ApiHarness, tenantId: string, contactId: string, ownerUserId: string, closedAt: Date): Promise<string> {
+/**
+ * A closed deal of `contactId` (fixture: no route closes a deal in the past). The contact is the primary contact and,
+ * unless `role` is null, holds `role` on deal_contacts (default: buyer on a buy deal, as createDeal records it).
+ * `listing` gives the deal a team listing at that address (the purchased or sold property).
+ */
+export async function closedDeal(
+  h: ApiHarness,
+  tenantId: string,
+  contactId: string,
+  ownerUserId: string,
+  closedAt: Date,
+  o: { side?: 'buy' | 'sell' | 'dual' | 'lease'; role?: string | null; listing?: { line1: string; city?: string; region?: string; postalCode: string } } = {},
+): Promise<string> {
   const id = randomUUID();
-  await h.su.query(`INSERT INTO deals (tenant_id, id, name, side, stage, stage_entered_at, primary_contact_id, owner_user_id, closed_at) VALUES ($1,$2,'12 Birch Ln purchase','buy','closed',$5,$3,$4,$5)`, [tenantId, id, contactId, ownerUserId, closedAt]);
+  const side = o.side ?? 'buy';
+  let listingId: string | null = null;
+  if (o.listing) {
+    listingId = randomUUID();
+    await h.su.query(`INSERT INTO listings (tenant_id, id, source, status, address_line1, city, region, postal_code, listing_agent_user_id) VALUES ($1,$2,'team','sold',$3,$4,$5,$6,$7)`, [tenantId, listingId, o.listing.line1, o.listing.city ?? 'Springfield', o.listing.region ?? 'SC', o.listing.postalCode, ownerUserId]);
+  }
+  await h.su.query(`INSERT INTO deals (tenant_id, id, name, side, stage, stage_entered_at, primary_contact_id, owner_user_id, closed_at, listing_id) VALUES ($1,$2,'12 Birch Ln purchase',$6,'closed',$5,$3,$4,$5,$7)`, [tenantId, id, contactId, ownerUserId, closedAt, side, listingId]);
+  const role = o.role === undefined ? (side === 'sell' ? 'seller' : side === 'lease' ? 'other' : 'buyer') : o.role;
+  if (role !== null) await h.su.query('INSERT INTO deal_contacts (tenant_id, deal_id, contact_id, role) VALUES ($1,$2,$3,$4)', [tenantId, id, contactId, role]);
   return id;
 }
 
@@ -145,7 +165,12 @@ export function beforeThisMonth(days = 5): Date {
  * A past client of `agent`: a contact (phone + email, through the API), a complete home address (POST
  * /contacts/:id/addresses) and a deal that closed before this UTC month (deals have no close path in these tests).
  */
-export async function pastClient(h: ApiHarness, w: NurtureWorld, agent: TestClient, o: { postalCode?: string; kind?: 'home' | 'property' | 'mailing'; closedAt?: Date; city?: string | null; role?: 'primary' | 'seller' } = {}): Promise<PastClient> {
+export async function pastClient(
+  h: ApiHarness,
+  w: NurtureWorld,
+  agent: TestClient,
+  o: { postalCode?: string; kind?: 'home' | 'property' | 'mailing'; closedAt?: Date; city?: string | null; side?: 'buy' | 'sell' | 'dual' | 'lease'; role?: string | null; listingAtHome?: boolean } = {},
+): Promise<PastClient> {
   const { ownedContact } = await import('../comms/testing.js');
   const c = await ownedContact(agent);
   homeSeq += 1;
@@ -153,7 +178,11 @@ export async function pastClient(h: ApiHarness, w: NurtureWorld, agent: TestClie
   const postalCode = o.postalCode ?? '29401';
   const a = await call<{ address: { id: string } }>(agent, 'POST', `/contacts/${c.id}/addresses`, { kind: o.kind ?? 'home', line1, city: o.city === undefined ? 'Springfield' : o.city, region: 'SC', postalCode });
   if (a.status !== 201) throw new Error(`address: ${a.status} ${JSON.stringify(a.body)}`);
-  const dealId = await closedDeal(h, w.tenantId, c.id, agent.userId!, o.closedAt ?? beforeThisMonth());
+  const dealId = await closedDeal(h, w.tenantId, c.id, agent.userId!, o.closedAt ?? beforeThisMonth(), {
+    ...(o.side ? { side: o.side } : {}),
+    ...(o.role !== undefined ? { role: o.role } : {}),
+    ...(o.listingAtHome ? { listing: { line1, postalCode } } : {}),
+  });
   return { ...c, addressId: a.body.address.id, line1, postalCode, dealId };
 }
 
