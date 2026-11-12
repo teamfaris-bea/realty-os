@@ -1,4 +1,4 @@
-// Reads and the download of api/documents (deliverable 3; R-DOC-1, R-DOC-3, R-DOC-8, E402, E409).
+// Reads and the download of api/documents (deliverable 3; R-DOC-1, R-DOC-3, R-DOC-7, R-DOC-9, E402, E409).
 //
 // Everything a caller sees is what RLS shows them: a pending document only to its uploader and tenant-wide roles,
 // a listing document only to the listing's writers and listing-side deal members. The download streams a document
@@ -224,7 +224,7 @@ export function downloadNames(displayName: string, contentType: string): { ascii
   return { asciiName: ascii === '' || ascii === `.${ext}` ? `document.${ext}` : ascii, utf8Name: encodeURIComponent(full) };
 }
 
-/** Streams a clean document the caller can read, as the person, audited by ids only (R-DOC-8, R-AUDIT-5). */
+/** Streams a clean document the caller can read, as the person, audited by ids only (R-DOC-7, R-AUDIT-5). */
 export async function downloadDocument(tx: Tx, deps: Pick<DocumentDeps, 'envelope' | 'providers'>, actor: UserActor, id: string): Promise<Download> {
   const d = await R.docById(tx, id);
   if (!d) throw new AppError('NOT_FOUND');

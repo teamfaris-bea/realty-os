@@ -1,4 +1,4 @@
-// Claim decisions through module 31 (deliverable 7; R-TXN-1, R-TXN-2, R-AST-1, R-AST-21, R-DOC-10, E412-E415).
+// Claim decisions through module 31 (deliverable 7; R-TXN-1, R-TXN-2, R-AST-1, R-AST-21, R-DOC-8, E412-E415).
 //
 // POST /documents/:id/extraction/claims/:claimId/confirm, as the person (milestone.confirm on the deal):
 //   1. the claim, locked, must belong to this document's contract_extraction (RLS: the uploader's or a tenant-wide

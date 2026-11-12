@@ -1,6 +1,6 @@
 // Adversarial tests of api/documents (module 42, critical): tenancy, scope, version chains, claim and date
 // cross-wiring, forged multipart bodies, document objects reused elsewhere, and a client cookie on staff routes
-// (R-TEN-6, R-PERM-5, R-DOC-1, R-DOC-5, R-DOC-10, R-TEN-14). Fakes only; every write goes through app_user.
+// (R-TEN-6, R-PERM-5, R-DOC-1, R-DOC-6, R-DOC-8, R-TEN-14). Fakes only; every write goes through app_user.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
@@ -76,7 +76,7 @@ describe('adversarial: tenancy and scope', () => {
     expect((await upload(w.isa, `/documents/${A.documentId}/versions`)).status).toBe(404);
   });
 
-  it('R-DOC-5: a version always stays in its document\'s own scope (the route takes no scope), and the DB refuses one across scopes', async () => {
+  it('R-DOC-6: a version always stays in its document\'s own scope (the route takes no scope), and the DB refuses one across scopes', async () => {
     const v = await upload(w.agents[0]!, `/documents/${A.documentId}/versions`, { extra: [{ name: 'dealId', value: randomUUID() }] });
     expect(v.status).toBe(422); // an unknown field
     const v2 = await upload(w.agents[0]!, `/documents/${A.documentId}/versions`, { kind: 'disclosure' });
@@ -94,7 +94,7 @@ describe('adversarial: tenancy and scope', () => {
 });
 
 describe('adversarial: claims and dates', () => {
-  it('R-DOC-10: a claim of another document used in this document\'s path is 404; a claim pointed at another deal\'s date is 404; neither writes a date', async () => {
+  it('R-DOC-8: a claim of another document used in this document\'s path is 404; a claim pointed at another deal\'s date is 404; neither writes a date', async () => {
     const B = await cleanContract(w);
     expect((await call(w.agents[0]!, 'POST', `/documents/${A.documentId}/extraction/claims/${B.claimId}/confirm`, { commandId: randomUUID(), target: { kind: 'new' } })).status).toBe(404);
     expect((await call(w.agents[0]!, 'POST', `/documents/${A.documentId}/extraction/claims/${B.claimId}/reject`, { commandId: randomUUID() })).status).toBe(404);
@@ -116,7 +116,7 @@ describe('adversarial: claims and dates', () => {
 });
 
 describe('adversarial: forged bodies and reused objects', () => {
-  it('R-DOC-6: two files, unknown fields, an oversized name field, a file posing as text, and a body that is not multipart are refused; nothing is stored', async () => {
+  it('R-DOC-5: two files, unknown fields, an oversized name field, a file posing as text, and a body that is not multipart are refused; nothing is stored', async () => {
     const before = (await h.su.query("SELECT count(*)::int AS n FROM stored_objects WHERE tenant_id = $1 AND purpose = 'document'", [w.tenantId])).rows[0].n;
     const f = { bytes: pdfBytes(), type: 'application/pdf', filename: 'a.pdf' };
     for (const parts of [
@@ -132,7 +132,7 @@ describe('adversarial: forged bodies and reused objects', () => {
     expect((await h.su.query("SELECT count(*)::int AS n FROM stored_objects WHERE tenant_id = $1 AND purpose = 'document'", [w.tenantId])).rows[0].n).toBe(before);
   });
 
-  it('R-DOC-5: a document object is never a marketing asset (MARKETING_ASSET_INVALID) nor an MMS upload (MMS_UPLOAD_OBJECT)', async () => {
+  it('R-DOC-6: a document object is never a marketing asset (MARKETING_ASSET_INVALID) nor an MMS upload (MMS_UPLOAD_OBJECT)', async () => {
     const objectId = (await h.su.query('SELECT object_id FROM documents WHERE id = $1', [A.documentId])).rows[0].object_id;
     const agent = w.agents[0]!;
     await clearFairHousing(h);

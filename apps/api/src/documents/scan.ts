@@ -1,4 +1,4 @@
-// The scan pipeline and the reconcile (deliverable 4; R-DOC-3, R-DOC-7, R-DOC-9, E130, E402-E405, E415).
+// The scan pipeline and the reconcile (deliverable 4; R-DOC-3, R-DOC-7, R-DOC-10, E130, E402-E405, E415).
 //
 // documents.scan (standalone, as the system of the job's tenant):
 //   1. no scanner configured: return; the document stays pending and nobody opens it (E402);

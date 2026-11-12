@@ -1,6 +1,6 @@
 // SQL of api/documents. Every query runs in the caller's transaction, so RLS (documents_select + the RESTRICTIVE
 // documents_clean_only, objects_select + objects_documents) decides which rows exist (R-DOC-1, R-DOC-3, R-PERM-5).
-// No query here writes deal_dates: dates go through module 31's confirmInTx (R-TXN-2, R-DOC-10).
+// No query here writes deal_dates: dates go through module 31's confirmInTx (R-TXN-2, R-DOC-8).
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 import type { DocumentKind, DocumentScope } from './types.js';
@@ -86,7 +86,7 @@ export async function hasCleanSuccessor(tx: Tx, id: string): Promise<boolean> {
 }
 
 /**
- * The bytes' key material of a CLEAN document the caller can read (R-DOC-3, R-DOC-8): the join itself requires
+ * The bytes' key material of a CLEAN document the caller can read (R-DOC-3, R-DOC-7): the join itself requires
  * scan_status 'clean' and a live document object, so a pending or blocked document never streams, whoever asks.
  */
 export async function cleanObjectOf(tx: Tx, id: string): Promise<{ object_id: string; storage_key: string; dek_wrapped: Buffer; content_type: string; byte_size: string; display_name: string } | null> {

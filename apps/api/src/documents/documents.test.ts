@@ -1,5 +1,5 @@
 // api/documents through the real server on real Postgres, fakes only (PHASE2_3_PLAN §5.4 #42; DATA_MODEL Part 2
-// R-DOC-1..9, E130, E400-E411, E419). Every write goes through the routes as app_user; the superuser pool reads back.
+// R-DOC-1..10, E130, E400-E411, E419). Every write goes through the routes as app_user; the superuser pool reads back.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { withTenantTx } from '@realty/db';
@@ -37,8 +37,8 @@ const rowsOf = async (sqlText: string, v: unknown[] = []) => (await h.su.query(s
 const docCount = async () => Number((await rowsOf('SELECT count(*)::int AS n FROM documents WHERE tenant_id = $1', [w.tenantId]))[0]!.n);
 const objCount = async () => Number((await rowsOf("SELECT count(*)::int AS n FROM stored_objects WHERE tenant_id = $1 AND purpose = 'document'", [w.tenantId]))[0]!.n);
 
-describe('upload (R-DOC-3, R-DOC-6)', () => {
-  it('R-DOC-6: a PDF, a JPEG and a PNG are accepted by their bytes; every upload starts pending and unshared; a scan job is enqueued (ids only)', async () => {
+describe('upload (R-DOC-3, R-DOC-5)', () => {
+  it('R-DOC-5: a PDF, a JPEG and a PNG are accepted by their bytes; every upload starts pending and unshared; a scan job is enqueued (ids only)', async () => {
     for (const [bytes, type] of [[pdfBytes(), 'application/pdf'], [jpegBytes(), 'image/jpeg'], [pngBytes(), 'image/png']] as const) {
       const r = await upload(w.agents[0]!, docs(deal.dealId), { bytes, type, filename: `file.${type.split('/')[1]}`, kind: 'disclosure' });
       expect(r.status, JSON.stringify(r.body)).toBe(201);
@@ -48,7 +48,7 @@ describe('upload (R-DOC-3, R-DOC-6)', () => {
     }
   });
 
-  it('E400 R-DOC-6: SVG, HTML, DOCX, ZIP, a PDF declared as a JPEG and an empty file are DOCUMENT_TYPE_NOT_ALLOWED; nothing is stored', async () => {
+  it('E400 R-DOC-5: SVG, HTML, DOCX, ZIP, a PDF declared as a JPEG and an empty file are DOCUMENT_TYPE_NOT_ALLOWED; nothing is stored', async () => {
     const before = [await docCount(), await objCount()];
     const enc = (s: string) => new TextEncoder().encode(s);
     const cases: [Uint8Array, string, string][] = [
@@ -66,7 +66,7 @@ describe('upload (R-DOC-3, R-DOC-6)', () => {
     expect([await docCount(), await objCount()]).toEqual(before);
   });
 
-  it('E401 R-DOC-6: a body over the cap is 413 before it is read, and an oversized part is DOCUMENT_TOO_LARGE; neither leaves a row', async () => {
+  it('E401 R-DOC-5: a body over the cap is 413 before it is read, and an oversized part is DOCUMENT_TOO_LARGE; neither leaves a row', async () => {
     const before = [await docCount(), await objCount()];
     const big = await rawPost(w.agents[0]!, docs(deal.dealId), Buffer.alloc(10), 'multipart/form-data; boundary=x', { 'content-length': String(DOCUMENT_MAX_BYTES + 70_000) });
     expect(big.statusCode).toBe(413);
@@ -77,7 +77,7 @@ describe('upload (R-DOC-3, R-DOC-6)', () => {
     expect([await docCount(), await objCount()]).toEqual(before);
   });
 
-  it('R-DOC-6: a gzip-encoded body is refused before it is read; an anonymous caller gets 401 first', async () => {
+  it('R-DOC-5: a gzip-encoded body is refused before it is read; an anonymous caller gets 401 first', async () => {
     const m = await multipart([{ name: 'file', value: { bytes: pdfBytes(), type: 'application/pdf', filename: 'a.pdf' } }, { name: 'kind', value: 'other' }]);
     const gz = await rawPost(w.agents[0]!, docs(deal.dealId), m.body, m.contentType, { 'content-encoding': 'gzip' });
     expect(gz.statusCode).toBe(415);
@@ -85,7 +85,7 @@ describe('upload (R-DOC-3, R-DOC-6)', () => {
     expect(anon.statusCode).toBe(401);
   });
 
-  it('R-DOC-6: names with CR/LF, bidi characters, paths or 300 characters are cleaned; no name reaches an audit row, a job payload or a log', async () => {
+  it('R-DOC-5: names with CR/LF, bidi characters, paths or 300 characters are cleaned; no name reaches an audit row, a job payload or a log', async () => {
     const marker = `Secret${Date.now()}`;
     const cases: [string, string | undefined, string][] = [
       [`C:\\Users\\x\\${marker}\r\nInjected.pdf`, undefined, `${marker} Injected.pdf`],
@@ -108,7 +108,7 @@ describe('upload (R-DOC-3, R-DOC-6)', () => {
     expect(Object.keys(changes).sort()).toEqual(['byte_count', 'content_type', 'document_kind', 'document_version_no']);
   });
 
-  it('R-DOC-6: a form with two files, an unknown field, a missing kind, a duplicated field or an oversized name field is refused', async () => {
+  it('R-DOC-5: a form with two files, an unknown field, a missing kind, a duplicated field or an oversized name field is refused', async () => {
     const before = await docCount();
     const f = { bytes: pdfBytes(), type: 'application/pdf', filename: 'a.pdf' };
     const forms = [
@@ -132,7 +132,7 @@ describe('upload (R-DOC-3, R-DOC-6)', () => {
     expect(await docCount()).toBe(before);
   });
 
-  it('R-DOC-6: the 61st upload attempt in an hour is RATE_LIMITED', async () => {
+  it('R-DOC-5: the 61st upload attempt in an hour is RATE_LIMITED', async () => {
     const other = w.agents[1]!;
     const d = await makeDeal(w, other, { members: false });
     const t0 = Date.UTC(2031, 0, 1, 10, 0, 0);
@@ -149,7 +149,7 @@ describe('upload (R-DOC-3, R-DOC-6)', () => {
     }
   });
 
-  it('R-DOC-6: a merged-away contact gets CONTACT_MERGED; a contact document is uploaded by its owner', async () => {
+  it('R-DOC-5: a merged-away contact gets CONTACT_MERGED; a contact document is uploaded by its owner', async () => {
     const a = w.agents[0]!;
     const c1 = await (await import('../comms/testing.js')).ownedContact(a, { consent: false, firstName: 'Mia' });
     const c2 = await (await import('../comms/testing.js')).ownedContact(a, { consent: false, firstName: 'Mia' });
@@ -191,7 +191,7 @@ describe('upload (R-DOC-3, R-DOC-6)', () => {
   });
 });
 
-describe('scan gating (R-DOC-3, R-DOC-8)', () => {
+describe('scan gating (R-DOC-3, R-DOC-7)', () => {
   it('R-DOC-3: a pending document is listed for its uploader and the Owner and is 404 for a peer and a Team Lead; /file is DOCUMENT_QUARANTINED even for those who read its object row', async () => {
     const a = w.agents[0]!;
     const r = await upload(a, docs(deal.dealId));
@@ -213,7 +213,7 @@ describe('scan gating (R-DOC-3, R-DOC-8)', () => {
     }
   });
 
-  it('R-DOC-8: after a clean scan every viewer downloads the exact bytes with the exact headers, audited by ids', async () => {
+  it('R-DOC-7: after a clean scan every viewer downloads the exact bytes with the exact headers, audited by ids', async () => {
     const bytes = pdfBytes('clean body');
     const id = await uploadClean(w.agents[0]!, docs(deal.dealId), { bytes, filename: 'Kontrakt é.pdf' });
     for (const c of [w.agents[0]!, w.owner, w.tc, w.isa, w.teamLead]) {
@@ -252,7 +252,7 @@ describe('scan gating (R-DOC-3, R-DOC-8)', () => {
     expect(chain.body.versions.map((v) => v.versionNo)).toEqual([1, 2]);
   });
 
-  it('E406 R-DOC-5: a second new version of the same document is DOCUMENT_VERSION_CONFLICT', async () => {
+  it('E406 R-DOC-6: a second new version of the same document is DOCUMENT_VERSION_CONFLICT', async () => {
     const v1 = await uploadClean();
     expect((await upload(w.agents[0]!, `/documents/${v1}/versions`)).status).toBe(201);
     const r = await upload(w.agents[0]!, `/documents/${v1}/versions`);
@@ -352,7 +352,7 @@ describe('the scanner (R-DOC-7)', () => {
     expect(await shredded()).toBe(true);
   });
 
-  it('E402 R-DOC-7: with the production bag (no scanner) every upload stays pending, nobody downloads it, the Owner included, nothing is enqueued, and the response says why', async () => {
+  it('E402 R-DOC-3 R-DOC-7: with the production bag (no scanner) every upload stays pending, nobody downloads it, the Owner included, nothing is enqueued, and the response says why', async () => {
     const p = h.app.platform.providers as unknown as { scanner: unknown; textExtractor: unknown };
     const [scanner, extractor] = [p.scanner, p.textExtractor];
     p.scanner = new UnconfiguredScanner();
@@ -381,8 +381,8 @@ describe('the scanner (R-DOC-7)', () => {
   });
 });
 
-describe('share, hold and retention (R-DOC-4, R-DOC-8, R-DOC-9)', () => {
-  it('E409 R-DOC-8: a new version of a shared document says the previous one is still shared; sharing it when the portal is not cleared says so', async () => {
+describe('share, hold and retention (R-DOC-4, R-DOC-9, R-DOC-10)', () => {
+  it('E409 R-DOC-9: a new version of a shared document says the previous one is still shared; sharing it when the portal is not cleared says so', async () => {
     const v1 = await uploadClean();
     const s = await call<DocBody>(w.agents[0]!, 'POST', `/documents/${v1}/share`, { shared: true });
     expect(s.status).toBe(200);
@@ -398,7 +398,7 @@ describe('share, hold and retention (R-DOC-4, R-DOC-8, R-DOC-9)', () => {
     expect(audits.map((a) => a.action)).toEqual(['document.shared', 'document.unshared']);
   });
 
-  it('E411 R-DOC-8: the TC and the ISA cannot share (404); a contact document and a pending document are DOCUMENT_NOT_SHAREABLE; canShare says who may', async () => {
+  it('E411 R-DOC-9: the TC and the ISA cannot share (404); a contact document and a pending document are DOCUMENT_NOT_SHAREABLE; canShare says who may', async () => {
     const id = await uploadClean();
     for (const c of [w.tc, w.isa]) {
       expect((await call(c, 'POST', `/documents/${id}/share`, { shared: true })).status).toBe(404);
@@ -414,7 +414,7 @@ describe('share, hold and retention (R-DOC-4, R-DOC-8, R-DOC-9)', () => {
     expect((await call(w.teamLead, 'POST', `/documents/${l}/share`, { shared: true })).status).toBe(200);
   });
 
-  it('R-DOC-4: an agent\'s hold or retention change is DOCUMENT_HOLD_OWNER_ADMIN; the Owner\'s and the Admin\'s are audited with before and after', async () => {
+  it('E419 R-DOC-4 R-DOC-10: an agent\'s hold or retention change is DOCUMENT_HOLD_OWNER_ADMIN; the Owner\'s and the Admin\'s are audited with before and after; a value outside 3-10 years is DOCUMENT_RETENTION_OUT_OF_RANGE', async () => {
     const id = await uploadClean();
     expect((await call(w.agents[0]!, 'POST', `/documents/${id}/hold`, { hold: true, reason: 'x' })).code).toBe('DOCUMENT_HOLD_OWNER_ADMIN');
     expect((await call(w.agents[0]!, 'PUT', `/documents/${id}/retention`, { retentionUntil: new Date(Date.now() + 5 * 365 * 86_400_000).toISOString() })).code).toBe('DOCUMENT_HOLD_OWNER_ADMIN');
@@ -431,7 +431,7 @@ describe('share, hold and retention (R-DOC-4, R-DOC-8, R-DOC-9)', () => {
     expect(a.find((x) => x.action === 'document.retention_changed')!.changes).toEqual({ retention_until: { from: null, to: until } });
   });
 
-  it('E419 R-DOC-9: the system stamps closed_at + 7 years only where retention is empty, never shortens or overwrites an Owner\'s value, and never stamps a contact document', async () => {
+  it('E419 R-DOC-10: the system stamps closed_at + 7 years only where retention is empty, never shortens or overwrites an Owner\'s value, and never stamps a contact document', async () => {
     const d = await makeDeal(w, w.agents[0]!);
     const a = await uploadClean(w.agents[0]!, docs(d.dealId));
     const b = await uploadClean(w.agents[0]!, docs(d.dealId));

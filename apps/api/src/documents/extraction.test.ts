@@ -1,5 +1,5 @@
 // Contract-date extraction and the claim decisions through module 31, on real Postgres with the fake scanner and PDF
-// reader (R-DOC-2, R-DOC-10, R-TXN-1, R-AST-1, R-AST-19, R-AST-21; E131, E159, E412-E418). Synthetic contracts only.
+// reader (R-DOC-2, R-DOC-8, R-TXN-1, R-AST-1, R-AST-19, R-AST-21; E131, E159, E412-E418; rule ids as DATA_MODEL §9 numbers them). Synthetic contracts only.
 import { formatEvidence } from '@realty/core/assistant';
 import { withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
@@ -61,7 +61,7 @@ const confirm = (c: Parameters<typeof call>[0], id: string, claimId: string, tar
 const reject = (c: Parameters<typeof call>[0], id: string, claimId: string) => call<ExtractionBody>(c, 'POST', `/documents/${id}/extraction/claims/${claimId}/reject`, { commandId: randomUUID() });
 
 describe('the accept path (PHASE2_3_PLAN §5.4 #42)', () => {
-  it('R-DOC-2 R-TXN-1 R-DOC-10: a TC uploads a text-layer contract; it scans clean in one job; each date shows its page and quote; the TC confirms them one by one; each date is a document date confirmed by the TC citing its claim; nothing else changed and nothing was sent', async () => {
+  it('R-DOC-2 R-TXN-1 R-DOC-8: a TC uploads a text-layer contract; it scans clean in one job; each date shows its page and quote; the TC confirms them one by one; each date is a document date confirmed by the TC citing its claim; nothing else changed and nothing was sent', async () => {
     const { dealId, documentId } = await contract();
     expect((await jobsOf(h, w.tenantId, DOCUMENT_JOBS.extract)).filter((j) => j.payload.documentId === documentId)).toHaveLength(1);
     const before = await rows('SELECT (SELECT row_to_json(d) FROM deals d WHERE id = $1)::text AS deal, (SELECT count(*)::int FROM messages WHERE tenant_id = $2) AS msgs', [dealId, w.tenantId]);
@@ -171,7 +171,7 @@ describe('the accept path (PHASE2_3_PLAN §5.4 #42)', () => {
 });
 
 describe('claim decisions (deliverable 7)', () => {
-  it('E131 E417 R-AST-1 R-DOC-10: an injected candidate whose quote is not in the PDF, or whose date differs, is needs_review: confirm is refused, nothing is written, and raw SQL hits DEAL_DATE_EVIDENCE_INVALID', async () => {
+  it('E131 E417 R-AST-1 R-AST-5 R-DOC-8: an injected candidate whose quote is not in the PDF, or whose date differs, is needs_review: confirm is refused, nothing is written, and raw SQL hits DEAL_DATE_EVIDENCE_INVALID', async () => {
     const d = await makeDeal(w, w.agents[0]!);
     const r = await upload(w.tc, `/deals/${d.dealId}/documents`);
     const documentId = r.body.document.id;
@@ -196,7 +196,7 @@ describe('claim decisions (deliverable 7)', () => {
     expect((await extraction(w.tc, documentId)).body.action!.status).toBe('rejected');
   });
 
-  it('E412 E413 R-TXN-1: confirming onto an existing date of the same kind moves it as the person\'s own move; the view lists the deal\'s dates of that kind and reads the applied date from evidence_claim_id; a later move by hand is said so', async () => {
+  it('E413 R-TXN-1 R-DOC-8: confirming onto an existing date of the same kind moves it as the person\'s own move; the view lists the deal\'s dates of that kind and reads the applied date from evidence_claim_id; a later move by hand is said so', async () => {
     const d = await makeDeal(w, w.agents[0]!);
     const manual = await call<{ date: { id: string } }>(w.agents[0]!, 'POST', `/deals/${d.dealId}/dates`, { kind: 'closing', dueOn: '2027-02-28' });
     expect(manual.status).toBe(201);
@@ -225,7 +225,7 @@ describe('claim decisions (deliverable 7)', () => {
     expect((await confirm(w.tc, documentId, fin.id, { kind: 'existing', dateId: foreign.body.date.id })).status).toBe(404);
   });
 
-  it('E414 R-DOC-10: a replayed confirm returns the same date and writes nothing new', async () => {
+  it('E414 R-DOC-8: a replayed confirm returns the same date and writes nothing new', async () => {
     const { dealId, documentId } = await contract();
     await runExtract(documentId);
     const c = (await extraction(w.tc, documentId)).body.claims[0]!;
@@ -263,7 +263,7 @@ describe('claim decisions (deliverable 7)', () => {
     expect(await runExtract(v3.body.document.id)).toMatchObject({ result: 'proposed' });
   });
 
-  it('E412 R-DOC-10: a contract stating two different closing dates gives two claims side by side, neither preselected, each saying "check which applies"; the confirm needs an explicit target', async () => {
+  it('E412 R-DOC-8: a contract stating two different closing dates gives two claims side by side, neither preselected, each saying "check which applies"; the confirm needs an explicit target', async () => {
     const pages = [
       { page: 1, text: 'RESIDENTIAL PURCHASE AGREEMENT (synthetic test form)\nClosing Date: 02/12/2027' },
       { page: 2, text: 'ADDENDUM (synthetic)\nClosing Date: 03/01/2027' },
@@ -288,7 +288,7 @@ describe('claim decisions (deliverable 7)', () => {
     expect([bare.status, bare.code]).toEqual([422, 'VALIDATION_FAILED']);
   });
 
-  it('E413 R-DOC-10 R-TXN-5: keeping the timeline date rejects the claim: the confirmed timeline date is untouched (date, version, source, no date-changed job)', async () => {
+  it('E413 R-DOC-8 R-TXN-5: keeping the timeline date rejects the claim: the confirmed timeline date is untouched (date, version, source, no date-changed job)', async () => {
     const d = await makeDeal(w, w.agents[0]!);
     const manual = await call<{ date: { id: string } }>(w.agents[0]!, 'POST', `/deals/${d.dealId}/dates`, { kind: 'closing', dueOn: '2027-02-28' });
     expect(manual.status).toBe(201);
@@ -303,7 +303,7 @@ describe('claim decisions (deliverable 7)', () => {
     expect((await extraction(w.tc, documentId)).body.claims.find((c) => c.id === closing.id)).toMatchObject({ reviewStatus: 'rejected', appliedDateId: null });
   });
 
-  it('R-DOC-10: a non-uploader member gets 404 on the extraction but sees the confirmed date on the deal', async () => {
+  it('R-DOC-8: a non-uploader member gets 404 on the extraction but sees the confirmed date on the deal', async () => {
     const { dealId, documentId } = await contract(w.tc);
     await runExtract(documentId);
     const c = (await extraction(w.tc, documentId)).body.claims[0]!;
@@ -337,7 +337,7 @@ describe('claim decisions (deliverable 7)', () => {
     expect((await confirm(w.tc, documentId, c1!.id)).status).toBe(200); // a replay of the confirmed one
   });
 
-  it('R-AST-21 R-DOC-10 (b11 sends-gates/F1, api-ui/F1): a contract extraction is no card in the generic Approvals inbox; the generic reject and claim review refuse it (EXTRACTION_USE_DOCUMENT), so the extraction stays open and its dates stay confirmable', async () => {
+  it('R-AST-21 R-DOC-8 (b11 sends-gates/F1, api-ui/F1): a contract extraction is no card in the generic Approvals inbox; the generic reject and claim review refuse it (EXTRACTION_USE_DOCUMENT), so the extraction stays open and its dates stay confirmable', async () => {
     const { dealId, documentId } = await contract();
     await runExtract(documentId);
     const v = await extraction(w.tc, documentId);
@@ -386,7 +386,7 @@ describe('claim decisions (deliverable 7)', () => {
     expect(await runExtract(documentId)).toEqual({ result: 'exists' });
   });
 
-  it('R-TXN-1 R-DOC-10 (module 31 fromDocument): a template proposal confirmed from the contract becomes a document date and loses its template basis', async () => {
+  it('R-TXN-1 R-DOC-8 (module 31 fromDocument): a template proposal confirmed from the contract becomes a document date and loses its template basis', async () => {
     await freshReauth(h, w.owner);
     expect((await putTemplates(w.owner, [template()])).status).toBe(200);
     const d = await makeDeal(w, w.agents[0]!);

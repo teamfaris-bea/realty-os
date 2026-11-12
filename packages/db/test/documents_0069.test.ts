@@ -1,5 +1,5 @@
 // Module 42 (api/documents) migration: the document integrity guard, the deal-date evidence guard and their indexes
-// (DATA_MODEL Part 2 R-DOC-5, R-DOC-8, R-DOC-10, R-AST-1; E406, E407, E408, E410, E411, E131, E417). Every write runs as
+// (DATA_MODEL Part 2 R-DOC-6, R-DOC-9, R-DOC-8, R-AST-1; E406, E407, E408, E410, E411, E131, E417). Every write runs as
 // app_user under RLS through withTenantTx; the superuser pool only reads back, and disables the new trigger inside a
 // rolled-back transaction to prove what the foreign key alone would accept.
 import { createHash, randomBytes } from 'node:crypto';
@@ -94,7 +94,7 @@ afterAll(async () => {
 });
 
 describe('documents_integrity_guard (0069)', () => {
-  it('E408 R-DOC-5: without the guard the foreign key alone accepts another person\'s object (referential checks bypass RLS)', async () => {
+  it('E408 R-DOC-6: without the guard the foreign key alone accepts another person\'s object (referential checks bypass RLS)', async () => {
     const foreign = await obj(b);
     const c = await h.su.connect();
     try {
@@ -109,7 +109,7 @@ describe('documents_integrity_guard (0069)', () => {
     }
   });
 
-  it('E408 R-DOC-5: another person\'s, another tenant\'s, an already-used, a wrong-purpose, a wrong-type, an empty, an oversized or a shredded object is refused', async () => {
+  it('E408 R-DOC-6: another person\'s, another tenant\'s, an already-used, a wrong-purpose, a wrong-type, an empty, an oversized or a shredded object is refused', async () => {
     const mine = await obj(a);
     await doc(a, mine);
     const cases: Array<[string, Promise<string>]> = [
@@ -132,14 +132,14 @@ describe('documents_integrity_guard (0069)', () => {
     for (const type of ['application/pdf', 'image/jpeg', 'image/png']) expect(await errOf(doc(a, await obj(a, { type, size: 10_000_000 })))).toBe('NO ERROR');
   });
 
-  it('R-DOC-5: the uploader is the acting person, never the system or someone named by an Owner', async () => {
+  it('R-DOC-6: the uploader is the acting person, never the system or someone named by an Owner', async () => {
     const o = await obj(w.owner);
     expect(await errOf(as(w.owner, (tx) => insertDoc(tx, w.owner, o, { uploader: a.id })))).toMatch(/DOCUMENT_UPLOADER_SELF|DOCUMENT_OBJECT_INVALID/);
     const sysObj = await obj(a);
     expect(await errOf(withTenantTx(w.system('worker'), (tx) => insertDoc(tx, a, sysObj), { db: h.app }))).toMatch(/DOCUMENT_UPLOADER_SELF/);
   });
 
-  it('R-DOC-5: version_no and kind are set by the database: a new version is prev + 1 and keeps the kind', async () => {
+  it('R-DOC-6: version_no and kind are set by the database: a new version is prev + 1 and keeps the kind', async () => {
     const v1 = await doc(a, await obj(a), { versionNo: 7, kind: 'addendum' });
     const v2 = await doc(a, await obj(a), { supersedes: v1, kind: 'other', versionNo: 1 });
     const rows = await suRows<{ id: string; version_no: number; kind: string }>(h.su, 'SELECT id, version_no, kind FROM documents WHERE id = ANY($1)', [[v1, v2]]);
@@ -147,7 +147,7 @@ describe('documents_integrity_guard (0069)', () => {
     expect(rows.find((r) => r.id === v2)).toMatchObject({ version_no: 2, kind: 'addendum' });
   });
 
-  it('E407 R-DOC-5: a version across scopes, or of a document the caller cannot read, is DOCUMENT_VERSION_INVALID', async () => {
+  it('E407 R-DOC-6: a version across scopes, or of a document the caller cannot read, is DOCUMENT_VERSION_INVALID', async () => {
     const v1 = await doc(a, await obj(a));
     await clean(v1);
     expect(await errOf(doc(b, await obj(b), { deal: dealB, supersedes: v1 }))).toMatch(/DOCUMENT_VERSION_INVALID/);
@@ -159,7 +159,7 @@ describe('documents_integrity_guard (0069)', () => {
     expect(await errOf(doc(tc, await obj(tc), { supersedes: pending }))).toMatch(/DOCUMENT_VERSION_INVALID/);
   });
 
-  it('E406 R-DOC-5: two new versions of one document on two connections: one commits, the other hits the linear-chain index', async () => {
+  it('E406 R-DOC-6: two new versions of one document on two connections: one commits, the other hits the linear-chain index', async () => {
     const v1 = await doc(a, await obj(a));
     const [o1, o2] = [await obj(a), await obj(a)];
     const results = await Promise.allSettled([doc(a, o1, { supersedes: v1 }), doc(a, o2, { supersedes: v1 })]);
@@ -168,7 +168,7 @@ describe('documents_integrity_guard (0069)', () => {
     expect(String(rejected.reason.message)).toMatch(/documents_supersedes_uq/);
   });
 
-  it('E411 R-DOC-8: the TC and the ISA on the deal cannot share; the deal owner and the Owner can; nobody shares a contact document', async () => {
+  it('E411 R-DOC-9: the TC and the ISA on the deal cannot share; the deal owner and the Owner can; nobody shares a contact document', async () => {
     const d = await doc(a, await obj(a));
     await clean(d);
     for (const m of [tc, isa]) {
@@ -189,7 +189,7 @@ describe('documents_integrity_guard (0069)', () => {
     await as(a, (tx) => sql`UPDATE documents SET display_name = 'Renamed.pdf' WHERE id = ${d}`.execute(tx));
   });
 
-  it('E410 R-DOC-8: unsharing stops portal downloads at once (portal.issue_document_stream returns nothing)', async () => {
+  it('E410 R-DOC-9: unsharing stops portal downloads at once (portal.issue_document_stream returns nothing)', async () => {
     await setPortalCleared(h, true);
     try {
       const p = await createParty(h, w, a, 'Pia Portal');
@@ -226,12 +226,12 @@ describe('deal_dates_evidence_guard (0069)', () => {
       INSERT INTO deal_dates (tenant_id, id, deal_id, kind, due_on, source, status, confirmed_by_user_id, confirmed_at, evidence_claim_id)
       VALUES (app.tenant_id(), ${uuid()}, ${deal}, 'closing', '2027-01-15', ${source}, 'confirmed', app.user_id(), now(), ${claimId})`.execute(tx));
 
-  it('E131 E417 R-DOC-10 R-AST-1: a needs_review claim never becomes a date, even by raw SQL', async () => {
+  it('E131 E417 R-DOC-8 R-AST-1 R-AST-5: a needs_review claim never becomes a date, even by raw SQL', async () => {
     const [nr] = await extraction(dealId, [{ needsReview: true }]);
     expect(await errOf(insertDate(a, dealId, nr!))).toMatch(/DEAL_DATE_EVIDENCE_INVALID/);
   });
 
-  it('R-DOC-10: another deal\'s claim, another kind of claim, or a non-document source is refused; the verified claim of the deal is accepted once', async () => {
+  it('R-DOC-8: another deal\'s claim, another kind of claim, or a non-document source is refused; the verified claim of the deal is accepted once', async () => {
     const [other] = await extraction(dealB, [{ needsReview: false }]);
     expect(await errOf(insertDate(a, dealId, other!))).toMatch(/DEAL_DATE_EVIDENCE_INVALID/);
     const [fact] = await extraction(dealId, [{ needsReview: false, kind: 'fact' }]);
@@ -246,7 +246,7 @@ describe('deal_dates_evidence_guard (0069)', () => {
     expect(await errOf(insertDate(tc, dealId, hidden!))).toMatch(/DEAL_DATE_EVIDENCE_INVALID/);
   });
 
-  it('R-DOC-10: a NULL claim (a manual date, or ON DELETE SET NULL) passes untouched', async () => {
+  it('R-DOC-8: a NULL claim (a manual date, or ON DELETE SET NULL) passes untouched', async () => {
     expect(await errOf(insertDate(a, dealId, null, 'manual'))).toBe('NO ERROR');
   });
 });

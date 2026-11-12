@@ -1,5 +1,5 @@
 // Authorization of api/documents, role × route, checked against core can() (R-PERM-5; DATA_MODEL §8 "Legal hold,
-// shorten document retention" and the publish row; R-DOC-1, R-DOC-8). A denial on something the caller cannot act on
+// shorten document retention" and the publish row; R-DOC-1, R-DOC-7). A denial on something the caller cannot act on
 // is 404, never 403; the only 403 is DOCUMENT_HOLD_OWNER_ADMIN to a member who sees the document. Also: the provider
 // selection (R-INT-1) and support (metadata, never bytes).
 import { type Action, type ResourceFacts, type SupportActor, can } from '@realty/core/foundation';
@@ -109,8 +109,8 @@ describe('R-PERM-5 role × route against can()', () => {
   });
 });
 
-describe('support reads metadata, never bytes (R-PERM-11, R-DOC-8)', () => {
-  it('R-DOC-8: can() lets support list and read documents but never download, upload, share or hold; under a grant support lists the scope through RLS', async () => {
+describe('support reads metadata, never bytes (R-PERM-11, R-DOC-7)', () => {
+  it('R-DOC-7: can() lets support list and read documents but never download, upload, share or hold; under a grant support lists the scope through RLS', async () => {
     const support: SupportActor = { kind: 'support', userId: '00000000-0000-7000-8000-00000000aaaa' as never, tenantId: w.tenantId as never, grantId: 'g' };
     expect(can(support, 'document.view', {}).ok).toBe(true);
     for (const a of ['document.download', 'document.upload', 'document.upload_listing', 'document.upload_contact', 'document.share', 'document.hold'] as Action[]) expect(can(support, a, { own: true, deal: true, team: true }).ok, a).toBe(false);

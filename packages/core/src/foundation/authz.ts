@@ -162,7 +162,7 @@ export const ACTIONS = [
   'document.upload_listing', // module 42: upload a listing document (listing.edit's grants)
   'document.upload_contact', // module 42: upload a contact document (contact.edit's grants without the system)
   'document.view', // module 42: list and read documents (RLS decides which: R-DOC-1, R-DOC-3); support reads metadata
-  'document.download', // module 42: stream a clean document's bytes (never support; R-DOC-8)
+  'document.download', // module 42: stream a clean document's bytes (never support; R-DOC-7)
   'document.share', // module 42: share a clean deal/listing document to the portal (Owner, Admin, TL T, agent own; DB re-checks)
   'document.hold', // module 42 (DATA_MODEL §8 "Legal hold, shorten document retention"): Owner, Admin
   'ads.view', // module 52: the ads page and ledger (human Owner/Admin only; no support, no system: R-ADS-10, DATA_MODEL §8)

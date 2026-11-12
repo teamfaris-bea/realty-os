@@ -1,4 +1,4 @@
-// Architecture of api/documents (module 42; D1, R-DOC-2, R-DOC-8, R-DOC-10, R-TEN-7, A2): source scans of every
+// Architecture of api/documents (module 42; D1, R-DOC-2, R-DOC-7, R-DOC-8, R-TEN-7, A2): source scans of every
 // apps/api file. documents/** sends nothing, calls no model, writes no deal_dates SQL (module 31's confirmInTx is the
 // one writer), reads file bytes only where it must, and answers no confidence number or tenant id.
 import { readFileSync, readdirSync, statSync } from 'node:fs';
@@ -42,7 +42,7 @@ describe('api/documents architecture', () => {
     for (const f of DOCS) expect(src(f), rel(f)).not.toMatch(/providers\.ai\b|anthropic|AiProvider|ai_runs|assistant\/(firstResponse|drafts|summaries|prompt)|buildPrompt|\.complete\(/);
   });
 
-  it('R-DOC-10: documents/** writes no deal_dates SQL (INSERT, UPDATE or DELETE): only module 31\'s confirmInTx does', () => {
+  it('R-DOC-8: documents/** writes no deal_dates SQL (INSERT, UPDATE or DELETE): only module 31\'s confirmInTx does', () => {
     for (const f of DOCS) expect(src(f), rel(f)).not.toMatch(/(INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+deal_dates/i);
   });
 
@@ -55,7 +55,7 @@ describe('api/documents architecture', () => {
     expect(readers).toEqual(['documents/extract.ts', 'documents/read.ts', 'documents/scan.ts']);
   });
 
-  it('R-DOC-8: the streaming SQL itself requires scan_status = \'clean\' and a live document object', () => {
+  it('R-DOC-7: the streaming SQL itself requires scan_status = \'clean\' and a live document object', () => {
     const repos = src(join(API_SRC, 'documents/repos.ts'));
     const fn = repos.slice(repos.indexOf('export async function cleanObjectOf'), repos.indexOf('export async function portalCleared'));
     expect(fn).toMatch(/d\.scan_status = 'clean'/);
@@ -84,7 +84,7 @@ describe('api/documents architecture', () => {
     expect([...handlers.matchAll(/jobPayload\(\{([^}]*)\}\)/g)].map((m) => m[1]!.trim())).toEqual(['documentId: zId', '']);
   });
 
-  it('R-DOC-6: no log, audit row or job payload in documents/** names a file or display name', () => {
+  it('R-DOC-5: no log, audit row or job payload in documents/** names a file or display name', () => {
     for (const f of DOCS) {
       const s = src(f);
       for (const m of s.matchAll(/(?:log\.(?:info|warn|error)|ctx\.log\.\w+)\(([^)]*)\)/g)) expect(m[1], rel(f)).not.toMatch(/display_?name|filename|displayName/i);
