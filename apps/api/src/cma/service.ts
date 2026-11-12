@@ -17,7 +17,6 @@ import { type CompetingRule, type ListingFacts, competingSet, dedupeMirrors, lis
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
 import { ZodError } from 'zod';
-import { mergeTree } from '../admin/repos/erasure.js';
 import { audit, redactDiff } from '../audit.js';
 import { AppError } from '../errors.js';
 import {
@@ -58,8 +57,11 @@ import {
   insertDraft,
   myOpenDraft,
   myOpenDrafts,
+  personRecords,
   relinkAddress,
   supersede,
+  supersedeMyDraftsForHome,
+  survivorSeenByCaller,
   tenantZoneName,
   touchDataDate,
   updateDraft,
@@ -386,10 +388,28 @@ async function compute(tx: Tx, now: Instant, i: Inputs): Promise<{ write: CmaWri
   };
 }
 
+/**
+ * A contact a CMA is prepared or edited for must be live. A merged-away record is 409 CONTACT_MERGED, naming the
+ * survivor only to a caller who sees it (R-PERM-5), also when contacts RLS hides the record itself from the caller
+ * (its former agent opening their own CMA of it: db-public/F1, F2); any other contact the caller cannot see is 404.
+ */
 async function assertContact(tx: Tx, contactId: string): Promise<void> {
   const c = await contactLive(tx, contactId);
-  if (c === null) throw new AppError('NOT_FOUND');
-  if (!c.live) throw new AppError('CONTACT_MERGED', c.mergedInto ? { mergedInto: c.mergedInto } : undefined);
+  if (c !== null && c.live) return;
+  const survivor = c === null || c.mergedInto !== null ? await survivorSeenByCaller(tx, contactId) : null;
+  if (c === null && survivor === null) throw new AppError('NOT_FOUND');
+  throw new AppError('CONTACT_MERGED', survivor ? { mergedInto: survivor } : undefined);
+}
+
+/**
+ * F15 across a merge (ownership-data/F4): once the caller stores or keeps a draft for a home on `contactId`, their open
+ * drafts for the same home (address key) on records merged into it are superseded (a merged-away record's draft takes
+ * no edit any more, and the person keeps one open draft per creator and home).
+ */
+async function supersedeMergedAwayDrafts(tx: Tx, contactId: string, w: CmaWrite): Promise<void> {
+  const key = (w.subject as StoredSubject).resolved.addressKey;
+  if (key === null) return;
+  await supersedeMyDraftsForHome(tx, (await personRecords(tx, contactId)).filter((id) => id !== contactId), key);
 }
 
 export interface PrepareBody {
@@ -407,7 +427,10 @@ export async function prepare(tx: Tx, actor: UserActor, now: Instant, b: Prepare
   const { write } = await compute(tx, now, { subject: b.subject, contactId, purpose: b.purpose, inspection: b.inspection ?? 'none', inspectedOn: b.inspectedOn ?? null, notes: null, disclosure: NO_DISCLOSURE, include: [], exclude: [], nearMatchDismissed: [] });
   // an explicit prepare supersedes the caller's open drafts for this contact and address, a draft whose address was
   // deleted and put back included (F15: one open draft per home)
-  if (contactId !== null) for (const d of await myOpenDrafts(tx, contactId, write.contactAddressId)) await supersede(tx, d.id);
+  if (contactId !== null) {
+    for (const d of await myOpenDrafts(tx, contactId, write.contactAddressId)) await supersede(tx, d.id);
+    await supersedeMergedAwayDrafts(tx, contactId, write);
+  }
   const id = randomUUID();
   let stored = await insertDraft(tx, id, write);
   if (stored === null) {
@@ -450,6 +473,7 @@ export async function oneTap(tx: Tx, actor: UserActor, now: Instant, contactId: 
     nearMatchDismissed: stored?.nearMatchDismissed ?? [],
   };
   const { write } = await compute(tx, now, inputs);
+  await supersedeMergedAwayDrafts(tx, contactId, write);
   if (open && open.content_sha256 === write.contentSha256) {
     if (open.contact_address_id === null) await relinkAddress(tx, open.id, addr.id);
     if ((open.mls_data_as_of?.getTime() ?? null) !== (write.mlsDataAsOf?.getTime() ?? null)) await touchDataDate(tx, open.id, write.mlsDataAsOf);
@@ -498,6 +522,8 @@ export async function patch(tx: Tx, actor: UserActor, now: Instant, id: string, 
   const row = await getCma(tx, id, { lock: true });
   if (!row) throw new AppError('NOT_FOUND');
   if (row.status !== 'draft') throw new AppError('CMA_NOT_DRAFT', { status: row.status });
+  // a merged-away record's draft takes no edit (CONTACT_MERGED), as prepare and the one-tap refuse it (db-public/F2)
+  if (row.contact_id !== null) await assertContact(tx, row.contact_id);
   if (await addressGone(tx, row)) {
     throw new AppError('CMA_SUBJECT_ADDRESS_GONE', { sentence: 'The home’s address was deleted from this contact, so this CMA can’t be re-run. Prepare a new CMA for the home.' });
   }
@@ -546,32 +572,48 @@ export interface CmaSummary {
   createdByUserId: string;
   mine: boolean;
   fromMergedRecord: boolean;
+  /** what PATCH would accept now: the caller's own draft of a live record whose address is still there */
+  canEdit: boolean;
   createdAt: string;
 }
 
+/** Whether the caller may edit the draft now (the view's canEdit): never an edit that must fail. */
+async function editable(tx: Tx, actor: UserActor, row: CmaRow, contactLiveNow: boolean | null): Promise<boolean> {
+  if (row.status !== 'draft' || row.created_by_user_id !== actor.userId) return false;
+  if (row.contact_id !== null && !(contactLiveNow ?? (await contactLive(tx, row.contact_id))?.live === true)) return false; // merged away, or not seen
+  return !(await addressGone(tx, row));
+}
+
 export async function listForContact(tx: Tx, actor: UserActor, contactId: string): Promise<CmaSummary[]> {
-  const ids = await mergeTree(tx, contactId); // the contact and every record merged into it (merge moves no CMA)
+  // the contact and every record merged into it (a merge moves no CMA), also those contacts RLS hides from the caller:
+  // their CMAs the caller may read are listed here (R-CMA-8, db-public/F1)
+  const ids = await personRecords(tx, contactId);
   const rows = await cmasOfContacts(tx, ids);
-  return rows.map((r) => {
-    const s = r.subject as unknown as StoredSubject;
-    const a = s.resolved?.address;
-    return {
-      id: r.id,
-      contactId: r.contact_id,
-      status: r.status,
-      purpose: r.purpose,
-      valuationDate: r.valuation_date,
-      mlsDataAsOf: r.mls_data_as_of?.toISOString() ?? null,
-      valueCents: r.value_cents === null ? null : Number(r.value_cents),
-      lowCents: r.low_cents === null ? null : Number(r.low_cents),
-      highCents: r.high_cents === null ? null : Number(r.high_cents),
-      address: a?.line1 ? [a.line1, a.line2].filter(Boolean).join(' ') + (a.city ? `, ${a.city}` : '') : null,
-      createdByUserId: r.created_by_user_id,
-      mine: r.created_by_user_id === actor.userId,
-      fromMergedRecord: r.contact_id !== contactId,
-      createdAt: r.created_at.toISOString(),
-    };
-  });
+  const live = (await contactLive(tx, contactId))?.live === true;
+  const out: CmaSummary[] = [];
+  for (const r of rows) out.push({ ...summaryOf(actor, contactId, r), canEdit: await editable(tx, actor, r, r.contact_id === contactId ? live : false) });
+  return out;
+}
+
+function summaryOf(actor: UserActor, contactId: string, r: CmaRow): Omit<CmaSummary, 'canEdit'> {
+  const s = r.subject as unknown as StoredSubject;
+  const a = s.resolved?.address;
+  return {
+    id: r.id,
+    contactId: r.contact_id,
+    status: r.status,
+    purpose: r.purpose,
+    valuationDate: r.valuation_date,
+    mlsDataAsOf: r.mls_data_as_of?.toISOString() ?? null,
+    valueCents: r.value_cents === null ? null : Number(r.value_cents),
+    lowCents: r.low_cents === null ? null : Number(r.low_cents),
+    highCents: r.high_cents === null ? null : Number(r.high_cents),
+    address: a?.line1 ? [a.line1, a.line2].filter(Boolean).join(' ') + (a.city ? `, ${a.city}` : '') : null,
+    createdByUserId: r.created_by_user_id,
+    mine: r.created_by_user_id === actor.userId,
+    fromMergedRecord: r.contact_id !== contactId,
+    createdAt: r.created_at.toISOString(),
+  };
 }
 
 // ---- the view ----------------------------------------------------------------------------------
@@ -640,8 +682,8 @@ async function viewOf(tx: Tx, actor: UserActor, now: Instant, row: CmaRow) {
     notes: row.agent_notes,
     createdByUserId: row.created_by_user_id,
     mine: row.created_by_user_id === actor.userId,
-    // never an edit that must fail: not a draft whose address was deleted and is still gone (F15)
-    canEdit: row.status === 'draft' && row.created_by_user_id === actor.userId && !(await addressGone(tx, row)),
+    // never an edit that must fail: not a merged-away record's draft, nor one whose address was deleted (F15)
+    canEdit: await editable(tx, actor, row, null),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
     sharedAt: row.shared_at?.toISOString() ?? null,

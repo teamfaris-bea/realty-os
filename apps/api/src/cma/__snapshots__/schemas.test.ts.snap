@@ -15,6 +15,9 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
               "null",
             ],
           },
+          "canEdit": {
+            "type": "boolean",
+          },
           "contactId": {
             "anyOf": [
               {
@@ -94,6 +97,7 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
           "createdByUserId",
           "mine",
           "fromMergedRecord",
+          "canEdit",
           "createdAt",
         ],
         "type": "object",

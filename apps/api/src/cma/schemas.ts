@@ -216,6 +216,7 @@ export const CmaListResponse = z.object({
       createdByUserId: Id,
       mine: z.boolean(),
       fromMergedRecord: z.boolean(),
+      canEdit: z.boolean(),
       createdAt: z.string(),
     }),
   ),

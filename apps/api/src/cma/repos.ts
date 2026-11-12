@@ -151,6 +151,66 @@ export async function supersede(tx: Tx, id: string): Promise<void> {
   await sql`UPDATE cma_reports SET status = 'superseded' WHERE tenant_id = app.tenant_id() AND id = ${id}::uuid AND status = 'draft'`.execute(tx);
 }
 
+// ---- merged records (R-CMA-8, batch 10 review db-public/F1, ownership-data/F4) -------------------------------------
+// A merge moves no CMA and leaves the merged-away record closed and unowned, so contacts RLS hides it from its former
+// agent, while 0061's cma_reports_select still shows its creator their CMAs of it. The survivor's own ledger events
+// (lead_ownership_events 'merged_in', payload.loserId; their policy follows the survivor's detail) name every record
+// merged into it, so the caller traces the person through what RLS shows them, no policy widened: the contacts it
+// shows (merged_into_contact_id) and the merged_in events of the records it reaches.
+
+/**
+ * The records of the person `contactId` heads, as far as the caller can trace them: the contact and every record
+ * merged into it, along chains (a chain through a record whose events the caller cannot read stops there).
+ */
+export async function personRecords(tx: Tx, contactId: string): Promise<string[]> {
+  const r = await sql<{ id: string }>`
+    WITH RECURSIVE tree(id) AS (
+      SELECT ${contactId}::uuid
+      UNION
+      SELECT x.id FROM tree t CROSS JOIN LATERAL (
+        SELECT c.id FROM contacts c WHERE c.tenant_id = app.tenant_id() AND c.merged_into_contact_id = t.id
+        UNION ALL
+        SELECT (e.payload ->> 'loserId')::uuid FROM lead_ownership_events e
+         WHERE e.tenant_id = app.tenant_id() AND e.contact_id = t.id AND e.type = 'merged_in' AND e.payload ? 'loserId') x(id)
+    )
+    SELECT id FROM tree`.execute(tx);
+  return r.rows.map((x) => x.id);
+}
+
+/**
+ * The live record a merged-away contact's person lives on now, when the caller sees its detail (R-PERM-5), else null:
+ * up the merge chain through the contacts RLS shows and the merged_in events naming a hidden record. Null for a
+ * contact that was never merged away.
+ */
+export async function survivorSeenByCaller(tx: Tx, contactId: string): Promise<string | null> {
+  const r = await sql<{ id: string }>`
+    WITH RECURSIVE up(id, depth) AS (
+      SELECT ${contactId}::uuid, 0
+      UNION ALL
+      SELECT s.id, up.depth + 1 FROM up CROSS JOIN LATERAL (
+        SELECT c.merged_into_contact_id FROM contacts c WHERE c.tenant_id = app.tenant_id() AND c.id = up.id AND c.merged_into_contact_id IS NOT NULL
+        UNION
+        SELECT e.contact_id FROM lead_ownership_events e WHERE e.tenant_id = app.tenant_id() AND e.type = 'merged_in' AND e.payload ->> 'loserId' = up.id::text) s(id)
+       WHERE up.depth < 16
+    )
+    SELECT up.id FROM up JOIN contacts c ON c.tenant_id = app.tenant_id() AND c.id = up.id
+     WHERE up.depth > 0 AND c.merged_into_contact_id IS NULL AND c.deleted_at IS NULL AND app.contact_detail_visible(c.tenant_id, c.id)
+     ORDER BY up.depth DESC LIMIT 1`.execute(tx);
+  return r.rows[0]?.id ?? null;
+}
+
+/**
+ * Supersedes the caller's own open drafts for the home `addressKey` on `contactIds` (records merged into the one the
+ * caller just stored a draft for): one creator keeps one open draft per home across the person (F15). Another
+ * person's draft is never touched (R-CMA-6).
+ */
+export async function supersedeMyDraftsForHome(tx: Tx, contactIds: readonly string[], addressKey: string): Promise<void> {
+  if (contactIds.length === 0) return;
+  await sql`UPDATE cma_reports SET status = 'superseded'
+     WHERE tenant_id = app.tenant_id() AND created_by_user_id = app.user_id() AND status = 'draft'
+       AND contact_id = ANY (${[...contactIds]}::uuid[]) AND subject #>> '{resolved,addressKey}' = ${addressKey}`.execute(tx);
+}
+
 /** The CMAs of contacts, newest first (RLS decides which rows the caller reads). */
 export async function cmasOfContacts(tx: Tx, contactIds: readonly string[]): Promise<CmaRow[]> {
   return (await sql<CmaRow>`SELECT ${COLS} FROM cma_reports WHERE tenant_id = app.tenant_id() AND contact_id = ANY (${[...contactIds]}::uuid[])

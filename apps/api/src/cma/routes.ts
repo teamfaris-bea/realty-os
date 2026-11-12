@@ -7,7 +7,9 @@
 //   PATCH /cma/:id                edit a draft and re-run it                                       cma.prepare
 //
 // Authorization: cma.prepare (DATA_MODEL §8: ✅ | ✅ | T | O | — | — | —) on the contact's facts (own, collaborating,
-// team), or `{own}` for the creator of a research CMA without a contact. ISA and TC have none; support reads through RLS
+// team), or `{own}` for the creator of a research CMA without a contact. A CMA of a merged-away record the caller no
+// longer sees is authorized on the facts of the survivor they see, which lists it (R-CMA-8, batch 10 review
+// db-public/F1): in practice its creator, whom 0061's cma_reports_select still shows the row. ISA and TC have none; support reads through RLS
 // only (no route). A contact whose detail the caller cannot see, an invisible CMA, another tenant's id and every denial
 // are 404 (R-PERM-5). Bodies are strict and carry no tenant id; the tenant is the session's (R-TEN-3).
 import type { ResourceFacts } from '@realty/core/foundation';
@@ -18,7 +20,7 @@ import { adminTx } from '../admin/common.js';
 import { personFacts } from '../lists/repos/catalog.js';
 import { authorize } from '../rbac.js';
 import type { RouteModule } from '../routes.js';
-import { getCma } from './repos.js';
+import { getCma, survivorSeenByCaller } from './repos.js';
 import { CmaListResponse, CmaResponse, IdParams, OneTapBody, PatchBody, PrepareBody } from './schemas.js';
 import { getView, listForContact, oneTap, patch, prepare } from './service.js';
 
@@ -32,8 +34,13 @@ export async function contactCmaFacts(tx: Tx, contactId: string): Promise<Resour
 async function cmaFacts(tx: Tx, req: FastifyRequest, id: string): Promise<ResourceFacts | null> {
   const row = await getCma(tx, id);
   if (!row) return null;
-  if (row.contact_id !== null) return contactCmaFacts(tx, row.contact_id);
-  return { own: row.created_by_user_id === req.actor?.userId };
+  if (row.contact_id === null) return { own: row.created_by_user_id === req.actor?.userId };
+  const facts = await contactCmaFacts(tx, row.contact_id);
+  if (facts !== null) return facts;
+  // contacts RLS hides a closed, unowned merged-away record from its former agent: its CMA is reached through the
+  // survivor the caller sees, as the survivor's list shows it (edits are refused CONTACT_MERGED in the service)
+  const survivor = await survivorSeenByCaller(tx, row.contact_id);
+  return survivor === null ? null : contactCmaFacts(tx, survivor);
 }
 
 async function register(app: FastifyInstance): Promise<void> {
