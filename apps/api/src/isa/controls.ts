@@ -15,6 +15,7 @@ import { capabilitiesInEffect, type IsaEndReason, type IsaFacts, type IsaPauseRe
 
 /** human_control, stop_signal and authorization_lost read no facts (core onControl): an explicit empty set */
 const NOFACTS = {} as IsaFacts;
+import { backstopInTx } from './backstop.js';
 import { applyActionsInTx, cancelForAssignmentInTx, chainEnvOf, contextFor, control, type IsaDeps, pauseCardInTx } from './effects.js';
 import { type AssignmentRow, activeBlock, assignmentById, evaluateChain, exclusivity, inFlightIsaMessages, liveAssignmentOf, lockForTurn, personIds, tenantIsaFacts } from './repo.js';
 
@@ -183,6 +184,8 @@ async function afterControl(deps: IsaDeps, tenantId: string, a: AssignmentRow, c
     const canceled = await cancelForAssignmentInTx(tx, a, 'AI_ISA_PAUSED');
     const fresh = (await assignmentById(tx, a.id)) ?? a;
     if (card !== null) await pauseCardInTx({ tx, deps, ctx: { ...(await contextFor(tx, fresh, now)), a: fresh }, now }, card);
+    // R-ISA-29: a transition out of live writes the card for any unconsumed inbound at once
+    await backstopInTx(tx, deps, fresh, null, now);
     return { canceled, inFlight: inFlightView(await inFlightIsaMessages(tx, a.contactId)) };
   });
 }

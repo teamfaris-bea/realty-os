@@ -1,4 +1,5 @@
 // Shared vocabulary of api/comms (BUILD_PLAN module 12).
+import type { AiIsaGateFacts } from '@realty/core/compliance';
 import type { ActionCategory, Channel, GateDecision, Initiator, Purpose } from '@realty/core/compliance';
 import type { IdGenerator, Instant } from '@realty/core/foundation';
 import type { Database } from '@realty/db';
@@ -40,7 +41,7 @@ export interface OutboundIntent {
   /** web chat (module 22): the sending widget's state for the gate (core check 10); absent/null on other channels */
   connection?: { status: 'connected' | 'degraded' | 'other' } | null;
   /** 0190 (D12): the AI ISA facts for core checks 0/8/12 (AI ISA categories only; isa/send.ts aiIsaGateFacts) */
-  aiIsa?: import('@realty/core/compliance').AiIsaGateFacts;
+  aiIsa?: AiIsaGateFacts;
 }
 
 /**

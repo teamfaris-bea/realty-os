@@ -8,6 +8,7 @@
 // - queueOutboundInTx: for assistant/system senders (api/assistant playbook steps, first response, search
 //   alerts; comms' own opt-out confirmation / HELP reply), in the caller's system transaction.
 // None of them addresses a merged-away record (F1, merged.ts): the person lives on the survivor.
+import { takeoverInTx } from '../isa/ingest.js';
 import { type Channel, type NumberFacts, chooseSender, classifyHumanPurpose } from '@realty/core/compliance';
 import type { ContactId, IdGenerator, Instant, TenantId, UserActor } from '@realty/core/foundation';
 import { at, toIso } from '@realty/core/foundation';
@@ -262,6 +263,9 @@ export async function composeHumanMessage(actor: UserActor, contactId: string, i
       integrationConnectionId: d.chat?.connectionId ?? null,
       marketingPieceId: input.marketingPieceId ?? null,
     });
+    // 0190 (D12, R-ISA-3): a one-to-one human message created or scheduled pauses live AI care at once (bulk and
+    // marketing sends never take over: they count toward the person's 24-hour budget instead)
+    if (inserted && !input.bulkActionId && !input.marketingPieceId) await takeoverInTx(tx, deps.ids, actor, contactId, now);
     if (!inserted) {
       // the same command raced in (double tap, network retry): it is that command's message
       const winner = await msgs.messageByIdempotencyKey(tx, key);
@@ -297,6 +301,7 @@ export async function sendExisting(actor: UserActor, messageId: string, deps: Co
     if (!m || m.initiator !== 'human' || m.initiatedByUserId !== actor.userId) throw new AppError('NOT_FOUND');
     if (!(await contactFacts(tx, m.contactId))) throw new AppError('NOT_FOUND');
     if (m.status !== 'queued' && m.status !== 'scheduled') throw new AppError('MESSAGE_NOT_SENDABLE', { status: m.status });
+    if (m.bulkActionId === null && m.marketingPieceId === null) await takeoverInTx(tx, deps.ids, actor, m.contactId, Date.now() as Instant); // R-ISA-3
     // the human tap is the audited decision (R-AUDIT-5); what dispatch then does is on the message itself
     await audit(tx, actor, { action: 'message.held_send', entity: { type: 'message', id: m.id }, changes: redactSnapshot({ status: m.status, statusReason: m.statusReason }, { entity: 'message' }), reason: m.statusReason ?? 'RETAP' });
   });

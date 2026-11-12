@@ -115,11 +115,22 @@ export async function mergeCommunication(
   const movedActions = await sql<{ id: string; kind: string }>`
     UPDATE assistant_actions SET contact_id = ${survivorId},
            owner_user_id = CASE WHEN kind = 'handback' AND ${target}::uuid IS NOT NULL THEN ${target}::uuid ELSE owner_user_id END,
-           status = CASE WHEN kind IN ('message_draft', 'autonomous_message', 'seller_update_draft', 'next_step') THEN 'invalidated'
+           status = CASE WHEN kind IN ('message_draft', 'autonomous_message', 'seller_update_draft', 'next_step', 'ai_isa_message') THEN 'invalidated'
                          ELSE status END,
            updated_at = now()
      WHERE tenant_id = app.tenant_id() AND contact_id = ${loserId} AND status = 'proposed'
     RETURNING id, kind`.execute(tx);
+  // AI ISA (D12 proposed, R-ISA-16, E526): a merge stops live AI care on both records in this transaction (the guard and
+  // liveness treat both as ended at commit; the stop-signal job writes the handoffs). No UPDATE right on the loser's
+  // assignment is needed: the ledger insert is allowed to any tenant actor.
+  await sql`
+    INSERT INTO ai_isa_stop_signals (tenant_id, contact_id, reason, source_table, source_id)
+    SELECT DISTINCT a.tenant_id, a.contact_id, 'merged', 'contacts', ${loserId}::uuid FROM ai_isa_assignments a
+     WHERE a.tenant_id = app.tenant_id() AND a.contact_id IN (${loserId}::uuid, ${survivorId}::uuid) AND a.ended_at IS NULL`.execute(tx);
+  await sql`
+    INSERT INTO jobs (tenant_id, queue, kind, payload, run_at)
+    SELECT s.tenant_id, 'realtime', 'ai_isa.stop_signal', jsonb_build_object('signalId', s.id), clock_timestamp() FROM ai_isa_stop_signals s
+     WHERE s.tenant_id = app.tenant_id() AND s.reason = 'merged' AND s.source_id = ${loserId}::uuid AND s.created_at >= now()`.execute(tx);
   const handbacks = movedActions.rows.filter((r) => r.kind === 'handback').map((r) => r.id);
   if (handbacks.length > 0) {
     await sql`

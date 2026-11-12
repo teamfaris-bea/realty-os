@@ -42,7 +42,7 @@ import * as msgs from './repos/messages.js';
 import { adminUserIds, contactLabel, handlerOf, notifyUser, upsertFeedItem } from './repos/notify.js';
 import { LEDGER_SYSTEM, SYSTEM_NOTICE, type CommsDeps } from './types.js';
 import { emailHandbackKey, messageIdHeader, rfcMessageIdSha256 } from '../channels/rfcMessageId.js';
-import { dkimAligned, ingestForAiIsaInTx } from '../isa/ingest.js';
+import { dkimAligned, ingestForAiIsaInTx, pauseForSyncedMailInTx } from '../isa/ingest.js';
 import type { DkimVerdict } from '../leadEmail/trust.js';
 import { type InquiryInput, ingestInquiryInTx, intakeLockKeys } from '../leads/intake.js';
 
@@ -640,6 +640,8 @@ export async function ingestSyncedMailInTx(tx: Tx, contactId: string, mailMessag
   const sharing = [...new Set([contactId, ...(await msgs.hmacPoints(tx, hmac)).map((p) => p.contactId)])].sort();
   await lockContacts(tx, sharing as ContactId[]);
   const now = (await sql<{ now: Date }>`SELECT clock_timestamp() AS now`.execute(tx)).rows[0]!.now.getTime() as Instant;
+  // 0190 (D12, R-GMAIL-14, R-ISA-3): synced mail is never an AI ISA turn; it only pauses live care (synced_mail)
+  for (const c of sharing) await pauseForSyncedMailInTx(tx, ids, c, now);
 
   const reason = pauseReasonOf(classification);
   let paused = false;

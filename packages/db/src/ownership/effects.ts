@@ -136,8 +136,18 @@ export async function invalidateDrafts(tx: Tx, contactId: ContactId, cur: Owners
   const r = await sql`
     UPDATE assistant_actions SET status = 'invalidated', updated_at = now()
      WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND status = 'proposed'
-       AND kind IN ('message_draft', 'autonomous_message', 'seller_update_draft', 'next_step')
+       AND kind IN ('message_draft', 'autonomous_message', 'seller_update_draft', 'next_step', 'ai_isa_message')
        AND (owner_user_id IS DISTINCT FROM ${owner}::uuid OR bound_ownership_seq IS DISTINCT FROM ${period}::bigint)`.execute(tx);
+  // AI ISA (D12 proposed, R-ISA-16): an owner change stops live AI care in this same transaction (the ledger; the
+  // stop-signal job then ends it with its handoff). A same-owner new period is a pause (reinquiry), not a stop.
+  await sql`
+    INSERT INTO ai_isa_stop_signals (tenant_id, contact_id, reason, source_table, source_id)
+    SELECT a.tenant_id, a.contact_id, 'owner_change', 'contacts', a.contact_id FROM ai_isa_assignments a
+     WHERE a.tenant_id = app.tenant_id() AND a.contact_id = ${contactId} AND a.ended_at IS NULL AND a.owner_user_id IS DISTINCT FROM ${owner}::uuid`.execute(tx);
+  await sql`
+    INSERT INTO jobs (tenant_id, queue, kind, payload, run_at)
+    SELECT s.tenant_id, 'realtime', 'ai_isa.stop_signal', jsonb_build_object('signalId', s.id), clock_timestamp() FROM ai_isa_stop_signals s
+     WHERE s.tenant_id = app.tenant_id() AND s.contact_id = ${contactId} AND s.reason = 'owner_change' AND s.created_at >= now()`.execute(tx);
   return Number(r.numAffectedRows ?? 0);
 }
 

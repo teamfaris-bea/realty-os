@@ -12,6 +12,7 @@ import type { Instant, SystemActor, UserActor } from '@realty/core/foundation';
 import { type Tx, enqueueJob } from '@realty/db';
 import { sql } from 'kysely';
 import { audit } from '../audit.js';
+import { systemActor } from '../worker/systemActor.js';
 import { upsertFeedItem } from '../comms/repos/notify.js';
 import type { IsaPauseReason } from './coreSeam.js';
 import { systemPauseInTx } from './controls.js';
@@ -102,17 +103,23 @@ export async function ingestForAiIsaInTx(tx: Tx, deps: IsaDeps, actor: SystemAct
  * system in the `ai_isa.after_control` job (the guard already refuses them: ISA_PAUSED). Bulk and marketing sends
  * never call this.
  */
-export async function takeoverInTx(tx: Tx, ids: IsaDeps['ids'], actor: UserActor | SystemActor, contactId: string, now: Instant): Promise<boolean> {
+/** Synced mail (R-GMAIL-14): only the ISA pause, as the system; never a turn, nothing reaches a prompt. */
+export async function pauseForSyncedMailInTx(tx: Tx, ids: IsaDeps['ids'], contactId: string, now: Instant): Promise<boolean> {
+  const t = await sql<{ t: string }>`SELECT app.tenant_id()::text AS t`.execute(tx);
+  return takeoverInTx(tx, ids, systemActor(t.rows[0]!.t, 'provider'), contactId, now, 'synced_mail');
+}
+
+export async function takeoverInTx(tx: Tx, ids: IsaDeps['ids'], actor: UserActor | SystemActor, contactId: string, now: Instant, reason: 'human_contact' | 'synced_mail' = 'human_contact'): Promise<boolean> {
   const a = await liveAssignmentOf(tx, contactId, 'update');
   if (a === null || a.pausedAt !== null) return false;
   const userId = actor.kind === 'user' ? actor.userId : null;
-  const machine = { ...a.machine, resumePhase: a.machine.phase, phase: 'paused' as const, paused: { reason: 'human_contact' as const, byKind: (userId ? 'user' : 'system') as 'user' | 'system', since: now }, awaitingModel: false };
+  const machine = { ...a.machine, resumePhase: a.machine.phase, phase: 'paused' as const, paused: { reason, byKind: (userId ? 'user' : 'system') as 'user' | 'system', since: now }, awaitingModel: false };
   const r = await sql<{ id: string }>`UPDATE ai_isa_assignments SET paused_at = ${new Date(now)}, paused_by_kind = ${userId ? 'user' : 'system'}, paused_by_user_id = ${userId},
-      pause_reason = 'human_contact', state = 'paused', machine = ${JSON.stringify(machine)}::jsonb
+      pause_reason = ${reason}, state = 'paused', machine = ${JSON.stringify(machine)}::jsonb
     WHERE tenant_id = app.tenant_id() AND id = ${a.id} AND paused_at IS NULL AND ended_at IS NULL RETURNING id`.execute(tx);
   if (r.rows.length === 0) return false;
-  await control(tx, ids, a, userId ? 'pause' : 'system_pause', 'human_contact', userId);
-  await audit(tx, actor, { action: userId ? 'ai_isa.assignment_paused' : 'ai_isa.system_paused', entity: { type: 'ai_isa_assignment', id: a.id }, reason: 'human_contact' });
+  await control(tx, ids, a, userId ? 'pause' : 'system_pause', reason, userId);
+  await audit(tx, actor, { action: userId ? 'ai_isa.assignment_paused' : 'ai_isa.system_paused', entity: { type: 'ai_isa_assignment', id: a.id }, reason });
   await enqueueJob(tx, { queue: 'realtime', kind: 'ai_isa.after_control', payload: { assignmentId: a.id, epoch: a.epoch }, dedupeKey: `ai_isa.after_control:${a.id}:${a.epoch}:human` });
   return true;
 }
