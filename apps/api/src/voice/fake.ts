@@ -94,6 +94,7 @@ export class FakeVoiceTransport implements VoiceTransport {
 
   private released = false;
 
+  /** Lets virtual time run again, for good: no later hold or hand-off pauses this transport again. */
   resume(): void {
     this.paused = false;
     this.released = true;
@@ -195,7 +196,7 @@ export class FakeVoiceTransport implements VoiceTransport {
   async handOff(twiml: string): Promise<void> {
     this.log.handOffs.push({ at: this.clock.now(), twiml });
     this.handedOff = true;
-    if (this.faults.pauseOnHandOff) this.paused = true;
+    if (this.faults.pauseOnHandOff && !this.released) this.paused = true;
   }
 
   async close(): Promise<void> {

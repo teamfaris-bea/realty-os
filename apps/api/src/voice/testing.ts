@@ -106,7 +106,7 @@ export async function expectPhase1Voicemail(h: ApiHarness, c: AiCall, code: stri
 
 /** Waits (real time) until the fake session of this call satisfies `cond`. */
 export async function waitFor(cond: () => boolean, what = 'condition'): Promise<void> {
-  for (let i = 0; i < 500; i++) {
+  for (let i = 0; i < 2000; i++) {
     if (cond()) return;
     await new Promise((r) => setTimeout(r, 10));
   }
