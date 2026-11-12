@@ -131,7 +131,7 @@ describe('E112 an opted-out caller is answered; no phone callback; a confirmatio
   it.each([
     ['voice revoked on the calling phone', { reach: reach({ consent: [revokedRow('voice', H_PHONE)] }), personDoNotContact: false }],
     ['voice revoked on another of the person\'s phones', { reach: reach({ points: [...reach().points, { id: 'p2', kind: 'phone', addressHmac: H_PHONE_2, status: 'active', lineType: 'mobile' }], consent: [revokedRow('voice', H_PHONE_2)] }), personDoNotContact: false }],
-    ['R-PAR-12 voice revoked on a removed phone that still counts', { reach: reach({ removedPhoneHmacs: [H_REMOVED], consent: [revokedRow('voice', H_REMOVED)] }), personDoNotContact: false }],
+    ['voice revoked on a removed phone that still counts (R-PAR-12 facts)', { reach: reach({ removedPhoneHmacs: [H_REMOVED], consent: [revokedRow('voice', H_REMOVED)] }), personDoNotContact: false }],
     ['the person is do-not-contact', { reach: reach(), personDoNotContact: true }],
     ['a voice suppression on a phone', { reach: reach({ suppressions: [{ id: 's1', addressHmac: H_PHONE, channel: 'voice', reason: 'internal_dnc', liftedAt: null }] }), personDoNotContact: false }],
     ['no phone on file', { reach: reach({ points: reach().points.filter((p) => p.kind !== 'phone') }), personDoNotContact: false }],
@@ -327,10 +327,11 @@ describe('transfers (R-VOICE-6, R-VOICE-7; E115)', () => {
   });
 });
 
-describe('bookings (R-VOICE-7; E151 core half: a taken slot is never offered again)', () => {
+// E151's booking lock and free-slot re-read are module 48's; core's half is that a taken slot is never offered again.
+describe('bookings (R-VOICE-7)', () => {
   const f = voiceFacts();
 
-  it('a failed booking (the slot was just taken, E151) says so, asks the model again, and never offers or books that slot again', () => {
+  it('a failed booking (the slot was just taken) says so, asks the model again, and never offers or books that slot again', () => {
     const r = run(openSession(f), f, [tool(10_000, 'book_appointment', SLOT_ARGS(SLOT_A)), { type: 'booking_result', at: T(11_000), ok: false }, tool(12_000, 'check_availability'), tool(12_500, 'book_appointment', SLOT_ARGS(SLOT_A))]);
     expect(lines(r)).toEqual(['bookingFailed']);
     expect(r.actions).toContainEqual({ kind: 'offer_slots', slots: [SLOT_B] });

@@ -146,8 +146,9 @@ describe('obfuscation (zero-width characters, look-alike letters)', () => {
   });
 });
 
-describe('opt-outs: no override (D1, R-PAR-12)', () => {
-  it('R-PAR-12 a voice opt-out on a REMOVED phone still withdraws the phone callback', () => {
+// Removed phones whose opt-outs still count: R-PAR-12 (the send-time half is the gate's and the dispatch guards').
+describe('opt-outs: no override (D1)', () => {
+  it('a voice opt-out on a REMOVED phone that still counts withdraws the phone callback', () => {
     const f = voiceFacts({ claims: HOT_CLAIMS, optOuts: { reach: reach({ removedPhoneHmacs: [H_REMOVED], consent: [revokedRow('voice', H_REMOVED)] }), personDoNotContact: false } });
     const r = run(openSession(f), f, [
       { type: 'tool_request', at: T(9000), request: request('warm_transfer', { target_user_id: OWNER_ID }, 9000) },
