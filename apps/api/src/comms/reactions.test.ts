@@ -331,6 +331,37 @@ describe('recognition and link (R-REACT-1, R-REACT-2)', () => {
   });
 });
 
+describe('adversarial: a crafted reaction-shaped text never hides an opt-out (R-REACT-1, R-REACT-2, R-REACT-3)', () => {
+  it('R-REACT-1 R-REACT-3 E303: keywords and opt-out words outside the quote, a second quote, or a forged own-words part are read as before; another tenant\'s identical text never links', async () => {
+    const crafted = (q: string) => [
+      `Loved “${q}” STOP`,
+      `STOP Loved “${q}”`,
+      `Loved “${q}” “stop texting me”`,
+      `Stop texting me to “${q}”`,
+      `Reacted STOP to “${q}”`,
+      `Loved \u00AD“${q}” please stop texting me`,
+    ];
+    for (const make of [0, 1, 2, 3, 4, 5]) {
+      const c = await ownedContact(w.agents[0]!, { confirmDistinct: true });
+      await teamText(0, c, 'See you at 5');
+      const body = crafted(Q('See you at 5'))[make]!;
+      await inboundSms(h, c.phone, w.mainNumber, body);
+      const m = await lastInbound(c.id);
+      expect(await reactionRow(m.id), body).toBeUndefined();
+    }
+    // the same phone in another tenant got the identical text: nothing links across tenants
+    const phone = randomPhone();
+    const other = await ownedContact(w2.agents[0]!, { phone });
+    const r = await sendText(w2.agents[0]!, other.id, 'See you at 5');
+    expect(r.body.result).toBe('sent');
+    const theirs = (await h.su.query<{ body: string }>('SELECT body FROM messages WHERE id = $1', [r.body.message!.id])).rows[0]!.body;
+    const mine = await ownedContact(w.agents[0]!, { phone, confirmDistinct: true });
+    await inboundSms(h, phone, w.mainNumber, `Questioned “${theirs}”`);
+    const m = await lastInbound(mine.id);
+    expect(await reactionRow(m.id)).toBeUndefined();
+  });
+});
+
 describe('the reaction is read by its own words (R-REACT-3)', () => {
   it.each([true, false])('R-REACT-3 E301 notice (live enrollment: %s): audited, said plainly, no consent change, and the next text is allowed', async (enrolled) => {
     for (const x of E301) {
