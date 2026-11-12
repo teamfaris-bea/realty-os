@@ -12,8 +12,8 @@
 -- calls the provider; the others answer "in progress" and never call it. The provider call stays outside any
 -- transaction. The claim is cleared with the outcome ('retracted', or the card for a post the provider could not
 -- delete), and a claim whose process died is taken again once it is older than app.marketing_retract_claim_window()
--- (5 minutes; provider calls time out long before), so the reconcile pass (handlers.ts, every 5 minutes) still
--- retracts it.
+-- (5 minutes; publish.ts waits at most DELETE_POST_TIMEOUT_MS, 60 s, for the provider, so a live caller never holds a
+-- claim that long), and the reconcile pass (handlers.ts, every 5 minutes) finishes it whatever the listing.
 --
 -- What this adds:
 --   * marketing_publications.retract_claim_id / retract_claimed_at: both or neither (CHECK), only on a
@@ -21,7 +21,8 @@
 --   * app.marketing_publications_guard (0025 body): a publication is never born with a claim; only the system writes
 --     one (the claim columns join the system-only tuple); a claim goes only on a 'published' row with a post id; a
 --     live claim is never replaced (PUBLICATION_RETRACT_CLAIMED) until it is older than the window; the claim time is
---     the database's now(), stamped with the claim and never moved without a new claim.
+--     the database's clock_timestamp() when the claim is written (not the start of a transaction that first waited
+--     for the row), stamped with the claim and never moved without a new claim.
 --   * app.marketing_retract_claim_window(): the window, one place for the guard and publish.ts.
 --
 -- SECURITY REVIEW ITEMS (CONVENTIONS §4; ARCHITECTURE §21.19 "marketing retract claim"):
@@ -59,7 +60,7 @@ GRANT EXECUTE ON FUNCTION app.marketing_retract_claim_window() TO app_user;
 -- kind, once counsel cleared platform:fair_housing; born 'publishing' with no outcome and no retract claim. UPDATE:
 -- the row never moves to another piece, account or requester; only the system writes the outcome (status, post id,
 -- times, error) and the retract claim; states only move forward; the provider's post id is written once; a retract
--- claim goes only on a published post, is never replaced while live, and carries the database's time.
+-- claim goes only on a published post, is never replaced while live, and carries the database's clock at the claim.
 CREATE OR REPLACE FUNCTION app.marketing_publications_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE sys boolean := COALESCE(app.actor_kind() = 'system', false) OR current_user IN ('app_definer','app_retention');
 BEGIN
@@ -119,10 +120,11 @@ BEGIN
     IF OLD.status <> 'published' OR NEW.status <> 'published' OR OLD.external_post_id IS NULL THEN
       RAISE EXCEPTION 'PUBLICATION_RETRACT_CLAIM: only a provider-confirmed post is claimed for retraction' USING ERRCODE = 'check_violation';
     END IF;
+    -- now() (the transaction's start, never later than the clock) judges a takeover conservatively
     IF OLD.retract_claim_id IS NOT NULL AND OLD.retract_claimed_at >= now() - app.marketing_retract_claim_window() THEN
       RAISE EXCEPTION 'PUBLICATION_RETRACT_CLAIMED: another retraction of this post is in flight' USING ERRCODE = 'check_violation';
     END IF;
-    NEW.retract_claimed_at := now();
+    NEW.retract_claimed_at := clock_timestamp();
   ELSIF NEW.retract_claim_id IS NULL THEN
     NEW.retract_claimed_at := NULL;
   ELSIF NEW.retract_claimed_at IS DISTINCT FROM OLD.retract_claimed_at THEN
@@ -146,7 +148,7 @@ BEGIN
      OR position('PLATFORM_NOT_CLEARED' IN src) = 0 OR position('PUBLICATION_IMMUTABLE' IN src) = 0
      OR position('PUBLICATION_SYSTEM_ONLY' IN src) = 0 OR position('PUBLICATION_POST_ID_FINAL' IN src) = 0
      OR position('PUBLICATION_FORWARD_ONLY' IN src) = 0 OR position('PUBLICATION_RETRACT_CLAIMED' IN src) = 0
-     OR position('NEW.retract_claimed_at := now()' IN src) = 0 THEN
+     OR position('NEW.retract_claimed_at := clock_timestamp()' IN src) = 0 THEN
     bad := bad || ' guard_rules';
   END IF;
   IF EXISTS (SELECT 1 FROM pg_proc p WHERE p.oid IN ('app.marketing_publications_guard()'::regprocedure, 'app.marketing_retract_claim_window()'::regprocedure)

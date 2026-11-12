@@ -136,7 +136,8 @@ export const ExportResponse = z.object({
   piece: PieceSchema,
   export: z.object({ text: z.string(), label: z.string(), flags: z.array(z.string()), images: z.array(z.object({ position: z.number(), url: z.string() })), flyerUrl: z.string().nullable() }),
 });
-export const RetractResponse = z.object({ piece: PieceSchema, retracted: z.number(), removeYourself: z.number() });
+/** inProgress: posts another retraction is taking down right now (take-down-all only; the single-post form answers 409 PUBLICATION_RETRACTING) */
+export const RetractResponse = z.object({ piece: PieceSchema, retracted: z.number(), removeYourself: z.number(), inProgress: z.number() });
 export const InviteResponse = z.object({
   sent: z.number(),
   total: z.number(),
@@ -281,16 +282,16 @@ async function register(app: FastifyInstance): Promise<void> {
     if (!p) throw new AppError('NOT_FOUND');
     if (p.kind === 'website_page') {
       await tx(req, (t, now) => retractPage(t, actor, req.params.id, now));
-      return { piece: await piece(req, req.params.id), retracted: 1, removeYourself: 0 };
+      return { piece: await piece(req, req.params.id), retracted: 1, removeYourself: 0, inProgress: 0 };
     }
-    let out: { retracted: number; removeYourself: number };
+    let out: { retracted: number; removeYourself: number; inProgress: number };
     if (req.body.publicationId) {
       const pub = await tx(req, (t) => repo.publicationById(t, req.body.publicationId!));
       if (!pub || pub.piece_id !== p.id) throw new AppError('NOT_FOUND');
       const r1 = await retractPublication(deps, actor.tenantId, pub.id, actor);
       if (r1.outcome === 'not_live') throw new AppError('PUBLICATION_NOT_LIVE');
       if (r1.outcome === 'in_progress') throw new AppError('PUBLICATION_RETRACTING');
-      out = { retracted: r1.outcome === 'retracted' ? 1 : 0, removeYourself: r1.outcome === 'remove_yourself' ? 1 : 0 };
+      out = { retracted: r1.outcome === 'retracted' ? 1 : 0, removeYourself: r1.outcome === 'remove_yourself' ? 1 : 0, inProgress: 0 };
     } else {
       out = await retractAllOf(deps, actor.tenantId, p.id, actor);
     }

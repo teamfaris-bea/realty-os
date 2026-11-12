@@ -10,6 +10,8 @@
 //     3. R-MKT-4: live (approved/published/exported) versions are re-rendered with the current identity and packs; one
 //        that no longer passes is taken down from pages we control (a page → 'retracted', final: it needs a new version)
 //        within the hour, and its external posts are retracted as in 2.
+//     4. R-MKT-12 (0054): a retraction whose process died after it claimed the post (a person's tap or a pass of its
+//        own) is finished once its claim is older than app.marketing_retract_claim_window(), whatever the listing.
 import { liveRecheck } from '@realty/core/marketing';
 import type { IdGenerator, SystemActor } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
@@ -43,6 +45,8 @@ export interface ReconcileSummary {
   invitesCanceled: number;
   retracted: number;
   removeYourself: number;
+  /** posts another retraction is taking down right now: left to it (a later pass finishes one whose process died) */
+  inProgress: number;
   pagesTakenDown: number;
 }
 
@@ -50,7 +54,7 @@ export interface ReconcileSummary {
 export async function reconcileMarketing(ctx: StandaloneJobContext, deps: PublishDeps): Promise<ReconcileSummary> {
   const tenantId = ctx.actor.tenantId;
   const pubs = await reconcilePublications(deps, tenantId);
-  const out: ReconcileSummary = { ...pubs, invitesCanceled: 0, retracted: 0, removeYourself: 0, pagesTakenDown: 0 };
+  const out: ReconcileSummary = { ...pubs, invitesCanceled: 0, retracted: 0, removeYourself: 0, inProgress: 0, pagesTakenDown: 0 };
 
   // 2 + 3: what must come down. Separate transactions, so an unavailable pack (3) never undoes the invite cancellations (2).
   const canceled = await ctx.withTx((tx) => cancelOffMarketInvites(tx));
@@ -62,16 +66,19 @@ export async function reconcileMarketing(ctx: StandaloneJobContext, deps: Publis
   }
   const work = await ctx.withTx(async (tx) => {
     // live or possibly-live posts ('unknown' may be up) of off-market listings and failing versions that were not yet
-    // retracted or handed to the agent as "remove it yourself" (filtered before the limit, so older ones never block)
+    // retracted or handed to the agent as "remove it yourself" (filtered before the limit, so older ones never block);
+    // and (0054) any post whose retraction claim outlived the window: someone asked for it to come down and that
+    // process died, so the stored request is finished whatever the listing (once: the claim is cleared or released)
     const posts = await sql<{ id: string }>`
       SELECT p.id FROM marketing_publications p
         JOIN marketing_pieces mp ON mp.tenant_id = p.tenant_id AND mp.id = p.piece_id
         JOIN listings l ON l.tenant_id = mp.tenant_id AND l.id = mp.listing_id
        WHERE p.tenant_id = app.tenant_id() AND p.status IN ('published','unknown')
-         AND (l.status IN ('sold','withdrawn','expired') OR mp.id = ANY (${down.failingPieceIds}::uuid[]))
-         AND NOT EXISTS (SELECT 1 FROM priority_feed_items f, jsonb_array_elements(f.reasons) x
-                          WHERE f.tenant_id = p.tenant_id AND f.dedupe_key = 'marketing:' || p.piece_id::text
-                            AND x->>'code' = 'REMOVE_POST_YOURSELF:' || p.id::text)
+         AND ((p.status = 'published' AND p.retract_claim_id IS NOT NULL AND p.retract_claimed_at < now() - app.marketing_retract_claim_window())
+              OR ((l.status IN ('sold','withdrawn','expired') OR mp.id = ANY (${down.failingPieceIds}::uuid[]))
+                  AND NOT EXISTS (SELECT 1 FROM priority_feed_items f, jsonb_array_elements(f.reasons) x
+                                   WHERE f.tenant_id = p.tenant_id AND f.dedupe_key = 'marketing:' || p.piece_id::text
+                                     AND x->>'code' = 'REMOVE_POST_YOURSELF:' || p.id::text)))
        ORDER BY p.requested_at LIMIT 50`.execute(tx);
     return { canceled, pagesTakenDown: down.pagesTakenDown, todo: posts.rows.map((r) => r.id) };
   });
@@ -81,6 +88,7 @@ export async function reconcileMarketing(ctx: StandaloneJobContext, deps: Publis
     const r = await retractPublication(deps, tenantId, id, null);
     if (r.outcome === 'retracted') out.retracted += 1;
     if (r.outcome === 'remove_yourself') out.removeYourself += 1;
+    if (r.outcome === 'in_progress') out.inProgress += 1;
   }
   return out;
 }
@@ -140,8 +148,8 @@ export function makeMarketingHandlers(depsFor: DepsFor = defaultDeps): JobHandle
     periodicPayload: {},
     async run(ctx) {
       const s = await reconcileMarketing(ctx, depsFor(ctx));
-      if (s.looked + s.retracted + s.removeYourself + s.pagesTakenDown + s.invitesCanceled > 0) {
-        ctx.log.info('marketing.reconcile', { jobId: ctx.job.id.toString(), code: `looked:${s.looked}:published:${s.published}:failed:${s.failed}:retracted:${s.retracted}:remove:${s.removeYourself}:pages:${s.pagesTakenDown}:invites:${s.invitesCanceled}` });
+      if (s.looked + s.retracted + s.removeYourself + s.inProgress + s.pagesTakenDown + s.invitesCanceled > 0) {
+        ctx.log.info('marketing.reconcile', { jobId: ctx.job.id.toString(), code: `looked:${s.looked}:published:${s.published}:failed:${s.failed}:retracted:${s.retracted}:remove:${s.removeYourself}:in_progress:${s.inProgress}:pages:${s.pagesTakenDown}:invites:${s.invitesCanceled}` });
       }
     },
   };
