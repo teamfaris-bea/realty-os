@@ -738,7 +738,8 @@ function decideTimer(state: OwnershipProjection, cmd: Cmd<'timer'>, ctx: Decisio
 }
 
 function decideTouch(state: OwnershipProjection, cmd: Cmd<'touch'>, ctx: DecisionContext): Decision {
-  // R-OWN-14 / R-AST-15: only a human outbound by the owner or a collaborator, after owned_at.
+  // R-OWN-14 / R-AST-15: only a human outbound by the owner or a collaborator, after owned_at: a call, text, email or
+  // reply in the website chat (owner decision D8), all alike. The assistant (its chat first response too) never is.
   const u = userOf(ctx.actor);
   if (!u) return noop(state);
   if (state.state !== 'owned' || (state.ownerUserId !== u.userId && ctx.actorIsCollaborator !== true)) return noop(state);

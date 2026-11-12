@@ -39,7 +39,7 @@ export function blockedSentence(p: MyPond, me: Pick<MyPondsResponse, 'claimsToda
     const waiting = me.uncontactedOwned;
     const need = Math.max(1, waiting - me.capacityCap + 1);
     const reach = need === 1 ? (waiting === 1 ? 'it' : 'one of them') : `${need} of them`;
-    return `${waiting} of your leads ${waiting === 1 ? 'is' : 'are'} still waiting for a first call, text or email (the most is ${me.capacityCap}). Reach ${reach} before claiming more.`;
+    return `${waiting} of your leads ${waiting === 1 ? 'is' : 'are'} still waiting for a first call, text, email or chat reply (the most is ${me.capacityCap}). Reach ${reach} before claiming more.`;
   }
   return null;
 }

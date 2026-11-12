@@ -580,5 +580,6 @@ export interface SpeedToLeadSummary {
 export interface TouchCounts {
   touches: number;
   calls: number;
+  /** human outbound messages: texts, emails and website-chat replies (R-OWN-14, owner decision D8) */
   textsAndEmails: number;
 }

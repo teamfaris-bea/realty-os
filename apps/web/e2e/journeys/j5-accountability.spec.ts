@@ -127,7 +127,7 @@ test('J5: a lead whose agent only logged an outside call and sent a bulk email m
   await expect(typeGroup.getByText('Untouched leads 1', { exact: true })).toBeVisible();
   const card = page.locator('article').filter({ has: page.getByRole('heading', { level: 2, name: `Untouched lead · ${name}` }) });
   await expect(card).toBeVisible();
-  await expect(card.getByRole('list', { name: 'Evidence' })).toContainText('No human call, text or email by the first-contact deadline');
+  await expect(card.getByRole('list', { name: 'Evidence' })).toContainText('No human call, text, email or chat reply by the first-contact deadline');
   // R-PAR-32: the agent's logged outside call is on the card as context, in their ownership period (never a touch)
   await expect(card.getByText("Member agent's ownership period", { exact: true })).toBeVisible();
   await expect(card.getByRole('list', { name: 'Evidence' })).toContainText(/Logged by Member agent: outgoing call, talked \(context only; not a first contact\)/);

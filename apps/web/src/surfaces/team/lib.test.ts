@@ -1,7 +1,8 @@
 // Pure helpers of the Team surface.
 import { describe, expect, it } from 'vitest';
 import { evidenceText } from '../../design/index.js';
-import { exceptionEvidenceView, normLine, periodLabel } from './lib.js';
+import { board } from '../admin/lib/testing.js';
+import { exceptionEvidenceView, normLine, periodLabel, scoreboardLines } from './lib.js';
 
 describe('exceptionEvidenceView', () => {
   it('keeps source, place and explanation; carries no score', () => {
@@ -45,6 +46,21 @@ describe('periodLabel and the period lines (one ownership period per card)', () 
     expect(line('No human call, text or email by the first-contact deadline; the lead later left this agent', 'Ava Agent')).toBe('No human call, text or email by the first-contact deadline');
     expect(line('First human contact', 'Ava Agent')).toBe('First human contact');
     expect(line('Lead became theirs')).toBe('Lead became theirs');
+  });
+  it('E310 (owner decision D8): the server names a chat reply among the touches; its "the lead later left" line is shortened the same way, and an item stored with the earlier words still reads as before', () => {
+    const line = (explanation: string) => exceptionEvidenceView({ sourceType: 'ownership_period', sourceId: 'p1', explanation, at: null, locator: null, snippet: null, needsReview: false, link: null }, { owner: 'Ava Agent' }).explanation;
+    expect(line('No human call, text, email or chat reply by the first-contact deadline; the lead later left this agent')).toBe('No human call, text, email or chat reply by the first-contact deadline');
+    expect(line('No human call, text, email or chat reply by the first-contact deadline')).toBe('No human call, text, email or chat reply by the first-contact deadline');
+    expect(line('First human call, text, email or chat reply came after the first-contact deadline')).toBe('First human call, text, email or chat reply came after the first-contact deadline');
+    // a handled item outside the recompute window keeps the words it was stored with
+    expect(line('No human call, text or email by the first-contact deadline; the lead later left this agent')).toBe('No human call, text or email by the first-contact deadline');
+  });
+});
+
+describe('scoreboardLines', () => {
+  it('E310 (owner decision D8): the touches split names the chat replies counted with the texts and emails', () => {
+    const touches = scoreboardLines(board({ touches: { count: 5, calls: 2, textsAndEmails: 3, days: 7 } })).find((l) => l.label === 'Touches');
+    expect(touches).toEqual({ label: 'Touches', text: '5 in 7 days', detail: '2 calls · 3 texts, emails and chat replies' });
   });
 });
 

@@ -93,6 +93,14 @@ export type TimerFence = OfferFence | PeriodFence;
 
 export type ImportTarget = { userId: UserId } | { pondId: PondId } | 'unassigned';
 
+/**
+ * R-OWN-14: what a touch is, a gate-allowed human outbound call, text, email or reply in the website chat (owner
+ * decision D8, 2026-11-12, extended the call/text/email touch to the chat). The first of a period is recorded as
+ * `first_touch_recorded` with reason `FIRST_TOUCH_<VIA>` and `payload.via`; the engine treats every kind alike.
+ */
+export const TOUCH_VIAS = ['call', 'sms', 'email', 'chat'] as const;
+export type TouchVia = (typeof TOUCH_VIAS)[number];
+
 export type OwnershipCommand =
   | { kind: 'create'; via: 'intake' | 'self' | 'inbound' }
   | { kind: 'route'; inquiryId?: string }
@@ -103,7 +111,7 @@ export type OwnershipCommand =
   | { kind: 'assign' | 'reassign'; toUserId: UserId; reason: OwnershipReasonCode; note?: string }
   | { kind: 'isa_handoff'; toUserId: UserId; note: string }
   | { kind: 'timer'; deadline: TimerDeadline; fence: TimerFence }
-  | { kind: 'touch'; via: 'call' | 'sms' | 'email'; refId: string; at: Instant }
+  | { kind: 'touch'; via: TouchVia; refId: string; at: Instant }
   | { kind: 'reinquiry'; inquiryId: string }
   | { kind: 'close'; reason: CloseReason }
   | { kind: 'reopen' }

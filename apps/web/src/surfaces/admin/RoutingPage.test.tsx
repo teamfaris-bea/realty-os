@@ -104,6 +104,12 @@ describe('Lead routing', () => {
     expect(fake.callsTo('PATCH /settings')[0]!.body).toEqual({ firstTouchSlaSeconds: 600, firstTouchReleaseSeconds: null, version: 7 });
   });
 
+  it('E310 (owner decision D8): the first-contact timer says what counts: a call, text, email or chat reply a person sends, never the assistant’s instant reply', async () => {
+    leadAdminApp(routingFake(), '/admin/routing', 'admin');
+    const sla = await screen.findByLabelText('First contact due within (minutes)');
+    expect(sla).toHaveAccessibleDescription(/^Counts calls, texts, emails and chat replies a person sends\. The assistant’s instant reply does not count\. /);
+  });
+
   it('timer inputs convert minutes to seconds and keep counts and days as they are', () => {
     expect(toInput('minutes', 300)).toBe('5');
     expect(toInput('days', 30)).toBe('30');

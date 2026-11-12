@@ -10,7 +10,8 @@
 //        core.canContact (allow | deny)
 //        allow ⇒ 'dispatching' + dispatched_at (DB CHECK; the dispatch guard re-checks the opt-out and
 //                the assistant autonomy); nothing is written to gate_decisions;
-//                human owner/collaborator ⇒ the touch in THIS transaction (R-OWN-14, E66)
+//                human owner/collaborator ⇒ the touch in THIS transaction (R-OWN-14, E66): a text, an email or a
+//                reply in the website chat (owner decision D8, 2026-11-12: core touch via 'chat'), never a bulk send
 //        deny  ⇒ INSERT gate_decisions (the blocked-send evidence) + 'blocked' with the reason
 //        guard refuses an allowed send about its recipient (RECIPIENT_OPTED_OUT, PERSON_DO_NOT_CONTACT,
 //                RECIPIENT_SUPPRESSED, RECIPIENT_NOT_A_CONTACT_POINT: gateInput.ts GUARD_DENY_REASONS;
@@ -20,7 +21,7 @@
 //   provider.send(idempotencyKey = message.id)        (never inside a transaction)
 //        web chat (module 22): the transport's deliverChannelMessage (reserved name: only this file calls it,
 //        R-GATE-15), through the session's widget connection; a closed session or a widget that is not connected is
-//        CHANNEL_NOT_CONNECTED in TX1 (core check 10; R-INBOX-7, E77)
+//        CHANNEL_NOT_CONNECTED in TX1 (core check 10; R-INBOX-7, E77), so such a reply is blocked and never a touch
 //   TX2  'sent' + provider ref | 'failed' | timeout ⇒ 'dispatch_unknown' + comms.reconcile (never resent)
 //        email (module 22, R-GMAIL-12): TX2, as the SYSTEM, stores the hash of the Message-ID the provider confirmed
 //        (messages.rfc_message_id_sha256; the messages_rfc_guard trigger refuses it from TX1, which runs as the person)
@@ -34,6 +35,7 @@ import { ALWAYS_HUMAN_CATEGORIES, type Channel, type Initiator, type Purpose, cl
 import { INTENT_RULES, PlaybookStepSchema, approvalCurrent, authorizeAutonomousAction, stepForChannel, stepRunAfterGate } from '@realty/core/assistant';
 import type { Actor, ContactId, Instant, TenantId, UserActor } from '@realty/core/foundation';
 import { MINUTE_MS, can, plusMs } from '@realty/core/foundation';
+import type { TouchVia } from '@realty/core/ownership';
 import { type Tx, applyOwnershipCommandInTx, dbNow, derivedCommandId, lockContact, recordConsentEvent, setOwnershipCommand, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { audit } from '../audit.js';
@@ -197,9 +199,9 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
       const facts = await contactFacts(tx, m.contactId);
       const ok = facts !== null && can(c.actor, 'comms.send', { ...facts, purpose }).ok;
       if (!ok && !extra.includes('SENDER_NOT_AUTHORIZED')) extra.push('SENDER_NOT_AUTHORIZED');
-      // parity module 63 (R-PAR-37): a bulk send is never a touch. Web chat: core's touch has no chat `via` yet
-      // (lane gap), so a chat reply is not recorded as a touch rather than mislabelled as a text.
-      touch = ok && facts !== null && (facts.own === true || facts.collaborator === true) && m.bulkActionId === null && channel !== 'web_chat';
+      // parity module 63 (R-PAR-37): a bulk send is never a touch. Owner decision D8 (2026-11-12): a reply in the
+      // website chat is a touch like a text or an email (core touch via 'chat', touchViaOf), so it is first contact.
+      touch = ok && facts !== null && (facts.own === true || facts.collaborator === true) && m.bulkActionId === null;
     }
   } else if (m.initiator === 'assistant') {
     const a = m.assistantActionId ? await auto.actionFacts(tx, m.assistantActionId) : null;
@@ -245,7 +247,7 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
   if (touch && userTx) {
     // R-OWN-14 / E66: the touch commits with TX1, under the same contact lock as auto_release / breach;
     // the message's dispatched_at is the touch instant the engine recorded (one instant for both).
-    await applyOwnershipCommandInTx(tx, c.actor, m.contactId as ContactId, { kind: 'touch', via: channel === 'email' ? 'email' : 'sms', refId: m.id, at: now }, { commandId: derivedCommandId('comms.touch', m.id), ids: c.deps.ids });
+    await applyOwnershipCommandInTx(tx, c.actor, m.contactId as ContactId, { kind: 'touch', via: touchViaOf(channel), refId: m.id, at: now }, { commandId: derivedCommandId('comms.touch', m.id), ids: c.deps.ids });
     await setOwnershipCommand(tx, null);
     const t = await sql<{ at: Date | null }>`SELECT last_human_touch_at AS at FROM contacts WHERE tenant_id = app.tenant_id() AND id = ${m.contactId}`.execute(tx);
     if (t.rows[0]?.at && t.rows[0].at.getTime() >= now) dispatchedAt = t.rows[0].at.getTime() as Instant;
@@ -265,6 +267,11 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
     if (purpose === 'marketing') headers = { ...headers, ...listUnsubscribeHeaders(unsubscribeUrl(c.deps.publicBaseUrl, c.deps.linkSecret, c.tenantId, m.id)) };
   }
   return { kind: 'send', plan: { m: { ...m, status: 'dispatching', dispatchedAt }, channel: channel === 'email' ? 'email' : channel === 'web_chat' ? 'web_chat' : 'sms', emailFrom, replyTo, headers }, decision: { id: null, ...verdict } };
+}
+
+/** The kind of touch a gate-allowed human send on this channel is (R-OWN-14; calls are dial.ts's 'call'). */
+function touchViaOf(channel: Channel): TouchVia {
+  return channel === 'email' ? 'email' : channel === 'web_chat' ? 'chat' : 'sms';
 }
 
 async function contactOwnership(tx: Tx, contactId: string): Promise<{ ownerUserId: string | null; periodSeq: number | null }> {
