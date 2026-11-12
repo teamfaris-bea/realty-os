@@ -154,7 +154,7 @@ function newest(rows: readonly ValuationRow[]): ValuationRow | null {
 export async function resolveSubject(tx: Tx, input: SubjectInput, o: { contactId: string | null; sizeField: string | null }): Promise<ResolvedSubject> {
   let address: SubjectAddress;
   let facts: SubjectFacts;
-  let sizeSource: string | null = null;
+  let sizeSource: string | null;
   let sizeSentence: string;
   let key: string | null;
   let rowsAtKey: ValuationRow[] = [];
