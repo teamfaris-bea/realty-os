@@ -470,6 +470,32 @@ describe('people brought in unassigned (owner decision B4)', () => {
     // review F7: a person merged away since is linked to the record they live on now, never to the closed old one
     expect(within(people).getByRole('link', { name: 'Pia Dnc' })).toHaveAttribute('href', `/contacts/${JANE}`);
   });
+
+  // Owner decision D8 (2026-11-12): a person brought in unassigned who asks again is routed like a returning lead. The
+  // card says when and to whom, in the server's words, next to where they are now; they are no longer selected.
+  it('E341 a person who asked again since the import says when and to whom the routing offered them, and is not selected for "Assign this person"', async () => {
+    const asked = 'Asked again on Nov 12, 2026, 10:04 AM EST and was offered to Sam Lee.';
+    const view = {
+      total: 2,
+      stillUnassigned: 1,
+      contactIds: [QUIN],
+      summary: ['After the import, 1 was offered to an agent.', '1 person is still unassigned: use "Assign this person" to give them an owner.'],
+      people: [
+        { contactId: OMAR, name: 'Omar Optout', sentence: why, stillUnassigned: false, now: 'offered', nowSentence: 'On offer to an agent now, with no owner yet.', mergedIntoContactId: null, askedAgainSentence: asked },
+        { contactId: QUIN, name: 'Quin Notext', sentence: why, stillUnassigned: true, now: 'unassigned', nowSentence: null, mergedIntoContactId: null, askedAgainSentence: null },
+      ],
+    };
+    const lines = [...ownershipRow(true).lines, '1 of them asked again since they were imported and was routed by your routing rules.'];
+    const b = batch([stage('contacts', 'verified'), stage('ownership', 'verified', { counts: committedOwnership })]);
+    leadAdminApp(importFake(b).on(`GET /imports/${BID}/report`, { status: 200, body: { source: 'Follow Up Boss', parity: null, notImported: null, categories: [{ ...ownershipRow(true), lines, unassigned: view }] } }), `/imports/${BID}`, 'owner');
+    const people = await screen.findByRole('region', { name: 'People who came in unassigned' });
+    const omar = within(people).getByRole('link', { name: 'Omar Optout' }).closest('li')!;
+    expect(within(omar).getByText(asked)).toBeInTheDocument();
+    expect(within(omar).getByText('On offer to an agent now, with no owner yet.')).toBeInTheDocument();
+    expect(screen.getAllByText(asked)).toHaveLength(1);
+    expect(screen.getByText(/1 of them asked again since they were imported and was routed by your routing rules\./)).toBeInTheDocument();
+    expect(within(people).getByRole('button', { name: 'Assign this person' })).toBeInTheDocument();
+  });
 });
 
 // Owner decision B7 (2026-11-11): Follow Up Boss tasks and appointments are counted, never imported, and the page

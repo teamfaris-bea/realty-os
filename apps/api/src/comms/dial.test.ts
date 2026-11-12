@@ -1,6 +1,7 @@
 // Tap-to-call, recordings and transcripts (ARCHITECTURE §9 path 3; R-CONSENT-16, R-PERM-8, R-PERM-9,
 // R-DATA-1, R-TEN-9, R-GATE-9; E47).
 import { randomUUID } from 'node:crypto';
+import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
 import { suFixture } from '../leads/testing.js';
@@ -150,6 +151,44 @@ describe('tap-to-call (path 3)', () => {
     expect(st).toEqual(expect.arrayContaining([{ channel: 'sms', status: 'revoked' }, { channel: 'voice', status: 'revoked' }]));
     const other = w.agents[1]!;
     expect((await call(other, 'POST', `/calls/${r.body.callId}/outcome`, { outcome: 'connected' })).status).toBe(404);
+  });
+
+  // Review D8-R5: intake (and inbound) take an address lock, then the contact lock (ARCHITECTURE §10 steps 1, 2). The call
+  // outcome took the contact lock, then the phone's address lock (recording the revoke): the reverse order, so it could
+  // deadlock with an inquiry of the same person.
+  it('global lock order (review D8-R5): a "wrong number" outcome takes the phone\'s address lock before the contact lock, so behind an inquiry holding that address it waits without holding the contact', async () => {
+    const agent = w.agents[0]!;
+    const c = await ownedContact(agent);
+    const r = await dial(agent, c.id);
+    const hmac = (await h.su.query<{ x: string }>("SELECT encode(address_hmac, 'hex') AS x FROM contact_points WHERE contact_id = $1 AND kind = 'phone'", [c.id])).rows[0]!.x;
+    const session = async () => {
+      const s = new pg.Client({ connectionString: h.testDb.ownerUrl, application_name: 'lock-order-probe' });
+      await s.connect();
+      await s.query('BEGIN');
+      await s.query("SELECT set_config('app.tenant_id', $1, true)", [w.tenantId]);
+      return s;
+    };
+    // an inquiry of the same person holds the phone's address lock (step 1)
+    const inquiry = await session();
+    await inquiry.query("SELECT app.lock_address(decode($1, 'hex'))", [hmac]);
+    const logging = call(agent, 'POST', `/calls/${r.body.callId}/outcome`, { outcome: 'wrong_number' });
+    for (let i = 0; ; i++) {
+      const waiting = (await h.su.query("SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND application_name <> 'lock-order-probe'")).rows.length;
+      if (waiting > 0) break;
+      if (i > 200) throw new Error('the outcome never waited');
+      await new Promise((res) => setTimeout(res, 25));
+    }
+    // while the outcome waits for that address, the contact is free: the inquiry can take its step 2 (before: the outcome
+    // held the contact lock here, so the inquiry's next lock waited on it and the two deadlocked)
+    const probe = await session();
+    await probe.query("SET LOCAL lock_timeout = '500ms'");
+    await expect(probe.query('SELECT app.lock_contact($1::uuid)', [c.id])).resolves.toBeDefined();
+    await probe.query('COMMIT');
+    await probe.end();
+    await inquiry.query('COMMIT');
+    await inquiry.end();
+    expect((await logging).status).toBe(200);
+    expect((await h.su.query("SELECT status FROM contact_points WHERE contact_id = $1 AND kind = 'phone'", [c.id])).rows[0]!.status).toBe('wrong_number');
   });
 
   // E14 (outcome part; the "on a call" banner for the new owner is UI, module 17)

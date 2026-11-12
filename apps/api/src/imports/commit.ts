@@ -71,7 +71,7 @@ import type { ContactId, Instant, SystemActor, TenantId, UserActor, UserId } fro
 import { canOwnLeads, toIso } from '@realty/core/foundation';
 import { canReceiveLead } from '@realty/core/ownership';
 import type { FieldDef } from '@realty/core/parity/fields';
-import { type Tx, applyOwnershipCommandInTx, derivedCommandId, enqueueJob, lockContact, recordConsentEvent, setOwnershipCommand, withTenantTx } from '@realty/db';
+import { type Tx, applyOwnershipCommandInTx, derivedCommandId, enqueueJob, lockAddresses, lockContact, recordConsentEvent, setOwnershipCommand, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { audit } from '../audit.js';
 import { TRANSCRIBE_JOB } from '../comms/recordings.js';
@@ -79,6 +79,7 @@ import { AppError } from '../errors.js';
 import { addContactTags, ensureFieldDef, ensureTags, setFieldValue } from '../lists/index.js';
 import { systemActor } from '../worker/systemActor.js';
 import * as brepo from './repos/batches.js';
+import { enqueueInquiryReplay } from './replay.js';
 import * as existing from './repos/existing.js';
 import * as prepo from './repos/parity.js';
 import { parityOptionsOf, sourceKindOf } from './parity.js';
@@ -461,6 +462,10 @@ async function applyContact(c: Ctx, rec: rrepo.RecordRow, n: NormalizedContact, 
   if (!targetId) throw new RecordError('RECORD_MALFORMED');
   const live = await liveId(c.tx, targetId);
   if (!live) throw new RecordError('MATCH_GONE');
+  // global lock order (ARCHITECTURE §10; review D8-R5): the addresses this record's opt-outs revoke are locked before the
+  // contact (step 1, then step 2), as intake and inbound take them; recordConsentEvent's own lock is then a no-op
+  const opt = optOutsOf(c, rec, n);
+  if (opt) await lockAddresses(c.tx, opt.fields.addresses.map((a) => c.keyOf(a.kind, a.address)));
   await lockContact(c.tx, live.id as ContactId);
   const ex = (await existing.loadContacts(c.tx, [live.id])).contacts[0];
   if (!ex) throw new RecordError('MATCH_GONE');
@@ -743,6 +748,8 @@ export async function runCommit(deps: ImportDeps, tenantId: string, stageId: str
           await rrepo.settleUnapplied(tx, stage.id);
           const counts = await rrepo.recount(tx, stage.id);
           await brepo.finishCommit(tx, stage.id, counts);
+          // review D8-R1: the owners are in; the inquiries their people sent meanwhile go to the engine now
+          if (stage.category === 'ownership') await enqueueInquiryReplay(tx, batch.id);
           const stages = await brepo.getStages(tx, batch.id);
           const done = stages.every((s) => ['committed', 'verified', 'skipped'].includes(s.id === stage.id ? 'committed' : s.status));
           const busy = stages.some((s) => s.id !== stage.id && s.status === 'committing');

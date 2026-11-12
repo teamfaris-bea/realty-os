@@ -228,6 +228,32 @@ export async function loadClaimStats(tx: Tx, userId: UserId, contactId: ContactI
   return s ? { claimsToday: s.claims_today, inCooldown: s.in_cooldown, uncontactedOwned: s.uncontacted_owned } : { claimsToday: Number.MAX_SAFE_INTEGER, inCooldown: true, uncontactedOwned: Number.MAX_SAFE_INTEGER };
 }
 
+/** Ownership-stage statuses from which the stage can still commit (a failed dry run is run again). */
+const OWNERS_TO_COME = ['pending', 'dry_run_running', 'dry_run_ready', 'approved', 'committing', 'failed'];
+/** Contacts-stage statuses under which the batch's people exist (a dry-run failure commits nothing). */
+const CONTACTS_IN = ['committing', 'committed', 'verified'];
+
+/**
+ * Review D8-R1 (owner decision D8, R-IMPORT-7): the contact is in its import's creation state (unassigned, never
+ * routed, its only ledger event the contacts stage's) and that batch's owners are still to come: its contacts stage
+ * has committed (or is committing) and its ownership stage can still commit. The approved owner mapping decides who
+ * holds the person, so a new inquiry is attached only and the import replays it once the owners are in. False for a
+ * CSV batch (no ownership stage), once the ownership stage committed, was skipped or reverted, and once the contacts
+ * stage is reverted. Read under the contact lock; import tables are tenant-wide (system actors only, never an agent).
+ */
+export async function importOwnersPending(tx: Tx, contactId: ContactId): Promise<boolean> {
+  const r = await sql<{ pending: boolean }>`
+    SELECT EXISTS (
+      SELECT 1 FROM contacts c
+       WHERE c.tenant_id = app.tenant_id() AND c.id = ${contactId}
+         AND c.ownership_state = 'unassigned' AND c.route_due_at IS NULL AND c.ownership_seq = 1 AND c.import_batch_id IS NOT NULL
+         AND EXISTS (SELECT 1 FROM import_stages o WHERE o.tenant_id = c.tenant_id AND o.batch_id = c.import_batch_id
+                        AND o.category = 'ownership' AND o.status = ANY (${OWNERS_TO_COME}::text[]))
+         AND EXISTS (SELECT 1 FROM import_stages k WHERE k.tenant_id = c.tenant_id AND k.batch_id = c.import_batch_id
+                        AND k.category = 'contacts' AND k.status = ANY (${CONTACTS_IN}::text[]))) AS pending`.execute(tx);
+  return r.rows[0]?.pending === true;
+}
+
 /** A deal on the contact (primary or linked) that is not closed/lost, visible to the caller. */
 export async function loadDealOpen(tx: Tx, contactId: ContactId): Promise<boolean> {
   const r = await sql<{ open: boolean }>`SELECT ${DEAL_OPEN(contactId)} AS open`.execute(tx);

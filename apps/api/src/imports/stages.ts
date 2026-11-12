@@ -50,6 +50,7 @@ import { systemActor } from '../worker/systemActor.js';
 import { fubStageRecords, parseFubExport, readSnapshot, userMapping } from './batches.js';
 import { csvStageRecords, type StageSource } from './csv.js';
 import * as brepo from './repos/batches.js';
+import { enqueueInquiryReplay } from './replay.js';
 import * as existing from './repos/existing.js';
 import * as rrepo from './repos/records.js';
 import * as vrepo from './repos/verify.js';
@@ -421,6 +422,8 @@ export async function skipStage(deps: ImportDeps, actor: UserActor, batchId: str
       if (category === 'contacts') {
         for (const s of stages) if (s.seq > stage.seq && ['dry_run_ready', 'approved'].includes(s.status)) await brepo.resetStageDryRun(tx, s.id, 'pending');
       }
+      // review D8-R1: no owners will come; the inquiries this batch's people sent while waiting for them go to the engine
+      if (category === 'ownership') await enqueueInquiryReplay(tx, batch.id);
       await audit(tx, actor, { action: 'import.approved', entity: { type: 'import_stage', id: stage.id }, reason: `${category.toUpperCase()}_SKIPPED` });
       await settleIfLast(tx, batch, stages.map((s) => (s.id === stage.id ? 'skipped' : s.status)));
     },

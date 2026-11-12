@@ -58,6 +58,7 @@ export {
   firstTouchFeedKey,
   decide,
   decideMerge,
+  reinquiryOutcome,
   type MergeDecision,
   deactivationCommandId,
   effectPlacement,

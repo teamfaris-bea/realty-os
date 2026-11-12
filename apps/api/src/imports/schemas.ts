@@ -213,6 +213,8 @@ export const ReportResponse = z.object({
               nowSentence: z.string().nullable(),
               /** `merged`: the live contact the person was merged into since (review F7: the report links there); else null */
               mergedIntoContactId: z.string().nullable(),
+              /** owner decision D8 (E341): when they asked again and where the routing took them, in words; else null */
+              askedAgainSentence: z.string().nullable(),
             }),
           ),
         })

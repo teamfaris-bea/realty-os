@@ -171,8 +171,12 @@ async function ingestFeedLead(tx: Tx, ctx: StandaloneJobContext, deps: FeedPollD
   } catch (e) {
     await sql`ROLLBACK TO SAVEPOINT ${name_}`.execute(tx);
     await sql`RELEASE SAVEPOINT ${name_}`.execute(tx);
+    // a serialization failure or a deadlock is not the lead's fault: the page transaction runs again (withTx retries
+    // it; the cursor fence keeps the page), so the lead is never dropped for it (review D8-R5)
+    const code = (e as { code?: string }).code;
+    if (code === '40001' || code === '40P01') throw e;
     // a malformed lead (invalid phone/email) is skipped visibly in the log, never blocks the page
-    ctx.log.warn('feed lead skipped', { kind: FEED_POLL_KIND, code: (e as { code?: string }).code ?? 'INVALID' });
+    ctx.log.warn('feed lead skipped', { kind: FEED_POLL_KIND, code: code ?? 'INVALID' });
     return false;
   }
 }
