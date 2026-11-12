@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { mlsConnection } from '../mls/testing.js';
 import { ESTIMATE_SENTENCE } from './gates.js';
-import { type CmaBody, type CmaWorld, address, call, cmaPack, cmaWorld, codes, contact, daysAgo, localSales, mlsSale, oneTap } from './testing.js';
+import { type CmaBody, type CmaWorld, address, call, cmaPack, cmaWorld, codes, contact, daysAgo, feedLastSyncedAt, localSales, mlsSale, oneTap } from './testing.js';
 
 let h: ApiHarness;
 
@@ -116,5 +116,24 @@ describe('E370 F2: MLS records the 0068 backfill has not re-read yet (mls_normal
     expect(b.listingIds).toEqual([near]);
     expect(b.sentence).toMatch(/^An MLS listing at 884 Sample Street, Oakland may be this home\./);
     expect(b.sentence).not.toMatch(/automated valuations/);
+  });
+});
+
+describe('E369: "MLS data as of …" with two feeds (api-ui/F8)', () => {
+  it('E369 R-CMA-6: comps from a fresh feed and a stale one are dated by the stale one, the oldest data they came from', async () => {
+    const w = await cmaWorld(h);
+    const b = { h, tenantId: w.tenantId, mls: await mlsConnection(h, w.tenantId, w.owner.userId!, { pack: cmaPack(), lastSyncedAt: new Date() }) };
+    await localSales(w, 4);
+    await localSales(b, 4);
+    const c = await seller(w, '886 Sample Avenue'); // A's sync just ran: A is fresh
+    const stale = new Date(Date.now() - 2 * 86_400_000);
+    await feedLastSyncedAt(b, stale);
+    const r = await oneTap(w.agents[0]!, c);
+    expect(r.status).toBe(201);
+    const compConns = (await h.su.query<{ c: string }>('SELECT DISTINCT mls_connection_id AS c FROM listings WHERE id = ANY ($1::uuid[])', [r.body.cma.comps.map((x) => x.saleListingId)])).rows.map((x) => x.c);
+    expect(compConns.sort()).toEqual([w.mls, b.mls].sort());
+    expect(r.body.cma.mlsDataAsOf).toBe(stale.toISOString());
+    expect((await h.su.query('SELECT mls_data_as_of FROM cma_reports WHERE id = $1', [r.body.cma.id])).rows[0].mls_data_as_of.toISOString()).toBe(stale.toISOString());
+    expect(codes(r.body)).toContain('FEED_STALE');
   });
 });

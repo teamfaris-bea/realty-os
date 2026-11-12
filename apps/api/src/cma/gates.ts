@@ -118,10 +118,16 @@ export async function readinessConnections(tx: Tx, now: Instant): Promise<CmaCon
   return { e, used };
 }
 
-/** "MLS data as of" = the newest last sync of the connections used. */
-export function mlsDataAsOf(c: CmaConnections): Date | null {
-  const t = c.used.map((u) => u.conn.lastSyncedAt).reduce<Instant | null>((a, b) => (b !== null && (a === null || b > a) ? b : a), null);
-  return t === null ? null : new Date(t);
+/**
+ * "MLS data as of" (E369: the agent's stale-feed signal) = the OLDEST last sync among the connections the comps came
+ * from (`compConnectionIds`), else among every connection the run read: with a fresh feed and a stale one, the date is
+ * never the fresh one's (batch 10 review api-ui/F8). A connection that never synced makes it unknown (null).
+ */
+export function mlsDataAsOf(c: CmaConnections, compConnectionIds: readonly (string | null)[] = []): Date | null {
+  const from = c.used.filter((u) => compConnectionIds.includes(u.conn.id));
+  const times = (from.length > 0 ? from : c.used).map((u) => u.conn.lastSyncedAt);
+  if (times.length === 0 || times.some((t) => t === null)) return null;
+  return new Date(Math.min(...(times as Instant[])));
 }
 
 export function asOfSentence(at: Date | null, zone: IanaZone): string {

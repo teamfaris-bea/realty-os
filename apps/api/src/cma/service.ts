@@ -372,7 +372,7 @@ async function compute(tx: Tx, now: Instant, i: Inputs): Promise<{ write: CmaWri
       disclosure: i.disclosure,
       methodVersion: result.methodVersion,
       valuationDate,
-      mlsDataAsOf: mlsDataAsOf(conns),
+      mlsDataAsOf: mlsDataAsOf(conns, result.comps.map((c) => c.ref.connectionId)),
       subject,
       result,
       valueCents: result.available ? result.valueCents : null,
