@@ -272,7 +272,7 @@ describe('scan gating (R-DOC-3, R-DOC-8)', () => {
 });
 
 describe('the scanner (R-DOC-7)', () => {
-  it('E130 E404 R-DOC-7: an EICAR upload is blocked and shredded; it is never streamed, shared or listed as clean; blob_delete removes it later', async () => {
+  it('E130 R-DOC-7: an EICAR upload is blocked and shredded; it is never streamed, shared or listed as clean; blob_delete removes it later', async () => {
     const r = await upload(w.agents[0]!, docs(deal.dealId), { bytes: eicarBytes(), filename: 'eicar.pdf' });
     const id = r.body.document.id;
     const s = await runScan(h, w.tenantId, id);
@@ -294,11 +294,29 @@ describe('the scanner (R-DOC-7)', () => {
     expect(await h.providers.storage.get(key)).toBeNull();
   });
 
-  it('R-DOC-7: an unscannable file is blocked with the password sentence (to the Owner, who reads the verdict)', async () => {
+  it('E404 R-DOC-7: a password-protected or unscannable file is blocked for good with the "could not read" sentence and shredded; a second scan changes nothing', async () => {
     const r = await upload(w.agents[0]!, docs(deal.dealId), { bytes: pdfBytes(FAKE_UNSCANNABLE_MARKER) });
-    await runScan(h, w.tenantId, r.body.document.id);
-    const v = await call<DocBody>(w.owner, 'GET', `/documents/${r.body.document.id}`);
+    const id = r.body.document.id;
+    expect(await runScan(h, w.tenantId, id)).toMatchObject({ result: 'scanned', verdict: { verdict: 'blocked', reason: 'unscannable' } });
+    const row = (await rowsOf('SELECT d.scan_status, o.dek_wrapped IS NULL AS shredded, o.deleted_at IS NOT NULL AS deleted FROM documents d JOIN stored_objects o ON o.id = d.object_id WHERE d.id = $1', [id]))[0]!;
+    expect(row).toEqual({ scan_status: 'infected', shredded: true, deleted: true });
+    expect(await runScan(h, w.tenantId, id)).toEqual({ result: 'not_pending' });
+    const v = await call<DocBody>(w.owner, 'GET', `/documents/${id}`);
     expect(v.body.document).toMatchObject({ scan: 'blocked', blockedReason: 'unscannable', scanText: COPY.blockedUnscannable });
+    expect(COPY.blockedUnscannable).toContain('could not read this file');
+    expect((await call(w.agents[0]!, 'GET', `/documents/${id}/file`)).code).toBe('DOCUMENT_BLOCKED');
+  });
+
+  it('E404 R-DOC-7 (Q5, b11 reconciliation documents-6): an uploader who cannot read the verdict (neither Owner nor Admin) is still asked for a copy without a password, in a sentence true for malware and unscannable files alike', async () => {
+    for (const bytes of [pdfBytes(FAKE_UNSCANNABLE_MARKER), eicarBytes()]) {
+      const r = await upload(w.agents[0]!, docs(deal.dealId), { bytes });
+      await runScan(h, w.tenantId, r.body.document.id);
+      const v = await call<DocBody>(w.agents[0]!, 'GET', `/documents/${r.body.document.id}`);
+      expect(v.body.document).toMatchObject({ scan: 'blocked', blockedReason: null, scanText: COPY.blockedReasonUnknown });
+    }
+    expect(COPY.blockedReasonUnknown).toBe(
+      "Blocked by the virus check: it found a threat, or it could not read the file (a password-protected file can't be checked). The file was deleted; nobody can open it. If the file has a password, upload a copy without one.",
+    );
   });
 
   it('E403 R-DOC-7: a scanner failure throws (the job retries) and never marks clean; the reconcile re-enqueues a scan pending over 2 minutes', async () => {

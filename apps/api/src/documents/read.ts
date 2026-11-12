@@ -60,7 +60,9 @@ function scanState(d: R.DocRow, scannerConfigured: boolean): ScanState {
 function scanText(state: ScanState, d: R.DocRow, reason: 'malware' | 'unscannable' | null): string | null {
   if (state === 'checking') return COPY.checking;
   if (state === 'waiting_for_scanner') return COPY.noScanner;
-  if (state === 'blocked') return d.legal_hold ? COPY.blockedHeld : reason === 'unscannable' ? COPY.blockedUnscannable : COPY.blockedMalware;
+  // the reason is read from the document.scanned audit row (Owner/Admin only): anyone else gets the sentence that is
+  // true for both reasons and still asks for a copy without a password (Q5; b11 reconciliation documents-6)
+  if (state === 'blocked') return d.legal_hold ? COPY.blockedHeld : reason === 'unscannable' ? COPY.blockedUnscannable : reason === 'malware' ? COPY.blockedMalware : COPY.blockedReasonUnknown;
   return null;
 }
 

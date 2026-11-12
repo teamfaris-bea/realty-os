@@ -3,7 +3,8 @@
 // POST /documents/:id/extraction/claims/:claimId/confirm, as the person (milestone.confirm on the deal):
 //   1. the claim, locked, must belong to this document's contract_extraction (RLS: the uploader's or a tenant-wide
 //      actor's), be verified (EXTRACTION_CLAIM_NEEDS_REVIEW), not rejected or corrected (EXTRACTION_CLAIM_DECIDED),
-//      of an open action (EXTRACTION_CLOSED), of a document with no clean newer version (DOCUMENT_SUPERSEDED);
+//      of a document with no clean newer version (DOCUMENT_SUPERSEDED, E415: checked before the action's status,
+//      since that version's clean scan also marks this extraction superseded), of an open action (EXTRACTION_CLOSED);
 //   2. a target: a new date of the claim's milestone, or an existing date of the deal of the same kind
 //      (EXTRACTION_TARGET_KIND; another deal's date is NOT_FOUND inside confirmInTx);
 //   3. confirmInTx with fromDocument: source 'document', the document basis, evidence_claim_id (the one writer of
@@ -69,8 +70,9 @@ export async function confirmClaimInTx(
   }
   if (c.needs_review) throw new AppError('EXTRACTION_CLAIM_NEEDS_REVIEW');
   if (c.review_status !== 'unreviewed') throw new AppError('EXTRACTION_CLAIM_DECIDED');
-  if (CLOSED.has(c.action_status)) throw new AppError('EXTRACTION_CLOSED');
+  // E415: a clean newer version answers first (its scan also marks this extraction superseded, which is CLOSED)
   if (await R.hasCleanSuccessor(tx, documentId)) throw new AppError('DOCUMENT_SUPERSEDED');
+  if (CLOSED.has(c.action_status)) throw new AppError('EXTRACTION_CLOSED');
   const m = c.structured?.milestone;
   if (!m?.kind || !m.dueOn) throw new AppError('NOT_FOUND');
   let dateId: string | null = null;
@@ -105,6 +107,7 @@ export async function rejectClaimInTx(tx: Tx, actor: UserActor, documentId: stri
   const c = await lockedClaim(tx, documentId, claimId);
   if (c.review_status === 'rejected') return; // a replay
   if (c.review_status !== 'unreviewed') throw new AppError('EXTRACTION_CLAIM_DECIDED');
+  if (await R.hasCleanSuccessor(tx, documentId)) throw new AppError('DOCUMENT_SUPERSEDED'); // E415
   if (CLOSED.has(c.action_status)) throw new AppError('EXTRACTION_CLOSED');
   await sql`UPDATE assistant_claims SET review_status = 'rejected', reviewed_by_user_id = ${actor.userId}, reviewed_at = now()
              WHERE tenant_id = app.tenant_id() AND id = ${claimId}`.execute(tx);

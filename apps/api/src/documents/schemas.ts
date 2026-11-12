@@ -63,6 +63,8 @@ const ClaimView = z.object({
   liveDates: z.array(z.object({ dateId: z.uuid(), label: z.string().nullable(), dueOn: z.string(), status: z.string(), source: z.string() })),
   appliedDateId: z.uuid().nullable(),
   appliedNote: z.string().nullable(),
+  conflictsWith: z.array(z.uuid()),
+  conflictNote: z.string().nullable(),
 });
 export const ExtractionResponse = z.object({
   document: DocumentSchema,

@@ -13,7 +13,7 @@ import { COPY } from './copy.js';
 import { extractDocument, writeProposalInTx } from './extract.js';
 import { EXTRACTOR_NOT_SET_UP, UnconfiguredTextExtractor } from './provider.js';
 import { DOCUMENT_JOBS } from './types.js';
-import { type DocWorld, call, docDeps, docWorld, jobsOf, jpegBytes, makeDeal, pdfBytes, runScan, upload } from './testing.js';
+import { type DocWorld, call, docDeps, docWorld, eicarBytes, jobsOf, jpegBytes, makeDeal, pdfBytes, runScan, upload } from './testing.js';
 
 let h: ApiHarness;
 let w: DocWorld;
@@ -237,20 +237,70 @@ describe('claim decisions (deliverable 7)', () => {
     expect(await rows('SELECT id FROM deal_dates WHERE deal_id = $1', [dealId])).toHaveLength(1);
   });
 
-  it('E415 R-DOC-2: a new version that scans clean supersedes the old version\'s open extraction; its claims are closed', async () => {
+  it('E415 R-DOC-2: a new version that scans clean supersedes the old version\'s open extraction; its claims get DOCUMENT_SUPERSEDED (confirm and reject); a pending or blocked new version changes nothing', async () => {
     const { dealId, documentId } = await contract();
     await runExtract(documentId);
-    const c = (await extraction(w.tc, documentId)).body.claims[0]!;
-    const v2bytes = pdfBytes();
-    h.providers.textExtractor.register(v2bytes, CONTRACT_PAGES);
-    const v2 = await upload(w.tc, `/documents/${documentId}/versions`, { bytes: v2bytes });
-    // still pending: the old proposal is open
+    const [c, c2] = (await extraction(w.tc, documentId)).body.claims;
+    // a blocked v2 (malware) changes nothing: v1's proposal stays open and its dates stay confirmable
+    const bad = await upload(w.tc, `/documents/${documentId}/versions`, { bytes: eicarBytes() });
+    expect(bad.status, JSON.stringify(bad.body)).toBe(201);
+    await runScan(h, w.tenantId, bad.body.document.id);
+    expect((await rows('SELECT scan_status FROM documents WHERE id = $1', [bad.body.document.id]))[0]!.scan_status).toBe('infected');
     expect((await extraction(w.tc, documentId)).body.action!.status).toBe('proposed');
-    await runScan(h, w.tenantId, v2.body.document.id);
+    expect((await confirm(w.tc, documentId, c2!.id)).status).toBe(200);
+    // a pending v3 (the chain is linear: it supersedes the blocked v2) changes nothing either
+    const v3bytes = pdfBytes();
+    h.providers.textExtractor.register(v3bytes, CONTRACT_PAGES);
+    const v3 = await upload(w.tc, `/documents/${bad.body.document.id}/versions`, { bytes: v3bytes });
+    expect(v3.status, JSON.stringify(v3.body)).toBe(201);
+    expect((await extraction(w.tc, documentId)).body.action!.status).toBe('approved');
+    await runScan(h, w.tenantId, v3.body.document.id);
     expect((await extraction(w.tc, documentId)).body.action!.status).toBe('superseded');
-    expect((await confirm(w.tc, documentId, c.id)).code).toBe('EXTRACTION_CLOSED');
-    expect(await rows('SELECT 1 FROM deal_dates WHERE deal_id = $1', [dealId])).toEqual([]);
-    expect(await runExtract(v2.body.document.id)).toMatchObject({ result: 'proposed' });
+    expect((await confirm(w.tc, documentId, c!.id)).code).toBe('DOCUMENT_SUPERSEDED');
+    expect((await reject(w.tc, documentId, c!.id)).code).toBe('DOCUMENT_SUPERSEDED');
+    // the date confirmed before stays; nothing else was written
+    expect(await rows('SELECT evidence_claim_id FROM deal_dates WHERE deal_id = $1', [dealId])).toEqual([{ evidence_claim_id: c2!.id }]);
+    expect(await runExtract(v3.body.document.id)).toMatchObject({ result: 'proposed' });
+  });
+
+  it('E412 R-DOC-10: a contract stating two different closing dates gives two claims side by side, neither preselected, each saying "check which applies"; the confirm needs an explicit target', async () => {
+    const pages = [
+      { page: 1, text: 'RESIDENTIAL PURCHASE AGREEMENT (synthetic test form)\nClosing Date: 02/12/2027' },
+      { page: 2, text: 'ADDENDUM (synthetic)\nClosing Date: 03/01/2027' },
+      { page: 3, text: 'Appraisal deadline: January 20, 2027' },
+    ];
+    const { documentId } = await contract(w.tc, undefined, pages);
+    await runExtract(documentId);
+    const v = await extraction(w.tc, documentId);
+    const closing = v.body.claims.filter((c) => c.milestone?.kind === 'closing');
+    expect(closing.map((c) => [c.milestone!.dueOn, c.page, c.needsReview, c.reviewStatus])).toEqual([
+      ['2027-02-12', 1, false, 'unreviewed'],
+      ['2027-03-01', 2, false, 'unreviewed'],
+    ]);
+    const [a, b] = closing as (ExtractionBody['claims'][number] & { conflictNote: string | null; conflictsWith: string[] })[];
+    expect([a!.conflictNote, a!.conflictsWith]).toEqual([COPY.conflictingDates, [b!.id]]);
+    expect([b!.conflictNote, b!.conflictsWith]).toEqual([COPY.conflictingDates, [a!.id]]);
+    expect(COPY.conflictingDates).toBe('This contract states more than one date for this. Check which applies before you confirm one.');
+    const appraisal = v.body.claims.find((c) => c.milestone?.kind === 'appraisal') as unknown as { conflictNote: string | null; conflictsWith: string[] };
+    expect([appraisal.conflictNote, appraisal.conflictsWith]).toEqual([null, []]);
+    // nothing is preselected: a confirm without a target is refused and writes nothing
+    const bare = await call(w.tc, 'POST', `/documents/${documentId}/extraction/claims/${a!.id}/confirm`, { commandId: randomUUID() });
+    expect([bare.status, bare.code]).toEqual([422, 'VALIDATION_FAILED']);
+  });
+
+  it('E413 R-DOC-10 R-TXN-5: keeping the timeline date rejects the claim: the confirmed timeline date is untouched (date, version, source, no date-changed job)', async () => {
+    const d = await makeDeal(w, w.agents[0]!);
+    const manual = await call<{ date: { id: string } }>(w.agents[0]!, 'POST', `/deals/${d.dealId}/dates`, { kind: 'closing', dueOn: '2027-02-28' });
+    expect(manual.status).toBe(201);
+    const before = (await rows('SELECT due_on::text AS due_on, due_version, source, status, evidence_claim_id, confirmed_by_user_id FROM deal_dates WHERE id = $1', [manual.body.date.id]))[0]!;
+    const { documentId } = await contract(w.tc, d.dealId);
+    await runExtract(documentId);
+    const closing = (await extraction(w.tc, documentId)).body.claims.find((c) => c.milestone?.kind === 'closing')!;
+    expect(closing.liveDates.map((x) => [x.dateId, x.dueOn])).toEqual([[manual.body.date.id, '2027-02-28']]);
+    expect((await reject(w.tc, documentId, closing.id)).status).toBe(200);
+    expect((await rows('SELECT due_on::text AS due_on, due_version, source, status, evidence_claim_id, confirmed_by_user_id FROM deal_dates WHERE id = $1', [manual.body.date.id]))[0]).toEqual(before);
+    expect(await rows("SELECT 1 FROM jobs WHERE kind = 'milestones.date_changed' AND payload->>'dealDateId' = $1", [manual.body.date.id])).toEqual([]);
+    expect((await extraction(w.tc, documentId)).body.claims.find((c) => c.id === closing.id)).toMatchObject({ reviewStatus: 'rejected', appliedDateId: null });
   });
 
   it('R-DOC-10: a non-uploader member gets 404 on the extraction but sees the confirmed date on the deal', async () => {

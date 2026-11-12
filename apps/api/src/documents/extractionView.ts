@@ -1,6 +1,6 @@
 // GET /documents/:id/extraction (deliverable 6; R-AST-2, R-DOC-2, E412, E413, E416, E418): the action, its claims
-// and their evidence, each claim beside the deal's live dates of the same kind, and the date it was applied to (read
-// from deal_dates.evidence_claim_id, never inferred). Visible to whoever sees the action (its owner, the uploader,
+// and their evidence, each claim beside the deal's live dates of the same kind (E413), the other claims of its kind
+// with another date (E412), and the date it was applied to (read from deal_dates.evidence_claim_id, never inferred). Visible to whoever sees the action (its owner, the uploader,
 // and tenant-wide roles); another member sees the confirmed dates on the deal, not the extraction (404).
 import { formatEvidence, type Locator } from '@realty/core/assistant';
 import type { Tx } from '@realty/db';
@@ -25,6 +25,9 @@ export interface ExtractionClaimView {
   liveDates: { dateId: string; label: string | null; dueOn: string; status: string; source: string }[];
   appliedDateId: string | null;
   appliedNote: string | null;
+  /** E412: the other claims of this extraction with the same milestone kind and another date (none is preselected) */
+  conflictsWith: string[];
+  conflictNote: string | null;
 }
 
 export async function extractionView(tx: Tx, documentId: string, ctx: ReadCtx) {
@@ -73,8 +76,17 @@ export async function extractionView(tx: Tx, documentId: string, ctx: ReadCtx) {
       liveDates: m ? dates.filter((x) => x.kind === m.kind && x.completed_at === null).map((x) => ({ dateId: x.id, label: x.label, dueOn: x.due_on, status: x.status, source: x.source })) : [],
       appliedDateId: applied?.id ?? null,
       appliedNote: applied && m && applied.due_on !== m.dueOn ? COPY.movedByPerson : null,
+      conflictsWith: [],
+      conflictNote: null,
     };
   });
+  // E412: one contract stating two different dates of one kind (a closing date and an addendum's new one): both stay
+  // side by side, neither preselected (a confirm names its target), each saying "check which applies"
+  for (const c of out) {
+    if (!c.milestone) continue;
+    c.conflictsWith = out.filter((o) => o.id !== c.id && o.milestone?.kind === c.milestone!.kind && o.milestone.dueOn !== c.milestone!.dueOn).map((o) => o.id);
+    c.conflictNote = c.conflictsWith.length > 0 ? COPY.conflictingDates : null;
+  }
   const payload = a.payload as { outcome?: ExtractOutcome; relativeDeadlines?: boolean };
   return {
     document,
