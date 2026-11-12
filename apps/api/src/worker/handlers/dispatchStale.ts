@@ -8,6 +8,7 @@
 // Lock order (ARCHITECTURE §10): app.lock_contact first, like dispatch TX1/TX2.
 import { plusMs } from '@realty/core/foundation';
 import { lockContact } from '@realty/db';
+import { emitIsaSendResultsInTx } from '../../isa/sendResult.js';
 import { COMMS_DISPATCH_STALE, COMMS_RECONCILE, type MessagePayload } from '../contracts.js';
 import { enqueueTyped } from '../registry.js';
 import { DISPATCH_STALE_AFTER_MS, markDispatchUnknown, messageDispatchState } from '../repos/messages.js';
@@ -27,6 +28,7 @@ export function dispatchStaleHandler(): TxJobHandler<MessagePayload> {
       const due = plusMs(m.dispatchedAt, DISPATCH_STALE_AFTER_MS);
       if (ctx.now < due) return { retryAt: due }; // early wake: not provably stale yet
       if (!(await markDispatchUnknown(ctx.tx, p.messageId))) return;
+      await emitIsaSendResultsInTx(ctx.tx, [p.messageId], 'dispatch_unknown'); // ISA-2b (flagged, R-ISA-21): facts stay pending
       await enqueueTyped(ctx.tx, COMMS_RECONCILE, { messageId: p.messageId }, { dedupeKey: COMMS_RECONCILE.dedupeKey(p), priority: COMMS_RECONCILE.priority });
       ctx.log.info('dispatching message marked dispatch_unknown', { jobId: ctx.job.id.toString(), kind: COMMS_DISPATCH_STALE.kind });
     },

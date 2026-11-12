@@ -50,15 +50,18 @@ async function locked(tx: Tx, id: string): Promise<AssignmentRow | null> {
 
 /** send_result (§9.2 Dispatch): every terminal status of an AI ISA message moves its turn, facts, offer and handoff. */
 export async function sendResultInTx(tx: Tx, deps: IsaDeps, actor: SystemActor, messageId: string, now: Instant): Promise<string> {
-  const m = await sql<{ status: string; reason: string | null; turn_id: string | null; assignment_id: string | null; category: string }>`
-    SELECT m.status, m.status_reason AS reason, t.id AS turn_id, t.assignment_id, m.action_category AS category FROM messages m
+  const m = await sql<{ status: string; reason: string | null; turn_id: string | null; assignment_id: string | null; category: string; dispatched_at: Date | null }>`
+    SELECT m.status, m.status_reason AS reason, t.id AS turn_id, t.assignment_id, m.action_category AS category, m.dispatched_at FROM messages m
       LEFT JOIN ai_isa_turns t ON t.tenant_id = m.tenant_id AND t.message_id = m.id WHERE m.tenant_id = app.tenant_id() AND m.id = ${messageId}`.execute(tx);
   const r = m.rows[0];
   if (!r?.assignment_id) return 'NO_TURN';
   const a = await locked(tx, r.assignment_id);
   if (a === null) return 'NO_ASSIGNMENT';
   const ok = r.status === 'sent' || r.status === 'delivered';
-  await sql`UPDATE ai_isa_shared_facts SET status = ${ok ? 'sent' : 'canceled'} WHERE tenant_id = app.tenant_id() AND message_id = ${messageId} AND status = 'pending'`.execute(tx);
+  // R-ISA-21: a fact is sent only after its send result; dispatch_unknown keeps it pending until a reconcile decides
+  if (r.status !== 'dispatch_unknown') {
+    await sql`UPDATE ai_isa_shared_facts SET status = ${ok ? 'sent' : 'canceled'} WHERE tenant_id = app.tenant_id() AND message_id = ${messageId} AND status = 'pending'`.execute(tx);
+  }
   await sql`UPDATE ai_isa_turns SET status = ${ok ? 'sent' : r.status === 'dispatch_unknown' ? 'unknown' : r.status === 'canceled' ? 'canceled' : 'blocked'}
     WHERE tenant_id = app.tenant_id() AND id = ${r.turn_id} AND status IN ('sending','deferred')`.execute(tx);
   await sql`UPDATE ai_isa_handoffs SET confirmation_status = ${ok ? 'sent' : r.status === 'canceled' ? 'canceled' : 'refused'}
@@ -85,7 +88,9 @@ export async function sendResultInTx(tx: Tx, deps: IsaDeps, actor: SystemActor, 
   const ctx = await contextFor(tx, a, now);
   const kind = (await sql<{ k: string | null }>`SELECT payload->>'messageKind' AS k FROM assistant_actions WHERE tenant_id = app.tenant_id()
     AND id = (SELECT assistant_action_id FROM messages WHERE tenant_id = app.tenant_id() AND id = ${messageId})`.execute(tx)).rows[0]?.k ?? 'conversation';
-  const st = step(a.machine, { type: 'send_result', at: now, messageId, messageKind: kind as never, status: r.status as never, reasonCodes: reason ? [reason] : [] }, ctx.facts);
+  // the result steps at the dispatch instant, so a fast reply after the offer counts as after delivery (machine row 10)
+  const at = ok && r.dispatched_at !== null ? (Math.min(now, r.dispatched_at.getTime()) as Instant) : now;
+  const st = step(a.machine, { type: 'send_result', at, messageId, messageKind: kind as never, status: r.status as never, reasonCodes: reason ? [reason] : [] }, ctx.facts);
   await applyActionsInTx({ tx, deps, actor, ctx, now, turnId: null, pinnedSeq: a.lastInboundSeq }, st);
   return ok ? 'SENT' : cls.toUpperCase();
 }

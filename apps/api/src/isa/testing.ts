@@ -18,6 +18,7 @@ import { HandlerRegistry } from '../worker/registry.js';
 import { DEFAULT_AI_ISA_CONTENT } from './coreSeam.js';
 import { makeIsaHandlers } from './handlers.js';
 import { ownershipFollowupHandler } from '../worker/handlers/followup.js';
+import { dispatchStaleHandler } from '../worker/handlers/dispatchStale.js';
 
 export { call, freshReauth };
 
@@ -91,7 +92,7 @@ export async function startCare(agent: TestClient, contactId: string, body: Reco
 /** A worker over the comms, assistant and AI ISA handlers on the harness database and fakes. */
 export function isaWorker(h: ApiHarness) {
   const deps = depsFromPlatform(h.app.platform);
-  const registry = new HandlerRegistry().registerAll([...makeCommsHandlers(() => deps), ...makeAssistantHandlers(() => deps), ...makeIsaHandlers(() => deps), ownershipFollowupHandler({ ids: deps.ids }) as never]);
+  const registry = new HandlerRegistry().registerAll([...makeCommsHandlers(() => deps), ...makeAssistantHandlers(() => deps), ...makeIsaHandlers(() => deps), ownershipFollowupHandler({ ids: deps.ids }) as never, dispatchStaleHandler() as never]);
   return createWorker({ db: h.database, registry, providers: h.providers, queues: ['realtime', 'default'], concurrency: 1, worker: `isa-test-${randomUUID().slice(0, 8)}`, idleMs: 10, log: silentLogger });
 }
 

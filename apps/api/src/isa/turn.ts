@@ -27,6 +27,7 @@ export type TurnDeps = IsaDeps & { envelope: EnvelopeService };
 export const DEBOUNCE_MS = 20_000;
 export const DEBOUNCE_CAP_MS = 120_000;
 export const HOLD_RETRY_MS = 15 * 60_000;
+export const SEND_RESULT_WAIT_MS = 2_000;
 
 export interface TurnPayload {
   assignmentId: string;
@@ -120,6 +121,14 @@ async function txA(deps: TurnDeps, tenantId: string, p: TurnPayload): Promise<Pr
     // debounce (§4.2): the worker's retryAt, capped at 2 minutes of total deferral
     if (inbounds.length > 0 && conv.lastInboundAt !== null && now - conv.lastInboundAt < DEBOUNCE_MS && now - inbounds[0]!.at < DEBOUNCE_CAP_MS) {
       return { kind: 'retry', retryAt: (conv.lastInboundAt + DEBOUNCE_MS) as Instant } as const;
+    }
+    // R-ISA-4: an AI message already terminal whose send_result has not run yet (its turn still sending or deferred):
+    // wait 2 s so core sees the delivery first (a fast "2" after the offer), within the debounce cap
+    if (inbounds.length > 0 && now - inbounds[0]!.at < DEBOUNCE_CAP_MS) {
+      const pend = await sql<{ n: number }>`SELECT count(*)::int AS n FROM ai_isa_turns t JOIN messages m ON m.tenant_id = t.tenant_id AND m.id = t.message_id
+        WHERE t.tenant_id = app.tenant_id() AND t.assignment_id = ${a.id} AND t.status IN ('sending','deferred')
+          AND m.status IN ('sent','delivered','failed','undelivered','blocked','canceled','dispatch_unknown')`.execute(tx);
+      if (pend.rows[0]!.n > 0) return { kind: 'retry', retryAt: (now + SEND_RESULT_WAIT_MS) as Instant } as const;
     }
     const ctx = await contextFor(tx, a, now);
     const event: IsaEvent = p.trigger === 'timer' && p.timer ? { type: 'timer', at: now, timer: p.timer }

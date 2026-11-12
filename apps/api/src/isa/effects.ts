@@ -16,6 +16,7 @@ import {
   type IsaAction, type IsaFacts, type IsaState, type LineIdentity, parseAiIsaContent, type QueueMessage, renderConfirmation, renderOffer, type StepResult,
 } from './coreSeam.js';
 import { writeHandoffInTx } from './handoff.js';
+import { emitIsaSendResultsInTx } from './sendResult.js';
 import { type AssignmentRow, type ChainEnv, saveMachine } from './repo.js';
 
 export type IsaDeps = Pick<CommsDeps, 'db' | 'ids' | 'providers' | 'aiIsaLiveOff'>;
@@ -221,6 +222,7 @@ export async function cancelForAssignmentInTx(tx: Tx, a: Pick<AssignmentRow, 'id
       AND direction = 'outbound' AND initiator = 'assistant' AND status IN ('queued','scheduled')
       AND action_category IN ('ai_isa_message','ai_isa_confirmation','ai_isa_holding_line') ${keepId ? sql`AND id <> ${keepId}` : sql``}
     RETURNING id`.execute(tx);
+  await emitIsaSendResultsInTx(tx, c.rows.map((x) => x.id), 'canceled');
   await sql`UPDATE assistant_actions SET status = 'invalidated' WHERE tenant_id = app.tenant_id()
     AND contact_id = ANY (app.contact_person_ids(app.tenant_id(), ${a.contactId}::uuid)) AND kind = 'ai_isa_message' AND status = 'proposed'
     ${keepId ? sql`AND id NOT IN (SELECT assistant_action_id FROM messages WHERE tenant_id = app.tenant_id() AND id = ${keepId} AND assistant_action_id IS NOT NULL)` : sql``}`.execute(tx);
@@ -304,8 +306,10 @@ export async function queueIsaMessageInTx(env: ApplyEnv, q: QueueMessage, s: Isa
   // one open AI message per contact: a newer message supersedes the pending one (§4.2)
   await sql`UPDATE assistant_actions SET status = 'superseded' WHERE tenant_id = app.tenant_id() AND contact_id = ${ctx.a.contactId}
     AND kind = 'ai_isa_message' AND status = 'proposed'`.execute(tx);
-  await sql`UPDATE messages SET status = 'canceled', status_reason = 'AI_ISA_SUPERSEDED' WHERE tenant_id = app.tenant_id() AND contact_id = ${ctx.a.contactId}
-    AND direction = 'outbound' AND initiator = 'assistant' AND status IN ('queued','scheduled') AND action_category IN ('ai_isa_message','ai_isa_confirmation','ai_isa_holding_line')`.execute(tx);
+  const superseded = await sql<{ id: string }>`UPDATE messages SET status = 'canceled', status_reason = 'AI_ISA_SUPERSEDED' WHERE tenant_id = app.tenant_id() AND contact_id = ${ctx.a.contactId}
+    AND direction = 'outbound' AND initiator = 'assistant' AND status IN ('queued','scheduled') AND action_category IN ('ai_isa_message','ai_isa_confirmation','ai_isa_holding_line')
+    RETURNING id`.execute(tx);
+  await emitIsaSendResultsInTx(tx, superseded.rows.map((x) => x.id), 'canceled');
   const actionId = deps.ids.next<'X'>() as string;
   const category = ISA_CATS[q.messageKind];
   await sql`INSERT INTO assistant_actions (tenant_id, id, contact_id, kind, action_category, autonomy, playbook_version_id, status, owner_user_id, explanation,

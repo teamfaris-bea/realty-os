@@ -31,6 +31,7 @@
 // re-decides visibility at send time); the system actor for assistant and system messages. When the
 // human can no longer see the message (lost the lead), a system TX1 blocks it with
 // SENDER_NOT_AUTHORIZED and offers the text to the new owner as a draft (E15).
+import { emitIsaSendResultsInTx } from '../isa/sendResult.js';
 import { aiIsaGateFacts, deferMessageInTx, deferralFor, emitSendResultInTx, isAiIsaMessage, isaFromName, isaGuardRefusal } from '../isa/send.js';
 import { ALWAYS_HUMAN_CATEGORIES, type Channel, type Initiator, type Purpose, classifyHumanPurpose } from '@realty/core/compliance';
 import { INTENT_RULES, type PlaybookStep, PlaybookStepSchema, approvalCurrent, authorizeAutonomousAction, stepForChannel, stepRunAfterGate, storedTriggerStep, triggerStepAsPlaybookStep } from '@realty/core/assistant';
@@ -551,11 +552,13 @@ export async function reconcileOutbound(messageId: string, deps: CommsDeps, tena
       await msgs.markSent(tx, m.id, m.channel === 'email' ? 'email' : 'telephony', found.providerRef);
       if (m.channel === 'mms' && /^MM[0-9a-f]{32}$/.test(found.providerRef)) await enqueueProviderCleanup(tx, { messageId: m.id, providerRef: found.providerRef }, m.dispatchedAt!); // D5a R-MMS-7
       if (status !== 'sent') await msgs.setStatus(tx, m.id, status, status === 'delivered' ? null : 'RECONCILED_FAILED', null);
+      await emitIsaSendResultsInTx(tx, [m.id], status); // ISA-2b (flagged, R-ISA-21): a reconciled AI ISA message reaches core
       return { kind: 'resolved' as const, status };
     }
     const deadline = plusMs(m.dispatchedAt as Instant, MAX_RECONCILE_MS);
     if (now < deadline) return { kind: 'retry' as const, at: (Math.min(deadline, now + 2 * MINUTE_MS) as Instant) };
     await msgs.markFailed(tx, m.id, 'DISPATCH_UNKNOWN_UNRESOLVED', null);
+    await emitIsaSendResultsInTx(tx, [m.id], 'failed'); // ISA-2b (flagged)
     if (m.channel === 'mms' && m.phoneNumberId) await enqueueProviderCleanup(tx, { messageId: m.id, phoneNumberId: m.phoneNumberId, dispatchedAt: m.dispatchedAt! }, m.dispatchedAt!); // D5a E298
     return { kind: 'resolved' as const, status: 'failed' };
   });

@@ -15,6 +15,7 @@ import { audit } from '../audit.js';
 import { PROVIDER_OPT_OUT_CODES, hint } from './dispatch.js';
 import * as msgs from './repos/messages.js';
 import { LEDGER_SYSTEM, type CommsDeps } from './types.js';
+import { emitIsaSendResultsInTx } from '../isa/sendResult.js';
 import { SENDER_NOT_VERIFIED, isSenderNotVerified, markSenderNotVerified } from './telephonySafeguards.js';
 
 export type MappedStatus = 'sent' | 'delivered' | 'failed' | 'undelivered' | 'bounced' | 'complained' | 'opened' | 'clicked';
@@ -112,6 +113,7 @@ async function applyInTx(tx: Tx, actor: SystemActor, e: StatusEvent, now: Instan
   }
   const next = nextStatus(m.status, e.mapped);
   if (next) await msgs.setStatus(tx, m.id, next, next === 'delivered' || next === 'sent' ? null : failureReason(next, e.providerStatus, e.errorCode), e.errorCode ?? null);
+  if (next === 'delivered' || next === 'undelivered' || next === 'failed') await emitIsaSendResultsInTx(tx, [m.id], next); // ISA-2b (flagged, R-ISA-11 E518)
   // R-TWL-9: an unverified sender reported by the status callback marks the number's registration not ready in THIS
   // transaction (never an opt-out; the message is not retried or reconciled: a terminal failure)
   if (next && (e.mapped === 'failed' || e.mapped === 'undelivered') && channel === 'sms' && isSenderNotVerified(e.errorCode)) {
