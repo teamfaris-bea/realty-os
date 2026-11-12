@@ -16,7 +16,7 @@ import type { EnvelopeService } from '../crypto/envelope.js';
 import type { CalendarEvent, IntegrationAdapters } from '../providers/integrations/types.js';
 import { audit, redactSnapshot } from '../audit.js';
 import { CALENDAR_SERVICES, refProvider } from './catalog.js';
-import { enqueuePendingPushes } from './hooks.js';
+import { enqueuePendingPushes, enqueuePendingPushesOfActiveLinks } from './hooks.js';
 import * as repo from './repos/links.js';
 import { revokeLinkAsSystem } from './service.js';
 import { GrantRevokedError, liveAuth, tokenForRevoke, withAuth } from './tokens.js';
@@ -121,10 +121,18 @@ async function finishRemovalRevoke(deps: PushDeps, tx: Tx, actor: SystemActor, l
   }
 }
 
-/** calendar.reconcile: R-INT-5 for people removed while no push ran for them. */
+/**
+ * calendar.reconcile:
+ *   1. R-INT-5 for people removed while no push ran for them (returns how many links it finished revoking)
+ *   2. R-CAL-2 catch-up: every change an active member's connected calendar does not have yet gets its push.
+ *      A push that ran while the member was suspended paused (member_inactive) and nothing else re-enqueues it,
+ *      so after a reactivation the calendar catches up within the hour. Dedupe keys are per version, so a push
+ *      already pending is not doubled.
+ */
 export async function reconcileLinks(deps: PushDeps, tx: Tx, actor: SystemActor): Promise<number> {
   const rows = await repo.linksToFinishRevoking(tx);
   for (const l of rows) await finishRemovalRevoke(deps, tx, actor, l);
+  await enqueuePendingPushesOfActiveLinks(tx);
   return rows.length;
 }
 

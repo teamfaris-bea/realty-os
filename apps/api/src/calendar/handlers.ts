@@ -1,8 +1,8 @@
 // Job handlers of api/calendar (registered in worker/handlers/index.ts).
 //
 //   calendar.push        one appointment to its person's connected calendar (push.ts); via 'provider'
-//   calendar.reconcile   hourly per tenant: links of people who are no longer active members are revoked and
-//                        purged (R-INT-5)
+//   calendar.reconcile   hourly per tenant: links of removed members are revoked and purged (R-INT-5); the
+//                        pushes an active member's connected calendar is missing are enqueued (R-CAL-2)
 import { loadConfig } from '../config.js';
 import { EnvelopeService } from '../crypto/envelope.js';
 import { localKek } from '../crypto/kek.js';

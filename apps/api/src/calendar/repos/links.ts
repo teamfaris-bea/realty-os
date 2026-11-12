@@ -142,6 +142,26 @@ export async function pendingPushesOf(tx: Tx, userId: string): Promise<{ id: str
   ).rows;
 }
 
+/**
+ * calendar.reconcile's catch-up (system actor; R-CAL-2, R-INT-5): the appointments of ACTIVE members with a
+ * connected link that the calendar does not have at their current version. A push that ran while the member was
+ * suspended or deactivating paused (member_inactive) and nothing else re-enqueues it, so the hourly reconcile
+ * does once they are active again. Same selection as pendingPushesOf, minus what can never be pushed (a
+ * canceled or rescheduled appointment that never reached the calendar). Degraded links are left to their own
+ * recovery path (the next in-app write), so a failing provider is not retried hourly.
+ */
+export async function pendingPushesOfActiveLinks(tx: Tx): Promise<{ id: string; sync_version: number }[]> {
+  return (
+    await sql<{ id: string; sync_version: number }>`SELECT a.id, a.sync_version FROM appointments a
+        JOIN user_calendar_links l ON l.tenant_id = a.tenant_id AND l.user_id = a.user_id AND l.status = 'connected'
+        JOIN memberships m ON m.tenant_id = a.tenant_id AND m.user_id = a.user_id AND m.status = 'active'
+      WHERE a.tenant_id = app.tenant_id() AND a.external_sync_status <> 'detached' AND a.ends_at > clock_timestamp()
+        AND (a.external_pushed_version IS NULL OR a.external_pushed_version < a.sync_version)
+        AND NOT (a.external_event_ref IS NULL AND a.status IN ('canceled','rescheduled'))
+      ORDER BY a.starts_at LIMIT 500`.execute(tx)
+  ).rows;
+}
+
 // ---- appointments (sync bookkeeping only; content columns are module 14's) -------------------------------
 
 /**

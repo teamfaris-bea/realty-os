@@ -524,26 +524,40 @@ describe('disconnect and removal (R-INT-5, R-CAL-4)', () => {
     expect(await run()).toBe(0);
   });
 
-  it('R-INT-5: suspending a member is not removal: sync pauses, the link and the grant are kept, and sync resumes on reactivation', async () => {
+  it('R-INT-5 R-CAL-2 (b7 ownership-data/F3): suspending a member is not removal: sync pauses, the link and the grant are kept, and calendar.reconcile pushes the changes made meanwhile once they are active again', async () => {
     const c = await inviteViaApi(h, owner, 'agent');
     await connectCalendar(h, c, 'google_calendar');
     const id = await newAppointment(c, { startsAt: inHours(310) });
+    await runCalendarJobs(h, c.tenantId!);
+    expect(google().events.get(id)?.status ?? 'confirmed').toBe('confirmed');
     const patch = async (status: string) => {
       await freshReauth(h, owner);
       const m = (await call<{ members: { userId: string; version: number }[] }>(owner, 'GET', '/members')).body.members.find((x) => x.userId === c.userId)!;
       expect((await call(owner, 'PATCH', `/members/${c.userId}`, { version: m.version, status })).status).toBe(200);
     };
     await patch('suspended');
+    // the Owner cancels the suspended agent's appointment; the push job runs and pauses (member_inactive)
+    expect((await call(owner, 'PATCH', `/appointments/${id}`, { status: 'canceled' })).status).toBe(200);
+    await runCalendarJobs(h, c.tenantId!);
     expect(await pushNow(c, id)).toBe('member_inactive');
     const { reconcileLinks } = await import('./push.js');
     const actor = systemActor(c.tenantId!, 'provider');
-    expect(await withTenantTx(actor, (tx) => reconcileLinks({ envelope: h.app.platform.envelope, adapters: h.providers.integrations, now: () => Date.now() }, tx, actor), { db: h.database })).toBe(0);
+    const reconcile = () => withTenantTx(actor, (tx) => reconcileLinks({ envelope: h.app.platform.envelope, adapters: h.providers.integrations, now: () => Date.now() }, tx, actor), { db: h.database });
+    expect(await reconcile()).toBe(0); // a suspended member's link is neither revoked nor pushed
     const row = (await linkRow(h, c.userId!))!;
     expect(row.status).toBe('connected');
     expect(row.access_enc).not.toBeNull();
+    expect(google().events.get(id)?.status).toBe('confirmed');
     await patch('active');
-    expect(await pushNow(c, id)).toBe('pushed');
-    expect(google().events.has(id)).toBe(true);
+    // no manual push: the hourly reconcile enqueues the pending change and the worker pushes it
+    await reconcile();
+    await runCalendarJobs(h, c.tenantId!);
+    expect(google().events.get(id)?.status).toBe('cancelled');
+    const s = await apptSync(h, id);
+    expect(s.external_pushed_version).toBe(s.sync_version);
+    // nothing left to push: the next reconcile enqueues nothing for it
+    await reconcile();
+    expect((await h.su.query(`SELECT 1 FROM jobs WHERE tenant_id = $1 AND kind = 'calendar.push' AND status = 'pending'`, [c.tenantId])).rowCount).toBe(0);
   });
 });
 
