@@ -269,6 +269,38 @@ export const ERROR_STATUS = {
   MAIL_NOT_CONNECTED: 404, // module 68: the caller has no live Gmail link
   MAIL_DISCLOSURE_STALE: 409, // module 68: the connect request must carry the hash of the current disclosure text
   MAIL_POINT_NOT_ALLOWED: 422, // module 68: an address that is not a current email of a client you own, collaborate on or share a deal with, or is a team mailbox (S-D2-1)
+  // ---- module 29 api/marketing (R-MKT-1..12; DB guard refusals keep their codes) ----
+  MARKETING_TEAM_LISTING_ONLY: 422, // only the team's own listings get marketing (R-MKT-5)
+  MARKETING_FROZEN: 409, // an approved version cannot change; a change is a new version (R-MKT-2)
+  MARKETING_TERMINAL: 409, // retracted / superseded are final
+  MARKETING_APPROVE_FIRST: 409, // nothing is published or exported unapproved (R-MKT-1)
+  MARKETING_HUMAN_APPROVAL: 403, // a person approves, as themselves
+  MARKETING_ASSET_INVALID: 422, // an image that is not a live marketing asset (or not a PNG/JPEG/WebP)
+  MARKETING_IDENTITY_IMMUTABLE: 409,
+  MARKETING_BORN_DRAFT: 409,
+  MARKETING_GUARD_FAILED: 422, // brokerage name, fair-housing wording or a pack rule fails: the reasons are on the piece
+  MARKETING_STALE: 409, // the content changed since the person looked; approve what is shown now
+  MARKETING_NOT_DRAFT: 409,
+  MARKETING_DRAFT_EXISTS: 409, // a newer draft of this kind exists already: edit that one
+  MARKETING_NOT_PUBLISHABLE: 422, // this kind is not published (flyers, Marketplace: export; invites: send)
+  MARKETING_NOT_LIVE: 409,
+  MARKETING_NOT_EXPORTABLE: 422, // an invite is sent, never exported
+  MARKETING_NOT_INVITE: 422,
+  MARKETING_PIECE_NOT_APPROVED: 409, // invites go out only from an approved open-house invite version (R-MKT-8)
+  MARKETING_NOT_FLYER: 422,
+  PLATFORM_NOT_CLEARED: 409, // publishing waits for counsel review of platform:fair_housing (R-INT-6): export instead
+  PUBLISH_TARGET_INVALID: 422, // a social post goes to a Facebook Page or Instagram business account only
+  PUBLISH_NEEDS_IMAGE: 422, // VERIFY: Instagram has no text-only posts
+  PUBLICATION_ALREADY_LIVE: 409, // one live publication per version and account (E227: never re-posted)
+  PUBLICATION_NOT_LIVE: 409,
+  PUBLICATION_HUMAN_TAP: 403,
+  PUBLICATION_BORN_PUBLISHING: 409,
+  PUBLICATION_SYSTEM_ONLY: 403, // only the system records a provider's outcome
+  PUBLICATION_FORWARD_ONLY: 409,
+  PUBLICATION_IMMUTABLE: 409,
+  PUBLICATION_POST_ID_FINAL: 409,
+  LISTING_OFF_MARKET: 409, // sold / withdrawn / expired: nothing new goes out (R-MKT-9)
+  FAIR_HOUSING_PACK_UNAVAILABLE: 503, // the fair-housing pack is missing or invalid: fail closed
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

@@ -26,6 +26,10 @@ import type {
   OAuthConnector,
   OAuthProviderName,
   OAuthToken,
+  DeleteRequest,
+  DeleteResult,
+  LookupRequest,
+  LookupResult,
   PublishRequest,
   PublishResult,
   PushResult,
@@ -221,11 +225,55 @@ export class FakeCalendar implements CalendarProvider {
   }
 }
 
+/**
+ * The fake Page / Instagram account. Deterministic; tests choose the provider's behaviour (module 29):
+ *   nextOutcome   'published' (default), 'rejected', or 'timeout' (the post IS made, but the answer is lost:
+ *                 the publish throws ProviderError('timeout'), E227)
+ *   lookup        'supported' (finds a timed-out post by piece + content hash) or 'unsupported' (VERIFY)
+ *   deletion      per target: 'supported' or 'unsupported' (VERIFY: Instagram)
+ * `posts` is what the provider holds live; `published` every publish call it received.
+ */
 export class FakeSocialPublisher implements SocialPublisher {
   readonly published: PublishRequest[] = [];
+  readonly posts = new Map<string, { externalAccountId: string; target: PublishRequest['target']; pieceId: string; contentSha256: string }>();
+  readonly lookups: LookupRequest[] = [];
+  readonly deletions: DeleteRequest[] = [];
+  nextOutcome: 'published' | 'rejected' | 'timeout' = 'published';
+  rejectCode = 'POST_REJECTED';
+  lookup: 'supported' | 'unsupported' = 'supported';
+  deletion: Record<PublishRequest['target'], 'supported' | 'unsupported'> = { facebook_page: 'supported', instagram_business: 'supported', gbp_location: 'supported' };
+  /** tests: runs inside the provider call, before the post is made (e.g. a pack change between TX1 and TX2) */
+  beforePublish: (() => Promise<void>) | null = null;
   async publishPost(p: PublishRequest): Promise<PublishResult> {
+    if (this.beforePublish) await this.beforePublish();
     this.published.push({ ...p, imageUrls: [...p.imageUrls] });
-    return { kind: 'published', providerRef: `fake-post-${this.published.length}`, url: null };
+    const outcome = this.nextOutcome;
+    this.nextOutcome = 'published';
+    if (outcome === 'rejected') return { kind: 'rejected', code: this.rejectCode };
+    const providerRef = `fake-post-${this.published.length}`;
+    this.posts.set(providerRef, { externalAccountId: p.externalAccountId, target: p.target, pieceId: p.pieceId, contentSha256: p.contentSha256 });
+    if (outcome === 'timeout') throw new ProviderError('timeout', 'PUBLISH_TIMEOUT');
+    return { kind: 'published', providerRef, url: null };
+  }
+  async lookupPost(p: LookupRequest): Promise<LookupResult> {
+    this.lookups.push({ ...p });
+    if (this.lookup === 'unsupported') return { kind: 'unsupported' };
+    for (const [ref, post] of this.posts) {
+      if (post.externalAccountId === p.externalAccountId && post.target === p.target && post.pieceId === p.pieceId && post.contentSha256 === p.contentSha256) return { kind: 'found', providerRef: ref };
+    }
+    return { kind: 'not_found' };
+  }
+  async deletePost(p: DeleteRequest): Promise<DeleteResult> {
+    this.deletions.push({ ...p });
+    if (this.deletion[p.target] === 'unsupported') return { kind: 'unsupported' };
+    const post = this.posts.get(p.providerRef);
+    if (!post || post.externalAccountId !== p.externalAccountId) return { kind: 'failed', code: 'POST_NOT_FOUND' };
+    this.posts.delete(p.providerRef);
+    return { kind: 'deleted' };
+  }
+  /** Postings on the fake account (what a person would see on the Page). */
+  livePosts(externalAccountId: string): string[] {
+    return [...this.posts.entries()].filter(([, v]) => v.externalAccountId === externalAccountId).map(([k]) => k);
   }
 }
 

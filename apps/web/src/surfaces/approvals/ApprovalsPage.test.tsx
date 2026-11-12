@@ -13,7 +13,7 @@ import type { ActionView, SavedSearchView } from '../feed/lib/types.js';
 const user = () => userEvent.setup();
 
 function inbox(items: ActionView[]) {
-  return new FakeFetch().on('GET /assistant/inbox', { status: 200, body: { items } });
+  return new FakeFetch().on('GET /assistant/inbox', { status: 200, body: { items } }).on('GET /marketing/approvals', { status: 200, body: { pieces: [] } });
 }
 
 const callClaim = {

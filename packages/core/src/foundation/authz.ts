@@ -298,6 +298,14 @@ export const AUDIT_ACTIONS = [
   'mail.sync_points_confirmed', // module 68: the mailbox owner confirmed client addresses for sync (S-D2-1; counts only)
   'mail.sync_point_removed', // module 68: the mailbox owner stopped syncing an address (S-D2-2)
   'mail.settings_changed', // module 68: the Owner switch or the backfill window changed (R-GMAIL-1, -8)
+  'marketing.approved', // module 29: a person approved a marketing piece version (bound to its content hash)
+  'marketing.page_published', // module 29: a listing page went live (or moved to a newer approved version)
+  'marketing.publish_requested', // module 29: a person tapped Publish to a Facebook Page / Instagram account (TX1)
+  'marketing.publication_recorded', // module 29: the system recorded the provider's outcome of a publication (TX2, reconcile)
+  'marketing.exported', // module 29: a piece was handed to the agent (export; never a claim that it was posted)
+  'marketing.retract_requested', // module 29: a person asked to take an external post down (TX1; recorded before any provider call)
+  'marketing.retracted', // module 29: a page taken down, or an external post deleted after the provider confirmed it
+  'marketing.invites_sent', // module 29: open-house invites sent as per-recipient gated emails (counts only)
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

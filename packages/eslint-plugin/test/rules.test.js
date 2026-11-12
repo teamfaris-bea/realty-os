@@ -39,6 +39,10 @@ describe('realty/no-provider-outbound (provider send/dial only in comms dispatch
       { code: 'await deps.providers.webChat.deliverChannelMessage(m)', errors: [{ messageId: 'outbound' }] },
       { code: 'const { deliverChannelMessage } = transport', errors: [{ messageId: 'outbound' }] },
       { code: "transport['deliverChannelMessage'](m)", errors: [{ messageId: 'outbound' }] },
+      // R-GATE-15 (module 29): publishing's reserved names, only in marketing/publish.ts
+      { code: 'await deps.providers.integrations.social.publishPost(p)', errors: [{ messageId: 'outbound' }] },
+      { code: 'const { publishPost } = social', errors: [{ messageId: 'outbound' }] },
+      { code: "social['postReviewReply'](r)", errors: [{ messageId: 'outbound' }] },
     ],
   });
 });

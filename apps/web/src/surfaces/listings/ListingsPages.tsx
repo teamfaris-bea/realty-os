@@ -11,6 +11,7 @@ import { formatDateTime, formatLocalDate, formatMoney } from '../feed/lib/format
 import { useMutate } from '../feed/lib/hooks.js';
 import { AGENT_ERROR_MESSAGES } from '../feed/lib/messages.js';
 import type { ListingDetailView, ListingView, ShowingView } from '../feed/lib/types.js';
+import { MarketingLink } from '../marketing/MarketingLink.js';
 
 const STATUS_LABEL: Record<string, string> = { coming_soon: 'Coming soon', active: 'Active', pending: 'Pending', sold: 'Sold', withdrawn: 'Withdrawn', expired: 'Expired' };
 
@@ -113,6 +114,7 @@ export function ListingPage() {
             ))}
           </ul>
         ) : null}
+        <MarketingLink listingId={l.id} />
       </Section>
       <Section title="Showings">
         <p className="text-[15px] text-ink">

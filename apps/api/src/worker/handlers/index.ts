@@ -19,6 +19,7 @@ import { mlsHandlers } from '../../mls/handlers.js';
 import { channelHandlers } from '../../channels/handlers.js';
 import { nurtureHandlers } from '../../nurture/handlers.js';
 import { mailSyncHandlers } from '../../mailSync/handlers.js';
+import { marketingHandlers } from '../../marketing/handlers.js';
 
 export const handlers: JobHandler<unknown>[] = [
   ...workerHandlers,
@@ -35,5 +36,6 @@ export const handlers: JobHandler<unknown>[] = [
   ...channelHandlers,
   ...nurtureHandlers,
   ...mailSyncHandlers,
+  ...marketingHandlers,
   // registry: add new entries above this line
 ];
