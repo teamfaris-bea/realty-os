@@ -216,8 +216,26 @@ export async function nearMatches(tx: Tx, key: string | null, dismissed: readonl
     .map((r) => ({ listingId: r.id, mlsNumber: r.mls_number, address: line(r), status: r.status, listingBrokerageName: r.listing_brokerage_name, avmDisplayAllowed: flagRead(r) ? r.avm_display_allowed : null, dismissed: dismissed.includes(r.id) }));
 }
 
+/** The listing rows behind the comps: each sale's MLS row and, for a mirrored team sale, its team row. */
+export function compListingIds(i: Pick<ReadinessInput, 'compSales'>): string[] {
+  return [...new Set(i.compSales.flatMap((c) => (c.teamListingId === null ? [c.saleListingId] : [c.saleListingId, c.teamListingId])))];
+}
+
+/**
+ * The connection set readiness judges (R-CMA-7), sorted: every connection the CMA's data came from, not only the ones
+ * the agent gate admits now (a connection whose valuation use was withdrawn after the CMA was prepared still shaped its
+ * comps or its market rates, so its client gate holds): the agent gate's `used`, the run's reads (comps and rate pool)
+ * and the subject record's, and each comp's connection (from `rows`, the comps' live listing rows). The client report
+ * carries the statement, attribution and disclaimer of each of them (V2-A report.ts; E615).
+ */
+export function readinessConnectionIds(i: Pick<ReadinessInput, 'conns' | 'readConnectionIds' | 'compSales'>, rows: readonly ListingRow[]): string[] {
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const ids = new Set<string>([...i.conns.used.map((u) => u.conn.id), ...i.readConnectionIds, ...i.compSales.flatMap((c) => byId.get(c.saleListingId)?.mls_connection_id ?? [])]);
+  return [...ids].sort();
+}
+
 /** A comp's client rendering with its sold price and date, or null when they must not reach a client now (V1-A). */
-function clientSale(e: MlsEligibility, sale: ListingRow | undefined, team: ListingRow | undefined): DisplayListing | null {
+export function clientSale(e: MlsEligibility, sale: ListingRow | undefined, team: ListingRow | undefined): DisplayListing | null {
   if (sale === undefined) return null;
   if (team !== undefined) return clientSoldView(e, sale, team); // E366: a mirrored team sale
   const v = clientView(e, sale);
@@ -240,7 +258,7 @@ const REFUSAL_BLOCKER: Readonly<Record<ValuationRefusal, PlainBlocker>> = {
 /** Client readiness (R-CMA-7). Reads live rows each time: nothing here is cached in the stored CMA. */
 export async function clientReadiness(tx: Tx, i: ReadinessInput): Promise<{ share: ClientShare; nearMatches: NearMatch[] }> {
   const blockers: Blocker[] = [];
-  const { e, used } = i.conns;
+  const { e } = i.conns;
   const has = (code: BlockerCode) => blockers.some((b) => b.code === code);
   const sentence: Record<PlainBlocker, string> = {
     PLATFORM_NOT_CLEARED: 'Client CMAs and seller value ranges wait for counsel review of the in-house CMA wording (platform:cma), which is not recorded.',
@@ -259,16 +277,9 @@ export async function clientReadiness(tx: Tx, i: ReadinessInput): Promise<{ shar
   };
 
   if (!(await platformCleared(tx, CMA_PLATFORM_PACK))) add('PLATFORM_NOT_CLEARED');
-  const rows = await listingRows(tx, [...new Set(i.compSales.flatMap((c) => (c.teamListingId === null ? [c.saleListingId] : [c.saleListingId, c.teamListingId])))]);
+  const rows = await listingRows(tx, compListingIds(i));
   const byId = new Map(rows.map((r) => [r.id, r]));
-  // Every connection the CMA's data came from, not only the ones the agent gate admits now: a connection whose valuation
-  // use was withdrawn after the CMA was prepared still shaped its comps or its market rates, so its client gate holds.
-  const ids = new Set<string>([
-    ...used.map((u) => u.conn.id),
-    ...i.readConnectionIds,
-    ...i.compSales.flatMap((c) => byId.get(c.saleListingId)?.mls_connection_id ?? []),
-  ]);
-  for (const id of [...ids].sort()) {
+  for (const id of readinessConnectionIds(i, rows)) {
     const conn = e.connections.find((x) => x.id === id);
     if (conn !== undefined) {
       // every condition that holds, so the agent reads all of them at once (V1-A's parsed pack and freshness). The

@@ -36,6 +36,7 @@ export interface CmaRow {
   created_by_user_id: string;
   shared_by_user_id: string | null;
   shared_at: Date | null;
+  shared_message_id: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -43,7 +44,7 @@ export interface CmaRow {
 const COLS = sql`id, contact_id, contact_address_id, listing_id, status, purpose, inspection, to_char(inspected_on, 'YYYY-MM-DD') AS inspected_on,
   intended_users, agent_interest, conflicts, value_definition, limiting_conditions, method_version, to_char(valuation_date, 'YYYY-MM-DD') AS valuation_date,
   mls_data_as_of, subject, result, value_cents, low_cents, high_cents, agent_notes, content_sha256, created_by_user_id, shared_by_user_id, shared_at,
-  created_at, updated_at`;
+  shared_message_id, created_at, updated_at`;
 
 export interface CmaWrite {
   contactId: string | null;
@@ -295,4 +296,24 @@ export async function listingRows(tx: Tx, ids: readonly string[]): Promise<Listi
 export async function mirrorsOf(tx: Tx, teamListingId: string): Promise<ListingRow[]> {
   return (await sql<ListingRow>`SELECT ${LISTING_COLS} FROM listings l WHERE l.tenant_id = app.tenant_id() AND l.source = 'mls' AND l.team_listing_id = ${teamListingId}::uuid
     ORDER BY l.mls_modified_at DESC NULLS LAST, l.id`.execute(tx)).rows;
+}
+
+// ---- the share's email (V2-A, R-CMA-9) -----------------------------------------------------------------
+
+export interface ShareMessageRow {
+  id: string;
+  status: string;
+  status_reason: string | null;
+  dispatched_at: Date | null;
+  /** the stored gate decision's sentence of a blocked email, when the viewer may read it */
+  explanation: string | null;
+}
+
+/** A share's email as the caller may read it (messages_select, gate_decisions_select), else null. */
+export async function shareMessage(tx: Tx, messageId: string): Promise<ShareMessageRow | null> {
+  return (
+    (await sql<ShareMessageRow>`SELECT m.id, m.status, m.status_reason, m.dispatched_at, g.explanation FROM messages m
+       LEFT JOIN gate_decisions g ON g.tenant_id = m.tenant_id AND g.id = m.gate_decision_id
+      WHERE m.tenant_id = app.tenant_id() AND m.id = ${messageId}::uuid`.execute(tx)).rows[0] ?? null
+  );
 }

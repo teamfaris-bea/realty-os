@@ -225,3 +225,48 @@ export function pdfFields(blocks: readonly ReportBlock[]): Record<string, string
 export function reportSha256(r: Pick<Report, 'subject' | 'blocks'>): string {
   return sha256Hex(canonicalJson({ subject: r.subject, blocks: r.blocks.map((b) => ({ role: b.role, text: b.text, prominence: b.prominence })) }));
 }
+
+// ---- the share's email, in words (the CMA view; R-CMA-9, E603, E612) --------------------------------------------
+
+/** Why the sweep canceled a share's email (status_reason 'CMA_' + the first blocker), in words without an address. */
+export const CANCEL_WORDS: Readonly<Record<string, string>> = {
+  PLATFORM_NOT_CLEARED: 'counsel review of the client CMA wording is not recorded',
+  FEED_DISCONNECTED: 'an MLS feed this CMA was built from is no longer connected',
+  VALUATION_USE_WITHDRAWN: 'your MLS licence pack no longer allows valuation use',
+  MLS_CLIENT_DISPLAY_OFF: 'your MLS licence pack does not allow showing MLS data to clients',
+  FEED_STALE: 'the MLS feed went out of date',
+  CLIENT_USE_NOT_ALLOWED: 'your MLS licence pack no longer allows CMAs for clients',
+  VALUATION_NOT_REVIEWED: 'the valuation part of your MLS licence pack is not reviewed by counsel',
+  NO_VALUATION_STATEMENT: 'no valuation statement is recorded for the home’s state',
+  COMPS_HIDDEN: 'a sale in it can no longer be shown to clients',
+  SUBJECT_ADDRESS_UNKNOWN: 'the home’s full address is not known',
+  SELLER_WITHHELD: 'the seller’s MLS listing of this home asks that automated valuations not be shown',
+  POSSIBLE_LIVE_LISTING: 'a live MLS listing may be this home',
+  NO_VALUE: 'there is no value',
+};
+
+export const HELD_SENTENCE = 'They replied since; open the thread to send it.';
+
+/** One sentence for the share's email as it stands (the view; VERIFY WITH COUNSEL: the canceled and blocked words). */
+export function shareMessageSentence(m: { status: string; status_reason: string | null; explanation: string | null }): string {
+  switch (m.status) {
+    case 'queued':
+    case 'scheduled':
+      return m.status_reason === 'CLIENT_REPLIED_SINCE_SCHEDULED' ? HELD_SENTENCE : 'Sending.';
+    case 'dispatching':
+    case 'dispatch_unknown':
+      return 'Sending.';
+    case 'sent':
+    case 'delivered':
+      return 'Sent.';
+    case 'blocked':
+      return `The email was not sent: ${m.explanation ?? 'the send-time check blocked it.'}`;
+    case 'canceled': {
+      const code = m.status_reason?.startsWith('CMA_') ? m.status_reason.slice(4) : null;
+      const why = code === null ? undefined : CANCEL_WORDS[code];
+      return why === undefined ? 'The email was canceled before sending.' : `The email was canceled before sending: ${why}. Prepare a new CMA to share again.`;
+    }
+    default:
+      return 'The email could not be delivered.';
+  }
+}

@@ -641,6 +641,9 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
             },
           ],
         },
+        "contentSha256": {
+          "type": "string",
+        },
         "context": {
           "items": {
             "additionalProperties": false,
@@ -774,6 +777,20 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
             "limitingConditions",
           ],
           "type": "object",
+        },
+        "disclosureMissing": {
+          "items": {
+            "enum": [
+              "intendedUsers",
+              "agentInterest",
+              "conflicts",
+              "valueDefinition",
+              "limitingConditions",
+              "inspectedOn",
+            ],
+            "type": "string",
+          },
+          "type": "array",
         },
         "id": {
           "format": "uuid",
@@ -1021,6 +1038,9 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
             "null",
           ],
         },
+        "pdfAvailable": {
+          "type": "boolean",
+        },
         "purpose": {
           "enum": [
             "listing_price",
@@ -1137,6 +1157,64 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
             "distanceSpanM",
           ],
           "type": "object",
+        },
+        "share": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "message": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "id": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string",
+                        },
+                        "sentence": {
+                          "type": "string",
+                        },
+                        "status": {
+                          "type": "string",
+                        },
+                        "statusReason": {
+                          "type": [
+                            "string",
+                            "null",
+                          ],
+                        },
+                      },
+                      "required": [
+                        "id",
+                        "status",
+                        "statusReason",
+                        "sentence",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "sharedByUserId": {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string",
+                },
+              },
+              "required": [
+                "sharedByUserId",
+                "message",
+              ],
+              "type": "object",
+            },
+            {
+              "type": "null",
+            },
+          ],
         },
         "sharedAt": {
           "type": [
@@ -1763,6 +1841,10 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
         "market",
         "backtest",
         "nearMatches",
+        "contentSha256",
+        "disclosureMissing",
+        "share",
+        "pdfAvailable",
         "clientShare",
       ],
       "type": "object",
