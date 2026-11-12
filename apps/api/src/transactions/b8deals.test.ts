@@ -29,7 +29,7 @@ async function dueDate(d: { dealId: string }, kind = 'closing'): Promise<string>
 const updatesOf = async (dealId: string, dateId: string) => (await milestones(w.tc, dealId)).body.dates.find((x) => x.id === dateId)!.updates;
 
 describe('b8 deals sends/F1 db-public/F1 ownership-data/F1-K1 ui/F1-K1 R-TXN-4: milestone updates go only to the team\'s side', () => {
-  it('K1 sell deal: the seller gets the update, a buyer-role contact (the other side) gets nothing, and the deal screen says why', async () => {
+  it('E344 K1 sell deal: the seller gets the update, a buyer-role contact (the other side) gets nothing, and the deal screen says why', async () => {
     const d = await deal(h, w, w.agents[0]!, { side: 'sell' });
     const otherBuyer = await dealContact(w.agents[0]!, d.dealId, 'buyer', { firstName: 'Morgan' });
     const id = await dueDate(d);
@@ -43,7 +43,7 @@ describe('b8 deals sends/F1 db-public/F1 ownership-data/F1-K1 ui/F1-K1 R-TXN-4: 
     expect(u.text).toMatch(/not this team's client on a sell deal/);
   });
 
-  it('K1 buy deal: a seller-role contact (the listing side\'s client) gets nothing', async () => {
+  it('E344 K1 buy deal: a seller-role contact (the listing side\'s client) gets nothing', async () => {
     const d = await deal(h, w, w.agents[0]!, { side: 'buy' });
     const otherSeller = await dealContact(w.agents[0]!, d.dealId, 'seller', { firstName: 'Jordan' });
     const coBuyer = await dealContact(w.agents[0]!, d.dealId, 'co_buyer', { firstName: 'Casey' });
@@ -55,7 +55,7 @@ describe('b8 deals sends/F1 db-public/F1 ownership-data/F1-K1 ui/F1-K1 R-TXN-4: 
     expect(mailTo(h, coBuyer.email)).toHaveLength(1);
   });
 
-  it('K1 dual deal: both sides are the team\'s clients and both get the update', async () => {
+  it('E344 K1 dual deal: both sides are the team\'s clients and both get the update', async () => {
     const d = await deal(h, w, w.agents[0]!, { side: 'dual' });
     const seller = await dealContact(w.agents[0]!, d.dealId, 'seller', { firstName: 'Riley' });
     const id = await dueDate(d);
@@ -66,7 +66,7 @@ describe('b8 deals sends/F1 db-public/F1 ownership-data/F1-K1 ui/F1-K1 R-TXN-4: 
     expect(mailTo(h, seller.email)).toHaveLength(1);
   });
 
-  it('K1 lease deal: no automatic milestone update to anyone, and the deal screen says so', async () => {
+  it('E345 K1 lease deal: no automatic milestone update to anyone, and the deal screen says so', async () => {
     const d = await deal(h, w, w.agents[0]!, { side: 'lease' });
     const buyer = await dealContact(w.agents[0]!, d.dealId, 'buyer', { firstName: 'Drew' });
     const id = await dueDate(d);
@@ -79,7 +79,7 @@ describe('b8 deals sends/F1 db-public/F1 ownership-data/F1-K1 ui/F1-K1 R-TXN-4: 
     expect(u.text).toMatch(/lease deals get no automatic milestone updates/);
   });
 
-  it('K1 send time: a planned recipient re-added later in the other side\'s client role gets nothing (NOT_OUR_CLIENT, re-read live)', async () => {
+  it('E346 K1 send time: a planned recipient re-added later in the other side\'s client role gets nothing (NOT_OUR_CLIENT, re-read live)', async () => {
     const d = await deal(h, w, w.agents[0]!, { side: 'buy' });
     const co = await dealContact(w.agents[0]!, d.dealId, 'co_buyer', { firstName: 'Sam' });
     const id = await dueDate(d);
@@ -109,7 +109,7 @@ const merge = async (survivorId: string, loserId: string) => {
 const roleOf = async (dealId: string, contactId: string) => (await h.su.query<{ role: string }>('SELECT role FROM deal_contacts WHERE deal_id = $1 AND contact_id = $2', [dealId, contactId])).rows[0]?.role ?? null;
 
 describe('b8 deals sends/F5 ownership-data/F3 ownership-data/F5 R-OWN-24 R-TXN-4: a planned milestone update follows a merged person', () => {
-  it('ownership-data/F5 sends/F5(b): a merge keeps the stronger deal role (the loser\'s co_buyer beats the survivor\'s other), so the person still gets updates', async () => {
+  it('E350 ownership-data/F5 sends/F5(b): a merge keeps the stronger deal role (the loser\'s co_buyer beats the survivor\'s other), so the person still gets updates', async () => {
     const d = await deal(h, w, w.agents[0]!, { side: 'buy' });
     const loser = await dealContact(w.agents[0]!, d.dealId, 'co_buyer', { firstName: 'Lee' });
     const survivor = await dealContact(w.agents[0]!, d.dealId, 'other', { firstName: 'Lee' });
@@ -120,7 +120,7 @@ describe('b8 deals sends/F5 ownership-data/F3 ownership-data/F5 R-OWN-24 R-TXN-4
     expect((await runsOfDate(h, id)).map((r) => r.contact_id).sort()).toEqual([d.contactId, survivor.id].sort());
   });
 
-  it('ownership-data/F5: the role rank follows the side: on a sell deal the loser\'s seller beats the survivor\'s (other-side) buyer, and a client role never yields to lender', async () => {
+  it('E350 ownership-data/F5: the role rank follows the side: on a sell deal the loser\'s seller beats the survivor\'s (other-side) buyer, and a client role never yields to lender', async () => {
     const d = await deal(h, w, w.agents[0]!, { side: 'sell' });
     const loser = await dealContact(w.agents[0]!, d.dealId, 'co_seller', { firstName: 'Kim' });
     const survivor = await dealContact(w.agents[0]!, d.dealId, 'buyer', { firstName: 'Kim' });
@@ -133,7 +133,7 @@ describe('b8 deals sends/F5 ownership-data/F3 ownership-data/F5 R-OWN-24 R-TXN-4
     expect(await roleOf(d2.dealId, s2.id)).toBe('co_buyer');
   });
 
-  it('sends/F5(a) ownership-data/F3 M2: merged after planning, before sending: the update is planned again for the survivor and sent once; the deal screen says so', async () => {
+  it('E349 sends/F5(a) ownership-data/F3 M2: merged after planning, before sending: the update is planned again for the survivor and sent once; the deal screen says so', async () => {
     const d = await deal(h, w, w.agents[0]!, { side: 'buy' });
     const loser = await dealContact(w.agents[0]!, d.dealId, 'co_buyer', { firstName: 'Rowan' });
     const survivor = await ownedContact(w.agents[0]!, { consent: false, firstName: 'Rowan' });
@@ -155,7 +155,7 @@ describe('b8 deals sends/F5 ownership-data/F3 ownership-data/F5 R-OWN-24 R-TXN-4
     expect(u.status).toBe('sent');
   });
 
-  it('ownership-data/F3 M1: sent, then merged: nothing is sent again, and the deal screen says the update was sent (not "nothing planned")', async () => {
+  it('E349 ownership-data/F3 M1: sent, then merged: nothing is sent again, and the deal screen says the update was sent (not "nothing planned")', async () => {
     const d = await deal(h, w, w.agents[0]!, { side: 'buy' });
     const loser = await dealContact(w.agents[0]!, d.dealId, 'co_buyer', { firstName: 'Blair' });
     const survivor = await ownedContact(w.agents[0]!, { consent: false, firstName: 'Blair' });

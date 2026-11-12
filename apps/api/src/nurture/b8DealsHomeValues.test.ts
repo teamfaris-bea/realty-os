@@ -29,7 +29,7 @@ const nothingFor = async (c: PastClient) => {
 };
 
 describe('b8 deals sends/F2 db-public/F4 ownership-data/F2-K2 ui/F2-K2 R-AVM-3: home values only for a home the team\'s buy-side client bought', () => {
-  it('K2 negative: a past seller whose home is the house they sold, a lease client, a primary contact with no client role, and the other side\'s seller on a buy deal get nothing', async () => {
+  it('E347 K2 negative: a past seller whose home is the house they sold, a lease client, a primary contact with no client role, and the other side\'s seller on a buy deal get nothing', async () => {
     const a0 = w.agents[0]!;
     const seller = await pastClient(h, w, a0, { side: 'sell', listingAtHome: true });
     const lease = await pastClient(h, w, a0, { side: 'lease' });
@@ -40,7 +40,7 @@ describe('b8 deals sends/F2 db-public/F4 ownership-data/F2-K2 ui/F2-K2 R-AVM-3: 
     for (const c of [seller, lease, leaseBuyerRole, primaryOnly, otherSideSeller]) await nothingFor(c);
   });
 
-  it('K2 negative: a buyer whose recorded home is a house they later sold through the team gets nothing for it', async () => {
+  it('E348 K2 negative: a buyer whose recorded home is a house they later sold through the team gets nothing for it', async () => {
     const a0 = w.agents[0]!;
     const c = await pastClient(h, w, a0, { side: 'buy' }); // bought, no listing known: their 'home' would qualify...
     await closedDeal(h, w.tenantId, c.id, a0.userId!, beforeThisMonth(2), { side: 'sell', listing: { line1: c.line1.toUpperCase(), postalCode: `${c.postalCode}-1234` } }); // ...but they sold it through the team
@@ -62,7 +62,7 @@ describe('b8 deals sends/F2 db-public/F4 ownership-data/F2-K2 ui/F2-K2 R-AVM-3: 
     expect((await avmFirings(bought)).map((r) => r.trigger_key)).toEqual([expect.stringContaining(`avm:${bought.addressId}:`)]);
   });
 
-  it('K2 send time: a planned note for a house the client then sells through the team is skipped (ADDRESS_NOT_CURRENT)', async () => {
+  it('E348 K2 send time: a planned note for a house the client then sells through the team is skipped (ADDRESS_NOT_CURRENT)', async () => {
     const a0 = w.agents[0]!;
     const c = await pastClient(h, w, a0, { side: 'buy' });
     await withAvmCleared(h, async () => {
@@ -79,7 +79,7 @@ describe('b8 deals sends/F2 db-public/F4 ownership-data/F2-K2 ui/F2-K2 R-AVM-3: 
 });
 
 describe('b8 deals ownership-data/F4 R-AVM-3: one home value per person, house and month across a merge', () => {
-  it('ownership-data/F4: duplicates sharing a home address are merged after the month\'s note: no second request, no second firing', async () => {
+  it('E351 ownership-data/F4: duplicates sharing a home address are merged after the month\'s note: no second request, no second firing', async () => {
     const a0 = w.agents[0]!;
     const loser = await pastClient(h, w, a0, { side: 'buy' });
     const survivor = await pastClient(h, w, a0, { side: 'buy', role: null }); // the duplicate record: primary contact only, not a candidate on its own
