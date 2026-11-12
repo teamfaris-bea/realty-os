@@ -50,7 +50,9 @@ one in their environment. Fill both once:
 
 The template sets `DATABASE_SSL_MODE=disable`: the compose database is on the same VM's network, so its connection
 carries no TLS. Production refuses `disable` unless `ALLOW_FAKE_PROVIDERS=true`, so this holds for this staging
-stack only; a real deployment uses `verify-full` to its own database host (DEPLOY §12). The api, worker and release
+stack only; a real deployment uses `verify-full` to its own database host (DEPLOY §12). **Existing staging env files
+must add `DATABASE_SSL_MODE=disable`:** without it production mode defaults to verify-full, and the api refuses to start
+with `database TLS failed (DATABASE_SSL_MODE=verify-full): <code>` (E486), naming `DATABASE_SSL_MODE`. The api, worker and release
 step also refuse any `PG*` variable and a query string in a database URL under `NODE_ENV=production` (DEPLOY §2).
 
 ```sh

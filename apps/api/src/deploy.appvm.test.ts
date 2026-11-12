@@ -377,8 +377,8 @@ describe('deploy/render-secrets.sh renders references into a 0600 env file and r
     expectRefused(render(store, '-', none.r, none.out), none.out, /E488 .*MIGRATION_DATABASE_URL/);
   });
 
-  it('E487: a fetched value with `$`, a space, a newline or a quote, or an empty one, is refused naming the variable, never the value', () => {
-    for (const [i, bad] of ['pa$word\n', 'two words\n', 'line1\nline2\n', "it's\n", 'say"hi"\n', 'x #y\n', '\n', ''].entries()) {
+  it('E487: a fetched value with `$`, a quote, a space, `#`, a backslash or a newline, or an empty one, is refused naming the variable, never the value', () => {
+    for (const [i, bad] of ['pa$word\n', 'two words\n', 'line1\nline2\n', "it's\n", 'say"hi"\n', 'x #y\n', 'hash#tag\n', 'back\\slash\n', '\n', ''].entries()) {
       store.put(`test/bad/${i}`, bad);
       const { s, r, out } = inputs(`bad${i}`, 'NODE_ENV=production\n', `SMTP_PASSWORD=test/bad/${i}\n`);
       const res = render(store, s, r, out);
