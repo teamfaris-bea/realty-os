@@ -89,6 +89,11 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   { path: '/admin/mail', roles: ADMINS, url: at('/admin/mail') },
   // module 41's calendar page (lane calendar)
   { path: '/settings/calendar', roles: ALL, url: at('/settings/calendar') },
+  // module 40 (lane insights)
+  { path: '/owner', roles: ADMINS, url: at('/owner') },
+  { path: '/plan', roles: ALL, url: at('/plan') },
+  { path: '/plan/:week', roles: ALL, url: at('/plan/2026-W46') },
+  { path: '/goals', roles: ALL, url: at('/goals') },
 ];
 
 /** Screens outside the app frame (signed out). */

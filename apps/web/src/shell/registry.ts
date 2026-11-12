@@ -42,6 +42,8 @@ import { surface as marketingSurface } from '../surfaces/marketing/index.js';
 import { surface as calendarSettingsSurface } from '../surfaces/settings/calendar/index.js';
 import { surface as adminIntegrationsSurface } from '../surfaces/admin/integrations/index.js';
 import { surface as adminWebChatSurface } from '../surfaces/admin/webchat/index.js';
+import { surface as ownerSurface } from '../surfaces/owner/index.js';
+import { surface as goalsSurface } from '../surfaces/goals/index.js';
 
 export type { NavSection, PageDef, PageNav, SurfaceModule } from './types.js';
 
@@ -76,5 +78,7 @@ export const surfaces: SurfaceModule[] = [
   calendarSettingsSurface,
   adminIntegrationsSurface,
   adminWebChatSurface,
+  ownerSurface,
+  goalsSurface,
   // registry: add new entries above this line
 ];

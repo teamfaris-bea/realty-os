@@ -36,6 +36,7 @@ import { mailSyncRoutes } from './mailSync/routes.js';
 import { marketingRoutes } from './marketing/routes.js';
 import { sellerUpdatesRoutes } from './sellerUpdates/routes.js';
 import { calendarRoutes } from './calendar/routes.js';
+import { insightsRoutes } from './insights/routes.js';
 
 export interface RouteModule {
   name: string;
@@ -70,5 +71,6 @@ export const routeModules: RouteModule[] = [
   marketingRoutes,
   sellerUpdatesRoutes,
   calendarRoutes,
+  insightsRoutes,
   // registry: add new entries above this line
 ];

@@ -147,6 +147,10 @@ export const ACTIONS = [
   'lead_email_review.view', // module 22 lead-email slice: the "Needs review" list of held lead emails (Owner/Admin/Team Lead; support read-only)
   'lead_email_review.decide', // module 22 lead-email slice: accept a held lead email as a lead (same intake path) or discard it
   'mail_sync.manage', // module 68 (D2): the Owner turns Gmail sync on (only while platform:gmail is cleared) and sets the window; an Admin may only turn it off (DB guard; DATA_MODEL §8)
+  'owner_view.view', // module 33: the owner view (dollars by source, costs, velocity, forecast): human Owner/Admin only (R-OWNER-1, DATA_MODEL §8)
+  'source_cost.edit', // module 33: manual lead-source costs (Owner/Admin as themselves; re-auth for a closed month, R-OWNER-5)
+  'goal.view', // module 33: goals and pace (DATA_MODEL agent_goals: self, TL of the user, Owner/Admin)
+  'goal.manage', // module 33: create, change or remove a goal (Owner/Admin any member; TL their team)
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -309,6 +313,8 @@ export const AUDIT_ACTIONS = [
   'calendar.connected', // module 34: a person's own calendar linked after they approved at the provider (system; no token, no calendar id)
   'calendar.disconnected', // module 34: the person disconnected their calendar; token purged in the same tx (R-INT-5)
   'calendar.link_revoked', // module 34: the system revoked and purged a link (GRANT_REVOKED E102, MEMBER_REMOVED R-INT-5)
+  'source_cost.changed', // module 33: a manual lead-source cost entered or changed (amounts in cents, the month; closed months need re-auth)
+  'goal.changed', // module 33: a goal created, changed or removed (member, period, metric, target)
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -361,6 +367,8 @@ export interface ResourceFacts {
   datesOnly?: boolean;
   /** Tenant settings that widen a cell. Absent = off (fail closed). */
   settings?: { teamLeadRecordingAccess?: boolean; tcRecordingAccess?: boolean; agentConsentEntryAllowed?: boolean };
+  /** Source-cost edit: the month has ended in the tenant's zone (a closed month). Absent = closed (fail closed). */
+  closedPeriod?: boolean;
   /** Session re-authentication state, required for 🔒 actions. Absent = not re-authenticated. */
   reauth?: { reauthenticatedAt: Instant | null; now: Instant };
 }
@@ -399,8 +407,8 @@ interface Grant {
   checks?: readonly Check[];
   /** The cell needs a setting that is on (e.g. agent consent entry). */
   setting?: SettingKey;
-  /** 🔒: 'always', or only when the compliance change is loosening. */
-  reauth?: 'always' | 'when_loosening';
+  /** 🔒: 'always', only when the compliance change is loosening, or only for a closed period (source costs). */
+  reauth?: 'always' | 'when_loosening' | 'when_closed_period';
 }
 
 type ActionCheck = 'liftable' | 'target_can_own';
@@ -555,6 +563,15 @@ const MATRIX: Record<Action, ActionRule> = {
   'integration.manage': { roles: { owner: ALL_REAUTH, admin: ALL_REAUTH } },
   // module 68 (D2): Owner turns Gmail sync on and sets the window; Admin turns it off only (enforced by the 0025 tenant_settings guard). 🔒 both.
   'mail_sync.manage': { roles: { owner: ALL_REAUTH, admin: ALL_REAUTH } },
+  // Module 33 (DATA_MODEL §8): Owner view ✅ | ✅ | — …; Source costs ✅ | ✅ (re-auth for closed months) | — ….
+  // Human actors only: no system via and no support (R-OWNER-1: the system never reads financials or manual costs).
+  // The closed-month re-auth applies to both Owner and Admin (PHASE2_3_PLAN §5.4 states it for the route).
+  'owner_view.view': { roles: { owner: ALL, admin: ALL } },
+  'source_cost.edit': { roles: { owner: { scopes: ['all'], reauth: 'when_closed_period' }, admin: { scopes: ['all'], reauth: 'when_closed_period' } } },
+  // Goals (agent_goals RLS: self, the user's TL, tenant-wide): view self / TL own+team / Owner, Admin all; manage:
+  // Owner/Admin any member, a TL the members of a team they lead (RLS goals_write decides the row set).
+  'goal.view': { roles: { owner: ALL, admin: ALL, team_lead: { scopes: ['own', 'team'] }, agent: OWN, isa: OWN, tc: OWN } },
+  'goal.manage': { roles: { owner: ALL, admin: ALL, team_lead: { scopes: ['team'] } } },
   // Module 22 lead-email slice (DATA_MODEL §8 lead-email row, R-LEM-6): the held-email list. Team Leads triage it too;
   // support reads it (read-only) and never decides. The system never "decides" (it holds or creates on arrival).
   'lead_email_review.view': { roles: { owner: ALL, admin: ALL, team_lead: ALL }, support: true },
@@ -703,7 +720,10 @@ export function can(actor: Actor, action: Action, resource: ResourceFacts): CanR
   const actionCode = actionChecks(rule, resource);
   if (actionCode) return { ok: false, code: actionCode };
 
-  const needsReauth = grant.reauth === 'always' || (grant.reauth === 'when_loosening' && resource.loosening !== false);
+  const needsReauth =
+    grant.reauth === 'always' ||
+    (grant.reauth === 'when_loosening' && resource.loosening !== false) ||
+    (grant.reauth === 'when_closed_period' && resource.closedPeriod !== false);
   if (needsReauth && !reauthFresh(resource)) return { ok: false, code: 'REAUTH_REQUIRED', reauth: true };
   return ALLOW;
 }
@@ -724,5 +744,5 @@ function finish(rule: ActionRule, f: ResourceFacts): CanResult {
 /** Whether the action is 🔒 for this role in any case (UI: prompt for re-auth before the tap). */
 export function requiresReauth(role: Role, action: Action): boolean {
   const g = MATRIX[action].roles[role];
-  return g?.reauth === 'always' || g?.reauth === 'when_loosening';
+  return g?.reauth === 'always' || g?.reauth === 'when_loosening' || g?.reauth === 'when_closed_period';
 }

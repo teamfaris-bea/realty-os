@@ -1426,6 +1426,28 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                     "additionalProperties": false,
                     "properties": {
                       "kind": {
+                        "const": "open_plan",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                      "week": {
+                        "pattern": "^\\d{4}-W\\d{2}$",
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "week",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
                         "const": "show_details",
                         "type": "string",
                       },
@@ -1936,6 +1958,28 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                     "kind",
                     "label",
                     "listingId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "open_plan",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "week": {
+                      "pattern": "^\\d{4}-W\\d{2}$",
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "week",
                   ],
                   "type": "object",
                 },
@@ -2479,6 +2523,28 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                     "additionalProperties": false,
                     "properties": {
                       "kind": {
+                        "const": "open_plan",
+                        "type": "string",
+                      },
+                      "label": {
+                        "type": "string",
+                      },
+                      "week": {
+                        "pattern": "^\\d{4}-W\\d{2}$",
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "label",
+                      "week",
+                    ],
+                    "type": "object",
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
                         "const": "show_details",
                         "type": "string",
                       },
@@ -2989,6 +3055,28 @@ exports[`api/workspace route table and schemas > R-AST-13 R-TEN-3: response sche
                     "kind",
                     "label",
                     "listingId",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "open_plan",
+                      "type": "string",
+                    },
+                    "label": {
+                      "type": "string",
+                    },
+                    "week": {
+                      "pattern": "^\\d{4}-W\\d{2}$",
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "label",
+                    "week",
                   ],
                   "type": "object",
                 },

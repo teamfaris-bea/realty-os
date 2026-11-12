@@ -306,6 +306,11 @@ export const ERROR_STATUS = {
   LISTING_OFF_MARKET: 409, // sold / withdrawn / expired: nothing new goes out (R-MKT-9)
   FAIR_HOUSING_PACK_UNAVAILABLE: 503, // the fair-housing pack is missing or invalid: fail closed
   CALENDAR_ALREADY_CONNECTED: 409, // module 34: the person already has a calendar connected (one at a time); disconnect it first
+  // ---- module 33 api/insights ----
+  COST_MONTH_IN_FUTURE: 422, // a lead-source cost for a month that has not started yet in the tenant's zone
+  GOAL_PERIOD_START_INVALID: 422, // a goal period must start on a Monday / the 1st / a quarter's or year's first day (details.periodKind)
+  GOAL_EXISTS: 409, // the member already has a goal for this period and metric (details.goalId)
+  PLAN_ALREADY_ACCEPTED: 409, // the weekly plan was already accepted (its tasks exist)
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

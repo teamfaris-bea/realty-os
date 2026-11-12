@@ -11,8 +11,9 @@
 //   complete_task / complete_deal_date     mark done
 //   log_outcome                            the appointment outcome sheet
 //   open_* / review_search                 the page that holds it (open_listing: the listing page)
+//   open_plan                              the weekly plan page of that week (/plan/:week, module 40)
 //   show_details                           opens the card's own details in place (Phase 2/3 cards whose
-//                                          page does not exist yet: the weekly plan, the daily tip)
+//                                          page does not exist yet: the daily tip)
 //
 // An ownership command that fails is said through the app's announcer (the agent toast and the polite live
 // region), not inside the card: the refresh the answer triggers usually takes the card away (someone else
@@ -48,6 +49,7 @@ export const ACTION_ICON: Partial<Record<OneTapAction['kind'], IconName>> = {
   log_outcome: 'checklist',
   review_handback: 'inbox',
   open_listing: 'listing',
+  open_plan: 'checklist',
   show_details: 'info',
 };
 
@@ -252,6 +254,8 @@ export function actionHref(a: OneTapAction, card?: Pick<FeedCard, 'contact'>): s
       return `/contacts/${a.contactId}`;
     case 'open_listing':
       return `/listings/${a.listingId}`;
+    case 'open_plan':
+      return `/plan/${a.week}`;
     default:
       return null;
   }

@@ -69,6 +69,7 @@ exports[`R-AUDIT-4 redacted diffs > R-AUDIT-4: generated field classification â€
     "criterion_evidence",
     "cursor",
     "day",
+    "deal_name",
     "decision",
     "dedupe_key",
     "definition",

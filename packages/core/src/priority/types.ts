@@ -394,6 +394,8 @@ export type OneTapAction =
   | { kind: 'open_contact'; label: string; contactId: ContactId }
   /** the listing page (seller updates and marketing pieces belong to a listing) */
   | { kind: 'open_listing'; label: string; listingId: ListingId }
+  /** the weekly plan page of one ISO week (module 40; card family weekly_plan:{user}:{week}) */
+  | { kind: 'open_plan'; label: string; week: string }
   /** opens the card's own details in place (what the owning module wrote on the card), no navigation */
   | { kind: 'show_details'; label: string };
 

@@ -36,13 +36,13 @@
 // priority_feed_items row under its key family (core/priority keys.ts):
 //   seller_update     seller_update:{listing}:{period}   module 28   → Open listing
 //   marketing_review  marketing:{piece}                  module 29   → Open listing (the piece's listing)
-//   weekly_plan       weekly_plan:{user}:{week}          module 33   → See the plan (the card's own lines)
+//   weekly_plan       weekly_plan:{user}:{week}          module 33   → See the plan (module 40's /plan/{week} page)
 //   coaching_fix      coaching_fix:{user}:{date}         module 36   → See the tip (the card's own lines)
 //   likely_to_move    likely:{contact}:{model}           module 50   → Open contact
 // The scorer never produces those keys, so it never updates or closes them; foreignActions() gives each
 // its one-tap action from the ids in its key. Deep links go only to pages that exist today (the listing
-// and contact pages); the weekly plan and daily tip pages (module 40) do not exist yet, so those cards
-// open their own details in place instead of pointing at a page that is not there.
+// and contact pages, and module 40's weekly plan page); the daily tip page does not exist yet, so that card
+// opens its own details in place instead of pointing at a page that is not there.
 //
 // R-PRED-5 (read path): a likely_to_move card is shown only while ITS model (the one in its key) is
 // approved and that model's prediction for the contact is still a likely/watch band. The RESTRICTIVE
@@ -475,7 +475,7 @@ export function foreignActions(r: ForeignRow): { primaryAction: OneTapAction; al
           ? { primaryAction: { kind: 'open_listing', label: 'Open listing', listingId: r.piece_listing_id as never }, alternatives: open }
           : { primaryAction: { kind: 'show_details', label: 'See details' }, alternatives: open };
       case 'weekly_plan':
-        return { primaryAction: { kind: 'show_details', label: 'See the plan' }, alternatives: open };
+        return { primaryAction: { kind: 'open_plan', label: 'See the plan', week: key.week }, alternatives: open };
       case 'coaching_fix':
         return { primaryAction: { kind: 'show_details', label: 'See the tip' }, alternatives: open };
       case 'likely_to_move':

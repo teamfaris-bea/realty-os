@@ -17,7 +17,7 @@ const LISTING = '01900000-0000-7000-8000-0000000115a1';
 const foreign = () => ({
   seller: card({ itemType: 'seller_update', contact: { id: IDS.jane, name: 'Jane Doe' }, reasons: [{ code: 'SELLER_UPDATE_READY', label: 'This week’s update for 12 Oak St is ready' }], primaryAction: { kind: 'open_listing', label: 'Open listing', listingId: LISTING } }),
   marketing: card({ itemType: 'marketing_review', contact: null, reasons: [{ code: 'MARKETING_DRAFT', label: 'A social post draft is ready for your review' }], primaryAction: { kind: 'open_listing', label: 'Open listing', listingId: LISTING } }),
-  plan: card({ itemType: 'weekly_plan', contact: null, reasons: [{ code: 'PLAN_ITEM', label: 'Call back last weekend’s leads' }, { code: 'PLAN_ITEM', label: 'Log outcomes for your consults' }], primaryAction: { kind: 'show_details', label: 'See the plan' } }),
+  plan: card({ itemType: 'weekly_plan', contact: null, reasons: [{ code: 'PLAN_ITEM', label: 'Call back last weekend’s leads' }, { code: 'PLAN_ITEM', label: 'Log outcomes for your consults' }], primaryAction: { kind: 'open_plan', label: 'See the plan', week: '2026-W46' } }),
   tip: card({ itemType: 'coaching_fix', contact: null, reasons: [{ code: 'COACHING_FIX', label: 'Ask about their timeline before the price' }], primaryAction: { kind: 'show_details', label: 'See the tip' } }),
   likely: card({ itemType: 'likely_to_move', contact: { id: IDS.pat, name: 'Pat Lee' }, reasons: [{ code: 'LIKELY_YEARS_IN_HOME', label: 'In the home for many years' }], primaryAction: { kind: 'open_contact', label: 'Open contact', contactId: IDS.pat } }),
 });
@@ -44,6 +44,13 @@ describe('Phase 2/3 cards', () => {
     expect(screen.getByRole('main').textContent).not.toMatch(/confidence|probability|score|%/i);
   });
 
+  it('open_plan (weekly plan) is 1 tap to that week’s plan page', async () => {
+    const f = foreign();
+    const { router } = agentApp(new FakeFetch().on('GET /feed', { status: 200, body: feed([], [f.plan]) }));
+    await user().click(within(await articleOf('Your plan this week')).getByRole('button', { name: 'See the plan' }));
+    await waitFor(() => expect(router.state.location.pathname).toBe('/plan/2026-W46'));
+  });
+
   it('open_listing is 1 tap to the listing page; open_contact (likely to move) is 1 tap to the contact', async () => {
     const f = foreign();
     const { router } = agentApp(new FakeFetch().on('GET /feed', { status: 200, body: feed([], [f.seller, f.likely]) }));
@@ -60,13 +67,13 @@ describe('Phase 2/3 cards', () => {
   it('show_details opens the card’s own lines in place in 1 tap (aria-expanded), with no duplicate "Why this" toggle; axe finds nothing', async () => {
     const f = foreign();
     agentApp(new FakeFetch().on('GET /feed', { status: 200, body: feed([], [f.plan, f.tip]) }));
-    const article = await articleOf('Your plan this week');
-    const see = within(article).getByRole('button', { name: 'See the plan' });
+    const article = await articleOf("Today's coaching tip");
+    const see = within(article).getByRole('button', { name: 'See the tip' });
     expect(see).toHaveAttribute('aria-expanded', 'false');
     expect(within(article).queryByRole('button', { name: 'Why this' })).toBeNull();
     await user().click(see);
     const details = within(article).getByRole('list', { name: 'Details' });
-    expect(within(details).getByText('Log outcomes for your consults')).toBeInTheDocument();
+    expect(within(details).getByText('Ask about their timeline before the price')).toBeInTheDocument();
     expect(see).toHaveAttribute('aria-expanded', 'true');
     expect(see).toHaveAttribute('aria-controls', details.id);
     const r = await axe.run(document.body, { rules: { 'color-contrast': { enabled: false } } });
