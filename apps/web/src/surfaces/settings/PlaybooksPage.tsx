@@ -24,7 +24,7 @@ import { ADMIN_MESSAGES } from '../admin/lib/messages.js';
 import type { Playbook, PlaybookStepView, PlaybookVersion } from '../admin/lib/types.js';
 import { Check, ErrorLine, Pill, Section, SelectField, StatusLine, TextArea } from '../admin/lib/ui.js';
 import { LEAD_STAGE_LABEL } from '../people/api.js';
-import { type AutoEnrollSetting, type DelayUnit, KIND_LABEL, STATUS_LABEL, TEMPLATES, approvalAttestation, autoEnrollRefusal, delayText, issueSentence, joinDelay, mayApprove, placeholdersIn, playbookState, revokeAttestation, splitDelay, stepsOf, workingVersion } from './playbooks.js';
+import { ALERTS_HEADING, type AutoEnrollSetting, type DelayUnit, KIND_LABEL, READ_ONLY_ALERTS, isReadOnlyPlaybook, STATUS_LABEL, TEMPLATES, approvalAttestation, autoEnrollRefusal, delayText, issueSentence, joinDelay, mayApprove, placeholdersIn, playbookState, revokeAttestation, splitDelay, stepsOf, workingVersion } from './playbooks.js';
 
 const PLAYBOOKS_KEY = ['assistant', 'playbooks'] as const;
 /** The tenant's stage labels (module 57's GET /stage-labels): the same cache Admin → Stage labels refreshes on save. */
@@ -40,8 +40,9 @@ export function PlaybooksPage() {
   const allowed = TEMPLATES.filter((t) => t.scope === 'agent' || role === 'owner' || role === 'admin');
   const [pick, setPick] = useState(allowed[0]?.key ?? '');
   const list = q.data?.playbooks ?? [];
-  const team = list.filter((p) => p.scope === 'team');
-  const mine = list.filter((p) => p.scope === 'agent');
+  const team = list.filter((p) => p.scope === 'team' && !isReadOnlyPlaybook(p));
+  const mine = list.filter((p) => p.scope === 'agent' && !isReadOnlyPlaybook(p));
+  const alerts = list.filter(isReadOnlyPlaybook); // module 26 (review ui/F2): read-only here
   return (
     <div className="flex w-full max-w-3xl flex-col gap-8">
       <Notice tone="info">
@@ -52,6 +53,7 @@ export function PlaybooksPage() {
       {q.data && list.length === 0 ? <EmptyState icon="checklist" title="No playbooks yet" /> : null}
       {team.length > 0 ? <PlaybookList title="Team playbooks" items={team} /> : null}
       {mine.length > 0 ? <PlaybookList title={role === 'owner' || role === 'admin' ? 'Personal playbooks' : 'Your playbooks'} items={mine} /> : null}
+      {alerts.length > 0 ? <PlaybookList title={ALERTS_HEADING} description={READ_ONLY_ALERTS} items={alerts} /> : null}
       {allowed.length > 0 ? (
         <Section title="Start a playbook" description="Start from a written-out example, then edit the words before approving it.">
           <form
@@ -80,9 +82,9 @@ export function PlaybooksPage() {
   );
 }
 
-function PlaybookList({ title, items }: { title: string; items: Playbook[] }) {
+function PlaybookList({ title, description, items }: { title: string; description?: string; items: Playbook[] }) {
   return (
-    <Section title={title}>
+    <Section title={title} description={description}>
       <ul className="flex flex-col gap-2">
         {items.map((p) => {
           const st = playbookState(p);
@@ -127,11 +129,15 @@ export function PlaybookPage() {
             <p className="flex flex-wrap items-center gap-2 text-[15px] text-ink-muted">
               {p.scope === 'team' ? 'Team playbook' : 'Personal playbook'} · {KIND_LABEL[p.kind] ?? p.kind} <Pill tone={playbookState(p).tone}>{playbookState(p).text}</Pill>
             </p>
-            {!approver ? <p className="mt-1 text-[14px] text-ink-muted">{p.scope === 'team' ? 'An Owner or Admin approves team playbooks. You can read it here.' : 'Only the agent it belongs to approves this playbook.'}</p> : null}
+            {isReadOnlyPlaybook(p) ? <p className="mt-1 text-[14px] text-ink-muted">{READ_ONLY_ALERTS}</p> : !approver ? <p className="mt-1 text-[14px] text-ink-muted">{p.scope === 'team' ? 'An Owner or Admin approves team playbooks. You can read it here.' : 'Only the agent it belongs to approves this playbook.'}</p> : null}
           </div>
-          <AutoEnrollStage key={p.id} playbook={p} onDone={announce} />
-          {working ? <Editor key={working.id} playbook={p} version={working} canEdit={approver} onDone={announce} /> : null}
-          {running && approver ? <Revoke playbook={p} version={running} onDone={announce} /> : null}
+          {isReadOnlyPlaybook(p) ? null : (
+            <>
+              <AutoEnrollStage key={p.id} playbook={p} onDone={announce} />
+              {working ? <Editor key={working.id} playbook={p} version={working} canEdit={approver} onDone={announce} /> : null}
+              {running && approver ? <Revoke playbook={p} version={running} onDone={announce} /> : null}
+            </>
+          )}
           <History playbook={p} />
         </>
       ) : null}
