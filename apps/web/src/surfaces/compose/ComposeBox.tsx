@@ -42,6 +42,7 @@ import { SendOutcome, WENT_OUT, sendOutcomeText, sentResult, useAgentSheets } fr
 import { CHANNEL_NOT_CONNECTED, type ComposeChannel, useWebChatApprove, useWebChatSend } from './channelApi.js';
 import { CHAT_NOT_HERE, chooseChannel, webChatState } from './channelChoice.js';
 import { firstName, formatPhone } from '../feed/lib/format.js';
+import { dealDateStaleWords } from '../feed/lib/messages.js';
 import { useSendCheck } from '../feed/lib/sendCheck.js';
 import type { ActionView, ApproveResponse, ComposeResponse, TypedInChat } from '../feed/lib/types.js';
 import { MediaAddButton, MediaTray } from './MediaTray.js';
@@ -318,6 +319,13 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
 
   /** A draft the server would not send as approved (R-AST-6, R-AST-7): the text stays and the box says what to do. */
   const draftRefused = (code: string, message: string, details: Record<string, unknown> | null): boolean => {
+    // E142: the deal date the draft cites changed; detached like an invalidated draft, the text stays as the agent's own
+    const dated = code === 'DRAFT_STALE' ? dealDateStaleWords(details, 'compose') : null;
+    if (dated !== null) {
+      setDraftId(null);
+      setNotice({ tone: 'warn', text: `${dated} Your text is still here; Send sends it as your own message.` });
+      return true;
+    }
     if (code === 'DRAFT_STALE') {
       const seq = details?.inboundSeq;
       if (typeof seq === 'number') setSeenSeq(seq);

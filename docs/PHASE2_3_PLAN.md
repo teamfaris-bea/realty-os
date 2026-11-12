@@ -491,7 +491,7 @@ export function planMilestones(anchor: { kind: 'acceptance'; date: LocalDate }, 
 export function confirmDate(prev: DealDate | null, input: ConfirmInput, zone: IanaZone): { dueAt: Instant; reminderAt: Instant | null; dueVersion: number; basis: Basis };   // zone = tenant_settings.default_timezone, recorded in basis
 // POST /deals/:id/milestones/plan  POST /deal-dates/:id/confirm; the Phase 1 deal-screen date routes call confirmDate too
 // milestones.reconcile (every 5 min per tenant): repairs confirmed dates with no due_at; reminder_at due ⇒ deal_date_upcoming trigger run
-//   (trigger_key txn:{deal_date}:{due_version}:{step}) executed by module 26's executeTriggerRun
+//   (firing key deal_date:{deal_date}:v{due_version}:{step}:{contact}, as built: api/transactions/reconcile.ts) executed by module 26's executeTriggerRun
 ```
 - **Rules:** R-TXN-1…6, R-OWN-27. **Tests:** E95–E97, E142, E143; only confirmed, uncompleted dates drive updates; a moved date cancels old firings and stales drafts; DST end-of-day; a date typed on the Phase 1 screen gets its stored instants within one reconcile pass. **Accept when:** a TC enters the acceptance date and confirms the proposed list in one screen; the TL queue shows an overdue confirmed milestone within 60 s (with module 18a).
 

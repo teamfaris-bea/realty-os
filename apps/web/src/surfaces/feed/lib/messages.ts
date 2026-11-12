@@ -46,3 +46,32 @@ export const AGENT_ERROR_MESSAGES: Record<string, string> = {
 export function useSurfaceMessages(): Record<string, string> {
   return AGENT_ERROR_MESSAGES;
 }
+
+/**
+ * E142 (R-TXN-5): DRAFT_STALE with details.reason says the deal date the update cites changed since it was drafted.
+ * Unlike an inbound reply (R-AST-6), no re-read or re-tap clears it, so these say only why and to dismiss it.
+ * VERIFY (V9): whether the team's update plan always covers a moved date.
+ */
+export const DEAL_DATE_STALE_WORDS = {
+  DATE_MOVED: "The deal date in this update moved since it was drafted, so it can't be sent as written. Dismiss it; the new date gets its own update if the team's update plan covers it.",
+  DATE_NO_LONGER_DRIVES: "The deal date in this update was completed or waived, so this update won't be sent. Dismiss it.",
+  DATE_GONE: "The deal date in this update no longer exists, so this update won't be sent. Dismiss it.",
+} as const;
+
+/** The same on a feed card, which has no Dismiss of the draft itself: it ends by pointing at Approvals. */
+const DEAL_DATE_STALE_FEED_WORDS: Record<keyof typeof DEAL_DATE_STALE_WORDS, string> = {
+  DATE_MOVED: "The deal date in this update moved since it was drafted, so it can't be sent as written; the new date gets its own update if the team's update plan covers it. Dismiss it in Approvals.",
+  DATE_NO_LONGER_DRIVES: "The deal date in this update was completed or waived, so this update won't be sent. Dismiss it in Approvals.",
+  DATE_GONE: "The deal date in this update no longer exists, so this update won't be sent. Dismiss it in Approvals.",
+};
+
+/** The E142 sentence for a DRAFT_STALE refusal's details, or null when it is the inbound (they-replied) staleness. */
+export function dealDateStaleWords(details: Record<string, unknown> | null | undefined, where: 'draft' | 'feed' | 'compose' = 'draft'): string | null {
+  const r = details?.['reason'];
+  if (typeof r !== 'string' || !(r in DEAL_DATE_STALE_WORDS)) return null;
+  const k = r as keyof typeof DEAL_DATE_STALE_WORDS;
+  if (where === 'feed') return DEAL_DATE_STALE_FEED_WORDS[k];
+  // in the compose box the draft is detached and its text kept as the agent's own: only the why, no Dismiss
+  if (where === 'compose') return DEAL_DATE_STALE_WORDS[k].replace(/ Dismiss it[;.].*$/, '');
+  return DEAL_DATE_STALE_WORDS[k];
+}

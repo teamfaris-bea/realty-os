@@ -40,6 +40,10 @@ export interface HeldCounts {
   owned: number;
   offered: number;
   ownedWithOpenDeal: number;
+  /** team listings with the member as listing agent, not yet sold/withdrawn/expired (the job moves them) */
+  openListings: number;
+  /** deals the member owns that are not closed or lost (counted, never moved: no deal-owner change exists) */
+  openDeals: number;
 }
 
 /** What the member holds right now (as a tenant-wide caller: every contact). */
@@ -54,7 +58,17 @@ export async function heldCounts(tx: Tx, userId: string): Promise<HeldCounts> {
       FROM contacts c
      WHERE c.tenant_id = app.tenant_id() AND (c.owner_user_id = ${userId}::uuid OR c.offered_to_user_id = ${userId}::uuid)`.execute(tx);
   const x = r.rows[0];
-  return { owned: x?.owned ?? 0, offered: x?.offered ?? 0, ownedWithOpenDeal: x?.open_deal ?? 0 };
+  const o = await sql<{ listings: number; deals: number }>`
+    SELECT (SELECT count(*)::int FROM listings l WHERE l.tenant_id = app.tenant_id() AND l.source = 'team' AND l.listing_agent_user_id = ${userId}::uuid
+               AND l.status IN ${OPEN_LISTING_STATUSES}) AS listings,
+           (SELECT count(*)::int FROM deals d WHERE d.tenant_id = app.tenant_id() AND d.owner_user_id = ${userId}::uuid AND d.stage NOT IN ('closed', 'lost')) AS deals`.execute(tx);
+  return {
+    owned: x?.owned ?? 0,
+    offered: x?.offered ?? 0,
+    ownedWithOpenDeal: x?.open_deal ?? 0,
+    openListings: o.rows[0]?.listings ?? 0,
+    openDeals: o.rows[0]?.deals ?? 0,
+  };
 }
 
 /** The member's Team Lead (active, in a team the member belongs to; lowest user id; never the member). */
@@ -91,6 +105,35 @@ export async function heldContactIds(tx: Tx, userId: string, limit: number): Pro
             OR (ownership_state = 'offered' AND offered_to_user_id = ${userId}::uuid))
      ORDER BY id LIMIT ${limit}`.execute(tx);
   return r.rows.map((x) => x.id);
+}
+
+/** A listing in these statuses is still on the market or under contract: the deactivation moves it (R-OWN-22). */
+const OPEN_LISTING_STATUSES = sql`('coming_soon', 'active', 'pending')`;
+
+/** The member's open team listings (they are the listing agent), ascending id. MLS rows are never ours to move. */
+export async function openListingIds(tx: Tx, userId: string, limit: number): Promise<string[]> {
+  const r = await sql<{ id: string }>`
+    SELECT id FROM listings
+     WHERE tenant_id = app.tenant_id() AND source = 'team' AND listing_agent_user_id = ${userId}::uuid AND status IN ${OPEN_LISTING_STATUSES}
+     ORDER BY id LIMIT ${limit}`.execute(tx);
+  return r.rows.map((x) => x.id);
+}
+
+/**
+ * Where the member's listing goes: the active Team Lead, else `fallbackUserId` (the Owner/Admin who ran the
+ * deactivation) while that member is still active and may own leads, else the first active Owner/Admin (Owner first).
+ * null when there is nobody at all.
+ */
+export async function listingDestination(tx: Tx, userId: string, fallbackUserId: string): Promise<string | null> {
+  const tl = await teamLeadOf(tx, userId);
+  if (tl) return tl.user_id;
+  const r = await sql<{ user_id: string }>`
+    SELECT user_id FROM memberships
+     WHERE tenant_id = app.tenant_id() AND status = 'active' AND user_id <> ${userId}::uuid
+       AND (user_id = ${fallbackUserId}::uuid OR role IN ('owner', 'admin'))
+       AND role <> 'tc' -- canOwnLeads (R-PERM-15)
+     ORDER BY user_id = ${fallbackUserId}::uuid DESC, role = 'owner' DESC, user_id LIMIT 1`.execute(tx);
+  return r.rows[0]?.user_id ?? null;
 }
 
 /** Stage 4: removed (with removed_at). Returns false when the membership is not deactivating any more. */

@@ -1,13 +1,17 @@
 // D5b texting reactions through the real server and the inbound transaction (R-REACT-1 … R-REACT-7; E300–E309).
 // Fakes only (the fake telephony, email and AI providers); every person and team here is synthetic.
 import { randomUUID } from 'node:crypto';
-import { classifyInbound } from '@realty/core/compliance';
+import { classifyInbound, parseReaction } from '@realty/core/compliance';
 import { renderStep, signOffFor } from '@realty/core/assistant';
 import { withTenantTx } from '@realty/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { actionsOf, appointment, approvedPlaybook, type ApprovedPlaybook, runJobs as runAssistantJobs, smsStep } from '../assistant/testing.js';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { command } from '../leads/testing.js';
+import { ownershipFollowupHandler } from '../worker/handlers/followup.js';
+import { createWorker } from '../worker/loop.js';
+import { silentLogger } from '../worker/observability.js';
+import { HandlerRegistry } from '../worker/registry.js';
 import { systemActor } from '../worker/systemActor.js';
 import { queueOutboundInTx } from './compose.js';
 import { ingestInbound } from './inbound.js';
@@ -583,5 +587,50 @@ describe('a reaction between a Team Lead\'s merge and its follow-up (b8 texting 
     const plain = (await h.su.query<{ opt_out_keyword: string | null }>(
       "SELECT opt_out_keyword FROM messages WHERE tenant_id = $1 AND direction = 'inbound' AND from_address = $2 ORDER BY occurred_at DESC, id DESC LIMIT 1", [wt.tenantId, loser.phone])).rows[0]!;
     expect(plain.opt_out_keyword).not.toBeNull();
+  });
+  it('R-REACT-6 R-OWN-24 E555: between a Team Lead\'s merge and its follow-up, the survivor\'s agent sees the reaction line with the quote, the not-an-opt-out line and the do-not-contact offer; after the follow-up the quote comes from the target', async () => {
+    const agent = wt.agents[0]!;
+    const loser = await ownedContact(agent, { firstName: 'Sam', confirmDistinct: true });
+    const sent = await sendText(agent, loser.id, 'No more texts about Elm Ct, I promise. Talk soon!');
+    expect(sent.body.result, JSON.stringify(sent.body)).toBe('sent');
+    const targetId = sent.body.message!.id;
+    const storedBody = (await h.su.query<{ body: string }>('SELECT body FROM messages WHERE id = $1', [targetId])).rows[0]!.body;
+    const survivor = await ownedContact(agent, { firstName: 'Sam', phone: loser.phone, confirmDistinct: true });
+    await freshReauth(h, wt.teamLead!);
+    const m = await command(wt.teamLead!, survivor.id, 'merge', { loserId: loser.id });
+    expect(m.status, JSON.stringify(m.body)).toBe(200);
+    expect(await pendingFollowups(wt.tenantId)).toBeGreaterThan(0);
+    // the phone quotes the team's text in its own case (the link key folds case): the two quotes are told apart below
+    const phoneQuote = storedBody.toLowerCase();
+    expect(phoneQuote).not.toBe(storedBody);
+    expect((await inboundSms(h, loser.phone, wt.mainNumber, `Loved “${phoneQuote}”`)).statusCode).toBeLessThan(300);
+    const inbound = (await h.su.query<{ id: string; contact_id: string }>(
+      "SELECT id, contact_id FROM messages WHERE tenant_id = $1 AND direction = 'inbound' AND from_address = $2 ORDER BY occurred_at DESC, id DESC LIMIT 1", [wt.tenantId, loser.phone])).rows[0]!;
+    expect(inbound.contact_id).toBe(survivor.id);
+    expect(await reactionRow(inbound.id)).toMatchObject({ target_message_id: targetId, action: 'add', reaction: 'love', whole_text_reading: 'opt_out_language' });
+    const line = async () => {
+      const r = await call<{ items: TItem[] }>(agent, 'GET', `/contacts/${survivor.id}/timeline`);
+      expect(r.status).toBe(200);
+      return r.body.items.find((x) => x.id === inbound.id)!;
+    };
+    // in the window: the agent reads the reaction but not the team's text, which still sits on the merged-away record
+    const seesTarget = await withTenantTx(agent.actor(), async (tx) => (await (await import('kysely')).sql<{ n: number }>`SELECT count(*)::int AS n FROM messages WHERE id = ${targetId}`.execute(tx)).rows[0]!.n, { db: h.database });
+    expect(seesTarget).toBe(0);
+    const during = await line();
+    // the quote is the person's own words as parsed (normalized: the sign-off's line break reads as a space)
+    const parsedQuote = parseReaction(`Loved “${phoneQuote}”`)!.quote;
+    expect(parsedQuote).toBe(phoneQuote.replace(/\s+/g, ' '));
+    expect(during.reaction).toEqual({ action: 'add', reaction: 'love', emoji: null, targetMessageId: targetId, quote: parsedQuote, raw: `Loved “${phoneQuote}”`, narrowed: true });
+    // the web shows the not-an-opt-out line when narrowed, and the offer when the viewer may edit a contact not yet marked
+    const details = await call<{ details: { canEdit: boolean; doNotContact: boolean } }>(agent, 'GET', `/contacts/${survivor.id}/details`);
+    expect(details.body.details).toMatchObject({ canEdit: true, doNotContact: false });
+    // the follow-up moves the team's text onto the survivor: the quote is now the target's own body
+    const registry = new HandlerRegistry().registerAll([ownershipFollowupHandler()]);
+    await createWorker({ db: h.database, registry, providers: h.providers, queues: ['realtime'], concurrency: 1, worker: `e555-${randomUUID().slice(0, 8)}`, idleMs: 10, log: silentLogger }).drain(20);
+    expect(await pendingFollowups(wt.tenantId)).toBe(0);
+    expect((await h.su.query<{ contact_id: string }>('SELECT contact_id FROM messages WHERE id = $1', [targetId])).rows[0]!.contact_id).toBe(survivor.id);
+    const after = await line();
+    expect(after.reaction).toMatchObject({ targetMessageId: targetId, quote: storedBody, narrowed: true });
+    expect((await call<{ items: TItem[] }>(agent, 'GET', `/contacts/${survivor.id}/timeline`)).body.items.find((x) => x.id === targetId)!.reactedWith).toMatchObject({ reaction: 'love' });
   });
 });

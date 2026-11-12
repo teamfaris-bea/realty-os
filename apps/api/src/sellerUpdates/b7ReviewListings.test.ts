@@ -105,13 +105,12 @@ describe('b7 ownership-data/F2: a removed listing agent', () => {
     const [first] = await draftsOf(h, l.listingId);
     expect(first).toMatchObject({ status: 'proposed', owner_user_id: a.userId });
 
-    // the staged deactivation through the API, then the job, as R-OWN-22 runs it
+    // the agent is suspended (the hold applies to any listing agent who is not active: listingAgent.ts
+    // LISTING_AGENT_ACTIVE); a suspension keeps the listing with them, unlike the staged deactivation (below)
     await freshReauth(h, x.owner);
-    const run = await call(x.owner, 'POST', `/members/${a.userId}/deactivate`, { mode: 'run', destination: 'default_pond' });
-    expect(run.status, JSON.stringify(run.body)).toBe(202);
-    await leadsWorker(h).drain();
-    expect((await h.su.query('SELECT status FROM memberships WHERE tenant_id = $1 AND user_id = $2', [x.tenantId, a.userId])).rows[0].status).toBe('removed');
-    // the listing keeps its (removed) agent: deactivation moves contacts, not listings
+    const v = (await h.su.query<{ version: number }>('SELECT version FROM memberships WHERE tenant_id = $1 AND user_id = $2', [x.tenantId, a.userId])).rows[0]!.version;
+    const sus = await call(x.owner, 'PATCH', `/members/${a.userId}`, { status: 'suspended', version: v });
+    expect(sus.status, JSON.stringify(sus.body)).toBe(200);
     expect((await h.su.query('SELECT listing_agent_user_id AS u FROM listings WHERE id = $1', [l.listingId])).rows[0].u).toBe(a.userId);
 
     const r1 = await reconcile(h, x.tenantId);
@@ -119,7 +118,7 @@ describe('b7 ownership-data/F2: a removed listing agent', () => {
     const after1 = await draftsOf(h, l.listingId);
     expect(after1.find((d) => d.id === first!.id)!.status).toBe('invalidated');
     expect(after1.filter((d) => d.status === 'proposed')).toHaveLength(0);
-    expect(after1.filter((d) => d.id !== first!.id)).toHaveLength(0); // no new draft for the removed member
+    expect(after1.filter((d) => d.id !== first!.id)).toHaveLength(0); // no new draft for the suspended member
     // the instant was not advanced past now (held, not skipped)
     expect((await dueAt(l.listingId))!.getTime()).toBeLessThanOrEqual(Date.now());
 
@@ -131,7 +130,7 @@ describe('b7 ownership-data/F2: a removed listing agent', () => {
       expect(c.reasons.map((y) => y.code)).toEqual(['LISTING_AGENT_INACTIVE']);
       expect(c.reasons[0]!.label).toContain(l.address);
     }
-    // nobody else (in particular not the removed agent nor the other agent) got the card
+    // nobody else (in particular not the suspended agent nor the other agent) got the card
     expect((await inactiveCards()).every((c) => c.user_id === x.owner.userId || c.user_id === admin.userId)).toBe(true);
 
     // a second pass holds again but does not duplicate the cards
@@ -158,7 +157,24 @@ describe('b7 ownership-data/F2: a removed listing agent', () => {
     // the new agent has the ready card; their update is sendable by them
     const ready = (await listingCards(l.listingId)).filter((c) => c.state === 'open');
     expect(ready.map((c) => [c.user_id, c.reasons[0]!.code])).toEqual([[b.userId, 'SELLER_UPDATE_READY']]);
-    const v = await call<{ update: UpdateT | null }>(b, 'GET', `/listings/${l.listingId}/seller-update`);
-    expect(v.body.update!.canSend).toBe(true);
+    const v2 = await call<{ update: UpdateT | null }>(b, 'GET', `/listings/${l.listingId}/seller-update`);
+    expect(v2.body.update!.canSend).toBe(true);
+  });
+
+  it('R-SELL-1 R-OWN-22 E540: the staged deactivation now moves an open listing, so no hold and no Owner/Admin card', async () => {
+    const x = await assistantWorld(h, { agents: 1, others: ['admin'] });
+    const a = x.agents[0]!;
+    const l = await sellerListing(a);
+    await reconcile(h, x.tenantId);
+    await freshReauth(h, x.owner);
+    const run = await call(x.owner, 'POST', `/members/${a.userId}/deactivate`, { mode: 'run', destination: 'default_pond' });
+    expect(run.status, JSON.stringify(run.body)).toBe(202);
+    await leadsWorker(h).drain();
+    expect((await h.su.query('SELECT status FROM memberships WHERE tenant_id = $1 AND user_id = $2', [x.tenantId, a.userId])).rows[0].status).toBe('removed');
+    // no Team Lead: the Owner who ran it takes the listing
+    expect((await h.su.query('SELECT listing_agent_user_id AS u FROM listings WHERE id = $1', [l.listingId])).rows[0].u).toBe(x.owner.userId);
+    const r = await reconcile(h, x.tenantId);
+    expect(r.held).toBe(0);
+    expect((await listingCards(l.listingId)).filter((c) => c.dedupe_key === `seller_update:${l.listingId}:agent-inactive`)).toHaveLength(0);
   });
 });

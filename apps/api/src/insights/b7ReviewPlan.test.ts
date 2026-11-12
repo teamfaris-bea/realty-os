@@ -2,8 +2,10 @@
 // (app.contact_person_ids: the record, its root survivor, every record merged into that root) and drops work whose
 // contact is a merged-away record, both when building the inputs (planInputs) and when rendering or accepting a
 // stored plan (renderFilter). Before the fix a task or appointment still pointing at a merged-away duplicate L, whose
-// survivor S carries the person-level do-not-contact, was suggested. Real Postgres through the real server (app_user),
-// the hourly reconcile as the system actor.
+// survivor S carries the person-level do-not-contact, was suggested. Since the backlog-gaps merge-work migration
+// (R-OWN-24, R-PLAN-3, E550, E551) the merge moves that work to S itself, so it is planned and shown on S (and kept out
+// when S, or any record of the person, is do-not-contact). Real Postgres through the real server (app_user), the hourly
+// reconcile as the system actor.
 import { randomUUID } from 'node:crypto';
 import { type Instant, type TenantId, localDateOf, zone } from '@realty/core/foundation';
 import { withTenantTx } from '@realty/db';
@@ -67,11 +69,11 @@ async function merge(agent: TestClient, survivorId: string, loserId: string): Pr
   expect(r).toEqual({ merged_into_contact_id: survivorId, closed_reason: 'merged' });
 }
 
-/** The merge leaves the loser's tasks and appointments where they were: the facts behind the finding. */
-async function stillOnLoser(taskIds: string[], apptIds: string[], loserId: string): Promise<void> {
+/** The merge moved the loser's open tasks and appointments to the survivor (backlog-gaps merge work, R-OWN-24). */
+async function movedToSurvivor(taskIds: string[], apptIds: string[], survivorId: string): Promise<void> {
   const t = (await h.su.query(`SELECT DISTINCT contact_id FROM tasks WHERE tenant_id = $1 AND id = ANY ($2::uuid[]) AND status = 'open'`, [w.tenantId, taskIds])).rows;
   const a = (await h.su.query(`SELECT DISTINCT contact_id FROM appointments WHERE tenant_id = $1 AND id = ANY ($2::uuid[]) AND outcome IS NULL`, [w.tenantId, apptIds])).rows;
-  expect([...t, ...a].map((x) => x.contact_id)).toEqual([...(taskIds.length ? [loserId] : []), ...(apptIds.length ? [loserId] : [])]);
+  expect([...t, ...a].map((x) => x.contact_id)).toEqual([...(taskIds.length ? [survivorId] : []), ...(apptIds.length ? [survivorId] : [])]);
 }
 
 const plan = async (c: TestClient) => {
@@ -105,7 +107,7 @@ beforeAll(async () => {
     ids.appt1 = await appt(dncAgent, l.id);
     ids.sTask1 = await task(dncAgent, 'todo', 'Call the survivor', at(1), s.id);
     await merge(dncAgent, s.id, l.id);
-    await stillOnLoser([ids.promise1, ids.todo1], [ids.appt1], l.id);
+    await movedToSurvivor([ids.promise1, ids.todo1], [ids.appt1], s.id);
     const d = await call(dncAgent, 'POST', `/contacts/${s.id}/do-not-contact`, { reason: 'asked_on_call' });
     expect(d.status, JSON.stringify(d.body)).toBe(200);
     // the person-level flag sits on the survivor only; the merged-away record's own column stays clear
@@ -123,7 +125,7 @@ beforeAll(async () => {
     ids.appt2 = await appt(plainAgent, l.id);
     ids.sTask2 = await task(plainAgent, 'todo', 'Call the other survivor', at(2), s.id);
     await merge(plainAgent, s.id, l.id);
-    await stillOnLoser([ids.promise2], [ids.appt2], l.id);
+    await movedToSurvivor([ids.promise2], [ids.appt2], s.id);
   }
 
   // test 3: work on L built into the plan BEFORE the merge
@@ -172,13 +174,14 @@ describe('b7 ownership-data/F5: the weekly plan and merged records', () => {
     expect(p.droppedSinceBuilt).toBe(0);
   });
 
-  it('R-PLAN-3 R-OWN-24 b7 ownership-data/F5: with no do-not-contact anywhere, work whose contact is a merged-away record is not in the plan (the survivor’s is)', async () => {
+  it('R-PLAN-3 R-OWN-24 E550 b7 ownership-data/F5: with no do-not-contact anywhere, the merged-away record’s work moved to the survivor and is planned there (with the survivor’s own)', async () => {
     const p = await plan(plainAgent);
-    expect(cites(p, ids.promise2!)).toBe(false);
-    expect(cites(p, ids.appt2!)).toBe(false);
+    expect(cites(p, ids.promise2!)).toBe(true);
+    expect(cites(p, ids.appt2!)).toBe(true);
     expect(onContact(p, ids.l2!)).toBe(false);
     expect(cites(p, ids.sTask2!)).toBe(true);
-    expect(p.items!.find((i) => cites({ items: [i] } as PlanT, ids.sTask2!))!.item.contactId).toBe(ids.s2);
+    for (const id of [ids.promise2!, ids.appt2!, ids.sTask2!]) expect(p.items!.find((i) => cites({ items: [i] } as PlanT, id))!.item.contactId, id).toBe(ids.s2);
+    expect(p.droppedSinceBuilt).toBe(0);
     const stored = (await h.su.query(`SELECT payload FROM assistant_actions WHERE tenant_id = $1 AND kind = 'weekly_plan' AND owner_user_id = $2`, [w.tenantId, plainAgent.userId])).rows[0];
     expect(JSON.stringify(stored.payload)).not.toContain(ids.l2);
   });
@@ -207,7 +210,7 @@ describe('b7 ownership-data/F5: the weekly plan and merged records', () => {
     expect(idx).toBeGreaterThanOrEqual(0);
   });
 
-  it('R-PLAN-3 b7 ownership-data/F5: renderFilter drops an item whose contact became merged-away after the plan was stored', async () => {
+  it('R-PLAN-3 R-OWN-24 E551 b7 ownership-data/F5: an item whose contact was merged away after the plan was stored is shown on the survivor, droppedSinceBuilt 0, and accept uses the survivor', async () => {
     const before = await plan(laterAgent);
     expect(cites(before, ids.promise3!)).toBe(true);
     expect(cites(before, ids.appt3!)).toBe(true);
@@ -217,23 +220,31 @@ describe('b7 ownership-data/F5: the weekly plan and merged records', () => {
     const control = before.items!.find((i) => cites({ items: [i] } as PlanT, ids.control3!))!.index;
 
     await merge(laterAgent, ids.s3!, ids.l3!);
-    await stillOnLoser([ids.promise3!], [ids.appt3!], ids.l3!);
+    await movedToSurvivor([ids.promise3!], [ids.appt3!], ids.s3!);
 
     const after = await plan(laterAgent);
     expect(onContact(after, ids.l3!)).toBe(false);
-    expect(cites(after, ids.promise3!)).toBe(false);
-    expect(cites(after, ids.appt3!)).toBe(false);
-    expect(after.droppedSinceBuilt).toBe(2);
-    expect(after.items!.map((i) => i.index)).toEqual([control]);
+    expect(cites(after, ids.promise3!)).toBe(true);
+    expect(cites(after, ids.appt3!)).toBe(true);
+    expect(after.droppedSinceBuilt).toBe(0);
+    // the same items at their stored indexes, the merged ones now on the survivor
+    expect(after.items!.map((i) => i.index)).toEqual(before.items!.map((i) => i.index));
+    expect(after.items!.filter((i) => onL.includes(i.index)).map((i) => i.item.contactId)).toEqual([ids.s3, ids.s3]);
+    expect(JSON.stringify(after.items)).not.toContain(ids.l3);
+    // the stored plan is not rewritten: it still names the record it was built for
+    const stored = (await h.su.query(`SELECT payload FROM assistant_actions WHERE tenant_id = $1 AND kind = 'weekly_plan' AND owner_user_id = $2`, [w.tenantId, laterAgent.userId])).rows[0];
+    expect(JSON.stringify(stored.payload)).toContain(ids.l3);
 
-    // accept: an index of a dropped item is refused (and nothing is decided); the remaining one is accepted
-    for (const i of onL) expect((await call(laterAgent, 'POST', `/me/weekly-plans/${week}/accept`, { itemIndexes: [i] })).status).toBe(404);
-    expect((await call(laterAgent, 'POST', `/me/weekly-plans/${week}/accept`, { itemIndexes: [control, ...onL] })).status).toBe(404);
-    const st = (await h.su.query(`SELECT status FROM assistant_actions WHERE tenant_id = $1 AND kind = 'weekly_plan' AND owner_user_id = $2`, [w.tenantId, laterAgent.userId])).rows[0];
-    expect(st.status).toBe('proposed');
-    const ok = await call<PlanT>(laterAgent, 'POST', `/me/weekly-plans/${week}/accept`, { itemIndexes: [control] });
+    // accept: the moved items are accepted with the control; a task is created on the survivor, never on the record
+    const ok = await call<PlanT>(laterAgent, 'POST', `/me/weekly-plans/${week}/accept`, { itemIndexes: [control, ...onL] });
     expect(ok.status, JSON.stringify(ok.body)).toBe(200);
-    expect(ok.body.accepted!.taskIds).toEqual([ids.control3]);
-    expect(ok.body.items!.map((i) => i.index)).toEqual([control]);
+    expect(ok.body.accepted!.taskIds).toContain(ids.control3);
+    expect(ok.body.accepted!.taskIds).toContain(ids.promise3);
+    expect(ok.body.accepted!.taskIds).toHaveLength(3);
+    const created = ok.body.accepted!.taskIds.filter((t) => t !== ids.control3 && t !== ids.promise3);
+    const rows = (await h.su.query(`SELECT id, contact_id FROM tasks WHERE tenant_id = $1 AND id = ANY ($2::uuid[]) ORDER BY id`, [w.tenantId, [...created, ids.promise3]])).rows;
+    expect(rows.map((r) => r.contact_id)).toEqual([ids.s3, ids.s3]);
+    expect(ok.body.droppedSinceBuilt).toBe(0);
+    expect(ok.body.items!.filter((i) => i.accepted).map((i) => i.index).sort()).toEqual([control, ...onL].sort());
   });
 });

@@ -312,6 +312,10 @@ export const DeactivationResponse = z.object({
     owned: z.number().int(),
     offered: z.number().int(),
     ownedWithOpenDeal: z.number().int(),
+    /** open team listings (coming soon / active / pending) with the member as listing agent: the job moves them */
+    openListings: z.number().int(),
+    /** deals the member owns that are not closed or lost: they keep the member as deal owner (not moved) */
+    openDeals: z.number().int(),
     /** where contacts go that cannot go to a pond (open deals) or when there is no Team Lead */
     teamLead: z.object({ userId: Id, displayName: z.string().nullable() }).nullable(),
     fallbackUserId: Id,

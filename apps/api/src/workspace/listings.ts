@@ -12,7 +12,7 @@
 // assistant.match_listing, which matches active saved searches and sends alerts through the gate
 // (api/assistant); the price history row is written by the DB trigger, never by this code.
 // Seller-update ASSEMBLY is Phase 2; Phase 1 only captures showings and feedback.
-import type { IdGenerator, ResourceFacts, UserActor } from '@realty/core/foundation';
+import type { Actor, IdGenerator, ResourceFacts, UserActor } from '@realty/core/foundation';
 import { enqueueJob, type Tx } from '@realty/db';
 import { sql } from 'kysely';
 import type { z } from 'zod';
@@ -192,8 +192,28 @@ export async function changeListingAgent(tx: Tx, actor: UserActor, listingId: st
   if (!c || c.source !== 'team') throw new AppError('NOT_FOUND'); // MLS rows have no listing agent of ours
   if (c.agent === agentUserId) return;
   await assertAssignable(tx, actor, agentUserId, { canOwnLeads: true });
-  await sql`UPDATE listings SET listing_agent_user_id = ${agentUserId}, updated_at = now() WHERE tenant_id = app.tenant_id() AND id = ${listingId}`.execute(tx);
-  await audit(tx, actor, { action: 'listing.agent_changed', entity: { type: 'listing', id: listingId }, changes: redactDiff({ listing_agent_user_id: c.agent }, { listing_agent_user_id: agentUserId }) });
+  if (c.agent !== null) await setListingAgentInTx(tx, actor, listingId, c.agent, agentUserId);
+}
+
+/**
+ * The one audited writer of a team listing's agent (R-OWN-22, E545): PATCH /listings/:id/agent (above) and the staged
+ * member deactivation (leads/deactivation.ts, as the system worker) both go through it. It locks the listing and
+ * writes only while it is a team listing whose agent is still `fromUserId` (and the new agent differs), so a write
+ * that lost a race with another change is a fenced no-op: false, nothing audited. The caller checks eligibility.
+ */
+export async function setListingAgentInTx(tx: Tx, actor: Actor, listingId: string, fromUserId: string, toUserId: string, reason?: string): Promise<boolean> {
+  if (toUserId === fromUserId) return false;
+  const r = await sql<{ id: string }>`
+    SELECT id FROM listings WHERE tenant_id = app.tenant_id() AND id = ${listingId} AND source = 'team' AND listing_agent_user_id = ${fromUserId} FOR UPDATE`.execute(tx);
+  if (!r.rows[0]) return false;
+  await sql`UPDATE listings SET listing_agent_user_id = ${toUserId}, updated_at = now() WHERE tenant_id = app.tenant_id() AND id = ${listingId}`.execute(tx);
+  await audit(tx, actor, {
+    action: 'listing.agent_changed',
+    entity: { type: 'listing', id: listingId },
+    changes: redactDiff({ listing_agent_user_id: fromUserId }, { listing_agent_user_id: toUserId }),
+    ...(reason === undefined ? {} : { reason }),
+  });
+  return true;
 }
 
 export async function addListingContact(tx: Tx, listingId: string, contactId: string, role: string): Promise<void> {

@@ -290,7 +290,7 @@ describe('R-AVM-3 who is asked, at most once a month per address', () => {
     const c = await pastClient(h, w, w.agents[0]!);
     const u = createUnconfiguredIntegrations();
     const r = await avmRefresh({ db: h.database, ids: depsOf(h).ids, avm: u.avm }, w.tenantId);
-    expect(r).toMatchObject({ configured: false, requested: 0, recorded: 0 });
+    expect(r).toMatchObject({ configured: false, purged: 0, requested: 0, recorded: 0 });
     expect(await valuationsOf(h, c.addressId)).toEqual([]);
     expect(await triggerRuns(h, c.id)).toEqual([]);
     const real = h.app.platform.providers.integrations;

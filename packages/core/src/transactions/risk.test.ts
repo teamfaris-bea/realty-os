@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { type DealDateId, HOUR_MS, at, instant, toIso } from '../foundation/index.js';
-import { milestoneKey, txnTriggerKey } from './keys.js';
+import { milestoneKey } from './keys.js';
 import { type RiskFacts, milestoneRisk } from './risk.js';
 
 const due = at('2026-06-30T03:59:59Z');
@@ -63,7 +63,6 @@ describe('R-ACC-6 milestone_at_risk', () => {
     const now = instant(due + HOUR_MS);
     expect(milestoneRisk(facts({ dueVersion: 4 }), now)?.key).not.toBe(milestoneRisk(facts(), now)?.key);
     expect(milestoneKey('a', 1)).toBe('milestone:a:1');
-    expect(txnTriggerKey('a', 2, 'client_update')).toBe('txn:a:2:client_update');
   });
 
   it('recomputing later never moves detectedAt', () => {
