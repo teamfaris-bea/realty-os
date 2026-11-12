@@ -308,6 +308,8 @@ export interface PhoneNumber {
   releasedAt: string | null;
   /** module 22 (R-TRK-1): the lead source a live tracking number credits, or null */
   leadSourceId: string | null;
+  /** b9 review sends/F1 (R-TWL-9): the carrier reported THIS number unverified for texting (its texts are paused) */
+  textingPausedDetail?: string | null;
 }
 
 export interface Registration {

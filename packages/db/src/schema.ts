@@ -1673,6 +1673,8 @@ export interface PhoneNumbersTable {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
   lead_source_id: string | null;
+  sender_not_verified_at: Timestamp | null;
+  sender_not_verified_detail: string | null;
 }
 
 /** public.playbook_approvals (table) */
