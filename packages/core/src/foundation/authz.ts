@@ -157,6 +157,10 @@ export const ACTIONS = [
   'coaching.settings', // module 36: call scoring on/off, Team Lead visibility, rubric items (Owner; an Admin may only turn call reviews off; widening needs 🔒)
   'milestone.confirm', // module 31 (DATA_MODEL §8 "Confirm or move a milestone date"): plan, confirm, enter, move, complete a deal date
   'milestone_template.manage', // module 31: tenant milestone templates (not a §8 row: Owner/Admin, flagged; R-TXN-6)
+  'ads.view', // module 52: the ads page and ledger (human Owner/Admin only; no support, no system: R-ADS-10, DATA_MODEL §8)
+  'ads.cap_set', // module 52: a new ad cap version (the Owner, as themselves, re-authenticated, attested: R-ADS-1)
+  'ads.shift_decide', // module 52: approve or reject an ad_reallocation (Owner/Admin, one tap each: D-ADS, R-AST-21)
+  'ads.campaign_manage', // module 52: link a campaign to a listing and its creative, resume a paused campaign (Owner/Admin)
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -325,6 +329,12 @@ export const AUDIT_ACTIONS = [
   'source_cost.changed', // module 33: a manual lead-source cost entered or changed (amounts in cents, the month; closed months need re-auth)
   'goal.changed', // module 33: a goal created, changed or removed (member, period, metric, target)
   'coaching.settings_changed', // module 36: the Owner changed call scoring, Team Lead visibility or the rubric items, or an Admin turned call reviews off (values only)
+  'ads.cap_set', // module 52: the Owner set a new ad cap version (amounts in cents, version; R-ADS-1)
+  'ads.shift_approved', // module 52: an Owner/Admin approved a budget shift; its planned rows are written in the same transaction (run id, counts)
+  'ads.shift_rejected', // module 52: an Owner/Admin rejected a budget shift
+  'ads.campaign_linked', // module 52: an Owner/Admin linked a campaign to a listing and an approved creative (ids only)
+  'ads.campaign_resumed', // module 52: an Owner/Admin resumed a paused campaign (one approved one-change shift; run id)
+  'ads.campaign_paused', // module 52: the system paused a campaign at the monthly cap (R-ADS-5; run id, cap version)
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -580,6 +590,12 @@ const MATRIX: Record<Action, ActionRule> = {
   // The closed-month re-auth applies to both Owner and Admin (PHASE2_3_PLAN §5.4 states it for the route).
   'owner_view.view': { roles: { owner: ALL, admin: ALL } },
   'source_cost.edit': { roles: { owner: { scopes: ['all'], reauth: 'when_closed_period' }, admin: { scopes: ['all'], reauth: 'when_closed_period' } } },
+  // Module 52 (DATA_MODEL §8 ads rows): human Owner/Admin only; no system via and no support (a support session reads the
+  // ownerless ad_reallocation rows through RLS only, never through these routes). The cap is the Owner's, 🔒 always.
+  'ads.view': { roles: { owner: ALL, admin: ALL } },
+  'ads.cap_set': { roles: { owner: ALL_REAUTH } },
+  'ads.shift_decide': { roles: { owner: ALL, admin: ALL } },
+  'ads.campaign_manage': { roles: { owner: ALL, admin: ALL } },
   // Goals (agent_goals RLS: self, the user's TL, tenant-wide): view self / TL own+team / Owner, Admin all; manage:
   // Owner/Admin any member, a TL the members of a team they lead (RLS goals_write decides the row set).
   'goal.view': { roles: { owner: ALL, admin: ALL, team_lead: { scopes: ['own', 'team'] }, agent: OWN, isa: OWN, tc: OWN } },
