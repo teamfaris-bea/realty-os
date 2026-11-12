@@ -57,6 +57,12 @@ export interface PublicRecordsProvider {
   readonly configured: boolean;
   /** shown wherever the platform reports the adapter's state */
   readonly statusText: string;
+  /**
+   * true only for the deterministic fake (dev, tests, a staging demo with ALLOW_FAKE_PROVIDERS): it is configured, so
+   * without this flag its answers read as county findings. The homeowner panel then shows `statusText` on every home
+   * (b11 api-ui/F5), as module 42's scanner and extractor do.
+   */
+  readonly test: boolean;
   /** One address; no tenant context, no contact data. Throws ProviderError on a failure. */
   lookup(address: PostalAddress): Promise<PublicRecordLookup>;
   /** D10: one address; the homeowner record (core/homeowner's closed field list). Throws ProviderError on a failure. */
@@ -64,10 +70,13 @@ export interface PublicRecordsProvider {
 }
 
 export const PUBLIC_RECORDS_NOT_SET_UP = 'Public records are not set up on this platform';
+/** The fake's status (b11 api-ui/F5): shown on every home of the homeowner panel while the fake answers. */
+export const PUBLIC_RECORDS_TEST_TEXT = 'This deployment uses test public records: no county was asked, and these answers are test data.';
 
 /** Production without ALLOW_FAKE_PROVIDERS: looks nothing up (R-INT-1, N13). */
 export class UnconfiguredPublicRecords implements PublicRecordsProvider {
   readonly configured = false;
+  readonly test = false;
   readonly statusText = PUBLIC_RECORDS_NOT_SET_UP;
   async lookup(): Promise<never> {
     throw new ProviderError('not_configured', 'PUBLIC_RECORDS_NOT_CONFIGURED');
@@ -139,7 +148,8 @@ export function parsePublicRecord(raw: unknown): PublicRecordLookup {
  */
 export class FakePublicRecords implements PublicRecordsProvider {
   readonly configured = true;
-  readonly statusText = 'Public records: deterministic fake (dev and tests only)';
+  readonly test = true;
+  readonly statusText = PUBLIC_RECORDS_TEST_TEXT;
   readonly calls: string[] = [];
   readonly #records = new Map<string, unknown>();
   /** test hook: runs before an answer is returned (a throw is a provider failure or a crash mid-lookup) */

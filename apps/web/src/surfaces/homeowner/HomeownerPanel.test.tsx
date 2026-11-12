@@ -26,7 +26,7 @@ const MATCHED = profile({
   },
 });
 const view = (homes: ViewInput['homes'], o: Partial<ViewInput> = {}): HomeownerView =>
-  homeownerView({ today: '2026-11-12', configured: true, statusText: 'x', reasons: [{ reason: 'seller_intent', since: null }], homes, outreachClearanceOn: null, ...o });
+  homeownerView({ today: '2026-11-12', configured: true, test: false, statusText: 'x', reasons: [{ reason: 'seller_intent', since: null }], homes, outreachClearanceOn: null, ...o });
 
 const contact = fullContact({ firstName: 'Jane' });
 
@@ -104,6 +104,16 @@ describe('the homeowner panel (R-HOME-8)', () => {
     mount(view([{ address: BEAUFORT, kind: 'home', profile: null }], { configured: false, statusText: 'Public records are not set up on this platform' }));
     await panel();
     expect(screen.getByText('Public records are not set up on this platform')).toBeTruthy();
+  });
+
+  it('R-HOME-4 R-HOME-5: on a test public-records source each home says no county was asked (b11 api-ui/F5)', async () => {
+    const TEST = 'This deployment uses test public records: no county was asked, and these answers are test data.';
+    mount(view([
+      { address: BEAUFORT, kind: 'home', profile: MATCHED },
+      { address: { ...BEAUFORT, line1: '11 Sample Lane' }, kind: 'home', profile: profile({ status: 'not_available' }) },
+    ], { test: true, statusText: TEST }));
+    await panel();
+    expect(screen.getAllByText(TEST)).toHaveLength(2);
   });
 
   it('R-HOME-2 E576: a Jasper home offers the county lookup; links open in a new tab with noopener noreferrer, and an unsafe URL is never a link', async () => {

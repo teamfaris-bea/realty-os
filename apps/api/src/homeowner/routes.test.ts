@@ -5,7 +5,7 @@ import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { ownedContact } from '../comms/testing.js';
 import { call } from '../leads/testing.js';
 import { beforeThisMonth, closedDeal } from '../nurture/testing.js';
-import { FakePublicRecords } from '../predict/provider.js';
+import { FakePublicRecords, PUBLIC_RECORDS_TEST_TEXT } from '../predict/provider.js';
 import { type WorkspaceWorld, workspaceWorld } from '../workspace/testing.js';
 import { HomeownerResponse, type HomeownerResponseT } from './schemas.js';
 import { addAddress, countyRecord, homeowner, nextBeaufortAddress, refresh } from './testing.js';
@@ -62,6 +62,19 @@ describe('GET /api/contacts/:id/homeowner (R-HOME-8)', () => {
     expect(text).not.toMatch(/score|confidence|percent|estimat|balance|equity|ownerName|TEST-/i);
     expect(HomeownerResponse.safeParse({ ...r.body, homes: [{ ...home, ownerNames: ['X'] }] }).success).toBe(false);
     expect(HomeownerResponse.safeParse({ ...r.body, score: 1 }).success).toBe(false);
+  });
+
+  // b11 api-ui/F5: outside production (and in a staging demo with ALLOW_FAKE_PROVIDERS) the provider is the fake, which
+  // is configured; its answers read as county findings unless the panel says no county was asked.
+  it('R-HOME-4 R-HOME-5: on the test public-records source every home says no county was asked, checked or not', async () => {
+    expect(h.providers.publicRecords.test).toBe(true);
+    const c = await homeowner(h, w, w.agents[0]!, records);
+    await addAddress(w.agents[0]!, c.id, nextBeaufortAddress({ postalCode: '29936' }));
+    await refresh(h, w.tenantId, { publicRecords: records });
+    const r = await get(w.agents[0]!, c.id);
+    expect(r.status).toBe(200);
+    expect(r.body.homes.map((x) => x.outcome).sort()).toEqual(['links_only', 'matched']);
+    expect(r.body.homes.map((x) => x.providerNote)).toEqual([PUBLIC_RECORDS_TEST_TEXT, PUBLIC_RECORDS_TEST_TEXT]);
   });
 
   it('R-HOME-8: the Team Lead reads it too; another tenant\'s user gets 404', async () => {

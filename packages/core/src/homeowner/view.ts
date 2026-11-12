@@ -28,6 +28,8 @@ export interface ViewHome {
 export interface ViewInput {
   today: string;
   configured: boolean;
+  /** the provider is the deterministic fake (b11 api-ui/F5): its status text is shown on every home */
+  test: boolean;
   statusText: string;
   /** viewer-visible reasons, with a date only where the viewer may see it (a past buyer's closing) */
   reasons: { reason: RecognitionReason; since: string | null }[];
@@ -68,7 +70,7 @@ export interface HomeView {
   lookupLinks: CountyLink[];
   /** where recorded loans are searched (no automated source) */
   loansLink: CountyLink | null;
-  /** the platform status text when public records are not set up */
+  /** the platform status text when public records are not set up, or on every home while a test source answers */
   providerNote: string | null;
 }
 
@@ -107,7 +109,8 @@ export function homeownerView(input: ViewInput): HomeownerView {
 
 function homeView(h: ViewHome, input: ViewInput): HomeView {
   const route = countyOf(h.address);
-  const providerNote = input.configured ? null : input.statusText;
+  // b11 api-ui/F5: a configured TEST source (the dev and staging-demo fake) says so on every home: no county was asked
+  const providerNote = input.configured && !input.test ? null : input.statusText;
   const base = { address: oneLine(h.address), matchDetail: null, yearsOwned: null, mailingDiffers: null, providerNote };
   const d9: ViewRow[] = D9_ROWS.map((key) => ({ key, state: 'pending_d9', why: 'pending_d9' }));
 

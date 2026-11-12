@@ -1,7 +1,7 @@
 // The Beaufort County connector against a MOCK county (synthetic fixtures only; no county host is ever called).
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../../config.js';
-import { FakePublicRecords, UnconfiguredPublicRecords, parsePublicRecord } from '../../predict/provider.js';
+import { FakePublicRecords, PUBLIC_RECORDS_TEST_TEXT, UnconfiguredPublicRecords, parsePublicRecord } from '../../predict/provider.js';
 import { createProviders } from '../index.js';
 import { ProviderError } from '../types.js';
 import { BEAUFORT_STATUS_OFF, BeaufortGisRecords, addressWhere, streetParts } from './beaufort.js';
@@ -251,6 +251,16 @@ describe('module 50\'s fake and the shared interface (R-PRED-2)', () => {
       annual_tax_cents: { value: 123_400, source: 'County Assessor', asOf: null },
     });
     expect(await f.lookupHomeowner({ ...HOME, line1: '11 Sample Lane' })).toEqual({ status: 'not_available', detail: 'no_record' });
+  });
+
+  // b11 api-ui/F5: the fake is configured, so only its test flag tells the panel that no county was asked.
+  it('R-HOME-4 R-HOME-5: only the fake is a test source, and its status says no county was asked; the county connector and the stand-in are not', () => {
+    const f = new FakePublicRecords();
+    expect([f.configured, f.test, f.statusText]).toEqual([true, true, PUBLIC_RECORDS_TEST_TEXT]);
+    expect(f.statusText).toMatch(/no county was asked/);
+    expect(new UnconfiguredPublicRecords().test).toBe(false);
+    expect(new BeaufortGisRecords({ liveCalls: false, allowedHosts: HOSTS, clock: manualClock().clock }).test).toBe(false);
+    expect(live().p.test).toBe(false);
   });
 
   it('R-INT-1 E588: homeownerCalls holds normalized addresses only; any other key on the argument is refused', async () => {

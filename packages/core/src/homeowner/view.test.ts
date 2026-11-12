@@ -25,7 +25,7 @@ const profile = (p: Partial<ViewProfile>): ViewProfile => ({
   status: 'matched', matchDetail: null, source: SRC, checkedOn: '2026-11-10', lastFailureOn: null, lastFailureCode: null, nextCheckOn: '2026-12-10', facts: {}, ...p,
 });
 const input = (homes: ViewHome[], extra: Partial<ViewInput> = {}): ViewInput => ({
-  today: '2026-11-12', configured: true, statusText: 'Public records: deterministic fake (dev and tests only)',
+  today: '2026-11-12', configured: true, test: false, statusText: 'Public records: Beaufort County GIS connector; live lookups are on on this platform',
   reasons: [{ reason: 'seller_intent', since: null }], homes, outreachClearanceOn: null, ...extra,
 });
 const one = (h: ViewHome, extra: Partial<ViewInput> = {}) => homeownerView(input([h], extra)).homes[0]!;
@@ -94,6 +94,23 @@ describe('homeownerView (R-HOME-8)', () => {
     const off = one({ address: BEAUFORT, kind: 'home', profile: null }, { configured: false, statusText: 'Public records are not set up on this platform' });
     expect(off.check).toEqual({ state: 'not_configured', text: 'Public records are not set up on this platform' });
     expect(off.providerNote).toBe('Public records are not set up on this platform');
+  });
+
+  // b11 api-ui/F5: the dev and staging-demo fake is configured, and its answers read as county findings ("Checked …",
+  // "The county has no record for this address.") with no word that no county was asked.
+  it('R-HOME-4 R-HOME-5: a test public-records source says so on every home (no county was asked); a real source adds no note', () => {
+    const TEST = 'This deployment uses test public records: no county was asked, and these answers are test data.';
+    const homes: ViewHome[] = [
+      { address: BEAUFORT, kind: 'home', profile: MATCHED },
+      { address: { ...BEAUFORT, line1: '11 Sample Lane' }, kind: 'home', profile: profile({ status: 'not_available' }) },
+      { address: { ...BEAUFORT, line1: '12 Sample Lane' }, kind: 'home', profile: null },
+      { address: JASPER, kind: 'home', profile: null },
+      { address: OTHER, kind: 'home', profile: null },
+    ];
+    const fake = homeownerView(input(homes, { test: true, statusText: TEST }));
+    expect(fake.homes.map((h) => h.providerNote)).toEqual(homes.map(() => TEST));
+    expect(fake.homes[2]!.check).toEqual({ state: 'not_checked' });
+    expect(homeownerView(input(homes)).homes.map((h) => h.providerNote)).toEqual(homes.map(() => null));
   });
 
   it('R-HOME-2 E576: a Jasper home is links only; a shared ZIP with no Beaufort record also offers the Jasper lookup', () => {

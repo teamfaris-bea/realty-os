@@ -95,6 +95,8 @@ const text = (v: unknown): string | null => (typeof v === 'string' && v.trim() !
 
 export class BeaufortGisRecords implements PublicRecordsProvider {
   readonly configured: boolean;
+  /** the county connector is never a test source: with live calls off it is not configured and asks nobody */
+  readonly test = false;
   readonly statusText: string;
   readonly #root: string;
   readonly #fetch: CountyFetch;
