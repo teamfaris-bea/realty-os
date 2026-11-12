@@ -21,7 +21,8 @@ export const TEAM_KEY = ['coaching', 'team'] as const;
 
 const OFF_TEXT = {
   not_cleared: { title: 'Call reviews are not on yet', body: 'They stay off until counsel has reviewed them for your team. Nothing about your calls is reviewed in the meantime.' },
-  scoring_off: { title: 'Call reviews are off', body: 'Your Owner has not turned on call reviews, so there is no tip today.' },
+  // neutral (batch 7 review ui/F8): an Admin may have turned them off (E283), and the Owner reads this page too
+  scoring_off: { title: 'Call reviews are off', body: 'Call reviews are off for your team, so there is no tip today. Only the Owner can turn them on.' },
 } as const;
 
 function FixBody({ fix, headingId, level = 2, who }: { fix: FixView; headingId: string; level?: 2 | 3; /** a team member's name: their tip, said about them */ who?: string }) {

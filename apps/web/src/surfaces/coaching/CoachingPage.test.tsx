@@ -92,6 +92,16 @@ describe('the daily fix page', () => {
     expect(screen.queryByRole('button', { name: 'Play this moment' })).toBeNull();
   });
 
+  it('b7 ui/F8 (E283): reviews off reads the same to every role and blames no one (an Admin may have turned them off)', async () => {
+    for (const role of ['agent', 'owner'] as const) {
+      const v = app(new FakeFetch().on('GET /coaching/today', { status: 200, body: ready({ state: 'scoring_off', fix: null, cardId: null }) }), '/coaching', role);
+      expect(await screen.findByRole('heading', { name: 'Call reviews are off' })).toBeInTheDocument();
+      expect(screen.getByText('Call reviews are off for your team, so there is no tip today. Only the Owner can turn them on.')).toBeInTheDocument();
+      expect(document.body.textContent).not.toMatch(/has not turned on/);
+      v.view.unmount();
+    }
+  });
+
   it('R-COACH-3: an agent never asks for the team; a Team Lead without the Owner\'s setting is told the tips are private', async () => {
     const agentFake = new FakeFetch().on('GET /coaching/today', { status: 200, body: ready() });
     const v = app(agentFake, '/coaching');

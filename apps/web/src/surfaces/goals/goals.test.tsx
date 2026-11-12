@@ -120,7 +120,7 @@ describe('module 40 review fixes', () => {
   });
 
   it('Remove asks first, names the goal, and sends nothing until confirmed; each goal shows its own counting method', async () => {
-    const touches = { ...goalsBody().goals[0]!, id: '01900000-0000-7000-8000-0000000a0002', metric: 'touches' as const, pace: { ...goalsBody().goals[0]!.pace, method: 'Counted from the scoreboard: calls and texts.' } };
+    const touches = { ...goalsBody().goals[0]!, id: '01900000-0000-7000-8000-0000000a0002', metric: 'touches' as const, pace: { ...goalsBody().goals[0]!.pace, method: "Counted from the scoreboard: calls, texts, emails and website-chat replies this member sent themselves (never imported, bulk or the assistant's)." } };
     const fake = new FakeFetch().on('GET /goals', { status: 200, body: goalsBody({ goals: [goalsBody().goals[0]!, touches] }) }).on('DELETE /goals/01900000-0000-7000-8000-0000000a0001', { status: 200, body: { ok: true } });
     insightsApp(fake, '/goals', 'owner');
     const u = userEvent.setup();
@@ -129,7 +129,7 @@ describe('module 40 review fixes', () => {
     expect(screen.getByText('Remove the closings goal for November 2026?')).toBeInTheDocument();
     await u.click(screen.getByRole('button', { name: 'Remove goal' }));
     await waitFor(() => expect(fake.callsTo('DELETE /goals/01900000-0000-7000-8000-0000000a0001')).toHaveLength(1));
-    expect(screen.getByText('Counted from the scoreboard: calls and texts.')).toBeInTheDocument();
+    expect(screen.getByText(/calls, texts, emails and website-chat replies/)).toBeInTheDocument();
     expect(screen.getByText(/Counted from the scoreboard for this member/)).toBeInTheDocument();
   });
 

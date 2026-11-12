@@ -1,8 +1,8 @@
 // Phase 2/3 cards in the Priority Feed (module 18a), in jsdom on a scripted API. They are written by their
 // owning modules under their own key families; the feed shows each with its label and one primary action,
-// reachable in one tap. The listing and contact pages exist today; the weekly plan and daily tip pages do
-// not, so those cards open their own lines in place. The same cards run against the real API in
-// e2e/feed/cards.spec.ts.
+// reachable in one tap: the listing, contact, weekly plan and daily tip pages. A marketing review whose piece has
+// no listing the viewer can open is the one card that opens its own lines in place (show_details; batch 7 review
+// ui/F9). The same cards run against the real API in e2e/feed/cards.spec.ts.
 import { FEED_ITEM_TYPES, FOREIGN_CARD_LABEL, FOREIGN_FEED_ITEM_TYPES } from '@realty/core/priority';
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -18,7 +18,9 @@ const foreign = () => ({
   seller: card({ itemType: 'seller_update', contact: { id: IDS.jane, name: 'Jane Doe' }, reasons: [{ code: 'SELLER_UPDATE_READY', label: 'This week’s update for 12 Oak St is ready' }], primaryAction: { kind: 'open_listing', label: 'Open listing', listingId: LISTING } }),
   marketing: card({ itemType: 'marketing_review', contact: null, reasons: [{ code: 'MARKETING_DRAFT', label: 'A social post draft is ready for your review' }], primaryAction: { kind: 'open_listing', label: 'Open listing', listingId: LISTING } }),
   plan: card({ itemType: 'weekly_plan', contact: null, reasons: [{ code: 'PLAN_ITEM', label: 'Call back last weekend’s leads' }, { code: 'PLAN_ITEM', label: 'Log outcomes for your consults' }], primaryAction: { kind: 'open_plan', label: 'See the plan', week: '2026-W46' } }),
-  tip: card({ itemType: 'coaching_fix', contact: null, reasons: [{ code: 'COACHING_FIX', label: 'Ask about their timeline before the price' }], primaryAction: { kind: 'show_details', label: 'See the tip' } }),
+  tip: card({ itemType: 'coaching_fix', contact: null, reasons: [{ code: 'COACHING_FIX', label: 'Ask about their timeline before the price' }], primaryAction: { kind: 'open_coaching_fix', label: 'See the tip' } }),
+  // api/workspace/feed.ts foreignActions: a marketing piece with no listing opens its details in place
+  marketingNoListing: card({ itemType: 'marketing_review', contact: null, reasons: [{ code: 'MARKETING_DRAFT', label: 'A post about your open house is ready for your review' }], primaryAction: { kind: 'show_details', label: 'See details' } }),
   likely: card({ itemType: 'likely_to_move', contact: { id: IDS.pat, name: 'Pat Lee' }, reasons: [{ code: 'LIKELY_YEARS_IN_HOME', label: 'In the home for many years' }], primaryAction: { kind: 'open_contact', label: 'Open contact', contactId: IDS.pat } }),
 });
 
@@ -31,7 +33,8 @@ describe('Phase 2/3 cards', () => {
   });
 
   it('each of the five card types shows its label and a primary action; the feed adds no score or number', async () => {
-    agentApp(new FakeFetch().on('GET /feed', { status: 200, body: feed([], Object.values(foreign())) }));
+    const { marketingNoListing: _inPlace, ...five } = foreign();
+    agentApp(new FakeFetch().on('GET /feed', { status: 200, body: feed([], Object.values(five)) }));
     for (const [label, action] of [
       ['Seller update to review', 'Open listing'],
       ['Marketing to review', 'Open listing'],
@@ -64,16 +67,23 @@ describe('Phase 2/3 cards', () => {
     await waitFor(() => expect(router.state.location.pathname).toBe(`/contacts/${IDS.pat}`));
   });
 
-  it('show_details opens the card’s own lines in place in 1 tap (aria-expanded), with no duplicate "Why this" toggle; axe finds nothing', async () => {
+  it('b7 ui/F9: open_coaching_fix (the daily tip) is 1 tap to the /coaching page', async () => {
     const f = foreign();
-    agentApp(new FakeFetch().on('GET /feed', { status: 200, body: feed([], [f.plan, f.tip]) }));
-    const article = await articleOf("Today's coaching tip");
-    const see = within(article).getByRole('button', { name: 'See the tip' });
+    const { router } = agentApp(new FakeFetch().on('GET /feed', { status: 200, body: feed([], [f.tip]) }));
+    await user().click(within(await articleOf("Today's coaching tip")).getByRole('button', { name: 'See the tip' }));
+    await waitFor(() => expect(router.state.location.pathname).toBe('/coaching'));
+  });
+
+  it('b7 ui/F9: show_details (a marketing review with no listing to open) opens the card’s own lines in place in 1 tap (aria-expanded), with no duplicate "Why this" toggle; axe finds nothing', async () => {
+    const f = foreign();
+    agentApp(new FakeFetch().on('GET /feed', { status: 200, body: feed([], [f.plan, f.marketingNoListing]) }));
+    const article = await articleOf('Marketing to review');
+    const see = within(article).getByRole('button', { name: 'See details' });
     expect(see).toHaveAttribute('aria-expanded', 'false');
     expect(within(article).queryByRole('button', { name: 'Why this' })).toBeNull();
     await user().click(see);
     const details = within(article).getByRole('list', { name: 'Details' });
-    expect(within(details).getByText('Ask about their timeline before the price')).toBeInTheDocument();
+    expect(within(details).getByText('A post about your open house is ready for your review')).toBeInTheDocument();
     expect(see).toHaveAttribute('aria-expanded', 'true');
     expect(see).toHaveAttribute('aria-controls', details.id);
     const r = await axe.run(document.body, { rules: { 'color-contrast': { enabled: false } } });
