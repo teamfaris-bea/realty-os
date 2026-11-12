@@ -38,6 +38,7 @@ import { type FakeIntegrationAdapters, type IntegrationAdapters, createFakeInteg
 import { InProcessWebChat, type WebChatTransport } from '../channels/transport.js';
 import { FakeGmail, type GmailProvider, UnconfiguredGmail } from '../mailSync/provider.js';
 import { FakePublicRecords, type PublicRecordsProvider, UnconfiguredPublicRecords } from '../predict/provider.js';
+import { BeaufortGisRecords } from './publicRecords/beaufort.js';
 
 export * from './types.js';
 export { FakeAi, FAKE_BAD_QUOTE, parseFakeSources } from './fake/ai.js';
@@ -182,6 +183,6 @@ export function createProviders(config: Config, opts: { clock: Clock; fetch?: ty
   // module 68: no Google OAuth client is configured in this build (fakes only, VERIFY before any real adapter)
   const gmail: GmailProvider = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredGmail() : fakes.gmail;
   // module 50: no public-records vendor is procured (N13); production looks nothing up unless fakes are allowed
-  const publicRecords: PublicRecordsProvider = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredPublicRecords() : fakes.publicRecords;
+  const publicRecords: PublicRecordsProvider = config.publicRecords.provider === 'county' ? new BeaufortGisRecords({ liveCalls: config.publicRecords.liveCalls, allowedHosts: config.publicRecords.allowedHosts, clock: opts.clock, ...(opts.fetch ? { fetch: opts.fetch } : {}) }) : config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredPublicRecords() : fakes.publicRecords;
   return { ...fakes, telephony, carrier, email, accountMail, ai, push, storage, integrations, gmail, publicRecords };
 }

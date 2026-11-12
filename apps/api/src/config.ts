@@ -194,6 +194,14 @@ export const ConfigSchema = z.object({
       authScheme: z.enum(['Bearer', 'OAuth']),
     }),
   }),
+  /** homeowner profile (D10): county public records, platform configuration (R-INT-1). No credential exists. */
+  publicRecords: z.object({
+    provider: z.enum(['fake', 'county']),
+    /** kill switch: false (the default everywhere) means the county connector makes no network call at all */
+    liveCalls: z.boolean(),
+    /** the app's SSRF list for county service hosts (not the sandbox network) */
+    allowedHosts: z.array(z.string()).min(1),
+  }),
   /** General per-session/IP request budget (in-memory, per process). Auth routes add DB-backed limits. */
   globalRateLimitPerMinute: z.coerce.number().int().min(10).default(600),
   logLevel: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
@@ -304,6 +312,26 @@ function mlsSettings(env: NodeJS.ProcessEnv, invalid: string[]) {
   return { provider, liveCalls, spark: { baseUrl, allowedHosts, authScheme } };
 }
 
+/** The county GIS host (VERIFY); providers/publicRecords/fields.ts BEAUFORT_DEFAULT_HOSTS matches. */
+const PUBLIC_RECORDS_DEFAULT_HOSTS = ['gis.beaufortcountysc.gov'];
+
+/**
+ * PUBLIC_RECORDS_PROVIDER (fake | county), PUBLIC_RECORDS_LIVE_CALLS (true | false, default false everywhere) and
+ * PUBLIC_RECORDS_ALLOWED_HOSTS (owner decision D10; SSRF guard). The county service URLs are code constants, checked
+ * against the allow-list when the connector is built (providers/publicRecords/http.ts checkCountyBaseUrl), which
+ * refuses start-up. Problems are pushed by key, never value. No setting here is ever a credential.
+ */
+function publicRecordsSettings(env: NodeJS.ProcessEnv, invalid: string[]) {
+  const provider = pick('PUBLIC_RECORDS_PROVIDER', env.PUBLIC_RECORDS_PROVIDER, ['fake', 'county'] as const, 'fake');
+  const live = (env.PUBLIC_RECORDS_LIVE_CALLS ?? '').trim().toLowerCase();
+  if (live !== '' && live !== 'true' && live !== 'false') invalid.push('PUBLIC_RECORDS_LIVE_CALLS must be true or false');
+  const liveCalls = live === 'true';
+  const hosts = [...new Set(list(env.PUBLIC_RECORDS_ALLOWED_HOSTS))];
+  if (hosts.some((h) => !isPublicDnsName(h))) invalid.push('PUBLIC_RECORDS_ALLOWED_HOSTS must list lowercase public host names only (no scheme, port, path or wildcard)');
+  const allowedHosts = hosts.length > 0 ? hosts : [...PUBLIC_RECORDS_DEFAULT_HOSTS];
+  return { provider, liveCalls, allowedHosts };
+}
+
 /**
  * Builds the Config from an environment map (default: process.env). Throws ConfigError, whose message names
  * the offending variables and never their values. Choosing a real vendor adapter without its credentials
@@ -408,6 +436,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   const fub = fubSettings(env, missing, invalid);
   const mls = mlsSettings(env, invalid);
+  const publicRecords = publicRecordsSettings(env, invalid);
   const trust = parseTrustProxy(env.TRUST_PROXY);
   if (!trust.ok) invalid.push(trust.message);
 
@@ -473,6 +502,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       authservId: env.LEAD_EMAIL_AUTHSERV_ID || null,
     },
     mls,
+    publicRecords,
     globalRateLimitPerMinute: env.GLOBAL_RATE_LIMIT_PER_MINUTE || undefined,
     databasePoolMax: env.DB_POOL_MAX || undefined,
     logLevel: env.LOG_LEVEL || undefined,
@@ -512,5 +542,6 @@ export function redactConfig(c: Config): Record<string, unknown> {
     s3Bucket: c.s3?.bucket,
     s3Endpoint: c.s3?.endpoint,
     mls: { provider: c.mls.provider, liveCalls: c.mls.liveCalls, sparkBaseUrl: c.mls.spark.baseUrl, sparkAuthScheme: c.mls.spark.authScheme },
+    publicRecords: { provider: c.publicRecords.provider, liveCalls: c.publicRecords.liveCalls, allowedHosts: c.publicRecords.allowedHosts },
   };
 }
