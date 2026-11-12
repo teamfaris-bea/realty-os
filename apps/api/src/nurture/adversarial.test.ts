@@ -14,7 +14,8 @@ import { command } from '../leads/testing.js';
 import { systemActor } from '../worker/systemActor.js';
 import { executeTriggerRunInTx } from './execute.js';
 import { reconcileTriggersInTx } from './reconcile.js';
-import { ATTEST, type NurtureWorld, approveTemplate, firingsDue, follow, mlsRecord, nurtureWorld, reconcileAndRun, triggerRuns } from './testing.js';
+import { FakeAvmP2 } from '../providers/integrations/fakes.js';
+import { ATTEST, type NurtureWorld, approveTemplate, avmCallsFor, avmPass, closedDeal, firingsDue, follow, mlsRecord, nurtureWorld, pastClient, reconcileAndRun, triggerRuns, valuationsOf } from './testing.js';
 
 let h: ApiHarness;
 let w: NurtureWorld;
@@ -268,5 +269,170 @@ describe('tenancy (R-TEN-*): every handler and route stays inside its tenant', (
     expect(r.status).toBe(200);
     expect(Object.fromEntries(r.body.triggers.map((t) => [t.trigger, t.availability]))).toEqual({ price_drop: 'available', back_on_market: 'available', home_anniversary: 'available', home_value: 'available', deal_date_upcoming: 'not_available_yet' });
     expect(r.body.templates.map((t) => t.key).sort()).toEqual(['after_closing_alerts', 'behavior_alerts', 'transaction_updates']);
+  });
+});
+
+// ---- home values (wave 2C): forged firings, vendor strings, the vendor call outside every lock, tenancy ----------
+
+describe('home values (wave 2C): a home-value firing is only ever what it says (R-NURT-1, R-AVM-1..3, R-TEN-*)', () => {
+  const avm = () => h.providers.integrations.avm;
+  const thisMonth = () => new Date().toISOString().slice(0, 7);
+  let tcWorld: NurtureWorld;
+  beforeAll(async () => {
+    await approveTemplate(w.agents[0]!, 'after_closing_alerts');
+    await approveTemplate(other.agents[0]!, 'after_closing_alerts');
+    tcWorld = await nurtureWorld(h, { others: ['tc'] });
+  }, 240_000);
+
+  const homeOutbound = async (contactId: string) => (await messagesOf(h, contactId)).filter((m) => m.action_category === 'nurture_step');
+
+  /** A stored home_value trigger_ref (what detection writes), pointing wherever the attacker likes. */
+  const forgedRef = (playbookId: string, ref: { contactAddressId: string; month: string; valuationId: string; address: string }) =>
+    JSON.stringify({ v: 1, trigger: 'home_value', playbookId, firedAt: Date.now() - 60_000, ref: { kind: 'home_value', ...ref }, evidence: [] });
+
+  async function afterClosingVersion(world: NurtureWorld, agent: TestClient): Promise<{ playbookId: string; versionId: string }> {
+    const r = await h.su.query<{ pid: string; vid: string }>("SELECT p.id AS pid, v.id AS vid FROM playbooks p JOIN playbook_versions v ON v.playbook_id = p.id WHERE p.tenant_id = $1 AND p.owner_user_id = $2 AND p.name = 'After-closing alerts' AND v.status = 'approved'", [world.tenantId, agent.userId]);
+    return { playbookId: r.rows[0]!.pid, versionId: r.rows[0]!.vid };
+  }
+
+  it('R-NURT-1 R-NURT-2: an agent\'s, a Team Lead\'s and a TC\'s insert of a trigger run is refused; an Owner/Admin row passes RLS by design (step_runs_trigger WITH CHECK is_tenant_wide), and executeTriggerRun re-checks a forged home_value run like any other (FACT_MISMATCH)', async () => {
+    const a = await pastClient(h, w, w.agents[0]!);
+    const b = await pastClient(h, w, w.agents[0]!);
+    const pb = await afterClosingVersion(w, w.agents[0]!);
+    // A's valuation, recorded without a firing (fixture); B's own valuation; another tenant's valuation
+    const aVal = randomUUID();
+    await h.su.query("INSERT INTO home_valuations (tenant_id, id, contact_id, contact_address_id, provider, value_cents, low_cents, high_cents, valued_at, status, as_of, display_allowed) VALUES ($1,$2,$3,$4,'p',40000000,38000000,42000000,now(),'ok',now()::date,true)", [w.tenantId, aVal, a.id, a.addressId]);
+    const b2 = await call<{ address: { id: string } }>(w.agents[0]!, 'POST', `/contacts/${b.id}/addresses`, { kind: 'home', line1: '9 Second Home Rd', city: 'Springfield', region: 'SC', postalCode: '29401' });
+    const bVal = randomUUID();
+    await h.su.query("INSERT INTO home_valuations (tenant_id, id, contact_id, contact_address_id, provider, value_cents, low_cents, high_cents, valued_at, status, as_of, display_allowed) VALUES ($1,$2,$3,$4,'p',40000000,38000000,42000000,now(),'ok',now()::date,true)", [w.tenantId, bVal, b.id, b.addressId]);
+    const theirs = await pastClient(h, other, other.agents[0]!);
+    const xVal = randomUUID();
+    await h.su.query("INSERT INTO home_valuations (tenant_id, id, contact_id, contact_address_id, provider, value_cents, low_cents, high_cents, valued_at, status, as_of, display_allowed) VALUES ($1,$2,$3,$4,'p',40000000,38000000,42000000,now(),'ok',now()::date,true)", [other.tenantId, xVal, theirs.id, theirs.addressId]);
+    const m = thisMonth();
+    const insertAs = (actor: Parameters<typeof withTenantTx>[0], id: string, key: string, ref: string) =>
+      withTenantTx(actor, (tx) => sql`INSERT INTO playbook_step_runs (tenant_id, id, enrollment_id, playbook_version_id, step_key, status, scheduled_for, contact_id, trigger_key, trigger_ref)
+          VALUES (app.tenant_id(), ${id}, NULL, ${pb.versionId}, 'home_value', 'scheduled', now() - interval '1 minute', ${b.id}, ${key}, ${ref}::jsonb)`.execute(tx), { db: h.database }).then(() => null, (e: Error) => e.message);
+    // people other than the Owner/Admin cannot write a trigger run at all
+    for (const who of [w.agents[0]!, w.teamLead!]) expect(await insertAs(who.actor(), randomUUID(), `forged:${randomUUID()}`, forgedRef(pb.playbookId, { contactAddressId: b.addressId, month: m, valuationId: bVal, address: 'x' }))).toMatch(/row-level security|policy/);
+    const tc = tcWorld.others.find((o) => o.role === 'tc')!;
+    const tcPb = (await h.su.query<{ id: string }>("SELECT v.id FROM playbook_versions v WHERE v.tenant_id = $1 LIMIT 1", [tcWorld.tenantId])).rows[0];
+    const tcContact = await ownedContact(tcWorld.agents[0]!);
+    const tcRefused = await withTenantTx(tc.actor(), (tx) => sql`INSERT INTO playbook_step_runs (tenant_id, id, enrollment_id, playbook_version_id, step_key, status, scheduled_for, contact_id, trigger_key, trigger_ref)
+        VALUES (app.tenant_id(), ${randomUUID()}, NULL, ${tcPb?.id ?? randomUUID()}, 'home_value', 'scheduled', now(), ${tcContact.id}, ${`forged:${randomUUID()}`}, '{}'::jsonb)`.execute(tx), { db: h.database }).then(() => null, (e: Error) => e.message);
+    expect(tcRefused).toMatch(/row-level security|policy|foreign key/);
+    // the Owner's forged rows pass RLS (residual, ARCHITECTURE §21.13); each one is re-checked and never sends
+    const forged = [
+      { why: 'another contact\'s valuation', key: `avm:${a.addressId}:${m}`, ref: { contactAddressId: a.addressId, month: m, valuationId: aVal, address: 'x' } },
+      { why: 'another address\'s key and ref', key: `avm:${b2.body.address.id}:${m}`, ref: { contactAddressId: b2.body.address.id, month: m, valuationId: bVal, address: 'x' } },
+      { why: 'another tenant\'s valuation', key: `avm:${b.addressId}:${m}`, ref: { contactAddressId: b.addressId, month: m, valuationId: xVal, address: 'x' } },
+      { why: 'a key that is not the ref\'s', key: `avm:${b.addressId}:1999-01`, ref: { contactAddressId: b.addressId, month: m, valuationId: bVal, address: 'x' } },
+    ];
+    for (const f of forged) {
+      const id = randomUUID();
+      expect(await insertAs(w.owner.actor(), id, f.key, forgedRef(pb.playbookId, f.ref)), f.why).toBeNull();
+      const out = await withTenantTx(systemActor(w.tenantId, 'assistant'), (tx, now) => executeTriggerRunInTx(tx, depsOf(h), w.tenantId, id, now), { db: h.database });
+      expect(out, f.why).toMatchObject({ kind: 'skipped', reasons: ['FACT_MISMATCH'] });
+    }
+    expect(await homeOutbound(b.id)).toEqual([]);
+  });
+
+  it('R-AVM-1 R-INT-1: vendor strings with template markers, line breaks or bidi controls never reach the template; an unavailable or broken answer never yields a value', async () => {
+    const c = await pastClient(h, w, w.agents[0]!);
+    const k = FakeAvmP2.key({ line1: c.line1, postalCode: c.postalCode });
+    const fresh = new Date().toISOString().slice(0, 8) + '01';
+    avm().answers.set(k, { kind: 'raw', answer: { available: true, valueCents: 41_000_000, lowCents: 38_000_000, highCents: 44_000_000, asOf: fresh, providerRef: 'ref {{x}}\n', provider: 'Evil {{first_name}}\nValues‮⁦ Inc', displayAllowed: true } });
+    await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = now() WHERE key = 'platform:avm'");
+    try {
+      await avmPass(h, w.tenantId);
+      await firingsDue(h, c.id);
+      await reconcileAndRun(h, w.tenantId);
+    } finally {
+      await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL WHERE key = 'platform:avm'");
+    }
+    const v = (await valuationsOf(h, c.addressId))[0]!;
+    expect(v.provider).toBe('Evil first_name Values Inc');
+    const [msg] = await homeOutbound(c.id);
+    expect(msg!.body).toContain('from Evil first_name Values Inc as of');
+    expect(msg!.body).not.toMatch(/\{\{|\}\}|[‪-‮⁦-⁩]/);
+    // answers that cannot be stored: no row, no firing; an unavailable answer that carries a number stores no value
+    const bad = [await pastClient(h, w, w.agents[0]!), await pastClient(h, w, w.agents[0]!), await pastClient(h, w, w.agents[0]!)];
+    avm().answers.set(FakeAvmP2.key({ line1: bad[0]!.line1, postalCode: bad[0]!.postalCode }), { kind: 'raw', answer: { available: true, valueCents: -5, lowCents: 1, highCents: 2, asOf: fresh, provider: 'P' } });
+    avm().answers.set(FakeAvmP2.key({ line1: bad[1]!.line1, postalCode: bad[1]!.postalCode }), { kind: 'raw', answer: { available: true, valueCents: 10, lowCents: 20, highCents: 5, asOf: '2026-02-31', provider: 'P' } });
+    avm().answers.set(FakeAvmP2.key({ line1: bad[2]!.line1, postalCode: bad[2]!.postalCode }), { kind: 'raw', answer: { available: false, valueCents: 40_000_000, provider: 'P' } });
+    await avmPass(h, w.tenantId);
+    expect(await valuationsOf(h, bad[0]!.addressId)).toEqual([]);
+    expect(await valuationsOf(h, bad[1]!.addressId)).toEqual([]);
+    expect(await triggerRuns(h, bad[0]!.id)).toEqual([]);
+    expect((await valuationsOf(h, bad[2]!.addressId)).map((x) => [x.status, x.value_cents, x.low_cents, x.high_cents])).toEqual([['unavailable', null, null, null]]);
+    // the database refuses what the parser would never produce (R-AVM-1)
+    const ins = (status: string, value: number | null, low: number | null, high: number | null, addr: string, cid: string) =>
+      h.su.query("INSERT INTO home_valuations (tenant_id, id, contact_id, contact_address_id, provider, value_cents, low_cents, high_cents, valued_at, status) VALUES ($1,$2,$3,$4,'p',$5,$6,$7,now(),$8)", [w.tenantId, randomUUID(), cid, addr, value, low, high, status]).then(() => null, (e: Error) => e.message);
+    expect(await ins('unavailable', 100, null, null, bad[0]!.addressId, bad[0]!.id)).toMatch(/home_valuations_value_when_ok/);
+    expect(await ins('ok', 100, 90, 80, bad[0]!.addressId, bad[0]!.id)).toMatch(/home_valuations_range/);
+    expect(await ins('ok', 100, 90, 110, bad[0]!.addressId, bad[0]!.id)).toBeNull();
+    expect(await ins('ok', 120, 90, 130, bad[0]!.addressId, bad[0]!.id)).toMatch(/home_valuations_one_per_month/);
+    expect(await ins('unavailable', null, null, null, bad[0]!.addressId, bad[0]!.id)).toBeNull(); // an unavailable row the same month is accepted by the DB
+  });
+
+  it('R-AVM-3: no vendor call happens inside a transaction, so no contact lock is ever held while the vendor answers', async () => {
+    const cs = [await pastClient(h, w, w.agents[0]!), await pastClient(h, w, w.agents[0]!)];
+    const seen: { advisory: number; openTx: number }[] = [];
+    avm().onEstimate = async () => {
+      const r = await h.su.query<{ advisory: number; open_tx: number }>(
+        `SELECT (SELECT count(*)::int FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid WHERE l.locktype = 'advisory' AND a.datname = current_database()) AS advisory,
+                (SELECT count(*)::int FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND state LIKE 'idle in transaction%') AS open_tx`);
+      seen.push({ advisory: r.rows[0]!.advisory, openTx: r.rows[0]!.open_tx });
+    };
+    try {
+      await avmPass(h, w.tenantId);
+    } finally {
+      avm().onEstimate = null;
+    }
+    expect(seen.length).toBeGreaterThanOrEqual(cs.length);
+    expect(seen.every((s) => s.advisory === 0 && s.openTx === 0)).toBe(true);
+  });
+
+  it('R-TEN-3: avm.refresh in one tenant reads and writes nothing of another; another tenant\'s home-value run is 404 on trigger-runs; trigger.step across tenants is a no-op', async () => {
+    const theirs = await pastClient(h, other, other.agents[0]!);
+    const mine = await pastClient(h, w, w.agents[0]!);
+    await avmPass(h, w.tenantId);
+    expect(avmCallsFor(h, theirs.line1)).toBe(0);
+    expect(await valuationsOf(h, theirs.addressId)).toEqual([]);
+    expect(await triggerRuns(h, theirs.id)).toEqual([]);
+    expect(await valuationsOf(h, mine.addressId)).toHaveLength(1);
+    await avmPass(h, other.tenantId);
+    const [run] = await triggerRuns(h, theirs.id);
+    expect(run).toBeDefined();
+    expect((await call(w.owner, 'GET', `/contacts/${theirs.id}/trigger-runs`)).status).toBe(404);
+    expect((await call(w.agents[0]!, 'GET', `/contacts/${theirs.id}/trigger-runs`)).status).toBe(404);
+    const out = await withTenantTx(systemActor(w.tenantId, 'assistant'), (tx, now) => executeTriggerRunInTx(tx, depsOf(h), w.tenantId, run!.id, now), { db: h.database });
+    expect(out).toEqual({ kind: 'noop', reason: 'MISSING' });
+    expect((await triggerRuns(h, theirs.id))[0]!.status).toBe('scheduled');
+  });
+
+  it('sourceLabel: a stored deal_date_upcoming run\'s claim and trigger-runs fact say "deal date", never "closed deal"', async () => {
+    const { recordFactInTx } = await import('./detect.js');
+    await approveTemplate(w.owner, 'transaction_updates');
+    const c = await ownedContact(w.agents[0]!);
+    const deal = await closedDeal(h, w.tenantId, c.id, w.agents[0]!.userId!, new Date());
+    await h.su.query("UPDATE deals SET stage = 'under_contract', closed_at = NULL WHERE id = $1", [deal]);
+    const dd = randomUUID();
+    const dueAt = new Date(Date.now() + 5 * 86_400_000);
+    // a person confirms the date as themselves (the DB requires it)
+    await withTenantTx(w.owner.actor(), (tx) => sql`INSERT INTO deal_dates (tenant_id, id, deal_id, kind, label, due_on, status, confirmed_by_user_id, confirmed_at, due_at)
+        VALUES (app.tenant_id(), ${dd}, ${deal}, 'inspection', 'Inspection', ${dueAt.toISOString()}::date, 'confirmed', ${w.owner.userId}, now(), ${dueAt.toISOString()}::timestamptz)`.execute(tx), { db: h.database });
+    await withTenantTx(systemActor(w.tenantId, 'assistant'), (tx, now) => recordFactInTx(tx, depsOf(h), { kind: 'deal_date_upcoming', dealId: deal, dealDateId: dd, dueVersion: 1, dueAt: dueAt.getTime() as never, label: 'Inspection', contactIds: [c.id], at: now }, [{ contactId: c.id, ownerUserId: w.agents[0]!.userId!, relation: { kind: 'contact' } }]), { db: h.database });
+    const [run] = await triggerRuns(h, c.id);
+    expect(run).toBeDefined();
+    const r = await call<{ runs: { trigger: string; fact: { source: string; text: string } | null }[] }>(w.agents[0]!, 'GET', `/contacts/${c.id}/trigger-runs`);
+    expect(r.body.runs[0]).toMatchObject({ trigger: 'deal_date_upcoming', fact: { source: 'deal_date' } });
+    await firingsDue(h, c.id);
+    await withTenantTx(systemActor(w.tenantId, 'assistant'), (tx, now) => executeTriggerRunInTx(tx, depsOf(h), w.tenantId, run!.id, now), { db: h.database });
+    const claims = (await h.su.query<{ text: string }>('SELECT c.text FROM assistant_claims c JOIN assistant_actions a ON a.id = c.action_id WHERE a.contact_id = $1', [c.id])).rows;
+    expect(claims.length).toBeGreaterThanOrEqual(1);
+    for (const x of claims) {
+      expect(x.text).toMatch(/\(deal date, /);
+      expect(x.text).not.toMatch(/closed deal/);
+    }
   });
 });

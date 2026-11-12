@@ -55,7 +55,8 @@ const cents = (x: unknown): number | null => (typeof x === 'number' && Number.is
 /** A vendor string as a client may see it: literal() (no template markers, line breaks or bidi controls), bounded. */
 export function vendorText(x: unknown, max: number): string | null {
   if (typeof x !== 'string') return null;
-  const s = literal(x).replace(/[<>]/g, '').slice(0, max).trim();
+  // markup characters go before literal(), so nothing can re-form a template marker after it ran
+  const s = literal(literal(x.replace(/[<>]/g, '')).slice(0, max));
   return s === '' ? null : s;
 }
 

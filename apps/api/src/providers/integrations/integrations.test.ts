@@ -31,7 +31,7 @@ describe('R-INT-1 fakes are the default and deterministic', () => {
     expect(await avm.estimate(a)).toEqual({ available: false, provider: FAKE_AVM_PROVIDER });
     avm.answers.set(FakeAvmP2.key(a), { kind: 'error' });
     await expect(avm.estimate(a)).rejects.toMatchObject({ kind: 'unavailable' });
-    expect(avm.calls).toHaveLength(4);
+    expect(avm.calls).toHaveLength(3); // this instance: the override, the unavailable answer and the error
   });
 
   it('the Providers bag carries the Phase 2-3 adapters as fakes in dev and test', () => {

@@ -16,10 +16,25 @@ let w: NurtureWorld;
  * Today's date in the tenant's own zone: the scan fires an anniversary on the tenant's local day (detect.ts), so a
  * closing date built from the UTC date is not "today" between UTC midnight and the zone's midnight.
  */
-async function localToday(): Promise<{ y: number; m: number; d: number }> {
+async function localToday(): Promise<{ y: number; m: number; d: number; zone: string }> {
   const zone = (await h.su.query<{ z: string }>('SELECT default_timezone AS z FROM tenant_settings WHERE tenant_id = $1', [w.tenantId])).rows[0]!.z;
   const [y, m, d] = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()).split('-').map(Number);
-  return { y: y!, m: m! - 1, d: d! };
+  return { y: y!, m: m! - 1, d: d!, zone };
+}
+
+/**
+ * Noon (or `hour`) of that local date in the tenant zone, as an instant. A fixed UTC hour is not: the world's zone is random
+ * (e.g. Etc/GMT-8, UTC+8), and 17:00 UTC is already the next local day there.
+ */
+function localNoon(zone: string, y: number, m: number, d: number, hour = 12): Date {
+  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' });
+  const want = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  for (let hh = -14; hh <= 14; hh++) {
+    const t = new Date(Date.UTC(y, m, d, hour - hh));
+    const parts = Object.fromEntries(fmt.formatToParts(t).map((p) => [p.type, p.value]));
+    if (`${parts['year']}-${parts['month']}-${parts['day']}` === want && parts['hour'] === String(hour).padStart(2, '0')) return t;
+  }
+  throw new Error(`no local noon for ${want} in ${zone}`);
 }
 
 beforeAll(async () => {
@@ -51,7 +66,7 @@ describe('R-NURT-2 home anniversaries (E101)', () => {
   it('R-NURT-2 R-AST-20: the anniversary email goes out once, from the approved after-closing alerts, in the nurture_step category, with the deal as evidence', async () => {
     const c = await ownedContact(w.agents[0]!);
     const today = await localToday();
-    const closed = new Date(Date.UTC(today.y - 2, today.m, today.d, 17));
+    const closed = localNoon(today.zone, today.y - 2, today.m, today.d);
     const deal = await closedDeal(h, w.tenantId, c.id, w.agents[0]!.userId!, closed);
     expect(await anniversaryScan(h, w.tenantId)).toBeGreaterThanOrEqual(1);
     expect(await anniversaryScan(h, w.tenantId)).toBe(0);
@@ -75,7 +90,8 @@ describe('R-NURT-2 home anniversaries (E101)', () => {
     // (a) the trigger sent it first: the enrollment's anniversary step is skipped visibly
     const a = await ownedContact(agent);
     const today = await localToday();
-    const closedA = new Date(Date.UTC(today.y - 1, today.m, today.d, 17));
+    // the start of that local day: the v1 step (365 days after closing) is due by now, whatever the time of day
+    const closedA = localNoon(today.zone, today.y - 1, today.m, today.d, 0);
     const dealA = await closedDeal(h, w.tenantId, a.id, agent.userId!, closedA);
     await anniversaryScan(h, w.tenantId);
     await firingsDue(h, a.id);

@@ -212,6 +212,27 @@ describe('R-AVM-3 who is asked, at most once a month per address', () => {
     }
   });
 
+  it('R-AVM-3: two workers draining the queue run the tenant\'s one avm.refresh job once: one vendor call, one answer and one firing per address', async () => {
+    const { enqueueJob } = await import('@realty/db');
+    const { createWorker } = await import('../worker/loop.js');
+    const { HandlerRegistry } = await import('../worker/registry.js');
+    const { silentLogger } = await import('../worker/observability.js');
+    const { makeNurtureHandlers } = await import('./handlers.js');
+    const { depsFromPlatform } = await import('../comms/runtime.js');
+    const cs = [await pastClient(h, w, w.agents[0]!), await pastClient(h, w, w.agents[0]!)];
+    // the periodic job is one live row per tenant (dedupe periodic:{kind}); a second enqueue is a no-op
+    for (let i = 0; i < 2; i++) await withTenantTx(systemActor(w.tenantId, 'worker'), (tx) => enqueueJob(tx, { queue: 'default', kind: 'avm.refresh', payload: {}, dedupeKey: 'periodic:avm.refresh' }), { db: h.database });
+    const deps = depsFromPlatform(h.app.platform);
+    const registry = new HandlerRegistry().registerAll(makeNurtureHandlers(() => deps));
+    const worker = (n: number) => createWorker({ db: h.database, registry, providers: h.providers, queues: ['default'], concurrency: 1, worker: `avm-${n}-${randomUUID().slice(0, 6)}`, idleMs: 10, log: silentLogger });
+    await Promise.all([worker(1).drain(10), worker(2).drain(10)]);
+    for (const c of cs) {
+      expect(avmCallsFor(h, c.line1)).toBe(1);
+      expect(await valuationsOf(h, c.addressId)).toHaveLength(1);
+      expect(await triggerRuns(h, c.id)).toHaveLength(1);
+    }
+  });
+
   it('R-AVM-3: no call for an opted-out, suppressed or person-level do-not-contact client, an unowned one, one no approved playbook covers, a non-client, or a deleted or incomplete address', async () => {
     const a0 = w.agents[0]!;
     const optedOut = await pastClient(h, w, a0);
@@ -395,5 +416,35 @@ describe('F7 one sender; R-AST-20 the reworded template', () => {
     expect(g.hardBlock).toBe(false);
     expect(g.issues).toEqual([]);
     void beforeThisMonth;
+  });
+});
+
+describe('R-AVM-3 the selection (property over real Postgres)', () => {
+  it('R-AVM-3: in any order of vendor outcomes and over any number of passes (sometimes two at once), an address gets at most one answer and one firing a UTC month; the vendor is asked again only after a failure', async () => {
+    const fc = (await import('fast-check')).default;
+    await fc.assert(
+      fc.asyncProperty(fc.array(fc.record({ outcome: fc.constantFrom('error' as const, 'unavailable' as const, 'ok' as const), twice: fc.boolean() }), { minLength: 1, maxLength: 4 }), async (passes) => {
+        const c = await pastClient(h, w, w.agents[0]!);
+        let answered = false;
+        let expectedCalls = 0;
+        for (const p of passes) {
+          avm().answers.set(key(c), p.outcome === 'ok' ? { kind: 'estimate', estimate: {} } : { kind: p.outcome });
+          const before = avmCallsFor(h, c.line1);
+          if (p.twice) await Promise.all([avmPass(h, w.tenantId), avmPass(h, w.tenantId)]);
+          else await avmPass(h, w.tenantId);
+          const made = avmCallsFor(h, c.line1) - before;
+          if (answered) expect(made).toBe(0);
+          else expect(made).toBeGreaterThanOrEqual(1);
+          expectedCalls += made;
+          if (p.outcome !== 'error') answered = true;
+        }
+        const vals = (await valuationsOf(h, c.addressId)).filter((v) => v.status === 'ok' || v.status === 'unavailable');
+        expect(vals.length).toBe(answered ? 1 : 0);
+        expect((await valuationsOf(h, c.addressId)).some((v) => v.status === 'error')).toBe(false);
+        expect((await triggerRuns(h, c.id)).length).toBe(answered ? 1 : 0);
+        expect(avmCallsFor(h, c.line1)).toBe(expectedCalls);
+      }),
+      { numRuns: 10 },
+    );
   });
 });
