@@ -21,8 +21,9 @@
 //     texts.
 //   - Sold-data coverage (E372, V2): over the newest 5,000 sold MLS rows per connection by modification time
 //     (listings_mls_connection_idx), the count, the oldest close date and the share of rows carrying each sale fact,
-//     plus the "Filling sold history" sentence while a backfill is pending. Counts and shares only: no confidence and
-//     no score.
+//     plus the "Filling sold history" sentence while a backfill is pending on a connection the sync reads (live, and
+//     not Spark with MLS_LIVE_CALLS false; otherwise it says nothing is read). Counts and shares only: no confidence
+//     and no score.
 import { DISPLAY_FIELDS, type DisplayField, LISTING_STATUSES, type ListingStatus, USPS_REGIONS, feedStale, packReviewed, parseLicensePack, staleNotice } from '@realty/core/listings';
 import type { IanaZone, Instant, UserActor } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
@@ -101,6 +102,13 @@ export interface SoldCoverage {
 
 export const SOLD_COVERAGE_SAMPLE = 5000;
 export const FILLING_SENTENCE = 'Filling sold history from the MLS. Coverage grows as older records are re-read.';
+/** Whether the sync reads this connection now (it claims connected or degraded rows; feeds.ts refuses Spark with live calls off). */
+export interface SoldRead {
+  live: boolean;
+  liveCallsOff: boolean;
+}
+const NOT_LIVE_SENTENCE = 'The connection is not live, so no sold history is read from the MLS.';
+const LIVE_CALLS_OFF_SENTENCE = 'Live MLS calls are turned off on this deployment, so no sold history is read from the MLS.';
 
 export interface MlsConnectionAdminView {
   id: string;
@@ -162,14 +170,26 @@ export function valuationValues(stored: unknown): { values: ValuationPackValues;
   };
 }
 
+/**
+ * D9: nothing built from MLS sales reaches a client in V1, whatever the valuation section says (sharing is V2's; client
+ * CMAs and seller value ranges also wait on platform:cma, which ships unreviewed). Said on every valuation view, so a
+ * fully marked section never reads as turning client values on (batch 10 review gates/F6, api-ui/F7).
+ */
+export const VALUATION_NO_SHARING = 'Nothing built from MLS sales reaches a client in this version: client CMAs are not built yet, and they would also wait for counsel review of the in-house CMA wording (platform:cma) on the Integrations page.';
+
+/**
+ * The section in words: what agents may do (valuation.agent_cma alone admits an agent CMA, R-CMA-6: the Owner/Admin's
+ * statement, no counsel stamp needed), how much counsel review is marked, and VALUATION_NO_SHARING.
+ */
 export function valuationPackView(stored: unknown): ValuationPackView {
   const { values, marks } = valuationValues(stored);
   const v = parseLicensePack(stored).valuation;
   const unreviewed = VALUATION_PACK_KEYS.filter((k) => marks[k] !== true).length;
-  const sentence =
-    v.reviewedByCounselAt !== null
-      ? 'Every valuation value is marked as reviewed by counsel. Values built from MLS sales may reach clients where these rules allow and a statement exists for the state.'
-      : `Values built from MLS sales do not reach clients: ${unreviewed} of ${VALUATION_PACK_KEYS.length} valuation values are not marked as reviewed by counsel.${values.agent_cma ? '' : ' Agent CMAs need an Owner or Admin to record, from your MLS agreement, that sold data may be used for valuations.'}`;
+  const agent = values.agent_cma
+    ? 'Agents may prepare CMAs from the MLS sales of this connection while it is live, for their own use.'
+    : 'Agent CMAs need an Owner or Admin to record, from your MLS agreement, that sold data may be used for valuations: Valuation use, on the MLS admin page.';
+  const review = v.reviewedByCounselAt !== null ? 'Every valuation value is marked as reviewed by counsel.' : `${unreviewed} of ${VALUATION_PACK_KEYS.length} valuation values are not marked as reviewed by counsel.`;
+  const sentence = `${agent} ${review} ${VALUATION_NO_SHARING}`;
   return { values: VALUATION_PACK_KEYS.map((key) => ({ key, value: values[key], counselReviewed: marks[key] === true })), reviewedByCounselAt: v.reviewedByCounselAt, unreviewedCount: unreviewed, sentence };
 }
 
@@ -222,8 +242,12 @@ const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringif
 
 type ConnRow = { id: string; display_name: string; status: ConnectionStatus; status_reason: string | null; last_error_code: string | null; disconnected_at: Date | null; last_synced_at: Date | null; next_sync_at: Date | null; license_pack: unknown; mls_backfill_pending: boolean };
 
-/** E372: coverage of one connection's sold rows (see the header). Under the caller's RLS. */
-export async function soldCoverage(tx: Tx, connectionId: string, backfillPending: boolean): Promise<SoldCoverage> {
+/**
+ * E372: coverage of one connection's sold rows (see the header). Under the caller's RLS. "Filling" only while the
+ * connection is read (batch 10 review api-ui/F6): 0068 set the backfill flag on every mls_feed row, whatever its status,
+ * and the sync reads only live rows, never a Spark row while MLS_LIVE_CALLS is false.
+ */
+export async function soldCoverage(tx: Tx, connectionId: string, backfillPending: boolean, read: SoldRead = { live: true, liveCallsOff: false }): Promise<SoldCoverage> {
   const r = await sql<Record<'n' | 'close_price' | 'close_date' | 'contract_date' | 'location' | 'year_built' | 'lot_size' | 'subdivision' | 'sale_conditions' | 'avm', number> & { oldest: string | null }>`
     SELECT count(*)::int AS n, min(s.close_date)::text AS oldest,
            count(s.close_price_cents)::int AS close_price, count(s.close_date)::int AS close_date, count(s.purchase_contract_date)::int AS contract_date,
@@ -236,11 +260,11 @@ export async function soldCoverage(tx: Tx, connectionId: string, backfillPending
              ORDER BY l.mls_modified_at DESC LIMIT ${SOLD_COVERAGE_SAMPLE}) s`.execute(tx);
   const x = r.rows[0]!;
   const pct = (k: number) => (x.n === 0 ? 0 : Math.round((100 * k) / x.n));
-  const sentence = backfillPending
-    ? FILLING_SENTENCE
-    : x.n === 0
+  const counts =
+    x.n === 0
       ? 'No sold MLS records yet.'
       : `${x.n.toLocaleString('en-US')} recent sold MLS records${x.n >= SOLD_COVERAGE_SAMPLE ? ' (the newest 5,000)' : ''}; ${pct(x.close_price)}% carry a close price and ${pct(x.location)}% a location.`;
+  const sentence = read.liveCallsOff ? `${LIVE_CALLS_OFF_SENTENCE} ${counts}` : !read.live ? `${NOT_LIVE_SENTENCE} ${counts}` : backfillPending ? FILLING_SENTENCE : counts;
   return {
     rows: x.n,
     sampleLimit: SOLD_COVERAGE_SAMPLE,
@@ -260,12 +284,16 @@ async function mlsRows(tx: Tx, id?: string, lock = false): Promise<ConnRow[]> {
   ).rows;
 }
 
-export async function mlsAdminView(tx: Tx, now: Instant): Promise<{ connections: MlsConnectionAdminView[] }> {
+/** The deployment's MLS settings this view needs (config.mls): Spark with live calls off reads nothing. */
+export type MlsDeploymentFacts = { provider: 'fake' | 'spark'; liveCalls: boolean };
+
+export async function mlsAdminView(tx: Tx, now: Instant, mls: MlsDeploymentFacts = { provider: 'fake', liveCalls: false }): Promise<{ connections: MlsConnectionAdminView[] }> {
   const zone = ((await sql<{ z: string }>`SELECT default_timezone AS z FROM tenant_settings WHERE tenant_id = app.tenant_id()`.execute(tx)).rows[0]?.z ?? 'UTC') as IanaZone;
   const facts = new Map((await mlsConnections(tx)).map((c) => [c.id, c]));
   const rows = await mlsRows(tx);
   const coverage = new Map<string, SoldCoverage>();
-  for (const r of rows) coverage.set(r.id, await soldCoverage(tx, r.id, r.mls_backfill_pending));
+  const liveCallsOff = mls.provider === 'spark' && !mls.liveCalls;
+  for (const r of rows) coverage.set(r.id, await soldCoverage(tx, r.id, r.mls_backfill_pending, { live: r.status === 'connected' || r.status === 'degraded', liveCallsOff }));
   return {
     connections: rows.map((r) => {
       const f = facts.get(r.id)!;

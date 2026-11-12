@@ -10,7 +10,7 @@ import { z } from 'zod';
 import { freshReauth } from '../admin/testing.js';
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
 import { type AssistantWorld, assistantWorld, call, listing } from '../assistant/testing.js';
-import { PACK_KEYS, VALUATION_PACK_KEYS } from './admin.js';
+import { FILLING_SENTENCE, PACK_KEYS, VALUATION_NO_SHARING, VALUATION_PACK_KEYS } from './admin.js';
 import { LISTING_COLS, type ListingRow, type MlsConnectionFacts, type MlsEligibility, VALUATION_SENTENCE, clientSoldView, clientView, mlsEligibility, valuationEligible } from './eligibility.js';
 import { LicensePackBody, MlsAdminResponse, PackViewSchema, SoldCoverageSchema } from './routes.js';
 import { syncConnection } from './sync.js';
@@ -199,6 +199,41 @@ describe('the pack\'s valuation section in the editor (E371) and sold-data cover
     expect(d.shares).toEqual({ closePrice: 100, closeDate: 67, contractDate: 100, location: 67, yearBuilt: 67, lotSize: 100, subdivision: 100, saleConditions: 67, avmDisplayAllowed: 67 });
     expect(d.sentence).toMatch(/^3 recent sold MLS records; 100% carry a close price and 67% a location\.$/);
     expect(JSON.stringify(d)).not.toMatch(/confidence|score|tenant/i);
+  });
+
+  it('D9 (b10 review gates/F6, api-ui/F7): the valuation sentence never says values built from MLS sales may reach clients, unreviewed or fully reviewed; it says what agents may do and that this version shares nothing', async () => {
+    const conn = await mlsConnection(h, w.tenantId, w.owner.userId!, { lastSyncedAt: new Date() });
+    const none = (await viewOf(w.owner, conn)).licensePack.valuation;
+    const partial = (await put(conn, { ...displayBody(REVIEWED_PACK), valuation: valuationBody({ reviewed: false }) })).body.licensePack.valuation;
+    const full = (await put(conn, { ...displayBody(REVIEWED_PACK), valuation: valuationBody() })).body.licensePack.valuation;
+    expect(full.reviewedByCounselAt).not.toBeNull(); // client_cma is ticked and every value marked: still nothing reaches a client
+    for (const v of [none, partial, full]) {
+      expect(v.sentence).not.toMatch(/may reach clients|reach clients where/);
+      expect(v.sentence).toContain(VALUATION_NO_SHARING);
+    }
+    expect(none.sentence).toBe(`Agent CMAs need an Owner or Admin to record, from your MLS agreement, that sold data may be used for valuations: Valuation use, on the MLS admin page. 5 of 5 valuation values are not marked as reviewed by counsel. ${VALUATION_NO_SHARING}`);
+    expect(partial.sentence).toBe(`Agents may prepare CMAs from the MLS sales of this connection while it is live, for their own use. 5 of 5 valuation values are not marked as reviewed by counsel. ${VALUATION_NO_SHARING}`);
+    expect(full.sentence).toBe(`Agents may prepare CMAs from the MLS sales of this connection while it is live, for their own use. Every valuation value is marked as reviewed by counsel. ${VALUATION_NO_SHARING}`);
+    expect(VALUATION_NO_SHARING).toBe('Nothing built from MLS sales reaches a client in this version: client CMAs are not built yet, and they would also wait for counsel review of the in-house CMA wording (platform:cma) on the Integrations page.');
+  });
+
+  it('E372 (b10 review api-ui/F6): sold-data coverage says "Filling" only while the connection is live and read; a connection not connected, disconnected, or on a Spark deployment with live calls off says nothing is read', async () => {
+    const conn = await mlsConnection(h, w.tenantId, w.owner.userId!, { lastSyncedAt: new Date() });
+    await h.su.query('UPDATE integration_connections SET mls_backfill_pending = true WHERE id = $1', [conn]);
+    expect((await viewOf(w.owner, conn)).soldData).toMatchObject({ backfillPending: true, sentence: FILLING_SENTENCE });
+    // MLS_LIVE_CALLS false on a Spark deployment: even a connected row reads nothing
+    const was = h.app.platform.config.mls;
+    h.app.platform.config.mls = { ...was, provider: 'spark', liveCalls: false };
+    try {
+      expect((await viewOf(w.owner, conn)).soldData).toMatchObject({ backfillPending: true, sentence: 'Live MLS calls are turned off on this deployment, so no sold history is read from the MLS. No sold MLS records yet.' });
+    } finally {
+      h.app.platform.config.mls = was;
+    }
+    expect((await viewOf(w.owner, conn)).soldData.sentence).toBe(FILLING_SENTENCE);
+    for (const [status, at] of [['not_configured', null], ['disconnected', new Date()]] as const) {
+      await h.su.query('UPDATE integration_connections SET status = $2, disconnected_at = $3 WHERE id = $1', [conn, status, at]);
+      expect((await viewOf(w.owner, conn)).soldData).toMatchObject({ backfillPending: true, sentence: 'The connection is not live, so no sold history is read from the MLS. No sold MLS records yet.' });
+    }
   });
 
   it('R-TEN-1: another tenant\'s admin view lists none of these connections or their coverage', async () => {
