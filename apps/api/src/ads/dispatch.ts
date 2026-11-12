@@ -29,7 +29,7 @@ import { systemActor } from '../worker/systemActor.js';
 import type { AdsAccount, AdsCampaignReport, AdsChangeResult } from './provider.js';
 import * as repo from './repo.js';
 import { type AdsDeps, account, asSystem, clockOf, safeCode, withinBound } from './runtime.js';
-import { ADS_KIND, APPLY_TIMEOUT_MS, OUTCOME_UNKNOWN_AFTER_MS, STALE_PLANNED_MS } from './settings.js';
+import { ADS_KIND, APPLY_TIMEOUT_MS, OUTCOME_UNKNOWN_AFTER_MS, STALE_PLANNED_MS, dollars } from './settings.js';
 
 // ---- the stored proposal ---------------------------------------------------------------------------------------------
 
@@ -259,7 +259,7 @@ export async function resumeCampaign(d: AdsDeps, actor: UserActor, campaignId: s
       v: 1, kind: 'resume', connection_id: row.connectionId, cap_version_id: cap.id, cap_version_no: cap.versionNo, changes: [change],
       rows: [{ campaignId: row.id, fromDailyCents: from, toDailyCents: change.to_daily_cents, changed: true, reasonCode: 'RESUMED' }],
     };
-    await repo.insertReallocation(tx, { id: actionId, status: 'approved', explanation: `Resume one campaign at ${(change.to_daily_cents / 100).toFixed(2)} dollars a day.`, payload, dedupeKey: null, decidedByUserId: actor.userId });
+    await repo.insertReallocation(tx, { id: actionId, status: 'approved', explanation: `Resume one paused campaign at its ${dollars(change.to_daily_cents)} daily budget.`, payload, dedupeKey: null, decidedByUserId: actor.userId });
     const runId = d.ids.next<'AdRunId'>();
     await repo.insertEvent(tx, { id: d.ids.next<'AdAllocationEventId'>(), runId, campaignId: row.id, kind: 'planned', capVersionId: cap.id, actionId,
       fromDailyCents: from, toDailyCents: change.to_daily_cents, reasonCode: 'RESUMED', providerRef: null });
@@ -355,7 +355,7 @@ export interface ResolveReport {
 
 /**
  * Planned rows of this connection with no outcome after STALE_PLANNED_MS, resolved against what Google Ads reports now:
- *   the planned amount ⇒ applied READBACK; after OUTCOME_UNKNOWN_AFTER_MS ⇒ failed OUTCOME_UNKNOWN; another amount ⇒ failed
+ *   the planned amount (for a resume: and serving again) ⇒ applied READBACK; after OUTCOME_UNKNOWN_AFTER_MS ⇒ failed OUTCOME_UNKNOWN; another amount ⇒ failed
  *   PLATFORM_CHANGED (the mirror takes it); the from amount ⇒ failed PACK_WITHDRAWN when the pack is no longer cleared,
  *   otherwise ONE re-apply (claimed first in trigger_ref.reapplied, and only while the plan is still the campaign's latest
  *   event; absolute amounts are idempotent by value, VERIFY), else wait. Never a second planned row per approval.
@@ -376,19 +376,23 @@ export async function resolveOpenPlans(d: AdsDeps, tenantId: string, connectionI
     rep.looked += 1;
     const action = plan.assistantActionId ? await asSystem(d, tenantId, (tx) => repo.reallocation(tx, plan.assistantActionId!)) : null;
     const resume = action ? storedProposal(action.payload)?.kind === 'resume' : false;
-    const onPlatform = reports.find((x) => x.externalCampaignId === camp.externalCampaignId)?.dailyBudgetCents ?? null;
+    const report = reports.find((x) => x.externalCampaignId === camp.externalCampaignId);
+    const onPlatform = report?.dailyBudgetCents ?? null;
+    // a resume keeps the budget: it took effect only if the campaign is serving again, and is untouched while still paused
+    const tookEffect = onPlatform === plan.toDailyCents && (!resume || report?.platformStatus === 'enabled');
+    const untouched = resume ? onPlatform === plan.toDailyCents && report?.platformStatus === 'paused' : onPlatform === plan.fromDailyCents;
     const record = async (r: AdsChangeResult, reason?: string) => {
       const k = await recordOutcome(d, tenantId, plan, r, { resume, ...(reason ? { reason } : {}) });
       if (k === 'applied') rep.applied += 1;
       else if (k === 'failed') rep.failed += 1;
     };
-    if (onPlatform === plan.toDailyCents) {
-      await record({ outcome: 'applied', providerRef: 'READBACK', dailyBudgetCents: onPlatform }, 'READBACK');
+    if (tookEffect) {
+      await record({ outcome: 'applied', providerRef: 'READBACK', dailyBudgetCents: plan.toDailyCents }, 'READBACK');
     } else if (age >= OUTCOME_UNKNOWN_AFTER_MS) {
       await record({ outcome: 'rejected', code: 'OUTCOME_UNKNOWN' });
     } else if (onPlatform === null) {
       rep.waiting += 1;
-    } else if (onPlatform !== plan.fromDailyCents) {
+    } else if (!untouched) {
       await record({ outcome: 'rejected', code: 'PLATFORM_CHANGED' });
     } else if (!(await asSystem(d, tenantId, (tx) => repo.packCleared(tx)))) {
       await record({ outcome: 'rejected', code: 'PACK_WITHDRAWN' });

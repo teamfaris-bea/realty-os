@@ -357,6 +357,23 @@ describe('resume (R-ADS-5: resuming is a tap)', () => {
       expect(ok.body).toMatchObject({ status: 'executed', rows: [{ reasonCode: 'RESUMED', outcome: 'applied' }] });
       expect(r.w.fake.statusOf(r.accountId, 'fake-c-cheap')).toBe('enabled');
       expect((await campaignOf(h, r.w.tenantId, 'fake-c-cheap'))!.status).toBe('active');
+      // E447 for a resume: a timed-out resume that did not take effect is not read back as applied (the budget alone matches)
+      const cap2 = await setCapVia(h, r.w.owner, 3_000_000, 10_000);
+      expect(cap2.status).toBe(201);
+      r.w.fake.failNext('applyBudgetChange', { kind: 'timeout', applied: false });
+      const pending = await call<{ rows: { outcome: string }[] }>(r.w.owner, 'POST', `/ads/campaigns/${r.costly}/resume`);
+      expect(pending.body.rows.map((x) => x.outcome)).toEqual(['pending']);
+      r.w.fake.failNext('applyBudgetChange', { kind: 'timeout', applied: false });
+      passTime(r.w, STALE);
+      await runReconcile(depsOf(h, r.w), r.w.tenantId);
+      const costlyRows = (await ledgerOf(h, r.w.tenantId)).filter((e) => e.campaign_id === r.costly && (e.event_kind === 'applied' || e.event_kind === 'failed'));
+      expect(costlyRows).toEqual([]);
+      expect(r.w.fake.statusOf(r.accountId, 'fake-c-costly')).toBe('paused');
+      // the next pass, with the re-apply already used: still waiting; the platform resumed by hand ⇒ applied READBACK
+      r.w.fake.setStatus(r.accountId, 'fake-c-costly', 'enabled');
+      passTime(r.w, STALE);
+      await runReconcile(depsOf(h, r.w), r.w.tenantId);
+      expect((await ledgerOf(h, r.w.tenantId)).filter((e) => e.campaign_id === r.costly && e.event_kind === 'applied').map((e) => e.reason_code)).toEqual(['READBACK']);
       // an agent cannot resume
       expect((await call(r.w.agent, 'POST', `/ads/campaigns/${r.costly}/resume`)).status).toBe(404);
     });
