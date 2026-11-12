@@ -51,7 +51,7 @@ export async function setCap(tx: Tx, actor: UserActor, ids: IdGenerator, now: In
   }
   await audit(tx, actor, {
     action: 'ads.cap_set', entity: { type: 'ad_budget_cap', id },
-    changes: redactSnapshot({ version_no: versionNo, monthly_cap_cents: input.monthlyCapCents, daily_ceiling_cents: input.dailyCeilingCents }),
+    changes: redactSnapshot({ cap_version_no: versionNo, monthly_cap_cents: input.monthlyCapCents, daily_ceiling_cents: input.dailyCeilingCents }),
   });
   const cap = (await repo.capInForce(tx))!;
   let reconcileQueued = false;
