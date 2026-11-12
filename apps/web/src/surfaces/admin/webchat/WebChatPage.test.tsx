@@ -210,11 +210,38 @@ describe('Website chat page', () => {
     expect(within(after).queryByRole('button')).toBeNull();
   });
 
-  it('with no active lead source it says a widget needs one, and does not send the person to a page that cannot add one', async () => {
+  it('R-LSRC-1 b9 ui/F4: with no active lead source it says a widget needs one and links to Lead sources, where one is added', async () => {
     mount(api().on('GET /lead-sources', { status: 200, body: { sources: [] } }), WEBCHAT_PATH);
-    expect(await screen.findByText(/A widget needs an active lead source, and there is none yet\. Lead sources can't be added in the app yet/)).toBeInTheDocument();
+    expect(await screen.findByText(/A widget needs an active lead source, and there is none yet\./)).toBeInTheDocument();
+    expect(within(screen.getByRole('main')).getByRole('link', { name: 'Add a source on Lead sources' })).toHaveAttribute('href', '/admin/lead-sources');
+    expect(document.body.textContent).not.toMatch(/can't be added in the app|whoever runs your deployment/);
     expect(within(screen.getByRole('main')).queryByRole('link', { name: /Lead routing/ })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add widget' })).toBeNull();
+  });
+
+  it("R-LSRC-2 b9 ui/F4: a widget whose source has no consent text links to that source's page to add it (the card and the one-time panel)", async () => {
+    mount(api({ disclosure: false }), WEBCHAT_PATH);
+    await screen.findByText('No chat widgets yet.');
+    await userEvent.click(screen.getByRole('button', { name: 'Add widget' }));
+    await confirmPassword();
+    expect(await screen.findByText("The chat window won't appear yet")).toBeInTheDocument();
+    const links = await screen.findAllByRole('link', { name: "Add consent text on Website's page" });
+    expect(links.length).toBeGreaterThanOrEqual(2);
+    for (const l of links) expect(l).toHaveAttribute('href', `/admin/lead-sources/${ID.source}`);
+    expect(document.body.textContent).not.toMatch(/the app can't do yet|whoever runs your deployment/);
+  });
+
+  it('R-LSRC-1 b9 ui/F5: a Website chat change refreshes the Lead sources overview, and the page reads the same lead-sources query', async () => {
+    const { qc } = mount(api(), WEBCHAT_PATH);
+    qc.setQueryData(['lead-sources', 'overview'], { sources: [], deployment: { inboundEmail: true, publicHttps: true, telephony: 'live' } });
+    await screen.findByText('No chat widgets yet.');
+    expect(qc.getQueryState(['lead-sources', 'overview'])!.isInvalidated).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Add widget' }));
+    await confirmPassword();
+    await screen.findByRole('heading', { level: 2, name: 'Website chat is added' });
+    await waitFor(() => expect(qc.getQueryState(['lead-sources', 'overview'])!.isInvalidated).toBe(true));
+    // its lead sources sit under the key Lead sources' own changes refresh
+    expect(qc.getQueryState(['admin', 'lead-sources', 'web-chat'])).toBeDefined();
   });
 
   it('a refused change is said in words', async () => {

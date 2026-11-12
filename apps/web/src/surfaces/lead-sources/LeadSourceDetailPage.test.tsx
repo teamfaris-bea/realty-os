@@ -6,7 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { sessionFixture } from '../../shell/testing/fakeApi.js';
 import { GOOGLE_STEPS } from './paths/GooglePath.js';
-import { PARTNER_SENTENCE } from './paths/OtherPaths.js';
+import { CHAT_NO_CONSENT, PARTNER_SENTENCE } from './paths/OtherPaths.js';
 import { INTAKE_FIELDS, SHOWN_ONCE } from './paths/WebhookPath.js';
 import { firstResponseWords } from './Preview.js';
 import { GKEY, HOOK_URL, S1, err, googleForm, overview, phone, source, sourcesApp, sourcesFake } from './testing.js';
@@ -193,6 +193,43 @@ describe('A lead source: webhook, phone numbers, partner feeds', () => {
     const t = await section('Typed in or imported');
     expect(t.getByRole('link', { name: 'Add a person' })).toHaveAttribute('href', '/people/new');
     expect(t.getByRole('link', { name: 'Import' })).toHaveAttribute('href', '/imports');
+  });
+});
+
+describe('A lead source: website chat agrees with the Website chat page (b9 ui/F5)', () => {
+  const chatSummary = () => screen.getByRole('heading', { level: 2, name: 'Website chat' }).closest('summary')!;
+
+  it('R-LSRC-1 b9 ui/F5: a live widget on a source with no consent text is "Not working", and the path says why and where to add it', async () => {
+    sourcesApp(sourcesFake(overview([source({ hasConsentText: false, paths: { webChats: [{ status: 'connected' }] } })])), page(), 'owner');
+    const c = await section('Website chat');
+    expect(chatSummary().textContent).toMatch(/Not working: no consent text/);
+    expect(chatSummary().textContent).not.toMatch(/\bOn\b/);
+    expect(c.getByText(CHAT_NO_CONSENT)).toBeInTheDocument();
+  });
+
+  it('R-LSRC-1 b9 ui/F5: a widget the Website chat page calls live (connected, or live with problems) is On when the source has consent text', async () => {
+    for (const status of ['connected', 'degraded']) {
+      const { view } = sourcesApp(sourcesFake(overview([source({ hasConsentText: true, paths: { webChats: [{ status }] } })])), page(), 'owner');
+      await section('Website chat');
+      expect(chatSummary().textContent).toMatch(/On/);
+      expect(screen.queryByText(CHAT_NO_CONSENT)).toBeNull();
+      view.unmount();
+    }
+  });
+
+  it('R-LSRC-2 b9 ui/F5: saving consent text refreshes the Website chat queries (its widgets, embed checks and lead sources)', async () => {
+    const fake = sourcesFake(overview([source({ hasConsentText: false, paths: { webChats: [{ status: 'connected' }] } })])).on(`PATCH /lead-sources/${S1}`, { status: 200, body: { source: { id: S1, name: 'Zillow', kind: 'portal', active: true, hasToken: true, createdAt: '' } } });
+    const { qc } = sourcesApp(fake, page(), 'owner', fresh);
+    for (const key of [['admin', 'web-chat', 'widgets'], ['admin', 'web-chat', 'embed', 'w1'], ['admin', 'lead-sources', 'web-chat']]) qc.setQueryData(key, []);
+    const u = userEvent.setup();
+    await u.click(await screen.findByRole('button', { name: 'Add consent text' }));
+    await u.type(screen.getByLabelText('New consent text'), 'By sending this you agree we may call and text you.');
+    await u.type(screen.getByLabelText('Who it names as the seller'), 'A Team');
+    await u.click(screen.getByRole('button', { name: 'Save consent text' }));
+    await waitFor(() => expect(fake.callsTo(`PATCH /lead-sources/${S1}`)).toHaveLength(1));
+    await waitFor(() => {
+      for (const key of [['admin', 'web-chat', 'widgets'], ['admin', 'web-chat', 'embed', 'w1'], ['admin', 'lead-sources', 'web-chat']]) expect(qc.getQueryState(key)!.isInvalidated).toBe(true);
+    });
   });
 });
 

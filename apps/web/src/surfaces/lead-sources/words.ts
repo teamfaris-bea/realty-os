@@ -2,6 +2,7 @@
 // never guessed. No clock is read here; callers pass `now` (ms). Nothing returns a code: kinds, states and inquiry
 // types are words.
 import { formatStamp, plural } from '../admin/lib/format.js';
+import { isLive } from '../admin/webchat/words.js';
 import type { InquiryType, PathState, SourceOverview } from './types.js';
 
 export const KINDS = [
@@ -69,7 +70,7 @@ export function waitingSentence(s: Pick<SourceOverview, 'heldEmails' | 'forwardi
   return `${parts.join(' and ')} in Needs review`;
 }
 
-export type ChipState = 'On' | 'Off' | 'Not set up' | 'Not available on this deployment' | 'Needs partner access';
+export type ChipState = 'On' | 'Off' | 'Not set up' | 'Not available on this deployment' | 'Needs partner access' | 'Not working: no consent text';
 export interface PathChip {
   path: PathKey;
   label: string;
@@ -97,12 +98,23 @@ export function pathChips(s: SourceOverview): PathChip[] {
   ];
   // a partner feed is never said to be connected: it needs the partner's access first
   if (s.paths.partnerFeeds.length > 0) chips.push({ path: 'partner', label: 'Partner feed', state: 'Needs partner access' });
-  if (s.paths.webChats.length > 0) chips.push({ path: 'chat', label: 'Website chat', state: stateOf(s.paths.webChats.some((c) => c.status === 'connected'), s.active) });
+  // b9 ui/F5: the Website chat page's own words (admin/webchat/words.ts isLive; WebChatPage "Not working" with no
+  // disclosure): a widget that is live there is live here, and the chat window never opens without consent text
+  if (s.paths.webChats.length > 0) chips.push({ path: 'chat', label: 'Website chat', state: chatState(s) });
   return chips;
 }
 
+/** Whether a website chat of the source is live (connected, or live with problems), as the Website chat page says. */
+export const hasLiveChat = (s: SourceOverview) => s.paths.webChats.some((c) => isLive(c.status));
+
+function chatState(s: SourceOverview): ChipState {
+  const live = hasLiveChat(s);
+  if (live && s.active && !s.hasConsentText) return 'Not working: no consent text';
+  return stateOf(live, s.active);
+}
+
 export function chipTone(state: ChipState): 'ok' | 'warn' | 'neutral' {
-  return state === 'On' ? 'ok' : state === 'Off' || state === 'Needs partner access' ? 'warn' : 'neutral';
+  return state === 'On' ? 'ok' : state === 'Off' || state === 'Needs partner access' || state === 'Not working: no consent text' ? 'warn' : 'neutral';
 }
 
 /**
