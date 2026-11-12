@@ -38,6 +38,8 @@ import { type FakeIntegrationAdapters, type IntegrationAdapters, createFakeInteg
 import { InProcessWebChat, type WebChatTransport } from '../channels/transport.js';
 import { FakeGmail, type GmailProvider, UnconfiguredGmail } from '../mailSync/provider.js';
 import { FakePublicRecords, type PublicRecordsProvider, UnconfiguredPublicRecords } from '../predict/provider.js';
+import { FakeVoiceAgent } from '../voice/fake.js';
+import { UnconfiguredVoiceAgent, type VoiceAgentProvider } from '../voice/provider.js';
 
 export * from './types.js';
 export { FakeAi, FAKE_BAD_QUOTE, parseFakeSources } from './fake/ai.js';
@@ -72,6 +74,8 @@ export interface Providers {
   gmail: GmailProvider;
   /** module 50: public property records, platform configuration (deterministic fake; production: unconfigured, no vendor yet, N13) */
   publicRecords: PublicRecordsProvider;
+  /** module 48: the voice agent (deterministic fake; production: unconfigured, no vendor yet, N12) */
+  voiceAgent: VoiceAgentProvider;
 }
 
 /** The fakes with their concrete types, so tests can inspect outboxes and inject failures. */
@@ -91,6 +95,7 @@ export interface FakeProviders extends Providers {
   webChat: InProcessWebChat;
   gmail: FakeGmail;
   publicRecords: FakePublicRecords;
+  voiceAgent: FakeVoiceAgent;
 }
 
 export function createFakeProviders(opts: { clock?: Clock } = {}): FakeProviders {
@@ -111,6 +116,7 @@ export function createFakeProviders(opts: { clock?: Clock } = {}): FakeProviders
     webChat: new InProcessWebChat(),
     gmail: new FakeGmail(),
     publicRecords: new FakePublicRecords(),
+    voiceAgent: new FakeVoiceAgent(opts.clock),
   };
 }
 
@@ -183,5 +189,7 @@ export function createProviders(config: Config, opts: { clock: Clock; fetch?: ty
   const gmail: GmailProvider = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredGmail() : fakes.gmail;
   // module 50: no public-records vendor is procured (N13); production looks nothing up unless fakes are allowed
   const publicRecords: PublicRecordsProvider = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredPublicRecords() : fakes.publicRecords;
-  return { ...fakes, telephony, carrier, email, accountMail, ai, push, storage, integrations, gmail, publicRecords };
+  // module 48: no voice vendor is procured (N12); production answers nothing unless fakes are allowed
+  const voiceAgent: VoiceAgentProvider = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredVoiceAgent() : fakes.voiceAgent;
+  return { ...fakes, telephony, carrier, email, accountMail, ai, push, storage, integrations, gmail, publicRecords, voiceAgent };
 }
