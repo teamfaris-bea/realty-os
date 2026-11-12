@@ -192,6 +192,37 @@ describe('R-OWN-24 contacts_guard covers merged_into_contact_id', () => {
       .resolves.toBeDefined();
   });
 
+  it('R-OWN-24 E547 (fences): a no-tenant superuser UPDATE is a partial merge (points, tags, notes, chat sessions and the do-not-contact follow; deal roles and tasks do not, no ledger event); an engine-merged record can never be cleared (contacts_check2)', async () => {
+    // b11 review db-public/F1: only contacts_merge_roles and contacts_merge_work check the engine's command; the
+    // children, web chat and do-not-contact triggers check the tenant and the survivor only
+    const s = await selfCreated(h.app, w, w.agents[0]!, 'Fen Survivor');
+    const l = await seedLoser(await selfCreated(h.app, w, w.agents[0]!, 'Fen Dup'));
+    expect((await h.su.query('UPDATE contacts SET merged_into_contact_id = $1 WHERE id = $2', [s, l.id])).rowCount).toBe(1);
+    expect(await placement(s, l)).toEqual({
+      phoneOnSurvivor: 1,
+      chatPointOnSurvivor: 1,
+      tag: [{ contact_id: s }],
+      note: [{ contact_id: s }],
+      session: s,
+      roles: [{ contact_id: l.id, role: 'buyer' }],
+      primary: l.id,
+      survivorDnc: l.dncEventId,
+      mergedAway: 0,
+      loser: { merged_into_contact_id: s, closed_reason: null },
+    });
+    expect((await one<{ contact_id: string }>('SELECT contact_id FROM tasks WHERE id = $1', [l.taskId])).contact_id).toBe(l.id);
+
+    // an engine merge closes the loser as merged: clearing the column then breaks contacts_check2, whoever tries,
+    // so the guard's unchecked clear (the FK's ON DELETE SET NULL) never applies to an engine-merged record
+    const s2 = await selfCreated(h.app, w, w.agents[0]!, 'Fen Root');
+    const l2 = await selfCreated(h.app, w, w.agents[0]!, 'Fen Merged');
+    await engineMerge(w.owner.actor, s2, l2);
+    await expect(withTenantTx(w.owner.actor, (tx) => sql`UPDATE contacts SET merged_into_contact_id = NULL WHERE tenant_id = app.tenant_id() AND id = ${l2}`.execute(tx), { db: h.app }))
+      .rejects.toThrow(/contacts_check2/);
+    await expect(h.su.query('UPDATE contacts SET merged_into_contact_id = NULL WHERE id = $1', [l2])).rejects.toThrow(/contacts_check2/);
+    expect(await one('SELECT merged_into_contact_id, closed_reason FROM contacts WHERE id = $1', [l2])).toEqual({ merged_into_contact_id: s2, closed_reason: 'merged' });
+  });
+
   it('R-OWN-24 E548 (guard): engine merges by the Owner, a Team Lead (follow-up pending, loser on offer) and the system, one with an upper-case survivor id: every merge trigger acts once', async () => {
     // the Owner (tenant-wide: communication moves in the merge transaction)
     const s1 = await selfCreated(h.app, w, w.agents[0]!, 'Ola Survivor');
