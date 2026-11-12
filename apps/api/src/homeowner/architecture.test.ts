@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 
 const API_SRC = join(dirname(fileURLToPath(import.meta.url)), '..');
 const WEB_SRC = join(API_SRC, '..', '..', 'web', 'src');
+const CORE_SRC = join(API_SRC, '..', '..', '..', 'packages', 'core', 'src');
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir).flatMap((n) => {
@@ -73,6 +74,25 @@ describe('R-HOME-10: the homeowner lane reaches only the agents\' panel', () => 
     for (const d of ['voice', 'ads', 'isa', 'portal', 'documents', 'gbp'].filter((x) => existsSync(join(API_SRC, x)))) {
       expect(RUNTIME.some((f) => rel(f).startsWith(`${d}/`)), d).toBe(true);
     }
+  });
+
+  // b11 reconciliation homeowner-18: the importer check above follows relative paths only, and core was not scanned, so
+  // the AI ISA core (module 74, packages/core/src/isa) and the assistant were outside the boundary test.
+  it('R-HOME-7 R-HOME-8: no core module but core/homeowner imports it (isa, assistant, nurture, marketing and portal included); @realty/core/homeowner is imported only by the lane, the connector and module 50\'s provider', () => {
+    const core = sourceFiles(CORE_SRC).filter((f) => !isTest(rel(f, CORE_SRC)));
+    for (const d of ['isa', 'assistant', 'nurture', 'marketing', 'portal']) expect(core.some((f) => rel(f, CORE_SRC).startsWith(`${d}/`)), d).toBe(true);
+    const coreTarget = (file: string, spec: string) => (spec.startsWith('.') ? rel(resolve(dirname(file), spec), CORE_SRC) : spec);
+    const coreImporters = core
+      .filter((f) => !rel(f, CORE_SRC).startsWith('homeowner/'))
+      .filter((f) => importsOf(f).some((x) => /^homeowner(\/|\.js$|$)/.test(coreTarget(f, x)) || /^@realty\/core\/homeowner\b/.test(x)))
+      .map((f) => rel(f, CORE_SRC));
+    expect(coreImporters).toEqual([]);
+    expect(readFileSync(join(CORE_SRC, 'index.ts'), 'utf8')).not.toMatch(/homeowner/);
+    const SPEC = /^@realty\/core\/homeowner\b/;
+    const apiImporters = RUNTIME.filter((f) => importsOf(f).some((x) => SPEC.test(x))).map((f) => rel(f)).filter((f) => !/^(homeowner|providers\/publicRecords)\//.test(f));
+    expect(apiImporters).toEqual(['predict/provider.ts']);
+    const web = sourceFiles(WEB_SRC).filter((f) => !isTest(rel(f, WEB_SRC)));
+    expect(web.filter((f) => importsOf(f).some((x) => SPEC.test(x))).map((f) => rel(f, WEB_SRC))).toEqual(['surfaces/homeowner/api.ts']);
   });
 
   it('R-PRED-2 E588: predict/** other than provider.ts never names lookupHomeowner or a homeowner table; lookupHomeowner is called only by homeowner/refresh.ts', () => {
