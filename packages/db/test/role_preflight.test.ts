@@ -3,11 +3,12 @@
 // already exist its UPDATE on a FORCE-RLS table updates 0 rows, so the 0032/0034/0035/0045 backfills would do
 // nothing without an error. These tests run on the local test cluster only, with throwaway realty_trial_<pid>_* roles.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { MIGRATIONS_DIR } from '../src/dbConfig.js';
+import { MIGRATIONS_DIR, connectionSettings, withCredentials, withDatabase } from '../src/dbConfig.js';
+import { runRelease } from '../src/release.js';
 import { MigrationError, migrate } from '../src/migrate.js';
 import { forceRlsProbe, inspectOwnerRole } from '../src/rolePreflight.js';
 import { createTestDb, type TestDb } from '../src/testing/index.js';
-import { type TrialOwner, cleanupTrials, clusterRoleSnapshot, createTrialDb, createTrialOwner, withClient } from './trialOwner.js';
+import { type TrialOwner, admin, cleanupTrials, clusterRoleSnapshot, createTrialDb, createTrialOwner, withClient } from './trialOwner.js';
 
 let before: unknown;
 let noBypass: TrialOwner;
@@ -82,5 +83,48 @@ describe('R-DEPLOY-2: the migration owner bypasses row-level security', () => {
     for (const r of ['app_user', 'app_definer', 'app_retention'] as const) expect(o.roles[r]).toMatchObject({ exists: true, admin: false, set: false, usage: false });
     const s = await withClient(su.ownerUrl, (c) => inspectOwnerRole(c));
     expect(s.su).toBe(true);
+  });
+});
+
+describe('R-DEPLOY-4 E477: the release step refuses an owner that lacks what it needs, with nothing changed', () => {
+  const appUrlFor = (database: string) => {
+    const s = connectionSettings();
+    return withCredentials(withDatabase(s.adminUrl, database), s.appUser.user, s.appUser.password);
+  };
+  const state = (database: string) =>
+    admin(async (c) => ({
+      schemas: (await c.query(`SELECT nspname FROM pg_namespace WHERE nspname IN ('realty_migrations','app','auth') ORDER BY 1`)).rows,
+      members: (await c.query(`SELECT count(*)::int AS n FROM pg_auth_members am JOIN pg_roles m ON m.oid = am.member WHERE m.rolname LIKE 'realty_trial_%' AND am.set_option`)).rows[0],
+    }), database);
+
+  it('E477: a BYPASSRLS owner without ADMIN on the existing app_definer is refused, naming the role and the grant to ask for', async () => {
+    const database = await createTrialDb(bypass, 'noadmin');
+    await admin((c) => c.query(`GRANT app_user, app_retention TO ${c.escapeIdentifier(bypass.name)} WITH ADMIN OPTION, INHERIT FALSE, SET FALSE`));
+    const before = await state(database);
+    const lines: string[] = [];
+    const err = await runRelease({ ownerUrl: bypass.url(database), appUrl: appUrlFor(database), dir: MIGRATIONS_DIR, log: (l) => lines.push(l) }).then(() => null, (e: unknown) => e as Error);
+    expect(err?.name).toBe('RolePreflightError');
+    expect(err?.message).toContain(`the migration role ${bypass.name} lacks ADMIN OPTION on the existing role app_definer`);
+    expect(err?.message).toContain(`GRANT app_definer TO ${bypass.name} WITH ADMIN OPTION`);
+    expect(err?.message).not.toContain('app_retention');
+    expect(err?.message).toMatch(/nothing was changed$/);
+    expect(lines).toEqual([]);
+    expect(await state(database)).toEqual(before);
+  });
+
+  it('E477: a BYPASSRLS owner without CREATE on the database is refused, naming CREATE on the database', async () => {
+    const lacking = await createTrialOwner('nocreate', 'CREATEROLE BYPASSRLS');
+    await admin((c) => c.query(`GRANT app_user, app_definer, app_retention TO ${c.escapeIdentifier(lacking.name)} WITH ADMIN OPTION, INHERIT FALSE, SET FALSE`));
+    const database = await createTrialDb(noBypass, 'notowned'); // owned by another role: no CREATE for `lacking`
+    const before = await state(database);
+    const err = await runRelease({ ownerUrl: lacking.url(database), appUrl: appUrlFor(database), dir: MIGRATIONS_DIR, log: () => {} }).then(() => null, (e: unknown) => e as Error);
+    expect(err?.message).toBe(`the migration role ${lacking.name} lacks CREATE on the database: 0001 creates schemas and extensions (ask an administrator to run GRANT CREATE ON DATABASE <database> TO ${lacking.name}, or make it the database owner); nothing was changed`);
+    expect(await state(database)).toEqual(before);
+  });
+
+  it('R-DEPLOY-2 E475: the release step refuses the non-bypass owner before any change, with no bookkeeping schema created', async () => {
+    const err = await runRelease({ ownerUrl: noBypass.url(noBypassDb), appUrl: appUrlFor(noBypassDb), dir: MIGRATIONS_DIR, log: () => {} }).then(() => null, (e: unknown) => e as Error);
+    expect(err?.message).toContain(`the migration role ${noBypass.name} is subject to row-level security`);
+    expect((await state(noBypassDb)).schemas).toEqual([]);
   });
 });
