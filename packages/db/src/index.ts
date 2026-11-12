@@ -62,6 +62,8 @@ export { type NewContactFields, projectionOf, eventOf, selectLedger } from './ow
 export { TenantNotReadyError, importOwnersPending, loadRoutingCandidates, loadRuleMembers, loadRules, loadTenantFacts, type TenantFacts } from './ownership/context.js';
 export { type AuditRowSpec, insertAuditRow } from './repos/audit.js';
 export { json } from './json.js';
+export { APP_ROLE_CHECK_SQL, type AppRoleProblem, type AppRoleRow, NOT_RLS_BOUND, appRoleProblems, tlsFailureMessage } from './rolePreflight.js';
+export { type DatabaseTls, libpqEnvNames, pgSsl } from './tls.js';
 export {
   type ClientActor,
   type PortalAuditEntity,

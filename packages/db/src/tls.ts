@@ -20,3 +20,14 @@ export function pgSsl(tls: DatabaseTls): false | { rejectUnauthorized: true; ca?
   if (tls.mode === 'disable') return false;
   return tls.ca ? { rejectUnauthorized: true, ca: tls.ca } : { rejectUnauthorized: true };
 }
+
+/**
+ * E483: the libpq-style variables present (non-empty) in `env`. pg reads `PG` + KEY for any setting the URL lacks
+ * (PGUSER, PGHOST, PGPASSWORD, PGSSLMODE, PGOPTIONS, PGPASSFILE, …; pg connection-parameters.js), so in production
+ * one of them could change the login, the host or the TLS mode behind the checked URL. Names only, never values.
+ */
+export function libpqEnvNames(env: Readonly<Record<string, string | undefined>>): string[] {
+  return Object.keys(env)
+    .filter((k) => /^PG[A-Z][A-Z0-9_]*$/.test(k) && (env[k] ?? '') !== '')
+    .sort();
+}

@@ -10,7 +10,7 @@ import { randomBytes } from 'node:crypto';
 import { instant, uuidv7Generator } from '@realty/core/foundation';
 import { closeDefaultDatabase, configureDatabase } from '@realty/db';
 import { loadConfig, redactConfig } from './config.js';
-import { assertNoOwnerCredentials, assertRlsBoundLogin } from './dbRole.js';
+import { assertAppRoleModel, assertNoOwnerCredentials } from './dbRole.js';
 import { markDraining, registerReadinessCheck } from './health.js';
 import { loadObservabilityConfig } from './observability/config.js';
 import { createErrorReporter } from './observability/errors.js';
@@ -28,7 +28,7 @@ async function main(): Promise<void> {
   process.on('uncaughtException', (e) => errorReporter.capture(e, { process: 'api', level: 'fatal', code: 'UNCAUGHT' }));
   process.on('unhandledRejection', (e) => errorReporter.capture(e, { process: 'api', code: 'UNHANDLED_REJECTION' }));
   const db = configureDatabase({ url: config.databaseUrl, applicationName: 'realty-api', max: config.databasePoolMax });
-  await assertRlsBoundLogin(db);
+  await assertAppRoleModel(db);
   const clock = { now: () => instant(Date.now()) };
   const ids = uuidv7Generator(clock, (n) => new Uint8Array(randomBytes(n)));
   const metrics = new Registry();

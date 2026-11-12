@@ -15,7 +15,7 @@ import { instant } from '@realty/core/foundation';
 import { QUEUES, type Queue, closeDefaultDatabase, configureDatabase } from '@realty/db';
 import { z } from 'zod';
 import { loadConfig } from '../config.js';
-import { assertNoOwnerCredentials, assertRlsBoundLogin } from '../dbRole.js';
+import { assertAppRoleModel, assertNoOwnerCredentials } from '../dbRole.js';
 import { observedAlerts } from '../observability/alerts.js';
 import { loadObservabilityConfig } from '../observability/config.js';
 import { createErrorReporter } from '../observability/errors.js';
@@ -61,7 +61,7 @@ async function main(): Promise<void> {
   const log = jsonLogger({ level: config.logLevel === 'silent' ? 'silent' : config.logLevel === 'fatal' || config.logLevel === 'trace' ? 'info' : config.logLevel });
   const db = configureDatabase({ url: config.databaseUrl, applicationName: 'realty-worker', max: args.concurrency + 4 });
   // same refusal as the API (docs/DEPLOY.md §2): a superuser or BYPASSRLS login would bypass tenant isolation
-  await assertRlsBoundLogin(db);
+  await assertAppRoleModel(db);
   const clock = { now: () => instant(Date.now()) };
   const providers = createProviders(config, { clock });
   registry.registerAll(handlers);
