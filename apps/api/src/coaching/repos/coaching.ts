@@ -3,7 +3,7 @@
 //   - the pages run as the signed-in person, so call_scores RLS decides what a Team Lead reads (only while
 //     the Owner's tl_sees_call_scores is on) and the recording scope decides what anyone reads (R-COACH-3).
 // No query here touches routing, ownership, offers, ponds or the scoreboard (R-COACH-5, architecture test).
-import { type ItemStatus, isRubricVersion } from '@realty/core/coaching';
+import { type ItemStatus, REVIEWED_ROLES, isRubricVersion } from '@realty/core/coaching';
 import type { CallId, Instant } from '@realty/core/foundation';
 import { instantFromDate, toIso } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
@@ -80,6 +80,8 @@ export interface CallReviewFactsRow {
   callId: string;
   contactId: string;
   agentUserId: string | null;
+  /** the agent's membership role (null without an agent) */
+  agentRole: string | null;
   handledBy: string;
   imported: boolean;
   recording: { source: string; consentBasis: string; shredded: boolean } | null;
@@ -88,8 +90,9 @@ export interface CallReviewFactsRow {
 }
 
 export async function callReviewFacts(tx: Tx, callId: string): Promise<CallReviewFactsRow | null> {
-  const r = await sql<{ id: string; contact_id: string; agent_user_id: string | null; handled_by: string; imported: boolean; source: string | null; consent_basis: string | null; rec_status: string | null; has_transcript: boolean; reviewed: boolean }>`
+  const r = await sql<{ id: string; contact_id: string; agent_user_id: string | null; agent_role: string | null; handled_by: string; imported: boolean; source: string | null; consent_basis: string | null; rec_status: string | null; has_transcript: boolean; reviewed: boolean }>`
     SELECT c.id, c.contact_id, c.agent_user_id, c.handled_by, c.imported, r.source, r.consent_basis, r.status AS rec_status,
+           (SELECT m.role FROM memberships m WHERE m.tenant_id = c.tenant_id AND m.user_id = c.agent_user_id) AS agent_role,
            EXISTS (SELECT 1 FROM transcripts t WHERE t.tenant_id = r.tenant_id AND t.recording_id = r.id AND t.status = 'ready') AS has_transcript,
            EXISTS (SELECT 1 FROM call_scores s WHERE s.tenant_id = c.tenant_id AND s.call_id = c.id) AS reviewed
       FROM calls c
@@ -101,6 +104,7 @@ export async function callReviewFacts(tx: Tx, callId: string): Promise<CallRevie
     callId: x.id,
     contactId: x.contact_id,
     agentUserId: x.agent_user_id,
+    agentRole: x.agent_role,
     handledBy: x.handled_by,
     imported: x.imported,
     recording: x.source === null ? null : { source: x.source, consentBasis: x.consent_basis ?? '', shredded: x.rec_status === 'shredded' },
@@ -121,6 +125,7 @@ export async function callsAwaitingReview(tx: Tx, now: Instant): Promise<string[
       JOIN transcripts t ON t.tenant_id = r.tenant_id AND t.recording_id = r.id
       JOIN tenant_settings s ON s.tenant_id = c.tenant_id
      WHERE c.tenant_id = app.tenant_id() AND c.handled_by = 'human' AND NOT c.imported AND c.agent_user_id IS NOT NULL
+       AND EXISTS (SELECT 1 FROM memberships m WHERE m.tenant_id = c.tenant_id AND m.user_id = c.agent_user_id AND m.role = ANY (${[...REVIEWED_ROLES]}::text[]))
        AND r.source = 'provider' AND r.consent_basis IN ('announced_all_parties','one_party_policy') AND r.status <> 'shredded'
        AND t.status = 'ready' AND t.updated_at > ${toIso(now)}::timestamptz - interval '2 days'
        AND s.call_scoring_enabled AND app.platform_cleared('platform:coaching')
@@ -231,11 +236,14 @@ export async function verifiedQuotes(tx: Tx, claimIds: readonly string[]): Promi
 
 export const fixKeyPrefix = (userId: string) => `coaching_fix:${userId}:`;
 
-/** Members whose reviews the reconcile looks at: active members with at least one review. */
+/**
+ * Members whose reviews the reconcile looks at: active members of a role with call reviews (never a TC: the tip's
+ * page is closed to them; batch 7 review ui/F5) with at least one review.
+ */
 export async function reviewedMembers(tx: Tx): Promise<string[]> {
   const r = await sql<{ user_id: string }>`
     SELECT m.user_id FROM memberships m
-     WHERE m.tenant_id = app.tenant_id() AND m.status = 'active'
+     WHERE m.tenant_id = app.tenant_id() AND m.status = 'active' AND m.role = ANY (${[...REVIEWED_ROLES]}::text[])
        AND EXISTS (SELECT 1 FROM call_scores s WHERE s.tenant_id = m.tenant_id AND s.agent_user_id = m.user_id AND s.scored_count > 0)
      ORDER BY m.user_id`.execute(tx);
   return r.rows.map((x) => x.user_id);

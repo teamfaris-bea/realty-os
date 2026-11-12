@@ -7,7 +7,7 @@
 // R-COACH-6: there is deliberately no numeric overall score, percentage, grade, rank, leaderboard,
 // voice-tone or sentiment field anywhere in this module. A call review is a list of observable
 // checks with verified quotes, summarised as "6 of 8 checks".
-import type { AssistantClaimId, CallId, Instant, LocalDate } from '../foundation/index.js';
+import type { AssistantClaimId, CallId, Instant, LocalDate, Role } from '../foundation/index.js';
 import type { EvidenceRef, SourceText } from '../assistant/index.js';
 
 /** `call_scores.rubric_version` (CHECK `^rubric/[0-9]+$`). */
@@ -43,6 +43,11 @@ export type RecordingSource = 'provider' | 'import_fub';
 /** What the API knows about one call when deciding whether to review it. */
 export interface CallReviewFacts {
   handledBy: CallHandledBy;
+  /**
+   * The role of the call's agent (their membership), or null when the call has no agent. Only roles that take calls
+   * have call reviews (DATA_MODEL matrix "Call reviews": never a TC; batch 7 review ui/F5).
+   */
+  agentRole: Role | null;
   /** calls.imported */
   imported: boolean;
   /** The call's recording, or null when there is none. */
@@ -59,6 +64,7 @@ export type IneligibleReason =
   | 'pack_not_cleared'
   | 'scoring_off'
   | 'not_human_handled'
+  | 'role_not_reviewed'
   | 'imported_call'
   | 'no_recording'
   | 'imported_recording'

@@ -15,7 +15,7 @@
 // review run. Nothing here feeds routing, ownership or the scoreboard (R-COACH-5).
 import { type Claim, type CheckedEvidenceRef, verifyQuote } from '@realty/core/assistant';
 import { RUBRIC_V1, type CallTranscript, type ConsentBasis, type IneligibleReason, type RecordingSource, type RubricClaim, callScoreItemsJson, reviewEligible, scoreFromClaims } from '@realty/core/coaching';
-import type { AssistantClaimId, SystemActor, TenantId } from '@realty/core/foundation';
+import { type AssistantClaimId, type SystemActor, type TenantId, isRole } from '@realty/core/foundation';
 import { withTenantTx, type Tx } from '@realty/db';
 import { insertAction } from '../assistant/repos/actions.js';
 import { callTranscripts } from '../assistant/repos/context.js';
@@ -42,6 +42,7 @@ async function gate(tx: Tx, callId: string, lock = false): Promise<Gate> {
   const rec = facts.recording;
   const e = reviewEligible({
     handledBy: facts.handledBy === 'human' ? 'human' : facts.handledBy === 'voicemail' ? 'voicemail' : 'assistant',
+    agentRole: facts.agentRole === null ? null : isRole(facts.agentRole) ? facts.agentRole : 'tc', // an unknown role is never reviewed
     imported: facts.imported,
     recording: rec === null || rec.shredded ? null : { source: rec.source as RecordingSource, consentBasis: rec.consentBasis as ConsentBasis },
     hasTranscript: facts.hasTranscript,

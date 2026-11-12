@@ -294,7 +294,7 @@ export async function revokeLinkAsSystem(tx: Tx, actor: ReturnType<typeof sys>, 
 // ---- live free/busy (R-CAL-3) -------------------------------------------------------------------------------
 
 export interface BusyView {
-  calendar: LinkState | 'unavailable';
+  calendar: Exclude<LinkState, 'pending'> | 'unavailable'; // a pending_review link is not live: no busy times
   provider: CalendarProviderKey | null;
   sentence: string;
   busy: Busy[];
@@ -315,7 +315,7 @@ export function mergeBusy(xs: readonly Busy[]): Busy[] {
   return out;
 }
 
-type ProviderBusy = { calendar: LinkState | 'unavailable'; provider: CalendarProviderKey | null; busy: Busy[] };
+type ProviderBusy = { calendar: BusyView['calendar']; provider: CalendarProviderKey | null; busy: Busy[] };
 
 /** System actor, inside the caller's transaction: the person's live calendar busy times, read now, kept nowhere. */
 async function providerBusy(deps: CalendarDeps, tx: Tx, tenantId: TenantId, userId: string, range: { start: string; end: string }): Promise<ProviderBusy> {
