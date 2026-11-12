@@ -70,7 +70,7 @@ describe('GET /admin/integrations: honest status for every service (R-INT-2, R-I
     expect((v as unknown as { perUser: { key: string }[] }).perUser.map((x) => x.key)).toEqual(['google_calendar', 'microsoft_calendar']);
     // D2 (migration 0025) adds platform:gmail, unreviewed like the rest
     expect(v.platformPacks.map((p) => p.key)).toEqual(
-      ['platform:avm', 'platform:coaching', 'platform:fair_housing', 'platform:gmail', 'platform:meta', 'platform:portal', 'platform:review_requests', 'platform:voice'],
+      ['platform:avm', 'platform:coaching', 'platform:fair_housing', 'platform:gmail', 'platform:meta', 'platform:portal', 'platform:public_records_outreach', 'platform:review_requests', 'platform:voice'],
     );
     for (const p of v.platformPacks) {
       expect(p.reviewed, p.key).toBe(false);

@@ -126,6 +126,7 @@ export const PACK_GATES: Record<string, string> = {
   'platform:voice': 'Voice answering',
   'platform:portal': 'Client portal sign-in',
   'platform:gmail': 'Gmail inbox sync',
+  'platform:public_records_outreach': 'Outreach using public-record data (not built)',
 };
 
 /**
