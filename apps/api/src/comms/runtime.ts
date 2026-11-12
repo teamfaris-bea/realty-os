@@ -19,8 +19,13 @@ import type { Platform } from '../server.js';
 import { systemActor } from '../worker/systemActor.js';
 import type { CommsDeps } from './types.js';
 
+/** R-ISA-25: which channels refuse AI ISA sends (AI_ISA_LIVE_SENDS off and a non-fake adapter). */
+export function aiIsaLiveOff(c: { aiIsaLiveSends: boolean; providers: { telephony: string; email: string } }): { sms: boolean; email: boolean } {
+  return { sms: !c.aiIsaLiveSends && c.providers.telephony !== 'fake', email: !c.aiIsaLiveSends && c.providers.email !== 'fake' };
+}
+
 export function depsFromPlatform(p: Platform): CommsDeps {
-  return { db: p.db, providers: p.providers, envelope: p.envelope, ids: p.ids, publicBaseUrl: p.config.publicBaseUrl, linkSecret: p.config.sessionSecret, telephonyDailyCap: p.config.providers.telephony === 'twilio' };
+  return { db: p.db, providers: p.providers, envelope: p.envelope, ids: p.ids, publicBaseUrl: p.config.publicBaseUrl, linkSecret: p.config.sessionSecret, telephonyDailyCap: p.config.providers.telephony === 'twilio', aiIsaLiveOff: aiIsaLiveOff(p.config) };
 }
 
 let runtime: Omit<CommsDeps, 'providers'> | null = null;
@@ -29,7 +34,7 @@ let runtime: Omit<CommsDeps, 'providers'> | null = null;
 export function commsRuntime(): Omit<CommsDeps, 'providers'> {
   if (runtime) return runtime;
   const cfg = loadConfig();
-  runtime = { db: getDatabase(), envelope: new EnvelopeService(localKek(cfg.kek, cfg.kekRef)), ids: defaultIds(), publicBaseUrl: cfg.publicBaseUrl, linkSecret: cfg.sessionSecret, telephonyDailyCap: cfg.providers.telephony === 'twilio' };
+  runtime = { db: getDatabase(), envelope: new EnvelopeService(localKek(cfg.kek, cfg.kekRef)), ids: defaultIds(), publicBaseUrl: cfg.publicBaseUrl, linkSecret: cfg.sessionSecret, telephonyDailyCap: cfg.providers.telephony === 'twilio', aiIsaLiveOff: aiIsaLiveOff(cfg) };
   return runtime;
 }
 

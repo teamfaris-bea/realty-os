@@ -20,6 +20,7 @@ export {
   ESCALATION_TABLE,
   fillLine,
   fromDisplayName,
+  holidaysAround,
   icuOffsetMinutes,
   initialState,
   isAcknowledgementOnly,
@@ -75,4 +76,5 @@ export type {
   LineIdentity,
   QueueMessage,
   RecipientZones,
+  StepResult,
 } from '@realty/core/isa';

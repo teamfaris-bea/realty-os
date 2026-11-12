@@ -31,6 +31,7 @@
 // re-decides visibility at send time); the system actor for assistant and system messages. When the
 // human can no longer see the message (lost the lead), a system TX1 blocks it with
 // SENDER_NOT_AUTHORIZED and offers the text to the new owner as a draft (E15).
+import { aiIsaGateFacts, deferMessageInTx, deferralFor, emitSendResultInTx, isAiIsaMessage, isaFromName, isaGuardRefusal } from '../isa/send.js';
 import { ALWAYS_HUMAN_CATEGORIES, type Channel, type Initiator, type Purpose, classifyHumanPurpose } from '@realty/core/compliance';
 import { INTENT_RULES, type PlaybookStep, PlaybookStepSchema, approvalCurrent, authorizeAutonomousAction, stepForChannel, stepRunAfterGate, storedTriggerStep, triggerStepAsPlaybookStep } from '@realty/core/assistant';
 import type { Actor, ContactId, Instant, TenantId, UserActor } from '@realty/core/foundation';
@@ -120,7 +121,7 @@ export async function dispatchOutbound(messageId: string, deps: CommsDeps, opts:
     try {
       return await once();
     } catch (e) {
-      const refused = guardOptOutRefusal(e);
+      const refused = guardOptOutRefusal(e) ?? (isaGuardRefusal(e) as DispatchDenyReason | null);
       if (refused === null || guardDeny.includes(refused)) throw e;
       guardDeny.push(refused);
       return once();
@@ -221,8 +222,16 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
       // in TX2). A merge or an ownership change that invalidated it withdrew the message, whatever the seqs say.
       if (a.status !== 'proposed') extra.push('ASSISTANT_ACTION_WITHDRAWN');
       else extra.push(...(await playbookReasons(tx, m, a, owner, channel, policy.autonomous, tenant, conv?.id ?? null)));
+    } else if (a.autonomy === 'ai_isa_mandate') {
+      // 0190 (D12 proposed, R-ISA-8): the AI ISA mandate; the gate's checks 0/8/12 and the guard decide (isa/send.ts)
+      gateInitiator = 'assistant';
+      if (a.status !== 'proposed' || !isAiIsaMessage(m.actionCategory)) extra.push('ASSISTANT_ACTION_WITHDRAWN');
     } else extra.push('ASSISTANT_ACTION_NOT_APPROVED');
   }
+  const isaMsg = m.initiator === 'assistant' && isAiIsaMessage(m.actionCategory);
+  const isaRef = { id: m.id, contactId: m.contactId, conversationId: m.conversationId, channel, assistantActionId: m.assistantActionId };
+  const isaTx1 = isaMsg ? await aiIsaGateFacts(tx, { db: c.deps.db, ids: c.deps.ids, providers: c.deps.providers, aiIsaLiveOff: c.deps.aiIsaLiveOff }, isaRef, addressHmac, now) : null;
+  if (isaTx1) extra.push(...(isaTx1.extra as DispatchDenyReason[]));
 
   const intent: OutboundIntent = {
     contactId: m.contactId,
@@ -233,6 +242,7 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
     sender: { phoneNumberId: m.phoneNumberId, emailIdentityId: m.emailIdentityId },
     body: m.body,
     connection: chatConnection,
+    ...(isaTx1 ? { aiIsa: isaTx1.facts } : {}),
   };
   const evaluated = await evaluateGate(tx, intent, now);
   let verdict = verdictOf(evaluated.decision, extra);
@@ -249,9 +259,23 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
     verdict = verdictOf(evaluated.decision, extra);
   }
 
+  // R-ISA-25: AI_ISA_LIVE_SENDS=false refuses an AI ISA message on a non-fake adapter (a hold, never an opt-out)
+  if (verdict.outcome === 'allow' && isaMsg && c.deps.aiIsaLiveOff?.[channel === 'email' ? 'email' : 'sms'] === true) {
+    extra.push('AI_ISA_LIVE_OFF');
+    verdict = verdictOf(evaluated.decision, extra);
+  }
+  // R-ISA-10/-11: a deferrable AI ISA refusal (quiet hours, caps, the gap, the offsets) sets the message back to scheduled
+  if (verdict.outcome !== 'allow' && isaMsg) {
+    const until = await deferralFor(tx, isaRef, verdict.reasons, now);
+    if (until !== null) {
+      await deferMessageInTx(tx, m.id, until, verdict.reasons[0] ?? 'ISA_DEFERRED');
+      return { kind: 'done', result: { kind: 'not_due', messageId, due: until } as DispatchResult };
+    }
+  }
   if (verdict.outcome === 'deny') {
     const blocked = await insertBlockedDecision(tx, { ids: c.deps.ids, intent, evaluated, verdict, actorUserId, messageId: m.id, now, extraDeny: extra });
     await msgs.markBlocked(tx, m.id, blocked.id, blocked.reasons[0] ?? 'DENIED');
+    if (isaMsg) await emitSendResultInTx(tx, m.id, 'blocked');
     if (m.playbookStepRunId) {
       const u = stepRunAfterGate({ outcome: 'deny', reasons: blocked.reasons as never });
       await auto.updateStepRun(tx, m.playbookStepRunId, { status: u.status, decisionId: blocked.id, messageId: m.id });
@@ -281,7 +305,7 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
   let headers: Record<string, string> | null = null;
   if (channel === 'email') {
     const ident = m.emailIdentityId ? await g.emailIdentityFacts(tx, m.emailIdentityId) : null;
-    if (ident) emailFrom = { address: ident.fromAddress, name: ident.displayName };
+    if (ident) emailFrom = { address: ident.fromAddress, name: isaMsg ? ((await isaFromName(tx, isaRef)) ?? ident.displayName) : ident.displayName };
     const token = replyToken(c.deps.linkSecret, c.tenantId, m.conversationId);
     await msgs.setReplyTokenIfMissing(tx, m.conversationId, replyTokenHash(token));
     replyTo = replyAddress(c.deps.publicBaseUrl, token);
@@ -428,10 +452,12 @@ async function sendAndRecord(plan: SendPlan, decision: StoredDecision, deps: Com
       if (m.channel === 'mms' && m.dispatchedAt !== null && /^MM[0-9a-f]{32}$/.test(out.ref)) await enqueueProviderCleanup(tx, { messageId: m.id, providerRef: out.ref }, m.dispatchedAt); // D5a R-MMS-7
       if (m.playbookStepRunId) await auto.updateStepRun(tx, m.playbookStepRunId, { status: 'sent', decisionId: null, messageId: m.id });
       if (m.assistantActionId) await auto.markActionExecuted(tx, m.assistantActionId);
+      if (isAiIsaMessage(m.actionCategory)) await emitSendResultInTx(tx, m.id, 'sent');
       return { kind: 'sent', messageId: m.id, decision: view, providerRef: out.ref } satisfies DispatchResult;
     }
     if (out.kind === 'timeout') {
       await msgs.markUnknown(tx, m.id, 'PROVIDER_TIMEOUT');
+      if (isAiIsaMessage(m.actionCategory)) await emitSendResultInTx(tx, m.id, 'dispatch_unknown');
       await enqueueTyped(tx, COMMS_RECONCILE, { messageId: m.id }, { dedupeKey: COMMS_RECONCILE.dedupeKey({ messageId: m.id }), runAt: plusMs(now, 2 * MINUTE_MS) });
       return { kind: 'dispatch_unknown', messageId: m.id, decision: view } satisfies DispatchResult;
     }
@@ -441,6 +467,7 @@ async function sendAndRecord(plan: SendPlan, decision: StoredDecision, deps: Com
     const unverified = plan.channel === 'sms' && isSenderNotVerified(out.code);
     const reason = optedOut ? 'PROVIDER_OPTED_OUT' : unverified ? SENDER_NOT_VERIFIED : out.code === TELEPHONY_LIVE_OFF ? TELEPHONY_LIVE_OFF : out.kind === 'not_configured' ? (out.code ?? 'PROVIDER_NOT_CONFIGURED') : `PROVIDER_${out.kind.toUpperCase()}`;
     await msgs.markFailed(tx, m.id, reason, out.code);
+    if (isAiIsaMessage(m.actionCategory)) await emitSendResultInTx(tx, m.id, 'failed');
     if (m.playbookStepRunId) await auto.updateStepRun(tx, m.playbookStepRunId, { status: 'failed', decisionId: null, messageId: m.id });
     if (optedOut) await recordProviderOptOut(tx, deps, tenantId, m, now);
     if (unverified) await markSenderNotVerified(tx, systemActor(tenantId, 'provider'), deps, m.phoneNumberId, out.code!, m.id, now);

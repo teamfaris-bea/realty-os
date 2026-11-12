@@ -97,6 +97,8 @@ ALTER TABLE gate_decisions ADD CONSTRAINT gate_decisions_action_category_check C
 
 -- the provider's DKIM verdict for an inbound email (true = an aligned pass for the From domain; R-ISA-28)
 ALTER TABLE messages ADD COLUMN email_dkim_aligned boolean;
+-- saved searches the AI ISA proposed (R-ISA-17): no alerts of their own while care is live; paused at the handoff
+ALTER TABLE saved_searches ADD COLUMN origin text NOT NULL DEFAULT 'standard' CHECK (origin IN ('standard','ai_isa'));
 -- whether the disclosure stated its channel and purpose scope (written by storeDisclosure; NULL on older rows = refused)
 ALTER TABLE consent_disclosures ADD COLUMN scope_stated boolean;
 

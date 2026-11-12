@@ -200,6 +200,13 @@ export const ConfigSchema = z.object({
    * (TELEPHONY_LIVE_OFF). It stays false until the written pilot approval. Inbound webhooks work either way.
    */
   telephonyLiveRequests: z.boolean(),
+  /**
+   * AI ISA live sends (AI_ISA_LIVE_SENDS; docs/AI_ISA.md §5.5, R-ISA-25; D12 proposed). false, the default in every
+   * environment, production included: an AI ISA message on a non-fake SMS or email adapter is failed before the
+   * provider call ("AI assistant sending is off on this deployment"), and the AI ISA treats it as a hold. The email
+   * adapter has no kill switch of its own; fakes are unaffected. Stays false until a written pilot approval.
+   */
+  aiIsaLiveSends: z.boolean(),
   /** General per-session/IP request budget (in-memory, per process). Auth routes add DB-backed limits. */
   globalRateLimitPerMinute: z.coerce.number().int().min(10).default(600),
   logLevel: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
@@ -417,6 +424,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   // R-TWL-1: the telephony kill switch, like MLS_LIVE_CALLS: false unless set to exactly true
   const telLive = (env.TELEPHONY_LIVE_REQUESTS ?? '').trim().toLowerCase();
   if (telLive !== '' && telLive !== 'true' && telLive !== 'false') invalid.push('TELEPHONY_LIVE_REQUESTS must be true or false');
+  // R-ISA-25: the AI ISA live-send switch, the same shape: false unless set to exactly true
+  const isaLive = (env.AI_ISA_LIVE_SENDS ?? '').trim().toLowerCase();
+  if (isaLive !== '' && isaLive !== 'true' && isaLive !== 'false') invalid.push('AI_ISA_LIVE_SENDS must be true or false');
   const trust = parseTrustProxy(env.TRUST_PROXY);
   if (!trust.ok) invalid.push(trust.message);
 
@@ -483,6 +493,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     },
     mls,
     telephonyLiveRequests: telLive === 'true',
+    aiIsaLiveSends: isaLive === 'true',
     globalRateLimitPerMinute: env.GLOBAL_RATE_LIMIT_PER_MINUTE || undefined,
     databasePoolMax: env.DB_POOL_MAX || undefined,
     logLevel: env.LOG_LEVEL || undefined,
@@ -522,6 +533,7 @@ export function redactConfig(c: Config): Record<string, unknown> {
     s3Bucket: c.s3?.bucket,
     s3Endpoint: c.s3?.endpoint,
     telephonyLiveRequests: c.telephonyLiveRequests,
+    aiIsaLiveSends: c.aiIsaLiveSends,
     mls: { provider: c.mls.provider, liveCalls: c.mls.liveCalls, sparkBaseUrl: c.mls.spark.baseUrl, sparkAuthScheme: c.mls.spark.authScheme },
   };
 }

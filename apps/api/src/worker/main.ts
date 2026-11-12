@@ -74,7 +74,7 @@ async function main(): Promise<void> {
   const metricsServer = obs.metrics ? await startMetricsListener({ ...obs.metrics, registry: metricRegistry }) : null;
   const ac = new AbortController();
   const name = workerName(hostname());
-  log.info('starting worker', { worker: name, queues: args.queues, count: args.concurrency, kind: registry.kinds().join(','), telephony: config.providers.telephony, telephonyLiveRequests: config.telephonyLiveRequests });
+  log.info('starting worker', { worker: name, queues: args.queues, count: args.concurrency, kind: registry.kinds().join(','), telephony: config.providers.telephony, telephonyLiveRequests: config.telephonyLiveRequests, aiIsaLiveSends: config.aiIsaLiveSends });
 
   const loops: Promise<never>[] = [createWorker({ queues: args.queues, concurrency: args.concurrency, worker: name, db, providers, log, alerts, metrics, signal: ac.signal }).run()];
   if (args.sweeper) loops.push(createSweeper({ db, log, alerts, metrics }).run({ everyMs: 15_000, signal: ac.signal }));
