@@ -16,7 +16,7 @@ describe('R-ISA-1 E524 AiIsaContent: strict schema and pack ceilings', () => {
     expect(parseAiIsaContent({ ...CONTENT, caps: { ...CONTENT.caps, ai24h: 4 } })).toBeNull();
   });
   it('the content is hashed by contentSha256 and refused as any other playbook kind', () => {
-    expect(contentSha256({ kind: 'ai_isa', aiIsa: CONTENT }, 'warm')).toMatch(/^[0-9a-f]{64}$/);
+    expect(contentSha256({ kind: 'ai_isa', aiIsa: CONTENT }, {})).toMatch(/^[0-9a-f]{64}$/);
     expect(validatePlaybookContent({ kind: 'ai_isa', aiIsa: CONTENT }, { kind: 'nurture' })[0]!.code).toBe('CONTENT_KIND_MISMATCH');
     expect(codes({ kind: 'voice', voice: {} })).toEqual(['CONTENT_KIND_MISMATCH']);
   });
