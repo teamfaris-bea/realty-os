@@ -12,11 +12,17 @@
 // db-public/F1): in practice its creator, whom 0061's cma_reports_select still shows the row. ISA and TC have none; support reads through RLS
 // only (no route). A contact whose detail the caller cannot see, an invisible CMA, another tenant's id and every denial
 // are 404 (R-PERM-5). Bodies are strict and carry no tenant id; the tenant is the session's (R-TEN-3).
+//
+// Limits (batch 10 review api-ui/F5): the three routes that run V1-B's engine synchronously (one soldCandidates read,
+// then prepareCma with its back-test: about 300 ms for 2,000 candidates) count every authorized call against a
+// per-person and a per-team limit (CMA_RUN_LIMITS; auth/rateLimit.ts, DB-backed fixed windows, as the Spark key and
+// MMS upload routes do), beside the global per-session limit. Reading a stored CMA runs no engine and is not limited.
 import type { ResourceFacts } from '@realty/core/foundation';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import type { Tx } from '@realty/db';
-import { adminTx } from '../admin/common.js';
+import { actorOf, adminTx, platformOf } from '../admin/common.js';
+import { type Limit, enforceLimits } from '../auth/rateLimit.js';
 import { personFacts } from '../lists/repos/catalog.js';
 import { authorize } from '../rbac.js';
 import type { RouteModule } from '../routes.js';
@@ -43,6 +49,21 @@ async function cmaFacts(tx: Tx, req: FastifyRequest, id: string): Promise<Resour
   return survivor === null ? null : contactCmaFacts(tx, survivor);
 }
 
+/**
+ * The engine routes' limits: 60 runs a minute per person (one a second, more than reviewing comps takes) and 300 per
+ * team, so one scripted session cannot hold an API process's event loop (VERIFY under load).
+ */
+export const CMA_RUN_LIMITS = (tenantId: string, userId: string): Limit[] => [
+  { kind: 'cma_run_user', parts: [tenantId, userId], max: 60, windowSeconds: 60 },
+  { kind: 'cma_run_tenant', parts: [tenantId], max: 300, windowSeconds: 60 },
+];
+
+async function limitRuns(req: FastifyRequest): Promise<void> {
+  const p = platformOf(req);
+  const a = actorOf(req);
+  await enforceLimits(p.db, p.config.sessionSecret, CMA_RUN_LIMITS(a.tenantId, a.userId), p.cmaLimitClock);
+}
+
 async function register(app: FastifyInstance): Promise<void> {
   const r = app.withTypeProvider<ZodTypeProvider>();
   const auth = { auth: 'cma.prepare' as const };
@@ -54,11 +75,13 @@ async function register(app: FastifyInstance): Promise<void> {
   });
 
   r.post('/cma', { config: auth, preHandler: onBody, bodyLimit: 64 * 1024, schema: { body: PrepareBody, response: { 201: CmaResponse } } }, async (req, reply) => {
+    await limitRuns(req);
     const cma = await adminTx(req, (tx, now, actor) => prepare(tx, actor, now, req.body));
     return reply.code(201).send({ cma });
   });
 
   r.post('/contacts/:id/cma', { config: auth, preHandler: onContact, bodyLimit: 16 * 1024, schema: { params: IdParams, body: OneTapBody.optional(), response: { 200: CmaResponse, 201: CmaResponse } } }, async (req, reply) => {
+    await limitRuns(req);
     const x = await adminTx(req, (tx, now, actor) => oneTap(tx, actor, now, req.params.id, req.body ?? {}));
     return reply.code(x.created ? 201 : 200).send({ cma: x.view });
   });
@@ -71,9 +94,10 @@ async function register(app: FastifyInstance): Promise<void> {
     cma: await adminTx(req, (tx, now, actor) => getView(tx, actor, now, req.params.id)),
   }));
 
-  r.patch('/cma/:id', { config: auth, preHandler: onCma, bodyLimit: 64 * 1024, schema: { params: IdParams, body: PatchBody, response: { 200: CmaResponse } } }, async (req) => ({
-    cma: await adminTx(req, (tx, now, actor) => patch(tx, actor, now, req.params.id, req.body)),
-  }));
+  r.patch('/cma/:id', { config: auth, preHandler: onCma, bodyLimit: 64 * 1024, schema: { params: IdParams, body: PatchBody, response: { 200: CmaResponse } } }, async (req) => {
+    await limitRuns(req);
+    return { cma: await adminTx(req, (tx, now, actor) => patch(tx, actor, now, req.params.id, req.body)) };
+  });
 }
 
 export const cmaRoutes: RouteModule = { name: 'cma', register };
