@@ -59,6 +59,10 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   { path: '/team/lead-email', roles: LEADS, url: at('/team/lead-email') },
   { path: '/admin/members', roles: ADMINS, url: at('/admin/members') },
   { path: '/admin/routing', roles: ADMINS, url: at('/admin/routing') },
+  // module 22 Lead sources (lane lead-intake). The sweep's world has no source id in SweepIds, so the detail is opened
+  // for an id that does not exist (its "doesn't exist" state); e2e/lead-sources/journey.spec.ts sweeps a real one.
+  { path: '/admin/lead-sources', roles: ADMINS, url: at('/admin/lead-sources') },
+  { path: '/admin/lead-sources/:sourceId', roles: ADMINS, url: at('/admin/lead-sources/00000000-0000-7000-8000-000000000000') },
   { path: '/admin/numbers', roles: ADMINS, url: at('/admin/numbers') },
   { path: '/admin/erasure', roles: ADMINS, url: (ids) => `/admin/erasure?contact=${ids.contactId}` },
   { path: '/admin/system', roles: ADMINS, url: at('/admin/system') },

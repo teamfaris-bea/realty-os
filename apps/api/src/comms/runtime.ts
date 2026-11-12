@@ -20,7 +20,7 @@ import { systemActor } from '../worker/systemActor.js';
 import type { CommsDeps } from './types.js';
 
 export function depsFromPlatform(p: Platform): CommsDeps {
-  return { db: p.db, providers: p.providers, envelope: p.envelope, ids: p.ids, publicBaseUrl: p.config.publicBaseUrl, linkSecret: p.config.sessionSecret };
+  return { db: p.db, providers: p.providers, envelope: p.envelope, ids: p.ids, publicBaseUrl: p.config.publicBaseUrl, linkSecret: p.config.sessionSecret, telephonyDailyCap: p.config.providers.telephony === 'twilio' };
 }
 
 let runtime: Omit<CommsDeps, 'providers'> | null = null;
@@ -29,7 +29,7 @@ let runtime: Omit<CommsDeps, 'providers'> | null = null;
 export function commsRuntime(): Omit<CommsDeps, 'providers'> {
   if (runtime) return runtime;
   const cfg = loadConfig();
-  runtime = { db: getDatabase(), envelope: new EnvelopeService(localKek(cfg.kek, cfg.kekRef)), ids: defaultIds(), publicBaseUrl: cfg.publicBaseUrl, linkSecret: cfg.sessionSecret };
+  runtime = { db: getDatabase(), envelope: new EnvelopeService(localKek(cfg.kek, cfg.kekRef)), ids: defaultIds(), publicBaseUrl: cfg.publicBaseUrl, linkSecret: cfg.sessionSecret, telephonyDailyCap: cfg.providers.telephony === 'twilio' };
   return runtime;
 }
 

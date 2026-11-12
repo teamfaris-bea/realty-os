@@ -83,7 +83,7 @@ export const REALTOR_LABELS: LabelTable = table({
 });
 
 export interface VendorFormat {
-  format: Exclude<LeadFormat, 'generic'>;
+  format: Exclude<LeadFormat, 'generic' | 'leadmetadata'>;
   /** the trusted sender's domain is one of these or a subdomain */
   senderDomains: readonly string[];
   /** the body carries this marker */
@@ -100,7 +100,11 @@ export const VENDORS: readonly VendorFormat[] = [
  * Portal domains (and their subdomains): an address there is the portal's own (no-reply, lead routing,
  * footer), never a lead's contact point. VERIFY the list (other brands of the same groups may send too).
  */
-export const PORTAL_DOMAINS: readonly string[] = ['zillow.com', 'realtor.com', 'move.com']; // VERIFY
+export const PORTAL_DOMAINS: readonly string[] = [
+  'zillow.com', 'realtor.com', 'move.com', // VERIFY
+  // the catalog portals without a vendor parser (trust.ts PORTAL_CATALOG): VERIFY each
+  'redfin.com', 'homes.com', 'homesnap.com', 'trulia.com', 'opcity.com',
+];
 
 /**
  * Vendor subjects that name the property, e.g. "New lead for 123 Main St" (VERIFY). Used only when no

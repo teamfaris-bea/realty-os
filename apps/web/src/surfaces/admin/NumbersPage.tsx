@@ -8,6 +8,12 @@
 // - A sending domain shows the DNS records to add and its SPF / DKIM / DMARC check results.
 //   Phase 1 has no list endpoint for domains (api/comms exposes add + verify only), so this page shows
 //   the domains added or checked during this visit; that limit is stated on the page.
+// - A tracking number can credit one lead source (module 22, R-TRK-1): a "Lead source" select on each live
+//   tracking number (PATCH /numbers/:id/lead-source) and on "Get a number" when the purpose is tracking. A
+//   number bought but not tied (the source was turned off meanwhile) comes with the server's notice, said as is.
+// - R-TWL-1 (b9 ui/F3): GET /numbers says whether texts and calls reach a phone (lib/telephony.ts). With the kill
+//   switch off or a simulated provider a notice at the top says so before any tap; with the switch off "Get number"
+//   is not offered, since the purchase can only be refused.
 import { useQuery } from '@tanstack/react-query';
 import { type FormEvent, useState } from 'react';
 import { Button, Card, Notice, TextField } from '../../design/index.js';
@@ -17,7 +23,8 @@ import { formatDate, roleLabel } from './lib/format.js';
 import { useAction, useAnnounce } from './lib/hooks.js';
 import { ADMIN_MESSAGES } from './lib/messages.js';
 import { IncomingCallsSettings } from './IncomingCallsSettings.js';
-import type { EmailIdentity, MembersResponse, PhoneNumber, Registration, SendingDomain } from './lib/types.js';
+import { type TelephonyMode, canBuyNumber, telephonyNotice } from './lib/telephony.js';
+import type { EmailIdentity, LeadSource, MembersResponse, PhoneNumber, Registration, SendingDomain } from './lib/types.js';
 import { ErrorLine, Pill, Section, SelectField, StatusLine, TextArea } from './lib/ui.js';
 
 const NUMBERS_KEY = ['admin', 'numbers'] as const;
@@ -49,26 +56,39 @@ export function registrationWords(status: string | null): { text: string; tone: 
 export default function NumbersPage() {
   const api = useApi();
   const [status, announce] = useAnnounce();
-  const numbers = useQuery<{ numbers: PhoneNumber[] }, ApiError>({ queryKey: NUMBERS_KEY, queryFn: ({ signal }) => api.get('/numbers', { signal }) });
+  const numbers = useQuery<{ numbers: PhoneNumber[]; telephony?: TelephonyMode }, ApiError>({ queryKey: NUMBERS_KEY, queryFn: ({ signal }) => api.get('/numbers', { signal }) });
+  const mode = numbers.data?.telephony;
+  const notice = telephonyNotice(mode);
   const members = useQuery<MembersResponse, ApiError>({ queryKey: ['admin', 'members'], queryFn: ({ signal }) => api.get('/members', { signal }) });
   const people = (members.data?.members ?? []).filter((m) => m.status === 'active');
   const nameOf = (id: string | null) => (id ? (people.find((m) => m.userId === id)?.displayName ?? 'a former member') : null);
+  const sourcesQ = useQuery<{ sources: LeadSource[] }, ApiError>({ queryKey: ['admin', 'lead-sources'], queryFn: ({ signal }) => api.get('/lead-sources', { signal }) });
+  const sources = sourcesQ.data?.sources ?? [];
   const live = (numbers.data?.numbers ?? []).filter((n) => !n.releasedAt);
   const [registrations, setRegistrations] = useState<Registration[]>([]);
   return (
     <div className="flex w-full flex-col gap-8">
       <StatusLine text={status} />
+      {notice.length > 0 ? (
+        <Notice tone="warn">
+          {notice.map((t) => (
+            <span key={t} className="block">
+              {t}
+            </span>
+          ))}
+        </Notice>
+      ) : null}
       <Section title="Phone numbers" description="Calls and texts to and from clients use these numbers.">
         {numbers.isError ? <Notice tone="error">{messageFor(numbers.error, ADMIN_MESSAGES)}</Notice> : null}
         {numbers.data && live.length === 0 ? <Notice tone="warn">There are no numbers yet, so nobody can call or text clients from the app.</Notice> : null}
         <ul className="flex flex-col gap-2">
           {live.map((n) => (
             <li key={n.id}>
-              <NumberRow number={n} assignee={nameOf(n.assignedUserId)} registrations={registrations} onDone={announce} />
+              <NumberRow number={n} assignee={nameOf(n.assignedUserId)} registrations={registrations} sources={sources} onDone={announce} />
             </li>
           ))}
         </ul>
-        <AcquireForm people={people.filter((m) => m.role !== 'tc').map((m) => ({ id: m.userId, label: `${m.displayName} · ${roleLabel(m.role)}` }))} registrations={registrations} onDone={announce} />
+        <AcquireForm people={people.filter((m) => m.role !== 'tc').map((m) => ({ id: m.userId, label: `${m.displayName} · ${roleLabel(m.role)}` }))} registrations={registrations} sources={sources.filter((x) => x.active)} canBuy={canBuyNumber(mode)} onDone={announce} />
       </Section>
       <IncomingCallsSettings onDone={announce} />
       <RegistrationForm onCreated={(r) => (setRegistrations((x) => [r, ...x]), announce('Registration saved'))} />
@@ -78,13 +98,20 @@ export default function NumbersPage() {
   );
 }
 
-function NumberRow({ number, assignee, registrations, onDone }: { number: PhoneNumber; assignee: string | null; registrations: Registration[]; onDone(t: string): void }) {
+function NumberRow({ number, assignee, registrations, sources, onDone }: { number: PhoneNumber; assignee: string | null; registrations: Registration[]; sources: LeadSource[]; onDone(t: string): void }) {
   const [confirming, setConfirming] = useState(false);
   const release = useAction<Record<string, never>, { number: PhoneNumber }>('POST', { invalidate: [[...NUMBERS_KEY]] });
   const refresh = useAction<Record<string, never>, { registration: Registration }>('POST', { invalidate: [[...NUMBERS_KEY]] });
   const attach = useAction<{ registrationId: string | null }, { number: PhoneNumber }>('PATCH', { invalidate: [[...NUMBERS_KEY]] });
-  const reg = registrationWords(number.registrationStatus);
-  const failure = release.error ?? refresh.error ?? attach.error;
+  const tie = useAction<{ leadSourceId: string | null }, { number: PhoneNumber }>('PATCH', { invalidate: [[...NUMBERS_KEY], ['admin', 'lead-sources'], ['lead-sources', 'overview']] });
+  // b9 review sends/F1 (honest UI): an approved registration does not mean THIS number may text when the carrier paused it
+  // (only over an approved registration, as the gate reads it: a suspended or rejected one says so itself)
+  const paused = !!number.textingPausedDetail && number.registrationStatus === 'approved';
+  const reg = paused ? { text: 'Texting paused for this number', tone: 'danger' as const } : registrationWords(number.registrationStatus);
+  const failure = release.error ?? refresh.error ?? attach.error ?? tie.error;
+  // the live sources, plus the one it credits now even if that one was turned off
+  const choices = sources.filter((x) => x.active || x.id === number.leadSourceId);
+  const sourceName = (id: string | null) => (id ? (sources.find((x) => x.id === id)?.name ?? 'a lead source') : null);
   return (
     <Card className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-3">
@@ -97,8 +124,33 @@ function NumberRow({ number, assignee, registrations, onDone }: { number: PhoneN
         </div>
         <Pill tone={reg.tone}>{reg.text}</Pill>
       </div>
+      {paused ? (
+        <p className="text-[14px] text-ink-muted">Texts from this number are paused: the carrier reports it isn&apos;t verified for texting. Calls still work, and other numbers are not affected.</p>
+      ) : null}
+      {number.purpose === 'tracking' ? (
+        <SelectField
+          label="Lead source"
+          value={number.leadSourceId ?? ''}
+          disabled={tie.pending}
+          className="sm:max-w-sm"
+          hint="New callers and texters on this number become leads credited to this source."
+          onChange={async (e) => {
+            const v = e.target.value || null;
+            const r = await tie.run(`/numbers/${number.id}/lead-source`, { leadSourceId: v });
+            if (r.ok) onDone(v ? `${formatPhone(number.e164)} now credits ${sourceName(v)}` : `${formatPhone(number.e164)} credits no lead source`);
+          }}
+        >
+          <option value="">None</option>
+          {choices.map((x) => (
+            <option key={x.id} value={x.id}>
+              {x.name}
+              {x.active ? '' : ' (off)'}
+            </option>
+          ))}
+        </SelectField>
+      ) : null}
       <div className="flex flex-wrap gap-2">
-        {number.registrationId && number.registrationStatus !== 'approved' ? (
+        {number.registrationId && (number.registrationStatus !== 'approved' || paused) ? (
           <Button variant="secondary" pending={refresh.pending} onClick={async () => (await refresh.run(`/sender-registrations/${number.registrationId}/refresh`, {})).ok && onDone('Registration status checked')}>
             Check registration status
           </Button>
@@ -129,17 +181,24 @@ function NumberRow({ number, assignee, registrations, onDone }: { number: PhoneN
   );
 }
 
-function AcquireForm({ people, registrations, onDone }: { people: { id: string; label: string }[]; registrations: Registration[]; onDone(t: string): void }) {
+function AcquireForm({ people, registrations, sources, canBuy, onDone }: { people: { id: string; label: string }[]; registrations: Registration[]; sources: LeadSource[]; canBuy: boolean; onDone(t: string): void }) {
   const [purpose, setPurpose] = useState<string>('team_main');
   const [area, setArea] = useState('');
   const [user, setUser] = useState('');
-  const a = useAction<Record<string, unknown>, { number: PhoneNumber }>('POST', { invalidate: [[...NUMBERS_KEY]] });
+  const [source, setSource] = useState('');
+  const a = useAction<Record<string, unknown>, { number: PhoneNumber; notice?: string }>('POST', { invalidate: [[...NUMBERS_KEY], ['admin', 'lead-sources'], ['lead-sources', 'overview']] });
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    const r = await a.run('/numbers', { purpose, ...(area ? { areaCode: area } : {}), ...(purpose === 'agent_direct' && user ? { assignedUserId: user } : {}), ...(registrations[0] ? { registrationId: registrations[0].id } : {}) });
+    const r = await a.run('/numbers', {
+      purpose,
+      ...(area ? { areaCode: area } : {}),
+      ...(purpose === 'agent_direct' && user ? { assignedUserId: user } : {}),
+      ...(registrations[0] ? { registrationId: registrations[0].id } : {}),
+      ...(purpose === 'tracking' && source ? { leadSourceId: source } : {}),
+    });
     if (r.ok) {
       setArea('');
-      onDone(`${formatPhone(r.data.number.e164)} added`);
+      onDone(r.data.notice ?? `${formatPhone(r.data.number.e164)} added`);
     }
   };
   return (
@@ -161,8 +220,18 @@ function AcquireForm({ people, registrations, onDone }: { people: { id: string; 
           ))}
         </SelectField>
       ) : null}
+      {purpose === 'tracking' ? (
+        <SelectField label="Lead source" value={source} onChange={(e) => setSource(e.target.value)} className="md:w-64">
+          <option value="">None for now</option>
+          {sources.map((x) => (
+            <option key={x.id} value={x.id}>
+              {x.name}
+            </option>
+          ))}
+        </SelectField>
+      ) : null}
       <TextField label="Area code (optional)" inputMode="numeric" maxLength={3} value={area} onChange={(e) => setArea(e.target.value.replace(/\D/g, ''))} className="md:w-48" />
-      <Button type="submit" pending={a.pending} disabled={(area !== '' && !/^[2-9]\d{2}$/.test(area)) || (purpose === 'agent_direct' && !user)}>
+      <Button type="submit" pending={a.pending} disabled={!canBuy || (area !== '' && !/^[2-9]\d{2}$/.test(area)) || (purpose === 'agent_direct' && !user)}>
         Get number
       </Button>
       <ErrorLine message={a.error?.message} />

@@ -39,6 +39,8 @@ import { telephonyAccount } from '../comms/repos/credentials.js';
 import { verifyMailgunSignature } from './email/mailgun.js';
 import { snsVerifier } from './email/ses.js';
 import { tagGuard } from '../rbac.js';
+import { verifyLeadSourceRequest } from '../leads/webhookAuth.js';
+import { verifyGoogleLeadKey } from '../leadForms/auth.js';
 import { systemActor } from '../worker/systemActor.js';
 
 export type WebhookProvider = 'telephony' | 'email' | 'lead';
@@ -47,12 +49,14 @@ declare module 'fastify' {
   interface FastifyContextConfig {
     webhookProvider?: WebhookProvider;
     /** a vendor email format's own authentication instead of the generic X-Realty-Signature */
-    webhookAuth?: 'basic' | 'sendgrid_ecdsa' | 'sns' | 'mailgun_hmac';
+    webhookAuth?: 'basic' | 'sendgrid_ecdsa' | 'sns' | 'mailgun_hmac' | 'lead_source' | 'google_lead_key';
   }
   interface FastifyRequest {
     rawBody?: string;
     /** TELEPHONY_PROVIDER=twilio: the tenant whose subaccount signed this request (null: the master account) */
     webhookTenantId?: string | null;
+    /** webhookAuth 'google_lead_key': the hook the body's google_key resolved to (leadForms/auth.ts) */
+    googleLeadHook?: { tenantId: string; hookId: string; leadSourceId: string };
   }
 }
 
@@ -169,6 +173,10 @@ export async function verifyRequest(provider: WebhookProvider, req: FastifyReque
   if (provider === 'email' && auth === 'sns') return snsVerifier.verify(req.body, p.config.emailInbound.sesSnsTopicArns, p.clock.now());
   if (provider === 'email' && auth === 'mailgun_hmac') return verifyMailgunSignature(p.config.emailInbound.mailgunWebhookSigningKey, req.body, Math.floor(p.clock.now() / 1000), SIGNATURE_TOLERANCE_S);
   if (provider === 'telephony' && p.config.providers.telephony === 'twilio') return verifyTwilioAccount(req);
+  // module 22: a lead source's own signing secret (R-LSRC-3); without one, the deployment secret below
+  if (provider === 'lead' && auth === 'lead_source') return verifyLeadSourceRequest(req);
+  // module 22: a Google Ads lead form's key in the body (R-GADS-1); a lookup that throws is WEBHOOK_UNAVAILABLE
+  if (provider === 'lead' && auth === 'google_lead_key') return verifyGoogleLeadKey(req);
   return verifyWebhook(provider, req);
 }
 
@@ -187,7 +195,13 @@ export async function recordRejectedWebhook(req: FastifyRequest, provider: Webho
 export const webhookGuard: preHandlerHookHandler = tagGuard(async function webhookGuard(req) {
   const provider = req.routeOptions.config.webhookProvider;
   if (!provider) throw new AppError('INTERNAL_ERROR');
-  if (!(await verifyRequest(provider, req).catch(() => false))) {
+  // A check that could not run (WEBHOOK_UNAVAILABLE: the database was unreachable) is a 503 the provider retries,
+  // with no rejected row (module 22, R-GADS-1 E591). Every other exception is still a 403.
+  const ok = await verifyRequest(provider, req).catch((e: unknown) => {
+    if (e instanceof AppError && e.code === 'WEBHOOK_UNAVAILABLE') throw e;
+    return false;
+  });
+  if (!ok) {
     await recordRejectedWebhook(req, provider);
     throw new AppError('WEBHOOK_SIGNATURE_INVALID');
   }

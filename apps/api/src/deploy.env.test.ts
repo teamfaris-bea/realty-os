@@ -50,6 +50,7 @@ describe('deploy/env.staging.example', () => {
     expect(c.providers).toEqual({ ai: 'fake', telephony: 'fake', email: 'fake', storage: 'local', push: 'fake' });
     expect(c.fub.provider).toBe('fake');
     expect(c.mls).toMatchObject({ provider: 'fake', liveCalls: false });
+    expect(c.telephonyLiveRequests).toBe(false);
     expect(c.kekRef).toBe('staging-kek:v1');
     expect(c.cookieSecure).toBe(true);
     expect(loadObservabilityConfig(env).metrics).toMatchObject({ port: 9464 });
@@ -222,6 +223,7 @@ describe('deploy/env.production.example', () => {
     expect(missing.length).toBeGreaterThan(0);
     for (const k of missing) expect(vars.has(k), `${k} is required but not in the template`).toBe(true);
     expect(vars.get('MLS_LIVE_CALLS')).toBe('false');
+    expect(vars.get('TELEPHONY_LIVE_REQUESTS')).toBe('false');
     expect(vars.get('ALLOW_FAKE_PROVIDERS')).toBe('false');
   });
 });

@@ -119,4 +119,11 @@ describe('Lead routing', () => {
     expect(fromInput('days', '')).toBeNull();
     expect(fromInput('days', '1.5')).toBeNull();
   });
+
+  it('lead sources live on their own page: one line links there, and no email intake is shown here', async () => {
+    leadAdminApp(routingFake(), '/admin/routing', 'owner');
+    expect(await screen.findByRole('link', { name: 'Lead sources' })).toHaveAttribute('href', '/admin/lead-sources');
+    expect(screen.queryByRole('region', { name: /Email intake/ })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Lead sources' })).toBeNull();
+  });
 });
