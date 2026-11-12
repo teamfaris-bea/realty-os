@@ -294,6 +294,18 @@ describe('module 37: compose on the client\'s last open channel', () => {
     agentApp(fake().on(`GET /contacts/${IDS.jane}/reachability`, summary('none')), `/contacts/${IDS.jane}/thread`);
     await waitFor(() => expect(screen.getByRole('radio', { name: 'Email' })).toBeInTheDocument());
     await waitFor(() => expect(screen.queryByRole('radio', { name: 'Web chat' })).toBeNull());
+    // Jane wrote last in a chat nobody can answer from here: the box says so instead of moving to Text silently
+    expect(screen.getByTestId('channel-why')).toHaveTextContent("Writing by text: this website chat can't be answered from this record.");
+  });
+
+  it('review ui-compose/F2: opened from Reply (?compose=web_chat) when the summary has no chat to answer, the box never falls silently to Text: it says why it writes by text', async () => {
+    const items = [timelineItem({ id: ids(7), detail: 'sms:inbound', preview: 'thanks', occurredAt: iso(-3_600_000) }), ...chatThenText().slice(1)];
+    agentApp(fake(items).on(`GET /contacts/${IDS.jane}/reachability`, summary('none')), `/contacts/${IDS.jane}/thread?compose=web_chat`);
+    const text = await screen.findByRole('radio', { name: 'Text' });
+    await waitFor(() => expect(text).toBeChecked());
+    expect(screen.queryByRole('radio', { name: 'Web chat' })).toBeNull();
+    // Jane texted last, but the agent tapped Reply in the chat: the line says why the box is on Text, not "where Jane wrote last"
+    expect(screen.getByTestId('channel-why')).toHaveTextContent("Writing by text: this website chat can't be answered from this record.");
   });
 
   it('D1: Jane texted last but texting is blocked: the box writes by email, says why, and Text shows the exact reason', async () => {

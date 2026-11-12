@@ -37,7 +37,7 @@ import { REACHABILITY_KEY, ReasonCaption, channelState, useReachabilityQuery } f
 import { type ApiError, useApi, useCommand } from '../../shell/index.js';
 import { SendOutcome, WENT_OUT, sendOutcomeText, sentResult, useAgentSheets } from '../feed/lib/AgentSheets.js';
 import { CHANNEL_NOT_CONNECTED, type ComposeChannel, useWebChatApprove, useWebChatSend } from './channelApi.js';
-import { chooseChannel, webChatState } from './channelChoice.js';
+import { CHAT_NOT_HERE, chooseChannel, webChatState } from './channelChoice.js';
 import { firstName, formatPhone } from '../feed/lib/format.js';
 import { useSendCheck } from '../feed/lib/sendCheck.js';
 import type { ActionView, ApproveResponse, ComposeResponse, TypedInChat } from '../feed/lib/types.js';
@@ -328,10 +328,12 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
 
   // nothing to write on at all, or nothing that can take a message now: no template and no draft (nothing could send them)
   const nothingSends = settled && choice.channel === null;
+  // asked to reply in a chat the summary has nothing to reply to (review ui-compose/F2): said, never left out
+  const chatNotHere = choiceInput.webChat.missing && [initialChannel, lastInboundChannel].includes('web_chat');
   if (settled && noChannel)
     return (
       <div className="flex flex-col gap-2">
-        <Notice tone="info">There's no phone number or email on file to message.</Notice>
+        <Notice tone="info">There's no phone number or email on file to message.{chatNotHere ? ` ${CHAT_NOT_HERE}.` : ''}</Notice>
         <TypedInChatNote contact={contact} />
       </div>
     );

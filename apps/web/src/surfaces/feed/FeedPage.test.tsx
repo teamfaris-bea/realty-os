@@ -394,6 +394,17 @@ describe('Priority Feed: opt-outs said before the tap (lane optout-visibility)',
     await waitFor(() => expect(reply).toBeDisabled());
     expect(reply).toHaveAccessibleDescription('The chat has ended: they left the page');
   });
+
+  it('review ui-compose/F2: Reply on a card whose summary has no chat to answer is disabled before the tap and says why; it never opens a text box in its place', async () => {
+    const c = card({ primaryAction: { kind: 'reply_chat', label: 'Reply', contactId: IDS.jane } });
+    const fake = new FakeFetch()
+      .on('GET /feed', { status: 200, body: feed([], [c]) })
+      .on(`GET /reachability?contactIds=${IDS.jane}`, { status: 200, body: { reachability: [reachability(IDS.jane, {}, 'none')] } });
+    agentApp(fake);
+    const reply = await screen.findByRole('button', { name: 'Reply' });
+    await waitFor(() => expect(reply).toBeDisabled());
+    expect(reply).toHaveAccessibleDescription("This website chat can't be answered from this record");
+  });
 });
 
 

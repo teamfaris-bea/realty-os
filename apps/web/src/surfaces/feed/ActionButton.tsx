@@ -4,7 +4,8 @@
 //   call                                   tap-to-call with the post-call outcome sheet
 //   text / email / edit_draft              the thread with the compose box (assistant draft prefilled)
 //   reply_chat                             the thread with the box on web chat, where the client wrote last (module 22);
-//                                          disabled before the tap once the chat ended, with the summary's reason
+//                                          disabled before the tap once the chat ended, with the summary's reason, and
+//                                          when the summary has no chat to answer (review ui-compose/F2)
 //   send_draft                             approve the assistant's draft as is → send (1 tap)
 //   review_handback                        the approvals inbox at that handback
 //   complete_task / complete_deal_date     mark done
@@ -27,7 +28,7 @@ import { type ReactNode, useId } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, type ButtonVariant, type IconName } from '../../design/index.js';
 import { type ChannelState, ReasonCaption, channelState, useChannelState, useReachability } from '../../reasons/index.js';
-import { webChatState } from '../compose/channelChoice.js';
+import { replyChatState } from '../compose/channelChoice.js';
 import { useCommand } from '../../shell/index.js';
 import { useInbox } from '../approvals/ApprovalsPage.js';
 import { sendOutcomeText, sentResult, useAgentSheets } from './lib/AgentSheets.js';
@@ -250,7 +251,7 @@ function NavButton({ action, card, variant = 'primary', block, className }: Acti
   const channel = action.kind === 'text' ? 'sms' : action.kind === 'email' ? 'email' : null;
   const chat = action.kind === 'reply_chat';
   const summary = useReachability((channel || chat) && 'contactId' in action ? action.contactId : null);
-  const reach: ChannelState = chat ? webChatState(summary, true) : channel ? channelState(summary, channel) : { blocked: false, sentence: null, note: null };
+  const reach: ChannelState = chat ? replyChatState(summary) : channel ? channelState(summary, channel) : { blocked: false, sentence: null, note: null };
   const reasonId = useId();
   return (
     <Wrap note={note} block={block} reach={reach} reasonId={reasonId}>
