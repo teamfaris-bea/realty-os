@@ -12,7 +12,15 @@ export const NOT_CHECKED = 'Not checked yet: county checks run overnight';
 export const AMBIGUOUS = 'More than one county record matches this address; nothing was kept.';
 export const ADDRESS_MISMATCH = 'The county record found has a different address; nothing was kept.';
 export const NOT_AVAILABLE = 'The county has no record for this address.';
-export const OUTSIDE = 'County records for this area are not read automatically.';
+/** E577 (b11 reconciliation homeowner-5): no county in the platform table, so no lookup and no link. */
+export const OUTSIDE = 'No county source for this address.';
+/** E560 (b11 reconciliation homeowner-4): recognised, but no complete home or property address and no K2 address. */
+export const ADD_HOME = 'Add the home address to build the profile.';
+/**
+ * The D9 slots (b11 ownership-data/F8, api-ui/F7): batch 10 built the MLS sold data and the in-house value (CMA V1),
+ * but this panel does not read them yet, so they are "not shown here", never "not built".
+ */
+export const D9_NOT_SHOWN = 'Not shown on this panel yet';
 export const TAX_MAIL_ELSEWHERE = 'Tax mail goes elsewhere';
 export const TAX_MAIL_HERE = 'Tax mail comes to this address';
 
@@ -72,7 +80,7 @@ export function sourceLine(row: Extract<ViewRow, { state: 'value' }>): string {
 }
 
 export function whyText(row: Exclude<ViewRow, { state: 'value' }>): string {
-  if (row.state === 'pending_d9') return row.key === 'mls_sale_history' ? "Shown here once the team's MLS sale data is built" : 'Shown here once the in-house valuation is built';
+  if (row.state === 'pending_d9') return D9_NOT_SHOWN;
   switch (row.why) {
     case 'not_in_record':
       return 'Not available: the county record read does not include it';

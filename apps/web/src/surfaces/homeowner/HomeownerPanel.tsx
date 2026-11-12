@@ -127,7 +127,7 @@ export function HomeownerPanel({ contact }: { contact: ContactFullView }) {
         <p className="text-[14px] font-medium text-ink">{T.INTERNAL}</p>
         <p className="text-[14px] text-ink-muted">{T.reasonsText(v.reasons)}</p>
       </header>
-      {v.homes.length === 0 ? <p className="text-[15px] text-ink-muted">No home or property address is recorded for this person.</p> : null}
+      {v.homes.length === 0 ? <p className="text-[15px] text-ink-muted">{T.ADD_HOME}</p> : null}
       {v.homes.map((home, i) => (
         <Home key={`${home.address}-${i}`} home={home} firstName={contact.firstName} index={i} />
       ))}

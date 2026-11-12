@@ -65,8 +65,9 @@ describe('the homeowner panel (R-HOME-8)', () => {
     expect(screen.getByText(`Owned 11 years: since the transfer on Jun 1, 2015 (source: ${SRC})`)).toBeTruthy();
     expect(screen.getByText(T.TAX_MAIL_ELSEWHERE)).toBeTruthy();
     expect(screen.getAllByText('Not available: the county record read does not include it', { exact: false }).length).toBeGreaterThan(0);
-    expect(screen.getByText("Shown here once the team's MLS sale data is built")).toBeTruthy();
-    expect(screen.getByText('Shown here once the in-house valuation is built')).toBeTruthy();
+    // b11 ownership-data/F8, api-ui/F7: CMA V1 built the MLS sold data and the in-house value; they are not wired here yet
+    expect(screen.getAllByText(T.D9_NOT_SHOWN)).toHaveLength(2);
+    expect(document.body.textContent).not.toMatch(/once .* is built/);
     expect(screen.getByText(`${T.LOANS}:`, { exact: false })).toBeTruthy();
     expect(screen.getByText(T.FOOTER)).toBeTruthy();
     expect(screen.getByText('Not for outreach: these records never address or trigger messages. Outreach use: not built; counsel clearance not recorded for this deployment.')).toBeTruthy();
@@ -149,6 +150,23 @@ describe('the homeowner panel (R-HOME-8)', () => {
     expect(screen.queryAllByRole('button')).toEqual([]);
     expect(document.body.textContent).not.toMatch(/\b(copy all|export|send|text them|add to list|check now)\b/i);
     expect(screen.getByText('Not for outreach: these records never address or trigger messages. Outreach use: not built; counsel clearance recorded on Nov 12, 2026 for this deployment.')).toBeTruthy();
+  });
+
+  // b11 reconciliation homeowner-4: "No home or property address is recorded" was false with an incomplete one on file
+  it('R-HOME-2 R-HOME-5 E560: a recognised person with no home to look up is asked for the home address', async () => {
+    mount(view([]));
+    await panel();
+    expect(screen.getByText('Add the home address to build the profile.')).toBeTruthy();
+    expect(screen.queryByText(/No home or property address is recorded/)).toBeNull();
+  });
+
+  // b11 reconciliation homeowner-5: "County records for this area are not read automatically." suggested a manual source
+  it('R-HOME-5 E577: an address outside South Carolina or the listed ZIPs says there is no county source, with no link', async () => {
+    mount(view([{ address: { ...BEAUFORT, region: 'GA', postalCode: '31401' }, kind: 'home', profile: null }]));
+    await panel();
+    expect(screen.getByText('No county source for this address.')).toBeTruthy();
+    expect(screen.queryAllByRole('link')).toEqual([]);
+    expect(screen.queryByText(/not read automatically/)).toBeNull();
   });
 
   it('R-HOME-8 E585: hidden when the person is not recognised or the viewer cannot read it', async () => {

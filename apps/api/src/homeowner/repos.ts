@@ -285,7 +285,12 @@ export interface ViewHomeRow {
   team_closed_on: string | null;
 }
 
-/** The contact's home and property addresses and every address with a visible profile (the profile's own RLS). */
+/**
+ * The contact's subjects as the viewer sees them: complete home and property addresses, complete K2 addresses of any
+ * kind (the viewer's deals; b11 reconciliation homeowner-4, E560), and every address with a visible profile (the
+ * profile's own RLS). An incomplete address and a plain mailing or interest row are never listed: nothing is looked up
+ * for them, and the panel then asks for the home address.
+ */
 export async function viewHomes(tx: Tx, contactId: string, tz: string): Promise<ViewHomeRow[]> {
   const r = await sql<ViewHomeRow>`
     SELECT a.id AS address_id, a.kind, a.line1, a.line2, a.city, a.region, a.postal_code,
@@ -298,7 +303,8 @@ export async function viewHomes(tx: Tx, contactId: string, tz: string): Promise<
       JOIN contacts c ON c.tenant_id = a.tenant_id AND c.id = a.contact_id
       LEFT JOIN homeowner_profiles p ON p.tenant_id = a.tenant_id AND p.contact_address_id = a.id
      WHERE a.tenant_id = app.tenant_id() AND a.contact_id = ${contactId}::uuid
-       AND (p.id IS NOT NULL OR (a.kind IN ('home','property') AND a.line1 IS NOT NULL AND a.city IS NOT NULL AND a.region IS NOT NULL AND a.postal_code IS NOT NULL))
+       AND (p.id IS NOT NULL OR (a.line1 IS NOT NULL AND a.city IS NOT NULL AND a.region IS NOT NULL AND a.postal_code IS NOT NULL
+                                 AND (a.kind IN ('home','property') OR ${avmQualifies('c', 'a')})))
      ORDER BY (p.id IS NULL), a.kind, a.created_at, a.id
      LIMIT 20`.execute(tx);
   return r.rows;

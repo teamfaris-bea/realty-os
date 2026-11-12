@@ -139,6 +139,21 @@ describe('recognition builds a profile (R-HOME-1, R-HOME-3)', () => {
     expect((await profileOf(h, interestId)).profile).toBeNull();
   });
 
+  // b11 reconciliation homeowner-2/-4: the brief's E560
+  it('R-HOME-2 E560: a recognised contact with no complete home or property address and no K2 address gets no lookup and no profile', async () => {
+    const records = fake();
+    const c = await ownedContact(w.agents[0]!, { firstName: 'Rae', consent: false });
+    const mailing = nextBeaufortAddress();
+    const mailingId = await addAddress(w.agents[0]!, c.id, mailing, 'mailing');
+    await h.su.query(`INSERT INTO contact_addresses (tenant_id, id, contact_id, kind, line1, region, postal_code) VALUES ($1, gen_random_uuid(), $2, 'home', '5 Sample Lane', 'SC', '29902')`, [w.tenantId, c.id]);
+    await recognise(h, w, c.id, w.agents[0]!.userId!, 'seller_intent');
+    records.put(mailing, countyRecord(mailing, ['RAE DOE']));
+    await refresh(h, w.tenantId, { publicRecords: records });
+    expect(records.homeownerCalls.filter((k) => k.startsWith(`${mailing.line1.split(' ')[0]} sample`) || k.startsWith('5 sample'))).toEqual([]);
+    expect((await profileOf(h, mailingId)).profile).toBeNull();
+    expect(Number((await h.su.query('SELECT count(*)::int AS n FROM homeowner_profiles WHERE contact_id = $1', [c.id])).rows[0].n)).toBe(0);
+  });
+
   it('R-HOME-10 R-HOME-7: a pass sends, enqueues, notifies, cards and writes nothing else: no message, job, feed card, task, notification, enrollment, audit row, address, tag or deal', async () => {
     const records = fake();
     await homeowner(h, w, w.agents[0]!, records);

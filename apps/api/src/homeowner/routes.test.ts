@@ -136,6 +136,25 @@ describe('GET /api/contacts/:id/homeowner (R-HOME-8)', () => {
     expect((await get(w.agents[0]!, c.id)).body.reasons).toEqual([{ reason: 'seller_inquiry', since: '2022-08-09' }]);
   });
 
+  // b11 reconciliation homeowner-4: the panel listed only home and property rows, so a past buyer's K2 mailing subject
+  // that was not checked yet was missing and the panel said no address was recorded.
+  it('R-HOME-2 E560: an unchecked K2 subject of any kind is listed; an incomplete home and a plain mailing row are not', async () => {
+    const c = await ownedContact(w.agents[0]!, { firstName: 'Kai', consent: false });
+    const bought = nextBeaufortAddress();
+    await addAddress(w.agents[0]!, c.id, bought, 'mailing');
+    await closedDeal(h, w.tenantId, c.id, w.agents[0]!.userId!, beforeThisMonth(), { listing: { line1: bought.line1, city: bought.city, postalCode: bought.postalCode } });
+    const r = await get(w.agents[0]!, c.id);
+    expect(r.body.reasons.map((x) => x.reason)).toEqual(['past_buyer']);
+    expect(r.body.homes.map((x) => [x.address.split(',')[0], x.outcome])).toEqual([[bought.line1, 'pending']]);
+    // a recognised seller with only a mailing row and an incomplete home: nothing to look up, so no home is listed
+    const s = await ownedContact(w.agents[0]!, { firstName: 'Rae', consent: false });
+    await addAddress(w.agents[0]!, s.id, nextBeaufortAddress(), 'mailing');
+    await h.su.query(`INSERT INTO contact_addresses (tenant_id, id, contact_id, kind, line1, region, postal_code) VALUES ($1, gen_random_uuid(), $2, 'home', '5 Sample Lane', 'SC', '29902')`, [w.tenantId, s.id]);
+    await h.su.query(`UPDATE contacts SET intent = 'seller' WHERE id = $1`, [s.id]);
+    const v = await get(w.agents[0]!, s.id);
+    expect(v.body).toMatchObject({ recognized: true, homes: [] });
+  });
+
   it('R-HOME-10: the outreach line is never built; the counsel clearance shows only once recorded', async () => {
     const c = await homeowner(h, w, w.agents[0]!, records);
     expect((await get(w.agents[0]!, c.id)).body.outreach).toEqual({ built: false, clearanceOn: null });
