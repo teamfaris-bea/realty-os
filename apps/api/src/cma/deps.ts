@@ -51,6 +51,18 @@ export {
   type CmaTier,
 } from '@realty/core/valuation';
 
+// From the PDF renderer (batch 7; pdf.ts): its type sizes and its WinAnsi reduction, which statement.ts judges text by.
+// From module 29 (marketing/repo.ts) and core/fairhousing: the fair-housing pack (fails closed) and its check, on the
+// agent's own CMA text (R-FH-1, R-CMA-9). From core/valuation: the money and distance words. From core/listings: the
+// freshness window (DATA_OLD). From module 22 (comms): the human email created in the sharer's transaction, its
+// preview, dispatch and the deny sentences (D1, R-GATE-14; ARCHITECTURE §9 path 1).
+export { SIZE, winAnsi } from '../providers/integrations/pdf.js';
+export { fairHousingPack, identityOf } from '../marketing/repo.js';
+export { check as fairHousingCheck } from '@realty/core/fairhousing';
+export { money, miles } from '@realty/core/valuation';
+export { feedStale, type DisplayListing } from '@realty/core/listings';
+// comms: added with deliverable 3
+
 /** V1-A's tier read names → V1-B's tier names (the same areas: V1-A reads geo cells, V1-B measures the real distance). */
 export const ENGINE_TIER: Readonly<Record<SoldTier, CmaTier | 'rate_pool'>> = Object.freeze({
   subdivision: 'subdivision',
