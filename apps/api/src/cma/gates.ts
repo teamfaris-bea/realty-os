@@ -167,6 +167,15 @@ export interface ReadinessInput {
   readConnectionIds: readonly string[];
   nearMatchDismissed: readonly string[];
   hasValue: boolean;
+  /**
+   * The output readiness is read for (lane V2-B, R-CMA-10): 'client_cma' (V1's CMA, the default) or 'automated_notes'
+   * (in-house home-value notes and seller value ranges). Under automated_notes the pack's automated_notes records the
+   * use, V1-A's gate is asked for automated_notes, a live record withholding automated valuations withholds under
+   * either avm_flag_scope (M2) and no dismissal sets a near match aside (nothing is reviewed by a person first).
+   */
+  use?: 'client_cma' | 'automated_notes';
+  /** listings that are the subject itself (its listing and mirrors, R-MLS-5): never near matches, under every use (E633) */
+  selfListingIds?: readonly string[];
 }
 
 export interface NearMatch {
@@ -241,14 +250,20 @@ const REFUSAL_BLOCKER: Readonly<Record<ValuationRefusal, PlainBlocker>> = {
 export async function clientReadiness(tx: Tx, i: ReadinessInput): Promise<{ share: ClientShare; nearMatches: NearMatch[] }> {
   const blockers: Blocker[] = [];
   const { e, used } = i.conns;
+  const use = i.use ?? 'client_cma';
+  const notes = use === 'automated_notes';
   const has = (code: BlockerCode) => blockers.some((b) => b.code === code);
   const sentence: Record<PlainBlocker, string> = {
-    PLATFORM_NOT_CLEARED: 'Client CMAs and seller value ranges wait for counsel review of the in-house CMA wording (platform:cma), which is not recorded.',
+    PLATFORM_NOT_CLEARED: notes
+      ? 'Home-value notes and seller value ranges from recent MLS sales wait for counsel review of the in-house values (platform:cma), which is not recorded.'
+      : 'Client CMAs and seller value ranges wait for counsel review of the in-house CMA wording (platform:cma), which is not recorded.',
     FEED_DISCONNECTED: 'An MLS feed this CMA was built from is no longer connected, so nothing from it could be shown to a client.',
     VALUATION_USE_WITHDRAWN: `Your MLS licence pack no longer says this feed’s sold data may be used for valuations, so this CMA could not be shown to a client. ${VALUATION_USE_WHERE}`,
     MLS_CLIENT_DISPLAY_OFF: 'Your MLS licence pack does not allow showing MLS data to clients yet (it needs counsel review, an attribution and a disclaimer).',
     FEED_STALE: 'The MLS feed is out of date, so nothing from it could be shown to a client until it syncs again.',
-    CLIENT_USE_NOT_ALLOWED: `Your MLS licence pack does not say sold data may be used in CMAs for clients. ${VALUATION_USE_WHERE}`,
+    CLIENT_USE_NOT_ALLOWED: notes
+      ? `Your MLS licence pack does not say sold data may be used in automated home-value notes and seller value ranges. ${VALUATION_USE_WHERE}`
+      : `Your MLS licence pack does not say sold data may be used in CMAs for clients. ${VALUATION_USE_WHERE}`,
     VALUATION_NOT_REVIEWED: 'The valuation part of your MLS licence pack has not been reviewed by counsel.',
     NO_VALUATION_STATEMENT: i.state === null ? 'The home’s state is not known, so no valuation statement applies.' : `No valuation statement is recorded for ${i.state}.`,
     SUBJECT_ADDRESS_UNKNOWN: 'The home’s full address (street, city, state and ZIP code) is not known, so its own MLS listings and live listings that may be this home could not be checked. To check them, prepare a new CMA with the home’s full address.',
@@ -279,12 +294,12 @@ export async function clientReadiness(tx: Tx, i: ReadinessInput): Promise<{ shar
       if (!conn.pack.valuation.agentCma) add('VALUATION_USE_WITHDRAWN');
       if (!(packReviewed(conn.pack) && conn.pack.attributionText !== null && conn.pack.disclaimerText !== null)) add('MLS_CLIENT_DISPLAY_OFF');
       if (e.staleIds.includes(id)) add('FEED_STALE');
-      if (!conn.pack.valuation.clientCma) add('CLIENT_USE_NOT_ALLOWED');
+      if (!(notes ? conn.pack.valuation.automatedNotes : conn.pack.valuation.clientCma)) add('CLIENT_USE_NOT_ALLOWED');
       if (conn.pack.valuation.reviewedByCounselAt === null) add('VALUATION_NOT_REVIEWED');
       if (valuationStatement(conn.pack, i.state) === null) add('NO_VALUATION_STATEMENT');
     }
     // V1-A's client gate is the authority: its refusal is always listed (a deleted connection: NO_MLS_CONNECTION)
-    const v = valuationEligible(e, id, 'client_cma', i.state, i.now);
+    const v = valuationEligible(e, id, use, i.state, i.now);
     if (!v.ok) add(REFUSAL_BLOCKER[v.code]);
   }
   // keep the canonical order of the codes so far (the order they were added may differ across connections)
@@ -307,7 +322,8 @@ export async function clientReadiness(tx: Tx, i: ReadinessInput): Promise<{ shar
   const live = await liveOnStreet(tx, i.addressKey);
   const subjectRows = [...atKey, ...(i.subjectMlsListingId ? await listingRows(tx, [i.subjectMlsListingId]) : []), ...live.filter((r) => keyOfRow(r) === i.addressKey)];
   const scopeOf = (r: ListingRow) => e.pack(r.mls_connection_id)?.valuation.avmFlagScope ?? 'all_client_outputs';
-  const withheld = subjectRows.filter((r) => LIVE_STATUSES.includes(r.status) && (!flagRead(r) || !r.avm_display_allowed) && scopeOf(r) === 'all_client_outputs');
+  // M2 (lane V2-B): automated notes and seller ranges are withheld under either scope (VERIFY WITH MLS)
+  const withheld = subjectRows.filter((r) => LIVE_STATUSES.includes(r.status) && (!flagRead(r) || !r.avm_display_allowed) && (notes || scopeOf(r) === 'all_client_outputs'));
   if (withheld.length > 0) {
     blockers.push({
       code: 'SELLER_WITHHELD',
@@ -319,7 +335,9 @@ export async function clientReadiness(tx: Tx, i: ReadinessInput): Promise<{ shar
   }
 
   // F2: a live listing that may be this home, until the agent confirms it is a different one
-  const matches = await nearMatches(tx, i.addressKey, i.nearMatchDismissed, live);
+  // E633: the subject's own listing and mirrors are never near matches; under automated_notes no dismissal applies
+  const self = new Set(i.selfListingIds ?? []);
+  const matches = (await nearMatches(tx, i.addressKey, notes ? [] : i.nearMatchDismissed, live)).filter((m) => !self.has(m.listingId));
   for (const m of matches.filter((x) => !x.dismissed)) {
     blockers.push({
       code: 'POSSIBLE_LIVE_LISTING',
