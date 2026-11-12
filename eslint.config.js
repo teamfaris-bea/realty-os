@@ -154,6 +154,7 @@ export default tseslint.config(
       'apps/api/src/leads/routing*',
       'apps/api/src/leads/routing*/**/*.{ts,tsx}',
       'apps/web/src/portal/**/*.{ts,tsx}',
+      'apps/api/src/cma/**/*.{ts,tsx}', // D9 module 71: valuations read no prediction (R-PRED-4, R-CMA-2)
     ],
     rules: { 'realty/no-prediction-import': 'error' },
   },

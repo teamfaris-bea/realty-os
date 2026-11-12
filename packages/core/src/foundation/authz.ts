@@ -157,6 +157,7 @@ export const ACTIONS = [
   'coaching.settings', // module 36: call scoring on/off, Team Lead visibility, rubric items (Owner; an Admin may only turn call reviews off; widening needs 🔒)
   'milestone.confirm', // module 31 (DATA_MODEL §8 "Confirm or move a milestone date"): plan, confirm, enter, move, complete a deal date
   'milestone_template.manage', // module 31: tenant milestone templates (not a §8 row: Owner/Admin, flagged; R-TXN-6)
+  'cma.prepare', // module 71 (D9): prepare, edit or view a CMA (DATA_MODEL §8: ✅ | ✅ | T | O | — | — | —; R-CMA-6)
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -331,6 +332,7 @@ export const AUDIT_ACTIONS = [
   'source_cost.changed', // module 33: a manual lead-source cost entered or changed (amounts in cents, the month; closed months need re-auth)
   'goal.changed', // module 33: a goal created, changed or removed (member, period, metric, target)
   'coaching.settings_changed', // module 36: the Owner changed call scoring, Team Lead visibility or the rubric items, or an Admin turned call reviews off (values only)
+  'cma.near_match_dismissed', // module 71 (D9): the agent confirmed a live MLS listing is a different home than the CMA's subject (listing ids only; F2)
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -644,6 +646,9 @@ const MATRIX: Record<Action, ActionRule> = {
   'milestone.confirm': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: { scopes: ['own', 'deal'] }, tc: DEAL } },
   // Milestone templates (R-TXN-6; §8 names no role): Owner/Admin, like the other tenant settings. Flagged for the owner.
   'milestone_template.manage': { roles: { owner: ALL, admin: ALL } },
+  // Module 71 (D9, DATA_MODEL §8 "Prepare, edit or view a CMA"): ✅ | ✅ | T | O | — | — | —. A person only, never the system;
+  // support reads through RLS only (R-CMA-6).
+  'cma.prepare': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: O } },
 };
 
 const DENY_NOT_FOUND: CanResult = { ok: false, code: 'NOT_FOUND' };

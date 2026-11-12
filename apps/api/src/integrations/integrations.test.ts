@@ -76,6 +76,8 @@ describe('GET /admin/integrations: honest status for every service (R-INT-2, R-I
       expect(p.reviewed, p.key).toBe(false);
       expect(p.sentence, p.key).toMatch(p.key === 'platform:meta' ? /: not offered \(owner decision D2\); nothing waits on this pack and it is never cleared / : / stays off: awaiting counsel review/);
     }
+    // module 71 (D9, F8): the platform:cma pack names what waits on it
+    expect(v.platformPacks.find((p) => p.key === 'platform:cma')!.sentence).toMatch(/^Client CMAs and seller value ranges stays off: awaiting counsel review \(pack 2026\.11\.0, not yet reviewed\)\.$/);
   });
 
   it('the kinds the API knows and lists are exactly the integration_connections kind CHECK (0018, widened by 0025)', async () => {
