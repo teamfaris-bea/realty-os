@@ -22,10 +22,13 @@ export interface CoachingSettingsRow {
   packVersion: string | null;
 }
 
-export async function coachingSettings(tx: Tx, o: { lock?: boolean } = {}): Promise<CoachingSettingsRow | null> {
+export async function coachingSettings(tx: Tx, o: { lock?: boolean; forUpdate?: boolean } = {}): Promise<CoachingSettingsRow | null> {
   // FOR SHARE: the review job's final check holds the row, so the Owner turning scoring off either commits
   // before it (and is seen) or waits until the review is stored (and closes the tips at once)
   if (o.lock) await sql`SELECT 1 FROM tenant_settings WHERE tenant_id = app.tenant_id() FOR SHARE`.execute(tx);
+  // FOR NO KEY UPDATE: a settings change decides on the row as it is now, after any change in flight commits (an
+  // Admin's "off"), and holds it until it writes, so nothing slips in between its read and its write (E283)
+  if (o.forUpdate) await sql`SELECT 1 FROM tenant_settings WHERE tenant_id = app.tenant_id() FOR NO KEY UPDATE`.execute(tx);
   const r = await sql<{ call_scoring_enabled: boolean; tl_sees_call_scores: boolean; coaching_rubric_disabled: string[]; ai_enabled: boolean; default_timezone: string; cleared: boolean; reviewed_at: Date | null; version: string | null }>`
     SELECT s.call_scoring_enabled, s.tl_sees_call_scores, s.coaching_rubric_disabled, s.ai_enabled, s.default_timezone,
            app.platform_cleared('platform:coaching') AS cleared,
@@ -46,12 +49,19 @@ export async function coachingSettings(tx: Tx, o: { lock?: boolean } = {}): Prom
   };
 }
 
-/** Written as the Owner: tenant_settings_p23_guard refuses anyone else and refuses "on" while the pack is not cleared. */
-export async function updateCoachingSettings(tx: Tx, v: { scoringEnabled: boolean; tlSeesCallScores: boolean; disabledKeys: readonly string[] }): Promise<void> {
-  await sql`
-    UPDATE tenant_settings SET call_scoring_enabled = ${v.scoringEnabled}, tl_sees_call_scores = ${v.tlSeesCallScores},
-           coaching_rubric_disabled = ${[...v.disabledKeys]}::text[]
-     WHERE tenant_id = app.tenant_id()`.execute(tx);
+/**
+ * Writes the given call-scoring settings and no others (none given: no write). tenant_settings_p23_guard refuses
+ * anyone but the Owner, except an Admin's write that turns call reviews off alone (E283), and refuses "on" while the
+ * pack is not cleared.
+ */
+export async function updateCoachingSettings(tx: Tx, v: { scoringEnabled?: boolean; tlSeesCallScores?: boolean; disabledKeys?: readonly string[] }): Promise<void> {
+  const sets = [
+    ...(v.scoringEnabled === undefined ? [] : [sql`call_scoring_enabled = ${v.scoringEnabled}`]),
+    ...(v.tlSeesCallScores === undefined ? [] : [sql`tl_sees_call_scores = ${v.tlSeesCallScores}`]),
+    ...(v.disabledKeys === undefined ? [] : [sql`coaching_rubric_disabled = ${[...v.disabledKeys]}::text[]`]),
+  ];
+  if (sets.length === 0) return;
+  await sql`UPDATE tenant_settings SET ${sql.join(sets, sql`, `)} WHERE tenant_id = app.tenant_id()`.execute(tx);
 }
 
 /** The tenant's local date at `now` (one fix per agent per local day; the tenant zone, as the scoreboard days). */

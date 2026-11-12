@@ -5,7 +5,9 @@
 //   - Owner: coaching settings from Home (phone: More → Coaching, 2 taps; desktop: the sidebar, 1 click),
 //     "Not reviewed by counsel" while the pack is unreviewed, Team Lead access on in 1 tap;
 //   - Team Lead: their team's tip appears only once the Owner allowed it;
-//   - agent: "Not now" sets the tip aside in 1 tap.
+//   - agent: "Not now" sets the tip aside in 1 tap;
+//   - Admin (last: it ends call reviews): the settings from Home in the same taps as the Owner, call reviews
+//     off in 1 tap; turning them on, Team Lead access and the checklist stay the Owner's (E283).
 // No score, grade, percentage or rank on any of these screens; axe finds nothing; no sideways scroll on phone.
 import { createRequire } from 'node:module';
 import { type Locator, type Page, expect, test } from 'playwright/test';
@@ -154,4 +156,37 @@ test('agent: "Not now" sets today’s tip aside in 1 tap', async ({ page }) => {
   await page.goto(`${stack.webUrl}/`);
   await expect(page.getByRole('heading', { level: 1, name: 'Home' })).toBeVisible();
   await expect(page.locator('article').filter({ has: page.getByText("Today's coaching tip", { exact: true }) })).toHaveCount(0);
+});
+
+test('Admin: call reviews go off in 1 tap; turning them on, Team Lead access and the checklist stay the Owner’s (E283)', async ({ page }) => {
+  test.setTimeout(120_000);
+  await signIn(page, seed.admin);
+  const n = { taps: 0 };
+  if (isPhone(page)) {
+    await tap(page, page.getByRole('link', { name: 'More' }), n);
+    await tap(page, page.getByRole('link', { name: 'Coaching', exact: true }), n);
+    expect(n.taps).toBe(2);
+  } else {
+    await tap(page, page.getByRole('navigation').getByRole('link', { name: 'Coaching', exact: true }), n);
+    expect(n.taps).toBe(1);
+  }
+  await expect(page.getByRole('heading', { level: 1, name: 'Coaching' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Call reviews are on' })).toBeVisible();
+  await expect(page.getByText('Only the Owner can change whether Team Leads see call reviews.')).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Checklist items' })).toHaveAccessibleDescription('Only the Owner can change what calls are checked for.');
+  await expect(page.getByRole('button', { name: 'Save checklist' })).toHaveCount(0);
+  await noGrades(page);
+  expect(await axeViolations(page)).toEqual([]);
+  const m = { taps: 0 };
+  await tap(page, page.getByRole('button', { name: 'Turn call reviews off' }), m);
+  await expect(page.getByRole('heading', { name: 'Call reviews are off' })).toBeVisible();
+  await expect(page.getByText('Call reviews are off. Today’s tips are gone.')).toBeVisible();
+  // the switch is gone (turning call reviews on is the Owner's): focus is on what changed, not lost to <body>
+  await expect(page.getByRole('heading', { name: 'Call reviews are off' })).toBeFocused();
+  expect(m.taps).toBe(1);
+  await expect(page.getByRole('button', { name: 'Turn call reviews on' })).toHaveCount(0);
+  await expect(page.getByText('Only the Owner can turn call reviews on.')).toBeVisible();
+  await noGrades(page);
+  expect(await axeViolations(page)).toEqual([]);
+  await shot(page, 'admin-off');
 });

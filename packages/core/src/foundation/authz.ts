@@ -153,7 +153,7 @@ export const ACTIONS = [
   'goal.manage', // module 33: create, change or remove a goal (Owner/Admin any member; TL their team)
   'coaching.view', // module 36: the caller's own daily fix and its quotes (R-COACH-3, R-COACH-4; Call reviews row: own calls)
   'coaching.team_view', // module 36: a team's current fixes (Owner/Admin; a Team Lead only while the Owner's tl_sees_call_scores is on, DB-enforced)
-  'coaching.settings', // module 36: call scoring on/off, Team Lead visibility, rubric items (Owner only; widening needs 🔒)
+  'coaching.settings', // module 36: call scoring on/off, Team Lead visibility, rubric items (Owner; an Admin may only turn call reviews off; widening needs 🔒)
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -318,7 +318,7 @@ export const AUDIT_ACTIONS = [
   'calendar.link_revoked', // module 34: the system revoked and purged a link (GRANT_REVOKED E102, MEMBER_REMOVED R-INT-5)
   'source_cost.changed', // module 33: a manual lead-source cost entered or changed (amounts in cents, the month; closed months need re-auth)
   'goal.changed', // module 33: a goal created, changed or removed (member, period, metric, target)
-  'coaching.settings_changed', // module 36: the Owner changed call scoring, Team Lead visibility or the rubric items (values only)
+  'coaching.settings_changed', // module 36: the Owner changed call scoring, Team Lead visibility or the rubric items, or an Admin turned call reviews off (values only)
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -620,9 +620,11 @@ const MATRIX: Record<Action, ActionRule> = {
   // they then read is decided by call_scores RLS (only while the Owner's setting is on).
   'coaching.view': { roles: { owner: OWN, admin: OWN, team_lead: OWN, agent: OWN, isa: OWN } },
   'coaching.team_view': { roles: { owner: ALL, admin: ALL, team_lead: T } },
-  // Coaching settings: Owner only (the DB trigger refuses anyone else); turning anything on (scoring, Team Lead
-  // visibility) is widening and needs re-auth; turning it off does not.
-  'coaching.settings': { roles: { owner: { scopes: ['all'], reauth: 'when_loosening' } } },
+  // Coaching settings (owner decision 2026-11-11, the Gmail sync rule): ✅ 🔒 | off only | — … The Owner changes them;
+  // turning anything on (scoring, Team Lead visibility) is widening and needs re-auth, turning it off does not. An
+  // Admin acts only when nothing loosens, with no re-auth (off only tightens); the API lets an Admin turn call reviews
+  // off and nothing else, and the DB trigger refuses anyone else.
+  'coaching.settings': { roles: { owner: { scopes: ['all'], reauth: 'when_loosening' }, admin: { scopes: ['all'], checks: ['not_loosening'] } } },
 };
 
 const DENY_NOT_FOUND: CanResult = { ok: false, code: 'NOT_FOUND' };

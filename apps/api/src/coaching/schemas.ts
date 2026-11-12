@@ -60,10 +60,13 @@ export const SettingsResponse = z.object({
   }),
 });
 
+// A request names only the settings it changes (each button of the page sends its own), and the others stay as
+// stored: a page loaded before someone else's change cannot write that change back (E283).
 export const SettingsBody = z
   .object({
-    scoringEnabled: z.boolean(),
-    tlSeesCallScores: z.boolean(),
-    disabledKeys: z.array(z.enum(RUBRIC_KEYS)).max(RUBRIC_KEYS.length),
+    scoringEnabled: z.boolean().optional(),
+    tlSeesCallScores: z.boolean().optional(),
+    disabledKeys: z.array(z.enum(RUBRIC_KEYS)).max(RUBRIC_KEYS.length).optional(),
   })
-  .strict();
+  .strict()
+  .refine((b) => b.scoringEnabled !== undefined || b.tlSeesCallScores !== undefined || b.disabledKeys !== undefined, { message: 'nothing to change' });

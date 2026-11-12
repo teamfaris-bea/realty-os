@@ -28,11 +28,12 @@ const ROUTES: { method: 'GET' | 'POST' | 'PUT'; url: string; action: Action; fac
   { method: 'GET', url: '/coaching/today', action: 'coaching.view', facts: { own: true } },
   { method: 'GET', url: '/coaching/team', action: 'coaching.team_view', facts: { team: true } },
   { method: 'GET', url: '/admin/coaching', action: 'coaching.settings', facts: { loosening: false } },
-  { method: 'PUT', url: '/admin/coaching', action: 'coaching.settings', facts: { loosening: false }, body: { scoringEnabled: false, tlSeesCallScores: false, disabledKeys: [] } },
+  // the one request every role that may change these settings may make: call reviews off (already off: a no-op)
+  { method: 'PUT', url: '/admin/coaching', action: 'coaching.settings', facts: { loosening: false }, body: { scoringEnabled: false } },
 ];
 
 describe('coaching routes × roles', () => {
-  it('R-COACH-3: every coaching route answers each role exactly as core.can() decides (Call reviews: own calls; team view Owner/Admin/TL; settings Owner only)', async () => {
+  it('R-COACH-3 E283: every coaching route answers each role exactly as core.can() decides (Call reviews: own calls; team view Owner/Admin/TL; settings Owner, and Admins only to turn call reviews off)', async () => {
     const got: string[] = [];
     for (const role of Object.keys(users) as Role[]) {
       for (const r of ROUTES) {
@@ -44,7 +45,7 @@ describe('coaching routes × roles', () => {
       }
     }
     expect(got.filter((g) => g.startsWith('tc ')).every((g) => g.endsWith('404'))).toBe(true);
-    expect(got.filter((g) => g.includes('/admin/coaching') && g.endsWith(' 200')).map((g) => g.split(' ')[0])).toEqual(['owner', 'owner']);
+    expect(got.filter((g) => g.includes('/admin/coaching') && g.endsWith(' 200')).map((g) => g.split(' ')[0])).toEqual(['owner', 'owner', 'admin', 'admin']);
   });
 
   it('every coaching route carries authorize(<its action>)', () => {

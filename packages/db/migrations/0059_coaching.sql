@@ -14,9 +14,11 @@
 --    claims/evidence policies its claims and quotes, is readable exactly where its call_scores row is.
 --    Without it a Team Lead who sees the contact could read the rubric claims of a team member's call
 --    while the Owner's tl_sees_call_scores is off (actions_select lets Team Leads read team actions).
--- 4. tenant_settings_p23_guard (replaced, same body plus one column): coaching_rubric_disabled is a
---    call-scoring setting and Owner-only like call_scoring_enabled and tl_sees_call_scores (DATA_MODEL
---    tenant_settings row: "call-scoring settings are Owner-only").
+-- 4. tenant_settings_p23_guard (replaced, same body plus one column and one exception): coaching_rubric_disabled
+--    is a call-scoring setting like call_scoring_enabled and tl_sees_call_scores. The Owner changes them (turning
+--    scoring on still needs platform:coaching cleared); an Admin may only turn call reviews off, with no other
+--    call-scoring change in the same UPDATE (owner decision 2026-11-11, the Gmail sync rule; E283). Everyone else,
+--    the system included, is refused as before (DATA_MODEL tenant_settings row).
 -- 5. call_scores_agent_idx: the daily fix reads an agent's latest scored calls.
 --
 -- VERIFY WITH COUNSEL: which recording bases make reviewing an agent's calls lawful (employee monitoring,
@@ -66,15 +68,23 @@ CREATE POLICY call_review_scope ON assistant_actions AS RESTRICTIVE FOR SELECT U
   OR EXISTS (SELECT 1 FROM call_scores s WHERE s.tenant_id = assistant_actions.tenant_id AND s.assistant_action_id = assistant_actions.id));
 
 -- -----------------------------------------------------------------------------
--- 4. Every call-scoring setting is the Owner's (0018 body, plus coaching_rubric_disabled)
+-- 4. Every call-scoring setting is the Owner's, except that an Admin may turn call reviews off
+--    (0018 body, plus coaching_rubric_disabled and the Admin's "off")
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION app.tenant_settings_p23_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF app.tenant_id() IS NOT NULL AND NEW.tenant_id IS DISTINCT FROM app.tenant_id() THEN RETURN NEW; END IF;   -- RLS rejects
   IF current_user IN ('app_definer','app_retention') THEN RETURN NEW; END IF;
+  -- an Admin may turn call reviews off and change nothing else: Team Lead visibility and the checklist stay
+  -- exactly as they were in the same UPDATE (owner decision 2026-11-11, as Gmail sync; E283). Every term of the
+  -- exception is true or false, never NULL (IS TRUE / IS FALSE), so a NULL fails closed here, not only at the
+  -- NOT NULL constraints checked after this trigger.
   IF (NEW.call_scoring_enabled, NEW.tl_sees_call_scores, NEW.coaching_rubric_disabled)
        IS DISTINCT FROM (OLD.call_scoring_enabled, OLD.tl_sees_call_scores, OLD.coaching_rubric_disabled)
-     AND COALESCE(app.my_role(), '') <> 'owner' THEN
+     AND COALESCE(app.my_role(), '') <> 'owner'
+     AND NOT (COALESCE(app.my_role(), '') = 'admin' AND OLD.call_scoring_enabled IS TRUE AND NEW.call_scoring_enabled IS FALSE
+              AND (NEW.tl_sees_call_scores, NEW.coaching_rubric_disabled)
+                  IS NOT DISTINCT FROM (OLD.tl_sees_call_scores, OLD.coaching_rubric_disabled)) THEN
     RAISE EXCEPTION 'OWNER_ONLY_SETTING' USING ERRCODE = 'insufficient_privilege';
   END IF;
   IF NEW.call_scoring_enabled AND NOT OLD.call_scoring_enabled AND NOT app.platform_cleared('platform:coaching') THEN

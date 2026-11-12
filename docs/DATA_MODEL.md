@@ -746,7 +746,7 @@ Owner decision **D2** (2026-11-11, `docs/PHASE2_3_PLAN.md` §2.2) changed the sc
 | `deal_dates` | + `source` (`manual/template/document/import`), `status` (`proposed/confirmed/waived`; existing rows `confirmed`; **completion stays `completed_at` alone**), `confirmed_by_user_id/at`, `responsible`, `due_at`, `reminder_at` (stored; per-tenant index), `due_version`, `basis` (template rule and the zone), `evidence_claim_id`. Non-manual confirmed ⇒ confirmer. Trigger: a confirmer acts as themselves; a `manual` confirmed date is entered, and any confirmed date is moved, only by a user actor; moving a confirmed date bumps `due_version` and drops stored instants not recomputed in the same statement; a completed or non-confirmed date has no reminder (CHECK too). |
 | `home_valuations` | + `status`, `as_of`, `display_allowed` (default false), `change_from_prior_bps`; `value_cents` present ⇔ `ok`; one `ok` estimate per address per month (unique index); low ≤ high. |
 | `compliance_policy_versions` | + `voice_answering_enabled`, `voice_answering_attestation` (enabled ⇒ attested; trigger: Owner-only and `platform:voice` cleared). |
-| `tenant_settings` | + `seller_update_cadence_days` (7), `milestone_templates` (data, unreviewed), `review_link_url`, `brand_color`, `avm_max_range_bps` (2500), `call_scoring_enabled` (off), `tl_sees_call_scores` (off), `coaching_rubric_disabled`, `calendar_title_detail`, `voice_answer_after_seconds` (20), `voice_answer_when`. Trigger: call-scoring settings are Owner-only, turning scoring on needs `platform:coaching` cleared, and only the Owner activates a policy version with voice answering on (including an older one). |
+| `tenant_settings` | + `seller_update_cadence_days` (7), `milestone_templates` (data, unreviewed), `review_link_url`, `brand_color`, `avm_max_range_bps` (2500), `call_scoring_enabled` (off), `tl_sees_call_scores` (off), `coaching_rubric_disabled`, `calendar_title_detail`, `voice_answer_after_seconds` (20), `voice_answer_when`. Trigger: call-scoring settings are Owner-only, except that an Admin may turn call scoring off with no other call-scoring change in the same UPDATE (owner decision 2026-11-11: Owner on, Admin off, as Gmail sync, except that the system cannot turn call reviews off and an Admin's off needs no re-auth; E283), turning scoring on needs `platform:coaching` cleared, and only the Owner activates a policy version with voice answering on (including an older one). |
 
 The two replaced retention definers (`app.purge_contact_internal`, `app.retention_sweep`, owned by `app_retention`): erasure refuses while a contact document is on legal hold or inside its retention period and shreds the contact's document objects; the sweep skips such contacts. Everything else is verbatim from 0001.
 
@@ -819,7 +819,8 @@ No full-text column on `mail_messages`: Phase 1 search does not index synced mai
 | Owner view (dollars, costs, forecast) | ✅ | ✅ | — | — | — | — | — |
 | Source costs | ✅ | ✅ (re-auth for closed months) | — | — | — | — | — |
 | Call reviews | ✅ | ✅ | T only if `tl_sees_call_scores` | own calls | own calls | — | — |
-| Coaching settings, voice answering on/off | ✅ 🔒 (on needs the platform pack cleared) | off only | — | — | — | — | — |
+| Coaching settings: call reviews on/off, Team Lead visibility, checklist items (E283) | ✅ 🔒 (turning reviews or Team Lead visibility on; reviews on needs `platform:coaching` cleared) | call reviews off only (no re-auth) | — | — | — | — | — |
+| Voice answering on/off | ✅ 🔒 (on needs the platform pack cleared) | off only | — | — | — | — | — |
 | Approve the voice playbook | ✅ | ✅ (still off until the Owner enables) | — | — | — | — | — |
 | Ad cap | ✅ 🔒 + attestation | — | — | — | — | — | — |
 | Approve an ad shift (money) | ✅ | ✅ | — | — | — | — | — |
@@ -1024,7 +1025,7 @@ D2: Google Ads only (`ads_google`); Meta ads are out of scope and `ads_meta` is 
 
 ## 10. Phase 2-3 edge cases
 
-E162–E200 belong to FUB parity (Part 3 §14; E194–E200: the People filters). The D2 cases (Gmail inbox sync and publishing) are E201–E229. E230–E233 (the FUB migration owner decisions of 2026-11-11) are in Part 3 §14 too. E310–E312 (owner decision D8 of 2026-11-12: a person's reply in the website chat is first contact, R-OWN-14) close this table.
+E162–E200 belong to FUB parity (Part 3 §14; E194–E200: the People filters). The D2 cases (Gmail inbox sync and publishing) are E201–E229. E230–E233 (the FUB migration owner decisions of 2026-11-11) are in Part 3 §14 too. E283 (an Admin turns call reviews off, owner decision 2026-11-11) is listed with the coaching cases. E310–E312 (owner decision D8 of 2026-11-12: a person's reply in the website chat is first contact, R-OWN-14) close this table.
 
 | # | Case | Handling | Rules |
 |---|---|---|---|
@@ -1064,6 +1065,7 @@ E162–E200 belong to FUB parity (Part 3 §14; E194–E200: the People filters).
 | E104 | Imported FUB recording | Never reviewed | R-COACH-1 |
 | E105 | A rubric quote fails verification | Item `needs_review`; excluded from the denominator | R-COACH-2 |
 | E106 | Agent has two scored calls in 14 days | No daily fix ("Not enough calls yet") | R-COACH-4 |
+| E283 | An Admin turns call reviews off (owner decision 2026-11-11: Owner on, Admin off, as Gmail sync, except that the system cannot turn call reviews off and an Admin's off needs no re-auth) | Allowed without re-auth: open tips close at once, audited like the Owner's change. Turning them on, Team Lead visibility and the checklist stay the Owner's: an Admin's request that names any of them (even as stored), alone or together with turning reviews off, is refused whole (`OWNER_REQUIRED`; DB `OWNER_ONLY_SETTING`). The off sticks: each request names only the settings it changes and is decided on the settings row as it is (locked), so an Owner's checklist or Team Lead save from a page loaded earlier leaves reviews off, and turning them back on asks for the Owner's password against the row as it is | R-COACH-1, R-COACH-3 |
 | E107 | Closed deal without commission | Excluded from dollars, listed as "missing commission" | R-OWNER-1 |
 | E108 | A source with cost and zero closings | "— (0 closings)", never $0 or ∞ | R-OWNER-2 |
 | E109 | Fewer than 10 deals entered a stage in the last year | That stage is left out of the forecast and counted ("not enough history") | R-OWNER-3 |

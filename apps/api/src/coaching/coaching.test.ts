@@ -382,14 +382,15 @@ describe('who sees reviews and tips', () => {
 });
 
 describe('the Owner\'s coaching settings', () => {
-  it('R-COACH-3 D-COACH: Owner only; Team Lead visibility defaults off; widening needs re-auth; every change is audited with values only', async () => {
+  it('R-COACH-3 D-COACH: the Owner and Admins open the settings, Team Leads and agents do not; Team Lead visibility defaults off; widening needs re-auth; every change is audited with values only', async () => {
     await setPackCleared(h, true);
     const w = await coachingWorld(h);
     const admin = await h.invite(w.owner, 'admin');
-    for (const c of [admin, w.teamLead!, w.agents[0]!]) {
+    for (const c of [w.teamLead!, w.agents[0]!]) {
       expect((await call(c, 'GET', '/admin/coaching')).status).toBe(404);
       expect((await call(c, 'PUT', '/admin/coaching', { scoringEnabled: false, tlSeesCallScores: false, disabledKeys: [] })).status).toBe(404);
     }
+    expect((await call(admin, 'GET', '/admin/coaching')).status).toBe(200);
     const g = await call<{ settings: { scoringEnabled: boolean; tlSeesCallScores: boolean; pack: { cleared: boolean } } }>(w.owner, 'GET', '/admin/coaching');
     expect(g.body.settings).toMatchObject({ scoringEnabled: false, tlSeesCallScores: false, pack: { cleared: true } });
     // a stale re-auth: turning on is refused, turning off is not
@@ -406,7 +407,7 @@ describe('the Owner\'s coaching settings', () => {
     expect(audits.every((a) => a.actor_user_id === w.owner.userId)).toBe(true);
   });
 
-  it('R-COACH-3: the DB refuses the coaching settings to anyone but the Owner, the rubric items included', async () => {
+  it('R-COACH-3 E283: the DB refuses an Admin every coaching setting but turning call reviews off, the rubric items included', async () => {
     await setPackCleared(h, true);
     const w = await coachingWorld(h);
     const admin = await h.invite(w.owner, 'admin');
@@ -415,6 +416,10 @@ describe('the Owner\'s coaching settings', () => {
     for (const stmt of [sql`UPDATE tenant_settings SET tl_sees_call_scores = true`, sql`UPDATE tenant_settings SET call_scoring_enabled = true`, sql`UPDATE tenant_settings SET coaching_rubric_disabled = '{recapped_call}'`]) {
       await expect(withTenantTx(actorOf(admin), (tx) => stmt.execute(tx), { db: h.database })).rejects.toThrow(/OWNER_ONLY_SETTING/);
     }
+    // the one exception: once the Owner turned call reviews on, the Admin's own UPDATE turns them off
+    await scoringOn(h, w.owner);
+    await withTenantTx(actorOf(admin), (tx) => sql`UPDATE tenant_settings SET call_scoring_enabled = false`.execute(tx), { db: h.database });
+    expect((await h.su.query('SELECT call_scoring_enabled AS on FROM tenant_settings WHERE tenant_id = $1', [w.tenantId])).rows[0]).toEqual({ on: false });
   });
 
   it('R-COACH-3: an unknown rubric item, or turning every item off, is refused', async () => {
@@ -425,5 +430,251 @@ describe('the Owner\'s coaching settings', () => {
     const all = ['introduced_self', 'asked_timeline', 'asked_financing', 'asked_motivation', 'confirmed_contact_preference', 'proposed_next_step', 'set_follow_up', 'recapped_call'];
     expect((await call(w.owner, 'PUT', '/admin/coaching', { scoringEnabled: false, tlSeesCallScores: false, disabledKeys: all })).status).toBe(422);
     void randomUUID;
+  });
+});
+
+describe('an Admin may only turn call reviews off (E283, owner decision 2026-11-11, the Gmail sync rule)', () => {
+  /** a request names only the settings it changes; the others stay as stored */
+  type Body = { scoringEnabled?: boolean; tlSeesCallScores?: boolean; disabledKeys?: string[] };
+  const row = async (tenantId: string) =>
+    (await h.su.query('SELECT call_scoring_enabled AS scoring, tl_sees_call_scores AS tl, coaching_rubric_disabled AS "off" FROM tenant_settings WHERE tenant_id = $1', [tenantId])).rows[0];
+  const auditRows = async (tenantId: string) =>
+    (await h.su.query("SELECT action, entity_type, entity_id, actor_kind, actor_user_id, actor_role, changes FROM audit_log WHERE tenant_id = $1 AND action = 'coaching.settings_changed' ORDER BY seq", [tenantId])).rows;
+  /** each audit row as "<role>: <the columns it changed>" */
+  const audited = async (tenantId: string) => (await auditRows(tenantId)).map((a: { actor_role: string; changes: object }) => `${a.actor_role}: ${Object.keys(a.changes).sort().join(' ')}`);
+  const put = async (c: Parameters<typeof call>[0], body: Body) => {
+    const r = await call<{ error?: { code: string } }>(c, 'PUT', '/admin/coaching', body);
+    return `${r.status} ${r.body.error?.code ?? 'ok'}`;
+  };
+  const staleReauth = (c: Parameters<typeof call>[0]) => h.su.query("UPDATE sessions SET reauthenticated_at = now() - interval '1 hour' WHERE user_id = $1", [c.userId]);
+  /**
+   * `request` is sent while an Admin's "off" (the UPDATE the API writes for it, as that Admin under RLS) is written but
+   * not yet committed; the off commits once the request waits on the tenant_settings row. Resolves to the request's answer.
+   */
+  async function whileAdminOffInFlight<T>(admin: Parameters<typeof call>[0], request: () => Promise<T>): Promise<T> {
+    const { withTenantTx } = await import('@realty/db');
+    const { sql } = await import('kysely');
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let written!: () => void;
+    const wrote = new Promise<void>((r) => (written = r));
+    const off = withTenantTx(actorOf(admin), async (tx) => {
+      await sql`UPDATE tenant_settings SET call_scoring_enabled = false WHERE tenant_id = app.tenant_id()`.execute(tx);
+      written();
+      await gate;
+    }, { db: h.database });
+    await Promise.race([wrote, off]);
+    const answer = request();
+    try {
+      for (let i = 0; ; i++) {
+        const waiting = (await h.su.query("SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%tenant_settings%'")).rows[0].n;
+        if (waiting > 0) break;
+        if (i > 400) throw new Error(`the request never waited for the Admin's off: ${String(await Promise.race([answer, 'still running']))}`);
+        await new Promise((r) => setTimeout(r, 25));
+      }
+    } finally {
+      release();
+    }
+    await off;
+    return answer;
+  }
+  /** the database guard off for the duration of `fn`: then only the API stands between the Admin and the row */
+  async function withoutGuard(fn: () => Promise<void>): Promise<void> {
+    await h.su.query('ALTER TABLE tenant_settings DISABLE TRIGGER tenant_settings_p23_guard');
+    try {
+      await fn();
+    } finally {
+      await h.su.query('ALTER TABLE tenant_settings ENABLE TRIGGER tenant_settings_p23_guard');
+    }
+  }
+
+  it('E283 R-COACH-1: an Admin turns call reviews off with no re-auth: today\'s open tips close at once, and the change is audited like the Owner\'s (values only, the Admin as the actor)', async () => {
+    // (today's tip is the daily fix of R-COACH-4; this checks only that "off" closes it at once)
+    const { w, contactId } = await readyWorld();
+    const a = w.agents[0]!;
+    for (let i = 0; i < 3; i++) await review(h, w.tenantId, await recordedCall(h, w, contactId, a.userId, { skip: ['asked_financing'], startedAt: new Date(Date.now() - (i + 2) * 3_600_000) }));
+    await reconcile(h, w.tenantId);
+    expect((await cardsOf(h, a.userId)).filter((c) => c.state === 'open')).toHaveLength(1);
+    const admin = await h.invite(w.owner, 'admin');
+    // the Admin's last re-auth is an hour old: turning call reviews off only tightens, so none is asked for
+    await staleReauth(admin);
+    const g = await call<{ settings: { scoringEnabled: boolean; tlSeesCallScores: boolean } }>(admin, 'GET', '/admin/coaching');
+    expect(g.status).toBe(200);
+    expect(g.body.settings).toMatchObject({ scoringEnabled: true, tlSeesCallScores: false });
+    const off = await call<{ settings: { scoringEnabled: boolean; scoringSentence: string } }>(admin, 'PUT', '/admin/coaching', { scoringEnabled: false });
+    expect(off.status).toBe(200);
+    expect(off.body.settings).toMatchObject({ scoringEnabled: false, scoringSentence: 'Call scoring is off. No call is reviewed and no tips are shown.' });
+    expect(await row(w.tenantId)).toEqual({ scoring: false, tl: false, off: [] });
+    expect((await cardsOf(h, a.userId)).filter((c) => c.state === 'open')).toHaveLength(0);
+    expect((await call<{ coaching: { state: string } }>(a, 'GET', '/coaching/today')).body.coaching.state).toBe('scoring_off');
+    const [byOwner, byAdmin, ...more] = await auditRows(w.tenantId);
+    expect(more).toEqual([]);
+    expect(byOwner).toMatchObject({ actor_user_id: w.owner.userId, actor_role: 'owner', changes: { call_scoring_enabled: { from: false, to: true } } });
+    expect(byAdmin).toEqual({ ...byOwner, actor_user_id: admin.userId, actor_role: 'admin', changes: { call_scoring_enabled: { from: true, to: false } } });
+    // asking again for what is already so changes nothing and writes no audit row
+    expect(await put(admin, { scoringEnabled: false })).toBe('200 ok');
+    expect(await auditRows(w.tenantId)).toHaveLength(2);
+  });
+
+  it('E283: an Admin turns paused call reviews off (the switch on, platform:coaching no longer cleared), and is told the switch is the Owner\'s, not theirs', async () => {
+    // (paused is R-INT-6's "a later unreviewed version turns the capability off again"; turning off never waits for counsel)
+    const { w } = await readyWorld();
+    await setPackCleared(h, false);
+    const admin = await h.invite(w.owner, 'admin');
+    const sentence = async (c: Parameters<typeof call>[0]) => (await call<{ settings: { scoringSentence: string } }>(c, 'GET', '/admin/coaching')).body.settings.scoringSentence;
+    expect(await sentence(w.owner)).toBe('Paused: your switch is on, but no call is reviewed and no tip is shown until counsel reviews call reviews.');
+    expect(await sentence(admin)).toBe('Paused: the Owner’s switch is on, but no call is reviewed and no tip is shown until counsel reviews call reviews.');
+    expect(await put(admin, { scoringEnabled: false })).toBe('200 ok');
+    expect(await row(w.tenantId)).toEqual({ scoring: false, tl: false, off: [] });
+    expect(await sentence(admin)).toBe('Call scoring cannot be turned on until counsel reviews it.');
+  });
+
+  it('E283: an Admin\'s "off" names only the switch, so it goes through whatever the Owner changed since the Admin\'s page loaded', async () => {
+    await setPackCleared(h, true);
+    const w = await coachingWorld(h);
+    await scoringOn(h, w.owner);
+    const admin = await h.invite(w.owner, 'admin');
+    // the Admin's page loads (Team Leads do not see reviews, every item is used); then the Owner changes both
+    expect((await call<{ settings: { tlSeesCallScores: boolean } }>(admin, 'GET', '/admin/coaching')).body.settings.tlSeesCallScores).toBe(false);
+    await freshReauth(h, w.owner);
+    expect(await put(w.owner, { tlSeesCallScores: true })).toBe('200 ok');
+    expect(await put(w.owner, { disabledKeys: ['recapped_call'] })).toBe('200 ok');
+    expect(await put(admin, { scoringEnabled: false })).toBe('200 ok');
+    expect(await row(w.tenantId)).toEqual({ scoring: false, tl: true, off: ['recapped_call'] });
+    expect(await audited(w.tenantId)).toEqual(['owner: call_scoring_enabled', 'owner: tl_sees_call_scores', 'owner: coaching_rubric_disabled', 'admin: call_scoring_enabled']);
+  });
+
+  it('E283: an Admin\'s "off" sticks: the Owner\'s next checklist or Team Lead save, from a page loaded before it, names only that setting and leaves call reviews off; the checklist asks for no password', async () => {
+    await setPackCleared(h, true);
+    const w = await coachingWorld(h);
+    await scoringOn(h, w.owner);
+    const admin = await h.invite(w.owner, 'admin');
+    expect(await put(admin, { scoringEnabled: false })).toBe('200 ok');
+    // the Owner's page still says call reviews are on, and their last re-auth is an hour old
+    await staleReauth(w.owner);
+    expect(await put(w.owner, { disabledKeys: ['recapped_call'] })).toBe('200 ok');
+    expect(await put(w.owner, { tlSeesCallScores: false })).toBe('200 ok');
+    expect(await row(w.tenantId)).toEqual({ scoring: false, tl: false, off: ['recapped_call'] });
+    // letting Team Leads see reviews widens who sees them: the password first, and call reviews still stay off
+    expect(await put(w.owner, { tlSeesCallScores: true })).toBe('401 REAUTH_REQUIRED');
+    await freshReauth(h, w.owner);
+    expect(await put(w.owner, { tlSeesCallScores: true })).toBe('200 ok');
+    expect(await row(w.tenantId)).toEqual({ scoring: false, tl: true, off: ['recapped_call'] });
+    // no row turns call reviews back on; restating Team Lead visibility as stored wrote nothing
+    expect(await audited(w.tenantId)).toEqual(['owner: call_scoring_enabled', 'admin: call_scoring_enabled', 'owner: coaching_rubric_disabled', 'owner: tl_sees_call_scores']);
+    // a body naming nothing is refused
+    expect(await put(w.owner, {})).toBe('422 VALIDATION_FAILED');
+  });
+
+  it('E283: an Owner request in flight while an Admin\'s "off" commits is decided on the row as the "off" left it: turning call reviews on asks the password again, a checklist save leaves them off, and the audit records only what changed', async () => {
+    await setPackCleared(h, true);
+    const w = await coachingWorld(h);
+    await scoringOn(h, w.owner);
+    const admin = await h.invite(w.owner, 'admin');
+    // the Owner's re-auth is an hour old: "on" needs the password, but reviews are on as the request starts
+    await staleReauth(w.owner);
+    expect(await whileAdminOffInFlight(admin, () => put(w.owner, { scoringEnabled: true, tlSeesCallScores: false, disabledKeys: [] }))).toBe('401 REAUTH_REQUIRED');
+    expect(await row(w.tenantId)).toEqual({ scoring: false, tl: false, off: [] });
+    expect(await audited(w.tenantId)).toEqual(['owner: call_scoring_enabled']);
+    // with the password, turning call reviews on is the Owner's to do, and it is audited as "on"
+    await freshReauth(h, w.owner);
+    expect(await put(w.owner, { scoringEnabled: true })).toBe('200 ok');
+    expect((await auditRows(w.tenantId)).at(-1)).toMatchObject({ actor_role: 'owner', changes: { call_scoring_enabled: { from: false, to: true } } });
+    // a checklist save in flight while another "off" commits: reviews stay off, and the Owner's row is the checklist's alone
+    await staleReauth(w.owner);
+    expect(await whileAdminOffInFlight(admin, () => put(w.owner, { disabledKeys: ['recapped_call'] }))).toBe('200 ok');
+    expect(await row(w.tenantId)).toEqual({ scoring: false, tl: false, off: ['recapped_call'] });
+    expect(await audited(w.tenantId)).toEqual(['owner: call_scoring_enabled', 'owner: call_scoring_enabled', 'owner: coaching_rubric_disabled']);
+  });
+
+  it('E283: two Admins turning call reviews off at once: the second waits for the first, finds them off and changes nothing, so it adds no second "off" to the audit', async () => {
+    await setPackCleared(h, true);
+    const w = await coachingWorld(h);
+    await scoringOn(h, w.owner);
+    const first = await h.invite(w.owner, 'admin');
+    const second = await h.invite(w.owner, 'admin');
+    expect(await whileAdminOffInFlight(first, () => put(second, { scoringEnabled: false }))).toBe('200 ok');
+    expect(await row(w.tenantId)).toEqual({ scoring: false, tl: false, off: [] });
+    // the first Admin's "off" here is the bare UPDATE (its audit row is the API's, written in its own transaction)
+    expect(await audited(w.tenantId)).toEqual(['owner: call_scoring_enabled']);
+  });
+
+  it('E283 R-COACH-1 R-COACH-3: an Admin\'s request to turn call reviews on, or that names Team Lead visibility or the checklist (alone, with turning reviews off, or as stored), is refused with OWNER_REQUIRED before the database: with the guard switched off nothing changes either, and nothing is audited', async () => {
+    await setPackCleared(h, true);
+    const w = await coachingWorld(h);
+    const admin = await h.invite(w.owner, 'admin');
+    await freshReauth(h, admin); // a fresh re-auth makes no difference
+    await withoutGuard(async () => {
+      for (const body of [
+        { scoringEnabled: true },
+        { scoringEnabled: true, tlSeesCallScores: false, disabledKeys: [] },
+        { tlSeesCallScores: true },
+        { disabledKeys: ['recapped_call'] },
+        { scoringEnabled: false, tlSeesCallScores: true, disabledKeys: [] },
+        { scoringEnabled: false, tlSeesCallScores: false, disabledKeys: ['recapped_call'] },
+      ]) {
+        expect({ body, got: await put(admin, body) }).toEqual({ body, got: '403 OWNER_REQUIRED' });
+      }
+      expect(await row(w.tenantId)).toEqual({ scoring: false, tl: false, off: [] });
+    });
+    await scoringOn(h, w.owner, { tl: true, disabledKeys: ['recapped_call'] });
+    const before = (await auditRows(w.tenantId)).length;
+    await withoutGuard(async () => {
+      for (const body of [
+        { scoringEnabled: true },
+        { scoringEnabled: true, tlSeesCallScores: false, disabledKeys: ['recapped_call'] },
+        { scoringEnabled: true, tlSeesCallScores: true, disabledKeys: [] },
+        { scoringEnabled: true, tlSeesCallScores: true, disabledKeys: ['recapped_call', 'asked_timeline'] },
+        { tlSeesCallScores: false },
+        { disabledKeys: [] },
+        { scoringEnabled: false, tlSeesCallScores: false },
+        { scoringEnabled: false, disabledKeys: ['recapped_call', 'asked_timeline'] },
+        { scoringEnabled: false, tlSeesCallScores: false, disabledKeys: ['recapped_call'] },
+        { scoringEnabled: false, tlSeesCallScores: true, disabledKeys: [] },
+        { scoringEnabled: false, tlSeesCallScores: false, disabledKeys: [] },
+        // restating what is stored is still naming it: an Admin's "off" names the switch alone
+        { scoringEnabled: false, tlSeesCallScores: true },
+        { scoringEnabled: false, tlSeesCallScores: true, disabledKeys: ['recapped_call'] },
+      ]) {
+        expect({ body, got: await put(admin, body) }).toEqual({ body, got: '403 OWNER_REQUIRED' });
+      }
+      expect(await row(w.tenantId)).toEqual({ scoring: true, tl: true, off: ['recapped_call'] });
+    });
+    expect(await auditRows(w.tenantId)).toHaveLength(before);
+    // the Owner's own requests are unaffected
+    await freshReauth(h, w.owner);
+    expect(await put(w.owner, { scoringEnabled: true, tlSeesCallScores: false, disabledKeys: [] })).toBe('200 ok');
+  });
+
+  it('E283 R-COACH-3: the guard is the backstop: a service fooled into the Owner\'s path (a forged role on the Admin\'s session) is still refused by the database (OWNER_ONLY_SETTING, answered OWNER_REQUIRED), except for turning call reviews off alone', async () => {
+    await setPackCleared(h, true);
+    const w = await coachingWorld(h);
+    const admin = await h.invite(w.owner, 'admin');
+    await scoringOn(h, w.owner, { tl: true });
+    const { withTenantTx } = await import('@realty/db');
+    const { saveCoachingSettings } = await import('./settings.js');
+    const { mapAdminDbError } = await import('../admin/common.js');
+    // the actor claims Owner, freshly re-authenticated; the database reads the membership (app.my_role()), which says Admin
+    const forged = { ...actorOf(admin), role: 'owner' as const };
+    const save = (body: Body) =>
+      withTenantTx(forged, (tx, now) => saveCoachingSettings(tx, forged, body, { now, reauth: { reauthenticatedAt: now, now } }), { db: h.database }).then(
+        () => null,
+        (e: unknown) => e,
+      );
+    for (const body of [
+      { scoringEnabled: true, tlSeesCallScores: false, disabledKeys: [] },
+      { scoringEnabled: true, tlSeesCallScores: true, disabledKeys: ['recapped_call'] },
+      { scoringEnabled: false, tlSeesCallScores: false, disabledKeys: [] },
+    ]) {
+      const err = await save(body);
+      expect(String((err as Error | null)?.message)).toMatch(/^OWNER_ONLY_SETTING/);
+      expect(mapAdminDbError(err)?.code).toBe('OWNER_REQUIRED');
+    }
+    expect(await row(w.tenantId)).toEqual({ scoring: true, tl: true, off: [] });
+    expect(await save({ scoringEnabled: false, tlSeesCallScores: true, disabledKeys: [] })).toBeNull();
+    expect(await row(w.tenantId)).toEqual({ scoring: false, tl: true, off: [] });
+    await setPackCleared(h, true);
+    expect(String(((await save({ scoringEnabled: true, tlSeesCallScores: true, disabledKeys: [] })) as Error | null)?.message)).toMatch(/^OWNER_ONLY_SETTING/);
+    expect(await row(w.tenantId)).toEqual({ scoring: false, tl: true, off: [] });
   });
 });
