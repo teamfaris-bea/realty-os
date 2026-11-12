@@ -58,8 +58,15 @@ const scanOf = (b: Uint8Array): Uint8Array => {
 
 // every fixture the idempotency test runs over
 const fixtures: [string, string, Uint8Array][] = [];
+const idempotent = (name: string, type: string, b: Uint8Array): void => {
+  const once = stripMediaMetadata(type, b);
+  if (!once.ok) return; // a refused fixture has nothing to re-strip
+  expect(stripMediaMetadata(type, once.bytes), `${name} idempotent`).toEqual(once);
+};
+// each fixture is checked for idempotency where it is built, so a test run on its own still checks its own fixtures
 const add = (name: string, type: string, b: Uint8Array): Uint8Array => {
   fixtures.push([name, type, b]);
+  idempotent(name, type, b);
   return b;
 };
 
@@ -243,8 +250,9 @@ describe('R-MMS-4 (E295) MP4 / QuickTime', () => {
 
 describe('R-MMS-4 (E295) idempotency and fail-closed', () => {
   it('R-MMS-4 E295: stripping is idempotent for every fixture', () => {
-    expect(fixtures.length).toBeGreaterThan(10);
-    for (const [name, type, src] of fixtures) {
+    // the fixtures the earlier tests built (when run together), plus clean ones of every kind built here
+    const own: [string, string, Uint8Array][] = [['clean jpeg', 'image/jpeg', baselineJpeg()], ['clean png', 'image/png', png()]];
+    for (const [name, type, src] of [...fixtures, ...own]) {
       const once = ok(stripMediaMetadata(type, src));
       const twice = ok(stripMediaMetadata(type, once));
       expect(twice, name).toEqual(once);

@@ -46,7 +46,7 @@ What it does not touch: Phase 1 and the Phase 2-3 plan stay in force, and nothin
 
 | Item | Why |
 |---|---|
-| Email attachments and outbound MMS | They need a dispatch branch and compose changes. Phase 2 module 22 owns `comms/dispatch.ts` and module 37 owns compose, so this lands as their follow-up: schema change none (`stored_objects` + `message_media`), owner question Q-PAR-6 |
+| Email attachments and outbound MMS | Outbound MMS: built under owner decision D5 (one-to-one human texts). Email attachments: still a module 22/37 follow-up. |
 | Tag-triggered automations | — |
 | Custom stages | — |
 | Private notes | — |
@@ -83,7 +83,7 @@ The full list with reasons is `docs/FUB_PARITY.md` §4.
 | Q-PAR-3 | Accept over-blocking from R-PAR-12 (a removed phone's STOP keeps blocking the person's other phones unless it was a confirmed wrong number)? | Yes (D1: an opt-out is final) |
 | Q-PAR-4 | May Team Leads edit team templates? | No (Owner/Admin); TLs copy to personal |
 | Q-PAR-5 | Batch text: allow at all, and cap per action? | Switch off by default; Owner-only on; ≤ 200 per action (DB ceiling; a lower tenant setting may follow); counsel first (C-PAR-1) |
-| Q-PAR-6 | Email attachments and outbound MMS: build with Phase 2 modules 22/37? | Yes, as their follow-up; not in this plan's lanes |
+| Q-PAR-6 | Email attachments and outbound MMS: build with Phase 2 modules 22/37? | Outbound MMS: built under owner decision D5 (one-to-one human texts). Email attachments: still a module 22/37 follow-up. |
 | Q-PAR-7 | Bulk size limits (tag/untag 10,000; stage, enroll, email, assign 2,000; text 200) and a per-tenant daily bulk-email cap (2,000) | As stated |
 | Q-PAR-8 | Custom field limit (50 live) and tag limit (1,000)? | As stated; FUB limits VERIFY |
 | Q-PAR-9 | In bulk email, skip people who wrote in the last 24 h? | Yes, default on, shown in the preview |

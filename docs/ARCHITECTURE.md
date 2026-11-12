@@ -569,7 +569,7 @@ connection/export test (counts only — no promises before this; FUB tasks/appoi
 |---|---|---|
 | Multi-turn autonomous qualification; AI auto-replies beyond one first message | Deferred indefinitely (PHASE2_3_PLAN §3; voice answering is the one bounded exception) | TCPA and accuracy risk; single message + handoff covers A7a |
 | AI voice: answering, outbound, warm transfer | Phase 3: inbound answering only, ships dark until `platform:voice` is cleared and the Owner enables it; live transfer only to the contact's own agent; AI outbound never (R-GATE-9) | FCC artificial-voice rules; disclosure laws |
-| Power dialer, voicemail drop, ringless voicemail, bulk SMS/email blasts, outbound MMS | Cut | High TCPA exposure; not needed to beat FUB daily |
+| Power dialer, voicemail drop, ringless voicemail, bulk SMS/email blasts, bulk or automated MMS | Cut. D5 (2026-11-11): an agent's own one-to-one text may carry photos and videos (PHASE2_3_PLAN §2, DATA_MODEL R-MMS-1); bulk, assistant, playbook, alert and marketing MMS stay cut | High TCPA exposure; not needed to beat FUB daily |
 | Calendar sync (Google/Microsoft), Gmail/Outlook inbox sync | Calendar: Phase 2, one-way push + live free/busy. D2: Gmail inbox sync is Phase 2 (modules 68/69, read-only, ships dark until `platform:gmail` is cleared); Outlook/Exchange mail sync not requested | OAuth scope and security review; in-app appointments only |
 | Unified inbox channels beyond SMS/email/call (FB/IG DMs, Zillow feeds, web chat) | Phase 2 (channel CHECK widens). D2: FB/IG DMs out of scope; web chat and Zillow/realtor.com leads stay | data model shaped (`messages.channel`, one conversation per person) |
 | Marketing generation, listing marketing, review automation | Phase 2 | — |
@@ -880,7 +880,7 @@ Authoritative for Phases 2 and 3; the build order, decisions and owner needs are
 ### 21.2 Channels and the one outbound path
 | Channel | Consent channel | Point kind / address | Sender | Allowed when |
 |---|---|---|---|---|
-| sms, mms | sms | phone | `phone_numbers` | Phase 1 |
+| sms, mms | sms | phone | `phone_numbers` | Phase 1; outbound `mms` only as an agent's own one-to-one text (D5, R-MMS-1) |
 | email | email | email | `email_identities` | Phase 1 |
 | messenger | messenger | `fb:{page}:{psid}` | connection `messenger_page` | **Out of scope (D2): never cleared; removed by the D2 cleanup.** Always `PLATFORM_NOT_CLEARED` (`platform:meta` is never cleared); no platform window is built. |
 | instagram | instagram | `ig:{account}:{igsid}` | connection `instagram_account` | **Out of scope (D2): never cleared; removed by the D2 cleanup.** Same as messenger. |
@@ -1045,3 +1045,21 @@ Posting to a Facebook Page, an Instagram business account or a GBP location goes
 - **`app.lead_email_messages_guard` (invoker).** Unchanged refusals; the only new permissions are for `current_user = 'app_retention'` (the two definers above): `needs_review → erased | expired`, and dropping the sender and DKIM domains (both at once). `point_hmacs` can only be cleared; CHECKs keep keys on held rows only and leave an erased/expired row empty.
 - **`app.feed_mark_contacts_deleted` (invoker, AFTER DELETE statement trigger on `contacts`).** Marks (`public.feed_dirty`) every member with a `feed_groups` row for a deleted record, probing the primary key through `memberships`; the next materialization re-scores and drops the group. Under RLS (any future non-definer delete) it marks what the writer can see, and the hourly reconcile repairs the rest (§6.1 of SECURITY.md, 0034).
 - **Deploy.** The database owner's credentials never reach the API or the worker: `docker-compose.prod.yml` interpolates them from `.env.owner` into the postgres and release services only, and both entrypoints refuse to start under `NODE_ENV=production` with `MIGRATION_DATABASE_URL`, `POSTGRES_OWNER_PASSWORD` or `POSTGRES_PASSWORD` in their environment (`apps/api/src/dbRole.ts`, DEPLOY §2-§3).
+
+### 21.15 Security notes: outbound photo and video texts (D5; migration `0060_outbound_mms.sql`, renumbered at merge)
+
+- **`app.outbound_media_upload_shred`** (AFTER DELETE on `outbound_media_uploads`; definer, owner app_retention, pinned search_path, EXECUTE revoked from PUBLIC).
+  - Keyed only on OLD. It shreds the deleted upload's own object only when that object has purpose `mms`, was created by that uploader, is not deleted and is attached to no message.
+  - It is reached by removal, the purge job, and erasure (the contact cascade, both in `app.purge_contact_internal` and in `app.retention_sweep`).
+  - No role can UPDATE the table, so OLD.object_id is the object the stamp trigger checked. A row a superuser forges (another user's object, a recording's object) shreds nothing (`packages/db/test/outbound_mms.test.ts`).
+- **`app.outbound_media_uploads_stamp`** (invoker, BEFORE INSERT). It sets the times itself, binds the row to an unshredded `mms` object of the uploader with the same type and size, and returns early for a foreign tenant so that RLS refuses the row.
+- **`app.message_media_outbound_guard`** (invoker, BEFORE INSERT, every inserter).
+  - Inbound parents pass.
+  - An outbound parent must be the caller's own queued or scheduled human `mms`, with no automation ids (the parent row is locked FOR UPDATE).
+  - The object must be the caller's unexpired upload for that person.
+  - At most 10 items and 5,000,000 bytes with the text.
+  - It returns early for a foreign tenant.
+- **`messages_mms_channel_fixed`** (invoker, BEFORE UPDATE OF channel): no message moves into or out of `mms`.
+- **`messages_mms_has_media`** (invoker, deferred constraint trigger): an outbound `mms` has media at commit.
+- **GET /api/mms/media** (public, global limiter off): MAC first, then 12 fetches per item per hour, then the message state and the object. One 404 for every refusal, byte-exact answers, nosniff, attachment, no-store and a sandbox CSP. No audit row. No Zod query schema, so a missing, repeated or extra parameter is the same 404, never a 422 (`apps/api/src/comms/outboundMedia.fetch.test.ts`).
+- **The token**: base64url(tenant ‖ message ‖ position ‖ expiry) and a 32-character linkMac (purpose `mms-media`, the session secret). It is stateless; rotating SESSION_SECRET_BASE64 breaks the links in flight. It lives at most 10 h 20 min, in a query string that the API never logs.
