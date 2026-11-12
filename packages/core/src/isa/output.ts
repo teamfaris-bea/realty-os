@@ -308,7 +308,8 @@ export function decideAction(out: IsaModelOutput, ctx: DecideContext): Decision 
           else if (c.src.channel === 'email' && !c.src.ownTextReliable) deny(a.type, 'OWN_TEXT_UNRELIABLE');
           else {
             const m = matchSlotChoice(a.quote, o.slots, o.zones);
-            if (m.kind !== 'unique') {
+            if (m.kind === 'none') deny(a.type, 'SLOT_MISMATCH');
+            else if (m.kind === 'ambiguous') {
               deny(a.type, 'SLOT_AMBIGUOUS');
               d.slotAmbiguous = true;
             } else if (m.index !== a.slot - 1) deny(a.type, 'SLOT_MISMATCH');
