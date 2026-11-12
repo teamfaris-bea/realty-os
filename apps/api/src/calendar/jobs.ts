@@ -15,5 +15,8 @@ export const CALENDAR_PUSH_JOB = { kind: 'calendar.push', queue: 'default', sche
 export const CalendarReconcilePayload = jobPayload({});
 export type CalendarReconcilePayload = Record<string, never>;
 
-/** calendar.reconcile (hourly, per tenant): revokes and purges the links of people who are no longer active members (R-INT-5). */
+/**
+ * calendar.reconcile (hourly, per tenant): revokes and purges the links of removed members (R-INT-5), and
+ * enqueues the pushes an active member's connected calendar is missing (changes made while they were suspended).
+ */
 export const CALENDAR_RECONCILE_JOB = { kind: 'calendar.reconcile', queue: 'default', schema: CalendarReconcilePayload, maxAttempts: 3 } as const;

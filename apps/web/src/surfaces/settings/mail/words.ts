@@ -32,6 +32,7 @@ export function resultWords(code: string | null): { tone: 'ok' | 'info' | 'error
 const REVOKE_WORDS: Record<RevokeReason, string> = {
   PROVIDER_REVOKED: COPY.providerRevoked,
   USER_DISCONNECTED: 'Gmail is disconnected. Your copies were removed from Realty OS.',
+  // only removal revokes now (R-GMAIL-13; a suspension pauses), but older rows were revoked by a suspension: true of both
   MEMBER_INACTIVE: "Gmail was disconnected because your account isn't active on this team.",
   SYNC_TURNED_OFF: 'Gmail was disconnected because Gmail sync was turned off for your team.',
   PLATFORM_NOT_CLEARED: "Gmail was disconnected because Gmail sync isn't available right now.",
@@ -52,6 +53,8 @@ export function formatDay(iso: string): string {
 /** The status line of a link. */
 export function statusWords(l: MailLinkView): string {
   if (l.status === 'revoked') return l.revokeReason ? REVOKE_WORDS[l.revokeReason] : 'Gmail is disconnected.';
+  // a suspended (or deactivating) member's link is paused, not revoked: the API says so in its own sentence
+  if (l.statusSentence?.startsWith('Paused ')) return l.statusSentence;
   if (l.status === 'degraded') return l.statusSentence || `Connected: ${l.mailboxAddress}, but the last sync didn't finish. Realty OS tries again on its own.`;
   return `Connected: ${l.mailboxAddress}. ${l.lastSyncedAt ? `Last synced ${formatWhen(l.lastSyncedAt)}.` : 'Not synced yet.'}`;
 }

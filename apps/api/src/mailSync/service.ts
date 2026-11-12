@@ -71,7 +71,7 @@ export interface LinkView {
   statusSentence: string;
 }
 
-interface OwnLinkRow {
+export interface OwnLinkRow {
   id: string;
   status: LinkView['status'];
   mailbox_address: string;
@@ -81,25 +81,32 @@ interface OwnLinkRow {
   revoke_reason: string | null;
   backfill_requested_at: Date | null;
   backfill_done_at: Date | null;
+  /** the owner's membership status: a live link of a suspended (or deactivating) member is paused, not revoked */
+  member_status: string | null;
 }
 
 const REVOKE_SENTENCE: Record<string, string> = {
   USER_DISCONNECTED: 'Disconnected. Your copies were removed from Realty OS.',
-  MEMBER_INACTIVE: 'Disconnected because your membership ended.',
+  // true of a removal and of a link revoked by a suspension before suspension became a pause (b7 review)
+  MEMBER_INACTIVE: 'Disconnected because your account was not active on this team.',
   SYNC_TURNED_OFF: 'Disconnected because Gmail sync was turned off for your team.',
   PLATFORM_NOT_CLEARED: 'Disconnected because Gmail sync is not available right now.',
   PROVIDER_REVOKED: 'Google access was removed: connect again.',
 };
 
-function linkView(r: OwnLinkRow): LinkView {
+export function linkView(r: OwnLinkRow): LinkView {
   const sentence =
     r.status === 'revoked'
       ? (REVOKE_SENTENCE[r.revoke_reason ?? ''] ?? 'Disconnected.')
-      : r.status === 'degraded'
-        ? `Connected: ${r.mailbox_address}. The last sync did not finish; Realty OS will try again.`
-        : r.last_synced_at
-          ? `Connected: ${r.mailbox_address}. Last synced ${r.last_synced_at.toISOString()}.`
-          : `Connected: ${r.mailbox_address}. The first sync starts within a few minutes.`;
+      : r.member_status === 'suspended'
+        ? 'Paused while your account is suspended.'
+        : r.member_status !== 'active'
+          ? 'Paused while your account is not active.'
+          : r.status === 'degraded'
+            ? `Connected: ${r.mailbox_address}. The last sync did not finish; Realty OS will try again.`
+            : r.last_synced_at
+              ? `Connected: ${r.mailbox_address}. Last synced ${r.last_synced_at.toISOString()}.`
+              : `Connected: ${r.mailbox_address}. The first sync starts within a few minutes.`;
   return {
     id: r.id,
     status: r.status,
@@ -117,7 +124,8 @@ function linkView(r: OwnLinkRow): LinkView {
 /** The caller's own live link, else their most recent revoked one (RLS: their rows only). Never refresh_enc. */
 async function ownLink(tx: Tx, live = false): Promise<OwnLinkRow | null> {
   const r = await sql<OwnLinkRow>`
-    SELECT id, status, mailbox_address, connected_at, last_synced_at, last_error_code, revoke_reason, backfill_requested_at, backfill_done_at
+    SELECT id, status, mailbox_address, connected_at, last_synced_at, last_error_code, revoke_reason, backfill_requested_at, backfill_done_at,
+           (SELECT m.status FROM memberships m WHERE m.tenant_id = user_mail_links.tenant_id AND m.user_id = user_mail_links.user_id) AS member_status
       FROM user_mail_links WHERE tenant_id = app.tenant_id() AND user_id = app.user_id()
        ${live ? sql`AND status <> 'revoked'` : sql``}
      ORDER BY (status <> 'revoked') DESC, created_at DESC LIMIT 1`.execute(tx);

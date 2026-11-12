@@ -5,7 +5,7 @@
 // until the JSON is regenerated, and then in the nginx test until nginx redacts it.
 import { readFileSync } from 'node:fs';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { CAPABILITY_PATHS_FILE, PUBLIC_PATH_PARAMS, capabilityPaths, capabilityPathsText, liveRouteTable, secretParams } from './capabilityPaths.js';
+import { CAPABILITY_PATHS_FILE, DOCUMENT_ROUTES, PUBLIC_PATH_PARAMS, capabilityPaths, capabilityPathsText, liveRouteTable, liveRoutesOutsideApi, secretParams } from './capabilityPaths.js';
 import type { RouteTableEntry } from './rbac.js';
 
 let table: RouteTableEntry[];
@@ -26,6 +26,8 @@ describe('the paths that carry a capability (capabilityPaths.json, read by the n
       'POST /api/intake/:sourceToken [sourceToken]',
       'POST /api/public/chat/session/:token/messages [token]',
       'GET,HEAD /api/public/chat/session/:token/poll [token]',
+      // b7 db-public/F1: module 29's signed image link (handed to Meta; the token carries the tenant and object ids)
+      'GET,HEAD /api/public/marketing-assets/:assetToken [assetToken]',
     ]);
   });
 
@@ -82,4 +84,25 @@ describe('the paths that carry a capability (capabilityPaths.json, read by the n
     const urls = new Set(listed.map((p) => p.path));
     for (const r of table) if (secretParams(r).length > 0) expect(urls.has(r.url), r.url).toBe(true);
   });
+});
+
+describe('routes outside /api (b7 db-public/F2)', () => {
+  it('R-MKT-7 b7 db-public/F2: the only routes outside /api are the public listing pages, every parameter of which is a declared public slug; nginx proxies /p/ to the API', async () => {
+    const all = await liveRoutesOutsideApi();
+    // the CORS plugin's catch-all preflight (no handler of ours, server.ts) is the one non-document route
+    expect(all.map((r) => `${r.methods.join(',')} ${r.path}`)).toEqual(['OPTIONS *', 'GET,HEAD /p/:tenantSlug/:pageSlug', 'GET,HEAD /p/:tenantSlug/:pageSlug/photos/:position']);
+    const live = all.filter((r) => r.path !== '*');
+    for (const r of live) {
+      const params = [...r.path.matchAll(/:([A-Za-z_][A-Za-z0-9_]*)/g)].map((m) => m[1]!);
+      expect(Object.keys(DOCUMENT_ROUTES[r.path] ?? {}).sort(), r.path).toEqual([...params].sort());
+      // a token on such a route would be a capability the access log keeps: refused
+      for (const p of params) expect(p, r.path).not.toMatch(/token$/i);
+    }
+    const nginx = readFileSync(new URL('../../../deploy/nginx.conf', import.meta.url), 'utf8');
+    for (const prefix of new Set(live.map((r) => `/${r.path.split('/')[1]}/`))) {
+      const at = nginx.indexOf(`\n  location ${prefix} {`);
+      expect(at, prefix).toBeGreaterThan(0);
+      expect(nginx.slice(at, nginx.indexOf('\n  }', at)), prefix).toContain('proxy_pass $api_upstream;');
+    }
+  }, 120_000);
 });

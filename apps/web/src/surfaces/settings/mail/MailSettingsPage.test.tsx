@@ -134,6 +134,12 @@ describe('Settings → Gmail: not connected', () => {
     expect(screen.getByRole('heading', { level: 2, name: DISCLOSURE_TITLE })).toBeVisible();
   });
 
+  it('R-GMAIL-13 (b7 ownership-data/F4): a suspended member\'s link is paused, not disconnected, and the page says so', async () => {
+    mount(new FakeFetch().on('GET /me/mail-link', { status: 200, body: view({ link: link({ statusSentence: 'Paused while your account is suspended.' }) }) }));
+    expect(await screen.findByText('Paused while your account is suspended.')).toBeVisible();
+    expect(screen.queryByText(/disconnected/i)).toBeNull();
+  });
+
   it('after Disconnect, it says so and offers Connect Gmail again', async () => {
     mount(new FakeFetch().on('GET /me/mail-link', { status: 200, body: view({ link: link({ status: 'revoked', revokeReason: 'USER_DISCONNECTED' }) }) }));
     expect(await screen.findByText('Gmail is disconnected. Your copies were removed from Realty OS.')).toBeVisible();

@@ -2,7 +2,7 @@
 // ARCHITECTURE §21.10). Standalone: provider calls happen OUTSIDE any transaction; each page commits in its own
 // system transaction, and the history cursor advances only after the page's rows commit.
 //
-//   1 revoke live links whose member is inactive, whose tenant switched sync off, or while platform:gmail is uncleared;
+//   1 revoke live links whose member was removed (suspension only pauses: skipped, copies hidden by mail_link_live), whose tenant switched sync off, or while platform:gmail is uncleared;
 //     refresh() invalid_grant ⇒ PROVIDER_REVOKED (E217). The refresh token is revoked at Google best effort.
 //   2 delete copies of revoked links, excluded threads, removed points, withdrawn confirmations (S-D2-2), addresses that
 //     became a live mailbox, and messages a platform row now duplicates (R-GMAIL-12); re-point a merged contact's
@@ -84,7 +84,10 @@ interface LinkRow {
   backfill_page_token: string | null;
   backfill_done_at: Date | null;
   last_synced_at: Date | null;
+  /** active membership: only then is the link synced */
   member_active: boolean;
+  /** removed (or no membership row): only then is the link revoked; suspended and deactivating pause it */
+  member_removed: boolean;
 }
 
 export interface MailSyncSummary {
@@ -129,7 +132,9 @@ export async function syncTenant(ctx: StandaloneJobContext, deps: MailSyncDeps):
     const enabled = (await sql<{ e: boolean }>`SELECT mail_sync_enabled AS e FROM tenant_settings WHERE tenant_id = app.tenant_id()`.execute(tx)).rows[0]?.e === true;
     const links = await liveLinks(tx);
     for (const l of links) {
-      const reason = !rules.cleared ? 'PLATFORM_NOT_CLEARED' : !enabled ? 'SYNC_TURNED_OFF' : !l.member_active ? 'MEMBER_INACTIVE' : null;
+      // R-GMAIL-13, R-INT-5: only REMOVAL revokes (MEMBER_INACTIVE). A suspended or deactivating member's link is
+      // paused, not revoked: it is skipped below and app.mail_link_live hides its copies until they are active again
+      const reason = !rules.cleared ? 'PLATFORM_NOT_CLEARED' : !enabled ? 'SYNC_TURNED_OFF' : l.member_removed ? 'MEMBER_INACTIVE' : null;
       if (!reason) continue;
       const r = await revokeLink(tx, deps.envelope, ctx.actor, l.id, reason);
       if (r.revoked) {
@@ -182,7 +187,8 @@ async function liveLinks(tx: Tx): Promise<LinkRow[]> {
     await sql<LinkRow>`
       SELECT l.id, l.user_id, l.status, l.mailbox_address_hmac, l.history_id, l.connected_at, l.next_sync_at, l.backfill_requested_at,
              l.backfill_page_token, l.backfill_done_at, l.last_synced_at,
-             EXISTS (SELECT 1 FROM memberships m WHERE m.tenant_id = l.tenant_id AND m.user_id = l.user_id AND m.status = 'active') AS member_active
+             EXISTS (SELECT 1 FROM memberships m WHERE m.tenant_id = l.tenant_id AND m.user_id = l.user_id AND m.status = 'active') AS member_active,
+             NOT EXISTS (SELECT 1 FROM memberships m WHERE m.tenant_id = l.tenant_id AND m.user_id = l.user_id AND m.status <> 'removed') AS member_removed
         FROM user_mail_links l WHERE l.tenant_id = app.tenant_id() AND l.status <> 'revoked' ORDER BY l.id`.execute(tx)
   ).rows;
 }

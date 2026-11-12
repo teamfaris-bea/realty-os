@@ -18,11 +18,18 @@ export async function enqueueCalendarPush(tx: Tx, appointmentId: string): Promis
 }
 
 /**
- * After a (re)connect or a recovery from `degraded` (system actor): every appointment of the person the
+ * After a (re)connect or a recovery from `degraded` (system actor; calendar.reconcile covers a reactivation): every appointment of the person the
  * calendar does not have at its current version gets its push (edits made while sync was stopped).
  */
 export async function enqueuePendingPushes(tx: Tx, userId: string): Promise<number> {
   const rows = await repo.pendingPushesOf(tx, userId);
+  for (const a of rows) await enqueueTyped(tx, CALENDAR_PUSH_JOB, { appointmentId: a.id }, { dedupeKey: `calendar.push:${a.id}:${a.sync_version}` });
+  return rows.length;
+}
+
+/** calendar.reconcile (system actor): the pending pushes of every active member's connected calendar. */
+export async function enqueuePendingPushesOfActiveLinks(tx: Tx): Promise<number> {
+  const rows = await repo.pendingPushesOfActiveLinks(tx);
   for (const a of rows) await enqueueTyped(tx, CALENDAR_PUSH_JOB, { appointmentId: a.id }, { dedupeKey: `calendar.push:${a.id}:${a.sync_version}` });
   return rows.length;
 }

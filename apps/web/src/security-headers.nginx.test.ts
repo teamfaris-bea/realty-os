@@ -210,10 +210,10 @@ describe('deploy/nginx.conf sends exactly webSecurityHeaders (SECURITY §2.1)', 
     }
   });
 
-  it('/api/ responses carry only the API’s own headers (no second CSP from nginx)', () => {
+  it('R-MKT-7 (b7 db-public/F2): /api/ and /p/ responses carry only the API’s own headers (no second CSP from nginx; the listing page sets its own CSP)', () => {
     const api = locations(conf.find((d) => d.name === 'server')!).filter((l) => l.proxied);
-    expect(api.map((l) => l.path)).toEqual(['/api/']);
-    expect(api[0]!.headers).toEqual([]);
+    expect(api.map((l) => l.path)).toEqual(['/api/', '/p/']);
+    for (const l of api) expect(l.headers, l.path).toEqual([]);
   });
 
   it('module 37: only /widget/chat.js is Cross-Origin-Resource-Policy: cross-origin (brokerages\' websites load it); every other location stays same-origin; the script is served as itself, never the SPA fallback', () => {
@@ -287,10 +287,14 @@ describe('the client address the API counts (finding chat-xff-ratelimit-bypass)'
   const server = conf.find((d) => d.name === 'server')!;
   const all = flatten(conf);
 
-  it('nginx states the client in X-Forwarded-For, replacing whatever the client sent: it never appends to a client-written header ($proxy_add_x_forwarded_for)', () => {
-    const api = server.block!.find((d) => d.name === 'location' && d.args.join(' ') === '/api/')!.block!;
-    const xff = flatten(api).filter((d) => d.name === 'proxy_set_header' && /^x-forwarded-for$/i.test(d.args[0] ?? ''));
-    expect(xff.map((d) => d.args[1])).toEqual(['$remote_addr']);
+  it('b7 db-public/F2: nginx states the client in X-Forwarded-For (/api/ and /p/), replacing whatever the client sent: it never appends to a client-written header ($proxy_add_x_forwarded_for)', () => {
+    // b7 db-public/F2: /p/ too, or every visitor of a listing page shares one per-IP bucket (PAGE_LIMITS)
+    for (const path of ['/api/', '/p/']) {
+      const loc = server.block!.find((d) => d.name === 'location' && d.args.join(' ') === path)?.block;
+      expect(loc, path).toBeDefined();
+      const xff = flatten(loc!).filter((d) => d.name === 'proxy_set_header' && /^x-forwarded-for$/i.test(d.args[0] ?? ''));
+      expect(xff.map((d) => d.args[1]), path).toEqual(['$remote_addr']);
+    }
     expect(JSON.stringify(all)).not.toContain('proxy_add_x_forwarded_for');
   });
 
@@ -373,8 +377,8 @@ describe('the access log carries no capability (findings chat-token-in-access-lo
     for (const uri of ['/', '/assets/app.3f2a.js', `/api/contacts/${ID}/thread`, '/api/public/chat/wk_0123456789abcdef0123456789abcdef01234567', '/api/auth/invites', '/widget/chat.js']) expect(logUri(conf, uri), uri).toBe(uri);
   });
 
-  it('F2-invite-token-access-log: every path the API route table marks as a capability (apps/api/src/capabilityPaths.json) is logged with "-" for each secret, so a new capability route cannot be missed', () => {
-    expect(capabilityPaths.map((p) => p.path)).toEqual(expect.arrayContaining(['/api/auth/invites/:token/accept', '/api/public/chat/session/:token/poll', '/api/email/unsubscribe/:token', '/api/intake/:sourceToken']));
+  it('F2-invite-token-access-log (b7 db-public/F1): every path the API route table marks as a capability (apps/api/src/capabilityPaths.json) is logged with "-" for each secret, so a new capability route cannot be missed', () => {
+    expect(capabilityPaths.map((p) => p.path)).toEqual(expect.arrayContaining(['/api/auth/invites/:token/accept', '/api/public/chat/session/:token/poll', '/api/email/unsubscribe/:token', '/api/intake/:sourceToken', '/api/public/marketing-assets/:assetToken']));
     for (const p of capabilityPaths) {
       expect(p.secrets.length, p.path).toBeGreaterThan(0);
       for (const s of p.secrets) expect(p.path, s).toContain(`:${s}`);
@@ -451,12 +455,14 @@ describe('the container stack (Dockerfile, docker-compose.prod.yml, deploy/nginx
     return lines.slice(start, end < 0 ? undefined : end).join('\n');
   };
 
-  it('/api/ re-resolves the API name: a variable upstream plus a resolver (a literal upstream kept a recreated api container’s old address: 502 until web restarted)', () => {
-    const api = block('/api/');
-    const pass = api.find((d) => d.name === 'proxy_pass')!.args[0]!;
-    expect(pass).toMatch(/^\$[a-z_]+$/);
-    expect(api.find((d) => d.name === 'set' && d.args[0] === pass)?.args[1]).toBe('http://${API_UPSTREAM}');
-    expect(api.find((d) => d.name === 'resolver')?.args[0]).toBe('${NGINX_RESOLVER}');
+  it('b7 db-public/F2: /api/ and /p/ re-resolve the API name: a variable upstream plus a resolver (a literal upstream kept a recreated api container’s old address: 502 until web restarted)', () => {
+    for (const path of ['/api/', '/p/']) {
+      const api = block(path);
+      const pass = api.find((d) => d.name === 'proxy_pass')!.args[0]!;
+      expect(pass, path).toMatch(/^\$[a-z_]+$/);
+      expect(api.find((d) => d.name === 'set' && d.args[0] === pass)?.args[1], path).toBe('http://${API_UPSTREAM}');
+      expect(api.find((d) => d.name === 'resolver')?.args[0], path).toBe('${NGINX_RESOLVER}');
+    }
     expect(stage('web')).toMatch(/^ENV .*NGINX_RESOLVER=127\.0\.0\.11/m);
   });
 

@@ -355,6 +355,17 @@ export async function insertInbound(tx: Tx, m: InboundInsert): Promise<boolean> 
   return r.rows.length === 1;
 }
 
+/**
+ * inbound_seq + 1 ONLY (b7 sends/F3): a fresh synced Gmail reply (ingestSyncedMailInTx). It moves the counter E27 and
+ * R-AST-6 compare, and never last_inbound_at: that would make a free-form message "informational" (R-CONSENT-5) and
+ * so step around a marketing-only unsubscribe (D1). Returns the new seq.
+ */
+export async function bumpInboundSeq(tx: Tx, conversationId: string): Promise<number> {
+  const r = await sql<{ inbound_seq: string }>`
+    UPDATE conversations SET inbound_seq = inbound_seq + 1 WHERE tenant_id = app.tenant_id() AND id = ${conversationId} RETURNING inbound_seq`.execute(tx);
+  return Number(r.rows[0]?.inbound_seq ?? 0);
+}
+
 /** inbound_seq + 1 and last_inbound_at (drafts pin inbound_seq; R-AST-6). Returns the new seq. */
 export async function bumpInbound(tx: Tx, conversationId: string, contactId: string, at: Instant): Promise<number> {
   const r = await sql<{ inbound_seq: string }>`
