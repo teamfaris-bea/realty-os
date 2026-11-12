@@ -5,6 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MIGRATIONS_DIR, connectionSettings, withCredentials, withDatabase } from '../src/dbConfig.js';
 import { runRelease } from '../src/release.js';
+import { runPreflight } from '../src/scripts/preflight.js';
 import { MigrationError, migrate } from '../src/migrate.js';
 import { forceRlsProbe, inspectOwnerRole } from '../src/rolePreflight.js';
 import { createTestDb, type TestDb } from '../src/testing/index.js';
@@ -126,5 +127,69 @@ describe('R-DEPLOY-4 E477: the release step refuses an owner that lacks what it 
     const err = await runRelease({ ownerUrl: noBypass.url(noBypassDb), appUrl: appUrlFor(noBypassDb), dir: MIGRATIONS_DIR, log: () => {} }).then(() => null, (e: unknown) => e as Error);
     expect(err?.message).toContain(`the migration role ${noBypass.name} is subject to row-level security`);
     expect((await state(noBypassDb)).schemas).toEqual([]);
+  });
+});
+
+describe('R-DEPLOY-2 R-DEPLOY-4: the read-only preflight CLI', () => {
+  const catalogs = (database: string) =>
+    admin(async (c) => ({
+      roles: (await c.query(`SELECT rolname, rolcanlogin, rolsuper, rolbypassrls FROM pg_roles ORDER BY 1`)).rows,
+      members: (await c.query(`SELECT roleid, member, admin_option, inherit_option, set_option FROM pg_auth_members ORDER BY 1, 2`)).rows,
+      namespaces: (await c.query(`SELECT nspname, nspowner, nspacl::text FROM pg_namespace ORDER BY 1`)).rows,
+      defaultAcl: (await c.query(`SELECT defaclrole, defaclnamespace, defaclobjtype, defaclacl::text FROM pg_default_acl ORDER BY 1, 2, 3`)).rows,
+      extensions: (await c.query(`SELECT extname FROM pg_extension ORDER BY 1`)).rows,
+    }), database);
+  const run = async (argv: string[], ownerUrl: string | undefined, appUrl?: string) => {
+    const out: string[] = [];
+    const code = await runPreflight(argv, { ownerUrl, appUrl, out: (l) => out.push(l) });
+    return { code, out };
+  };
+
+  it('R-DEPLOY-4: --trial on a throwaway database reports every capability for a BYPASSRLS owner of it and leaves pg_roles, pg_auth_members, pg_namespace, pg_default_acl and the extensions identical', async () => {
+    const database = await createTrialDb(bypass, 'trial');
+    const before = await catalogs(database);
+    const r = await run(['--trial'], bypass.url(database));
+    expect(r.out).toEqual([
+      'trial: server version 16 or later: ok',
+      'trial: CREATE on the database: ok',
+      'trial: create a NOLOGIN BYPASSRLS role: ok',
+      'trial: grant it to the owner WITH INHERIT, SET: ok',
+      'trial: create a schema with CREATE for that role: ok',
+      'trial: move a SECURITY DEFINER function to that role: ok',
+      'trial: FORCE-RLS update probe: ok',
+      'trial: CREATE EXTENSION IF NOT EXISTS pgcrypto: ok',
+      'trial: CREATE EXTENSION IF NOT EXISTS pg_trgm: ok',
+      'trial: CREATE EXTENSION IF NOT EXISTS citext: ok',
+      'preflight ok',
+    ]);
+    expect(r.code).toBe(0);
+    expect(await catalogs(database)).toEqual(before);
+  });
+
+  it('R-DEPLOY-2 E475 E476: --trial and --owner for the non-bypass owner fail, naming the check, and change nothing', async () => {
+    const before = await catalogs(noBypassDb);
+    const t = await run(['--trial'], noBypass.url(noBypassDb));
+    expect(t.code).toBe(1);
+    expect(t.out).toContain('trial: create a NOLOGIN BYPASSRLS role: failed: SQLSTATE 42501');
+    expect(t.out).toContain('trial: grant it to the owner WITH INHERIT, SET: not checked: create a NOLOGIN BYPASSRLS role failed');
+    expect(t.out).toContain('trial: FORCE-RLS update probe: failed: the FORCE-RLS update probe updated 0 rows, not 1');
+    const o = await run(['--owner'], noBypass.url(noBypassDb));
+    expect(o.out[0]).toBe(`owner bypasses row-level security: failed: the migration role ${noBypass.name} is subject to row-level security (not superuser, no BYPASSRLS): migration backfills would update zero rows under FORCE RLS, and 0001 cannot create the BYPASSRLS roles; nothing was applied`);
+    expect(o.out.at(-1)).toBe('preflight failed: 2 checks');
+    expect(o.out.join('\n')).not.toContain(noBypass.password);
+    expect(await catalogs(noBypassDb)).toEqual(before);
+  });
+
+  it('R-DEPLOY-1: --app before the first release reports the app checks not checked, never ok; a missing URL and an unreachable host fail by variable and code only', async () => {
+    const s = connectionSettings();
+    const app = withCredentials(withDatabase(s.adminUrl, bypassDb), s.appUser.user, s.appUser.password);
+    const r = await run(['--app'], undefined, app);
+    expect(r.out).toEqual(['app role checks: not checked: SQLSTATE 42P01: the schema is not migrated yet (run the release step first)', 'preflight ok']);
+    const missing = await run(['--owner'], undefined);
+    expect(missing.out).toEqual(['owner connection: failed: MIGRATION_DATABASE_URL is not set', 'preflight failed: 1 checks']);
+    const down = await run(['--app'], undefined, 'postgres://app_user:secret-pw@127.0.0.1:1/realty');
+    expect(down.out[0]).toBe('app connection: failed: cannot connect with DATABASE_URL: ECONNREFUSED');
+    expect(down.out.join('\n')).not.toMatch(/secret-pw|127\.0\.0\.1/);
+    expect(await run(['--bogus'], undefined)).toEqual({ code: 1, out: ['preflight failed: unknown option --bogus (use --owner, --app, --trial)'] });
   });
 });
