@@ -2,8 +2,8 @@ import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { type ContactId, at, sequentialIds } from '../foundation/index.js';
 import { normalizeClaims } from './claims.js';
-import { sourceIndex } from './evidence.js';
-import { type ContactBundle, MAX_VOICE_SAMPLES, buildPrompt } from './prompt.js';
+import { sourceIndex, verifyQuote } from './evidence.js';
+import { type ContactBundle, MAX_VOICE_SAMPLES, PROMPT_VERSION, buildPrompt } from './prompt.js';
 import { CALL, CONTACT_ID, LA, LISTING_ID, OTHER_CONTACT_ID, teamIdentity } from './testing/fixtures.js';
 import { AI_PURPOSES } from './types.js';
 
@@ -240,3 +240,43 @@ describe('buildPrompt with a sparse or unusual bundle', () => {
     expect(p.user).not.toMatch(/CONVERSATION|AGENT NOTES|DEALS|LISTINGS|ACTIVITY|CALL/);
     expect(p.sources).toEqual([]);
   });
+
+describe('texting reactions in the prompt (D5b, R-REACT-7)', () => {
+  const TEAM_ID = '00000000-0000-7000-8000-00000000a601';
+  const RX_ID = '00000000-0000-7000-8000-00000000a602';
+  const TEAM_TEXT = 'Would the sellers take 450k if we close fast?';
+  const rxBundle = () =>
+    bundle({
+      messages: [
+        { id: TEAM_ID, contactId: CONTACT_ID, direction: 'outbound', channel: 'sms', at: T, body: TEAM_TEXT, author: 'agent' },
+        { id: RX_ID, contactId: CONTACT_ID, direction: 'inbound', channel: 'sms', at: T, body: `Loved “${TEAM_TEXT}”`, author: 'client', reaction: { phrase: 'loved', targetId: TEAM_ID } },
+      ],
+    });
+
+  it('R-REACT-7 E309: the reaction is printed as untrusted data only, naming the handle of the team text', () => {
+    const p = build(rxBundle());
+    expect(p.user).toMatch(/\[S2\] [^\n]* client \(sms reaction to the team's text \[S1\]\):\n<untrusted_[0-9a-f]+>\nloved\n<\/untrusted_[0-9a-f]+>/);
+    expect(p.user).not.toContain('Loved “');
+    // the team's words appear once: as the agent's own text
+    expect(p.user.split(TEAM_TEXT).length - 1).toBe(1);
+    const rx = p.sources.find((s) => s.sourceId === RX_ID)!;
+    expect(rx).toMatchObject({ kind: 'text', text: 'loved', author: 'client', handle: 'S2' });
+    expect(PROMPT_VERSION).toBe('assistant-prompts/2.1.0');
+  });
+
+  it('R-REACT-7 E309: a claim quoting the team words that cites the reaction is NOT_FOUND; citing the team text verifies as the agent\'s', () => {
+    const p = build(rxBundle());
+    const rx = p.sources.find((s) => s.sourceId === RX_ID)!;
+    const team = p.sources.find((s) => s.sourceId === TEAM_ID)!;
+    const ref = (id: string) => ({ sourceType: 'message' as const, sourceId: id, locator: { kind: 'message' as const }, snippet: 'take 450k if we close fast' });
+    expect(verifyQuote(rx, ref(RX_ID))).toEqual({ verified: false, reason: 'NOT_FOUND' });
+    expect(verifyQuote(team, ref(TEAM_ID))).toEqual({ verified: true });
+    expect(team).toMatchObject({ author: 'agent' });
+  });
+
+  it('R-REACT-7: a reaction whose target is not in the bundle names no handle, and plain messages keep their handles', () => {
+    const p = build(bundle({ messages: [{ id: RX_ID, contactId: CONTACT_ID, direction: 'inbound', channel: 'sms', at: T, body: 'Loved “x”', author: 'client', reaction: { phrase: 'loved', targetId: TEAM_ID } }] }));
+    expect(p.user).toContain("client (sms reaction to the team's text (not shown)):");
+    expect(build().sources.map((s) => s.handle)).toEqual(['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7']);
+  });
+});
