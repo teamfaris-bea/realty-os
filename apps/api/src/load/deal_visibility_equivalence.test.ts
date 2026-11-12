@@ -268,7 +268,9 @@ describe('deal visibility once per statement: contact-children and timeline poli
       // the rewritten policies are exactly the listed ones, each reading through the helper
       const pol = (await su.query<{ tablename: string; policyname: string; qual: string; with_check: string | null }>(
         `SELECT tablename, policyname, qual, with_check FROM pg_policies WHERE schemaname = 'public' AND qual LIKE '%contact_detail_row%'`)).rows;
-      expect(pol.map((p) => `${p.tablename}.${p.policyname}`).sort()).toEqual(OLD_USING.map((p) => `${p.table}.${p.policy}`).sort());
+      // later tables that use the helper from the start (never rewritten, so outside this comparison)
+      const NATIVE = new Set(['homeowner_profiles.profiles_select']);
+      expect(pol.map((p) => `${p.tablename}.${p.policyname}`).filter((x) => !NATIVE.has(x)).sort()).toEqual(OLD_USING.map((p) => `${p.table}.${p.policy}`).sort());
       for (const p of pol) expect(p.qual, p.policyname).not.toContain('contact_detail_visible');
       // every table in the comparison has rows in this tenant for the non-vacuous ones
       for (const t of ['messages', 'calls', 'notes', 'contact_points', 'lead_ownership_events', 'appointments', 'behavior_events', 'lead_inquiries', ...PARITY]) {
