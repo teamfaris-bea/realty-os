@@ -176,6 +176,13 @@ describe('R-ISA-6 inbound escalations and precedence', () => {
     expect(handoffs(r.actions)[0]).toMatchObject({ handoff: { basis: { rule: 'B2' }, priority: 'critical' } });
     expect(queued(r.actions)[0]!.lines).toEqual(['ready']);
   });
+  it('E492 two texts 5 s apart are one turn that reads both (one model call)', () => {
+    const r = step(start(), { type: 'inbound', at: T(5000), messages: [inbound('hi, we are looking', { seq: 41, at: NOW }), inbound('in Springfield', { seq: 42, at: T(5000) })] }, F);
+    expect(r.actions).toEqual([{ kind: 'await_model', repair: false, initiated: false }]);
+    expect(r.state.lastInboundSeq).toBe(42);
+    // a replay of the same batch (a stuck lease) is a no-op
+    expect(step(r.state, { type: 'inbound', at: T(6000), messages: [inbound('hi, we are looking', { seq: 41 }), inbound('in Springfield', { seq: 42 })] }, F).actions).toEqual([]);
+  });
   it('inbounds already consumed, or arriving while paused or ended, do nothing', () => {
     const s = step(start(), say('hi', { seq: 5 }), F).state;
     expect(step(s, say('again', { seq: 5 }), F).actions).toEqual([]);

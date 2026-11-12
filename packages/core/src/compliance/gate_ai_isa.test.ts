@@ -219,7 +219,7 @@ describe('R-ISA-10 R-ISA-11 check 12: monotone, and an allow is always inside th
     expect(canContact(aiIsaInput({}, { counts: { ai24h: 2, automated24h: 2, initiated24h: 1, initiated7d: 3, lastAiOutboundAt: T(-120_000) } })).outcome).toBe('allow');
     expect(canContact(aiIsaInput({}, { counts: { ai24h: 0, automated24h: 3, initiated24h: 0, initiated7d: 0, lastAiOutboundAt: null } })).reasons).toEqual(['ISA_CAP_REACHED']);
   });
-  it('12a/12b/12g: a user recipient, web chat, voice, media, sold facts by SMS', () => {
+  it('R-ISA-24 12a/12b/12g: SMS and email only — a user recipient, web chat, voice, media, sold facts by SMS are refused', () => {
     expect(canContact(aiIsaInput({ recipient: { kind: 'user', addressHmac: H1, channel: 'sms' } })).reasons).toContain('ISA_UNBOUND_RECIPIENT');
     expect(canContact(aiIsaInput({ recipient: { kind: 'contact', addressHmac: H1, channel: 'web_chat' }, sender: null, connection: { status: 'connected' } })).reasons).toContain('ISA_CHANNEL_NOT_ALLOWED');
     expect(canContact(aiIsaInput({ recipient: { kind: 'contact', addressHmac: H1, channel: 'voice' }, rendered: undefined })).reasons).toEqual(expect.arrayContaining(['AUTOMATED_VOICE_UNAVAILABLE', 'ISA_CHANNEL_NOT_ALLOWED']));
