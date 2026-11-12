@@ -843,3 +843,23 @@ Security review items of the migration (CONVENTIONS §4):
   saved search now stays `active` but never alerts; moving it to the survivor, or pausing it at the merge, is a product
   decision. The contact page's reachability summary for a merged-away record (seen only by tenant-wide roles and the
   loser's collaborators) still describes that record's own points, though every send from it is refused.
+
+## 9. Batch 6 interaction review: web chat and opt-out honesty (migration `webchat_sessions_follow_merge`, lane number 0046)
+
+Fixes of the batch 6 review (group "chat"; ARCHITECTURE §21.13). Each change only refuses, blocks or says more; no
+opt-out check, guard, policy or grant is weakened (D1), and each is proved by a test that failed before the fix.
+
+- **New SECURITY DEFINER trigger `app.webchat_sessions_follow_merge()`** (owner `app_definer`, `search_path =
+  pg_catalog, public`, EXECUTE revoked from PUBLIC; column grant `UPDATE (contact_id, contact_point_id)` on
+  `webchat_sessions` to `app_definer`). It fires only on the ownership engine's merge (`merged_into_contact_id` from
+  NULL to a contact), within that row's tenant, after 0027's point copy, and re-points only the merged-away record's
+  chat sessions to the survivor's copy of the same chat identity. It writes no opt-out state; a person still cannot
+  write a session (0018 `webchat_system`), and a staff user reads one only with the survivor's detail (0018
+  `webchat_staff_read`), as they read the messages the merge moved. The migration's self-check and
+  `packages/db/test/webchat_follow_merge.test.ts` assert the shape, the trigger order and the backfill.
+- **canContact's web-chat fan-out reads the whole person** (`comms/repos/gate.ts chatFanoutHmacs`), the set the 0043
+  guard reads, so a chat reply to a merged-away record is refused by the gate first, with its evidence
+  (`comms/guardEquivalence.test.ts`, R-INBOX-3 case).
+- **The person-level do-not-contact is said before every tap** (reachability summary, feed hint, compose, Details),
+  web chat included; the points routes refuse the chat identity (404 `NOT_FOUND`) so it cannot be removed from under
+  its chat. Read paths only; everything stays under the caller's RLS.
