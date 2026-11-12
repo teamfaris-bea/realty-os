@@ -21,7 +21,7 @@ const TEAM = '+15555559300';
 const PHONE = '+15555550101';
 
 const as = <T>(actor: Actor, fn: Parameters<typeof withTenantTx<T>>[1]) => withTenantTx(actor, fn, { db: h.app, retries: 0 });
-const sys = (): SystemActor => w.system('webhook');
+const sys = (): SystemActor => w.system('provider');
 
 interface Msg {
   contact?: string;
@@ -215,7 +215,7 @@ describe('message_reactions (D5b)', () => {
     expect(await visible(w.agents[0]!.actor)).toBe(1);
     // another tenant sees nothing, even naming the row
     expect(await visible(w2.owner.actor as UserActor)).toBe(0);
-    expect(await as(w2.system('webhook'), async (tx) => (await sql<{ n: number }>`SELECT count(*)::int AS n FROM message_reactions`.execute(tx)).rows[0]!.n)).toBe(0);
+    expect(await as(w2.system('provider'), async (tx) => (await sql<{ n: number }>`SELECT count(*)::int AS n FROM message_reactions`.execute(tx)).rows[0]!.n)).toBe(0);
     // cascade with the reaction message, then with the target
     await h.su.query('DELETE FROM messages WHERE id = $1', [r]);
     expect(await suRows(h.su, 'SELECT 1 FROM message_reactions WHERE message_id = $1', [r])).toHaveLength(0);
