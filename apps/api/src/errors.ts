@@ -359,6 +359,7 @@ export const ERROR_STATUS = {
   EXTRACTION_CLAIM_NEEDS_REVIEW: 409, // not found in the document as quoted: never a date (R-AST-1, E131)
   EXTRACTION_CLAIM_DECIDED: 409, // the claim was already rejected or corrected
   EXTRACTION_TARGET_KIND: 409, // the existing date is another kind of milestone
+  EXTRACTION_USE_DOCUMENT: 409, // a contract extraction is decided on its document, never by the generic reject or claim review (details.documentId)
   // ---- module 52 api/ads (the same codes the DB raises; R-ADS-1..13) ----
   ADS_NOT_CLEARED: 409, // platform:ads is not cleared (counsel review AND the vendor check): no approval, no plan (R-ADS-7)
   ADS_GOOGLE_ONLY: 409, // D2: only a Google Ads campaign the caller sees is planned (R-ADS-8)

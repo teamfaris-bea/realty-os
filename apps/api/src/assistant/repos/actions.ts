@@ -155,14 +155,23 @@ export async function actionByDedupeKey(tx: Tx, key: string): Promise<ActionRow 
 }
 
 /**
+ * Kinds decided only on their own path, never by the generic card taps: a contract extraction's dates are confirmed or
+ * rejected claim by claim on the document (module 42, /documents/:id/extraction), where a confirm writes the deal date
+ * through module 31. A generic reject would close the extraction for good and a generic claim review would mark a
+ * claim decided without a date (b11 sends-gates/F1, api-ui/F1). The generic approve stays acknowledge-only.
+ */
+export const OWN_DECISION_PATH_KINDS: readonly string[] = ['contract_extraction'];
+
+/**
  * Open (proposed) actions owned by the current user, newest first. Autonomous messages of an approved
  * playbook are not cards: they are not waiting for the agent, and a tap could not stop them (the playbook
- * is paused or stopped from the enrollment instead).
+ * is paused or stopped from the enrollment instead). Kinds with their own decision path are not cards either.
  */
 export async function inboxActions(tx: Tx, limit: number): Promise<ActionRow[]> {
   const r = await sql<RawAction>`
     SELECT ${ACTION_COLS} FROM assistant_actions
      WHERE tenant_id = app.tenant_id() AND owner_user_id = app.user_id() AND status = 'proposed' AND autonomy <> 'within_playbook'
+       AND kind <> ALL (${[...OWN_DECISION_PATH_KINDS]}::text[])
      ORDER BY created_at DESC, id DESC LIMIT ${limit}`.execute(tx);
   return r.rows.map(actionRow);
 }

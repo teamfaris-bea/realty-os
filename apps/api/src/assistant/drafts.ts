@@ -325,11 +325,23 @@ async function revertApproval(tx: Tx, actionId: string, sendActionId: string): P
                         AND o.dedupe_key = priority_feed_items.dedupe_key AND o.state IN ('open','snoozed'))`.execute(tx);
 }
 
+/**
+ * b11 sends-gates/F1, api-ui/F1: a contract extraction is rejected or confirmed claim by claim on its document (module
+ * 42), never by a generic reject (which would close it for good) or a generic claim review (which would mark a claim
+ * decided with no deal date). The generic approve only acknowledges it (R-AST-21) and is not refused.
+ */
+function refuseOwnDecisionPath(a: A.ActionRow): void {
+  if (!A.OWN_DECISION_PATH_KINDS.includes(a.kind)) return;
+  const documentId = typeof a.payload.documentId === 'string' ? a.payload.documentId : null;
+  throw new AppError('EXTRACTION_USE_DOCUMENT', documentId ? { documentId } : undefined);
+}
+
 /** POST /assistant/actions/:id/reject */
 export async function rejectAction(actor: UserActor, actionId: string, deps: AssistantDeps): Promise<{ actionId: string; status: string }> {
   return asUser(deps, actor, async (tx, now) => {
     const peek = await A.actionById(tx, actionId);
     if (!peek || peek.ownerUserId !== actor.userId) throw new AppError('NOT_FOUND');
+    refuseOwnDecisionPath(peek);
     if (peek.contactId) await lockContact(tx, peek.contactId as ContactId);
     const a = (await A.actionById(tx, actionId, { lock: true }))!;
     if (a.status === 'rejected') return { actionId, status: 'rejected' };
@@ -372,6 +384,7 @@ export async function reviewClaim(actor: UserActor, claimId: string, input: Clai
     if (!c) throw new AppError('NOT_FOUND');
     const a = await A.actionById(tx, c.actionId);
     if (!a || a.ownerUserId !== actor.userId) throw new AppError('NOT_FOUND');
+    refuseOwnDecisionPath(a);
     if (a.contactId) await lockContact(tx, a.contactId as ContactId);
     if (c.reviewStatus !== 'unreviewed') throw new AppError('ALREADY_REVIEWED');
     let structured: Record<string, unknown> | undefined;

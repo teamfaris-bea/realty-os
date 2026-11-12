@@ -287,6 +287,31 @@ describe('claim decisions (deliverable 7)', () => {
     expect((await confirm(w.tc, documentId, c1!.id)).status).toBe(200); // a replay of the confirmed one
   });
 
+  it('R-AST-21 R-DOC-10 (b11 sends-gates/F1, api-ui/F1): a contract extraction is no card in the generic Approvals inbox; the generic reject and claim review refuse it (EXTRACTION_USE_DOCUMENT), so the extraction stays open and its dates stay confirmable', async () => {
+    const { dealId, documentId } = await contract();
+    await runExtract(documentId);
+    const v = await extraction(w.tc, documentId);
+    const actionId = v.body.action!.id;
+    const inbox = await call<{ items: { id: string; kind: string }[] }>(w.tc, 'GET', '/assistant/inbox');
+    expect(inbox.status).toBe(200);
+    expect(inbox.body.items.some((i) => i.id === actionId || i.kind === 'contract_extraction')).toBe(false);
+    const [c1, c2] = v.body.claims;
+    const rv = await call<{ error: { code: string; details?: Record<string, unknown> } }>(w.tc, 'POST', `/assistant/claims/${c1!.id}/review`, { status: 'confirmed' });
+    expect([rv.status, rv.body.error?.code, rv.body.error?.details]).toEqual([409, 'EXTRACTION_USE_DOCUMENT', { documentId }]);
+    expect((await call<{ error: { code: string } }>(w.tc, 'POST', `/assistant/claims/${c2!.id}/review`, { status: 'rejected' })).body.error?.code).toBe('EXTRACTION_USE_DOCUMENT');
+    const rj = await call<{ error: { code: string; details?: Record<string, unknown> } }>(w.tc, 'POST', `/assistant/actions/${actionId}/reject`);
+    expect([rj.status, rj.body.error?.code, rj.body.error?.details]).toEqual([409, 'EXTRACTION_USE_DOCUMENT', { documentId }]);
+    // nothing changed: the action is open, both claims are unreviewed, and the document path still decides them
+    const after = await extraction(w.tc, documentId);
+    expect(after.body.action!.status).toBe('proposed');
+    expect(after.body.claims.slice(0, 2).map((c) => c.reviewStatus)).toEqual(['unreviewed', 'unreviewed']);
+    expect((await confirm(w.tc, documentId, c1!.id)).status).toBe(200);
+    expect((await reject(w.tc, documentId, c2!.id)).status).toBe(200);
+    expect(await rows('SELECT 1 FROM deal_dates WHERE deal_id = $1', [dealId])).toHaveLength(1);
+    // a tenant-wide reader who does not own the action still gets 404 from the generic routes
+    expect((await call(w.owner, 'POST', `/assistant/actions/${actionId}/reject`)).status).toBe(404);
+  });
+
   it('R-AST-21: proposed → approved on the first confirm; proposed → rejected when every verified claim is rejected', async () => {
     const a = await contract();
     await runExtract(a.documentId);
