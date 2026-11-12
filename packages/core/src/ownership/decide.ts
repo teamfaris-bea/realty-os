@@ -466,7 +466,7 @@ function decideCreate(state: OwnershipProjection | null, cmd: Cmd<'create'>, ctx
 }
 
 /** Only `import_assign` → 'unassigned' produces this projection: one ledger event, unassigned, no route due. */
-function inImportCreationState(state: OwnershipProjection): boolean {
+function inImportCreationState(state: Pick<OwnershipProjection, 'state' | 'seq' | 'routeDueAt'>): boolean {
   return state.state === 'unassigned' && state.seq === 1 && state.routeDueAt === null;
 }
 
@@ -775,6 +775,25 @@ function decideTouch(state: OwnershipProjection, cmd: Cmd<'touch'>, ctx: Decisio
   return accepted(b, null);
 }
 
+/**
+ * R-OWN-20: what a new inquiry from an existing contact does, by the contact's ownership state (read under the
+ * contact lock). `reinquiry` where the engine acts on it: owned (the owner hears; a quiet period starts a new SLA),
+ * in a pond (the pond's setting), closed (it stays closed), and, owner decision D8 (2026-11-12), unassigned with no
+ * route due, which nothing will ever route (an import left it so: no owner in the source, a CSV row, B4's suspended
+ * member, a merge or an undo before the owners came in), so it is routed like a returning lead. `attached` where the
+ * inquiry is only attached: on offer, or unassigned awaiting the router (a route due), which routes it once; and
+ * (review D8-R1) a person still in the import's creation state whose owners are still to come (`ownersPending`: the
+ * contacts are imported and the ownership stage can still commit): the approved owner mapping decides who holds them,
+ * so the import replays the inquiry once the owners are in (their owner hears it; one who still has nobody is routed
+ * then). Intake records this as the inquiry's outcome and sends the `reinquiry` command only for `reinquiry`.
+ */
+export function reinquiryOutcome(p: Pick<OwnershipProjection, 'state' | 'routeDueAt' | 'seq'>, facts: { ownersPending?: boolean } = {}): 'reinquiry' | 'attached' {
+  if (p.state === 'offered') return 'attached';
+  if (p.state !== 'unassigned') return 'reinquiry';
+  if (p.routeDueAt !== null) return 'attached';
+  return facts.ownersPending === true && inImportCreationState(p) ? 'attached' : 'reinquiry';
+}
+
 function decideReinquiry(state: OwnershipProjection, cmd: Cmd<'reinquiry'>, ctx: DecisionContext): Decision {
   if (!isSystem(ctx.actor, 'provider', 'worker')) return rejection(state, cmd, ctx, 'NOT_FOUND');
   const b = new Builder(state, ctx.contactId, ctx);
@@ -814,8 +833,19 @@ function decideReinquiry(state: OwnershipProjection, cmd: Cmd<'reinquiry'>, ctx:
       return accepted(b, null);
     }
     case 'offered':
-    case 'unassigned':
       return noop(state); // the inquiry is attached only
+    case 'unassigned': {
+      // awaiting the router (a decline, an expiry, a reopen, an intake): attached only; the router routes it once.
+      // Still in the import's creation state with its owners to come (review D8-R1): attached only, and the import
+      // replays it once the owners are in, so the approved owner mapping, not the rotation, decides who holds them.
+      if (reinquiryOutcome(state, { ownersPending: ctx.ownersPending === true }) === 'attached') return noop(state);
+      // Owner decision D8 (2026-11-12; batch 6 review ownership-sla/F4): no route is due, so nothing would ever route
+      // it and the inquiry would reach nobody. Routed like a returning pond lead: due now, routed here by the system
+      // actor (an offer with its timer, notification and card, or a pond) or, without a routing snapshot, by the follow-up.
+      b.emit('reinquiry', 'unassigned', { reasonCode: 'REINQUIRY_ROUTE', payload: { inquiryId: cmd.inquiryId, routeDueAt: ctx.now } });
+      routeIfPossible(b);
+      return accepted(b, null);
+    }
     case 'closed': {
       if (state.closedReason === 'merged') return rejection(state, cmd, ctx, 'CONTACT_MERGED'); // redirect along merged_into first
       for (const a of [...(ctx.people?.admins ?? [])].sort()) b.notify(a, 'system', 'normal', `reinquiry:${cmd.inquiryId}`, 'REINQUIRY_CLOSED');
@@ -940,7 +970,20 @@ export function decideMerge(survivor: OwnershipProjection, loser: OwnershipProje
   const owner = own.ownerUserId;
   const survivorOwner = survivor.state === 'owned' ? survivor.ownerUserId : null;
   const mergedPayload = { loserId: cmd.loserId, ownerRule: own.rule };
-  if (owner === null || owner === survivorOwner) {
+  // Review D8-R3: neither owned, and the survivor is unassigned with no route due (an import left it so), so keeping
+  // its state would leave nothing to route the person: the loser's live demand goes with them. On offer or awaiting
+  // the router: a route is due now (finalize asks for it; the follow-up routes once, as the system); the agent the
+  // loser was on offer to learns the offer was withdrawn. In a pond: that pond, for its members to claim.
+  const unrouted = owner === null && survivor.state === 'unassigned' && survivor.routeDueAt === null;
+  const routeNow = unrouted && (loser.state === 'offered' || (loser.state === 'unassigned' && loser.routeDueAt !== null));
+  if (unrouted && loser.state === 'in_pond') {
+    sb.emit('merged_in', 'in_pond', { reasonCode: 'MERGED_IN', pondId: loser.pondId, payload: { ...mergedPayload } });
+  } else if (routeNow) {
+    sb.emit('merged_in', 'unassigned', { reasonCode: 'MERGED_IN', payload: { ...mergedPayload, routeDueAt: ctx.now } });
+    const offeree = loser.state === 'offered' ? loser.offeredToUserId : null;
+    const actorId = u ? u.userId : null;
+    if (offeree && offeree !== actorId) sb.notify(offeree, 'reassigned_away', 'normal', `merge:${cmd.loserId}:${cmd.survivorId}`, 'OFFER_RESCINDED');
+  } else if (owner === null || owner === survivorOwner) {
     sb.emit('merged_in', survivor.state, {
       reasonCode: 'MERGED_IN',
       pondId: survivor.pondId,

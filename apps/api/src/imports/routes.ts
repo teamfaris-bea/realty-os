@@ -245,11 +245,14 @@ export function makeImportsRoutes(depsFor?: ImportDepsFromPlatform): RouteModule
             if (!b) throw new AppError('NOT_FOUND');
             const stages = await brepo.getStages(tx, b.id);
             // owner decision B4 (E231): the people the ownership commit brought in unassigned and where each is now, with
-            // the members they were matched to as their membership reads now (reviews B4-R1, B4-R2)
+            // the members they were matched to as their membership reads now (reviews B4-R1, B4-R2); owner decision D8
+            // (E341): when one of them asked again, in the team's time, and the member the routing offered them to
             const own = stages.find((s) => s.category === 'ownership');
             const unassigned = own ? await rrepo.unassignedPeople(tx, own.id) : [];
-            const names = await brepo.memberNames(tx, unassigned.map((u) => (u.issue && 'userId' in u.issue ? u.issue.userId : null)).filter((x): x is string => typeof x === 'string'));
-            return reportView(b, stages, { unassigned, names });
+            const named = unassigned.flatMap((u) => [u.issue && 'userId' in u.issue ? u.issue.userId : null, u.asked_again_offered_to]).filter((x): x is string => typeof x === 'string');
+            const names = await brepo.memberNames(tx, named);
+            const zone = unassigned.some((u) => u.asked_again_at !== null) ? await brepo.tenantZone(tx) : 'UTC';
+            return reportView(b, stages, { unassigned, names, zone });
           },
           { db: deps(req).db },
         ),

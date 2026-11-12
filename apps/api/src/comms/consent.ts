@@ -14,7 +14,7 @@
 import { type ConsentEventSpec, type Channel, type EventPurpose, planNotAnOptOut, validateConsentEventSpec } from '@realty/core/compliance';
 import type { ContactId, Instant, TenantId, UserActor } from '@realty/core/foundation';
 import { instantFromDate } from '@realty/core/foundation';
-import { type Tx, hmacBytes, lockAddress, lockContact, recordConsentEvent, withTenantTx } from '@realty/db';
+import { type Tx, hmacBytes, lockAddress, lockAddresses, lockContact, recordConsentEvent, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { audit, redactSnapshot } from '../audit.js';
 import { AppError } from '../errors.js';
@@ -289,6 +289,12 @@ export async function logCallOutcome(actor: UserActor, callId: string, outcome: 
     const c = r.rows[0];
     if (!c) return null;
     if (c.agent_user_id !== actor.userId) throw new AppError('CALL_NOT_ACTIVE');
+    // global lock order (ARCHITECTURE §10; review D8-R5): the phones a consent outcome revokes are address-locked before
+    // the contact (step 1, then step 2), as intake and inbound take them; recordConsentEvent's own lock is then a no-op
+    if (outcome === 'wrong_number' || outcome === 'do_not_call_request') {
+      const phones = (await g.contactPoints(tx, c.contact_id)).filter((x) => x.kind === 'phone');
+      await lockAddresses(tx, (outcome === 'wrong_number' ? phones.filter((x) => x.address === c.client_address) : phones).map((x) => x.hmac));
+    }
     await lockContact(tx, c.contact_id as ContactId);
     await sql`
       UPDATE calls SET outcome = ${outcome}, outcome_logged_by_user_id = ${actor.userId}, outcome_logged_at = ${new Date(now).toISOString()}::timestamptz

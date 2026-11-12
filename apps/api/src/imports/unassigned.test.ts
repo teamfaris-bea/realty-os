@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import type { UnassignedPersonRow } from './repos/records.js';
 import { OWNER_UNAVAILABLE, type UnassignedIssue, type UnassignedNow } from './types.js';
-import { type MemberNames, documentedView, issueView, namedMembers, unassignedReport, unassignedSentence } from './views.js';
+import { type MemberNames, askedAgainSentence, documentedView, issueView, namedMembers, unassignedReport, unassignedSentence } from './views.js';
 
 const BLAKE = '01900000-0000-7000-8000-0000000000b1';
 const issue = (reason: UnassignedIssue['reason'], userId = BLAKE): UnassignedIssue => ({ code: OWNER_UNAVAILABLE, severity: 'info', reason, userId });
@@ -25,6 +25,10 @@ const row = (n: number, now: UnassignedNow = 'unassigned', reason: UnassignedIss
   display_name: `Person ${n}`,
   now,
   merged_into_contact_id: null,
+  asked_again_at: null,
+  asked_again_next: null,
+  asked_again_offered_to: null,
+  asked_again_pond: null,
 });
 
 describe('E230 the reason a planned assignment came in unassigned, in plain words', () => {
@@ -154,5 +158,45 @@ describe('E231 the report lists the people brought in unassigned and offers "Ass
     expect([r.view.total, r.view.stillUnassigned, r.view.people.length, r.view.contactIds.length]).toEqual([2_100, 2_100, 50, 2_000]);
     expect(r.lines[0]).toBe("2,100 people came in unassigned because Blake Chen's account is suspended.");
     expect(r.lines.at(-1)).toBe('2,100 people are still unassigned: use "Assign these people" to give them an owner.');
+  });
+});
+
+// Owner decision D8 (2026-11-12; batch 6 review ownership-sla/F4): a person brought in unassigned who asks again is
+// routed like a returning lead. The report says when (the team's time) and where the routing took them, from their own
+// ledger; "Assign these people" selects only those still unassigned. The journeys prove it end to end.
+describe('E341 a person brought in unassigned who asked again since (owner decision D8)', () => {
+  const AVERY = '01900000-0000-7000-8000-0000000000a1';
+  const who: MemberNames = new Map([...blake(), [AVERY, { name: 'Avery Stone', status: 'active', role: 'agent' }]]);
+  const at = new Date('2026-11-12T15:04:00Z');
+  const asked = (n: number, now: UnassignedNow, next: string | null, o: Partial<UnassignedPersonRow> = {}): UnassignedPersonRow => ({ ...row(n, now), asked_again_at: at, asked_again_next: next, ...o });
+
+  it('E341 says when they asked again in the team\'s time and to whom the routing offered them, or the pond; one line counts them; only those still unassigned stay selected', () => {
+    const rows = [row(1), asked(2, 'offered', 'offered', { asked_again_offered_to: AVERY }), asked(3, 'in_pond', 'sent_to_pond', { asked_again_pond: 'Team Pond' }), asked(4, 'unassigned', null), asked(5, 'owned', 'assigned')];
+    const r = unassignedReport(rows, who, 'America/New_York')!;
+    expect(r.view.people.map((p) => [p.now, p.askedAgainSentence])).toEqual([
+      ['unassigned', null],
+      ['offered', 'Asked again on Nov 12, 2026, 10:04 AM EST and was offered to Avery Stone.'],
+      ['in_pond', 'Asked again on Nov 12, 2026, 10:04 AM EST and was put in Team Pond.'],
+      // the routing is due and has not run yet (the follow-up runs it)
+      ['unassigned', 'Asked again on Nov 12, 2026, 10:04 AM EST and is waiting to be routed.'],
+      // someone acted on them before any routing: the line about now says where they are
+      ['owned', 'Asked again on Nov 12, 2026, 10:04 AM EST.'],
+    ]);
+    // after what the import itself did, counting those the routing took somewhere (not the one still waiting, nor the one
+    // someone acted on first); where they are now is said once, by the people card (review F8)
+    expect(r.lines.slice(1)).toEqual([
+      'Nothing was assigned to them, and the import started no offer, timer or routing.',
+      '2 of them asked again since they were imported and were routed by your routing rules.',
+      ...r.view.summary,
+    ]);
+    expect(r.view.contactIds).toEqual([row(1).contact_id, row(4).contact_id]);
+    expect(unassignedReport([asked(6, 'offered', 'offered', { asked_again_offered_to: AVERY })], who, 'America/New_York')!.lines).toContain('1 of them asked again since they were imported and was routed by your routing rules.');
+  });
+
+  it('E341 never leaves a blank or a guess: an unreadable name is "an agent", a pond without a name is "a pond", a zone the runtime cannot read is said in UTC; nobody asked again, nothing is said', () => {
+    expect(askedAgainSentence(asked(7, 'offered', 'offered', { asked_again_offered_to: '01900000-0000-7000-8000-0000000000ff' }), who, 'UTC')).toBe('Asked again on Nov 12, 2026, 3:04 PM UTC and was offered to an agent.');
+    expect(askedAgainSentence(asked(8, 'in_pond', 'sent_to_pond'), who, 'Not/AZone')).toBe('Asked again on Nov 12, 2026, 3:04 PM UTC and was put in a pond.');
+    expect(askedAgainSentence(row(9), who, 'America/New_York')).toBeNull();
+    expect(unassignedReport([row(10)], who)!.lines.join(' ')).not.toMatch(/asked again/);
   });
 });

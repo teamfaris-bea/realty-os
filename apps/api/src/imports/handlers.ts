@@ -3,6 +3,8 @@
 //   imports.dry_run   one stage's dry run, in one transaction
 //   imports.commit    ≤ 1,000 records per transaction, resumable; yields after CHUNKS_PER_RUN chunks
 //   imports.revert    reverting stages, latest first, in chunks
+//   imports.replay_inquiries  the inquiries a batch's people sent while their owners were still to come, once the owners
+//                     are in (review D8-R1): one engine `reinquiry` per person, each in its own transaction
 // Standalone mode: each step manages its own transactions (the commit must commit between chunks).
 // Payloads carry ids only (R-TEN-7). The verification recount is computed on request (GET …/verification
 // and POST …/verify) from the stored records, so it needs no job.
@@ -16,6 +18,7 @@ import type { JobHandler, StandaloneJobHandler } from '../worker/types.js';
 import { SNAPSHOT_JOB, takeSnapshot } from './batches.js';
 import { COMMIT_JOB, runCommit } from './commit.js';
 import { FakeFub, type FubConnector, httpFubConnector } from './fub.js';
+import { REPLAY_JOB, replayWaitingInquiries } from './replay.js';
 import { REVERT_JOB, runRevert } from './revert.js';
 import { DRY_RUN_JOB, runDryRun } from './stages.js';
 import type { ImportDeps } from './types.js';
@@ -99,7 +102,19 @@ export function makeImportHandlers(depsFor: DepsFor = defaultDeps): JobHandler<u
       if (r === 'more') return { retryAt: ctx.now };
     },
   };
-  return [snapshot, dry, commit, revert] as JobHandler<unknown>[];
+  const replay: StandaloneJobHandler<BatchPayload> = {
+    kind: REPLAY_JOB.kind,
+    queue: REPLAY_JOB.queue,
+    mode: 'standalone',
+    via: 'worker',
+    maxAttempts: 5,
+    schema: BatchPayload,
+    async run(ctx, p) {
+      const n = await replayWaitingInquiries(depsFor(ctx.providers), ctx.actor.tenantId, p.batchId);
+      ctx.log.info('import inquiry replay', { kind: REPLAY_JOB.kind, jobId: ctx.job.id.toString(), count: n });
+    },
+  };
+  return [snapshot, dry, commit, revert, replay] as JobHandler<unknown>[];
 }
 
 export const importHandlers: JobHandler<unknown>[] = makeImportHandlers();

@@ -22,6 +22,7 @@ import { audit } from '../audit.js';
 import { AppError } from '../errors.js';
 import { systemActor } from '../worker/systemActor.js';
 import * as brepo from './repos/batches.js';
+import { enqueueInquiryReplay } from './replay.js';
 import * as prepo from './repos/parity.js';
 import * as rrepo from './repos/records.js';
 import * as rv from './repos/revert.js';
@@ -317,6 +318,8 @@ export async function runRevert(deps: ImportDeps, tenantId: string, batchId: str
       const all = await brepo.lockStages(tx, batchId);
       if (all.some((s) => s.status === 'reverting')) return;
       const anyLeft = all.some((s) => ['committed', 'verified'].includes(s.status));
+      // review D8-R1: an undo of the contacts (or of a partly committed ownership stage) ends any wait for the owners
+      await enqueueInquiryReplay(tx, batchId);
       await brepo.setBatchStatus(tx, batchId, anyLeft ? 'partially_committed' : 'reverted', anyLeft ? {} : { revertedAt: true });
       // a reverted batch can never snapshot or commit again: its FUB key goes too (R-IMPORT-11, ≤ 30 days)
       if (!anyLeft) {

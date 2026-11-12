@@ -39,10 +39,12 @@ export async function touchedContacts(tx: Tx, batchId: string, baseline: Readonl
   // Work a person (or the assistant on their behalf) attached to the contact since the import: a task,
   // an appointment, a deal, a saved search, an enrollment, a share, a phone/email/address the import
   // did not add, a staff-recorded consent, a listing or showing link, an attribute. Soft-deleting the
-  // contact would silently take that work with it, so it is "touched" (R-IMPORT-10, E43).
+  // contact would silently take that work with it, so it is "touched" (R-IMPORT-10, E43). So is a new
+  // inquiry from the person since (review D8-R1): live demand, which the undo must not delete with them.
   const work = await sql<{ id: string }>`
     SELECT x.id::text AS id FROM unnest(${ids}::uuid[]) AS x(id)
      WHERE EXISTS (SELECT 1 FROM tasks t WHERE t.tenant_id = app.tenant_id() AND t.contact_id = x.id AND t.created_at > ${since} AND t.created_by_kind <> 'import')
+        OR EXISTS (SELECT 1 FROM lead_inquiries li WHERE li.tenant_id = app.tenant_id() AND li.contact_id = x.id AND li.created_at > ${since})
         OR EXISTS (SELECT 1 FROM appointments a WHERE a.tenant_id = app.tenant_id() AND a.contact_id = x.id AND a.created_at > ${since})
         OR EXISTS (SELECT 1 FROM deals d WHERE d.tenant_id = app.tenant_id() AND d.primary_contact_id = x.id AND d.created_at > ${since})
         OR EXISTS (SELECT 1 FROM deal_contacts dc JOIN deals d ON d.tenant_id = dc.tenant_id AND d.id = dc.deal_id

@@ -388,6 +388,13 @@ export interface DecisionContext {
   routing?: RoutingSnapshot;
   claimStats?: { claimsToday: number; inCooldown: boolean; uncontactedOwned: number };
   pond?: PondFacts;
+  /**
+   * reinquiry (owner decision D8; review D8-R1): the contact is in its import's creation state and that batch's owners
+   * are still to come (the contacts are imported, the ownership stage can still commit). Its new inquiry is attached
+   * only and the import replays it once the owners are in, so routing never takes the person before their approved
+   * owner mapping does. db reads it under the contact lock (importOwnersPending), for the system actor only.
+   */
+  ownersPending?: boolean;
   dealOpen?: boolean;
   lastHumanTouchAt?: Instant | null;
   /** contacts.stage (inactivity applies to new/attempting only). */

@@ -59,7 +59,7 @@ export {
 export { FOLLOWUP_JOB_KIND, type FollowupPayload, followupDedupeKey } from './ownership/effects.js';
 export { type FollowupResult, FollowupPayloadError, applyOwnershipFollowupInTx, runOwnershipFollowup } from './ownership/followup.js';
 export { type NewContactFields, projectionOf, eventOf, selectLedger } from './ownership/rows.js';
-export { TenantNotReadyError } from './ownership/context.js';
+export { TenantNotReadyError, importOwnersPending } from './ownership/context.js';
 export { type AuditRowSpec, insertAuditRow } from './repos/audit.js';
 export { json } from './json.js';
 export {

@@ -143,9 +143,22 @@ export async function setPondSummary(tx: Tx, contactId: string, summary: string 
               AND pond_summary IS DISTINCT FROM ${summary}`.execute(tx);
 }
 
-export async function contactState(tx: Tx, contactId: string): Promise<{ ownership_state: ExactMatchRow['ownership_state']; closed_reason: string | null } | null> {
-  const r = await sql<{ ownership_state: ExactMatchRow['ownership_state']; closed_reason: string | null }>`
-    SELECT ownership_state, closed_reason FROM contacts WHERE tenant_id = app.tenant_id() AND id = ${contactId}::uuid`.execute(tx);
+export interface ContactStateRow {
+  ownership_state: ExactMatchRow['ownership_state'];
+  closed_reason: string | null;
+  /** unassigned: when system routing is due (NULL: nothing will route it, owner decision D8) */
+  route_due_at: Date | null;
+  /** the ledger head (bigint as text): 1 with no route due is an import's creation state (review D8-R1) */
+  ownership_seq: string;
+  /** closed as merged: the record the person lives on now (review D8-R5: a merge committed after the match) */
+  merged_into_contact_id: string | null;
+}
+
+/** The attached contact's ownership state, read under its contact lock (the engine decides on the same row). */
+export async function contactState(tx: Tx, contactId: string): Promise<ContactStateRow | null> {
+  const r = await sql<ContactStateRow>`
+    SELECT ownership_state, closed_reason, route_due_at, ownership_seq::text AS ownership_seq, merged_into_contact_id::text AS merged_into_contact_id
+      FROM contacts WHERE tenant_id = app.tenant_id() AND id = ${contactId}::uuid`.execute(tx);
   return r.rows[0] ?? null;
 }
 
