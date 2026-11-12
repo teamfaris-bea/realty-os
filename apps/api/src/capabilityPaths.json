@@ -1,0 +1,57 @@
+{
+  "$comment": "GENERATED from the API route table by apps/api/src/capabilityPaths.ts (--write). Do not edit: apps/api/src/capabilityPaths.test.ts fails when this file drifts, and apps/web/src/security-headers.nginx.test.ts fails while deploy/nginx.conf would log a secret of any path listed here.",
+  "publicParams": {
+    "widgetToken": "the website chat widget key: it is in the embed code of every website that shows the widget (module 37)",
+    "kind": "the integration kind in an OAuth callback's path (a fixed list)"
+  },
+  "paths": [
+    {
+      "path": "/api/auth/invites/:token/accept",
+      "methods": [
+        "POST"
+      ],
+      "secrets": [
+        "token"
+      ]
+    },
+    {
+      "path": "/api/email/unsubscribe/:token",
+      "methods": [
+        "GET",
+        "HEAD",
+        "POST"
+      ],
+      "secrets": [
+        "token"
+      ]
+    },
+    {
+      "path": "/api/intake/:sourceToken",
+      "methods": [
+        "POST"
+      ],
+      "secrets": [
+        "sourceToken"
+      ]
+    },
+    {
+      "path": "/api/public/chat/session/:token/messages",
+      "methods": [
+        "POST"
+      ],
+      "secrets": [
+        "token"
+      ]
+    },
+    {
+      "path": "/api/public/chat/session/:token/poll",
+      "methods": [
+        "GET",
+        "HEAD"
+      ],
+      "secrets": [
+        "token"
+      ]
+    }
+  ]
+}

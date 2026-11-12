@@ -279,7 +279,7 @@ Each rule has at least one test. Where the rule is enforced is given in brackets
 - **R-TEN-4** Layer 1 is a RESTRICTIVE policy that requires `principal_type = 'staff'`. Non-staff principals (the Phase 3 client portal) see nothing until per-table client policies are added. [DB, smoke]
 - **R-TEN-5** Cross-tenant or pre-tenant reads happen only in the enumerated SECURITY DEFINER functions (ARCHITECTURE §4). Each pins `search_path`, is owned by `app_definer`/`app_retention`, and returns minimal columns. [DB self-check; CODEOWNERS]
 - **R-TEN-6** One job is one transaction in one tenant. A worker never touches two tenants in one transaction. [api]
-- **R-TEN-7** Job payloads, logs, error reports and audit `changes` contain ids and codes, never names, phones, emails or bodies. [api: Zod payload schemas + log redaction tests]
+- **R-TEN-7** Job payloads, logs, error reports and audit `changes` contain ids and codes, never names, phones, emails or bodies. [api: Zod payload schemas + log redaction tests; the `web` image's nginx writes no query string to its access log and no request to its error log: `security-headers.nginx.test.ts`]
 - **R-TEN-8** A live phone number belongs to exactly one tenant (global unique index). A number released by one tenant cannot be acquired by another for 90 days, and inbound to a released number is never delivered. [DB, smoke]
 - **R-TEN-9** Object storage keys are `tenants/{tenant_id}/…` (DB CHECK) and ciphertext AAD binds tenant, table, column and row, so a mis-keyed fetch fails to decrypt. [DB + api crypto tests]
 - **R-TEN-10** A user without an `active` membership in the context tenant sees nothing, whatever the GUCs say. [DB, smoke]
