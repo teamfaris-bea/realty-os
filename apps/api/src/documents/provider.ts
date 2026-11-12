@@ -10,6 +10,10 @@
 //
 // VERIFY with each vendor before a real adapter (N11 scanner, N17 PDF text reader): verdict vocabulary, how a
 // password-protected or corrupt file is reported, size limits, data handling and retention on the vendor's side.
+// None of this was read on a vendor page. N11 (ClamAV or a commercial scanner, not chosen): VERIFY the clamd INSTREAM
+// protocol and its StreamMaxLength default, the signature update cadence, how encrypted PDFs are reported, sizing and
+// rescans. N17 (pdfjs-dist or a vendor, not chosen): VERIFY the text-content offsets the locators rely on, that eval
+// is turned off (the CVE-2024-4367 class), worker caps, and the licence.
 import { createHash } from 'node:crypto';
 import { ProviderError } from '../providers/types.js';
 

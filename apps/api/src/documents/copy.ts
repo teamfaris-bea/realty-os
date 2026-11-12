@@ -2,6 +2,8 @@
 // never a claim the product does not make. The API returns them so the web never paraphrases a state.
 export { EXTRACTOR_NOT_SET_UP, EXTRACTOR_TEST_TEXT, SCANNER_NOT_SET_UP, SCANNER_TEST_TEXT } from './provider.js';
 
+// VERIFY WITH COUNSEL: the copy "Blocked by the virus check" (blockedMalware, blockedHeld, blockedReasonUnknown), and
+// whether a held malicious file must be kept and blocked uploads are records (E405, blockedHeld).
 export const COPY = {
   checking: 'Checking this file for viruses. Only you and the Owner or Admin can see it until the check passes.',
   noScanner: 'This platform has no virus scanner yet, so the file stays locked. Nobody can open it until a scanner checks it.',

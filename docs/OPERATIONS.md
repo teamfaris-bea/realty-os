@@ -167,6 +167,7 @@ timers and provider health, and can retry or cancel a job (audited).
 
 ### 4.1a Documents waiting for the virus check
 - **Means:** documents stay "checking" (a test or real scanner) or "waiting for a scanner" (production has none until N11). With a scanner, `documents.reconcile` re-enqueues a scan pending over 2 minutes every 5 minutes; a scanner outage shows as failing `documents.scan` jobs on the System page, and no file is ever marked clean by an error.
+- **Limits:** uploads stay locked until N11 (a scanner) is configured. The 10,000,000-byte file cap relies on the proxy's `client_max_body_size 11m` (deploy/nginx.conf; DEPLOY §7): a smaller proxy limit refuses large files before the API can answer `DOCUMENT_TOO_LARGE`, so keep it at 11m or more.
 
 ### 4.2 ApiDegraded
 - **Means:** `/api/ready` answers 200 `degraded`: the database is fine but `storage` or `providers` failed. Reads work; uploads, recordings or sends may fail. `unavailable` (503) means the database check failed and the balancer takes the instance out.
