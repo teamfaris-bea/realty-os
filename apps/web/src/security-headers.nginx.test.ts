@@ -321,19 +321,39 @@ function logUri(conf: Directive[], uri: string): string {
   return uri;
 }
 
-describe('the access log carries no capability (finding chat-token-in-access-log)', () => {
+/**
+ * The API paths whose URL carries a capability, as the API generates them from its own route table
+ * (apps/api/src/capabilityPaths.ts; capabilityPaths.test.ts there fails while this JSON is stale). apps/web does not
+ * depend on @realty/api, so it is read as data, like test/contract.ts reads webContract.json.
+ */
+interface CapabilityPath {
+  path: string;
+  methods: string[];
+  secrets: string[];
+}
+const capabilityPaths = (JSON.parse(read('apps/api/src/capabilityPaths.json')) as { paths: CapabilityPath[] }).paths;
+
+describe('the access log carries no capability (findings chat-token-in-access-log, F2-invite-token-access-log)', () => {
   const conf = parse(read('deploy/nginx.conf'), includeFromImage);
   const server = conf.find((d) => d.name === 'server')!;
-  // Capability URLs: a secret in the PATH is the request's only authority (module 22's chat session token, polled
-  // every few seconds; the RFC 8058 one-click unsubscribe ref; a lead source's intake token).
+  // Capability URLs: a secret in the PATH is the request's only authority (the invite token, until the invite is
+  // accepted; module 22's chat session token, polled every few seconds; the RFC 8058 one-click unsubscribe ref; a lead
+  // source's intake token).
   const SECRET = 'TF6MynTkfd1czegmGiWVTVMYLhFWd6UJwMOXyzDEWxM';
+  const ID = '018f0000-0000-7000-8000-000000000001';
   const capability = [
+    [`/api/auth/invites/${SECRET}/accept`, '/api/auth/invites/-/accept'],
     [`/api/public/chat/session/${SECRET}/poll`, '/api/public/chat/session/-/poll'],
     [`/api/public/chat/session/${SECRET}/messages`, '/api/public/chat/session/-/messages'],
     [`/api/public/chat/session/${SECRET}`, '/api/public/chat/session/-'],
     [`/api/email/unsubscribe/${SECRET}`, '/api/email/unsubscribe/-'],
     [`/api/intake/${SECRET}`, '/api/intake/-'],
   ] as const;
+  /** A request path for a route path (each secret parameter → SECRET, any other → an id) and what the access log must write for it ("-" for each secret). */
+  const concrete = (p: CapabilityPath) => {
+    const fill = (secret: string) => p.path.replace(/:([A-Za-z_][A-Za-z0-9_]*)/g, (_m, name: string) => (p.secrets.includes(name) ? secret : ID));
+    return { uri: fill(SECRET), logged: fill('-') };
+  };
 
   it('every access_log writes the format whose path is $log_uri, never the raw path or the query string', () => {
     const logs = flatten(conf).filter((d) => d.name === 'access_log' && d.args[0] !== 'off');
@@ -345,12 +365,77 @@ describe('the access log carries no capability (finding chat-token-in-access-log
     expect(server.block!.some((d) => d.name === 'access_log')).toBe(true);
   });
 
-  it('a chat session token, an unsubscribe ref and an intake token are logged as "-"; other paths as they are', () => {
+  it('an invite token, a chat session token, an unsubscribe ref and an intake token are logged as "-"; other paths as they are', () => {
     for (const [uri, logged] of capability) {
       expect(logUri(conf, uri), uri).toBe(logged);
       expect(logUri(conf, uri)).not.toContain(SECRET);
     }
-    for (const uri of ['/', '/assets/app.3f2a.js', '/api/contacts/018f0000-0000-7000-8000-000000000001/thread', '/api/public/chat/wk_0123456789abcdef0123456789abcdef01234567', '/widget/chat.js']) expect(logUri(conf, uri), uri).toBe(uri);
+    for (const uri of ['/', '/assets/app.3f2a.js', `/api/contacts/${ID}/thread`, '/api/public/chat/wk_0123456789abcdef0123456789abcdef01234567', '/api/auth/invites', '/widget/chat.js']) expect(logUri(conf, uri), uri).toBe(uri);
+  });
+
+  it('F2-invite-token-access-log: every path the API route table marks as a capability (apps/api/src/capabilityPaths.json) is logged with "-" for each secret, so a new capability route cannot be missed', () => {
+    expect(capabilityPaths.map((p) => p.path)).toEqual(expect.arrayContaining(['/api/auth/invites/:token/accept', '/api/public/chat/session/:token/poll', '/api/email/unsubscribe/:token', '/api/intake/:sourceToken']));
+    for (const p of capabilityPaths) {
+      expect(p.secrets.length, p.path).toBeGreaterThan(0);
+      for (const s of p.secrets) expect(p.path, s).toContain(`:${s}`);
+      const { uri, logged } = concrete(p);
+      expect(logUri(conf, uri), p.path).toBe(logged);
+      expect(logUri(conf, uri), p.path).not.toContain(SECRET);
+    }
+  });
+});
+
+/** nginx:1.27-alpine's own nginx.conf: `error_log /var/log/nginx/error.log notice;`, a link to the container's stderr. */
+const IMAGE_ERROR_LOG = '/var/log/nginx/error.log';
+
+/**
+ * Where nginx writes its error records about a request, for the server and every location (nested ones too): the
+ * level's own error_log files, else the enclosing level's (location → server → http, the template's top level), else
+ * the image's default. An empty list means every one of them goes to /dev/null.
+ */
+function errorLogProblems(conf: Directive[]): string[] {
+  const problems: string[] = [];
+  const own = (b: Directive[]) => b.filter((d) => d.name === 'error_log').map((d) => d.args[0] ?? '');
+  const check = (where: string, files: string[]) => {
+    for (const f of files) if (f !== '/dev/null') problems.push(`${where}: request errors go to ${f}`);
+  };
+  const top = own(conf);
+  const http = top.length > 0 ? top : [IMAGE_ERROR_LOG];
+  const servers = conf.filter((d) => d.name === 'server');
+  if (servers.length === 0) problems.push('no server block');
+  for (const s of servers) {
+    const sb = s.block ?? [];
+    const server = own(sb).length > 0 ? own(sb) : http;
+    check('server', server);
+    const walk = (b: Directive[], inherited: string[]) => {
+      for (const d of b) {
+        if (d.name !== 'location' || !d.block) continue;
+        const mine = own(d.block);
+        if (mine.length > 0) check(`location ${d.args.join(' ')}`, mine);
+        walk(d.block, mine.length > 0 ? mine : inherited);
+      }
+    };
+    walk(sb, server);
+  }
+  return problems;
+}
+
+describe('the error log carries no request (finding F4-nginx-error-log-capabilities)', () => {
+  const conf = parse(read('deploy/nginx.conf'), includeFromImage);
+
+  it('R-TEN-7 F4-nginx-error-log-capabilities: no request reaches the error log, from the server or any location: nginx appends the raw request line (secret path and query string) and the upstream URI to every record about a request, e.g. each open chat’s poll while the API restarts on a deploy', () => {
+    expect(errorLogProblems(conf)).toEqual([]);
+    const server = conf.find((d) => d.name === 'server')!;
+    expect(server.block!.filter((d) => d.name === 'error_log').map((d) => d.args)).toEqual([['/dev/null']]);
+  });
+
+  it('F4-nginx-error-log-capabilities: the checker catches drift: no error_log (the image’s default, stderr), an error_log at http level, a location writing its own, a second file next to /dev/null', () => {
+    const inc = () => '';
+    expect(errorLogProblems(parse('server { location / { } }', inc))).toEqual([`server: request errors go to ${IMAGE_ERROR_LOG}`]);
+    expect(errorLogProblems(parse('error_log stderr; server { location / { } }', inc))).toEqual(['server: request errors go to stderr']);
+    expect(errorLogProblems(parse('server { error_log /dev/null; location /api/ { error_log /dev/stderr crit; location /api/x/ { } } }', inc))).toEqual(['location /api/: request errors go to /dev/stderr']);
+    expect(errorLogProblems(parse('server { error_log /dev/null; error_log stderr; location / { } }', inc))).toEqual(['server: request errors go to stderr']);
+    expect(errorLogProblems(parse('server { error_log /dev/null; location / { } location /api/ { } }', inc))).toEqual([]);
   });
 });
 
