@@ -185,6 +185,8 @@ test('R-MMS-8 R-MMS-9: with two photos and the counter, the box passes axe in li
   const found: string[] = [];
   for (const scheme of ['light', 'dark'] as const) {
     await page.emulateMedia({ colorScheme: scheme });
+    // switching the scheme in place starts colour transitions: let them finish so axe reads the settled colours
+    await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== 'running'));
     found.push(...(await axe(page)).map((v) => `${scheme}: ${v}`));
   }
   await page.emulateMedia({ colorScheme: 'light' });
