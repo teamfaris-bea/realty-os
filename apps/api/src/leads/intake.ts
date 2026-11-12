@@ -197,6 +197,17 @@ export interface IngestOptions {
    * duplicate. The identity is the contact's only point.
    */
   webChat?: { address: string; hmac: string; pointId: string };
+  /**
+   * Module 22 tracked numbers (R-TRK-2): a new contact made from an unknown caller or texter is named and summarized
+   * as today's unknown-caller path names it ("Unknown (415) 555-0100", "Called in"), and its phone point is labelled
+   * 'mobile'. Used only when a new contact is created.
+   */
+  unknownCaller?: { displayName: string; pondSummary: string };
+  /**
+   * 'none' (module 22 tracked numbers, a Google form that does not show the source's text): the person saw no consent
+   * text, so the inquiry cites none (consent_disclosure_id NULL) and no grant is recorded (R-CONSENT-4; history only, D1).
+   */
+  disclosure?: 'none';
 }
 
 /**
@@ -208,19 +219,21 @@ export async function ingestInquiryInTx(tx: Tx, actor: SystemActor, input: Inqui
   return ingestInTx(tx, actor, { ...parsed, leadSourceId: input.leadSourceId }, now, deps, opts);
 }
 
-async function ingestInTx(tx: Tx, actor: SystemActor, i: InquiryInput, now: Instant, deps: IntakeDeps, opts: IngestOptions = {}): Promise<IngestResult> {
-  const { ids, envelope } = deps;
-  const source = await repo.leadSource(tx, i.leadSourceId);
-  if (!source || !source.active) throw new AppError('NOT_FOUND');
-  const inquiryType = (i.inquiryType ?? 'general') as InquiryType;
-  if (opts.webChat && ((i.phones ?? []).length > 0 || (i.emails ?? []).length > 0)) throw new AppError('INTERNAL_ERROR');
-  const idents = await identifiersOf(tx, envelope, actor.tenantId, i.phones ?? [], i.emails ?? []);
-  const name = personName(i);
-  if (!name.displayName && idents.phones.length === 0 && idents.emails.length === 0) throw new AppError('INQUIRY_EMPTY');
-  if (i.priceMinCents !== undefined && i.priceMaxCents !== undefined && i.priceMinCents > i.priceMaxCents) {
-    throw new AppError('VALIDATION_FAILED', { issues: [{ path: '/priceMinCents', code: 'price_band' }] });
-  }
+interface IntakeKeys {
+  inquiryType: InquiryType;
+  idents: Identifiers;
+  name: ReturnType<typeof personName>;
+  person: { phoneHmacs: string[]; emailHmacs: string[]; displayName: string | null; postalCode: string | null };
+  fingerprint: string;
+  externalId: string | null;
+  /** exactly the hex list ingestion passes to lockAddresses (global lock order step 1) */
+  lockKeys: string[];
+}
 
+async function intakeKeys(tx: Tx, envelope: EnvelopeService, tenantId: TenantId, leadSourceId: string, i: InquiryInput, opts: IngestOptions): Promise<IntakeKeys> {
+  const inquiryType = (i.inquiryType ?? 'general') as InquiryType;
+  const idents = await identifiersOf(tx, envelope, tenantId, i.phones ?? [], i.emails ?? []);
+  const name = personName(i);
   const person = { phoneHmacs: idents.phones.map((p) => p.hmac), emailHmacs: idents.emails.map((e) => e.hmac), displayName: name.displayName, postalCode: i.postalCode ?? null };
   // E19: with no phone or email the fingerprint must still tell people apart, or every name-only
   // inquiry of one source and type inside 10 minutes would be "the same lead". The name (+ ZIP)
@@ -229,13 +242,38 @@ async function ingestInTx(tx: Tx, actor: SystemActor, i: InquiryInput, now: Inst
   const fingerprintIds = [...person.phoneHmacs, ...person.emailHmacs, ...(opts.webChat ? [opts.webChat.hmac] : [])];
   if (fingerprintIds.length === 0 && name.displayName) {
     const key = `intake-name:${name.displayName.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim()}|${(i.postalCode ?? '').slice(0, 5)}`;
-    fingerprintIds.push(Buffer.from(await envelope.inTx(tx, actor.tenantId).hmacAddress(actor.tenantId, key)).toString('hex'));
+    fingerprintIds.push(Buffer.from(await envelope.inTx(tx, tenantId).hmacAddress(tenantId, key)).toString('hex'));
   }
-  const fingerprint = inquiryFingerprint({ leadSourceId: source.id, identifierHmacs: fingerprintIds, inquiryType });
+  const fingerprint = inquiryFingerprint({ leadSourceId, identifierHmacs: fingerprintIds, inquiryType });
   const externalId = i.externalId ?? null;
-  const externalKey = externalId ? sha256Hex(`intake.external:${source.id}:${externalId}`) : null;
+  const externalKey = externalId ? sha256Hex(`intake.external:${leadSourceId}:${externalId}`) : null;
   // Global lock order step 1 (sorted): identifiers, the fingerprint and the external id share one order.
-  await lockAddresses(tx, [...addressLockOrder(person), fingerprint, ...(externalKey ? [externalKey] : [])]);
+  const lockKeys = [...addressLockOrder(person), fingerprint, ...(externalKey ? [externalKey] : [])];
+  return { inquiryType, idents, name, person, fingerprint, externalId, lockKeys };
+}
+
+/**
+ * Module 22 tracked numbers (R-TRK-2, E323/E324): the address-lock keys an inquiry's ingestion takes (identifier HMACs,
+ * the fingerprint, the external key), so the inbound transaction takes them in ONE sorted lockAddresses call with the
+ * caller's own address lock, before matching. Equal to what ingestInquiryInTx locks (intake.tracking test).
+ */
+export async function intakeLockKeys(tx: Tx, envelope: EnvelopeService, tenantId: TenantId, input: InquiryInput, opts: IngestOptions = {}): Promise<string[]> {
+  const parsed = IntakeBody.parse(Object.fromEntries(Object.entries(input).filter(([k]) => k !== 'leadSourceId')));
+  const source = await repo.leadSource(tx, input.leadSourceId);
+  return (await intakeKeys(tx, envelope, tenantId, source?.id ?? input.leadSourceId, { ...parsed, leadSourceId: input.leadSourceId }, opts)).lockKeys;
+}
+
+async function ingestInTx(tx: Tx, actor: SystemActor, i: InquiryInput, now: Instant, deps: IntakeDeps, opts: IngestOptions = {}): Promise<IngestResult> {
+  const { ids, envelope } = deps;
+  const source = await repo.leadSource(tx, i.leadSourceId);
+  if (!source || !source.active) throw new AppError('NOT_FOUND');
+  if (opts.webChat && ((i.phones ?? []).length > 0 || (i.emails ?? []).length > 0)) throw new AppError('INTERNAL_ERROR');
+  const { inquiryType, idents, name, person, fingerprint, externalId, lockKeys } = await intakeKeys(tx, envelope, actor.tenantId, source.id, i, opts);
+  if (!name.displayName && idents.phones.length === 0 && idents.emails.length === 0) throw new AppError('INQUIRY_EMPTY');
+  if (i.priceMinCents !== undefined && i.priceMaxCents !== undefined && i.priceMinCents > i.priceMaxCents) {
+    throw new AppError('VALIDATION_FAILED', { issues: [{ path: '/priceMinCents', code: 'price_band' }] });
+  }
+  await lockAddresses(tx, lockKeys);
   const at = await dbNowAfterLocks(tx, now);
   const receivedAt = receivedAtOf(i.receivedAt, at);
 
@@ -251,7 +289,8 @@ async function ingestInTx(tx: Tx, actor: SystemActor, i: InquiryInput, now: Inst
   }
   const rawPayloadEnc = async (inquiryId: string) =>
     envelope.inTx(tx, actor.tenantId).encrypt(actor.tenantId, { table: 'lead_inquiries', column: 'raw_payload_enc', rowId: inquiryId }, Buffer.from(JSON.stringify({ ...i, leadSourceId: undefined })));
-  const inquiryRow = async (inquiryId: string, contactId: string, outcome: repo.InquiryInsert['outcome'], consentDisclosureId: string | null = source.consent_disclosure_id): Promise<repo.InquiryInsert> => ({
+  const noDisclosure = opts.disclosure === 'none';
+  const inquiryRow = async (inquiryId: string, contactId: string, outcome: repo.InquiryInsert['outcome'], consentDisclosureId: string | null = noDisclosure ? null : source.consent_disclosure_id): Promise<repo.InquiryInsert> => ({
     id: inquiryId,
     contactId,
     leadSourceId: source.id,
@@ -297,9 +336,10 @@ async function ingestInTx(tx: Tx, actor: SystemActor, i: InquiryInput, now: Inst
   // web chat: an unseen identity never attaches (a name match is only a suggestion, R-INBOX-1)
   const decision: DedupOutcome = opts.webChat && matched.kind !== 'create' ? { kind: 'create', duplicates: matched.duplicates } : matched;
 
+  let isNewCaller = false;
   const addPoints = async (contactId: string) => {
     if (opts.webChat) await contacts.addPoint(tx, { id: opts.webChat.pointId, contactId, kind: 'web_chat', address: opts.webChat.address, hmacHex: opts.webChat.hmac });
-    for (const p of idents.phones) await contacts.addPoint(tx, { id: ids.next(), contactId, kind: 'phone', address: p.e164, hmacHex: p.hmac });
+    for (const p of idents.phones) await contacts.addPoint(tx, { id: ids.next(), contactId, kind: 'phone', address: p.e164, hmacHex: p.hmac, ...(isNewCaller ? { label: 'mobile' } : {}) });
     for (const e of idents.emails) await contacts.addPoint(tx, { id: ids.next(), contactId, kind: 'email', address: e.email, hmacHex: e.hmac });
   };
   const addCandidates = async (contactId: string) => {
@@ -307,7 +347,9 @@ async function ingestInTx(tx: Tx, actor: SystemActor, i: InquiryInput, now: Inst
     for (const d of decision.duplicates) if (d.contactId !== contactId) await contacts.addDuplicateCandidate(tx, ids.next(), contactId, d.contactId, d.reason);
   };
   // 7 E38: the disclosure this inquiry carries (stored once per text), and its ledger grants
-  const disclosure = i.consentDisclosure
+  const disclosure = noDisclosure
+    ? null
+    : i.consentDisclosure
     ? await storeDisclosure(tx, ids, i.consentDisclosure, disclosureSourceKind(source.kind))
     : source.consent_disclosure_id
       ? await repo.disclosureById(tx, source.consent_disclosure_id)
@@ -324,15 +366,16 @@ async function ingestInTx(tx: Tx, actor: SystemActor, i: InquiryInput, now: Inst
     // 5 a new person: create via intake (system routing inside this transaction)
     const contactId = ids.next<'ContactId'>();
     const inquiryId = ids.next<'LeadInquiryId'>();
+    isNewCaller = opts.unknownCaller !== undefined;
     const res = await applyOwnershipCommandInTx(tx, actor, contactId, { kind: 'create', via: 'intake' }, {
       commandId: derivedCommandId('intake.create', inquiryId),
       ids,
       newContact: {
-        displayName: name.displayName ?? 'New lead',
+        displayName: name.displayName ?? opts.unknownCaller?.displayName ?? 'New lead',
         firstName: name.firstName,
         lastName: name.lastName,
         intent: INTENT[inquiryType],
-        pondSummary: summary,
+        pondSummary: opts.unknownCaller?.pondSummary ?? summary,
         originalLeadSourceId: source.id,
         originalCampaignRef: i.campaignRef ?? null,
         originalAdRef: i.adRef ?? null,

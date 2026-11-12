@@ -39,6 +39,7 @@ import * as msgs from './repos/messages.js';
 import { adminUserIds, contactLabel, handlerOf, notifyUser, upsertFeedItem } from './repos/notify.js';
 import { LEDGER_SYSTEM, SYSTEM_NOTICE, type CommsDeps } from './types.js';
 import { emailHandbackKey, messageIdHeader, rfcMessageIdSha256 } from '../channels/rfcMessageId.js';
+import { type InquiryInput, ingestInquiryInTx, intakeLockKeys } from '../leads/intake.js';
 
 export type InboundEvent =
   | { kind: 'sms'; providerRef: string; from: string; to: string; body: string; mediaCount?: number; occurredAt?: Instant }
@@ -128,14 +129,32 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
 
   // the number that was texted / called (still live for this tenant: the resolver checked, R-TEN-8)
   let toNumber: { id: string; assignedUserId: string | null } | null = null;
+  // module 22 (R-TRK-2/3): a live tracking number of an ACTIVE lead source makes unknown callers and texters leads
+  let tracked: { input: InquiryInput } | null = null;
   if (!isEmail && !isChat) {
-    const r = await sql<{ id: string; assigned_user_id: string | null }>`
-      SELECT id, assigned_user_id FROM phone_numbers WHERE tenant_id = app.tenant_id() AND e164 = ${e.to} AND released_at IS NULL`.execute(tx);
+    const r = await sql<{ id: string; assigned_user_id: string | null; purpose: string; lead_source_id: string | null; source_active: boolean | null }>`
+      SELECT n.id, n.assigned_user_id, n.purpose, n.lead_source_id, s.active AS source_active
+        FROM phone_numbers n LEFT JOIN lead_sources s ON s.tenant_id = n.tenant_id AND s.id = n.lead_source_id
+       WHERE n.tenant_id = app.tenant_id() AND n.e164 = ${e.to} AND n.released_at IS NULL`.execute(tx);
     if (!r.rows[0]) return { kind: 'unroutable', reason: 'NUMBER_NOT_LIVE' };
     toNumber = { id: r.rows[0].id, assignedUserId: r.rows[0].assigned_user_id };
+    const n = r.rows[0];
+    if ((e.kind === 'call' || e.kind === 'sms') && n.purpose === 'tracking' && n.lead_source_id !== null && n.source_active === true) {
+      tracked = {
+        input: {
+          leadSourceId: n.lead_source_id,
+          externalId: `tracking:${e.kind}:${e.providerRef}`.slice(0, 200),
+          phones: [from],
+          inquiryType: 'general',
+          sourceDetail: { channel: 'tracking_number', via: e.kind, phone_number_id: n.id },
+        },
+      };
+    }
   }
 
-  await lockAddresses(tx, [hmac]);
+  // Global lock order step 1: the address lock and, on a tracked number, the intake's own lock set, in ONE sorted call
+  // before matching (E323, E324): a tracked call and a signed webhook lead for the same new phone never deadlock
+  await lockAddresses(tx, tracked ? [hmac, ...(await intakeLockKeys(tx, deps.envelope, tenantId, tracked.input))] : [hmac]);
 
   // E60: an agent's own verified alert phone (a USER recipient, not a contact)
   if (e.kind === 'sms') {
@@ -160,6 +179,21 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
     target = sharing[0]!;
   } else if (sharing.length === 1) target = sharing[0]!;
   else if (sharing.length > 1) target = await affinity(tx, sharing, toNumber?.id ?? null);
+  if (target === null && tracked) {
+    // R-TRK-2 (module 22): a new caller or texter on a tracked number becomes a lead through the intake: credited to
+    // the number's source, routed by its rules, no 60-second reply and no consent text cited (the caller saw none;
+    // the R-CONSENT-4 first-text grant below is unchanged). The intake adds the phone point ('mobile').
+    const res = await ingestInquiryInTx(tx, actor, tracked.input, txNow, { envelope: deps.envelope, ids, db: deps.db }, {
+      firstResponse: false,
+      disclosure: 'none',
+      unknownCaller: { displayName: `Unknown ${displayPhone(from)}`, pondSummary: e.kind === 'call' ? 'Called in' : 'Texted in' },
+    });
+    await setOwnershipCommand(tx, null);
+    target = res.contactId;
+    sharing = [res.contactId];
+    created = res.outcome === 'new_contact';
+    tracked = null; // this delivery is the inquiry: nothing more below
+  }
   if (target === null) {
     // zero matches: an "Unknown +1…" contact through intake routing (system), with this number on it
     const contactId = ids.next<'ContactId'>();
@@ -308,6 +342,20 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
         const title = classification.kind === 'wrong_number' ? `${label ?? 'A contact'}'s number may be a wrong number` : `${label ?? 'A contact'} opted out`;
         await notifyUser(tx, ids, { userId: h.userId, kind: 'opt_out', priority: 'normal', title, body: null, subjectType: 'contact', subjectId: target, dedupeKey: `opt_out:${messageId}` }, now);
       }
+    }
+  }
+
+  // R-TRK-3 (module 22): a known person in a pond or unassigned who calls, or texts something that is not STOP, opt-out
+  // language or a wrong-number reply, on a tracked number: the call or text is also an inquiry from the number's
+  // source, so the re-inquiry rules decide (R-OWN-20, owner decision D8(2)). Owned, offered and closed people are only
+  // threaded. Read under the contact locks taken in step 3; the intake attaches to a contact in `sharing` (same HMAC).
+  // (Once lane/sms-reactions has merged, a reaction text is skipped here too.)
+  if (tracked && (e.kind === 'call' || classification.kind === 'none')) {
+    const st = await sql<{ ownership_state: string }>`SELECT ownership_state FROM contacts WHERE tenant_id = app.tenant_id() AND id = ${target}`.execute(tx);
+    const state = st.rows[0]?.ownership_state;
+    if (state === 'in_pond' || state === 'unassigned') {
+      await ingestInquiryInTx(tx, actor, tracked.input, txNow, { envelope: deps.envelope, ids, db: deps.db }, { firstResponse: false, disclosure: 'none' });
+      await setOwnershipCommand(tx, null);
     }
   }
 

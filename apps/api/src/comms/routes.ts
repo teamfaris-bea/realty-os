@@ -37,7 +37,7 @@ import { cancelMessage, composeHumanMessage, previewHumanMessage, sendExisting }
 import { liftSuppression, logCallOutcome, markNotOptOut, recordStaffConsent, resumeAutomation, unsubscribeByLink } from './consent.js';
 import { startCall } from './dial.js';
 import { reachabilityFor, reachabilityOf } from './reachability.js';
-import { acquireNumber, addDomain, addEmailIdentity, attachRegistration, createRegistration, listNumbers, refreshRegistration, releaseNumber, verifyDomain } from './numbers.js';
+import { acquireNumber, addDomain, addEmailIdentity, attachRegistration, createRegistration, listNumbers, refreshRegistration, releaseNumber, setNumberLeadSource, verifyDomain } from './numbers.js';
 import { issueStreamToken, recordingFacts, streamRecording, viewTranscript } from './recordings.js';
 import { contactFacts, dealOrAppointmentContext, detailVisibleContact } from './repos/contacts.js';
 import { conversationOf } from './repos/gate.js';
@@ -225,10 +225,14 @@ async function register(app: FastifyInstance): Promise<void> {
   const admin = { config: { auth: 'settings.numbers' as const }, preHandler: authorize('settings.numbers', () => ({})) };
   r.get('/numbers', { ...admin, schema: { response: { 200: S.NumbersResponse } } }, async (req) => ({ numbers: await listNumbers(actorOf(req), deps()) }));
   r.post('/numbers', { ...admin, schema: { body: S.AcquireBody, response: { 201: S.NumberResponse } } }, async (req, reply) => {
-    const n = await acquireNumber(actorOf(req), req.body, deps());
+    const { notice, ...n } = await acquireNumber(actorOf(req), req.body, deps());
     reply.status(201);
-    return { number: n };
+    return notice ? { number: n, notice } : { number: n };
   });
+  // module 22 (R-TRK-1): tie a live tracking number to a lead source, or untie it
+  r.patch('/numbers/:id/lead-source', { ...admin, schema: { params: IdParams, body: S.NumberLeadSourceBody, response: { 200: S.NumberResponse } } }, async (req) => ({
+    number: await setNumberLeadSource(actorOf(req), req.params.id, req.body.leadSourceId, deps()),
+  }));
   r.patch('/numbers/:id/registration', { ...admin, schema: { params: IdParams, body: S.AttachRegistrationBody, response: { 200: S.NumberResponse } } }, async (req) => ({
     number: await attachRegistration(actorOf(req), req.params.id, req.body.registrationId, deps()),
   }));
