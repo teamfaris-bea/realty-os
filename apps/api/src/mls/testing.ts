@@ -185,3 +185,66 @@ export async function v1Row(h: ApiHarness, tenantId: string, connectionId: strin
   );
   return id;
 }
+
+// ---- the 500k skewed volume fixture (lane V1-A; shared with api/cma's volume check) ----------------------------------
+
+/** The shape of mlsVolumeFixture: 500k MLS rows, half active/pending (500 per postal code), half sold history (D9). */
+export const MLS_VOLUME = Object.freeze({
+  ROWS: 500_000,
+  ACTIVE: 250_000,
+  SOLD: 250_000,
+  ZIPS: 500,
+  /** 40,000 sold rows over 24 months, in a 2 x 2 mi grid near HOT_LAT/HOT_LON; 5,000 of them in 'Big Subdivision' */
+  HOT_ZIP: '94999',
+  HOT_LAT: 37_800_000,
+  HOT_LON: -122_270_000,
+  /** 120,000 sold rows */
+  BIG_CITY: 'Big City',
+  BIG_SUBDIVISION: 'Big Subdivision',
+});
+
+/**
+ * Bulk-inserts the 500k skewed MLS rows of one tenant's connection (superuser: a load fixture, not an application path;
+ * the table owner passes the 0061 valuation guard). Sold rows close over the 730 days before `anchorDate` (default
+ * 2026-11-01, the module 24 benchmark's fixed window; the CMA check passes today, so its 24-month window is full).
+ * 2 % leases, 5 % unfilled version-1 rows with null close dates. `sizeSource` (default none, as module 24's benchmark
+ * stores) is the RESO field the filled rows' sizes were read from; the CMA engine compares only like sizes (V3).
+ */
+export async function mlsVolumeFixture(h: ApiHarness, tenantId: string, connectionId: string, o: { anchorDate?: string; sizeSource?: string } = {}): Promise<void> {
+  const { ACTIVE, SOLD, ZIPS, HOT_ZIP, HOT_LAT, HOT_LON } = MLS_VOLUME;
+  await h.su.query(
+    `INSERT INTO listings (tenant_id, id, source, mls_number, status, address_line1, city, region, postal_code, list_price_cents, beds, baths_x10, sqft,
+                           property_type, attributes, mls_connection_id, mls_modified_at, listing_brokerage_name, display_allowed, last_seen_in_feed_at)
+     SELECT $1, gen_random_uuid(), 'mls', 'V' || i, CASE WHEN (i / ${ZIPS}) % 10 = 0 THEN 'pending' ELSE 'active' END, (i % 9000 + 1) || ' Volume St',
+            'City' || (i % 200), 'CA', (94000 + i % ${ZIPS})::text, 30000000 + ((i / ${ZIPS}) % 1000) * 50000, 1 + (i / ${ZIPS}) % 5, 20, 1200 + i % 900,
+            'single_family', '{"mls":{"address_display":true,"photo_urls":[]}}'::jsonb, $2, timestamptz '2026-11-01' + (i || ' seconds')::interval,
+            'Volume Brokerage (test)', (i / ${ZIPS}) % 10 <> 3, now()
+       FROM generate_series(1, ${ACTIVE}) i`,
+    [tenantId, connectionId],
+  );
+  // D9 sold history: j = 1..SOLD. j <= 40,000: the hot postal code (a 2 x 2 mi grid near HOT_LAT/LON), its 5,000 j % 8 = 0
+  // rows the big subdivision; j <= 120,000: the big city. 2 % leases (j % 50 = 0), 5 % unfilled version-1 rows (j % 20 = 1).
+  await h.su.query(
+    `INSERT INTO listings (tenant_id, id, source, mls_number, status, address_line1, city, region, postal_code, list_price_cents, beds, baths_x10, sqft,
+                           property_type, attributes, mls_connection_id, mls_modified_at, listing_brokerage_name, display_allowed, last_seen_in_feed_at,
+                           close_price_cents, close_date, purchase_contract_date, latitude_e6, longitude_e6, year_built, lot_sqft, subdivision_name,
+                           sale_conditions, is_lease, avm_display_allowed, mls_normalize_version, size_source)
+     SELECT $1, gen_random_uuid(), 'mls', 'S' || j, 'sold', (j % 9000 + 1) || ' History Rd',
+            CASE WHEN j <= 120000 THEN 'Big City' ELSE 'City' || (j % 200) END, 'CA',
+            CASE WHEN j <= 40000 THEN '${HOT_ZIP}' ELSE (94000 + j % ${ZIPS})::text END,
+            30000000 + (j % 1000) * 50000, 1 + j % 5, 20, 1200 + j % 900, 'single_family',
+            '{"mls":{"address_display":true,"photo_urls":[]}}'::jsonb, $2, timestamptz '2026-11-01' + (j || ' seconds')::interval, 'Volume Brokerage (test)', true, now(),
+            CASE WHEN u THEN NULL ELSE 29000000 + (j % 1000) * 50000 END,
+            CASE WHEN u THEN NULL ELSE $3::date - (j % 730) END,
+            CASE WHEN u THEN NULL ELSE $3::date - (j % 730) - 30 END,
+            CASE WHEN u THEN NULL WHEN j <= 40000 THEN ${HOT_LAT} + (j % 200) * 150 ELSE 36000000 + ((j % ${ZIPS}) % 25) * 60000 + (j % 97) * 200 END,
+            CASE WHEN u THEN NULL WHEN j <= 40000 THEN ${HOT_LON} - ((j / 200) % 200) * 150 ELSE -121000000 - ((j % ${ZIPS}) / 25) * 60000 - (j % 89) * 200 END,
+            CASE WHEN u THEN NULL ELSE 1950 + j % 70 END,
+            CASE WHEN u THEN NULL ELSE 4000 + j % 6000 END,
+            CASE WHEN u THEN NULL WHEN j <= 40000 AND j % 8 = 0 THEN 'Big Subdivision' ELSE 'Sub ' || (j % 3000) END,
+            CASE WHEN u THEN '{}'::text[] ELSE ARRAY['standard'] END,
+            j % 50 = 0, NOT u, CASE WHEN u THEN 1 ELSE 2 END, CASE WHEN u THEN NULL ELSE $4::text END
+       FROM generate_series(1, ${SOLD}) j, LATERAL (SELECT j % 20 = 1 AS u) x`,
+    [tenantId, connectionId, o.anchorDate ?? '2026-11-01', o.sizeSource ?? null],
+  );
+}

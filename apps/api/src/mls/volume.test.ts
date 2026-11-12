@@ -21,15 +21,9 @@ import { type AssistantWorld, assistantWorld, call, listing, ownedContact } from
 import { cellsWithin } from '@realty/core/listings';
 import { type SoldQuery, type TierQuery, soldCandidates, tierSql } from './comps.js';
 import { SYNC_BATCH, syncConnection } from './sync.js';
-import { makeDue, mlsConnection, mlsDeps, pagedFeed, reso, soldReso, splitFeed, startBackfill } from './testing.js';
+import { MLS_VOLUME, makeDue, mlsConnection, mlsDeps, mlsVolumeFixture, pagedFeed, reso, soldReso, splitFeed, startBackfill } from './testing.js';
 
-const ROWS = 500_000;
-const ACTIVE = 250_000; // active/pending rows: 500 per postal code
-const SOLD = ROWS - ACTIVE; // sold history (D9)
-const ZIPS = 500;
-const HOT_ZIP = '94999'; // 40,000 sold rows over 24 months
-const HOT_LAT = 37_800_000;
-const HOT_LON = -122_270_000;
+const { ROWS, ZIPS, HOT_ZIP, HOT_LAT, HOT_LON } = MLS_VOLUME;
 let h: ApiHarness;
 let w: AssistantWorld;
 let other: TestClient;
@@ -52,41 +46,7 @@ beforeAll(async () => {
   conn = await mlsConnection(h, w.tenantId, w.owner.userId!, { lastSyncedAt: new Date() });
   otherConn = await mlsConnection(h, other.tenantId!, other.userId!, { lastSyncedAt: new Date() });
   const t0 = performance.now();
-  await h.su.query(
-    `INSERT INTO listings (tenant_id, id, source, mls_number, status, address_line1, city, region, postal_code, list_price_cents, beds, baths_x10, sqft,
-                           property_type, attributes, mls_connection_id, mls_modified_at, listing_brokerage_name, display_allowed, last_seen_in_feed_at)
-     SELECT $1, gen_random_uuid(), 'mls', 'V' || i, CASE WHEN (i / ${ZIPS}) % 10 = 0 THEN 'pending' ELSE 'active' END, (i % 9000 + 1) || ' Volume St',
-            'City' || (i % 200), 'CA', (94000 + i % ${ZIPS})::text, 30000000 + ((i / ${ZIPS}) % 1000) * 50000, 1 + (i / ${ZIPS}) % 5, 20, 1200 + i % 900,
-            'single_family', '{"mls":{"address_display":true,"photo_urls":[]}}'::jsonb, $2, timestamptz '2026-11-01' + (i || ' seconds')::interval,
-            'Volume Brokerage (test)', (i / ${ZIPS}) % 10 <> 3, now()
-       FROM generate_series(1, ${ACTIVE}) i`,
-    [w.tenantId, conn],
-  );
-  // D9 sold history: j = 1..SOLD. j <= 40,000: the hot postal code (a 2 x 2 mi grid near HOT_LAT/LON), its 5,000 j % 8 = 0
-  // rows the big subdivision; j <= 120,000: the big city. 2 % leases (j % 50 = 0), 5 % unfilled version-1 rows (j % 20 = 1).
-  await h.su.query(
-    `INSERT INTO listings (tenant_id, id, source, mls_number, status, address_line1, city, region, postal_code, list_price_cents, beds, baths_x10, sqft,
-                           property_type, attributes, mls_connection_id, mls_modified_at, listing_brokerage_name, display_allowed, last_seen_in_feed_at,
-                           close_price_cents, close_date, purchase_contract_date, latitude_e6, longitude_e6, year_built, lot_sqft, subdivision_name,
-                           sale_conditions, is_lease, avm_display_allowed, mls_normalize_version)
-     SELECT $1, gen_random_uuid(), 'mls', 'S' || j, 'sold', (j % 9000 + 1) || ' History Rd',
-            CASE WHEN j <= 120000 THEN 'Big City' ELSE 'City' || (j % 200) END, 'CA',
-            CASE WHEN j <= 40000 THEN '${HOT_ZIP}' ELSE (94000 + j % ${ZIPS})::text END,
-            30000000 + (j % 1000) * 50000, 1 + j % 5, 20, 1200 + j % 900, 'single_family',
-            '{"mls":{"address_display":true,"photo_urls":[]}}'::jsonb, $2, timestamptz '2026-11-01' + (j || ' seconds')::interval, 'Volume Brokerage (test)', true, now(),
-            CASE WHEN u THEN NULL ELSE 29000000 + (j % 1000) * 50000 END,
-            CASE WHEN u THEN NULL ELSE date '2026-11-01' - (j % 730) END,
-            CASE WHEN u THEN NULL ELSE date '2026-11-01' - (j % 730) - 30 END,
-            CASE WHEN u THEN NULL WHEN j <= 40000 THEN ${HOT_LAT} + (j % 200) * 150 ELSE 36000000 + ((j % ${ZIPS}) % 25) * 60000 + (j % 97) * 200 END,
-            CASE WHEN u THEN NULL WHEN j <= 40000 THEN ${HOT_LON} - ((j / 200) % 200) * 150 ELSE -121000000 - ((j % ${ZIPS}) / 25) * 60000 - (j % 89) * 200 END,
-            CASE WHEN u THEN NULL ELSE 1950 + j % 70 END,
-            CASE WHEN u THEN NULL ELSE 4000 + j % 6000 END,
-            CASE WHEN u THEN NULL WHEN j <= 40000 AND j % 8 = 0 THEN 'Big Subdivision' ELSE 'Sub ' || (j % 3000) END,
-            CASE WHEN u THEN '{}'::text[] ELSE ARRAY['standard'] END,
-            j % 50 = 0, NOT u, CASE WHEN u THEN 1 ELSE 2 END
-       FROM generate_series(1, ${SOLD}) j, LATERAL (SELECT j % 20 = 1 AS u) x`,
-    [w.tenantId, conn],
-  );
+  await mlsVolumeFixture(h, w.tenantId, conn);
   await h.su.query(
     `INSERT INTO listings (tenant_id, id, source, mls_number, status, address_line1, city, region, postal_code, list_price_cents, beds, mls_connection_id, mls_modified_at, listing_brokerage_name, display_allowed)
      SELECT $1, gen_random_uuid(), 'mls', 'B' || i, 'active', i || ' Other St', 'City1', 'CA', (94000 + i % ${ZIPS})::text, 40000000, 3, $2, timestamptz '2026-11-01', 'B Brokerage (test)', true
