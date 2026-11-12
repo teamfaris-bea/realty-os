@@ -363,6 +363,23 @@ describe('PATCH (R-CMA-8)', () => {
   });
 });
 
+describe('market context (E360)', () => {
+  it('E360 (b10 review ownership-data/F5): an active lease nearby is never in the CMA\'s market context, so a rent is never shown as a list price or counted', async () => {
+    const c = await contact(w.agents[0]!);
+    await address(h, w.tenantId, c, { line1: '4321 Context Ave' });
+    const lease = await mlsSale(w, { status: 'active', isLease: true, listPriceCents: 300_000, line1: '77 Lease St' });
+    const sale = await mlsSale(w, { status: 'active', listPriceCents: 60_000_000, line1: '78 Sale St' });
+    const r = await oneTap(w.agents[0]!, c, { facts: { propertyType: 'single_family', sqft: 1500 } });
+    expect(r.status).toBe(201);
+    const cma = r.body.cma as unknown as { context: { listingId: string; listPriceCents: number | null }[]; contextSentence: string };
+    const ids = cma.context.map((x) => x.listingId);
+    expect(ids).toContain(sale);
+    expect(ids).not.toContain(lease);
+    expect(cma.context.some((x) => x.listPriceCents === 300_000)).toBe(false);
+    expect(cma.contextSentence).toBe(`${cma.context.length} active or pending listings nearby, shown for the market only: they are not sales and are not used in the value.`);
+  });
+});
+
 describe('gates and readiness (R-CMA-6, R-CMA-7)', () => {
   it('E369 R-CMA-6: a feed stale for 3 days still gives the agent a CMA with "MLS data as of …", and blocks client sharing (FEED_STALE)', async () => {
     const ws = await cmaWorld(h);

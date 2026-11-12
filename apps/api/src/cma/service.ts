@@ -282,8 +282,9 @@ async function contextListings(tx: Tx, conns: CmaConnections, s: ResolvedSubject
   const zips = [...new Set([(s.address.postalCode ?? '').trim(), zip])].filter((z) => z !== '');
   const area = sql`(l.postal_code = ANY (${zips}::text[]) OR (l.city = ${s.address.city ?? ''} AND l.region = ${s.address.region ?? ''}))`;
   const rows = (
+    // never a lease (E360, b10 review ownership-data/F5): its list price is a rent; team rows carry is_lease false
     await sql<ListingRow>`SELECT ${LISTING_COLS} FROM listings l WHERE l.tenant_id = app.tenant_id() AND l.status = ANY (${['active', 'pending']}::text[]) AND ${area}
-      AND (l.source = 'team' OR l.mls_connection_id = ANY (${live}::uuid[])) ORDER BY l.id LIMIT 500`.execute(tx)
+      AND NOT l.is_lease AND (l.source = 'team' OR l.mls_connection_id = ANY (${live}::uuid[])) ORDER BY l.id LIMIT 500`.execute(tx)
   ).rows;
   const subjectFacts: ListingFacts = {
     id: (s.listingId ?? null) as ListingFacts['id'],

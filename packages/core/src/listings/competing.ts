@@ -14,6 +14,8 @@
 // - `rule.mlsFeedStale` (R-MLS-3): MLS candidates pause; team listings remain;
 // - `rule.onlyDisplayAllowed` (R-MLS-2, client-facing output): MLS candidates whose broker opted out
 //   of internet display are dropped. The caller still renders each one through applyDisplayRules.
+// - a lease (`valuation.isLease`, E360) never competes: its list price is a monthly rent, not a price for sale
+//   (batch 10 review ownership-data/F5: the CMA's market context, the agent's competing view and seller updates).
 //
 // Order (deterministic, independent of input order):
 //   1. absolute list-price distance from the subject, ascending (unknown prices last);
@@ -102,6 +104,7 @@ export function competingSet(subject: ListingFacts, candidates: readonly Listing
 
   for (const c of dedupeMirrors(candidates).listings) {
     if (isSubjectOrMirror(subject, c)) continue;
+    if (c.valuation.isLease) continue;
     if (c.source === 'mls' && (rule.mlsFeedStale || (rule.onlyDisplayAllowed && !c.displayAllowed))) continue;
     const why: Omit<CriterionMatch, 'listing'>[] = [];
 
