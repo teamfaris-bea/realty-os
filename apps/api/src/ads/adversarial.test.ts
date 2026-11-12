@@ -89,6 +89,21 @@ describe('roles, support and tenancy (R-ADS-10, R-PERM-5, R-TEN-1)', () => {
     });
   });
 
+  it('R-ADS-1 R-ADS-10 R-AST-21: the ads actions by role: Owner all (the cap re-authenticated); Admin all but the cap; every other role and the system none', () => {
+    const now = instant(Date.now());
+    const fresh = { reauth: { reauthenticatedAt: now, now } };
+    const stale = { reauth: { reauthenticatedAt: instant(Date.now() - 3_600_000), now } };
+    const user = (role: 'owner' | 'admin' | 'team_lead' | 'agent' | 'isa' | 'tc'): Actor => ({ kind: 'user', userId: randomUUID() as never, tenantId: randomUUID() as never, role, sessionId: 's' });
+    const actions = ['ads.view', 'ads.cap_set', 'ads.shift_decide', 'ads.campaign_manage'] as const;
+    for (const a of actions) {
+      expect(can(user('owner'), a, fresh), a).toEqual({ ok: true });
+      expect(can(user('admin'), a, fresh), a).toEqual(a === 'ads.cap_set' ? { ok: false, code: 'NOT_FOUND' } : { ok: true });
+      for (const r of ['team_lead', 'agent', 'isa', 'tc'] as const) expect(can(user(r), a, fresh), `${r} ${a}`).toMatchObject({ ok: false, code: 'NOT_FOUND' });
+      expect(can(systemActor(randomUUID(), 'timer'), a, fresh), a).toMatchObject({ ok: false });
+    }
+    expect(can(user('owner'), 'ads.cap_set', stale)).toMatchObject({ ok: false, code: 'REAUTH_REQUIRED' });
+  });
+
   it('R-ADS-10: a support session under the Owner\'s grant reads the ownerless ad_reallocation (read-only, as documented) and no ads table row; it cannot change it', async () => {
     await withAdsCleared(h, async () => {
       const w = await adsWorld(h);
