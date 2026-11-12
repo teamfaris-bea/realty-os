@@ -12,7 +12,7 @@
 // - Revoke: the version becomes `revoked` at once, so the dispatch guard refuses any of its messages from
 //   that instant (R-GATE-4); assistant.playbook_revoked then pauses every enrollment on it
 //   (`approval_revoked`) and cancels their queued step messages, 500 per run under per-contact locks.
-import { type PlaybookKind, type PlaybookStep, PlaybookStepSchema, type Tone, ToneSchema, contentSha256, validatePlaybook } from '@realty/core/assistant';
+import { type PlaybookContent, type PlaybookKind, type PlaybookStep, PlaybookStepSchema, type Tone, ToneSchema, contentSha256, storedContent, validatePlaybookContent } from '@realty/core/assistant';
 import type { ContactId, Instant, UserActor } from '@realty/core/foundation';
 import { type Tx, enqueueJob, lockContact } from '@realty/db';
 import { sql } from 'kysely';
@@ -30,7 +30,8 @@ export interface VersionView {
   versionNo: number;
   status: string;
   contentSha256: string;
-  steps: unknown[];
+  /** a step playbook's PlaybookStep[]; a trigger or voice playbook's one PlaybookContent object (module 26) */
+  steps: unknown[] | Record<string, unknown>;
   tone: Record<string, unknown>;
   /** what blocks approval (empty when the version can be approved) */
   issues: { index: number; stepKey?: string | undefined; code: string; detail?: string | undefined }[];
@@ -50,9 +51,11 @@ export interface PlaybookView {
 
 export const MIGRATE_BATCH = 500;
 
-async function issuesFor(tx: Tx, p: P.PlaybookRow, steps: readonly unknown[]): Promise<VersionView['issues']> {
+async function issuesFor(tx: Tx, p: P.PlaybookRow, content: unknown): Promise<VersionView['issues']> {
   const identity = await identityFacts(tx, { scope: p.scope, agentUserId: p.ownerUserId });
-  return validatePlaybook(steps, { kind: p.kind as PlaybookKind, identity });
+  // module 26: one validator for every content kind (steps, triggers, voice), so PLAYBOOK_INVALID never fires
+  // for valid trigger or voice content (R-NURT-1)
+  return validatePlaybookContent(content, { kind: p.kind as PlaybookKind, identity });
 }
 
 async function view(tx: Tx, p: P.PlaybookRow): Promise<PlaybookView> {
@@ -89,6 +92,24 @@ function parseSteps(raw: readonly unknown[]): PlaybookStep[] {
   return out;
 }
 
+/** Kinds whose stored content is one PlaybookContent object rather than a step array (0018, module 26). */
+const OBJECT_CONTENT: ReadonlySet<string> = new Set(['trigger', 'voice_answering']);
+
+/**
+ * The content to store for a version of `kind`: a step array (Phase 1) or, for trigger and voice
+ * playbooks, one content object of the right kind. Shape only: everything else is validatePlaybookContent's
+ * job (it lists the issues on the draft and blocks approval).
+ */
+function parseContent(kind: string, raw: unknown): PlaybookStep[] | PlaybookContent {
+  if (!OBJECT_CONTENT.has(kind)) {
+    if (!Array.isArray(raw)) throw new AppError('PLAYBOOK_INVALID', { issues: [{ code: 'CONTENT_KIND_MISMATCH' }] });
+    return parseSteps(raw);
+  }
+  const c = storedContent(raw);
+  if (c === null || Array.isArray(raw) || c.kind !== (kind === 'trigger' ? 'triggers' : 'voice')) throw new AppError('PLAYBOOK_INVALID', { issues: [{ code: 'CONTENT_KIND_MISMATCH' }] });
+  return raw as PlaybookContent;
+}
+
 function parseTone(raw: unknown): Tone {
   const r = ToneSchema.safeParse(raw ?? {});
   if (!r.success) throw new AppError('PLAYBOOK_INVALID', { issues: [{ code: 'TONE' }] });
@@ -100,7 +121,7 @@ export interface CreatePlaybookInput {
   kind?: PlaybookKind | undefined;
   scope?: 'team' | 'agent' | undefined;
   name?: string | undefined;
-  steps?: unknown[] | undefined;
+  steps?: unknown[] | Record<string, unknown> | undefined;
   tone?: unknown;
 }
 
@@ -112,7 +133,8 @@ export async function createPlaybook(actor: UserActor, input: CreatePlaybookInpu
   const scope = input.scope ?? t?.scope;
   if (!kind || !scope) throw new AppError('VALIDATION_FAILED');
   if (kind === 'new_lead_response' && scope !== 'team') throw new AppError('PLAYBOOK_INVALID', { issues: [{ code: 'NEW_LEAD_RESPONSE_IS_TEAM' }] });
-  const steps = parseSteps(input.steps ?? t?.steps ?? []);
+  if (kind === 'voice_answering' && scope !== 'team') throw new AppError('PLAYBOOK_INVALID', { issues: [{ code: 'VOICE_ANSWERING_IS_TEAM' }] });
+  const steps = parseContent(kind, input.steps ?? t?.content ?? t?.steps ?? []);
   const tone = parseTone(input.tone);
   return asUser(deps, actor, async (tx) => {
     const id = deps.ids.next<'PlaybookId'>();
@@ -126,12 +148,12 @@ export async function createPlaybook(actor: UserActor, input: CreatePlaybookInpu
  * POST /playbooks/:id/versions: edit = a new draft (the approved version keeps running, E31). An
  * existing draft is replaced in place (drafts are not frozen yet).
  */
-export async function createVersion(actor: UserActor, playbookId: string, input: { steps: unknown[]; tone?: unknown }, deps: AssistantDeps): Promise<PlaybookView> {
-  const steps = parseSteps(input.steps);
+export async function createVersion(actor: UserActor, playbookId: string, input: { steps: unknown[] | Record<string, unknown>; tone?: unknown }, deps: AssistantDeps): Promise<PlaybookView> {
   const tone = parseTone(input.tone);
   return asUser(deps, actor, async (tx) => {
     const p = await P.playbookById(tx, playbookId, { lock: true });
     if (!p) throw new AppError('NOT_FOUND');
+    const steps = parseContent(p.kind, input.steps);
     const versions = await P.versionsOf(tx, [p.id]);
     const last = versions[versions.length - 1];
     const sha = contentSha256(steps, tone);
@@ -213,6 +235,10 @@ export async function migrateVersionEnrollments(tx: Tx, p: { fromVersionId: stri
   const to = await P.versionById(tx, p.toVersionId);
   const from = await P.versionById(tx, p.fromVersionId);
   if (!to || !from || to.status !== 'approved') return { moved: 0, more: false };
+  // module 26 (R-NURT-1, R-AST-4): a trigger playbook has no enrollments; its firings not built yet move to the
+  // new approved version when it still has their step (they are built from the new content), and are skipped
+  // visibly otherwise. A firing already built (queued or drafted) stays as it is.
+  if (!Array.isArray(to.steps)) return { moved: await migrateTriggerRuns(tx, from.id, to), more: false };
   const list = await P.enrollmentsOnVersion(tx, from.id, batch);
   let moved = 0;
   for (const e of list) {
@@ -229,7 +255,46 @@ export async function migrateVersionEnrollments(tx: Tx, p: { fromVersionId: stri
  * assistant.playbook_revoked (R-AST-4, E32): every enrollment on the revoked version is paused
  * (`approval_revoked`) and its queued step messages are canceled, under per-contact locks.
  */
+async function migrateTriggerRuns(tx: Tx, fromVersionId: string, to: P.VersionRow): Promise<number> {
+  const keys = (storedContent(to.steps)?.kind === 'triggers' ? ((to.steps as unknown as { triggers: { stepKey?: unknown }[] }).triggers ?? []) : []).map((t) => String(t.stepKey));
+  const moved = await sql`
+    UPDATE playbook_step_runs SET playbook_version_id = ${to.id}, updated_at = now()
+     WHERE tenant_id = app.tenant_id() AND enrollment_id IS NULL AND playbook_version_id = ${fromVersionId} AND status = 'scheduled'
+       AND message_id IS NULL AND assistant_action_id IS NULL AND step_key = ANY (${keys}::text[])`.execute(tx);
+  await sql`
+    UPDATE playbook_step_runs SET status = 'skipped_ineligible', updated_at = now(),
+           trigger_ref = trigger_ref || '{"skip":{"reason":"STEP_REMOVED","text":"The approved playbook no longer has this alert."}}'::jsonb
+     WHERE tenant_id = app.tenant_id() AND enrollment_id IS NULL AND playbook_version_id = ${fromVersionId} AND status = 'scheduled'
+       AND message_id IS NULL AND assistant_action_id IS NULL`.execute(tx);
+  return Number(moved.numAffectedRows ?? 0n);
+}
+
+/**
+ * module 26 (R-AST-4, R-GATE-4): the scheduled firings of a revoked trigger version are skipped visibly and
+ * their queued messages canceled (the dispatch guard already refuses them from the revoke instant), under the
+ * contact lock dispatch takes.
+ */
+async function stopRevokedTriggerRuns(tx: Tx, versionId: string, batch: number): Promise<number> {
+  const r = await sql<{ id: string; contact_id: string; message_id: string | null }>`
+    SELECT id, contact_id, message_id FROM playbook_step_runs
+     WHERE tenant_id = app.tenant_id() AND enrollment_id IS NULL AND playbook_version_id = ${versionId} AND status = 'scheduled'
+       AND (message_id IS NULL OR EXISTS (SELECT 1 FROM messages m WHERE m.tenant_id = playbook_step_runs.tenant_id AND m.id = playbook_step_runs.message_id
+                                            AND m.status IN ('queued','scheduled')))
+     ORDER BY contact_id, id LIMIT ${batch}`.execute(tx);
+  for (const x of r.rows) {
+    await lockContact(tx, x.contact_id as ContactId);
+    if (x.message_id) await sql`UPDATE messages SET status = 'canceled', status_reason = 'PLAYBOOK_APPROVAL_REVOKED' WHERE tenant_id = app.tenant_id() AND id = ${x.message_id} AND status IN ('queued','scheduled')`.execute(tx);
+    await sql`
+      UPDATE playbook_step_runs SET status = 'skipped_ineligible', updated_at = now(),
+             trigger_ref = trigger_ref || '{"skip":{"reason":"APPROVAL_NOT_CURRENT","text":"The playbook approval is no longer current."}}'::jsonb
+       WHERE tenant_id = app.tenant_id() AND id = ${x.id} AND status = 'scheduled'`.execute(tx);
+  }
+  return r.rows.length;
+}
+
 export async function pauseRevokedEnrollments(tx: Tx, versionId: string, now: Instant, batch = MIGRATE_BATCH): Promise<{ paused: number; more: boolean }> {
+  const triggerRuns = await stopRevokedTriggerRuns(tx, versionId, batch);
+  if (triggerRuns > 0) return { paused: triggerRuns, more: triggerRuns === batch };
   const list = await P.enrollmentsToRevoke(tx, versionId, batch);
   let paused = 0;
   for (const e of list) {

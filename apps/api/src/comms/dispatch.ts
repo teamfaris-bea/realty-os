@@ -31,7 +31,7 @@
 // human can no longer see the message (lost the lead), a system TX1 blocks it with
 // SENDER_NOT_AUTHORIZED and offers the text to the new owner as a draft (E15).
 import { ALWAYS_HUMAN_CATEGORIES, type Channel, type Initiator, type Purpose, classifyHumanPurpose } from '@realty/core/compliance';
-import { INTENT_RULES, PlaybookStepSchema, approvalCurrent, authorizeAutonomousAction, stepForChannel, stepRunAfterGate } from '@realty/core/assistant';
+import { INTENT_RULES, type PlaybookStep, PlaybookStepSchema, approvalCurrent, authorizeAutonomousAction, stepForChannel, stepRunAfterGate, storedTriggerStep, triggerStepAsPlaybookStep } from '@realty/core/assistant';
 import type { Actor, ContactId, Instant, TenantId, UserActor } from '@realty/core/foundation';
 import { MINUTE_MS, can, plusMs } from '@realty/core/foundation';
 import { type Tx, applyOwnershipCommandInTx, dbNow, derivedCommandId, lockContact, recordConsentEvent, setOwnershipCommand, withTenantTx } from '@realty/db';
@@ -279,7 +279,7 @@ async function playbookReasons(
   tx: Tx,
   m: msgs.MessageRow,
   a: auto.ActionFacts,
-  owner: { ownerUserId: string | null },
+  owner: { ownerUserId: string | null; periodSeq: number | null },
   channel: Channel,
   autonomous: ReadonlySet<string>,
   tenant: g.TenantFacts,
@@ -291,11 +291,23 @@ async function playbookReasons(
   // an agent playbook speaks for its agent: it never messages a contact that agent no longer owns
   if (pb.scope === 'agent' && pb.ownerUserId !== owner.ownerUserId) out.push('PLAYBOOK_OWNER_NOT_CONTACT_OWNER');
   const run = m.playbookStepRunId ? await auto.stepRunFacts(tx, m.playbookStepRunId) : null;
-  if (!run || run.enrollmentState !== 'active') return [...out, 'ENROLLMENT_NOT_ACTIVE'];
-  const raw = pb.steps.find((s) => (s as { stepKey?: string }).stepKey === run.stepKey);
-  const parsed = raw === undefined ? null : PlaybookStepSchema.safeParse(raw);
-  if (!parsed || !parsed.success) return [...out, 'AUTONOMY_DOWNGRADED'];
-  const step = stepForChannel(parsed.data, channel === 'email' ? 'email' : channel === 'web_chat' ? 'web_chat' : 'sms') ?? parsed.data;
+  let parsedStep: PlaybookStep | null;
+  if (run !== null && run.enrollmentId === null) {
+    // module 26 (flagged, additive; R-NURT-1): a trigger firing has no enrollment. It sends only while its run is
+    // still scheduled (inbound ingestion cancels it, R-NURT-5) and only as its step of the approved trigger content.
+    if (run.status !== 'scheduled') return [...out, 'ENROLLMENT_NOT_ACTIVE'];
+    // R-NURT-7 at send time: an owned contact, still the owner and ownership period the message was built for
+    if (owner.ownerUserId === null || a.ownerUserId !== owner.ownerUserId || a.boundOwnershipSeq !== owner.periodSeq) return [...out, 'ASSISTANT_ACTION_STALE'];
+    const t = storedTriggerStep(pb.steps, run.stepKey);
+    parsedStep = t === null ? null : triggerStepAsPlaybookStep(t);
+  } else {
+    if (!run || run.enrollmentState !== 'active') return [...out, 'ENROLLMENT_NOT_ACTIVE'];
+    const raw = (Array.isArray(pb.steps) ? pb.steps : []).find((s) => (s as { stepKey?: string }).stepKey === run.stepKey);
+    const parsed = raw === undefined ? null : PlaybookStepSchema.safeParse(raw);
+    parsedStep = parsed?.success ? parsed.data : null;
+  }
+  if (parsedStep === null) return [...out, 'AUTONOMY_DOWNGRADED'];
+  const step = stepForChannel(parsedStep, channel === 'email' ? 'email' : channel === 'web_chat' ? 'web_chat' : 'sms') ?? parsedStep;
   if (ALWAYS_HUMAN_CATEGORIES.has(m.actionCategory as never)) return [...out, 'AUTONOMY_DOWNGRADED'];
   const first = conversationId === null ? true : !(await msgs.hasPriorOutbound(tx, conversationId, m.id));
   const verdict = authorizeAutonomousAction({

@@ -17,6 +17,7 @@ import { bulkHandlers } from '../../bulk/handlers.js';
 import { stageAutomationHandlers } from '../../stageAutomation/handlers.js';
 import { mlsHandlers } from '../../mls/handlers.js';
 import { channelHandlers } from '../../channels/handlers.js';
+import { nurtureHandlers } from '../../nurture/handlers.js';
 
 export const handlers: JobHandler<unknown>[] = [
   ...workerHandlers,
@@ -31,5 +32,6 @@ export const handlers: JobHandler<unknown>[] = [
   ...stageAutomationHandlers,
   ...mlsHandlers,
   ...channelHandlers,
+  ...nurtureHandlers,
   // registry: add new entries above this line
 ];

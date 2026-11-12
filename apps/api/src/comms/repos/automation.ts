@@ -126,13 +126,14 @@ export async function playbookFacts(tx: Tx, versionId: string): Promise<Playbook
   };
 }
 
-export async function stepRunFacts(tx: Tx, id: string): Promise<{ id: string; stepKey: string; enrollmentId: string; enrollmentState: string } | null> {
-  const r = await sql<{ id: string; step_key: string; enrollment_id: string; state: string }>`
-    SELECT s.id, s.step_key, s.enrollment_id, e.state FROM playbook_step_runs s
-      JOIN playbook_enrollments e ON e.tenant_id = s.tenant_id AND e.id = s.enrollment_id
+export async function stepRunFacts(tx: Tx, id: string): Promise<{ id: string; stepKey: string; enrollmentId: string | null; enrollmentState: string | null; status: string } | null> {
+  // module 26 (flagged, additive): a trigger firing is a step run with no enrollment (R-NURT-1), so the join is LEFT
+  const r = await sql<{ id: string; step_key: string; enrollment_id: string | null; state: string | null; status: string }>`
+    SELECT s.id, s.step_key, s.enrollment_id, e.state, s.status FROM playbook_step_runs s
+      LEFT JOIN playbook_enrollments e ON e.tenant_id = s.tenant_id AND e.id = s.enrollment_id
      WHERE s.tenant_id = app.tenant_id() AND s.id = ${id}`.execute(tx);
   const x = r.rows[0];
-  return x ? { id: x.id, stepKey: x.step_key, enrollmentId: x.enrollment_id, enrollmentState: x.state } : null;
+  return x ? { id: x.id, stepKey: x.step_key, enrollmentId: x.enrollment_id, enrollmentState: x.state, status: x.status } : null;
 }
 
 /** decisionId: the blocked-send gate_decisions row, when the step's message was blocked. */
