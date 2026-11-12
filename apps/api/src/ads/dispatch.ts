@@ -192,7 +192,10 @@ export async function approveShift(d: AdsDeps, actor: UserActor, actionId: strin
     const p = storedProposal(a.payload);
     if (!p || a.editedPayload !== null) throw new AppError('ACTION_NOT_PENDING', { status: a.status });
     if (!(await repo.packCleared(tx))) throw new AppError('ADS_NOT_CLEARED');
-    if (!(await liveConnection(tx, p.connectionId))) throw new AppError('ADS_CONNECTION_NOT_LIVE');
+    const conn = await liveConnection(tx, p.connectionId);
+    if (!conn) throw new AppError('ADS_CONNECTION_NOT_LIVE');
+    // b11 sends-gates/F2: without a lead source the spend is no longer recorded, so no money moves
+    if (conn.leadSourceId === null) throw new AppError('ADS_NO_LEAD_SOURCE');
     const campaigns = await repo.campaignRows(tx);
     const stale = await staleness(tx, p, campaigns);
     if (stale) return { kind: 'stale', reason: stale.reason };
@@ -240,7 +243,10 @@ export async function resumeCampaign(d: AdsDeps, actor: UserActor, campaignId: s
     if (!row) throw new AppError('NOT_FOUND');
     if (!(await repo.packCleared(tx))) throw new AppError('ADS_NOT_CLEARED');
     if (row.connectionKind !== ADS_KIND) throw new AppError('ADS_GOOGLE_ONLY');
-    if (!(await liveConnection(tx, row.connectionId))) throw new AppError('ADS_CONNECTION_NOT_LIVE');
+    const conn = await liveConnection(tx, row.connectionId);
+    if (!conn) throw new AppError('ADS_CONNECTION_NOT_LIVE');
+    // b11 sends-gates/F2: the E459 guard reads recorded spend, which stops without a lead source
+    if (conn.leadSourceId === null) throw new AppError('ADS_NO_LEAD_SOURCE');
     const cap = await repo.capInForce(tx);
     if (!cap) throw new AppError('ADS_NO_CAP');
     // E459: at or over the monthly cap, a resume would only be paused again
@@ -414,17 +420,25 @@ export interface PauseReport {
   paused: number;
   unknown: number;
   refused: number;
+  /** campaigns not paused because the pack was withdrawn during the pass (R-ADS-7: no provider write while dark) */
+  withdrawn: number;
 }
 
 /**
  * Pauses each given mirrored campaign of the connection on Google Ads (key run:campaign) and, on success, records a paused
  * row (to 0, the cap in force, MONTHLY_CAP_REACHED, the provider ref), sets the mirror to paused and audits it, as the
- * system. An unknown result is retried by the next hourly pass. The caller checked the pack (dark ⇒ never called).
+ * system. An unknown result is retried by the next hourly pass. The caller checked the pack (dark ⇒ never called), and
+ * the pack is re-checked as the system before each call (b11 ads-16): once withdrawn, no further pause is sent.
+ * VERIFY WITH COUNSEL (C3): auto-pausing at the cap, unmanaged campaigns included (Q-ADS-3).
  */
 export async function pauseForMonthlyCap(d: AdsDeps, tenantId: string, acct: AdsAccount, campaigns: readonly repo.CampaignRow[], cap: repo.CapRow): Promise<PauseReport> {
-  const rep: PauseReport = { paused: 0, unknown: 0, refused: 0 };
+  const rep: PauseReport = { paused: 0, unknown: 0, refused: 0, withdrawn: 0 };
   const runId = d.ids.next<'AdRunId'>();
-  for (const c of campaigns) {
+  for (const [i, c] of campaigns.entries()) {
+    if (!(await asSystem(d, tenantId, (tx) => repo.packCleared(tx)))) {
+      rep.withdrawn = campaigns.length - i;
+      break;
+    }
     let r: AdsChangeResult;
     try {
       r = await withinBound(d.ads.pauseCampaign({ account: acct, externalCampaignId: c.externalCampaignId, idempotencyKey: `${runId}:${c.id}` }), d.applyTimeoutMs ?? APPLY_TIMEOUT_MS);

@@ -376,6 +376,7 @@ export const ERROR_STATUS = {
   ADS_MONTHLY_CAP_REACHED: 409, // month-to-date spend is at or over the monthly cap: resuming waits for next month or a higher cap (E459)
   ADS_CAMPAIGN_NOT_ELIGIBLE: 409, // the campaign cannot be resumed here (details.blockers); unmanaged campaigns are resumed in Google Ads
   ADS_NO_CAP: 409, // no ad cap is in force yet
+  ADS_NO_LEAD_SOURCE: 409, // the Google Ads connection has no lead source, so its spend is not recorded: no budget moves (b11 sends-gates/F2)
   AD_CAP_CHANGED: 409, // another cap version was saved at the same time; reload and try again
   AD_CAP_INVALID: 422, // the daily ceiling is above the monthly cap
   // registry: add new entries above this line

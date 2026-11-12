@@ -15,7 +15,7 @@ import { installNetworkTripwire } from '../providers/integrations/spark.testing.
 import { campaignName, mapTargeting, runReconcile } from './mirror.js';
 import { ADS_NOT_SET_UP, FakeAds, UnconfiguredAds } from './provider.js';
 import { GOOGLE_ADS_SCOPES } from '../integrations/catalog.js';
-import { type AdsWorld, adsWorld, campaignOf, connectAds, depsOf, passTime, resetAdsPack, setAdsPack } from './testing.js';
+import { type AdsWorld, adsWorld, campaignOf, connectAds, depsOf, midMonth, passTime, resetAdsPack, setAdsPack } from './testing.js';
 
 const tripwire = installNetworkTripwire();
 let h: ApiHarness;
@@ -199,6 +199,34 @@ describe('the mirror (R-ADS-12, R-ADS-4)', () => {
   });
 });
 
+describe('reads while dark (Q-ADS-1)', () => {
+  it('Q-ADS-1 R-ADS-7 (b11 ads-7): with READS_WHILE_DARK off, a dark pass reads nothing from Google Ads, mirrors and costs nothing, sends no alert, and the page says why; once cleared it reads again', async () => {
+    const w = await adsWorld(h);
+    const { accountId } = await connectAds(h, w, undefined, { campaigns: [{ externalCampaignId: 'fake-c-dark' }] });
+    w.fake.addSpend(accountId, 'fake-c-dark', w.clock.now() - HOUR_MS, 900);
+    passTime(w, 3 * HOUR_MS);
+    const r = await runReconcile(depsOf(h, w), w.tenantId, { readsWhileDark: false });
+    expect(r).toMatchObject({ cleared: false, readsSkipped: true, connections: [], costsWritten: 0, uncheckedAlerts: 0 });
+    expect(w.fake.calls).toEqual([]);
+    expect(await campaignOf(h, w.tenantId, 'fake-c-dark')).toBeUndefined();
+    expect(await costs(w.tenantId)).toEqual([]);
+    expect(await notes(w.tenantId)).toEqual([]);
+    const { buildOverview } = await import('./overview.js');
+    const ov = await withTenantTx(w.owner.actor(), (tx) => buildOverview(tx, w.clock.now() as never, { readsWhileDark: false }), { db: h.database });
+    expect(ov.stateSentence).toMatch(/Google Ads is not read/);
+    expect(ov.overspendNote).toMatch(/does not read Google Ads/);
+    try {
+      await setAdsPack(h, { reviewed: true, vendor: true });
+      const cleared = await runReconcile(depsOf(h, w), w.tenantId, { readsWhileDark: false });
+      expect(cleared.readsSkipped).toBe(false);
+      expect(w.fake.calls.map((c) => c.op)).toContain('listCampaigns');
+      expect(await campaignOf(h, w.tenantId, 'fake-c-dark')).toBeDefined();
+    } finally {
+      await resetAdsPack(h);
+    }
+  });
+});
+
 describe('connection states (R-INT-2; E453, E454)', () => {
   it('E453: a non-USD account is degraded ADS_CURRENCY_UNSUPPORTED: nothing is managed or costed, overspend is unchecked and the "not checked" alert fires', async () => {
     const w = await adsWorld(h);
@@ -214,26 +242,27 @@ describe('connection states (R-INT-2; E453, E454)', () => {
     expect((await overview(w)).uncheckedSentence).toMatch(/^Google Ads spend has not been checked since /);
   });
 
-  it('E453: a quota error degrades the connection (ADS_QUOTA) and retries next hour; after 2 hours without a check the "not checked" alert fires once a day', async () => {
-    const w = await adsWorld(h);
+  it('E453 R-ADS-13: a quota error degrades the connection (ADS_QUOTA) and retries next hour; after 2 hours without a check the "not checked" alert fires once a day', async () => {
+    // noon on the 15th (no plans here, so the fake clock need not follow the DB's): the passes stay inside one UTC day
+    const w = await adsWorld(h, { clockMs: midMonth() });
     const { connectionId } = await connectAds(h, w, undefined, { campaigns: [{ externalCampaignId: 'fake-c-q' }] });
     await runReconcile(depsOf(h, w), w.tenantId);
     expect((await conn(connectionId)).status).toBe('connected');
     w.fake.failNext('accountInfo', { kind: 'quota' });
-    passTime(w, HOUR_MS);
+    w.clock.advance(HOUR_MS);
     await runReconcile(depsOf(h, w), w.tenantId);
     expect(await conn(connectionId)).toMatchObject({ status: 'degraded', status_reason: 'ADS_QUOTA' });
     expect(await notes(w.tenantId)).toEqual([]);
     for (const _ of [1, 2]) {
       w.fake.failNext('accountInfo', { kind: 'quota' });
-      passTime(w, HOUR_MS);
+      w.clock.advance(HOUR_MS);
       await runReconcile(depsOf(h, w), w.tenantId);
     }
     const n = await notes(w.tenantId);
     expect(n).toHaveLength(2);
     expect(n.every((x) => x.dedupe_key.startsWith(`ad_unchecked:${connectionId}:`))).toBe(true);
     // the next success restores the connection
-    passTime(w, HOUR_MS);
+    w.clock.advance(HOUR_MS);
     await runReconcile(depsOf(h, w), w.tenantId);
     expect(await conn(connectionId)).toMatchObject({ status: 'connected', status_reason: null });
   });
@@ -253,7 +282,7 @@ describe('connection states (R-INT-2; E453, E454)', () => {
     expect(w.fake.applied).toEqual([]);
   });
 
-  it('no lead source: nothing is mirrored or costed and the page asks for the lead source', async () => {
+  it('R-ADS-13 (b11 api-ui/F2): no lead source: nothing is mirrored or costed and the page says so without pointing at a control the web app does not have', async () => {
     const w = await adsWorld(h);
     await connectAds(h, w, undefined, { leadSource: false, campaigns: [{ externalCampaignId: 'fake-c-ns' }] });
     try {
@@ -263,7 +292,8 @@ describe('connection states (R-INT-2; E453, E454)', () => {
       expect(await costs(w.tenantId)).toEqual([]);
       const ov = await overview(w);
       expect(ov.state).toBe('no_lead_source');
-      expect(ov.stateSentence).toBe('Choose the lead source Google Ads spend is recorded under');
+      expect(ov.stateSentence).toBe('The Google Ads account has no lead source, so its spend is not recorded and no budget moves.');
+      expect((ov as unknown as { overspendNote: string }).overspendNote).toMatch(/Without a lead source it records no new campaign: pause those in Google Ads\.$/);
     } finally {
       await resetAdsPack(h);
     }

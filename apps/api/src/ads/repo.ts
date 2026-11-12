@@ -71,16 +71,20 @@ function parseSnapshot(s: string | null): SyncSnapshot | null {
   }
 }
 
-/** Every ads_google connection of the tenant that is not disconnected, oldest first. */
-export async function adsConnections(tx: Tx, o: { forUpdate?: boolean } = {}): Promise<AdsConnection[]> {
+/**
+ * Every ads_google connection of the tenant that is not disconnected, oldest first; with `withDisconnected`, the
+ * disconnected ones too (only the reconcile's "not checked" alert reads them, E454).
+ */
+export async function adsConnections(tx: Tx, o: { forUpdate?: boolean; withDisconnected?: boolean } = {}): Promise<AdsConnection[]> {
   const lock = o.forUpdate ? sql` FOR UPDATE` : sql``;
+  const live = o.withDisconnected ? sql`` : sql` AND status <> 'disconnected'`;
   const r = await sql<{
     id: string; status: ConnectionStatus; status_reason: string | null; external_account_id: string | null; credential_id: string | null; lead_source_id: string | null;
     last_synced_at: Date | null; connected_at: Date | null; last_error_code: string | null; sync_cursor: string | null;
   }>`
     SELECT id, status, status_reason, external_account_id, credential_id, lead_source_id, last_synced_at, connected_at, last_error_code, sync_cursor
       FROM integration_connections
-     WHERE tenant_id = app.tenant_id() AND kind = ${ADS_KIND} AND status <> 'disconnected'
+     WHERE tenant_id = app.tenant_id() AND kind = ${ADS_KIND}${live}
      ORDER BY created_at, id${lock}`.execute(tx);
   return r.rows.map((c) => ({
     id: c.id, status: c.status, statusReason: c.status_reason, externalAccountId: c.external_account_id, credentialId: c.credential_id,

@@ -8,18 +8,23 @@ import type { Tx } from '@realty/db';
 import { packSentence } from '../integrations/catalog.js';
 import { spendMonth } from './caps.js';
 import * as repo from './repo.js';
-import { LEDGER_PER_CAMPAIGN, OVERSPEND_NOTE, UNCHECKED_ALERT_MS, dollars } from './settings.js';
+import {
+  LEDGER_PER_CAMPAIGN, OVERSPEND_NOTE, OVERSPEND_NOTE_DARK, OVERSPEND_NOTE_NO_LEAD_SOURCE, OVERSPEND_NOTE_NOT_READ, READS_WHILE_DARK, UNCHECKED_ALERT_MS, dollars,
+} from './settings.js';
 
 export type AdsState = 'not_cleared' | 'no_connection' | 'connection_not_live' | 'no_lead_source' | 'no_cap' | 'ready';
 
+// What is true on this deployment (b11 api-ui/F2): the web app has no Google Ads connect button and no lead-source
+// control for a connection yet, so no sentence sends the person to one.
 const STATE_SENTENCE: Record<AdsState, string> = {
-  not_cleared: 'Budget changes stay off until counsel review and the Google Ads check are complete. Spend is still read and shown.',
-  no_connection: 'Connect a Google Ads account on the Integrations page to see its campaigns and spend.',
-  connection_not_live: 'The Google Ads account is not connected: connect it again on the Integrations page.',
-  no_lead_source: 'Choose the lead source Google Ads spend is recorded under',
+  not_cleared: 'Budget changes and the pause at your monthly cap stay off until counsel review and the Google Ads check are complete. Spend is still read and shown, and you are alerted at the cap.',
+  no_connection: 'No Google Ads account is connected, so there are no campaigns or spend to show.',
+  connection_not_live: 'The Google Ads account is no longer connected, so its campaigns and spend are not read and no budget moves.',
+  no_lead_source: 'The Google Ads account has no lead source, so its spend is not recorded and no budget moves.',
   no_cap: 'Set a monthly cap and a daily ceiling before any budget can move.',
   ready: 'Budget proposals arrive each Monday; each one waits for an Owner or Admin to approve it.',
 };
+const NOT_READ_SENTENCE = 'Budget changes and the pause at your monthly cap stay off until counsel review and the Google Ads check are complete. Until then Google Ads is not read, so no campaigns or spend are shown.';
 
 export interface LedgerView {
   id: string;
@@ -67,7 +72,8 @@ function countsOf(a: repo.ActionRow | null): { at: string; windowDays: number; b
   return { at: a.createdAt, windowDays: counts.windowDays ?? 90, byCampaign: new Map(counts.campaigns.map((c) => [c.campaignId as string, c])) };
 }
 
-export async function buildOverview(tx: Tx, now: Instant) {
+export async function buildOverview(tx: Tx, now: Instant, o: { readsWhileDark?: boolean } = {}) {
+  const readsWhileDark = o.readsWhileDark ?? READS_WHILE_DARK;
   const pack = await repo.packRow(tx);
   const cleared = await repo.packCleared(tx);
   const conns = await repo.adsConnections(tx);
@@ -119,14 +125,15 @@ export async function buildOverview(tx: Tx, now: Instant) {
     a ? { id: a.id, status: a.status, explanation: a.explanation, createdAt: a.createdAt, payload: a.payload } : null;
   return {
     state,
-    stateSentence: STATE_SENTENCE[state],
+    stateSentence: state === 'not_cleared' && !readsWhileDark ? NOT_READ_SENTENCE : STATE_SENTENCE[state],
     packKey: 'platform:ads',
     packSentence: pack ? packSentence(pack) : 'Changing Google Ads budgets stays off: the pack is missing on this deployment.',
     cleared,
     cap: cap ? { id: cap.id, versionNo: cap.versionNo, monthlyCapCents: cap.monthlyCapCents, dailyCeilingCents: cap.dailyCeilingCents, effectiveFrom: cap.effectiveFrom } : null,
     monthToDate: { month: month.slice(0, 7), zone, spentCents: spent, capCents: cap?.monthlyCapCents ?? null, sentence: cap ? `${dollars(spent)} of your ${dollars(cap.monthlyCapCents)} monthly cap spent in ${month.slice(0, 7)}.` : `${dollars(spent)} spent in ${month.slice(0, 7)}; no monthly cap set.` },
     dailyTotal: { countedCents: managedTotal, ceilingCents: cap?.dailyCeilingCents ?? null, sentence: cap ? `Daily budgets total ${dollars(managedTotal)} against your ${dollars(cap.dailyCeilingCents)} daily ceiling.` : `Daily budgets total ${dollars(managedTotal)}.` },
-    overspendNote: OVERSPEND_NOTE,
+    // b11 api-ui/F4: the pause runs only while the pack is cleared (and covers only campaigns it records)
+    overspendNote: !cleared ? (readsWhileDark ? OVERSPEND_NOTE_DARK : OVERSPEND_NOTE_NOT_READ) : live !== null && live.leadSourceId === null ? OVERSPEND_NOTE_NO_LEAD_SOURCE : OVERSPEND_NOTE,
     asOf: syncedAt ? `as reported by Google Ads at ${syncedAt}` : null,
     lastSyncedAt: syncedAt,
     uncheckedSentence: unchecked ? `Google Ads spend has not been checked since ${since ? `${since.slice(0, 16).replace('T', ' ')} UTC` : 'it was connected'}.` : null,

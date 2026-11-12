@@ -10,7 +10,7 @@ import { AppError } from '../errors.js';
 import { installNetworkTripwire } from '../providers/integrations/spark.testing.js';
 import { setCap } from './caps.js';
 import { runReconcile } from './mirror.js';
-import { capAttestation, OVERSPEND_NOTE } from './settings.js';
+import { capAttestation, OVERSPEND_NOTE, OVERSPEND_NOTE_DARK } from './settings.js';
 import { adsWorld, connectAds, depsOf, resetAdsPack, setCapVia, withAdsCleared } from './testing.js';
 
 const tripwire = installNetworkTripwire();
@@ -83,22 +83,29 @@ describe('the ad cap (R-ADS-1)', () => {
 
 describe('GET /ads (R-ADS-5, R-AST-13)', () => {
   type Ov = { state: string; stateSentence: string; packSentence: string; overspendNote: string; cap: unknown; dailyTotal: { sentence: string }; monthToDate: { sentence: string } };
-  it('R-ADS-5 R-ADS-7: the page says why in words: not cleared, no connection, no cap, ready; it always carries the over-delivery sentence; no confidence or probability anywhere', async () => {
+  it('R-ADS-5 R-ADS-7 R-ADS-13: the page says why in words: not cleared, no connection, no cap, ready; its over-delivery sentence says what the cap does on this deployment (b11 api-ui/F4: no pause while dark); no confidence or probability anywhere', async () => {
     const w = await adsWorld(h);
     const get = async () => (await call<Ov>(w.owner, 'GET', '/ads')).body;
     let ov = await get();
     expect(ov.state).toBe('not_cleared');
     expect(ov.packSentence).toBe('Changing Google Ads budgets stays off: awaiting counsel review and the vendor check (pack 2026.11.0, not yet reviewed).');
-    expect(ov.overspendNote).toBe(OVERSPEND_NOTE);
-    expect(ov.overspendNote).toBe('Google Ads may spend more than a daily budget on a given day; Realty OS pauses every campaign once month-to-date spend reaches your monthly cap.');
+    // while dark the reconcile only alerts at the cap: the page never says Realty OS pauses
+    expect(ov.stateSentence).toBe('Budget changes and the pause at your monthly cap stay off until counsel review and the Google Ads check are complete. Spend is still read and shown, and you are alerted at the cap.');
+    expect(ov.overspendNote).toBe(OVERSPEND_NOTE_DARK);
+    expect(ov.overspendNote).toBe('Google Ads may spend more than a daily budget on a given day. Until counsel review and the Google Ads check are complete, Realty OS reads spend and alerts you at your monthly cap but cannot pause campaigns: pause them in Google Ads.');
+    expect(ov.overspendNote).not.toMatch(/Realty OS pauses/);
     await withAdsCleared(h, async () => {
-      expect((await get()).state).toBe('no_connection');
+      ov = await get();
+      expect(ov.state).toBe('no_connection');
+      expect(ov.stateSentence).toBe('No Google Ads account is connected, so there are no campaigns or spend to show.');
+      expect(ov.overspendNote).toBe(OVERSPEND_NOTE);
       await connectAds(h, w, undefined, { campaigns: [{ externalCampaignId: 'fake-c-1', dailyBudgetCents: 2000 }] });
       await runReconcile(depsOf(h, w), w.tenantId);
       expect((await get()).state).toBe('no_cap');
       await setCapVia(h, w.owner, 300_000, 10_000);
       ov = await get();
       expect(ov.state).toBe('ready');
+      expect(ov.overspendNote).toBe('Google Ads may spend more than a daily budget on a given day; Realty OS pauses every campaign once month-to-date spend reaches your monthly cap.');
       expect(ov.dailyTotal.sentence).toBe('Daily budgets total $0.00 against your $100.00 daily ceiling.');
       expect(ov.monthToDate.sentence).toMatch(/^\$0\.00 of your \$3,000\.00 monthly cap spent in \d{4}-\d{2}\.$/);
     });

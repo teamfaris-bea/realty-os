@@ -3,7 +3,7 @@
 // hour by hour); the network tripwire is installed.
 import { HOUR_MS } from '@realty/core/foundation';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { call } from '../admin/testing.js';
+import { call, freshReauth } from '../admin/testing.js';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { installNetworkTripwire } from '../providers/integrations/spark.testing.js';
 import { overspendText, runReconcile, uncheckedText } from './mirror.js';
@@ -98,7 +98,7 @@ describe('pause at the monthly cap (R-ADS-5)', () => {
     expect(n[0]!.body).toBe('Month-to-date spend reached your $5.00 cap. Realty OS cannot pause campaigns until counsel review and the Google Ads check are complete: pause them in Google Ads.');
   });
 
-  it('no lead source: the cap only alerts, from the account\'s month-to-date spend (nothing is mirrored to pause)', async () => {
+  it('R-ADS-5 E452: a connection that never had a lead source: the cap only alerts, from the account\'s month-to-date spend (nothing is mirrored to pause)', async () => {
     const w = await adsWorld(h);
     try {
       await setAdsPack(h, { reviewed: true, vendor: true });
@@ -114,7 +114,76 @@ describe('pause at the monthly cap (R-ADS-5)', () => {
     expect(w.fake.calls.filter((c) => c.op === 'pauseCampaign')).toEqual([]);
     const n = await alerts(w.tenantId);
     expect(n).toHaveLength(2);
-    expect(n[0]!.body).toMatch(/until you choose the lead source Google Ads spend is recorded under: pause them in Google Ads\.$/);
+    expect(n[0]!.body).toMatch(/^Month-to-date spend reached your \$5\.00 cap\. The Google Ads account has no lead source, so Realty OS has no record of some running campaigns and cannot pause them: pause them in Google Ads\.$/);
+  });
+
+  it('R-ADS-5 E452 (b11 sends-gates/F2): an Admin clears the lead source after mirroring: the cap still pauses every mirrored campaign; one added in Google Ads since is not recorded, so its alert says "pause them in Google Ads"', async () => {
+    await withAdsCleared(h, async () => {
+      const w = await adsWorld(h);
+      const { connectionId, accountId } = await spending(w);
+      await setCapVia(h, w.owner, 300, 300); // $3 a month: 2 hours of $2/h
+      // the state PATCH /admin/integrations/connections/:id allows an Admin (integration.manage)
+      await freshReauth(h, w.admin);
+      const cleared = await call<{ connection: { leadSourceId: string | null } }>(w.admin, 'PATCH', `/admin/integrations/connections/${connectionId}`, { leadSourceId: null });
+      expect(cleared.status).toBe(200);
+      expect(cleared.body.connection.leadSourceId).toBeNull();
+      w.fake.addCampaign(accountId, { externalCampaignId: 'fake-c-new', name: 'Oak St new', dailyBudgetCents: 2400 });
+      for (let hour = 1; hour <= 8; hour++) {
+        w.clock.advance(HOUR_MS);
+        await runReconcile(depsOf(h, w), w.tenantId);
+      }
+      expect(w.fake.statusOf(accountId, 'fake-c-a')).toBe('paused');
+      expect(w.fake.statusOf(accountId, 'fake-c-b')).toBe('paused');
+      expect((await campaignOf(h, w.tenantId, 'fake-c-a'))!.status).toBe('paused');
+      expect((await ledgerOf(h, w.tenantId)).filter((e) => e.event_kind === 'paused')).toHaveLength(2);
+      // never mirrored without a lead source, so Realty OS has no record to pause it with
+      expect(await campaignOf(h, w.tenantId, 'fake-c-new')).toBeUndefined();
+      expect(w.fake.statusOf(accountId, 'fake-c-new')).toBe('enabled');
+      const n = await alerts(w.tenantId);
+      expect(n.filter((x) => x.title === 'Google Ads paused at your monthly cap').map((x) => x.user_id).sort()).toEqual([w.owner.userId, w.admin.userId].sort());
+      const rest = n.filter((x) => x.title !== 'Google Ads paused at your monthly cap');
+      expect(rest).toHaveLength(2);
+      expect(rest[0]!.body).toMatch(/no lead source/);
+      expect(rest[0]!.body).toMatch(/pause them in Google Ads\.$/);
+    });
+  });
+
+  it('R-ADS-7 E452 (b11 ads-16): the pack withdrawn during a pass: no pause call after the withdrawal; the alert says "pause them in Google Ads"', async () => {
+    await withAdsCleared(h, async () => {
+      const w = await adsWorld(h);
+      const { accountId } = await spending(w);
+      await setCapVia(h, w.owner, 300, 300);
+      // the first pause of the pass succeeds; counsel withdraws the pack right after it
+      w.fake.afterChange = async (op) => {
+        if (op === 'pauseCampaign') await resetAdsPack(h);
+      };
+      for (let hour = 1; hour <= 4; hour++) {
+        w.clock.advance(HOUR_MS);
+        await runReconcile(depsOf(h, w), w.tenantId);
+      }
+      expect(w.fake.calls.filter((c) => c.op === 'pauseCampaign')).toHaveLength(1);
+      expect([w.fake.statusOf(accountId, 'fake-c-a'), w.fake.statusOf(accountId, 'fake-c-b')].sort()).toEqual(['enabled', 'paused']);
+      expect((await ledgerOf(h, w.tenantId)).filter((e) => e.event_kind === 'paused')).toHaveLength(1);
+      const n = await alerts(w.tenantId);
+      expect(n.filter((x) => x.body.endsWith('the Google Ads check are complete: pause them in Google Ads.'))).toHaveLength(2);
+    });
+  });
+
+  it('Q-ADS-3 R-ADS-5 (b11 ads-7): with CAP_COUNTS_EVERY_CAMPAIGN off, only campaigns linked here count toward the cap and only managed (active) ones are paused', async () => {
+    await withAdsCleared(h, async () => {
+      const w = await adsWorld(h);
+      const { accountId } = await spending(w); // fake-c-a linked and active, fake-c-b running unmanaged; $1 an hour each
+      await setCapVia(h, w.owner, 400, 400); // the whole account reaches $4 in 2 hours, the linked campaign alone in 4
+      let pausedAtHour: number | null = null;
+      for (let hour = 1; hour <= 6; hour++) {
+        w.clock.advance(HOUR_MS);
+        await runReconcile(depsOf(h, w), w.tenantId, { capCountsEveryCampaign: false });
+        if (pausedAtHour === null && w.fake.statusOf(accountId, 'fake-c-a') === 'paused') pausedAtHour = hour;
+      }
+      expect(pausedAtHour).toBe(4);
+      expect(w.fake.statusOf(accountId, 'fake-c-b')).toBe('enabled');
+      expect((await ledgerOf(h, w.tenantId)).filter((e) => e.event_kind === 'paused')).toHaveLength(1);
+    });
   });
 
   it('R-TEN-7: every alert fits the 120/240 CHECKs and carries no pack key, code, campaign name or account id', () => {

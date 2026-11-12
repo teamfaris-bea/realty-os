@@ -201,6 +201,8 @@ export class FakeAds implements AdsProvider {
   readonly calls: FakeAdsCall[] = [];
   /** changes that took effect on the simulated platform (a repeated idempotency key is not repeated here) */
   readonly applied: { op: 'budget' | 'pause'; externalAccountId: string; externalCampaignId: string; toDailyCents: number; resume: boolean; idempotencyKey: string }[] = [];
+  /** test hook: awaited after each budget change or pause answers (e.g. to withdraw the pack mid-pass) */
+  afterChange: ((op: 'applyBudgetChange' | 'pauseCampaign') => Promise<void>) | null = null;
   readonly #accounts = new Map<string, FakeAccount>();
   readonly #failures = new Map<FakeAdsOp, FakeAdsFailure[]>();
   readonly #byKey = new Map<string, AdsChangeResult>();
@@ -353,25 +355,31 @@ export class FakeAds implements AdsProvider {
 
   async applyBudgetChange(c: BudgetChange): Promise<AdsChangeResult> {
     const a = this.#enter('applyBudgetChange', c.account, c.externalCampaignId, c.idempotencyKey, c.toDailyCents);
-    return this.#change('applyBudgetChange', a, c.externalCampaignId, c.idempotencyKey, (camp) => {
+    return this.#after('applyBudgetChange', this.#change('applyBudgetChange', a, c.externalCampaignId, c.idempotencyKey, (camp) => {
       if (camp.sharedBudget) return { outcome: 'rejected', code: 'SHARED_BUDGET' };
       camp.dailyBudgetCents = c.toDailyCents;
       if (c.resume) camp.platformStatus = 'enabled';
       this.applied.push({ op: 'budget', externalAccountId: a.id, externalCampaignId: camp.externalCampaignId, toDailyCents: c.toDailyCents, resume: c.resume, idempotencyKey: c.idempotencyKey });
       return { outcome: 'applied', providerRef: `fake-ads-op-${++this.#seq}`, dailyBudgetCents: c.toDailyCents };
-    });
+    }));
   }
 
   async pauseCampaign(p: PauseRequest): Promise<AdsChangeResult> {
     const a = this.#enter('pauseCampaign', p.account, p.externalCampaignId, p.idempotencyKey);
-    return this.#change('pauseCampaign', a, p.externalCampaignId, p.idempotencyKey, (camp) => {
+    return this.#after('pauseCampaign', this.#change('pauseCampaign', a, p.externalCampaignId, p.idempotencyKey, (camp) => {
       camp.platformStatus = 'paused';
       this.applied.push({ op: 'pause', externalAccountId: a.id, externalCampaignId: camp.externalCampaignId, toDailyCents: 0, resume: false, idempotencyKey: p.idempotencyKey });
       return { outcome: 'applied', providerRef: `fake-ads-op-${++this.#seq}`, dailyBudgetCents: camp.dailyBudgetCents ?? 0 };
-    });
+    }));
   }
 
   // ---- internals ----
+
+  async #after(op: 'applyBudgetChange' | 'pauseCampaign', r: Promise<AdsChangeResult>): Promise<AdsChangeResult> {
+    const out = await r;
+    if (this.afterChange) await this.afterChange(op);
+    return out;
+  }
 
   #account(id: string): FakeAccount {
     const a = this.#accounts.get(id);

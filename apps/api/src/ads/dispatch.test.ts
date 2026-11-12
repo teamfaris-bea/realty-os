@@ -4,7 +4,7 @@
 import { HOUR_MS, MINUTE_MS } from '@realty/core/foundation';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { call } from '../admin/testing.js';
+import { call, freshReauth } from '../admin/testing.js';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { installNetworkTripwire } from '../providers/integrations/spark.testing.js';
 import { approveShift } from './dispatch.js';
@@ -333,6 +333,73 @@ describe('replays and concurrency (E145, E161, E457)', () => {
       expect(rej.body.status).toBe('rejected');
       expect((await h.su.query("SELECT count(*)::int AS n FROM audit_log WHERE tenant_id = $1 AND action = 'ads.shift_rejected'", [r.w.tenantId])).rows[0].n).toBe(1);
       expect((await call(r.w.owner, 'POST', `/ads/proposals/${id2}/approve`)).code).toBe('ACTION_NOT_PENDING');
+    });
+  });
+});
+
+describe('no lead source, no money move (b11 sends-gates/F2)', () => {
+  it('R-ADS-9 E459: once an Admin clears the connection\'s lead source (its spend is no longer recorded), a pending proposal\'s tap and a resume are 409 ADS_NO_LEAD_SOURCE and nothing is planned', async () => {
+    await withAdsCleared(h, async () => {
+      const r = await ready();
+      const id = await propose(r);
+      const leadSource = async (leadSourceId: string | null) => {
+        await freshReauth(h, r.w.admin);
+        expect((await call(r.w.admin, 'PATCH', `/admin/integrations/connections/${r.connectionId}`, { leadSourceId })).status).toBe(200);
+      };
+      await leadSource(null);
+      const before = await moneyRows(h, r.w.tenantId);
+      const tap = await call(r.w.owner, 'POST', `/ads/proposals/${id}/approve`);
+      expect(tap.status).toBe(409);
+      expect(tap.code).toBe('ADS_NO_LEAD_SOURCE');
+      expect((await actionOf(h, id))!.status).toBe('proposed');
+      // a campaign paused in Google Ads, mirrored as paused while the lead source was set again; then cleared again
+      await leadSource(r.w.sourceId);
+      r.w.fake.setStatus(r.accountId, 'fake-c-costly', 'paused');
+      await runReconcile(depsOf(h, r.w), r.w.tenantId);
+      expect((await campaignOf(h, r.w.tenantId, 'fake-c-costly'))!.status).toBe('paused');
+      await leadSource(null);
+      const resume = await call(r.w.owner, 'POST', `/ads/campaigns/${r.costly}/resume`);
+      expect(resume.status).toBe(409);
+      expect(resume.code).toBe('ADS_NO_LEAD_SOURCE');
+      expect(await moneyRows(h, r.w.tenantId)).toEqual(before);
+      expect(r.w.fake.calls.filter((c) => c.op === 'applyBudgetChange')).toEqual([]);
+    });
+  });
+});
+
+describe('grant revoked, then disconnected (E454)', () => {
+  it('E454 R-ADS-8 R-ADS-13: revoked, then disconnected: the tap is ADS_CONNECTION_NOT_LIVE and the weekly run finds no connection; campaign and ledger rows are kept; spend unchecked for 2 hours still alerts each Owner and Admin once a day', async () => {
+    await withAdsCleared(h, async () => {
+      const r = await ready();
+      // last week's proposal, approved and applied: ledger rows exist; this week's is pending
+      const last = await runWeeklyProposal(depsOf(h, r.w, { now: () => (thisMonday() - 7 * DAY_MS) as never }), r.w.tenantId);
+      expect(last.outcome).toBe('proposed');
+      expect((await call(r.w.owner, 'POST', `/ads/proposals/${last.actionId}/approve`)).status).toBe(200);
+      await runReconcile(depsOf(h, r.w), r.w.tenantId);
+      const id = await propose(r);
+      const ledger = (await ledgerOf(h, r.w.tenantId)).length;
+      expect(ledger).toBeGreaterThan(0);
+      r.w.fake.revoke(r.accountId);
+      await runReconcile(depsOf(h, r.w), r.w.tenantId);
+      expect((await h.su.query('SELECT status FROM integration_connections WHERE id = $1', [r.connectionId])).rows[0].status).toBe('revoked');
+      expect((await call(r.w.owner, 'POST', `/ads/proposals/${id}/approve`)).code).toBe('ADS_CONNECTION_NOT_LIVE');
+      await freshReauth(h, r.w.owner);
+      expect((await call(r.w.owner, 'POST', `/admin/integrations/connections/${r.connectionId}/disconnect`)).status).toBe(200);
+      expect((await call(r.w.admin, 'POST', `/ads/proposals/${id}/approve`)).code).toBe('ADS_CONNECTION_NOT_LIVE');
+      const next = await runWeeklyProposal(depsOf(h, r.w, { now: () => (thisMonday() + 7 * DAY_MS) as never }), r.w.tenantId);
+      expect(next.outcome).toBe('no_connection');
+      expect((await actionOf(h, id))!.status).toBe('proposed');
+      // the rows stay
+      expect((await h.su.query('SELECT count(*)::int AS n FROM ad_campaigns WHERE tenant_id = $1', [r.w.tenantId])).rows[0].n).toBe(2);
+      expect((await ledgerOf(h, r.w.tenantId)).length).toBe(ledger);
+      // a disconnected account's campaigns may still spend: after 2 hours unchecked, one alert per Owner/Admin and day
+      const unchecked = async () => (await h.su.query<{ user_id: string }>("SELECT user_id FROM notifications WHERE tenant_id = $1 AND kind = 'ad_overspend' AND dedupe_key LIKE $2", [r.w.tenantId, `ad_unchecked:${r.connectionId}:%`])).rows;
+      expect(await unchecked()).toEqual([]);
+      passTime(r.w, 3 * HOUR_MS);
+      await runReconcile(depsOf(h, r.w), r.w.tenantId);
+      await runReconcile(depsOf(h, r.w), r.w.tenantId);
+      expect((await unchecked()).map((x) => x.user_id).sort()).toEqual([r.w.owner.userId, r.w.admin.userId].sort());
+      expect(r.w.fake.calls.filter((c) => c.op === 'applyBudgetChange').length).toBe(2);
     });
   });
 });
