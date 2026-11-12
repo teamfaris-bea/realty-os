@@ -13,10 +13,11 @@ import { adminUserIds, contactLabel, notifyUser, upsertFeedItem } from '../comms
 import type { CommsDeps } from '../comms/types.js';
 import {
   AI_ISA_PROMPT_VERSION, AI_ISA_RULES_VERSION, type AiIsaContent, aiIsaRecipientZones, aiIsaSendWindow, composeMessage, DEFAULT_AI_ISA_CONTENT, fillLine,
-  type IsaAction, type IsaFacts, type IsaState, type LineIdentity, parseAiIsaContent, type QueueMessage, renderConfirmation, renderOffer, type StepResult,
+  type IsaAction, type IsaFacts, type IsaState, type LineIdentity, parseAiIsaContent, type QueueMessage, renderConfirmation, renderOffer, step, type StepResult,
 } from './coreSeam.js';
 import { writeHandoffInTx } from './handoff.js';
 import { emitIsaSendResultsInTx } from './sendResult.js';
+import { markAcceptingInTx, reconcileOfferRowsInTx } from './booking/rows.js';
 import { type AssignmentRow, type ChainEnv, saveMachine } from './repo.js';
 
 export type IsaDeps = Pick<CommsDeps, 'db' | 'ids' | 'providers' | 'aiIsaLiveOff'>;
@@ -99,6 +100,8 @@ export interface ApplyEnv {
   now: Instant;
   turnId: string | null;
   pinnedSeq: number;
+  /** TX-C: the booking's appointment detail and notes for the handoff package (codes, ids, times, the verified quote) */
+  handoffExtra?: { appointmentDetail?: Record<string, unknown>; notes?: string[] } | undefined;
 }
 
 export interface ApplyOutcome {
@@ -116,6 +119,7 @@ export async function applyActionsInTx(env: ApplyEnv, r: StepResult): Promise<Ap
   const out: ApplyOutcome = { state: r.state, queued: [], handoffId: null, ended: false, paused: false, denied: [] };
   let pendingMessageId: string | null = null;
   let handoffAction: Extract<IsaAction, { kind: 'handoff' }> | null = null;
+  let bookNotOffered = false;
   for (const act of r.actions) {
     switch (act.kind) {
       case 'cancel_messages':
@@ -157,10 +161,17 @@ export async function applyActionsInTx(env: ApplyEnv, r: StepResult): Promise<Ap
         if (act.timer === 'follow_up') await sql`UPDATE ai_isa_assignments SET next_follow_up_at = ${new Date(act.at)} WHERE tenant_id = app.tenant_id() AND id = ${ctx.a.id} AND ended_at IS NULL`.execute(tx);
         break;
       case 'request_offer':
-        await enqueueJob(tx, { queue: 'default', kind: 'ai_isa.offer', payload: { assignmentId: ctx.a.id, epoch: ctx.a.epoch, kind: act.appointmentKind }, dedupeKey: `ai_isa.offer:${ctx.a.id}:${ctx.a.epoch}` });
+        await enqueueJob(tx, { queue: 'default', kind: 'ai_isa.offer', payload: { assignmentId: ctx.a.id, epoch: ctx.a.epoch, kind: act.appointmentKind },
+          dedupeKey: `ai_isa.offer:${ctx.a.id}:${ctx.a.epoch}:${r.state.counters.bookingFailures}` });
         break;
       case 'book':
-        await enqueueJob(tx, { queue: 'realtime', kind: 'ai_isa.book', payload: { assignmentId: ctx.a.id, offerId: act.offerId, slot: act.slotIndex, messageId: act.messageId }, dedupeKey: `ai_isa.book:${act.offerId}` });
+        // item 9: only an `offered`, unexpired row moves to accepting (the agreed slot, the message, the own-text quote)
+        if (await markAcceptingInTx(tx, { offerId: act.offerId, assignmentId: ctx.a.id, slotIndex: act.slotIndex, messageId: act.messageId })) {
+          await enqueueJob(tx, { queue: 'realtime', kind: 'ai_isa.book', payload: { assignmentId: ctx.a.id, offerId: act.offerId }, dedupeKey: `ai_isa.book:${act.offerId}` });
+        } else {
+          out.denied.push('book:OFFER_NOT_OFFERED');
+          bookNotOffered = true;
+        }
         break;
       case 'propose_saved_search':
         await enqueueJob(tx, { queue: 'default', kind: 'ai_isa.saved_search', payload: { assignmentId: ctx.a.id }, dedupeKey: `ai_isa.saved_search:${ctx.a.id}` });
@@ -185,9 +196,19 @@ export async function applyActionsInTx(env: ApplyEnv, r: StepResult): Promise<Ap
   }
   if (handoffAction !== null) {
     const ins = await inFlightNotes(tx, ctx.a.contactId, pendingMessageId);
-    out.handoffId = await writeHandoffInTx(tx, deps.ids, env.actor, ctx.a, { handoff: handoffAction.handoff, pendingMessageId, notes: ins }, now);
+    out.handoffId = await writeHandoffInTx(tx, deps.ids, env.actor, ctx.a, { handoff: handoffAction.handoff, pendingMessageId, notes: [...(env.handoffExtra?.notes ?? []), ...ins],
+      ...(env.handoffExtra?.appointmentDetail ? { appointmentDetail: env.handoffExtra.appointmentDetail } : {}) }, now);
   }
-  if (!out.ended) await saveMachine(tx, ctx.a, r.state);
+  if (!out.ended) {
+    await saveMachine(tx, ctx.a, r.state);
+    await reconcileOfferRowsInTx(tx, ctx.a.id, r.state);
+  }
+  if (bookNotOffered && !out.ended && r.state.offer?.status === 'accepting') {
+    // the row was not `offered` (expired or replaced): no booking; the machine hears an honest failure
+    const next = step(r.state, { type: 'booking_result', at: now, ok: false, code: 'CALENDAR_UNAVAILABLE' }, ctx.facts);
+    const more = await applyActionsInTx({ ...env, ctx: { ...ctx, a: { ...ctx.a, machine: r.state } } }, next);
+    return { ...more, queued: [...out.queued, ...more.queued], denied: [...out.denied, ...more.denied] };
+  }
   return out;
 }
 
@@ -280,8 +301,9 @@ export async function queueIsaMessageInTx(env: ApplyEnv, q: QueueMessage, s: Isa
   const parts: string[] = q.lines.map((l) => fillLine(l, ctx.who));
   const offer = s.offer;
   if (q.messageKind === 'offer' && offer !== null) parts.push(renderOffer({ slots: offer.slots, agentFirstName: ctx.who.agentFirstName, zones: offer.zones, kindLabel: kindLabel(offer.appointmentKind) }));
-  if (q.messageKind === 'confirmation' && offer !== null && q.slotIndex !== null && offer.slots[q.slotIndex - 1]) {
-    parts.unshift(renderConfirmation({ slot: offer.slots[q.slotIndex - 1]!, agentFirstName: ctx.who.agentFirstName, zones: offer.zones, kindLabel: kindLabel(offer.appointmentKind) }));
+  // the machine's slot index is 0-based (matchSlotChoice, acceptedIndex)
+  if (q.messageKind === 'confirmation' && offer !== null && q.slotIndex !== null && offer.slots[q.slotIndex]) {
+    parts.unshift(renderConfirmation({ slot: offer.slots[q.slotIndex]!, agentFirstName: ctx.who.agentFirstName, zones: offer.zones, kindLabel: kindLabel(offer.appointmentKind) }));
   }
   if (q.text !== null && q.text.trim() !== '') parts.push(q.text.trim());
   const bodyCore = parts.join(channel === 'email' ? '\n\n' : ' ').trim();

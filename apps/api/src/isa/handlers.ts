@@ -11,10 +11,13 @@ import type { CommsDeps } from '../comms/types.js';
 import type { Providers } from '../providers/index.js';
 import { jobPayload, zId } from '../worker/payload.js';
 import type { JobHandler, StandaloneJobHandler, TxJobHandler } from '../worker/types.js';
-import { refusalClass, step, type IsaFacts } from './coreSeam.js';
+import { ISA_BOOKING_DEFAULTS, refusalClass, step, type IsaFacts } from './coreSeam.js';
 import { finalizeInTx, systemEndInTx } from './controls.js';
 import { applyActionsInTx, cancelForAssignmentInTx, contextFor, type IsaDeps, pauseCardInTx } from './effects.js';
-import { slaSweepInTx } from './handoff.js';
+import { confirmationNotSentInTx, slaSweepInTx } from './handoff.js';
+import { runBookJob } from './booking/book.js';
+import { runOfferJob } from './booking/offer.js';
+import { emitIsaSendResultsInTx } from './sendResult.js';
 import { type AssignmentRow, assignmentById, lockForTurn } from './repo.js';
 import { HOLD_CODES } from './send.js';
 import { backstopInTx } from './backstop.js';
@@ -29,7 +32,7 @@ const SignalPayload = jobPayload({ signalId: zId });
 const AssignmentPayload = jobPayload({ assignmentId: zId, epoch: z.number().int().min(1).optional() });
 const BackstopPayload = jobPayload({ assignmentId: zId, messageId: zId.optional() });
 const OfferPayload = jobPayload({ assignmentId: zId, epoch: z.number().int().min(1), kind: z.enum(['buyer_consult', 'listing_appointment', 'consult']) });
-const BookPayload = jobPayload({ assignmentId: zId, offerId: zId, slot: z.number().int().min(1).max(3), messageId: zId });
+const BookPayload = jobPayload({ assignmentId: zId, offerId: zId });
 const Empty = jobPayload({});
 
 export const AI_ISA_SWEEP_EVERY_MS = 5 * 60_000;
@@ -64,8 +67,17 @@ export async function sendResultInTx(tx: Tx, deps: IsaDeps, actor: SystemActor, 
   }
   await sql`UPDATE ai_isa_turns SET status = ${ok ? 'sent' : r.status === 'dispatch_unknown' ? 'unknown' : r.status === 'canceled' ? 'canceled' : 'blocked'}
     WHERE tenant_id = app.tenant_id() AND id = ${r.turn_id} AND status IN ('sending','deferred')`.execute(tx);
-  await sql`UPDATE ai_isa_handoffs SET confirmation_status = ${ok ? 'sent' : r.status === 'canceled' ? 'canceled' : 'refused'}
-    WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id} AND pending_message_id = ${messageId} AND confirmation_status IN ('queued','scheduled')`.execute(tx);
+  // the post-handoff message (§4.7): dispatch_unknown leaves it open; anything else but sent/delivered is not sent
+  const ho = r.status === 'dispatch_unknown' ? { rows: [] } : await sql<{ id: string; recipient_user_id: string | null }>`UPDATE ai_isa_handoffs
+      SET confirmation_status = ${ok ? 'sent' : r.status === 'canceled' ? 'canceled' : 'refused'}
+    WHERE tenant_id = app.tenant_id() AND assignment_id = ${a.id} AND pending_message_id = ${messageId} AND confirmation_status IN ('queued','scheduled')
+    RETURNING id, recipient_user_id`.execute(tx);
+  // item 9 (R-ISA-14 E533): an appointment confirmation that did not go out makes the card critical; ISA_HANDOFF_CLOSED
+  // (a person reached them first) only says so
+  if (!ok && ho.rows[0] && r.category === 'ai_isa_confirmation') {
+    await confirmationNotSentInTx(tx, deps.ids, { id: ho.rows[0].id, assignmentId: a.id, contactId: a.contactId, recipientUserId: ho.rows[0].recipient_user_id },
+      (r.reason ?? '').startsWith('ISA_HANDOFF_CLOSED') ? 'closed' : 'not_sent', now);
+  }
   if (!ok && r.status !== 'dispatch_unknown') {
     await sql`UPDATE assistant_actions SET status = 'blocked' WHERE tenant_id = app.tenant_id() AND id = (SELECT assistant_action_id FROM messages WHERE tenant_id = app.tenant_id() AND id = ${messageId}) AND status = 'proposed'`.execute(tx);
   }
@@ -140,7 +152,50 @@ export async function sweepInTx(tx: Tx, deps: IsaDeps, actor: SystemActor, now: 
     await sql`UPDATE ai_isa_turns SET status = 'canceled' WHERE tenant_id = app.tenant_id() AND assignment_id = ${t.assignment_id} AND status = 'deciding' AND updated_at < ${new Date(now - STUCK_TURN_MS)}`.execute(tx);
     await enqueueJob(tx, { queue: 'default', kind: 'ai_isa.turn', payload: { assignmentId: t.assignment_id, trigger: 'sweep', epoch: t.epoch }, dedupeKey: `ai_isa.turn:${t.assignment_id}:${t.epoch}:recover` });
   }
+  await bookingSweepInTx(tx, deps, now);
   return { checked: rows.rows.length };
+}
+
+export const BOOKING_STUCK_MS = 5 * 60_000;
+
+/**
+ * The booking part of the sweep (items 8–9): an offer unsent at its expiry is canceled (OFFER_EXPIRED_UNSENT); a row
+ * accepting for 5 minutes, or decided while the machine still says accepting, gets its book job again (tx#1 replays
+ * a decided row straight to TX-C); a post-handoff confirmation still unsent at the slot's notice time is canceled
+ * (CONFIRMATION_LATE) and the card made critical.
+ */
+export async function bookingSweepInTx(tx: Tx, deps: IsaDeps, now: Instant): Promise<void> {
+  const unsent = await sql<{ id: string; m: string | null }>`SELECT o.id, o.offered_message_id AS m FROM ai_isa_slot_offers o WHERE o.tenant_id = app.tenant_id()
+    AND o.status = 'pending_delivery' AND o.expires_at <= now() LIMIT 100`.execute(tx);
+  for (const o of unsent.rows) {
+    if (o.m) {
+      const c = await sql<{ id: string }>`UPDATE messages SET status = 'canceled', status_reason = 'OFFER_EXPIRED_UNSENT' WHERE tenant_id = app.tenant_id() AND id = ${o.m}
+        AND status IN ('queued','scheduled') RETURNING id`.execute(tx);
+      await emitIsaSendResultsInTx(tx, c.rows.map((x) => x.id), 'canceled');
+    }
+    await sql`UPDATE ai_isa_slot_offers SET status = 'expired', refusal_code = 'OFFER_EXPIRED_UNSENT' WHERE tenant_id = app.tenant_id() AND id = ${o.id} AND status = 'pending_delivery'`.execute(tx);
+  }
+  const stuck = await sql<{ id: string; assignment_id: string }>`SELECT o.id, o.assignment_id FROM ai_isa_slot_offers o JOIN ai_isa_assignments a ON a.tenant_id = o.tenant_id AND a.id = o.assignment_id
+    WHERE o.tenant_id = app.tenant_id() AND (
+        (o.status = 'accepting' AND o.updated_at < ${new Date(now - BOOKING_STUCK_MS)})
+     OR (o.status IN ('accepted','refused') AND a.machine->'offer'->>'id' = o.id::text AND a.machine->'offer'->>'status' = 'accepting'))
+    LIMIT 100`.execute(tx);
+  for (const o of stuck.rows) {
+    await enqueueJob(tx, { queue: 'realtime', kind: 'ai_isa.book', payload: { assignmentId: o.assignment_id, offerId: o.id }, dedupeKey: `ai_isa.book:${o.id}` }); // the same key: deduped while a job is pending or running
+  }
+  const late = await sql<{ id: string; assignment_id: string; contact_id: string; recipient_user_id: string | null; m: string }>`SELECT h.id, h.assignment_id, h.contact_id, h.recipient_user_id, h.pending_message_id AS m
+      FROM ai_isa_handoffs h JOIN messages m ON m.tenant_id = h.tenant_id AND m.id = h.pending_message_id
+     WHERE h.tenant_id = app.tenant_id() AND h.confirmation_status IN ('queued','scheduled') AND m.action_category = 'ai_isa_confirmation' AND m.status IN ('queued','scheduled')
+       AND (h.package->'appointmentDetail'->>'startsAt') IS NOT NULL
+       AND (h.package->'appointmentDetail'->>'startsAt')::timestamptz - make_interval(hours => ${ISA_BOOKING_DEFAULTS.minNoticeHours}) <= now()
+     LIMIT 100`.execute(tx);
+  for (const x of late.rows) {
+    const c = await sql<{ id: string }>`UPDATE messages SET status = 'canceled', status_reason = 'CONFIRMATION_LATE' WHERE tenant_id = app.tenant_id() AND id = ${x.m}
+      AND status IN ('queued','scheduled') RETURNING id`.execute(tx);
+    if (c.rows.length === 0) continue;
+    await sql`UPDATE ai_isa_handoffs SET confirmation_status = 'canceled' WHERE tenant_id = app.tenant_id() AND id = ${x.id}`.execute(tx);
+    await confirmationNotSentInTx(tx, deps.ids, { id: x.id, assignmentId: x.assignment_id, contactId: x.contact_id, recipientUserId: x.recipient_user_id }, 'not_sent', now);
+  }
 }
 
 const NOFACTS = {} as IsaFacts;
@@ -153,6 +208,15 @@ export function makeIsaHandlers(depsFor: DepsFor = defaultDeps): JobHandler<unkn
       const r = await runTurn(deps, ctx.actor.tenantId, p);
       if (r.kind === 'retry') return { retryAt: r.retryAt };
     },
+  };
+  const calDeps = (providers: Providers) => { const d = isaDeps(depsFor, providers); return { ...d, adapters: providers.integrations, now: () => Date.now() }; };
+  const offer: StandaloneJobHandler<z.infer<typeof OfferPayload>> = {
+    kind: 'ai_isa.offer', queue: 'default', mode: 'standalone', via: 'assistant', schema: OfferPayload, maxAttempts: 5,
+    async run(ctx, p) { await runOfferJob(calDeps(ctx.providers), ctx.actor.tenantId, p); },
+  };
+  const book: StandaloneJobHandler<z.infer<typeof BookPayload>> = {
+    kind: 'ai_isa.book', queue: 'realtime', mode: 'standalone', via: 'assistant', schema: BookPayload, maxAttempts: 5,
+    async run(ctx, p) { await runBookJob(calDeps(ctx.providers), ctx.actor.tenantId, p); },
   };
   const tx = <P>(kind: `${string}.${string}`, schema: TxJobHandler<P>['schema'], fn: (t: Tx, deps: IsaDeps, actor: SystemActor, p: P, now: Instant) => Promise<unknown>, queue: 'realtime' | 'default' = 'realtime'): TxJobHandler<P> => ({
     kind, queue, via: 'assistant', schema, async run(ctx, p) { await fn(ctx.tx, isaDeps(depsFor, ctx.providers), ctx.actor, p, ctx.now); },
@@ -173,22 +237,9 @@ export function makeIsaHandlers(depsFor: DepsFor = defaultDeps): JobHandler<unkn
       const a = await assignmentById(t, p.assignmentId);
       if (a !== null) await backstopInTx(t, d, a, p.messageId ?? null, now);
     }, 'default'),
-    // booking (§4.6) is not built in this lane's slice: an offer request is answered honestly as unavailable
-    // (hold_topic booking_unavailable: "I couldn't confirm a time right now. {Agent} will reach out to set one.")
-    tx('ai_isa.offer', OfferPayload, async (t, d, a, p, now) => {
-      const asg = await locked(t, p.assignmentId);
-      if (asg === null || asg.endedAt !== null || asg.epoch !== p.epoch) return;
-      const ctx = await contextFor(t, asg, now);
-      const r = step(asg.machine, { type: 'offer_unavailable', at: now }, ctx.facts);
-      await applyActionsInTx({ tx: t, deps: d, actor: a, ctx, now, turnId: null, pinnedSeq: asg.lastInboundSeq }, r);
-    }, 'default'),
-    tx('ai_isa.book', BookPayload, async (t, d, a, p, now) => {
-      const asg = await locked(t, p.assignmentId);
-      if (asg === null || asg.endedAt !== null) return;
-      const ctx = await contextFor(t, asg, now);
-      const r = step(asg.machine, { type: 'booking_result', at: now, ok: false, code: 'CALENDAR_UNAVAILABLE' }, ctx.facts);
-      await applyActionsInTx({ tx: t, deps: d, actor: a, ctx, now, turnId: null, pinnedSeq: asg.lastInboundSeq }, r);
-    }),
+    // booking (§4.6): standalone jobs; the live calendar read holds no ISA lock (offer) or only lock 5 (book)
+    offer as JobHandler<unknown>,
+    book as JobHandler<unknown>,
     tx('ai_isa.saved_search', AssignmentPayload, async () => undefined, 'default'),
     { ...tx('ai_isa.sla', Empty, (t, d, _a, _p, now) => slaSweepInTx(t, d.ids, now), 'default'), every: { ms: AI_ISA_SLA_EVERY_MS, offsetMs: 20_000 }, periodicPayload: {} } as JobHandler<unknown>,
     { ...tx('ai_isa.sweep', Empty, (t, d, a, _p, now) => sweepInTx(t, d, a, now), 'default'), every: { ms: AI_ISA_SWEEP_EVERY_MS, offsetMs: 40_000 }, periodicPayload: {} } as JobHandler<unknown>,

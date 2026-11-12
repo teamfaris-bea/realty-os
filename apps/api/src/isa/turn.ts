@@ -16,11 +16,12 @@ import { aiRunAad } from '../assistant/runs.js';
 import type { EnvelopeService } from '../crypto/envelope.js';
 import { systemActor } from '../worker/systemActor.js';
 import {
-  buildIsaPrompt, capabilitiesInEffect, clientOwnText, decideAction, type IsaEvent, type IsaInbound, parseIsaModelOutput, repairNote, step,
+  buildIsaPrompt, capabilitiesInEffect, clientOwnText, confirmationInTime, decideAction, formatSlot, isAcknowledgementOnly, type IsaEvent, type IsaInbound, parseIsaModelOutput, repairNote, step,
 } from './coreSeam.js';
 import { systemEndInTx, systemPauseInTx } from './controls.js';
 import { applyActionsInTx, chainEnvOf, contextFor, ensureTurn, type IsaContext, type IsaDeps } from './effects.js';
 import { type AssignmentRow, assignmentById, evaluateChain, lockForTurn } from './repo.js';
+import { calendarLiveInTx, nextSendAtInTx } from './booking/rows.js';
 
 export type TurnDeps = IsaDeps & { envelope: EnvelopeService };
 
@@ -91,7 +92,7 @@ async function txA(deps: TurnDeps, tenantId: string, p: TurnPayload): Promise<Pr
     const peek = await assignmentById(tx, p.assignmentId);
     if (peek === null || peek.endedAt !== null) return { kind: 'done', code: 'ENDED' } as const;
     await lockForTurn(tx, peek.contactId, peek.id);
-    const a = (await assignmentById(tx, p.assignmentId, 'update'))!;
+    let a = (await assignmentById(tx, p.assignmentId, 'update'))!;
     if (a.endedAt !== null) return { kind: 'done', code: 'ENDED' } as const;
     if (p.epoch !== a.epoch && p.trigger === 'timer') return { kind: 'done', code: 'STALE_EPOCH' } as const;
     // the link-failure table: a hold defers before any model call; a pause or end applies and stops (§3.1)
@@ -130,7 +131,24 @@ async function txA(deps: TurnDeps, tenantId: string, p: TurnPayload): Promise<Pr
           AND m.status IN ('sent','delivered','failed','undelivered','blocked','canceled','dispatch_unknown')`.execute(tx);
       if (pend.rows[0]!.n > 0) return { kind: 'retry', retryAt: (now + SEND_RESULT_WAIT_MS) as Instant } as const;
     }
-    const ctx = await contextFor(tx, a, now);
+    // item 8: an inbound waits (2 s, within the debounce cap) while the offer is being booked
+    if (inbounds.length > 0 && a.machine.offer?.status === 'accepting' && now - inbounds[0]!.at < DEBOUNCE_CAP_MS) {
+      return { kind: 'retry', retryAt: (now + SEND_RESULT_WAIT_MS) as Instant } as const;
+    }
+    let ctx = await contextFor(tx, a, now);
+    // item 8: a due offer expiry is applied BEFORE an inbound event, so row 10 never books an expired offer
+    const off = a.machine.offer;
+    if (inbounds.length > 0 && off !== null && off.status === 'offered' && off.expiresAt !== null && off.expiresAt <= now) {
+      const ex = step(a.machine, { type: 'timer', at: now, timer: 'offer_expiry' }, ctx.facts);
+      await applyActionsInTx({ tx, deps, actor: actor(tenantId), ctx, now, turnId: null, pinnedSeq: a.lastInboundSeq }, ex);
+      a = (await assignmentById(tx, a.id, 'update'))!;
+      ctx = await contextFor(tx, a, now);
+    }
+    // Q10: while an offer is offered, acknowledgement-only own text ("ok", "great", a tapback) reaches core as a
+    // reaction: one clarification, never a booking (core's YES_RE would book a one-slot offer: an ISA-1 follow-up)
+    if (a.machine.offer?.status === 'offered') {
+      for (const m of inbounds) if (!m.reaction && isAcknowledgementOnly(m.ownText, false) && !/^\s*(?:yes|yeah|yep|yup|that\s+works|works(?:\s+for\s+me)?)[\s.!]*$/iu.test(m.ownText)) m.reaction = true;
+    }
     const event: IsaEvent = p.trigger === 'timer' && p.timer ? { type: 'timer', at: now, timer: p.timer }
       : inbounds.length > 0 ? { type: 'inbound', at: now, messages: inbounds }
       : a.machine.phase === 'starting' ? { type: 'start', at: now }
@@ -174,18 +192,25 @@ async function prepare(tx: Tx, ctx: IsaContext, a: AssignmentRow, turnId: string
     const own = m.direction === 'inbound' ? clientOwnText(m.body, m.channel) : null;
     return { messageId: m.id, direction: m.direction, channel: m.channel, text: own ? own.text : m.body, at: instantFromDate(m.created_at), ownTextReliable: m.channel === 'sms' || m.direction === 'outbound' || own!.reliable };
   });
+  // item 8: the calendar and the offer as decideAction sees them
+  const calendarLive = await calendarLiveInTx(tx, a.ownerUserId);
+  const mo = a.machine.offer;
+  const turnOffer = mo === null ? null : { handle: 'O1', status: (mo.status === 'requested' ? 'pending_delivery' : mo.status) as 'pending_delivery' | 'offered' | 'accepting', slots: mo.slots, deliveredAt: mo.deliveredAt, zones: mo.zones };
+  const nextSend = mo?.status === 'offered' ? await nextSendAtInTx(tx, { contactId: a.contactId, zones: ctx.zones, content: ctx.content, now }) : null;
+  const inTime = (slot: Parameters<typeof confirmationInTime>[0]['slot']) => confirmationInTime({ slot, nextSendAt: nextSend, minNoticeHours: ctx.content.booking.minNoticeHours });
   const replyChannel = (a.machine.lastInboundChannel && ctx.channels.includes(a.machine.lastInboundChannel) ? a.machine.lastInboundChannel : ctx.channels[0]) ?? 'sms';
   const prompt = buildIsaPrompt({
-    side: a.side, phase: a.machine.phase, agentFirstName: ctx.who.agentFirstName, clientFirstName: first, allowedActions: ['reply', 'record_qualification', 'escalate', 'ready', 'follow_up', 'end', ...[...caps].filter((c) => c === 'book_appointments').map(() => 'offer_slots')],
+    side: a.side, phase: a.machine.phase, agentFirstName: ctx.who.agentFirstName, clientFirstName: first, allowedActions: ['reply', 'record_qualification', 'escalate', 'ready', 'follow_up', 'end',
+      ...(caps.has('book_appointments') && calendarLive && mo === null ? ['offer_slots'] : []), ...(caps.has('book_appointments') && mo?.status === 'offered' ? ['book_slot'] : [])],
     replyAllowedNow: ctx.facts.windowOpenNow, replyChannel, windowLabel: `${ctx.content.window.startSec / 3600}:00–${ctx.content.window.endSec / 3600}:00 local`,
     heldTopics: a.machine.held.map((h) => h.class), messages, claims: a.machine.claims, handles: [], unavailable: ['listings: BUNDLE_NOT_BUILT', 'sold_comps_unavailable: PLATFORM_NOT_CLEARED'],
-    offer: null, ...(aw?.repair ? { repairNote: repairNote(['root']) } : {}),
+    offer: mo !== null && mo.status === 'offered' ? { handle: 'O1', slotLabels: mo.slots.map((sl, k) => `${k + 1}) ${formatSlot(sl, mo.zones[0]!)}`) } : null, ...(aw?.repair ? { repairNote: repairNote(['root']) } : {}),
   });
   const sources = messages.map((m, i) => ({ handle: `S${i + 1}`, messageId: m.messageId, author: m.direction === 'inbound' ? ('client_own' as const) : ('team' as const), channel: m.channel, text: m.text, at: m.at, ownTextReliable: m.ownTextReliable }));
   const decideBase: Prepared['decideBase'] = {
     side: a.side, capabilities: caps, replyChannel, sources, teamTexts: ctx.facts.teamTexts, listingHandles: new Set(), competitionHandles: new Set(), compsAvailable: false,
-    heldClasses: new Set(a.machine.held.map((h) => h.class)), calendarLive: false, offer: null, meetRequested: a.machine.intents.length > 0,
-    confirmationInTime: () => false, savedSearchAllowed: false, intents: a.machine.intents, priorClaims: a.machine.claims, appointmentBooked: a.machine.appointment,
+    heldClasses: new Set(a.machine.held.map((h) => h.class)), calendarLive, offer: turnOffer, meetRequested: a.machine.intents.length > 0,
+    confirmationInTime: inTime, savedSearchAllowed: false, intents: a.machine.intents, priorClaims: a.machine.claims, appointmentBooked: a.machine.appointment,
     mlsListedElsewhere: false, subjectConfirmed: false, zone: ctx.facts.zone,
     identity: { brokerageLegalName: ctx.who.brokerageName, teamName: ctx.who.teamName, agentFirstName: ctx.who.agentFirstName, scope: 'agent', allowedLinkHosts: [] } as never,
     promptSources: prompt.sources, claimId: (i: number) => `${turnId.slice(0, 24)}${String(i).padStart(12, '0')}`.slice(0, 36),

@@ -11,6 +11,9 @@ import { ISA_SLA_MINUTES, type Handoff } from './coreSeam.js';
 import type { AssignmentRow } from './repo.js';
 import type { SystemActor } from '@realty/core/foundation';
 
+/** basis is codes-only (0190 ai_isa_codes_only): core's version 'isa-readiness/1' is stored as 'isa-readiness:1'. */
+const codeOf = (v: string) => v.replace(/[^A-Za-z0-9_:.@-]/g, ':').slice(0, 64);
+
 export type SlaClass = 'critical' | 'high' | 'normal' | 'low';
 
 /** Business-time deadline (VERIFY): critical 15 min, high 2 h, normal/low by the end of the next day. */
@@ -65,6 +68,8 @@ export interface HandoffInput {
   /** extra frozen sentences as codes ("CONFIRMATION_NOT_SENT", "BOOKED_WHILE_PAUSED", "IN_FLIGHT:<id>") */
   notes?: string[];
   nextSteps?: string[];
+  /** TX-C: the booked appointment's detail (ids, kind, times, organizer, offer, the agreed message and quote, the link and the read time) */
+  appointmentDetail?: Record<string, unknown>;
 }
 
 /** Writes the one handoff of `a` (idempotent on the assignment). Returns the handoff id, or null if one exists. */
@@ -87,6 +92,10 @@ export async function writeHandoffInTx(tx: Tx, ids: IdGenerator, actor: SystemAc
     JOIN tenant_settings s ON s.tenant_id = c.tenant_id WHERE c.tenant_id = app.tenant_id() AND c.id = ${a.contactId}`.execute(tx);
   const releaseAt = inact.rows[0]?.release ?? null;
   const rec = await recipientFor(tx, a);
+  // the confirmation status follows its message: `scheduled` when the message waits for the window (§4.7)
+  const pendingStatus = i.pendingMessageId
+    ? ((await sql<{ s: string }>`SELECT status AS s FROM messages WHERE tenant_id = app.tenant_id() AND id = ${i.pendingMessageId}`.execute(tx)).rows[0]?.s === 'scheduled' ? 'scheduled' : 'queued')
+    : 'none';
   const pkg = {
     v: 1,
     reason: h.reason,
@@ -94,6 +103,7 @@ export async function writeHandoffInTx(tx: Tx, ids: IdGenerator, actor: SystemAc
     priority: h.priority,
     basis: h.basis,
     appointment: h.appointment,
+    appointmentDetail: i.appointmentDetail ?? null,
     openOffer: h.openOffer,
     commitments: h.commitments,
     claims: a.machine.claims.filter((c) => h.claims.includes(c.claimId)).map((c) => ({ claimId: c.claimId, field: c.field, value: c.value, quote: c.quote, messageId: c.messageId })),
@@ -120,9 +130,9 @@ export async function writeHandoffInTx(tx: Tx, ids: IdGenerator, actor: SystemAc
   const body = JSON.stringify(pkg);
   await sql`INSERT INTO ai_isa_handoffs (tenant_id, id, assignment_id, contact_id, reason, basis, assistant_action_id, appointment_id, package, package_sha256,
       pending_message_id, confirmation_status, sla_class, sla_due_at, recipient_user_id)
-    VALUES (app.tenant_id(), ${handoffId}, ${a.id}, ${a.contactId}, ${h.reason}, ${JSON.stringify(h.basis ? { rule: h.basis.rule, ruleVersion: h.basis.ruleVersion, claimIds: h.basis.claimIds } : {})}::jsonb,
+    VALUES (app.tenant_id(), ${handoffId}, ${a.id}, ${a.contactId}, ${h.reason}, ${JSON.stringify(h.basis ? { rule: h.basis.rule, ruleVersion: codeOf(h.basis.ruleVersion), claimIds: h.basis.claimIds } : {})}::jsonb,
       ${actionId}, ${h.appointment?.appointmentId ?? null}, ${body}::jsonb, encode(sha256(convert_to(${body}::jsonb::text, 'UTF8')), 'hex'),
-      ${i.pendingMessageId ?? null}, ${i.pendingMessageId ? 'queued' : 'none'}, ${cls}, ${new Date(due)}, ${rec.primary})`.execute(tx);
+      ${i.pendingMessageId ?? null}, ${i.pendingMessageId ? pendingStatus : 'none'}, ${cls}, ${new Date(due)}, ${rec.primary})`.execute(tx);
   const targets = rec.primary ? [rec.primary] : rec.escalation;
   const hot = cls === 'critical';
   const cardText = h.reason === 'inactivity_warning' && releaseAt !== null
@@ -204,4 +214,29 @@ export async function slaSweepInTx(tx: Tx, ids: IdGenerator, now: Instant): Prom
     escalated += 1;
   }
   return { met, escalated };
+}
+
+/**
+ * Item 9 (R-ISA-14; E533): the post-handoff confirmation did not go out. `not_sent` (canceled by a non-acknowledgement
+ * inbound, failed, undelivered, blocked, or late): the card becomes critical (score 98, AI_ISA_CONFIRMATION_NOT_SENT),
+ * an `ai_isa_handoff_hot` notification, and the deadline is pulled in to 15 minutes. `closed` (ISA_HANDOFF_CLOSED: a
+ * person reached them first): the card says so, nothing hot. Codes only; never message content.
+ */
+export async function confirmationNotSentInTx(tx: Tx, ids: IdGenerator, h: { id: string; assignmentId: string; contactId: string; recipientUserId: string | null }, kind: 'not_sent' | 'closed', now: Instant): Promise<void> {
+  const label = (await contactLabel(tx, h.contactId)) ?? 'A lead';
+  if (kind === 'closed') {
+    await sql`UPDATE priority_feed_items SET reasons = ${JSON.stringify([{ code: 'AI_ISA_CONFIRMATION_NOT_NEEDED', text: 'Someone on the team reached them first, so the AI confirmation was not sent.' }])}::jsonb,
+        updated_at = now() WHERE tenant_id = app.tenant_id() AND dedupe_key = ${`ai_isa_handoff:${h.assignmentId}`} AND state IN ('open','snoozed')`.execute(tx);
+    return;
+  }
+  const due = new Date(now + ISA_SLA_MINUTES.critical * 60_000);
+  await sql`UPDATE ai_isa_handoffs SET sla_due_at = least(sla_due_at, ${due}) WHERE tenant_id = app.tenant_id() AND id = ${h.id} AND sla_met_at IS NULL`.execute(tx);
+  await sql`UPDATE priority_feed_items SET score = 98, band = 'pinned', due_at = least(COALESCE(due_at, ${due}), ${due}),
+      reasons = ${JSON.stringify([{ code: 'AI_ISA_CONFIRMATION_NOT_SENT', text: 'The appointment confirmation was not sent: confirm it by hand.' }])}::jsonb, updated_at = now()
+    WHERE tenant_id = app.tenant_id() AND dedupe_key = ${`ai_isa_handoff:${h.assignmentId}`} AND state IN ('open','snoozed')`.execute(tx);
+  const targets = h.recipientUserId ? [h.recipientUserId] : await adminUserIds(tx);
+  for (const userId of targets) {
+    await notifyUser(tx, ids, { userId, kind: 'ai_isa_handoff_hot', priority: 'critical', title: `Confirm the appointment: ${label}`.slice(0, 120), body: null,
+      subjectType: 'contact', subjectId: h.contactId, dedupeKey: `ai_isa_confirmation_not_sent:${h.id}` }, now);
+  }
 }

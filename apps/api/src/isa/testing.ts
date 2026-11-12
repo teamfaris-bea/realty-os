@@ -40,12 +40,12 @@ export interface IsaWorld extends CommsWorld {
 }
 
 /** A tenant with the AI ISA fully authorized on fakes: pack cleared, switch on, an approved policy, agent 0 opted in. */
-export async function isaWorld(h: ApiHarness, o: { optIn?: boolean; clear?: boolean } = {}): Promise<IsaWorld> {
+export async function isaWorld(h: ApiHarness, o: { optIn?: boolean; clear?: boolean; capabilities?: string[] } = {}): Promise<IsaWorld> {
   const w = await commsWorld(h, { agents: 2, teamLead: true });
   const pb = randomUUID();
   const versionId = randomUUID();
   const versionSha = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '');
-  const content = { ...DEFAULT_AI_ISA_CONTENT };
+  const content = { ...DEFAULT_AI_ISA_CONTENT, ...(o.capabilities ? { capabilities: o.capabilities } : {}) };
   await h.su.query(`SET session_replication_role = replica`);
   try {
     await h.su.query(`INSERT INTO playbooks (tenant_id, id, kind, scope, name, status) VALUES ($1, $2, 'ai_isa', 'team', 'AI assistant', 'active')`, [w.tenantId, pb]);
@@ -67,9 +67,10 @@ export async function isaWorld(h: ApiHarness, o: { optIn?: boolean; clear?: bool
   return { ...w, versionId, versionSha, ai };
 }
 
-export async function optInAgent(h: ApiHarness, agent: TestClient, versionId: string, capabilities: string[] = ['converse']): Promise<void> {
+export async function optInAgent(h: ApiHarness, agent: TestClient, versionId: string, capabilities: string[] = ['converse'],
+  o: { timezone?: string; availability?: { weekday: number; start: string; end: string }[]; bookingKinds?: string[] } = {}): Promise<void> {
   await freshReauth(h, agent);
-  const r = await call(agent, 'PUT', '/me/ai-isa/opt-in', { versionId, capabilities, channels: ['sms', 'email'], timezone: 'America/New_York', availability: [], bookingKinds: [] });
+  const r = await call(agent, 'PUT', '/me/ai-isa/opt-in', { versionId, capabilities, channels: ['sms', 'email'], timezone: o.timezone ?? 'America/New_York', availability: o.availability ?? [], bookingKinds: o.bookingKinds ?? [] });
   if (r.status !== 200) throw new Error(`opt-in: ${r.status} ${JSON.stringify(r.body)}`);
 }
 
@@ -97,13 +98,19 @@ export function isaWorker(h: ApiHarness) {
 }
 
 /** Makes every pending AI ISA and dispatch job due and drains, `rounds` times. */
-export async function runIsa(h: ApiHarness, tenantId: string, rounds = 4): Promise<void> {
+export async function runIsa(h: ApiHarness, tenantId: string, rounds = 4, o: { beforeTick?: () => Promise<void> } = {}): Promise<void> {
   for (let i = 0; i < rounds; i += 1) {
     await h.su.query(`UPDATE jobs SET run_at = now() - interval '1 second' WHERE tenant_id = $1 AND status = 'pending' AND (kind LIKE 'ai_isa.%' OR kind IN ('comms.dispatch','ownership.followup')) AND kind NOT IN ('ai_isa.sweep','ai_isa.sla')`, [tenantId]);
     // the debounce reads conversations.last_inbound_at: age it so a due turn runs now
     await h.su.query(`UPDATE conversations SET last_inbound_at = last_inbound_at - interval '1 minute' WHERE tenant_id = $1 AND last_inbound_at > now() - interval '1 minute'`, [tenantId]);
     await h.su.query(`UPDATE messages SET created_at = created_at - interval '3 minutes' WHERE tenant_id = $1 AND direction = 'inbound' AND created_at > now() - interval '3 minutes'`, [tenantId]);
-    await isaWorker(h).drain(30);
+    if (o.beforeTick) {
+      const wk = isaWorker(h);
+      for (let k = 0; k < 30; k += 1) {
+        await o.beforeTick();
+        if ((await wk.drain(1)) === 0) break;
+      }
+    } else await isaWorker(h).drain(30);
   }
 }
 

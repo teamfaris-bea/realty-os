@@ -353,6 +353,7 @@ export const ERROR_STATUS = {
   AI_ISA_PERSON_DECLINED: 409, // a person block (opt-out, complaint, declined AI)
   AI_ISA_HANDBACK_STALE: 409, // the handback is no longer current or its reply was queued
   AI_ISA_UNDO_EXPIRED: 409, // the 10-second undo window has passed
+  AI_ISA_BOOKING_IN_PROGRESS: 409, // ISA-2b: the AI assistant is booking an agreed time; resume after it finishes
   AI_ISA_NOT_LIVE: 409, // no live or paused assignment to control
   AI_ISA_NOT_PAUSED: 409, // resume needs a paused assignment
   AI_ISA_DO_NOT_CONTACT: 409, // the person asked not to be contacted
