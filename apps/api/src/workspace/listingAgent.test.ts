@@ -8,6 +8,7 @@ import { type ApiHarness, type TestClient, createApiHarness } from '../auth/test
 import { assistantWorld } from '../assistant/testing.js';
 import { call, freshReauth, leadsWorker } from '../leads/testing.js';
 import { generateAll, marketingWorld, teamListing } from '../marketing/testing.js';
+import { mlsConnection } from '../mls/testing.js';
 import { reconcile } from '../sellerUpdates/testing.js';
 
 let h: ApiHarness;
@@ -90,6 +91,23 @@ describe('R-PERM-1 b7 ownership-data/F2: changing a listing agent', () => {
     expect((await call(w.teamLead!, 'PATCH', `/listings/${target}/agent`, { listingAgentUserId: a1.userId })).status).toBe(404);
     // an unknown listing is 404 for the Owner too
     expect((await call(w.owner, 'PATCH', `/listings/${nobody}/agent`, { listingAgentUserId: a1.userId })).status).toBe(404);
+  });
+  it('R-PERM-1: the MLS listing agent change is 404 and audits nothing', async () => {
+    const w = await assistantWorld(h, { agents: 1, push: false });
+    const a1 = w.agents[0]!;
+    // R-PERM-1: an MLS listing has no listing agent of ours: 404 for the Owner, nothing changed, nothing audited
+    // (an MLS row has no application write path: the superuser writes it as the feed would)
+    const mls = '01a1ce00-0000-7000-8000-0000000000aa';
+    const conn = await mlsConnection(h, w.tenantId, w.owner.userId!);
+    await h.su.query(
+      `INSERT INTO listings (tenant_id, id, source, mls_number, status, address_line1, city, region, postal_code, mls_connection_id, mls_modified_at, listing_brokerage_name)
+       VALUES ($1, $2, 'mls', 'MLS-TEST-1', 'active', '1 Example Way', 'Charleston', 'SC', '29401', $3, now(), 'Example Brokerage')`,
+      [w.tenantId, mls, conn],
+    );
+    const onMls = await call(w.owner, 'PATCH', `/listings/${mls}/agent`, { listingAgentUserId: a1.userId });
+    expect(onMls.status).toBe(404);
+    expect(await agentOf(mls)).toBeNull();
+    expect(await audits(mls)).toHaveLength(0);
   });
 });
 
