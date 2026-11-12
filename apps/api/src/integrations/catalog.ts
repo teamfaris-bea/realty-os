@@ -47,6 +47,11 @@ export const META_PUBLISH_SCOPES = {
 /** Google Business Profile management scope. VERIFY. */
 export const GOOGLE_GBP_SCOPES = ['https://www.googleapis.com/auth/business.manage'] as const;
 /**
+ * Module 52 (R-ADS-13): the one Google Ads API scope, requested exactly (no other Google scope rides along). VERIFY the
+ * name against Google's current OAuth scope list for the Google Ads API.
+ */
+export const GOOGLE_ADS_SCOPES = ['https://www.googleapis.com/auth/adwords'] as const;
+/**
  * Scopes that must never appear in any connect request (D2, R-MKT-12: no DMs, no messaging webhooks, no Lead Ads
  * retrieval): the Facebook Login names, the messaging permission of the Instagram API with Instagram Login
  * (instagram_business_manage_messages) and Messenger's pages_messaging_subscriptions. VERIFY current Meta names.
@@ -73,7 +78,9 @@ export const SERVICES: readonly ServiceDef[] = [
   // Spark RESO Web API, read-only, with the CRM's own API key (mls/spark; never the website's key)
   { kind: 'mls_feed', name: 'MLS listings (Spark, read-only)', connect: 'api_key', needsLeadSource: false, usedBy: 'MLS search and alerts' },
   { kind: 'showing_service', name: 'Showing service', connect: 'partner', needsLeadSource: false, usedBy: 'seller updates' },
-  { kind: 'ads_google', name: 'Google Ads account', connect: 'later', oauthProvider: 'google', needsLeadSource: false, usedBy: 'ads (Phase 3)' },
+  // module 52: the lead source Google Ads spend is recorded under is set at connect or by PATCH connections/:id; it is not
+  // required to connect (needsLeadSource mirrors the 0018 CHECK, which does not list ads_google)
+  { kind: 'ads_google', name: 'Google Ads account', connect: 'oauth', oauthProvider: 'google', needsLeadSource: false, usedBy: 'Google Ads budget proposals and spend', scopes: GOOGLE_ADS_SCOPES },
   { kind: 'gbp_location', name: 'Google Business Profile', connect: 'oauth', oauthProvider: 'google', needsLeadSource: false, usedBy: 'Google Business Profile', scopes: GOOGLE_GBP_SCOPES },
   // D2: out of scope (Messenger and Instagram DMs, Meta Lead Ads, Meta ads). These 0018 kinds stay in the kind
   // CHECK until the cleanup migration (PHASE2_3_PLAN §3). They are listed only so that a row made before D2 stays
@@ -108,7 +115,7 @@ export interface PlatformPack {
  * voice, 0025 Gmail) needs `reviewed_by_counsel_at` AND `rules.vendor_ready_at` (R-INT-6). A test compares this
  * list with the database's own calls.
  */
-export const VENDOR_CHECKED_PACKS: readonly string[] = ['platform:voice', 'platform:gmail'];
+export const VENDOR_CHECKED_PACKS: readonly string[] = ['platform:voice', 'platform:gmail', 'platform:ads'];
 
 /**
  * D2: packs that are never cleared. platform:meta gates only 0018's DM guard branch, which no product path writes,
@@ -126,16 +133,21 @@ export const PACK_GATES: Record<string, string> = {
   'platform:voice': 'Voice answering',
   'platform:portal': 'Client portal sign-in',
   'platform:gmail': 'Gmail inbox sync',
+  'platform:ads': 'Changing Google Ads budgets',
 };
 
 /**
- * A capability that also waits on a platform clearance pack. These packs need counsel review only (none is in
- * VENDOR_CHECKED_PACKS), as the 0025 publications guard's `app.platform_cleared('platform:fair_housing')` does.
+ * A capability that also waits on a platform clearance pack. A pack in VENDOR_CHECKED_PACKS also needs its vendor
+ * check (`rules.vendor_ready_at`), exactly as the database clears it: `change_budget` waits for `platform:ads`, which
+ * the module 52 gates read with `app.platform_cleared('platform:ads', true)`. The publishing packs need counsel review
+ * only, as the 0025 publications guard's `app.platform_cleared('platform:fair_housing')` does. Reading Google Ads
+ * spend waits for no pack (module 52, Q-ADS-1).
  */
 const CAPABILITY_PACK: Partial<Record<ConnectionKind, Record<string, string>>> = {
   facebook_page: { publish_posts: 'platform:fair_housing' },
   instagram_business: { publish_posts: 'platform:fair_housing' },
   gbp_location: { publish_posts: 'platform:fair_housing' },
+  ads_google: { change_budget: 'platform:ads' },
 };
 
 /**
@@ -243,8 +255,18 @@ export function capabilityViews(kind: ConnectionKind, status: ConnectionStatus, 
     const live = status === 'connected' || status === 'degraded';
     const packKey = CAPABILITY_PACK[kind]?.[name];
     const pack = packKey ? packs.find((p) => p.key === packKey) : undefined;
-    const cleared = !packKey || (pack !== undefined && pack.reviewedByCounselAt !== null);
-    const reason = !offered ? NOT_OFFERED : !live ? 'The connection is not live.' : !cleared ? `Waits for counsel review of ${packKey}.` : null;
+    const reviewed = pack !== undefined && pack.reviewedByCounselAt !== null;
+    const vendorPending = packKey !== undefined && VENDOR_CHECKED_PACKS.includes(packKey) && (pack === undefined || pack.vendorReadyAt === null);
+    const cleared = !packKey || (reviewed && !vendorPending);
+    const reason = !offered
+      ? NOT_OFFERED
+      : !live
+        ? 'The connection is not live.'
+        : cleared
+          ? null
+          : !reviewed
+            ? `Waits for counsel review of ${packKey}.`
+            : `Waits for the vendor check of ${packKey}.`;
     out.push({ name, available: reason === null, reason });
   }
   return out;
