@@ -298,7 +298,8 @@ export function clientSoldView(e: MlsEligibility, mirror: ListingRow, team: List
   if (!rules.statuses.includes('sold') || !SOLD_FIELDS.every((f) => rules.fields.includes(f))) return null;
   const m = applyDisplayRules({ ...factsOfRow(mirror), teamListingId: null }, pack, 'client');
   if (m === null) return null;
-  const t = applyDisplayRules(factsOfRow(team), STRICTEST_LICENSE_PACK, 'client')!;
+  // the team row's display without its (empty) sold fields: only the mirror's shown ones are added
+  const { closePriceCents: _p, closeDate: _d, yearBuilt: _y, lotSqft: _l, subdivisionName: _s, ...t } = applyDisplayRules(factsOfRow(team), STRICTEST_LICENSE_PACK, 'client')!;
   return {
     ...t,
     status: 'sold',

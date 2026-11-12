@@ -93,41 +93,50 @@ function perValue(q: SoldQuery, eq: ReturnType<typeof sql>[], limit: number, fil
   return sql<ListingRow>`SELECT * FROM (${sql.join(parts, sql` UNION ALL `)}) u ORDER BY u.close_date DESC, u.id LIMIT ${limit}`;
 }
 
-async function readTier(tx: Tx, q: SoldQuery, t: TierQuery): Promise<ListingRow[]> {
-  const limit = Math.max(1, Math.min(t.limit ?? DEFAULT_LIMIT[t.tier], 2000));
+const limitOf = (t: TierQuery) => Math.max(1, Math.min(t.limit ?? DEFAULT_LIMIT[t.tier], 2000));
+
+/**
+ * The SQL of one tier read (null: nothing to read), shared by soldCandidates and the volume test's EXPLAIN. The rate
+ * pool is two reads (cells, postal codes) merged in code, so it has no single statement.
+ */
+export async function tierSql(tx: Tx, q: SoldQuery, t: Exclude<TierQuery, { tier: 'rate_pool' }>) {
+  const limit = limitOf(t);
   switch (t.tier) {
     case 'cells_1mi':
-    case 'cells_3mi': {
-      if (t.cells.length === 0) return [];
-      return (await sql<ListingRow>`SELECT ${LISTING_COLS} FROM listings l WHERE ${soldWindow(q)} AND l.geo_cell = ANY (${[...t.cells]}::int[])
-                                     ORDER BY l.close_date DESC, l.id LIMIT ${limit}`.execute(tx)).rows;
-    }
+    case 'cells_3mi':
+      if (t.cells.length === 0) return null;
+      return sql<ListingRow>`SELECT ${LISTING_COLS} FROM listings l WHERE ${soldWindow(q)} AND l.geo_cell = ANY (${[...t.cells]}::int[])
+                              ORDER BY l.close_date DESC, l.id LIMIT ${limit}`;
     case 'postal_code': {
       const zips = [...new Set(t.postalCodes)];
-      if (zips.length === 0) return [];
-      return (await perValue(q, zips.map((z) => sql`l.postal_code = ${z}`), limit).execute(tx)).rows;
+      return zips.length === 0 ? null : perValue(q, zips.map((z) => sql`l.postal_code = ${z}`), limit);
     }
     case 'city': {
       const spellings = await soldSpellings(tx, 'city', t.cities);
-      if (spellings.length === 0) return [];
-      return (await perValue(q, spellings.map((c) => sql`l.city = ${c} AND l.region = ${t.region}`), limit).execute(tx)).rows;
+      return spellings.length === 0 ? null : perValue(q, spellings.map((c) => sql`l.city = ${c} AND l.region = ${t.region}`), limit);
     }
     case 'subdivision': {
       const spellings = await soldSpellings(tx, 'subdivision_name', t.names);
-      if (spellings.length === 0 || (t.postalCodes.length === 0 && t.cells.length === 0)) return [];
+      if (spellings.length === 0 || (t.postalCodes.length === 0 && t.cells.length === 0)) return null;
       const near = sql`AND (l.postal_code = ANY (${[...t.postalCodes]}::text[]) OR l.geo_cell = ANY (${[...t.cells]}::int[]))`;
-      return (await perValue(q, spellings.map((n) => sql`l.subdivision_name = ${n}`), limit, near).execute(tx)).rows;
-    }
-    case 'rate_pool': {
-      const byCell = t.cells.length === 0 ? [] : await readTier(tx, q, { tier: 'cells_3mi', cells: t.cells, limit });
-      const byZip = t.postalCodes.length === 0 ? [] : await readTier(tx, q, { tier: 'postal_code', postalCodes: t.postalCodes, limit });
-      const seen = new Set<string>();
-      return [...byCell, ...byZip]
-        .filter((r) => !seen.has(r.id) && (seen.add(r.id), true))
-        .sort((a, b) => (a.close_date! < b.close_date! ? 1 : a.close_date! > b.close_date! ? -1 : a.id < b.id ? -1 : 1))
-        .slice(0, limit);
+      return perValue(q, spellings.map((n) => sql`l.subdivision_name = ${n}`), limit, near);
     }
   }
+}
+
+async function readTier(tx: Tx, q: SoldQuery, t: TierQuery): Promise<ListingRow[]> {
+  if (t.tier !== 'rate_pool') {
+    const s = await tierSql(tx, q, t);
+    return s === null ? [] : (await s.execute(tx)).rows;
+  }
+  const limit = limitOf(t);
+  const byCell = t.cells.length === 0 ? [] : await readTier(tx, q, { tier: 'cells_3mi', cells: t.cells, limit });
+  const byZip = t.postalCodes.length === 0 ? [] : await readTier(tx, q, { tier: 'postal_code', postalCodes: t.postalCodes, limit });
+  const seen = new Set<string>();
+  return [...byCell, ...byZip]
+    .filter((r) => !seen.has(r.id) && (seen.add(r.id), true))
+    .sort((a, b) => (a.close_date! < b.close_date! ? 1 : a.close_date! > b.close_date! ? -1 : a.id < b.id ? -1 : 1))
+    .slice(0, limit);
 }
 
 /** Closed MLS sales per tier (see the header), the sold team rows their mirrors name, and what each read hit. */
@@ -137,7 +146,7 @@ export async function soldCandidates(tx: Tx, q: SoldQuery): Promise<SoldCandidat
   const reads: SoldCandidates['reads'] = [];
   for (const t of q.tiers) {
     const rows = await readTier(tx, q, t);
-    reads.push({ tier: t.tier, rows: rows.length, limitReached: rows.length >= Math.max(1, Math.min(t.limit ?? DEFAULT_LIMIT[t.tier], 2000)) });
+    reads.push({ tier: t.tier, rows: rows.length, limitReached: rows.length >= limitOf(t) });
     for (const r of rows) if (!byId.has(r.id)) byId.set(r.id, r);
   }
   const teamIds = [...new Set([...byId.values()].map((r) => r.team_listing_id).filter((x): x is string => x !== null))];
