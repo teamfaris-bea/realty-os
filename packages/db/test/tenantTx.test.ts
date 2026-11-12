@@ -117,14 +117,14 @@ describe('withTenantTx', () => {
       const n = await count(tx, 'contacts');
       const t = await count(tx, 'tenants');
       // platform reference data stays readable: the US pack, and the unreviewed platform clearance packs
-      // (0018's seven, plus platform:gmail from the D2 migration)
+      // (0018's seven, plus platform:gmail from the D2 migration and platform:gbp from module 53)
       const pack = await sql<{ n: string; p: string; reviewed: string }>`
         SELECT count(*) FILTER (WHERE key = 'US') AS n, count(*) FILTER (WHERE key LIKE 'platform:%') AS p,
                count(*) FILTER (WHERE key LIKE 'platform:%' AND reviewed_by_counsel_at IS NOT NULL) AS reviewed
           FROM jurisdiction_packs`.execute(tx);
       return { n, t, packs: Number(pack.rows[0]!.n), platformPacks: Number(pack.rows[0]!.p), reviewed: Number(pack.rows[0]!.reviewed) };
     }, { db: h.app });
-    expect(r).toEqual({ n: 0, t: 0, packs: 1, platformPacks: 8, reviewed: 0 });
+    expect(r).toEqual({ n: 0, t: 0, packs: 1, platformPacks: 9, reviewed: 0 });
   });
 
   it('support actors are read-only (RESTRICTIVE support_read_only_* policies)', async () => {
