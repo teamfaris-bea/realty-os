@@ -35,6 +35,7 @@ import * as connections from '../integrations/repos/connections.js';
 import { systemActor } from '../worker/systemActor.js';
 import type { Logger } from '../worker/observability.js';
 import { type MlsRecordFeed, openRecordFeed } from './feeds.js';
+import { type ListingBefore, mlsListingBefore, mlsListingChangedInTx } from '../nurture/detect.js';
 import type { SparkDeps } from './spark/service.js';
 
 /** Records read per connection run (bounded work per job; a full batch schedules the next run at once). */
@@ -166,6 +167,7 @@ export async function syncConnection(deps: MlsDeps, tenantId: TenantId, connecti
       const mapping: FieldMapping = { connectionId: connectionId as MlsConnectionId, fields: claimed.feed!.fields };
       res.skippedInvalid += page.unpositioned;
       const changed: string[] = [];
+      const priorOf = new Map<string, ListingBefore>();
       const issueCodes = new Map<string, number>();
       for (const raw of page.records) {
         const f = normalizeMlsListing(raw, mapping);
@@ -174,6 +176,7 @@ export async function syncConnection(deps: MlsDeps, tenantId: TenantId, connecti
           for (const i of f as Issue[]) issueCodes.set(i.code, (issueCodes.get(i.code) ?? 0) + 1);
           continue;
         }
+        const before = await mlsListingBefore(tx, f.mlsNumber!, f.mlsConnectionId!); // module 26 (flagged): price/status before
         const u = await upsertMlsListing(tx, deps.ids, f, now);
         if (!u) {
           res.skippedStale += 1;
@@ -182,6 +185,7 @@ export async function syncConnection(deps: MlsDeps, tenantId: TenantId, connecti
         if (u.inserted) res.inserted += 1;
         else res.updated += 1;
         changed.push(u.id);
+        if (before && !u.inserted) priorOf.set(u.id, before);
       }
       // the connection: cursor, freshness, recovery, next run
       await sql`
@@ -195,6 +199,8 @@ export async function syncConnection(deps: MlsDeps, tenantId: TenantId, connecti
       }
       // R-MLS-6: every new or changed MLS row goes through the Phase 1 saved-search path (deduped per match)
       for (const id of changed) res.matched += await matchListingInTx(tx, deps, tenantId, id, now);
+      // module 26 (flagged): price drops and returns to market on followed homes become trigger firings (facts only)
+      for (const [id, before] of priorOf) await mlsListingChangedInTx(tx, deps, id, before, now);
       await cancelIneligibleMlsAlertsInTx(tx, now);
       log?.info('mls.sync', { inserted: res.inserted, updated: res.updated, skippedStale: res.skippedStale, skippedInvalid: res.skippedInvalid, matched: res.matched, issues: Object.fromEntries(issueCodes) });
       return res;
