@@ -75,10 +75,17 @@ export function adapterModeWords(m: AdapterMode): { tone: 'info' | 'warn'; text:
   return null;
 }
 
-/** Where a keyed or key-based service is set up (it has no outside login to connect here). */
+/** b9 ui/F8: Google Ads lead forms are set up per source on Lead sources; the ads account is a later connection. */
+export const GOOGLE_ADS_HINT = 'Google Ads lead forms work now: each lead source sets up its own on Lead sources. The Google Ads account itself is not connected, so nothing about your ads is read.';
+/** b9 ui/F8: until a partner grants access, a portal's leads arrive by lead email, set up per source. */
+export const PARTNER_FEED_HINT = "Until the partner grants access, set up lead email on the portal's lead source: the portal sends its new-lead emails there.";
+
+/** Where a keyed or key-based service is set up (it has no outside login to connect here), or where its leads arrive meanwhile. */
 export function manageLink(kind: string): { to: string; label: string; hint: string } | null {
   if (kind === 'web_chat_widget') return { to: WEBCHAT_PAGE_PATH, label: 'Set up website chat', hint: 'Create a widget, get its embed code and choose the websites it runs on.' };
   if (kind === 'lead_email') return { to: LEAD_SOURCES_PAGE_PATH, label: 'Open Lead sources', hint: 'Each lead source has its own lead-email address on its Lead sources page.' };
+  if (kind === 'ads_google') return { to: LEAD_SOURCES_PAGE_PATH, label: 'Open Lead sources', hint: GOOGLE_ADS_HINT };
+  if (kind === 'zillow_feed' || kind === 'realtor_feed') return { to: LEAD_SOURCES_PAGE_PATH, label: 'Open Lead sources', hint: PARTNER_FEED_HINT };
   if (kind === 'mls_feed') return { to: MLS_PAGE_PATH, label: 'Open MLS', hint: 'Sync status, the Spark key and the licence pack.' };
   return null;
 }
