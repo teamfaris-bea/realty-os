@@ -21,10 +21,10 @@ export function PartnerPath({ source }: { source: SourceOverview }) {
       ) : null}
       <p className="text-[15px] text-ink">{PARTNER_SENTENCE}</p>
       <p className="flex flex-wrap gap-x-4 gap-y-1 text-[15px]">
-        <a href="#email" className="text-accent underline">
+        <a href="#email" className="inline-flex min-h-tap items-center text-accent underline">
           Use lead email
         </a>
-        <Link to={PAGES.integrations} className="text-accent underline">
+        <Link to={PAGES.integrations} className="inline-flex min-h-tap items-center text-accent underline">
           Integrations
         </Link>
       </p>
@@ -38,7 +38,7 @@ export function ChatPath({ source }: { source: SourceOverview }) {
     <>
       <Muted>{n === 0 ? 'No website chat sends its conversations to this source.' : n === 1 ? 'One website chat sends its conversations to this source.' : `${n} website chats send their conversations to this source.`}</Muted>
       <p className="text-[15px]">
-        <Link to={PAGES.webChat} className="text-accent underline">
+        <Link to={PAGES.webChat} className="inline-flex min-h-tap items-center text-accent underline">
           Set up website chat
         </Link>
       </p>
@@ -51,10 +51,10 @@ export function TypedPath() {
     <>
       <Muted>Leads you type in or import are added on these pages.</Muted>
       <p className="flex flex-wrap gap-x-4 gap-y-1 text-[15px]">
-        <Link to={PAGES.addPerson} className="text-accent underline">
+        <Link to={PAGES.addPerson} className="inline-flex min-h-tap items-center text-accent underline">
           Add a person
         </Link>
-        <Link to={PAGES.imports} className="text-accent underline">
+        <Link to={PAGES.imports} className="inline-flex min-h-tap items-center text-accent underline">
           Import
         </Link>
       </p>

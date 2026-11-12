@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { overview, source, sourcesFake } from '../lead-sources/testing.js';
 import { IGNORED_SENTENCE, ROTATE_WARNING, TRUST_SENTENCE, cleanDomain } from './EmailIntake.js';
 import { CONSUMER_MAILBOX_SENTENCE, LEAD_EMAIL_ERROR_MESSAGES } from './messages.js';
-import { ADDRESS, FakeFetch, SRC, enabledInbox, err, inbox, leadEmailApp } from './testing.js';
+import { ADDRESS, type FakeFetch, SRC, enabledInbox, err, inbox, leadEmailApp } from './testing.js';
 import type { Inbox } from './types.js';
 
 const session = { user: { id: 'u', email: 'me@example.test', displayName: 'Me' }, tenant: { id: '01900000-0000-7000-8000-000000000001', name: 'Harbor Home Team', slug: 'harbor', role: 'owner' }, tenants: [], mfa: { enabled: false, verified: false, enrollmentRequired: false }, reauthenticatedAt: new Date().toISOString(), csrfToken: 'csrf-2' };

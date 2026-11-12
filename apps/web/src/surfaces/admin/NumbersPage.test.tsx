@@ -9,8 +9,16 @@ import { registrationWords } from './NumbersPage.js';
 
 const num = (over: Partial<PhoneNumber> = {}): PhoneNumber => ({ id: 'n1', e164: '+14155550100', purpose: 'team_main', numberType: 'local', assignedUserId: null, registrationId: 'reg-1', registrationStatus: 'submitted', smsCapable: true, voiceCapable: true, releasedAt: null, leadSourceId: null, ...over });
 
+const SOURCES = [
+  { id: 'src-1', name: 'Yard signs', kind: 'sign_call', active: true, hasToken: true, createdAt: '' },
+  { id: 'src-2', name: 'Old ads', kind: 'ads', active: false, hasToken: true, createdAt: '' },
+];
+
 function numbersFake(numbers: PhoneNumber[] = [num()]) {
-  return new FakeFetch().on('GET /numbers', { status: 200, body: { numbers } }).on('GET /members', { status: 200, body: { members: [member()], invites: [] } });
+  return new FakeFetch()
+    .on('GET /numbers', { status: 200, body: { numbers } })
+    .on('GET /members', { status: 200, body: { members: [member()], invites: [] } })
+    .on('GET /lead-sources', { status: 200, body: { sources: SOURCES } });
 }
 
 describe('Phone and email', () => {
@@ -68,5 +76,36 @@ describe('Phone and email', () => {
     await u.click(screen.getByRole('button', { name: 'Check DNS now' }));
     expect(await screen.findByText('DKIM failing')).toBeInTheDocument();
     expect(screen.getByText('mail.harbor.test is not verified yet')).toBeInTheDocument();
+  });
+
+  it('a live tracking number has a Lead source select (live sources only, plus the one it credits now); changing it is one PATCH', async () => {
+    const fake = numbersFake([num({ id: 't1', purpose: 'tracking', e164: '+14155550177', leadSourceId: 'src-2' }), num({ id: 'm1', purpose: 'team_main' })]).on('PATCH /numbers/t1/lead-source', { status: 200, body: { number: num({ id: 't1', purpose: 'tracking', leadSourceId: 'src-1' }) } });
+    leadAdminApp(fake, '/admin/numbers', 'owner');
+    const u = userEvent.setup();
+    await screen.findByText('(415) 555-0177');
+    const selects = await screen.findAllByLabelText('Lead source');
+    // only the tracking number has one (the acquire form's shows only with purpose tracking)
+    expect(selects).toHaveLength(1);
+    expect(within(selects[0]!).getAllByRole('option').map((o) => o.textContent)).toEqual(['None', 'Yard signs', 'Old ads (off)']);
+    expect(selects[0]).toHaveValue('src-2');
+    await u.selectOptions(selects[0]!, 'src-1');
+    await waitFor(() => expect(fake.callsTo('PATCH /numbers/t1/lead-source')).toHaveLength(1));
+    expect(fake.callsTo('PATCH /numbers/t1/lead-source')[0]!.body).toEqual({ leadSourceId: 'src-1' });
+    expect(await screen.findByText('(415) 555-0177 now credits Yard signs')).toBeInTheDocument();
+  });
+
+  it('getting a tracking number can tie it to a live source; the server’s notice is said as is', async () => {
+    const fake = numbersFake([]).on('POST /numbers', { status: 201, body: { number: num({ e164: '+15105550111', purpose: 'tracking' }), notice: 'Bought, but not tied to Yard signs: that source was turned off.' } });
+    leadAdminApp(fake, '/admin/numbers', 'owner');
+    const u = userEvent.setup();
+    const form = await screen.findByRole('form', { name: 'Get a number' });
+    expect(within(form).queryByLabelText('Lead source')).toBeNull();
+    await u.selectOptions(within(form).getByLabelText('New number for'), 'tracking');
+    const pick = within(form).getByLabelText('Lead source');
+    expect(within(pick).getAllByRole('option').map((o) => o.textContent)).toEqual(['None for now', 'Yard signs']);
+    await u.selectOptions(pick, 'src-1');
+    await u.click(within(form).getByRole('button', { name: 'Get number' }));
+    expect(await screen.findByText('Bought, but not tied to Yard signs: that source was turned off.')).toBeInTheDocument();
+    expect(fake.callsTo('POST /numbers')[0]!.body).toEqual({ purpose: 'tracking', leadSourceId: 'src-1' });
   });
 });

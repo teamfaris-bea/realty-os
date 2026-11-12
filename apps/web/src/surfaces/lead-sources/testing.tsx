@@ -14,7 +14,7 @@ export const ADDR = `leads+${'ab'.repeat(20)}@leads.realty-os.invalid`;
 export const HOOK_URL = 'https://realty.example.test/api/webhooks/google-lead-form';
 export const GKEY = 'gk_' + 'c'.repeat(40);
 
-export function source(over: Partial<SourceOverview> & { paths?: Partial<SourceOverview['paths']> } = {}): SourceOverview {
+export function source(over: Omit<Partial<SourceOverview>, 'paths'> & { paths?: Partial<SourceOverview['paths']> } = {}): SourceOverview {
   const { paths, ...rest } = over;
   return {
     id: S1,

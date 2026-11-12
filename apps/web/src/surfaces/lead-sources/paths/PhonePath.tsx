@@ -101,7 +101,7 @@ export function PhonePath({ source, sourceName }: { source: SourceOverview; sour
       {failure ? <Notice tone="error">{sentenceFor(failure)}</Notice> : null}
       <p className="text-[15px] text-ink">{TRACKING_SENTENCE}</p>
       <p className="text-[15px]">
-        <Link to={PAGES.numbers} className="text-accent underline">
+        <Link to={PAGES.numbers} className="inline-flex min-h-tap items-center text-accent underline">
           Numbers and texting registration: Phone and email
         </Link>
       </p>

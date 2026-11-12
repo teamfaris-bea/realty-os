@@ -80,7 +80,8 @@ export interface PreviewResponse {
 
 export interface GoogleLeadForm {
   state: PathState;
-  webhookUrl: string;
+  /** null when not available (no public https address) */
+  webhookUrl: string | null;
   /** only while it is on */
   key: string | null;
   createdAt: string | null;

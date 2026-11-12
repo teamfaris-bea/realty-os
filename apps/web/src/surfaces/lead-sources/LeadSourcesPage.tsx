@@ -66,7 +66,7 @@ export function SourceCard({ source: s, now }: { source: SourceOverview; now: nu
     <Card as="article" aria-labelledby={hid} className="flex h-full flex-col gap-3">
       <div className="flex flex-col gap-0.5">
         <h2 id={hid} className="break-words text-[18px] font-semibold text-ink">
-          <Link to={detailPath(s.id)} className="underline-offset-2 hover:underline">
+          <Link to={detailPath(s.id)} className="inline-flex min-h-tap items-center underline-offset-2 hover:underline">
             {s.name}
           </Link>
         </h2>
@@ -75,7 +75,7 @@ export function SourceCard({ source: s, now }: { source: SourceOverview; now: nu
       <p className={`text-[15px] ${s.active ? 'text-ink' : 'font-medium text-ink'}`}>{statusSentence(s, now)}</p>
       {waiting ? (
         <p className="text-[15px]">
-          <Link to={PAGES.needsReview} className="text-accent underline">
+          <Link to={PAGES.needsReview} className="inline-flex min-h-tap items-center text-accent underline">
             {waiting}
           </Link>
         </p>

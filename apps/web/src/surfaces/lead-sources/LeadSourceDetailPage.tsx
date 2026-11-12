@@ -63,7 +63,7 @@ export default function LeadSourceDetailPage() {
       <div className="flex flex-col gap-3">
         <Notice tone="warn">This lead source doesn't exist, or you can't see it.</Notice>
         <p className="text-[15px]">
-          <Link to="/admin/lead-sources" className="text-accent underline">
+          <Link to="/admin/lead-sources" className="inline-flex min-h-tap items-center text-accent underline">
             All lead sources
           </Link>
         </p>
@@ -92,7 +92,7 @@ export default function LeadSourceDetailPage() {
   return (
     <div className="flex w-full flex-col gap-4">
       <p className="hidden text-[15px] md:block">
-        <Link to="/admin/lead-sources" className="text-accent underline">
+        <Link to="/admin/lead-sources" className="inline-flex min-h-tap items-center text-accent underline">
           All lead sources
         </Link>
       </p>
@@ -101,7 +101,7 @@ export default function LeadSourceDetailPage() {
         <p className="text-[16px] text-ink">{statusSentence(s, Date.now())}</p>
         {waiting ? (
           <p className="text-[15px]">
-            <Link to={PAGES.needsReview} className="text-accent underline">
+            <Link to={PAGES.needsReview} className="inline-flex min-h-tap items-center text-accent underline">
               {waiting}
             </Link>
           </p>
