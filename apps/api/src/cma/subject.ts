@@ -14,8 +14,9 @@
 // is 404).
 import type { Tx } from '@realty/db';
 import { AppError } from '../errors.js';
-import { type CmaPropertyType, type CmaSubject, type CmaSubjectFacts, type ValuationRow, addressKey, listingRow, mirrorsOf, mlsRowsAtAddress, uspsState } from './deps.js';
-import { type AddressRow, addressOf } from './repos.js';
+import { CMA_SUPPORTED_TYPES, type CmaPropertyType, type CmaSubject, type ListingRow, addressKey, factsOfRow, mlsRowsAtAddress, uspsCode } from './deps.js';
+import { type AddressRow, addressOf, listingRow, mirrorsOf } from './repos.js';
+import type { CmaSubjectFacts } from './schemas.js';
 
 export type FactSource = 'mls' | 'team' | 'agent';
 export interface Fact<T> {
@@ -80,7 +81,7 @@ export interface ResolvedSubject {
   sizeSource: string | null;
   sizeSentence: string;
   saleHistory: SaleHistoryEntry[];
-  /** listing ids and MLS numbers that are the subject itself (never comps) */
+  /** listing ids and MLS numbers that are the subject itself (never comps): its listing and mirrors first, then records at its key */
   selfListingIds: string[];
   selfMlsNumbers: string[];
   /** the subject listing's MLS mirror (SELLER_WITHHELD reads its AVM flag) */
@@ -89,31 +90,38 @@ export interface ResolvedSubject {
   connectionId: string | null;
 }
 
-/** Owner question (g) default: land is not valued in V1. One branch: */
-export const UNSUPPORTED_TYPES: readonly CmaPropertyType[] = ['land'];
+/** Owner question (g) default, held by the engine (core/valuation CMA_SUPPORTED_TYPES): land and 'other' are not valued in V1. */
+export const SUPPORTED_TYPES: readonly CmaPropertyType[] = CMA_SUPPORTED_TYPES;
 
 const none = <T>(): Fact<T> => ({ value: null, source: null });
 const of = <T>(v: T | null | undefined, source: FactSource): Fact<T> => (v === null || v === undefined ? none<T>() : { value: v, source });
 const pick = <T>(...xs: Fact<T>[]): Fact<T> => xs.find((x) => x.value !== null) ?? none<T>();
-const num = (v: string | number | null): number | null => (v === null ? null : Number(v));
-const day = (d: Date | string | null): string | null => (d === null ? null : typeof d === 'string' ? d.slice(0, 10) : d.toISOString().slice(0, 10));
 
-function factsFromRow(r: ValuationRow | null, src: FactSource): SubjectFacts {
+/** The subject facts of a listings row (V1-A factsOfRow: a team row carries no valuation facts, only the MLS sync writes them). */
+function factsFromRow(r: ListingRow | null, src: FactSource): SubjectFacts {
+  const f = r === null ? null : factsOfRow(r);
+  const v = f?.valuation ?? null;
   return {
-    propertyType: of(r?.property_type as CmaPropertyType | null, src),
-    sqft: of(r?.sqft, src),
+    propertyType: of(f?.propertyType, src),
+    sqft: of(f?.sqft, src),
     agentEnteredSqft: null,
-    beds: of(r?.beds, src),
-    bathsX10: of(r?.baths_x10, src),
-    yearBuilt: of(r?.year_built, src),
-    lotSqft: of(r ? num(r.lot_sqft) : null, src),
-    garageSpacesX10: of(r?.garage_spaces_x10, src),
-    storiesX10: of(r?.stories_x10, src),
-    poolPrivate: of(r?.pool_private, src),
-    subdivision: of(r?.subdivision_name, src),
-    latE6: of(r?.latitude_e6, src),
-    lonE6: of(r?.longitude_e6, src),
+    beds: of(f?.beds, src),
+    bathsX10: of(f?.bathsX10, src),
+    yearBuilt: of(v?.yearBuilt, src),
+    lotSqft: of(v?.lotSqft, src),
+    garageSpacesX10: of(v?.garageSpacesX10, src),
+    storiesX10: of(v?.storiesX10, src),
+    poolPrivate: of(v?.poolPrivate, src),
+    subdivision: of(v?.subdivisionName, src),
+    latE6: of(v?.latitudeE6, src),
+    lonE6: of(v?.longitudeE6, src),
   };
+}
+
+/** V1-A's address key of a subject address, or null when a part the key needs (street, city, state, ZIP) is missing. */
+function keyOf(a: SubjectAddress): string | null {
+  if (!a.line1 || !a.city || !a.region || !a.postalCode) return null;
+  return addressKey({ line1: a.line1, line2: a.line2, city: a.city, region: a.region, postalCode: a.postalCode });
 }
 
 /** Agent-entered facts replace the resolved ones they name (labelled 'agent'). */
@@ -136,14 +144,17 @@ function withAgentFacts(f: SubjectFacts, a: CmaSubjectFacts | undefined): Subjec
   };
 }
 
-function history(rows: readonly ValuationRow[]): SaleHistoryEntry[] {
+function history(rows: readonly ListingRow[]): SaleHistoryEntry[] {
   return rows
     .filter((r) => r.status === 'sold')
-    .map((r) => ({ listingId: r.id, mlsNumber: r.mls_number, status: r.status, closeDate: day(r.close_date), closePriceCents: num(r.close_price_cents), listingBrokerageName: r.listing_brokerage_name }))
+    .map((r) => {
+      const v = factsOfRow(r).valuation;
+      return { listingId: r.id, mlsNumber: r.mls_number, status: r.status, closeDate: v.closeDate, closePriceCents: v.closePriceCents, listingBrokerageName: r.listing_brokerage_name };
+    })
     .sort((a, b) => ((b.closeDate ?? '') < (a.closeDate ?? '') ? -1 : (b.closeDate ?? '') > (a.closeDate ?? '') ? 1 : a.listingId < b.listingId ? -1 : 1));
 }
 
-function newest(rows: readonly ValuationRow[]): ValuationRow | null {
+function newest(rows: readonly ListingRow[]): ListingRow | null {
   return [...rows].sort((a, b) => (b.mls_modified_at?.getTime() ?? 0) - (a.mls_modified_at?.getTime() ?? 0) || (a.id < b.id ? -1 : 1))[0] ?? null;
 }
 
@@ -157,7 +168,7 @@ export async function resolveSubject(tx: Tx, input: SubjectInput, o: { contactId
   let sizeSource: string | null;
   let sizeSentence: string;
   let key: string | null;
-  let rowsAtKey: ValuationRow[] = [];
+  let rowsAtKey: ListingRow[] = [];
   let listingId: string | null = null;
   let contactAddressId: string | null = null;
   let mirrorListingId: string | null = null;
@@ -206,13 +217,13 @@ export async function resolveSubject(tx: Tx, input: SubjectInput, o: { contactId
       }
       mirrorListingId = mirror?.id ?? null;
       connectionId = mirror?.mls_connection_id ?? null;
-      key = mirror?.address_key ?? addressKey(address);
+      key = mirror?.address_key ?? keyOf(address);
     } else {
       facts = factsFromRow(row, 'mls');
       sizeSource = row.size_source;
       sizeSentence = `Size from the MLS record${row.size_source ? ` (${row.size_source})` : ''}.`;
       connectionId = row.mls_connection_id;
-      key = row.address_key ?? addressKey(address);
+      key = row.address_key ?? keyOf(address);
     }
     if (key) rowsAtKey = await mlsRowsAtAddress(tx, key);
   } else if (input.kind === 'contact_address') {
@@ -221,7 +232,7 @@ export async function resolveSubject(tx: Tx, input: SubjectInput, o: { contactId
     if (!a) throw new AppError('NOT_FOUND');
     contactAddressId = a.id;
     address = { line1: a.line1, line2: a.line2, city: a.city, region: a.region, postalCode: a.postal_code };
-    key = addressKey(address);
+    key = keyOf(address);
     rowsAtKey = key ? await mlsRowsAtAddress(tx, key) : [];
     const n = newest(rowsAtKey);
     facts = factsFromRow(n, 'mls');
@@ -231,16 +242,21 @@ export async function resolveSubject(tx: Tx, input: SubjectInput, o: { contactId
   } else {
     const an = input.anchor;
     address = { line1: an.line1 ?? null, line2: an.line2 ?? null, city: an.city ?? null, region: an.region, postalCode: an.postalCode };
-    key = addressKey(address);
+    key = keyOf(address);
     rowsAtKey = key ? await mlsRowsAtAddress(tx, key) : [];
     facts = factsFromRow(null, 'agent');
     sizeSource = o.sizeField;
     sizeSentence = agentSize;
   }
 
+  // the subject listing and its mirrors first (sorted), then the other records at its address key (sorted)
+  const own = [...self].sort();
+  const ownNumbers = [...selfNumbers].sort();
+  const atKey = new Set<string>();
+  const atKeyNumbers = new Set<string>();
   for (const r of rowsAtKey) {
-    self.add(r.id);
-    if (r.mls_number) selfNumbers.add(r.mls_number);
+    if (!self.has(r.id)) atKey.add(r.id);
+    if (r.mls_number && !selfNumbers.has(r.mls_number)) atKeyNumbers.add(r.mls_number);
   }
   const hadSize = facts.sqft.value !== null;
   facts = withAgentFacts(facts, input.facts);
@@ -256,8 +272,8 @@ export async function resolveSubject(tx: Tx, input: SubjectInput, o: { contactId
       sentence: rowsAtKey.length === 0 ? 'This address is not in the MLS history. Enter the property type and size to prepare a CMA.' : 'Enter the property type and size to prepare a CMA.',
     });
   }
-  if (UNSUPPORTED_TYPES.includes(facts.propertyType.value!)) {
-    throw new AppError('CMA_SUBJECT_TYPE_NOT_SUPPORTED', { propertyType: facts.propertyType.value, sentence: 'Land is not valued yet: CMAs cover homes only for now.' });
+  if (!SUPPORTED_TYPES.includes(facts.propertyType.value!)) {
+    throw new AppError('CMA_SUBJECT_TYPE_NOT_SUPPORTED', { propertyType: facts.propertyType.value, sentence: 'Land and other property types are not valued yet: CMAs cover homes only for now.' });
   }
 
   return {
@@ -266,39 +282,48 @@ export async function resolveSubject(tx: Tx, input: SubjectInput, o: { contactId
     contactAddressId,
     address,
     addressKey: key,
-    state: uspsState(address.region),
+    state: address.region === null ? null : uspsCode(address.region),
     facts,
     sizeSource,
     sizeSentence,
     saleHistory: history(rowsAtKey),
-    selfListingIds: [...self].sort(),
-    selfMlsNumbers: [...selfNumbers].sort(),
+    selfListingIds: [...own, ...[...atKey].sort()],
+    selfMlsNumbers: [...ownNumbers, ...[...atKeyNumbers].sort()],
     mirrorListingId,
     connectionId,
   };
 }
 
-/** The engine's view of the subject (property and location facts only). */
+/** V1-B's subject schema holds at most this many own identities and MLS numbers. */
+const MAX_OWN = 100;
+
+/**
+ * The engine's view of the subject (property and location facts only; V1-B CmaSubject). The region is the USPS code
+ * when known, as V1-A stores an MLS row's StateOrProvince (upper case), so the city tier compares like with like. The
+ * subject's own listing and its mirrors come first in ownIdentities; records found only at the address key follow
+ * (the engine also knows them by the address key, so the cap never lets one become a comp).
+ */
 export function engineSubject(s: ResolvedSubject): CmaSubject {
+  const located = s.facts.latE6.value !== null && s.facts.lonE6.value !== null;
   return {
-    propertyType: s.facts.propertyType.value!,
-    sqft: s.facts.sqft.value!,
+    propertyType: s.facts.propertyType.value,
+    sqft: s.facts.sqft.value,
     sizeSource: s.sizeSource,
     beds: s.facts.beds.value,
     bathsX10: s.facts.bathsX10.value,
     yearBuilt: s.facts.yearBuilt.value,
     lotSqft: s.facts.lotSqft.value,
     garageSpacesX10: s.facts.garageSpacesX10.value,
-    storiesX10: s.facts.storiesX10.value,
     poolPrivate: s.facts.poolPrivate.value,
-    latE6: s.facts.latE6.value !== null && s.facts.lonE6.value !== null ? s.facts.latE6.value : null,
-    lonE6: s.facts.latE6.value !== null && s.facts.lonE6.value !== null ? s.facts.lonE6.value : null,
-    subdivision: s.facts.subdivision.value,
+    storiesX10: s.facts.storiesX10.value,
+    latE6: located ? s.facts.latE6.value : null,
+    lonE6: located ? s.facts.lonE6.value : null,
     postalCode: s.address.postalCode,
     city: s.address.city,
-    region: s.address.region,
+    region: s.state ?? s.address.region,
+    subdivisionName: s.facts.subdivision.value,
     addressKey: s.addressKey,
-    listingIds: s.selfListingIds,
-    mlsNumbers: s.selfMlsNumbers,
+    ownIdentities: s.selfListingIds.slice(0, MAX_OWN),
+    ownMlsNumbers: s.selfMlsNumbers.slice(0, MAX_OWN),
   };
 }

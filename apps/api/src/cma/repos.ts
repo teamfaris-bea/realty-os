@@ -3,6 +3,7 @@
 // actor as themselves; edited by its creator or a tenant-wide role; the guard keeps shared and superseded rows frozen).
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
+import { LISTING_COLS, type ListingRow } from './deps.js';
 
 export type CmaStatus = 'draft' | 'shared' | 'superseded';
 export type CmaPurpose = 'listing_price' | 'buyer_offer' | 'other';
@@ -165,10 +166,13 @@ export async function contactLive(tx: Tx, contactId: string): Promise<{ live: bo
   return x ? { live: x.live, mergedInto: x.merged_into } : null;
 }
 
-/** The size field the connections' sold rows were read from most (the "connection's size field", V3). */
+/**
+ * The size field the connections' sold rows were read from most (the "connection's size field", V3): the RESO name
+ * V1-A's sync stored in listings.size_source (normalize records the field it read sqft from, LivingArea by default,
+ * BuildingAreaTotal under the Spark mapping). No column records a connection's field, so the newest sold rows are sampled.
+ */
 export async function connectionSizeField(tx: Tx, connectionIds: readonly string[]): Promise<string | null> {
   if (connectionIds.length === 0) return null;
-  // a sample of the feed's sold rows (interim: V1-A records the connection's size field)
   const r = await sql<{ f: string }>`SELECT f FROM (SELECT size_source AS f FROM listings WHERE tenant_id = app.tenant_id() AND source = 'mls'
      AND mls_connection_id = ANY (${[...connectionIds]}::uuid[]) AND status = 'sold' AND size_source IS NOT NULL LIMIT 500) x
      GROUP BY f ORDER BY count(*) DESC, f LIMIT 1`.execute(tx);
@@ -183,8 +187,19 @@ export async function tenantZoneName(tx: Tx): Promise<string> {
   return (await sql<{ z: string }>`SELECT default_timezone AS z FROM tenant_settings WHERE tenant_id = app.tenant_id()`.execute(tx)).rows[0]?.z ?? 'UTC';
 }
 
-/** The tenant's raw licence packs by connection (the valuation section and sold fields are read from the stored JSON). */
-export async function storedPacks(tx: Tx): Promise<Map<string, unknown>> {
-  const r = await sql<{ id: string; license_pack: unknown }>`SELECT id, license_pack FROM integration_connections WHERE tenant_id = app.tenant_id() AND kind = 'mls_feed'`.execute(tx);
-  return new Map(r.rows.map((x) => [x.id, x.license_pack]));
+// ---- listings (V1-A's columns and row type) ---------------------------------------------------------
+
+export async function listingRow(tx: Tx, id: string): Promise<ListingRow | null> {
+  return (await sql<ListingRow>`SELECT ${LISTING_COLS} FROM listings l WHERE l.tenant_id = app.tenant_id() AND l.id = ${id}::uuid`.execute(tx)).rows[0] ?? null;
+}
+
+export async function listingRows(tx: Tx, ids: readonly string[]): Promise<ListingRow[]> {
+  if (ids.length === 0) return [];
+  return (await sql<ListingRow>`SELECT ${LISTING_COLS} FROM listings l WHERE l.tenant_id = app.tenant_id() AND l.id = ANY (${[...ids]}::uuid[]) ORDER BY l.id`.execute(tx)).rows;
+}
+
+/** The MLS mirrors of a team listing (R-MLS-5), newest first. */
+export async function mirrorsOf(tx: Tx, teamListingId: string): Promise<ListingRow[]> {
+  return (await sql<ListingRow>`SELECT ${LISTING_COLS} FROM listings l WHERE l.tenant_id = app.tenant_id() AND l.source = 'mls' AND l.team_listing_id = ${teamListingId}::uuid
+    ORDER BY l.mls_modified_at DESC NULLS LAST, l.id`.execute(tx)).rows;
 }

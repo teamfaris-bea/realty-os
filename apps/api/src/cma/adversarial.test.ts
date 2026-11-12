@@ -61,6 +61,22 @@ describe('forged ids', () => {
   });
 });
 
+describe('stored values beyond the engine\'s bounds', () => {
+  it('E361 R-CMA-2: an MLS sale the sync stored with a value beyond the engine\'s bounds (a $2 billion close price) is left out and said; the CMA is still prepared', async () => {
+    const wb = await cmaWorld(h);
+    await localSales(wb, 5);
+    const bad = await mlsSale(wb, { closePriceCents: 200_000_000_000, closeDate: daysAgo(8), sqft: 1500 });
+    expect((await h.su.query('SELECT close_price_cents FROM listings WHERE id = $1', [bad])).rows[0].close_price_cents).toBe('200000000000');
+    const { c } = await seller(wb);
+    const r = await oneTap(wb.agents[0]!, c);
+    expect(r.status).toBe(201);
+    expect(r.body.cma.area.recordsLeftOut).toBe(1);
+    expect(r.body.cma.area.sentences).toContain('1 MLS record was left out because its stored values are outside what the valuation reads (for example a price above $1 billion).');
+    expect(JSON.stringify(r.body)).not.toContain(bad);
+    expect(r.body.cma.comps.length).toBeGreaterThanOrEqual(3);
+  });
+});
+
 describe('strict inputs (R-CMA-2, fair housing)', () => {
   it('extra keys in entered facts are refused (no school, demographic, crime or listing-text field reaches the engine)', async () => {
     for (const extra of [{ schoolRating: 9 }, { neighborhoodDemographics: 'x' }, { crimeIndex: 3 }, { description: 'great family street' }, { photos: ['https://x.invalid/1.jpg'] }]) {

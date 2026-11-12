@@ -2,8 +2,31 @@
 // person, demographic or school field can reach the engine (R-CMA-2, fair housing). Response schemas carry no tenant id
 // and no field named like confidence, score or probability (R-AST-13, R-CMA-4; snapshot-tested).
 import { z } from 'zod';
-import { CMA_PROPERTY_TYPES, CMA_TIERS, CmaSubjectFactsSchema } from './deps.js';
+import { CMA_PROPERTY_TYPES, CMA_TIERS } from './deps.js';
 import { BLOCKER_CODES } from './gates.js';
+
+const Int = z.number().int();
+
+/**
+ * The agent-entered subject facts (strict: no other key is accepted, R-CMA-2 / fair housing). These are the agent-entry
+ * bounds; each one fits core/valuation's CmaSubjectSchema field of the same fact (schemas.test.ts checks it), where
+ * `subdivision` is the engine's `subdivisionName`.
+ */
+export const CmaSubjectFactsSchema = z
+  .object({
+    propertyType: z.enum(CMA_PROPERTY_TYPES).optional(),
+    sqft: Int.min(100).max(100_000).optional(),
+    beds: Int.min(0).max(50).nullable().optional(),
+    bathsX10: Int.min(0).max(500).nullable().optional(),
+    yearBuilt: Int.min(1600).max(2100).nullable().optional(),
+    lotSqft: Int.min(0).max(1e9).nullable().optional(),
+    garageSpacesX10: Int.min(0).max(500).nullable().optional(),
+    storiesX10: Int.min(0).max(500).nullable().optional(),
+    poolPrivate: z.boolean().nullable().optional(),
+    subdivision: z.string().trim().min(1).max(120).nullable().optional(),
+  })
+  .strict();
+export type CmaSubjectFacts = z.infer<typeof CmaSubjectFactsSchema>;
 
 const Id = z.uuid();
 const Day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -54,6 +77,8 @@ const Source = z.enum(['mls', 'team', 'agent']).nullable();
 const fact = <T extends z.ZodType>(v: T) => z.object({ value: v.nullable(), source: Source });
 const Address = z.object({ line1: z.string().nullable(), line2: z.string().nullable(), city: z.string().nullable(), region: z.string().nullable(), postalCode: z.string().nullable() });
 const N = z.number().nullable();
+const ListingAddress = z.object({ line1: z.string(), line2: z.string().nullable(), city: z.string(), region: z.string(), postalCode: z.string() });
+const Support = z.object({ kind: z.enum(['with_without', 'above_below', 'sales_months', 'none']), first: z.number(), second: z.number(), pairs: z.number() });
 
 export const CmaViewSchema = z.object({
   id: Id,
@@ -100,7 +125,17 @@ export const CmaViewSchema = z.object({
     exclude: z.array(z.string()),
     nearMatchDismissed: z.array(z.string()),
   }),
-  result: z.object({ available: z.boolean(), reason: z.enum(['INSUFFICIENT_COMPS']).nullable(), sentence: z.string(), valueCents: N, lowCents: N, highCents: N }),
+  result: z.object({
+    available: z.boolean(),
+    reason: z.enum(['NO_SALES', 'INSUFFICIENT_COMPS', 'SUBJECT_INCOMPLETE', 'SUBJECT_TYPE_NOT_SUPPORTED']).nullable(),
+    sentence: z.string(),
+    sentences: z.array(z.string()),
+    valueCents: N,
+    lowCents: N,
+    highCents: N,
+    closeDateSpan: z.object({ earliest: z.string(), latest: z.string() }).nullable(),
+    distanceSpanM: z.object({ min: z.number(), max: z.number() }).nullable(),
+  }),
   comps: z.array(
     z.object({
       listingId: z.string(),
@@ -108,31 +143,47 @@ export const CmaViewSchema = z.object({
       sourceLabel: z.enum(['MLS', 'Team']),
       mlsNumber: z.string().nullable(),
       listingBrokerageName: z.string().nullable(),
-      address: z.object({ line1: z.string(), line2: z.string().nullable(), city: z.string(), region: z.string(), postalCode: z.string() }),
+      address: ListingAddress,
       closePriceCents: N,
       closeDate: z.string().nullable(),
       contractDate: z.string().nullable(),
-      distanceMiles: N,
-      distanceSentence: z.string(),
-      tier: z.enum(CMA_TIERS),
+      distanceM: N,
+      tier: z.enum(CMA_TIERS).nullable(),
       facts: z.object({ propertyType: z.string().nullable(), sqft: N, sizeSource: z.string().nullable(), beds: N, bathsX10: N, yearBuilt: N, lotSqft: N, daysOnMarket: N, concessionsCents: N }),
-      adjustments: z.array(z.object({ feature: z.string(), amountCents: z.number(), sentence: z.string() })),
+      adjustments: z.array(z.object({ feature: z.string(), subjectValue: N, compValue: N, rate: N, amountCents: z.number(), support: Support, sentence: z.string() })),
       adjustedPriceCents: z.number(),
+      grossAdjustmentBps: z.number(),
+      weightBasisBps: z.number(),
       weightBps: z.number(),
       why: z.array(z.string()),
+      labels: z.array(z.string()),
       saleConditions: z.array(z.string()),
       includedByAgent: z.boolean(),
     }),
   ),
-  notUsed: z.array(z.object({ listingId: z.string(), mlsNumber: z.string().nullable(), address: z.string(), reason: z.string(), sentence: z.string(), includable: z.boolean() })),
-  adjustmentRates: z.array(z.object({ feature: z.string(), adjusted: z.boolean(), centsPerUnit: N, unit: z.string(), support: z.object({ below: z.number(), above: z.number(), pairs: z.number() }), sentence: z.string() })),
+  notUsed: z.array(z.object({ listingId: z.string(), mlsNumber: z.string().nullable(), address: z.string(), reason: z.string(), conditions: z.array(z.string()), distanceM: N, sentence: z.string(), includable: z.boolean() })),
+  notUsedTotal: z.number(),
+  subjectSales: z.array(z.object({ listingId: z.string(), closeDate: z.string().nullable(), closePriceCents: N, status: z.string() })),
   context: z.array(
     z.object({ listingId: z.string(), sourceLabel: z.enum(['MLS', 'Team']), mlsNumber: z.string().nullable(), listingBrokerageName: z.string().nullable(), status: z.string(), listPriceCents: N, beds: N, bathsX10: N, sqft: N, address: z.string(), why: z.array(z.string()) }),
   ),
   contextSentence: z.string(),
-  area: z.object({ tierUsed: z.enum(CMA_TIERS).nullable(), tiers: z.array(z.object({ tier: z.enum(CMA_TIERS), ran: z.boolean(), count: z.number(), limit: z.number(), limitReached: z.boolean(), sentence: z.string() })) }),
-  market: z.object({ sales: z.number(), medianPricePerSqftCents: N, medianDaysOnMarket: N, sentence: z.string() }),
-  backtest: z.object({ tested: z.number(), withinPct: z.number(), within: z.number(), sentence: z.string() }),
+  area: z.object({
+    tier: z.enum(CMA_TIERS).nullable(),
+    lookbackMonths: z.number(),
+    tiersSkipped: z.array(z.enum(CMA_TIERS)),
+    reads: z.array(z.object({ tier: z.enum([...CMA_TIERS, 'rate_pool']), ran: z.boolean(), rows: z.number(), limitReached: z.boolean() })),
+    recordsLeftOut: z.number(),
+    sentences: z.array(z.string()),
+  }),
+  market: z.object({
+    poolTier: z.enum(CMA_TIERS).nullable(),
+    poolMonths: z.number(),
+    poolSales: z.number(),
+    rates: z.array(z.object({ feature: z.string(), applied: z.boolean(), rate: N, support: Support, sentence: z.string() })),
+    sentences: z.array(z.string()),
+  }),
+  backtest: z.object({ salesTested: z.number(), notValued: z.number(), medianMissBps: N, within10PctBps: N, windowStart: z.string(), sentence: z.string() }),
   nearMatches: z.array(z.object({ listingId: z.string(), mlsNumber: z.string().nullable(), address: z.string(), status: z.string(), listingBrokerageName: z.string().nullable(), avmDisplayAllowed: z.boolean(), dismissed: z.boolean() })),
   clientShare: z.object({
     allowed: z.boolean(),

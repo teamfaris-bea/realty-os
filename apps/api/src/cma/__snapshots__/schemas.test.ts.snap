@@ -116,71 +116,64 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
     "cma": {
       "additionalProperties": false,
       "properties": {
-        "adjustmentRates": {
-          "items": {
-            "additionalProperties": false,
-            "properties": {
-              "adjusted": {
-                "type": "boolean",
-              },
-              "centsPerUnit": {
-                "type": [
-                  "number",
-                  "null",
-                ],
-              },
-              "feature": {
-                "type": "string",
-              },
-              "sentence": {
-                "type": "string",
-              },
-              "support": {
-                "additionalProperties": false,
-                "properties": {
-                  "above": {
-                    "type": "number",
-                  },
-                  "below": {
-                    "type": "number",
-                  },
-                  "pairs": {
-                    "type": "number",
-                  },
-                },
-                "required": [
-                  "below",
-                  "above",
-                  "pairs",
-                ],
-                "type": "object",
-              },
-              "unit": {
-                "type": "string",
-              },
-            },
-            "required": [
-              "feature",
-              "adjusted",
-              "centsPerUnit",
-              "unit",
-              "support",
-              "sentence",
-            ],
-            "type": "object",
-          },
-          "type": "array",
-        },
         "area": {
           "additionalProperties": false,
           "properties": {
-            "tierUsed": {
+            "lookbackMonths": {
+              "type": "number",
+            },
+            "reads": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "limitReached": {
+                    "type": "boolean",
+                  },
+                  "ran": {
+                    "type": "boolean",
+                  },
+                  "rows": {
+                    "type": "number",
+                  },
+                  "tier": {
+                    "enum": [
+                      "subdivision",
+                      "within_1mi",
+                      "postal_code",
+                      "within_3mi",
+                      "city",
+                      "rate_pool",
+                    ],
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "tier",
+                  "ran",
+                  "rows",
+                  "limitReached",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+            "recordsLeftOut": {
+              "type": "number",
+            },
+            "sentences": {
+              "items": {
+                "type": "string",
+              },
+              "type": "array",
+            },
+            "tier": {
               "anyOf": [
                 {
                   "enum": [
                     "subdivision",
-                    "radius_1mi",
+                    "within_1mi",
                     "postal_code",
+                    "within_3mi",
                     "city",
                   ],
                   "type": "string",
@@ -190,74 +183,64 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
                 },
               ],
             },
-            "tiers": {
+            "tiersSkipped": {
               "items": {
-                "additionalProperties": false,
-                "properties": {
-                  "count": {
-                    "type": "number",
-                  },
-                  "limit": {
-                    "type": "number",
-                  },
-                  "limitReached": {
-                    "type": "boolean",
-                  },
-                  "ran": {
-                    "type": "boolean",
-                  },
-                  "sentence": {
-                    "type": "string",
-                  },
-                  "tier": {
-                    "enum": [
-                      "subdivision",
-                      "radius_1mi",
-                      "postal_code",
-                      "city",
-                    ],
-                    "type": "string",
-                  },
-                },
-                "required": [
-                  "tier",
-                  "ran",
-                  "count",
-                  "limit",
-                  "limitReached",
-                  "sentence",
+                "enum": [
+                  "subdivision",
+                  "within_1mi",
+                  "postal_code",
+                  "within_3mi",
+                  "city",
                 ],
-                "type": "object",
+                "type": "string",
               },
               "type": "array",
             },
           },
           "required": [
-            "tierUsed",
-            "tiers",
+            "tier",
+            "lookbackMonths",
+            "tiersSkipped",
+            "reads",
+            "recordsLeftOut",
+            "sentences",
           ],
           "type": "object",
         },
         "backtest": {
           "additionalProperties": false,
           "properties": {
+            "medianMissBps": {
+              "type": [
+                "number",
+                "null",
+              ],
+            },
+            "notValued": {
+              "type": "number",
+            },
+            "salesTested": {
+              "type": "number",
+            },
             "sentence": {
               "type": "string",
             },
-            "tested": {
-              "type": "number",
+            "windowStart": {
+              "type": "string",
             },
-            "within": {
-              "type": "number",
-            },
-            "withinPct": {
-              "type": "number",
+            "within10PctBps": {
+              "type": [
+                "number",
+                "null",
+              ],
             },
           },
           "required": [
-            "tested",
-            "withinPct",
-            "within",
+            "salesTested",
+            "notValued",
+            "medianMissBps",
+            "within10PctBps",
+            "windowStart",
             "sentence",
           ],
           "type": "object",
@@ -367,16 +350,68 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
                     "amountCents": {
                       "type": "number",
                     },
+                    "compValue": {
+                      "type": [
+                        "number",
+                        "null",
+                      ],
+                    },
                     "feature": {
                       "type": "string",
+                    },
+                    "rate": {
+                      "type": [
+                        "number",
+                        "null",
+                      ],
                     },
                     "sentence": {
                       "type": "string",
                     },
+                    "subjectValue": {
+                      "type": [
+                        "number",
+                        "null",
+                      ],
+                    },
+                    "support": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "first": {
+                          "type": "number",
+                        },
+                        "kind": {
+                          "enum": [
+                            "with_without",
+                            "above_below",
+                            "sales_months",
+                            "none",
+                          ],
+                          "type": "string",
+                        },
+                        "pairs": {
+                          "type": "number",
+                        },
+                        "second": {
+                          "type": "number",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "first",
+                        "second",
+                        "pairs",
+                      ],
+                      "type": "object",
+                    },
                   },
                   "required": [
                     "feature",
+                    "subjectValue",
+                    "compValue",
+                    "rate",
                     "amountCents",
+                    "support",
                     "sentence",
                   ],
                   "type": "object",
@@ -401,14 +436,11 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
                   "null",
                 ],
               },
-              "distanceMiles": {
+              "distanceM": {
                 "type": [
                   "number",
                   "null",
                 ],
-              },
-              "distanceSentence": {
-                "type": "string",
               },
               "facts": {
                 "additionalProperties": false,
@@ -481,8 +513,17 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
                 ],
                 "type": "object",
               },
+              "grossAdjustmentBps": {
+                "type": "number",
+              },
               "includedByAgent": {
                 "type": "boolean",
+              },
+              "labels": {
+                "items": {
+                  "type": "string",
+                },
+                "type": "array",
               },
               "listingBrokerageName": {
                 "type": [
@@ -516,13 +557,24 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
                 "type": "string",
               },
               "tier": {
-                "enum": [
-                  "subdivision",
-                  "radius_1mi",
-                  "postal_code",
-                  "city",
+                "anyOf": [
+                  {
+                    "enum": [
+                      "subdivision",
+                      "within_1mi",
+                      "postal_code",
+                      "within_3mi",
+                      "city",
+                    ],
+                    "type": "string",
+                  },
+                  {
+                    "type": "null",
+                  },
                 ],
-                "type": "string",
+              },
+              "weightBasisBps": {
+                "type": "number",
               },
               "weightBps": {
                 "type": "number",
@@ -544,14 +596,16 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
               "closePriceCents",
               "closeDate",
               "contractDate",
-              "distanceMiles",
-              "distanceSentence",
+              "distanceM",
               "tier",
               "facts",
               "adjustments",
               "adjustedPriceCents",
+              "grossAdjustmentBps",
+              "weightBasisBps",
               "weightBps",
               "why",
+              "labels",
               "saleConditions",
               "includedByAgent",
             ],
@@ -727,30 +781,103 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
         "market": {
           "additionalProperties": false,
           "properties": {
-            "medianDaysOnMarket": {
-              "type": [
-                "number",
-                "null",
-              ],
-            },
-            "medianPricePerSqftCents": {
-              "type": [
-                "number",
-                "null",
-              ],
-            },
-            "sales": {
+            "poolMonths": {
               "type": "number",
             },
-            "sentence": {
-              "type": "string",
+            "poolSales": {
+              "type": "number",
+            },
+            "poolTier": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "subdivision",
+                    "within_1mi",
+                    "postal_code",
+                    "within_3mi",
+                    "city",
+                  ],
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "rates": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "applied": {
+                    "type": "boolean",
+                  },
+                  "feature": {
+                    "type": "string",
+                  },
+                  "rate": {
+                    "type": [
+                      "number",
+                      "null",
+                    ],
+                  },
+                  "sentence": {
+                    "type": "string",
+                  },
+                  "support": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "first": {
+                        "type": "number",
+                      },
+                      "kind": {
+                        "enum": [
+                          "with_without",
+                          "above_below",
+                          "sales_months",
+                          "none",
+                        ],
+                        "type": "string",
+                      },
+                      "pairs": {
+                        "type": "number",
+                      },
+                      "second": {
+                        "type": "number",
+                      },
+                    },
+                    "required": [
+                      "kind",
+                      "first",
+                      "second",
+                      "pairs",
+                    ],
+                    "type": "object",
+                  },
+                },
+                "required": [
+                  "feature",
+                  "applied",
+                  "rate",
+                  "support",
+                  "sentence",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+            "sentences": {
+              "items": {
+                "type": "string",
+              },
+              "type": "array",
             },
           },
           "required": [
-            "sales",
-            "medianPricePerSqftCents",
-            "medianDaysOnMarket",
-            "sentence",
+            "poolTier",
+            "poolMonths",
+            "poolSales",
+            "rates",
+            "sentences",
           ],
           "type": "object",
         },
@@ -821,6 +948,18 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
               "address": {
                 "type": "string",
               },
+              "conditions": {
+                "items": {
+                  "type": "string",
+                },
+                "type": "array",
+              },
+              "distanceM": {
+                "type": [
+                  "number",
+                  "null",
+                ],
+              },
               "includable": {
                 "type": "boolean",
               },
@@ -845,12 +984,17 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
               "mlsNumber",
               "address",
               "reason",
+              "conditions",
+              "distanceM",
               "sentence",
               "includable",
             ],
             "type": "object",
           },
           "type": "array",
+        },
+        "notUsedTotal": {
+          "type": "number",
         },
         "notes": {
           "type": [
@@ -872,6 +1016,52 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
             "available": {
               "type": "boolean",
             },
+            "closeDateSpan": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "earliest": {
+                      "type": "string",
+                    },
+                    "latest": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "earliest",
+                    "latest",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "distanceSpanM": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "max": {
+                      "type": "number",
+                    },
+                    "min": {
+                      "type": "number",
+                    },
+                  },
+                  "required": [
+                    "min",
+                    "max",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
             "highCents": {
               "type": [
                 "number",
@@ -888,7 +1078,10 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
               "anyOf": [
                 {
                   "enum": [
+                    "NO_SALES",
                     "INSUFFICIENT_COMPS",
+                    "SUBJECT_INCOMPLETE",
+                    "SUBJECT_TYPE_NOT_SUPPORTED",
                   ],
                   "type": "string",
                 },
@@ -899,6 +1092,12 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
             },
             "sentence": {
               "type": "string",
+            },
+            "sentences": {
+              "items": {
+                "type": "string",
+              },
+              "type": "array",
             },
             "valueCents": {
               "type": [
@@ -911,9 +1110,12 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
             "available",
             "reason",
             "sentence",
+            "sentences",
             "valueCents",
             "lowCents",
             "highCents",
+            "closeDateSpan",
+            "distanceSpanM",
           ],
           "type": "object",
         },
@@ -1464,6 +1666,39 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
           ],
           "type": "object",
         },
+        "subjectSales": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "closeDate": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "closePriceCents": {
+                "type": [
+                  "number",
+                  "null",
+                ],
+              },
+              "listingId": {
+                "type": "string",
+              },
+              "status": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "listingId",
+              "closeDate",
+              "closePriceCents",
+              "status",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
         "updatedAt": {
           "type": "string",
         },
@@ -1494,7 +1729,8 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
         "result",
         "comps",
         "notUsed",
-        "adjustmentRates",
+        "notUsedTotal",
+        "subjectSales",
         "context",
         "contextSentence",
         "area",

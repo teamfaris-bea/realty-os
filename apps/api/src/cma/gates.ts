@@ -1,18 +1,36 @@
 // The CMA gates (module 71; R-CMA-6, R-CMA-7; R-MLS-2/3/4/5, R-INT-6, R-AVM-1; E369, E370, E371).
 //
-// Agent gate (R-CMA-6): an agent CMA needs a live MLS connection whose licence pack records valuation use
-// (valuation.agent_cma). Otherwise it is refused in words. A stale feed is not a block: "MLS data as of …" is shown.
+// Agent gate (R-CMA-6): an agent CMA reads the connections V1-A's valuationEligible(…, 'agent_cma') admits: live, with
+// the licence pack's valuation.agent_cma. With no live connection it is refused in words (CMA_NO_MLS_CONNECTION), with
+// live ones but none allowed likewise (CMA_VALUATION_NOT_ALLOWED, E371). A stale feed is not a block: "MLS data as of …"
+// is shown (E369).
 //
-// Client readiness (R-CMA-7): computed on every view, never stored, and nothing is shared in V1. `allowed` only when
-// no blocker holds. Each blocker is one plain sentence. VERIFY WITH COUNSEL / MLS: every sentence and every condition.
-// V2's share re-checks the same function inside the transaction that queues the share.
+// Client readiness (R-CMA-7): computed on every view, never stored, and nothing is shared in V1. `allowed` only when no
+// blocker holds. Every blocker that holds is listed, each in one plain sentence, read from V1-A's parsed licence pack
+// (LicensePack.valuation, valuationStatement), V1-A's connection eligibility and freshness, and V1-A's client renderings
+// (clientView; clientSoldView for a mirrored team sale). V1-A's valuationEligible(…, 'client_cma') is the authority:
+// whatever it refuses is always a blocker here, so readiness is never looser than the client gate. VERIFY WITH COUNSEL /
+// MLS: every sentence and every condition. V2's share re-checks the same function inside the transaction that queues it.
+import type { DisplayListing } from '@realty/core/listings';
 import { type IanaZone, type Instant } from '@realty/core/foundation';
-import { feedStale, packReviewed } from '@realty/core/listings';
 import type { Tx } from '@realty/db';
 import { AppError } from '../errors.js';
-import { type MlsConnectionFacts, type MlsEligibility, mlsEligibility } from '../mls/eligibility.js';
-import { type ValuationRow, type ValuationUse, clientSoldView, listingRows, liveNearMatches, LIVE_STATUSES, mlsRowsAtAddress, valuationUse } from './deps.js';
-import { platformCleared, storedPacks } from './repos.js';
+import {
+  type ListingRow,
+  type MlsConnectionFacts,
+  type MlsEligibility,
+  type ValuationRefusal,
+  clientSoldView,
+  clientView,
+  connectionClientEligible,
+  liveNearMatches,
+  mlsEligibility,
+  mlsRowsAtAddress,
+  streetOfKey,
+  valuationEligible,
+  valuationStatement,
+} from './deps.js';
+import { listingRows, platformCleared } from './repos.js';
 
 export const CMA_PLATFORM_PACK = 'platform:cma';
 /** The R-AVM-1 sentence every client rendering carries (named in the readiness view). VERIFY WITH COUNSEL. */
@@ -46,33 +64,33 @@ export interface ClientShare {
 
 export interface ConnectionUse {
   conn: MlsConnectionFacts;
-  use: ValuationUse;
   stale: boolean;
 }
 
 export interface CmaConnections {
   e: MlsEligibility;
-  packs: Map<string, unknown>;
   /** live connections whose pack records valuation use (the CMA's data) */
   used: ConnectionUse[];
 }
 
-const LIVE = new Set(['connected', 'degraded']);
+/** The live statuses of an MLS record of the subject (SELLER_WITHHELD; the same three V1-A's liveNearMatches reads). */
+export const LIVE_STATUSES: readonly string[] = ['coming_soon', 'active', 'pending'];
 
 export const SENTENCES = {
   noConnection: 'No MLS feed is connected, so there are no sold homes to compare.',
   notAllowed: 'Your MLS licence pack does not say MLS sold data may be used for valuations. An Owner or Admin records this from your MLS agreement.',
 } as const;
 
+const NOT_LIVE: ReadonlySet<ValuationRefusal> = new Set(['NO_MLS_CONNECTION', 'MLS_NOT_LIVE']);
+
 /** The agent gate (R-CMA-6): throws in words, or returns the connections the CMA reads. */
 export async function agentGate(tx: Tx, now: Instant): Promise<CmaConnections> {
   const e = await mlsEligibility(tx, now);
-  const packs = await storedPacks(tx);
-  const live = e.connections.filter((c) => LIVE.has(c.status));
-  if (live.length === 0) throw new AppError('CMA_NO_MLS_CONNECTION', { sentence: SENTENCES.noConnection });
-  const used = live.map((conn) => ({ conn, use: valuationUse(packs.get(conn.id)), stale: feedStale(conn.lastSyncedAt, now, conn.pack) })).filter((u) => u.use.agentCma);
+  const verdicts = e.connections.map((conn) => ({ conn, v: valuationEligible(e, conn.id, 'agent_cma', null, now) }));
+  if (verdicts.every((x) => !x.v.ok && NOT_LIVE.has(x.v.code))) throw new AppError('CMA_NO_MLS_CONNECTION', { sentence: SENTENCES.noConnection });
+  const used = verdicts.filter((x) => x.v.ok).map(({ conn }) => ({ conn, stale: e.staleIds.includes(conn.id) }));
   if (used.length === 0) throw new AppError('CMA_VALUATION_NOT_ALLOWED', { sentence: SENTENCES.notAllowed }); // E371
-  return { e, packs, used };
+  return { e, used };
 }
 
 /** "MLS data as of" = the newest last sync of the connections used. */
@@ -87,6 +105,12 @@ export function asOfSentence(at: Date | null, zone: IanaZone): string {
   return `MLS data as of ${f}.`;
 }
 
+/** One comp's sale as the readiness check sees it: the MLS row behind it and, for a mirrored team sale, the team row. */
+export interface CompSale {
+  saleListingId: string;
+  teamListingId: string | null;
+}
+
 export interface ReadinessInput {
   conns: CmaConnections;
   now: Instant;
@@ -95,8 +119,7 @@ export interface ReadinessInput {
   addressLine: string | null;
   /** the subject listing's MLS mirror, or an MLS subject listing itself */
   subjectMlsListingId: string | null;
-  /** MLS row ids behind the comps shown (a mirrored pair: the mirror) */
-  compSaleListingIds: string[];
+  compSales: CompSale[];
   nearMatchDismissed: readonly string[];
   hasValue: boolean;
 }
@@ -111,47 +134,89 @@ export interface NearMatch {
   dismissed: boolean;
 }
 
-const line = (r: ValuationRow) => [r.address_line1, r.address_line2].filter(Boolean).join(' ') + `, ${r.city}`;
+const line = (r: ListingRow) => [r.address_line1, r.address_line2].filter(Boolean).join(' ') + `, ${r.city}`;
 
-/** The live MLS listings that may be the subject (F2), each with its own AVM flag. */
+/**
+ * The live MLS listings that may be the subject although their key differs (F2): V1-A's liveNearMatches on the key's
+ * street number, street name and postal code. A live record at the subject's own key is not a near match (it is the
+ * subject's own listing: SELLER_WITHHELD reads it).
+ */
 export async function nearMatches(tx: Tx, key: string | null, dismissed: readonly string[]): Promise<NearMatch[]> {
-  if (key === null) return [];
-  const rows = await liveNearMatches(tx, key);
-  return rows.map((r) => ({ listingId: r.id, mlsNumber: r.mls_number, address: line(r), status: r.status, listingBrokerageName: r.listing_brokerage_name, avmDisplayAllowed: r.avm_display_allowed, dismissed: dismissed.includes(r.id) }));
+  const street = key === null ? null : streetOfKey(key);
+  if (street === null) return [];
+  const rows = (await liveNearMatches(tx, street)).filter((r) => r.address_key !== key);
+  return rows
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .map((r) => ({ listingId: r.id, mlsNumber: r.mls_number, address: line(r), status: r.status, listingBrokerageName: r.listing_brokerage_name, avmDisplayAllowed: r.avm_display_allowed, dismissed: dismissed.includes(r.id) }));
 }
+
+/** A comp's client rendering with its sold price and date, or null when they must not reach a client now (V1-A). */
+function clientSale(e: MlsEligibility, sale: ListingRow | undefined, team: ListingRow | undefined): DisplayListing | null {
+  if (sale === undefined) return null;
+  if (team !== undefined) return clientSoldView(e, sale, team); // E366: a mirrored team sale
+  const v = clientView(e, sale);
+  return v !== null && v.closePriceCents !== undefined && v.closeDate !== undefined ? v : null;
+}
+
+/** The blockers read from the connections and the result (the rest carry ids). */
+type PlainBlocker = Exclude<BlockerCode, 'COMPS_HIDDEN' | 'SELLER_WITHHELD' | 'POSSIBLE_LIVE_LISTING'>;
+
+const REFUSAL_BLOCKER: Readonly<Record<ValuationRefusal, PlainBlocker>> = {
+  NO_MLS_CONNECTION: 'MLS_CLIENT_DISPLAY_OFF',
+  MLS_NOT_LIVE: 'MLS_CLIENT_DISPLAY_OFF',
+  MLS_NOT_CLIENT_ELIGIBLE: 'MLS_CLIENT_DISPLAY_OFF',
+  FEED_STALE: 'FEED_STALE',
+  PACK_DOES_NOT_ALLOW: 'CLIENT_USE_NOT_ALLOWED',
+  VALUATION_NOT_REVIEWED: 'VALUATION_NOT_REVIEWED',
+  NO_VALUATION_STATEMENT: 'NO_VALUATION_STATEMENT',
+};
 
 /** Client readiness (R-CMA-7). Reads live rows each time: nothing here is cached in the stored CMA. */
 export async function clientReadiness(tx: Tx, i: ReadinessInput): Promise<{ share: ClientShare; nearMatches: NearMatch[] }> {
   const blockers: Blocker[] = [];
-  const used = i.conns.used;
-  if (!(await platformCleared(tx, CMA_PLATFORM_PACK))) {
-    blockers.push({ code: 'PLATFORM_NOT_CLEARED', sentence: 'Client CMAs and seller value ranges wait for counsel review of the in-house CMA wording (platform:cma). Nothing is shown to clients until it is recorded.' });
-  }
-  const displayOff = used.filter((u) => !(packReviewed(u.conn.pack) && u.conn.pack.attributionText !== null && u.conn.pack.disclaimerText !== null));
-  if (displayOff.length > 0) blockers.push({ code: 'MLS_CLIENT_DISPLAY_OFF', sentence: 'Your MLS licence pack does not allow showing MLS data to clients yet (it needs counsel review, an attribution and a disclaimer).' });
-  if (used.some((u) => u.stale)) blockers.push({ code: 'FEED_STALE', sentence: 'The MLS feed is out of date, so nothing from it can be shown to clients until it syncs again.' });
-  if (used.some((u) => !u.use.clientCma)) blockers.push({ code: 'CLIENT_USE_NOT_ALLOWED', sentence: 'Your MLS licence pack does not say sold data may be used in CMAs for clients. An Owner or Admin records this from your MLS agreement.' });
-  if (used.some((u) => u.use.reviewedByCounselAt === null)) blockers.push({ code: 'VALUATION_NOT_REVIEWED', sentence: 'The valuation part of your MLS licence pack has not been reviewed by counsel.' });
-  if (i.state === null || used.some((u) => u.use.statements[i.state!] === undefined)) {
-    blockers.push({ code: 'NO_VALUATION_STATEMENT', sentence: i.state === null ? 'The home’s state is not known, so no valuation statement applies.' : `No valuation statement is recorded for ${i.state}.` });
-  }
+  const { e, used } = i.conns;
+  const has = (code: BlockerCode) => blockers.some((b) => b.code === code);
+  const sentence: Record<PlainBlocker, string> = {
+    PLATFORM_NOT_CLEARED: 'Client CMAs and seller value ranges wait for counsel review of the in-house CMA wording (platform:cma). Nothing is shown to clients until it is recorded.',
+    MLS_CLIENT_DISPLAY_OFF: 'Your MLS licence pack does not allow showing MLS data to clients yet (it needs counsel review, an attribution and a disclaimer).',
+    FEED_STALE: 'The MLS feed is out of date, so nothing from it can be shown to clients until it syncs again.',
+    CLIENT_USE_NOT_ALLOWED: 'Your MLS licence pack does not say sold data may be used in CMAs for clients. An Owner or Admin records this from your MLS agreement.',
+    VALUATION_NOT_REVIEWED: 'The valuation part of your MLS licence pack has not been reviewed by counsel.',
+    NO_VALUATION_STATEMENT: i.state === null ? 'The home’s state is not known, so no valuation statement applies.' : `No valuation statement is recorded for ${i.state}.`,
+    NO_VALUE: 'There is no value to share: not enough comparable sales.',
+  };
+  const add = (code: PlainBlocker) => {
+    if (!has(code)) blockers.push({ code, sentence: sentence[code] });
+  };
 
-  // comps: each must pass the client display rules with sold data allowed (a mirrored pair: through its mirror)
-  const rows = await listingRows(tx, i.compSaleListingIds);
+  if (!(await platformCleared(tx, CMA_PLATFORM_PACK))) add('PLATFORM_NOT_CLEARED');
+  for (const { conn, stale } of used) {
+    // every condition that holds, so the agent reads all of them at once (V1-A's parsed pack and freshness)
+    if (!stale && !connectionClientEligible(conn, i.now)) add('MLS_CLIENT_DISPLAY_OFF');
+    if (stale) add('FEED_STALE');
+    if (!conn.pack.valuation.clientCma) add('CLIENT_USE_NOT_ALLOWED');
+    if (conn.pack.valuation.reviewedByCounselAt === null) add('VALUATION_NOT_REVIEWED');
+    if (valuationStatement(conn.pack, i.state) === null) add('NO_VALUATION_STATEMENT');
+    // V1-A's client gate is the authority: its refusal is always listed
+    const v = valuationEligible(e, conn.id, 'client_cma', i.state, i.now);
+    if (!v.ok) add(REFUSAL_BLOCKER[v.code]);
+  }
+  // keep the canonical order of the codes so far (the order they were added may differ across connections)
+  blockers.sort((a, b) => BLOCKER_CODES.indexOf(a.code) - BLOCKER_CODES.indexOf(b.code));
+
+  // comps: each must reach a client with its sold price and date (a mirrored pair through clientSoldView)
+  const rows = await listingRows(tx, [...new Set(i.compSales.flatMap((c) => (c.teamListingId === null ? [c.saleListingId] : [c.saleListingId, c.teamListingId])))]);
   const byId = new Map(rows.map((r) => [r.id, r]));
-  const hidden = i.compSaleListingIds.filter((id) => {
-    const r = byId.get(id);
-    return r === undefined || clientSoldView(i.conns.e, i.conns.packs, r) === null;
-  });
+  const hidden = i.compSales.filter((c) => clientSale(e, byId.get(c.saleListingId), c.teamListingId === null ? undefined : byId.get(c.teamListingId)) === null).map((c) => c.saleListingId);
   if (hidden.length > 0) {
     blockers.push({ code: 'COMPS_HIDDEN', count: hidden.length, listingIds: [...hidden].sort(), sentence: `${hidden.length} of these sales can’t be shown to clients under your MLS licence. Remove ${hidden.length === 1 ? 'it' : 'them'} to share.` });
   }
 
-  // E370: a live MLS record of the subject that withholds automated valuations, under the pack's scope
+  // E370: a live MLS record of the subject that withholds automated valuations, under the pack's scope (V6)
   const atKey = i.addressKey ? await mlsRowsAtAddress(tx, i.addressKey) : [];
   const subjectRows = [...atKey, ...(i.subjectMlsListingId ? await listingRows(tx, [i.subjectMlsListingId]) : [])];
-  const scopeOf = (r: ValuationRow) => valuationUse(i.conns.packs.get(r.mls_connection_id ?? '')).avmFlagScope;
-  const withheld = subjectRows.filter((r) => (LIVE_STATUSES as readonly string[]).includes(r.status) && !r.avm_display_allowed && scopeOf(r) === 'all_client_outputs');
+  const scopeOf = (r: ListingRow) => e.pack(r.mls_connection_id)?.valuation.avmFlagScope ?? 'all_client_outputs';
+  const withheld = subjectRows.filter((r) => LIVE_STATUSES.includes(r.status) && !r.avm_display_allowed && scopeOf(r) === 'all_client_outputs');
   if (withheld.length > 0) {
     blockers.push({ code: 'SELLER_WITHHELD', listingIds: [...new Set(withheld.map((r) => r.id))].sort(), sentence: 'The seller’s MLS listing of this home asks that automated valuations not be shown, so this CMA can’t be shared with clients.' });
   }
@@ -166,6 +231,6 @@ export async function clientReadiness(tx: Tx, i: ReadinessInput): Promise<{ shar
     });
   }
 
-  if (!i.hasValue) blockers.push({ code: 'NO_VALUE', sentence: 'There is no value to share: not enough comparable sales.' });
+  if (!i.hasValue) add('NO_VALUE');
   return { share: { allowed: blockers.length === 0, blockers, estimateSentence: ESTIMATE_SENTENCE }, nearMatches: matches };
 }

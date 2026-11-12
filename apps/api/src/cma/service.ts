@@ -19,21 +19,28 @@ import { sql } from 'kysely';
 import { mergeTree } from '../admin/repos/erasure.js';
 import { audit, redactDiff } from '../audit.js';
 import { AppError } from '../errors.js';
-import { LISTING_COLS, type ListingRow, factsOfRow, mlsCitySpellings } from '../mls/eligibility.js';
 import {
   CMA_DEFAULTS,
+  CmaCandidateSchema,
   type CmaCandidate,
   type CmaRef,
   type CmaResult,
-  type CmaSubjectFacts,
+  type CmaSubject,
   type CmaTier,
-  type TierRead,
-  type ValuationRow,
-  listingRows,
-  monthsBefore,
+  ENGINE_TIER,
+  EMPTY_VALUATION_FACTS,
+  LISTING_COLS,
+  type ListingRow,
+  type SoldTier,
+  type TierQuery,
+  addMonths,
+  cellsWithin,
+  factsOfRow,
+  postalKey,
   prepareCma as runEngine,
   saleOfRow,
   soldCandidates,
+  subdivisionKey,
 } from './deps.js';
 import { type ClientShare, type CmaConnections, type NearMatch, agentGate, asOfSentence, clientReadiness, mlsDataAsOf, nearMatches } from './gates.js';
 import {
@@ -54,6 +61,7 @@ import {
   touchDataDate,
   updateDraft,
 } from './repos.js';
+import type { CmaSubjectFacts } from './schemas.js';
 import { type ResolvedSubject, type SubjectInput, engineSubject, resolveSubject } from './subject.js';
 
 export interface Disclosure {
@@ -88,15 +96,38 @@ export interface ContextListing {
   why: string[];
 }
 
-/** What a CMA stores in `result`: the engine's result, the MLS rows behind each comp, and the context listings. */
-export interface StoredResult extends CmaResult {
-  /** comp ref id → the MLS row that carries its sale (a mirrored pair: the mirror; E366) */
-  saleListingIds: Record<string, string>;
+/** The listing behind one engine identity, as the agent view shows it (the engine's references carry no address). */
+export interface RefListing {
+  /** the MLS row that carries the sale (a mirrored team sale: the mirror; E366) */
+  saleListingId: string;
+  /** the team row of a mirrored team sale, else null */
+  teamListingId: string | null;
+  sourceLabel: 'MLS' | 'Team';
+  mlsNumber: string | null;
+  listingBrokerageName: string | null;
+  address: { line1: string; line2: string | null; city: string; region: string; postalCode: string };
+}
+
+/** One tier read of V1-A's soldCandidates, under V1-B's tier name; `ran` false when the subject lacks the tier's fact. */
+export interface TierReadView {
+  tier: CmaTier | 'rate_pool';
+  ran: boolean;
+  rows: number;
+  limitReached: boolean;
+}
+
+/** What a CMA stores in `result`: V1-B's result as returned, and what the API read to get it. */
+export type StoredResult = CmaResult & {
+  /** engine identity → its listing (every identity in comps, notUsed and subjectSales) */
+  listings: Record<string, RefListing>;
+  reads: TierReadView[];
+  /** MLS records read but left out because V1-B's strict sale schema refuses their stored values */
+  recordsLeftOut: number;
   context: ContextListing[];
   contextSentence: string;
   /** the MLS connections the run read */
   connectionIds: string[];
-}
+};
 
 interface Inputs {
   subject: SubjectInput;
@@ -117,69 +148,97 @@ async function zoneOf(tx: Tx): Promise<IanaZone> {
 
 const addressText = (r: Pick<ListingRow, 'address_line1' | 'address_line2' | 'city'>) => [r.address_line1, r.address_line2].filter(Boolean).join(' ') + `, ${r.city}`;
 
-/** The engine's reference for a listing row (the team row for a mirrored pair: F4/F10). */
-function refOf(r: ValuationRow, mirror: ValuationRow | null): CmaRef {
+/** Miles of a V1-B radius (metres), for V1-A's cellsWithin. */
+const milesOf = (m: number) => m / 1609.344;
+
+/** Every tier's read for this subject (F6): V1-A's TierQuery shapes over V1-B's areas and radii; limits are V1-A's (CMA_DEFAULTS). */
+function tierQueries(subject: CmaSubject): TierQuery[] {
+  const located = subject.latE6 !== null && subject.lonE6 !== null;
+  const near = located ? cellsWithin(subject.latE6!, subject.lonE6!, milesOf(CMA_DEFAULTS.nearRadiusM)) : [];
+  const far = located ? cellsWithin(subject.latE6!, subject.lonE6!, milesOf(CMA_DEFAULTS.farRadiusM)) : [];
+  const zip = postalKey(subject.postalCode);
+  const zips = zip === null ? [] : [zip];
+  const sub = subdivisionKey(subject.subdivisionName) === null ? null : subject.subdivisionName;
+  const q: TierQuery[] = [];
+  if (sub !== null && (zips.length > 0 || located)) q.push({ tier: 'subdivision', names: [sub], postalCodes: zips, cells: far });
+  if (located) q.push({ tier: 'cells_1mi', cells: near });
+  if (zips.length > 0) q.push({ tier: 'postal_code', postalCodes: zips });
+  if (located) q.push({ tier: 'cells_3mi', cells: far });
+  if (subject.city !== null && subject.region !== null) q.push({ tier: 'city', cities: [subject.city], region: subject.region });
+  if (located || zips.length > 0) q.push({ tier: 'rate_pool', cells: far, postalCodes: zips });
+  return q;
+}
+
+const READ_ORDER: readonly SoldTier[] = ['subdivision', 'cells_1mi', 'postal_code', 'cells_3mi', 'city', 'rate_pool'];
+
+function refListing(sale: ListingRow, team: ListingRow | null): RefListing {
+  const shown = team ?? sale;
   return {
-    id: r.id,
-    source: r.source,
-    mlsNumber: r.mls_number ?? mirror?.mls_number ?? null,
-    connectionId: (mirror ?? r).mls_connection_id,
-    brokerage: r.listing_brokerage_name ?? mirror?.listing_brokerage_name ?? null,
-    addressKey: (mirror ?? r).address_key,
-    address: { line1: r.address_line1, line2: r.address_line2, city: r.city, region: r.region, postalCode: r.postal_code },
+    saleListingId: sale.id,
+    teamListingId: team?.id ?? null,
+    sourceLabel: team ? 'Team' : 'MLS',
+    mlsNumber: shown.mls_number ?? sale.mls_number,
+    listingBrokerageName: shown.listing_brokerage_name ?? sale.listing_brokerage_name,
+    address: { line1: shown.address_line1, line2: shown.address_line2, city: shown.city, region: shown.region, postalCode: shown.postal_code },
   };
 }
 
-/** One run: every tier's sold sales in one read (F6), mirrors counted once (F4/F10), the engine, the context listings. */
+/** The engine's reference for a sale (a mirrored team sale: the team row's identity, the mirror's connection; F4/F10). */
+function refOf(sale: ListingRow, team: ListingRow | null): CmaRef {
+  if (team) return { identity: listingIdentity(factsOfRow(team)), source: 'team', teamListingId: team.id, mlsNumber: team.mls_number ?? sale.mls_number, connectionId: sale.mls_connection_id };
+  return { identity: listingIdentity(factsOfRow(sale)), source: 'mls', teamListingId: sale.team_listing_id, mlsNumber: sale.mls_number, connectionId: sale.mls_connection_id };
+}
+
+/**
+ * One run: every tier's sold sales in one soldCandidates call (F6), each mirrored team sale one candidate (R-MLS-5, E366:
+ * the team row's identity and facts, the lowest-id mirror's close price, size and sale facts), V1-B's engine, the context
+ * listings. A record whose stored values V1-B's strict schemas refuse (a price or count beyond the engine's bounds) is
+ * left out and counted, so one bad record never stops a CMA.
+ */
 async function run(tx: Tx, conns: CmaConnections, s: ResolvedSubject, valuationDate: string, include: readonly string[], exclude: readonly string[]): Promise<StoredResult> {
   const connectionIds = conns.used.map((u) => u.conn.id);
   const subject = engineSubject(s);
-  const cities = s.address.city ? [...new Set([s.address.city, ...(await mlsCitySpellings(tx, [s.address.city]))])] : [];
-  const reads = await soldCandidates(tx, {
-    connectionIds,
-    propertyType: subject.propertyType,
-    valuationDate,
-    fromDate: monthsBefore(valuationDate, CMA_DEFAULTS.lookbackMonths),
-    limit: CMA_DEFAULTS.tierLimit,
-    subdivisionMiles: CMA_DEFAULTS.subdivisionMiles,
-    subject: { latE6: subject.latE6, lonE6: subject.lonE6, subdivision: subject.subdivision, postalCode: subject.postalCode, city: subject.city, region: subject.region, citySpellings: cities },
-  });
-  const tiersOf = new Map<string, CmaTier[]>();
-  const rowById = new Map<string, ValuationRow>();
-  for (const t of reads) for (const r of t.rows) {
-    rowById.set(r.id, r);
-    tiersOf.set(r.id, [...(tiersOf.get(r.id) ?? []), t.tier]);
+  const since = addMonths(valuationDate, -Math.max(CMA_DEFAULTS.extendedLookbackMonths, CMA_DEFAULTS.ratePoolMonths));
+  const read = await soldCandidates(tx, { connectionIds, propertyType: subject.propertyType, since, until: valuationDate, tiers: tierQueries(subject) });
+  const teamById = new Map(read.rows.filter((r) => r.source === 'team').map((r) => [r.id, r]));
+  const mirrorOf = new Map<string, ListingRow>();
+  for (const r of read.rows) {
+    if (r.source !== 'mls' || r.team_listing_id === null || !teamById.has(r.team_listing_id)) continue;
+    const kept = mirrorOf.get(r.team_listing_id);
+    if (kept === undefined || r.id < kept.id) mirrorOf.set(r.team_listing_id, r);
   }
-  // R-MLS-5: a mirrored team sale is one candidate: the team row's ref, the mirror's sale facts
-  const mlsRows = [...rowById.values()];
-  const teamIds = [...new Set(mlsRows.flatMap((r) => (r.team_listing_id ? [r.team_listing_id] : [])))];
-  const teamRows = await listingRows(tx, teamIds);
-  const teamById = new Map(teamRows.map((r) => [r.id, r]));
-  const facts = [...teamRows, ...mlsRows].map((r) => ({ f: factsOfRow(r), r }));
-  const kept = new Set(dedupeMirrors(facts.map((x) => x.f)).listings.map(listingIdentity));
   const candidates: CmaCandidate[] = [];
-  const saleListingIds: Record<string, string> = {};
-  for (const r of mlsRows) {
-    const team = r.team_listing_id ? teamById.get(r.team_listing_id) : undefined;
-    if (team) {
-      if (saleListingIds[team.id] !== undefined && saleListingIds[team.id]! < r.id) continue; // one mirror per team listing
-      saleListingIds[team.id] = r.id;
-      const i = candidates.findIndex((c) => c.ref.id === team.id);
-      const c = { ref: refOf(team, r), sale: saleOfRow(r), tiers: tiersOf.get(r.id)! };
-      if (i >= 0) candidates[i] = c;
-      else candidates.push(c);
-      continue;
+  const listings: Record<string, RefListing> = {};
+  let recordsLeftOut = 0;
+  const offer = (sale: ListingRow, team: ListingRow | null) => {
+    const c = { ref: refOf(sale, team), sale: saleOfRow(sale, team) };
+    if (!CmaCandidateSchema.safeParse(c).success) {
+      recordsLeftOut += 1;
+      return;
     }
+    candidates.push(c);
+    listings[c.ref.identity] = refListing(sale, team);
+  };
+  // R-MLS-5 / E81: core dedupeMirrors keeps the team row of a mirrored pair, and one mirror per team listing whose team
+  // row was not read (then counted as the MLS sale it is)
+  const kept = new Set(dedupeMirrors(read.rows.map(factsOfRow)).listings.map(listingIdentity));
+  for (const r of read.rows) {
     if (!kept.has(listingIdentity(factsOfRow(r)))) continue;
-    saleListingIds[r.id] = r.id;
-    candidates.push({ ref: refOf(r, null), sale: saleOfRow(r), tiers: tiersOf.get(r.id)! });
+    if (r.source === 'team') {
+      const m = mirrorOf.get(r.id);
+      if (m) offer(m, r);
+    } else offer(r, null);
   }
-  const tiers: TierRead[] = reads.map((t) => ({ tier: t.tier, ran: t.ran, count: t.rows.length, limit: CMA_DEFAULTS.tierLimit, limitReached: t.limitReached }));
-  const result = runEngine({ subject, candidates, tiers, valuationDate, include, exclude });
-  const used = new Set([...result.comps.map((c) => c.ref.id), ...result.notUsed.map((n) => n.ref.id)]);
-  for (const k of Object.keys(saleListingIds)) if (!used.has(k)) delete saleListingIds[k];
+  const tierReads = read.reads.map((x) => ({ tier: ENGINE_TIER[x.tier], limitReached: x.limitReached }));
+  const result = runEngine({ subject, candidates, tierReads, valuationDate, include, exclude });
+  const used = new Set([...result.comps.map((c) => c.ref.identity), ...result.notUsed.map((n) => n.ref.identity), ...result.subjectSales.map((x) => x.ref.identity)]);
+  for (const k of Object.keys(listings)) if (!used.has(k)) delete listings[k];
+  const reads = READ_ORDER.map((t) => {
+    const x = read.reads.find((y) => y.tier === t);
+    return { tier: ENGINE_TIER[t], ran: x !== undefined, rows: x?.rows ?? 0, limitReached: x?.limitReached ?? false };
+  });
   const context = await contextListings(tx, conns, s);
-  return { ...result, saleListingIds, connectionIds, ...context };
+  return { ...result, listings, reads, recordsLeftOut, connectionIds, ...context };
 }
 
 /** Actives and pendings near the subject: support only, never comps (core competingSet with no price band). */
@@ -221,6 +280,7 @@ async function contextListings(tx: Tx, conns: CmaConnections, s: ResolvedSubject
     teamListingId: null,
     lastSeenInFeedAt: null,
     offMarketAt: null,
+    valuation: EMPTY_VALUATION_FACTS,
   };
   const self = new Set(s.selfListingIds);
   const candidates = rows.filter((r) => !self.has(r.id)).map(factsOfRow);
@@ -259,10 +319,10 @@ async function compute(tx: Tx, now: Instant, i: Inputs): Promise<{ write: CmaWri
   const resolved = await resolveSubject(tx, i.subject, { contactId: i.contactId, sizeField });
   const valuationDate = localDateOf(now, zone) as string;
   const result = await run(tx, conns, resolved, valuationDate, i.include, i.exclude);
-  // only listings that are near matches now may be dismissed (others are ignored)
-  const near = new Set((await nearMatches(tx, resolved.addressKey, [])).map((m) => m.listingId));
+  // only listings that are near matches now may be dismissed (others are ignored; with nothing to dismiss, nothing is read)
+  const near = new Set(i.nearMatchDismissed.length === 0 ? [] : (await nearMatches(tx, resolved.addressKey, [])).map((m) => m.listingId));
   // include/exclude keep only ids this run read (a lease, a future sale or another tenant's id is never stored)
-  const seen = new Set([...result.comps.map((c) => c.ref.id), ...result.notUsed.map((n) => n.ref.id)]);
+  const seen = new Set([...result.comps.map((c) => c.ref.identity), ...result.notUsed.map((n) => n.ref.identity)]);
   const known = (xs: readonly string[]) => [...new Set(xs)].filter((id) => seen.has(id)).sort();
   const subject: StoredSubject = { input: i.subject, include: known(i.include), exclude: known(i.exclude), nearMatchDismissed: [...new Set(i.nearMatchDismissed)].filter((id) => near.has(id)).sort(), resolved };
   return {
@@ -281,9 +341,9 @@ async function compute(tx: Tx, now: Instant, i: Inputs): Promise<{ write: CmaWri
       mlsDataAsOf: mlsDataAsOf(conns),
       subject,
       result,
-      valueCents: result.valueCents,
-      lowCents: result.lowCents,
-      highCents: result.highCents,
+      valueCents: result.available ? result.valueCents : null,
+      lowCents: result.available ? result.lowCents : null,
+      highCents: result.available ? result.highCents : null,
       notes: i.notes,
       contentSha256: contentOf(subject, result, { ...i, inspectedOn: i.inspection === 'none' ? null : i.inspectedOn }),
     },
@@ -461,6 +521,8 @@ async function viewOf(tx: Tx, actor: UserActor, now: Instant, row: CmaRow) {
   const s = row.subject as unknown as StoredSubject;
   const r = row.result as unknown as StoredResult;
   const zone = await zoneOf(tx);
+  const listing = (identity: string): RefListing =>
+    r.listings[identity] ?? { saleListingId: identity, teamListingId: null, sourceLabel: 'MLS', mlsNumber: null, listingBrokerageName: null, address: { line1: '', line2: null, city: '', region: '', postalCode: '' } };
   let share: ClientShare;
   let matches: NearMatch[];
   try {
@@ -472,7 +534,10 @@ async function viewOf(tx: Tx, actor: UserActor, now: Instant, row: CmaRow) {
       addressKey: s.resolved.addressKey,
       addressLine: s.resolved.address.line1,
       subjectMlsListingId: s.resolved.mirrorListingId ?? (s.resolved.connectionId && s.resolved.listingId ? s.resolved.listingId : null),
-      compSaleListingIds: r.comps.map((c) => r.saleListingIds[c.ref.id] ?? c.ref.id),
+      compSales: r.comps.map((c) => {
+        const l = listing(c.ref.identity);
+        return { saleListingId: l.saleListingId, teamListingId: l.teamListingId };
+      }),
       nearMatchDismissed: s.nearMatchDismissed,
       hasValue: row.value_cents !== null,
     });
@@ -486,27 +551,33 @@ async function viewOf(tx: Tx, actor: UserActor, now: Instant, row: CmaRow) {
     matches = [];
   }
   const facts = s.resolved.facts;
-  const comp = (c: StoredResult['comps'][number]) => ({
-    listingId: c.ref.id,
-    saleListingId: r.saleListingIds[c.ref.id] ?? c.ref.id,
-    sourceLabel: c.ref.source === 'team' ? ('Team' as const) : ('MLS' as const),
-    mlsNumber: c.ref.mlsNumber,
-    listingBrokerageName: c.ref.brokerage,
-    address: { line1: c.ref.address.line1, line2: c.ref.address.line2, city: c.ref.address.city, region: c.ref.address.region, postalCode: c.ref.address.postalCode },
-    closePriceCents: c.sale.closePriceCents,
-    closeDate: c.sale.closeDate,
-    contractDate: c.sale.contractDate,
-    distanceMiles: c.distanceMiles,
-    distanceSentence: c.distanceSentence,
-    tier: c.tier,
-    facts: { propertyType: c.sale.propertyType, sqft: c.sale.sqft, sizeSource: c.sale.sizeSource, beds: c.sale.beds, bathsX10: c.sale.bathsX10, yearBuilt: c.sale.yearBuilt, lotSqft: c.sale.lotSqft, daysOnMarket: c.sale.daysOnMarket, concessionsCents: c.sale.concessionsCents },
-    adjustments: c.adjustments.map((a) => ({ feature: a.feature, amountCents: a.amountCents, sentence: a.sentence })),
-    adjustedPriceCents: c.adjustedPriceCents,
-    weightBps: c.weightBps,
-    why: c.why,
-    saleConditions: c.sale.saleConditions,
-    includedByAgent: c.includedByAgent,
-  });
+  const comp = (c: StoredResult['comps'][number]) => {
+    const l = listing(c.ref.identity);
+    return {
+      listingId: c.ref.identity,
+      saleListingId: l.saleListingId,
+      sourceLabel: l.sourceLabel,
+      mlsNumber: l.mlsNumber,
+      listingBrokerageName: l.listingBrokerageName,
+      address: l.address,
+      closePriceCents: c.sale.closePriceCents,
+      closeDate: c.sale.closeDate,
+      contractDate: c.sale.contractDate,
+      distanceM: c.distanceM,
+      tier: c.tier,
+      facts: { propertyType: c.sale.propertyType, sqft: c.sale.sqft, sizeSource: c.sale.sizeSource, beds: c.sale.beds, bathsX10: c.sale.bathsX10, yearBuilt: c.sale.yearBuilt, lotSqft: c.sale.lotSqft, daysOnMarket: c.sale.daysOnMarket, concessionsCents: c.sale.concessionsCents },
+      adjustments: c.adjustments.map((a) => ({ feature: a.feature, subjectValue: a.subjectValue, compValue: a.compValue, rate: a.rate, amountCents: a.amountCents, support: a.support, sentence: a.sentence })),
+      adjustedPriceCents: c.adjustedPriceCents,
+      grossAdjustmentBps: c.grossAdjustmentBps,
+      weightBasisBps: c.weightBasisBps,
+      weightBps: c.weightBps,
+      why: [...c.why],
+      labels: [...c.labels],
+      saleConditions: [...c.sale.saleConditions],
+      includedByAgent: c.includedByAgent,
+    };
+  };
+  const text = (a: RefListing['address']) => [a.line1, a.line2].filter(Boolean).join(' ') + `, ${a.city}`;
   return {
     id: row.id,
     contactId: row.contact_id,
@@ -552,16 +623,48 @@ async function viewOf(tx: Tx, actor: UserActor, now: Instant, row: CmaRow) {
       exclude: s.exclude,
       nearMatchDismissed: s.nearMatchDismissed,
     },
-    result: { available: r.available, reason: r.reason, sentence: r.sentence, valueCents: r.valueCents, lowCents: r.lowCents, highCents: r.highCents },
+    result: {
+      available: r.available,
+      reason: r.available ? null : r.reason,
+      sentence: r.sentences[0] ?? '',
+      sentences: [...r.sentences],
+      valueCents: r.available ? r.valueCents : null,
+      lowCents: r.available ? r.lowCents : null,
+      highCents: r.available ? r.highCents : null,
+      closeDateSpan: r.available ? r.closeDateSpan : null,
+      distanceSpanM: r.available ? r.distanceSpanM : null,
+    },
     comps: r.comps.map(comp),
-    notUsed: r.notUsed.map((n) => ({ listingId: n.ref.id, mlsNumber: n.ref.mlsNumber, address: [n.ref.address.line1, n.ref.address.line2].filter(Boolean).join(' ') + `, ${n.ref.address.city}`, reason: n.reason, sentence: n.sentence, includable: n.includable })),
-    adjustmentRates: r.rates.map((x) => ({ feature: x.feature, adjusted: x.adjusted, centsPerUnit: x.centsPerUnit, unit: x.unit, support: x.support, sentence: x.sentence })),
+    notUsed: r.notUsed.map((n) => {
+      const l = listing(n.ref.identity);
+      return { listingId: n.ref.identity, mlsNumber: l.mlsNumber, address: text(l.address), reason: n.reason, conditions: [...n.conditions], distanceM: n.distanceM, sentence: n.sentence, includable: n.includable };
+    }),
+    notUsedTotal: r.notUsedTotal,
+    subjectSales: r.subjectSales.map((x) => ({ listingId: x.ref.identity, closeDate: x.closeDate, closePriceCents: x.closePriceCents, status: x.status })),
     context: r.context,
     contextSentence: r.contextSentence,
-    area: { tierUsed: r.area.tierUsed, tiers: r.area.tiers.map((t) => ({ tier: t.tier, ran: t.ran, count: t.count, limit: t.limit, limitReached: t.limitReached, sentence: t.sentence })) },
-    market: r.market,
+    area: {
+      tier: r.area.tier,
+      lookbackMonths: r.area.lookbackMonths,
+      tiersSkipped: [...r.area.tiersSkipped],
+      reads: r.reads,
+      recordsLeftOut: r.recordsLeftOut,
+      sentences: [...r.area.sentences, ...(r.recordsLeftOut > 0 ? [recordsLeftOutSentence(r.recordsLeftOut)] : [])],
+    },
+    market: {
+      poolTier: r.market.poolTier,
+      poolMonths: r.market.poolMonths,
+      poolSales: r.market.poolSales,
+      rates: r.market.rates.map((x) => ({ feature: x.feature, applied: x.applied, rate: x.rate, support: x.support, sentence: x.sentence })),
+      sentences: [...r.market.sentences],
+    },
     backtest: r.backtest,
     nearMatches: matches,
     clientShare: share,
   };
+}
+
+/** The sentence for MLS records the engine could not take (their stored values are outside its bounds). */
+export function recordsLeftOutSentence(n: number): string {
+  return `${n} MLS ${n === 1 ? 'record was' : 'records were'} left out because ${n === 1 ? 'its' : 'their'} stored values are outside what the valuation reads (for example a price above $1 billion).`;
 }

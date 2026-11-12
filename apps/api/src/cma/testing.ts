@@ -1,15 +1,15 @@
 // Test helpers for module 71 (imported by *.test.ts only). Synthetic data only: no real MLS, brokerage, person or
-// address; fakes only, nothing is sent. Until lane V1-A's sync stores sold facts, sold MLS rows are written here as the
-// SYSTEM actor (the 0061 guard lets only it write the valuation columns), exactly as the sync will. Contact addresses are
-// written by the superuser fixture pool (no API in this lane writes them).
+// address; fakes only, nothing is sent. MLS rows reach the database through lane V1-A's real pipeline: each fixture
+// sale is a RESO record that V1-A's sync (syncConnection, with a deterministic record feed in place of a provider)
+// normalizes and upserts as the system actor, so the address key, the sale facts, the AVM flag and the team-listing
+// link are V1-A's. Contact addresses are written by the superuser fixture pool (no API in this lane writes them).
 import { randomUUID } from 'node:crypto';
-import { withTenantTx } from '@realty/db';
-import { sql } from 'kysely';
+import type { TenantId } from '@realty/core/foundation';
+import type { ResoLike } from '@realty/core/listings';
 import type { ApiHarness, TestClient } from '../auth/testHarness.js';
 import { type LeadsWorld, call, leadsWorld, randomPhone } from '../leads/testing.js';
-import { REVIEWED_PACK, mlsConnection } from '../mls/testing.js';
-import { systemActor } from '../worker/systemActor.js';
-import { addressKey } from './deps.js';
+import { syncConnection } from '../mls/sync.js';
+import { REVIEWED_PACK, makeDue, mlsConnection, mlsDeps, pagedFeed } from '../mls/testing.js';
 
 export { call };
 
@@ -32,7 +32,7 @@ export function cmaPack(o: { valuation?: Record<string, unknown> | null; clientS
             client_cma: true,
             automated_notes: true,
             avm_flag_scope: 'all_client_outputs',
-            statements: { CA: TEST_STATEMENT },
+            statements: { CA: { text: TEST_STATEMENT, min_point_size: 10 } },
             ...o.valuation,
           },
         }),
@@ -81,7 +81,7 @@ export const HOME = { latE6: 37_750_000, lonE6: -122_420_000 };
 
 export interface Sale {
   mlsNumber?: string;
-  status?: string;
+  status?: 'sold' | 'active' | 'pending' | 'coming_soon' | 'withdrawn' | 'expired';
   line1?: string;
   line2?: string | null;
   city?: string;
@@ -93,78 +93,116 @@ export interface Sale {
   originalListPriceCents?: number | null;
   listPriceCents?: number | null;
   concessionsCents?: number | null;
-  saleConditions?: string[];
+  saleConditions?: ('short_sale' | 'reo' | 'auction' | 'probate')[];
   daysOnMarket?: number | null;
   latE6?: number | null;
   lonE6?: number | null;
   sqft?: number | null;
-  sizeSource?: string | null;
   beds?: number | null;
   bathsX10?: number | null;
   yearBuilt?: number | null;
   subdivision?: string | null;
-  propertyType?: string;
+  propertyType?: 'single_family' | 'condo' | 'townhouse';
   isLease?: boolean;
   avmDisplayAllowed?: boolean;
   displayAllowed?: boolean;
-  addressKey?: string | null;
-  teamListingId?: string | null;
   brokerage?: string;
-  connectionId?: string;
 }
 
 let seq = 0;
+/** Feed modification times: one second apart, in creation order (a later record is newer, as in a real feed). */
+const BASE_MODIFIED = Date.now() - 86_400_000;
 
 /** Today's date (UTC) minus `days`, as YYYY-MM-DD. */
 export function daysAgo(days: number): string {
   return new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
 }
 
-/** One MLS row as the sync stores it (system actor). Returns its id. */
-export async function mlsSale(w: Pick<CmaWorld, 'h' | 'tenantId' | 'mls'>, s: Sale = {}): Promise<string> {
+const RESO_STATUS: Record<NonNullable<Sale['status']>, string> = { sold: 'Closed', active: 'Active', pending: 'Pending', coming_soon: 'Coming Soon', withdrawn: 'Withdrawn', expired: 'Expired' };
+const RESO_SUBTYPE: Record<NonNullable<Sale['propertyType']>, string> = { single_family: 'Single Family Residence', condo: 'Condominium', townhouse: 'Townhouse' };
+const RESO_CONDITION: Record<NonNullable<Sale['saleConditions']>[number], string> = { short_sale: 'Short Sale', reo: 'Real Estate Owned', auction: 'Auction', probate: 'Probate Listing' };
+const dollars = (c: number | null | undefined) => (c === null || c === undefined ? null : (c / 100).toFixed(2));
+const degrees = (e6: number | null) => (e6 === null ? null : (e6 / 1e6).toFixed(6));
+
+/** One fixture sale as the RESO record an MLS feed sends (synthetic; standard RESO field names). */
+export function saleReso(s: Sale = {}): ResoLike {
   seq += 1;
-  const id = randomUUID();
   const n = s.mlsNumber ?? `S${Date.now() % 1_000_000}-${seq}`;
-  const line1 = s.line1 ?? `${200 + seq} Sample Ave`;
-  const postal = s.postalCode ?? '94110';
-  const region = s.region ?? 'CA';
-  const key = s.addressKey !== undefined ? s.addressKey : addressKey({ line1, line2: s.line2 ?? null, city: s.city ?? 'Oakland', region, postalCode: postal });
   const status = s.status ?? 'sold';
   const sold = status === 'sold';
-  await withTenantTx(
-    systemActor(w.tenantId, 'provider'),
-    async (tx) => {
-      await sql`INSERT INTO listings (tenant_id, id, source, mls_number, status, address_line1, address_line2, city, region, postal_code, list_price_cents,
-                  beds, baths_x10, sqft, property_type, mls_connection_id, mls_modified_at, listing_brokerage_name, display_allowed, team_listing_id,
-                  last_seen_in_feed_at, attributes, close_price_cents, close_date, purchase_contract_date, original_list_price_cents, concessions_cents,
-                  sale_conditions, days_on_market, latitude_e6, longitude_e6, year_built, subdivision_name, size_source, is_lease, avm_display_allowed, address_key)
-                VALUES (app.tenant_id(), ${id}, 'mls', ${n}, ${status}, ${line1}, ${s.line2 ?? null}, ${s.city ?? 'Oakland'}, ${region}, ${postal},
-                  ${s.listPriceCents ?? s.originalListPriceCents ?? 50_000_000}, ${s.beds === undefined ? 3 : s.beds}, ${s.bathsX10 === undefined ? 20 : s.bathsX10},
-                  ${s.sqft === undefined ? 1400 : s.sqft}, ${s.propertyType ?? 'single_family'}, ${s.connectionId ?? w.mls}, now() - (${seq} * interval '1 second'),
-                  ${s.brokerage ?? 'Other Brokerage (test)'}, ${s.displayAllowed ?? true}, ${s.teamListingId ?? null}, now(),
-                  ${JSON.stringify({ mls: { listing_key: `K-${n}`, address_display: true, photo_urls: [], photos_count: 0 } })}::jsonb,
-                  ${sold ? (s.closePriceCents === undefined ? 50_000_000 : s.closePriceCents) : (s.closePriceCents ?? null)}, ${sold ? (s.closeDate === undefined ? daysAgo(60) : s.closeDate) : (s.closeDate ?? null)}::date,
-                  ${s.contractDate ?? null}::date, ${s.originalListPriceCents ?? null}, ${s.concessionsCents ?? null}, ${s.saleConditions ?? []}::text[],
-                  ${s.daysOnMarket ?? 20}, ${s.latE6 === undefined ? HOME.latE6 + seq * 10 : s.latE6}, ${s.lonE6 === undefined ? HOME.lonE6 - seq * 10 : s.lonE6},
-                  ${s.yearBuilt ?? 1960}, ${s.subdivision === undefined ? 'Sample Heights' : s.subdivision}, ${s.sizeSource === undefined ? 'LivingArea' : s.sizeSource},
-                  ${s.isLease ?? false}, ${s.avmDisplayAllowed ?? true}, ${key})`.execute(tx);
-    },
-    { db: w.h.database },
-  );
-  return id;
+  return {
+    ListingKey: `CK-${n}`,
+    ListingId: n,
+    StandardStatus: RESO_STATUS[status],
+    ListPrice: dollars(s.listPriceCents ?? s.originalListPriceCents ?? 50_000_000),
+    UnparsedAddress: s.line1 ?? `${200 + seq} Sample Ave`,
+    UnitNumber: s.line2 ?? null,
+    City: s.city ?? 'Oakland',
+    StateOrProvince: s.region ?? 'CA',
+    PostalCode: s.postalCode ?? '94110',
+    BedroomsTotal: s.beds === undefined ? 3 : s.beds,
+    BathroomsTotalInteger: s.bathsX10 === undefined ? 2 : s.bathsX10 === null ? null : s.bathsX10 / 10,
+    LivingArea: s.sqft === undefined ? 1400 : s.sqft,
+    PropertyType: s.isLease ? 'Residential Lease' : 'Residential',
+    PropertySubType: RESO_SUBTYPE[s.propertyType ?? 'single_family'],
+    ListOfficeName: s.brokerage ?? 'Other Brokerage (test)',
+    ModificationTimestamp: new Date(BASE_MODIFIED + seq * 1000).toISOString(),
+    InternetEntireListingDisplayYN: s.displayAllowed ?? true,
+    InternetAddressDisplayYN: true,
+    ClosePrice: sold ? dollars(s.closePriceCents === undefined ? 50_000_000 : s.closePriceCents) : dollars(s.closePriceCents),
+    CloseDate: sold ? (s.closeDate === undefined ? daysAgo(60) : s.closeDate) : (s.closeDate ?? null),
+    PurchaseContractDate: s.contractDate ?? null,
+    OriginalListPrice: dollars(s.originalListPriceCents),
+    ConcessionsAmount: dollars(s.concessionsCents),
+    SpecialListingConditions: s.saleConditions?.map((c) => RESO_CONDITION[c]) ?? null,
+    DaysOnMarket: s.daysOnMarket === undefined ? 20 : s.daysOnMarket,
+    Latitude: degrees(s.latE6 === undefined ? HOME.latE6 + seq * 10 : s.latE6),
+    Longitude: degrees(s.lonE6 === undefined ? HOME.lonE6 - seq * 10 : s.lonE6),
+    YearBuilt: s.yearBuilt === undefined ? 1960 : s.yearBuilt,
+    SubdivisionName: s.subdivision === undefined ? 'Sample Heights' : s.subdivision,
+    InternetAutomatedValuationDisplayYN: (s.avmDisplayAllowed ?? true) ? 'Y' : 'N',
+  };
 }
 
-/** `n` comparable local sales: around $350/sq ft, 1,200–1,800 sq ft, spread over the last ~10 months. */
+/**
+ * Feeds RESO records through lane V1-A's sync for the world's connection, exactly as a provider run would (the
+ * connection made due, one fenced run, every record normalized and upserted by the system actor). Every record must
+ * be stored. Returns the listing ids, in the records' order. The run moves last_synced_at to now, as a real run does.
+ */
+export async function syncSales(w: Pick<CmaWorld, 'h' | 'tenantId' | 'mls'>, records: ResoLike[]): Promise<string[]> {
+  await makeDue(w.h, w.mls);
+  const r = await syncConnection(mlsDeps(w.h, { [w.mls]: pagedFeed([records]) }), w.tenantId as TenantId, w.mls);
+  if (r.outcome !== 'synced' || r.skippedInvalid !== 0 || r.inserted + r.updated !== records.length) throw new Error(`fixture sync: ${JSON.stringify(r)}`);
+  const numbers = records.map((x) => String(x['ListingId']));
+  const rows = (await w.h.su.query<{ id: string; mls_number: string }>("SELECT id, mls_number FROM listings WHERE tenant_id = $1 AND source = 'mls' AND mls_number = ANY ($2::text[])", [w.tenantId, numbers])).rows;
+  const byNumber = new Map(rows.map((x) => [x.mls_number, x.id]));
+  return numbers.map((n) => byNumber.get(n)!);
+}
+
+/** One MLS record stored through V1-A's sync. Returns its listing id. */
+export async function mlsSale(w: Pick<CmaWorld, 'h' | 'tenantId' | 'mls'>, s: Sale = {}): Promise<string> {
+  return (await syncSales(w, [saleReso(s)]))[0]!;
+}
+
+/** `n` comparable local sales (one sync run): around $350/sq ft, 1,200–1,800 sq ft, spread over the last ~10 months. */
 export async function localSales(w: Pick<CmaWorld, 'h' | 'tenantId' | 'mls'>, n: number, o: Sale = {}): Promise<string[]> {
-  const ids: string[] = [];
+  const records: ResoLike[] = [];
   for (let i = 0; i < n; i++) {
     const sqft = 1200 + ((i * 37) % 600);
     const beds = 2 + (i % 3);
     const days = 10 + ((i * 29) % 290);
     const price = Math.round(sqft * 35_000 * (1 + (300 - days) / 3000)) + (i % 5) * 100_000;
-    ids.push(await mlsSale(w, { sqft, beds, bathsX10: 10 + (i % 3) * 5, closeDate: daysAgo(days), contractDate: daysAgo(days + 30), closePriceCents: price, originalListPriceCents: price, ...o }));
+    records.push(saleReso({ sqft, beds, bathsX10: 10 + (i % 3) * 5, closeDate: daysAgo(days), contractDate: daysAgo(days + 30), closePriceCents: price, originalListPriceCents: price, ...o }));
   }
-  return ids;
+  return syncSales(w, records);
+}
+
+/**
+ * Sets when the feed last synced (E369's stale feed). A connection-state fixture, not a listing write: the sync above
+ * moves last_synced_at to now on every run, so a stale feed is made after its records are stored.
+ */
+export async function feedLastSyncedAt(w: Pick<CmaWorld, 'h' | 'mls'>, at: Date): Promise<void> {
+  await w.h.su.query('UPDATE integration_connections SET last_synced_at = $2 WHERE id = $1', [w.mls, at]);
 }
 
 /** A team listing of `agent` (through the API). */
@@ -178,21 +216,22 @@ export interface CmaBody {
   cma: {
     id: string;
     status: string;
-    result: { available: boolean; reason: string | null; sentence: string; valueCents: number | null; lowCents: number | null; highCents: number | null };
-    comps: { listingId: string; saleListingId: string; adjustments: { feature: string; amountCents: number }[]; adjustedPriceCents: number; weightBps: number; why: string[]; distanceSentence: string; sourceLabel: string; closePriceCents: number | null; saleConditions: string[] }[];
+    methodVersion: string;
+    result: { available: boolean; reason: string | null; sentence: string; sentences: string[]; valueCents: number | null; lowCents: number | null; highCents: number | null };
+    comps: { listingId: string; saleListingId: string; adjustments: { feature: string; amountCents: number }[]; adjustedPriceCents: number; weightBps: number; why: string[]; labels: string[]; includedByAgent: boolean; distanceM: number | null; sourceLabel: string; closePriceCents: number | null; saleConditions: string[]; facts: { beds: number | null; sqft: number | null; sizeSource: string | null } }[];
     notUsed: { listingId: string; reason: string; sentence: string; includable: boolean }[];
+    subjectSales: { listingId: string }[];
     subject: { kind: string; facts: Record<string, { value: unknown; source: string | null }>; saleHistory: { listingId: string }[]; sizeSentence: string; nearMatchDismissed: string[]; include: string[] };
     clientShare: { allowed: boolean; blockers: { code: string; sentence: string; count?: number; listingIds?: string[] }[] };
     nearMatches: { listingId: string; dismissed: boolean; avmDisplayAllowed: boolean }[];
-    area: { tierUsed: string | null; tiers: { tier: string; ran: boolean; count: number; limitReached: boolean; sentence: string }[] };
-    backtest: { tested: number; sentence: string };
-    market: { sentence: string };
+    area: { tier: string | null; tiersSkipped: string[]; reads: { tier: string; ran: boolean; rows: number; limitReached: boolean }[]; recordsLeftOut: number; sentences: string[] };
+    backtest: { salesTested: number; sentence: string };
+    market: { rates: { feature: string; applied: boolean; sentence: string }[]; sentences: string[] };
     context: { listingId: string }[];
     mlsDataAsOf: string | null;
     mlsDataAsOfSentence: string;
     createdByUserId: string;
     contactId: string | null;
-    adjustmentRates: { feature: string; adjusted: boolean; sentence: string }[];
   };
 }
 

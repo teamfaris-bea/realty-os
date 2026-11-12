@@ -1,8 +1,10 @@
 // Module 71 api/cma behaviour against real Postgres (R-CMA-6, R-CMA-7, R-CMA-8; F4, F15; E365, E366, E369, E370,
-// E371, E373). Fakes only: nothing is sent, no real MLS is called (MLS rows are fixtures written as the system actor).
+// E371, E373), on lane V1-A's sold data and lane V1-B's engine. Fakes only: nothing is sent, no real MLS is called (MLS
+// rows are RESO fixtures stored through V1-A's sync with a deterministic record feed).
+import { CMA_METHOD_VERSION } from '@realty/core/valuation';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
-import { type CmaBody, type CmaWorld, address, call, cmaPack, cmaWorld, codes, contact, daysAgo, localSales, mlsSale, oneTap, teamListing } from './testing.js';
+import { type CmaBody, type CmaWorld, address, call, cmaPack, cmaWorld, codes, contact, daysAgo, feedLastSyncedAt, localSales, mlsSale, oneTap, teamListing } from './testing.js';
 
 let h: ApiHarness;
 let w: CmaWorld;
@@ -28,23 +30,26 @@ describe('accept: one call from a seller\'s contact', () => {
     expect(v.comps.length).toBeGreaterThanOrEqual(3);
     for (const comp of v.comps) {
       expect(comp.why.length).toBeGreaterThan(0);
-      expect(comp.distanceSentence).toMatch(/mi away$/);
+      expect(comp.distanceM).not.toBeNull();
+      expect(comp.why[0]).toMatch(/ mi away\.$/);
     }
     expect(v.result.available).toBe(true);
     expect(v.result.valueCents!).toBeGreaterThanOrEqual(v.result.lowCents!);
     expect(v.result.valueCents!).toBeLessThanOrEqual(v.result.highCents!);
     expect(Math.min(...v.comps.map((x) => x.adjustedPriceCents))).toBe(v.result.lowCents);
-    expect(v.area.tierUsed).toBe('subdivision');
-    expect(v.backtest.sentence).toMatch(/^Tested on \d+ recent local sales/);
+    expect(v.area.tier).toBe('subdivision');
+    expect(v.backtest.sentence).toMatch(/^On \d+ recent local sales, valued only from earlier sales, this method missed the price by /);
     expect(v.mlsDataAsOfSentence).toMatch(/^MLS data as of /);
-    expect(v.adjustmentRates.some((x) => x.adjusted && x.feature === 'sqft')).toBe(true);
+    expect(v.market.rates.some((x) => x.applied && x.feature === 'size')).toBe(true);
     expect(v.comps.some((x) => x.adjustments.length > 0)).toBe(true);
+    // the engine is core/valuation's, and the stored CMA carries its method version (R-CMA-5)
+    expect(v.methodVersion).toBe(CMA_METHOD_VERSION);
     // R-CMA-7: platform:cma ships unreviewed, so the default blocker is always there, in words
     expect(codes(r.body)).toContain('PLATFORM_NOT_CLEARED');
     expect(v.clientShare.allowed).toBe(false);
     expect(v.clientShare.blockers.find((b) => b.code === 'PLATFORM_NOT_CLEARED')!.sentence).toMatch(/Client CMAs and seller value ranges/);
     const stored = await h.su.query('SELECT status, value_cents, content_sha256, method_version FROM cma_reports WHERE id = $1', [v.id]);
-    expect(stored.rows[0]).toMatchObject({ status: 'draft', value_cents: String(v.result.valueCents) });
+    expect(stored.rows[0]).toMatchObject({ status: 'draft', value_cents: String(v.result.valueCents), method_version: CMA_METHOD_VERSION });
   });
 });
 
@@ -63,8 +68,10 @@ const prepare = (client: typeof w.owner, body: Record<string, unknown>) => call<
 
 describe('subject resolution (F4, E373)', () => {
   it('F4 R-MLS-5: a team listing with an MLS mirror takes its size from the mirror and shows the agent-entered size beside it', async () => {
-    const team = await teamListing(w.agents[0]!, { addressLine1: '510 Sample Avenue', sqft: 1500 });
-    await mlsSale(w, { line1: '510 Sample Ave', status: 'active', teamListingId: team, sqft: 1480, closePriceCents: null, closeDate: null });
+    // the MLS record carries the team listing's MLS number, so V1-A's sync links it as the team listing's mirror (E81)
+    const team = await teamListing(w.agents[0]!, { addressLine1: '510 Sample Avenue', sqft: 1500, mlsNumber: 'TM510' });
+    const mirror = await mlsSale(w, { mlsNumber: 'TM510', line1: '510 Sample Ave', status: 'active', sqft: 1480, closePriceCents: null, closeDate: null });
+    expect((await h.su.query('SELECT team_listing_id FROM listings WHERE id = $1', [mirror])).rows[0].team_listing_id).toBe(team);
     const r = await prepare(w.agents[0]!, { subject: { kind: 'listing', listingId: team } });
     expect(r.status).toBe(201);
     expect(r.body.cma.subject.facts['sqft']).toEqual({ value: 1480, source: 'mls' });
@@ -80,22 +87,30 @@ describe('subject resolution (F4, E373)', () => {
     expect(r.body.cma.subject.sizeSentence).toMatch(/taken as LivingArea/);
   });
 
-  it('E373 R-CMA-2: entered facts with only type and size work; without coordinates the distance tier does not run and every distance is "not known"', async () => {
+  it('E373 R-CMA-2: entered facts with only type and size work; without coordinates the distance tiers do not run and every distance is "not known"', async () => {
     const r = await prepare(w.agents[0]!, { subject: { kind: 'entered', anchor: { region: 'CA', postalCode: '94110', city: 'Oakland' }, facts: { propertyType: 'single_family', sqft: 1400 } } });
     expect(r.status).toBe(201);
     expect(r.body.cma.subject.facts['propertyType']).toEqual({ value: 'single_family', source: 'agent' });
-    expect(r.body.cma.area.tiers.find((t) => t.tier === 'radius_1mi')).toMatchObject({ ran: false, sentence: 'Distance search not run: the home has no map location.' });
-    expect(r.body.cma.area.tiers.find((t) => t.tier === 'subdivision')!.ran).toBe(false);
+    // neither distance read runs (V1-A), the engine skips both distance tiers and the subdivision tier and says so (V1-B)
+    for (const t of ['within_1mi', 'within_3mi', 'subdivision']) expect(r.body.cma.area.reads.find((x) => x.tier === t)).toMatchObject({ ran: false, rows: 0 });
+    expect([...r.body.cma.area.tiersSkipped].sort()).toEqual(['subdivision', 'within_1mi', 'within_3mi']);
+    expect(r.body.cma.area.sentences).toContain('Distance tiers were skipped because the home has no coordinates; the subdivision tier was skipped because the home has no subdivision.');
     expect(r.body.cma.comps.length).toBeGreaterThanOrEqual(3);
-    for (const comp of r.body.cma.comps) expect(comp.distanceSentence).toBe('Distance not known');
+    for (const comp of r.body.cma.comps) {
+      expect(comp.distanceM).toBeNull();
+      expect(comp.why[0]).toMatch(/; distance not known\.$/);
+    }
     expect(r.body.cma.subject.sizeSentence).toMatch(/entered by the agent, taken as LivingArea/);
   });
 
-  it('E373: entered facts need the type and the size (CMA_SUBJECT_INCOMPLETE names what is missing); land is not valued yet', async () => {
+  it('E373: entered facts need the type and the size (CMA_SUBJECT_INCOMPLETE names what is missing); land and other types are not valued yet', async () => {
     const r = await prepare(w.agents[0]!, { subject: { kind: 'entered', anchor: { region: 'CA', postalCode: '94110' }, facts: { propertyType: 'condo' } } });
     expect([r.status, r.code, (r.body as unknown as { error: { details: { missing: string[] } } }).error.details.missing]).toEqual([422, 'CMA_SUBJECT_INCOMPLETE', ['sqft']]);
-    const land = await prepare(w.agents[0]!, { subject: { kind: 'entered', anchor: { region: 'CA', postalCode: '94110' }, facts: { propertyType: 'land', sqft: 9000 } } });
-    expect([land.status, land.code]).toEqual([422, 'CMA_SUBJECT_TYPE_NOT_SUPPORTED']);
+    // owner question (g) default, held by core/valuation CMA_SUPPORTED_TYPES: land and 'other' are not valued yet
+    for (const propertyType of ['land', 'other']) {
+      const r2 = await prepare(w.agents[0]!, { subject: { kind: 'entered', anchor: { region: 'CA', postalCode: '94110' }, facts: { propertyType, sqft: 9000 } } });
+      expect([propertyType, r2.status, r2.code]).toEqual([propertyType, 422, 'CMA_SUBJECT_TYPE_NOT_SUPPORTED']);
+    }
   });
 
   it('E373: a contact address that is not in the MLS history prompts for type and size; with them, the one-tap CMA is stored with the facts labelled agent', async () => {
@@ -132,14 +147,17 @@ describe('subject resolution (F4, E373)', () => {
     expect(r.status).toBe(201);
     expect(r.body.cma.subject.saleHistory.map((x) => x.listingId)).toEqual([earlier]);
     expect(r.body.cma.comps.map((x) => x.listingId)).not.toContain(earlier);
-    expect(r.body.cma.notUsed.find((x) => x.listingId === earlier)).toMatchObject({ reason: 'subject', includable: false });
+    // the engine matched it by the address key: the subject's own sale, never a comp and never offered back as one
+    expect(r.body.cma.notUsed.map((x) => x.listingId)).not.toContain(earlier);
+    expect(r.body.cma.subjectSales.map((x) => x.listingId)).toEqual([earlier]);
   });
 });
 
 describe('E366 R-MLS-5: a mirrored team sale', () => {
-  it('E366: a team listing mirrored in the MLS as sold is one comp: the team row\'s identity, the MLS close price; its client rendering is the mirror\'s', async () => {
-    const team = await teamListing(w.agents[1]!, { addressLine1: '700 Sample Avenue', status: 'sold', sqft: 1500 });
-    const mirror = await mlsSale(w, { line1: '700 Sample Ave', teamListingId: team, closeDate: daysAgo(15), sqft: 1490, closePriceCents: 52_000_000, displayAllowed: false });
+  it('E366: a team listing mirrored in the MLS as sold is one comp: the team row\'s identity and facts, the MLS close price and size; its client rendering is the mirror\'s', async () => {
+    const team = await teamListing(w.agents[1]!, { addressLine1: '700 Sample Avenue', status: 'sold', sqft: 1500, beds: 3, mlsNumber: 'TM700' });
+    const mirror = await mlsSale(w, { mlsNumber: 'TM700', line1: '700 Sample Ave', closeDate: daysAgo(15), sqft: 1490, beds: 2, closePriceCents: 52_000_000, displayAllowed: false });
+    expect((await h.su.query('SELECT team_listing_id FROM listings WHERE id = $1', [mirror])).rows[0].team_listing_id).toBe(team);
     const { c } = await seller();
     const r = await oneTap(w.agents[0]!, c);
     const as = r.body.cma.comps.filter((x) => x.listingId === team || x.saleListingId === mirror);
@@ -147,6 +165,8 @@ describe('E366 R-MLS-5: a mirrored team sale', () => {
     expect(out).toEqual([]);
     expect(as).toHaveLength(1);
     expect(as[0]).toMatchObject({ listingId: team, saleListingId: mirror, sourceLabel: 'Team', closePriceCents: 52_000_000 });
+    // the team row's facts with the MLS close price and size (E366, R-MLS-5: the team row wins where it has a value)
+    expect(as[0]!.facts).toMatchObject({ beds: 3, sqft: 1490, sizeSource: 'LivingArea' });
     // the mirror is hidden from internet display, so the comp is hidden from clients (judged as the MLS row it is)
     expect(r.body.cma.clientShare.blockers.find((b) => b.code === 'COMPS_HIDDEN')!.listingIds).toEqual([mirror]);
   });
@@ -200,15 +220,15 @@ describe('PATCH (R-CMA-8)', () => {
     const { c } = await seller();
     const short = await mlsSale(w, { closeDate: daysAgo(20), sqft: 1500, saleConditions: ['short_sale'], closePriceCents: 40_000_000 });
     const a = await oneTap(w.agents[0]!, c);
-    expect(a.body.cma.notUsed.find((x) => x.listingId === short)).toMatchObject({ reason: 'sale_conditions', sentence: 'Not used: short sale.', includable: true });
+    expect(a.body.cma.notUsed.find((x) => x.listingId === short)).toMatchObject({ reason: 'sale_condition', sentence: 'Not used: short sale.', includable: true });
     const first = a.body.cma.comps[0]!.listingId;
     const b = await call<CmaBody>(w.agents[0]!, 'PATCH', `/cma/${a.body.cma.id}`, { exclude: [first], include: [short] });
     expect(b.status).toBe(200);
     expect(b.body.cma.notUsed.find((x) => x.listingId === first)).toMatchObject({ reason: 'excluded_by_agent' });
-    const added = b.body.cma.comps.find((x) => x.listingId === short) ?? null;
-    const notChosen = b.body.cma.notUsed.find((x) => x.listingId === short) ?? null;
-    expect(added !== null || notChosen?.reason === 'not_chosen').toBe(true);
-    if (added) expect(added.why).toContain('Labelled: short sale');
+    // the engine keeps an agent-added sale among the comps, labelled with what kept it out (E367)
+    const added = b.body.cma.comps.find((x) => x.listingId === short)!;
+    expect(added).toMatchObject({ includedByAgent: true, labels: ['short sale'] });
+    expect(added.why).toContain('Added by the agent after review: short sale.');
   });
 
   it('E368 R-CMA-3: $15,000 of seller concessions lower the adjusted price by $15,000, never raise it', async () => {
@@ -234,9 +254,11 @@ describe('PATCH (R-CMA-8)', () => {
 
 describe('gates and readiness (R-CMA-6, R-CMA-7)', () => {
   it('E369 R-CMA-6: a feed stale for 3 days still gives the agent a CMA with "MLS data as of …", and blocks client sharing (FEED_STALE)', async () => {
-    const ws = await cmaWorld(h, { lastSyncedAt: new Date(Date.now() - 3 * 86_400_000) });
+    const ws = await cmaWorld(h);
     await localSales(ws, 8);
     const { c } = await seller({ world: ws });
+    // the sync that stored the records moved last_synced_at to now; the feed then goes quiet for 3 days
+    await feedLastSyncedAt(ws, new Date(Date.now() - 3 * 86_400_000));
     const r = await oneTap(ws.agents[0]!, c);
     expect(r.status).toBe(201);
     expect(r.body.cma.mlsDataAsOfSentence).toMatch(/^MLS data as of /);
