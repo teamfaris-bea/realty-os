@@ -297,12 +297,12 @@ describe('module 37: compose on the client\'s last open channel', () => {
     }
   });
 
-  it('E155 R-CHAN-3: an opt-out in the chat alone (no person-level do-not-contact) blocks the chat, in words, and the box writes by text', async () => {
-    const said = stopReason({ source: 'opt_out_language', keyword: null, addressHint: 'web chat' });
-    agentApp(fake().on(`GET /contacts/${IDS.jane}/reachability`, summary({ reasons: [said] })), `/contacts/${IDS.jane}/thread`);
+  it('R-INBOX-3: an opt-out on the chat alone (the visitor said it was the wrong person: no person-level do-not-contact) blocks the chat, in words, and the box writes by text', async () => {
+    const wrong = stopReason({ source: 'wrong_number', keyword: null, addressHint: 'web chat' });
+    agentApp(fake().on(`GET /contacts/${IDS.jane}/reachability`, summary({ reasons: [wrong] })), `/contacts/${IDS.jane}/thread`);
     const web = await screen.findByRole('radio', { name: 'Web chat' });
     await waitFor(() => expect(web).toBeDisabled());
-    expect(web).toHaveAccessibleDescription('Web chat not offered: Asked in the chat to stop being contacted on Nov 10');
+    expect(web).toHaveAccessibleDescription('Web chat not offered: Marked as a wrong number on Nov 10');
     expect(screen.getByTestId('channel-why')).toHaveTextContent('Writing by text: web chat is blocked.');
   });
 
