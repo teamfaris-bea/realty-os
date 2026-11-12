@@ -263,6 +263,8 @@ Unregistered or unapproved senders are blocked by the send gate (R-CONSENT-17).
 
 **VERIFY on a live call:** that an agent's carrier voicemail answering the agent leg is never reported as an accept, that a Dial recording's callback carries the parent call SID, and the voicemail notice wording per state (**VERIFY WITH COUNSEL**).
 
+**AI answering of missed calls (module 48) stays off.** It needs, all at once: `platform:voice` counsel-reviewed (counsel-review) AND `rules.vendor_ready_at` (no writer exists: a real vendor must first pass the latency check, N12), a configured voice vendor (production uses the unconfigured stand-in: "No voice vendor is set up on this platform yet"), an approved "AI answering for missed calls" playbook, the Owner's attested switch (**Settings → AI answering**, `POST /api/voice/answering/enable`), recording on, and `TELEPHONY_LIVE_REQUESTS=true` on real telephony. The deterministic fake never answers a call on `TELEPHONY_PROVIDER=twilio`. Until then every call follows the flow above unchanged. A completed AI call without a handback after 10 minutes raises a P1 (`WORKER_ERROR`, reason `VOICE_HANDBACK_MISSING`).
+
 **MMS.** Inbound media are fetched by SID with the subaccount credentials (the media URL in the webhook is never fetched). Kept: at most 10 items of at most 5 MB, of allowed types (JPEG, PNG, GIF, WebP, HEIC/HEIF, MP4, 3GPP, QuickTime, AMR, MP3, M4A, PDF, vCard) whose bytes match the type. Each item is encrypted with its own DEK and deleted at Twilio. Anything else is not stored; the conversation says which attachment was not saved, and why.
 
 **Outbound (D5).**

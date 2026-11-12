@@ -70,7 +70,7 @@ describe('E422 E423 E424 R-VOICE-2: provider ordering', () => {
     await settled(h, w.tenantId, c.callId);
   });
 
-  it('E422 R-VOICE-2: the provider\'s in_progress status before the announcement sets no answered_at and raises nothing', async () => {
+  it('E422 E426 R-VOICE-2: the provider\'s in_progress status before the announcement sets no answered_at; a hang-up before the announcement answers nothing', async () => {
     const c = await aiCall(h, w, { name: 'disclosure only', steps: [ev.disclosed(4000)] }, { faults: { holdBeforeStep: 1 }, settle: false });
     await waitFor(() => h.providers.voiceAgent.transportOf(w.tenantId, c.callId)?.isPaused === true, 'the paused session');
     const st = await callStatus(h, w, c.callSid, c.from, 'in-progress');

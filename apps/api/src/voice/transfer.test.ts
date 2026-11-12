@@ -34,7 +34,38 @@ async function inTransfer(owner = w.agents[0]!): Promise<{ c: AiCall; ring: stri
 }
 
 describe('E432 E433 E434 E435 R-VOICE-6: transfer to the contact\'s own agent', () => {
-  it('E432 R-VOICE-6: the owner is rung from the team number for the hold, hears the whisper, presses 1: connected', async () => {
+  it('R-VOICE-23: the hold is the pack\'s voice_transfer_hold_seconds when set, else the content\'s 20 s', async () => {
+    await h.su.query(`UPDATE jurisdiction_packs SET rules = rules || '{"voice_transfer_hold_seconds": 15}' WHERE key = 'platform:voice' AND status = 'published'`);
+    try {
+      const { c, ring } = await inTransfer();
+      expect(ring).toContain('timeout="15"');
+      transport(c).advance(16_000);
+      transport(c).resume();
+      expect((await settled(h, w.tenantId, c.callId))?.handback.transferOutcome).toBe('no_answer');
+    } finally {
+      await h.su.query("UPDATE jurisdiction_packs SET rules = rules - 'voice_transfer_hold_seconds' WHERE key = 'platform:voice' AND status = 'published'");
+    }
+  });
+
+  it('R-VOICE-19: in-call claims are never stored; the handback\'s claims cite the call\'s own fields with the stored value, or carry no evidence (needs review)', async () => {
+    const { c } = await inTransfer();
+    transport(c).advance(25_000);
+    transport(c).resume();
+    await settled(h, w.tenantId, c.callId);
+    const hb = (await handbacksOf(h, c.callId))[0];
+    const claims = (await h.su.query('SELECT c.text, c.needs_review, e.source_type, e.locator, e.snippet FROM assistant_claims c LEFT JOIN evidence_refs e ON e.claim_id = c.id WHERE c.action_id = $1 ORDER BY c.ordinal', [hb.id])).rows;
+    const row = await callRowOf(h, c.callSid);
+    for (const x of claims) {
+      if (x.source_type === null) expect(x.needs_review).toBe(true);
+      else {
+        expect(x.source_type).toBe('call');
+        expect(x.snippet).toBe(x.locator.field === 'ai_takeover_at' ? new Date(row.ai_takeover_at).toISOString() : String(row[x.locator.field]));
+      }
+    }
+    expect(claims.some((x) => /pre-approved|this week/.test(x.text))).toBe(false); // the caller's in-call claims
+  });
+
+  it('E432 R-VOICE-6 R-VOICE-19: (hot only by the caller\'s own quoted words) the owner is rung from the team number for the hold, hears the whisper, presses 1: connected', async () => {
     const { c, ring } = await inTransfer();
     expect(ring).toContain(`callerId="${w.mainNumber}"`);
     expect(ring).toContain('timeout="20"');
