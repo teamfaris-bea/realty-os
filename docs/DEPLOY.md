@@ -425,9 +425,55 @@ A KMS-backed KEK (wrap and unwrap as KMS calls) is a drop-in for the same interf
 - [ ] Storage: private bucket; a recording plays back.
 - [ ] Backups configured, and one restore drill done and timed.
 - [ ] Logs collected; metrics scraped; the alerts of `docs/OPERATIONS.md` §3 routed to a pager; `pnpm ops:synthetic` scheduled every 5 minutes with a dedicated check user (OPERATIONS §6).
-- [ ] Counsel items in ARCHITECTURE §19 reviewed for the launch states.
-- [ ] Phase 2, Gmail inbox sync (owner decision D2): ships dark. `platform:gmail` stays uncleared (no `reviewed_by_counsel_at`, no `rules.vendor_ready_at`) until counsel item C14 and Google's verification of the restricted `gmail.readonly` scope plus its security assessment (N19, **VERIFY** current requirements and renewal) have passed; the Google OAuth client requests that scope only. Until then no tenant can turn sync on (DB). Rollout precondition (pack notes, R-GMAIL-12): set `vendor_ready_at` only after module 22 has written `messages.rfc_message_id_sha256` on platform email for at least 90 days (the largest backfill window), or after its one-time repair; the database refuses a Gmail duplicate only of platform email that carries the hash.
+- [ ] Counsel items in ARCHITECTURE §19 reviewed for the launch states. Counsel reviews of platform clearance packs are recorded on the deployment with the owner command of §10.1 (dry run first, then `--apply`), never by hand.
+- [ ] Phase 2, Gmail inbox sync (owner decision D2): ships dark. `platform:gmail` stays uncleared until it has both `reviewed_by_counsel_at` (counsel item C14, recorded with §10.1; owner decision D11 reports it cleared) and `rules.vendor_ready_at` (which §10.1 never sets), that is until Google's verification of the restricted `gmail.readonly` scope plus its security assessment (N19, **VERIFY** current requirements and renewal) have passed; the Google OAuth client requests that scope only. Until then no tenant can turn sync on (DB). Rollout precondition (pack notes, R-GMAIL-12): set `vendor_ready_at` only after module 22 has written `messages.rfc_message_id_sha256` on platform email for at least 90 days (the largest backfill window), or after its one-time repair; the database refuses a Gmail duplicate only of platform email that carries the hash.
 - [ ] MLS: `MLS_LIVE_CALLS=false` unless every step of §11 "Before any live call" is done and signed off.
+
+### 10.1 Recording counsel reviews (platform clearance packs, R-INT-6)
+
+Each capability that waits on counsel is gated on its **platform clearance pack**, the published `jurisdiction_packs` row with key `platform:<name>`: `app.platform_cleared` (0018) is true only when that version has `reviewed_by_counsel_at` and, for voice and Gmail, also `rules.vendor_ready_at`. Packs ship unreviewed and the migrations keep it that way; a later pack version ships unreviewed too and turns its capability off again until its own review is recorded. No route, tool or migration writes `reviewed_by_counsel_at`: this owner command is the one writer.
+
+```sh
+# a checkout with .env (MIGRATION_DATABASE_URL, the owner role), e.g. a dev or staging host
+pnpm --filter @realty/db counsel-review -- --keys platform:<name>[,platform:<name>...] \
+  --reviewed-on YYYY-MM-DD --reference "<who reported the review and where it is recorded>"        # dry run
+# the compose stack: the release service already receives the owner URL from .env.owner
+docker compose -f docker-compose.prod.yml --env-file .env.owner run --rm --no-deps release \
+  node packages/db/dist/scripts/counsel-review.js --keys ... --reviewed-on ... --reference "..."     # dry run
+# any other host: the api image, with MIGRATION_DATABASE_URL set for this one-off container only (as in §9)
+```
+
+- **Dry run by default.** It makes the change inside one transaction to print the outcome, then rolls back. Add `--apply` to commit. Read the dry run first.
+- **Per key** it prints the version, `before:` and `after:` (`reviewed by counsel on <date>` or `not reviewed by counsel`; `cleared`, `not cleared`, or `not cleared: still waits for the vendor check`), then a summary: `dry run: <n> would be recorded…`, `applied: <n> recorded, <m> already recorded` or `nothing to change`. Exit 0 on success, 1 on any refusal or failure.
+- **What it writes,** for each named key's **published** version only (drafts and retired versions are untouched): `reviewed_by_counsel_at` = 00:00 UTC of `--reviewed-on`, and one note appended to `notes`: `Counsel review recorded <UTC time> by database role <role>: reviewed on <date>; source: <reference>.` (voice and Gmail add that the vendor check is separate and was not recorded). It never writes `rules`, so it never sets or changes `vendor_ready_at`: Gmail still waits for Google's verification of the restricted scope and its security assessment (and the R-GMAIL-12 rollout precondition, §10), voice for a real vendor's latency check (N12). Those are separate steps.
+- **Idempotent.** A pack already recorded with the same date is reported `unchanged` and gets no second note.
+- **All or nothing.** It refuses, changes nothing and exits 1 on: a key that is not `platform:<name>` (jurisdiction packs such as `US` are not recorded here); an unknown key, or one with no published version; `platform:meta` (owner decision D2: never cleared); a pack already recorded with a **different** date (it never rewrites a recorded review); a missing `--keys`, `--reviewed-on` or `--reference`; a malformed date or one after today (UTC); a reference that is not one line (at most 300 characters); an unknown option; and a database role that is not the owner (below).
+- **Owner role only.** It connects with `MIGRATION_DATABASE_URL`. `app_user` has SELECT on `jurisdiction_packs` and nothing else, and the table forces row-level security with a read policy only, so the command refuses (in a dry run too) any role that cannot update the table or is neither superuser nor `BYPASSRLS`. Never give the owner URL to the api or worker for this (§3).
+- **Audit trail.** There is no platform-level audit table (`audit_log` is per tenant), so the record is the pack itself: `reviewed_by_counsel_at` and the appended note, which the platform reads (`app_user` has SELECT; the Integrations page says per pack `cleared by counsel on <date>` or that it still waits for the vendor check), plus the command's printed output. **Keep the `--apply` output with the deploy log.**
+- **Effect.** Once applied, that deployment stops holding the capability back on that pack from the next statement on (the gates read the pack each time; no restart). It turns nothing on by itself: each capability still needs its own switch, connection or vendor. The pilot is a separate approval: on a deployment real teams use, run `--apply` only once the pilot is approved.
+
+**Owner decision D11 (2026-11-12).** The owner reported that counsel cleared nine items. Seven have a pack and are recorded with one command (dry run, read it, then the same command with `--apply`):
+
+```sh
+docker compose -f docker-compose.prod.yml --env-file .env.owner run --rm --no-deps release \
+  node packages/db/dist/scripts/counsel-review.js \
+  --keys platform:fair_housing,platform:coaching,platform:gmail,platform:voice,platform:avm,platform:review_requests,platform:portal \
+  --reviewed-on 2026-11-12 --reference "counsel review reported by the owner, 2026-11-12 (owner decision D11)"
+```
+
+| D11 item | Pack | After `--apply` |
+|---|---|---|
+| Publishing marketing (the fair-housing wording check) | `platform:fair_housing` | cleared |
+| Reviewing calls for coaching | `platform:coaching` | cleared |
+| Gmail sync | `platform:gmail` | not cleared: still waits for Google's verification (`vendor_ready_at`) |
+| AI voice answering | `platform:voice` | not cleared: still waits for a real vendor's latency check (`vendor_ready_at`) |
+| Home-value notes to past clients | `platform:avm` | cleared |
+| Review requests | `platform:review_requests` | cleared |
+| The client portal | `platform:portal` | cleared |
+| The likely-to-move models (C4) | none | not recorded here: each `prediction_models` version still needs `counsel_reviewed_at` and the platform back-test at its own approval |
+| Using public-record personal information for outreach (South Carolina privacy law) | none | not recorded here: owner decision D10's lane carries it |
+
+Rehearsed against a throwaway test database only (the D11 command's dry run, `--apply`, and a re-run that reported `nothing to change: 7 already recorded`); the compose form above has not been run against a compose stack.
 
 ## 11. Spark MLS (read-only)
 
