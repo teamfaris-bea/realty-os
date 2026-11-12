@@ -93,7 +93,7 @@ afterAll(async () => {
   await h?.close();
 });
 
-describe('documents_integrity_guard (0140)', () => {
+describe('documents_integrity_guard (0069)', () => {
   it('E408 R-DOC-5: without the guard the foreign key alone accepts another person\'s object (referential checks bypass RLS)', async () => {
     const foreign = await obj(b);
     const c = await h.su.connect();
@@ -203,7 +203,7 @@ describe('documents_integrity_guard (0140)', () => {
   });
 });
 
-describe('deal_dates_evidence_guard (0140)', () => {
+describe('deal_dates_evidence_guard (0069)', () => {
   async function extraction(dealFor: string, claims: Array<{ needsReview: boolean; kind?: string }>): Promise<string[]> {
     const actionId = uuid();
     const ids = claims.map(() => uuid());

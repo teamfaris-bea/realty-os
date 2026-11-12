@@ -682,7 +682,7 @@ const MATRIX: Record<Action, ActionRule> = {
   'cma.prepare': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: O } },
   // Module 42 (PHASE2_3_PLAN §5.4 #42). Each upload action mirrors an existing row so a TC never reaches contact
   // documents through contactFacts.deal: deal documents as milestone.confirm, listing documents as listing.edit,
-  // contact documents as contact.edit without the system. A person only; the DB binds the uploader (0140).
+  // contact documents as contact.edit without the system. A person only; the DB binds the uploader (0069).
   'document.upload': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: { scopes: ['own', 'deal'] }, tc: DEAL } },
   'document.upload_listing': { roles: { owner: ALL, admin: ALL, team_lead: ALL, agent: OWN } },
   'document.upload_contact': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: O, isa: O } },

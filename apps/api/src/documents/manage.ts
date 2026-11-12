@@ -1,6 +1,6 @@
 // Share, legal hold and retention (deliverable 5; R-DOC-1, R-DOC-4, R-DOC-8, R-DOC-9, E409-E411, E419).
 //
-// Share: clean deal and listing documents only; the database re-checks who may (0140 documents_integrity_guard:
+// Share: clean deal and listing documents only; the database re-checks who may (0069 documents_integrity_guard:
 // deal_writable / listing_writable, so TCs and ISAs never share). Unsharing stops portal downloads at once (module
 // 43's per-download re-check); the client's portal item is retracted by module 45, never here.
 // Hold and retention: a human Owner or Admin, as themselves (0018 documents_guard), audited with before and after.

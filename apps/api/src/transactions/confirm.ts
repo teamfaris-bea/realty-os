@@ -51,7 +51,7 @@ export interface ConfirmArgs {
   /**
    * module 42 (one flagged edit, PHASE2_3_PLAN §5.3): the person confirms a contract date read from a document. The
    * row gets source 'document', the basis {kind: 'document', claimId} (a replaced template basis is dropped) and
-   * evidence_claim_id; the DB checks the claim (0140 deal_dates_evidence_guard). Absent: nothing changes.
+   * evidence_claim_id; the DB checks the claim (0069 deal_dates_evidence_guard). Absent: nothing changes.
    */
   fromDocument?: { claimId: string };
 }

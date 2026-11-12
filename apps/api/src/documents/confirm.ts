@@ -7,7 +7,7 @@
 //   2. a target: a new date of the claim's milestone, or an existing date of the deal of the same kind
 //      (EXTRACTION_TARGET_KIND; another deal's date is NOT_FOUND inside confirmInTx);
 //   3. confirmInTx with fromDocument: source 'document', the document basis, evidence_claim_id (the one writer of
-//      deal dates; the DB re-checks the claim, 0140); a move of an existing date is the person's own move (E413);
+//      deal dates; the DB re-checks the claim, 0069); a move of an existing date is the person's own move (E413);
 //   4. the claim is confirmed as the person; a replay returns the same date (E414; the unique index is the backstop);
 //   5. the action's status follows the claims: proposed → approved on the first confirm, approved → executed once no
 //      unreviewed verified claim remains, proposed → rejected once every verified claim is rejected.

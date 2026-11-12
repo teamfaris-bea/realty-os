@@ -6,7 +6,7 @@
 //   4. the bytes are stored unmodified (sha256 recorded), encrypted under a fresh DEK, purpose 'document';
 //   5. the display name defaults to the file name, cleaned (no path, CR/LF, control or bidi characters; 200 max);
 //   6. one transaction as the person: refuse a merged-away contact, the object row, the document row (the DB forces
-//      pending and unshared, binds the object and the version; 0018 documents_guard, 0140 integrity guard), the
+//      pending and unshared, binds the object and the version; 0018 documents_guard, 0069 integrity guard), the
 //      scan job when a scanner is configured, and the audit row with kind, version, size and type only.
 // No file or display name reaches a log, a job payload or an audit row.
 import type { Clock, TenantId, UserActor } from '@realty/core/foundation';

@@ -64,7 +64,7 @@ function readCtx(req: FastifyRequest): ReadCtx {
   return { actor: actorOf(req), can: canFor(req), scanner: p.scanner, extractor: p.textExtractor };
 }
 
-/** One request transaction as the person; DB refusals map to stable codes (0140 codes are API bugs if reached). */
+/** One request transaction as the person; DB refusals map to stable codes (0069 codes are API bugs if reached). */
 export async function docTx<T>(req: FastifyRequest, fn: (tx: Tx, actor: UserActor) => Promise<T>): Promise<T> {
   const actor = actorOf(req);
   try {

@@ -1,7 +1,7 @@
 // decideCandidate (deliverable 6; R-AST-1, R-AST-2, R-DOC-2, E131, E417): pure. A candidate becomes a verified claim
 // only when its snippet is found verbatim at its own character range of its own page (core verifyQuote with a
 // char_range locator) AND the last date written in the snippet is the candidate's date. Anything else is a
-// needs_review claim, which is never a date (the database agrees: 0140 deal_dates_evidence_guard).
+// needs_review claim, which is never a date (the database agrees: 0069 deal_dates_evidence_guard).
 import { type CheckedEvidenceRef, type Locator, verifyQuote } from '@realty/core/assistant';
 import type { Instant } from '@realty/core/foundation';
 import { type Candidate, datesIn } from './finder.js';
