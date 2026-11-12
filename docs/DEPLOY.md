@@ -24,7 +24,7 @@ docker build --target api -t realty-api:<version> .
 docker build --target web -t realty-web:<version> .
 ```
 
-`docker-compose.prod.yml` is a complete example stack: Postgres, then release, then API and worker, then web. It takes **two** env files (§3): copy `deploy/env.production.example` to `.env.production` (the app's environment, which the api, worker and release containers read) and `deploy/env.owner.example` to `.env.owner` (the database owner's user, password and URL, which only the postgres service and the release step receive, by interpolation), and fill both in. Then `docker compose -f docker-compose.prod.yml --env-file .env.owner up -d --build`; the `--env-file .env.owner` flag is needed on **every** compose command, because the compose file itself reads the owner's credentials from it (and `WEB_PORT` from the shell). Never put an owner credential in `.env.production`: the API and the worker refuse to start in production with one in their environment (§2). A stack that still keeps one env file (before batch 5) moves `POSTGRES_OWNER_USER`, `POSTGRES_OWNER_PASSWORD`, `POSTGRES_DB` and `MIGRATION_DATABASE_URL` from `.env.production` into `.env.owner` and switches its `--env-file` to `.env.owner`; until then the new API and worker refuse to start and name the variables to move. For real teams, use a managed Postgres with backups and TLS instead of the compose database, and put a TLS-terminating load balancer in front of `web`. A fake-provider staging stack starts from `deploy/env.staging.example` instead (`docs/STAGING.md`).
+`docker-compose.prod.yml` is a complete example stack: Postgres, then release, then API and worker, then web. It takes **two** env files (§3): copy `deploy/env.production.example` to `.env.production` (the app's environment, which the api, worker and release containers read) and `deploy/env.owner.example` to `.env.owner` (the database owner's user, password and URL, which only the postgres service and the release step receive, by interpolation), and fill both in. Then `docker compose -f docker-compose.prod.yml --env-file .env.owner up -d --build`; the `--env-file .env.owner` flag is needed on **every** compose command, because the compose file itself reads the owner's credentials from it (and `WEB_PORT` from the shell). Never put an owner credential in `.env.production`: the API and the worker refuse to start in production with one in their environment (§2). A stack that still keeps one env file (before batch 5) moves `POSTGRES_OWNER_USER`, `POSTGRES_OWNER_PASSWORD`, `POSTGRES_DB` and `MIGRATION_DATABASE_URL` from `.env.production` into `.env.owner` and switches its `--env-file` to `.env.owner`; until then the new API and worker refuse to start and name the variables to move. For real teams, use a managed Postgres with backups and TLS instead of the compose database, and put a TLS-terminating load balancer in front of `web`. A fake-provider staging stack starts from `deploy/env.staging.example` instead (`docs/STAGING.md`). `docker-compose.prod.yml` is the single-VM **staging and rehearsal** stack: its Postgres runs in the stack without TLS. Real teams run `docker-compose.app-vm.yml` on an app VM, with the database on its own host over verified TLS: §12 is that runbook.
 
 - **Storage volume.** With `STORAGE_PROVIDER=local`, set `STORAGE_DIR=/var/lib/realty/storage`: the compose file mounts the named volume `storage` there on the API and the worker, and the `api` image creates that directory owned by `node`. Any other path is not writable in the image, and `/api/ready` then reports `degraded` with `storage: failed`.
 - **Re-resolving the API.** nginx resolves `API_UPSTREAM` through `NGINX_RESOLVER` (default `127.0.0.11`, Docker's DNS) at most every 10 s, so a recreated `api` container is found again. If you run the `web` image outside Docker networking, set `NGINX_RESOLVER` to a resolver that knows the API's name.
@@ -59,7 +59,9 @@ Give the orchestrator a stop grace period of at least `SHUTDOWN_DRAIN_MS + SHUTD
 **Start-up refusals.** The API **and the worker** refuse to start, exit 1, and print one JSON line on stderr (`{"level":"fatal","msg":"api failed to start" | "worker failed to start","type":…,"detail":…}`) naming the problem by key, never by value, when:
 
 - the configuration is incomplete or unsafe (§4). Rehearsed refusals: `KEK_BASE64` missing, not base64 or not 32 bytes; `KEK_REF` missing; fake providers without `ALLOW_FAKE_PROVIDERS=true`; a non-https `PUBLIC_BASE_URL` or `WEB_ORIGIN` entry; `SESSION_COOKIE_SECURE=false`; the KEK equal to the session secret; with `MLS_PROVIDER=spark`, a Spark base URL that is http, has a path, a port or credentials, or a host missing from `SPARK_ALLOWED_HOSTS`, and a wildcard or internal name in that list; an unknown `MLS_PROVIDER` or `MLS_LIVE_CALLS` value;
-- `DATABASE_URL` logs in as a superuser or a `BYPASSRLS` role;
+- `DATABASE_URL` logs in as a superuser or a `BYPASSRLS` role (`DATABASE_URL must be the RLS-bound app role (not superuser, no BYPASSRLS)`, checked first);
+- R-DEPLOY-1, checked next, in this order, each naming the check: the login is not `app_user` (`current_user` or `session_user`, E480); `app_user` has CREATEROLE, CREATEDB or REPLICATION, is a member of a role, owns a relation, function or schema, or holds CREATE on a schema (E481); a public table lacks ENABLE and FORCE row-level security (named, E482); a tenant is visible without context; with `DATABASE_SSL_MODE=verify-full`, the session is not encrypted, or the connection fails: `database TLS failed (DATABASE_SSL_MODE=verify-full): <code>` (a TLS or socket error code, or `SERVER_NO_SSL`; never the host, E486);
+- with `NODE_ENV=production`, a `PG*` variable is set (`PGPASSWORD`, `PGSSLMODE`, `PGHOST`, …: pg reads them in place of the URL's own settings; named with the owner variables in one line, E483), a database URL carries a query string or fragment (E484), or the TLS settings are refused (E485, §4);
 - with `NODE_ENV=production`, a database owner credential is in the process environment at all: `MIGRATION_DATABASE_URL`, `POSTGRES_OWNER_PASSWORD` or `POSTGRES_PASSWORD` (checked first, before anything else is read; the line names the variables, never their values). The batch 5 review found the compose file giving the internet-facing api and worker the owner's superuser URL and password; an environment leak or code execution there would have been a superuser login (every guard, the append-only and audit tables, `COPY … TO PROGRAM` on the database host).
 
 A `KEK_BASE64` or `SESSION_SECRET_BASE64` problem is reported on its own, before the rest of the list: fix it and start again to see the other problems.
@@ -112,7 +114,17 @@ A migration that fails leaves nothing behind: the file and its bookkeeping row a
 4. **Otherwise** (a migration changed or destroyed data, or the previous image misbehaves): restore the restore point into a **new** instance (§8), point the previous image at it, and accept that writes after that point are lost.
 5. **To fix a bad migration**, add the next-numbered migration. Never edit an applied one.
 
-**Managed Postgres (VERIFY).** Migration `0001` creates the `NOLOGIN BYPASSRLS` owner roles `app_definer` and `app_retention`, and `SECURITY DEFINER` functions owned by them. Some managed services do not give the owner full superuser. Before choosing a provider, check that its admin role can create roles with `BYPASSRLS` and transfer function ownership.
+**The owner role (R-DEPLOY-2, R-DEPLOY-4).** The owner must bypass row-level security: superuser, or `BYPASSRLS`. An owner subject to RLS is refused by the runner, the release step and `db:preflight` before anything is written (E475): the backfills in `0032`, `0034`, `0035` and `0045` would otherwise update **zero** rows under FORCE RLS without an error, and `0001` cannot create the `BYPASSRLS` roles. A managed Postgres usually gives a non-superuser admin role instead of a superuser (**VERIFY** per provider). The release step supports one that has `CREATEROLE` and `BYPASSRLS` (no `CREATEDB` or `REPLICATION` needed) and `CREATE` on the database (owning it is simplest):
+
+1. it refuses a missing `CREATEROLE`, a missing `CREATE` on the database, or a cluster role that already exists without the owner's `ADMIN OPTION` (E477, naming `GRANT <role> TO <owner> WITH ADMIN OPTION` for an administrator; **VERIFY** whether your provider lets its admin role receive that);
+2. it runs the FORCE-RLS update probe (rolled back) and requires 1 updated row (E476);
+3. it runs `0001`'s role block (the owner creates the roles it lacks, and holds `ADMIN` on them), grants itself `app_definer` and `app_retention` `WITH INHERIT TRUE, SET TRUE` (ALTER … OWNER TO needs SET; the EXECUTE grants on their functions need INHERIT), and aligns `app_user`, changing only the attributes PostgreSQL 16 lets it change (E478 names any other);
+4. it opens the **schema CREATE window**: a default privilege and direct grants give the definer roles `CREATE` on the owner's schemas (function ownership moves need it), prints `schema CREATE window opened for app_definer, app_retention`, runs the migrations, and in `finally` revokes both and prints `schema CREATE window closed`. A run killed in between leaves the window to the next run, which closes it first (`schema CREATE window left open by an earlier run: closed`);
+5. post-checks on every release (E479): every `SECURITY DEFINER` function outside `pg_catalog` and `information_schema` that is not an extension member is owned by `app_definer` or `app_retention`; neither holds `CREATE` on any schema or a default privilege; both are `NOLOGIN NOSUPERUSER BYPASSRLS` (0001's own check runs only once). Then the R-DEPLOY-1 app checks over `DATABASE_URL` (§2), which replace the old single query.
+
+It prints one secret-free line per step, then `release ok: app connects as app_user, RLS-bound`; a second run prints `0 applied` and `release ok`. A superuser owner skips steps 3 and 4 and prints exactly what it printed before. Rehearsed on the local test cluster only (a CREATEROLE BYPASSRLS owner without CREATEDB applied every migration, then `0 applied`); the catalog matches a superuser-migrated database apart from ACL entry order. Check a candidate provider first with `pnpm db:preflight -- --trial` on a throwaway database (§12, G1).
+
+The new refusals, exact messages: `the migration role <name> is subject to row-level security (not superuser, no BYPASSRLS): migration backfills would update zero rows under FORCE RLS, and 0001 cannot create the BYPASSRLS roles; nothing was applied`; `the migration role <name> lacks CREATEROLE …` / `… lacks CREATE on the database …` / `… lacks ADMIN OPTION on the existing role <role> …`; `the migration role <name> does not bypass row-level security on its own tables (the FORCE-RLS update probe updated 0 rows, not 1) …`; `app_user has CREATEDB and the owner role cannot remove it (PG16 lets only a role with CREATEDB change it): ask an administrator to run ALTER ROLE app_user NOCREATEDB`; `post-checks failed: …`; `the app role check failed: …`. A connection or TLS failure prints `release failed: database connection failed: <code>`, never the host.
 
 **Migration for real providers.** `0017_production_readiness.sql` adds one `SECURITY DEFINER` read, `app.resolve_telephony_account`, which maps a Twilio subaccount SID to its tenant for webhook signature checks. It returns the tenant id only, for active credentials of active tenants. It is a security-review item.
 
@@ -133,6 +145,10 @@ Choosing a real vendor without its credentials fails in every environment. The f
 | `NODE_ENV` | yes | `production` |
 | `DATABASE_URL` | yes | app role (RLS-bound) |
 | `MIGRATION_DATABASE_URL` | release step only (`.env.owner` with the compose stack) | owner role; never in the api or worker environment (refused in production, §2) |
+| `DATABASE_SSL_MODE` | default `verify-full` in prod | `verify-full` (verified TLS, checked against the URL's host) or `disable`. Nothing else: `require`, `prefer` and `verify-ca` mean verify-full in pg anyway and `no-verify` turns verification off. `disable` is refused in production unless `ALLOW_FAKE_PROVIDERS=true` (staging, whose database is on the same VM). Applies to every client, the owner's included (R-DEPLOY-5) |
+| `DATABASE_SSL_CA_FILE` | no | absolute path to the database CA (PEM); without it Node's default trust store is used. The app VM mounts `/etc/realty/db-ca.pem` at `/run/realty/db-ca.pem` |
+
+Database URLs carry **no query string or fragment** in production (E484: `?user=`, `?host=` or `?sslmode=` would override the login, the host or the TLS mode), and no `PG*` variable may be set (E483).
 | `PUBLIC_BASE_URL` | yes, https | the public origin. Webhook signatures are computed over it, and it builds links and the reply domain `in.<host>`. |
 | `WEB_ORIGIN` | yes, https | CSRF/CORS allowlist (comma-separated) |
 | `TRUST_PROXY` | behind a proxy | the proxies whose `X-Forwarded-For` is believed: comma-separated addresses, CIDRs, `loopback`, `linklocal` or `uniquelocal` (compose stack: `uniquelocal`, the `web` container). Empty or `false`: none. `true` is refused (it trusts every hop: a client could pick its own IP) |
@@ -457,7 +473,7 @@ Encrypt both and store them away from the host. Roles are cluster-wide, so a dum
    pg_restore --exit-on-error -d "$RESTORE_OWNER_URL" realty-<date>.dump
    ```
 
-   It must finish with no error. Check that the `SECURITY DEFINER` functions are owned by `app_definer` or `app_retention`: `SELECT r.rolname, count(*) FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner WHERE p.prosecdef GROUP BY 1` (no other owner).
+   It must finish with no error. Check that the `SECURITY DEFINER` functions are owned by `app_definer` or `app_retention`: `SELECT r.rolname, count(*) FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner JOIN pg_namespace n ON n.oid = p.pronamespace WHERE p.prosecdef AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e') GROUP BY 1` (no other owner; extension members, which a managed provider may install, are left out). The release step of step 2 runs the same check (E479).
 2. Run the release step against it with the same image version. It must report `0 applied` (or apply only the migrations newer than the backup), then `release ok`. It also sets `app_user`'s password from the drill's `DATABASE_URL`.
 3. Start one API and one worker with the production KEK and secrets, pointing at the restored database and a **read-only** copy of the bucket (or of the storage volume). Use a separate `PUBLIC_BASE_URL` and `WEB_ORIGIN`, and **fake** telephony and email (`ALLOW_FAKE_PROVIDERS=true`), so nothing reaches real clients. With a read-only copy, `/api/ready` reports `degraded` (`storage: failed`), because its check writes a probe object; that is expected here.
 4. Check `/api/ready` answers 200. Log in as a known test user with MFA (this proves the KEK decrypts platform data). Open a contact and a conversation. Open a stored object to prove object decryption: a recording, an MMS item, or an import file (the import's **Take snapshot** makes the worker decrypt it; the batch then shows its source counts). For the audit log there is no screen: as the owner role, `SELECT count(*) FROM audit_log`, and check that the worker's first `audit_log seq check` line reports `"missing":0`.
@@ -491,7 +507,7 @@ Encrypt both and store them away from the host. Roles are cluster-wide, so a dum
 
 **Rehearsed (2026-11-11, seeded demo tenant):** a random "previous" key aborted with `a tenant key opens with neither KEK (tenant key field v1); nothing was changed` and left `tenant_keys` and the MFA ciphertexts byte-identical. A run killed with SIGKILL while it waited inside its transaction changed nothing either. The real run, through the documented `docker run` command, took 0.4 s including container start (3 tenant keys, 1 MFA secret, 4 webhook payloads). A re-run reported `8 already under the new KEK` and changed nothing. With the new KEK: ready, MFA sign-in, a contact and an import file's decryption by the worker all passed.
 
-A KMS-backed KEK (wrap and unwrap as KMS calls) is a drop-in for the same interface (`crypto/kek.ts`) but is not built yet. It needs a cloud account.
+A KMS-backed KEK is **not** a drop-in, and it is not built: `Kek.platformKey` is synchronous and derives the platform keys (MFA secrets, stored webhook payloads) from the raw key bytes (`apps/api/src/crypto/kek.ts`), so a KMS adapter that wraps and unwraps tenant keys remotely still needs a separately protected platform root. §12 (H5) is the runbook step; it needs a cloud account and a design change first.
 
 ## 10. Launch checklist
 
@@ -528,6 +544,9 @@ pnpm --filter @realty/db counsel-review -- --keys platform:<name>@<version>[,pla
 docker compose -f docker-compose.prod.yml --env-file .env.owner run --rm --no-deps release \
   node packages/db/dist/scripts/counsel-review.js --keys ...@... --reviewed-on ... --reference "..."  # dry run
 # any other host: the api image, with MIGRATION_DATABASE_URL set for this one-off container only (as in §9)
+# the app VM (§12): render owner.env first, run it through the release profile, then remove owner.env
+REALTY_VERSION=<version> docker compose -f docker-compose.app-vm.yml --profile release run --rm release \
+  node packages/db/dist/scripts/counsel-review.js --keys ...@... --reviewed-on ... --reference "..."  # dry run
 # withdrawing a recorded review (a key counsel did not clear, a wrong date, a review set by hand):
 pnpm --filter @realty/db counsel-review -- --revoke --keys platform:<name>@<version> --reference "<why, reported by whom>"   # dry run
 ```
@@ -664,3 +683,72 @@ Roles: **owner** is the team's business owner; **operator** runs the deployment;
 - **Licence pack.** `PUT /api/admin/mls/connections/:id/license-pack` (Owner/Admin, re-auth) stores every value with the person's statement whether counsel reviewed it. Until **every** value is marked reviewed, and the pack has an attribution and a disclaimer, no MLS listing reaches a client (saved-search alerts). `GET /api/admin/mls` says, per connection, whether MLS data may reach clients and why not. Every value is **VERIFY WITH COUNSEL / MLS**.
 - **Staleness.** When the last successful sync is older than the pack's `max_staleness_hours` (a pack without one is always stale), MLS alerts pause, queued MLS alerts are canceled by the `mls.compliance_sweep` job (every 5 min), the connection is marked degraded (`MLS_FEED_STALE`), competing sets drop MLS rows, and the admin view says "MLS data as of …".
 - **Stop.** Setting `MLS_LIVE_CALLS=false` stops every read; disconnecting stops the sync and purges the key (§11.2).
+
+## 12. Pilot deploy runbook: an app VM and a database host (option A)
+
+The recommended shape for the first real teams (hosting option A; the vendor, the secret manager and the region are **owner decisions**, still open). Two machines on one private network: the **app VM** runs `docker-compose.app-vm.yml` (api, worker, web, the one-off release step, and an optional TLS edge); the **database host** (or a managed Postgres 16 instance) runs Postgres with at least 4 dedicated cores (§3 "Database host"). Every database connection is verified TLS. Nothing in this repository provisions, configures or contacts a provider: each step below is done by the operator, and every vendor fact is **VERIFY**.
+
+Live switches stay **off** throughout: `TELEPHONY_LIVE_REQUESTS=false`, `MLS_LIVE_CALLS=false`, `ALLOW_FAKE_PROVIDERS=false` (in `deploy/app-vm/app.settings.example`; `apps/api/src/deploy.appvm.test.ts` checks them). Real leads and outbound messaging wait for the explicitly approved pilot.
+
+### 12.1 G1: choose the database (before provisioning anything for real)
+
+1. Create a **throwaway** database with the candidate's admin role (a trial instance or a scratch database).
+2. From any checkout, with only that database's owner URL set (no query string; `DATABASE_SSL_MODE=verify-full` and the provider's CA in `DATABASE_SSL_CA_FILE` to check TLS too):
+
+   ```sh
+   MIGRATION_DATABASE_URL='postgres://<admin-role>:<password>@<db-host>:5432/<scratch-db>' \
+   DATABASE_SSL_MODE=verify-full DATABASE_SSL_CA_FILE=/path/to/provider-ca.pem \
+     pnpm db:preflight -- --trial
+   ```
+
+   In one rolled-back transaction it creates a `NOLOGIN BYPASSRLS` role, grants it to the owner `WITH INHERIT, SET`, creates a schema with `CREATE` for it, moves a `SECURITY DEFINER` function to it, runs the FORCE-RLS update probe and `CREATE EXTENSION IF NOT EXISTS` for `pgcrypto`, `pg_trgm` and `citext`, and reports `CREATE` on the database and a server version of 16 or later. One line per check, then `preflight ok` or `preflight failed: <n> checks`. It commits nothing (the test compares `pg_roles`, `pg_namespace` and `pg_default_acl` before and after).
+3. Any `failed` line rules the candidate out as it is configured, or names the grant to ask the provider for. Then delete the throwaway database.
+
+### 12.2 G2: provision, render, release, up
+
+1. **Database host.** Postgres 16 on a private address only. Start from `deploy/db-host/postgresql.realty.conf.example` (`listen_addresses` = the private address, `ssl = on`, `ssl_min_protocol_version = 'TLSv1.2'`, `password_encryption = scram-sha-256`) and `deploy/db-host/pg_hba.conf.example` (`hostssl … scram-sha-256` from the app VM's address only; no `host` and no `trust` line). The server certificate must name `<db-host>` and chain to the CA the app VM gets. Create the owner role (superuser, or `CREATEROLE BYPASSRLS` owning the database, §3) and an empty database `realty` owned by it. A managed instance: its admin role and its CA bundle (**VERIFY** the role's attributes and where the CA is published).
+2. **Secrets in the secret manager** (H5 below): the app role's URL (`postgres://app_user:<password>@<db-host>:5432/realty`, no query string), the owner's URL, `KEK_BASE64`, `SESSION_SECRET_BASE64`, each webhook secret (different), and the vendor keys of `deploy/app-vm/app.secrets.refs.example`. Values may hold only `A-Z a-z 0-9 + / = : . _ @ % , ~ -` (E487): generate keys with `openssl rand -base64 32` and secrets with `openssl rand -hex 32`, and percent-encode anything else inside a URL.
+3. **App VM files** (root-owned, never in the repository):
+   - `/etc/realty/db-ca.pem`: the database CA (it is not secret, but it is what verify-full trusts);
+   - `/etc/realty/app.settings`: from `deploy/app-vm/app.settings.example` (every non-secret setting; replace the placeholders);
+   - `/etc/realty/app.secrets.refs` and `/etc/realty/owner.secrets.refs`: from the two `*.refs.example` files, one `NAME=<reference>` per line (`[A-Za-z0-9/_.:@-]+`);
+   - `/run/realty`: a directory only root can enter (`install -d -m 700 /run/realty`; it is a tmpfs, so rendered files do not survive a reboot).
+4. **Render.** `SECRET_FETCH_CMD` is a command **you** supply that prints one secret's value for the reference given as its single argument (your secret manager's CLI; **VERIFY** its flags; its stderr is discarded):
+
+   ```sh
+   export SECRET_FETCH_CMD='<your-secret-cli> <read-one-secret-by-reference>'
+   sh deploy/render-secrets.sh /etc/realty/app.settings /etc/realty/app.secrets.refs /run/realty/app.env
+   sh deploy/render-secrets.sh - /etc/realty/owner.secrets.refs /run/realty/owner.env
+   ```
+
+   Each output is mode 0600, written through a temp file in the same directory. Nothing is printed but refusals, which name the variable and the reference, never a value (R-DEPLOY-7).
+5. **Preflight** (read-only): `REALTY_VERSION=<version> docker compose -f docker-compose.app-vm.yml --profile release run --rm release node packages/db/dist/scripts/preflight.js` (`--owner --app`; `--app` reports `not checked` until the first release).
+6. **Restore point**, then **release** (§3): `REALTY_VERSION=<version> docker compose -f docker-compose.app-vm.yml --profile release run --rm release`. Keep its output with the deploy log. It must end `release ok: app connects as app_user, RLS-bound`.
+7. **Remove the owner's file:** `rm /run/realty/owner.env`. Only the `release` profile reads it; api, worker, web and edge never reference it (R-DEPLOY-6), and the api and worker refuse to start with an owner credential.
+8. **Up:** `REALTY_VERSION=<version> docker compose -f docker-compose.app-vm.yml up -d` (add `--profile edge` for the optional TLS edge: certificates at `/etc/realty/tls/fullchain.pem` and `privkey.pem`, `deploy/edge/edge.conf` with your host in place of `app.example.com`; it answers 444 to every other name, sets HSTS, replaces `X-Forwarded-For` and logs nothing). Without the edge, `web` listens on `127.0.0.1:8080` (`WEB_BIND_ADDRESS`, `WEB_PORT`) for your own TLS terminator or load balancer.
+9. **Checks:** `/api/ready` 200 through the public origin; the start-up lines of the api and worker show `telephonyLiveRequests: false` and `databaseTls: { mode: 'verify-full', … }`; `docker compose -f docker-compose.app-vm.yml exec -T api printenv MIGRATION_DATABASE_URL` prints nothing and exits 1; an MFA sign-in; the §10 checklist.
+10. **Restore drill** (§8) into a new instance, before the first team's data, with the times written down.
+
+Every later deploy: render (step 4), restore point, release, remove `owner.env`, `up -d` with the new `REALTY_VERSION`.
+
+**Counsel reviews are an owner action, per deployment, never a deploy step** (§10.1): with `owner.env` rendered, run the dry run through the release profile, read it, then the same command with `--apply`, and remove `owner.env` again.
+
+### 12.3 H4: backups and point-in-time recovery (runbook only; no tooling is configured here)
+
+- [ ] PITR with at least a **35-day** window (ARCHITECTURE §8), encrypted, stored in another region or account than the database. A managed instance: turn on its PITR and set the retention (**VERIFY** the maximum the provider allows). A self-run host: a physical-backup tool with WAL archiving (`archive_mode`, `archive_command` or `archive_library`, `wal_level` in `postgresql.realty.conf`; **VERIFY** in the tool's documentation).
+- [ ] The object bucket: versioning plus replication or a nightly copy (§7, §8).
+- [ ] The KEK and secrets are **not** in the backups: they stay in the secret manager (H5). A backup without the KEK cannot be decrypted.
+- [ ] A restore point before every release step (§3 "Rollback").
+- [ ] The restore drill (§8) quarterly and before launch, timed (RTO, RPO). A restore into a new instance from a dump needs `deploy/restore-roles.sql` first.
+- [ ] Erased contacts persist in backups for the PITR window (**VERIFY WITH COUNSEL**).
+
+### 12.4 H5: the KEK and other keys (runbook only; no KMS code)
+
+- [ ] `KEK_BASE64` and `SESSION_SECRET_BASE64` live in the secret manager, rendered into `/run/realty/app.env` only (12.2 step 4), never in the repository, an image or a backup.
+- [ ] KEK rotation (§9) runs as a one-off container with the owner's file rendered: pass the keys with `--env-file` files rendered the same way (mode 0600), not `-e NAME="$VALUE"` on a shared shell, then remove them.
+- [ ] A KMS-backed KEK is **not** a drop-in (§9: `Kek.platformKey` is synchronous and derives platform keys from the raw bytes). Moving to one needs a separately protected platform root and its own design; until then the KEK is a 32-byte secret in the secret manager, with access limited to the app VM's identity (**VERIFY** the manager's access policies and audit log).
+- [ ] Object storage: `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` are static keys (the adapter has no role credentials yet); scope them to the bucket (§7) and rotate them on a schedule. The bucket holds only per-object envelope ciphertext; optional SSE (`S3_SSE`) adds nothing the envelope does not already give (**VERIFY** any compliance requirement for it).
+
+### 12.5 What stays out
+
+No provisioning, IaC for options B and C, DNS or MX records, a malware scanner (N11), log shipping or load-balancer configuration, `*_FILE` secret variables, or changes to `/api/ready`. `docker-compose.prod.yml` keeps its in-stack Postgres for staging and rehearsals (docs/STAGING.md).
