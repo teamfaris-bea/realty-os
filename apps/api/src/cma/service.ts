@@ -209,9 +209,10 @@ function engine(input: Parameters<typeof runEngine>[0]): CmaResult {
  * One run: every tier's sold sales in one soldCandidates call (F6), each mirrored team sale one candidate (R-MLS-5, E366:
  * the team row's identity and facts, the lowest-id mirror's close price, size and sale facts), V1-B's engine, the context
  * listings. A record whose stored values V1-B's strict schemas refuse (a price or count beyond the engine's bounds) is
- * left out and counted, so one bad record never stops a CMA.
+ * left out and counted, so one bad record never stops a CMA. Also returns every identity offered to the engine: the ids
+ * this run read under RLS (V1-B lists only the closest not-used sales, so its result does not name them all).
  */
-async function run(tx: Tx, conns: CmaConnections, s: ResolvedSubject, valuationDate: string, include: readonly string[], exclude: readonly string[]): Promise<StoredResult> {
+async function run(tx: Tx, conns: CmaConnections, s: ResolvedSubject, valuationDate: string, include: readonly string[], exclude: readonly string[]): Promise<{ result: StoredResult; offered: ReadonlySet<string> }> {
   const connectionIds = conns.used.map((u) => u.conn.id);
   const subject = engineSubject(s);
   const since = addMonths(valuationDate, -Math.max(CMA_DEFAULTS.extendedLookbackMonths, CMA_DEFAULTS.ratePoolMonths));
@@ -247,14 +248,22 @@ async function run(tx: Tx, conns: CmaConnections, s: ResolvedSubject, valuationD
   }
   const tierReads = read.reads.map((x) => ({ tier: ENGINE_TIER[x.tier], limitReached: x.limitReached }));
   const result = engine({ subject, candidates, tierReads, valuationDate, include, exclude });
-  const used = new Set([...result.comps.map((c) => c.ref.identity), ...result.notUsed.map((n) => n.ref.identity), ...result.subjectSales.map((x) => x.ref.identity)]);
+  const offered = new Set(candidates.map((c) => c.ref.identity));
+  // the listing of every identity the result names, and of every one the agent included or excluded (so the view can
+  // show what was chosen even when V1-B's not-used list leaves it out)
+  const used = new Set([
+    ...result.comps.map((c) => c.ref.identity),
+    ...result.notUsed.map((n) => n.ref.identity),
+    ...result.subjectSales.map((x) => x.ref.identity),
+    ...[...include, ...exclude].filter((id) => offered.has(id)),
+  ]);
   for (const k of Object.keys(listings)) if (!used.has(k)) delete listings[k];
   const reads = READ_ORDER.map((t) => {
     const x = read.reads.find((y) => y.tier === t);
     return { tier: ENGINE_TIER[t], ran: x !== undefined, rows: x?.rows ?? 0, limitReached: x?.limitReached ?? false };
   });
   const context = await contextListings(tx, conns, s);
-  return { ...result, listings, reads, recordsLeftOut, connectionIds, ...context };
+  return { result: { ...result, listings, reads, recordsLeftOut, connectionIds, ...context }, offered };
 }
 
 /** Actives and pendings near the subject: support only, never comps (core competingSet with no price band). */
@@ -334,11 +343,15 @@ async function compute(tx: Tx, now: Instant, i: Inputs): Promise<{ write: CmaWri
   const sizeField = await connectionSizeField(tx, conns.used.map((u) => u.conn.id));
   const resolved = await resolveSubject(tx, i.subject, { contactId: i.contactId, sizeField });
   const valuationDate = localDateOf(now, zone) as string;
-  const result = await run(tx, conns, resolved, valuationDate, i.include, i.exclude);
+  const { result, offered } = await run(tx, conns, resolved, valuationDate, i.include, i.exclude);
   // only listings that are near matches now may be dismissed (others are ignored; with nothing to dismiss, nothing is read)
   const near = new Set(i.nearMatchDismissed.length === 0 ? [] : (await nearMatches(tx, resolved.addressKey, [])).map((m) => m.listingId));
-  // include/exclude keep only ids this run read (a lease, a future sale or another tenant's id is never stored)
-  const seen = new Set([...result.comps.map((c) => c.ref.identity), ...result.notUsed.map((n) => n.ref.identity)]);
+  // include/exclude keep only ids this run offered to the engine: sold, non-lease MLS sales of this tenant read under
+  // RLS inside the window (a lease, a future sale or another tenant's id is never stored). Every offered id counts, not
+  // only those V1-B lists: its not-used list is the closest 50, and an exclusion further out must not be lost. The
+  // subject's own sales are not candidates for either (choosing them changes nothing).
+  const own = new Set(result.subjectSales.map((x) => x.ref.identity));
+  const seen = new Set([...offered].filter((id) => !own.has(id)));
   const known = (xs: readonly string[]) => [...new Set(xs)].filter((id) => seen.has(id)).sort();
   const subject: StoredSubject = { input: i.subject, include: known(i.include), exclude: known(i.exclude), nearMatchDismissed: [...new Set(i.nearMatchDismissed)].filter((id) => near.has(id)).sort(), resolved };
   return {

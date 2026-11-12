@@ -74,7 +74,7 @@ export interface CmaRule {
   readonly minDistinctValues: number;
   /** Size rate: pairs at least this many sq ft apart. VERIFY. */
   readonly sizePairMinDiffSqft: number;
-  /** How many not-used sales are listed (the closest). */
+  /** How many not-used sales are listed (the closest), besides every sale the agent excluded (always listed). */
   readonly notUsedLimit: number;
   /** Back-test: most sales tested. VERIFY. */
   readonly backtestMaxSales: number;
@@ -350,7 +350,7 @@ interface CmaResultCommon {
   readonly valuationDate: string;
   readonly comps: readonly CompView[];
   readonly notUsed: readonly NotUsedView[];
-  /** How many candidates were not used (notUsed lists the closest notUsedLimit). */
+  /** How many candidates were not used (notUsed lists the closest notUsedLimit, and every sale the agent excluded). */
   readonly notUsedTotal: number;
   /** The subject's own earlier sales, matched by listing or address key (E365). Never comps. */
   readonly subjectSales: readonly SubjectSaleView[];

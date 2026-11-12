@@ -134,4 +134,26 @@ describe('scale', () => {
     expect(r.notUsedTotal).toBeGreaterThan(CMA_DEFAULTS.notUsedLimit);
     expect(r.market.poolSales).toBeLessThanOrEqual(CMA_DEFAULTS.ratePoolLimit);
   });
+
+  it('R-CMA-8: a sale the agent excluded is always listed as not used, even beyond the closest notUsedLimit, so the exclusion can be seen and undone', () => {
+    const market = linearMarket({ n: 2_000, seed: 21, trendCentsPerMonth: 30, poolCents: 2_000_000, bedCents: 800_000, noise: 0.04, radiusMiles: 3 });
+    const base = run({ candidates: market });
+    const far = [...base.comps].sort((a, b) => (b.distanceM ?? 0) - (a.distanceM ?? 0))[0]!;
+    const r = run({ candidates: market, exclude: [far.ref.identity] });
+    expect(r.comps.map((c) => c.ref.identity)).not.toContain(far.ref.identity);
+    // more than notUsedLimit not-used sales are closer, so only the exclusion rule lists it
+    expect(r.notUsed.filter((n) => (n.distanceM ?? 0) < (far.distanceM ?? 0)).length).toBeGreaterThanOrEqual(CMA_DEFAULTS.notUsedLimit);
+    expect(r.notUsed.find((n) => n.ref.identity === far.ref.identity)).toMatchObject({ reason: 'excluded_by_agent', includable: false });
+    expect(r.notUsed).toHaveLength(CMA_DEFAULTS.notUsedLimit + 1);
+    // the next-ranked sale took its place among the comps, so the count of not-used sales is unchanged
+    expect(r.comps).toHaveLength(base.comps.length);
+    expect(r.notUsedTotal).toBe(base.notUsedTotal);
+    // without coordinates the list is in identity order: an excluded comp whose identity sorts last is listed too
+    const flat = Array.from({ length: 200 }, (_, i) => cand(`id-${String(i).padStart(4, '0')}`, { latE6: null, lonE6: null, closeDate: i >= 190 ? monthsBefore(1) : monthsBefore(4), contractDate: null }));
+    const noCoords = subject({ latE6: null, lonE6: null });
+    const b2 = run({ subject: noCoords, candidates: flat });
+    const last = [...b2.comps.map((c) => c.ref.identity)].sort().at(-1)!;
+    const r2 = run({ subject: noCoords, candidates: flat, exclude: [last] });
+    expect(r2.notUsed.find((n) => n.ref.identity === last)).toMatchObject({ reason: 'excluded_by_agent' });
+  });
 });

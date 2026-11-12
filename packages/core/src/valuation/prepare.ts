@@ -124,10 +124,13 @@ function compView(c: ChosenComp, weightBps: number, valuationDate: string, rule:
   };
 }
 
+/**
+ * The closest notUsedLimit not-used sales, then every other sale the agent excluded (R-CMA-8: an exclusion is always
+ * listed, so it can be seen and undone; the caller bounds the exclude list). Still in distance, then identity, order.
+ */
 function notUsedViews(items: readonly { s: Screened; reason: NotUsedReason }[], rule: CmaRule, lookbackMonths: number): NotUsedView[] {
-  return [...items]
-    .sort((a, b) => (a.s.distanceM ?? Number.MAX_SAFE_INTEGER) - (b.s.distanceM ?? Number.MAX_SAFE_INTEGER) || byIdentity(a.s, b.s))
-    .slice(0, rule.notUsedLimit)
+  const sorted = [...items].sort((a, b) => (a.s.distanceM ?? Number.MAX_SAFE_INTEGER) - (b.s.distanceM ?? Number.MAX_SAFE_INTEGER) || byIdentity(a.s, b.s));
+  return [...sorted.slice(0, rule.notUsedLimit), ...sorted.slice(rule.notUsedLimit).filter((x) => x.reason === 'excluded_by_agent')]
     .map(({ s, reason }) => ({
       ref: s.c.ref,
       reason,

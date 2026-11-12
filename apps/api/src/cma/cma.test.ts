@@ -5,7 +5,7 @@ import { CMA_METHOD_VERSION } from '@realty/core/valuation';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { mlsConnection } from '../mls/testing.js';
-import { type CmaBody, type CmaWorld, address, call, cmaPack, cmaWorld, codes, contact, daysAgo, feedLastSyncedAt, localSales, mlsSale, oneTap, teamListing } from './testing.js';
+import { type CmaBody, type CmaWorld, HOME, address, call, cmaPack, cmaWorld, codes, contact, daysAgo, feedLastSyncedAt, localSales, mlsSale, oneTap, saleReso, syncSales, teamListing } from './testing.js';
 
 let h: ApiHarness;
 let w: CmaWorld;
@@ -297,6 +297,33 @@ describe('PATCH (R-CMA-8)', () => {
     const added = b.body.cma.comps.find((x) => x.listingId === short)!;
     expect(added).toMatchObject({ includedByAgent: true, labels: ['short sale'] });
     expect(added.why).toContain('Added by the agent after review: short sale.');
+  });
+
+  it('R-CMA-8: an exclusion survives when more than 50 not-used sales are closer than the excluded comp: stored, listed, and kept by a later PATCH and a re-tap', async () => {
+    const wd = await cmaWorld(h);
+    const at = (dLat: number) => ({ latE6: HOME.latE6 + dLat, lonE6: HOME.lonE6 });
+    // 60 sales right next to the home but twice its size (never comps), then 8 comparable sales further out
+    await syncSales(wd, Array.from({ length: 60 }, (_, i) => saleReso({ sqft: 3000, closeDate: daysAgo(20 + i), ...at(100 + i * 5) })));
+    await syncSales(wd, Array.from({ length: 8 }, (_, i) => saleReso({ sqft: 1450 + i * 10, beds: 3, closeDate: daysAgo(30 + i * 7), closePriceCents: 50_000_000 + i * 200_000, ...at(4000 + i * 600) })));
+    const c = await contact(wd.agents[0]!);
+    const line1 = '1050 Sample Avenue';
+    await address(h, wd.tenantId, c, { kind: 'property', line1 });
+    await mlsSale(wd, { line1, closeDate: daysAgo(4 * 365), sqft: 1500, beds: 3, ...at(0) });
+    const a = await oneTap(wd.agents[0]!, c);
+    expect(a.status).toBe(201);
+    const far = [...a.body.cma.comps].sort((x, y) => (y.distanceM ?? 0) - (x.distanceM ?? 0))[0]!.listingId;
+    const p = await call<CmaBody>(wd.agents[0]!, 'PATCH', `/cma/${a.body.cma.id}`, { exclude: [far] });
+    expect(p.status).toBe(200);
+    expect(p.body.cma.notUsed.filter((x) => x.reason === 'size_not_similar').length).toBeGreaterThanOrEqual(50);
+    expect(p.body.cma.comps.map((x) => x.listingId)).not.toContain(far);
+    expect(p.body.cma.subject.exclude).toEqual([far]);
+    expect(p.body.cma.notUsed.find((x) => x.listingId === far)).toMatchObject({ reason: 'excluded_by_agent' });
+    const n = await call<CmaBody>(wd.agents[0]!, 'PATCH', `/cma/${a.body.cma.id}`, { notes: 'checked the street' });
+    expect(n.body.cma.subject.exclude).toEqual([far]);
+    expect(n.body.cma.comps.map((x) => x.listingId)).not.toContain(far);
+    const again = await oneTap(wd.agents[0]!, c);
+    expect([again.status, again.body.cma.id]).toEqual([200, a.body.cma.id]);
+    expect(again.body.cma.comps.map((x) => x.listingId)).not.toContain(far);
   });
 
   it('E368 R-CMA-3: $15,000 of seller concessions lower the adjusted price by $15,000, never raise it', async () => {
