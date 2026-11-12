@@ -32,7 +32,7 @@ function mock(responses: ({ status: number; json?: unknown; bytes?: Uint8Array }
 }
 
 const tw = (f: typeof fetch, o: Partial<ConstructorParameters<typeof TwilioTelephony>[0]> = {}) =>
-  new TwilioTelephony({ accountSid: MASTER, authToken: 'master-token', publicBaseUrl: 'https://api.example.test', fetch: f, sleep: async () => undefined, ...o });
+  new TwilioTelephony({ accountSid: MASTER, authToken: 'master-token', publicBaseUrl: 'https://api.example.test', fetch: f, sleep: async () => undefined, liveRequests: true, ...o });
 
 const basic = (sid: string, token: string) => `Basic ${Buffer.from(`${sid}:${token}`).toString('base64')}`;
 
@@ -185,7 +185,7 @@ describe('TwilioCarrierLookup', () => {
   it('maps Lookup v2 line_type_intelligence onto mobile/landline/voip/unknown', async () => {
     for (const [type, want] of [['mobile', 'mobile'], ['landline', 'landline'], ['nonFixedVoip', 'voip'], ['fixedVoip', 'voip'], ['tollFree', 'unknown']] as const) {
       const m = mock([{ status: 200, json: { line_type_intelligence: { type, carrier_name: 'Carrier X' } } }]);
-      const l = new TwilioCarrierLookup({ accountSid: MASTER, authToken: 't', fetch: m.f, sleep: async () => undefined });
+      const l = new TwilioCarrierLookup({ accountSid: MASTER, authToken: 't', fetch: m.f, sleep: async () => undefined, liveRequests: true });
       expect(await l.lookup('+14155550123')).toEqual({ lineType: want, carrier: 'Carrier X' });
       expect(m.seen[0]!.url.toString()).toBe('https://lookups.twilio.com/v2/PhoneNumbers/%2B14155550123?Fields=line_type_intelligence');
     }

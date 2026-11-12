@@ -4,10 +4,11 @@
 import { FakeFetch, renderApp, sessionFixture, tableWith } from '../../shell/testing/fakeApi.js';
 import { AGENT_SURFACES } from '../feed/lib/testing.js';
 import { LEAD_ADMIN_SURFACES, type TestRole } from '../admin/lib/testing.js';
+import { surface as leadSourcesSurface } from '../lead-sources/index.js';
 import { surface as leadEmailSurface } from './index.js';
-import type { Inbox, ReviewItem } from './types.js';
+import type { Inbox, PortalCatalogEntry, ReviewItem } from './types.js';
 
-export const leadEmailTable = () => tableWith(...AGENT_SURFACES, ...LEAD_ADMIN_SURFACES, leadEmailSurface);
+export const leadEmailTable = () => tableWith(...AGENT_SURFACES, ...LEAD_ADMIN_SURFACES, leadEmailSurface, leadSourcesSurface);
 
 export const SRC = '01900000-0000-7000-8000-00000000500a';
 export const KEY = 'ab'.repeat(20);
@@ -16,6 +17,17 @@ export const ADDRESS = `leads+${KEY}@leads.realty-os.invalid`;
 export const SUGGESTED = [
   { domain: 'zillow.com', label: 'Zillow' },
   { domain: 'realtor.com', label: 'Realtor.com' },
+];
+
+/** apps/api/src/leadEmail/trust.ts PORTAL_CATALOG */
+export const CATALOG: PortalCatalogEntry[] = [
+  { portal: 'zillow', domain: 'zillow.com', label: 'Zillow', preTicked: true },
+  { portal: 'realtor', domain: 'realtor.com', label: 'Realtor.com', preTicked: true },
+  { portal: 'redfin', domain: 'redfin.com', label: 'Redfin', preTicked: false },
+  { portal: 'homes', domain: 'homes.com', label: 'Homes.com', preTicked: false },
+  { portal: 'homes', domain: 'homesnap.com', label: 'Homes.com', preTicked: false },
+  { portal: 'trulia', domain: 'trulia.com', label: 'Trulia', preTicked: false },
+  { portal: 'opcity', domain: 'opcity.com', label: 'Opcity', preTicked: false },
 ];
 
 export function inbox(over: Partial<Inbox> = {}): Inbox {
@@ -28,6 +40,8 @@ export function inbox(over: Partial<Inbox> = {}): Inbox {
     addressCreatedAt: null,
     allowedSenderDomains: [],
     suggestedSenderDomains: SUGGESTED,
+    ignoredSenderDomains: [],
+    portalCatalog: CATALOG,
     inboundDomainConfigured: true,
     ...over,
   };

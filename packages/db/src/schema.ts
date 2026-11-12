@@ -326,6 +326,40 @@ export interface CallsTable {
   ring_user_id: string | null;
 }
 
+/** public.cma_reports (table) */
+export interface CmaReportsTable {
+  tenant_id: string;
+  id: string;
+  contact_id: string | null;
+  contact_address_id: string | null;
+  listing_id: string | null;
+  status: Generated<string>;
+  purpose: string;
+  inspection: Generated<string>;
+  inspected_on: string | null;
+  intended_users: string | null;
+  agent_interest: string | null;
+  conflicts: string | null;
+  value_definition: string | null;
+  limiting_conditions: string | null;
+  method_version: string;
+  valuation_date: string;
+  mls_data_as_of: Timestamp | null;
+  subject: Json;
+  result: Json;
+  value_cents: Int8 | null;
+  low_cents: Int8 | null;
+  high_cents: Int8 | null;
+  agent_notes: string | null;
+  content_sha256: string;
+  created_by_user_id: string;
+  shared_by_user_id: string | null;
+  shared_at: Timestamp | null;
+  shared_message_id: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
 /** public.compliance_policy_versions (table) */
 export interface CompliancePolicyVersionsTable {
   tenant_id: string;
@@ -907,6 +941,24 @@ export interface GbpReviewsTable {
   created_at: Generated<Timestamp>;
 }
 
+/** public.google_lead_form_hooks (table) */
+export interface GoogleLeadFormHooksTable {
+  tenant_id: string;
+  id: string;
+  lead_source_id: string;
+  key_hash: Buffer;
+  key_enc: Buffer;
+  inquiry_type: Generated<string>;
+  cites_source_disclosure: Generated<boolean>;
+  created_by_user_id: string | null;
+  created_at: Generated<Timestamp>;
+  retired_at: Timestamp | null;
+  last_test_at: Timestamp | null;
+  last_unreadable_at: Timestamp | null;
+  unreadable_count: Generated<number>;
+  updated_at: Generated<Timestamp>;
+}
+
 /** public.home_valuations (table) */
 export interface HomeValuationsTable {
   tenant_id: string;
@@ -1068,6 +1120,8 @@ export interface IntegrationConnectionsTable {
   disconnected_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+  mls_backfill_pending: Generated<boolean>;
+  mls_backfill_cursor: string | null;
 }
 
 /** public.invites (table) */
@@ -1218,6 +1272,26 @@ export interface LeadSourceCostsTable {
   updated_at: Generated<Timestamp>;
 }
 
+/** public.lead_source_skips (table) */
+export interface LeadSourceSkipsTable {
+  tenant_id: string;
+  id: string;
+  lead_source_id: string;
+  channel: string;
+  external_ref_sha256: Buffer;
+  reason: string;
+  skipped_at: Generated<Timestamp>;
+}
+
+/** public.lead_source_webhook_secrets (table) */
+export interface LeadSourceWebhookSecretsTable {
+  tenant_id: string;
+  lead_source_id: string;
+  secret_enc: Buffer;
+  created_by_user_id: string | null;
+  created_at: Generated<Timestamp>;
+}
+
 /** public.lead_sources (table) */
 export interface LeadSourcesTable {
   tenant_id: string;
@@ -1229,6 +1303,7 @@ export interface LeadSourcesTable {
   active: Generated<boolean>;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+  active_changed_at: Timestamp | null;
 }
 
 /** public.listing_contacts (table) */
@@ -1281,6 +1356,27 @@ export interface ListingsTable {
   off_market_at: Timestamp | null;
   team_listing_id: string | null;
   seller_update_next_due_at: Timestamp | null;
+  close_price_cents: Int8 | null;
+  close_date: string | null;
+  purchase_contract_date: string | null;
+  original_list_price_cents: Int8 | null;
+  concessions_cents: Int8 | null;
+  sale_conditions: Generated<string[]>;
+  days_on_market: number | null;
+  latitude_e6: number | null;
+  longitude_e6: number | null;
+  geo_cell: GeneratedAlways<number | null>;
+  year_built: number | null;
+  lot_sqft: Int8 | null;
+  subdivision_name: string | null;
+  garage_spaces_x10: number | null;
+  stories_x10: number | null;
+  pool_private: boolean | null;
+  size_source: string | null;
+  is_lease: Generated<boolean>;
+  avm_display_allowed: Generated<boolean>;
+  address_key: string | null;
+  mls_normalize_version: Generated<number>;
 }
 
 /** public.mail_messages (table) */
@@ -1482,6 +1578,19 @@ export interface MessageTemplatesTable {
   updated_at: Generated<Timestamp>;
 }
 
+/** public.message_text_parts (table) */
+export interface MessageTextPartsTable {
+  tenant_id: string;
+  message_id: string;
+  position: number;
+  provider_media_ref: string | null;
+  status: Generated<string>;
+  body: string | null;
+  classification: string | null;
+  read_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+}
+
 /** public.messages (table) */
 export interface MessagesTable {
   tenant_id: string;
@@ -1657,6 +1766,9 @@ export interface PhoneNumbersTable {
   quarantine_until: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+  lead_source_id: string | null;
+  sender_not_verified_at: Timestamp | null;
+  sender_not_verified_detail: string | null;
 }
 
 /** public.playbook_approvals (table) */
@@ -2312,6 +2424,14 @@ export interface TeamsTable {
   updated_at: Generated<Timestamp>;
 }
 
+/** public.telephony_daily_usage (table) */
+export interface TelephonyDailyUsageTable {
+  tenant_id: string;
+  day: string;
+  sends: number;
+  updated_at: Generated<Timestamp>;
+}
+
 /** public.tenant_keys (table) */
 export interface TenantKeysTable {
   tenant_id: string;
@@ -2374,6 +2494,7 @@ export interface TenantSettingsTable {
   batch_text_enabled: Generated<boolean>;
   mail_sync_enabled: Generated<boolean>;
   mail_backfill_days: Generated<number>;
+  telephony_daily_cap: Generated<number>;
 }
 
 /** public.tenants (table) */
@@ -2572,6 +2693,7 @@ export interface WebhookEventsTable {
   payload_enc: Buffer | null;
   processed_at: Timestamp | null;
   error_code: string | null;
+  last_attempt_at: Timestamp | null;
 }
 
 /** Every table and view in schema public. */
@@ -2593,6 +2715,7 @@ export interface DB {
   bulk_actions: BulkActionsTable;
   call_scores: CallScoresTable;
   calls: CallsTable;
+  cma_reports: CmaReportsTable;
   compliance_policy_versions: CompliancePolicyVersionsTable;
   consent_disclosures: ConsentDisclosuresTable;
   consent_events: ConsentEventsTable;
@@ -2628,6 +2751,7 @@ export interface DB {
   feed_groups: FeedGroupsTable;
   gate_decisions: GateDecisionsTable;
   gbp_reviews: GbpReviewsTable;
+  google_lead_form_hooks: GoogleLeadFormHooksTable;
   home_valuations: HomeValuationsTable;
   homeowner_profile_facts: HomeownerProfileFactsTable;
   homeowner_profiles: HomeownerProfilesTable;
@@ -2644,6 +2768,8 @@ export interface DB {
   lead_inquiries: LeadInquiriesTable;
   lead_ownership_events: LeadOwnershipEventsTable;
   lead_source_costs: LeadSourceCostsTable;
+  lead_source_skips: LeadSourceSkipsTable;
+  lead_source_webhook_secrets: LeadSourceWebhookSecretsTable;
   lead_sources: LeadSourcesTable;
   listing_contacts: ListingContactsTable;
   listing_price_history: ListingPriceHistoryTable;
@@ -2662,6 +2788,7 @@ export interface DB {
   message_search_tokens: MessageSearchTokensTable;
   message_status_events: MessageStatusEventsTable;
   message_templates: MessageTemplatesTable;
+  message_text_parts: MessageTextPartsTable;
   messages: MessagesTable;
   mfa_recovery_codes: MfaRecoveryCodesTable;
   note_search_tokens: NoteSearchTokensTable;
@@ -2716,6 +2843,7 @@ export interface DB {
   tasks: TasksTable;
   team_members: TeamMembersTable;
   teams: TeamsTable;
+  telephony_daily_usage: TelephonyDailyUsageTable;
   tenant_keys: TenantKeysTable;
   tenant_settings: TenantSettingsTable;
   tenants: TenantsTable;
@@ -2752,6 +2880,7 @@ export const TABLE_NAMES = [
   'bulk_actions',
   'call_scores',
   'calls',
+  'cma_reports',
   'compliance_policy_versions',
   'consent_disclosures',
   'consent_events',
@@ -2786,6 +2915,7 @@ export const TABLE_NAMES = [
   'feed_groups',
   'gate_decisions',
   'gbp_reviews',
+  'google_lead_form_hooks',
   'home_valuations',
   'homeowner_profile_facts',
   'homeowner_profiles',
@@ -2802,6 +2932,8 @@ export const TABLE_NAMES = [
   'lead_inquiries',
   'lead_ownership_events',
   'lead_source_costs',
+  'lead_source_skips',
+  'lead_source_webhook_secrets',
   'lead_sources',
   'listing_contacts',
   'listing_price_history',
@@ -2820,6 +2952,7 @@ export const TABLE_NAMES = [
   'message_search_tokens',
   'message_status_events',
   'message_templates',
+  'message_text_parts',
   'messages',
   'mfa_recovery_codes',
   'note_search_tokens',
@@ -2874,6 +3007,7 @@ export const TABLE_NAMES = [
   'tasks',
   'team_members',
   'teams',
+  'telephony_daily_usage',
   'tenant_keys',
   'tenant_settings',
   'tenants',

@@ -10,7 +10,18 @@ export interface Inbox {
   addressCreatedAt: string | null;
   allowedSenderDomains: string[];
   suggestedSenderDomains: { domain: string; label: string }[];
+  /** saved entries the trust rule ignores (consumer mailbox domains, R-LEM-11): shown as not allowed */
+  ignoredSenderDomains: string[];
+  /** every portal the server knows; only the pre-ticked ones start ticked (suggested, unconfirmed) */
+  portalCatalog: PortalCatalogEntry[];
   inboundDomainConfigured: boolean;
+}
+
+export interface PortalCatalogEntry {
+  portal: 'zillow' | 'realtor' | 'redfin' | 'homes' | 'trulia' | 'opcity';
+  domain: string;
+  label: string;
+  preTicked: boolean;
 }
 
 export interface InboxResponse {

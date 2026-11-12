@@ -166,6 +166,7 @@ Choosing a real vendor without its credentials fails in every environment. The f
 | `TWILIO_PLATFORM_SENDER` | yes in prod | the master-account sender of account-security codes (alert-phone verification): E.164 or a Messaging Service SID `MG…` |
 | `TWILIO_NUMBER_COUNTRY` | no | `US` |
 | `TELEPHONY_WEBHOOK_SECRET` | in production with the fake (staging) | only signs the fake's callbacks. With Twilio, each subaccount's own auth token verifies its webhooks. |
+| `TELEPHONY_LIVE_REQUESTS` | no | `false` (default in every environment, production included) or `true`. The telephony kill switch (§5.1): while `false`, the Twilio adapter refuses every outbound request before making it. **It stays `false` until the written pilot approval.** |
 
 **Email** (`EMAIL_PROVIDER=smtp`)
 
@@ -281,6 +282,65 @@ Unregistered or unapproved senders are blocked by the send gate (R-CONSENT-17).
 
 **Opt-outs.** Twilio's own STOP handling stays on. A send to a recipient who texted STOP fails at Twilio with error 21610, which the app records as a provider opt-out (R-CONSENT-12), on top of its own keyword handling (D1).
 
+### 5.1 Telephony kill switch and daily cap (R-TWL-1, R-TWL-2)
+
+**The switch stays off until the written pilot approval.** `TELEPHONY_LIVE_REQUESTS` defaults to `false` in every environment, production included; only the exact value `true` turns it on, and any other value refuses start-up (the error names the key, never the value). The API's `starting api` log line (`config.telephonyLiveRequests`) and the worker's `starting worker` line (`telephonyLiveRequests`) show the value on every start, on staging and production alike.
+
+While it is `false`, the Twilio adapter (`providers/twilio/http.ts`, the one place every Twilio REST request passes) refuses each request **before it is made**, with the typed provider error `TELEPHONY_LIVE_OFF`: sends, calls, number purchase and release, message lookups (reconciliation), registration reads, media and recording fetches and deletes, subaccount creation, alert-phone verification codes and line-type lookups. No credential is put on the wire. What people see:
+
+| Path | Result while the switch is off |
+|---|---|
+| a text (any sender) | the message is `failed`, reason `TELEPHONY_LIVE_OFF`; the agent sees "Live texting and calling are off on this deployment." Never an opt-out, never retried, never reconciled. |
+| click-to-call | `{ result: 'failed', reason: 'TELEPHONY_LIVE_OFF' }`, the same sentence; nothing is dialed |
+| buy a number, release a number, "Check registration status" | `409 TELEPHONY_LIVE_OFF`, the same sentence; nothing changes |
+| an agent alert text | the delivery ends `suppressed` `TELEPHONY_LIVE_OFF` (not retried); push and email alerts are unaffected |
+| an inbound MMS attachment or text part | not fetched: recorded as not saved (`FETCH_FAILED`), with the usual honest note in the conversation |
+| inbound webhooks | keep working: they only receive what someone points at them |
+
+**Daily cap.** `tenant_settings.telephony_daily_cap` (default **200**, CHECK 1–100000) limits the outbound texts and calls a team hands the real telephony adapter per team-local day. It is enforced inside the send-time transaction, before the provider call, by claiming one unit of `telephony_daily_usage`; over the cap the send is blocked with the gate reason `DAILY_SEND_CAP_REACHED`, "Today's sending limit for this team is reached." The platform's own STOP confirmation and HELP reply are exempt. The cap counts only while `TELEPHONY_PROVIDER=twilio` (the deterministic fake is not counted). To change a team's cap, an operator updates the column (no screen yet).
+
+**Where the pilot credentials will live.** When the pilot is approved, the team's Twilio credentials live only in the encrypted `provider_credentials` store (field-encrypted under the tenant key, like every subaccount token). This release adds no way to enter them, and no change to any number, Messaging Service or webhook configuration at Twilio.
+
+### 5.2 Telephony webhook endpoints: the stable public contract (R-TWL-3)
+
+These paths are a **public contract**: provider configuration points at them and they never move. `{base}` is `PUBLIC_BASE_URL` exactly as Twilio calls it (scheme and host, no trailing slash). Every one is `POST`, form-encoded (`application/x-www-form-urlencoded`), and:
+
+- **verifies `X-Twilio-Signature`** before anything else (HMAC-SHA1 over `{base}` + the path and query + the sorted form parameters, keyed by the auth token of the account named by `AccountSid`; with the fake, by `TELEPHONY_WEBHOOK_SECRET`). The URL is built from `PUBLIC_BASE_URL`, **never the Host header**. A bad or missing signature is `403 WEBHOOK_SIGNATURE_INVALID`, a tenant-less rejected row and no tenant write;
+- **is idempotent** on the provider id named below: a retried or replayed delivery is recorded once (`webhook_events`, then the downstream unique keys) and changes nothing the second time; TwiML endpoints answer the same TwiML from stored state.
+
+`webhooks.contract.test.ts` fails if a path below disappears from the route table, stops verifying its signature, or stops being idempotent.
+
+| Path | Parameters (form; query) | Answers | Idempotent on |
+|---|---|---|---|
+| `{base}/api/webhooks/telephony/sms` | `MessageSid`, `From`, `To` required; `Body`, `NumMedia`, `MediaUrl{n}`, `MediaContentType{n}`, `OptOutType` | empty TwiML `<Response></Response>` (`text/xml`) | `MessageSid` |
+| `{base}/api/webhooks/telephony/status` | `MessageSid` required; `MessageStatus`, `ErrorCode`, `From` (optional: R-TWL-4); query `m` = our message id | `200 {"ok":true}` (also for an unknown status or an unrouted callback) | `MessageSid` + `MessageStatus` |
+| `{base}/api/webhooks/telephony/voice` | `CallSid`, `From`, `To` required; `CallStatus`, `Direction`, `ParentCallSid`, `CallDuration`, `Timestamp`, `AnnouncementStatus` | TwiML: for a new inbound call the ring/voicemail plan, otherwise empty TwiML | `CallSid` + `CallStatus` (+ announcement); the stored plan answers a retried fetch |
+| `{base}/api/webhooks/telephony/voice/screen` | query `c` (our signed call ref); form as Twilio sends it | TwiML: the agent's whisper ("press 1"), or hang up | the call's stored state (same answer every time) |
+| `{base}/api/webhooks/telephony/voice/accept` | query `c`; `Digits` | TwiML: bridge on `1`, else hang up | the call's stored state (accepted once) |
+| `{base}/api/webhooks/telephony/voice/dial-result` | query `c`; `DialCallStatus` | TwiML: voicemail when unanswered, else hang up | the call's stored state |
+| `{base}/api/webhooks/telephony/voice/voicemail-done` | query `c` | TwiML: the closing sentence, hang up | stateless |
+| `{base}/api/webhooks/telephony/recording` | `CallSid`, `RecordingSid` required; `RecordingDuration`, `From`; query `vm` (signed voicemail ref) | `200 {"ok":true}` | `RecordingSid` |
+| `{base}/api/webhooks/telephony/answer` | query `c` (signed); `CallSid`, `ParentCallSid` | TwiML: the recording announcement when owed, else empty TwiML | `ParentCallSid` (else `CallSid`) |
+
+**The app never re-points a number.** Numbers bought through the app get these URLs once, at purchase (the only code that writes `SmsUrl`, `VoiceUrl` or a number's `StatusCallback`; R-TWL-5, architecture test). Nothing updates an existing number at Twilio, and the team's existing numbers stay routed exactly as they are.
+
+### 5.3 Opt-outs and sender errors from Twilio (R-TWL-7 to R-TWL-11)
+
+D1 is unchanged: sending checks only opt-outs. Each item below plugs into the same opt-out model and the single send path. **Twilio's Advanced Opt-Out stays off** (owner default); Twilio's own STOP handling stays on.
+
+| Signal | What the app does |
+|---|---|
+| `OptOutType=STOP` on an inbound text whose Body we do not read as a STOP, opt-out language or wrong number | treated as STOP (`OPTOUTTYPE_STOP`): every phone of the contact revoked, queued texts cancelled, owner told; **no** platform confirmation (Twilio sent its own). `START`, `HELP` and a Body of `YES` change nothing; YES never lifts an opt-out. |
+| `21610` on a text to a contact | provider opt-out (R-CONSENT-12), as before |
+| `21610` on an agent alert text | the agent's alert texts are revoked as if they had texted STOP; the delivery is `suppressed` `PROVIDER_OPTED_OUT`; audited; Admins told. The agent's own START from that phone restores alerts. |
+| `30032` (toll-free not verified) or `30034` (unregistered A2P 10DLC sender), on the submit or a status callback | the text fails `SENDER_NOT_VERIFIED` ("Not delivered: the team's number isn't verified for texting. The Owner has been told."), never an opt-out, never retried or reconciled. In the same transaction the number's registration is marked not ready (`status_detail` names the code), so texts from it are blocked by the sender check while **calls keep working**; one Owner/Admin notice per number per day. Only **Check registration status** restores it (a Twilio read, blocked while the kill switch is off). |
+| STOP / HELP to a **toll-free** number | the platform sends no confirmation or HELP reply of its own (the carrier answers). Local numbers follow the team policy. |
+| text in an MMS `text/plain` part | read by SID (≤ 16 KiB, strict UTF-8) by job `comms.mms_text`; a STOP, opt-out language or wrong number in it has the same effects as in the Body (it never lifts one); a STOP found only in a part is confirmed by the platform once per message. An unreadable part is recorded as not saved and the conversation's handler is told to check it before texting. |
+
+**VERIFY in the pilot test step** (with the written approval, on a test number, before any real lead): the codes 30032 and 30034 and the status a failed toll-free / 10DLC send reports; that Twilio sends `OptOutType` on the inbound webhook for STOP/START/HELP; that a toll-free number's carrier answers STOP and HELP itself (so the platform's silence is right); how Twilio delivers a text part of an MMS (MediaContentType `text/plain`) and whether its own keyword handling reads it.
+
+
+
 ## 6. Email: SMTP, DNS and inbound
 
 **Sending.** Any SMTP relay works, over STARTTLS (587) or implicit TLS (465), with AUTH PLAIN or LOGIN.
@@ -359,6 +419,14 @@ Portal lead notifications (Zillow, Realtor.com, a website form) can be forwarded
 4. **Sender domains to confirm (owner, per portal):** which domain DKIM-signs each portal's lead notifications. The seed suggestions `zillow.com` and `realtor.com` are **VERIFY**: if a portal signs with its email vendor's domain, its emails are unaligned and wait in Needs review (safe, but slower) until you confirm and allowlist the right domain.
 5. **In the app:** an Owner/Admin turns on lead email per lead source (Routing → lead sources), copies the address into the portal's lead-forwarding setting, and checks the allowed sender domains. Send one test lead from each portal and confirm it becomes a lead automatically: only that confirms the portal's sender domain (the page calls the suggested ones unconfirmed until then). One that waits in Needs review did arrive, and its reason says what is wrong (step 4).
 6. **Body limits:** the proxy in front of the API must allow at least 5 MB on `/api/webhooks/lead-email/sendgrid/inbound` (1 MB elsewhere); larger deliveries are refused with 413.
+
+### 6.2 Google Ads lead forms (module 22; OWNER ACTIONS; nothing is configured by the app or this repository)
+
+1. **Gate:** do not point any Google form at a deployment until the team's housing-advertiser eligibility for lead form assets is confirmed (PHASE2_3_PLAN N22; **VERIFY** support.google.com/adspolicy/answer/9472930).
+2. The deployment needs a public https `PUBLIC_BASE_URL`; otherwise the Lead sources page says the form is not available here.
+3. On the Lead sources page, the Owner turns on the source's Google lead form, picks what its leads are about, and copies the webhook URL (`https://app.example.com/api/webhooks/google-ads/lead-form`, one fixed URL) and the key into the lead form asset's webhook integration in Google Ads (**VERIFY** the menu names).
+4. **Pilot step G5:** press Google's "Send test data" there. The page then says "Test lead received <time> (no one was added)". If it does not, Google's test may be sending a placeholder key (**VERIFY**): submit a real lead on the team's own form instead and check "Last lead" on the page. A test lead creates no contact.
+5. Bodies the API's JSON parser refuses (a NUL character, malformed JSON, a non-JSON content type) are answered 4XX before the key can be read: the key travels inside the body, so such a delivery cannot be authenticated, and it is refused like any unsigned request. Google keeps its leads downloadable in Google Ads for 30 days; whether it retries a 4XX (it should not) or a 5XX (it should), how often and for how long, is **VERIFY** (PHASE2_3_PLAN #22 addendum).
 
 ## 7. Object storage
 
@@ -445,6 +513,7 @@ A KMS-backed KEK (wrap and unwrap as KMS calls) is a drop-in for the same interf
 - [ ] Counsel items in ARCHITECTURE §19 reviewed for the launch states. Counsel reviews of platform clearance packs are recorded on the deployment with the owner command of §10.1 (dry run first, then `--apply`), each pinned to the version counsel reviewed, and withdrawn with its `--revoke`; never by hand.
 - [ ] Phase 2, Gmail inbox sync (owner decision D2): ships dark. `platform:gmail` stays uncleared until it has both `reviewed_by_counsel_at` (counsel item C14, recorded with §10.1; owner decision D11 reports it cleared) and `rules.vendor_ready_at` (which §10.1 never sets), that is until Google's verification of the restricted `gmail.readonly` scope plus its security assessment (N19, **VERIFY** current requirements and renewal) have passed; the Google OAuth client requests that scope only. Until then no tenant can turn sync on (DB). Rollout precondition (pack notes, R-GMAIL-12): set `vendor_ready_at` only after module 22 has written `messages.rfc_message_id_sha256` on platform email for at least 90 days (the largest backfill window), or after its one-time repair; the database refuses a Gmail duplicate only of platform email that carries the hash.
 - [ ] MLS: `MLS_LIVE_CALLS=false` unless every step of §11 "Before any live call" is done and signed off.
+- [ ] Telephony: `TELEPHONY_LIVE_REQUESTS=false` until the written pilot approval (§5.1). The start-up log of the API and the worker shows its value.
 - [ ] County public records (owner decision D10): `PUBLIC_RECORDS_LIVE_CALLS=false` unless every step of "Before any live county call" below is done and signed off.
 
   **Before any live county call** (each step signed off by the owner; nothing here is done in this build):

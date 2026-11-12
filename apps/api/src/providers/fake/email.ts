@@ -2,7 +2,10 @@
 // account email to users (AccountMailer: password reset, invites).
 import { createHash } from 'node:crypto';
 import { type AccountMailer, type EmailProvider, type EmailRequest, ProviderError, type ProviderMessageStatus } from '../types.js';
-import type { FakeFailure } from './telephony.js';
+import type { FakeFailure as AnyFakeFailure } from './telephony.js';
+
+/** the email fake injects plain failure kinds only */
+type FakeFailure = Extract<AnyFakeFailure, string>;
 import { makeMessageId } from '../email/mime.js';
 
 const ref = (s: string) => 'EM' + createHash('sha256').update(s).digest('hex').slice(0, 30);

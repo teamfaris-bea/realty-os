@@ -6,11 +6,20 @@ import { describe, expect, it } from 'vitest';
 import { FakeFetch, leadAdminApp, member } from './lib/testing.js';
 import type { PhoneNumber } from './lib/types.js';
 import { registrationWords } from './NumbersPage.js';
+import { TELEPHONY_OFF_DETAIL, TELEPHONY_OFF_SETUP, TELEPHONY_SIMULATED } from './lib/telephony.js';
 
-const num = (over: Partial<PhoneNumber> = {}): PhoneNumber => ({ id: 'n1', e164: '+14155550100', purpose: 'team_main', numberType: 'local', assignedUserId: null, registrationId: 'reg-1', registrationStatus: 'submitted', smsCapable: true, voiceCapable: true, releasedAt: null, ...over });
+const num = (over: Partial<PhoneNumber> = {}): PhoneNumber => ({ id: 'n1', e164: '+14155550100', purpose: 'team_main', numberType: 'local', assignedUserId: null, registrationId: 'reg-1', registrationStatus: 'submitted', smsCapable: true, voiceCapable: true, releasedAt: null, leadSourceId: null, ...over });
 
-function numbersFake(numbers: PhoneNumber[] = [num()]) {
-  return new FakeFetch().on('GET /numbers', { status: 200, body: { numbers } }).on('GET /members', { status: 200, body: { members: [member()], invites: [] } });
+const SOURCES = [
+  { id: 'src-1', name: 'Yard signs', kind: 'sign_call', active: true, hasToken: true, createdAt: '' },
+  { id: 'src-2', name: 'Old ads', kind: 'ads', active: false, hasToken: true, createdAt: '' },
+];
+
+function numbersFake(numbers: PhoneNumber[] = [num()], telephony: 'live' | 'off' | 'simulated' = 'live') {
+  return new FakeFetch()
+    .on('GET /numbers', { status: 200, body: { numbers, telephony } })
+    .on('GET /members', { status: 200, body: { members: [member()], invites: [] } })
+    .on('GET /lead-sources', { status: 200, body: { sources: SOURCES } });
 }
 
 describe('Phone and email', () => {
@@ -27,6 +36,44 @@ describe('Phone and email', () => {
     await userEvent.setup().click(screen.getByRole('button', { name: 'Check registration status' }));
     await waitFor(() => expect(fake.callsTo('POST /sender-registrations/reg-1/refresh')).toHaveLength(1));
     await waitFor(() => expect(fake.callsTo('GET /numbers').length).toBeGreaterThanOrEqual(2));
+  });
+
+  it('b9 comms sends/F1 R-TWL-9: a number the carrier paused says so (never "Texting approved"), names what still works, and offers "Check registration status"', async () => {
+    const fake = numbersFake([num({ registrationStatus: 'approved', textingPausedDetail: 'SENDER_NOT_VERIFIED: provider error 30034 on a local number ending 0100' })]);
+    leadAdminApp(fake, '/admin/numbers', 'admin');
+    expect(await screen.findByText('(415) 555-0100')).toBeInTheDocument();
+    expect(screen.queryByText('Texting approved')).not.toBeInTheDocument();
+    expect(screen.getByText('Texting paused for this number')).toBeInTheDocument();
+    expect(screen.getByText(/Calls still work, and other numbers are not affected/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Check registration status' })).toBeInTheDocument();
+  });
+
+  it('b9 comms sends/F1: a paused number whose registration is suspended says the registration is suspended (not "other numbers are not affected")', async () => {
+    leadAdminApp(numbersFake([num({ registrationStatus: 'suspended', textingPausedDetail: 'SENDER_NOT_VERIFIED: provider error 30034 on a local number ending 0100' })]), '/admin/numbers', 'admin');
+    expect(await screen.findByText('(415) 555-0100')).toBeInTheDocument();
+    expect(screen.queryByText('Texting paused for this number')).not.toBeInTheDocument();
+    expect(screen.queryByText(/other numbers are not affected/)).not.toBeInTheDocument();
+  });
+
+  it('R-TWL-1 b9 ui/F3: with the kill switch off, the page says so at the top and does not offer to get a number', async () => {
+    const fake = numbersFake([num()], 'off');
+    leadAdminApp(fake, '/admin/numbers', 'owner');
+    expect(await screen.findByText(TELEPHONY_OFF_SETUP)).toBeInTheDocument();
+    expect(screen.getByText(TELEPHONY_OFF_DETAIL)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Get number' })).toBeDisabled();
+  });
+
+  it('R-TWL-1 b9 ui/F3: with a simulated provider, the page says nothing reaches a phone and its numbers are test numbers; getting one stays possible', async () => {
+    leadAdminApp(numbersFake([num()], 'simulated'), '/admin/numbers', 'owner');
+    expect(await screen.findByText(TELEPHONY_OFF_SETUP)).toBeInTheDocument();
+    expect(screen.getByText(TELEPHONY_SIMULATED)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Get number' })).toBeEnabled();
+  });
+
+  it('R-TWL-1 b9 ui/F3: live telephony shows no notice', async () => {
+    leadAdminApp(numbersFake([num()], 'live'), '/admin/numbers', 'owner');
+    expect(await screen.findByText('(415) 555-0100')).toBeInTheDocument();
+    expect(screen.queryByText(TELEPHONY_OFF_SETUP)).toBeNull();
   });
 
   it('with no numbers it says nobody can call or text clients yet', async () => {
@@ -68,5 +115,36 @@ describe('Phone and email', () => {
     await u.click(screen.getByRole('button', { name: 'Check DNS now' }));
     expect(await screen.findByText('DKIM failing')).toBeInTheDocument();
     expect(screen.getByText('mail.harbor.test is not verified yet')).toBeInTheDocument();
+  });
+
+  it('a live tracking number has a Lead source select (live sources only, plus the one it credits now); changing it is one PATCH', async () => {
+    const fake = numbersFake([num({ id: 't1', purpose: 'tracking', e164: '+14155550177', leadSourceId: 'src-2' }), num({ id: 'm1', purpose: 'team_main' })]).on('PATCH /numbers/t1/lead-source', { status: 200, body: { number: num({ id: 't1', purpose: 'tracking', leadSourceId: 'src-1' }) } });
+    leadAdminApp(fake, '/admin/numbers', 'owner');
+    const u = userEvent.setup();
+    await screen.findByText('(415) 555-0177');
+    const selects = await screen.findAllByLabelText('Lead source');
+    // only the tracking number has one (the acquire form's shows only with purpose tracking)
+    expect(selects).toHaveLength(1);
+    expect(within(selects[0]!).getAllByRole('option').map((o) => o.textContent)).toEqual(['None', 'Yard signs', 'Old ads (off)']);
+    expect(selects[0]).toHaveValue('src-2');
+    await u.selectOptions(selects[0]!, 'src-1');
+    await waitFor(() => expect(fake.callsTo('PATCH /numbers/t1/lead-source')).toHaveLength(1));
+    expect(fake.callsTo('PATCH /numbers/t1/lead-source')[0]!.body).toEqual({ leadSourceId: 'src-1' });
+    expect(await screen.findByText('(415) 555-0177 now credits Yard signs')).toBeInTheDocument();
+  });
+
+  it('getting a tracking number can tie it to a live source; the server’s notice is said as is', async () => {
+    const fake = numbersFake([]).on('POST /numbers', { status: 201, body: { number: num({ e164: '+15105550111', purpose: 'tracking' }), notice: 'Bought, but not tied to Yard signs: that source was turned off.' } });
+    leadAdminApp(fake, '/admin/numbers', 'owner');
+    const u = userEvent.setup();
+    const form = await screen.findByRole('form', { name: 'Get a number' });
+    expect(within(form).queryByLabelText('Lead source')).toBeNull();
+    await u.selectOptions(within(form).getByLabelText('New number for'), 'tracking');
+    const pick = within(form).getByLabelText('Lead source');
+    expect(within(pick).getAllByRole('option').map((o) => o.textContent)).toEqual(['None for now', 'Yard signs']);
+    await u.selectOptions(pick, 'src-1');
+    await u.click(within(form).getByRole('button', { name: 'Get number' }));
+    expect(await screen.findByText('Bought, but not tied to Yard signs: that source was turned off.')).toBeInTheDocument();
+    expect(fake.callsTo('POST /numbers')[0]!.body).toEqual({ purpose: 'tracking', leadSourceId: 'src-1' });
   });
 });

@@ -15,6 +15,8 @@ export {
   selectCandidate,
   type Selection,
   offeredInCurrentSequence,
+  previewRouting,
+  type RoutingPreview,
 } from './routing.js';
 export {
   offerExpiresAt,

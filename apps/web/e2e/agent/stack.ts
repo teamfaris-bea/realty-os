@@ -25,7 +25,7 @@ const CHILD = String.raw`
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { createApiHarness, TEST_ORIGIN, TEST_PASSWORD } from './src/auth/testHarness.ts';
-import { commsWorld, call, inboundSms, randomEmail, runJobs } from './src/comms/testing.ts';
+import { commsWorld, call, inboundSms, randomEmail, runJobs, telephonyWebhook } from './src/comms/testing.ts';
 import { intake, contactState } from './src/leads/testing.ts';
 (async () => {
 const origin = process.env.E2E_WEB_ORIGIN;
@@ -70,6 +70,33 @@ const routes = {
     await runJobs(h, w.tenantId, ['comms.dispatch']);
     const m = (await h.su.query('SELECT status, status_reason FROM messages WHERE id = $1', [r.message.id])).rows[0];
     return { id: r.message.id, status: m.status, statusReason: m.status_reason };
+  },
+  // lane telephony-safeguards (R-TWL-11): an inbound MMS with text/plain parts through the signed webhook; the fake serves
+  // each part by SID; read: how many leading parts comms.mms_text reads before the page opens (the rest stay pending)
+  async '/mms-text'(b) {
+    const hex = () => randomUUID().replace(/-/g, '');
+    const mm = 'MM' + hex();
+    const form = { MessageSid: mm, From: b.phone, To: w.mainNumber, Body: b.body ?? '', NumMedia: String(b.parts.length) };
+    b.parts.forEach((t, i) => {
+      const me = 'ME' + hex();
+      form['MediaUrl' + i] = 'https://api.twilio.com/2010-04-01/Accounts/AC' + '1'.repeat(32) + '/Messages/' + mm + '/Media/' + me;
+      form['MediaContentType' + i] = 'text/plain';
+      h.providers.telephony.media.set(me, { bytes: new Uint8Array(Buffer.from(t, 'utf8')), contentType: 'text/plain' });
+    });
+    const r = await telephonyWebhook(h, '/webhooks/telephony/sms', form);
+    if (r.statusCode >= 300) throw new Error('mms: ' + r.statusCode + ' ' + r.body);
+    if (b.read) {
+      const id = (await h.su.query('SELECT id FROM messages WHERE provider_message_ref = $1', [mm])).rows[0].id;
+      // read the first part only: the second stays pending (the job reads every pending part, so hide the rest from it)
+      await h.su.query("UPDATE jobs SET run_at = now() + interval '1 day' WHERE kind = 'comms.mms_text' AND payload->>'messageId' <> $1", [id]);
+      const { readTextParts } = await import('./src/comms/mmsTextJob.ts');
+      const { systemActor } = await import('./src/worker/systemActor.ts');
+      const j = (await h.su.query("SELECT payload FROM jobs WHERE kind = 'comms.mms_text' AND payload->>'messageId' = $1", [id])).rows[0].payload;
+      await h.su.query("INSERT INTO message_media_skipped (tenant_id, message_id, position, reason, declared_type) SELECT tenant_id, message_id, position, 'FETCH_FAILED', 'text/plain' FROM message_text_parts WHERE message_id = $1 AND position >= $2", [id, b.read]);
+      await readTextParts(systemActor(w.tenantId, 'provider'), { messageId: id, messageRef: j.messageRef, parts: j.parts }, w.deps);
+      await h.su.query('DELETE FROM message_media_skipped WHERE message_id = $1 AND position >= $2', [id, b.read]);
+    }
+    return { ok: true };
   },
   // a text the agent tries through the API (the send-time check decides)
   async '/attempt'(b) {
@@ -145,7 +172,7 @@ process.stdin.resume();
 })().catch((e) => { console.error(e); process.exit(1); });
 `;
 
-export type FixturePath = '/world' | '/contact' | '/offer' | '/draft' | '/task' | '/appointment' | '/deal' | '/listing' | '/held' | '/attempt' | '/dnc' | '/address' | '/long-address';
+export type FixturePath = '/world' | '/contact' | '/mms-text' | '/offer' | '/draft' | '/task' | '/appointment' | '/deal' | '/listing' | '/held' | '/attempt' | '/dnc' | '/address' | '/long-address';
 
 export interface AgentStack {
   webUrl: string;

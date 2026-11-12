@@ -18,6 +18,7 @@ import { sql } from 'kysely';
 import { getObject, putObject } from '../crypto/objects.js';
 import { AppError } from '../errors.js';
 import { ProviderError } from '../providers/types.js';
+import { TELEPHONY_LIVE_OFF } from '../providers/twilio/http.js';
 import { telephonyAccount } from './repos/credentials.js';
 import { asUser } from './runtime.js';
 import type { CommsDeps } from './types.js';
@@ -27,7 +28,8 @@ export const MAX_MEDIA_ITEMS = 10;
 export const MAX_MEDIA_BYTES = 5 * 1024 * 1024;
 export const MEDIA_COPY_JOB = { kind: 'comms.media_copy', queue: 'default' as const, dedupeKey: (messageId: string) => `comms.media_copy:${messageId}` };
 
-export type SkipReason = 'TYPE_NOT_ALLOWED' | 'TOO_LARGE' | 'TOO_MANY' | 'CONTENT_MISMATCH' | 'FETCH_FAILED';
+/** LIVE_REQUESTS_OFF (R-TWL-1, b9 ui/F7): our own kill switch refused the fetch; the carrier sent the item. */
+export type SkipReason = 'TYPE_NOT_ALLOWED' | 'TOO_LARGE' | 'TOO_MANY' | 'CONTENT_MISMATCH' | 'FETCH_FAILED' | 'LIVE_REQUESTS_OFF';
 
 /** Allowed types → how to recognise their bytes and whether a browser may show them inline. */
 const ALLOWED: Record<string, { sniff: (b: Uint8Array) => boolean; inline: boolean; ext: string }> = {
@@ -150,6 +152,9 @@ export async function copyInboundMedia(actor: SystemActor, messageId: string, it
       try {
         got = await deps.providers.telephony.fetchMedia(account, { messageRef: pre.messageRef, mediaRef: it.ref });
       } catch (e) {
+        // R-TWL-1: the kill switch refused the fetch: a refused item recorded as the switch's (never the carrier's),
+        // never a job retry loop; a provider refusal stays FETCH_FAILED
+        if (e instanceof ProviderError && e.providerCode === TELEPHONY_LIVE_OFF) return { reason: 'LIVE_REQUESTS_OFF' };
         if (e instanceof ProviderError && e.kind === 'rejected') return { reason: 'FETCH_FAILED' };
         throw e; // unavailable / timeout: retried by the job
       }
@@ -191,6 +196,8 @@ export interface AttachmentView {
   messageId: string;
   media: { position: number; contentType: string; byteSize: number; inline: boolean; url: string }[];
   skipped: { position: number; reason: SkipReason }[];
+  /** R-TWL-11: text/plain parts (comms/mmsTextJob.ts): read ⇒ the text (plain, never HTML); pending ⇒ null */
+  textParts: { position: number; status: 'read' | 'pending'; text: string | null }[];
 }
 
 export interface VoicemailView {
@@ -212,10 +219,17 @@ export async function contactAttachments(actor: UserActor, contactId: string, de
     const skipped = await sql<{ message_id: string; position: number; reason: SkipReason }>`
       SELECT s.message_id, s.position, s.reason FROM message_media_skipped s JOIN messages m ON m.tenant_id = s.tenant_id AND m.id = s.message_id
        WHERE s.tenant_id = app.tenant_id() AND m.contact_id = ${contactId} ORDER BY s.message_id, s.position LIMIT 500`.execute(tx);
+    // R-TWL-11: text parts, visible exactly when the message is (text_parts_select); a skipped one is reported in `skipped`
+    const parts = await sql<{ message_id: string; position: number; status: 'read' | 'pending'; body: string | null }>`
+      SELECT t.message_id, t.position, t.status, t.body FROM message_text_parts t JOIN messages m ON m.tenant_id = t.tenant_id AND m.id = t.message_id
+       WHERE t.tenant_id = app.tenant_id() AND m.contact_id = ${contactId}
+         AND NOT EXISTS (SELECT 1 FROM message_media_skipped s WHERE s.tenant_id = t.tenant_id AND s.message_id = t.message_id AND s.position = t.position)
+       ORDER BY t.message_id, t.position LIMIT 500`.execute(tx);
     const byMessage = new Map<string, AttachmentView>();
-    const view = (id: string) => byMessage.get(id) ?? (byMessage.set(id, { messageId: id, media: [], skipped: [] }), byMessage.get(id)!);
+    const view = (id: string) => byMessage.get(id) ?? (byMessage.set(id, { messageId: id, media: [], skipped: [], textParts: [] }), byMessage.get(id)!);
     for (const x of media.rows) view(x.message_id).media.push({ position: x.position, contentType: x.content_type, byteSize: Number(x.byte_size), inline: mediaPresentation(x.content_type).inline, url: `/api/messages/${x.message_id}/media/${x.position}` });
     for (const x of skipped.rows) view(x.message_id).skipped.push({ position: x.position, reason: x.reason });
+    for (const x of parts.rows) view(x.message_id).textParts.push({ position: x.position, status: x.status, text: x.status === 'read' ? x.body : null });
     const vm = await sql<{ call_id: string; recording_id: string; duration_s: number | null; ready: boolean }>`
       SELECT c.id AS call_id, r.id AS recording_id, r.duration_s,
              EXISTS (SELECT 1 FROM transcripts t WHERE t.tenant_id = r.tenant_id AND t.recording_id = r.id AND t.status = 'ready') AS ready

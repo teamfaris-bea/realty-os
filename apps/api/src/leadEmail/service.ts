@@ -17,6 +17,15 @@
 //     retention sweep expires held content after 30 days (batch 5 review F2, migration 0041, R-DATA-4, R-DATA-3).
 // acceptReview / discardReview: an Owner/Admin/Team Lead (role re-read under the system actor) decides a held email.
 // Accepting goes through the same intake, audited, WITHOUT an autonomous first response (R-INBOX-9).
+//
+// Personal mailboxes and forwarding (R-LEM-11, R-LEM-12):
+//   - mail From a consumer mailbox domain (a lead forwarded by hand) is held PERSONAL_MAILBOX and only its forwarded
+//     block is read (forwardedOnly), so the reviewer can accept it without retyping;
+//   - Gmail's forwarding confirmation (google.com, aligned DKIM pass, its subject) is held FORWARDING_CONFIRMATION,
+//     never parsed and never accepted (Discard only); its content is kept encrypted so the reviewer can read the code;
+//   - the team's own addresses never become a lead's point: before the auto-create path and on accept, the PARSED
+//     points drop the email's From address, every active member's account email and alert phone, and the tenant's
+//     live numbers (compared by tenant HMAC). Points a reviewer types are kept.
 import { createHash, randomBytes } from 'node:crypto';
 import type { IdGenerator, Instant, SystemActor, TenantId, UserActor } from '@realty/core/foundation';
 import { normalizeEmail, normalizePhone } from '@realty/core/foundation';
@@ -27,9 +36,9 @@ import { AppError } from '../errors.js';
 import { type IngestResult, identifiersOf, ingestInquiryInTx } from '../leads/intake.js';
 import { systemActor } from '../worker/systemActor.js';
 import { type LeadEmailInbound, inboundAddress, keyFromRecipients } from './formats.js';
-import { type ParseResult, type ParsedLead, parseLeadEmail } from './parse/index.js';
+import { type ParseInput, type ParseResult, type ParsedLead, normalizeBody, parseLeadEmail } from './parse/index.js';
 import * as repo from './repos/leadEmail.js';
-import { HOLD_SENTENCES, SUGGESTED_SENDER_DOMAINS, decideTrust, isAllowableSenderDomain, normalizeDomain } from './trust.js';
+import { type PortalId, PORTAL_CATALOG, SUGGESTED_SENDER_DOMAINS, decideTrust, holdSentence, ignoredSenderDomains, isForwardingConfirmation, normalizeDomain, senderDomainProblem } from './trust.js';
 
 export interface LeadEmailDeps {
   db: Database;
@@ -119,11 +128,15 @@ async function receiveInTx(tx: Tx, actor: SystemActor, deps: LeadEmailDeps, reso
   await lockAddresses(tx, [key.toString('hex')]);
   if (await repo.messageExists(tx, key)) return { outcome: 'duplicate', contactId: null };
 
+  // R-LEM-12: Gmail's forwarding confirmation is never parsed into an inquiry (a forged copy gets the ordinary hold)
+  const confirmation = isForwardingConfirmation(n.from, n.dkim, n.subject);
   const trust = decideTrust(n.from, n.dkim, inbox.allowed_sender_domains);
-  const parsed: ParseResult = parseLeadEmail({ subject: n.subject, text: n.text, html: n.html, senderDomain: trust.fromDomain });
-  const lead = parsed.ok ? parsed.lead : parsed.partial;
+  const input: ParseInput = { subject: n.subject, text: n.text, html: n.html, senderDomain: trust.fromDomain, ...(!trust.trusted && trust.code === 'PERSONAL_MAILBOX' ? { forwardedOnly: true } : {}) };
+  const parsed: ParseResult = confirmation ? { ok: false, text: normalizeBody(input), reason: 'UNKNOWN_FORMAT', partial: null } : parseLeadEmail(input);
+  const parsedLead = parsed.ok ? parsed.lead : parsed.partial;
+  const lead = parsedLead ? await withoutTeamPoints(tx, deps, actor.tenantId, parsedLead, n.from) : null;
   const points = contactPointsOf(lead);
-  const hold = !trust.trusted ? trust.code : !parsed.ok ? parsed.reason : points.phones.length + points.emails.length === 0 ? 'NO_CONTACT_POINT' : null;
+  const hold = confirmation ? 'FORWARDING_CONFIRMATION' : !trust.trusted ? trust.code : !parsed.ok ? parsed.reason : points.phones.length + points.emails.length === 0 ? 'NO_CONTACT_POINT' : null;
   const id = deps.ids.next<'LeadEmailMessageId'>();
   const base = {
     id,
@@ -136,9 +149,9 @@ async function receiveInTx(tx: Tx, actor: SystemActor, deps: LeadEmailDeps, reso
     dkimPassDomains: [...new Set(n.dkim.filter((v) => v.result === 'pass').map((v) => v.domain))].slice(0, 10),
   };
 
-  if (hold === null && parsed.ok) {
-    const res: IngestResult = await ingestInquiryInTx(tx, actor, inquiryOf(parsed.lead, points, inbox.lead_source_id, `lead-email:${key.toString('hex').slice(0, 40)}`), now, { envelope: deps.envelope, ids: deps.ids }, { parse: { status: 'parsed', evidence: evidenceOf(parsed.lead) } });
-    await repo.claimMessage(tx, { ...base, status: 'lead_created', holdCode: null, parserKind: parsed.lead.format, contentEnc: null, parsedEnc: null, pointHmacs: [], contactId: res.contactId, inquiryId: res.inquiryId });
+  if (hold === null && parsed.ok && lead) {
+    const res: IngestResult = await ingestInquiryInTx(tx, actor, inquiryOf(lead, points, inbox.lead_source_id, `lead-email:${key.toString('hex').slice(0, 40)}`), now, { envelope: deps.envelope, ids: deps.ids }, { parse: { status: 'parsed', evidence: evidenceOf(lead) } });
+    await repo.claimMessage(tx, { ...base, status: 'lead_created', holdCode: null, parserKind: lead.format, contentEnc: null, parsedEnc: null, pointHmacs: [], contactId: res.contactId, inquiryId: res.inquiryId });
     return { outcome: 'lead_created', contactId: res.contactId };
   }
 
@@ -149,6 +162,33 @@ async function receiveInTx(tx: Tx, actor: SystemActor, deps: LeadEmailDeps, reso
   const pointHmacs = await addressKeys(tx, deps.envelope, actor.tenantId, points);
   await repo.claimMessage(tx, { ...base, status: 'needs_review', holdCode: hold ?? 'UNKNOWN_FORMAT', contentEnc, parsedEnc, pointHmacs, contactId: null, inquiryId: null });
   return { outcome: 'needs_review', contactId: null };
+}
+
+/**
+ * The tenant-HMACs of the team's own addresses (R-LEM-11 E590): every active member's account email and alert phone
+ * (VERIFY 16: whether other member addresses, e.g. an email identity, belong here too), the tenant's live numbers, and
+ * the email's own From address. Read as the system actor of the tenant (RLS: memberships and their users are readable
+ * tenant-wide).
+ */
+async function teamPointKeys(tx: Tx, envelope: EnvelopeService, tenantId: TenantId, from: string | null): Promise<Set<string>> {
+  const team = await repo.teamAddresses(tx);
+  const ids = await identifiersOf(tx, envelope, tenantId, team.phones, from ? [...team.emails, from] : team.emails);
+  return new Set([...ids.phones, ...ids.emails].map((x) => x.hmac));
+}
+
+/** The parsed lead without the team's own points (a parse never makes the forwarder or the team a lead's point). */
+async function withoutTeamPoints(tx: Tx, deps: LeadEmailDeps, tenantId: TenantId, lead: ParsedLead, from: string | null): Promise<ParsedLead> {
+  if (lead.phones.length + lead.emails.length === 0) return lead;
+  const team = await teamPointKeys(tx, deps.envelope, tenantId, from);
+  const isTeam = async (phones: string[], emails: string[]) => {
+    const ids = await identifiersOf(tx, deps.envelope, tenantId, phones, emails);
+    return [...ids.phones, ...ids.emails].some((x) => team.has(x.hmac));
+  };
+  const phones: ParsedLead['phones'] = [];
+  const emails: ParsedLead['emails'] = [];
+  for (const p of lead.phones) if (!(await isTeam([p.value], []))) phones.push(p);
+  for (const e of lead.emails) if (/[\r\n]/.test(e.value) || !(await isTeam([], [e.value]))) emails.push(e);
+  return { ...lead, phones, emails };
 }
 
 /**
@@ -171,6 +211,10 @@ export interface InboxView {
   addressCreatedAt: string | null;
   allowedSenderDomains: string[];
   suggestedSenderDomains: { domain: string; label: string }[];
+  /** saved entries the trust rule ignores (consumer mailbox domains saved before R-LEM-11) */
+  ignoredSenderDomains: string[];
+  /** every portal we know of; only the pre-ticked ones are suggestedSenderDomains */
+  portalCatalog: { portal: PortalId; domain: string; label: string; preTicked: boolean }[];
   inboundDomainConfigured: boolean;
 }
 
@@ -202,7 +246,9 @@ async function inboxView(tx: Tx, deps: LeadEmailDeps, tenantId: TenantId, leadSo
     address,
     addressCreatedAt: k ? k.created_at.toISOString() : null,
     allowedSenderDomains: inbox?.allowed_sender_domains ?? [],
-    suggestedSenderDomains: [...SUGGESTED_SENDER_DOMAINS],
+    suggestedSenderDomains: SUGGESTED_SENDER_DOMAINS.map((d) => ({ ...d })),
+    ignoredSenderDomains: ignoredSenderDomains(inbox?.allowed_sender_domains ?? []),
+    portalCatalog: PORTAL_CATALOG.map((p) => ({ ...p })),
     inboundDomainConfigured: deps.inboundDomain !== null,
   };
 }
@@ -220,7 +266,9 @@ function cleanDomains(raw: readonly string[]): string[] {
   const out: string[] = [];
   for (const d of raw) {
     const n = normalizeDomain(d);
-    if (!isAllowableSenderDomain(n)) throw new AppError('LEAD_EMAIL_DOMAIN_INVALID', { domain: n.slice(0, 253) });
+    const problem = senderDomainProblem(n);
+    // R-LEM-11 E327: a consumer mailbox domain (anyone can send from it) is refused with its own reason
+    if (problem) throw new AppError('LEAD_EMAIL_DOMAIN_INVALID', { domain: n.slice(0, 253), ...(problem === 'consumer_mailbox' ? { reason: 'consumer_mailbox' } : {}) });
     if (!out.includes(n)) out.push(n);
   }
   if (out.length > MAX_SENDER_DOMAINS) throw new AppError('VALIDATION_FAILED', { issues: [{ path: '/domains', code: 'too_many' }] });
@@ -329,7 +377,7 @@ async function reviewView(tx: Tx, deps: LeadEmailDeps, tenantId: TenantId, m: re
     leadSourceName: m.lead_source_name,
     status: m.status === 'lead_created' ? 'accepted' : m.status,
     holdCode: m.hold_code ?? 'UNKNOWN_FORMAT',
-    holdSentence: HOLD_SENTENCES[m.hold_code ?? 'UNKNOWN_FORMAT'] ?? HOLD_SENTENCES.UNKNOWN_FORMAT!,
+    holdSentence: holdSentence(m.hold_code, content?.subject ?? null),
     senderDomain: m.sender_domain,
     dkimPassDomains: m.dkim_pass_domains,
     parserKind: m.parser_kind,
@@ -338,7 +386,8 @@ async function reviewView(tx: Tx, deps: LeadEmailDeps, tenantId: TenantId, m: re
     fields: lead
       ? { name: f(lead.name), phones: lead.phones.map((x) => f(x)!), emails: lead.emails.map((x) => f(x)!), message: f(lead.message), property: f(lead.property), listingId: f(lead.listingId), leadType: lead.leadType }
       : null,
-    canAccept: m.status === 'needs_review' && (() => {
+    // R-LEM-12: a forwarding confirmation is never a lead (Discard only)
+    canAccept: m.status === 'needs_review' && m.hold_code !== 'FORWARDING_CONFIRMATION' && (() => {
       const p = contactPointsOf(lead);
       return p.phones.length + p.emails.length > 0;
     })(),
@@ -367,8 +416,12 @@ export async function acceptReview(deps: LeadEmailDeps, actor: UserActor, id: st
     const m = await repo.messageById(tx, id, { forUpdate: true });
     if (!m) throw new AppError('NOT_FOUND');
     if (m.status !== 'needs_review') throw new AppError('LEAD_EMAIL_NOT_PENDING', { review: await reviewView(tx, deps, sys.tenantId, m) });
+    // R-LEM-12 E353: whatever the reviewer types
+    if (m.hold_code === 'FORWARDING_CONFIRMATION') throw new AppError('LEAD_EMAIL_NOT_A_LEAD');
     const env = deps.envelope.inTx(tx, sys.tenantId);
-    const parsedLead = m.parsed_enc ? (JSON.parse(Buffer.from(await env.decrypt(sys.tenantId, { table: 'lead_email_messages', column: 'parsed_enc', rowId: m.id }, m.parsed_enc)).toString('utf8')) as ParsedLead) : null;
+    const stored = m.parsed_enc ? (JSON.parse(Buffer.from(await env.decrypt(sys.tenantId, { table: 'lead_email_messages', column: 'parsed_enc', rowId: m.id }, m.parsed_enc)).toString('utf8')) as ParsedLead) : null;
+    // the parsed points drop the team's own again (membership may have changed since receipt); typed points are kept
+    const parsedLead = stored ? await withoutTeamPoints(tx, deps, sys.tenantId, stored, null) : null;
     const lead: ParsedLead = parsedLead ?? emptyLead();
     // the reviewer may add what the parser could not read (typed by a person, never by the email)
     const extra = { phones: overrides.phone ? [{ value: overrides.phone, span: { start: 0, end: 0 } }] : [], emails: overrides.email ? [{ value: overrides.email, span: { start: 0, end: 0 } }] : [] };

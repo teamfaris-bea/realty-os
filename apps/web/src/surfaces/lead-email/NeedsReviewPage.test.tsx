@@ -190,4 +190,22 @@ describe('Needs review', () => {
       view.unmount();
     }
   });
+
+  it("R-LEM-12 b9 ui/F6: Gmail's forwarding confirmation offers Discard only, never an Accept that would fail; a refused accept is said in words", async () => {
+    const confirmation = review({
+      id: '01900000-0000-7000-8000-0000000e1009',
+      subject: 'Gmail Forwarding Confirmation - Receive Mail from agent@example.test',
+      holdCode: 'FORWARDING_CONFIRMATION',
+      holdSentence: "agent@example.test asked Gmail to forward its mail here. If you don't know that address, discard this. If you do, give that person the confirmation code in the email below, then discard this email.",
+      canAccept: false,
+      senderDomain: 'google.com',
+    });
+    leadEmailApp(fake([confirmation]), '/team/lead-email', 'owner');
+    const c = within(await waitFor(() => card(/Gmail Forwarding Confirmation/)));
+    expect(c.getByText(/give that person the confirmation code/)).toBeInTheDocument();
+    expect(c.queryByRole('button', { name: /^Accept/ })).toBeNull();
+    expect(c.getByRole('button', { name: /^Discard/ })).toBeInTheDocument();
+    expect(c.queryByText(/Type one in to create the lead/)).toBeNull();
+    expect(LEAD_EMAIL_ERROR_MESSAGES.LEAD_EMAIL_NOT_A_LEAD).toBe("This is Gmail's forwarding confirmation, not a lead: give the code to the person who asked for it, then discard it.");
+  });
 });

@@ -18,6 +18,11 @@ export interface CommsDeps {
   publicBaseUrl: string;
   /** keys the stateless email links (unsubscribe); derived per purpose with HMAC */
   linkSecret: Uint8Array;
+  /**
+   * R-TWL-2: count outbound texts and calls against tenant_settings.telephony_daily_cap. On whenever the REAL telephony
+   * adapter is configured (TELEPHONY_PROVIDER=twilio); the deterministic fake leaves it off unless a test turns it on.
+   */
+  telephonyDailyCap?: boolean;
 }
 
 /** What a send-time gate evaluation is about (buildGateInput). Never carries a plaintext address. */

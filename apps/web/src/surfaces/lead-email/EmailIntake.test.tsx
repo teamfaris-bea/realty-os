@@ -1,4 +1,4 @@
-// Email intake of a lead source on Lead routing (Owner/Admin): off → "Turn on lead email" with the
+// Email intake of a lead source on that source's page under Lead sources (Owner/Admin; /admin/lead-sources/:id): off → "Turn on lead email" with the
 // suggested sender domains as removable chips (each marked "suggested", with one plain sentence that they
 // are unconfirmed until a test lead from each portal becomes a lead automatically; the internal VERIFY marker
 // never shows) and re-auth on a stale session; on → the address read-only with Copy ("Copied" announced),
@@ -7,21 +7,18 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { member, settings } from '../admin/lib/testing.js';
-import { ROTATE_WARNING, TRUST_SENTENCE, cleanDomain } from './EmailIntake.js';
-import { LEAD_EMAIL_ERROR_MESSAGES } from './messages.js';
-import { ADDRESS, FakeFetch, SRC, enabledInbox, err, inbox, leadEmailApp } from './testing.js';
+import { overview, source, sourcesFake } from '../lead-sources/testing.js';
+import { IGNORED_SENTENCE, ROTATE_WARNING, TRUST_SENTENCE, cleanDomain } from './EmailIntake.js';
+import { CONSUMER_MAILBOX_SENTENCE, LEAD_EMAIL_ERROR_MESSAGES } from './messages.js';
+import { ADDRESS, type FakeFetch, SRC, enabledInbox, err, inbox, leadEmailApp } from './testing.js';
 import type { Inbox } from './types.js';
 
 const session = { user: { id: 'u', email: 'me@example.test', displayName: 'Me' }, tenant: { id: '01900000-0000-7000-8000-000000000001', name: 'Harbor Home Team', slug: 'harbor', role: 'owner' }, tenants: [], mfa: { enabled: false, verified: false, enrollmentRequired: false }, reauthenticatedAt: new Date().toISOString(), csrfToken: 'csrf-2' };
 
-function routingFake(box: Inbox | null = inbox()) {
-  const f = new FakeFetch()
-    .on('GET /routing-rules', { status: 200, body: { rules: [] } })
-    .on('GET /ponds', { status: 200, body: { ponds: [] } })
-    .on('GET /members', { status: 200, body: { members: [member()], invites: [] } })
-    .on('GET /lead-sources', { status: 200, body: { sources: [{ id: SRC, name: 'Portal', kind: 'portal', active: true, hasToken: true, createdAt: '' }] } })
-    .on('GET /settings', { status: 200, body: { settings } });
+const PAGE = `/admin/lead-sources/${SRC}?setup=email`;
+
+function routingFake(box: Inbox | null = inbox()): FakeFetch {
+  const f = sourcesFake(overview([source({ id: SRC, name: 'Portal', paths: { email: { state: box?.enabled ? 'on' : 'off', address: box?.address ?? null, lastEmailAt: null } } })]));
   if (box) f.on(`GET /lead-sources/${SRC}/lead-email`, { status: 200, body: { inbox: box } });
   return f;
 }
@@ -39,10 +36,10 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('Email intake on Lead routing', () => {
+describe('Email intake on a lead source page', () => {
   it('lists the lead source with the plain trust sentence; off, it offers Turn on lead email with the suggested domains as chips marked "suggested" and says in plain words they are unconfirmed (never the internal VERIFY marker)', async () => {
-    leadEmailApp(routingFake(), '/admin/routing', 'owner');
-    expect(await screen.findByRole('heading', { level: 3, name: /Portal/ })).toBeInTheDocument();
+    leadEmailApp(routingFake(), PAGE, 'owner');
+    expect(await screen.findByRole('heading', { level: 1, name: 'Portal' })).toBeInTheDocument();
     const box = await intake();
     expect(await box.findByRole('button', { name: 'Turn on lead email' })).toBeInTheDocument();
     expect(box.getByText((_, el) => el?.tagName === 'P' && el.textContent === 'Only emails DKIM-signed by an allowed domain become leads automatically; everything else waits in Needs review.')).toBeInTheDocument();
@@ -57,7 +54,7 @@ describe('Email intake on Lead routing', () => {
   });
 
   it('a domain the Owner types is not marked suggested; with no suggestion left on the list, the unconfirmed sentence goes', async () => {
-    leadEmailApp(routingFake(), '/admin/routing', 'owner');
+    leadEmailApp(routingFake(), PAGE, 'owner');
     const u = userEvent.setup();
     const box = await intake();
     await u.type(await box.findByLabelText('Add a sender domain'), 'homes.example.test');
@@ -72,7 +69,7 @@ describe('Email intake on Lead routing', () => {
   });
 
   it('on: a saved suggestion keeps its "suggested" mark and the sentence, a typed domain has neither; nothing says VERIFY', async () => {
-    leadEmailApp(routingFake(enabledInbox({ allowedSenderDomains: ['zillow.com', 'homes.example.test'] })), '/admin/routing', 'owner');
+    leadEmailApp(routingFake(enabledInbox({ allowedSenderDomains: ['zillow.com', 'homes.example.test'] })), PAGE, 'owner');
     const box = await intake();
     expect(await box.findByLabelText('Inbound address for Portal')).toHaveValue(ADDRESS);
     expect(chips(box)).toEqual(['zillow.com · Zillow · suggested', 'homes.example.test']);
@@ -87,7 +84,7 @@ describe('Email intake on Lead routing', () => {
       .on(`GET /lead-sources/${SRC}/lead-email`, () => ({ status: 200, body: { inbox: current } }))
       .on(`POST /lead-sources/${SRC}/lead-email`, () => (++n === 1 ? err(401, 'REAUTH_REQUIRED') : ((current = enabledInbox({ allowedSenderDomains: ['zillow.com', 'homes.example.test'] })), { status: 200, body: { inbox: current } })))
       .on('POST /auth/reauth', { status: 200, body: { session } });
-    leadEmailApp(fake, '/admin/routing', 'owner');
+    leadEmailApp(fake, PAGE, 'owner');
     const u = userEvent.setup();
     const box = await intake();
     await u.click(await box.findByRole('button', { name: 'Remove realtor.com' }));
@@ -107,7 +104,7 @@ describe('Email intake on Lead routing', () => {
   });
 
   it('a domain that is not shaped like one is refused in place and not added', async () => {
-    leadEmailApp(routingFake(), '/admin/routing', 'owner');
+    leadEmailApp(routingFake(), PAGE, 'owner');
     const u = userEvent.setup();
     const box = await intake();
     await u.type(await box.findByLabelText('Add a sender domain'), 'zillow');
@@ -120,14 +117,14 @@ describe('Email intake on Lead routing', () => {
   });
 
   it('on a deployment without an inbound domain it says so in a sentence and offers nothing to turn on', async () => {
-    leadEmailApp(routingFake(inbox({ inboundDomainConfigured: false })), '/admin/routing', 'owner');
+    leadEmailApp(routingFake(inbox({ inboundDomainConfigured: false })), PAGE, 'owner');
     const box = await intake();
     expect(await box.findByText(LEAD_EMAIL_ERROR_MESSAGES.LEAD_EMAIL_NOT_CONFIGURED!)).toBeInTheDocument();
     expect(box.queryByRole('button', { name: 'Turn on lead email' })).toBeNull();
   });
 
   it('on: the address is read-only; Copy writes it to the clipboard and announces "Copied"', async () => {
-    leadEmailApp(routingFake(enabledInbox()), '/admin/routing', 'owner');
+    leadEmailApp(routingFake(enabledInbox()), PAGE, 'owner');
     const u = userEvent.setup();
     const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined);
     const box = await intake();
@@ -141,7 +138,7 @@ describe('Email intake on Lead routing', () => {
   });
 
   it('when the clipboard is refused, the address is selected and the page says to copy it from the field', async () => {
-    leadEmailApp(routingFake(enabledInbox()), '/admin/routing', 'owner');
+    leadEmailApp(routingFake(enabledInbox()), PAGE, 'owner');
     const u = userEvent.setup();
     vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue(new Error('denied'));
     const box = await intake();
@@ -152,7 +149,7 @@ describe('Email intake on Lead routing', () => {
   it('sender domains: Save is off until something changes, sends the whole list, and a refused domain is a sentence, never the code', async () => {
     let n = 0;
     const fake = routingFake(enabledInbox()).on(`PUT /lead-sources/${SRC}/lead-email/sender-domains`, () => (++n === 1 ? err(422, 'LEAD_EMAIL_DOMAIN_INVALID', { domain: 'co.uk' }) : { status: 200, body: { inbox: enabledInbox({ allowedSenderDomains: ['zillow.com'] }) } }));
-    leadEmailApp(fake, '/admin/routing', 'owner', { reauthenticatedAt: new Date().toISOString() });
+    leadEmailApp(fake, PAGE, 'owner', { reauthenticatedAt: new Date().toISOString() });
     const u = userEvent.setup();
     const box = await intake();
     const save = await box.findByRole('button', { name: 'Save sender domains' });
@@ -176,7 +173,7 @@ describe('Email intake on Lead routing', () => {
     const fake = routingFake(null)
       .on(`GET /lead-sources/${SRC}/lead-email`, () => ({ status: 200, body: { inbox: current } }))
       .on(`POST /lead-sources/${SRC}/lead-email/rotate`, () => ((current = enabledInbox({ address: next })), { status: 200, body: { inbox: current } }));
-    leadEmailApp(fake, '/admin/routing', 'owner', { reauthenticatedAt: new Date().toISOString() });
+    leadEmailApp(fake, PAGE, 'owner', { reauthenticatedAt: new Date().toISOString() });
     const u = userEvent.setup();
     const box = await intake();
     await u.click(await box.findByRole('button', { name: 'Get a new address' }));
@@ -195,8 +192,44 @@ describe('Email intake on Lead routing', () => {
 
   it('an Admin who cannot see the inbox (404) gets the plain not-available sentence, not a code', async () => {
     const fake = routingFake(null).on(`GET /lead-sources/${SRC}/lead-email`, err(404, 'NOT_FOUND'));
-    leadEmailApp(fake, '/admin/routing', 'admin');
+    leadEmailApp(fake, PAGE, 'admin');
     const box = await intake();
     expect(await box.findByText("This isn't available. It may have moved, or you may not have access to it.")).toBeInTheDocument();
+  });
+
+  it('"Which portals send to this address?": Zillow and Realtor.com start ticked, the others only when picked; ticking Homes.com adds both its domains, unticking Zillow removes it', async () => {
+    const fake = routingFake();
+    fake.on(`POST /lead-sources/${SRC}/lead-email`, { status: 200, body: { inbox: enabledInbox() } });
+    leadEmailApp(fake, PAGE, 'owner', { reauthenticatedAt: new Date().toISOString() });
+    const u = userEvent.setup();
+    const box = await intake();
+    const picker = within(await box.findByRole('group', { name: 'Which portals send to this address?' }));
+    expect(picker.getByLabelText('Zillow')).toBeChecked();
+    expect(picker.getByLabelText('Realtor.com')).toBeChecked();
+    for (const p of ['Redfin', 'Homes.com', 'Trulia', 'Opcity']) expect(picker.getByLabelText(p)).not.toBeChecked();
+    await u.click(picker.getByLabelText('Homes.com'));
+    await u.click(picker.getByLabelText('Zillow'));
+    expect(chips(box)).toEqual(['realtor.com · Realtor.com · suggested', 'homes.com · Homes.com · suggested', 'homesnap.com · Homes.com · suggested']);
+    await u.click(box.getByRole('button', { name: 'Turn on lead email' }));
+    await waitFor(() => expect(fake.callsTo(`POST /lead-sources/${SRC}/lead-email`)).toHaveLength(1));
+    expect(fake.callsTo(`POST /lead-sources/${SRC}/lead-email`)[0]!.body).toEqual({ allowedSenderDomains: ['realtor.com', 'homes.com', 'homesnap.com'] });
+  });
+
+  it('a saved personal mailbox domain is shown as not allowed; a refused consumer mailbox domain is its own sentence, never the code', async () => {
+    const fake = routingFake(enabledInbox({ allowedSenderDomains: ['zillow.com', 'gmail.com'], ignoredSenderDomains: ['gmail.com'] })).on(
+      `PUT /lead-sources/${SRC}/lead-email/sender-domains`,
+      err(422, 'LEAD_EMAIL_DOMAIN_INVALID', { domain: 'outlook.com', reason: 'consumer_mailbox' }),
+    );
+    leadEmailApp(fake, PAGE, 'owner', { reauthenticatedAt: new Date().toISOString() });
+    const u = userEvent.setup();
+    const box = await intake();
+    expect(await box.findByText('Not allowed: gmail.com')).toBeInTheDocument();
+    expect(box.getByText(IGNORED_SENTENCE)).toBeInTheDocument();
+    expect(chips(box)).toContain('gmail.com · not allowed');
+    await u.type(box.getByLabelText('Add a sender domain'), 'outlook.com');
+    await u.click(box.getByRole('button', { name: 'Add domain' }));
+    await u.click(box.getByRole('button', { name: 'Save sender domains' }));
+    expect(await box.findByText(CONSUMER_MAILBOX_SENTENCE)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/LEAD_EMAIL_|consumer_mailbox/);
   });
 });
