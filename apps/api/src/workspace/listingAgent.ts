@@ -49,7 +49,7 @@ export async function raiseListingAgentInactiveCard(tx: Tx, ids: IdGenerator, l:
   const reasons = [
     {
       code: 'LISTING_AGENT_INACTIVE',
-      label: `${l.address} has no active listing agent, so its seller updates and marketing reviews are on hold. Change the listing's agent to restart them`,
+      label: `${l.address} has no active listing agent. Change the listing's agent so its seller updates and marketing reviews reach someone who can act on them`,
     },
   ];
   const key = listingAgentInactiveKey(l.listingId);

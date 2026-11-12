@@ -138,7 +138,10 @@ export async function reconcileSellerUpdates(tx: Tx, env: ReconcileEnv, now: Ins
       SELECT l.id, l.address_line1 FROM listings l
        WHERE l.tenant_id = app.tenant_id() AND l.seller_update_next_due_at IS NOT NULL AND l.seller_update_next_due_at <= ${nowIso}::timestamptz
          AND NOT ${LISTING_AGENT_ACTIVE}
-       ORDER BY l.seller_update_next_due_at, l.id LIMIT ${RECONCILE_BATCH}`.execute(tx);
+       -- listings nobody has been told about yet first, so more than a batch of held listings all get their card
+       ORDER BY EXISTS (SELECT 1 FROM priority_feed_items f WHERE f.tenant_id = l.tenant_id AND f.item_type = 'seller_update' AND f.subject_type = 'listing'
+                         AND f.subject_id = l.id AND f.dedupe_key LIKE '%:agent-inactive' AND f.state IN ('open','snoozed')),
+                l.seller_update_next_due_at, l.id LIMIT ${RECONCILE_BATCH}`.execute(tx);
     for (const l of holds.rows) await raiseListingAgentInactiveCard(tx, env.ids, { listingId: l.id, address: l.address_line1 });
     held = holds.rows.length;
     const due = await sql<{ id: string; address_line1: string; listing_agent_user_id: string; due: Date }>`

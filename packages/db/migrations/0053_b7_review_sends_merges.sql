@@ -25,7 +25,8 @@
 --    seller keeps getting seller updates (sellerContacts / HAS_SELLER), an "interested" person keeps their listing
 --    alerts (nurture listingFollowers) and the anniversary of a closed deal fires for the survivor (closedDealsOn).
 --    The open seller-update card of a listing whose seller moved says so (one honest sentence; the draft itself
---    holds no recipient, its recipients are the listing's sellers at send time). Records merged away before this
+--    holds no recipient, its recipients are the listing's sellers at send time, judged then: owner, visibility,
+--    opt-outs). The daily activity view v_agent_activity_daily (0021) skips invites too. Records merged away before this
 --    migration are moved the same way, to the root survivor of their merge chain (section 3b).
 --
 -- SECURITY REVIEW ITEMS (CONVENTIONS §4; ARCHITECTURE §21.16 "batch 7 review fixes, merges, sends and listings"):
@@ -35,7 +36,8 @@
 --     before; the two trigger functions by nobody. Each only counts fewer rows or refuses more sends.
 --   * New SECURITY DEFINER trigger function app.contacts_merge_roles() (owner app_definer, pinned search_path,
 --     EXECUTE revoked from PUBLIC). It acts only for a row whose merged_into_contact_id the ownership engine's merge
---     just set, only inside that row's tenant, only on rows that name the merged-away record, and only towards the
+--     just set (checked: the current ownership command appended the row's merged_away event; a bare UPDATE of the
+--     column, which app_user's column grant allows and contacts_guard does not cover, moves nothing), only inside that row's tenant, only on rows that name the merged-away record, and only towards the
 --     survivor the merge chose. It moves no opt-out state, sends nothing and reveals nothing: who may read a listing
 --     role, a deal role or a deal is unchanged (the existing policies judge the survivor as they judged the loser,
 --     and the merge already made the survivor the person). Least-privilege grants to app_definer:
@@ -284,6 +286,38 @@ SELECT r.tenant_id, r.day
                   AND m.dispatched_at >= (r.day::timestamp AT TIME ZONE r.zone)
                   AND m.dispatched_at < ((r.day + 1)::timestamp AT TIME ZONE r.zone));
 
+-- f) the daily activity view (0021 body; security_invoker as before, nothing in the API reads it)
+CREATE OR REPLACE VIEW v_agent_activity_daily WITH (security_invoker = true) AS
+  WITH rows AS (
+    SELECT m.tenant_id, m.initiated_by_user_id AS user_id, m.occurred_at AS at, 'text_or_email'::text AS metric
+      FROM messages m
+     WHERE m.direction = 'outbound' AND m.initiator = 'human'
+       AND m.status IN ('sent','delivered','dispatch_unknown')
+       AND m.bulk_action_id IS NULL                       -- R-PAR-37: a bulk send is not a touch
+       AND m.marketing_piece_id IS NULL                   -- b7 sends/F1: nor is an open-house invite
+    UNION ALL
+    SELECT c.tenant_id, c.agent_user_id, c.started_at, 'call' FROM calls c
+     WHERE c.direction = 'outbound' AND c.initiator = 'human'
+    UNION ALL
+    SELECT a.tenant_id, COALESCE(a.set_by_user_id, a.user_id), a.created_at, 'appointment_set' FROM appointments a
+     WHERE a.created_by_kind = 'user'
+    UNION ALL
+    SELECT a.tenant_id, a.user_id, a.starts_at, 'appointment_held' FROM appointments a WHERE a.status = 'held'
+    UNION ALL
+    SELECT h.tenant_id, d.owner_user_id, h.changed_at, 'agreement_signed' FROM deal_stage_history h
+      JOIN deals d ON d.tenant_id = h.tenant_id AND d.id = h.deal_id
+     WHERE h.to_stage = 'agreement_signed')
+  SELECT r.tenant_id, r.user_id, (r.at AT TIME ZONE s.default_timezone)::date AS day,
+         count(*) FILTER (WHERE r.metric IN ('text_or_email','call')) AS touches,
+         count(*) FILTER (WHERE r.metric = 'call') AS calls,
+         count(*) FILTER (WHERE r.metric = 'text_or_email') AS texts_and_emails,
+         count(*) FILTER (WHERE r.metric = 'appointment_set') AS appointments_set,
+         count(*) FILTER (WHERE r.metric = 'appointment_held') AS appointments_held,
+         count(*) FILTER (WHERE r.metric = 'agreement_signed') AS agreements_signed
+    FROM rows r JOIN tenant_settings s ON s.tenant_id = r.tenant_id
+   WHERE r.user_id IS NOT NULL
+   GROUP BY r.tenant_id, r.user_id, (r.at AT TIME ZONE s.default_timezone)::date;
+
 -- -----------------------------------------------------------------------------
 -- 2. sends/F2: the dispatch guard (0043 body) sends an autonomous message only from a proposed action
 -- -----------------------------------------------------------------------------
@@ -415,6 +449,13 @@ BEGIN
   IF s IS NULL OR s = l OR NOT EXISTS (SELECT 1 FROM public.contacts c WHERE c.tenant_id = t AND c.id = s) THEN
     RETURN NULL;
   END IF;
+  -- only the ownership engine's merge: merged_into_contact_id set in the same ownership command that appended the
+  -- loser's merged_away event (contacts_guard does not cover the column, so a bare UPDATE of it moves nothing here)
+  IF app.ownership_command() IS NULL OR NEW.ownership_command_id IS DISTINCT FROM app.ownership_command()
+     OR NOT EXISTS (SELECT 1 FROM public.lead_ownership_events e
+                     WHERE e.tenant_id = t AND e.contact_id = l AND e.type = 'merged_away' AND e.command_id = app.ownership_command()) THEN
+    RETURN NULL;
+  END IF;
 
   -- the listings on which the loser was a seller (their open seller-update card says the seller moved)
   sold := ARRAY(SELECT lc.listing_id FROM public.listing_contacts lc
@@ -442,7 +483,7 @@ BEGIN
   IF cardinality(sold) > 0 THEN
     UPDATE public.priority_feed_items f
        SET reasons = jsonb_build_array(jsonb_build_object('code', 'SELLER_UPDATE_SELLER_MERGED',
-                       'label', 'A seller on this listing was merged with a duplicate record, so this update now goes to the merged record. Check who it goes to, add your recommendation and send')),
+                       'label', 'A seller on this listing was merged with a duplicate record, so who this update goes to may have changed. Check the recipients, add your recommendation and send')),
            updated_at = now()
      WHERE f.tenant_id = t AND f.item_type = 'seller_update' AND f.subject_type = 'listing' AND f.subject_id = ANY (sold)
        AND f.assistant_action_id IS NOT NULL   -- a draft's card only, never the "no active listing agent" card

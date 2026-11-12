@@ -129,7 +129,7 @@ const BLOCKED: Record<string, string> = {
   SENDER_NOT_AUTHORIZED: 'you no longer handle this contact',
   ASSISTANT_ACTION_NOT_APPROVED: "the draft wasn't approved",
   ASSISTANT_ACTION_STALE: 'the lead moved to someone else after it was drafted',
-  ASSISTANT_ACTION_WITHDRAWN: 'it was withdrawn before it went out (the contact was merged or changed hands)',
+  ASSISTANT_ACTION_WITHDRAWN: 'it was withdrawn before it went out (the lead was merged, reassigned, closed or started a new inquiry period)',
   PLAYBOOK_NOT_APPROVED: 'the playbook is no longer approved',
   PLAYBOOK_OWNER_NOT_CONTACT_OWNER: 'the playbook belongs to an agent who no longer owns the lead',
   ENROLLMENT_NOT_ACTIVE: 'the playbook for this contact is paused or stopped',

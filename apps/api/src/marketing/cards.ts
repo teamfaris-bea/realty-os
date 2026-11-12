@@ -59,6 +59,12 @@ export async function syncReviewCards(tx: Tx, ids: IdGenerator, listingId: strin
     } else if (p.status !== 'draft') {
       await closeReviewCard(tx, p.id);
     }
+    // b7 review: a review card held by anyone but the current active listing agent (the listing changed agent, or its
+    // agent left) is closed: they can no longer approve it. Remove-it-yourself cards stay until their holder closes them.
+    await sql`UPDATE priority_feed_items SET state = 'done', resolved_at = now(), snoozed_until = NULL, updated_at = now()
+               WHERE tenant_id = app.tenant_id() AND dedupe_key = ${`marketing:${p.id}`} AND state IN ('open','snoozed')
+                 AND user_id IS DISTINCT FROM ${agent?.agentActive ? p.agent : null}::uuid
+                 AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(reasons) x WHERE x->>'code' LIKE 'REMOVE_POST_YOURSELF:%')`.execute(tx);
   }
 }
 
