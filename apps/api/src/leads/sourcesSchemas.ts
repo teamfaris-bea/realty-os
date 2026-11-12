@@ -2,6 +2,7 @@
 // field and no tenant id in any response (R-AST-13, R-TEN-3; matrix.test.ts checks LEAD_SOURCES_RESPONSE_SCHEMAS).
 import { z } from 'zod';
 import { ConsentDisclosureInput } from './schemas.js';
+import { TelephonyMode } from '../comms/telephonyMode.js';
 
 const Id = z.uuid();
 const Iso = z.string();
@@ -40,7 +41,7 @@ export const SourceOverview = z.object({
   }),
   hasConsentText: z.boolean(),
 });
-export const OverviewResponse = z.object({ sources: z.array(SourceOverview), deployment: z.object({ inboundEmail: z.boolean(), publicHttps: z.boolean() }) });
+export const OverviewResponse = z.object({ sources: z.array(SourceOverview), deployment: z.object({ inboundEmail: z.boolean(), publicHttps: z.boolean(), telephony: TelephonyMode }) });
 
 export const SourceView = z.object({ id: Id, name: z.string(), kind: z.string(), active: z.boolean(), offSince: Iso.nullable(), hasToken: z.boolean(), createdAt: Iso });
 export const SourceResponse = z.object({ source: SourceView });

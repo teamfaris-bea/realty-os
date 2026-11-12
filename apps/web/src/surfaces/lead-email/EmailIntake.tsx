@@ -14,6 +14,8 @@
 // - On: the inbound address (read-only, with Copy and an announced "Copied"), the allowed sender
 //   domains (add / remove, Save), saved domains the trust rule ignores (personal mailboxes) shown as not
 //   allowed, and "Get a new address", which asks first because the old address stops working at once.
+// Each of these also refreshes the keys the host passes in alsoRefresh (Lead sources: its overview), so no other
+// view keeps copying an address that stopped working.
 // Turning it on, saving domains and a new address are re-auth actions (🔒): useAction opens the shell's
 // password prompt on REAUTH_REQUIRED and sends the same request again. Codes are never shown: every
 // failure is a sentence (messages.ts).
@@ -34,6 +36,9 @@ export interface IntakeSource {
   name: string;
 }
 
+/** Other query keys an intake change refreshes (Lead sources passes its overview keys, so the list copies the live address). */
+export type RefreshKeys = readonly (readonly unknown[])[];
+
 export const MAX_DOMAINS = 10;
 export const TRUST_SENTENCE = 'Only emails DKIM-signed by an allowed domain become leads automatically; everything else waits in Needs review.';
 export const ROTATE_WARNING = 'The old address stops working at once: emails sent to it from now on are not received. Give the new address to every portal that uses the old one.';
@@ -48,7 +53,7 @@ export function cleanDomain(raw: string): string | null {
   return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(d) ? d : null;
 }
 
-export function EmailIntake({ source }: { source: IntakeSource }) {
+export function EmailIntake({ source, alsoRefresh = [] }: { source: IntakeSource; alsoRefresh?: RefreshKeys }) {
   const api = useApi();
   const q = useQuery<InboxResponse, ApiError>({ queryKey: INBOX_KEY(source.id), queryFn: ({ signal }) => api.get<InboxResponse>(`/lead-sources/${source.id}/lead-email`, { signal }) });
   const inbox = q.data?.inbox;
@@ -70,15 +75,15 @@ export function EmailIntake({ source }: { source: IntakeSource }) {
       {q.isPending ? <p className="text-[15px] text-ink-muted">Loading</p> : null}
       {q.isError ? <Notice tone="error">{sentenceFor(q.error)}</Notice> : null}
       {inbox && !inbox.enabled && !inbox.inboundDomainConfigured ? <Notice tone="warn">{LEAD_EMAIL_ERROR_MESSAGES.LEAD_EMAIL_NOT_CONFIGURED}</Notice> : null}
-      {inbox && !inbox.enabled && inbox.inboundDomainConfigured ? <TurnOn source={source} inbox={inbox} /> : null}
-      {inbox?.enabled ? <Enabled source={source} inbox={inbox} /> : null}
+      {inbox && !inbox.enabled && inbox.inboundDomainConfigured ? <TurnOn source={source} inbox={inbox} alsoRefresh={alsoRefresh} /> : null}
+      {inbox?.enabled ? <Enabled source={source} inbox={inbox} alsoRefresh={alsoRefresh} /> : null}
     </section>
   );
 }
 
-function useInboxAction(method: 'POST' | 'PUT', source: IntakeSource) {
+function useInboxAction(method: 'POST' | 'PUT', source: IntakeSource, alsoRefresh: RefreshKeys) {
   const qc = useQueryClient();
-  const a = useAction<Record<string, unknown>, InboxResponse>(method, { invalidate: [[...INBOX_KEY(source.id)], [...REVIEWS_KEY]] });
+  const a = useAction<Record<string, unknown>, InboxResponse>(method, { invalidate: [[...INBOX_KEY(source.id)], [...REVIEWS_KEY], ...alsoRefresh.map((k) => [...k])] });
   const run = async (path: string, body?: Record<string, unknown>) => {
     const r = await a.run(path, body);
     if (r.ok) qc.setQueryData(INBOX_KEY(source.id), r.data);
@@ -87,8 +92,8 @@ function useInboxAction(method: 'POST' | 'PUT', source: IntakeSource) {
   return { run, pending: a.pending, error: a.error ? sentenceFor(a.error) : null };
 }
 
-function TurnOn({ source, inbox }: { source: IntakeSource; inbox: Inbox }) {
-  const enable = useInboxAction('POST', source);
+function TurnOn({ source, inbox, alsoRefresh }: { source: IntakeSource; inbox: Inbox; alsoRefresh: RefreshKeys }) {
+  const enable = useInboxAction('POST', source, alsoRefresh);
   return (
     <DomainEditor
       initial={inbox.suggestedSenderDomains.map((s) => s.domain)}
@@ -103,13 +108,13 @@ function TurnOn({ source, inbox }: { source: IntakeSource; inbox: Inbox }) {
   );
 }
 
-function Enabled({ source, inbox }: { source: IntakeSource; inbox: Inbox }) {
+function Enabled({ source, inbox, alsoRefresh }: { source: IntakeSource; inbox: Inbox; alsoRefresh: RefreshKeys }) {
   const field = useRef<HTMLInputElement>(null);
   const [copyStatus, announceCopy] = useAnnounce(5000);
   const [confirming, setConfirming] = useState(false);
   const [rotated, announceRotated] = useAnnounce(8000);
-  const save = useInboxAction('PUT', source);
-  const rotate = useInboxAction('POST', source);
+  const save = useInboxAction('PUT', source, alsoRefresh);
+  const rotate = useInboxAction('POST', source, alsoRefresh);
   const address = inbox.address ?? '';
   const copy = async () => {
     try {

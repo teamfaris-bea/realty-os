@@ -2,6 +2,9 @@
 // number" (POST /numbers purpose tracking with leadSourceId; a notice from the server says when it was bought but
 // could not be tied) and "Use one of your tracking numbers" (PATCH /numbers/:id/lead-source). Then exactly what a
 // tracked call or text does, with a link to the Phone and email page (registration lives there).
+// R-TWL-1 (b9 ui/F3): GET /numbers says whether texts and calls reach a phone. With the kill switch off or a simulated
+// provider the path says so first; with the switch off "Get a tracking number" is not offered (it can only be refused),
+// while tying a number the team already has still works.
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -9,6 +12,7 @@ import { Button, Notice, TextField } from '../../../design/index.js';
 import { type ApiError, useApi } from '../../../shell/index.js';
 import { formatPhone } from '../../feed/lib/format.js';
 import { useAction, useAnnounce } from '../../admin/lib/hooks.js';
+import { type TelephonyMode, canBuyNumber, telephonyNotice } from '../../admin/lib/telephony.js';
 import type { PhoneNumber } from '../../admin/lib/types.js';
 import { SelectField, StatusLine } from '../../admin/lib/ui.js';
 import { SOURCE_KEYS } from '../hooks.js';
@@ -19,7 +23,7 @@ import { PAGES, TRACKING_SENTENCE } from '../words.js';
 
 export function PhonePath({ source, sourceName }: { source: SourceOverview; sourceName(id: string): string }) {
   const api = useApi();
-  const numbers = useQuery<{ numbers: PhoneNumber[] }, ApiError>({ queryKey: NUMBERS_KEY, queryFn: ({ signal }) => api.get('/numbers', { signal }) });
+  const numbers = useQuery<{ numbers: PhoneNumber[]; telephony?: TelephonyMode }, ApiError>({ queryKey: NUMBERS_KEY, queryFn: ({ signal }) => api.get('/numbers', { signal }) });
   const [status, announce] = useAnnounce(8000);
   const [area, setArea] = useState('');
   const [pick, setPick] = useState('');
@@ -30,9 +34,20 @@ export function PhonePath({ source, sourceName }: { source: SourceOverview; sour
   const mine = live.filter((n) => n.leadSourceId === source.id);
   const others = live.filter((n) => n.leadSourceId !== source.id);
   const failure = buy.error ?? tie.error;
+  const mode = numbers.data?.telephony;
+  const notice = telephonyNotice(mode);
   return (
     <>
       <StatusLine text={status} />
+      {notice.length > 0 ? (
+        <Notice tone="warn">
+          {notice.map((t) => (
+            <span key={t} className="block">
+              {t}
+            </span>
+          ))}
+        </Notice>
+      ) : null}
       {numbers.isError ? <Notice tone="error">{sentenceFor(numbers.error)}</Notice> : null}
       {mine.length > 0 ? (
         <ul aria-label={`Tracking numbers of ${source.name}`} className="flex flex-col gap-2">
@@ -54,7 +69,7 @@ export function PhonePath({ source, sourceName }: { source: SourceOverview; sour
             <TextField label="Area code (optional)" inputMode="numeric" maxLength={3} value={area} onChange={(e) => setArea(e.target.value.replace(/\D/g, ''))} className="sm:w-48" />
             <Button
               pending={buy.pending}
-              disabled={area !== '' && !/^[2-9]\d{2}$/.test(area)}
+              disabled={!canBuyNumber(mode) || (area !== '' && !/^[2-9]\d{2}$/.test(area))}
               onClick={async () => {
                 const r = await buy.run('/numbers', { purpose: 'tracking', leadSourceId: source.id, ...(area ? { areaCode: area } : {}) });
                 if (r.ok) {

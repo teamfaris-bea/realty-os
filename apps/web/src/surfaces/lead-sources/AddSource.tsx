@@ -2,11 +2,12 @@
 // defaults the kind (which can be changed) and, once POST /lead-sources has made the source, opens that path's setup
 // on the source's page. "An agent's forwarded email" is a guided setup of its own (AgentForwarding.tsx) that names
 // the source after the agent. The consent text is optional. Where this deployment cannot do a path (no inbound email
-// domain, no public https address) the choice says so before anything is made.
+// domain, no public https address, live texting and calling off) the choice says so before anything is made.
 import { type FormEvent, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Dialog, Notice, TextField } from '../../design/index.js';
 import { useAction } from '../admin/lib/hooks.js';
+import { TELEPHONY_OFF_SETUP } from '../admin/lib/telephony.js';
 import { Check, SelectField, TextArea } from '../admin/lib/ui.js';
 import { LEAD_EMAIL_ERROR_MESSAGES } from '../lead-email/messages.js';
 import { AgentForwarding } from './AgentForwarding.js';
@@ -20,6 +21,8 @@ export function arrivalNote(choice: PathKey, deployment: OverviewResponse['deplo
   if (choice === 'email' && !deployment.inboundEmail) return LEAD_EMAIL_ERROR_MESSAGES.LEAD_EMAIL_NOT_CONFIGURED!;
   if (choice === 'forward' && !deployment.inboundEmail) return LEAD_EMAIL_ERROR_MESSAGES.LEAD_EMAIL_NOT_CONFIGURED!;
   if (choice === 'google' && !deployment.publicHttps) return GOOGLE_NOT_AVAILABLE;
+  // R-TWL-1 (b9 ui/F3): the kill switch off or a simulated provider: said before anything is made
+  if (choice === 'phone' && deployment.telephony && deployment.telephony !== 'live') return TELEPHONY_OFF_SETUP;
   return null;
 }
 
