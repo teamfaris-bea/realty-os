@@ -12,13 +12,18 @@
 //   POST /documents/:id/hold {hold, reason}   Owner/Admin as themselves (403 DOCUMENT_HOLD_OWNER_ADMIN
 //                                             to a member who sees the document)                        document.view + document.hold
 //   PUT  /documents/:id/retention             Owner/Admin; 3-10 years after the scope's close           document.view + document.hold
+//   GET  /documents/:id/extraction            the proposal, its claims, evidence and the deal's dates   document.view (+ the action's RLS)
+//   POST /documents/:id/extraction/run        read a clean PDF contract now (uploader, tenant-wide)     document.view (+ the action's RLS)
+//   POST /documents/:id/extraction/claims/:claimId/confirm   one date through module 31's confirmInTx    milestone.confirm
+//   POST /documents/:id/extraction/claims/:claimId/reject    dismiss one claim (needs_review included)   milestone.confirm
 // An invisible scope or document is 404 (R-PERM-5). Multipart is parsed only inside this plugin's upload scope:
 // buffered up to 10,000,000 + 65,536 bytes (a larger declared body is 413 before it is read), then
 // Response.formData(); a Content-Encoding other than identity is refused before the body is read.
-import { type Action, type ResourceFacts, type UserActor, can } from '@realty/core/foundation';
+import { type Action, type Instant, type ResourceFacts, type UserActor, can } from '@realty/core/foundation';
 import { type Tx, withTenantTx } from '@realty/db';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { sql } from 'kysely';
 import { contactFacts } from '../comms/repos/contacts.js';
 import { depsFromPlatform } from '../comms/runtime.js';
 import { AppError } from '../errors.js';
@@ -28,7 +33,10 @@ import type { RouteModule } from '../routes.js';
 import { actorOf, mapWorkspaceDbError, platformOf } from '../workspace/common.js';
 import { dealFacts } from '../workspace/deals.js';
 import { listingFacts } from '../workspace/listings.js';
+import { confirmClaimInTx, rejectClaimInTx } from './confirm.js';
 import { COPY, previousVersionSharedText } from './copy.js';
+import { extractDocument } from './extract.js';
+import { extractionView } from './extractionView.js';
 import { setHold, setRetention, setShared } from './manage.js';
 import { type ReadCtx, documentDetail, downloadDocument, listScope, shareFacts } from './read.js';
 import * as R from './repos.js';
@@ -195,4 +203,62 @@ async function register(app: FastifyInstance): Promise<void> {
   });
 }
 
-export const documentRoutes: RouteModule = { name: 'documents', register };
+async function registerExtraction(app: FastifyInstance): Promise<void> {
+  const r = app.withTypeProvider<ZodTypeProvider>();
+  const dealConfirm = authorize('milestone.confirm', (req) =>
+    docTx(req, async (tx) => {
+      const d = await R.docById(tx, idOf(req));
+      return d?.deal_id ? dealFacts(tx, d.deal_id) : null;
+    }),
+  );
+  r.get('/documents/:id/extraction', { config: { auth: 'document.view' }, preHandler: authorize('document.view', docVisible), schema: { params: S.IdParams, response: { 200: S.ExtractionResponse } } }, async (req) =>
+    docTx(req, (tx) => extractionView(tx, req.params.id, readCtx(req))),
+  );
+  r.post('/documents/:id/extraction/run', { config: { auth: 'document.view' }, preHandler: authorize('document.view', docVisible), schema: { params: S.IdParams, response: { 200: S.ExtractionResponse } } }, async (req) => {
+    const actor = actorOf(req);
+    const deps = documentDeps(req);
+    // the uploader or a tenant-wide actor (the action is the uploader's; RLS lets nobody else write it)
+    const allowed = await docTx(req, async (tx) => {
+      const d = await R.docById(tx, req.params.id);
+      if (!d) return false;
+      const x = await sql<{ ok: boolean }>`SELECT (app.is_tenant_wide() OR app.user_id() = ${d.uploaded_by_user_id}::uuid) AS ok`.execute(tx);
+      return x.rows[0]?.ok === true;
+    });
+    if (!allowed) throw new AppError('NOT_FOUND');
+    let run;
+    try {
+      run = await extractDocument(deps, actor, (fn) => withTenantTx(actor, fn, { db: deps.db }), req.params.id);
+    } catch (e) {
+      throw mapDocumentDbError(req, e);
+    }
+    if (run.result === 'exists') throw new AppError('EXTRACTION_EXISTS');
+    return docTx(req, (tx) => extractionView(tx, req.params.id, readCtx(req)));
+  });
+  const claimTx = async <T>(req: FastifyRequest, fn: (tx: Tx, actor: UserActor, now: Instant) => Promise<T>): Promise<T> => {
+    const actor = actorOf(req);
+    try {
+      return await withTenantTx(actor, (tx, now) => fn(tx, actor, now), { db: platformOf(req).db, retries: 2 });
+    } catch (e) {
+      // module 31's codes, as transactions/routes.ts maps them
+      if (String((e as { message?: unknown })?.message ?? '').startsWith('DATE_HUMAN_CONFIRMATION')) throw new AppError('DATE_HUMAN_CONFIRMATION');
+      throw mapDocumentDbError(req, e);
+    }
+  };
+  r.post('/documents/:id/extraction/claims/:claimId/confirm', { config: { auth: 'milestone.confirm' }, preHandler: dealConfirm, schema: { params: S.ClaimParams, body: S.ConfirmClaimBody, response: { 200: S.ClaimDecisionResponse } } }, async (req) =>
+    claimTx(req, async (tx, actor, now) => {
+      const res = await confirmClaimInTx(tx, actor, platformOf(req).ids, req.params.id, req.params.claimId, { target: req.body.target, reminderDaysBefore: req.body.reminderDaysBefore }, now);
+      return { ...(await extractionView(tx, req.params.id, readCtx(req))), dateId: res.dateId };
+    }),
+  );
+  r.post('/documents/:id/extraction/claims/:claimId/reject', { config: { auth: 'milestone.confirm' }, preHandler: dealConfirm, schema: { params: S.ClaimParams, body: S.RejectClaimBody, response: { 200: S.ClaimDecisionResponse } } }, async (req) =>
+    claimTx(req, async (tx, actor) => {
+      await rejectClaimInTx(tx, actor, req.params.id, req.params.claimId);
+      return { ...(await extractionView(tx, req.params.id, readCtx(req))), dateId: null };
+    }),
+  );
+}
+
+export const documentRoutes: RouteModule = { name: 'documents', register: async (app) => {
+  await register(app);
+  await registerExtraction(app);
+} };

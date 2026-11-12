@@ -15,14 +15,15 @@
 //   2. stamp retention; 3. shred infected documents' objects once their hold is lifted;
 //   4. backstop: supersede open extractions that have a clean newer version.
 import type { Actor, Instant, TenantId } from '@realty/core/foundation';
-import type { Tx } from '@realty/db';
+import { type Tx, enqueueJob } from '@realty/db';
 import { sql } from 'kysely';
 import { audit, redactDiff } from '../audit.js';
 import { getObject } from '../crypto/objects.js';
 import type { ScanVerdict } from './provider.js';
 import { stampRetentionInTx } from './manage.js';
+import { extractable } from './read.js';
 import { enqueueScan } from './upload.js';
-import { type DocumentDeps, SCAN_STALE_MS } from './types.js';
+import { DOCUMENT_JOBS, type DocumentDeps, SCAN_STALE_MS } from './types.js';
 
 export type RunTx = <T>(fn: (tx: Tx, now: Instant) => Promise<T>) => Promise<T>;
 
@@ -73,6 +74,10 @@ export async function applyVerdictInTx(tx: Tx, deps: Pick<DocumentDeps, 'provide
   if (verdict.verdict === 'clean') {
     await stampRetentionInTx(tx, documentId);
     if (d.supersedes_id) await supersedePriorExtractionsInTx(tx, documentId);
+    const ct = await sql<{ content_type: string }>`SELECT content_type FROM stored_objects WHERE tenant_id = app.tenant_id() AND id = ${d.object_id}`.execute(tx);
+    if (deps.providers.textExtractor.configured && extractable({ deal_id: d.deal_id, kind: d.kind as never, content_type: ct.rows[0]?.content_type ?? null })) {
+      await enqueueJob(tx, { queue: 'default', kind: DOCUMENT_JOBS.extract, payload: { documentId }, dedupeKey: `${DOCUMENT_JOBS.extract}:${documentId}` });
+    }
   } else if (!d.legal_hold) {
     await shredObjectInTx(tx, d.object_id);
   }

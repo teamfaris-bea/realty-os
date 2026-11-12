@@ -50,4 +50,32 @@ export const UploadResponse = DetailResponse.extend({ previousVersionShared: z.b
 export const ShareBody = z.strictObject({ shared: z.boolean() });
 export const ShareResponse = DetailResponse.extend({ text: z.string().nullable() });
 export const HoldBody = z.strictObject({ hold: z.boolean(), reason: z.string().trim().min(1).max(200) });
+const ClaimView = z.object({
+  id: z.uuid(),
+  ordinal: z.number().int(),
+  text: z.string(),
+  milestone: z.object({ kind: z.string(), label: z.string(), dueOn: z.string() }).nullable(),
+  page: z.number().int().nullable(),
+  needsReview: z.boolean(),
+  reviewNote: z.string().nullable(),
+  reviewStatus: z.enum(['unreviewed', 'confirmed', 'corrected', 'rejected']),
+  evidence: z.array(z.object({ sourceType: z.literal('document'), locator: z.object({ kind: z.literal('char_range'), page: z.number().int(), start: z.number().int(), end: z.number().int() }), snippet: z.string().nullable(), verified: z.boolean(), line: z.string().nullable() })),
+  liveDates: z.array(z.object({ dateId: z.uuid(), label: z.string().nullable(), dueOn: z.string(), status: z.string(), source: z.string() })),
+  appliedDateId: z.uuid().nullable(),
+  appliedNote: z.string().nullable(),
+});
+export const ExtractionResponse = z.object({
+  document: DocumentSchema,
+  action: z.object({ id: z.uuid(), status: z.string(), outcome: z.enum(['dates', 'no_text', 'no_dates', 'unreadable']).nullable(), text: z.string().nullable() }).nullable(),
+  claims: z.array(ClaimView),
+  relativeDeadlineText: z.string().nullable(),
+  platform: PlatformSchema,
+});
+export const ConfirmClaimBody = z.strictObject({
+  commandId: z.uuid(),
+  target: z.discriminatedUnion('kind', [z.strictObject({ kind: z.literal('new') }), z.strictObject({ kind: z.literal('existing'), dateId: z.uuid() })]),
+  reminderDaysBefore: z.number().int().min(0).max(60).nullable().optional(),
+});
+export const RejectClaimBody = z.strictObject({ commandId: z.uuid() });
+export const ClaimDecisionResponse = ExtractionResponse.extend({ dateId: z.uuid().nullable() });
 export const RetentionBody = z.strictObject({ retentionUntil: z.iso.datetime({ offset: true }) });

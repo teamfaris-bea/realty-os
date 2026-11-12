@@ -48,6 +48,12 @@ export interface ConfirmArgs {
   responsible?: Responsible | null;
   /** absent: the proposal's rule (basis.reminderDaysBefore) or the last confirm's */
   reminderDaysBefore?: number | null;
+  /**
+   * module 42 (one flagged edit, PHASE2_3_PLAN §5.3): the person confirms a contract date read from a document. The
+   * row gets source 'document', the basis {kind: 'document', claimId} (a replaced template basis is dropped) and
+   * evidence_claim_id; the DB checks the claim (0140 deal_dates_evidence_guard). Absent: nothing changes.
+   */
+  fromDocument?: { claimId: string };
 }
 
 export async function enqueueDateChanged(tx: Tx, dealDateId: string): Promise<void> {
@@ -67,8 +73,8 @@ export async function confirmInTx(tx: Tx, actor: Actor, ids: IdGenerator, a: Con
   const dueOn = (a.dueOn ?? prev?.due_on) as LocalDate | undefined;
   if (dueOn === undefined) throw new AppError('VALIDATION_FAILED', { reason: 'DUE_ON_REQUIRED' });
   const reminderDaysBefore = a.reminderDaysBefore !== undefined ? a.reminderDaysBefore : prev === null ? null : storedReminderDays(prev.basis);
-  const source = prev?.source ?? 'manual';
-  const basis = cleanBasis(prev === null ? { kind: 'manual' } : proposalBasisOf(R.coreDate(prev).basis));
+  const source = a.fromDocument ? 'document' : (prev?.source ?? 'manual');
+  const basis = a.fromDocument ? ({ kind: 'document', claimId: a.fromDocument.claimId } as ProposalBasis) : cleanBasis(prev === null ? { kind: 'manual' } : proposalBasisOf(R.coreDate(prev).basis));
   // R-TXN-1: only a person confirms, enters or moves a date (core and the DB guard refuse anyone else too)
   if (actor.kind !== 'user') fail('DATE_HUMAN_CONFIRMATION');
   const dateActor = { kind: 'user', userId: actor.userId } as const;
@@ -86,9 +92,9 @@ export async function confirmInTx(tx: Tx, actor: Actor, ids: IdGenerator, a: Con
     const id = ids.next<'DealDateId'>();
     await sql`
       INSERT INTO deal_dates (tenant_id, id, deal_id, kind, label, due_on, source, status, confirmed_by_user_id, confirmed_at, responsible,
-                              due_at, reminder_at, due_version, basis)
-      VALUES (app.tenant_id(), ${id}, ${a.dealId}, ${a.kind ?? 'custom'}, ${a.label ?? null}, ${dueOn}::date, 'manual', 'confirmed', ${actor.userId},
-              ${nowIso}::timestamptz, ${responsible}, ${iso(v.dueAt)}::timestamptz, ${iso(v.reminderAt)}::timestamptz, ${v.dueVersion}, ${JSON.stringify(v.basis)}::jsonb)`.execute(tx);
+                              due_at, reminder_at, due_version, basis${a.fromDocument ? sql`, evidence_claim_id` : sql``})
+      VALUES (app.tenant_id(), ${id}, ${a.dealId}, ${a.kind ?? 'custom'}, ${a.label ?? null}, ${dueOn}::date, ${a.fromDocument ? 'document' : 'manual'}, 'confirmed', ${actor.userId},
+              ${nowIso}::timestamptz, ${responsible}, ${iso(v.dueAt)}::timestamptz, ${iso(v.reminderAt)}::timestamptz, ${v.dueVersion}, ${JSON.stringify(v.basis)}::jsonb${a.fromDocument ? sql`, ${a.fromDocument.claimId}` : sql``})`.execute(tx);
     return id;
   }
   const moved = prev.status === 'confirmed' && prev.due_on !== dueOn;
@@ -96,7 +102,7 @@ export async function confirmInTx(tx: Tx, actor: Actor, ids: IdGenerator, a: Con
     UPDATE deal_dates SET due_on = ${dueOn}::date, status = 'confirmed', confirmed_by_user_id = ${actor.userId}, confirmed_at = ${nowIso}::timestamptz,
            responsible = ${responsible}, label = CASE WHEN ${a.label !== undefined} THEN ${a.label ?? null} ELSE label END,
            due_at = ${iso(v.dueAt)}::timestamptz, reminder_at = ${iso(v.reminderAt)}::timestamptz, due_version = ${v.dueVersion},
-           basis = ${JSON.stringify(v.basis)}::jsonb, updated_at = now()
+           basis = ${JSON.stringify(v.basis)}::jsonb, updated_at = now()${a.fromDocument ? sql`, source = 'document', evidence_claim_id = ${a.fromDocument.claimId}` : sql``}
      WHERE tenant_id = app.tenant_id() AND id = ${prev.id}`.execute(tx);
   if (moved) await enqueueDateChanged(tx, prev.id);
   return prev.id;
