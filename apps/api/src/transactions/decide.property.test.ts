@@ -123,3 +123,22 @@ describe('finding 1 and 4: deal_date_upcoming step validation', () => {
     expect(validatePlaybookContent({ kind: 'triggers', digestWindowMinutes: 0, triggers: [anniversary] }, { kind: 'trigger' })).toEqual([expect.objectContaining({ code: 'SCHEMA', detail: 'roles' })]);
   });
 });
+
+describe('b8 deals sends/F1 K1 R-TXN-4 (property): a reminder never reaches the other side of the deal', () => {
+  it('K1: for any side and roles, every candidate keeps only roles the team represents on that side (none of a lease deal\'s client roles)', () => {
+    const ROLES = ['buyer', 'seller', 'co_buyer', 'co_seller', 'other', 'lender', 'title', 'attorney'] as const;
+    const TEAM = { buy: ['buyer', 'co_buyer'], sell: ['seller', 'co_seller'], dual: ['buyer', 'seller', 'co_buyer', 'co_seller'], lease: [] } as Record<string, string[]>;
+    fc.assert(
+      fc.property(fc.constantFrom('buy', 'sell', 'dual', 'lease' as const), fc.array(fc.subarray([...ROLES], { minLength: 1 }), { minLength: 1, maxLength: 4 }), (side, roleSets) => {
+        const rs: Recipient[] = roleSets.map((roles, i) => ({ contactId: `c-${i}`, ownerUserId: 'u-1', live: true, roles }));
+        const d = { id: 'dd' as DealDate['id'], dealId: 'd', kind: 'closing' as const, label: null, dueOn: day(10), source: 'manual' as const, status: 'confirmed' as const, dueVersion: 1, dueAt: instant(T0 + 10 * 86_400_000), reminderAt: instant(T0 - 1), completedAt: null, responsible: null, basis: {} };
+        const dec = reminderFact(d, rs, instant(T0), side);
+        if (!dec.fire) return;
+        for (const r of dec.rels) {
+          expect(r.dealRoles.length).toBeGreaterThan(0);
+          for (const role of r.dealRoles) expect(['buyer', 'seller', 'co_buyer', 'co_seller'].includes(role) ? TEAM[side]!.includes(role) : true).toBe(true);
+        }
+      }),
+    );
+  });
+});

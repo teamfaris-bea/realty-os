@@ -82,18 +82,50 @@ export function notOurClientText(side: DealSide, roles: readonly string[]): stri
   return `No update: the ${roleList(otherSideRoles(side, roles))} is not this team's client on a ${SIDE_TEXT[side]} deal (the team represents the ${roleList(teamClientRoles(side))}).`;
 }
 
+/** ownership-data/F3: the reconcile's note of a run on a record since merged into this contact (basis.mergedUpdates). */
+function noteOf(d: R.DateRow, contactId: string): { status: string; at: string | null } | null {
+  const all = d.basis['mergedUpdates'];
+  if (typeof all !== 'object' || all === null || Array.isArray(all)) return null;
+  const n = (all as Record<string, unknown>)[`${contactId}:v${d.due_version}`];
+  if (typeof n !== 'object' || n === null) return null;
+  const x = n as { status?: unknown; at?: unknown };
+  return typeof x.status === 'string' ? { status: x.status, at: str(x.at) } : null;
+}
+
 function recipientStatus(
   d: R.DateRow,
-  side: DealSide,
+  deal: { side: DealSide; open: boolean },
   c: R.DealRecipient,
   pb: { approved: boolean; roles: string[] },
   runs: RunInfo[],
+  merged: ReadonlySet<string>,
   decisions: Map<string, string>,
   zone: Parameters<typeof formatDue>[2],
+  now: Instant,
 ): Omit<RecipientUpdate, 'contactId' | 'name' | 'roles'> {
+  const side = deal.side;
   const named = c.roles.some((r) => pb.roles.includes(r));
-  const mine = runs.filter((r) => r.contact_id === c.contactId).sort((a, b) => Number(b.v) - Number(a.v) || b.updated_at.getTime() - a.updated_at.getTime());
+  const byRecent = (a: RunInfo, b: RunInfo) => Number(b.v) - Number(a.v) || b.updated_at.getTime() - a.updated_at.getTime();
+  const mine = runs.filter((r) => r.contact_id === c.contactId).sort(byRecent);
   const cur = mine.find((r) => Number(r.v) === d.due_version) ?? null;
+  // ownership-data/F3: a run of a record since merged into this one (this person's own history, never "nothing planned")
+  const prev = cur === null ? (runs.filter((r) => merged.has(r.contact_id) && Number(r.v) === d.due_version).sort(byRecent)[0] ?? null) : null;
+  const note = cur === null ? noteOf(d, c.contactId) : null;
+  if (prev === null && note !== null) {
+    if (note.status === 'sent') return { status: 'sent', text: 'Update sent, to a record since merged into this one.', at: note.at };
+    if (note.status === 'failed') return { status: 'failed', text: 'The update to a record since merged into this one could not be delivered.', at: note.at };
+    if (note.status === 'converted_to_draft') return { status: 'drafted', text: 'Update drafted for a record since merged into this one: it waits for the contact owner to review it.', at: note.at };
+    return { status: 'scheduled', text: 'Update planned for a record since merged into this one.', at: note.at };
+  }
+  if (prev !== null) {
+    const at = prev.updated_at.toISOString();
+    if (prev.status === 'sent') return { status: 'sent', text: 'Update sent, to a record since merged into this one.', at };
+    if (prev.status === 'failed') return { status: 'failed', text: 'The update to a record since merged into this one could not be delivered.', at };
+    const again = deal.open && drivesUpdates(R.coreDate(d)) && d.due_at !== null && d.due_at.getTime() > now;
+    return again
+      ? { status: 'waiting', text: 'The record this update was planned for was merged into this one; it is planned again for this record within a few minutes.', at }
+      : { status: 'skipped', text: 'Not sent: the record this update was planned for was merged into this one before it went out.', at };
+  }
   if (cur !== null) {
     const at = cur.updated_at.toISOString();
     switch (cur.status) {
@@ -138,13 +170,18 @@ export async function milestonesOfDeal(tx: Tx, dealId: string, now: Instant) {
   const s = await R.txnSettings(tx);
   const [rows, recips, pb] = await Promise.all([R.datesOfDeal(tx, dealId), R.dealRecipients(tx, [dealId]), playbookRoles(tx)]);
   const recipients = recips.get(dealId) ?? [];
+  // ownership-data/F3: every record of each recipient's person (records merged into it), as the caller's RLS shows them
+  const person = await sql<{ contact_id: string; rec: string }>`
+    SELECT x.id AS contact_id, unnest(app.contact_person_ids(app.tenant_id(), x.id)) AS rec FROM unnest(${recipients.map((c) => c.contactId)}::uuid[]) AS x(id)`.execute(tx);
+  const recordsOf = new Map<string, Set<string>>();
+  for (const p of person.rows) if (p.rec !== p.contact_id) recordsOf.set(p.contact_id, (recordsOf.get(p.contact_id) ?? new Set()).add(p.rec));
   const runs = await sql<RunInfo & { date_id: string }>`
     SELECT r.trigger_ref->'ref'->>'dealDateId' AS date_id, r.contact_id, r.status, r.scheduled_for, r.trigger_ref->'ref'->>'dueVersion' AS v,
            r.trigger_ref->'skip'->>'text' AS skip_text, m.status AS message_status, m.status_reason AS message_reason,
            COALESCE(m.gate_decision_id, r.last_gate_decision_id) AS gate_decision_id, r.updated_at
       FROM playbook_step_runs r LEFT JOIN messages m ON m.tenant_id = r.tenant_id AND m.id = r.message_id
      WHERE r.tenant_id = app.tenant_id() AND r.enrollment_id IS NULL AND r.trigger_ref->>'trigger' = 'deal_date_upcoming'
-       AND r.contact_id = ANY (${recipients.map((c) => c.contactId)}::uuid[]) AND r.trigger_ref->'ref'->>'dealId' = ${dealId}`.execute(tx);
+       AND r.contact_id = ANY (${[...recipients.map((c) => c.contactId), ...[...recordsOf.values()].flatMap((x) => [...x])]}::uuid[]) AND r.trigger_ref->'ref'->>'dealId' = ${dealId}`.execute(tx);
   const decisions = new Map<string, string>();
   for (const id of new Set(runs.rows.map((r) => r.gate_decision_id).filter((x): x is string => x !== null))) {
     const v = await storedDecisionView(tx, id);
@@ -167,7 +204,7 @@ export async function milestonesOfDeal(tx: Tx, dealId: string, now: Instant) {
     templates: offeredTemplates(s.templates, deal.side, s.jurisdictions).map((t) => ({ id: t.id, version: t.version, name: t.name, side: t.side, jurisdiction: t.jurisdiction, reviewed: t.reviewed === true })),
     calendar: { note: DEFAULT_CALENDAR_NOTE, reviewed: false as const },
     // K1: the step's roles a deal of this side can reach (the other side's client roles drop out; none on a lease deal)
-    updates: { approved: pb.approved, roles: pb.roles, teamRoles: reachableStepRoles(deal.side, pb.roles) },
+    updates: { approved: pb.approved, roles: pb.roles, teamRoles: reachableStepRoles(deal.side, pb.roles), side: deal.side },
     dates: rows.map((d) => {
       const core = R.coreDate(d);
       const rule = d.basis['reminderRule'] as { daysBefore?: unknown } | null | undefined;
@@ -203,7 +240,7 @@ export async function milestonesOfDeal(tx: Tx, dealId: string, now: Instant) {
           contactId: c.contactId,
           name: c.name,
           roles: c.roles,
-          ...recipientStatus(d, deal.side, c, pb, runs.rows.filter((r) => r.date_id === d.id), decisions, s.zone),
+          ...recipientStatus(d, { side: deal.side, open: deal.stage !== 'closed' && deal.stage !== 'lost' }, c, pb, runs.rows.filter((r) => r.date_id === d.id), recordsOf.get(c.contactId) ?? new Set(), decisions, s.zone, now),
         })),
       };
     }),

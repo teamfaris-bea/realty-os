@@ -1,8 +1,12 @@
 // b8 deals review fixes for home values over real Postgres: K2 (sends/F2, db-public/F4, ownership-data/F2-K2,
 // ui/F2-K2; R-AVM-3) and the merge dedupe (ownership-data/F4). The deterministic fake AVM and fake email only.
+import { randomUUID } from 'node:crypto';
+import { withTenantTx } from '@realty/db';
+import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { call } from '../assistant/testing.js';
+import { systemActor } from '../worker/systemActor.js';
 import { command, freshReauth } from '../leads/testing.js';
 import { type NurtureWorld, type PastClient, approveTemplate, avmCallsFor, avmPass, beforeThisMonth, closedDeal, firingsDue, nurtureWorld, pastClient, reconcileAndRun, triggerRuns, withAvmCleared } from './testing.js';
 
@@ -90,5 +94,24 @@ describe('b8 deals ownership-data/F4 R-AVM-3: one home value per person, house a
     const norm = (x: string) => x.trim().toLowerCase();
     expect(h.providers.integrations.avm.calls.filter((x) => norm(x.line1) === norm(loser.line1))).toHaveLength(1);
     expect(await avmFirings(survivor)).toEqual([]);
+  });
+});
+
+describe('b8 deals db-public/F3 R-AVM-1 R-AVM-3: home_valuations writes are system-only', () => {
+  it('db-public/F3: an agent who sees the contact cannot insert or update a valuation; the system can; people still read it; deleting the address still works', async () => {
+    const a0 = w.agents[0]!;
+    const c = await pastClient(h, w, a0, { side: 'buy' });
+    const ins = (id: string) => sql`
+      INSERT INTO home_valuations (tenant_id, id, contact_id, contact_address_id, provider, value_cents, low_cents, high_cents, valued_at, status, as_of, display_allowed)
+      VALUES (app.tenant_id(), ${id}, ${c.id}, ${c.addressId}, 'Test source', 100, 90, 110, now() - interval '40 days', 'ok', (now() - interval '40 days')::date, true)`;
+    await expect(withTenantTx(a0.actor(), (tx) => ins(randomUUID()).execute(tx), { db: h.database })).rejects.toThrow(/row-level security/);
+    const id = randomUUID();
+    await withTenantTx(systemActor(w.tenantId, 'provider'), (tx) => ins(id).execute(tx), { db: h.database });
+    const upd = await withTenantTx(a0.actor(), async (tx) => Number((await sql`UPDATE home_valuations SET value_cents = 1, display_allowed = true WHERE id = ${id}`.execute(tx)).numAffectedRows ?? 0n), { db: h.database });
+    expect(upd).toBe(0);
+    const seen = await withTenantTx(a0.actor(), async (tx) => (await sql<{ v: string }>`SELECT value_cents::text AS v FROM home_valuations WHERE id = ${id}`.execute(tx)).rows, { db: h.database });
+    expect(seen).toEqual([{ v: '100' }]);
+    expect((await call(a0, 'DELETE', `/contacts/${c.id}/addresses/${c.addressId}`)).status).toBe(200);
+    expect((await h.su.query('SELECT contact_address_id FROM home_valuations WHERE id = $1', [id])).rows).toEqual([{ contact_address_id: null }]);
   });
 });

@@ -2,7 +2,9 @@
 // merge findings (sends/F5, ownership-data/F3, ownership-data/F5). Fakes only (the harness's fake email provider).
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
+import { command, freshReauth } from '../leads/testing.js';
 import { reconcileAndRun } from '../nurture/testing.js';
+import { ownedContact } from '../comms/testing.js';
 import { type TxnWorld, approveUpdates, call, confirmDueSoon, deal, dealContact, enterDate, localDay, mailTo, milestones, reconcile, runsOfDate, txnWorld } from './testing.js';
 
 let h: ApiHarness;
@@ -96,5 +98,78 @@ describe('b8 deals sends/F1 db-public/F1 ownership-data/F1-K1 ui/F1-K1 R-TXN-4: 
     const d = await deal(h, w, w.agents[0]!, { side: 'sell' });
     const m = await milestones(w.tc, d.dealId);
     expect((m.body.updates as unknown as { teamRoles: string[] }).teamRoles).toEqual(['seller', 'co_seller']);
+  });
+});
+
+const merge = async (survivorId: string, loserId: string) => {
+  await freshReauth(h, w.owner);
+  const r = await command(w.owner, survivorId, 'merge', { loserId });
+  if (r.status !== 200) throw new Error(`merge: ${r.status} ${JSON.stringify(r.body)}`);
+};
+const roleOf = async (dealId: string, contactId: string) => (await h.su.query<{ role: string }>('SELECT role FROM deal_contacts WHERE deal_id = $1 AND contact_id = $2', [dealId, contactId])).rows[0]?.role ?? null;
+
+describe('b8 deals sends/F5 ownership-data/F3 ownership-data/F5 R-OWN-24 R-TXN-4: a planned milestone update follows a merged person', () => {
+  it('ownership-data/F5 sends/F5(b): a merge keeps the stronger deal role (the loser\'s co_buyer beats the survivor\'s other), so the person still gets updates', async () => {
+    const d = await deal(h, w, w.agents[0]!, { side: 'buy' });
+    const loser = await dealContact(w.agents[0]!, d.dealId, 'co_buyer', { firstName: 'Lee' });
+    const survivor = await dealContact(w.agents[0]!, d.dealId, 'other', { firstName: 'Lee' });
+    await merge(survivor.id, loser.id);
+    expect(await roleOf(d.dealId, survivor.id)).toBe('co_buyer');
+    const id = await dueDate(d);
+    await reconcile(h, w.tenantId);
+    expect((await runsOfDate(h, id)).map((r) => r.contact_id).sort()).toEqual([d.contactId, survivor.id].sort());
+  });
+
+  it('ownership-data/F5: the role rank follows the side: on a sell deal the loser\'s seller beats the survivor\'s (other-side) buyer, and a client role never yields to lender', async () => {
+    const d = await deal(h, w, w.agents[0]!, { side: 'sell' });
+    const loser = await dealContact(w.agents[0]!, d.dealId, 'co_seller', { firstName: 'Kim' });
+    const survivor = await dealContact(w.agents[0]!, d.dealId, 'buyer', { firstName: 'Kim' });
+    await merge(survivor.id, loser.id);
+    expect(await roleOf(d.dealId, survivor.id)).toBe('co_seller');
+    const d2 = await deal(h, w, w.agents[0]!, { side: 'buy' });
+    const l2 = await dealContact(w.agents[0]!, d2.dealId, 'lender', { firstName: 'Ash' });
+    const s2 = await dealContact(w.agents[0]!, d2.dealId, 'co_buyer', { firstName: 'Ash' });
+    await merge(s2.id, l2.id);
+    expect(await roleOf(d2.dealId, s2.id)).toBe('co_buyer');
+  });
+
+  it('sends/F5(a) ownership-data/F3 M2: merged after planning, before sending: the update is planned again for the survivor and sent once; the deal screen says so', async () => {
+    const d = await deal(h, w, w.agents[0]!, { side: 'buy' });
+    const loser = await dealContact(w.agents[0]!, d.dealId, 'co_buyer', { firstName: 'Rowan' });
+    const survivor = await ownedContact(w.agents[0]!, { consent: false, firstName: 'Rowan' });
+    const id = await dueDate(d);
+    await reconcile(h, w.tenantId);
+    expect((await runsOfDate(h, id)).map((r) => r.contact_id).sort()).toEqual([d.contactId, loser.id].sort());
+    await merge(survivor.id, loser.id);
+    expect(await roleOf(d.dealId, survivor.id)).toBe('co_buyer');
+    await reconcile(h, w.tenantId);
+    const runs = await runsOfDate(h, id);
+    expect(runs.find((r) => r.contact_id === loser.id)!.status).toBe('skipped_ineligible');
+    expect(runs.filter((r) => r.contact_id === survivor.id)).toHaveLength(1);
+    await reconcileAndRun(h, w.tenantId);
+    await reconcile(h, w.tenantId); // a second pass plans nothing new
+    await reconcileAndRun(h, w.tenantId);
+    expect((await runsOfDate(h, id)).filter((r) => r.contact_id === survivor.id).map((r) => r.status)).toEqual(['sent']);
+    expect(mailTo(h, survivor.email).length + mailTo(h, loser.email).length).toBe(1);
+    const u = (await updatesOf(d.dealId, id)).find((x) => x.contactId === survivor.id)!;
+    expect(u.status).toBe('sent');
+  });
+
+  it('ownership-data/F3 M1: sent, then merged: nothing is sent again, and the deal screen says the update was sent (not "nothing planned")', async () => {
+    const d = await deal(h, w, w.agents[0]!, { side: 'buy' });
+    const loser = await dealContact(w.agents[0]!, d.dealId, 'co_buyer', { firstName: 'Blair' });
+    const survivor = await ownedContact(w.agents[0]!, { consent: false, firstName: 'Blair' });
+    const id = await dueDate(d);
+    await reconcile(h, w.tenantId);
+    await reconcileAndRun(h, w.tenantId);
+    expect(mailTo(h, loser.email)).toHaveLength(1);
+    await merge(survivor.id, loser.id);
+    await reconcile(h, w.tenantId);
+    await reconcileAndRun(h, w.tenantId);
+    expect((await runsOfDate(h, id)).filter((r) => r.contact_id === survivor.id)).toEqual([]);
+    expect(mailTo(h, survivor.email).length + mailTo(h, loser.email).length).toBe(1);
+    const u = (await updatesOf(d.dealId, id)).find((x) => x.contactId === survivor.id)!;
+    expect(u.status).toBe('sent');
+    expect(u.text).toMatch(/merged into this one/);
   });
 });

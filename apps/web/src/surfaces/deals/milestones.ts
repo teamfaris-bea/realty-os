@@ -64,7 +64,8 @@ export interface DealMilestones {
   acceptanceDate: string | null;
   templates: TemplateRef[];
   calendar: { note: string; reviewed: false };
-  updates: { approved: boolean; roles: string[] };
+  /** teamRoles: the step roles this deal's side can reach (K1: the other side's clients never get the team's updates) */
+  updates: { approved: boolean; roles: string[]; teamRoles: string[]; side: 'buy' | 'sell' | 'dual' | 'lease' };
   dates: MilestoneDate[];
   riskItems: { id: string; dedupeKey: string; dealDateId: string | null; conditionCleared: boolean; detectedAt: string; text: string }[];
 }
@@ -112,10 +113,23 @@ export function statusLabel(d: Pick<MilestoneDate, 'status' | 'completedAt'>): s
   return d.status === 'proposed' ? 'Proposed' : d.status === 'waived' ? 'Waived' : 'Confirmed';
 }
 
-/** "Client updates" line: honest about whether anything is sent at all, and to whom. */
+const OTHER_SIDE: Record<'buy' | 'sell', string> = { buy: 'The seller side is not this team\'s client on a buy deal, so they get none.', sell: 'The buyer side is not this team\'s client on a sell deal, so they get none.' };
+
+/**
+ * "Client updates" line: honest about whether anything is sent at all, to whom, and (K1, b8 deals ui/F1-K1) why the
+ * other side of the deal gets nothing: only the roles this deal's side can reach are named.
+ */
 export function updatesLine(u: DealMilestones['updates']): string {
   if (!u.approved) return 'Client updates are off: the Milestone updates playbook is not approved, so no update is sent.';
-  return `Client updates go to the ${u.roles.map((r) => ROLE_LABEL[r] ?? r).join(', ')} when a confirmed date's reminder comes due.`;
+  const who = u.teamRoles.map((r) => ROLE_LABEL[r] ?? r).join(', ');
+  if (u.side === 'lease') {
+    return u.teamRoles.length === 0
+      ? 'No automatic client updates on lease deals: nobody on this deal is sent milestone updates.'
+      : `Updates go to the ${who} when a confirmed date's reminder comes due. Lease clients get no automatic updates.`;
+  }
+  if (u.teamRoles.length === 0) return 'No client updates on this deal: the Milestone updates playbook names no role this team represents here.';
+  const line = `Client updates go to the ${who} when a confirmed date's reminder comes due.`;
+  return u.side === 'dual' ? `${line} The team represents both sides on this deal.` : `${line} ${OTHER_SIDE[u.side]}`;
 }
 
 /** The counsel-review warnings a plan shows (R-TXN-6, C9): never assume reviewed. */

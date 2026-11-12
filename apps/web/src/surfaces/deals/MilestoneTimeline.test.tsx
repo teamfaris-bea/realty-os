@@ -36,7 +36,7 @@ function milestones(over: Partial<DealMilestones> = {}): DealMilestones {
     acceptanceDate: '2027-03-01',
     templates: [{ id: 't', version: 1, name: 'Purchase', side: 'buy', jurisdiction: 'US', reviewed: false }],
     calendar: { note: 'Business days: Monday to Friday; holidays are not counted. Not reviewed by counsel.', reviewed: false },
-    updates: { approved: true, roles: ['buyer', 'seller'] },
+    updates: { approved: true, roles: ['buyer', 'seller'], teamRoles: ['buyer', 'seller'], side: 'dual' },
     dates: [date()],
     riskItems: [],
     ...over,
@@ -111,8 +111,10 @@ describe('milestone timeline', () => {
   it('pure helpers: status chips, the updates line, review warnings', () => {
     expect(statusLabel({ status: 'confirmed', completedAt: iso(-1) })).toBe('Done');
     expect(statusLabel({ status: 'proposed', completedAt: null })).toBe('Proposed');
-    expect(updatesLine({ approved: false, roles: [] })).toMatch(/not approved, so no update is sent/);
-    expect(updatesLine({ approved: true, roles: ['buyer', 'co_buyer'] })).toBe("Client updates go to the buyer, co-buyer when a confirmed date's reminder comes due.");
+    expect(updatesLine({ approved: false, roles: [], teamRoles: [], side: 'buy' })).toMatch(/not approved, so no update is sent/);
+    expect(updatesLine({ approved: true, roles: ['buyer', 'co_buyer'], teamRoles: ['buyer', 'co_buyer'], side: 'buy' })).toBe(
+      "Client updates go to the buyer, co-buyer when a confirmed date's reminder comes due. The seller side is not this team's client on a buy deal, so they get none.",
+    );
     expect(reviewWarnings(milestones(), 't')).toHaveLength(2);
     expect(reviewWarnings(milestones({ templates: [{ id: 't', version: 1, name: 'P', side: 'buy', jurisdiction: 'US', reviewed: true }] }), 't')).toEqual(['Business days: Monday to Friday; holidays are not counted. Not reviewed by counsel.']);
   });
@@ -133,5 +135,15 @@ describe('TC board', () => {
     expect(screen.getByText('Overdue, nobody responsible')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Confirm Inspection on Mar 6, 2027' }));
     await waitFor(() => expect(fake.callsTo(`POST /deal-dates/${D1}/confirm`)).toHaveLength(1));
+  });
+});
+
+describe('b8 deals ui/F1-K1 R-TXN-4: the updates line names only the team\'s side and says why the other side gets none', () => {
+  it('sell, dual and lease', () => {
+    expect(updatesLine({ approved: true, roles: ['buyer', 'seller', 'co_buyer', 'co_seller'], teamRoles: ['seller', 'co_seller'], side: 'sell' })).toBe(
+      "Client updates go to the seller, co-seller when a confirmed date's reminder comes due. The buyer side is not this team's client on a sell deal, so they get none.",
+    );
+    expect(updatesLine({ approved: true, roles: ['buyer', 'seller'], teamRoles: ['buyer', 'seller'], side: 'dual' })).toMatch(/represents both sides/);
+    expect(updatesLine({ approved: true, roles: ['buyer', 'seller'], teamRoles: [], side: 'lease' })).toBe('No automatic client updates on lease deals: nobody on this deal is sent milestone updates.');
   });
 });

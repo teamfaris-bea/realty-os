@@ -29,13 +29,27 @@ export function reminderFact(d: DealDate & { dealId: string }, recipients: reado
   if (!drivesUpdates(d) || d.dueAt === null) return { fire: false, reason: 'NOT_DRIVING' };
   if (d.reminderAt === null) return { fire: false, reason: 'NO_REMINDER' };
   if (d.reminderAt > now) return { fire: false, reason: 'NOT_DUE' };
+  return factOf({ ...d, dueAt: d.dueAt }, recipients, side, d.reminderAt);
+}
+
+/**
+ * sends/F5, ownership-data/F3: the same fact for recipients a merge made (the survivor now holding the loser's deal
+ * role) after the reminder pass already ran for this version. `at` is the pass's instant; the firing key
+ * deal_date:{date}:v{n}:{step}:{contact} keeps a second pass a no-op.
+ */
+export function replanFact(d: DealDate & { dealId: string }, recipients: readonly Recipient[], side: DealSide, at: Instant): ReminderDecision {
+  if (!drivesUpdates(d) || d.dueAt === null) return { fire: false, reason: 'NOT_DRIVING' };
+  return factOf({ ...d, dueAt: d.dueAt }, recipients, side, at);
+}
+
+function factOf(d: DealDate & { dealId: string; dueAt: Instant }, recipients: readonly Recipient[], side: DealSide, at: Instant): ReminderDecision {
   const rels = recipients
     .filter((c) => c.live)
     .map((c) => ({ contactId: c.contactId, ownerUserId: c.ownerUserId, relation: { kind: 'contact' as const }, dealRoles: updateRoles(side, c.roles) }))
     .filter((c) => c.dealRoles.length > 0);
   return {
     fire: true,
-    fact: { kind: 'deal_date_upcoming', dealId: d.dealId, dealDateId: d.id, dueVersion: d.dueVersion, dueAt: d.dueAt, label: d.label ?? KIND_TEXT[d.kind], contactIds: rels.map((x) => x.contactId), at: d.reminderAt },
+    fact: { kind: 'deal_date_upcoming', dealId: d.dealId, dealDateId: d.id, dueVersion: d.dueVersion, dueAt: d.dueAt, label: d.label ?? KIND_TEXT[d.kind], contactIds: rels.map((x) => x.contactId), at },
     rels,
   };
 }

@@ -28,7 +28,7 @@ import { recordFactInTx } from '../nurture/detect.js';
 import { approvedTriggerPlaybooks, skipRun } from '../nurture/repos.js';
 import type { NurtureDeps } from '../nurture/types.js';
 import * as R from './repos.js';
-import { reminderFact, staleRuns } from './decide.js';
+import { reminderFact, replanFact, staleRuns } from './decide.js';
 import { RECONCILE_LIMIT, TRANSACTION_UPDATES } from './types.js';
 
 const iso = (t: number) => new Date(t).toISOString();
@@ -73,9 +73,13 @@ export async function remindersInTx(tx: Tx, deps: Pick<NurtureDeps, 'ids'>, now:
        AND d.stage NOT IN ('closed','lost')
      ORDER BY dd.reminder_at, dd.id LIMIT ${limit}`.execute(tx);
   if (r.rows.length === 0) return { reminders: 0, firings: 0 };
-  const recipients = await R.dealRecipients(tx, [...new Set(r.rows.map((x) => x.deal_id))]);
+  const dealIds = [...new Set(r.rows.map((x) => x.deal_id))];
+  const first = await R.dealRecipients(tx, dealIds);
   // every contact lock of the pass, once, in id order, before any firing is written (no lock cycle with other paths)
-  await lockContacts(tx, r.rows.flatMap((x) => (recipients.get(x.deal_id) ?? []).map((c) => c.contactId as ContactId)));
+  await lockContacts(tx, r.rows.flatMap((x) => (first.get(x.deal_id) ?? []).map((c) => c.contactId as ContactId)));
+  // ownership-data/F3: re-read under the locks: a merge that committed between the first read and the locks moved the
+  // loser's deal role to the survivor, who is a recipient now (recordFactInTx locks each firing's contact itself)
+  const recipients = await R.dealRecipients(tx, dealIds);
   const approved = (await approvedTriggerPlaybooks(tx)).some((p) => p.templateKey === TRANSACTION_UPDATES.templateKey && p.ref.scope === TRANSACTION_UPDATES.scope);
   let firings = 0;
   let reminders = 0;
@@ -101,10 +105,86 @@ export async function remindersInTx(tx: Tx, deps: Pick<NurtureDeps, 'ids'>, now:
   return { reminders, firings };
 }
 
+interface MergedReminder extends DueReminder {
+  pass_at: string;
+  survivor_id: string;
+  /** the latest run of this (date, version) on another record of the survivor's person that still counts, if any */
+  prior_status: string | null;
+  prior_at: Date | null;
+}
+
+/**
+ * (c) Merges (sends/F5, ownership-data/F3; R-OWN-24, R-TXN-4): a date whose reminder pass already ran for its current
+ * version, still driving updates, due in the future, on an open deal, where a deal contact (the survivor) is a live
+ * record into which another record of the same person was merged AT OR AFTER that pass, and the survivor has no run
+ * of this (date, version) and no note of one yet:
+ *   - if another record of the person has a run of this (date, version) that sent, failed, is still scheduled or
+ *     deferred, or is a draft still waiting, nothing is sent again: the run is noted on the date
+ *     (basis.mergedUpdates["{survivor}:v{n}"] = {status, at}) so the deal screen, read under the TC's own RLS, which
+ *     no longer shows the merged-away record, says what happened instead of "nothing planned";
+ *   - otherwise (the merge skipped the loser's scheduled run as CONTACT_REMOVED, invalidated its draft, or committed
+ *     before the loser's firing was written) the same fact is recorded for the survivor: its current roles, the
+ *     deal's side and the approved step decide, as at the pass. The firing key keeps a second pass a no-op.
+ */
+export async function mergeReplanInTx(tx: Tx, deps: Pick<NurtureDeps, 'ids'>, now: Instant, limit = RECONCILE_LIMIT): Promise<number> {
+  const r = await sql<MergedReminder>`
+    SELECT ${R.DATE_COLS}, d.stage, d.side, dd.basis->'reminderPass'->>'at' AS pass_at, c.id AS survivor_id, prior.status AS prior_status, prior.updated_at AS prior_at
+      FROM deal_dates dd
+      JOIN deals d ON d.tenant_id = dd.tenant_id AND d.id = dd.deal_id
+      JOIN deal_contacts dc ON dc.tenant_id = dd.tenant_id AND dc.deal_id = dd.deal_id
+      JOIN contacts c ON c.tenant_id = dc.tenant_id AND c.id = dc.contact_id AND c.deleted_at IS NULL AND c.merged_into_contact_id IS NULL
+      LEFT JOIN LATERAL (
+        SELECT pr.status, pr.updated_at FROM playbook_step_runs pr
+         WHERE pr.tenant_id = dd.tenant_id AND pr.enrollment_id IS NULL AND pr.contact_id <> c.id
+           AND pr.contact_id = ANY (app.contact_person_ids(c.tenant_id, c.id))
+           AND pr.trigger_ref->>'trigger' = 'deal_date_upcoming' AND pr.trigger_ref->'ref'->>'dealDateId' = dd.id::text
+           AND pr.trigger_ref->'ref'->>'dueVersion' = dd.due_version::text
+           AND (pr.status IN ('scheduled','sent','failed','deferred')
+                OR (pr.status = 'converted_to_draft'
+                    AND NOT EXISTS (SELECT 1 FROM assistant_actions aa WHERE aa.tenant_id = pr.tenant_id AND aa.id = pr.assistant_action_id AND aa.status = 'invalidated')))
+         ORDER BY (pr.status = 'sent') DESC, pr.updated_at DESC, pr.id LIMIT 1) prior ON true
+     WHERE dd.tenant_id = app.tenant_id() AND dd.status = 'confirmed' AND dd.completed_at IS NULL AND dd.reminder_at IS NULL
+       AND dd.due_at > ${iso(now)}::timestamptz AND d.stage NOT IN ('closed','lost')
+       AND dd.basis ? 'reminderPass' AND dd.basis->'reminderPass'->>'reason' IS NULL
+       AND (dd.basis->'reminderPass'->>'dueVersion')::int = dd.due_version
+       AND NOT (COALESCE(dd.basis->'mergedUpdates', '{}'::jsonb) ? (c.id::text || ':v' || dd.due_version::text))
+       AND EXISTS (SELECT 1 FROM lead_ownership_events e
+                    WHERE e.tenant_id = c.tenant_id AND e.type = 'merged_away' AND e.contact_id <> c.id
+                      AND e.contact_id = ANY (app.contact_person_ids(c.tenant_id, c.id))
+                      AND e.occurred_at >= (dd.basis->'reminderPass'->>'at')::timestamptz)
+       AND NOT EXISTS (SELECT 1 FROM playbook_step_runs own
+                        WHERE own.tenant_id = dd.tenant_id AND own.enrollment_id IS NULL AND own.contact_id = c.id
+                          AND own.trigger_ref->>'trigger' = 'deal_date_upcoming' AND own.trigger_ref->'ref'->>'dealDateId' = dd.id::text
+                          AND own.trigger_ref->'ref'->>'dueVersion' = dd.due_version::text)
+     ORDER BY dd.id, c.id LIMIT ${limit}`.execute(tx);
+  if (r.rows.length === 0) return 0;
+  await lockContacts(tx, r.rows.map((x) => x.survivor_id as ContactId));
+  const recipients = await R.dealRecipients(tx, [...new Set(r.rows.map((x) => x.deal_id))]);
+  const approved = (await approvedTriggerPlaybooks(tx)).some((p) => p.templateKey === TRANSACTION_UPDATES.templateKey && p.ref.scope === TRANSACTION_UPDATES.scope);
+  let firings = 0;
+  for (const row of r.rows) {
+    if (row.prior_status !== null) {
+      const note = { [`${row.survivor_id}:v${row.due_version}`]: { status: row.prior_status, at: row.prior_at === null ? null : row.prior_at.toISOString() } };
+      await sql`
+        UPDATE deal_dates SET basis = basis || jsonb_build_object('mergedUpdates', COALESCE(basis->'mergedUpdates', '{}'::jsonb) || ${JSON.stringify(note)}::jsonb), updated_at = now()
+         WHERE tenant_id = app.tenant_id() AND id = ${row.id} AND due_version = ${row.due_version} AND due_on = ${row.due_on}::date`.execute(tx);
+      continue;
+    }
+    const at = Date.parse(row.pass_at);
+    if (!approved || !Number.isFinite(at)) continue;
+    const mine = (recipients.get(row.deal_id) ?? []).filter((c) => c.contactId === row.survivor_id);
+    const decision = replanFact({ ...R.coreDate(row), dealId: row.deal_id }, mine, row.side, at as Instant);
+    if (!decision.fire) continue;
+    firings += await recordFactInTx(tx, deps, decision.fact, decision.rels, { only: TRANSACTION_UPDATES });
+  }
+  return firings;
+}
+
 export async function milestonesReconcileInTx(tx: Tx, deps: Pick<NurtureDeps, 'ids'>, now: Instant, limit = RECONCILE_LIMIT): Promise<ReconcileResult> {
   const repaired = await repairInTx(tx, now, limit);
   const { reminders, firings } = await remindersInTx(tx, deps, now, limit);
-  return { repaired, reminders, firings };
+  const replanned = await mergeReplanInTx(tx, deps, now, limit);
+  return { repaired, reminders, firings: firings + replanned };
 }
 
 /** milestones.date_changed: the date's scheduled firings that no longer match are skipped visibly; their queued messages canceled. */
