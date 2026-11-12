@@ -9,11 +9,13 @@ import type { ApiHarness, TestClient } from '../auth/testHarness.js';
 import { type CommsWorld, commsWorld, ownedContact, randomPhone, telephonyWebhook } from '../comms/testing.js';
 import type { FakeFaults } from './fake.js';
 import { enableAnswering } from './answering.js';
+import { VOICEMAIL_NOTICE } from '../comms/voice.js';
 import { voiceDeps } from './runtime.js';
 
 export interface VoiceWorld extends CommsWorld {
   ownerPhone: string;
   playbookVersionId: string;
+  playbookSha: string;
 }
 
 let n = 0;
@@ -45,7 +47,7 @@ export async function voiceWorld(h: ApiHarness, o: { enable?: boolean; agents?: 
   const ownerPhone = await verifyAlertPhone(h, w.agents[0]!);
   const pb = await approvedPlaybook(w.owner, { templateKey: 'voice_answering' });
   if (o.enable !== false) await enableAnswering(w.owner.actor(), voiceDeps(h.app.platform));
-  return { ...w, ownerPhone, playbookVersionId: pb.versionId };
+  return { ...w, ownerPhone, playbookVersionId: pb.versionId, playbookSha: pb.sha };
 }
 
 /** The path + query of an absolute callback URL found in TwiML (attribute values are XML-escaped). */
@@ -89,3 +91,15 @@ export async function settled(h: ApiHarness, tenantId: string, callId: string) {
 
 export const handbacksOf = (h: ApiHarness, callId: string) => h.su.query("SELECT * FROM assistant_actions WHERE kind = 'handback' AND payload ->> 'inboundCallId' = $1 ORDER BY created_at", [callId]).then((r) => r.rows);
 export const ledgerOf = (h: ApiHarness, callId: string) => h.su.query('SELECT seq, tool, args, decision, reason_code FROM voice_tool_calls WHERE call_id = $1 ORDER BY seq', [callId]).then((r) => r.rows as { seq: number; tool: string; args: Record<string, string>; decision: string; reason_code: string }[]);
+
+/** Phase 1's voicemail answer for a refused takeover, and the stored refusal code (E420). */
+export async function expectPhase1Voicemail(h: ApiHarness, c: AiCall, code: string): Promise<void> {
+  const row = await callRowOf(h, c.callSid);
+  if (!c.answer.includes(VOICEMAIL_NOTICE) || !c.answer.includes('recording?vm=')) throw new Error(`not the Phase 1 voicemail: ${c.answer}`);
+  if (row.handled_by !== 'voicemail' || row.voice_outcome !== null || row.voice_playbook_version_id !== null) throw new Error(`call row: ${row.handled_by}`);
+  const got = (row.recording_decision as { voiceTakeover?: { code?: string } }).voiceTakeover?.code;
+  if (got !== code) throw new Error(`refusal code ${String(got)}, expected ${code}`);
+  const tools = await h.su.query('SELECT 1 FROM voice_tool_calls WHERE call_id = $1', [c.callId]);
+  const hb = await h.su.query("SELECT 1 FROM assistant_actions WHERE payload ->> 'inboundCallId' = $1 AND payload ? 'voice'", [c.callId]);
+  if (tools.rows.length + hb.rows.length > 0) throw new Error('an assistant row exists');
+}

@@ -65,7 +65,7 @@ async function callVoice(actor: UserActor, db: Database, callId: string) {
 async function testCall(actor: UserActor, deps: ReturnType<typeof voiceDeps>, i: { script: string; versionId?: string | undefined }) {
   const script = (SCRIPTS as Record<string, (typeof SCRIPTS)[ScriptName]>)[i.script];
   if (!script) throw new AppError('VALIDATION_FAILED', { reason: 'UNKNOWN_SCRIPT' });
-  const content = await withTenantTx(actor, async (tx): Promise<VoiceContent> => {
+  const picked = await withTenantTx(actor, async (tx): Promise<{ content: VoiceContent; versionId: string }> => {
     const identity = await identityFacts(tx, { scope: 'team', agentUserId: null });
     const r = await sql<{ id: string; status: string; steps: unknown; kind: string }>`
       SELECT v.id, v.status, v.steps, p.kind FROM playbook_versions v JOIN playbooks p ON p.tenant_id = v.tenant_id AND p.id = v.playbook_id
@@ -76,15 +76,15 @@ async function testCall(actor: UserActor, deps: ReturnType<typeof voiceDeps>, i:
     if (v.status === 'approved') {
       const c = approvedVoiceContent({ versionId: v.id as PlaybookVersionId, kind: v.kind, status: 'approved', content: v.steps }, identity);
       if (!c) throw new AppError('PLAYBOOK_INVALID', { issues: [{ code: 'VOICE_CONTENT' }] });
-      return c;
+      return { content: c, versionId: v.id };
     }
     const issues = validatePlaybookContent(v.steps, { kind: 'voice_answering', identity });
     if (issues.length > 0) throw new AppError('PLAYBOOK_INVALID', { issues: issues.map((x) => ({ code: x.code })) });
-    return VoiceContentSchema.parse((storedContent(v.steps) as { voice: unknown }).voice);
+    return { content: VoiceContentSchema.parse((storedContent(v.steps) as { voice: unknown }).voice), versionId: v.id };
   }, { db: deps.db });
-  const run = runScript(script, voiceFacts({ content }));
+  const run = runScript(script, voiceFacts({ content: picked.content }));
   const end = run.actions.find((a) => a.action.kind === 'end')?.action as Extract<(typeof run.actions)[number]['action'], { kind: 'end' }> | undefined;
-  await withTenantTx(actor, (tx) => audit(tx, actor, { action: 'voice.test_call', entity: { type: 'playbook_version', id: i.versionId ?? 'approved' }, reason: i.script }), { db: deps.db });
+  await withTenantTx(actor, (tx) => audit(tx, actor, { action: 'voice.test_call', entity: { type: 'playbook_version', id: picked.versionId }, reason: i.script }), { db: deps.db });
   return {
     sentence: TEST_CALL_SENTENCE,
     lines: run.actions.flatMap((a) => (a.action.kind === 'say' ? [{ source: a.action.source, text: a.action.text }] : [])),
