@@ -147,6 +147,39 @@ export function liveProperty(i: number, o: Record<string, unknown> = {}, expand 
   return base;
 }
 
+/**
+ * A closed sale in the live shape (D9): liveProperty plus the RESO sale and property fields the sold-data sync stores.
+ * Synthetic values only. Longitude is western (negative) text, as live feeds send it.
+ */
+export function liveClosedProperty(i: number, o: Record<string, unknown> = {}, expand = true): Record<string, unknown> {
+  return liveProperty(
+    i,
+    {
+      StandardStatus: 'Closed',
+      ClosePrice: 395000 + i * 100,
+      CloseDate: '2026-09-15',
+      PurchaseContractDate: '2026-08-20',
+      OriginalListPrice: 410000 + i * 100,
+      ConcessionsAmount: 5000,
+      SpecialListingConditions: 'Standard',
+      DaysOnMarket: 26,
+      Latitude: 32.7801234,
+      Longitude: '-79.9305678',
+      YearBuilt: 2003,
+      LotSizeAcres: 0.15,
+      LotSizeUnits: 'Acres',
+      SubdivisionName: 'Example Commons',
+      GarageSpaces: 2,
+      PoolPrivateYN: false,
+      Stories: 1.5,
+      InternetAutomatedValuationDisplayYN: true,
+      'ClosePrice@Core.Permissions': 'Read',
+      ...o,
+    },
+    expand,
+  );
+}
+
 export interface LiveSparkOptions {
   /** records the Property set holds (sorted by the mock like Spark: ModificationTimestamp, ListingKey) */
   records?: () => Record<string, unknown>[];

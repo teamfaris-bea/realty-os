@@ -147,9 +147,9 @@ const facts = (l: RawListing): ListingFacts => ({ source: 'team', status: l.stat
 const listingView = (l: RawListing): ListingView => ({ id: l.id, source: l.source, listingBrokerageName: l.source === 'mls' ? l.listing_brokerage_name : null, addressLine1: l.address_line1, city: l.city, postalCode: l.postal_code, status: l.status, listPriceCents: l.list_price_cents === null ? null : Number(l.list_price_cents), beds: l.beds, bathsX10: l.baths_x10, sqft: l.sqft, propertyType: l.property_type });
 const LCOLS = LISTING_COLS;
 
-/** A team row always may be matched (Phase 1); an MLS row only while it may reach a client now. */
+/** A team row always may be matched (Phase 1); an MLS row only while it may reach a client now, and never a lease (F3-lease, E360: its price is a rent). */
 function mlsMatchable(e: MlsEligibility, l: RawListing): boolean {
-  return l.source === 'team' || clientView(e, l) !== null;
+  return l.source === 'team' || (!l.is_lease && clientView(e, l) !== null);
 }
 
 /** SQL for client-eligible MLS rows (the cheap part of mlsMatchable; the display rules run after). */
