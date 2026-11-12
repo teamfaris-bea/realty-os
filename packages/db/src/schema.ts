@@ -925,6 +925,43 @@ export interface HomeValuationsTable {
   change_from_prior_bps: number | null;
 }
 
+/** public.homeowner_profile_facts (table) */
+export interface HomeownerProfileFactsTable {
+  tenant_id: string;
+  profile_id: string;
+  field: string;
+  date_value: string | null;
+  cents_value: Int8 | null;
+  int_value: number | null;
+  bool_value: boolean | null;
+  text_value: string | null;
+  source: string;
+  as_of: string | null;
+}
+
+/** public.homeowner_profiles (table) */
+export interface HomeownerProfilesTable {
+  tenant_id: string;
+  id: string;
+  contact_id: string;
+  contact_address_id: string;
+  county_key: string;
+  status: string;
+  match_detail: string | null;
+  recognized_by: string[];
+  parcel_ref: string | null;
+  source: string | null;
+  record_as_of: string | null;
+  checked_at: Timestamp | null;
+  last_failure_at: Timestamp | null;
+  last_failure_code: string | null;
+  address_updated_at: Timestamp;
+  next_refresh_at: Timestamp;
+  retention_until: Timestamp;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
 /** public.import_batches (table) */
 export interface ImportBatchesTable {
   tenant_id: string;
@@ -2592,6 +2629,8 @@ export interface DB {
   gate_decisions: GateDecisionsTable;
   gbp_reviews: GbpReviewsTable;
   home_valuations: HomeValuationsTable;
+  homeowner_profile_facts: HomeownerProfileFactsTable;
+  homeowner_profiles: HomeownerProfilesTable;
   import_batches: ImportBatchesTable;
   import_records: ImportRecordsTable;
   import_stages: ImportStagesTable;
@@ -2748,6 +2787,8 @@ export const TABLE_NAMES = [
   'gate_decisions',
   'gbp_reviews',
   'home_valuations',
+  'homeowner_profile_facts',
+  'homeowner_profiles',
   'import_batches',
   'import_records',
   'import_stages',

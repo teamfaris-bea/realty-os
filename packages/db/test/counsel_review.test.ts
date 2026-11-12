@@ -24,6 +24,8 @@ const D11_KEYS = [
   'platform:review_requests',
   'platform:portal',
 ];
+/** published platform packs D11's run does not record: Meta (D2 cut) and the D10 outreach pack, recorded by its own run */
+const NOT_D11 = ['platform:meta', 'platform:public_records_outreach'];
 const VENDOR_CHECKED = ['platform:voice', 'platform:gmail'];
 const D11_REFERENCE = 'counsel review reported by the owner, 2026-11-12';
 /** the version every platform pack ships at (0018, 0025): the version D11's review covers */
@@ -101,7 +103,7 @@ afterAll(async () => {
 describe('counsel-review: recording counsel review of platform packs (R-INT-6, D11)', () => {
   it('R-INT-6: every platform pack still ships unreviewed (the code default is unchanged)', () => {
     const platform = snapshot.filter((p) => p.key.startsWith('platform:') && p.status === 'published');
-    expect(platform.map((p) => p.key).sort()).toEqual([...D11_KEYS, 'platform:meta'].sort());
+    expect(platform.map((p) => p.key).sort()).toEqual([...D11_KEYS, ...NOT_D11].sort());
     for (const p of snapshot) expect(p.reviewed_by_counsel_at, p.key).toBeNull();
     for (const p of platform) expect(p.rules, p.key).not.toHaveProperty('vendor_ready_at');
   });
@@ -382,6 +384,25 @@ describe('counsel-review: recording counsel review of platform packs (R-INT-6, D
     expect(await cleared('platform:voice', true)).toBe(true);
     expect(v.out).toContain('before: not reviewed by counsel; not cleared');
     expect(v.out).toContain('after:  reviewed by counsel on 2026-11-12; cleared');
+  });
+
+  it('R-HOME-10 R-INT-6 D11: platform:public_records_outreach ships unreviewed with {"states":["SC"]}; the seven-key D11 run leaves it alone, and only its own command run records it', async () => {
+    const before = await published('platform:public_records_outreach');
+    expect(before.reviewed_by_counsel_at).toBeNull();
+    expect(before.rules).toEqual({ states: ['SC'] });
+    expect(before.notes).toContain('Gates nothing in this build');
+    const d11 = await run(args(D11_KEYS.map(pin), ['--apply']));
+    expect(d11.code).toBe(0);
+    expect(d11.out).toContain('applied: 7 recorded');
+    expect(await published('platform:public_records_outreach')).toEqual(before);
+    expect(await cleared('platform:public_records_outreach', false)).toBe(false);
+    const own = await run(args([pin('platform:public_records_outreach')], ['--apply']));
+    expect(own.err).toBe('');
+    expect(own.code).toBe(0);
+    const after = await published('platform:public_records_outreach');
+    expect(after.reviewed_by_counsel_at?.toISOString()).toBe('2026-11-12T00:00:00.000Z');
+    expect(after.rules).toEqual(before.rules);
+    expect(await cleared('platform:public_records_outreach', false)).toBe(true);
   });
 
   it('R-INT-6: a dry run (the default) prints what would change and changes nothing; --apply then changes it', async () => {
