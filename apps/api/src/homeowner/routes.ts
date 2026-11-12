@@ -59,7 +59,10 @@ async function register(app: FastifyInstance): Promise<void> {
         // reasons the viewer can see, unioned with the labels stored on the profiles they can see
         const stored = new Set(homes.flatMap((h) => h.recognized_by ?? []));
         const visible: Record<RecognitionReason, boolean> = { seller_intent: v.seller_intent, seller_inquiry: v.seller_inquiry, homeowner_tag: v.homeowner_tag, past_buyer: v.past_buyer };
-        const reasons = RECOGNITION_REASONS.filter((x) => visible[x] || stored.has(x)).map((reason) => ({ reason, since: reason === 'past_buyer' && v.past_buyer ? v.past_buyer_since : null }));
+        // a date only where the viewer may see it: a past buyer's closing (the deal), the latest seller inquiry (owner question 16)
+        const since = (reason: RecognitionReason): string | null =>
+          reason === 'past_buyer' && v.past_buyer ? v.past_buyer_since : reason === 'seller_inquiry' && v.seller_inquiry ? v.seller_inquiry_on : null;
+        const reasons = RECOGNITION_REASONS.filter((x) => visible[x] || stored.has(x)).map((reason) => ({ reason, since: since(reason) }));
         const viewHomes: ViewHome[] = homes.map((h) => ({
           address: { line1: h.line1 ?? '', line2: h.line2, city: h.city ?? '', region: h.region ?? '', postalCode: h.postal_code ?? '' },
           kind: h.kind,

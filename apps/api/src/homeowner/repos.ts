@@ -235,6 +235,8 @@ export interface ViewReasonsRow {
   seller_intent: boolean;
   seller_inquiry: boolean;
   homeowner_tag: boolean;
+  /** owner question 16: the latest sell or value inquiry the viewer can see (team's date; any age counts), or null */
+  seller_inquiry_on: string | null;
   /** the latest closing of a qualifying purchase the viewer can see, or null (K2 not visible to them) */
   past_buyer_since: string | null;
   past_buyer: boolean;
@@ -247,6 +249,8 @@ export async function viewReasons(tx: Tx, contactId: string, keys: readonly stri
     SELECT s.default_timezone AS tz, (now() AT TIME ZONE s.default_timezone)::date::text AS today,
            COALESCE(c.intent IN ('seller','buyer_seller'), false) AS seller_intent,
            EXISTS (SELECT 1 FROM lead_inquiries li WHERE li.tenant_id = c.tenant_id AND li.contact_id = c.id AND li.inquiry_type IN ('sell','value')) AS seller_inquiry,
+           (SELECT (max(li.received_at) AT TIME ZONE s.default_timezone)::date::text FROM lead_inquiries li
+             WHERE li.tenant_id = c.tenant_id AND li.contact_id = c.id AND li.inquiry_type IN ('sell','value')) AS seller_inquiry_on,
            EXISTS (SELECT 1 FROM contact_tags ct JOIN tags t ON t.tenant_id = ct.tenant_id AND t.id = ct.tag_id
                     WHERE ct.tenant_id = c.tenant_id AND ct.contact_id = c.id AND t.name_key = ANY (${[...keys]}::text[]) AND NOT t.protected_proxy) AS homeowner_tag,
            EXISTS (SELECT 1 FROM contact_addresses ka WHERE ka.tenant_id = c.tenant_id AND ka.contact_id = c.id AND ${avmQualifies('c', 'ka')}) AS past_buyer,

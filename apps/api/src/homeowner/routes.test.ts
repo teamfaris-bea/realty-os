@@ -1,5 +1,6 @@
 // GET /api/contacts/:id/homeowner (module 78; D10): the viewer's RLS, the strict schema, honest states.
 // Real Postgres as app_user, the deterministic public-records fake only.
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { ownedContact } from '../comms/testing.js';
@@ -119,6 +120,20 @@ describe('GET /api/contacts/:id/homeowner (R-HOME-8)', () => {
     expect(agent.outcome).toBe('matched');
     expect(agent.yearsOwned).toBeNull();
     expect(JSON.stringify(agent)).not.toContain('2021-03-15');
+  });
+
+  // b11 reconciliation homeowner-7 (owner question 16's default): seller inquiries of any age count, with the date shown
+  it('R-HOME-1 R-HOME-7: a sell or value inquiry of any age recognises the person, and the reason shows the latest inquiry\'s date (team time zone)', async () => {
+    const c = await ownedContact(w.agents[0]!, { firstName: 'Ash', consent: false });
+    await addAddress(w.agents[0]!, c.id, nextBeaufortAddress());
+    const inquiry = (type: string, at: string) => h.su.query(
+      `INSERT INTO lead_inquiries (tenant_id, id, contact_id, lead_source_id, received_at, inquiry_type, fingerprint, outcome) VALUES ($1, $2, $3, $4, $5, $6, $7, 'attached')`,
+      [w.tenantId, randomUUID(), c.id, w.sourceId, at, type, `fp-${randomUUID()}`]);
+    await inquiry('value', '2019-04-02T16:00:00Z');
+    expect((await get(w.agents[0]!, c.id)).body.reasons).toEqual([{ reason: 'seller_inquiry', since: '2019-04-02' }]);
+    await inquiry('sell', '2022-08-09T16:00:00Z');
+    await inquiry('buy', '2024-01-05T16:00:00Z');
+    expect((await get(w.agents[0]!, c.id)).body.reasons).toEqual([{ reason: 'seller_inquiry', since: '2022-08-09' }]);
   });
 
   it('R-HOME-10: the outreach line is never built; the counsel clearance shows only once recorded', async () => {

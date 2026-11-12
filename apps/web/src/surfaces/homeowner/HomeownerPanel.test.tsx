@@ -74,6 +74,12 @@ describe('the homeowner panel (R-HOME-8)', () => {
     expect(document.body.textContent!.replace(T.FOOTER, '')).not.toMatch(/investor|score|confidence|%|estimat|equity|balance/i);
   });
 
+  it('R-HOME-1: a seller inquiry reason shows the date of the latest one (owner question 16)', async () => {
+    mount(view([{ address: BEAUFORT, kind: 'home', profile: MATCHED }], { reasons: [{ reason: 'seller_inquiry', since: '2019-04-02' }, { reason: 'homeowner_tag', since: null }] }));
+    await panel();
+    expect(screen.getByText('Shown because this person is asked about selling or a home value (last on Apr 2, 2019), tagged as a homeowner.')).toBeTruthy();
+  });
+
   it('R-HOME-4 E582: with no county transfer date, years owned names the team closing it counts from', async () => {
     mount(view([{ address: BEAUFORT, kind: 'home', profile: profile({ facts: {} }), teamClosingOn: '2021-03-15' }]));
     await panel();

@@ -30,8 +30,14 @@ export const REASON_WORDS: Record<string, string> = {
   past_buyer: 'bought a home with the team',
 };
 
+/** The reasons sentence: a past buyer's closing date and the latest seller inquiry's date where the API gives one. */
 export function reasonsText(reasons: { reason: string; since: string | null }[]): string {
-  const parts = reasons.map((r) => (r.reason === 'past_buyer' && r.since ? `${REASON_WORDS[r.reason]} (closed ${day(r.since)})` : (REASON_WORDS[r.reason] ?? r.reason)));
+  const parts = reasons.map((r) => {
+    const words = REASON_WORDS[r.reason] ?? r.reason;
+    if (r.reason === 'past_buyer' && r.since) return `${words} (closed ${day(r.since)})`;
+    if (r.reason === 'seller_inquiry' && r.since) return `${words} (last on ${day(r.since)})`;
+    return words;
+  });
   return `Shown because this person is ${parts.join(', ')}.`;
 }
 
