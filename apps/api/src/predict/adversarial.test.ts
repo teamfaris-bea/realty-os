@@ -48,7 +48,8 @@ describe('R-PRED-2: the vendor payload is cut down to property facts', () => {
     expect(Object.keys(l.candidate).sort()).toEqual(['address', 'facts', 'ownerNames', 'provenance', 'providerRef']);
     expect(Object.keys(l.candidate.address).sort()).toEqual(['city', 'line1', 'line2', 'postalCode', 'region']);
     expect(Object.keys(l.candidate.facts).sort()).toEqual(['assessedValueCents', 'lastSaleDate', 'lastSalePriceCents', 'recentPermit']);
-    expect(JSON.stringify(l)).not.toMatch(/47|married|5555550123|Mortgage Co|Elsewhere|PO Box|2019-01-01|householdSize|injected/);
+    // the age (47) is matched as a JSON value: the record's random providerRef (a UUID) can contain the digits 47
+    expect(JSON.stringify(l)).not.toMatch(/"age"|:47[,}]|married|5555550123|Mortgage Co|Elsewhere|PO Box|2019-01-01|householdSize|injected/);
     // malformed facts become null rather than a guess
     const bad = parsePublicRecord({ ...vendorRecord(a, ['Pat Doe']), lastSaleDate: 'last spring', lastSalePriceCents: -5, assessedValueCents: 1.5, recentPermit: 'yes', providerRef: 'x y z<script>' });
     expect(bad.status === 'found' && bad.candidate.facts).toEqual({ lastSaleDate: null, lastSalePriceCents: null, assessedValueCents: null, recentPermit: null });
