@@ -140,11 +140,12 @@ export async function invalidateDrafts(tx: Tx, contactId: ContactId, cur: Owners
        AND (owner_user_id IS DISTINCT FROM ${owner}::uuid OR bound_ownership_seq IS DISTINCT FROM ${period}::bigint)`.execute(tx);
   // AI ISA (D12 proposed, R-ISA-16): an owner change stops live AI care in this same transaction (the ledger; the
   // stop-signal job then ends it with its handoff). A same-owner new period is a pause (reinquiry), not a stop.
-  await sql`
+  // (Skipped on a schema before the AI ISA migration, e.g. the upgrade tests that run today's code on older schemas.)
+  if (await aiIsaSchema(tx)) await sql`
     INSERT INTO ai_isa_stop_signals (tenant_id, contact_id, reason, source_table, source_id)
     SELECT a.tenant_id, a.contact_id, 'owner_change', 'contacts', a.contact_id FROM ai_isa_assignments a
      WHERE a.tenant_id = app.tenant_id() AND a.contact_id = ${contactId} AND a.ended_at IS NULL AND a.owner_user_id IS DISTINCT FROM ${owner}::uuid`.execute(tx);
-  await sql`
+  if (await aiIsaSchema(tx)) await sql`
     INSERT INTO jobs (tenant_id, queue, kind, payload, run_at)
     SELECT s.tenant_id, 'realtime', 'ai_isa.stop_signal', jsonb_build_object('signalId', s.id), clock_timestamp() FROM ai_isa_stop_signals s
      WHERE s.tenant_id = app.tenant_id() AND s.contact_id = ${contactId} AND s.reason = 'owner_change' AND s.created_at >= now()`.execute(tx);
@@ -312,4 +313,10 @@ export async function enqueueFollowup(tx: Tx, p: Omit<FollowupPayload, 'commandI
     dedupeKey: followupDedupeKey(key),
     payload: { ...p, commandId: key },
   });
+}
+
+/** Whether the AI ISA tables exist (migration ai_isa applied). */
+export async function aiIsaSchema(tx: Tx): Promise<boolean> {
+  const r = await sql<{ ok: boolean }>`SELECT to_regclass('public.ai_isa_stop_signals') IS NOT NULL AS ok`.execute(tx);
+  return r.rows[0]!.ok;
 }

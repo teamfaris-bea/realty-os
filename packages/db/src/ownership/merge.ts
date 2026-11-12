@@ -15,6 +15,7 @@
 // itself, by the definer trigger app.contacts_merge_children on contacts.merged_into_contact_id.
 // Runs as a tenant-wide actor (system / Owner / Admin): inline in the merge transaction, or in the
 // merge's ownership.followup for a Team Lead.
+import { aiIsaSchema } from './effects.js';
 import type { ContactId, IdGenerator, Instant, UserId } from '@realty/core/foundation';
 import { toIso } from '@realty/core/foundation';
 import type { PeopleFacts } from '@realty/core/ownership';
@@ -122,12 +123,13 @@ export async function mergeCommunication(
     RETURNING id, kind`.execute(tx);
   // AI ISA (D12 proposed, R-ISA-16, E526): a merge stops live AI care on both records in this transaction (the guard and
   // liveness treat both as ended at commit; the stop-signal job writes the handoffs). No UPDATE right on the loser's
-  // assignment is needed: the ledger insert is allowed to any tenant actor.
-  await sql`
+  // assignment is needed: the ledger insert is allowed to any tenant actor. (Skipped on a pre-AI-ISA schema.)
+  const isa = await aiIsaSchema(tx);
+  if (isa) await sql`
     INSERT INTO ai_isa_stop_signals (tenant_id, contact_id, reason, source_table, source_id)
     SELECT DISTINCT a.tenant_id, a.contact_id, 'merged', 'contacts', ${loserId}::uuid FROM ai_isa_assignments a
      WHERE a.tenant_id = app.tenant_id() AND a.contact_id IN (${loserId}::uuid, ${survivorId}::uuid) AND a.ended_at IS NULL`.execute(tx);
-  await sql`
+  if (isa) await sql`
     INSERT INTO jobs (tenant_id, queue, kind, payload, run_at)
     SELECT s.tenant_id, 'realtime', 'ai_isa.stop_signal', jsonb_build_object('signalId', s.id), clock_timestamp() FROM ai_isa_stop_signals s
      WHERE s.tenant_id = app.tenant_id() AND s.reason = 'merged' AND s.source_id = ${loserId}::uuid AND s.created_at >= now()`.execute(tx);
