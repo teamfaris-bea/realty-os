@@ -126,16 +126,19 @@ export const PACK_GATES: Record<string, string> = {
   'platform:voice': 'Voice answering',
   'platform:portal': 'Client portal sign-in',
   'platform:gmail': 'Gmail inbox sync',
+  'platform:gbp': 'Google Business Profile',
 };
 
 /**
- * A capability that also waits on a platform clearance pack. These packs need counsel review only (none is in
- * VENDOR_CHECKED_PACKS), as the 0025 publications guard's `app.platform_cleared('platform:fair_housing')` does.
+ * A capability that also waits on platform clearance packs (one, or several that must all be reviewed). These packs
+ * need counsel review only (none is in VENDOR_CHECKED_PACKS), as the 0025 publications guard's
+ * `app.platform_cleared('platform:fair_housing')` and module 53's `app.platform_cleared('platform:gbp')` do.
  */
-const CAPABILITY_PACK: Partial<Record<ConnectionKind, Record<string, string>>> = {
+const CAPABILITY_PACK: Partial<Record<ConnectionKind, Record<string, string | readonly string[]>>> = {
   facebook_page: { publish_posts: 'platform:fair_housing' },
   instagram_business: { publish_posts: 'platform:fair_housing' },
-  gbp_location: { publish_posts: 'platform:fair_housing' },
+  // module 53: GBP stays dark behind platform:gbp (D7); posts and replies also need platform:fair_housing
+  gbp_location: { publish_posts: ['platform:fair_housing', 'platform:gbp'], read_reviews: 'platform:gbp', reply_reviews: ['platform:fair_housing', 'platform:gbp'] },
 };
 
 /**
@@ -241,10 +244,11 @@ export function capabilityViews(kind: ConnectionKind, status: ConnectionStatus, 
   for (const name of Object.keys(reported).sort()) {
     if (reported[name] !== true) continue;
     const live = status === 'connected' || status === 'degraded';
-    const packKey = CAPABILITY_PACK[kind]?.[name];
-    const pack = packKey ? packs.find((p) => p.key === packKey) : undefined;
-    const cleared = !packKey || (pack !== undefined && pack.reviewedByCounselAt !== null);
-    const reason = !offered ? NOT_OFFERED : !live ? 'The connection is not live.' : !cleared ? `Waits for counsel review of ${packKey}.` : null;
+    const named = CAPABILITY_PACK[kind]?.[name];
+    const keys: readonly string[] = named === undefined ? [] : typeof named === 'string' ? [named] : named;
+    // "available" only when every named pack is reviewed; the reason names the first that is not
+    const waiting = keys.find((k) => !packs.some((p) => p.key === k && p.reviewedByCounselAt !== null));
+    const reason = !offered ? NOT_OFFERED : !live ? 'The connection is not live.' : waiting !== undefined ? `Waits for counsel review of ${waiting}.` : null;
     out.push({ name, available: reason === null, reason });
   }
   return out;

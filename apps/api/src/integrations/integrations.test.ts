@@ -180,6 +180,35 @@ describe('connect through the provider callback (R-INT-3)', () => {
     }
   });
 
+  it('R-GBP-3 E460: a GBP location\'s capabilities wait for counsel review of platform:gbp, even after platform:fair_housing is reviewed; posts and replies need both', async () => {
+    const g = await connectFlow(h, owner, 'gbp_location', { externalAccountId: 'loc-caps', displayName: 'Example Realty Team location' }, [{ id: 'loc-caps' }]);
+    expect(g.cb.result).toBe('CONNECTED');
+    const caps = async () => (await list()).services.find((s) => s.kind === 'gbp_location')!.connections.find((c) => c.id === g.connectionId)!.capabilities;
+    const set = (key: string, on: boolean) => h.su.query(`UPDATE jurisdiction_packs SET reviewed_by_counsel_at = ${on ? 'now()' : 'NULL'} WHERE key = $1 AND status = 'published'`, [key]);
+    try {
+      expect(await caps()).toEqual([
+        { name: 'publish_posts', available: false, reason: 'Waits for counsel review of platform:fair_housing.' },
+        { name: 'read_reviews', available: false, reason: 'Waits for counsel review of platform:gbp.' },
+        { name: 'reply_reviews', available: false, reason: 'Waits for counsel review of platform:fair_housing.' },
+      ]);
+      await set('platform:fair_housing', true);
+      for (const c of await caps()) expect(c, c.name).toEqual({ name: c.name, available: false, reason: 'Waits for counsel review of platform:gbp.' });
+      await set('platform:gbp', true);
+      expect((await caps()).every((c) => c.available && c.reason === null)).toBe(true);
+      await set('platform:fair_housing', false);
+      expect(await caps()).toEqual([
+        { name: 'publish_posts', available: false, reason: 'Waits for counsel review of platform:fair_housing.' },
+        { name: 'read_reviews', available: true, reason: null },
+        { name: 'reply_reviews', available: false, reason: 'Waits for counsel review of platform:fair_housing.' },
+      ]);
+      expect((await list()).platformPacks.find((p) => p.key === 'platform:gbp')!.sentence).toMatch(/^Google Business Profile: cleared by counsel on /);
+    } finally {
+      await set('platform:fair_housing', false);
+      await set('platform:gbp', false);
+    }
+    expect((await list()).platformPacks.find((p) => p.key === 'platform:gbp')!.sentence).toMatch(/^Google Business Profile stays off: awaiting counsel review \(pack 2026\.11\.0, not yet reviewed\)\.$/);
+  });
+
   it('E160: a Page the token does not manage is refused; nothing is linked; the row stays unconfigured; the token is revoked', async () => {
     const f = await connectFlow(h, owner, 'facebook_page', { externalAccountId: 'page-not-mine' }, [{ id: 'page-other' }]);
     expect(f.cb.result).toBe('ACCOUNT_NOT_MANAGED');

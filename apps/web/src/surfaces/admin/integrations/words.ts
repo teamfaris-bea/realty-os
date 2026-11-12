@@ -16,6 +16,7 @@ const PACK_NAMES: Record<string, string> = {
   'platform:voice': 'Voice answering',
   'platform:portal': 'Client portal sign-in',
   'platform:gmail': 'Gmail inbox sync',
+  'platform:gbp': 'Google Business Profile',
 };
 
 export function packName(key: string): string {
