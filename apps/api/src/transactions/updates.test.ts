@@ -210,7 +210,7 @@ describe('R-AST-3 R-GATE-7 wording', () => {
   });
 });
 
-describe('E97 R-GATE-1 R-GATE-14 an opted-out lender', () => {
+describe('E97 an opted-out lender: the R-GATE-14 path test (the DB dispatch guard itself is module 22 and comms)', () => {
   it('E97 R-TXN-4 R-GATE-14: the lender asked for no email: the update is blocked at send (gate_decisions written, provider never called), failed_send reaches the deal owner, the TC sees "not sent"', async () => {
     const d = await deal(h, w, w.agents[0]!);
     // the lender contact is the deal owner's (otherwise failed_send goes to the lender contact's owner, see the report)
