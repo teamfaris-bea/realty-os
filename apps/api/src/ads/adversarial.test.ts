@@ -1,4 +1,4 @@
-// Adversarial checks of module 52 (R-ADS-10, R-PERM-5, R-TEN-1, R-TEN-7, R-AST-21, D1, D-ADS): roles and support, tenancy,
+// Adversarial checks of module 52 (R-ADS-9, R-PERM-5, R-TEN-1, R-TEN-7, R-AST-21, D1, D-ADS): roles and support, tenancy,
 // what a support session reads, and that no name, account id or token reaches a log, an audit row, a job or a notification.
 // Real Postgres as app_user; FakeAds and FakeOAuth only; the network tripwire is installed.
 import { type Actor, type TenantId, can, instant } from '@realty/core/foundation';

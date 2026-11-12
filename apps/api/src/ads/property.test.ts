@@ -118,6 +118,7 @@ describe('the DB trigger and core/ads agree (R-ADS-2)', () => {
         expect(post.total).toBe(tenantDailyTotal(after, [{ campaign_id: probeId, to_daily_cents: ceiling + 1 }]));
         seen.probes += 1;
       }),
+      // 12 runs with a fixed seed: each run builds a whole tenant on real Postgres (VERIFY: enough runs for the time it takes)
       { numRuns: 12, seed: 52, endOnFailure: true },
     );
     // the run is not vacuous: it saw proposals, holds and probes

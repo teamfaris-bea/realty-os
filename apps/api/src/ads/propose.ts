@@ -1,5 +1,5 @@
 // The weekly proposal of api/ads (module 52; job ads.propose: an hourly wake that acts on the tenant's local Monday, once
-// per ISO week, dedupe `ads_proposal:<isoWeek>`; R-ADS-2, R-ADS-6, R-ADS-10; D-ADS; E123).
+// per ISO week, dedupe `ads_proposal:<isoWeek>`; R-ADS-2, R-ADS-6, R-ADS-9; D-ADS; Q-ADS-5; E123).
 //
 // Runs only while platform:ads is cleared, a cap is in force and a live ads_google connection has a lead source.
 // Inputs: every campaign with its latest ledger event; 90 days of daily Google Ads spend (read OUTSIDE any transaction);
@@ -11,6 +11,9 @@
 // assistant approve/reject routes 404 for it (they need owner_user_id = the caller). Only POST /ads/proposals/:id/approve
 // (ads/dispatch.ts) plans it. A hold is the same kind with status `blocked` and its counts; the cap check reads only
 // approved or executed actions, so a hold is never planned. Either result supersedes the pending proposal.
+// VERIFY WITH COUNSEL (C3, the ads item): the disparate-impact risk of shifting budget by cost per agreement (radius
+// targeting only, no audiences), and ranking campaigns by `gads:` attribution of deals and inquiries.
+// Checked (an engineering VERIFY of the brief): a blocked or proposed ownerless action reaches no inbox or feed (propose.test.ts).
 import { DEFAULT_ALLOC_RULES, type AllocRules, type Hold, type Proposal, proposeReallocation } from '@realty/core/ads';
 import { DAY_MS, type TenantId, ianaZone, instant, localDateOf, toIso } from '@realty/core/foundation';
 import { addDaysLocal, isoWeekOf, isoWeekday, tenantZone } from '../insights/common.js';

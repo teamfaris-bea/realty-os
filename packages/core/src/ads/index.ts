@@ -39,12 +39,13 @@
 // VERIFY (Google Ads, N14; kept configurable or passed in): budget units, minimum daily budget and
 // increment (core keeps whole cents; module 52's adapter converts); how far a campaign may spend over
 // its daily budget in a day (core assumes no factor and pauses only on the monthly cap); the account's
-// reporting zone and hourly-spend delay (the caller passes the month's rows); developer-token access.
+// reporting zone and hourly-spend delay (the caller passes the month's rows); the API access level (said to sit on the
+// Cloud project, not on a developer token; VERIFY, N14).
 // VERIFY WITH COUNSEL (R-ADS-4, R-FH-4, C3): housing special-category requirements and targeting limits
 // per jurisdiction and platform policy.
-// Platform pack: none exists for ads (0018 seeds none; R-INT-6 names no ads gate; only publishing waits for
-// platform:fair_housing). Keeping ads dark (D7) needs an orchestrator decision before module 52; core/ads
-// takes no clearance input.
+// Platform pack: `platform:ads` (migration 0070, module 52) keeps ads dark (D7): its two invoker gates refuse every new
+// ad_reallocation approval and planned ledger row until counsel review AND rules.vendor_ready_at (R-ADS-7, R-INT-6).
+// core/ads takes no clearance input; api/ads checks the pack.
 export * from './types.js';
 export { proposeReallocation, eligibility, DEFAULT_ALLOC_RULES } from './propose.js';
 export { overspend } from './overspend.js';

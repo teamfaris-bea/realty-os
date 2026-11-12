@@ -12,14 +12,26 @@
 // gets unless ALLOW_FAKE_PROVIDERS: it reads and changes nothing and says "Google Ads is not set up on this platform".
 // There is no real adapter, developer token, OAuth client or account id here.
 //
-// VERIFY (Google Ads API, N14; a real adapter must settle each before platform:ads gets its vendor_ready_at):
-//   - budgets are micros of the account currency; the adapter converts to whole cents and back (rounding);
+// VERIFY (Google Ads API, N14; developers.google.com was unreachable when this was built, so every Google fact here is
+// unverified; a real adapter must settle each before platform:ads gets its vendor_ready_at):
+//   - the API access level and its limits: the owner-reported Explorer level of about 2,880 operations a day, whether
+//     reads count against it, and whether Explorer may mutate production accounts; that access is said to sit on the
+//     Cloud project (with the API turned on), not on a developer token;
+//   - the OAuth scope (integrations/catalog.ts GOOGLE_ADS_SCOPES, believed https://www.googleapis.com/auth/adwords), token
+//     refresh and expiry, and how a revoked grant is reported (TOKEN_REVOKED / INVALID_GRANT);
+//   - proof of control through the accessible-customers list, manager accounts and the login-customer header;
+//   - budgets are micros of the account currency; the adapter converts to whole cents and back (rounding); the minimum
+//     daily budget and its increment (core minDailyCents is 0);
 //   - a campaign's daily budget may be shared between campaigns (a shared budget is never managed here);
-//   - the housing special ad category declaration and how a campaign reports it ('unknown' when not reported);
-//   - serving issues / disapprovals and the policy reason codes;
+//   - the housing special ad category declaration and how a campaign reports it ('unknown' when not reported); if the
+//     API does not expose it, nothing is managed;
+//   - campaign status values (enabled / paused / removed), serving issues / disapprovals and the policy reason codes;
+//   - how radius targeting and its centre are reported (mirror.ts mapTargeting);
 //   - how far a campaign may spend over its daily budget on a given day (module 52 pauses only at the monthly cap);
-//   - the reporting zone, how late hourly cost arrives, and the quota and error shapes (QUOTA, TOKEN_REVOKED);
-//   - whether a mutate can carry an idempotency key (the fake honours one; absolute amounts are idempotent by value).
+//   - the account-zone field, how late hourly cost arrives, month finality and invalid-click credits (the reconcile
+//     recomputes the current and the previous month only), and the quota and error shapes (QUOTA, TOKEN_REVOKED);
+//   - whether a mutate can carry an idempotency key or is absolute (the fake honours one; absolute amounts are idempotent
+//     by value).
 import { type Clock, DAY_MS, HOUR_MS, ianaZone, localDateOf, wallMs } from '@realty/core/foundation';
 import { ProviderError } from '../providers/types.js';
 
