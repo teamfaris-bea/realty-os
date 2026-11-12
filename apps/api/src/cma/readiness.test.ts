@@ -76,3 +76,45 @@ describe('R-CMA-7: readiness without the agent gate (gates/F5, api-ui/F1)', () =
     expect(codes(v.body)).toEqual(['PLATFORM_NOT_CLEARED', 'FEED_DISCONNECTED', 'COMPS_HIDDEN']);
   });
 });
+
+describe('E370 F2: MLS records the 0068 backfill has not re-read yet (mls_normalize_version 1, no stored address key) (gates/F4)', () => {
+  /** The row as it was stored before 0061 and before the backfill reached it: no address key, the AVM flag column at its default. */
+  const asVersion1 = (id: string) => h.su.query('UPDATE listings SET address_key = NULL, mls_normalize_version = 1 WHERE id = $1', [id]);
+  const NOT_READ = 'An MLS listing of this home has not been re-read since the feed’s automated-valuation flag was added, so whether the seller allows automated valuations is not known yet. Until it is, this CMA could not be shown to a client.';
+
+  it('E370 R-CMA-7: the home\'s own live record without a stored key is the subject\'s (SELLER_WITHHELD, never a dismissable near match), and its unread flag is not stated, whatever the column holds', async () => {
+    const w = await cmaWorld(h);
+    await localSales(w, 6);
+    for (const [line1, avmDisplayAllowed] of [['883 Sample Avenue', false], ['885 Sample Avenue', true]] as const) {
+      const c = await seller(w, line1);
+      const live = await mlsSale(w, { line1, status: 'active', closePriceCents: null, closeDate: null, avmDisplayAllowed });
+      await asVersion1(live);
+      const r = await oneTap(w.agents[0]!, c);
+      expect(r.status).toBe(201);
+      const withheld = r.body.cma.clientShare.blockers.find((x) => x.code === 'SELLER_WITHHELD');
+      expect([line1, withheld?.listingIds, withheld?.sentence]).toEqual([line1, [live], NOT_READ]);
+      expect(codes(r.body)).not.toContain('POSSIBLE_LIVE_LISTING');
+      expect(r.body.cma.nearMatches).toEqual([]);
+      // it is not a near match, so it cannot be dismissed as "a different home"
+      const p = await call<CmaBody>(w.agents[0]!, 'PATCH', `/cma/${r.body.cma.id}`, { nearMatchDismissed: [live] });
+      expect(p.status).toBe(200);
+      expect(p.body.cma.subject.nearMatchDismissed).toEqual([]);
+      expect(codes(p.body)).toContain('SELLER_WITHHELD');
+    }
+  });
+
+  it('F2: a near match not re-read yet is listed with its AVM flag unknown, and its sentence says nothing about the flag', async () => {
+    const w = await cmaWorld(h);
+    await localSales(w, 6);
+    const c = await seller(w, '884 Sample Avenue');
+    const near = await mlsSale(w, { line1: '884 Sample Street', status: 'active', closePriceCents: null, closeDate: null, avmDisplayAllowed: false });
+    await asVersion1(near);
+    const r = await oneTap(w.agents[0]!, c);
+    expect(r.status).toBe(201);
+    expect(r.body.cma.nearMatches).toEqual([expect.objectContaining({ listingId: near, avmDisplayAllowed: null, dismissed: false })]);
+    const b = r.body.cma.clientShare.blockers.find((x) => x.code === 'POSSIBLE_LIVE_LISTING')!;
+    expect(b.listingIds).toEqual([near]);
+    expect(b.sentence).toMatch(/^An MLS listing at 884 Sample Street, Oakland may be this home\./);
+    expect(b.sentence).not.toMatch(/automated valuations/);
+  });
+});

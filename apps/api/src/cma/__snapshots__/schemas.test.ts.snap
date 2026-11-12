@@ -907,7 +907,10 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
                 "type": "string",
               },
               "avmDisplayAllowed": {
-                "type": "boolean",
+                "type": [
+                  "boolean",
+                  "null",
+                ],
               },
               "dismissed": {
                 "type": "boolean",

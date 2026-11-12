@@ -25,6 +25,7 @@ import {
   type MlsConnectionFacts,
   type MlsEligibility,
   type ValuationRefusal,
+  addressKey,
   clientSoldView,
   clientView,
   liveNearMatches,
@@ -159,24 +160,42 @@ export interface NearMatch {
   address: string;
   status: string;
   listingBrokerageName: string | null;
-  avmDisplayAllowed: boolean;
+  /** the seller's automated-valuation flag; null while the record has not been re-read since the flag was added */
+  avmDisplayAllowed: boolean | null;
   dismissed: boolean;
 }
 
 const line = (r: ListingRow) => [r.address_line1, r.address_line2].filter(Boolean).join(' ') + `, ${r.city}`;
 
 /**
- * The live MLS listings that may be the subject although their key differs (F2): V1-A's liveNearMatches on the key's
- * street number, street name and postal code. A live record at the subject's own key is not a near match (it is the
- * subject's own listing: SELLER_WITHHELD reads it).
+ * A row's address key: the stored one, else V1-A's key of its address, as liveNearMatches computes it (gates/F4: a
+ * record stored before 0061 that the 0068 backfill has not re-read yet, mls_normalize_version 1, has no stored key).
  */
-export async function nearMatches(tx: Tx, key: string | null, dismissed: readonly string[]): Promise<NearMatch[]> {
+const keyOfRow = (r: ListingRow): string | null => r.address_key ?? addressKey({ line1: r.address_line1, line2: r.address_line2, city: r.city, region: r.region, postalCode: r.postal_code });
+
+/**
+ * Whether the row's automated-valuation flag was read from the feed. A version-1 row was stored before the flag
+ * existed: avm_display_allowed holds the column default, so nothing is said about it and it is never taken as allowed.
+ */
+const flagRead = (r: ListingRow): boolean => r.mls_normalize_version >= 2;
+
+/** V1-A's live MLS rows on the key's street number, street name and postal code (none without a key). */
+async function liveOnStreet(tx: Tx, key: string | null): Promise<ListingRow[]> {
   const street = key === null ? null : streetOfKey(key);
-  if (street === null) return [];
-  const rows = (await liveNearMatches(tx, street)).filter((r) => r.address_key !== key);
-  return rows
+  return street === null ? [] : liveNearMatches(tx, street);
+}
+
+/**
+ * The live MLS listings that may be the subject although their key differs (F2): V1-A's liveNearMatches on the key's
+ * street number, street name and postal code. A live record whose key (stored, or computed for a row not re-read yet)
+ * is the subject's own is not a near match: it is the subject's own listing, which SELLER_WITHHELD reads and no
+ * dismissal can set aside (gates/F4).
+ */
+export async function nearMatches(tx: Tx, key: string | null, dismissed: readonly string[], live?: readonly ListingRow[]): Promise<NearMatch[]> {
+  const rows = (live ?? (await liveOnStreet(tx, key))).filter((r) => keyOfRow(r) !== key);
+  return [...rows]
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-    .map((r) => ({ listingId: r.id, mlsNumber: r.mls_number, address: line(r), status: r.status, listingBrokerageName: r.listing_brokerage_name, avmDisplayAllowed: r.avm_display_allowed, dismissed: dismissed.includes(r.id) }));
+    .map((r) => ({ listingId: r.id, mlsNumber: r.mls_number, address: line(r), status: r.status, listingBrokerageName: r.listing_brokerage_name, avmDisplayAllowed: flagRead(r) ? r.avm_display_allowed : null, dismissed: dismissed.includes(r.id) }));
 }
 
 /** A comp's client rendering with its sold price and date, or null when they must not reach a client now (V1-A). */
@@ -262,22 +281,32 @@ export async function clientReadiness(tx: Tx, i: ReadinessInput): Promise<{ shar
   // E370 and F2 need the subject's address key: without one, neither check can run, and that is said (never allowed)
   if (i.addressKey === null) add('SUBJECT_ADDRESS_UNKNOWN');
 
-  // E370: a live MLS record of the subject that withholds automated valuations, under the pack's scope (V6)
+  // E370: a live MLS record of the subject that withholds automated valuations, under the pack's scope (V6). The
+  // subject's records are those at its stored key, its own MLS record, and the live ones whose key computed from
+  // their address is its key (a record the backfill has not re-read has none stored: gates/F4). A record whose flag
+  // was never read from the feed is not taken as allowing them, and its flag is not stated.
   const atKey = i.addressKey ? await mlsRowsAtAddress(tx, i.addressKey) : [];
-  const subjectRows = [...atKey, ...(i.subjectMlsListingId ? await listingRows(tx, [i.subjectMlsListingId]) : [])];
+  const live = await liveOnStreet(tx, i.addressKey);
+  const subjectRows = [...atKey, ...(i.subjectMlsListingId ? await listingRows(tx, [i.subjectMlsListingId]) : []), ...live.filter((r) => keyOfRow(r) === i.addressKey)];
   const scopeOf = (r: ListingRow) => e.pack(r.mls_connection_id)?.valuation.avmFlagScope ?? 'all_client_outputs';
-  const withheld = subjectRows.filter((r) => LIVE_STATUSES.includes(r.status) && !r.avm_display_allowed && scopeOf(r) === 'all_client_outputs');
+  const withheld = subjectRows.filter((r) => LIVE_STATUSES.includes(r.status) && (!flagRead(r) || !r.avm_display_allowed) && scopeOf(r) === 'all_client_outputs');
   if (withheld.length > 0) {
-    blockers.push({ code: 'SELLER_WITHHELD', listingIds: [...new Set(withheld.map((r) => r.id))].sort(), sentence: 'The seller’s MLS listing of this home asks that automated valuations not be shown, so this CMA can’t be shared with clients.' });
+    blockers.push({
+      code: 'SELLER_WITHHELD',
+      listingIds: [...new Set(withheld.map((r) => r.id))].sort(),
+      sentence: withheld.some(flagRead)
+        ? 'The seller’s MLS listing of this home asks that automated valuations not be shown, so this CMA can’t be shared with clients.'
+        : 'An MLS listing of this home has not been re-read since the feed’s automated-valuation flag was added, so whether the seller allows automated valuations is not known yet. Until it is, this CMA could not be shown to a client.',
+    });
   }
 
   // F2: a live listing that may be this home, until the agent confirms it is a different one
-  const matches = await nearMatches(tx, i.addressKey, i.nearMatchDismissed);
+  const matches = await nearMatches(tx, i.addressKey, i.nearMatchDismissed, live);
   for (const m of matches.filter((x) => !x.dismissed)) {
     blockers.push({
       code: 'POSSIBLE_LIVE_LISTING',
       listingIds: [m.listingId],
-      sentence: `An MLS listing at ${m.address} may be this home. Confirm it is a different home before sharing.${m.avmDisplayAllowed ? '' : ' That listing asks that automated valuations not be shown.'}`,
+      sentence: `An MLS listing at ${m.address} may be this home. Confirm it is a different home before sharing.${m.avmDisplayAllowed === false ? ' That listing asks that automated valuations not be shown.' : ''}`,
     });
   }
 
