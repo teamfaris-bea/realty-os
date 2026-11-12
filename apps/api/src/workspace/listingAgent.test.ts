@@ -99,7 +99,10 @@ describe('R-MKT-4 b7 ownership-data/F2: marketing review on a listing whose agen
     const admin = await h.invite(w.owner, 'admin');
     const next = w.agents[1]!;
     const address = (await h.su.query<{ a: string }>('SELECT address_line1 AS a FROM listings WHERE id = $1', [w.listingId])).rows[0]!.a;
-    await removeMember(w.owner, w.tenantId, w.agent);
+    // suspended, not removed: the staged deactivation now moves an open listing (R-OWN-22 E540), a suspension keeps it
+    await freshReauth(h, w.owner);
+    const v = (await h.su.query<{ version: number }>('SELECT version FROM memberships WHERE tenant_id = $1 AND user_id = $2', [w.tenantId, w.agent.userId])).rows[0]!.version;
+    expect((await call(w.owner, 'PATCH', `/members/${w.agent.userId}`, { status: 'suspended', version: v })).status).toBe(200);
     expect(await agentOf(w.listingId)).toBe(w.agent.userId);
 
     // the Owner drafts marketing for the listing (listing.edit: ALL)

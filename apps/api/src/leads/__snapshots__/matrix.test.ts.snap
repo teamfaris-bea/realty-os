@@ -1444,6 +1444,16 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: leads response schemas have
             "minimum": -9007199254740991,
             "type": "integer",
           },
+          "openDeals": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
+          "openListings": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer",
+          },
           "owned": {
             "maximum": 9007199254740991,
             "minimum": -9007199254740991,
@@ -1499,6 +1509,8 @@ exports[`route table and schemas > R-AST-13 R-TEN-3: leads response schemas have
           "owned",
           "offered",
           "ownedWithOpenDeal",
+          "openListings",
+          "openDeals",
           "teamLead",
           "fallbackUserId",
           "deactivationId",

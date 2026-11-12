@@ -1,7 +1,7 @@
 // A team listing whose listing agent is no longer an active member (b7 ownership-data/F2; DATA_MODEL R-SELL-1,
-// R-MKT-4, R-OWN-22). Staged deactivation moves the member's contacts but not their listings, so a listing can keep
-// a removed (or suspended) agent. Only the listing agent sends its seller update and reviews its marketing, so such a
-// listing's seller updates and marketing cards would go to someone who can no longer act, and nobody would be told.
+// R-MKT-4, R-OWN-22). Staged deactivation moves the member's open team listings (R-OWN-22 E540), but a suspended
+// agent keeps theirs, and so can a listing reopened after its agent left. Only the listing agent sends its seller update and
+// reviews its marketing, so such a listing's seller updates and marketing cards would go to someone who can no longer act.
 //
 // Instead, the seller-update reconcile and the marketing card writers skip the agent and raise ONE card per listing
 // (key `seller_update:{listing}:agent-inactive`, item type seller_update, "Open listing") to every active Owner and

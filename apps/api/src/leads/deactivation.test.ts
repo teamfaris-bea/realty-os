@@ -55,7 +55,7 @@ describe('R-OWN-22 staged deactivation', () => {
     await freshReauth(h, w.owner);
     const preview = await call<{ deactivation: Record<string, unknown> }>(w.owner, 'POST', `/members/${a.userId}/deactivate`, { mode: 'preview', destination: 'default_pond' });
     expect(preview.status).toBe(200);
-    expect(preview.body.deactivation).toMatchObject({ mode: 'preview', status: 'active', owned: 40, offered: 2, ownedWithOpenDeal: 1, teamLead: { userId: w.teamLead!.userId }, deactivationId: null });
+    expect(preview.body.deactivation).toMatchObject({ mode: 'preview', status: 'active', owned: 40, offered: 2, ownedWithOpenDeal: 1, openListings: 0, openDeals: 1, teamLead: { userId: w.teamLead!.userId }, deactivationId: null });
     expect((await contactState(h, owned[1]!)).owner_user_id).toBe(a.userId); // preview changes nothing
 
     const run = await call<{ deactivation: { status: string; deactivationId: string } }>(w.owner, 'POST', `/members/${a.userId}/deactivate`, { mode: 'run', destination: 'default_pond' });

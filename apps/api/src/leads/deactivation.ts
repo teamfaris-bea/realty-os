@@ -16,10 +16,14 @@
 //          replays instead of acting twice; then a final transaction locks the membership FOR
 //          UPDATE, re-checks that nothing is held (including anything handed to the member while
 //          stage 1 committed), and marks it `removed` (+ removed_at), audited as member.removed.
-import type { Role, UserId } from '@realty/core/foundation';
+//          Before the contacts, each pass moves the member's open team listings (coming soon, active, pending) to
+//          the Team Lead, else the Owner/Admin who ran it while still active, else the first active Owner/Admin: one
+//          transaction each, audited listing.agent_changed (system, OWNER_DEACTIVATED), review cards re-synced. Sold,
+//          withdrawn, expired and MLS listings are never touched; open deals are counted, never moved.
+import type { IdGenerator, Role, UserId } from '@realty/core/foundation';
 import { can } from '@realty/core/foundation';
 import { deactivationCommandId } from '@realty/core/ownership';
-import { applyOwnershipCommandInTx, derivedCommandId, enqueueJob } from '@realty/db';
+import { applyOwnershipCommandInTx, defaultIds, derivedCommandId, enqueueJob } from '@realty/db';
 import type { ContactId } from '@realty/core/foundation';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -32,6 +36,8 @@ import type { StandaloneJobHandler } from '../worker/types.js';
 import { leadsTx, platformOf } from './common.js';
 import * as repo from './repos/members.js';
 import { DeactivateBody, DeactivationResponse } from './schemas.js';
+import { syncReviewCards } from '../marketing/cards.js';
+import { setListingAgentInTx } from '../workspace/listings.js';
 
 export const DEACTIVATE_JOB_KIND = 'leads.deactivate';
 export const deactivateDedupeKey = (userId: string) => `leads.deactivate:${userId}`;
@@ -53,7 +59,8 @@ export class DeactivationNotConvergedError extends Error {
   readonly code = 'DEACTIVATION_NOT_CONVERGED';
 }
 
-export function deactivationHandler(): StandaloneJobHandler<DeactivatePayload> {
+/** `ids` names the review cards the listing move writes (injected in tests). */
+export function deactivationHandler(ids: IdGenerator = defaultIds()): StandaloneJobHandler<DeactivatePayload> {
   return {
     kind: DEACTIVATE_JOB_KIND,
     queue: 'default',
@@ -64,6 +71,17 @@ export function deactivationHandler(): StandaloneJobHandler<DeactivatePayload> {
     async run(ctx, p) {
       const userId = p.userId as UserId;
       for (let pass = 0; pass < MAX_PASSES; pass++) {
+        // R-OWN-22 (E540, E541): the member's open team listings first, one transaction each, through the one audited
+        // listing-agent writer; the departed agent's review cards close and the new agent's open in the same transaction
+        const listings = await ctx.withTx((tx) => repo.openListingIds(tx, userId, BATCH));
+        for (const listingId of listings) {
+          await ctx.withTx(async (tx) => {
+            const to = await repo.listingDestination(tx, userId, p.fallbackUserId);
+            if (!to) throw new DeactivationNotConvergedError('no active Team Lead, Owner or Admin to take the listing');
+            // fenced: a change committed meanwhile (an Owner's PATCH, E545) leaves the writer a no-op
+            if (await setListingAgentInTx(tx, ctx.actor, listingId, userId, to, 'OWNER_DEACTIVATED')) await syncReviewCards(tx, ids, listingId);
+          });
+        }
         const held = await ctx.withTx((tx) => repo.heldContactIds(tx, userId, BATCH));
         // stages 2 + 3: one transaction per contact (offers rescinded + re-routed, owned contacts moved)
         for (const id of held) {
@@ -77,12 +95,14 @@ export function deactivationHandler(): StandaloneJobHandler<DeactivatePayload> {
             });
           });
         }
-        if (held.length === BATCH) continue;
+        if (held.length === BATCH || listings.length === BATCH) continue;
         // stage 4: final re-check under the membership row lock, then removed
         const done = await ctx.withTx(async (tx, now) => {
           const m = await repo.memberRow(tx, userId, true);
           if (!m || m.status !== 'deactivating') return true; // already finished (re-run) or reactivated by an admin
           if ((await repo.heldContactIds(tx, userId, 1)).length > 0) return false;
+          // a listing created meanwhile (E544): the FOR UPDATE above waited for its in-flight insert (FK KEY SHARE)
+          if ((await repo.openListingIds(tx, userId, 1)).length > 0) return false;
           await repo.finishDeactivation(tx, userId, new Date(now).toISOString());
           await audit(tx, ctx.actor, {
             action: 'member.removed',
@@ -94,7 +114,7 @@ export function deactivationHandler(): StandaloneJobHandler<DeactivatePayload> {
         });
         if (done) return;
       }
-      throw new DeactivationNotConvergedError('member still holds leads after the deactivation passes');
+      throw new DeactivationNotConvergedError('member still holds leads or listings after the deactivation passes');
     },
   };
 }
@@ -158,6 +178,8 @@ export async function registerDeactivationRoutes(app: FastifyInstance): Promise<
           owned: held.owned,
           offered: held.offered,
           ownedWithOpenDeal: held.ownedWithOpenDeal,
+          openListings: held.openListings,
+          openDeals: held.openDeals,
           teamLead: tl ? { userId: tl.user_id, displayName: tl.display_name } : null,
           fallbackUserId: actor.userId,
           deactivationId,

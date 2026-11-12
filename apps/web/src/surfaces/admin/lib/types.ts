@@ -162,6 +162,10 @@ export interface Deactivation {
   owned: number;
   offered: number;
   ownedWithOpenDeal: number;
+  /** open team listings with them as listing agent (moved by the deactivation) */
+  openListings: number;
+  /** deals they own that are not closed or lost (kept, not moved) */
+  openDeals: number;
   teamLead: { userId: string; displayName: string | null } | null;
   fallbackUserId: string;
   deactivationId: string | null;
