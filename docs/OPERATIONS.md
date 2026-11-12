@@ -165,6 +165,9 @@ timers and provider health, and can retry or cancel a job (audited).
 - **Fix:** a bad deploy → roll back to the previous image, which is safe as is only when that deploy's release step applied no migration (`0 applied`); otherwise follow DEPLOY §3 "Rollback". A configuration refusal → fix the named variable. Database down → §4.2's database branch.
 - **Escalate:** after 15 minutes down, to the on-call engineer and the team Owner (agents should use their phones directly meanwhile).
 
+### 4.1a Documents waiting for the virus check
+- **Means:** documents stay "checking" (a test or real scanner) or "waiting for a scanner" (production has none until N11). With a scanner, `documents.reconcile` re-enqueues a scan pending over 2 minutes every 5 minutes; a scanner outage shows as failing `documents.scan` jobs on the System page, and no file is ever marked clean by an error.
+
 ### 4.2 ApiDegraded
 - **Means:** `/api/ready` answers 200 `degraded`: the database is fine but `storage` or `providers` failed. Reads work; uploads, recordings or sends may fail. `unavailable` (503) means the database check failed and the balancer takes the instance out.
 - **Check:** the `checks` object names the failed dependency. Storage: bucket credentials, bucket policy, region, disk (local storage). Providers: the provider configuration no longer loads (a removed or rotated secret).

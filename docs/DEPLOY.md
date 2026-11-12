@@ -360,6 +360,7 @@ Portal lead notifications (Zillow, Realtor.com, a website form) can be forwarded
 - **Least privilege:** grant the credentials only `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` and `s3:ListBucket`, on this bucket (and prefix).
 - **Versioning and retention:** turn on versioning, with a lifecycle rule that expires non-current versions. Retention deletes (for example of recordings after 730 days) must not linger forever as old versions. Size the window to your backup policy (**VERIFY WITH COUNSEL** for retention periods).
 - **Region and encryption:** use a bucket in the same region as the database. Optional SSE (`S3_SSE`); R2 encrypts at rest by itself.
+- **Documents (module 42):** deal, listing and contact documents are stored here too (purpose `document`, at most 10,000,000 bytes each; the proxy's 11m body limit covers them). Production has no virus scanner yet (N11): every upload stays locked and says so until one is configured; there is no environment variable for it.
 
 ## 8. Backups and the restore drill
 
