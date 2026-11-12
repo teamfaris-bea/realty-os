@@ -27,7 +27,9 @@ import { type Tx, lockContact, withTenantTx } from '@realty/db';
 import { evaluateGate } from '../comms/index.js';
 import * as g from '../comms/repos/gate.js';
 import type { OutboundIntent } from '../comms/types.js';
+import { IN_HOUSE_REF } from '../cma/avm.js';
 import type { AddressFacts, AvmProvider } from '../providers/integrations/types.js';
+import { ProviderError } from '../providers/types.js';
 import type { Logger } from '../worker/observability.js';
 import { systemActor } from '../worker/systemActor.js';
 import { literal } from './decide.js';
@@ -48,7 +50,7 @@ export const AVM_PREVIEW_REFUSALS = ['CONSENT_REVOKED', 'SUPPRESSED', 'PERSON_DO
 
 /** A vendor answer after parsing: what TX2 stores. No confidence or score field exists (R-AST-13). */
 export type ParsedAvmAnswer =
-  | { status: 'ok'; valueCents: number; lowCents: number; highCents: number; asOf: string; displayAllowed: boolean; provider: string; method: string; comparables: { address: string; soldOn: string; priceCents: number; listingId: string | null }[] }
+  | { status: 'ok'; valueCents: number; lowCents: number; highCents: number; asOf: string; displayAllowed: boolean; provider: string; method: string; comparables: { address: string; soldOn: string; priceCents: number; listingId: string | null }[]; ref: string | null }
   | { status: 'unavailable'; provider: string };
 
 const isObj = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
@@ -87,6 +89,10 @@ export function parseAvmAnswer(raw: unknown): ParsedAvmAnswer | null {
   if (typeof asOf !== 'string' || !realDate(asOf)) return null;
   const method = vendorText(raw['method'], 120);
   if (method === null) return null;
+  // R-CMA-10 (lane V2-B): an in-house ref is stored only when well formed; a present but malformed one makes the answer
+  // unparseable (no row, retried by a later pass; E634)
+  const rawRef = raw['ref'];
+  if (rawRef !== undefined && (typeof rawRef !== 'string' || !IN_HOUSE_REF.test(rawRef))) return null;
   // comparables are evidence: malformed entries are dropped, never repaired
   const comparables = (Array.isArray(raw['comparables']) ? raw['comparables'] : []).slice(0, 20).flatMap((c) => {
     if (!isObj(c)) return [];
@@ -96,7 +102,7 @@ export function parseAvmAnswer(raw: unknown): ParsedAvmAnswer | null {
     const listingId = typeof c['listingId'] === 'string' && /^[0-9a-f-]{36}$/i.test(c['listingId']) ? c['listingId'] : null;
     return address !== null && priceCents !== null && soldOn !== null ? [{ address, soldOn, priceCents, listingId }] : [];
   });
-  return { status: 'ok', valueCents, lowCents, highCents, asOf, displayAllowed: raw['displayAllowed'] === true, provider, method, comparables };
+  return { status: 'ok', valueCents, lowCents, highCents, asOf, displayAllowed: raw['displayAllowed'] === true, provider, method, comparables, ref: typeof rawRef === 'string' ? rawRef : null };
 }
 
 /** The stored row as core's AvmEstimate (avmSendable, homeValueText). */
@@ -230,12 +236,14 @@ export async function recordAnswerInTx(tx: Tx, deps: Pick<NurtureDeps, 'ids'>, p
     asOf: est.asOf,
     displayAllowed: est.displayAllowed,
     provider: est.provider,
-    providerRef: null, // source-neutral (D9): no source-specific reference is stored
+    providerRef: answer.status === 'ok' ? answer.ref : null, // R-CMA-10: the in-house run's ref; none from any other source
     changeFromPriorBps: changeFromPriorBps(est, prior ? estimateOfRow(prior) : null),
   });
   const fact: Fact = { kind: 'home_value', contactId: c.id, contactAddressId: addr.id, month, valuationId: id, at: valuedAt, address: addressText(addr) };
   // the claim cites the row (R-AVM-1): the fact the agent and the trigger-runs view see is the R-AVM-1 sentence
-  const evidence: EvidenceRef[] = [{ sourceType: 'home_valuation', sourceId: id, locator: { kind: 'field', name: 'estimate' }, snippet: homeValueText(est) ?? 'No estimate available.' }];
+  // R-CMA-6 (E636): a number only when the estimate may reach the client; trigger runs are read by ISA and TC too
+  const snippet = est.status !== 'ok' ? 'No estimate available.' : est.displayAllowed ? (homeValueText(est) ?? 'No estimate available.') : 'Estimate not shown to clients.';
+  const evidence: EvidenceRef[] = [{ sourceType: 'home_valuation', sourceId: id, locator: { kind: 'field', name: 'estimate' }, snippet }];
   const fired = await recordFactInTx(tx, deps, fact, [{ contactId: c.id, ownerUserId: c.ownerUserId, relation: { kind: 'contact' } }], { evidence });
   return { outcome: 'recorded', valuationId: id, fired };
 }
@@ -262,16 +270,20 @@ export interface AvmRefreshResult {
 export async function avmRefresh(deps: AvmRefreshDeps, tenantId: TenantId | string, log?: Logger): Promise<AvmRefreshResult> {
   const res: AvmRefreshResult = { configured: deps.avm.configured, requested: 0, recorded: 0, fired: 0, failed: 0, skipped: 0 };
   if (!deps.avm.configured) return res; // R-INT-1: no vendor on this platform ⇒ nothing requested, nothing written
+  // R-CMA-10 E620: a source with tenant prerequisites (the in-house one) that this tenant lacks ⇒ nothing requested
+  if (deps.avm.availability && !(await deps.avm.availability({ tenantId: String(tenantId), db: deps.db })).available) return res;
   const actor = systemActor(tenantId as TenantId, 'provider');
   const pairs = await withTenantTx(actor, (tx, now) => duePairsInTx(tx, now), { db: deps.db, retries: 2 });
   for (const pair of pairs) {
     res.requested += 1;
     let answer: ParsedAvmAnswer | null;
     try {
-      answer = parseAvmAnswer(await deps.avm.estimate(facts(pair.address)));
+      const raw = await deps.avm.estimate(facts(pair.address), { tenantId: String(tenantId), contactId: pair.contactId, contactAddressId: pair.address.id, db: deps.db });
+      answer = parseAvmAnswer(raw);
+      if (answer === null) log?.warn('avm.refresh answer refused', { code: 'AVM_ANSWER_UNPARSEABLE' });
     } catch (e) {
       answer = null;
-      log?.warn('avm.refresh vendor error', { code: e instanceof Error ? e.name : 'unknown' });
+      log?.warn('avm.refresh vendor error', { code: e instanceof ProviderError ? (e.providerCode ?? e.kind) : e instanceof Error ? e.name : 'unknown' });
     }
     if (answer === null) {
       res.failed += 1; // no row, no firing: a later pass this month asks again
