@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { at } from '../foundation/index.js';
 import { clientOwnText, isTeamText, negatedBefore, qualValueQuoted, timelineDays } from './ownText.js';
 import { NOW, NY } from './testing/fixtures.js';
+import { runs } from './testing/runs.js';
 
 const ctx = (ownText: string) => ({ ownText, saidAt: NOW, zone: NY });
 
@@ -136,7 +137,7 @@ describe('R-ISA-12 R-ISA-27 qualValueQuoted', () => {
         expect(qualValueQuoted('financing_status_stated', value, own, ctx(own))).toBe(false);
         expect(qualValueQuoted('financing_status_stated', value, term, ctx(own))).toBe(false);
       }),
-      { numRuns: 300 },
+      { numRuns: runs(300) },
     );
   });
 });

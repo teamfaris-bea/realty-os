@@ -90,7 +90,18 @@ export const NEGATED: Readonly<Record<string, readonly string[]>> = {
   complaint: ['no complaints at all'],
   privacy_request: ["don't delete my info, I'm still looking"],
   safety: ["I'm not in danger, just asking"],
+  legal_contract: ["we don't need an attorney, thanks"],
+  financial: ["we don't need a lender, we're paying cash"],
+  pricing_negotiation: ["I'm not asking what it's worth, just curious about the area"],
+  ai_declined: ["I don't hate bots, this is fine"],
 };
+
+/**
+ * Classes whose lexicon is deliberately NOT negation-aware (the pattern carries its own negation, or any mention must
+ * reach a person): fraud_risk ("we don't need to wire anything" still warns), consent_dispute, third_party,
+ * sensitive_personal. Listed so the choice is explicit and reviewed (VERIFY WITH COUNSEL).
+ */
+export const NON_NEGATABLE_BY_DESIGN: readonly string[] = ['fraud_risk', 'consent_dispute', 'third_party', 'sensitive_personal'];
 
 /** Statements that must never escalate (every B3 and S3 field phrase included, E504, E507). */
 export const MUST_NOT_ESCALATE: readonly string[] = [

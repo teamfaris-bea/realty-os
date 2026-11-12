@@ -27,6 +27,9 @@ export default {
   reporters: ['clear-text', 'progress', 'json'],
   jsonReporter: { fileName: 'reports/mutation/isa.json' },
   coverageAnalysis: 'perTest',
+  // module-level lexicon regexes and data tables are static mutants: they are reviewed data with fixtures, not
+  // decision logic, and would take most of the run (every test re-runs for each one)
+  ignoreStatic: true,
   tempDirName: '.stryker-tmp',
   concurrency: 4,
   timeoutMS: 30000,

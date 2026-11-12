@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { aiIdentityMissing, hasNumber, isaGuard, type IsaGuardCode } from './guard.js';
 import { composeMessage, disclosureLine, signOffLine } from './lines.js';
 import { IDENTITY, WHO } from './testing/fixtures.js';
+import { runs } from './testing/runs.js';
 
 const g = (text: string, channel: 'sms' | 'email' = 'sms') => isaGuard(text, { channel, identity: IDENTITY, sources: [] });
 const codes = (text: string): IsaGuardCode[] => g(text).codes;
@@ -65,7 +66,7 @@ describe('R-ISA-7 E506 property: numerals, number words and "a" amounts never pa
       fc.property(fc.string({ maxLength: 40 }), fc.integer({ min: 0, max: 9 }), fc.string({ maxLength: 40 }), (a, d, b) => {
         expect(isaGuard(`${a}${d}${b}`, { channel: 'email', identity: IDENTITY, sources: [] }).pass).toBe(false);
       }),
-      { numRuns: 300 },
+      { numRuns: runs(300) },
     );
   });
   it('number words and spoken amounts fail', () => {

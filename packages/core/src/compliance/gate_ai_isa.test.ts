@@ -10,6 +10,7 @@ import { type GateInput, canContact } from './gate.js';
 import { H1, H2, NOW, aiIsaFacts, aiIsaInput, gateInput, grantRow, revokedRow } from './testing/fixtures.js';
 import { ACTION_CATEGORIES, AI_ISA_CATEGORIES, type AiIsaGateFacts, AUTONOMOUS_ELIGIBLE, CHANNELS, isPlatformChannel } from './types.js';
 import { AI_ISA_REASONS, OPT_OUT_REASONS } from './reasons.js';
+import { runs } from '../isa/testing/runs.js';
 
 const T = (ms: number): Instant => instant(NOW + ms);
 const decisionOf = (i: GateInput) => {
@@ -110,7 +111,7 @@ describe('R-ISA-8 non-interference: checks 0, 8 and 12 never touch a category ou
         expect(decisionOf({ ...input, aiIsa: facts })).toEqual(decisionOf(input));
         expect(canContact({ ...input, aiIsa: facts }).reasons.some((r) => AI_ISA_REASONS.has(r))).toBe(false);
       }),
-      { numRuns: 3000 },
+      { numRuns: runs(3000) },
     );
   });
   it('the AI ISA categories are never autonomous-eligible (R-AST-20 holds) and never in a policy\'s autonomous set', () => {
@@ -143,7 +144,7 @@ describe('R-ISA-8 R-ISA-31 D1 first: opt-outs block every AI ISA message, whatev
         expect(d.outcome).toBe('deny');
         expect(d.reasons.some((r) => OPT_OUT_REASONS.has(r))).toBe(true);
       }),
-      { numRuns: 1000 },
+      { numRuns: runs(1000) },
     );
   });
   it('a conversation paused for an opt-out or a wrong number still blocks, even under AI care', () => {
@@ -174,7 +175,7 @@ describe('R-ISA-10 R-ISA-11 check 12: monotone, and an allow is always inside th
         expect(f.sharedAddress || f.activeClient || f.paused || !f.pinnedSeqCurrent || !f.epochCurrent).toBe(false);
         if (f.soldDerivedFact) expect(f.sellerPacksCleared && ch === 'email').toBe(true);
       }),
-      { numRuns: 3000 },
+      { numRuns: runs(3000) },
     );
   });
   it('property: making any one fact worse never removes a reason', () => {
@@ -199,7 +200,7 @@ describe('R-ISA-10 R-ISA-11 check 12: monotone, and an allow is always inside th
         for (const r of a.reasons) expect(b.reasons).toContain(r);
         expect(b.outcome === 'deny' || a.outcome === 'allow').toBe(true);
       }),
-      { numRuns: 2000 },
+      { numRuns: runs(2000) },
     );
   });
   it('E511 E512 E515 window, days and caps', () => {

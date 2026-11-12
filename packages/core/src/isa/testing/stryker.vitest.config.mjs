@@ -15,5 +15,6 @@ export default defineConfig({
     include: ['src/isa/**/*.test.ts'],
     pool: 'forks',
     testTimeout: 60_000,
+    env: { ISA_MUTATION: '1' },
   },
 });

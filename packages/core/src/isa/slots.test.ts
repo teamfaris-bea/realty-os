@@ -5,6 +5,7 @@ import { computeOffer, confirmationInTime, displayZones, formatSlot, matchSlotCh
 import { CHI, LA, NY } from './testing/fixtures.js';
 import type { IsaSlot } from './types.js';
 import { CONTINENTAL_ZONES } from './zones.js';
+import { runs } from './testing/runs.js';
 
 // Thu 2026-11-12 14:00 UTC = 09:00 ET
 const NOW = at('2026-11-12T14:00:00Z');
@@ -65,7 +66,7 @@ describe('R-ISA-13 computeOffer', () => {
         }
         expect(halves.size).toBe(o.slots.length);
       }),
-      { numRuns: 200 },
+      { numRuns: runs(200) },
     );
   });
 });
@@ -141,7 +142,7 @@ describe('R-ISA-13 E528 E529 matchSlotChoice', () => {
         const r = matchSlotChoice(t, SLOTS, [NY]);
         if (r.kind === 'unique') expect(r.index >= 0 && r.index < SLOTS.length).toBe(true);
       }),
-      { numRuns: 500 },
+      { numRuns: runs(500) },
     );
   });
   void ({} as Instant);

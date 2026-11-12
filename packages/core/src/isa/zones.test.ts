@@ -4,6 +4,7 @@ import { type IanaZone, at, instant, localWindowContains, nextWindowStart, resol
 import { AREA_CODE_STATES, areaCodeOf, areaCodeZones } from './areaCodes.js';
 import { STATE_ZONES, ZIP3_RANGES, stateOfPostalCode, zonesOfState } from './stateZones.js';
 import { CONTINENTAL_ZONES, aiIsaRecipientZones, aiIsaSendWindow, holidaysAround, icuOffsetMinutes, offsetsAgree, usFederalHolidays, type RecipientZoneInput } from './zones.js';
+import { runs } from './testing/runs.js';
 
 const base = (o: Partial<RecipientZoneInput> = {}): RecipientZoneInput => ({ contactTz: null, contactTzSource: null, phones: [], pointTzs: [], tenantZone: 'America/New_York', inquiryPostalCode: null, addressStates: [], ...o });
 const H = 3600;
@@ -136,7 +137,7 @@ describe('R-ISA-10 the send window', () => {
           }
         }
       }),
-      { numRuns: 400 },
+      { numRuns: runs(400) },
     );
   });
   it('E514 offsets agree with a DB reading; a mismatch is reported', () => {

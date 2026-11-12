@@ -6,6 +6,7 @@ import { type IsaEvent, type IsaInbound, type IsaState, initialState, step } fro
 import { matchSlotChoice } from './slots.js';
 import { MUST_ESCALATE, MUST_NOT_ESCALATE, NEGATED, classify, emptyDecision, facts, NY } from './testing/fixtures.js';
 import { ESCALATION_CLASSES, type IsaSlot } from './types.js';
+import { runs } from './testing/runs.js';
 
 const T0 = at('2026-11-12T15:00:00Z');
 const F = facts();
@@ -95,7 +96,7 @@ describe('R-ISA-14 R-ISA-5 policy machine properties', () => {
         }
         expect(handoffs === 1).toBe(s.ended !== null);
       }),
-      { numRuns: 1500 },
+      { numRuns: runs(1500) },
     );
   });
   it('book only after the offer was delivered, and (from an inbound) only on a verified, unique own-text match', () => {
@@ -122,7 +123,7 @@ describe('R-ISA-14 R-ISA-5 policy machine properties', () => {
           s = r.state;
         }
       }),
-      { numRuns: 1500 },
+      { numRuns: runs(1500) },
     );
     // the generator reaches bookings, so the property is not vacuous
     expect(books).toBeGreaterThan(0);
@@ -135,7 +136,7 @@ describe('R-ISA-14 R-ISA-5 policy machine properties', () => {
         const s = start();
         expect(step(s, { type: 'inbound', at: T0, messages: shuffled }, F)).toEqual(step(s, { type: 'inbound', at: T0, messages: batch }, F));
       }),
-      { numRuns: 500 },
+      { numRuns: runs(500) },
     );
   });
   it('determinism: the same state and event give the same result', () => {
@@ -151,7 +152,7 @@ describe('R-ISA-14 R-ISA-5 policy machine properties', () => {
           b = rb.state;
         }
       }),
-      { numRuns: 300 },
+      { numRuns: runs(300) },
     );
   });
 });

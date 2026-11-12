@@ -2,7 +2,8 @@ import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { ESCALATION_CLASSES, type EscalationClass } from './types.js';
 import { ESCALATION_TABLE, STOP_CLASSES, escalationPriority, inboundSignals, isAcknowledgementOnly, legalRequest, precedence, questionClauses, requestFrame, topClass, uncoveredLanguage } from './signals.js';
-import { MUST_ESCALATE, MUST_NOT_ESCALATE, NEGATED, classify } from './testing/fixtures.js';
+import { MUST_ESCALATE, MUST_NOT_ESCALATE, NEGATED, NON_NEGATABLE_BY_DESIGN, classify } from './testing/fixtures.js';
+import { SIGNAL_LEXICON } from './signals.js';
 
 const sig = (text: string, reaction = false) => inboundSignals({ ownText: text, classification: classify(text), reaction });
 
@@ -20,6 +21,13 @@ describe('R-ISA-6 E507 negated fixtures never escalate their class', () => {
       it(`${cls} negated: "${p}"`, () => expect(sig(p).classes).not.toContain(cls));
     }
   }
+});
+
+describe('R-ISA-6 every lexicon class has negated fixtures or is non-negatable by design', () => {
+  it('coverage of the negation fixtures', () => {
+    for (const cls of Object.keys(SIGNAL_LEXICON)) expect(cls in NEGATED || NON_NEGATABLE_BY_DESIGN.includes(cls)).toBe(true);
+    expect(sig("we don't need to wire anything").classes).toContain('fraud_risk');
+  });
 });
 
 describe('R-ISA-6 E504 statements are qualification, never an escalation (every B3 and S3 phrase)', () => {
