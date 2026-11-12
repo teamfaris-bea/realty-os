@@ -1,7 +1,7 @@
 // Test fixtures for core/marketing: a team listing, an identity, packs and one valid piece per kind.
 import { at, type IanaZone, type ListingId, type MessageId, type ShowingId, type StoredObjectId } from '../../foundation/index.js';
 import { DEFAULT_FAIR_HOUSING_PACK, type FairHousingPack } from '../../fairhousing/index.js';
-import type { ListingFacts } from '../../listings/index.js';
+import { EMPTY_VALUATION_FACTS, type ListingFacts } from '../../listings/index.js';
 import { advertisingPackFrom } from '../schemas.js';
 import type { BrokerageIdentity, Packs, PieceKind, PieceVersion, ProseByKind } from '../types.js';
 
@@ -43,6 +43,7 @@ export const teamListing = (o: Partial<ListingFacts> = {}): ListingFacts => ({
   teamListingId: null,
   lastSeenInFeedAt: null,
   offMarketAt: null,
+  valuation: EMPTY_VALUATION_FACTS,
   ...o,
 });
 

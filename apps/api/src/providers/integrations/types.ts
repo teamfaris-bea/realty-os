@@ -138,6 +138,21 @@ export interface ResoListing {
   propertyType: string;
   listOfficeName: string;
   modificationTimestamp: string;
+  /** D9 sale and property facts (optional; synthetic in the fake). Money in cents, coordinates in decimal degrees. */
+  closePriceCents?: number | null;
+  closeDate?: string | null;
+  purchaseContractDate?: string | null;
+  originalListPriceCents?: number | null;
+  concessionsCents?: number | null;
+  specialListingConditions?: string | null;
+  daysOnMarket?: number | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  yearBuilt?: number | null;
+  lotSizeSquareFeet?: number | null;
+  subdivisionName?: string | null;
+  propertySubType?: string | null;
+  internetAutomatedValuationDisplayYN?: boolean | null;
 }
 
 export interface MlsPage {

@@ -82,7 +82,7 @@ describe('applyDisplayRules: client and public audiences', () => {
     const d = applyDisplayRules(mls(), REVIEWED_PACK, 'public');
     expect(d).not.toBeNull();
     expect(Object.keys(d ?? {}).filter((k) => ['mlsNumber', 'sqft', 'bathsX10', 'description', 'listDate', 'propertyType', 'address'].includes(k))).toEqual([]);
-    expect(d?.omittedFields).toEqual(['mlsNumber', 'baths', 'sqft', 'propertyType', 'description', 'listDate', 'address']);
+    expect(d?.omittedFields).toEqual(['mlsNumber', 'baths', 'sqft', 'propertyType', 'description', 'listDate', 'address', 'closePrice', 'closeDate', 'yearBuilt', 'lotSize', 'subdivision']);
     expect(d).toMatchObject({ status: 'active', listPriceCents: 45_000_000, beds: 3, addressHidden: true });
     const client = applyDisplayRules(mls(), REVIEWED_PACK, 'client');
     expect(client?.omittedFields).toEqual([]);

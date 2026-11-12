@@ -81,7 +81,7 @@ describe('R-INT-1 fakes are the default and deterministic', () => {
     expect(Object.keys(one.avm).some((k) => /confidence|score/i.test(k))).toBe(false); // R-AST-13
     expect(one.license.rules.displayToPublic).toBe(false); // strictest default until a licence pack is entered
     expect(one.mls.listings).toHaveLength(1);
-    expect(one.mls2.listings.map((l) => l.listingKey)).toEqual(['FAKE-MLS-1002']);
+    expect(one.mls2.listings.map((l) => l.listingKey)).toEqual(['FAKE-MLS-1002', 'FAKE-MLS-2001', 'FAKE-MLS-2002', 'FAKE-MLS-2003', 'FAKE-MLS-2004']); // D9: the fake also carries closed sales
   });
 
   it('the fake OAuth provider checks PKCE and makes codes single-use', async () => {
