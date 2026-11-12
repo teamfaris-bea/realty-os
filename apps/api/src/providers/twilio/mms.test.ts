@@ -1,8 +1,8 @@
 // D5a Twilio adapter for photo texts against a stubbed fetch (no live calls; R-MMS-6, R-MMS-7, E298): one MediaUrl key
 // per item, no Body when it is empty, the URL refusals, and the media / outbound-listing parsing.
 import { describe, expect, it } from 'vitest';
-import { ProviderError } from '../providers/types.js';
-import { TwilioTelephony } from '../providers/twilio/telephony.js';
+import { ProviderError } from '../types.js';
+import { TwilioTelephony } from './telephony.js';
 
 const MASTER = 'AC' + '1'.repeat(32);
 const SUB = 'AC' + '2'.repeat(32);

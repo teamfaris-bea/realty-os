@@ -74,7 +74,7 @@ export function RowAttachments({ contactId, item }: { contactId: string; item: P
         const label = `Attachment ${x.position + 1} of ${total}, ${kindOf(x.contentType)}, ${formatBytes(x.byteSize)}`;
         return (
           <div key={x.position} className="flex flex-col items-start gap-1">
-            {x.inline ? <img src={x.url} alt={`Photo ${x.position + 1} of ${total} they sent`} loading="lazy" className="max-h-64 max-w-full rounded-xl border border-line object-contain" /> : null}
+            {x.inline ? <img src={x.url} alt={`Photo ${x.position + 1} of ${total}`} loading="lazy" className="max-h-64 max-w-full rounded-xl border border-line object-contain" /> : null}
             <a href={x.url} download className="inline-flex min-h-tap items-center text-[14px] font-medium text-accent underline">
               Download {label}
             </a>

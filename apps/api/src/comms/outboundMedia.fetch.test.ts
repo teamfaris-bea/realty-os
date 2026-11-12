@@ -4,7 +4,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
-import { MemoryErrorReporter } from '../observability/errors.js';
+import type { MemoryErrorReporter } from '../observability/errors.js';
 import { mediaToken } from './outboundMedia.js';
 import { jpeg, png, sendPhotoText, uploadId } from './outboundMedia.testing.js';
 import { type CommsWorld, call, commsWorld, ownedContact } from './testing.js';

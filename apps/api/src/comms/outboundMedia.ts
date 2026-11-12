@@ -271,7 +271,7 @@ export async function serveProviderMedia(query: unknown, deps: CommsDeps): Promi
   } catch {
     throw refused();
   }
-  let out: { bytes: Uint8Array; contentType: string } | null = null;
+  let out: { bytes: Uint8Array; contentType: string } | null;
   try {
     out = await asSystem(deps, claims.tenantId, 'provider', async (tx) => {
       const r = await sql<{ object_id: string; storage_key: string; dek_wrapped: Buffer | null; content_type: string }>`
@@ -338,7 +338,7 @@ export async function cleanupProviderCopies(deps: CommsDeps, tenantId: string, p
   const tel = deps.providers.telephony;
   const account = await asSystem(deps, tenantId, 'provider', (tx) => telephonyAccount(tx, deps.envelope, tenantId));
   if (!account || !tel.listMessageMedia || !tel.deleteMedia) return { deleted: 0, messages: 0, complete: false };
-  let refs: string[] = [];
+  let refs: string[];
   let complete = true;
   if (p.providerRef) refs = [p.providerRef];
   else if (p.phoneNumberId && p.dispatchedAt !== undefined && tel.listOutboundMediaMessages) {

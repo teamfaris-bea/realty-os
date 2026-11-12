@@ -141,7 +141,7 @@ export class TwilioTelephony implements TelephonyProvider {
     const media = r.mediaUrls ?? [];
     if (media.length > 10) throw new ProviderError('rejected', 'TWILIO_MEDIA_URL_INVALID');
     for (const u of media) {
-      let ok = false;
+      let ok: boolean;
       try {
         const x = new URL(u);
         ok = x.protocol === 'https:' || x.protocol === 'http:';

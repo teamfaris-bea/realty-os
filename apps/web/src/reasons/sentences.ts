@@ -165,6 +165,12 @@ const CARRIER: Record<string, string> = {
   '30023': 'the daily texting limit for this number was reached',
   '30032': "the toll-free sending number isn't verified yet",
   '30034': "the sending number isn't registered for texting yet",
+  // D5a: picture messages (VERIFY against Twilio's error dictionary)
+  '11751': 'a photo or video was larger than their carrier allows',
+  '30019': 'the photos or videos were larger than their carrier allows',
+  '12300': "the phone service couldn't use one of the files",
+  '21620': "the phone service couldn't fetch the photos",
+  '21623': 'too many photos or videos for one text',
   // the Twilio adapter's own codes
   TWILIO_AUTH: "the phone service didn't accept our credentials",
   TWILIO_FROM_INVALID: "the sending number isn't a valid phone number",
@@ -296,6 +302,7 @@ export function messageStatus(m: MessageStatusFacts, contactFirstName: string, n
     }
     case 'failed':
     case 'undelivered': {
+      if (m.status === 'failed' && reason === 'MEDIA_UNAVAILABLE') return { text: 'Not sent: the photos or videos were no longer available', tone: 'failed' };
       // module 22: a chat reply is delivered by the website chat, not a carrier
       const service = ch === 'email' ? 'email service' : ch === 'web_chat' ? 'website chat' : 'phone service';
       const rejected = ch === 'email' ? 'the email service rejected it' : ch === 'web_chat' ? "the website chat couldn't deliver it" : 'the carrier rejected it';
