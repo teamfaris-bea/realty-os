@@ -52,4 +52,33 @@ describe('R-ISA-16: the inactivity warning hands back', () => {
   }
 });
 
+describe('R-ISA-15 R-ISA-30: the handoff recipient after a take over (Q1)', () => {
+  it('R-ISA-15 R-ISA-30: a team lead\'s take over makes them the recipient of the card and deadline, the owner notified; after an End, the owner', async () => {
+    const l = await liveLead();
+    const tl = w.teamLead!;
+    const t = await call(tl, 'POST', `/contacts/${l.id}/ai-isa/take-over`, {});
+    expect(t.status).toBe(200);
+    await h.su.query(`UPDATE ai_isa_assignments SET finalize_at = now() - interval '1 second' WHERE contact_id = $1`, [l.id]);
+    await runIsa(h, w.tenantId);
+    expect((await assignmentOf(h, l.id))!.end_reason).toBe('taken_over');
+    const ho = (await h.su.query<{ recipient_user_id: string; package: Record<string, unknown> }>(`SELECT recipient_user_id, package FROM ai_isa_handoffs WHERE contact_id = $1`, [l.id])).rows;
+    expect(ho[0]!.recipient_user_id).toBe(tl.userId);
+    expect(ho[0]!.package['recipientUserId']).toBe(tl.userId);
+    const c = await card(l.id);
+    expect(c.map((x) => x.user_id)).toEqual([tl.userId]);
+    expect(c[0]!.due_at).not.toBeNull();
+    const n = await h.su.query<{ user_id: string; kind: string }>(`SELECT user_id, kind FROM notifications WHERE subject_id = $1 AND kind LIKE 'ai_isa_%'`, [l.id]);
+    expect(n.rows).toEqual(expect.arrayContaining([{ user_id: w.agents[0]!.userId, kind: 'ai_isa_ended' }]));
+    expect(n.rows.filter((r) => r.kind.startsWith('ai_isa_handoff')).map((r) => r.user_id)).toEqual([tl.userId]);
+
+    const l2 = await liveLead();
+    expect((await call(w.agents[0]!, 'POST', `/contacts/${l2.id}/ai-isa/end`, {})).status).toBe(200);
+    await h.su.query(`UPDATE ai_isa_assignments SET finalize_at = now() - interval '1 second' WHERE contact_id = $1`, [l2.id]);
+    await runIsa(h, w.tenantId);
+    const h2 = (await h.su.query<{ recipient_user_id: string; package: Record<string, unknown> }>(`SELECT recipient_user_id, package FROM ai_isa_handoffs WHERE contact_id = $1`, [l2.id])).rows;
+    expect(h2[0]!.recipient_user_id).toBe(w.agents[0]!.userId);
+    expect(h2[0]!.package['endedByUserId']).toBe(w.agents[0]!.userId);
+  });
+});
+
 void inboundSms;

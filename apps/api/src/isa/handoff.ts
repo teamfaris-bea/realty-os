@@ -29,6 +29,35 @@ export async function handoffRecipients(tx: Tx, ownerUserId: string): Promise<{ 
   return { primary: m.rows[0]?.active ? ownerUserId : null, escalation };
 }
 
+/** Who took over (the latest `take_over` control's user) while the take over is pending or final, else null. */
+async function takerOf(tx: Tx, assignmentId: string): Promise<string | null> {
+  const r = await sql<{ reason: string | null; u: string | null }>`SELECT a.pause_reason AS reason, (SELECT c.by_user_id FROM ai_isa_controls c
+      WHERE c.tenant_id = a.tenant_id AND c.assignment_id = a.id AND c.kind = 'take_over' ORDER BY c.created_at DESC, c.id DESC LIMIT 1) AS u
+    FROM ai_isa_assignments a WHERE a.tenant_id = app.tenant_id() AND a.id = ${assignmentId}`.execute(tx);
+  const x = r.rows[0];
+  return x?.reason === 'taking_over' ? (x.u ?? null) : null;
+}
+
+/**
+ * The handoff recipient (Q1; R-ISA-15, R-ISA-30). While a take over is pending or final (pause_reason `taking_over`:
+ * the finalize, or any end inside the undo window, a booking's included) it is the person who took over, from the
+ * latest `take_over` control row (paused_by_user_id keeps only the FIRST pause). An inactive taker falls back to the
+ * owner's recipients. Escalation always follows the owner's chain. An End keeps the owner, with endedByUserId.
+ */
+export async function recipientFor(tx: Tx, a: Pick<AssignmentRow, 'id' | 'ownerUserId'>): Promise<{ primary: string | null; escalation: string[]; takerUserId: string | null; endedByUserId: string | null }> {
+  const base = await handoffRecipients(tx, a.ownerUserId);
+  const taker = await takerOf(tx, a.id);
+  const ender = await sql<{ u: string | null; reason: string | null }>`SELECT a.pause_reason AS reason, (SELECT c.by_user_id FROM ai_isa_controls c
+      WHERE c.tenant_id = a.tenant_id AND c.assignment_id = a.id AND c.kind = 'end' ORDER BY c.created_at DESC, c.id DESC LIMIT 1) AS u
+    FROM ai_isa_assignments a WHERE a.tenant_id = app.tenant_id() AND a.id = ${a.id}`.execute(tx);
+  const endedByUserId = ender.rows[0]?.reason === 'ending' ? (ender.rows[0].u ?? null) : null;
+  if (taker !== null) {
+    const m = await sql<{ active: boolean }>`SELECT status = 'active' AS active FROM memberships WHERE tenant_id = app.tenant_id() AND user_id = ${taker}`.execute(tx);
+    if (m.rows[0]?.active) return { primary: taker, escalation: base.escalation.filter((u) => u !== taker), takerUserId: taker, endedByUserId };
+  }
+  return { ...base, takerUserId: taker, endedByUserId };
+}
+
 export interface HandoffInput {
   handoff: Handoff;
   /** the pending post-handoff message (confirmation or holding line), when one was queued with it */
@@ -57,6 +86,7 @@ export async function writeHandoffInTx(tx: Tx, ids: IdGenerator, actor: SystemAc
   const inact = await sql<{ release: Date | null; tz: string }>`SELECT c.inactivity_release_at AS release, s.default_timezone AS tz FROM contacts c
     JOIN tenant_settings s ON s.tenant_id = c.tenant_id WHERE c.tenant_id = app.tenant_id() AND c.id = ${a.contactId}`.execute(tx);
   const releaseAt = inact.rows[0]?.release ?? null;
+  const rec = await recipientFor(tx, a);
   const pkg = {
     v: 1,
     reason: h.reason,
@@ -75,6 +105,8 @@ export async function writeHandoffInTx(tx: Tx, ids: IdGenerator, actor: SystemAc
     startedAt: a.startedAt,
     epoch: a.epoch,
     inactivityReleaseAt: releaseAt?.toISOString() ?? null,
+    recipientUserId: rec.primary,
+    endedByUserId: rec.endedByUserId,
   };
   const actionId = ids.next<'X'>() as string;
   const handoffId = ids.next<'X'>() as string;
@@ -83,7 +115,6 @@ export async function writeHandoffInTx(tx: Tx, ids: IdGenerator, actor: SystemAc
     VALUES (app.tenant_id(), ${actionId}, ${a.contactId}, 'ai_isa_handoff', 'internal', 'internal', 'proposed', ${a.ownerUserId},
             ${`AI care handed back: ${h.reason}`.slice(0, 300)}, ${JSON.stringify({ assignmentId: a.id, handoffId })}::jsonb, ${`ai_isa_handoff:${a.id}`})
     ON CONFLICT (tenant_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING`.execute(tx);
-  const rec = await handoffRecipients(tx, a.ownerUserId);
   const cls: SlaClass = h.priority;
   const due = slaDueAt(cls, now);
   const body = JSON.stringify(pkg);
@@ -106,6 +137,11 @@ export async function writeHandoffInTx(tx: Tx, ids: IdGenerator, actor: SystemAc
     // a notification names no content: the reason code only (the AI summary is never in a notification)
     await notifyUser(tx, ids, { userId, kind: hot ? 'ai_isa_handoff_hot' : 'ai_isa_handoff', priority: hot ? 'critical' : cls === 'high' ? 'high' : 'normal',
       title: `AI care handed back: ${label}`.slice(0, 120), body: null, subjectType: 'contact', subjectId: a.contactId, dedupeKey: `ai_isa_handoff:${a.id}` }, now);
+  }
+  // Q1: after a take over the taker gets the card and the deadline; a different owner is told AI care ended
+  if (rec.takerUserId !== null && rec.primary === rec.takerUserId && a.ownerUserId !== rec.takerUserId) {
+    await notifyUser(tx, ids, { userId: a.ownerUserId, kind: 'ai_isa_ended', priority: 'normal', title: `AI care ended: ${label} was taken over`.slice(0, 120), body: null,
+      subjectType: 'contact', subjectId: a.contactId, dedupeKey: `ai_isa_ended:${a.id}` }, now);
   }
   await audit(tx, actor, { action: 'ai_isa.handoff_created', entity: { type: 'ai_isa_handoff', id: handoffId }, reason: h.reason });
   return handoffId;
