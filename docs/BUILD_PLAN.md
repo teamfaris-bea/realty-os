@@ -133,7 +133,7 @@ export type OwnershipCommand =
   | { kind:'assign'|'reassign'; toUserId: UserId; reason: ReasonCode; note?: string } | { kind:'isa_handoff'; toUserId: UserId; note: string }
   | { kind:'timer'; deadline:'offer_expiry'|'first_touch_breach'|'auto_release'|'inactivity_warn'|'inactivity_release';
       fence: { offerId: string } | { periodSeq: number; dueAt: Instant } }
-  | { kind:'touch'; via:'call'|'sms'|'email'; refId: string; at: Instant } | { kind:'reinquiry'; inquiryId: string }
+  | { kind:'touch'; via:'call'|'sms'|'email'|'chat' /* chat: owner decision D8 */; refId: string; at: Instant } | { kind:'reinquiry'; inquiryId: string }
   | { kind:'close'; reason: CloseReason } | { kind:'reopen' } | { kind:'soft_delete' }
   | { kind:'merge'; survivorId: ContactId; loserId: ContactId; ownerChoice: UserId|null }
   | { kind:'deactivate_owner'; destination: 'team_lead'|'default_pond'|'reroute'; deactivationId: string }

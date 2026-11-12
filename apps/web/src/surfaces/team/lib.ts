@@ -36,9 +36,19 @@ export function periodLabel(item: Pick<ExceptionItem, 'itemType' | 'owner' | 'pe
     : `${who}'s earlier ownership period (the lead has moved on since)`;
 }
 
-/** The server's period lines, said about the period's owner (the period label already says when it ended). */
+/**
+ * The server's period lines, said about the period's owner (the period label already says when it ended). Since owner
+ * decision D8 the server names a chat reply among the touches and says whose touch is missing ("from the agent or a
+ * collaborator": a Team Lead's reply is no touch, E311), which names the owner here; an item stored before D8 keeps
+ * its earlier words.
+ */
+const missedBy = (o: string) => `No human call, text, email or chat reply from ${o} or a collaborator by the first-contact deadline`;
 const PERIOD_LINE: Record<string, (owner: string) => string> = {
   'Lead became theirs': (o) => `Lead became ${o}'s`,
+  'No human call, text, email or chat reply from the agent or a collaborator by the first-contact deadline': missedBy,
+  'No human call, text, email or chat reply from the agent or a collaborator by the first-contact deadline; the lead later left this agent': missedBy,
+  'First human call, text, email or chat reply from the agent or a collaborator came after the first-contact deadline': (o) =>
+    `First human call, text, email or chat reply from ${o} or a collaborator came after the first-contact deadline`,
   'No human call, text or email by the first-contact deadline; the lead later left this agent': () => 'No human call, text or email by the first-contact deadline',
 };
 
@@ -112,7 +122,8 @@ export function scoreboardLines(s: Scoreboard): MetricLine[] {
       text: `${stl.withinSla} of ${stl.total} within the first-touch window`,
       detail: stl.pending > 0 ? `${median} · ${stl.pending} still waiting` : median,
     },
-    { label: 'Touches', text: `${s.touches.count} in ${daysWord(s.touches.days)}`, detail: `${plural(s.touches.calls, 'call')} · ${s.touches.textsAndEmails} texts and emails` },
+    // a reply in the website chat is a touch (owner decision D8) and is counted with the texts and emails
+    { label: 'Touches', text: `${s.touches.count} in ${daysWord(s.touches.days)}`, detail: `${plural(s.touches.calls, 'call')} · ${s.touches.textsAndEmails} texts, emails and chat replies` },
     { label: 'Appointments set', text: `${s.appointmentsSet.count} in ${daysWord(s.appointmentsSet.days)}` },
     { label: 'Appointments held', text: `${s.appointmentsHeld.count} of ${s.appointmentsHeld.of} held` },
     { label: 'Agreements signed', text: `${s.agreementsSigned.count} in ${daysWord(s.agreementsSigned.days)}` },

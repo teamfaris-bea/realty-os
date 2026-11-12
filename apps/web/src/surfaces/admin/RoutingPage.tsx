@@ -483,7 +483,7 @@ type TimerKey = 'offerWindowSeconds' | 'maxOffers' | 'firstTouchSlaSeconds' | 'f
 export const TIMER_FIELDS: readonly { key: TimerKey; label: string; unit: 'minutes' | 'count' | 'days' | 'hours'; nullable?: string; hint?: string }[] = [
   { key: 'offerWindowSeconds', label: 'Time to accept an offer', unit: 'minutes' },
   { key: 'maxOffers', label: 'Offers before a lead goes to the pond', unit: 'count' },
-  { key: 'firstTouchSlaSeconds', label: 'First contact due within', unit: 'minutes', hint: 'Counts calls, texts and emails a person sends. The assistant’s instant reply does not count.' },
+  { key: 'firstTouchSlaSeconds', label: 'First contact due within', unit: 'minutes', hint: 'Counts calls, texts, emails and chat replies a person sends. The assistant’s instant reply does not count.' },
   { key: 'firstTouchReleaseSeconds', label: 'Release an untouched lead after', unit: 'minutes', nullable: 'Never release automatically' },
   { key: 'reinquirySlaAfterDays', label: 'A returning lead starts a new first-contact clock after', unit: 'days' },
   { key: 'inactivityReleaseDays', label: 'Release a lead with no contact after', unit: 'days', nullable: 'Never release for inactivity' },

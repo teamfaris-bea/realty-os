@@ -101,7 +101,7 @@ describe('untouched_lead', () => {
     const mine = (await queue(lead.owner)).items.find((i) => i.dedupeKey === key)!;
     expect(mine).toMatchObject({ itemType: 'untouched_lead', live: true, owner: { userId: lead.owner.userId }, contact: { id: lead.contactId, name: 'Pat Lead' } });
     expect(mine.evidence.length).toBeGreaterThanOrEqual(1);
-    expect(mine.evidence[0]).toMatchObject({ sourceType: 'ownership_period', explanation: 'No human call, text or email by the first-contact deadline', link: { kind: 'contact', id: lead.contactId } });
+    expect(mine.evidence[0]).toMatchObject({ sourceType: 'ownership_period', explanation: 'No human call, text, email or chat reply from the agent or a collaborator by the first-contact deadline', link: { kind: 'contact', id: lead.contactId } });
     expect(mine.ageSeconds).toBeGreaterThanOrEqual(59);
     expect(mine.actions).toEqual({ resolve: true, reassign: false, verify: false, reopen: false });
 
@@ -138,7 +138,7 @@ describe('untouched_lead', () => {
     expect(item.live).toBe(true);
     expect(item.conditionClearedAt).not.toBeNull();
     expect(item.evidence.map((e) => e.explanation)).toEqual([
-      'First human call, text or email came after the first-contact deadline',
+      'First human call, text, email or chat reply from the agent or a collaborator came after the first-contact deadline',
       'Lead became theirs',
       'First human contact',
     ]);
@@ -158,7 +158,7 @@ describe('untouched_lead', () => {
     expect([row?.owner_user_id, row?.condition_cleared_at]).toEqual([lead.owner.userId, null]);
     const item = (await queue(lead.owner)).items.find((i) => i.dedupeKey === key)!;
     expect(item.live).toBe(true);
-    expect(item.evidence[0]!.explanation).toBe('No human call, text or email by the first-contact deadline; the lead later left this agent');
+    expect(item.evidence[0]!.explanation).toBe('No human call, text, email or chat reply from the agent or a collaborator by the first-contact deadline; the lead later left this agent');
     // R-PERM-6/7: the previous owner sees the pond card (masked last name), never the detail
     expect(item.contact).toEqual({ id: lead.contactId, name: 'Pat L.' });
     expect(keysOf((await queue(w.teamLead!)).items)).toContain(key);
@@ -194,11 +194,11 @@ describe('untouched_lead', () => {
     await recompute(h, w.tenantId, { contactId: lead.contactId });
     const earlier = (await itemRow(h, lead.key))!;
     expect(earlier.condition_cleared_at).toBeNull();
-    expect(explanations(earlier.evidence)).toEqual(['No human call, text or email by the first-contact deadline', 'Lead became theirs']);
+    expect(explanations(earlier.evidence)).toEqual(['No human call, text, email or chat reply from the agent or a collaborator by the first-contact deadline', 'Lead became theirs']);
     const touchAt = await lastFirstTouchAt(lead.contactId);
     const newer = (await itemRow(h, second))!;
     expect(newer.condition_cleared_at?.getTime()).toBe(touchAt.getTime());
-    expect(explanations(newer.evidence)).toEqual(['First human call, text or email came after the first-contact deadline', 'Lead became theirs', 'First human contact']);
+    expect(explanations(newer.evidence)).toEqual(['First human call, text, email or chat reply from the agent or a collaborator came after the first-contact deadline', 'Lead became theirs', 'First human contact']);
     const tl = (await queue(w.teamLead!)).items;
     expect(tl.find((i) => i.dedupeKey === second)).toMatchObject({ live: true, conditionClearedAt: touchAt.toISOString() });
     expect(keysOf(tl)).not.toContain(lead.key);
@@ -222,7 +222,7 @@ describe('untouched_lead', () => {
     const row = (await h.su.query('SELECT condition_cleared_at, rule_version, evidence FROM exception_items WHERE dedupe_key = $1', [lead.key])).rows[0];
     expect([row.condition_cleared_at, row.rule_version]).toEqual([null, EXCEPTION_RULE_VERSION]);
     expect(row.rule_version).toBeGreaterThanOrEqual(3);
-    expect(explanations(row.evidence)).toEqual(['No human call, text or email by the first-contact deadline', 'Lead became theirs']);
+    expect(explanations(row.evidence)).toEqual(['No human call, text, email or chat reply from the agent or a collaborator by the first-contact deadline', 'Lead became theirs']);
     // the condition reopened, the Team Lead's verification still stands: handled, not back in the live queue
     expect(keysOf((await queue(w.teamLead!)).items)).not.toContain(lead.key);
     expect((await queue(w.teamLead!, '?state=handled')).items.find((i) => i.dedupeKey === lead.key)?.latestEvent).toMatchObject({ action: 'verified' });

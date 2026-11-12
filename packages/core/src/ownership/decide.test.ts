@@ -27,7 +27,7 @@ import {
   systemActor,
   userActor,
 } from './testing/fixtures.js';
-import type { Decision, Effect, OwnershipCommand } from './types.js';
+import { TOUCH_VIAS, type Decision, type Effect, type OwnershipCommand } from './types.js';
 
 const kinds = (d: Decision) => d.effects.map((e) => e.kind);
 const effectsOf = <K extends Effect['kind']>(d: Decision, k: K) => d.effects.filter((e): e is Extract<Effect, { kind: K }> => e.kind === k);
@@ -569,6 +569,32 @@ describe('first-touch timers (R-OWN-13, R-OWN-14, R-OWN-15)', () => {
     expect(decide(l.p, { ...t, at: plusMs(T0, -1) }, ctx({ actor: userActor(U.a) }))).toMatchObject({ ok: true, events: [] });
     expect(eventsOf(decide(l.p, t, ctx({ actor: userActor(U.isa), actorIsCollaborator: true })))[0]?.type).toBe('first_touch_recorded');
     expect(decide(pondLead().p, t, ctx({ actor: userActor(U.a) }))).toMatchObject({ ok: true, events: [] });
+  });
+
+  it('R-OWN-14 E310 E311: a reply in the website chat is a touch like a text (owner decision D8): every touch kind records the first touch once; the assistant’s chat reply and a member who is neither owner nor collaborator never do', () => {
+    // the four kinds of human touch, each the first touch of its own lead (FIRST_TOUCH_<VIA>)
+    expect(TOUCH_VIAS).toEqual(['call', 'sms', 'email', 'chat']);
+    for (const via of TOUCH_VIAS) {
+      const l = ownedLead(U.a);
+      const now = plusMs(T0, 2 * MINUTE_MS);
+      const d = l.run({ kind: 'touch', via, refId: `${via}-1`, at: now }, { now, actor: userActor(U.a) });
+      expect(eventsOf(d), via).toHaveLength(1);
+      expect(eventsOf(d)[0], via).toMatchObject({ type: 'first_touch_recorded', reasonCode: `FIRST_TOUCH_${via.toUpperCase()}`, occurredAt: now, payload: { via, refId: `${via}-1`, afterBreach: false } });
+      const p = l.p.periodSeq as number;
+      expect(effectsOf(d, 'cancelTimers')[0]?.dedupeKeys, via).toEqual([`ownership.first_touch_breach:${C1}:${p}`, `ownership.auto_release:${C1}:${p}`]);
+      expect(effectsOf(d, 'recordHumanTouch'), via).toEqual([{ kind: 'recordHumanTouch', at: now }]);
+    }
+    const l = ownedLead(U.a);
+    const chat = { kind: 'touch', via: 'chat', refId: 'chat-1', at: T0 } as const;
+    // the assistant's first response in the chat (R-AST-15), the system, and a member who neither owns nor collaborates
+    for (const actor of [systemActor('assistant'), systemActor('worker'), userActor(U.b)]) expect(decide(l.p, chat, ctx({ actor }))).toEqual({ ok: true, events: [], next: l.p, effects: [] });
+    // a collaborator's chat reply counts the way their text would
+    expect(eventsOf(decide(l.p, chat, ctx({ actor: userActor(U.isa), actorIsCollaborator: true })))[0]).toMatchObject({ type: 'first_touch_recorded', reasonCode: 'FIRST_TOUCH_CHAT', actorUserId: U.isa });
+    // a chat reply after a breach still records the true response time; a later one writes no second first touch
+    timer(l, 'first_touch_breach', l.p.firstTouchDueAt as Instant);
+    const late = plusMs(l.p.firstTouchDueAt as Instant, MINUTE_MS);
+    expect(eventsOf(l.run({ ...chat, at: late }, { now: late, actor: userActor(U.a) }))[0]).toMatchObject({ type: 'first_touch_recorded', reasonCode: 'FIRST_TOUCH_CHAT', payload: { afterBreach: true } });
+    expect(eventsOf(l.run({ ...chat, refId: 'chat-2', at: plusMs(late, MINUTE_MS) }, { now: plusMs(late, MINUTE_MS), actor: userActor(U.a) }))).toEqual([]);
   });
 
   it('R-OWN-14: touch vs auto-release in either commit order: touch first ⇒ no release; release first ⇒ the touch is not the owner’s', () => {

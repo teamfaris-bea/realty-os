@@ -4,7 +4,9 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { plusMs } from '../foundation/index.js';
+import { U, ownedLead } from './testing/fixtures.js';
 import { DTS, World, stepArb } from './testing/world.js';
+import { TOUCH_VIAS } from './types.js';
 
 const RUNS = Number((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.OWNERSHIP_PROPERTY_RUNS ?? 10_000);
 
@@ -40,6 +42,24 @@ describe('decide() properties (R-OWN-1 … R-OWN-26)', () => {
     },
     600_000,
   );
+
+  it('R-OWN-14 R-AST-15 (owner decision D8): the touch draw pairs every touch kind, the chat reply included, with the assistant, a member who is not the owner, a collaborator and the owner', () => {
+    // every (who, flag) a step can carry, on an owned lead: the actor and the kind must not be drawn from one number
+    const w = new World();
+    w.state = ownedLead(U.a).p;
+    const seen = new Set<string>();
+    for (let who = 0; who <= 15; who++) {
+      for (let flag = 0; flag <= 15; flag++) {
+        const c = w.command({ op: 13, who, flag, dt: 0 });
+        if (c?.cmd.kind !== 'touch') throw new Error(`op 13 draws a touch, not ${c?.cmd.kind}`);
+        const a = c.ctx.actor;
+        seen.add(`${a.kind === 'system' ? a.via : a.userId === U.a ? 'owner' : 'other'}:${c.cmd.via}`);
+        if (c.ctx.actorIsCollaborator === true && a.kind === 'user' && a.userId !== U.a) seen.add(`collaborator:${c.cmd.via}`);
+      }
+    }
+    const want = TOUCH_VIAS.flatMap((via) => ['assistant', 'other', 'collaborator', 'owner'].map((who) => `${who}:${via}`));
+    expect(want.filter((x) => !seen.has(x))).toEqual([]);
+  });
 
   it('R-OWN-1: no reachable projection has two owners or an owner outside `owned` (exhaustive small sequences)', () => {
     fc.assert(

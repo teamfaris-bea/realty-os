@@ -267,6 +267,19 @@ describe('scoreFeed: item types and reasons', () => {
     expect(codes(ft)).not.toContain('CANT_CONTACT');
   });
 
+  it('first-touch SLA E311 (owner decision D8): a person whose chat reply is no touch (a Team Lead) answered the chat; the owner’s card still leads with Reply in the chat, never "Can\'t reach them", and the waiting card goes', () => {
+    const unreachable = new Map([[contact(2), { sms: { outcome: 'unavailable' as const, explanation: 'No working phone number' }, voice: { outcome: 'unavailable' as const, explanation: 'No working phone number' }, email: { outcome: 'unavailable' as const, explanation: 'No email address' } }]]);
+    const byTeamLead = touch({ at: t(-min(1) / 2), byUserId: OTHER });
+    const out = scoreFeed(feedInputs({ slas: [sla()], unansweredInbound: [inbound({ contactId: contact(2), channel: 'web_chat', at: t(-min(1)), laterTouches: [byTeamLead] })], blockedChannels: unreachable }));
+    expect(out.map((x) => x.itemType)).toEqual(['first_touch_due']);
+    const ft = out[0] as FeedItem;
+    expect(ft.primaryAction).toEqual({ kind: 'reply_chat', label: 'Reply', contactId: contact(2) });
+    expect(codes(ft)).toEqual(['FIRST_TOUCH_DUE', 'RELEASE_SOON']);
+    // the client's latest message decides, answered or not: a text after the chat asks for a call or a text first
+    const thenTexted = scoreFeed(feedInputs({ slas: [sla()], unansweredInbound: [inbound({ contactId: contact(2), channel: 'web_chat', at: t(-min(2)), laterTouches: [byTeamLead] }), inbound({ id: msg(2), contactId: contact(2), channel: 'sms', at: t(-min(1) / 4), laterTouches: [byTeamLead] })] }));
+    expect(thenTexted.find((x) => x.itemType === 'first_touch_due')?.primaryAction.kind).toBe('call');
+  });
+
   it('client waiting: an email asks for an email reply; over an hour adds urgency', () => {
     const it = one(feedInputs({ unansweredInbound: [inbound({ channel: 'email', at: t(-hours(2)) })] }));
     expect(it.reasons.map((r) => r.code)).toEqual(['CLIENT_WAITING', 'WAITING_OVER_1H']);

@@ -124,7 +124,8 @@ export const RELATIONSHIP_LABEL: Record<string, string> = { spouse_partner: 'Spo
 export const PEOPLE_ERROR_MESSAGES: Record<string, string> = {
   STALE_CONTACT: 'Someone else changed this person a moment ago. Your view was refreshed; try again.',
   FIELD_NOT_EDITABLE: 'That field can’t be changed here.',
-  STAGE_NEEDS_CONTACT: 'Reach them first (call or text), or close the lead.',
+  // R-PAR-14: owner decision D8 made a reply in the website chat first contact too (R-OWN-14)
+  STAGE_NEEDS_CONTACT: 'Reach them first (a call, text, email or reply in their website chat), or close the lead.',
   POINT_EXISTS: 'That number or email is already on this person.',
   POINT_UNCHANGED: 'That is the same number or email.',
   POINT_REMOVED: 'That number or email was already removed.',

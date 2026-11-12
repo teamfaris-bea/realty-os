@@ -21,7 +21,7 @@ describe('Pond', () => {
     const me = { claimsToday: 5, uncontactedOwned: 5, capacityCap: 5 };
     expect(blockedSentence(myPonds().ponds[0]!, me)).toBeNull();
     expect(blockedSentence(myPonds({ blockedBy: 'CLAIM_LIMIT_REACHED' }).ponds[0]!, me)).toBe("You've claimed 5 leads today (from any pond), and this pond lets you claim only until you reach 5 a day. You can claim from it again tomorrow.");
-    expect(blockedSentence(myPonds({ blockedBy: 'CAPACITY_REACHED' }).ponds[0]!, me)).toBe('5 of your leads are still waiting for a first call, text or email (the most is 5). Reach one of them before claiming more.');
+    expect(blockedSentence(myPonds({ blockedBy: 'CAPACITY_REACHED' }).ponds[0]!, me)).toBe('5 of your leads are still waiting for a first call, text, email or chat reply (the most is 5). Reach one of them before claiming more.');
   });
 
   it('the daily count is claims from every pond, so a pond with a lower limit never reads as claimed from', () => {
@@ -36,9 +36,9 @@ describe('Pond', () => {
     const capped = myPonds({ blockedBy: 'CAPACITY_REACHED' }).ponds[0]!;
     // a claim needs fewer waiting leads than the cap (R-OWN-16): 2 waiting with the cap lowered to 1, reaching one
     // still leaves 1, which is not under 1
-    expect(blockedSentence(capped, { claimsToday: 0, uncontactedOwned: 2, capacityCap: 1 })).toBe('2 of your leads are still waiting for a first call, text or email (the most is 1). Reach 2 of them before claiming more.');
-    expect(blockedSentence(capped, { claimsToday: 0, uncontactedOwned: 7, capacityCap: 5 })).toBe('7 of your leads are still waiting for a first call, text or email (the most is 5). Reach 3 of them before claiming more.');
-    expect(blockedSentence(capped, { claimsToday: 0, uncontactedOwned: 1, capacityCap: 1 })).toBe('1 of your leads is still waiting for a first call, text or email (the most is 1). Reach it before claiming more.');
+    expect(blockedSentence(capped, { claimsToday: 0, uncontactedOwned: 2, capacityCap: 1 })).toBe('2 of your leads are still waiting for a first call, text, email or chat reply (the most is 1). Reach 2 of them before claiming more.');
+    expect(blockedSentence(capped, { claimsToday: 0, uncontactedOwned: 7, capacityCap: 5 })).toBe('7 of your leads are still waiting for a first call, text, email or chat reply (the most is 5). Reach 3 of them before claiming more.');
+    expect(blockedSentence(capped, { claimsToday: 0, uncontactedOwned: 1, capacityCap: 1 })).toBe('1 of your leads is still waiting for a first call, text, email or chat reply (the most is 1). Reach it before claiming more.');
   });
 
   it('R-PERM-6: pond cards show only card fields; Claim is one tap; losing the race says so', async () => {

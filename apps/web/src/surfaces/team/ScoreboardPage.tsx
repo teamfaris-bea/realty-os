@@ -102,7 +102,7 @@ function TeamBoard({ range }: { range: RangeKey }) {
           </div>
         </>
       ) : null}
-      <p className="text-[14px] text-ink-muted">Touches count calls, texts and emails people sent themselves. Messages the assistant sent never count here.</p>
+      <p className="text-[14px] text-ink-muted">Touches count calls, texts, emails and chat replies people sent themselves. Messages the assistant sent never count here.</p>
     </Section>
   );
 }
@@ -118,7 +118,7 @@ function OwnBoard({ range }: { range: RangeKey }) {
       {q.isPending ? <p className="text-[15px] text-ink-muted">Loading</p> : null}
       {q.isError ? <Notice tone="error">{messageFor(q.error, ADMIN_MESSAGES)}</Notice> : null}
       {q.data ? <BoardCard board={q.data.scoreboard} /> : null}
-      <p className="text-[14px] text-ink-muted">Touches count calls, texts and emails you sent yourself. Messages the assistant sent never count here.</p>
+      <p className="text-[14px] text-ink-muted">Touches count calls, texts, emails and chat replies you sent yourself. Messages the assistant sent never count here.</p>
     </Section>
   );
 }

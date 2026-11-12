@@ -33,6 +33,7 @@ import {
   REASON_CODE_RE,
   type RotationCursor,
   type RoutingSnapshot,
+  TOUCH_VIAS,
   type TimerJobFence,
 } from '../types.js';
 
@@ -201,7 +202,10 @@ export class World {
       case 14: {
         const owner = st.ownerUserId ?? who;
         const actor = s.flag % 6 === 0 ? this.system('assistant') : this.actorFor(s.flag % 4 === 0 ? who : owner);
-        return { cmd: { kind: 'touch', via: (['call', 'sms', 'email'] as const)[s.flag % 3] as 'sms', refId: `ref-${s.flag}`, at: this.now }, ctx: this.ctx(actor, { actorIsCollaborator: s.flag % 5 === 0 }) };
+        // the kind and the collaborator fact are drawn from flag + who, not from flag alone like the actor, so every kind
+        // (the chat reply included, owner decision D8) meets the assistant, a non-owner, a collaborator and the owner
+        const k = s.flag + s.who;
+        return { cmd: { kind: 'touch', via: TOUCH_VIAS[k % TOUCH_VIAS.length] ?? 'sms', refId: `ref-${s.flag}`, at: this.now }, ctx: this.ctx(actor, { actorIsCollaborator: k % 5 === 0 }) };
       }
       case 15:
         return {

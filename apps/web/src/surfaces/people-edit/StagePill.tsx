@@ -1,9 +1,11 @@
 // Stage pill (PARITY_PLAN §5 "Change stage": pill → stage = 2 taps, toast with Undo). The eight stages show
 // with the team's labels. Stages an agent cannot pick yet (R-PAR-14: a routed lead nobody has reached) are
-// shown locked BEFORE the tap, with why and what to do instead ("Reach them first: Call · Text · Close"),
+// shown locked BEFORE the tap, with why and what to do instead ("Reach them first: Call · Text · Close", with Reply
+// in chat first while the lead's website chat is open: owner decision D8 made a chat reply first contact, R-OWN-14),
 // never failing after it.
 import { useId, useState } from 'react';
 import { Button, Dialog, Notice } from '../../design/index.js';
+import { useReachability } from '../../reasons/index.js';
 import { type Details, STAGE_KEYS, stageLabelOf } from './api.js';
 import { usePersonAction, useToast } from './hooks.js';
 
@@ -28,7 +30,7 @@ export function automationText(a: StageAutomation): string {
   return `${a.plan} didn't start: ${SKIP_WORDS[a.skipped] ?? 'it could not start'}`;
 }
 
-export function StagePill({ contactId, name, details, onCall, onText }: { contactId: string; name: string; details: Details; onCall: () => void; onText: () => void }) {
+export function StagePill({ contactId, name, details, onCall, onText, onReplyChat }: { contactId: string; name: string; details: Details; onCall: () => void; onText: () => void; onReplyChat: () => void }) {
   const [open, setOpen] = useState(false);
   const act = usePersonAction<{ stage: { stage: string; label: string }; previousStage: string; automation?: StageAutomation }>(contactId);
   const toast = useToast();
@@ -36,6 +38,10 @@ export function StagePill({ contactId, name, details, onCall, onText }: { contac
   const labels = details.stageLabels;
   const current = details.stage.stage;
   const locked = new Set(details.stage.locked);
+  // a reply in the open website chat is first contact (owner decision D8) and opens the stages; a chat that ended, was
+  // turned off or is blocked takes no reply (E312), so it is not offered. Asked only for a lead with locked stages.
+  const chat = useReachability(locked.size > 0 ? contactId : null)?.channels.web_chat;
+  const chatOpen = chat?.session?.open === true && !chat.blocked;
 
   const move = async (to: string) => {
     const r = await act.run('POST', `/contacts/${contactId}/stage`, { stage: to });
@@ -69,9 +75,10 @@ export function StagePill({ contactId, name, details, onCall, onText }: { contac
           {locked.size > 0 ? (
             <div id={lockedId} className="mb-3 flex flex-col gap-2 rounded-xl bg-warn-soft px-3 py-2 text-[15px] text-ink">
               <p>
-                <span className="font-semibold">Reach them first.</span> {name} is a new lead nobody has reached yet, so the locked stages open once you call or text (or close the lead if it is not a real lead).
+                <span className="font-semibold">Reach them first.</span> {name} is a new lead nobody has reached yet, so the locked stages open once you reach them: a call, text, email or reply in their website chat (or close the lead if it is not a real lead).
               </p>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
+                {chatOpen ? <Button variant="secondary" icon="message" onClick={() => { setOpen(false); onReplyChat(); }}>Reply in chat</Button> : null}
                 <Button variant="secondary" icon="phone" onClick={() => { setOpen(false); onCall(); }}>Call</Button>
                 <Button variant="secondary" icon="message" onClick={() => { setOpen(false); onText(); }}>Text</Button>
               </div>

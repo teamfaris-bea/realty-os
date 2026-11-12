@@ -14,7 +14,8 @@
 //
 // Imported history never raises an exception (R-IMPORT-6), and only a human touch satisfies the
 // first-touch SLA (R-AST-15): `SlaFacts.firstTouchAt` is the ledger's first_touch_recorded, which
-// only a gate-allowed human outbound writes (R-OWN-14).
+// only a gate-allowed human outbound writes (R-OWN-14: a call, text, email or reply in the website chat,
+// owner decision D8).
 //
 // R-MKT-8: an open-house invite recipient blocked at send time (an opt-out) is counted on the send itself
 // ("Sent 41 of 45; 4 opted out"), so a message carrying `marketingPieceId` never raises failed_send.
@@ -43,6 +44,10 @@ import type {
  * 3: an untouched_lead period's first-touch window also ends when a re-inquiry starts a new period of
  *    the same owner (R-OWN-20, E68): a touch in the later period no longer marks the earlier miss
  *    "fixed late", and a period superseded before its deadline is no item.
+ * Owner decision D8 (2026-11-12) changed no definition here: a reply in the website chat became a touch where
+ * touches are written (R-OWN-14, dispatch TX1), and the untouched_lead evidence now names it among the touch kinds
+ * and says whose touch is missing ("call, text, email or chat reply from the agent or a collaborator"). A stored item
+ * gets the new words when a recompute next reaches it (DATA_MODEL R-ACC-2 says when those words need a check first).
  */
 export const EXCEPTION_RULE_VERSION = 3;
 
@@ -74,11 +79,14 @@ export function untouchedLead(s: SlaFacts, now: Instant): DerivedException {
     return { kind: 'clear', key };
   }
   const late = s.firstTouchAt !== null;
+  // The touch kinds and who makes one are R-OWN-14's (owner decision D8 added the chat reply): the agent of the period
+  // or a collaborator. Someone else may have replied (a Team Lead in the chat, E311), which is no touch, so the words
+  // say whose touch is missing rather than that nobody replied.
   const explanation = late
-    ? 'First human call, text or email came after the first-contact deadline'
+    ? 'First human call, text, email or chat reply from the agent or a collaborator came after the first-contact deadline'
     : s.periodEndedAt !== null
-      ? 'No human call, text or email by the first-contact deadline; the lead later left this agent'
-      : 'No human call, text or email by the first-contact deadline';
+      ? 'No human call, text, email or chat reply from the agent or a collaborator by the first-contact deadline; the lead later left this agent'
+      : 'No human call, text, email or chat reply from the agent or a collaborator by the first-contact deadline';
   const evidence: ExceptionEvidence[] = [
     { sourceType: 'ownership_period', sourceId: s.contactId, explanation, at: due },
     { sourceType: 'ownership_period', sourceId: s.contactId, explanation: 'Lead became theirs', at: s.ownedAt },

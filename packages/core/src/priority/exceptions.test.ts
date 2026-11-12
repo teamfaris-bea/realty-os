@@ -52,7 +52,7 @@ describe('R-ACC-2 untouched_lead', () => {
       ruleVersion: EXCEPTION_RULE_VERSION,
       dedupeKey: `untouched:${contact(2)}:4`,
     });
-    expect(s.evidence.map((e) => e.explanation)).toEqual(['No human call, text or email by the first-contact deadline', 'Lead became theirs']);
+    expect(s.evidence.map((e) => e.explanation)).toEqual(['No human call, text, email or chat reply from the agent or a collaborator by the first-contact deadline', 'Lead became theirs']);
   });
 
   it('R-ACC-2: not yet due, touched in time, or ended before the deadline (the lead left, or a re-inquiry started a new period) is not an exception', () => {
@@ -77,16 +77,27 @@ describe('R-ACC-2 untouched_lead', () => {
     const s = only(exceptionInputs({ ownedWithSla: [sla({ firstTouchDueAt: t(-min(40)), periodEndedAt: t(-min(10)) })] }));
     expect(s.conditionClearedAt).toBeNull();
     expect(s.ownerUserId).toBe(ME);
-    expect(s.evidence[0]?.explanation).toBe('No human call, text or email by the first-contact deadline; the lead later left this agent');
+    expect(s.evidence[0]?.explanation).toBe('No human call, text, email or chat reply from the agent or a collaborator by the first-contact deadline; the lead later left this agent');
   });
 
   it('R-ACC-1: a late first touch is "fixed late": the item exists, cleared at the touch instant', () => {
     const s = only(exceptionInputs({ ownedWithSla: [sla({ firstTouchDueAt: t(-min(10)), firstTouchAt: t(-min(4)) })] }));
     expect(s.conditionClearedAt).toBe(t(-min(4)));
     expect(s.evidence.map((e) => e.explanation)).toEqual([
-      'First human call, text or email came after the first-contact deadline',
+      'First human call, text, email or chat reply from the agent or a collaborator came after the first-contact deadline',
       'Lead became theirs',
       'First human contact',
+    ]);
+  });
+
+  it('R-ACC-2 E310 E311: the evidence names every kind of human touch, a reply in the website chat included (owner decision D8), and whose touch is missing: the agent’s or a collaborator’s (a Team Lead may have replied, which is no touch)', () => {
+    const missed = only(exceptionInputs({ ownedWithSla: [sla({ firstTouchDueAt: due })] }));
+    const left = only(exceptionInputs({ ownedWithSla: [sla({ firstTouchDueAt: due, periodEndedAt: t(-min(1) / 2) })] }));
+    const late = only(exceptionInputs({ ownedWithSla: [sla({ firstTouchDueAt: t(-min(10)), firstTouchAt: t(-min(4)) })] }));
+    expect([missed, left, late].map((s) => s.evidence[0]?.explanation)).toEqual([
+      'No human call, text, email or chat reply from the agent or a collaborator by the first-contact deadline',
+      'No human call, text, email or chat reply from the agent or a collaborator by the first-contact deadline; the lead later left this agent',
+      'First human call, text, email or chat reply from the agent or a collaborator came after the first-contact deadline',
     ]);
   });
 
@@ -110,9 +121,9 @@ describe('R-ACC-2 untouched_lead', () => {
     // the input's first touch is the period's own (none here); a touch in the re-inquiry period is that period's
     const s = only(exceptionInputs({ ownedWithSla: [sla({ firstTouchDueAt: t(-hours(8 * 24)), nextPeriodAt: t(-min(30)) })] }));
     expect(s.conditionClearedAt).toBeNull();
-    expect(s.evidence.map((e) => e.explanation)).toEqual(['No human call, text or email by the first-contact deadline', 'Lead became theirs']);
+    expect(s.evidence.map((e) => e.explanation)).toEqual(['No human call, text, email or chat reply from the agent or a collaborator by the first-contact deadline', 'Lead became theirs']);
     const left = only(exceptionInputs({ ownedWithSla: [sla({ firstTouchDueAt: t(-hours(8 * 24)), nextPeriodAt: t(-min(30)), periodEndedAt: t(-min(5)) })] }));
-    expect(left.evidence[0]?.explanation).toBe('No human call, text or email by the first-contact deadline; the lead later left this agent');
+    expect(left.evidence[0]?.explanation).toBe('No human call, text, email or chat reply from the agent or a collaborator by the first-contact deadline; the lead later left this agent');
   });
 
   // Batch 6 review ownership-sla/F2 and F5. A stored item that the current rules make no item at all (rule 3: a period a

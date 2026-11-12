@@ -48,8 +48,9 @@ export function speedToLeadSummary(rows: readonly SpeedRow[], opts: { now?: Inst
 }
 
 /**
- * Scoreboard touches: gate-allowed human outbound calls, texts and emails only. Assistant, system
- * and imported messages never count (R-AST-15, R-IMPORT-6); answered inbound calls are not touches.
+ * Scoreboard touches: gate-allowed human outbound calls, texts, emails and website-chat replies only (a chat
+ * reply is a message, counted with the texts and emails; owner decision D8 made it a touch, R-OWN-14). Assistant,
+ * system and imported messages never count (R-AST-15, R-IMPORT-6); answered inbound calls are not touches.
  */
 export function countTouches(rows: readonly TouchFacts[]): TouchCounts {
   let calls = 0;
