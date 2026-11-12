@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import type { Instant, TenantId } from '@realty/core/foundation';
 import { withTenantTx } from '@realty/db';
 import type { ApiHarness, TestClient } from '../auth/testHarness.js';
+import { type AvmRefreshResult, avmRefresh } from './avm.js';
 import { approvedPlaybook } from '../assistant/testing.js';
 import { makeAssistantHandlers } from '../assistant/handlers.js';
 import { type CommsWorld, call, commsWorld } from '../comms/testing.js';
@@ -119,3 +120,77 @@ export async function closedDeal(h: ApiHarness, tenantId: string, contactId: str
 }
 
 export const ATTEST = 'I reviewed these alerts and approve them.';
+
+// ---- home values (wave 2C) -------------------------------------------------------------------------------
+
+let homeSeq = 0;
+
+export interface PastClient {
+  id: string;
+  phone: string;
+  email: string;
+  addressId: string;
+  line1: string;
+  postalCode: string;
+  dealId: string;
+}
+
+/** The first instant of the current UTC month minus `days` days (a closing before this UTC month). */
+export function beforeThisMonth(days = 5): Date {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1) - days * 86_400_000);
+}
+
+/**
+ * A past client of `agent`: a contact (phone + email, through the API), a complete home address (POST
+ * /contacts/:id/addresses) and a deal that closed before this UTC month (deals have no close path in these tests).
+ */
+export async function pastClient(h: ApiHarness, w: NurtureWorld, agent: TestClient, o: { postalCode?: string; kind?: 'home' | 'property' | 'mailing'; closedAt?: Date; city?: string | null; role?: 'primary' | 'seller' } = {}): Promise<PastClient> {
+  const { ownedContact } = await import('../comms/testing.js');
+  const c = await ownedContact(agent);
+  homeSeq += 1;
+  const line1 = `${100 + homeSeq} Birch Ln ${randomUUID().slice(0, 4)}`;
+  const postalCode = o.postalCode ?? '29401';
+  const a = await call<{ address: { id: string } }>(agent, 'POST', `/contacts/${c.id}/addresses`, { kind: o.kind ?? 'home', line1, city: o.city === undefined ? 'Springfield' : o.city, region: 'SC', postalCode });
+  if (a.status !== 201) throw new Error(`address: ${a.status} ${JSON.stringify(a.body)}`);
+  const dealId = await closedDeal(h, w.tenantId, c.id, agent.userId!, o.closedAt ?? beforeThisMonth());
+  return { ...c, addressId: a.body.address.id, line1, postalCode, dealId };
+}
+
+/** One avm.refresh pass for the tenant, as the handler runs it, on the harness's fake AVM. */
+export async function avmPass(h: ApiHarness, tenantId: string): Promise<AvmRefreshResult> {
+  const deps = depsFromPlatform(h.app.platform);
+  return avmRefresh({ db: h.database, ids: deps.ids, avm: h.providers.integrations.avm }, tenantId);
+}
+
+export interface ValuationView {
+  id: string;
+  status: string;
+  value_cents: string | null;
+  low_cents: string | null;
+  high_cents: string | null;
+  as_of: string | null;
+  display_allowed: boolean;
+  change_from_prior_bps: number | null;
+  provider: string;
+  valued_at: Date;
+}
+
+export async function valuationsOf(h: ApiHarness, addressId: string): Promise<ValuationView[]> {
+  return (await h.su.query<ValuationView>("SELECT id, status, value_cents, low_cents, high_cents, to_char(as_of, 'YYYY-MM-DD') AS as_of, display_allowed, change_from_prior_bps, provider, valued_at FROM home_valuations WHERE contact_address_id = $1 ORDER BY valued_at, id", [addressId])).rows;
+}
+
+/** Vendor calls the fake AVM received for one address. */
+export function avmCallsFor(h: ApiHarness, line1: string): number {
+  return h.providers.integrations.avm.calls.filter((c) => c.line1 === line1).length;
+}
+
+/** Clears platform:avm for the duration of `fn` (counsel review is platform data; restored afterwards). */
+export async function withAvmCleared<T>(h: ApiHarness, fn: () => Promise<T>): Promise<T> {
+  await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = now() WHERE key = 'platform:avm' AND status = 'published'");
+  try {
+    return await fn();
+  } finally {
+    await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL WHERE key = 'platform:avm'");
+  }
+}

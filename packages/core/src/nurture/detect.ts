@@ -85,7 +85,9 @@ function evidenceOf(fact: Fact): EvidenceRef[] {
     case 'home_anniversary':
       return [{ sourceType: 'deal', sourceId: fact.dealId, locator: { kind: 'field', name: 'closed_on' }, snippet: fact.closedOn }];
     case 'home_value':
-      return [];
+      // the claim cites the home_valuations row (R-AVM-1, R-AST-1); the API replaces the snippet with the row's
+      // homeValueText (or "No estimate available.") when it records the firing
+      return [{ sourceType: 'home_valuation', sourceId: fact.valuationId, locator: { kind: 'field', name: 'estimate' }, snippet: `${fact.month} home value estimate` }];
     case 'deal_date_upcoming':
       return [{ sourceType: 'deal', sourceId: fact.dealId, locator: { kind: 'field', name: `deal_date:${fact.dealDateId}` }, snippet: fact.label }];
   }

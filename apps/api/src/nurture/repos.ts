@@ -366,3 +366,141 @@ export async function platformCleared(tx: Tx, key: string): Promise<boolean> {
 
 export type { StoredTriggerRef };
 export { toIso };
+
+// ---- home values (wave 2C: avm.refresh and the home_value firing; R-AVM-1..3) ----------------------------
+
+/** A contact's kind 'home' address as avm.refresh reads it (the snapshot TX2 and the send-time recheck compare). */
+export interface HomeAddressRow {
+  id: string;
+  contactId: string;
+  kind: string;
+  line1: string | null;
+  line2: string | null;
+  city: string | null;
+  region: string | null;
+  postalCode: string | null;
+  country: string;
+  updatedAt: Instant;
+}
+
+type RawAddress = { id: string; contact_id: string; kind: string; line1: string | null; line2: string | null; city: string | null; region: string | null; postal_code: string | null; country: string; updated_at: Date };
+const addressOf = (x: RawAddress): HomeAddressRow => ({ id: x.id, contactId: x.contact_id, kind: x.kind, line1: x.line1, line2: x.line2, city: x.city, region: x.region, postalCode: x.postal_code, country: x.country, updatedAt: instantFromDate(x.updated_at) });
+
+/** The UTC month (`YYYY-MM`) of the DB clock of this statement's transaction (R-NURT-2's avm key month). */
+export async function utcMonthNow(tx: Tx): Promise<string> {
+  const r = await sql<{ m: string }>`SELECT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM') AS m`.execute(tx);
+  return r.rows[0]!.m;
+}
+
+export interface AvmCandidate {
+  address: HomeAddressRow;
+  ownerUserId: string;
+  /** `YYYY-MM`, the UTC month of this transaction's now() */
+  month: string;
+}
+
+/**
+ * avm.refresh TX1 (R-AVM-3): complete kind 'home' addresses of live, owned contacts who are a party of a deal that
+ * closed before the current UTC month (closedDealsOn's party set: primary contact, buyer, seller, co_buyer,
+ * co_seller), with no ok or unavailable valuation and no avm:{address}:{yyyy-mm} firing yet this UTC month. One page
+ * in address id order; the caller applies the playbook and send-time preview checks.
+ */
+export async function avmCandidates(tx: Tx, afterAddressId: string | null, limit: number): Promise<AvmCandidate[]> {
+  const r = await sql<RawAddress & { owner_user_id: string; month: string }>`
+    SELECT a.id, a.contact_id, a.kind, a.line1, a.line2, a.city, a.region, a.postal_code, a.country, a.updated_at, c.owner_user_id,
+           to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM') AS month
+      FROM contact_addresses a
+      JOIN contacts c ON c.tenant_id = a.tenant_id AND c.id = a.contact_id
+     WHERE a.tenant_id = app.tenant_id() AND a.kind = 'home'
+       AND btrim(COALESCE(a.line1, '')) <> '' AND btrim(COALESCE(a.city, '')) <> '' AND btrim(COALESCE(a.region, '')) <> '' AND btrim(COALESCE(a.postal_code, '')) <> ''
+       AND c.deleted_at IS NULL AND c.merged_into_contact_id IS NULL AND c.owner_user_id IS NOT NULL
+       AND EXISTS (SELECT 1 FROM deals d
+                    WHERE d.tenant_id = c.tenant_id AND d.stage = 'closed' AND d.closed_at IS NOT NULL
+                      AND d.closed_at < (date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')
+                      AND (d.primary_contact_id = c.id OR EXISTS (SELECT 1 FROM deal_contacts dc WHERE dc.tenant_id = d.tenant_id AND dc.deal_id = d.id
+                                                                    AND dc.contact_id = c.id AND dc.role IN ('buyer','seller','co_buyer','co_seller'))))
+       AND NOT EXISTS (SELECT 1 FROM home_valuations v
+                        WHERE v.tenant_id = a.tenant_id AND v.contact_address_id = a.id AND v.status IN ('ok','unavailable')
+                          AND date_trunc('month', v.valued_at AT TIME ZONE 'UTC') = date_trunc('month', now() AT TIME ZONE 'UTC'))
+       AND NOT EXISTS (SELECT 1 FROM playbook_step_runs r
+                        WHERE r.tenant_id = a.tenant_id AND r.trigger_key = 'avm:' || a.id::text || ':' || to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM'))
+       AND (${afterAddressId}::uuid IS NULL OR a.id > ${afterAddressId}::uuid)
+     ORDER BY a.id LIMIT ${limit}`.execute(tx);
+  return r.rows.map((x) => ({ address: addressOf(x), ownerUserId: x.owner_user_id, month: x.month }));
+}
+
+export async function addressById(tx: Tx, id: string): Promise<HomeAddressRow | null> {
+  const r = await sql<RawAddress>`
+    SELECT id, contact_id, kind, line1, line2, city, region, postal_code, country, updated_at FROM contact_addresses
+     WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx);
+  return r.rows[0] ? addressOf(r.rows[0]) : null;
+}
+
+/** Whether an ok or unavailable answer, or the avm firing, already exists for the address and UTC month (R-AVM-3). */
+export async function avmRecordedThisMonth(tx: Tx, addressId: string, month: string): Promise<boolean> {
+  const r = await sql<{ x: boolean }>`
+    SELECT EXISTS (SELECT 1 FROM home_valuations v WHERE v.tenant_id = app.tenant_id() AND v.contact_address_id = ${addressId} AND v.status IN ('ok','unavailable')
+                     AND to_char(v.valued_at AT TIME ZONE 'UTC', 'YYYY-MM') = ${month})
+        OR EXISTS (SELECT 1 FROM playbook_step_runs r WHERE r.tenant_id = app.tenant_id() AND r.trigger_key = ${`avm:${addressId}:${month}`}) AS x`.execute(tx);
+  return r.rows[0]?.x === true;
+}
+
+export interface ValuationRow {
+  id: string;
+  contactId: string;
+  contactAddressId: string | null;
+  status: 'ok' | 'unavailable' | 'error';
+  valueCents: number | null;
+  lowCents: number | null;
+  highCents: number | null;
+  /** `YYYY-MM-DD` */
+  asOf: string | null;
+  displayAllowed: boolean;
+  provider: string;
+  valuedAt: Instant;
+  /** `YYYY-MM`, the UTC month of valued_at */
+  month: string;
+  changeFromPriorBps: number | null;
+}
+
+type RawValuation = { id: string; contact_id: string; contact_address_id: string | null; status: ValuationRow['status']; value_cents: string | null; low_cents: string | null; high_cents: string | null; as_of: string | null; display_allowed: boolean; provider: string; valued_at: Date; month: string; change_from_prior_bps: number | null };
+const VAL_COLS = sql`v.id, v.contact_id, v.contact_address_id, v.status, v.value_cents, v.low_cents, v.high_cents, to_char(v.as_of, 'YYYY-MM-DD') AS as_of, v.display_allowed, v.provider, v.valued_at,
+                     to_char(v.valued_at AT TIME ZONE 'UTC', 'YYYY-MM') AS month, v.change_from_prior_bps`;
+const num = (x: string | null): number | null => (x === null ? null : Number(x));
+const valuationOf = (x: RawValuation): ValuationRow => ({ id: x.id, contactId: x.contact_id, contactAddressId: x.contact_address_id, status: x.status, valueCents: num(x.value_cents), lowCents: num(x.low_cents), highCents: num(x.high_cents), asOf: x.as_of, displayAllowed: x.display_allowed, provider: x.provider, valuedAt: instantFromDate(x.valued_at), month: x.month, changeFromPriorBps: x.change_from_prior_bps });
+
+export async function valuationById(tx: Tx, id: string): Promise<ValuationRow | null> {
+  const r = await sql<RawValuation>`SELECT ${VAL_COLS} FROM home_valuations v WHERE v.tenant_id = app.tenant_id() AND v.id = ${id}`.execute(tx);
+  return r.rows[0] ? valuationOf(r.rows[0]) : null;
+}
+
+/** The latest ok valuation of the address recorded before `before` (other than `exceptId`): the prior estimate. */
+export async function priorOkValuation(tx: Tx, addressId: string, before: Instant | null, exceptId: string | null): Promise<ValuationRow | null> {
+  const r = await sql<RawValuation>`
+    SELECT ${VAL_COLS} FROM home_valuations v
+     WHERE v.tenant_id = app.tenant_id() AND v.contact_address_id = ${addressId} AND v.status = 'ok'
+       AND (${before === null ? null : iso(before)}::timestamptz IS NULL OR v.valued_at < ${before === null ? null : iso(before)}::timestamptz)
+       AND (${exceptId}::uuid IS NULL OR v.id <> ${exceptId}::uuid)
+     ORDER BY v.valued_at DESC, v.id DESC LIMIT 1`.execute(tx);
+  return r.rows[0] ? valuationOf(r.rows[0]) : null;
+}
+
+/** Inserts one answer; valued_at is this transaction's DB clock (now()), never the vendor's as_of. */
+export async function insertValuation(tx: Tx, v: { id: string; contactId: string; contactAddressId: string; status: 'ok' | 'unavailable'; valueCents: number | null; lowCents: number | null; highCents: number | null; asOf: string | null; displayAllowed: boolean; provider: string; providerRef: string | null; changeFromPriorBps: number | null }): Promise<Instant> {
+  const r = await sql<{ valued_at: Date }>`
+    INSERT INTO home_valuations (tenant_id, id, contact_id, contact_address_id, provider, value_cents, low_cents, high_cents, valued_at, provider_ref, status, as_of, display_allowed, change_from_prior_bps)
+    VALUES (app.tenant_id(), ${v.id}, ${v.contactId}, ${v.contactAddressId}, ${v.provider}, ${v.valueCents}, ${v.lowCents}, ${v.highCents}, now(), ${v.providerRef},
+            ${v.status}, ${v.asOf}::date, ${v.displayAllowed}, ${v.changeFromPriorBps})
+    RETURNING valued_at`.execute(tx);
+  return instantFromDate(r.rows[0]!.valued_at);
+}
+
+/** The limits a home-value note is judged by (R-AVM-2): the tenant's range limit and platform:avm's max age. */
+export async function avmLimits(tx: Tx): Promise<{ maxRangeBps: number; maxAgeDays: number | null }> {
+  const r = await sql<{ bps: number | null; age: string | null }>`
+    SELECT (SELECT avm_max_range_bps FROM tenant_settings WHERE tenant_id = app.tenant_id()) AS bps,
+           (SELECT rules->>'max_age_days' FROM jurisdiction_packs WHERE key = 'platform:avm' AND status = 'published') AS age`.execute(tx);
+  const age = r.rows[0]?.age;
+  const n = age === null || age === undefined ? NaN : Number(age);
+  return { maxRangeBps: r.rows[0]?.bps ?? 2500, maxAgeDays: Number.isInteger(n) && n >= 0 ? n : null };
+}

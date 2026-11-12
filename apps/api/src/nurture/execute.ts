@@ -39,7 +39,7 @@ import {
 } from '@realty/core/assistant';
 import type { ActionCategory } from '@realty/core/compliance';
 import type { AssistantClaimId, ContactId, IanaZone, Instant } from '@realty/core/foundation';
-import { type FactState, type Firing, alertItemLine, planBatch, planTriggerRun } from '@realty/core/nurture';
+import { type AvmDecision, type AvmEstimate, DEFAULT_AVM_JUMP_BPS, DEFAULT_AVM_MAX_AGE_DAYS, type FactState, type Firing, type SkipReason, alertItemLine, avmSendable, homeValueText, planBatch, planTriggerRun } from '@realty/core/nurture';
 import { type Tx, lockContact } from '@realty/db';
 import { sql } from 'kysely';
 import * as A from '../assistant/repos/actions.js';
@@ -48,7 +48,9 @@ import { EMAIL_UNSUBSCRIBE_LINE, firstInThread } from '../assistant/steps.js';
 import { queueOutboundInTx } from '../comms/index.js';
 import { resolvedPolicy } from '../comms/gateInput.js';
 import { LISTING_COLS, type ListingRow, type MlsEligibility, clientView, mlsEligibility } from '../mls/eligibility.js';
+import { addressText, estimateOfRow } from './avm.js';
 import { DIGEST_SUBJECT, type RunSkipReason, apiSkip, decideBatch, digestTemplate, draftExplanation, firingOfRow, literal } from './decide.js';
+import { localToday } from './detect.js';
 import * as R from './repos.js';
 import type { NurtureDeps } from './types.js';
 
@@ -65,6 +67,8 @@ interface Item {
   /** the listing row and its client view (listing firings) */
   listing?: { row: ListingRow; view: ReturnType<typeof clientView> };
   deal?: { address: string; closedAt: Instant | null };
+  /** home_value firings: the cited valuation as core reads it and its R-AVM-1 sentence */
+  avm?: { estimate: AvmEstimate; text: string | null; valuationId: string; prior: AvmEstimate | null };
 }
 
 async function listingRow(tx: Tx, id: string): Promise<ListingRow | null> {
@@ -72,8 +76,8 @@ async function listingRow(tx: Tx, id: string): Promise<ListingRow | null> {
   return r.rows[0] ?? null;
 }
 
-/** The fact as it stands now (R-NURT-4), read under the contact lock. */
-async function currentFact(tx: Tx, f: Firing, e: MlsEligibility): Promise<Pick<Item, 'current' | 'listing' | 'deal'>> {
+/** The fact as it stands now (R-NURT-4), read under the contact lock. `skip`: the firing cannot be what it says. */
+async function currentFact(tx: Tx, f: Firing, e: MlsEligibility): Promise<Pick<Item, 'current' | 'listing' | 'deal' | 'avm'> & { skip?: SkipReason }> {
   const r = f.ref;
   switch (r.kind) {
     case 'price_drop':
@@ -104,8 +108,21 @@ async function currentFact(tx: Tx, f: Firing, e: MlsEligibility): Promise<Pick<I
       if (!x) return { current: { kind: 'gone' } };
       return { current: { kind: 'deal_date', dueVersion: x.due_version, confirmed: x.status === 'confirmed' && x.confirmed_by_user_id !== null, dueAt: x.due_at ? (x.due_at.getTime() as Instant) : null } };
     }
-    case 'home_value':
-      return { current: { kind: 'gone' } }; // wave 2C; apiSkip stops it first (NOT_AVAILABLE_YET)
+    case 'home_value': {
+      // the firing's own valuation: same contact, same address, the month of its key; anything else is a forged or
+      // mismatched firing (another contact's, address's or tenant's row is FACT_MISMATCH, never sent)
+      const v = await R.valuationById(tx, r.valuationId);
+      if (!v || v.contactId !== f.contactId || f.triggerKey !== `avm:${r.contactAddressId}:${r.month}` || v.month !== r.month) return { current: { kind: 'gone' }, skip: 'FACT_MISMATCH' };
+      if (v.contactAddressId !== null && v.contactAddressId !== r.contactAddressId) return { current: { kind: 'gone' }, skip: 'FACT_MISMATCH' };
+      const estimate = estimateOfRow(v);
+      const prior = v.contactAddressId === null ? null : await R.priorOkValuation(tx, v.contactAddressId, v.valuedAt, v.id);
+      const avm = { estimate, text: homeValueText(estimate), valuationId: v.id, prior: prior ? estimateOfRow(prior) : null };
+      // R-NURT-4: the address still belongs to the contact and is unchanged since it was valued (a deleted address
+      // sets contact_address_id to NULL, 0037)
+      const a = v.contactAddressId === null ? null : await R.addressById(tx, v.contactAddressId);
+      const addressCurrent = a !== null && a.contactId === f.contactId && a.kind === 'home' && a.updatedAt <= v.valuedAt && addressText(a) === r.address;
+      return { current: { kind: 'home_value', addressCurrent }, avm };
+    }
   }
 }
 
@@ -144,12 +161,23 @@ function itemText(it: Item, zone: IanaZone): { line: string; slots: SlotValues }
     slots.document_name = literal(r.label);
     slots.due_date = formatDue(r.dueAt, true, zone);
   }
+  // R-AVM-1: a home value's line is the estimate sentence itself (provider, range, as-of, "not an appraisal")
+  if (r.kind === 'home_value' && it.avm?.text) line = `${where}: ${it.avm.text}`;
   return { line, slots };
 }
 
-function sourceLabel(it: Item): { source: 'mls' | 'team' | 'deal'; text: string } {
+/** Where an item's fact comes from, per kind (module 26 owns it for every trigger; routes.ts says the same). */
+export type FactSource = 'mls' | 'team' | 'deal' | 'home_valuation' | 'deal_date';
+function sourceLabel(it: Item): { source: FactSource; text: string } {
   if (it.listing) return it.listing.row.source === 'mls' ? { source: 'mls', text: 'MLS' } : { source: 'team', text: 'team listing' };
-  return { source: 'deal', text: 'closed deal' };
+  switch (it.firing.ref.kind) {
+    case 'home_value':
+      return { source: 'home_valuation', text: 'home value estimate' };
+    case 'deal_date_upcoming':
+      return { source: 'deal_date', text: 'deal date' };
+    default:
+      return { source: 'deal', text: 'closed deal' };
+  }
 }
 
 /** The fact claim of one item: what it says, from where and when (evidence over confidence). */
@@ -159,7 +187,7 @@ function claimOf(deps: Pick<NurtureDeps, 'ids'>, it: Item, ordinal: number, line
   const ev = it.firing.evidence[0];
   const r = it.firing.ref;
   const p = currentPrice(it);
-  const snippet = r.kind === 'price_drop' && p !== null ? `${formatPriceCents(p)} (was ${formatPriceCents(r.oldPriceCents)})` : (ev?.snippet ?? line);
+  const snippet = r.kind === 'price_drop' && p !== null ? `${formatPriceCents(p)} (was ${formatPriceCents(r.oldPriceCents)})` : r.kind === 'home_value' && it.avm?.text ? it.avm.text : (ev?.snippet ?? line);
   return {
     id: deps.ids.next<'AssistantClaimId'>() as AssistantClaimId,
     ordinal,
@@ -197,6 +225,16 @@ export async function executeTriggerRunInTx(tx: Tx, deps: NurtureDeps, tenantId:
     return versions.get(id) ?? null;
   };
   const e = await mlsEligibility(tx, now);
+  // R-AVM-2's limits and clearance, read once per run: the tenant's range limit, the jump limit, platform:avm's
+  // max_age_days (core's 45 only when the pack has none), the tenant's local date and app.platform_cleared
+  let avmCtx: { settings: { maxRangeBps: number; maxJumpBps: number; maxAgeDays: number; today: string }; cleared: boolean } | null = null;
+  const avmDecision = async (a: NonNullable<Item['avm']>): Promise<AvmDecision> => {
+    if (avmCtx === null) {
+      const lim = await R.avmLimits(tx);
+      avmCtx = { settings: { maxRangeBps: lim.maxRangeBps, maxJumpBps: DEFAULT_AVM_JUMP_BPS, maxAgeDays: lim.maxAgeDays ?? DEFAULT_AVM_MAX_AGE_DAYS, today: await localToday(tx, await R.tenantZone(tx), now) }, cleared: await R.platformCleared(tx, 'platform:avm') };
+    }
+    return avmSendable(a.estimate, a.prior, avmCtx.settings, avmCtx.cleared);
+  };
   const skipped: { run: R.RunRow; reason: RunSkipReason }[] = [];
   const items: { item: Item; plan: ReturnType<typeof planTriggerRun> }[] = [];
   for (const run of runs) {
@@ -229,6 +267,10 @@ export async function executeTriggerRunInTx(tx: Tx, deps: NurtureDeps, tenantId:
       continue;
     }
     const cur = await currentFact(tx, f, e);
+    if (cur.skip !== undefined) {
+      skipped.push({ run, reason: cur.skip });
+      continue;
+    }
     const plan = planTriggerRun({
       firing: f,
       current: cur.current,
@@ -238,6 +280,7 @@ export async function executeTriggerRunInTx(tx: Tx, deps: NurtureDeps, tenantId:
       contactOwnerUserId: contact!.ownerUserId,
       paused: false, // the pause is decided once for the whole message (decideBatch)
       guard: { hardBlock: false, fairHousing: false, otherIssues: false }, // the guard runs on the composed text
+      ...(f.trigger === 'home_value' ? { avm: cur.avm ? await avmDecision(cur.avm) : { ok: false, reason: 'UNAVAILABLE' } } : {}),
     });
     if (plan.action === 'skip') skipped.push({ run, reason: plan.reason });
     else items.push({ item: { run, firing: f, ...cur }, plan });
@@ -308,6 +351,9 @@ export async function executeTriggerRunInTx(tx: Tx, deps: NurtureDeps, tenantId:
   // (one home: the approved template has no brokerage slot, so the listing brokerage the pack requires is a note too)
   const broker = kept.length === 1 && kept[0]!.listing?.row.source === 'mls' ? kept[0]!.listing.view?.listingBrokerageName : null;
   const notes = [...new Set([...(broker ? [`Listed by ${broker}.`] : []), ...kept.flatMap((it) => (it.listing?.view && it.listing.row.source === 'mls' ? [it.listing.view.attribution, it.listing.view.disclaimer] : []))].filter((x): x is string => x !== null && x !== undefined).map(literal))];
+  // R-AVM-1: the system adds the estimate sentence after rendering, so every approved wording carries it, before the
+  // content guard and authorizeAutonomousAction read the text (several items: it is on each item's line already)
+  if (kept.length === 1 && kept[0]!.avm?.text) notes.unshift(kept[0]!.avm.text);
   let text = notes.length > 0 ? `${rendered.text}\n${notes.join('\n')}` : rendered.text;
   if (step.channel === 'email' && step.purpose === 'marketing') text = `${text}\n${EMAIL_UNSUBSCRIBE_LINE}`;
   const subject = step.channel === 'email' ? (kept.length === 1 ? (rendered.subject ?? tstep.subject ?? 'A note from your agent') : DIGEST_SUBJECT(kept.length)) : undefined;

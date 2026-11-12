@@ -306,6 +306,7 @@ const WHERE: Record<SourceType, string> = {
   deal: 'on the deal',
   task: 'on a task',
   appointment: 'on the appointment',
+  home_valuation: 'in the home value estimate',
 };
 
 /**

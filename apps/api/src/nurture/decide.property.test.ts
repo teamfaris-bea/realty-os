@@ -132,7 +132,7 @@ describe('digest and stored firings (property)', () => {
     expect(apiSkip({ ...base, content: null })).toBe('STEP_REMOVED');
     expect(apiSkip({ ...base, content: { ...content, triggers: [{ ...content.triggers[0]!, stepKey: 'other' }] } })).toBe('STEP_REMOVED');
     expect(apiSkip({ ...base, stillFollowed: false })).toBe('NO_LONGER_FOLLOWED');
-    expect(apiSkip({ ...base, firing: { ...f, trigger: 'home_value', ref: { kind: 'home_value', contactAddressId: 'a', month: '2026-11', valuationId: 'v', address: 'x' } }, content: { ...content, triggers: [{ ...content.triggers[0]!, trigger: 'home_value' }] } })).toBe('NOT_AVAILABLE_YET');
+    expect(apiSkip({ ...base, firing: { ...f, trigger: 'home_value', ref: { kind: 'home_value', contactAddressId: 'a', month: '2026-11', valuationId: 'v', address: 'x' } }, content: { ...content, triggers: [{ ...content.triggers[0]!, trigger: 'home_value' }] } })).toBeNull(); // wave 2C: home values fire
   });
 
   it('R-NURT-7 R-NURT-4 (core, as wired here): an agent playbook never fires for a contact another agent owns, and planBatch drops only the items whose fact no longer holds', () => {

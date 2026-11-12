@@ -6,16 +6,20 @@
 //   nurture.anniversary_scan  per tenant, hourly, tx: yearly home anniversaries (a no-op after the first run of
 //                             a local day: the firing key anniversary:{deal}:{yyyy}:{contact})
 //   nurture.listing_changed   default, tx: a team listing's price-history row or status change → firings
+//   avm.refresh               per tenant, daily, standalone (like mls.sync): the due home addresses' monthly
+//                             estimates from the platform's AVM vendor (called outside any transaction), one
+//                             home_valuations row and one avm:{address}:{yyyy-mm} firing each (avm.ts)
 // Nothing here sends: messages are queued for comms.dispatch, which gates them at send time.
 import { z } from 'zod';
 import { commsRuntime } from '../comms/runtime.js';
 import type { Providers } from '../providers/index.js';
 import { jobPayload, zId, zToken } from '../worker/payload.js';
-import type { JobHandler, TxJobHandler } from '../worker/types.js';
+import type { JobHandler, StandaloneJobHandler, TxJobHandler } from '../worker/types.js';
+import { avmRefresh } from './avm.js';
 import { anniversaryScanInTx, recordListingChangeInTx } from './detect.js';
 import { executeTriggerRunInTx } from './execute.js';
 import { reconcileTriggersInTx } from './reconcile.js';
-import { ANNIVERSARY_SCAN_EVERY_MS, NURTURE_JOBS, type NurtureDeps, TRIGGER_RECONCILE_EVERY_MS } from './types.js';
+import { ANNIVERSARY_SCAN_EVERY_MS, AVM_REFRESH_EVERY_MS, NURTURE_JOBS, type NurtureDeps, TRIGGER_RECONCILE_EVERY_MS } from './types.js';
 
 type DepsFor = (providers: Providers) => NurtureDeps;
 const defaultDeps: DepsFor = (providers) => ({ ...commsRuntime(), providers });
@@ -70,7 +74,22 @@ export function makeNurtureHandlers(depsFor: DepsFor = defaultDeps): JobHandler<
       if (n > 0) ctx.log.info('nurture.listing_changed', { jobId: ctx.job.id.toString(), fired: n });
     },
   };
-  return [reconcile, step, anniversaries, listingChanged] as unknown as JobHandler<unknown>[];
+  const avm: StandaloneJobHandler<z.infer<typeof Empty>> = {
+    kind: NURTURE_JOBS.avmRefresh,
+    queue: 'default',
+    mode: 'standalone',
+    via: 'provider',
+    schema: Empty,
+    every: { ms: AVM_REFRESH_EVERY_MS, offsetMs: 3 * 60 * 60_000 + 11 * 60_000 },
+    periodicPayload: {},
+    maxAttempts: 3,
+    async run(ctx) {
+      const d = depsFor(ctx.providers);
+      const r = await avmRefresh({ db: d.db, ids: d.ids, avm: ctx.providers.integrations.avm }, ctx.actor.tenantId, ctx.log);
+      if (r.requested > 0) ctx.log.info('avm.refresh', { jobId: ctx.job.id.toString(), requested: r.requested, recorded: r.recorded, fired: r.fired, failed: r.failed });
+    },
+  };
+  return [reconcile, step, anniversaries, listingChanged, avm] as unknown as JobHandler<unknown>[];
 }
 
 /** Everything api/nurture registers with the worker (CONVENTIONS §3). */

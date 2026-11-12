@@ -83,8 +83,8 @@ export function storedRefOf(f: Firing): StoredTriggerRef {
   return { v: 1, trigger: f.trigger, playbookId: f.playbookId, firedAt: f.scheduledFor, ref: f.ref, evidence: f.evidence };
 }
 
-/** Trigger kinds that can fire in wave 2A (home values are wave 2C; deal dates fire from module 31). */
-export const FIRES_IN_THIS_RELEASE: ReadonlySet<TriggerKind> = new Set<TriggerKind>(['price_drop', 'back_on_market', 'home_anniversary', 'deal_date_upcoming']);
+/** Trigger kinds that can fire (home values from wave 2C's avm.refresh; deal dates fire from module 31). */
+export const FIRES_IN_THIS_RELEASE: ReadonlySet<TriggerKind> = new Set<TriggerKind>(['price_drop', 'back_on_market', 'home_anniversary', 'home_value', 'deal_date_upcoming']);
 
 /**
  * The API-level checks before core's planTriggerRun: the contact is a live record (not merged away, not
@@ -140,13 +140,27 @@ export function decideBatch(i: {
 export function draftExplanation(d: Extract<BatchDecision, { action: 'draft' }>, downgradeText: string | null): string {
   if (d.reasons.includes('PAUSED')) return 'They replied, so automatic alerts are paused. This alert waits for you: send it, edit it or dismiss it.';
   if (d.checkThis) return 'Check this: the wording may raise a fair-housing concern, so it was not sent on its own.';
+  // home values (R-AVM-2): the failed check in plain words
+  if (d.reasons.includes('AVM_NOT_CLEARED')) return 'Home-value notes wait for counsel review, so this one was not sent on its own. Check it, then send it, edit it or dismiss it.';
+  if (d.reasons.includes('AVM_JUMP_TOO_LARGE')) return 'The estimate moved a lot since last month, so this note was not sent on its own. Check it before it goes out.';
+  if (d.reasons.includes('AVM_RANGE_TOO_WIDE')) return 'The estimate’s range is wider than your team’s limit, so this note was not sent on its own. Check it before it goes out.';
   if (downgradeText !== null) return downgradeText;
   return 'This alert needs a quick check before it goes out.';
 }
 
-/** Strips template markers from data we did not write (MLS addresses, licence notes) before composing. */
+/**
+ * Strips template markers, line breaks, other control characters and bidi controls from data we did not write
+ * (MLS addresses, licence notes, AVM vendor strings) before composing.
+ */
 export function literal(s: string): string {
-  return s.replace(/\{\{|\}\}/g, '').replace(/[\r\n\t]+/g, ' ').trim();
+  // line breaks become spaces, other control and bidi characters go, then template markers (until none re-forms)
+  // eslint-disable-next-line no-control-regex
+  let out = s.replace(/[\r\n\t\u2028\u2029]+/g, ' ').replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '');
+  for (let prev = ''; prev !== out; ) {
+    prev = out;
+    out = out.replace(/\{\{|\}\}/g, '');
+  }
+  return out.trim();
 }
 
 /**
