@@ -11,7 +11,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { sql } from 'kysely';
-import { adminTx, platformOf } from '../admin/common.js';
+import { actorOf, adminTx, platformOf } from '../admin/common.js';
 import { authorize } from '../rbac.js';
 import type { RouteModule } from '../routes.js';
 import * as R from './repos/gbp.js';
@@ -19,7 +19,6 @@ import * as S from './schemas.js';
 import { type ReplyDeps, discardReply, draftReply, listReviews, postReply } from './replies.js';
 import { gbpStatus } from './status.js';
 import type { Platform } from '../server.js';
-import { actorOf } from '../leads/common.js';
 
 const replyDepsOf = (p: Platform): ReplyDeps => ({ db: p.db, envelope: p.envelope, ids: p.ids, ai: p.providers.ai, gbp: p.providers.gbp });
 
