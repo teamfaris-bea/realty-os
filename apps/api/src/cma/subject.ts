@@ -18,7 +18,7 @@
 // is 404).
 import type { Tx } from '@realty/db';
 import { AppError } from '../errors.js';
-import { CMA_SUPPORTED_TYPES, type CmaPropertyType, type CmaSubject, type ListingRow, addressKey, factsOfRow, mlsRowsAtAddress, uspsCode } from './deps.js';
+import { CMA_SUPPORTED_TYPES, CmaSubjectSchema, type CmaPropertyType, type CmaSubject, type ListingRow, addressKey, factsOfRow, mlsRowsAtAddress, uspsCode } from './deps.js';
 import { type AddressRow, addressOf, listingRow, mirrorsOf } from './repos.js';
 import type { CmaSubjectFacts } from './schemas.js';
 
@@ -84,6 +84,8 @@ export interface ResolvedSubject {
   facts: SubjectFacts;
   sizeSource: string | null;
   sizeSentence: string;
+  /** stored facts left out because they are outside what the valuation reads, each said in one sentence */
+  factSentences: string[];
   saleHistory: SaleHistoryEntry[];
   /** listing ids and MLS numbers that are the subject itself (never comps): its listing and mirrors first, then records at its key */
   selfListingIds: string[];
@@ -100,6 +102,63 @@ export const SUPPORTED_TYPES: readonly CmaPropertyType[] = CMA_SUPPORTED_TYPES;
 const none = <T>(): Fact<T> => ({ value: null, source: null });
 const of = <T>(v: T | null | undefined, source: FactSource): Fact<T> => (v === null || v === undefined ? none<T>() : { value: v, source });
 const pick = <T>(...xs: Fact<T>[]): Fact<T> => xs.find((x) => x.value !== null) ?? none<T>();
+
+/** V1-B's strict subject schema, field by field: what the engine reads. */
+const ENGINE_FIELD = CmaSubjectSchema.shape as unknown as Record<keyof CmaSubject, { safeParse(v: unknown): { success: boolean } }>;
+const readable = (field: keyof CmaSubject, v: unknown) => ENGINE_FIELD[field].safeParse(v).success;
+
+/** The stored facts the engine bounds (V1-A stores wider values: SMALLINT/INTEGER/bigint columns and unbounded text). */
+const BOUNDED_FACTS: readonly { fact: 'sqft' | 'beds' | 'bathsX10' | 'yearBuilt' | 'lotSqft' | 'garageSpacesX10' | 'storiesX10' | 'subdivision'; field: keyof CmaSubject; words: string }[] = [
+  { fact: 'sqft', field: 'sqft', words: 'size' },
+  { fact: 'beds', field: 'beds', words: 'bedroom count' },
+  { fact: 'bathsX10', field: 'bathsX10', words: 'bathroom count' },
+  { fact: 'yearBuilt', field: 'yearBuilt', words: 'year built' },
+  { fact: 'lotSqft', field: 'lotSqft', words: 'lot size' },
+  { fact: 'garageSpacesX10', field: 'garageSpacesX10', words: 'garage spaces' },
+  { fact: 'storiesX10', field: 'storiesX10', words: 'number of stories' },
+  { fact: 'subdivision', field: 'subdivisionName', words: 'subdivision name' },
+];
+const WHOSE: Readonly<Record<FactSource, string>> = { mls: 'MLS record’s', team: 'team listing’s', agent: 'entered' };
+
+/**
+ * V1-B's strict subject bounds (R-CMA-2): a stored fact outside them would make the engine throw, so it is left out
+ * and said, as a comp's record would be. The agent can enter a bounded value (CmaSubjectFactsSchema fits the engine).
+ * A size left out leaves the subject without one: the caller asks for it (CMA_SUBJECT_INCOMPLETE). A subdivision name
+ * is never shortened: a cut name would not match the subdivision's sales.
+ */
+function boundFacts(f: SubjectFacts): { facts: SubjectFacts; sentences: string[] } {
+  const out: SubjectFacts = { ...f };
+  const sentences: string[] = [];
+  for (const b of BOUNDED_FACTS) {
+    const cur = f[b.fact] as Fact<unknown>;
+    if (cur.value === null || readable(b.field, cur.value)) continue;
+    (out[b.fact] as Fact<unknown>) = none();
+    sentences.push(`The ${WHOSE[cur.source ?? 'mls']} ${b.words} of this home is outside what the valuation reads, so it is not used. Enter it to use it.`);
+  }
+  if ((f.latE6.value !== null && !readable('latE6', f.latE6.value)) || (f.lonE6.value !== null && !readable('lonE6', f.lonE6.value))) {
+    out.latE6 = none();
+    out.lonE6 = none();
+    sentences.push('The map location of this home is outside what the valuation reads, so the home is valued without it.');
+  }
+  return { facts: out, sentences };
+}
+
+const ADDRESS_WORDS: Readonly<Record<string, string>> = { city: 'city', region: 'state', postalCode: 'ZIP code', address: 'street address' };
+
+/** The address parts the engine reads (city, state, ZIP code, address key) must fit its bounds; one that does not is refused, by name. */
+function assertReadableAddress(a: SubjectAddress, region: string | null, key: string | null): void {
+  const bad = [
+    ...(a.city !== null && !readable('city', a.city) ? ['city'] : []),
+    ...(region !== null && !readable('region', region) ? ['region'] : []),
+    ...(a.postalCode !== null && !readable('postalCode', a.postalCode) ? ['postalCode'] : []),
+    ...(key !== null && !readable('addressKey', key) ? ['address'] : []),
+  ];
+  if (bad.length === 0) return;
+  throw new AppError('CMA_SUBJECT_INCOMPLETE', {
+    missing: bad,
+    sentence: `The home’s ${listed(bad.map((p) => ADDRESS_WORDS[p]!))} ${bad.length === 1 ? 'is' : 'are'} longer than the valuation reads. Correct the address to prepare a CMA.`,
+  });
+}
 
 /** The subject facts of a listings row (V1-A factsOfRow: a team row carries no valuation facts, only the MLS sync writes them). */
 function factsFromRow(r: ListingRow | null, src: FactSource): SubjectFacts {
@@ -299,20 +358,29 @@ export async function resolveSubject(tx: Tx, input: SubjectInput, o: { contactId
     if (!self.has(r.id)) atKey.add(r.id);
     if (r.mls_number && !selfNumbers.has(r.mls_number)) atKeyNumbers.add(r.mls_number);
   }
+  const state = address.region === null ? null : uspsCode(address.region);
+  assertReadableAddress(address, state ?? address.region, key);
   const hadSize = facts.sqft.value !== null;
   facts = withAgentFacts(facts, input.facts);
   if (input.facts?.sqft !== undefined && (input.kind !== 'entered' || hadSize)) {
     sizeSource = o.sizeField ?? sizeSource;
     sizeSentence = agentSize;
   }
+  // V1-B's strict bounds, after the agent's facts (which always fit) and before the required-fact checks, so a stored
+  // size outside them asks for the size as a missing one does
+  const storedSize = facts.sqft;
+  const bounded = boundFacts(facts);
+  facts = bounded.facts;
+  const sizeLeftOut = storedSize.value !== null && facts.sqft.value === null;
 
   const missing = [...(facts.propertyType.value === null ? ['propertyType'] : []), ...(facts.sqft.value === null ? ['sqft'] : [])];
   if (missing.length > 0) {
     throw new AppError('CMA_SUBJECT_INCOMPLETE', {
       missing,
       // "not in the MLS history" only when the history was looked up (a key was built)
-      sentence:
-        key === null
+      sentence: sizeLeftOut
+        ? `The ${WHOSE[storedSize.source ?? 'mls']} size of this home is outside what the valuation reads. Enter ${missing.length > 1 ? 'the property type and size' : 'the size'} to prepare a CMA.`
+        : key === null
           ? input.kind === 'listing'
             ? 'Enter the property type and size to prepare a CMA.'
             : 'The home’s street address is not known, so its MLS history was not looked up. Enter the property type and size to prepare a CMA.'
@@ -331,10 +399,11 @@ export async function resolveSubject(tx: Tx, input: SubjectInput, o: { contactId
     contactAddressId,
     address,
     addressKey: key,
-    state: address.region === null ? null : uspsCode(address.region),
+    state,
     facts,
     sizeSource,
     sizeSentence,
+    factSentences: bounded.sentences,
     saleHistory: history(rowsAtKey),
     selfListingIds: [...own, ...[...atKey].sort()],
     selfMlsNumbers: [...ownNumbers, ...[...atKeyNumbers].sort()],
@@ -373,6 +442,7 @@ export function engineSubject(s: ResolvedSubject): CmaSubject {
     subdivisionName: s.facts.subdivision.value,
     addressKey: s.addressKey,
     ownIdentities: s.selfListingIds.slice(0, MAX_OWN),
-    ownMlsNumbers: s.selfMlsNumbers.slice(0, MAX_OWN),
+    // an MLS number longer than the engine reads cannot name a candidate either (CmaRef has the same bound)
+    ownMlsNumbers: s.selfMlsNumbers.filter((n) => readable('ownMlsNumbers', [n])).slice(0, MAX_OWN),
   };
 }

@@ -4,7 +4,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
-import { type CmaBody, type CmaWorld, address, call, cmaWorld, contact, daysAgo, localSales, mlsSale, oneTap } from './testing.js';
+import { type CmaBody, type CmaWorld, address, call, cmaWorld, contact, daysAgo, localSales, mlsSale, oneTap, saleReso, syncSales } from './testing.js';
 
 let h: ApiHarness;
 let w: CmaWorld;
@@ -74,6 +74,56 @@ describe('stored values beyond the engine\'s bounds', () => {
     expect(r.body.cma.area.sentences).toContain('1 MLS record was left out because its stored values are outside what the valuation reads (for example a price above $1 billion).');
     expect(JSON.stringify(r.body)).not.toContain(bad);
     expect(r.body.cma.comps.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('E361 R-CMA-2: the subject\'s own newest MLS record with values beyond the engine\'s bounds (a 1.9 billion sq ft lot, 1,500 garage spaces, a 250-character subdivision, 1,200 bedrooms) gives a CMA on both prepare paths, those facts left out and said', async () => {
+    const wb = await cmaWorld(h);
+    await localSales(wb, 5);
+    const c = await contact(wb.agents[0]!);
+    const line1 = '3100 Sample Avenue';
+    const addr = await address(h, wb.tenantId, c, { line1 });
+    // stored through V1-A's sync, which keeps these values (SMALLINT, bigint and unbounded text columns)
+    const [rec] = await syncSales(wb, [{ ...saleReso({ line1, closeDate: daysAgo(2500), sqft: 1500 }), LotSizeAcres: '43560', GarageSpaces: '1500', SubdivisionName: 'Sample '.repeat(36), BedroomsTotal: 1200 }]);
+    const stored = (await h.su.query('SELECT lot_sqft, garage_spaces_x10, length(subdivision_name) AS sub, beds FROM listings WHERE id = $1', [rec])).rows[0];
+    expect(stored).toEqual({ lot_sqft: '1897473600', garage_spaces_x10: 15000, sub: 251, beds: 1200 });
+    const tap = await oneTap(wb.agents[0]!, c);
+    const post = await call<CmaBody>(wb.agents[0]!, 'POST', '/cma', { subject: { kind: 'contact_address', contactAddressId: addr }, contactId: c, purpose: 'other' });
+    for (const r of [tap, post]) {
+      expect(r.status).toBe(201);
+      const s = r.body.cma.subject as CmaBody['cma']['subject'] & { factSentences: string[] };
+      for (const k of ['lotSqft', 'garageSpacesX10', 'subdivision', 'beds']) expect([k, s.facts[k]]).toEqual([k, { value: null, source: null }]);
+      expect(s.facts['sqft']).toEqual({ value: 1500, source: 'mls' });
+      expect(s.factSentences).toEqual([
+        'The MLS record’s bedroom count of this home is outside what the valuation reads, so it is not used. Enter it to use it.',
+        'The MLS record’s lot size of this home is outside what the valuation reads, so it is not used. Enter it to use it.',
+        'The MLS record’s garage spaces of this home is outside what the valuation reads, so it is not used. Enter it to use it.',
+        'The MLS record’s subdivision name of this home is outside what the valuation reads, so it is not used. Enter it to use it.',
+      ]);
+    }
+    // the agent can enter a bounded value instead
+    const fixed = await oneTap(wb.agents[0]!, c, { facts: { beds: 3, lotSqft: 6000 } });
+    expect(fixed.body.cma.subject.facts['beds']).toEqual({ value: 3, source: 'agent' });
+  });
+
+  it('E361 R-CMA-2: a subject size beyond the engine\'s bounds asks for the size (CMA_SUBJECT_INCOMPLETE), and an address part longer than the engine reads is refused by name: never a 500', async () => {
+    const wb = await cmaWorld(h);
+    await localSales(wb, 3);
+    const c = await contact(wb.agents[0]!);
+    const line1 = '3200 Sample Avenue';
+    await address(h, wb.tenantId, c, { line1 });
+    await mlsSale(wb, { line1, closeDate: daysAgo(2500), sqft: 2_000_000_000 });
+    const big = await oneTap(wb.agents[0]!, c);
+    const e1 = big.body as unknown as { error: { details: { missing: string[]; sentence: string } } };
+    expect([big.status, big.code, e1.error.details.missing]).toEqual([422, 'CMA_SUBJECT_INCOMPLETE', ['sqft']]);
+    expect(e1.error.details.sentence).toBe('The MLS record’s size of this home is outside what the valuation reads. Enter the size to prepare a CMA.');
+    expect((await oneTap(wb.agents[0]!, c, { facts: { sqft: 1500 } })).status).toBe(201);
+    // a contact address an import stored with a 220-character city (the people API stops at 120)
+    const c2 = await contact(wb.agents[0]!);
+    await address(h, wb.tenantId, c2, { line1: '3300 Sample Avenue', city: 'Sampletown '.repeat(20).trim() });
+    const long = await oneTap(wb.agents[0]!, c2, { facts: { propertyType: 'single_family', sqft: 1500 } });
+    const e2 = long.body as unknown as { error: { details: { missing: string[] } } };
+    expect([long.status, long.code]).toEqual([422, 'CMA_SUBJECT_INCOMPLETE']);
+    expect(e2.error.details.missing).toContain('city');
   });
 });
 

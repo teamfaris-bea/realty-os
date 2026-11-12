@@ -16,6 +16,7 @@ import { type IanaZone, type Instant, type UserActor, ianaZone, localDateOf } fr
 import { type CompetingRule, type ListingFacts, competingSet, dedupeMirrors, listingIdentity } from '@realty/core/listings';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
+import { ZodError } from 'zod';
 import { mergeTree } from '../admin/repos/erasure.js';
 import { audit, redactDiff } from '../audit.js';
 import { AppError } from '../errors.js';
@@ -190,6 +191,21 @@ function refOf(sale: ListingRow, team: ListingRow | null): CmaRef {
 }
 
 /**
+ * V1-B's engine, which throws a ZodError on an input outside its strict schemas. Candidates are checked one by one
+ * before (left out and counted) and resolveSubject keeps the subject's facts and address inside the bounds, so this is
+ * a backstop: anything else outside them is a 422 naming the fields, never a 500.
+ */
+function engine(input: Parameters<typeof runEngine>[0]): CmaResult {
+  try {
+    return runEngine(input);
+  } catch (e) {
+    if (!(e instanceof ZodError)) throw e;
+    const fields = [...new Set(e.issues.map((x) => String(x.path[0] ?? 'subject')))].sort();
+    throw new AppError('CMA_SUBJECT_INCOMPLETE', { missing: fields, sentence: 'Part of this home’s record is outside what the valuation reads. Enter the home’s facts to prepare a CMA.' });
+  }
+}
+
+/**
  * One run: every tier's sold sales in one soldCandidates call (F6), each mirrored team sale one candidate (R-MLS-5, E366:
  * the team row's identity and facts, the lowest-id mirror's close price, size and sale facts), V1-B's engine, the context
  * listings. A record whose stored values V1-B's strict schemas refuse (a price or count beyond the engine's bounds) is
@@ -230,7 +246,7 @@ async function run(tx: Tx, conns: CmaConnections, s: ResolvedSubject, valuationD
     } else offer(r, null);
   }
   const tierReads = read.reads.map((x) => ({ tier: ENGINE_TIER[x.tier], limitReached: x.limitReached }));
-  const result = runEngine({ subject, candidates, tierReads, valuationDate, include, exclude });
+  const result = engine({ subject, candidates, tierReads, valuationDate, include, exclude });
   const used = new Set([...result.comps.map((c) => c.ref.identity), ...result.notUsed.map((n) => n.ref.identity), ...result.subjectSales.map((x) => x.ref.identity)]);
   for (const k of Object.keys(listings)) if (!used.has(k)) delete listings[k];
   const reads = READ_ORDER.map((t) => {
@@ -605,6 +621,7 @@ async function viewOf(tx: Tx, actor: UserActor, now: Instant, row: CmaRow) {
       address: s.resolved.address,
       state: s.resolved.state,
       sizeSentence: s.resolved.sizeSentence,
+      factSentences: s.resolved.factSentences ?? [],
       facts: {
         propertyType: facts.propertyType,
         sqft: facts.sqft,

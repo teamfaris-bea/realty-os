@@ -106,6 +106,8 @@ export const CmaViewSchema = z.object({
     address: Address,
     state: z.string().nullable(),
     sizeSentence: z.string(),
+    /** stored facts left out because they are outside what the valuation reads, one sentence each */
+    factSentences: z.array(z.string()),
     facts: z.object({
       propertyType: fact(z.enum(CMA_PROPERTY_TYPES)),
       sqft: fact(z.number()),

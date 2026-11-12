@@ -1192,6 +1192,12 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
               },
               "type": "array",
             },
+            "factSentences": {
+              "items": {
+                "type": "string",
+              },
+              "type": "array",
+            },
             "facts": {
               "additionalProperties": false,
               "properties": {
@@ -1659,6 +1665,7 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
             "address",
             "state",
             "sizeSentence",
+            "factSentences",
             "facts",
             "saleHistory",
             "include",
