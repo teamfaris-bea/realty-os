@@ -43,21 +43,35 @@ async function msg(o: Msg = {}): Promise<string> {
   const contact = o.contact ?? contactId;
   const imported = o.imported ?? false;
   const status = o.status ?? (direction === 'inbound' ? 'received' : 'sent');
-  const initiator = imported ? 'import' : direction === 'inbound' ? 'client' : 'system';
+  // An outbound photo text exists only as an agent's own one-to-one send with media (0055: messages_mms_one_to_one_human,
+  // messages_mms_has_media), so the mms fixture is written the way the compose path writes one: initiator 'human', the
+  // sender named, and one attached photo (b8 texting db-public/F2).
+  const humanMms = direction === 'outbound' && !imported && o.channel === 'mms';
+  const initiator = imported ? 'import' : direction === 'inbound' ? 'client' : humanMms ? 'human' : 'system';
   const dispatched = direction === 'outbound' && o.dispatchedAgo !== null ? `now() - interval '${o.dispatchedAgo ?? '1 hour'}'` : 'NULL';
   await suFixture(
     h.su,
     `INSERT INTO messages (tenant_id, id, conversation_id, contact_id, channel, direction, phone_number_id, from_address, to_address, body,
-       status, initiator, purpose, gate_decision_id, imported, import_record_id, dispatched_at, occurred_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, ${dispatched}, now() - interval '${o.occurredAgo ?? (direction === 'inbound' ? '0 seconds' : '1 hour')}')`,
+       status, initiator, purpose, gate_decision_id, imported, import_record_id, initiated_by_user_id, dispatched_at, occurred_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, ${dispatched}, now() - interval '${o.occurredAgo ?? (direction === 'inbound' ? '0 seconds' : '1 hour')}')`,
     [
       w.tenantId, id, contact === contactId ? conv : otherConv, contact, o.channel ?? 'sms', direction,
       o.phoneNumberId === undefined ? numberId : o.phoneNumberId,
       o.from ?? (direction === 'inbound' ? PHONE : TEAM), o.to ?? (direction === 'inbound' ? TEAM : PHONE), o.body ?? 'See you at 3',
       status, initiator, direction === 'outbound' ? 'informational' : null, direction === 'outbound' && !imported ? uuid() : null,
-      imported, imported ? uuid() : null,
+      imported, imported ? uuid() : null, humanMms ? w.agents[0]!.id : null,
     ],
   );
+  if (humanMms) {
+    const objectId = uuid();
+    await suFixture(
+      h.su,
+      `INSERT INTO stored_objects (tenant_id, id, purpose, storage_key, content_type, byte_size, sha256, dek_wrapped, key_version, created_by_user_id)
+         VALUES ($1, $2, 'mms', 'tenants/' || $1 || '/mms/' || $2, 'image/jpeg', 1000, decode(repeat('00', 32), 'hex'), 'dek'::bytea, 1, $4);
+       INSERT INTO message_media (tenant_id, message_id, object_id, position) VALUES ($1, $3, $2, 0);`,
+      [w.tenantId, objectId, id, w.agents[0]!.id],
+    );
+  }
   return id;
 }
 
@@ -177,7 +191,7 @@ describe('message_reactions (D5b)', () => {
     await link(sys(), r, target);
   });
 
-  it('R-REACT-2 the guard and the candidates query admit exactly the same targets', async () => {
+  it('R-REACT-2 R-MMS-1 the guard and the candidates query admit exactly the same targets, a real photo text included (b8 texting db-public/F2)', async () => {
     const bounds: [string, Msg][] = [
       ['in bounds', {}],
       ['dispatching', { status: 'dispatching' }],
@@ -202,6 +216,8 @@ describe('message_reactions (D5b)', () => {
       const inQuery = (await candidates(r)).includes(t);
       const admitted = (await errOf(link(sys(), r, t))) === 'ok';
       expect(admitted, name).toBe(inQuery);
+      // a valid outbound photo text is in bounds: the mms half of R-REACT-2 is proven against 0055's real constraint
+      if (name === 'in bounds' || name === 'mms target') expect(admitted, name).toBe(true);
     }
   });
 
