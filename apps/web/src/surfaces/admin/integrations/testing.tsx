@@ -50,6 +50,7 @@ export const ID = {
   source: '01900000-0000-7000-8000-00000000f007',
   source2: '01900000-0000-7000-8000-00000000f008',
   disclosure: '01900000-0000-7000-8000-00000000f009',
+  ads: '01900000-0000-7000-8000-00000000f00a',
 } as const;
 
 const conn = (over: Record<string, unknown>) => ({
@@ -68,7 +69,7 @@ const conn = (over: Record<string, unknown>) => ({
 });
 
 /** GET /admin/integrations as the API answers on the test adapters (every service in the API catalog). */
-export function integrations(o: { messengerRow?: 'live' | 'disconnected' | null; packsReviewed?: boolean; mode?: 'fake' | 'unconfigured' | 'real'; fbCapability?: { available: boolean; reason: string | null } } = {}) {
+export function integrations(o: { messengerRow?: 'live' | 'disconnected' | null; packsReviewed?: boolean; mode?: 'fake' | 'unconfigured' | 'real'; fbCapability?: { available: boolean; reason: string | null }; adsRow?: boolean } = {}) {
   const svc = (kind: string, name: string, connect: string, sentence: string, connections: unknown[] = []) => ({ kind, name, connect, canConnect: connect === 'oauth', sentence, connections });
   const notOffered = 'Not offered: the owner has taken this out of scope.';
   return {
@@ -84,7 +85,13 @@ export function integrations(o: { messengerRow?: 'live' | 'disconnected' | null;
       svc('realtor_feed', 'realtor.com lead feed', 'partner', 'Needs partner access: realtor.com lead feed has not granted this platform API access yet. Leads still arrive by email forwarding where the service offers it.'),
       svc('mls_feed', 'MLS listings (Spark, read-only)', 'api_key', 'Demo data only (test adapter); no real MLS account is connected.'),
       svc('showing_service', 'Showing service', 'partner', 'Demo data only (test adapter); no real partner account is connected.'),
-      svc('ads_google', 'Google Ads account', 'later', 'Arrives with ads (Phase 3); it cannot be connected yet.'),
+      // module 52: an OAuth kind; reading spend works at once, budget changes wait for platform:ads (Q-ADS-1)
+      svc('ads_google', 'Google Ads account', 'oauth', 'Test adapter: connects to a simulated account only.', o.adsRow ? [
+        conn({ id: ID.ads, kind: 'ads_google', displayName: 'Harbor Ads', externalAccountId: 'fake-ads-1', leadSourceId: ID.source, capabilities: [
+          { name: 'change_budget', available: false, reason: 'Waits for counsel review of platform:ads.' },
+          { name: 'read_spend', available: true, reason: null },
+        ] }),
+      ] : []),
       svc('gbp_location', 'Google Business Profile', 'oauth', 'Test adapter: connects to a simulated account only.', [
         conn({ id: ID.gbp, kind: 'gbp_location', displayName: 'Harbor GBP', status: 'degraded', statusSentence: 'Connected with problems (PROVIDER_ERRORS). Some messages may be delayed.' }),
       ]),

@@ -23,9 +23,9 @@ describe('Integrations page', () => {
     expect(screen.getByText(/test adapters for Meta, Google, Zillow, realtor\.com, the showing service and personal calendars/)).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/every connection here is simulated/);
     // there is no connect control here, and the page says so for the services that connect with a login
-    expect(screen.getAllByText(/Connecting is not available from this page yet\./)).toHaveLength(3);
+    expect(screen.getAllByText(/Connecting is not available from this page yet\./)).toHaveLength(4);
     expect(screen.getAllByText(/Needs partner access: Zillow lead feed has not granted/)).toHaveLength(1);
-    expect(screen.getByText('Arrives with ads (Phase 3); it cannot be connected yet.')).toBeInTheDocument();
+    expect(screen.queryByText(/Arrives with ads/)).toBeNull();
     // keyed services point at their own page, not at "inbox settings"
     expect(screen.queryByText(/inbox settings/)).toBeNull();
     expect(screen.getAllByText('It has no outside account to connect; it is set up on its own page (below).')).toHaveLength(2);
@@ -94,20 +94,32 @@ describe('Integrations page', () => {
     expect(screen.getByRole('link', { name: 'Open MLS' })).toHaveAttribute('href', '/admin/integrations/mls');
   });
 
-  it('R-GADS-1 b9 ui/F8: Google Ads points to the lead form on Lead sources (where it says whether the deployment can take them) and says the account itself is not connected; the partner feeds point there too', async () => {
+  it('R-GADS-1 b9 ui/F8: Google Ads points to the lead form on Lead sources (where it says whether the deployment can take them); the partner feeds point there too', async () => {
     mount(new FakeFetch().on('GET /admin/integrations', { status: 200, body: integrations() }), PAGE_PATH);
     const card = async (name: string) => within((await screen.findByRole('heading', { level: 3, name })).closest('li')!);
     const ads = await card('Google Ads account');
     expect(ads.getByRole('link', { name: 'Open Lead sources' })).toHaveAttribute('href', '/admin/lead-sources');
     expect(ads.getByText(GOOGLE_ADS_HINT)).toBeInTheDocument();
+    expect(ads.getByText('No connection yet.')).toBeInTheDocument();
     // never "works now": a deployment without public https cannot take them, and Lead sources says so
     expect(GOOGLE_ADS_HINT).not.toMatch(/work now/);
-    expect(GOOGLE_ADS_HINT).toMatch(/account itself is not connected/);
+    expect(GOOGLE_ADS_HINT).toMatch(/lead forms/);
     for (const name of ['Zillow lead feed', 'realtor.com lead feed']) {
       const c = await card(name);
       expect(c.getByRole('link', { name: 'Open Lead sources' })).toHaveAttribute('href', '/admin/lead-sources');
       expect(c.getByText(PARTNER_FEED_HINT)).toBeInTheDocument();
     }
+  });
+
+  it('R-ADS-13 R-INT-6 (b11 api-ui/F2): a connected Google Ads account shows what it reads and what waits, and the card never says nothing about the ads is read', async () => {
+    mount(new FakeFetch().on('GET /admin/integrations', { status: 200, body: integrations({ adsRow: true }) }), PAGE_PATH);
+    const ads = within((await screen.findByRole('heading', { level: 3, name: 'Google Ads account' })).closest('li')!);
+    expect(ads.getByText('Harbor Ads')).toBeInTheDocument();
+    expect(ads.getByText('Connected')).toBeInTheDocument();
+    expect(ads.getByText(/Read spend:/).closest('li')).toHaveTextContent('Read spend: Works now.');
+    expect(ads.getByText(/Change budget:/).closest('li')).toHaveTextContent('Change budget: Waits for counsel review of the google ads budget changes rules.');
+    expect(ads.queryByText(/nothing about your ads is read/)).toBeNull();
+    expect(ads.queryByText(/not connected/)).toBeNull();
   });
 
   it('a live pre-D2 row is listed only to be disconnected; re-auth is asked and the same request is sent again', async () => {

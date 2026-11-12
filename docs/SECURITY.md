@@ -212,7 +212,7 @@ it, and the packs still ship unreviewed.
   counsel did not see.
 - **What it changes:** for each pinned key, only the published version's `reviewed_by_counsel_at` (00:00 UTC of the
   stated review date) and one note appended to `notes` (UTC time recorded, database role, version, review date, the
-  reported source). It never writes `rules`, so it never sets `vendor_ready_at`: voice and Gmail stay off until their
+  reported source). It never writes `rules`, so it never sets `vendor_ready_at`: voice, Gmail and Google Ads stay off until their
   vendor checks pass. It refuses other keys (`US` and other jurisdiction packs, unknown or unpublished keys,
   `platform:meta`), a review date before 2026-01-01, before the pinned version's month or after today (UTC, on the
   client's and the database's clock), a pack already recorded with a different date, and a review set outside the

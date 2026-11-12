@@ -16,6 +16,7 @@ const PACK_NAMES: Record<string, string> = {
   'platform:voice': 'Voice answering',
   'platform:portal': 'Client portal sign-in',
   'platform:gmail': 'Gmail inbox sync',
+  'platform:cma': 'Client CMAs and seller value ranges',
   'platform:ads': 'Google Ads budget changes',
   'platform:public_records_outreach': 'Outreach using public-record data (not built)',
 };
@@ -77,8 +78,11 @@ export function adapterModeWords(m: AdapterMode): { tone: 'info' | 'warn'; text:
   return null;
 }
 
-/** b9 ui/F8: Google Ads lead forms are set up per source on Lead sources; the ads account is a later connection. */
-export const GOOGLE_ADS_HINT = 'Google Ads lead forms are set up on each lead source under Lead sources, which says whether this deployment can take them. The Google Ads account itself is not connected, so nothing about your ads is read.';
+/**
+ * b9 ui/F8: Google Ads lead forms are set up per source on Lead sources. b11 api-ui/F2: only the lead-form part; the
+ * account's own connection rows (module 52) say what is read and what waits, so this never claims nothing is read.
+ */
+export const GOOGLE_ADS_HINT = 'Google Ads lead forms are set up on each lead source under Lead sources, which says whether this deployment can take them.';
 /** b9 ui/F8: until a partner grants access, a portal's leads arrive by lead email, set up per source. */
 export const PARTNER_FEED_HINT = "Until the partner grants access, set up lead email on the portal's lead source: the portal sends its new-lead emails there.";
 

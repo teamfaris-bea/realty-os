@@ -6,7 +6,7 @@
 //
 // A platform pack (jurisdiction_packs key 'platform:<name>') gates its capability through app.platform_cleared
 // (0018): cleared once the published version has reviewed_by_counsel_at and, where the database also asks for a
-// vendor check (voice, Gmail), rules.vendor_ready_at. Packs ship unreviewed and the migrations stay that way; this
+// vendor check (voice, Gmail and Google Ads), rules.vendor_ready_at. Packs ship unreviewed and the migrations stay that way; this
 // command is the one writer of reviewed_by_counsel_at. Each key is pinned to the version counsel reviewed
 // (platform:<name>@<version>) and is recorded only while that version is the PUBLISHED one: a later version ships
 // unreviewed and turns its capability off again, and an old pin (a standing runbook command replayed after a pack
@@ -15,7 +15,7 @@
 // version, the review date and the reported source (--reference). --revoke withdraws a recorded review the same
 // way: reviewed_by_counsel_at back to NULL and a withdrawal note. It never writes rules, so it never sets or changes
 // vendor_ready_at: vendor checks are separate (Google's verification for Gmail, a real vendor's latency check for
-// voice).
+// voice, a real Google Ads adapter's check for Google Ads; R-ADS-7).
 //
 // All or nothing, in one transaction: a refused key, a bad flag or a role that cannot write the packs changes
 // nothing. A pack already recorded with the same date by this command (its own note for that version is the last
@@ -37,7 +37,7 @@ export const COUNSEL_REVIEW_USAGE = [
   'Records (with --revoke: withdraws) counsel review on each named platform pack, as the database owner role',
   '(MIGRATION_DATABASE_URL). <version> is the version counsel reviewed; it must be the published one.',
   'A dry run by default (--dry-run): prints before and after per key and changes nothing; --apply commits.',
-  'Never sets rules.vendor_ready_at: voice and Gmail also wait for their vendor checks.',
+  'Never sets rules.vendor_ready_at: voice, Gmail and Google Ads also wait for their vendor checks.',
 ].join('\n');
 
 /** D2: packs that are never cleared (apps/api/src/integrations/catalog.ts NEVER_CLEARED_PACKS; 0025 notes "Do not clear"). */
