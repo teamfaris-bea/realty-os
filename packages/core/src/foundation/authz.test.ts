@@ -436,6 +436,7 @@ describe('R-PERM-1 generated can() matrix: one case per DATA_MODEL §3 cell', ()
     PHASE_2_3.push('playbook.auto_enroll_stage'); // parity module 67: DATA_MODEL §12 row, tested in apps/api/src/stageAutomation/stageAutomation.test.ts (role × route vs can())
     PHASE_2_3.push('coaching.view', 'coaching.team_view', 'coaching.settings'); // module 36: DATA_MODEL Part 2 row "Call reviews" / "Coaching settings", tested in apps/api/src/coaching/matrix.test.ts (role × route vs can())
     PHASE_2_3.push('listing.reassign'); // b7 review ownership-data/F2: DATA_MODEL §8 row, tested in apps/api/src/workspace/listingAgent.test.ts (role × route vs can())
+    PHASE_2_3.push('settings.ai_isa', 'ai_isa.optin', 'ai_isa.view', 'ai_isa.start', 'ai_isa.pause', 'ai_isa.resume', 'ai_isa.control', 'ai_isa.handoff'); // module 75 (D12 proposed): docs/AI_ISA.md §3.5, tested in apps/api/src/isa/authz.test.ts (role × action vs can())
     const PARITY_LISTS: Action[] = ['contact.edit', 'tag.create', 'tag.manage', 'custom_field.manage', 'smart_list.personal', 'smart_list.team_manage'];
     expect(notInMatrix.filter((a) => !PHASE_2_3.includes(a) && !PARITY_LISTS.includes(a)).sort()).toEqual(['data.export', 'number.release', 'support.revoke', 'system.jobs', 'system.view']);
   });

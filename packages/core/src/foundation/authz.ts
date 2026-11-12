@@ -157,6 +157,14 @@ export const ACTIONS = [
   'coaching.settings', // module 36: call scoring on/off, Team Lead visibility, rubric items (Owner; an Admin may only turn call reviews off; widening needs 🔒)
   'milestone.confirm', // module 31 (DATA_MODEL §8 "Confirm or move a milestone date"): plan, confirm, enter, move, complete a deal date
   'milestone_template.manage', // module 31: tenant milestone templates (not a §8 row: Owner/Admin, flagged; R-TXN-6)
+  'settings.ai_isa', // module 75 (D12 proposed): the AI ISA tenant switch and daily cap (Owner on/raise 🔒 + attestation; Admin off/lower only; DB guard)
+  'ai_isa.optin', // module 75: an agent opts in to the AI ISA for their own leads (🔒 on create or widen; never TC or the human ISA role, Q-ISA-8)
+  'ai_isa.view', // module 75: "Under AI care" and the per-lead panel (✅ | ✅ | T | O | O | — ; support read-only)
+  'ai_isa.start', // module 75: start (or continue) AI care on a lead: the lead's current owner only, as themselves (Q-ISA-9)
+  'ai_isa.pause', // module 75: pause AI care (✅ | ✅ | T | O | own | —; Q-ISA-18)
+  'ai_isa.resume', // module 75: resume AI care: the lead's owner only (R-ISA-15)
+  'ai_isa.control', // module 75: take over or end AI care, and their 10 s undo (✅ | ✅ | T | own | — | —)
+  'ai_isa.handoff', // module 75: acknowledge a handoff, resolve a held topic (✅ | ✅ | T | own | — | —)
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -331,6 +339,30 @@ export const AUDIT_ACTIONS = [
   'source_cost.changed', // module 33: a manual lead-source cost entered or changed (amounts in cents, the month; closed months need re-auth)
   'goal.changed', // module 33: a goal created, changed or removed (member, period, metric, target)
   'coaching.settings_changed', // module 36: the Owner changed call scoring, Team Lead visibility or the rubric items, or an Admin turned call reviews off (values only)
+  'ai_isa.tenant_enabled', // module 75 (D12 proposed): codes only, never content
+  'ai_isa.tenant_disabled', // module 75 (D12 proposed): codes only, never content
+  'ai_isa.tenant_cap_changed', // module 75 (D12 proposed): codes only, never content
+  'ai_isa.optin_created', // module 75 (D12 proposed): codes only, never content
+  'ai_isa.optin_narrowed', // module 75 (D12 proposed): codes only, never content
+  'ai_isa.optin_superseded', // module 75 (D12 proposed): codes only, never content
+  'ai_isa.optin_revoked', // module 75 (D12 proposed): codes only, never content
+  'ai_isa.assignment_started', // module 75 (D12 proposed): codes only, never content
+  'ai_isa.assignment_paused', // module 75 (D12 proposed): codes only, never content
+  'ai_isa.assignment_resumed', // module 75 (D12 proposed): codes only, never content
+  'ai_isa.assignment_taken_over', // module 75 (D12 proposed): codes only, never content
+  'ai_isa.assignment_ended', // module 75 (D12 proposed): codes only, never content
+  'ai_isa.pause_all', // module 75 (D12 proposed): codes only, never content
+  'ai_isa.undo', // module 75 (D12 proposed): codes only, never content
+  'ai_isa.slot_booked', // module 75 (D12 proposed): codes only, never content
+  'ai_isa.booking_refused', // module 75 (D12 proposed): codes only, never content
+  'ai_isa.handoff_created', // module 75 (D12 proposed): codes only, never content
+  'ai_isa.handoff_acknowledged', // module 75 (D12 proposed): codes only, never content
+  'ai_isa.system_paused', // module 75 (D12 proposed): codes only, never content
+  'ai_isa.system_ended', // module 75 (D12 proposed): codes only, never content
+  'ai_isa.block_lifted', // module 75 (D12 proposed): codes only, never content
+  'ai_isa.escalation_resolved', // module 75 (D12 proposed): codes only, never content
+  'ai_isa.hold_started', // module 75 (D12 proposed): codes only, never content
+  'ai_isa.hold_ended', // module 75 (D12 proposed): codes only, never content
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -644,6 +676,16 @@ const MATRIX: Record<Action, ActionRule> = {
   'milestone.confirm': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: { scopes: ['own', 'deal'] }, tc: DEAL } },
   // Milestone templates (R-TXN-6; §8 names no role): Owner/Admin, like the other tenant settings. Flagged for the owner.
   'milestone_template.manage': { roles: { owner: ALL, admin: ALL } },
+  // module 75 (D12 proposed; docs/AI_ISA.md §3.5). The DB guards are the backstop: only the Owner turns the switch
+  // on (tenant_settings_ai_isa_guard), only the owner starts and resumes (ai_isa_assignments_guard).
+  'settings.ai_isa': { roles: { owner: { scopes: ['all'], checks: ['attest_when_loosening'], reauth: 'when_loosening' }, admin: { scopes: ['all'], checks: ['not_loosening'] } } },
+  'ai_isa.optin': { roles: { owner: { scopes: ['all'], reauth: 'when_loosening' }, admin: { scopes: ['all'], reauth: 'when_loosening' }, team_lead: { scopes: ['all'], reauth: 'when_loosening' }, agent: { scopes: ['all'], reauth: 'when_loosening' } } },
+  'ai_isa.view': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: O, isa: OWN }, system: ['assistant', 'worker'], support: true },
+  'ai_isa.start': { roles: { owner: OWN, admin: OWN, team_lead: OWN, agent: OWN } },
+  'ai_isa.pause': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: O, isa: OWN }, system: ['assistant', 'worker', 'timer'] },
+  'ai_isa.resume': { roles: { owner: OWN, admin: OWN, team_lead: OWN, agent: OWN } },
+  'ai_isa.control': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: OWN }, system: ['assistant', 'worker', 'timer'] },
+  'ai_isa.handoff': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: OWN } },
 };
 
 const DENY_NOT_FOUND: CanResult = { ok: false, code: 'NOT_FOUND' };
