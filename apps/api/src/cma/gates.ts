@@ -22,10 +22,10 @@ import {
   type ValuationRefusal,
   clientSoldView,
   clientView,
-  connectionClientEligible,
   liveNearMatches,
   mlsEligibility,
   mlsRowsAtAddress,
+  packReviewed,
   streetOfKey,
   valuationEligible,
   valuationStatement,
@@ -191,8 +191,10 @@ export async function clientReadiness(tx: Tx, i: ReadinessInput): Promise<{ shar
 
   if (!(await platformCleared(tx, CMA_PLATFORM_PACK))) add('PLATFORM_NOT_CLEARED');
   for (const { conn, stale } of used) {
-    // every condition that holds, so the agent reads all of them at once (V1-A's parsed pack and freshness)
-    if (!stale && !connectionClientEligible(conn, i.now)) add('MLS_CLIENT_DISPLAY_OFF');
+    // every condition that holds, so the agent reads all of them at once (V1-A's parsed pack and freshness). The display
+    // pack is judged on its own terms: freshness is FEED_STALE's alone, so a stale feed never hides an unreviewed pack.
+    // (Every `used` connection is live: V1-A's agent_cma gate requires it.)
+    if (!(packReviewed(conn.pack) && conn.pack.attributionText !== null && conn.pack.disclaimerText !== null)) add('MLS_CLIENT_DISPLAY_OFF');
     if (stale) add('FEED_STALE');
     if (!conn.pack.valuation.clientCma) add('CLIENT_USE_NOT_ALLOWED');
     if (conn.pack.valuation.reviewedByCounselAt === null) add('VALUATION_NOT_REVIEWED');

@@ -266,6 +266,18 @@ describe('gates and readiness (R-CMA-6, R-CMA-7)', () => {
     expect(codes(r.body)).toContain('FEED_STALE');
   });
 
+  it('E369 R-CMA-7: a stale feed does not hide the display-pack blocker; with an unreviewed display pack and no client use, all three are listed at once', async () => {
+    // the valuation section refuses first (client_cma false), so V1-A's client gate alone reports CLIENT_USE_NOT_ALLOWED:
+    // MLS_CLIENT_DISPLAY_OFF must come from readiness's own display check, whatever the feed's freshness
+    const ws = await cmaWorld(h, { pack: cmaPack({ reviewed: false, valuation: { client_cma: false } }) });
+    await localSales(ws, 5);
+    const { c } = await seller({ world: ws });
+    await feedLastSyncedAt(ws, new Date(Date.now() - 3 * 86_400_000));
+    const r = await oneTap(ws.agents[0]!, c);
+    expect(r.status).toBe(201);
+    expect(codes(r.body)).toEqual(expect.arrayContaining(['MLS_CLIENT_DISPLAY_OFF', 'FEED_STALE', 'CLIENT_USE_NOT_ALLOWED']));
+  });
+
   it('E371 R-CMA-6: a reviewed pack with no valuation section refuses the agent CMA in words; the display pack keeps its review state', async () => {
     const wn = await cmaWorld(h, { pack: cmaPack({ valuation: null }) });
     const c = await contact(wn.agents[0]!);

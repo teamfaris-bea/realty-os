@@ -3,7 +3,7 @@
 //
 // From lane V1-A (core/listings, api/mls): addressKey, streetOfKey and cellsWithin, the USPS code of a state
 // (uspsCode), the licence pack's valuation section (LicensePack.valuation, read by valuationEligible and
-// valuationStatement), the client sold fields (DISPLAY_FIELDS closePrice/closeDate, rendered by applyDisplayRules
+// valuationStatement), the display pack's counsel review (packReviewed), the client sold fields (DISPLAY_FIELDS closePrice/closeDate, rendered by applyDisplayRules
 // through clientView and clientSoldView), soldCandidates (TierQuery / SoldQuery), mlsRowsAtAddress, liveNearMatches,
 // and a row's valuation facts (ListingRow, factsOfRow).
 // From lane V1-B (core/valuation): prepareCma, CMA_DEFAULTS, CMA_METHOD_VERSION, the tiers and property types, the
@@ -15,7 +15,7 @@ import type { CmaSale, CmaTier } from '@realty/core/valuation';
 import type { SoldTier } from '../mls/comps.js';
 import { type ListingRow, factsOfRow } from '../mls/eligibility.js';
 
-export { addressKey, cellsWithin, streetOfKey, uspsCode, valuationStatement, EMPTY_VALUATION_FACTS } from '@realty/core/listings';
+export { addressKey, cellsWithin, packReviewed, streetOfKey, uspsCode, valuationStatement, EMPTY_VALUATION_FACTS } from '@realty/core/listings';
 export {
   LISTING_COLS,
   type ListingRow,
@@ -23,7 +23,6 @@ export {
   type MlsEligibility,
   clientSoldView,
   clientView,
-  connectionClientEligible,
   factsOfRow,
   mlsEligibility,
   valuationEligible,
