@@ -183,7 +183,7 @@ export function contentSha256(steps: readonly PlaybookStep[] | PlaybookContentLi
 
 /** Structural stand-in for `PlaybookContent` (defined in ./content.ts, which imports this file). */
 export interface PlaybookContentLike {
-  kind: 'steps' | 'triggers' | 'voice';
+  kind: 'steps' | 'triggers' | 'voice' | 'ai_isa';
   [field: string]: unknown;
 }
 

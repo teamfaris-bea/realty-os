@@ -81,7 +81,11 @@ export type ActionCategory =
   | 'money'
   | 'contract'
   | 'novel_message'
-  | 'seller_update';
+  | 'seller_update'
+  // D12 (proposed; docs/AI_ISA.md §2.2, §8.1): sendable only by the assistant under autonomy `ai_isa_mandate`
+  | 'ai_isa_message'
+  | 'ai_isa_confirmation'
+  | 'ai_isa_holding_line';
 
 export const ACTION_CATEGORIES: readonly ActionCategory[] = [
   'none',
@@ -98,6 +102,9 @@ export const ACTION_CATEGORIES: readonly ActionCategory[] = [
   'contract',
   'novel_message',
   'seller_update',
+  'ai_isa_message',
+  'ai_isa_confirmation',
+  'ai_isa_holding_line',
 ];
 
 /** Never autonomous (R-AST-3, DB CHECK on compliance_policy_versions.autonomous_categories). */
@@ -117,6 +124,66 @@ export const AUTONOMOUS_ELIGIBLE: ReadonlySet<ActionCategory> = new Set<ActionCa
   'nurture_step',
   'search_alert',
 ]);
+
+/**
+ * The AI ISA categories (D12 proposed, docs/AI_ISA.md §2.2, R-ISA-8, R-ISA-23). Never in AUTONOMOUS_ELIGIBLE or a
+ * policy's autonomous set (R-AST-20 holds): the gate's check 0 sends them only for `initiator='assistant'` with the
+ * AI ISA facts (`GateInput.aiIsa`), and check 12 adds the AI-only send checks on top of D1.
+ */
+export const AI_ISA_CATEGORIES: ReadonlySet<ActionCategory> = new Set<ActionCategory>(['ai_isa_message', 'ai_isa_confirmation', 'ai_isa_holding_line']);
+
+export function isAiIsaCategory(c: ActionCategory): boolean {
+  return AI_ISA_CATEGORIES.has(c);
+}
+
+/**
+ * The facts dispatch TX1 reads for one AI ISA message (docs/AI_ISA.md §5.4). Core/isa computes the consent basis
+ * (`aiIsaConsentBasis`), the zone set (`aiIsaRecipientZones`) and the counts; the gate re-applies each rule. Read by
+ * checks 0, 8 and 12 for the AI ISA categories ONLY: every other category ignores it (non-interference, R-ISA-8).
+ * VERIFY WITH COUNSEL: every value that comes from pack rules.
+ */
+export interface AiIsaGateFacts {
+  /** 12a: the R-ISA-1 chain links that fail now (`AI_ISA_CHAIN_LINKS`); empty when the chain holds. */
+  chainFailures: readonly string[];
+  /** 8: the assignment is paused, ended, stopped or blocked (liveness, R-ISA-15, R-ISA-31). */
+  paused: boolean;
+  /** 8: `aa.pinned_inbound_seq = conversations.inbound_seq` (ISA_STALE_REPLY). */
+  pinnedSeqCurrent: boolean;
+  /** 8: `aa.epoch = assignment.epoch` (ISA_STALE_EPOCH). */
+  epochCurrent: boolean;
+  /** 8: conversations.automation_pause_reason; opt_out and wrong_number still block (docs/AI_ISA.md §5.4). */
+  conversationPauseReason: string | null;
+  /** 12a: the HMAC of the point bound for this channel at start (R-ISA-28); null = none bound. */
+  boundRecipientHmac: string | null;
+  /** 12b: the channels the content, the opt-in and the assignment allow. */
+  allowedChannels: readonly ('sms' | 'email')[];
+  /** 12b: the message carries media (never, D5(a)). */
+  hasMedia: boolean;
+  /** 12c: core/isa `aiIsaConsentBasis` for this message: the missing parts, empty when the tier passes. */
+  consentMissing: readonly ('evidence' | 'reply_window' | 'dnc')[];
+  /** 12d: the conservative zone set (`aiIsaRecipientZones`); empty = unresolved. */
+  zones: readonly string[];
+  /** 12d: the window in seconds after local midnight (content window, within the pack ceiling). */
+  windowStartSec: number;
+  windowEndSec: number;
+  /** 12d: an initiated message (core/isa `messageKind`), which also obeys the days and the holidays. */
+  initiated: boolean;
+  /** 12d: ISO weekdays (1 = Monday) initiated messages may go out on. */
+  initiatedDays: readonly number[];
+  /** 12d: local dates (YYYY-MM-DD) with no initiated message (US federal holidays by default; VERIFY). */
+  holidays: readonly string[];
+  /** 12e: counts across all the person's addresses, rolling (docs/AI_ISA.md §5.3 counted statuses). */
+  counts: { ai24h: number; automated24h: number; initiated24h: number; initiated7d: number; lastAiOutboundAt: Instant | null };
+  /** 12e: the caps in force (content values, at or below the pack ceiling). */
+  caps: { ai24h: number; automated24h: number; initiated24h: number; initiated7d: number; minGapSeconds: number };
+  /** 12f */
+  sharedAddress: boolean;
+  activeClient: boolean;
+  /** 12g: the message carries a sold-derived fact (comp set or nearby sale). */
+  soldDerivedFact: boolean;
+  /** 12g: platform:cma and platform:ai_isa_seller_data cleared, and the licence's `valuation.ai_isa_comps`. */
+  sellerPacksCleared: boolean;
+}
 
 /**
  * Opt-out-exempt system replies (ARCHITECTURE §9 path 8): the system's own informational SMS answer to

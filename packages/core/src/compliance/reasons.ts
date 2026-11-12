@@ -34,12 +34,33 @@ export const REASON_CODES = [
   'PERSON_DO_NOT_CONTACT',
   'CHANNEL_NOT_CONNECTED',
   'FAIR_HOUSING_TERMS',
+  // D12 proposed (docs/AI_ISA.md §5.4): the AI ISA categories only; every other category never produces these.
+  'ISA_NOT_AUTHORIZED',
+  'ISA_PAUSED',
+  'ISA_STALE_REPLY',
+  'ISA_STALE_EPOCH',
+  'ISA_UNBOUND_RECIPIENT',
+  'ISA_PURPOSE_MISMATCH',
+  'ISA_CHANNEL_NOT_ALLOWED',
+  'ISA_CONSENT_EVIDENCE_MISSING',
+  'ISA_REPLY_WINDOW_CLOSED',
+  'ISA_DNC_UNVERIFIED',
+  'ISA_QUIET_HOURS',
+  'ISA_ZONE_UNRESOLVED',
+  'ISA_CAP_REACHED',
+  'ISA_MIN_GAP',
+  'ISA_SHARED_ADDRESS',
+  'ISA_ACTIVE_CLIENT',
+  'ISA_SELLER_DATA_NOT_CLEARED',
 ] as const;
 
 export type ReasonCode = (typeof REASON_CODES)[number];
 
 /** The opt-out reasons: never overridable by anyone (R-CONSENT-10). */
 export const OPT_OUT_REASONS: ReadonlySet<ReasonCode> = new Set<ReasonCode>(['CONSENT_REVOKED', 'SUPPRESSED', 'PERSON_DO_NOT_CONTACT']);
+
+/** The AI ISA codes (R-ISA-8). The dispatch reason classes (deferrable, replan, terminal) are core/isa's `ISA_REASON_CLASS`. */
+export const AI_ISA_REASONS: ReadonlySet<ReasonCode> = new Set<ReasonCode>(REASON_CODES.filter((r) => r.startsWith('ISA_')));
 
 /** Operational platform rules (core-compliance/3.0.0): not consent, D1 stands. Blocks until the chat widget reconnects. */
 export const PLATFORM_REASONS: ReadonlySet<ReasonCode> = new Set<ReasonCode>(['CHANNEL_NOT_CONNECTED']);
@@ -106,6 +127,42 @@ export function reasonSentence(r: ReasonCode, channel: Channel): string {
       return channel === 'web_chat' ? 'The chat has ended: they left the page or the website chat was turned off' : `${CHANNEL_NAME[channel]} isn't connected right now`;
     case 'FAIR_HOUSING_TERMS':
       return 'Contains wording that fair-housing rules do not allow; edit it first';
+    case 'ISA_NOT_AUTHORIZED':
+      return "The AI assistant isn't authorized to send this right now";
+    case 'ISA_PAUSED':
+      return 'AI care is paused or has ended for this person';
+    case 'ISA_STALE_REPLY':
+      return 'They wrote again, so the AI assistant will answer both messages together';
+    case 'ISA_STALE_EPOCH':
+      return 'AI care was paused and resumed after this was written';
+    case 'ISA_UNBOUND_RECIPIENT':
+      return "The AI assistant only writes to the number or address it was started on";
+    case 'ISA_PURPOSE_MISMATCH':
+      return 'AI assistant messages are always sent as marketing';
+    case 'ISA_CHANNEL_NOT_ALLOWED':
+      return `The AI assistant isn't allowed to send ${noun} here`;
+    case 'ISA_CONSENT_EVIDENCE_MISSING':
+      return channel === 'sms'
+        ? 'Listings and follow-ups by text need written consent naming the team, from their own form. Not on file'
+        : 'Listings and follow-ups by email need consent from their own form. Not on file';
+    case 'ISA_REPLY_WINDOW_CLOSED':
+      return 'Their last message is too old for the AI assistant to reply to';
+    case 'ISA_DNC_UNVERIFIED':
+      return 'AI-initiated texts need a recent Do Not Call check. Not on file';
+    case 'ISA_QUIET_HOURS':
+      return "Outside the hours the AI assistant may write in every time zone they could be in";
+    case 'ISA_ZONE_UNRESOLVED':
+      return "Their time zone couldn't be worked out, so the AI assistant waits";
+    case 'ISA_CAP_REACHED':
+      return 'They have had as many automated messages today as the AI assistant allows';
+    case 'ISA_MIN_GAP':
+      return 'The AI assistant waits a couple of minutes between messages';
+    case 'ISA_SHARED_ADDRESS':
+      return 'This number or address is shared with another person';
+    case 'ISA_ACTIVE_CLIENT':
+      return "They're already a client on an open deal or a team listing";
+    case 'ISA_SELLER_DATA_NOT_CLEARED':
+      return "Recent sales can't be sent until counsel and the MLS licence clear it";
   }
 }
 

@@ -37,24 +37,38 @@
 //  11  FAIR_HOUSING_TERMS: a hard fair-housing match (counted by core/fairhousing, module 20) blocks
 //      marketing for everyone and any automated send. VERIFY WITH COUNSEL
 //
+// D12 (proposed; docs/AI_ISA.md §5.4, R-ISA-8). For the AI ISA categories ONLY (`AI_ISA_CATEGORIES`), with the
+// facts `input.aiIsa` that dispatch TX1 builds:
+//   0  they skip `policy.autonomous` (they are never in it, R-AST-20) and instead require `initiator='assistant'`
+//      and `input.aiIsa`, else ISA_NOT_AUTHORIZED; ALWAYS_HUMAN is unchanged
+//   8  the conversation pause is replaced by the assignment's freshness (ISA_PAUSED, ISA_STALE_REPLY,
+//      ISA_STALE_EPOCH); a pause for opt_out or wrong_number still blocks (AUTOMATION_PAUSED)
+//  12  a chain and binding (ISA_NOT_AUTHORIZED, ISA_UNBOUND_RECIPIENT, ISA_PURPOSE_MISMATCH); b channel; c consent
+//      evidence; d recipient-local quiet hours over the conservative zone set; e caps and the minimum gap;
+//      f shared address and active client; g sold-derived facts need the seller-data packs
+// D1's checks 5, 6 and 9 run first and unchanged for them. Every other category ignores `input.aiIsa`
+// (non-interference, property-tested in gate_ai_isa.test.ts). VERIFY WITH COUNSEL: every AI ISA parameter.
+//
 // Every new input only ever adds reasons (monotonic denial, property-tested). An unknown channel throws
 // ChannelUnknownError (R-GATE-13): it is refused, never mapped.
 // The opt-out exemption (ARCHITECTURE §9 path 8) covers only the system's own informational SMS reply
 // to a STOP/HELP keyword; it still checks everything else, suppressions included.
 //
 // Legal parameters come from `input.policy` (resolvePolicy). VERIFY WITH COUNSEL every default.
-import type { Instant } from '../foundation/index.js';
+import { type Instant, ianaZone, localDateOf, localWindowContains, type LocalTime, weekdayOf } from '../foundation/index.js';
 import { canonicalize, canonicalJson, sha256Hex, type Canonical } from './digest.js';
 import type { ResolvedPolicy } from './policy.js';
 import { type ReasonCode, explain } from './reasons.js';
 import {
   type ActionCategory,
+  type AiIsaGateFacts,
   ALWAYS_HUMAN_CATEGORIES,
   AUTONOMOUS_ELIGIBLE,
   CHANNELS,
   type Channel,
   ChannelUnknownError,
   CONSENT_EXEMPT_CATEGORIES,
+  isAiIsaCategory,
   isPlatformChannel,
   type ConsentStateRow,
   type Initiator,
@@ -114,6 +128,11 @@ export interface GateInput {
   personDoNotContact: boolean;
   /** Web chat: the sending widget's `integration_connections` status; null = none. Ignored on other channels. */
   connection: { status: GateConnectionStatus } | null;
+  /**
+   * D12 (proposed): the AI ISA facts of an AI ISA message (docs/AI_ISA.md §5.4). Read only for the AI ISA
+   * categories; absent for every other send.
+   */
+  aiIsa?: AiIsaGateFacts;
 }
 
 export type GateOutcome = 'allow' | 'deny';
@@ -175,15 +194,21 @@ export function canContact(input: GateInput): GateDecision {
     (input.keywordSenders ?? []).includes(recipient.addressHmac);
   const messaging = ch !== 'voice';
 
+  const isa = isAiIsaCategory(category);
+  const isaFacts = isa ? input.aiIsa : undefined;
+
   // 0. autonomy / category / recipient
   if ((category === 'agent_alert') !== toUser) add('RECIPIENT_CATEGORY_MISMATCH');
   if (automated && ALWAYS_HUMAN_CATEGORIES.has(category)) add('CATEGORY_REQUIRES_HUMAN');
   if (
+    !isa &&
     (input.initiator === 'assistant' || (input.initiator === 'system' && AUTONOMOUS_ELIGIBLE.has(category))) &&
     !policy.autonomous.has(category)
   ) {
     add('CATEGORY_NOT_AUTONOMOUS');
   }
+  // D12: an AI ISA category is sendable only by the assistant with the AI ISA facts (never by a human or the system)
+  if (isa && (input.initiator !== 'assistant' || isaFacts === undefined)) add('ISA_NOT_AUTHORIZED');
   if (automated && ch === 'voice') add('AUTOMATED_VOICE_UNAVAILABLE');
 
   // 1. tenant
@@ -223,8 +248,19 @@ export function canContact(input: GateInput): GateDecision {
   // 7. payment instructions (R-GATE-7)
   if (rendered?.paymentInstructions === true) add('PAYMENT_INSTRUCTIONS');
 
-  // 8. automation pause (R-AST-9); humans can always reply
-  if (automated && !toUser && !optOutExempt && input.automationPausedAt !== null) add('AUTOMATION_PAUSED');
+  // 8. automation pause (R-AST-9); humans can always reply. D12: under AI care the conversation pause is replaced
+  // by the assignment's own freshness, except a pause for an opt-out or a wrong number, which still blocks.
+  if (automated && !toUser && !optOutExempt) {
+    if (isaFacts === undefined) {
+      if (input.automationPausedAt !== null) add('AUTOMATION_PAUSED');
+    } else {
+      const r = isaFacts.conversationPauseReason;
+      if (input.automationPausedAt !== null && (r === 'opt_out' || r === 'wrong_number')) add('AUTOMATION_PAUSED');
+      if (isaFacts.paused) add('ISA_PAUSED');
+      if (!isaFacts.pinnedSeqCurrent) add('ISA_STALE_REPLY');
+      if (!isaFacts.epochCurrent) add('ISA_STALE_EPOCH');
+    }
+  }
 
   // 9. person-level do-not-contact (R-CHAN-2): every channel, every initiator, no override
   if (!optOutExempt && input.personDoNotContact) add('PERSON_DO_NOT_CONTACT');
@@ -238,6 +274,9 @@ export function canContact(input: GateInput): GateDecision {
   // 11. fair housing (R-FH-1/2 at send time): marketing for everyone, anything automated
   if ((rendered?.fairHousingHardMatches ?? 0) > 0 && (marketing || automated)) add('FAIR_HOUSING_TERMS');
 
+  // 12. D12: the AI-only send checks (docs/AI_ISA.md §5.4)
+  if (isaFacts !== undefined) for (const r of aiIsaChecks(input, isaFacts)) add(r);
+
   const outcome: GateOutcome = reasons.length > 0 ? 'deny' : 'allow';
   return {
     outcome,
@@ -246,4 +285,44 @@ export function canContact(input: GateInput): GateDecision {
     rulesVersion: RULES_VERSION,
     inputsDigest: sha256Hex(canonicalJson(input)),
   };
+}
+
+/**
+ * Check 12 of an AI ISA message (D12 proposed; docs/AI_ISA.md §5.2-§5.4; R-ISA-8, -9, -10, -11, -2, -18). Every
+ * value comes from `f`, which TX1 builds from fresh reads; the DB guard re-derives each one. VERIFY WITH COUNSEL.
+ */
+function aiIsaChecks(input: GateInput, f: AiIsaGateFacts): ReasonCode[] {
+  const out: ReasonCode[] = [];
+  const ch = input.recipient.channel;
+  // 12a chain, binding, purpose (R-ISA-1, R-ISA-28; every AI ISA message is marketing)
+  if (f.chainFailures.length > 0) out.push('ISA_NOT_AUTHORIZED');
+  if (input.recipient.kind !== 'contact' || f.boundRecipientHmac === null || f.boundRecipientHmac !== input.recipient.addressHmac) out.push('ISA_UNBOUND_RECIPIENT');
+  if (input.purpose !== 'marketing') out.push('ISA_PURPOSE_MISMATCH');
+  // 12b channel (SMS and email only, no media, R-ISA-24); sold-derived facts never by SMS (§6.3)
+  if ((ch !== 'sms' && ch !== 'email') || !f.allowedChannels.includes(ch) || f.hasMedia || (f.soldDerivedFact && ch !== 'email')) out.push('ISA_CHANNEL_NOT_ALLOWED');
+  // 12c consent evidence (R-ISA-9)
+  if (f.consentMissing.includes('evidence')) out.push('ISA_CONSENT_EVIDENCE_MISSING');
+  if (f.consentMissing.includes('reply_window')) out.push('ISA_REPLY_WINDOW_CLOSED');
+  if (f.consentMissing.includes('dnc')) out.push('ISA_DNC_UNVERIFIED');
+  // 12d quiet hours in every zone of the set; initiated messages also obey the days and holidays (R-ISA-10)
+  const zones = f.zones.map((z) => ianaZone(z));
+  if (zones.length === 0 || zones.some((z) => z === null)) out.push('ISA_ZONE_UNRESOLVED');
+  else {
+    const valid = Number.isInteger(f.windowStartSec) && Number.isInteger(f.windowEndSec) && f.windowStartSec >= 0 && f.windowEndSec <= 86_400 && f.windowStartSec < f.windowEndSec;
+    const now = input.now;
+    const inside = valid && zones.every((z) => localWindowContains(now, z!, f.windowStartSec as LocalTime, f.windowEndSec as LocalTime));
+    const dayOk = !f.initiated || zones.every((z) => f.initiatedDays.includes(weekdayOf(now, z!)) && !f.holidays.includes(localDateOf(now, z!)));
+    if (!inside || !dayOk) out.push('ISA_QUIET_HOURS');
+  }
+  // 12e caps and the minimum gap (R-ISA-11): the AI yields to the person's other automated and bulk messages
+  const c = f.counts;
+  const cap = f.caps;
+  if (c.ai24h >= cap.ai24h || c.automated24h >= cap.automated24h || (f.initiated && (c.initiated24h >= cap.initiated24h || c.initiated7d >= cap.initiated7d))) out.push('ISA_CAP_REACHED');
+  if (c.lastAiOutboundAt !== null && input.now - c.lastAiOutboundAt < cap.minGapSeconds * 1000) out.push('ISA_MIN_GAP');
+  // 12f exclusivity (R-ISA-2)
+  if (f.sharedAddress) out.push('ISA_SHARED_ADDRESS');
+  if (f.activeClient) out.push('ISA_ACTIVE_CLIENT');
+  // 12g sold-derived facts need platform:cma, platform:ai_isa_seller_data and the licence use (R-ISA-18)
+  if (f.soldDerivedFact && !f.sellerPacksCleared) out.push('ISA_SELLER_DATA_NOT_CLEARED');
+  return out;
 }
