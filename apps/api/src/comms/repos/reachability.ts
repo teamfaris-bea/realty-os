@@ -223,16 +223,25 @@ export async function personDoNotContactFor(tx: Tx, contactIds: readonly string[
 export async function chatFanoutFor(tx: Tx, contactIds: readonly string[]): Promise<Map<string, string[]>> {
   const out = new Map<string, string[]>(contactIds.map((id) => [id, []]));
   if (contactIds.length === 0) return out;
-  const r = await sql<{ contact_id: string; h: Buffer }>`
-    SELECT DISTINCT c.id AS contact_id, p.address_hmac AS h
-      FROM unnest(${[...contactIds]}::uuid[]) AS c(id)
-      JOIN contact_points p ON p.tenant_id = app.tenant_id() AND p.kind = 'web_chat'
-                           AND p.contact_id = ANY ((SELECT app.contact_person_ids(app.tenant_id(), c.id))::uuid[])
-                           AND (p.removed_at IS NULL OR p.removed_reason IS DISTINCT FROM 'wrong_number')
-     ORDER BY 1, 2`.execute(tx);
+  const r = await chatFanoutSql(contactIds).execute(tx);
   for (const x of r.rows) out.get(x.contact_id)?.push(Buffer.from(x.h).toString('hex'));
   return out;
 }
+
+/**
+ * The SQL of chatFanoutFor (exported for its plan-shape test, comms/chatFanout.perf.test.ts). The person of each
+ * contact is read once, as a function scan in FROM, and its points then by contact_id (review chat-R1 of batch 6): a
+ * correlated `contact_id = ANY ((SELECT app.contact_person_ids(..., c.id)))` in the join condition, or in a LATERAL
+ * subquery the planner flattens, becomes a join filter that runs the recursive person read once per (contact,
+ * web-chat point of the tenant) pair.
+ */
+export const chatFanoutSql = (contactIds: readonly string[]) => sql<{ contact_id: string; h: Buffer }>`
+    SELECT DISTINCT c.id AS contact_id, p.address_hmac AS h
+      FROM unnest(${[...contactIds]}::uuid[]) AS c(id)
+      CROSS JOIN LATERAL unnest(app.contact_person_ids(app.tenant_id(), c.id)) AS m(id)
+      JOIN contact_points p ON p.tenant_id = app.tenant_id() AND p.contact_id = m.id AND p.kind = 'web_chat'
+                           AND (p.removed_at IS NULL OR p.removed_reason IS DISTINCT FROM 'wrong_number')
+     ORDER BY 1, 2`;
 
 /**
  * Of these contacts, the ones whose detail the caller sees, with what classifies a human message's purpose
