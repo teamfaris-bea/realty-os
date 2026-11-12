@@ -28,7 +28,7 @@ import {
   sqlstate,
   trialProbe,
 } from '../rolePreflight.js';
-import { type DatabaseTls, TLS_DISABLED, pgSsl } from '../tls.js';
+import { type DatabaseTls, TLS_DISABLED, databaseTlsFromEnv, pgSsl } from '../tls.js';
 
 export interface PreflightIo {
   ownerUrl: string | undefined;
@@ -153,6 +153,14 @@ function appRoleProblemsByCheck(row: AppRoleRow | undefined, tls: DatabaseTls): 
 const isEntry = process.argv[1] !== undefined && /scripts[\\/]preflight\.(t|j)s$/.test(process.argv[1]);
 if (isEntry) {
   loadRootEnv();
-  const code = await runPreflight(process.argv.slice(2), { ownerUrl: process.env.MIGRATION_DATABASE_URL, appUrl: process.env.DATABASE_URL, out: (l) => console.log(l) });
+  let tls: DatabaseTls;
+  try {
+    tls = databaseTlsFromEnv(process.env);
+  } catch (err) {
+    console.log(`database settings: failed: ${(err as Error).message}`);
+    console.log('preflight failed: 1 checks');
+    process.exit(1);
+  }
+  const code = await runPreflight(process.argv.slice(2), { ownerUrl: process.env.MIGRATION_DATABASE_URL, appUrl: process.env.DATABASE_URL, tls, out: (l) => console.log(l) });
   process.exit(code);
 }

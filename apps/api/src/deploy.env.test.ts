@@ -53,6 +53,8 @@ describe('deploy/env.staging.example', () => {
     expect(c.telephonyLiveRequests).toBe(false);
     expect(c.kekRef).toBe('staging-kek:v1');
     expect(c.cookieSecure).toBe(true);
+    // R-DEPLOY-5: the compose database is on the same VM's network: staging only, allowed by ALLOW_FAKE_PROVIDERS
+    expect(c.databaseTls).toEqual({ mode: 'disable', caFile: null, ca: null });
     expect(loadObservabilityConfig(env).metrics).toMatchObject({ port: 9464 });
   });
 
@@ -225,5 +227,32 @@ describe('deploy/env.production.example', () => {
     expect(vars.get('MLS_LIVE_CALLS')).toBe('false');
     expect(vars.get('TELEPHONY_LIVE_REQUESTS')).toBe('false');
     expect(vars.get('ALLOW_FAKE_PROVIDERS')).toBe('false');
+  });
+
+  it('R-DEPLOY-5 E485 E484: verified TLS to <db-host> with the mounted CA path, no query string; the CA path must hold a certificate', () => {
+    const vars = parseEnvFile('deploy/env.production.example');
+    expect(vars.get('DATABASE_SSL_MODE')).toBe('verify-full');
+    expect(vars.get('DATABASE_SSL_CA_FILE')).toBe('/run/realty/db-ca.pem');
+    expect(vars.get('DATABASE_URL')).toMatch(/^postgres:\/\/app_user:[^@]+@<db-host>:5432\/realty$/);
+    const env: Record<string, string> = {};
+    for (const [k, v] of vars) if (v !== '') env[k] = v;
+    env.KEK_BASE64 = randomBytes(32).toString('base64');
+    env.SESSION_SECRET_BASE64 = randomBytes(32).toString('base64');
+    const dir = mkdtempSync(join(tmpdir(), 'realty-ca-'));
+    try {
+      // the template's path does not exist here: refused by name
+      expect(() => loadConfig(env)).toThrow(/DATABASE_SSL_CA_FILE is not readable/);
+      const ca = join(dir, 'db-ca.pem');
+      writeFileSync(ca, '-----BEGIN CERTIFICATE-----\nMIIBfake\n-----END CERTIFICATE-----\n');
+      let msg = '';
+      try {
+        loadConfig({ ...env, DATABASE_SSL_CA_FILE: ca, DATABASE_URL: env.DATABASE_URL!.replace('<db-host>', 'db.example.com') });
+      } catch (e) {
+        msg = (e as Error).message;
+      }
+      expect(msg).not.toMatch(/DATABASE_SSL|DATABASE_URL/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -63,7 +63,7 @@ export { TenantNotReadyError, importOwnersPending, loadRoutingCandidates, loadRu
 export { type AuditRowSpec, insertAuditRow } from './repos/audit.js';
 export { json } from './json.js';
 export { APP_ROLE_CHECK_SQL, type AppRoleProblem, type AppRoleRow, NOT_RLS_BOUND, appRoleProblems, tlsFailureMessage } from './rolePreflight.js';
-export { type DatabaseTls, libpqEnvNames, pgSsl } from './tls.js';
+export { type DatabaseTls, DatabaseTlsError, assertDatabaseUrlShape, databaseTlsFromEnv, databaseTlsProblems, databaseUrlShapeProblem, libpqEnvNames, pgSsl } from './tls.js';
 export {
   type ClientActor,
   type PortalAuditEntity,

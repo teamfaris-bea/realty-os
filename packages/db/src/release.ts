@@ -157,7 +157,7 @@ export async function runRelease(o: ReleaseOptions): Promise<void> {
  */
 export function releaseFailure(err: unknown): string {
   const e = err as { name?: string; message?: string; code?: unknown; severity?: unknown } | null;
-  if (e && ['ReleaseRefused', 'RolePreflightError', 'AppRoleAttributeError', 'MigrationError'].includes(e.name ?? '')) return e.message ?? '';
+  if (e && ['ReleaseRefused', 'RolePreflightError', 'AppRoleAttributeError', 'MigrationError', 'DatabaseTlsError'].includes(e.name ?? '')) return e.message ?? '';
   if (e && typeof e.severity === 'string' && typeof e.message === 'string') return `${e.message} (SQLSTATE ${String(e.code)})`;
   const code = typeof e?.code === 'string' ? e.code : /does not support SSL/.test(e?.message ?? '') ? 'SERVER_NO_SSL' : 'CONNECT_FAILED';
   return `database connection failed: ${code}`;

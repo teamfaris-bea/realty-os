@@ -1,6 +1,7 @@
 // pnpm db:migrate — applies packages/db/migrations/*.sql to MIGRATION_DATABASE_URL (owner role).
 import { MIGRATIONS_DIR, loadRootEnv } from '../dbConfig.js';
 import { migrate } from '../migrate.js';
+import { databaseTlsFromEnv, pgSsl } from '../tls.js';
 
 loadRootEnv();
 const url = process.env.MIGRATION_DATABASE_URL;
@@ -9,7 +10,7 @@ if (!url) {
   process.exit(1);
 }
 try {
-  const r = await migrate(url, MIGRATIONS_DIR, { log: (l) => console.log(l) });
+  const r = await migrate(url, MIGRATIONS_DIR, { log: (l) => console.log(l), ssl: pgSsl(databaseTlsFromEnv(process.env, ['MIGRATION_DATABASE_URL'])) });
   console.log(`migrations: ${r.applied.length} applied, ${r.alreadyApplied.length} already applied`);
 } catch (err) {
   console.error(err instanceof Error ? err.message : err);

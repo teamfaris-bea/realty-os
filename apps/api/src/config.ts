@@ -5,6 +5,7 @@
 // adds one field to `ConfigSchema` + one line in `loadConfig` and the matching `.env.example` key.
 import { createHmac } from 'node:crypto';
 import { isIP } from 'node:net';
+import { databaseTlsProblems, databaseUrlShapeProblem } from '@realty/db';
 import { z } from 'zod';
 
 const base64Key = (name: string) =>
@@ -102,6 +103,8 @@ const S3Schema = z.object({
 export const ConfigSchema = z.object({
   env: z.enum(['development', 'test', 'production']).default('development'),
   databaseUrl: z.string().min(1, 'DATABASE_URL is required'),
+  /** DATABASE_SSL_MODE / DATABASE_SSL_CA_FILE (R-DEPLOY-5, @realty/db tls.ts): every database client passes pgSsl(this) */
+  databaseTls: z.object({ mode: z.enum(['verify-full', 'disable']), caFile: z.string().nullable(), ca: z.string().nullable() }),
   /**
    * Connections in the API process's app_user pool (DB_POOL_MAX; docs/DEPLOY.md). Default 10: the pg
    * default the API always ran with, and the best of 10/20/30/45 for 45+ simultaneous taps against a
@@ -419,8 +422,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (telLive !== '' && telLive !== 'true' && telLive !== 'false') invalid.push('TELEPHONY_LIVE_REQUESTS must be true or false');
   const trust = parseTrustProxy(env.TRUST_PROXY);
   if (!trust.ok) invalid.push(trust.message);
+  // R-DEPLOY-5 (E485, E483): database TLS settings, all problems at once
+  const dbTls = databaseTlsProblems(env);
+  invalid.push(...dbTls.problems);
 
   if (prod) {
+    // E484: no query string or fragment (query keys override the user, host and TLS settings)
+    for (const k of ['DATABASE_URL', 'MIGRATION_DATABASE_URL']) {
+      const p = env[k] ? databaseUrlShapeProblem(env[k], k) : null;
+      if (p) invalid.push(p);
+    }
     // the name stamped on every key the KEK wraps (tenant_keys.kek_ref); rotation (DEPLOY §9) needs a real one
     if (!(env.KEK_REF ?? '').trim()) missing.push('KEK_REF');
     if (!env.PUBLIC_BASE_URL) missing.push('PUBLIC_BASE_URL');
@@ -454,6 +465,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const parsed = ConfigSchema.safeParse({
     env: nodeEnv,
     databaseUrl: env.DATABASE_URL ?? '',
+    databaseTls: dbTls.tls,
     apiPort: port,
     apiHost: env.API_HOST,
     webOrigins: origins,
@@ -508,6 +520,7 @@ function assertProductionSecrets(c: Config): void {
 export function redactConfig(c: Config): Record<string, unknown> {
   return {
     env: c.env,
+    databaseTls: { mode: c.databaseTls.mode, caFile: c.databaseTls.caFile },
     apiPort: c.apiPort,
     webOrigins: c.webOrigins,
     publicBaseUrl: c.publicBaseUrl,

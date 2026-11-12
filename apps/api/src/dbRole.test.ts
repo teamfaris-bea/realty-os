@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
+import { rootCertificates } from 'node:tls';
 import { type Database, createDatabase } from '@realty/db';
 import { type TestDb, createTestDb } from '@realty/db/testing';
 import pg from 'pg';
@@ -178,6 +179,18 @@ describe('R-DEPLOY-1: the app role model at start-up (assertAppRoleModel)', () =
       }
     }
     await expect(assertAppRoleModel(loginAs(trial, password), trial)).resolves.toBeUndefined();
+  });
+
+  it('R-DEPLOY-1 E486: under verify-full a TLS connect failure becomes the named ConfigError, by code, without the host or password', async () => {
+    // a trust anchor that did not sign the local cluster's certificate: verification fails before any query
+    const u = new URL(db.appUserUrl);
+    const h = createDatabase({ url: u.href, max: 1, ssl: { rejectUnauthorized: true, ca: rootCertificates[0]! } });
+    handles.push(h);
+    const e = await assertAppRoleModel(h, 'app_user', { mode: 'verify-full' }).then(() => null, (x: unknown) => x as Error);
+    expect(e?.name).toBe('ConfigError');
+    expect(e?.message).toMatch(/^database TLS failed \(DATABASE_SSL_MODE=verify-full\): [A-Za-z0-9_]+$/);
+    expect(e?.message).not.toContain(u.hostname);
+    expect(e?.message).not.toContain(decodeURIComponent(u.password));
   });
 
   it('R-DEPLOY-1 E482: a public table without FORCE ROW LEVEL SECURITY makes start-up refuse, naming the table', async () => {

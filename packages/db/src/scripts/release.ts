@@ -9,12 +9,15 @@
 // Prints no secrets.
 import { MIGRATIONS_DIR } from '../dbConfig.js';
 import { releaseFailure, runRelease } from '../release.js';
+import { databaseTlsFromEnv } from '../tls.js';
 
 try {
   await runRelease({
     ownerUrl: process.env.MIGRATION_DATABASE_URL,
     appUrl: process.env.DATABASE_URL,
     dir: MIGRATIONS_DIR,
+    // DATABASE_SSL_MODE / DATABASE_SSL_CA_FILE; in production also the URL shape (E484) and no PG* variable (E483)
+    tls: databaseTlsFromEnv(process.env),
     log: (l) => console.log(l),
   });
 } catch (err) {
