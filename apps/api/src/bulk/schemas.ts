@@ -47,6 +47,8 @@ export const ActionSchema = z.object({
   targetCount: z.number().int(),
   preflight: z.record(z.string(), z.number().int()),
   sharedAddresses: z.number().int(),
+  /** assign: of the people it will assign, those on offer to an agent now (their offers are withdrawn, each agent told) */
+  onOffer: z.number().int(),
   counts: CountsSchema,
   templateId: z.uuid().nullable(),
   templateVersion: z.number().int().nullable(),

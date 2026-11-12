@@ -30,7 +30,7 @@ import type { CommsDeps, DispatchResult } from '../comms/types.js';
 import { AppError } from '../errors.js';
 import { systemActor } from '../worker/systemActor.js';
 import { assignTarget, kindFacts, personFacts, personRow, sendContext, sendFacts } from './facts.js';
-import { notifyAssignSummaries, notifyFinished } from './notices.js';
+import { notifyAssignSummaries, notifyFinished, notifyOfferSummaries } from './notices.js';
 import * as B from './repos/bulk.js';
 
 export type RunResult = { kind: 'finished'; status: 'completed' | 'canceled' | 'failed' } | { kind: 'retry'; at: Instant } | { kind: 'noop' };
@@ -50,6 +50,8 @@ interface StoredCounts {
   selected?: number;
   preflight?: Record<string, number>;
   assignFrom?: Record<string, number>;
+  /** assign: per agent, the leads on offer to them that this action assigned (their offers withdrawn, batch 6 review F6) */
+  offerFrom?: Record<string, number>;
   [k: string]: unknown;
 }
 
@@ -103,6 +105,8 @@ async function finish(deps: CommsDeps, tenantId: string, actionId: string, statu
       gained.delete(a.createdByUserId);
       lost.delete(a.createdByUserId);
       await notifyAssignSummaries(tx, deps.ids, actionId, gained, lost);
+      const withdrawn = new Map<string, number>(Object.entries(c.offerFrom ?? {}).filter(([u, n]) => u !== to && u !== a.createdByUserId && n > 0));
+      await notifyOfferSummaries(tx, deps.ids, actionId, withdrawn);
     }
     await audit(tx, systemActor(tenantId, 'worker'), { action: 'bulk.completed', entity: { type: 'bulk_action', id: actionId }, changes: redactSnapshot({ kind: a.kind, status, doneCount: final.done, skippedCount: final.skipped, blockedCount: final.blocked, failedCount: final.failed }, { entity: 'bulk_action' }), reason: failureCode ?? 'COMPLETED' });
     return { kind: 'finished', status } as const;
@@ -279,6 +283,14 @@ async function editItem(deps: CommsDeps, tenantId: string, creator: UserActor, a
                      SET counts = jsonb_set(jsonb_set(counts, '{assignFrom}', COALESCE(counts -> 'assignFrom', '{}'::jsonb), true),
                                             ARRAY['assignFrom', ${p.ownerUserId}::text],
                                             to_jsonb(COALESCE((counts #>> ARRAY['assignFrom', ${p.ownerUserId}::text])::int, 0) + 1), true)
+                   WHERE tenant_id = app.tenant_id() AND id = ${a.id}`.execute(tx);
+      }
+      if (a.kind === 'assign' && p.ownershipState === 'offered' && p.offeredToUserId) {
+        // whose offers the engine withdrew (R-OWN-18), for one summary per agent at the end (batch 6 review F6)
+        await sql`UPDATE bulk_actions
+                     SET counts = jsonb_set(jsonb_set(counts, '{offerFrom}', COALESCE(counts -> 'offerFrom', '{}'::jsonb), true),
+                                            ARRAY['offerFrom', ${p.offeredToUserId}::text],
+                                            to_jsonb(COALESCE((counts #>> ARRAY['offerFrom', ${p.offeredToUserId}::text])::int, 0) + 1), true)
                    WHERE tenant_id = app.tenant_id() AND id = ${a.id}`.execute(tx);
       }
       await B.finishItem(tx, a.id, it.contactId, 'done', null);

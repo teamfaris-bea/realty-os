@@ -150,6 +150,31 @@ describe('R-PAR-35 assign through the ownership engine', () => {
   });
 });
 
+// Batch 6 review ownership-sla/F6: from "Owner is nobody" a bulk Assign also takes leads on offer to an agent (the engine
+// withdraws the offer, R-OWN-18) and closed people (the engine refuses those). The preview counted the closed ones as
+// going to be assigned, nothing said an offer would be withdrawn, and the agent it was on offer to was told nothing.
+describe('R-PAR-35 assign from "Owner is nobody": people on offer and closed people', () => {
+  it('R-PAR-35 R-OWN-18: closed people are left out before Confirm (CLOSED); people on offer are counted, assigned, and each agent whose offer was withdrawn is told once', async () => {
+    const offered = await intake(h, w, { fullName: 'Olive Offer' });
+    const offeredTo = (await h.su.query<{ s: string; u: string }>('SELECT ownership_state AS s, offered_to_user_id AS u FROM contacts WHERE id = $1', [offered.contactId])).rows[0]!;
+    expect(offeredTo.s).toBe('offered');
+    const closed = await ownedContact(w.agents[0]!);
+    expect((await command(w.owner, closed.id, 'close', { reason: 'not_a_lead' })).status).toBe(200);
+    const to = w.agents.find((a) => a.userId !== offeredTo.u)!;
+    const d = await draft(w.owner, { kind: 'assign', selection: { contactIds: [offered.contactId, closed.id] }, toUserId: to.userId });
+    expect(d.status).toBe(201);
+    expect(d.body.action).toMatchObject({ targetCount: 1, preflight: { CLOSED: 1 }, onOffer: 1 });
+    await confirm(w.owner, d.body.action.id);
+    expect(await run(d.body.action.id)).toEqual({ kind: 'finished', status: 'completed' });
+    const ev = await h.su.query('SELECT type FROM lead_ownership_events WHERE contact_id = $1 ORDER BY seq DESC LIMIT 2', [offered.contactId]);
+    expect(ev.rows.map((r) => r.type).reverse()).toEqual(['offer_rescinded', 'assigned']);
+    const notices = (await h.su.query('SELECT user_id, kind, title FROM notifications WHERE subject_id = $1 ORDER BY kind, user_id', [d.body.action.id])).rows;
+    expect(notices).toEqual(expect.arrayContaining([{ user_id: offeredTo.u, kind: 'reassigned_away', title: '1 lead offered to you was withdrawn: it was assigned to someone else' }]));
+    // the closed person stays as they were
+    expect((await h.su.query('SELECT ownership_state FROM contacts WHERE id = $1', [closed.id])).rows[0].ownership_state).toBe('closed');
+  });
+});
+
 describe('R-PAR-35 enroll', () => {
   async function approvedPlaybook(scope: 'team' | 'agent', ownerUserId: string | null): Promise<string> {
     const playbookId = randomUUID();

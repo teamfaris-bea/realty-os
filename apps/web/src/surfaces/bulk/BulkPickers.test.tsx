@@ -39,6 +39,7 @@ const draft = (over: Partial<BulkActionView> = {}): BulkActionView => ({
   targetCount: 2,
   preflight: { ALREADY_OWNER: 1 },
   sharedAddresses: 0,
+  onOffer: 0,
   counts: { selected: 3, done: 0, skipped: 1, blocked: 0, failed: 0, canceled: 0, pending: 2, byReason: { ALREADY_OWNER: 1 } },
   templateId: null,
   templateVersion: null,
@@ -69,6 +70,23 @@ const playbooks = {
     ],
   },
 };
+
+// Batch 6 review ownership-sla/F6: from "Owner is nobody" the selection can hold people on offer to an agent (assigning
+// withdraws the offer) and closed people (never assigned); the sheet said neither.
+describe('R-PAR-35 bulk assign: people on offer and closed people say what happens to them', () => {
+  it('R-PAR-35 R-OWN-18: the sheet says how many are on offer now and that their offers are withdrawn, each agent told; closed people are left out, said as closed', async () => {
+    const fake = new FakeFetch()
+      .on('GET /members', members)
+      .on('POST /bulk-actions', { status: 201, body: { action: draft({ preflight: { CLOSED: 1 }, onOffer: 1 }) } });
+    app(fake, `/bulk/new?kind=assign&contacts=${C.join(',')}`, 'owner');
+    const u = userEvent.setup();
+    const picker = await screen.findByRole('region', { name: 'Assign to' });
+    await u.click(await within(picker).findByRole('button', { name: 'Sam Lee' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Assign 2 of 3?' });
+    expect(within(within(sheet).getByRole('region', { name: 'Left out (1)' })).getByRole('listitem').textContent).toBe('1 are closed (reopen them to assign them)');
+    expect(within(sheet).getByText('1 of them is on offer to an agent now: assigning withdraws that offer, and the agent is told.')).toBeInTheDocument();
+  });
+});
 
 describe('R-PAR-35 bulk assign: the person picker', () => {
   it('an Owner picks from the active members who can hold leads (never a TC, never someone suspended); person → Confirm is 2 taps, the left-out counted by reason', async () => {

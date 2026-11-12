@@ -361,7 +361,7 @@ Each rule has at least one test. Where the rule is enforced is given in brackets
   - Owner/Admin may reassign anywhere.
   - A TL may reassign only when the current owner and the target are both in a team they lead.
   - An ISA may hand off only contacts they own, only to an agent or TL, with a required note. The ISA becomes a collaborator until handoff + `isa_access_after_handoff_days` (7).
-  - Reassigning an `offered` lead writes `offer_rescinded` then `assigned`.
+  - Reassigning an `offered` lead writes `offer_rescinded` then `assigned`, and the agent it was on offer to is told the offer was withdrawn (unless it went to them; batch 6 review F6).
   - Both the old and new owners are notified.
 
   [core]
@@ -1284,7 +1284,7 @@ The role policies are in §11.1. Two rules carry the design:
 - **R-PAR-34** The target is built when the draft is created, from people whose detail the creator sees then, and confirmed exactly as previewed; nothing is ever added after confirm. There is no re-preview loop when a list grows. An item keeps its person and address, and a processed item is final (no re-send). The runner processes one item per transaction **as the creator**, rebuilt from the row while their membership is active, as `dispatchOutbound` rebuilds a human sender. RLS and `can()` therefore re-decide each item. An item no longer visible, merged or deleted is `skipped` with its reason. A suspended creator stops the run. [DB, smoke + api]
 - **R-PAR-35** Per kind:
   - **tag/untag/stage**: as `contact.edit`, with R-PAR-14 per item.
-  - **assign**: Owner/Admin/TL (within their team) only, one ownership command per person with a derived command id (idempotent), R-OWN-18 checks, no SLA. Per-person notices are replaced by one summary per affected user.
+  - **assign**: Owner/Admin/TL (within their team) only, one ownership command per person with a derived command id (idempotent), R-OWN-18 checks, no SLA. Per-person notices are replaced by one summary per affected user, the agents whose offers it withdrew included ("1 lead offered to you was withdrawn: it was assigned to someone else"). Before Confirm, closed people are left out (`CLOSED`: the engine assigns no closed lead) and the people on offer to an agent now are counted ("assigning withdraws that offer, and the agent is told"; batch 6 review F6).
   - **enroll**: approved version only; `ALREADY_ENROLLED` and unreachable people are skipped.
   - TCs run none.
   [DB CHECK + core + api]
@@ -1345,7 +1345,7 @@ The role policies are in §11.1. Two rules carry the design:
 | E194 | A saved list holds `{ kind: 'stage', in: [...] }` and the team then uses "Stage is not Closed, Lost" | Exclusions are new union members (`not_in` on stage, source, owner, intent, contact type); the definition stays `v: 1`, every saved definition parses and compiles to the same plan as before (golden plans), `in` and `not_in` together are refused | R-PAR-29 |
 | E195 | "Source is not Zillow" and some people have no source | Kept: a person with no source is not from Zillow. `"is"` never matches a missing value, so "is" and "is not" split the people the viewer sees exactly in two (VERIFY against FUB) | R-PAR-29 |
 | E196 | "Intent is not Buyer" and some people have no intent | Kept, the same rule as E195 (stage and contact type are never empty) | R-PAR-29 |
-| E197 | "Owner is not Avery" and some people are unassigned (pond) | Kept for the viewers who may see that person in detail (Owner, Admin, Team Lead); an agent still sees only their own people | R-PAR-28, R-PAR-29 |
+| E197 | "Owner is not Avery" and some people are unassigned (pond) | Kept for the viewers who may see that person in detail (Owner, Admin, Team Lead); an agent still sees only their own people. A person has no owner when the engine says so: unassigned, in a pond, on offer to an agent, or closed, and the builder names the "no owner" clause for all four ("Owner: nobody (unassigned, in a pond, on offer or closed)"; batch 6 review F6); a bulk Assign from such a list says what happens to the people on offer and leaves the closed ones out (R-PAR-35) | R-PAR-28, R-PAR-29 |
 | E198 | An exclusion list with an unknown stage, a malformed id, 51 ids, or 21 clauses | Refused `422 LIST_DEFINITION_INVALID` / `LIST_DEFINITION_TOO_LARGE` with the path; never a 500; the values reach SQL only as bound parameters | R-PAR-29 |
 | E199 | An agent filters "Owner is Bob" or "Owner is not me", or a definition names another tenant's source or user | Returns (and counts) only people the agent may see in detail: 0, never Bob's book; a foreign id matches nobody. The builder's catalogs (`GET /people/filter-options`) are the tenant's own sources and members, names only | R-PAR-28, R-TEN-3 |
 | E200 | A Team Lead filters by name ("jane") inside Active and saves it as a team list | Refused before the tap and by the server: "Team lists can't include typed text. Remove the name search or save it as your own list." Saved as their own list it works; a bulk send to any filtered list still skips every opted-out person (D1) | R-PAR-27, R-PAR-36 |

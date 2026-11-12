@@ -165,6 +165,15 @@ describe('R-PAR-34 R-PAR-35 per-person preflight', () => {
     expect(bulkPreflight('enroll', OWN, { kind: 'enroll', liveEnrollment: false, reachable: false }, run)).toEqual({ ok: false, reason: 'UNREACHABLE' });
   });
 
+  // Batch 6 review ownership-sla/F6: from "Owner is nobody" a bulk Assign also selects closed people, whom the engine
+  // refuses (LEAD_STATE_CHANGED) only when the item runs: the preview counted them as going to be assigned.
+  it('R-PAR-35 R-OWN-18 assign: a closed person is left out before Confirm, said as closed; a person on offer is assigned (the offer is withdrawn)', () => {
+    const admin = { ...run, actor: user('admin') };
+    const facts = (ownershipState: 'closed' | 'offered' | 'unassigned' | 'in_pond') => ({ kind: 'assign' as const, ownerUserId: null, toUserId: 'b', target: { role: 'agent' as const, inMyTeam: false }, ownershipState });
+    expect(bulkPreflight('assign', OWN, facts('closed'), admin)).toEqual({ ok: false, reason: 'CLOSED' });
+    for (const st of ['offered', 'unassigned', 'in_pond'] as const) expect(bulkPreflight('assign', OWN, facts(st), admin), st).toEqual({ ok: true });
+  });
+
   it('R-PAR-38 one send per address: a person without an address or sharing one is skipped', () => {
     expect(bulkPreflight('email', OWN, send('email', { addressHmac: null, gate: null }), run)).toEqual({ ok: false, reason: 'NO_ADDRESS' });
     expect(bulkPreflight('email', OWN, send('email', { sharedWithEarlier: true }), run)).toEqual({ ok: false, reason: 'SHARED_ADDRESS' });

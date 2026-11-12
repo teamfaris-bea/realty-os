@@ -22,6 +22,8 @@ export interface BulkActionView {
   targetCount: number;
   preflight: Record<string, number>;
   sharedAddresses: number;
+  /** assign: of the people it will assign, those on offer to an agent now (assigning withdraws their offers); absent: none */
+  onOffer?: number;
   counts: BulkCounts;
   templateId: string | null;
   templateVersion: number | null;
@@ -65,6 +67,7 @@ export const REASON_WORDS: Record<string, string> = {
   ALREADY_IN_STAGE: 'are already in that stage',
   STAGE_NEEDS_CONTACT: "haven't been reached yet (call or text them first)",
   ALREADY_OWNER: 'are already theirs',
+  CLOSED: 'are closed (reopen them to assign them)',
   ALREADY_ENROLLED: 'are already in a plan',
   UNREACHABLE: "can't be reached by text or email",
   CLIENT_REPLIED: 'replied before it was sent',

@@ -70,6 +70,7 @@ export const REASON_PHRASES: Readonly<Record<SkipReason, string>> = Object.freez
   ALREADY_IN_STAGE: 'already in that stage',
   STAGE_NEEDS_CONTACT: 'not reached yet',
   ALREADY_OWNER: 'already theirs',
+  CLOSED: 'closed (reopen to assign)',
   ALREADY_ENROLLED: 'already enrolled',
   UNREACHABLE: 'unreachable',
   CLIENT_REPLIED: 'replied before sending',

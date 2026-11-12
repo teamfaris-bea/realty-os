@@ -617,6 +617,10 @@ function decideAssign(state: OwnershipProjection, cmd: Cmd<'assign' | 'reassign'
   }
   b.emit(oldOwner ? 'reassigned' : 'assigned', 'owned', { reasonCode: cmd.reason, ownerUserId: cmd.toUserId, note: cmd.note ?? null, deadlineAt: null, payload: { releaseDueAt: null } });
   notifyOwnerChange(b, oldOwner, cmd.toUserId);
+  // the agent the lead was on offer to learns their offer was withdrawn (batch 6 review F6), unless it went to them
+  const offeree = state.state === 'offered' ? state.offeredToUserId : null;
+  const actorId = u ? u.userId : null;
+  if (offeree && offeree !== cmd.toUserId && offeree !== actorId) b.notify(offeree, 'reassigned_away', 'normal', `owner_change:${ctx.contactId}:${b.state.seq}`, 'OFFER_RESCINDED');
   return accepted(b, cmd.kind === 'assign' ? 'ownership.assign' : 'ownership.reassign');
 }
 
