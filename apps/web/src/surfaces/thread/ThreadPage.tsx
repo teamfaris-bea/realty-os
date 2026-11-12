@@ -191,8 +191,8 @@ export function parseDetail(detail: string | null): { channel: string; direction
   return { channel, direction };
 }
 
-/** The tag on every bubble. D2: no Messenger or Instagram; a channel this app does not know says only "Message". */
-const CHANNEL_TAG: Record<string, string> = { sms: 'SMS', mms: 'SMS', email: 'Email', web_chat: 'Web chat', call: 'Call' };
+/** The tag on every bubble; a photo or video text reads MMS (owner question 9, R-MMS-8). D2: no Messenger or Instagram; a channel this app does not know says only "Message". */
+const CHANNEL_TAG: Record<string, string> = { sms: 'SMS', mms: 'MMS', email: 'Email', web_chat: 'Web chat', call: 'Call' };
 export const channelTag = (channel: string): string => CHANNEL_TAG[channel] ?? 'Message';
 
 export function ChannelTag({ channel }: { channel: string }) {

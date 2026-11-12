@@ -8,6 +8,7 @@ import { providerCodeSentence, messageStatus } from '../../reasons/sentences.js'
 import { FakeFetch, IDS, agentApp, decision, draftAction, err, findToast, fullContact, iso, reachability, stopReason, timelineItem } from '../feed/lib/testing.js';
 import { MEDIA_UPLOAD_LIMIT_WORDS } from './mediaApi.js';
 import { type MediaDeps, mediaDeps } from './prepareMedia.js';
+import { channelTag } from '../thread/ThreadPage.js';
 
 // applyAccept off: a desktop file picker can choose any file ("All files"), so the refusals are tested as such
 const user = () => userEvent.setup({ applyAccept: false });
@@ -377,6 +378,10 @@ describe('D5a thread: outbound photos and videos', () => {
     }
   });
 
+  it("R-MMS-8 E558: a photo text's tag reads MMS (a plain text stays SMS)", () => {
+    expect([channelTag('mms'), channelTag('sms')]).toEqual(['MMS', 'SMS']);
+  });
+
   it('R-MMS-8: an outbound picture message shows its photos with neutral alt text ("Photo 1 of 2") and draws no empty text bubble', async () => {
     const M = '01900000-0000-7000-8000-0000000e5801';
     const items = [timelineItem({ id: M, detail: 'mms:outbound', preview: '', occurredAt: iso(-60_000), actor: { userId: IDS.me, displayName: 'Ava Agent' }, status: 'delivered' })];
@@ -391,7 +396,7 @@ describe('D5a thread: outbound photos and videos', () => {
     expect(await screen.findByRole('img', { name: 'Photo 1 of 2' })).toBeInTheDocument();
     const row = screen.getByRole('img', { name: 'Photo 2 of 2' }).closest('li[id]')!;
     expect(row.textContent).toContain('Ava Agent');
-    expect(row.textContent).toContain('SMS');
+    expect(row.querySelector('[data-channel-tag]')?.textContent).toBe('MMS'); // R-MMS-8 E558
     expect([...row.querySelectorAll('p')].every((p) => (p.textContent ?? '').trim() !== '')).toBe(true);
     expect(screen.queryByRole('img', { name: /they sent/ })).toBeNull();
   });
