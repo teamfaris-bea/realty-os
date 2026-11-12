@@ -2578,5 +2578,8 @@ exports[`route table and schemas > every leads route declares its authorization 
   "POST /api/contacts/:id/cma → cma.prepare",
   "GET /api/contacts/:id/cmas → cma.prepare",
   "HEAD /api/contacts/:id/cmas → cma.prepare",
+  "POST /api/contacts/:id/documents → document.upload_contact",
+  "GET /api/contacts/:id/documents → document.view",
+  "HEAD /api/contacts/:id/documents → document.view",
 ]
 `;

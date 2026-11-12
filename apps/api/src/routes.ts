@@ -42,6 +42,7 @@ import { insightsRoutes } from './insights/routes.js';
 import { coachingRoutes } from './coaching/routes.js';
 import { transactionRoutes } from './transactions/routes.js';
 import { cmaRoutes } from './cma/routes.js';
+import { documentRoutes } from './documents/routes.js';
 
 export interface RouteModule {
   name: string;
@@ -82,5 +83,6 @@ export const routeModules: RouteModule[] = [
   coachingRoutes,
   transactionRoutes,
   cmaRoutes,
+  documentRoutes,
   // registry: add new entries above this line
 ];

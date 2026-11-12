@@ -10,8 +10,9 @@ import type { AssistantClaimId, IanaZone, Instant } from '../foundation/index.js
 /**
  * evidence_refs.source_type. 'home_valuation' (module 26, a home-value note's claim: R-AVM-1) is in the union
  * only, not in SOURCE_TYPES: core/priority's evidence enum spreads SOURCE_TYPES, and a model never cites it.
+ * 'document' (module 42, a contract date's claim: R-DOC-2) is in the union only, for the same reasons.
  */
-export type SourceType = 'call' | 'message' | 'email' | 'note' | 'listing' | 'import' | 'behavior_event' | 'deal' | 'task' | 'appointment' | 'home_valuation';
+export type SourceType = 'call' | 'message' | 'email' | 'note' | 'listing' | 'import' | 'behavior_event' | 'deal' | 'task' | 'appointment' | 'home_valuation' | 'document';
 export const SOURCE_TYPES: readonly SourceType[] = ['call', 'message', 'email', 'note', 'listing', 'import', 'behavior_event', 'deal', 'task', 'appointment'];
 
 /** evidence_refs.locator (jsonb with a `kind` key). */

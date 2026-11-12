@@ -11,7 +11,8 @@ import { type Envelope, encodeAad } from './envelope.js';
 import { openGcm, randomBytes, sealGcm, sha256 } from './primitives.js';
 
 // module 29 (additive): 'marketing_asset', a listing photo used by marketing pieces (0018 purpose)
-export type ObjectPurpose = 'recording' | 'mms' | 'import_file' | 'consent_evidence' | 'marketing_asset';
+// module 42 (additive): 'document', a deal, listing or contact document (0018 purpose)
+export type ObjectPurpose = 'recording' | 'mms' | 'import_file' | 'consent_evidence' | 'marketing_asset' | 'document';
 
 export function storageKeyFor(tenantId: TenantId, purpose: ObjectPurpose, objectId: string): string {
   return `tenants/${tenantId.toLowerCase()}/${purpose}/${objectId.toLowerCase()}`;

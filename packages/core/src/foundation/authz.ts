@@ -158,6 +158,13 @@ export const ACTIONS = [
   'milestone.confirm', // module 31 (DATA_MODEL §8 "Confirm or move a milestone date"): plan, confirm, enter, move, complete a deal date
   'milestone_template.manage', // module 31: tenant milestone templates (not a §8 row: Owner/Admin, flagged; R-TXN-6)
   'cma.prepare', // module 71 (D9): prepare, edit or view a CMA (DATA_MODEL §8: ✅ | ✅ | T | O | — | — | —; R-CMA-6)
+  'document.upload', // module 42: upload a deal document or a new version (milestone.confirm's grants: Owner, Admin, TL T, agent own/deal, TC deal)
+  'document.upload_listing', // module 42: upload a listing document (listing.edit's grants)
+  'document.upload_contact', // module 42: upload a contact document (contact.edit's grants without the system)
+  'document.view', // module 42: list and read documents (RLS decides which: R-DOC-1, R-DOC-3); support reads metadata
+  'document.download', // module 42: stream a clean document's bytes (never support; R-DOC-8)
+  'document.share', // module 42: share a clean deal/listing document to the portal (Owner, Admin, TL T, agent own; DB re-checks)
+  'document.hold', // module 42 (DATA_MODEL §8 "Legal hold, shorten document retention"): Owner, Admin
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -333,6 +340,14 @@ export const AUDIT_ACTIONS = [
   'goal.changed', // module 33: a goal created, changed or removed (member, period, metric, target)
   'coaching.settings_changed', // module 36: the Owner changed call scoring, Team Lead visibility or the rubric items, or an Admin turned call reviews off (values only)
   'cma.near_match_dismissed', // module 71 (D9): the agent confirmed a live MLS listing is a different home than the CMA's subject (listing ids only; F2)
+  'document.uploaded', // module 42: a document or version uploaded (kind, version, size, type; never the name)
+  'document.scanned', // module 42: the system recorded the virus check's verdict (status, reason, engine)
+  'document.shared', // module 42: a person shared a clean document to the client portal
+  'document.unshared', // module 42: a person stopped sharing it (downloads stop at once)
+  'document.hold_placed', // module 42: an Owner or Admin placed a legal hold (reason)
+  'document.hold_lifted', // module 42: an Owner or Admin lifted it (reason)
+  'document.retention_changed', // module 42: an Owner or Admin set the retention date (before and after)
+  'document.downloaded', // module 42: a person downloaded a clean document (ids only)
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -649,6 +664,19 @@ const MATRIX: Record<Action, ActionRule> = {
   // Module 71 (D9, DATA_MODEL §8 "Prepare, edit or view a CMA"): ✅ | ✅ | T | O | — | — | —. A person only, never the system;
   // support reads through RLS only (R-CMA-6).
   'cma.prepare': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: O } },
+  // Module 42 (PHASE2_3_PLAN §5.4 #42). Each upload action mirrors an existing row so a TC never reaches contact
+  // documents through contactFacts.deal: deal documents as milestone.confirm, listing documents as listing.edit,
+  // contact documents as contact.edit without the system. A person only; the DB binds the uploader (0140).
+  'document.upload': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: { scopes: ['own', 'deal'] }, tc: DEAL } },
+  'document.upload_listing': { roles: { owner: ALL, admin: ALL, team_lead: ALL, agent: OWN } },
+  'document.upload_contact': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: O, isa: O } },
+  // what a role reads is RLS's (documents_select, documents_clean_only); support lists metadata but never downloads
+  'document.view': { roles: { owner: ALL, admin: ALL, team_lead: ALL, agent: ALL, isa: ALL, tc: ALL }, support: true },
+  'document.download': { roles: { owner: ALL, admin: ALL, team_lead: ALL, agent: ALL, isa: ALL, tc: ALL } },
+  // DATA_MODEL §8 (sharing as publishing): ✅ | ✅ | T | own deals/listings | — | — (TCs and ISAs never share)
+  'document.share': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: OWN } },
+  // DATA_MODEL §8 "Legal hold, shorten document retention": ✅ | ✅ | — …
+  'document.hold': { roles: { owner: ALL, admin: ALL } },
 };
 
 const DENY_NOT_FOUND: CanResult = { ok: false, code: 'NOT_FOUND' };

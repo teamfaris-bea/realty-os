@@ -38,6 +38,7 @@ import { type FakeIntegrationAdapters, type IntegrationAdapters, createFakeInteg
 import { InProcessWebChat, type WebChatTransport } from '../channels/transport.js';
 import { FakeGmail, type GmailProvider, UnconfiguredGmail } from '../mailSync/provider.js';
 import { FakePublicRecords, type PublicRecordsProvider, UnconfiguredPublicRecords } from '../predict/provider.js';
+import { type DocumentTextExtractor, FakeScanner, FakeTextExtractor, type MalwareScanner, UnconfiguredScanner, UnconfiguredTextExtractor } from '../documents/provider.js';
 
 export * from './types.js';
 export { FakeAi, FAKE_BAD_QUOTE, parseFakeSources } from './fake/ai.js';
@@ -72,6 +73,10 @@ export interface Providers {
   gmail: GmailProvider;
   /** module 50: public property records, platform configuration (deterministic fake; production: unconfigured, no vendor yet, N13) */
   publicRecords: PublicRecordsProvider;
+  /** module 42: the document virus scanner (deterministic fake; production: unconfigured until one is procured, N11) */
+  scanner: MalwareScanner;
+  /** module 42: the PDF text-layer reader for contract dates (deterministic fake; production: unconfigured, N17) */
+  textExtractor: DocumentTextExtractor;
 }
 
 /** The fakes with their concrete types, so tests can inspect outboxes and inject failures. */
@@ -91,6 +96,8 @@ export interface FakeProviders extends Providers {
   webChat: InProcessWebChat;
   gmail: FakeGmail;
   publicRecords: FakePublicRecords;
+  scanner: FakeScanner;
+  textExtractor: FakeTextExtractor;
 }
 
 export function createFakeProviders(opts: { clock?: Clock } = {}): FakeProviders {
@@ -111,6 +118,8 @@ export function createFakeProviders(opts: { clock?: Clock } = {}): FakeProviders
     webChat: new InProcessWebChat(),
     gmail: new FakeGmail(),
     publicRecords: new FakePublicRecords(),
+    scanner: new FakeScanner(),
+    textExtractor: new FakeTextExtractor(),
   };
 }
 
@@ -183,5 +192,8 @@ export function createProviders(config: Config, opts: { clock: Clock; fetch?: ty
   const gmail: GmailProvider = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredGmail() : fakes.gmail;
   // module 50: no public-records vendor is procured (N13); production looks nothing up unless fakes are allowed
   const publicRecords: PublicRecordsProvider = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredPublicRecords() : fakes.publicRecords;
-  return { ...fakes, telephony, carrier, email, accountMail, ai, push, storage, integrations, gmail, publicRecords };
+  // module 42: no scanner (N11) or PDF reader (N17) is procured; production never gets the fakes, which pass every file
+  const scanner: MalwareScanner = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredScanner() : fakes.scanner;
+  const textExtractor: DocumentTextExtractor = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredTextExtractor() : fakes.textExtractor;
+  return { ...fakes, telephony, carrier, email, accountMail, ai, push, storage, integrations, gmail, publicRecords, scanner, textExtractor };
 }

@@ -342,6 +342,22 @@ export const ERROR_STATUS = {
   CMA_SUBJECT_INCOMPLETE: 422, // the subject lacks its property type or size, the contact has no address, or a street address lacks the city, state or ZIP its MLS key needs (details.missing, details.sentence; E373, E365)
   CMA_SUBJECT_TYPE_NOT_SUPPORTED: 422, // land and 'other' are not valued in V1 (owner question (g), core/valuation CMA_SUPPORTED_TYPES; details.propertyType)
   CMA_NOT_DRAFT: 409, // a shared or superseded CMA never changes; prepare a new draft (details.status; E377)
+  // ---- api/documents (module 42; R-DOC-1..10) ----
+  DOCUMENT_TYPE_NOT_ALLOWED: 422, // not a PDF, JPEG or PNG by its bytes, the declared type differs, or the file is empty (E400)
+  DOCUMENT_RETENTION_OUT_OF_RANGE: 422, // retention 3-10 years after the scope's close (or the upload); details {from, to}
+  DOCUMENT_TOO_LARGE: 413, // a file part over 10,000,000 bytes (details.limitBytes; E401)
+  DOCUMENT_QUARANTINED: 409, // the virus check has not passed yet: nobody opens it, the uploader and the Owner included (R-DOC-3)
+  DOCUMENT_NOT_SHAREABLE: 409, // only a clean deal or listing document is shared to the portal (R-DOC-1)
+  DOCUMENT_VERSION_CONFLICT: 409, // another new version of this document was uploaded first (E406)
+  DOCUMENT_RETAINED: 409, // on legal hold or inside its retention period: erasure and purge refuse (R-DOC-4)
+  DOCUMENT_SUPERSEDED: 409, // a clean newer version exists: its dates are confirmed from that one
+  DOCUMENT_BLOCKED: 410, // the virus check blocked it: the file is gone or locked for good
+  DOCUMENT_HOLD_OWNER_ADMIN: 403, // legal holds and retention are an Owner's or Admin's (R-DOC-4)
+  EXTRACTION_EXISTS: 409, // the document was already read for dates
+  EXTRACTION_CLOSED: 409, // the extraction was rejected, superseded or invalidated
+  EXTRACTION_CLAIM_NEEDS_REVIEW: 409, // not found in the document as quoted: never a date (R-AST-1, E131)
+  EXTRACTION_CLAIM_DECIDED: 409, // the claim was already rejected or corrected
+  EXTRACTION_TARGET_KIND: 409, // the existing date is another kind of milestone
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 
