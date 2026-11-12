@@ -76,7 +76,7 @@ export function adapterModeWords(m: AdapterMode): { tone: 'info' | 'warn'; text:
 }
 
 /** b9 ui/F8: Google Ads lead forms are set up per source on Lead sources; the ads account is a later connection. */
-export const GOOGLE_ADS_HINT = 'Google Ads lead forms work now: each lead source sets up its own on Lead sources. The Google Ads account itself is not connected, so nothing about your ads is read.';
+export const GOOGLE_ADS_HINT = 'Google Ads lead forms are set up on each lead source under Lead sources, which says whether this deployment can take them. The Google Ads account itself is not connected, so nothing about your ads is read.';
 /** b9 ui/F8: until a partner grants access, a portal's leads arrive by lead email, set up per source. */
 export const PARTNER_FEED_HINT = "Until the partner grants access, set up lead email on the portal's lead source: the portal sends its new-lead emails there.";
 

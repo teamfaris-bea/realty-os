@@ -200,6 +200,8 @@ describe('R-TWL-11 E387 unreadable, oversized and refused parts', () => {
     const notes = (await h.su.query('SELECT title, body FROM notifications WHERE tenant_id = $1 AND dedupe_key = $2', [w.tenantId, `text_part_unreadable:${messageId}`])).rows;
     expect(notes).toEqual([{ title: LIVE_OFF_PART_NOTICE('Avery D.'), body: LIVE_OFF_PART_DETAIL }]);
     expect(LIVE_OFF_PART_NOTICE('Avery D.').length).toBeLessThanOrEqual(120);
+    // the title is what a phone shows (push shows no body): it keeps the ask to check before texting
+    expect(LIVE_OFF_PART_NOTICE('Avery D.')).toMatch(/Check the conversation before you text them\.$/);
     expect(notes[0]!.title).not.toMatch(/carrier/);
   });
 });

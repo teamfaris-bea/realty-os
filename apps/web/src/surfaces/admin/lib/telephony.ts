@@ -10,7 +10,7 @@ export type TelephonyMode = 'live' | 'off' | 'simulated';
 
 export const TELEPHONY_OFF_SETUP = 'Live texting and calling are off on this deployment: numbers can be set up but nothing reaches a phone yet.';
 /** with the kill switch off: what waits until it is on */
-export const TELEPHONY_OFF_DETAIL = 'Getting a new number, checking a registration and releasing a number wait until they are turned on. A number the team already has can still be tied to a lead source, and texts and calls that come in are still received.';
+export const TELEPHONY_OFF_DETAIL = 'Until they are turned on, getting a new number is not offered, and checking a registration or releasing a number is refused. A number the team already has can still be tied to a lead source, and texts and calls that come in are still received.';
 /** with a simulated provider */
 export const TELEPHONY_SIMULATED = 'Numbers made here are test numbers from a simulated provider: don’t give them out or print them.';
 

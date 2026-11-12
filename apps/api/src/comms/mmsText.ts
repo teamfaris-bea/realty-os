@@ -20,7 +20,7 @@ export const UNREADABLE_PART_NOTICE = (name: string) => `Part of a text from ${n
  * R-TWL-1 (b9 ui/F7): the notice when the kill switch refused the part. Said as the switch, never the carrier; the
  * part stays skipped (R-TWL-11), so the handler is told to treat it as unread.
  */
-export const LIVE_OFF_PART_NOTICE = (name: string) => `Part of a text from ${name} wasn't read: live texting and calling are off.`;
+export const LIVE_OFF_PART_NOTICE = (name: string) => `Part of a text from ${name} wasn't read (live texting is off). Check the conversation before you text them.`;
 /** The notice's body (titles are cut at 120 characters). */
 export const LIVE_OFF_PART_DETAIL = "Live texting and calling are off on this deployment, so that part wasn't downloaded and stays unread, even after they are turned on. Treat it as unread (it may say STOP) before you text them.";
 /** What the thread shows for a part that has not been read yet. */

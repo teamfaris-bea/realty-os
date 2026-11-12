@@ -118,8 +118,8 @@ describe('Add a source', () => {
       await u.click(await screen.findByRole('button', { name: 'Add a source' }));
       const dialog = within(screen.getByRole('dialog', { name: 'Add a source' }));
       await u.click(dialog.getByLabelText('A tracking phone number'));
-      if (telephony === 'live') expect(dialog.queryByText(TELEPHONY_OFF_SETUP)).toBeNull();
-      else expect(dialog.getByText(TELEPHONY_OFF_SETUP)).toBeInTheDocument();
+      if (telephony === 'live') expect(dialog.queryByText((t) => t.startsWith(TELEPHONY_OFF_SETUP))).toBeNull();
+      else expect(dialog.getByText((t) => t.startsWith(TELEPHONY_OFF_SETUP))).toBeInTheDocument();
       view.unmount();
     }
   });

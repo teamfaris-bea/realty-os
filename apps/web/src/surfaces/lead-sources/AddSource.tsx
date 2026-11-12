@@ -7,7 +7,7 @@ import { type FormEvent, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Dialog, Notice, TextField } from '../../design/index.js';
 import { useAction } from '../admin/lib/hooks.js';
-import { TELEPHONY_OFF_SETUP } from '../admin/lib/telephony.js';
+import { TELEPHONY_OFF_SETUP, TELEPHONY_SIMULATED } from '../admin/lib/telephony.js';
 import { Check, SelectField, TextArea } from '../admin/lib/ui.js';
 import { LEAD_EMAIL_ERROR_MESSAGES } from '../lead-email/messages.js';
 import { AgentForwarding } from './AgentForwarding.js';
@@ -22,7 +22,8 @@ export function arrivalNote(choice: PathKey, deployment: OverviewResponse['deplo
   if (choice === 'forward' && !deployment.inboundEmail) return LEAD_EMAIL_ERROR_MESSAGES.LEAD_EMAIL_NOT_CONFIGURED!;
   if (choice === 'google' && !deployment.publicHttps) return GOOGLE_NOT_AVAILABLE;
   // R-TWL-1 (b9 ui/F3): the kill switch off or a simulated provider: said before anything is made
-  if (choice === 'phone' && deployment.telephony && deployment.telephony !== 'live') return TELEPHONY_OFF_SETUP;
+  if (choice === 'phone' && deployment.telephony === 'off') return `${TELEPHONY_OFF_SETUP} Getting a new number waits until they are on; a number the team already has can be tied to the source.`;
+  if (choice === 'phone' && deployment.telephony === 'simulated') return `${TELEPHONY_OFF_SETUP} ${TELEPHONY_SIMULATED}`;
   return null;
 }
 

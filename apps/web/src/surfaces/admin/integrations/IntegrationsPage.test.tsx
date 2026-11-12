@@ -94,13 +94,15 @@ describe('Integrations page', () => {
     expect(screen.getByRole('link', { name: 'Open MLS' })).toHaveAttribute('href', '/admin/integrations/mls');
   });
 
-  it('R-GADS-1 b9 ui/F8: Google Ads points to the lead form on Lead sources and says the account itself is not connected; the partner feeds point there too', async () => {
+  it('R-GADS-1 b9 ui/F8: Google Ads points to the lead form on Lead sources (where it says whether the deployment can take them) and says the account itself is not connected; the partner feeds point there too', async () => {
     mount(new FakeFetch().on('GET /admin/integrations', { status: 200, body: integrations() }), PAGE_PATH);
     const card = async (name: string) => within((await screen.findByRole('heading', { level: 3, name })).closest('li')!);
     const ads = await card('Google Ads account');
     expect(ads.getByRole('link', { name: 'Open Lead sources' })).toHaveAttribute('href', '/admin/lead-sources');
     expect(ads.getByText(GOOGLE_ADS_HINT)).toBeInTheDocument();
-    expect(GOOGLE_ADS_HINT).toBe('Google Ads lead forms work now: each lead source sets up its own on Lead sources. The Google Ads account itself is not connected, so nothing about your ads is read.');
+    // never "works now": a deployment without public https cannot take them, and Lead sources says so
+    expect(GOOGLE_ADS_HINT).not.toMatch(/work now/);
+    expect(GOOGLE_ADS_HINT).toMatch(/account itself is not connected/);
     for (const name of ['Zillow lead feed', 'realtor.com lead feed']) {
       const c = await card(name);
       expect(c.getByRole('link', { name: 'Open Lead sources' })).toHaveAttribute('href', '/admin/lead-sources');
