@@ -15,11 +15,18 @@ import { audit } from '../audit.js';
 import { PROVIDER_OPT_OUT_CODES, hint } from './dispatch.js';
 import * as msgs from './repos/messages.js';
 import { LEDGER_SYSTEM, type CommsDeps } from './types.js';
+import { SENDER_NOT_VERIFIED, isSenderNotVerified, markSenderNotVerified } from './telephonySafeguards.js';
 
 export type MappedStatus = 'sent' | 'delivered' | 'failed' | 'undelivered' | 'bounced' | 'complained' | 'opened' | 'clicked';
 
 const RANK: Record<string, number> = { dispatching: 0, dispatch_unknown: 0, sent: 1, delivered: 2, failed: 3, undelivered: 3, bounced: 3 };
 
+/**
+ * A provider message status → ours (null: ignored, nothing recorded). R-TWL-4 (lane telephony-safeguards): Twilio's
+ * `canceled` (a scheduled message cancelled before it left) is a failure (reason PROVIDER_CANCELED); `scheduled` is
+ * ignored (the platform never schedules at Twilio, so it says nothing new); `read` (WhatsApp/RCS read receipt) is
+ * delivered.
+ */
 export function mapTelephonyStatus(s: string): MappedStatus | null {
   switch (s.toLowerCase()) {
     case 'sent':
@@ -28,14 +35,24 @@ export function mapTelephonyStatus(s: string): MappedStatus | null {
     case 'sending':
       return 'sent';
     case 'delivered':
+    case 'read':
       return 'delivered';
     case 'undelivered':
       return 'undelivered';
     case 'failed':
+    case 'canceled':
       return 'failed';
+    case 'scheduled':
     default:
       return null;
   }
+}
+
+/** The status_reason of a failure the provider reported (R-TWL-4: a canceled message is PROVIDER_CANCELED). */
+function failureReason(next: string, providerStatus: string, errorCode: string | null | undefined): string {
+  if (isSenderNotVerified(errorCode)) return SENDER_NOT_VERIFIED;
+  if (next === 'failed' && providerStatus.toLowerCase() === 'canceled') return 'PROVIDER_CANCELED';
+  return `PROVIDER_${next.toUpperCase()}`;
 }
 
 export interface StatusEvent {
@@ -94,7 +111,12 @@ async function applyInTx(tx: Tx, actor: SystemActor, e: StatusEvent, now: Instan
     return { kind: 'recorded', messageId: m.id, status: m.status };
   }
   const next = nextStatus(m.status, e.mapped);
-  if (next) await msgs.setStatus(tx, m.id, next, next === 'delivered' || next === 'sent' ? null : `PROVIDER_${next.toUpperCase()}`, e.errorCode ?? null);
+  if (next) await msgs.setStatus(tx, m.id, next, next === 'delivered' || next === 'sent' ? null : failureReason(next, e.providerStatus, e.errorCode), e.errorCode ?? null);
+  // R-TWL-9: an unverified sender reported by the status callback marks the number's registration not ready in THIS
+  // transaction (never an opt-out; the message is not retried or reconciled: a terminal failure)
+  if (next && (e.mapped === 'failed' || e.mapped === 'undelivered') && channel === 'sms' && isSenderNotVerified(e.errorCode)) {
+    await markSenderNotVerified(tx, actor, deps, m.phoneNumberId, e.errorCode!, m.id, now);
+  }
   if ((e.mapped === 'failed' || e.mapped === 'undelivered') && e.errorCode && PROVIDER_OPT_OUT_CODES.has(e.errorCode)) {
     const env = deps.envelope.inTx(tx, actor.tenantId as TenantId);
     const hmac = Buffer.from(await env.hmacAddress(actor.tenantId as TenantId, m.toAddress)).toString('hex');

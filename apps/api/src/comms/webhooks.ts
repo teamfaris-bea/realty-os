@@ -48,13 +48,14 @@ import { RECORDING_ANNOUNCEMENT, applyCallStatus } from './dial.js';
 import { ingestInbound, isMissedCallStatus, recordMissedInboundCall } from './inbound.js';
 import { RECORDING_COPY_JOB } from './recordings.js';
 import { MEDIA_COPY_JOB, mediaItemsOf } from './media.js';
+import { isTextPart } from './mmsText.js';
 import { BRIDGE_TWIML, ringTwiml, sayAndHangupTwiml, screenTwiml, voicemailTwiml } from '../providers/twilio/voiceTwiml.js';
 import { type InboundCallPlan, SIGNED_REF_PURPOSE, VOICEMAIL_DONE, VOICEMAIL_MAX_S, VOICEMAIL_NOTICE, acceptInboundCall, finishInboundCall, inboundDialResult, inboundUrls, planInboundCall, screenFor, voicemailLeft } from './voice.js';
 import { tokenFromRecipient, verifySignedRef } from './render.js';
 import { depsFromPlatform } from './runtime.js';
 import { type MappedStatus, applyMessageStatus, mapTelephonyStatus } from './status.js';
 
-type Provider = 'telephony' | 'email';
+type Provider = 'telephony' | 'email' | 'lead';
 
 async function resolveNumber(db: Database, e164: string): Promise<string | null> {
   if (!/^\+[1-9][0-9]{6,14}$/.test(e164)) return null;
@@ -111,13 +112,24 @@ function occurred(v: string | undefined, now: Instant): Instant {
 }
 
 /**
+ * R-LSRC-7 (pilot plan R4): a delivery already recorded is re-armed for one more run when its first run failed, or
+ * crashed without finishing (still 'received' after the stale window). Processed, unrouted and rejected rows, and two
+ * concurrent retries after the first, get NULL (app.rearm_webhook_event is one conditional UPDATE).
+ */
+async function rearmEvent(db: Database, provider: Provider, eventId: string, now: Instant): Promise<string | null> {
+  return withPreTenant(async (tx) => (await sql<{ id: string | null }>`
+    SELECT app.rearm_webhook_event(${provider}, ${eventId.slice(0, 200)}, ${toIso(now)}::timestamptz) AS id`.execute(tx)).rows[0]?.id ?? null, { db });
+}
+
+/**
  * Records the delivery once (webhook_events: idempotency + the unrouted log), then runs `fn` in the resolved tenant.
- * Also used by the lead-email webhooks (module 22 slice: apps/api/src/leadEmail/routes.ts).
+ * Also used by the lead-email webhooks (module 22 slice: apps/api/src/leadEmail/routes.ts). A provider's retry of a
+ * delivery whose run failed or crashed runs `fn` again (R-LSRC-7), so every `fn` is idempotent on a re-run.
  */
 export async function run<T>(req: FastifyRequest, provider: Provider, eventId: string, tenantId: string | null, payload: unknown, fn: () => Promise<T>): Promise<'duplicate' | 'unrouted' | T> {
   const p = req.server.platform;
   const now = p.clock.now();
-  const id = await recordEvent(p.db, p.ids, p.envelope, provider, eventId, tenantId, payload, now);
+  const id = (await recordEvent(p.db, p.ids, p.envelope, provider, eventId, tenantId, payload, now)) ?? (tenantId ? await rearmEvent(p.db, provider, eventId, now) : null);
   if (!id) return 'duplicate';
   if (!tenantId) {
     req.log.warn({ code: 'WEBHOOK_UNROUTED', provider }, 'unrouted inbound (platform alert)');
@@ -142,10 +154,13 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
     if (!b.MessageSid || !b.From || !b.To) throw new AppError('VALIDATION_FAILED');
     const p = req.server.platform;
     const tenantId = await telephonyTenant(req, b.To);
-    const media = mediaItemsOf(b);
+    const items = mediaItemsOf(b);
+    // R-TWL-11: text/plain parts are read for opt-outs by comms.mms_text (enqueued by the ingestion itself), never copied as files
+    const textParts = items.filter((m) => isTextPart(m.declaredType)).slice(0, 100).map((m) => ({ position: m.position, ref: m.ref }));
+    const media = items.filter((m) => !isTextPart(m.declaredType));
     await run(req, 'telephony', `sms:${b.MessageSid}`, tenantId, { sid: b.MessageSid }, async () => {
       const actor = systemActor(tenantId!, 'provider');
-      const out = await ingestInbound(actor, { kind: 'sms', providerRef: b.MessageSid!, from: b.From!, to: b.To!, body: b.Body ?? '', mediaCount: media.length }, depsFromPlatform(p));
+      const out = await ingestInbound(actor, { kind: 'sms', providerRef: b.MessageSid!, from: b.From!, to: b.To!, body: b.Body ?? '', mediaCount: items.length, ...(b.OptOutType ? { optOutType: b.OptOutType.slice(0, 20) } : {}), ...(textParts.length > 0 ? { textParts } : {}) }, depsFromPlatform(p));
       // MMS media are copied into encrypted storage by a job (never inside the webhook request)
       if (out.kind === 'stored' && out.messageId && media.length > 0) {
         await withTenantTx(actor, async (tx) => {
@@ -161,9 +176,11 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
   r.post('/webhooks/telephony/status', { ...tel, schema: { body: Form, querystring: z.object({ m: z.uuid().optional() }) } }, async (req) => {
     const b = req.body;
     const mapped = mapTelephonyStatus(b.MessageStatus ?? '');
-    if (!b.MessageSid || !b.From) throw new AppError('VALIDATION_FAILED');
+    // R-TWL-4 (E382): MessageSid stays required; a missing From is accepted. Its tenant is the one the signature guard
+    // resolved (Twilio subaccount); otherwise run() records one unrouted row with a WEBHOOK_UNROUTED log and we answer 200
+    if (!b.MessageSid) throw new AppError('VALIDATION_FAILED');
     const p = req.server.platform;
-    const tenantId = await telephonyTenant(req, b.From);
+    const tenantId = b.From ? await telephonyTenant(req, b.From) : (req.webhookTenantId ?? null);
     if (!mapped) return { ok: true };
     const ref = `status:${b.MessageSid}:${b.MessageStatus}`;
     await run(req, 'telephony', ref, tenantId, { sid: b.MessageSid, status: b.MessageStatus }, () =>

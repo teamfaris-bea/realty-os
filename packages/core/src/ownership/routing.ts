@@ -4,7 +4,7 @@
 // the caller persists `cursorAfter` in the same transaction as the `offered` event. Routing runs
 // only as the system actor (ARCHITECTURE §5), which is decide()'s concern, not this file's.
 import { z } from 'zod';
-import type { LeadSourceId, UserId } from '../foundation/index.js';
+import type { LeadSourceId, PondId, UserId } from '../foundation/index.js';
 import { skipReason } from './eligibility.js';
 import type {
   Candidate,
@@ -177,4 +177,33 @@ export function offeredInCurrentSequence(events: readonly OwnershipEvent[]): Use
     if (e.type === 'offered' && e.offeredToUserId !== null && !out.includes(e.offeredToUserId)) out.push(e.offeredToUserId);
   }
   return out;
+}
+
+// ---- preview (R-LSRC-4) -------------------------------------------------------------------------
+
+/** What route() would do for a NEW lead arriving now (module 22's Lead sources preview). */
+export type RoutingPreview =
+  | { kind: 'offer'; rule: RuleFacts; userId: UserId; considered: ConsideredCandidate[] }
+  | { kind: 'pond'; rule: RuleFacts | null; pondId: PondId; reasonCode: 'NO_RULE_MATCH' | 'RULE_POND' | 'MAX_OFFERS_REACHED' | 'NO_ELIGIBLE_AGENT'; considered: ConsideredCandidate[] };
+
+/**
+ * R-LSRC-4: mirrors decide.ts route() for a lead created via intake (round 0, nobody offered yet): the router's own
+ * match (matchRule) and selection (selectCandidate) over the candidates the router's shared query reads. Pure: the
+ * cursor is only read, never advanced; nothing is offered, notified or written.
+ */
+export function previewRouting(
+  rules: RuleFacts[],
+  inquiry: InquiryFacts,
+  candidates: readonly Candidate[],
+  cursor: RotationCursor,
+  settings: { defaultPondId: PondId; maxOffers: number; uncontactedCapacityCap: number },
+): RoutingPreview {
+  const rule = matchRule(rules, inquiry);
+  if (rule === null) return { kind: 'pond', rule: null, pondId: settings.defaultPondId, reasonCode: 'NO_RULE_MATCH', considered: [] };
+  if (rule.strategy === 'pond') return { kind: 'pond', rule, pondId: rule.targetPondId ?? settings.defaultPondId, reasonCode: 'RULE_POND', considered: [] };
+  const fallback = rule.fallbackPondId ?? settings.defaultPondId;
+  if (0 >= (rule.maxOffers ?? settings.maxOffers)) return { kind: 'pond', rule, pondId: fallback, reasonCode: 'MAX_OFFERS_REACHED', considered: [] };
+  const sel = selectCandidate(rule, candidates.map((c) => ({ ...c, alreadyOffered: c.alreadyOffered === true })), cursor, { capacityCap: settings.uncontactedCapacityCap });
+  if (sel.pick === null) return { kind: 'pond', rule, pondId: fallback, reasonCode: 'NO_ELIGIBLE_AGENT', considered: sel.considered };
+  return { kind: 'offer', rule, userId: sel.pick, considered: sel.considered };
 }

@@ -1,6 +1,8 @@
 // Plain words and pure helpers for the Website chat page.
 
 export const WEBCHAT_PATH = '/admin/web-chat';
+/** Lead sources (surfaces/lead-sources): where sources and their consent text are added (b9 ui/F4). */
+export const LEAD_SOURCES_PATH = '/admin/lead-sources';
 export const MAX_WEBSITES = 10;
 
 export const ERROR_MESSAGES: Record<string, string> = {

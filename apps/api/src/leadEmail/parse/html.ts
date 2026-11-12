@@ -185,6 +185,25 @@ export function htmlToText(html: string, maxChars: number = MAX_INPUT_CHARS): st
   return cutAt(out, max);
 }
 
+/** Decodes the entities of an attribute value (the same handful htmlToText decodes); linear. */
+export function decodeEntities(s: string): string {
+  if (typeof s !== 'string' || s.indexOf('&') < 0) return typeof s === 'string' ? s : '';
+  let out = '';
+  let i = 0;
+  while (i < s.length) {
+    const k = s.indexOf('&', i);
+    if (k < 0) {
+      out += s.slice(i);
+      break;
+    }
+    out += s.slice(i, k);
+    i = decodeEntity(s, k, (x) => {
+      out += x;
+    });
+  }
+  return out;
+}
+
 /** Decodes the entity at src[i] (an '&'); returns the index after it. Unknown entities stay literal. */
 function decodeEntity(src: string, i: number, emit: (s: string) => void): number {
   const c1 = src.charCodeAt(i + 1);

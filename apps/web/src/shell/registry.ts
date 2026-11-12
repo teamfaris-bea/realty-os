@@ -36,6 +36,7 @@ import { surface as templatesSurface } from '../surfaces/templates/index.js';
 import { surface as bulkSurface } from '../surfaces/bulk/index.js';
 import { surface as batchTextSurface } from '../surfaces/settings/batch-text/index.js';
 import { surface as leadEmailSurface } from '../surfaces/lead-email/index.js';
+import { surface as leadSourcesSurface } from '../surfaces/lead-sources/index.js';
 import { surface as mailSettingsSurface } from '../surfaces/settings/mail/index.js';
 import { surface as adminMailSurface } from '../surfaces/admin/mail/index.js';
 import { surface as marketingSurface } from '../surfaces/marketing/index.js';
@@ -75,6 +76,7 @@ export const surfaces: SurfaceModule[] = [
   bulkSurface,
   batchTextSurface,
   leadEmailSurface,
+  leadSourcesSurface,
   mailSettingsSurface,
   adminMailSurface,
   marketingSurface,

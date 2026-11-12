@@ -19,7 +19,7 @@ function stub(responses: { status: number; json?: unknown }[]) {
   }) as typeof fetch;
   return { f, seen };
 }
-const tw = (f: typeof fetch) => new TwilioTelephony({ accountSid: MASTER, authToken: 'master-token', publicBaseUrl: 'https://api.example.test', fetch: f, sleep: async () => undefined });
+const tw = (f: typeof fetch) => new TwilioTelephony({ accountSid: MASTER, authToken: 'master-token', publicBaseUrl: 'https://api.example.test', fetch: f, sleep: async () => undefined, liveRequests: true });
 
 describe('R-MMS-6: TwilioTelephony.sendSms with media', () => {
   it('R-MMS-6: repeated MediaUrl keys in order; no Body for a photo-only text; no ValidityPeriod/SmartEncoded/SendAsMms/ContentRetention/AddressRetention', async () => {
