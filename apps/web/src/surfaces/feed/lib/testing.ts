@@ -235,7 +235,22 @@ function chatReach(f: WebChatFixture): ChatReach {
  * identity, no session), never an API without the entry (finding F3: the fixtures must be what the API can send).
  */
 export function reachability(contactId: string = IDS.jane, blocks: Partial<Record<'sms' | 'voice' | 'email', ReachReason[]>> = {}, webChat: WebChatFixture = 'none'): Reachability {
-  return { contactId, purposeNow: 'informational', channels: { sms: channelReach(blocks.sms), voice: channelReach(blocks.voice), email: channelReach(blocks.email), web_chat: chatReach(webChat) } };
+  return { contactId, purposeNow: 'informational', doNotContact: null, channels: { sms: channelReach(blocks.sms), voice: channelReach(blocks.voice), email: channelReach(blocks.email), web_chat: chatReach(webChat) } };
+}
+
+/** The person-level do-not-contact as the API names it (R-CHAN-2): its own code, no address, who recorded it and when. */
+export function dncReason(over: Partial<ReachReason> = {}): ReachReason {
+  return stopReason({ code: 'PERSON_DO_NOT_CONTACT', source: 'agent_recorded', keyword: null, addressHint: null, recordedBy: { userId: IDS.me, displayName: 'Ava Agent' }, ...over });
+}
+
+/**
+ * A summary of a person who asked not to be contacted, as the API sends it (review optouts/F1): `doNotContact` names it,
+ * and every point of every channel carries it first and is blocked, the website chat's included.
+ */
+export function withDoNotContact(r: Reachability, dnc: ReachReason = dncReason()): Reachability {
+  const block = <C extends ChannelReach>(c: C): C => (c.hasAddress ? { ...c, blocked: true, reasons: [dnc, ...c.reasons.filter((x) => x.code !== dnc.code)], points: c.points.map((p) => ({ ...p, blocked: true, reasons: [dnc, ...p.reasons.filter((x) => x.code !== dnc.code)] })) } : c);
+  const chat = r.channels.web_chat;
+  return { ...r, doNotContact: dnc, channels: { sms: block(r.channels.sms), voice: block(r.channels.voice), email: block(r.channels.email), ...(chat ? { web_chat: block(chat) } : {}) } };
 }
 
 /** The reply's answer when the send-time check refused it because the chat ended or its widget is off (E77, R-INBOX-7). */

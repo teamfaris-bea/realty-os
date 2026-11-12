@@ -5,7 +5,8 @@
 export type ReachChannel = 'sms' | 'voice' | 'email';
 export type ReachPurpose = 'marketing' | 'informational';
 
-export type ReachCode = 'CONSENT_REVOKED' | 'SUPPRESSED' | 'WRONG_NUMBER' | 'CONTACT_POINT_INVALID' | 'LANDLINE_NO_SMS';
+/** PERSON_DO_NOT_CONTACT: the person-level do-not-contact (R-CHAN-2), on every channel; review optouts/F1 of batch 6 */
+export type ReachCode = 'PERSON_DO_NOT_CONTACT' | 'CONSENT_REVOKED' | 'SUPPRESSED' | 'WRONG_NUMBER' | 'CONTACT_POINT_INVALID' | 'LANDLINE_NO_SMS';
 
 export type ReachSource = 'keyword' | 'opt_out_language' | 'unsubscribe' | 'agent_recorded' | 'call_outcome' | 'wrong_number' | 'provider_report' | 'imported' | 'suppression' | 'contact_point' | 'other';
 
@@ -45,6 +46,11 @@ export interface ChatReach extends ChannelReach {
 export interface Reachability {
   contactId: string;
   purposeNow: ReachPurpose;
+  /**
+   * The person-level do-not-contact (R-CHAN-2) with its evidence, or null; every channel's reasons carry it too. Absent
+   * only from an API older than the batch 6 review.
+   */
+  doNotContact?: ReachReason | null;
   /** web_chat is absent only from an API older than module 22 (then the thread's own messages decide) */
   channels: Record<ReachChannel, ChannelReach> & { web_chat?: ChatReach };
 }

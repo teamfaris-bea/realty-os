@@ -9,12 +9,18 @@
 //
 //   CONSENT_REVOKED         an opt-out (check 5): the same predicate canContact uses (`optedOut`), over
 //                           the same rows (this address, plus the contact's other phones for texts and
-//                           calls, removed ones that still count included, R-PAR-12). STOP, unsubscribe,
-//                           an agent-recorded do-not-contact, an import.
+//                           calls, removed ones that still count included, R-PAR-12; for a website-chat
+//                           reply every chat identity of the person, R-CHAN-4). STOP, unsubscribe, an
+//                           agent-recorded do-not-contact, an import.
 //   SUPPRESSED              an active suppression on this address for the channel or `all` (check 6)
+//   PERSON_DO_NOT_CONTACT   the person-level do-not-contact (check 9, R-CHAN-2): of any record of the person
+//                           (a merge carries it), on every channel and every point, the website chat included,
+//                           also a point that carries no revoke of its own (review optouts/F1 of batch 6)
 //   WRONG_NUMBER            the point is marked a wrong number (check 2)
 //   CONTACT_POINT_INVALID   the point is not active (invalid, bouncing, removed) (check 2)
 //   LANDLINE_NO_SMS         a text to a landline (check 2)
+//
+// The keyword exemption (the system's STOP/HELP reply, path 8) is not predicted: no summary is about it.
 //
 // Pure and deterministic, like the gate.
 import { optedOut } from './gate.js';
@@ -23,7 +29,7 @@ import type { PointKind, Channel, ConsentStateRow, LineType, PointStatus, Purpos
 import { CHANNELS, PHONE_EMAIL_CHANNELS, PURPOSES, pointKindOf } from './types.js';
 
 /** The canContact reasons reachability predicts. Every other reason depends on the message or the sender. */
-export const REACHABILITY_REASONS = ['CONSENT_REVOKED', 'SUPPRESSED', 'WRONG_NUMBER', 'CONTACT_POINT_INVALID', 'LANDLINE_NO_SMS'] as const satisfies readonly ReasonCode[];
+export const REACHABILITY_REASONS = ['CONSENT_REVOKED', 'SUPPRESSED', 'PERSON_DO_NOT_CONTACT', 'WRONG_NUMBER', 'CONTACT_POINT_INVALID', 'LANDLINE_NO_SMS'] as const satisfies readonly ReasonCode[];
 export type ReachabilityReason = (typeof REACHABILITY_REASONS)[number];
 
 export interface ReachPoint {
@@ -49,10 +55,23 @@ export interface ReachabilityInput {
    * fan-out of texts and calls, as the send-time gate and the dispatch guards read it. Absent = none.
    */
   removedPhoneHmacs?: readonly string[];
-  /** consent_state rows for every one of the contact's addresses (removed phones above included), any channel */
+  /**
+   * R-CHAN-4 (review optouts/F4 of batch 6): HMACs of the person's other website-chat identities whose opt-out still
+   * counts: on another record of the person (app.contact_person_ids), or removed other than as a confirmed wrong
+   * number. Never listed and never replied to: their opt-outs only join the chat fan-out, as the send-time gate
+   * (api repos/gate.ts chatFanoutHmacs) and the 0043 dispatch guard read it. Absent = none.
+   */
+  otherChatHmacs?: readonly string[];
+  /** consent_state rows for every one of the contact's addresses (removed phones and other chat identities above included), any channel */
   consent: readonly ConsentStateRow[];
   /** suppressions for every one of the contact's addresses (lifted ones are ignored) */
   suppressions: readonly ReachSuppression[];
+  /**
+   * R-CHAN-2 (canContact check 9; review optouts/F1 of batch 6): the person-level do-not-contact of any record of the
+   * person (api repos/gate.ts personDoNotContact: the record, the one it was merged into, every duplicate merged into
+   * either). It blocks every channel and every point, whatever the message and the sender. Absent = false.
+   */
+  personDoNotContact?: boolean;
 }
 
 export interface ReachBlock {
@@ -74,12 +93,13 @@ export function pointKindFor(channel: Channel): PointKind {
  */
 export function gateConsentRows(input: ReachabilityInput, point: ReachPoint, channel: Channel): ConsentStateRow[] {
   const hmacs = new Set([point.addressHmac]);
-  // texts and calls: every phone, removed ones that still count too; DMs: every identity of the kind
+  // texts and calls: every phone, removed ones that still count too; chat: every identity of the person
   // (R-CHAN-4); email: the address
   if (channel !== 'email') {
     const kind = pointKindOf(channel);
     for (const p of input.points) if (p.kind === kind) hmacs.add(p.addressHmac);
     if (kind === 'phone') for (const h of input.removedPhoneHmacs ?? []) hmacs.add(h);
+    if (kind === 'web_chat') for (const h of input.otherChatHmacs ?? []) hmacs.add(h);
   }
   return input.consent.filter((r) => r.channel === channel && hmacs.has(r.addressHmac));
 }
@@ -101,6 +121,8 @@ export function pointBlocks(input: ReachabilityInput, point: ReachPoint, channel
   // check 6 (suppressions on this address)
   const sup = input.suppressions.filter((s) => s.addressHmac === point.addressHmac && s.liftedAt === null && (s.channel === 'all' || s.channel === channel));
   if (sup.length > 0) block('SUPPRESSED', [], sup);
+  // check 9 (the person-level do-not-contact): every channel, every point, no override
+  if (input.personDoNotContact === true) block('PERSON_DO_NOT_CONTACT');
   return out;
 }
 

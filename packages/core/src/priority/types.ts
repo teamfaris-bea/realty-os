@@ -76,8 +76,11 @@ export interface ChannelBlock {
 /**
  * Per-contact summary of blocked channels for the feed (contacts absent from the map have no known
  * block). It is a display hint only: every send is re-checked by canContact at send time (R-GATE-1).
+ * `web_chat` (module 22): a reply in the website chat is blocked whatever the chat's session says, by the
+ * person-level do-not-contact (R-CHAN-2) or an opt-out on any chat identity of the person (R-CHAN-4); whether
+ * the session is still open is the reachability summary's to say on the button (review optouts/F1 of batch 6).
  */
-export type GateSummary = Partial<Record<Channel, ChannelBlock>>;
+export type GateSummary = Partial<Record<Channel | 'web_chat', ChannelBlock>>;
 
 // ---- feed inputs ---------------------------------------------------------------------------------
 

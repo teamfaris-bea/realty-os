@@ -473,14 +473,35 @@ const SUPPRESSION_SENTENCE: Record<string, string> = {
   import_dnc: 'Marked do-not-contact in the import',
 };
 
+/** The feed's words for the person-level do-not-contact (R-CHAN-2); the web says it the same way (reasons/sentences.ts). */
+export const PERSON_DNC_SENTENCE = 'Asked not to be contacted at all';
+
 /**
  * Per-contact channel hint for the feed (core GateSummary). A channel is `unavailable` when the contact
  * has no working address for it, and `deny` when every working address is suppressed or opted out.
- * Contacts with no known block are absent from the map.
+ * The person-level do-not-contact (R-CHAN-2, review optouts/F1 of batch 6) denies every channel, the website chat
+ * included, whatever the points say (a merge survivor's own phone, a point added later); a chat opt-out on any chat
+ * identity of the person (R-CHAN-4) denies the chat. The sets are the send gate's (repos/gate.ts personDoNotContact,
+ * chatFanoutHmacs: the person's records), read as one query: for a live record the person's do-not-contact and chat
+ * identities are on its own row and points already (a merge carries the flag up, 0018, and copies every point, 0027),
+ * so app.contact_person_ids runs only for a merged-away one. Contacts with no known block are absent from the map.
  */
 export async function gateSummaries(tx: Tx, contactIds: readonly string[]): Promise<Map<ContactId, GateSummary>> {
   const out = new Map<ContactId, GateSummary>();
   if (contactIds.length === 0) return out;
+  const person = await sql<{ contact_id: string; dnc: boolean; chat_revoked: boolean }>`
+    SELECT c.id AS contact_id,
+           EXISTS (SELECT 1 FROM contacts x WHERE x.tenant_id = c.tenant_id AND x.do_not_contact_at IS NOT NULL AND x.id = ANY (r.person)) AS dnc,
+           EXISTS (SELECT 1 FROM contact_points p JOIN consent_state cs ON cs.tenant_id = p.tenant_id AND cs.address_hmac = p.address_hmac
+                                                                       AND cs.channel = 'web_chat' AND cs.status = 'revoked'
+                    WHERE p.tenant_id = c.tenant_id AND p.kind = 'web_chat' AND p.contact_id = ANY (r.person)
+                      AND (p.removed_at IS NULL OR p.removed_reason IS DISTINCT FROM 'wrong_number')) AS chat_revoked
+      FROM contacts c
+      CROSS JOIN LATERAL (SELECT CASE WHEN c.merged_into_contact_id IS NULL THEN ARRAY[c.id]
+                                      ELSE app.contact_person_ids(c.tenant_id, c.id) END AS person) r
+     WHERE c.tenant_id = app.tenant_id() AND c.id = ANY (${[...contactIds]}::uuid[])`.execute(tx);
+  const dnc = new Set(person.rows.filter((x) => x.dnc).map((x) => x.contact_id));
+  const chatOut = new Set(person.rows.filter((x) => x.chat_revoked).map((x) => x.contact_id));
   const r = await sql<{ contact_id: string; kind: 'phone' | 'email'; line_type: string; sup_sms: string | null; sup_voice: string | null; sup_email: string | null; rev_sms: boolean; rev_voice: boolean; rev_email: boolean }>`
     SELECT p.contact_id, p.kind, p.line_type,
            (SELECT s.reason FROM suppressions s WHERE s.tenant_id = p.tenant_id AND s.address_hmac = p.address_hmac AND s.lifted_at IS NULL AND s.channel IN ('sms','all') LIMIT 1) AS sup_sms,
@@ -543,6 +564,12 @@ export async function gateSummaries(tx: Tx, contactIds: readonly string[]): Prom
     const acc = per.get(id) ?? fresh();
     const has = seen.get(id) ?? new Set<Channel>();
     const g: GateSummary = {};
+    if (dnc.has(id)) {
+      // R-CHAN-2: nobody can text, call, email or answer the chat of a person who asked not to be contacted
+      for (const ch of ['sms', 'voice', 'email', 'web_chat'] as const) g[ch] = { outcome: 'deny', explanation: PERSON_DNC_SENTENCE };
+      out.set(id as ContactId, g);
+      continue;
+    }
     for (const ch of ['sms', 'voice', 'email'] as const) {
       if (acc[ch].usable) continue;
       const block: ChannelBlock = has.has(ch)
@@ -550,6 +577,7 @@ export async function gateSummaries(tx: Tx, contactIds: readonly string[]): Prom
         : { outcome: 'unavailable', explanation: ch === 'email' ? 'No email address' : 'No working phone number' };
       g[ch] = block;
     }
+    if (chatOut.has(id)) g.web_chat = { outcome: 'deny', explanation: 'Opted out of chat messages' };
     if (Object.keys(g).length > 0) out.set(id as ContactId, g);
   }
   return out;

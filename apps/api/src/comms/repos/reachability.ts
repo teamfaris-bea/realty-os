@@ -29,7 +29,7 @@ export async function consentStateFor(tx: Tx, hmacs: readonly string[]): Promise
 /** What the ledger says about one opt-out event (the evidence behind a revoked row). */
 export interface RevokeEventFacts {
   id: string;
-  channel: 'sms' | 'voice' | 'email';
+  channel: 'sms' | 'voice' | 'email' | 'web_chat';
   purpose: 'marketing' | 'informational' | 'all';
   source: string;
   occurredAt: Date;
@@ -193,6 +193,43 @@ export async function removedFanoutPhones(tx: Tx, contactIds: readonly string[])
      WHERE tenant_id = app.tenant_id() AND contact_id = ANY (${[...contactIds]}::uuid[]) AND kind = 'phone'
        AND removed_at IS NOT NULL AND removed_reason IS DISTINCT FROM 'wrong_number'
      ORDER BY contact_id, address_hmac`.execute(tx);
+  for (const x of r.rows) out.get(x.contact_id)?.push(Buffer.from(x.h).toString('hex'));
+  return out;
+}
+
+/**
+ * R-CHAN-2 (review optouts/F1 of batch 6): per contact, the person-level do-not-contact the send-time gate reads
+ * (repos/gate.ts personDoNotContact: any record of the person, app.contact_person_ids, under the caller's RLS), with
+ * the earliest one's ledger event and instant. Contacts whose person has none are absent. One query for the page.
+ */
+export async function personDoNotContactFor(tx: Tx, contactIds: readonly string[]): Promise<Map<string, { eventId: string | null; at: Date }>> {
+  if (contactIds.length === 0) return new Map();
+  const r = await sql<{ contact_id: string; event_id: string | null; at: Date }>`
+    SELECT c.id AS contact_id, d.do_not_contact_event_id AS event_id, d.do_not_contact_at AS at
+      FROM unnest(${[...contactIds]}::uuid[]) AS c(id)
+      CROSS JOIN LATERAL (
+        SELECT x.do_not_contact_event_id, x.do_not_contact_at FROM contacts x
+         WHERE x.tenant_id = app.tenant_id() AND x.do_not_contact_at IS NOT NULL
+           AND x.id = ANY ((SELECT app.contact_person_ids(app.tenant_id(), c.id))::uuid[])
+         ORDER BY x.do_not_contact_at, x.id LIMIT 1) d`.execute(tx);
+  return new Map(r.rows.map((x) => [x.contact_id, { eventId: x.event_id, at: x.at }]));
+}
+
+/**
+ * R-CHAN-4 (review optouts/F4 of batch 6): per contact, the HMACs of the person's website-chat identities whose
+ * opt-out blocks a chat reply (repos/gate.ts chatFanoutHmacs, the 0043 guard's `others` for web_chat): every record of
+ * the person, live or removed, except one removed as a confirmed wrong number. Only for the fan-out: never listed.
+ */
+export async function chatFanoutFor(tx: Tx, contactIds: readonly string[]): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>(contactIds.map((id) => [id, []]));
+  if (contactIds.length === 0) return out;
+  const r = await sql<{ contact_id: string; h: Buffer }>`
+    SELECT DISTINCT c.id AS contact_id, p.address_hmac AS h
+      FROM unnest(${[...contactIds]}::uuid[]) AS c(id)
+      JOIN contact_points p ON p.tenant_id = app.tenant_id() AND p.kind = 'web_chat'
+                           AND p.contact_id = ANY ((SELECT app.contact_person_ids(app.tenant_id(), c.id))::uuid[])
+                           AND (p.removed_at IS NULL OR p.removed_reason IS DISTINCT FROM 'wrong_number')
+     ORDER BY 1, 2`.execute(tx);
   for (const x of r.rows) out.get(x.contact_id)?.push(Buffer.from(x.h).toString('hex'));
   return out;
 }

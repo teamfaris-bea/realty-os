@@ -8,7 +8,8 @@ import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { optOutFanoutPhoneHmacs } from '../comms/repos/gate.js';
 import { intake } from '../leads/testing.js';
 import { type AssistantWorld, assistantWorld, call, inboundSms, randomEmail, randomPhone } from '../assistant/testing.js';
-import { acceptLead, chatSource, createWidget, openChat, SITE } from '../channels/testing.js';
+import { randomUUID } from 'node:crypto';
+import { acceptLead, chatMessage, chatSource, createWidget, openChat, SITE } from '../channels/testing.js';
 import { gateSummaries } from './repos/feedInputs.js';
 
 let h: ApiHarness;
@@ -72,6 +73,26 @@ describe('feed channel hint = the send gate\'s opt-out fan-out (R-PAR-12)', () =
     expect(await fanout(p.contactId)).toHaveLength(1);
     const g = await hint(p.contactId);
     expect(g.sms).toBeUndefined();
+  });
+});
+
+describe('the person-level do-not-contact on the card hint (R-CHAN-2, review optouts/F1 of batch 6)', () => {
+  it('R-CHAN-2: a phone and an email added after the person asked not to be contacted carry no revoke of their own; the hint blocks texts, calls, email and the website chat with the person-level reason, as the send gate does', async () => {
+    const r = await intake(h, w, { fullName: 'Dana Decline', phones: [], emails: [randomEmail()] });
+    expect((await call(w.owner, 'POST', `/contacts/${r.contactId}/do-not-contact`, { reason: 'asked_on_call' })).status).toBe(200);
+    expect((await call(w.owner, 'POST', `/contacts/${r.contactId}/points`, { kind: 'phone', address: randomPhone(), label: 'mobile' })).status).toBe(201);
+    expect((await call(w.owner, 'POST', `/contacts/${r.contactId}/points`, { kind: 'email', address: randomEmail(), label: 'other' })).status).toBe(201);
+    const dnc = { outcome: 'deny', explanation: 'Asked not to be contacted at all' };
+    expect(await hint(r.contactId)).toEqual({ sms: dnc, voice: dnc, email: dnc, web_chat: dnc });
+  });
+
+  it('R-CHAN-4: an opt-out in the website chat blocks a reply in the chat only (the person did not ask about every channel)', async () => {
+    const src = await chatSource(h, w.owner, w.tenantId, 'Website chat (hint)');
+    const widget = await createWidget(h, w.owner, src.sourceId, [SITE]);
+    const c = await openChat(h, widget.key, src.disclosureId, { name: 'Wes Wrong', email: randomEmail() });
+    expect((await chatMessage(h, c.token, { message: 'Sorry, wrong person', clientMessageId: randomUUID() })).statusCode).toBe(200);
+    expect(await hint(c.contactId)).toMatchObject({ web_chat: { outcome: 'deny', explanation: 'Opted out of chat messages' } });
+    expect((await hint(c.contactId)).sms).toEqual({ outcome: 'unavailable', explanation: 'No working phone number' });
   });
 });
 

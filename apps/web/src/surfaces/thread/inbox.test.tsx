@@ -7,7 +7,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import { FakeFetch, IDS, agentApp, chatEndedReply, decision, draftAction, findToast, fullContact, iso, reachability, stopReason, timelineItem } from '../feed/lib/testing.js';
+import { FakeFetch, IDS, agentApp, chatEndedReply, decision, dncReason, draftAction, findToast, fullContact, iso, reachability, stopReason, timelineItem, withDoNotContact } from '../feed/lib/testing.js';
 import { lastInboundChannel, liveChat } from './ThreadPage.js';
 
 const user = () => userEvent.setup();
@@ -253,13 +253,32 @@ describe('module 37: compose on the client\'s last open channel', () => {
     }
   });
 
-  it('E155 R-CHAN-3: after "stop contacting me" in the chat the summary blocks the chat with that opt-out, in words', async () => {
+  it('E155 R-CHAN-3: an opt-out in the chat alone (no person-level do-not-contact) blocks the chat, in words, and the box writes by text', async () => {
     const said = stopReason({ source: 'opt_out_language', keyword: null, addressHint: 'web chat' });
     agentApp(fake().on(`GET /contacts/${IDS.jane}/reachability`, summary({ reasons: [said] })), `/contacts/${IDS.jane}/thread`);
     const web = await screen.findByRole('radio', { name: 'Web chat' });
     await waitFor(() => expect(web).toBeDisabled());
     expect(web).toHaveAccessibleDescription('Web chat not offered: Asked in the chat to stop being contacted on Nov 10');
     expect(screen.getByTestId('channel-why')).toHaveTextContent('Writing by text: web chat is blocked.');
+  });
+
+  it('E155 R-CHAN-3 R-CHAN-2 (review optouts/F1): after "please stop contacting me" in the chat, the summary blocks texts and email as well as the chat, with the person-level do-not-contact in its own words: nothing is offered, nothing is previewed, Send stays disabled', async () => {
+    const said = stopReason({ source: 'opt_out_language', keyword: null, addressHint: 'web chat' });
+    const asked = withDoNotContact(reachability(IDS.jane, {}, { reasons: [said] }), dncReason({ source: 'opt_out_language', recordedBy: null }));
+    const f = fake().on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: asked } });
+    agentApp(f, `/contacts/${IDS.jane}/thread`);
+    const text = await screen.findByRole('radio', { name: 'Text' });
+    await waitFor(() => expect(text).toBeDisabled());
+    expect(text).toHaveAccessibleDescription('Text not offered: Asked not to be contacted at all on Nov 10');
+    expect(screen.getByRole('radio', { name: 'Email' })).toHaveAccessibleDescription('Email not offered: Asked not to be contacted at all on Nov 10');
+    expect(screen.getByRole('radio', { name: 'Web chat' })).toBeDisabled();
+    expect(screen.queryByTestId('channel-why')).toBeNull();
+    await user().type(screen.getByRole('textbox', { name: 'Web chat message' }), 'Hello?');
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send' })).toHaveAccessibleDescription('Asked not to be contacted at all on Nov 10');
+    expect(document.body.textContent).not.toMatch(/Writing by text|Replying in web chat/);
+    expect(f.callsTo(`POST /contacts/${IDS.jane}/messages/preview`)).toEqual([]);
+    expect(f.callsTo(`POST /contacts/${IDS.jane}/messages`)).toEqual([]);
   });
 
   it('a lead who only ever chatted, once the chat ended, has nothing to write on: the reason is shown and Send stays disabled', async () => {
@@ -288,6 +307,21 @@ describe('module 37: compose on the client\'s last open channel', () => {
     expect(screen.getByRole('link', { name: /their details/ })).toHaveAttribute('href', `/contacts/${IDS.jane}`);
     expect(screen.queryByRole('button', { name: 'Ask the assistant for a draft' })).toBeNull();
     expect(screen.queryByRole('button', { name: /Templates/ })).toBeNull();
+  });
+
+  it('R-CHAN-3 E155 (review optouts/F3): a chat-only lead who asked not to be contacted: the box says so, and never invites adding what they typed to call, text or email them', async () => {
+    const sam = fullContact({ phones: [], emails: [], typedInChat: [{ kind: 'email', address: 'sam.rivera@example.com', typedAt: iso(-3_600_000) }] });
+    const said = stopReason({ source: 'opt_out_language', keyword: null, addressHint: 'web chat' });
+    const asked = withDoNotContact(reachability(IDS.jane, {}, { reasons: [said] }), dncReason({ source: 'opt_out_language', recordedBy: null }));
+    const f = new FakeFetch()
+      .on(`GET /contacts/${IDS.jane}`, { status: 200, body: { contact: sam } })
+      .on(`GET /contacts/${IDS.jane}/timeline?limit=100`, { status: 200, body: { items: chatThenText().slice(0, 2), nextCursor: null } })
+      .on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: asked } });
+    agentApp(f, `/contacts/${IDS.jane}/thread`);
+    const note = await screen.findByTestId('typed-in-chat');
+    expect(note).toHaveTextContent('Jane asked not to be contacted. Nobody on the team can text, email or call them.');
+    expect(note.textContent).not.toMatch(/sam\.rivera@example\.com|Add it|to call, text or email/);
+    expect(screen.queryByRole('link', { name: /their details/ })).toBeNull();
   });
 
   it('no web chat is offered when the summary says there is no chat to reply to, whatever the thread shows', async () => {

@@ -93,12 +93,17 @@ async function gateReasons(agent: TestClient, contactId: string, r: Reach): Prom
   return out;
 }
 
-/** The summary agrees with the gate: the default point's reasons are exactly the gate's opt-out/point reasons. */
+/**
+ * The summary agrees with the gate: the default point's reasons are exactly the gate's reasons, every one of them (the
+ * sends here are clean otherwise, so a reason no summary predicts fails; review optouts/F1 of batch 6: a deny whose
+ * only reason was the person-level do-not-contact had passed as agreeing).
+ */
 async function expectAgrees(agent: TestClient, contactId: string): Promise<Reach> {
   const r = (await reach(agent, contactId)).body.reachability;
   const gate = await gateReasons(agent, contactId, r);
   for (const ch of ['sms', 'voice', 'email'] as const) {
-    const predicted = gate[ch].filter((x) => PREDICTED.has(x)).sort();
+    const predicted = [...gate[ch]].sort();
+    for (const x of predicted) expect(PREDICTED.has(x), `${ch}: ${x} is a reason no summary names`).toBe(true);
     expect(r.channels[ch].reasons.map((x) => x.code).sort(), ch).toEqual(predicted);
     expect(r.channels[ch].blocked, ch).toBe(predicted.length > 0);
   }
@@ -224,6 +229,21 @@ describe('reachability summary agrees with the send-time gate', () => {
     const r = await expectAgrees(agent, id);
     expect(r.channels.sms.reasons.map((x) => x.code)).toEqual(['WRONG_NUMBER']);
     expect(r.channels.voice.reasons.map((x) => x.code)).toEqual(['WRONG_NUMBER']);
+  });
+
+  it('R-CHAN-2 (review ui-compose/F1): a phone and an email added after the person asked not to be contacted carry no revoke of their own; the summary blocks texts, calls and email with the person-level reason (who recorded it, when), as the send does', async () => {
+    const agent = w.agents[0]!;
+    const id = await contactWith(agent, [], [randomEmail()]);
+    expect((await call(agent, 'POST', `/contacts/${id}/do-not-contact`, { reason: 'asked_on_call' })).status).toBe(200);
+    expect((await call(agent, 'POST', `/contacts/${id}/points`, { kind: 'phone', address: randomPhone(), label: 'mobile' })).status).toBe(201);
+    expect((await call(agent, 'POST', `/contacts/${id}/points`, { kind: 'email', address: randomEmail(), label: 'other' })).status).toBe(201);
+    const r = await expectAgrees(agent, id);
+    for (const ch of ['sms', 'voice'] as const) {
+      expect(r.channels[ch].reasons, ch).toEqual([expect.objectContaining({ code: 'PERSON_DO_NOT_CONTACT', source: 'agent_recorded', recordedBy: { userId: agent.userId, displayName: expect.any(String) }, at: expect.any(String), otherAddress: false, addressHint: null })]);
+    }
+    // every email of the person: the one that asked (revoked too) and the one added later
+    const email = r.channels.email.points.map((p) => p.reasons.map((x) => x.code).sort());
+    expect(email).toEqual(expect.arrayContaining([['PERSON_DO_NOT_CONTACT'], ['CONSENT_REVOKED', 'PERSON_DO_NOT_CONTACT']]));
   });
 
   it('E-import: an imported do-not-contact is a suppression named as imported, with its import batch when the caller may see imports', async () => {

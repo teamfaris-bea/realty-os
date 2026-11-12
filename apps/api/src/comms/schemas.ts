@@ -58,7 +58,7 @@ export const SendExistingBody = z.strictObject({});
  * content-independent half of the send-time check, with its evidence. Read-only; never a decision.
  */
 export const ReachReasonSchema = z.object({
-  code: z.enum(['CONSENT_REVOKED', 'SUPPRESSED', 'WRONG_NUMBER', 'CONTACT_POINT_INVALID', 'LANDLINE_NO_SMS']),
+  code: z.enum(['PERSON_DO_NOT_CONTACT', 'CONSENT_REVOKED', 'SUPPRESSED', 'WRONG_NUMBER', 'CONTACT_POINT_INVALID', 'LANDLINE_NO_SMS']),
   source: z.enum(['keyword', 'opt_out_language', 'unsubscribe', 'agent_recorded', 'call_outcome', 'wrong_number', 'provider_report', 'imported', 'suppression', 'contact_point', 'other']),
   purposes: z.array(z.enum(['marketing', 'informational'])),
   at: z.string().nullable(),
@@ -86,6 +86,8 @@ const ChatReachSchema = ChannelReachSchema.extend({
 const ReachabilitySchema = z.object({
   contactId: z.uuid(),
   purposeNow: z.enum(['marketing', 'informational']),
+  /** the person-level do-not-contact (R-CHAN-2) with its evidence; every channel's reasons carry it too */
+  doNotContact: ReachReasonSchema.nullable(),
   channels: z.object({ sms: ChannelReachSchema, voice: ChannelReachSchema, email: ChannelReachSchema, web_chat: ChatReachSchema }),
 });
 export const ReachabilityResponse = z.object({ reachability: ReachabilitySchema });

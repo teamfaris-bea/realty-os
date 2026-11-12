@@ -58,11 +58,19 @@ export interface ComposeContact {
 
 /**
  * Nothing can be sent to them (E77: a chat-only lead whose chat ended), but they typed a phone or email in the chat:
- * say so, unverified, and where the agent may add it by hand to call, text or email (finding UXA-5).
+ * say so, unverified, and where the agent may add it by hand to call, text or email (finding UXA-5). Never for a person
+ * who asked not to be contacted (R-CHAN-2/3, the summary's person-level do-not-contact, also one a merge carried):
+ * nobody may call, text or email them, so the note says that instead (review optouts/F3 of batch 6).
  */
-function TypedInChatNote({ contact }: { contact: ComposeContact }) {
+function TypedInChatNote({ contact, doNotContact }: { contact: ComposeContact; doNotContact: boolean }) {
   const typed = contact.typedInChat ?? [];
   if (typed.length === 0) return null;
+  if (doNotContact)
+    return (
+      <p data-testid="typed-in-chat" className="text-[14px] leading-snug text-ink">
+        {firstName(contact.name)} asked not to be contacted. Nobody on the team can text, email or call them.
+      </p>
+    );
   const shown = typed.map((t) => (t.kind === 'phone' ? formatPhone(t.address) : t.address)).join(' and ');
   return (
     <p data-testid="typed-in-chat" className="text-[14px] leading-snug text-ink">
@@ -328,13 +336,15 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
 
   // nothing to write on at all, or nothing that can take a message now: no template and no draft (nothing could send them)
   const nothingSends = settled && choice.channel === null;
+  // the person-level do-not-contact (R-CHAN-2): the summary names it once for the person (review optouts/F3)
+  const personDnc = (reach?.doNotContact ?? null) !== null;
   // asked to reply in a chat the summary has nothing to reply to (review ui-compose/F2): said, never left out
   const chatNotHere = choiceInput.webChat.missing && [initialChannel, lastInboundChannel].includes('web_chat');
   if (settled && noChannel)
     return (
       <div className="flex flex-col gap-2">
         <Notice tone="info">There's no phone number or email on file to message.{chatNotHere ? ` ${CHAT_NOT_HERE}.` : ''}</Notice>
-        <TypedInChatNote contact={contact} />
+        <TypedInChatNote contact={contact} doNotContact={personDnc} />
       </div>
     );
 
@@ -451,7 +461,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
         </div>
       ) : null}
       {settled && outcome === null ? <ReasonCaption id={`${id}-reason`} state={blockedNow} /> : null}
-      {nothingSends ? <TypedInChatNote contact={contact} /> : null}
+      {nothingSends ? <TypedInChatNote contact={contact} doNotContact={personDnc} /> : null}
       {finalText !== null ? (
         <figure aria-label={`What ${firstName(contact.name)} will get`} className="flex flex-col gap-1 rounded-xl bg-surface-2 px-3 py-2 text-[14px] text-ink">
           <figcaption className="font-medium text-ink-muted">What {firstName(contact.name)} will get</figcaption>

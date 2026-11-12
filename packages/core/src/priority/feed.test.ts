@@ -145,6 +145,23 @@ describe('scoreFeed: item types and reasons', () => {
     expect(FeedItemSchema.safeParse(both).success).toBe(true);
   });
 
+  it('R-CHAN-2 (review optouts/F1): a lead waiting in the website chat whose person asked not to be contacted gets no Reply: the card keeps "Can\'t reach them right now" with the reason, and opens the contact', () => {
+    const dnc = { outcome: 'deny' as const, explanation: 'Asked not to be contacted at all' };
+    const blocked = new Map([[contact(3), { sms: dnc, voice: dnc, email: dnc, web_chat: dnc }]]);
+    const waiting = one(feedInputs({ unansweredInbound: [inbound({ channel: 'web_chat', at: t(-min(1)) })], blockedChannels: blocked }));
+    expect(waiting.primaryAction).toEqual({ kind: 'open_contact', label: 'Open', contactId: contact(3) });
+    expect([waiting.primaryAction, ...waiting.alternatives].map((a) => a.kind)).not.toContain('reply_chat');
+    expect(waiting.reasons.find((r) => r.code === 'CANT_CONTACT')?.label).toBe("Can't reach them right now: Asked not to be contacted at all");
+    // the first-touch card too
+    const ft = scoreFeed(feedInputs({ slas: [sla()], unansweredInbound: [inbound({ contactId: contact(2), channel: 'web_chat', at: t(-min(1)) })], blockedChannels: new Map([[contact(2), { sms: dnc, voice: dnc, email: dnc, web_chat: dnc }]]) })).find((x) => x.itemType === 'first_touch_due')!;
+    expect(ft.primaryAction.kind).toBe('open_contact');
+    expect(codes(ft)).toContain('CANT_CONTACT');
+    // a chat that only opted out (the person did not ask about every channel): no Reply in it, the other channels stay
+    const chatOnly = new Map([[contact(3), { web_chat: { outcome: 'deny' as const, explanation: 'Asked in the chat to stop being contacted' } }]]);
+    const other = one(feedInputs({ unansweredInbound: [inbound({ channel: 'web_chat' })], blockedChannels: chatOnly }));
+    expect([other.primaryAction.kind, ...other.alternatives.map((a) => a.kind)]).toEqual(['call', 'text', 'email', 'open_contact']);
+  });
+
   it('first-touch SLA (finding UXA-3): a new lead who wrote in the website chat gets a Reply in the chat first', () => {
     const unreachable = new Map([[contact(2), { sms: { outcome: 'unavailable' as const, explanation: 'No working phone number' }, voice: { outcome: 'unavailable' as const, explanation: 'No working phone number' }, email: { outcome: 'unavailable' as const, explanation: 'No email address' } }]]);
     const out = scoreFeed(feedInputs({ slas: [sla()], unansweredInbound: [inbound({ contactId: contact(2), channel: 'web_chat', at: t(-min(1)) })], blockedChannels: unreachable }));

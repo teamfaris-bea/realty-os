@@ -317,13 +317,17 @@ export async function chooseEmailIdentity(tx: Tx, userId: string | null): Promis
 }
 
 /**
- * Module 22: the chat identities whose opt-out blocks a chat reply to the contact: every web-chat point of the
- * contact except one removed as a confirmed wrong number (the dispatch guard's `others` set for web_chat, 0021).
+ * Module 22: the chat identities whose opt-out blocks a chat reply to the contact (R-CHAN-4): every web-chat point of
+ * the person (personIds: every record of it, review optouts/F4 of batch 6) except one removed as a confirmed wrong
+ * number. The WHERE clause is the `others` set of app.messages_dispatch_guard for web_chat (migration 0043),
+ *   contact_id = ANY (person) AND kind = 'web_chat' AND (removed_at IS NULL OR removed_reason IS DISTINCT FROM 'wrong_number')
+ * so canContact sees every chat opt-out the guard sees, a merged-away recipient's included, and refuses first.
  */
 export async function chatFanoutHmacs(tx: Tx, contactId: string): Promise<string[]> {
   const r = await sql<{ h: Buffer }>`
-    SELECT address_hmac AS h FROM contact_points
-     WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND kind = 'web_chat'
-       AND (removed_at IS NULL OR removed_reason IS DISTINCT FROM 'wrong_number')`.execute(tx);
-  return r.rows.map((x) => x.h.toString('hex'));
+    SELECT DISTINCT address_hmac AS h FROM contact_points
+     WHERE tenant_id = app.tenant_id() AND contact_id = ANY (${personIds(contactId)}) AND kind = 'web_chat'
+       AND (removed_at IS NULL OR removed_reason IS DISTINCT FROM 'wrong_number')
+     ORDER BY address_hmac`.execute(tx);
+  return r.rows.map((x) => Buffer.from(x.h).toString('hex'));
 }

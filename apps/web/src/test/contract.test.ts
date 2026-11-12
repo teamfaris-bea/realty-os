@@ -4,7 +4,7 @@
 // one of phone or email at start, contactIds as a list of UUIDs). And the fixtures the web's tests answer with are
 // responses the API can send.
 import { describe, expect, it } from 'vitest';
-import { reachability, stopReason } from '../surfaces/feed/lib/testing.js';
+import { dncReason, reachability, stopReason, withDoNotContact } from '../surfaces/feed/lib/testing.js';
 import { contract, requestViolations, responseViolations } from './contract.js';
 
 const D = '01900000-0000-7000-8000-0000000d15c1';
@@ -33,7 +33,7 @@ describe('test/contract.ts against the API (finding F3)', () => {
   it('the reachability fixtures are summaries the API can send: every channel, the website chat entry included, with real ids and every field', () => {
     const route = 'GET /contacts/:id/reachability';
     expect(contract.routes[route]).toBeDefined();
-    for (const r of [reachability(C1), reachability(C1, { sms: [stopReason()] }), reachability(C1, { email: [stopReason({ addressRemoved: true, otherAddress: true })] }, 'open'), reachability(C1, {}, 'ended'), reachability(C1, {}, 'off'), reachability(C1, {}, 'none')]) {
+    for (const r of [reachability(C1), reachability(C1, { sms: [stopReason()] }), reachability(C1, { email: [stopReason({ addressRemoved: true, otherAddress: true })] }, 'open'), reachability(C1, {}, 'ended'), reachability(C1, {}, 'off'), reachability(C1, {}, 'none'), withDoNotContact(reachability(C1, { sms: [stopReason()] }, 'open'), dncReason()), withDoNotContact(reachability(C1, {}, 'none'), dncReason({ source: 'opt_out_language', recordedBy: null }))]) {
       expect(responseViolations(route, { reachability: r })).toEqual([]);
     }
     // a contact who never chatted: the API says so (no chat identity, no session), it does not leave the entry out

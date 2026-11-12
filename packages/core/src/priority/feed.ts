@@ -92,7 +92,7 @@ export function answersClient(t: TouchFacts, since: Instant): boolean {
 
 const BLOCK_CODE: Record<Channel, FeedReasonCode> = { sms: 'TEXT_BLOCKED', voice: 'CALL_BLOCKED', email: 'EMAIL_BLOCKED' };
 
-function isBlocked(g: GateSummary | undefined, ch: Channel): boolean {
+function isBlocked(g: GateSummary | undefined, ch: Channel | 'web_chat'): boolean {
   return g?.[ch] !== undefined;
 }
 
@@ -139,10 +139,12 @@ function planContact(f: LabelFormat, contactId: ContactId, prefs: readonly Chann
  * The client wrote last in the website chat (module 22): a Reply in the chat comes first, ahead of the other channels.
  * Such a lead often has no phone or email at all (the chat is its only identity), which is not "can't reach them":
  * the chat is how to answer, so the plan's demotion goes. Whether the chat is still open is the reachability
- * summary's to say on the button (the web disables it with the reason); the send-time check decides the rest.
+ * summary's to say on the button (the web disables it with the reason); the send-time check decides the rest. A chat
+ * the gate summary blocks (the person asked not to be contacted, R-CHAN-2, or opted out of the chat) is no way to
+ * answer: no Reply, and the plan keeps its demotion ("Can't reach them right now: …", review optouts/F1 of batch 6).
  */
-function withChatReply(plan: ContactPlan, contactId: ContactId, chat: boolean): ContactPlan {
-  if (!chat) return plan;
+function withChatReply(plan: ContactPlan, contactId: ContactId, chat: boolean, g: GateSummary | undefined): ContactPlan {
+  if (!chat || isBlocked(g, 'web_chat')) return plan;
   return { usable: [{ kind: 'reply_chat', label: 'Reply', contactId }, ...plan.usable], open: plan.open, demotion: [] };
 }
 
@@ -315,7 +317,7 @@ export function scoreFeed(i: FeedInputs, opts: ScoreFeedOptions = {}): FeedItem[
         : reason('FIRST_TOUCH_DUE', `First contact due ${f.in(s.firstTouchDueAt)}`),
     ];
     if (s.releaseDueAt != null && s.releaseDueAt > now) reasons.push(reason('RELEASE_SOON', `Goes back to the pond ${f.in(s.releaseDueAt)} if not contacted`));
-    const plan = withChatReply(planContact(f, s.contactId, CALL_FIRST, gateOf(s.contactId)), s.contactId, chatLatest(s.contactId));
+    const plan = withChatReply(planContact(f, s.contactId, CALL_FIRST, gateOf(s.contactId)), s.contactId, chatLatest(s.contactId), gateOf(s.contactId));
     const d: Draft = {
       itemType: 'first_touch_due',
       band: 'pinned',
@@ -469,7 +471,7 @@ export function scoreFeed(i: FeedInputs, opts: ScoreFeedOptions = {}): FeedItem[
       if (replyDraft.needsReview) reasons.push(reason('CHECK_THIS', 'Check this: a detail needs your OK'));
     }
     const replyPrefs = replyDraft !== undefined ? (replyDraft.channel === 'email' ? EMAIL_FIRST : TEXT_FIRST) : prefsFor(missed ? 'voice' : latest.channel);
-    const plan = withChatReply(planContact(f, contactId, replyPrefs, gateOf(contactId), replyDraft && { channel: replyDraft.channel, actionId: replyDraft.actionId }), contactId, !missed && replyDraft === undefined && latest.channel === 'web_chat');
+    const plan = withChatReply(planContact(f, contactId, replyPrefs, gateOf(contactId), replyDraft && { channel: replyDraft.channel, actionId: replyDraft.actionId }), contactId, !missed && replyDraft === undefined && latest.channel === 'web_chat', gateOf(contactId));
     reasons.push(...plan.demotion);
     out.push({
       itemType: missed ? 'missed_call' : 'unanswered_inbound',

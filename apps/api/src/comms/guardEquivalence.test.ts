@@ -14,7 +14,8 @@ import { type Tx, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
-import { command, suFixture } from '../leads/testing.js';
+import { chatMessage, chatSource, createWidget, openChat } from '../channels/testing.js';
+import { command, freshReauth, suFixture } from '../leads/testing.js';
 import { systemActor } from '../worker/systemActor.js';
 import { evaluateGate } from './gateInput.js';
 import * as msgs from './repos/messages.js';
@@ -347,5 +348,84 @@ describe('R-CHAN-2 equivalence: the app gate decides exactly what the DB dispatc
     // the exemption never covers a suppression: both refuse the confirmation for it
     await suppress(p.phone.hmac, 'phone', 'sms');
     expect(sameFact(await systemConfirmation(p.id, p.phone))).toEqual({ app: ['SUPPRESSED'], guard: 'RECIPIENT_SUPPRESSED', predicted: 'RECIPIENT_SUPPRESSED' });
+  }, 120_000);
+});
+
+describe('R-CHAN-4 equivalence for website-chat replies (review optouts/F4 of batch 6): canContact reads the chat opt-out fan-out the 0043 guard reads, the whole person', () => {
+  let widget: { id: string; key: string };
+  let src: { sourceId: string; disclosureId: string };
+  beforeAll(async () => {
+    src = await chatSource(h, w.owner, w.tenantId, 'Website chat (equivalence)');
+    widget = await createWidget(h, w.owner, src.sourceId);
+  });
+
+  const chatPoint = async (contactId: string): Promise<Pt> =>
+    (await h.su.query<Pt>("SELECT id, address, encode(address_hmac, 'hex') AS hmac FROM contact_points WHERE contact_id = $1 AND kind = 'web_chat' ORDER BY created_at, id LIMIT 1", [contactId])).rows[0]!;
+  const mergeAsOwner = async (survivorId: string, loserId: string) => {
+    await freshReauth(h, w.owner);
+    const r = await command(w.owner, survivorId, 'merge', { loserId, commandId: randomUUID() });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+  };
+
+  /** The app gate's opt-out reasons for a human chat reply to `to` (a connected widget), as the Owner. */
+  async function appChat(contactId: string, to: Pt, purpose: Purpose): Promise<string[]> {
+    const e = await withTenantTx(
+      w.owner.actor(),
+      (tx, now) => evaluateGate(tx, { contactId, recipient: { kind: 'contact', addressHmac: to.hmac, channel: 'web_chat', pointId: to.id }, purpose, initiator: 'human', category: 'none', sender: { phoneNumberId: null, emailIdentityId: null }, body: `${brokerage}: checking in about the house.`, connection: { status: 'connected' } }, now),
+      { db: h.database },
+    );
+    return e.decision.reasons.filter((r) => (OPT_OUT as readonly string[]).includes(r));
+  }
+  /** The dispatch guard for a queued chat reply to `to` moved to dispatching, core bypassed, rolled back, as the Owner. */
+  async function guardChat(contactId: string, to: Pt, purpose: Purpose): Promise<string> {
+    try {
+      await withTenantTx(w.owner.actor(), async (tx, now) => {
+        const conversationId = await msgs.ensureConversation(tx, randomUUID(), contactId, null);
+        const id = randomUUID();
+        await msgs.insertOutbound(tx, {
+          id, conversationId, contactId, channel: 'web_chat', phoneNumberId: null, emailIdentityId: null, fromAddress: `widget:${widget.id}`, toAddress: to.address, subject: null,
+          body: 'Checking in', status: 'queued', scheduledFor: null, initiator: 'human', initiatedByUserId: w.owner.userId!, purpose, actionCategory: 'none',
+          assistantActionId: null, playbookStepRunId: null, pinnedInboundSeq: null, idempotencyKey: `eq:${id}`, occurredAt: now, integrationConnectionId: widget.id,
+        });
+        await msgs.markDispatching(tx, id, now);
+        throw new Rollback('rolled back on purpose');
+      }, { db: h.database });
+    } catch (e) {
+      if (e instanceof Rollback) return 'allow';
+      const code = /^([A-Z_]+):/.exec((e as Error).message)?.[1];
+      if (!code) throw e;
+      return code;
+    }
+    throw new Error('unreachable');
+  }
+
+  it('R-CHAN-4 D1 F1: a reply to a merged-away chat lead\'s own identity, when the person\'s chat on another record opted out, is refused by both layers for the same reason; with no opt-out both allow it; the survivor\'s copy answers the same', async () => {
+    // C1's visitor said it was the wrong person (a chat revoke on C1's identity, no person-level do-not-contact)
+    const c1 = await openChat(h, widget.key, src.disclosureId, { name: 'Will Wrong' });
+    expect((await chatMessage(h, c1.token, { message: 'Sorry, wrong person', clientMessageId: randomUUID() })).statusCode).toBe(200);
+    expect((await h.su.query('SELECT do_not_contact_at FROM contacts WHERE id = $1', [c1.contactId])).rows[0].do_not_contact_at).toBeNull();
+    const c2 = await openChat(h, widget.key, src.disclosureId, { name: 'Will Again' });
+    const own = await chatPoint(c2.contactId);
+    await mergeAsOwner(c1.contactId, c2.contactId);
+    const copy = await pointOf(c1.contactId, own.address);
+    // and a pair nobody opted out of
+    const n1 = await openChat(h, widget.key, src.disclosureId, { name: 'Nia First' });
+    const n2 = await openChat(h, widget.key, src.disclosureId, { name: 'Nia Second' });
+    const nOwn = await chatPoint(n2.contactId);
+    await mergeAsOwner(n1.contactId, n2.contactId);
+    const cases = [
+      { label: 'the merged-away record, the person opted out on another record', contactId: c2.contactId, to: own, want: 'RECIPIENT_OPTED_OUT' },
+      { label: "the survivor's copy of that identity", contactId: c1.contactId, to: copy, want: 'RECIPIENT_OPTED_OUT' },
+      { label: 'the merged-away record, nobody opted out', contactId: n2.contactId, to: nOwn, want: 'allow' },
+    ];
+    for (const k of cases) {
+      for (const purpose of ['informational', 'marketing'] as const) {
+        const label = `${k.label} / ${purpose}`;
+        const app = await appChat(k.contactId, k.to, purpose);
+        const guard = await guardChat(k.contactId, k.to, purpose);
+        expect({ label, guard }).toEqual({ label, guard: predicted(app) });
+        expect({ label, guard }).toEqual({ label, guard: k.want });
+      }
+    }
   }, 120_000);
 });

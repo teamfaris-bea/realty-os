@@ -159,7 +159,7 @@ describe('compose web chat against the real module 22 routes (webContract.json)'
 
   it('module 22: the reachability summary\'s web_chat entry, exactly as the API sends it, is read as open, ended, turned off or opted out', () => {
     const none = { hasAddress: false, defaultPointId: null, blocked: false, reasons: [], points: [] };
-    const summary = (web_chat: NonNullable<Reachability['channels']['web_chat']>): { reachability: Reachability } => ({ reachability: { contactId: CONTACT, purposeNow: 'informational', channels: { sms: none, voice: none, email: none, web_chat } } });
+    const summary = (web_chat: NonNullable<Reachability['channels']['web_chat']>, doNotContact: Reachability['doNotContact'] = null): { reachability: Reachability } => ({ reachability: { contactId: CONTACT, purposeNow: 'informational', doNotContact, channels: { sms: none, voice: none, email: none, web_chat } } });
     const point = (blocked: boolean, reasons: Reachability['channels']['sms']['reasons'] = []) => [{ pointId: POINT, addressHint: 'Website chat', blocked, reasons }];
     const optOut = { code: 'CONSENT_REVOKED' as const, source: 'opt_out_language' as const, purposes: ['informational' as const, 'marketing' as const], at: '2026-11-10T15:00:00.000Z', keyword: null, recordedBy: null, importBatchId: null, suppressionReason: null, addressHint: 'web chat', otherAddress: false, addressRemoved: false, evidence: { consentEventId: '01900000-0000-7000-8000-0000000ce001', inboundMessageId: '01900000-0000-7000-8000-0000000e5599', callId: null, suppressionId: null } };
     const cases = [
@@ -168,6 +168,8 @@ describe('compose web chat against the real module 22 routes (webContract.json)'
       { s: summary({ hasAddress: true, defaultPointId: POINT, blocked: true, reasons: [], points: point(false), session: { open: true, widgetConnected: false } }), want: { offered: true, blocked: true, sentence: 'The website chat was turned off' } },
       { s: summary({ hasAddress: true, defaultPointId: POINT, blocked: true, reasons: [optOut], points: point(true, [optOut]), session: { open: true, widgetConnected: true } }), want: { offered: true, blocked: true, sentence: 'Asked in the chat to stop being contacted on Nov 10' } },
       { s: summary({ ...none, session: null }), want: { offered: false, blocked: false } },
+      // R-CHAN-2 (review optouts/F1): the person-level do-not-contact, first among the chat's reasons, in its own words
+      { s: summary({ hasAddress: true, defaultPointId: POINT, blocked: true, reasons: [{ ...optOut, code: 'PERSON_DO_NOT_CONTACT', addressHint: null }, optOut], points: point(true, [{ ...optOut, code: 'PERSON_DO_NOT_CONTACT', addressHint: null }, optOut]), session: { open: true, widgetConnected: true } }, { ...optOut, code: 'PERSON_DO_NOT_CONTACT', addressHint: null }), want: { offered: true, blocked: true, sentence: 'Asked not to be contacted at all on Nov 10' } },
     ];
     for (const c of cases) {
       // the fixture is what the API sends (its response schema accepts it, every field present)
