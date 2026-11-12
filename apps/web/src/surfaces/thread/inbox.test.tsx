@@ -224,24 +224,25 @@ describe('module 37: compose on the client\'s last open channel', () => {
     expect(f.callsTo(`POST /contacts/${IDS.jane}/messages`)).toEqual([]);
   });
 
-  it('review ui-compose/F6: when the summary, asked again while the chat is live, says the chat ended as the agent types, the box says so in a status message and announces it, keeps the text and says where Send goes now; the agent\'s own tap to Text announces nothing', async () => {
+  it('review ui-compose/F6: when the summary, asked again while the chat is live, says the chat ended as the agent types, the box says so in a status message (a live region), keeps the text and says where Send goes now; the agent\'s own tap to Text says nothing', async () => {
     let ended = false;
     const f = fake().on(`GET /contacts/${IDS.jane}/reachability`, () => summary(ended ? 'ended' : 'open'));
     const { qc } = agentApp(f, `/contacts/${IDS.jane}/thread`);
     const chat = await screen.findByRole('radio', { name: 'Web chat' });
     await waitFor(() => expect(chat).toBeChecked());
-    // the agent's own taps move the box: nothing to announce
+    // the agent's own taps move the box: nothing to say
     await user().click(screen.getByRole('radio', { name: 'Text' }));
     await user().click(screen.getByRole('radio', { name: 'Web chat' }));
-    expect(screen.queryByRole('status', { name: '' })?.textContent ?? '').not.toMatch(/chat has ended/);
+    const form = screen.getByRole('form', { name: 'Message Jane Doe' });
+    expect(within(form).queryAllByRole('status').map((n) => n.textContent).join(' ')).not.toMatch(/chat has ended/);
     await user().type(screen.getByRole('textbox', { name: 'Web chat message' }), 'Are you still on the page?');
     // Jane left the page: the summary's next refresh (every 15 s while the chat is live) says so
     ended = true;
     await act(() => qc.invalidateQueries({ queryKey: ['reachability'] }));
     await waitFor(() => expect(screen.getByRole('radio', { name: 'Text' })).toBeChecked());
     const said = "The chat has ended: they left the page, so this can't go there. Your text is still here. Send now sends it by text.";
-    expect(screen.getByText(said)).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByTestId('announcer')).toHaveTextContent(said));
+    // said in a status region of the box (role="status": announced without moving focus), as the preview path says it
+    expect(within(form).getAllByRole('status').map((n) => n.textContent)).toContain(said);
     expect(screen.getByRole('textbox', { name: 'Text message' })).toHaveValue('Are you still on the page?');
     expect(f.callsTo(`POST /contacts/${IDS.jane}/messages`)).toEqual([]);
   });

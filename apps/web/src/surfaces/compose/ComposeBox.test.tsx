@@ -204,6 +204,28 @@ describe('Thread', () => {
     expect(screen.queryByRole('button', { name: /anyway/ })).toBeNull();
   });
 
+  it('review ui-compose/F9: after a send the gate blocked, when the refreshed summary now blocks the channel, every aria-describedby of the box still points at an element on the page', async () => {
+    let stopped = false;
+    // a phone only: once texting is blocked there is no other channel, so the box stays on Text
+    const fake = threadFake()
+      .on(`GET /contacts/${IDS.jane}`, { status: 200, body: { contact: fullContact({ emails: [] }) } })
+      .on(`GET /contacts/${IDS.jane}/reachability`, () => ({ status: 200, body: { reachability: reachability(IDS.jane, stopped ? { sms: [stopReason()] } : {}) } }))
+      .on(`POST /contacts/${IDS.jane}/messages`, () => {
+        stopped = true; // Jane's STOP landed while the agent was typing: the send is refused and the summary asked again
+        return { status: 200, body: { message: null, decision: decision({ outcome: 'deny', explanation: 'Opted out of texts' }), result: 'not_created' } };
+      });
+    agentApp(fake, `/contacts/${IDS.jane}/thread?compose=sms`);
+    const u = user();
+    await u.type(await screen.findByRole('textbox', { name: 'Text message' }), 'Hi');
+    await u.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText(/Not sent:/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled());
+    const form = screen.getByRole('form', { name: 'Message Jane Doe' });
+    for (const el of form.querySelectorAll('[aria-describedby]')) {
+      for (const ref of (el.getAttribute('aria-describedby') ?? '').split(/\s+/).filter(Boolean)) expect(document.getElementById(ref), `${el.outerHTML.slice(0, 80)} -> #${ref}`).not.toBeNull();
+    }
+  });
+
   it('when the preview already said why and the send is blocked, the reason is shown once, not twice', async () => {
     const deny = decision({ id: null, phase: 'preview', outcome: 'deny', explanation: 'Opted out of texts' });
     const fake = threadFake()
