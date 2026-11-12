@@ -331,6 +331,10 @@ export const AUDIT_ACTIONS = [
   'source_cost.changed', // module 33: a manual lead-source cost entered or changed (amounts in cents, the month; closed months need re-auth)
   'goal.changed', // module 33: a goal created, changed or removed (member, period, metric, target)
   'coaching.settings_changed', // module 36: the Owner changed call scoring, Team Lead visibility or the rubric items, or an Admin turned call reviews off (values only)
+  'voice.answering_changed', // module 48: the Owner turned AI answering on (attested) or an Owner/Admin turned it off (codes only)
+  'voice.session_ended', // module 48: an AI-answered call ended in its one handback (outcome and end reason codes only)
+  'voice.test_call', // module 48: a scripted test call against the fake (in memory; nothing placed or saved)
+  'voice.handback_recovered', // module 48: voice.reconcile wrote the recovery handback of a call whose session was lost
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

@@ -15,7 +15,8 @@
 import type { Clock, Instant, ManualClock } from '@realty/core/foundation';
 import { fixedClock, instant } from '@realty/core/foundation';
 import type { VoiceEvent } from '@realty/core/voice';
-import type { VoiceScript } from '@realty/core/voice/testing';
+import { SLOT_A, SLOT_B, type VoiceScript } from '@realty/core/voice/testing';
+import { toIso } from '@realty/core/foundation';
 import { ProviderError } from '../providers/types.js';
 import type { NextResult, OfferedSlotIso, PlatformEvent, SaySource, VoiceAgentProvider, VoiceSessionContext, VoiceTransport } from './provider.js';
 
@@ -29,6 +30,8 @@ export interface FakeFaults {
   closeAtStep?: number;
   /** After a hand-off the virtual clock stands still until advance() or reconnect. */
   pauseOnHandOff?: boolean;
+  /** Keep the scripts' fixture slots as they are (default: SLOT_A/SLOT_B become the 1st/2nd slot the session offered). */
+  literalSlots?: boolean;
 }
 
 export interface FakeSessionLog {
@@ -138,9 +141,19 @@ export class FakeVoiceTransport implements VoiceTransport {
         this.lastCallerTurn = { ms: s.ms, text: ev.text };
         for (const d of this.deferredClaims.splice(0)) this.ready.push({ type: 'claim_proposals', at: t, raw: claimProposals(d, this.log.sessionId, this.lastCallerTurn) });
       }
+      if (ev.type === 'tool_request' && ev.request.tool === 'book_appointment' && !this.faults.literalSlots) return { ...ev, request: { ...ev.request, args: this.mapSlot(ev.request.args) } };
       if (ev.type === 'model_turn' && this.faults.latencyMs !== undefined) return { ...ev, latencyMs: (ev.latencyMs ?? 0) + this.faults.latencyMs };
       return ev as PlatformEvent;
     }
+  }
+
+  /** The scripts name fixture slots; a real model picks from what the session offered: SLOT_A/B ⇒ the 1st/2nd offered. */
+  private mapSlot(args: unknown): unknown {
+    if (typeof args !== 'object' || args === null) return args;
+    const a = args as Record<string, unknown>;
+    const offered = [...this.log.toolResults].reverse().find((r) => r.slots !== undefined)?.slots ?? [];
+    const pick = a['slot_start'] === toIso(SLOT_A.start) ? offered[0] : a['slot_start'] === toIso(SLOT_B.start) ? offered[1] : undefined;
+    return pick ? { ...a, slot_start: pick.start, slot_end: pick.end } : args;
   }
 
   async say(text: string, source: SaySource): Promise<void> {

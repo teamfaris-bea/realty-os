@@ -336,6 +336,13 @@ export const ERROR_STATUS = {
   MILESTONE_TEMPLATE_NOT_FOUND: 422, // no template with this id and version for the deal's side and the tenant's jurisdictions
   MILESTONE_PLAN_OPEN: 409, // another template's proposals are still open on this deal (details.templateId)
   MILESTONE_TEMPLATES_INVALID: 422, // PUT milestone templates: invalid entries by index (details.invalid)
+  VOICE_PLAYBOOK_NOT_APPROVED: 409, // module 48: AI answering needs an approved voice_answering version (R-VOICE-1)
+  VOICE_ANSWERING_OFF: 409, // module 48: the Owner has not turned AI answering on (R-VOICE-9)
+  VOICE_NOT_CLEARED: 409, // module 48: platform:voice is not cleared (counsel review and the vendor latency spike, R-INT-6)
+  VOICE_VENDOR_NOT_CONFIGURED: 409, // module 48: no voice vendor is set up on this platform (N12)
+  VOICE_FAKE_ON_REAL_TELEPHONY: 409, // module 48: the deterministic fake voice agent never answers real telephony
+  VOICE_RECORDING_OFF: 409, // module 48: recording is off in the active policy; an AI call is always announced and recorded (O13)
+  AI_DISABLED: 409, // module 48: the team turned the assistant off (tenant_settings.ai_enabled)
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 
