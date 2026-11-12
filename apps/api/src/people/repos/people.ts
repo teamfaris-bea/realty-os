@@ -98,6 +98,15 @@ export interface PointRow {
 }
 
 /** Every point of a contact, removed ones included (RLS: contact detail visible). */
+/**
+ * A phone or an email: the only points a person lists or edits through api/people. The table also holds website-chat
+ * identities (kind web_chat, module 22), which are a chat session's own and never a person's to edit (review
+ * tenancy-public/F3: removing one broke the chat and the Details' response schema), whatever the row type says.
+ */
+export function personPoint(p: { kind: string }): boolean {
+  return p.kind === 'phone' || p.kind === 'email';
+}
+
 export async function allPoints(tx: Tx, contactId: string): Promise<PointRow[]> {
   const r = await sql<PointRow>`
     SELECT p.id, p.kind, p.address, encode(p.address_hmac, 'hex') AS hmac, p.label, p.status, p.is_primary, p.removed_at, p.removed_reason,

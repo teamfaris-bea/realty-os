@@ -98,7 +98,8 @@ export async function registerContactEditRoutes(app: FastifyInstance): Promise<v
             addresses: (await repo.addresses(tx, id)).map(addressView),
             collaborators: (await repo.collaborators(tx, id)).map(collaboratorView),
             relationships: (await repo.relationships(tx, id)).map((x) => relationshipView(x, id)),
-            removedPoints: (await repo.allPoints(tx, id)).filter((p) => p.removed_at !== null).map(removedPointView),
+            // phones and emails only: a removed website-chat identity is no removed point of the person (tenancy-public/F3)
+            removedPoints: (await repo.allPoints(tx, id)).filter((p) => p.removed_at !== null && repo.personPoint(p)).map(removedPointView),
             canEdit: can(actor, 'contact.edit', facts).ok,
             canManageCollaborators: can(actor, 'collaborator.manage', facts).ok,
           },
