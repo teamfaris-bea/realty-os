@@ -78,12 +78,8 @@ test('each Phase 2/3 card shows its label and a primary action that does its job
     const n = { taps: 0 };
     if (!(await primary.isVisible())) await primary.scrollIntoViewIfNeeded();
     await tap(page, primary, n);
-    if ('to' in c) {
-      await expect(page).toHaveURL(new RegExp(`${c.to()}$`));
-    } else {
-      await expect(primary).toHaveAttribute('aria-expanded', 'true');
-      await expect(card.getByRole('list', { name: 'Details' }).getByText(c.details)).toBeVisible();
-    }
+    // every Phase 2/3 card now opens its own page (the weekly plan: /plan/:week; the coaching tip: /coaching)
+    await expect(page).toHaveURL(new RegExp(`${c.to()}$`));
     expect(n.taps).toBeLessThanOrEqual(2);
   }
   await page.goto(`${stack.webUrl}/`);

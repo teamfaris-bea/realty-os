@@ -12,6 +12,16 @@ import { ATTEST, type NurtureWorld, anniversaryScan, approveTemplate, closedDeal
 let h: ApiHarness;
 let w: NurtureWorld;
 
+/**
+ * Today's date in the tenant's own zone: the scan fires an anniversary on the tenant's local day (detect.ts), so a
+ * closing date built from the UTC date is not "today" between UTC midnight and the zone's midnight.
+ */
+async function localToday(): Promise<{ y: number; m: number; d: number }> {
+  const zone = (await h.su.query<{ z: string }>('SELECT default_timezone AS z FROM tenant_settings WHERE tenant_id = $1', [w.tenantId])).rows[0]!.z;
+  const [y, m, d] = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()).split('-').map(Number);
+  return { y: y!, m: m! - 1, d: d! };
+}
+
 beforeAll(async () => {
   h = await createApiHarness();
   w = await nurtureWorld(h);
@@ -40,8 +50,8 @@ describe('R-NURT-2 home anniversaries (E101)', () => {
 
   it('R-NURT-2 R-AST-20: the anniversary email goes out once, from the approved after-closing alerts, in the nurture_step category, with the deal as evidence', async () => {
     const c = await ownedContact(w.agents[0]!);
-    const now = new Date();
-    const closed = new Date(Date.UTC(now.getUTCFullYear() - 2, now.getUTCMonth(), now.getUTCDate(), 17));
+    const today = await localToday();
+    const closed = new Date(Date.UTC(today.y - 2, today.m, today.d, 17));
     const deal = await closedDeal(h, w.tenantId, c.id, w.agents[0]!.userId!, closed);
     expect(await anniversaryScan(h, w.tenantId)).toBeGreaterThanOrEqual(1);
     expect(await anniversaryScan(h, w.tenantId)).toBe(0);
@@ -64,8 +74,8 @@ describe('R-NURT-2 home anniversaries (E101)', () => {
     expect((await call(agent, 'POST', `/playbook-versions/${v.id}/approve`, { attestation: ATTEST, contentSha256: v.contentSha256 })).status).toBe(200);
     // (a) the trigger sent it first: the enrollment's anniversary step is skipped visibly
     const a = await ownedContact(agent);
-    const now = new Date();
-    const closedA = new Date(Date.UTC(now.getUTCFullYear() - 1, now.getUTCMonth(), now.getUTCDate(), 17));
+    const today = await localToday();
+    const closedA = new Date(Date.UTC(today.y - 1, today.m, today.d, 17));
     const dealA = await closedDeal(h, w.tenantId, a.id, agent.userId!, closedA);
     await anniversaryScan(h, w.tenantId);
     await firingsDue(h, a.id);

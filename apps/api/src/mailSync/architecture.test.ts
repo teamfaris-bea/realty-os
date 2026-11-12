@@ -107,7 +107,9 @@ describe('module 68 architecture (R-GMAIL-14)', () => {
   });
 
   it('R-GMAIL-4 S-D2-7: no code outside mailSync/token.ts selects user_mail_links.refresh_enc, and no route schema returns it', () => {
-    const offenders = SOURCES.filter((f) => f.rel !== 'mailSync/token.ts' && /refresh_enc/.test(stripComments(f.text))).map((f) => f.rel);
+    // a file that never names user_mail_links cannot select its column (the calendar's own user_calendar_links.refresh_enc is not this one)
+    const offenders = SOURCES.filter((f) => f.rel !== 'mailSync/token.ts' && /user_mail_links/.test(stripComments(f.text)) && /refresh_enc/.test(stripComments(f.text))).map((f) => f.rel);
+    expect(SOURCES.filter((f) => /user_mail_links/.test(stripComments(f.text))).length).toBeGreaterThan(1);
     expect(offenders).toEqual([]);
     expect(stripComments(byRel.get('mailSync/routes.ts')!)).not.toMatch(/refresh|accessToken|access_token/i);
   });
