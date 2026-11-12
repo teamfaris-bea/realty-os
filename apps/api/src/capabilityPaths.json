@@ -1,8 +1,15 @@
 {
   "$comment": "GENERATED from the API route table by apps/api/src/capabilityPaths.ts (--write). Do not edit: apps/api/src/capabilityPaths.test.ts fails when this file drifts, and apps/web/src/security-headers.nginx.test.ts fails while deploy/nginx.conf would log a secret of any path listed here.",
   "publicParams": {
-    "widgetToken": "the website chat widget key: it is in the embed code of every website that shows the widget (module 37)",
-    "kind": "the integration kind in an OAuth callback's path (a fixed list)"
+    "/api/public/chat/:widgetToken": {
+      "widgetToken": "the website chat widget key: it is in the embed code of every website that shows the widget (module 37)"
+    },
+    "/api/public/chat/:widgetToken/start": {
+      "widgetToken": "the website chat widget key: it is in the embed code of every website that shows the widget (module 37)"
+    },
+    "/api/admin/integrations/:kind/callback": {
+      "kind": "the integration kind in an OAuth callback's path (a fixed list)"
+    }
   },
   "paths": [
     {

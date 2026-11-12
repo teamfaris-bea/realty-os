@@ -17,14 +17,22 @@ import type { RouteTableEntry } from './rbac.js';
 
 export const CAPABILITY_PATHS_FILE = fileURLToPath(new URL('./capabilityPaths.json', import.meta.url));
 
+const WIDGET_KEY = 'the website chat widget key: it is in the embed code of every website that shows the widget (module 37)';
+
 /**
- * Path parameters that are no secret although the rule below would make them one, and why. Adding one decides that
- * whoever reads the access log may see its value.
+ * Path parameters that are no secret although the rule below would make them one, and why, by route path (as the
+ * route table lists it) and parameter name: an exemption covers the routes it was decided for, never the same name on
+ * another route (finding deploy-R2-public-param-exemption-by-name). Adding one decides that whoever reads the access
+ * log may see its value on that route. capabilityPaths.test.ts fails while one names a path the route table has not.
  */
-export const PUBLIC_PATH_PARAMS: Readonly<Record<string, string>> = {
-  widgetToken: 'the website chat widget key: it is in the embed code of every website that shows the widget (module 37)',
-  kind: "the integration kind in an OAuth callback's path (a fixed list)",
+export const PUBLIC_PATH_PARAMS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  '/api/public/chat/:widgetToken': { widgetToken: WIDGET_KEY },
+  '/api/public/chat/:widgetToken/start': { widgetToken: WIDGET_KEY },
+  '/api/admin/integrations/:kind/callback': { kind: "the integration kind in an OAuth callback's path (a fixed list)" },
 };
+
+/** The parameters PUBLIC_PATH_PARAMS names public on this route path (none on any other). */
+const publicParamsOf = (url: string): Readonly<Record<string, string>> => (Object.hasOwn(PUBLIC_PATH_PARAMS, url) ? PUBLIC_PATH_PARAMS[url]! : {});
 
 /** A path parameter: `:name` in a route's URL. */
 const PARAM = /:([A-Za-z_][A-Za-z0-9_]*)/g;
@@ -32,13 +40,14 @@ const PARAM = /:([A-Za-z_][A-Za-z0-9_]*)/g;
 /**
  * The parameters of a route's path that are a secret. A parameter named …token is one on any route (the convention
  * `capabilityUrl` relies on, rbac.ts), and so is every parameter of a route without a session ('public', 'webhook'),
- * where the URL may be the only authority. PUBLIC_PATH_PARAMS lists the exceptions.
+ * where the URL may be the only authority. PUBLIC_PATH_PARAMS lists the exceptions, route by route.
  */
 export function secretParams(route: Pick<RouteTableEntry, 'url' | 'auth'>): string[] {
   // a wildcard or a regular-expression parameter would slip past the rule: refuse it until the rule covers it
   if (/[*(]/.test(route.url)) throw new Error(`capabilityPaths: ${route.url} has a wildcard or regular-expression parameter, which the secret rule does not cover`);
   const unauthenticated = route.auth === 'public' || route.auth === 'webhook';
-  return [...route.url.matchAll(PARAM)].map((m) => m[1]!).filter((p) => !Object.hasOwn(PUBLIC_PATH_PARAMS, p) && (/token$/i.test(p) || unauthenticated));
+  const exempt = publicParamsOf(route.url);
+  return [...route.url.matchAll(PARAM)].map((m) => m[1]!).filter((p) => !Object.hasOwn(exempt, p) && (/token$/i.test(p) || unauthenticated));
 }
 
 export interface CapabilityPath {

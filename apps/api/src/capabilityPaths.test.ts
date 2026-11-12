@@ -37,16 +37,43 @@ describe('the paths that carry a capability (capabilityPaths.json, read by the n
     expect(secret('/api/admin/integrations/:kind/callback', 'public')).toEqual([]);
     expect(secret('/api/contacts/:id/thread', 'contact.view')).toEqual([]);
     expect(secret('/api/recordings/:id/stream', 'recording.play')).toEqual([]);
-    expect(Object.keys(PUBLIC_PATH_PARAMS).sort()).toEqual(['kind', 'widgetToken']);
     // a new route is a capability path unless its parameter is named public on purpose
     expect(secret('/api/auth/invites/:token/accept', 'public')).toEqual(['token']);
     expect(secret('/api/portal/login/:code', 'public')).toEqual(['code']);
     expect(secret('/api/webhooks/partner/:hookId/events', 'webhook')).toEqual(['hookId']);
     expect(secret('/api/devices/:id/pair/:pairingToken', 'self')).toEqual(['pairingToken']);
-    expect(secret('/api/public/listings/:kind/:slug', 'public')).toEqual(['slug']);
     // a parameter shape the rule cannot read is refused, not skipped
     expect(() => secret('/api/files/*', 'public')).toThrow(/wildcard or regular-expression/);
     expect(() => secret('/api/x/:id(^\\d+)', 'public')).toThrow(/wildcard or regular-expression/);
+  });
+
+  it('deploy-R2-public-param-exemption-by-name: a parameter is public on the routes it was decided for only, never by its name on another route', () => {
+    const secret = (url: string, auth: RouteTableEntry['auth']) => secretParams({ url, auth });
+    expect(Object.entries(PUBLIC_PATH_PARAMS).map(([url, ps]) => `${url} [${Object.keys(ps).join(',')}]`).sort()).toEqual([
+      '/api/admin/integrations/:kind/callback [kind]',
+      '/api/public/chat/:widgetToken [widgetToken]',
+      '/api/public/chat/:widgetToken/start [widgetToken]',
+    ]);
+    // the same names on any other route are secrets
+    expect(secret('/api/public/listings/:kind/:slug', 'public')).toEqual(['kind', 'slug']);
+    expect(secret('/api/webhooks/:kind/events', 'webhook')).toEqual(['kind']);
+    expect(secret('/api/public/forms/:widgetToken', 'public')).toEqual(['widgetToken']);
+    expect(secret('/api/public/chat/:widgetToken/rotate', 'public')).toEqual(['widgetToken']);
+    expect(secret('/api/admin/widgets/:widgetToken', 'session')).toEqual(['widgetToken']);
+  });
+
+  it('deploy-R2-public-param-exemption-by-name: every exemption names a route of the live table and one of its parameters, which would be a secret without it (no stale or needless exemption)', () => {
+    for (const [url, params] of Object.entries(PUBLIC_PATH_PARAMS)) {
+      const routes = table.filter((r) => r.url === url);
+      expect(routes.length, url).toBeGreaterThan(0);
+      for (const p of Object.keys(params)) {
+        expect(url, p).toContain(`:${p}`);
+        expect(
+          routes.some((r) => r.auth === 'public' || r.auth === 'webhook' || /token$/i.test(p)),
+          `${url} :${p} is no secret even without its exemption`,
+        ).toBe(true);
+      }
+    }
   });
 
   it('every listed secret is a parameter of its path, and every route of the table with a secret parameter is listed', () => {
