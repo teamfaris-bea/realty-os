@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { FAKE_BAD_REVIEW_QUOTE } from '../providers/fake/ai.js';
 import { feedOf } from '../workspace/testing.js';
+import { inviteViaApi } from '../admin/testing.js';
 import { DAY_MS, actorOf, cardsOf, playableCall, call, coachingWorld, freshReauth, ownedContact, reconcile, recordedCall, review, scoringOn, setPackCleared, type CoachingWorld } from './testing.js';
 
 let h: ApiHarness;
@@ -676,5 +677,37 @@ describe('an Admin may only turn call reviews off (E283, owner decision 2026-11-
     await setPackCleared(h, true);
     expect(String(((await save({ scoringEnabled: true, tlSeesCallScores: true, disabledKeys: [] })) as Error | null)?.message)).toMatch(/^OWNER_ONLY_SETTING/);
     expect(await row(w.tenantId)).toEqual({ scoring: false, tl: true, off: [] });
+  });
+});
+
+describe('batch 7 review ui/F5: a TC has no call reviews, so never a coaching tip (R-COACH-3, R-COACH-4, D-COACH matrix)', () => {
+  it('b7 ui/F5: a TC\'s recorded, transcribed call is not reviewed (the job skips it before any model run)', async () => {
+    const { w, contactId } = await readyWorld();
+    const tc = await inviteViaApi(h, w.owner, 'tc');
+    const id = await recordedCall(h, w, contactId, tc.userId);
+    expect(await review(h, w.tenantId, id)).toEqual({ kind: 'skipped', reason: 'role_not_reviewed' });
+    expect(await scoreRow(id)).toBeUndefined();
+  });
+
+  it('b7 ui/F5: a member who became a TC keeps no tip: the reconcile skips TCs even with stored reviews', async () => {
+    const { w, contactId } = await readyWorld();
+    const b = w.agents[1]!;
+    for (let i = 0; i < 3; i++) {
+      const id = await recordedCall(h, w, contactId, b.userId, { skip: ['asked_financing'], startedAt: new Date(Date.now() - (i + 2) * 3_600_000) });
+      expect(await review(h, w.tenantId, id)).toMatchObject({ kind: 'reviewed' });
+    }
+    expect(await reconcile(h, w.tenantId)).toMatchObject({ written: 1 });
+    // fixture: the member is now a TC with reviews stored from before (role-change guards are triggers, off in replica mode)
+    const c = await h.su.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query("UPDATE memberships SET role = 'tc', accepting_leads = false WHERE tenant_id = $1 AND user_id = $2", [w.tenantId, b.userId]);
+      await c.query('COMMIT');
+    } finally {
+      c.release();
+    }
+    expect(await reconcile(h, w.tenantId, (Date.now() + DAY_MS) as Instant)).toMatchObject({ written: 0 });
+    expect((await cardsOf(h, b.userId)).filter((c) => c.state === 'open')).toHaveLength(0);
   });
 });

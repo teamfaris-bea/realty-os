@@ -11,9 +11,9 @@ export const surface: SurfaceModule = {
   pages: [
     {
       path: ADMIN_MAIL_PATH,
-      title: 'Gmail sync',
+      title: 'Gmail sync (team)',
       roles: ['owner', 'admin'],
-      nav: { phone: 'more', desktop: 'sidebar', icon: 'inbox', label: 'Gmail sync', order: 255, section: 'admin' },
+      nav: { phone: 'more', desktop: 'sidebar', icon: 'inbox', label: 'Gmail sync (team)', order: 255, section: 'admin' },
       component: lazy(() => import('./AdminMailPage.js')),
     },
   ],

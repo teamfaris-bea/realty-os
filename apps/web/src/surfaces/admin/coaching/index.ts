@@ -9,9 +9,9 @@ export const surface: SurfaceModule = {
   pages: [
     {
       path: '/admin/coaching',
-      title: 'Coaching',
+      title: 'Coaching settings',
       roles: ['owner', 'admin'],
-      nav: { phone: 'more', desktop: 'sidebar', icon: 'settings', label: 'Coaching', order: 237, section: 'admin' },
+      nav: { phone: 'more', desktop: 'sidebar', icon: 'settings', label: 'Coaching settings', order: 237, section: 'admin' },
       component: lazy(() => import('./CoachingSettingsPage.js')),
     },
   ],

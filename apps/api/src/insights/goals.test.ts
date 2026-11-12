@@ -123,11 +123,12 @@ describe('review fixes (module 33 review)', () => {
     expect(rs.filter((r) => r.status === 409).every((r) => r.code === 'GOAL_EXISTS')).toBe(true);
   });
 
-  it('R-PLAN-2: each goal carries the counting method of its own metric', async () => {
+  it('R-PLAN-2, b7 ownership-data/F7: each goal carries the counting method of its own metric', async () => {
     const all = (await call<{ goals: GoalT[] }>(w.owner, 'GET', '/goals')).body.goals;
     const by = new Map(all.map((g) => [g.metric, g.pace.method]));
     expect(by.get('closings')).toMatch(/deals that closed/);
-    expect(by.get('touches')).toMatch(/calls .* texts and emails/);
+    // b7 ownership-data/F7 (D8(1)): the sentence names every channel the count holds, and what it never holds
+    expect(by.get('touches')).toBe("Counted from the scoreboard: calls, texts, emails and website-chat replies this member sent themselves (never imported, bulk or the assistant's) over the goal period so far, compared with an even pace across the period.");
     expect(new Set(all.map((g) => g.pace.method)).size).toBe(new Set(all.map((g) => g.metric)).size);
   });
 });

@@ -233,6 +233,16 @@ describe('R-PAR-16 R-PAR-35 bulk Start plan: the plan picker', () => {
     expect(planChoices(playbooks.body.playbooks, SAM).map((p) => p.id)).toEqual([PB.buyer, PB.theirs]);
     expect(planChoices(playbooks.body.playbooks, undefined).map((p) => p.id)).toEqual([PB.buyer]);
   });
+
+  it('b7 ui/F2: Start plan never offers trigger or voice-answering playbooks (the API refuses them, bulk/service.ts)', () => {
+    const base = { scope: 'team' as const, ownerUserId: null, approvedVersionId: 'v1' };
+    const list = [
+      { ...base, id: 'a', name: 'Alerts', kind: 'trigger' },
+      { ...base, id: 'b', name: 'Voice', kind: 'voice_answering' },
+      { ...base, id: 'c', name: 'Stay', kind: 'nurture' },
+    ];
+    expect(planChoices(list, ME).map((p) => p.id)).toEqual(['c']);
+  });
 });
 
 describe('DATA_MODEL §12 the roles the bulk bar offers Assign and Start plan to are core\'s', () => {

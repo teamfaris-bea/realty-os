@@ -106,13 +106,13 @@ test('Owner: coaching settings say "Not reviewed by counsel" while the pack is u
     const n = { taps: 0 };
     if (isPhone(page)) {
       await tap(page, page.getByRole('link', { name: 'More' }), n);
-      await tap(page, page.getByRole('link', { name: 'Coaching', exact: true }), n);
+      await tap(page, page.getByRole('link', { name: 'Coaching settings', exact: true }), n);
       expect(n.taps).toBe(2);
     } else {
-      await tap(page, page.getByRole('navigation').getByRole('link', { name: 'Coaching', exact: true }), n);
+      await tap(page, page.getByRole('navigation').getByRole('link', { name: 'Coaching settings', exact: true }), n);
       expect(n.taps).toBe(1);
     }
-    await expect(page.getByRole('heading', { level: 1, name: 'Coaching' })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1, name: 'Coaching settings' })).toBeVisible();
     await expect(page.getByText('Not reviewed by counsel', { exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Call reviews are paused' })).toBeVisible();
     await noGrades(page);
@@ -164,13 +164,13 @@ test('Admin: call reviews go off in 1 tap; turning them on, Team Lead access and
   const n = { taps: 0 };
   if (isPhone(page)) {
     await tap(page, page.getByRole('link', { name: 'More' }), n);
-    await tap(page, page.getByRole('link', { name: 'Coaching', exact: true }), n);
+    await tap(page, page.getByRole('link', { name: 'Coaching settings', exact: true }), n);
     expect(n.taps).toBe(2);
   } else {
-    await tap(page, page.getByRole('navigation').getByRole('link', { name: 'Coaching', exact: true }), n);
+    await tap(page, page.getByRole('navigation').getByRole('link', { name: 'Coaching settings', exact: true }), n);
     expect(n.taps).toBe(1);
   }
-  await expect(page.getByRole('heading', { level: 1, name: 'Coaching' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Coaching settings' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Call reviews are on' })).toBeVisible();
   await expect(page.getByText('Only the Owner can change whether Team Leads see call reviews.')).toBeVisible();
   await expect(page.getByRole('group', { name: 'Checklist items' })).toHaveAccessibleDescription('Only the Owner can change what calls are checked for.');

@@ -79,10 +79,11 @@ describe('Website chat page', () => {
     expect(within(panel).getByLabelText('Widget key')).toHaveValue(KEY);
     const code = (await within(panel).findByLabelText('Embed code')) as HTMLTextAreaElement;
     expect(code.value).toContain(`data-widget-key="${KEY}"`);
-    expect(code.value).toContain('data-brokerage="Harbor Realty LLC"');
-    expect(code.value).toContain(`data-disclosure-id="${ID.disclosure}"`);
-    expect(code.value).toContain(`data-disclosure="${DISCLOSURE}"`);
-    expect(code.value).toContain('/widget/chat.js');
+    // b7 ui/F4: the widget reads only its key; the team name and the current disclosure come from the server
+    expect(code.value).toBe(`<script src="${window.location.origin}/widget/chat.js" defer data-widget-key="${KEY}"></script>`);
+    expect(code.value).not.toMatch(/data-brokerage|data-disclosure/);
+    expect(within(panel).getByText(/kept up to date by Realty OS/)).toBeInTheDocument();
+    expect(within(panel).queryByText(/your brokerage name/)).toBeNull();
     const posts = fake.callsTo('POST /admin/web-chat/widgets');
     expect(posts).toHaveLength(2);
     expect(posts[1]!.body).toEqual({ displayName: 'Website chat', leadSourceId: ID.source, allowedOrigins: ['https://www.harbor.example'] });
@@ -165,6 +166,18 @@ describe('Website chat page', () => {
     expect(screen.getByLabelText('Widget key')).toHaveValue(KEY);
   });
 
+  it('b7 ui/F4: when the embed details fail, the key-only embed code is still shown (it needs only the key)', async () => {
+    const f = api({});
+    f.on(`GET /admin/web-chat/widgets/${ID.widget}/embed`, err(500, 'INTERNAL'));
+    mount(f, WEBCHAT_PATH);
+    await screen.findByText('No chat widgets yet.');
+    await userEvent.click(screen.getByRole('button', { name: 'Add widget' }));
+    await confirmPassword();
+    const code = (await screen.findByLabelText('Embed code')) as HTMLTextAreaElement;
+    expect(code.value).toContain(`data-widget-key="${KEY}"`);
+    expect(screen.getByText(/couldn't check whether this widget's lead source has a consent disclosure/i)).toBeInTheDocument();
+  });
+
   it('allowed websites: a page path is refused before any request; a valid list is saved', async () => {
     const fake = api({ widgets: [widget()] });
     mount(fake, WEBCHAT_PATH);
@@ -238,10 +251,11 @@ describe('website chat words', () => {
     expect(parseWebsites(Array.from({ length: 11 }, (_, i) => `https://s${i}.example`).join('\n'))).toEqual({ ok: false, message: 'List at most 10 websites.' });
   });
 
-  it('embedSnippet escapes every attribute value', () => {
-    const s = embedSnippet('https://app.example', 'wk_x', { brokerage: 'A "B" <C> & D', disclosure: { id: 'd', text: '"><script>alert(1)</script>' } });
+  it('b7 ui/F4: embedSnippet carries only the key (widget/config.ts), escaped', () => {
+    const s = embedSnippet('https://app.example', 'wk_"><script>alert(1)</script>');
     expect(s).not.toContain('<script>alert');
-    expect(s).toContain('data-brokerage="A &quot;B&quot; &lt;C&gt; &amp; D"');
+    expect(s).not.toMatch(/data-brokerage|data-disclosure/);
     expect(s.match(/<script /g)).toHaveLength(1);
+    expect(embedSnippet('https://app.example', 'wk_x')).toBe('<script src="https://app.example/widget/chat.js" defer data-widget-key="wk_x"></script>');
   });
 });

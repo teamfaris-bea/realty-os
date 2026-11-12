@@ -37,12 +37,12 @@
 //   seller_update     seller_update:{listing}:{period}   module 28   → Open listing
 //   marketing_review  marketing:{piece}                  module 29   → Open listing (the piece's listing)
 //   weekly_plan       weekly_plan:{user}:{week}          module 33   → See the plan (module 40's /plan/{week} page)
-//   coaching_fix      coaching_fix:{user}:{date}         module 36   → See the tip (the card's own lines)
+//   coaching_fix      coaching_fix:{user}:{date}         module 36   → See the tip (module 36's /coaching page)
 //   likely_to_move    likely:{contact}:{model}           module 50   → Open contact
 // The scorer never produces those keys, so it never updates or closes them; foreignActions() gives each
-// its one-tap action from the ids in its key. Deep links go only to pages that exist today (the listing
-// and contact pages, and module 40's weekly plan page); the daily tip page does not exist yet, so that card
-// opens its own details in place instead of pointing at a page that is not there.
+// its one-tap action from the ids in its key. Deep links go only to pages that exist today (the listing and
+// contact pages, module 40's weekly plan page and module 36's daily tip page). A marketing_review card whose
+// piece has no listing the viewer can open is the one that opens its own details in place (show_details).
 //
 // R-PRED-5 (read path): a likely_to_move card is shown only while ITS model (the one in its key) is
 // approved and that model's prediction for the contact is still a likely/watch band. The RESTRICTIVE

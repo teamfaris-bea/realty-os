@@ -183,6 +183,24 @@ describe('layout and navigation', () => {
     expect(within(tabbar).getByRole('link', { name: 'More' })).toHaveAttribute('aria-current', 'page');
   });
 
+  it('b7 ui/F7: the phone More list is grouped by section under headings, as the desktop sidebar is', async () => {
+    const C = () => null;
+    const grouped: SurfaceModule = {
+      pages: [
+        { path: '/w', title: 'Work page', roles: 'all', component: C, nav: { phone: 'more', desktop: 'sidebar', icon: 'info', order: 50, section: 'work' } },
+        { path: '/a', title: 'Admin page', roles: 'all', component: C, nav: { phone: 'more', desktop: 'sidebar', icon: 'settings', order: 250, section: 'admin' } },
+      ],
+    };
+    const fake = new FakeFetch().on('GET /auth/session', ok());
+    renderApp({ fake, path: '/more', table: tableWith(grouped) });
+    const more = await screen.findByRole('navigation', { name: 'More' });
+    const headings = within(more).getAllByRole('heading', { level: 2 }).map((h) => h.textContent);
+    expect(headings).toEqual(['Work', 'Admin', 'Account']);
+    const adminList = within(more).getByRole('list', { name: 'Admin' });
+    expect(within(adminList).getAllByRole('link').map((l) => l.textContent)).toEqual(['Admin page']);
+    expect(within(within(more).getByRole('list', { name: 'Account' })).getByRole('link', { name: 'Account' })).toBeInTheDocument();
+  });
+
   it('a page the role may not open is "not available", even by URL (the server still decides data access)', async () => {
     const fake = new FakeFetch().on('GET /auth/session', ok());
     renderApp({ fake, path: '/team', table });

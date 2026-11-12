@@ -54,10 +54,14 @@ export interface PlanChoice {
   scope: 'team' | 'agent';
 }
 
-/** The plans Start plan offers: approved, not the instant reply to new leads, a team plan or the viewer's own. */
+/**
+ * The plans Start plan offers: approved, not the instant reply to new leads, not module 26's alerts or call answering
+ * (bulk/service.ts refuses those three; batch 7 review ui/F2), a team plan or the viewer's own.
+ */
+const NOT_ENROLLABLE: readonly string[] = ['new_lead_response', 'trigger', 'voice_answering'];
 export function planChoices(playbooks: readonly Pick<Playbook, 'id' | 'name' | 'kind' | 'scope' | 'ownerUserId' | 'approvedVersionId'>[], me: string | undefined): PlanChoice[] {
   return playbooks
-    .filter((p) => p.approvedVersionId !== null && p.kind !== 'new_lead_response' && (p.scope === 'team' || (me !== undefined && p.ownerUserId === me)))
+    .filter((p) => p.approvedVersionId !== null && !NOT_ENROLLABLE.includes(p.kind) && (p.scope === 'team' || (me !== undefined && p.ownerUserId === me)))
     .map((p) => ({ id: p.id, name: p.name, kind: p.kind, scope: p.scope }))
     .sort((a, b) => (a.scope === b.scope ? a.name.localeCompare(b.name) : a.scope === 'team' ? -1 : 1));
 }

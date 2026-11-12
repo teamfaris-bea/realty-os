@@ -70,7 +70,7 @@ export function statusLabel(c: Pick<Connection, 'status'>): { label: string; ton
 
 export function adapterModeWords(m: AdapterMode): { tone: 'info' | 'warn'; text: string } | null {
   if (m === 'fake')
-    return { tone: 'warn', text: 'This deployment uses test adapters for Meta, Google, Zillow, realtor.com and the showing service: those connections are simulated and reach no real account. The MLS card says what the MLS connection does.' };
+    return { tone: 'warn', text: 'This deployment uses test adapters for Meta, Google, Zillow, realtor.com, the showing service and personal calendars: those connections are simulated and reach no real account. The MLS card says what the MLS connection does.' };
   if (m === 'unconfigured') return { tone: 'warn', text: 'No platform apps are set up on this deployment yet, so services that need an outside login cannot be connected.' };
   return null;
 }

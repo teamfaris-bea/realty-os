@@ -27,7 +27,9 @@ export const GOAL_PERIODS = ['week', 'month', 'quarter', 'year'] as const;
 const PACE_TAIL = ' over the goal period so far, compared with an even pace across the period.';
 /** How each metric's count is made, in one sentence (shown on every goal). */
 export const PACE_METHOD: Record<GoalMetric, string> = {
-  touches: `Counted from the scoreboard: calls this member made and texts and emails they sent themselves (never imported or the assistant's)${PACE_TAIL}`,
+  // app.scoreboard_activity (0035): every human, non-imported, non-bulk outbound message on any channel, web chat
+  // included (D8(1)), plus calls (batch 7 review ownership-data/F7)
+  touches: `Counted from the scoreboard: calls, texts, emails and website-chat replies this member sent themselves (never imported, bulk or the assistant's)${PACE_TAIL}`,
   appointments_set: `Counted from the scoreboard: appointments this member set${PACE_TAIL}`,
   appointments_held: `Counted from the scoreboard: this member's appointments marked held${PACE_TAIL}`,
   agreements_signed: `Counted from the scoreboard: this member's deals that moved to agreement signed${PACE_TAIL}`,

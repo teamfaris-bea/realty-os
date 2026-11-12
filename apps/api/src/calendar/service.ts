@@ -62,7 +62,8 @@ export interface CalendarView {
 }
 
 export function stateOf(link: repo.LinkRow | undefined, configured: boolean): LinkState {
-  if (link?.status === 'connected' || link?.status === 'pending_review') return 'connected';
+  if (link?.status === 'connected') return 'connected';
+  if (link?.status === 'pending_review') return 'pending'; // its own waiting state (batch 7 review ui/F3)
   if (link?.status === 'degraded') return 'degraded';
   if (link?.status === 'revoked' && link.last_error_code === 'GRANT_REVOKED') return configured ? 'needs_reconnect' : 'not_configured';
   return configured ? 'not_connected' : 'not_configured';
@@ -77,13 +78,13 @@ export async function calendarView(tx: Tx, actor: UserActor, adapters: Integrati
     const link = links.find((l) => l.provider === key);
     const configured = adapters.oauth[svc.oauth].configured;
     const state = stateOf(link, configured);
-    const isLive = state === 'connected' || state === 'degraded';
+    const isLive = state === 'connected' || state === 'degraded' || state === 'pending';
     const other = live && live.provider !== key ? CALENDAR_SERVICES[live.provider] : null;
     return {
       provider: key,
       name: svc.name,
       state,
-      sentence: linkSentence(svc, state),
+      sentence: linkSentence(svc, state, adapters.mode),
       canConnect: configured && !isLive && !other,
       canDisconnect: isLive || state === 'needs_reconnect',
       blockedSentence: other && !isLive ? `Disconnect ${other.name} first to use ${svc.name} instead. Realty OS adds appointments to one calendar.` : null,
@@ -293,7 +294,7 @@ export async function revokeLinkAsSystem(tx: Tx, actor: ReturnType<typeof sys>, 
 // ---- live free/busy (R-CAL-3) -------------------------------------------------------------------------------
 
 export interface BusyView {
-  calendar: LinkState | 'unavailable';
+  calendar: Exclude<LinkState, 'pending'> | 'unavailable'; // a pending_review link is not live: no busy times
   provider: CalendarProviderKey | null;
   sentence: string;
   busy: Busy[];
@@ -314,7 +315,7 @@ export function mergeBusy(xs: readonly Busy[]): Busy[] {
   return out;
 }
 
-type ProviderBusy = { calendar: LinkState | 'unavailable'; provider: CalendarProviderKey | null; busy: Busy[] };
+type ProviderBusy = { calendar: BusyView['calendar']; provider: CalendarProviderKey | null; busy: Busy[] };
 
 /** System actor, inside the caller's transaction: the person's live calendar busy times, read now, kept nowhere. */
 async function providerBusy(deps: CalendarDeps, tx: Tx, tenantId: TenantId, userId: string, range: { start: string; end: string }): Promise<ProviderBusy> {

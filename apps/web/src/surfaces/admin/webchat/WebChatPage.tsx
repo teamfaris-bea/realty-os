@@ -6,7 +6,7 @@
 //   POST /admin/web-chat/widgets                          create (re-auth); the key comes back ONCE
 //   POST /admin/web-chat/widgets/:id/rotate               a new key (re-auth), ONCE; the old embed stops at once
 //   PUT  /admin/web-chat/widgets/:id/origins              allowed websites (re-auth)
-//   GET  /admin/web-chat/widgets/:id/embed                brokerage name + disclosure for the embed code
+//   GET  /admin/web-chat/widgets/:id/embed                whether the lead source has a consent disclosure (the code itself is the key only)
 //   POST /admin/integrations/connections/:id/disconnect   disconnect (re-auth; the integrations route)
 //
 // THE WIDGET KEY is shown once: only the one-time panel's component state holds it (never the query cache,
@@ -334,7 +334,9 @@ function KeyOnce({ fresh, onDone }: { fresh: Fresh; onDone(): void }) {
   // the one-time panel appears at the top of the page: take focus there so it is read out and not missed
   useEffect(() => heading.current?.focus(), [fresh]);
   const e = embed.data;
-  const snippet = e?.disclosure ? embedSnippet(window.location.origin, fresh.key, { ...e, disclosure: e.disclosure }) : null;
+  // the code needs only the key; it is held back only when the lead source is known to have no disclosure (the chat
+  // would never open), never because the details could not be read (review ui/F4)
+  const snippet = e?.disclosure || embed.isError ? embedSnippet(window.location.origin, fresh.key) : null;
 
   const copy = async (what: string, text: string) => {
     try {
@@ -361,7 +363,7 @@ function KeyOnce({ fresh, onDone }: { fresh: Fresh; onDone(): void }) {
         <input id={keyId} readOnly value={fresh.key} autoComplete="off" spellCheck={false} className="min-h-tap w-full rounded-xl border border-line bg-surface-2 px-3.5 font-mono text-[15px] text-ink" onFocus={(ev) => ev.currentTarget.select()} />
       </div>
       {embed.isPending ? <p className="text-[15px] text-ink-muted">Loading the embed code</p> : null}
-      {embed.isError ? <Notice tone="error">{`${messageFor(embed.error, ERROR_MESSAGES)} The key above works, but the embed code could not be built. Copy the key, or make a new key to try again.`}</Notice> : null}
+      {embed.isError ? <Notice tone="error">{`${messageFor(embed.error, ERROR_MESSAGES)} We couldn't check whether this widget's lead source has a consent disclosure. The embed code below works, but the chat window never opens without one.`}</Notice> : null}
       {e && !e.disclosure ? (
         <Notice tone="warn" title="The chat window won't appear yet">
           This widget's lead source has no consent disclosure, and the chat window never opens without one. A consent disclosure is set when a lead source is created, which the app can't do yet: ask whoever runs your deployment for a lead source with one, then add a widget for it.
@@ -374,7 +376,7 @@ function KeyOnce({ fresh, onDone }: { fresh: Fresh; onDone(): void }) {
           </label>
           <textarea id={snipId} aria-describedby={`${snipId}-hint`} readOnly value={snippet} rows={5} spellCheck={false} className="w-full rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 font-mono text-[14px] text-ink" onFocus={(ev) => ev.currentTarget.select()} />
           <p id={`${snipId}-hint`} className="text-[14px] text-ink-muted">
-            Paste it just before the closing body tag of each page that should show the chat. It shows your brokerage name and your consent disclosure before the first message.
+            Paste it just before the closing body tag of each page that should show the chat. It shows your team name (or brokerage name) and your consent disclosure before the first message, both kept up to date by Realty OS: nothing in the code changes when they do.
           </p>
         </div>
       ) : null}

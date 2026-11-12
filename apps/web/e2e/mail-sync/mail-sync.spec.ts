@@ -97,8 +97,8 @@ async function noSideScroll(page: Page) {
 
 test('the Owner turns Gmail sync on once platform:gmail is cleared; the page shows no mailbox or sync state', async ({ page }) => {
   await signIn(page, w.owner);
-  await openFromNav(page, 'Gmail sync');
-  await expect(page.getByRole('heading', { level: 1, name: 'Gmail sync' })).toBeVisible();
+  await openFromNav(page, 'Gmail sync (team)');
+  await expect(page.getByRole('heading', { level: 1, name: 'Gmail sync (team)' })).toBeVisible();
   const on = page.getByRole('button', { name: 'Turn Gmail sync on' });
   // a fresh stack starts uncleared on the first project only if no earlier run cleared it: each project has its own stack
   await expect(on).toBeDisabled();
@@ -117,8 +117,8 @@ test('the Owner turns Gmail sync on once platform:gmail is cleared; the page sho
 test('the agent connects Gmail and confirms their clients in 2 in-app taps (budget 3)', async ({ page }) => {
   const t = tapper(page);
   await signIn(page, w.agent);
-  await openFromNav(page, 'Gmail');
-  await expect(page.getByRole('heading', { level: 1, name: 'Gmail' })).toBeVisible();
+  await openFromNav(page, 'My Gmail');
+  await expect(page.getByRole('heading', { level: 1, name: 'My Gmail' })).toBeVisible();
   await expect(page.getByRole('heading', { level: 2, name: 'Connect your Gmail (read-only)' })).toBeVisible();
   await expect(page.getByText('Read-only: Realty OS never sends, labels or deletes in your Gmail.')).toBeVisible();
   await noSideScroll(page);

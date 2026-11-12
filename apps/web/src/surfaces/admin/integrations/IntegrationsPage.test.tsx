@@ -19,7 +19,8 @@ describe('Integrations page', () => {
       expect(screen.getByRole('heading', { level: 3, name })).toBeInTheDocument();
     }
     // the banner does not call the MLS connection simulated: the MLS card says what it does
-    expect(screen.getByText(/test adapters for Meta, Google, Zillow, realtor\.com and the showing service/)).toBeInTheDocument();
+    // b7 ui/F3: the list names the personal calendars too (the same adapters)
+    expect(screen.getByText(/test adapters for Meta, Google, Zillow, realtor\.com, the showing service and personal calendars/)).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/every connection here is simulated/);
     // there is no connect control here, and the page says so for the services that connect with a login
     expect(screen.getAllByText(/Connecting is not available from this page yet\./)).toHaveLength(3);

@@ -19,4 +19,8 @@ describe('the Gmail connect disclosure (R-GMAIL-3, R-GMAIL-6, Q-GMAIL-5)', () =>
     expect(text).toMatch(/Personal mail is never copied/);
     expect(text).toMatch(/Nothing is sent to an AI model/);
   });
+
+  it("R-GMAIL-14, b7 sends/F4: it says a reply sent from Gmail is not first contact (synced mail is never a touch, D8)", () => {
+    expect(web.paragraphs).toContain("Replies you send from Gmail don't count as first contact. Reply here to stop the clock.");
+  });
 });

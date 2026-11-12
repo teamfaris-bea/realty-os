@@ -51,6 +51,7 @@ export function claim(itemKey: string, status: ClaimedStatus, evidence: Evidence
 export function facts(over: Partial<CallReviewFacts> = {}): CallReviewFacts {
   return {
     handledBy: 'human',
+    agentRole: 'agent',
     imported: false,
     recording: { source: 'provider', consentBasis: 'announced_all_parties' },
     hasTranscript: true,

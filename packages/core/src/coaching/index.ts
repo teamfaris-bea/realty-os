@@ -12,7 +12,7 @@
 // voice-tone or sentiment analysis exists in this module.
 export * from './types.js';
 export { RUBRIC_V1, assertRubric, isRubricVersion } from './rubric.js';
-export { REVIEWABLE_CONSENT_BASES, reviewEligible } from './eligibility.js';
+export { REVIEWABLE_CONSENT_BASES, REVIEWED_ROLES, reviewEligible } from './eligibility.js';
 export { callScoreItemsJson, countItems, scoreFromClaims, scoreSummaryText, verifiedRefs } from './score.js';
 export { FIX_MAX_QUOTES, FIX_MIN_CALLS, FIX_WINDOW_CALLS, NO_FIX_TEXT, coachingFixKey, dailyFix, dailyFixResult, fixWindow } from './fix.js';
 export { TREND_MIN_SCORED, TREND_STEADY_BELOW_POINTS, trend } from './trend.js';

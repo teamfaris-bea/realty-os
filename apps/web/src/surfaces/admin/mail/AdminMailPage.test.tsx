@@ -56,7 +56,7 @@ describe('Admin → Gmail sync', () => {
   it('uncleared: the switch is disabled and described by the review sentence; no axe violations', async () => {
     const pack = { cleared: false, reviewedByCounsel: false, vendorReady: false, sentence: 'Not cleared.' };
     mount(new FakeFetch().on('GET /admin/mail-sync', { status: 200, body: view({ pack, canTurnOn: false }) }));
-    expect(await screen.findByRole('heading', { level: 1, name: 'Gmail sync' })).toBeVisible();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Gmail sync (team)' })).toBeVisible();
     const on = await screen.findByRole('button', { name: 'Turn Gmail sync on' });
     expect(on).toBeDisabled();
     expect(on).toHaveAccessibleDescription(packWords(pack));

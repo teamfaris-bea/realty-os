@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { reviewEligible } from './index.js';
+import { ROLES, can } from '../foundation/index.js';
+import { REVIEWED_ROLES, reviewEligible } from './index.js';
 import { facts } from './testing/fixtures.js';
 
 describe('R-COACH-1 R-COACH-3 review eligibility', () => {
@@ -47,5 +48,18 @@ describe('R-COACH-1 R-COACH-3 review eligibility', () => {
       reason: 'pack_not_cleared',
     });
     expect(reviewEligible(facts({ callScoringEnabled: false, handledBy: 'assistant' }))).toEqual({ eligible: false, reason: 'scoring_off' });
+  });
+
+  it('b7 ui/F5 (R-COACH-3): a TC has no call reviews; every other calling role does; a call with no agent is left to the job', () => {
+    expect(reviewEligible(facts({ agentRole: 'tc' }))).toEqual({ eligible: false, reason: 'role_not_reviewed' });
+    for (const r of ['owner', 'admin', 'team_lead', 'agent', 'isa'] as const) expect(reviewEligible(facts({ agentRole: r }))).toEqual({ eligible: true });
+    expect(reviewEligible(facts({ agentRole: null }))).toEqual({ eligible: true });
+    // the order: a call no person handled says so first
+    expect(reviewEligible(facts({ agentRole: 'tc', handledBy: 'voicemail' }))).toEqual({ eligible: false, reason: 'not_human_handled' });
+  });
+
+  it('b7 ui/F5: REVIEWED_ROLES are exactly the roles of coaching.view (authz), so a tip never opens a page closed to its holder', () => {
+    const viewers = ROLES.filter((role) => can({ kind: 'user', userId: 'u' as never, tenantId: 't' as never, role, sessionId: 's' }, 'coaching.view', { own: true }).ok);
+    expect([...REVIEWED_ROLES].sort()).toEqual([...viewers].sort());
   });
 });

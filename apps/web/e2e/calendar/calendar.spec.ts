@@ -63,8 +63,11 @@ test('an agent connects Google Calendar, an appointment reaches it, and they dis
 
   // connect: one tap, then the provider's approval, then back on the page in words
   await tap(page.getByRole('button', { name: 'Connect Google Calendar' }));
-  await expect(page.getByText('Your calendar is connected. New and changed appointments will appear there.')).toBeVisible();
-  await expect(page.getByText('Connected. New and changed appointments are added to your Google Calendar.')).toBeVisible();
+  // b7 ui/F3: the e2e stack runs the fake adapters, and the page says so
+  await expect(page.getByText('This deployment uses a test calendar: nothing reaches your real calendar.')).toBeVisible();
+  await expect(page.getByText('The test calendar is connected. Nothing reaches your real calendar.')).toBeVisible();
+  await expect(page.getByText('Connected to a test calendar: nothing reaches your real Google Calendar.')).toBeVisible();
+  await expect(page.getByText('Connected (test)')).toBeVisible();
   expect(taps).toBe(isPhone(page) ? 3 : 2);
   expect((await stack.fixture<{ link: { status: string; has_token: boolean } }>('/link')).link).toMatchObject({ status: 'connected', has_token: true });
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
