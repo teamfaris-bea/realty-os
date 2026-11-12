@@ -1,6 +1,8 @@
 // Home anniversaries, the post-closing template v2 and review requests (PHASE2_3_PLAN §5.4 #26; R-NURT-2,
 // R-MKT-11, R-AST-20, F7; E101), through real Postgres and the fake providers.
-import { contentSha256, validatePlaybookContent, type PlaybookKind } from '@realty/core/assistant';
+import { contentSha256, validatePlaybookContent, type PlaybookContent, type PlaybookKind } from '@realty/core/assistant';
+
+type TriggersContent = Extract<PlaybookContent, { kind: 'triggers' }>;
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { actionsOf, call, depsOf, messagesOf, ownedContact, runJobs, stepNow } from '../assistant/testing.js';
@@ -144,8 +146,8 @@ describe('built-in templates (R-AST-4, R-AST-20, F7, R-INBOX-4)', () => {
     expect(validatePlaybookContent([{ ...review, template: 'Leave us a 5-star review and get a $50 gift card!' }], { kind: 'post_closing' }).map((i) => i.code)).toContain('REVIEW_REQUEST_INCENTIVE');
     expect(validatePlaybookContent([{ ...review, onlyIf: 'happy' }], { kind: 'post_closing' }).map((i) => i.code)).toContain('SCHEMA');
     // the after-closing alerts carry the anniversary and the (not yet available) home value; Behavior alerts are facts only
-    expect(templateByKey('after_closing_alerts')!.content!.triggers.map((x) => x.trigger)).toEqual(['home_anniversary', 'home_value']);
-    expect(templateByKey('behavior_alerts')!.content!.triggers.map((x) => x.trigger)).toEqual(['price_drop', 'back_on_market']);
+    expect((templateByKey('after_closing_alerts')!.content as TriggersContent).triggers.map((x) => x.trigger)).toEqual(['home_anniversary', 'home_value']);
+    expect((templateByKey('behavior_alerts')!.content as TriggersContent).triggers.map((x) => x.trigger)).toEqual(['price_drop', 'back_on_market']);
     expect(templateByKey('new_lead_response_where_they_wrote')!.steps[0]!.channel).toBe('inbound_channel');
   });
 
