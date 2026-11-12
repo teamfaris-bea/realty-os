@@ -242,7 +242,7 @@ export function MessageRow({ item, contact }: { item: TimelineItem; contact?: { 
   const bubble = !outbound ? 'bg-surface text-ink border border-line' : st?.failed ? 'border border-dashed border-danger bg-surface text-ink-muted' : st?.held ? 'border border-dashed border-warn bg-surface text-ink' : 'bg-accent-soft text-ink';
   return (
     <li id={item.id} className={`flex max-w-[85%] flex-col gap-0.5 ${outbound ? 'self-end items-end' : 'self-start items-start'}`}>
-      <p className={`whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2 text-[16px] ${bubble}`}>{item.preview ?? ''}</p>
+      {outbound && !item.preview ? null : <p className={`whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2 text-[16px] ${bubble}`}>{item.preview ?? ''}</p>}
       <p className="flex flex-wrap items-center gap-x-1 px-1 text-[12px] text-ink-muted">
         <ChannelTag channel={channel} />
         <span>
@@ -253,7 +253,7 @@ export function MessageRow({ item, contact }: { item: TimelineItem; contact?: { 
       </p>
       {st ? <p className={`px-1 text-[13px] font-medium ${st.failed ? 'text-danger' : st.held ? 'text-warn' : 'text-ink-muted'}`}>{st.text}</p> : null}
       {st?.held && contact ? <HeldActions item={item} contact={contact} /> : null}
-      {contact && !outbound ? <RowAttachments contactId={contact.id} item={item} /> : null}
+      {contact ? <RowAttachments contactId={contact.id} item={item} /> : null}
     </li>
   );
 }

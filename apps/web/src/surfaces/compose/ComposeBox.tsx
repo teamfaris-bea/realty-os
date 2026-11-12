@@ -44,6 +44,9 @@ import { CHAT_NOT_HERE, chooseChannel, webChatState } from './channelChoice.js';
 import { firstName, formatPhone } from '../feed/lib/format.js';
 import { useSendCheck } from '../feed/lib/sendCheck.js';
 import type { ActionView, ApproveResponse, ComposeResponse, TypedInChat } from '../feed/lib/types.js';
+import { MediaTray } from './MediaTray.js';
+import { SegmentCounter, plainQuotes, useCounterView } from './SegmentCounter.js';
+import { mediaHold, mediaRefusal, useComposeMedia } from './useComposeMedia.js';
 
 export type Channel = 'sms' | 'email';
 
@@ -138,9 +141,9 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
   const [notice, setNotice] = useState<{ tone: 'warn' | 'error' | 'ok'; text: string; link?: { to: string; label: string } } | null>(null);
   // review F7: a send refused because this record was merged meanwhile (CONTACT_MERGED) names the record the person lives
   // on now, when the caller may see it (details.mergedInto): link there, to write on the same channel
-  const failed = (r: { code?: string; message: string; details?: Record<string, unknown> | null }) => {
+  const failed = (r: { code?: string; message: string; details?: Record<string, unknown> | null }, text?: string | null) => {
     const into = r.code === 'CONTACT_MERGED' && typeof r.details?.mergedInto === 'string' ? r.details.mergedInto : null;
-    setNotice({ tone: 'error', text: r.message, ...(into ? { link: { to: `/contacts/${into}/thread?compose=${channel}`, label: 'Open their current record' } } : {}) });
+    setNotice({ tone: 'error', text: text ?? r.message, ...(into ? { link: { to: `/contacts/${into}/thread?compose=${channel}`, label: 'Open their current record' } } : {}) });
   };
   const [outcome, setOutcome] = useState<ComposeResponse | null>(null);
   // parity module 64 (R-PAR-25): "Send later" exposes the existing scheduleAt (one-to-one only)
@@ -149,6 +152,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
   // a draft the agent asked for while replying in an open web chat loads in the chat (review ui-compose/F5): the
   // assistant drafts a requested reply for texts or email only, and loading it must not move the box under the agent
   const keepChat = useRef(false);
+  const media = useComposeMedia(contact.id);
 
   const draftQ = useQuery<{ action: ActionView }, ApiError>({
     queryKey: ['action', draftId],
@@ -179,10 +183,10 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
   // adopt a suggested draft only if the agent hasn't started writing or chosen one
   const adopted = useRef(false);
   useEffect(() => {
-    if (adopted.current || suggestedDraftId === null || draftId !== null || body !== '') return;
+    if (adopted.current || suggestedDraftId === null || draftId !== null || body !== '' || media.count > 0) return;
     adopted.current = true;
     setDraftId(suggestedDraftId);
-  }, [suggestedDraftId, draftId, body]);
+  }, [suggestedDraftId, draftId, body, media.count]);
 
   const reachQ = useReachabilityQuery(contact.id, { refetchMs: liveChat ? 15_000 : undefined });
   const reach = reachQ.summary;
@@ -227,7 +231,11 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
   const previewSubject = useDebounced(subject.trim(), 500);
   const blockedNow = isChat ? { blocked: choice.channel === null, sentence: choice.options.find((o) => o.channel === 'web_chat')?.reason ?? null, note: null } : channelState(reach, channel);
   // the same preview for every channel, web chat included (module 22): what the send would decide for this text
-  const preview = useSendCheck({ contactId: contact.id, channel, body: previewBody, subject: previewSubject, enabled: settled && (channel === 'sms' ? contact.canText : channel === 'email' ? contact.canEmail : choiceInput.webChat.offered) && !blockedNow.blocked });
+  const preview = useSendCheck({ contactId: contact.id, channel, body: previewBody, subject: previewSubject, enabled: settled && (channel === 'sms' ? contact.canText : channel === 'email' ? contact.canEmail : choiceInput.webChat.offered) && !blockedNow.blocked, withMedia: channel === 'sms' && media.count > 0 });
+  const counter = useCounterView({ typed: body, final: previewBody === body.trim() ? preview.final : null, sender: preview.textSender, media: channel === 'sms' && media.count > 0 ? media : null });
+  const mediaWait = mediaHold(channel, media);
+  const hold = mediaWait ? `${id}-media-hold` : channel === 'sms' && counter?.tooLong ? `${id}-counter-too-long` : null;
+  const draftOpen = draft !== null || (draftId !== null && draftQ.isPending);
   // the chat ended while the agent was on the thread: the preview of the real text says so (CHANNEL_NOT_CONNECTED). The
   // box closes Web chat at once and asks the summary again, so it never offers what the preview and the send refuse
   const previewEnded = isChat && (preview.decision?.reasons.includes(CHANNEL_NOT_CONNECTED) ?? false);
@@ -259,7 +267,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per move of the box's channel
   }, [channel, settled]);
 
-  const human = useCommand<Record<string, unknown>, ComposeResponse>(`/contacts/${contact.id}/messages`, { idKey: 'idempotencyKey', invalidate: [['feed'], ['timeline', contact.id], [...REACHABILITY_KEY]] });
+  const human = useCommand<Record<string, unknown>, ComposeResponse>(`/contacts/${contact.id}/messages`, { idKey: 'idempotencyKey', invalidate: [['feed'], ['timeline', contact.id], [...REACHABILITY_KEY], ['attachments', contact.id]] });
   const approve = useCommand<Record<string, unknown>, ApproveResponse>(`/assistant/actions/${draftId ?? 'none'}/approve`, { invalidate: [['feed'], ['inbox'], ['timeline', contact.id], [...REACHABILITY_KEY]] });
   const chat = useWebChatSend(contact.id);
   const chatApprove = useWebChatApprove(contact.id, draftId);
@@ -276,6 +284,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
 
   const afterSend = (r: ComposeResponse) => {
     setOutcome(r);
+    if (r.message) media.sent();
     // a replay ('noop', after a lost answer) went out only if its message did (finding F1)
     if (WENT_OUT.has(sentResult(r))) {
       setBody('');
@@ -309,7 +318,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
     setNotice(null);
     setOutcome(null);
     const text = body.trim();
-    if (!text || !settled || blockedNow.blocked) return;
+    if ((!text && media.count === 0) || !settled || blockedNow.blocked || hold !== null) return;
     if (isChat) {
       // a reply in web chat, or the draft approved as one (never scheduled)
       const o = draft ? await chatApprove.approve(text, seenSeq, edited) : await chat.send(text);
@@ -342,9 +351,9 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
       setNotice({ tone: 'error', text: 'Pick a time in the future, or turn off Send later.' });
       return;
     }
-    const r = await human.run({ channel, body: text, ...(channel === 'email' && subject.trim() ? { subject: subject.trim() } : {}), ...(at ? { scheduleAt: at.toISOString() } : {}) });
+    const r = await human.run({ channel, body: text, ...(channel === 'email' && subject.trim() ? { subject: subject.trim() } : {}), ...(at ? { scheduleAt: at.toISOString() } : {}), ...(media.count > 0 ? { mediaIds: media.ids } : {}) });
     if (r.ok) afterSend(r.data);
-    else failed(r);
+    else failed(r, mediaRefusal(media, r));
   };
 
   const askDraft = useCommand<Record<string, unknown>, { action: ActionView }>(`/contacts/${contact.id}/drafts`, {});
@@ -457,12 +466,15 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
           rows={2}
           maxLength={10_000}
           placeholder={placeholder}
+          aria-describedby={settled && channel === 'sms' && counter ? `${id}-counter` : undefined}
           className="min-h-tap flex-1 resize-y rounded-xl border border-line bg-surface px-3.5 py-2.5 text-[17px] text-ink placeholder:text-ink-muted"
         />
-        <Button type="submit" pending={pending} pendingLabel="Sending" disabled={!settled || body.trim().length === 0 || blockedNow.blocked} aria-describedby={reasonShown ? `${id}-reason` : undefined}>
+        <Button type="submit" pending={pending} pendingLabel="Sending" disabled={!settled || (body.trim().length === 0 && media.count === 0) || blockedNow.blocked || hold !== null} aria-describedby={[reasonShown ? `${id}-reason` : null, hold].filter(Boolean).join(' ') || undefined}>
           {later ? 'Schedule' : 'Send'}
         </Button>
       </div>
+      {settled && channel === 'sms' ? <SegmentCounter id={`${id}-counter`} view={counter} onPlainQuotes={() => { setBody(plainQuotes(body)); requestAnimationFrame(() => field.current?.focus()); }} /> : null}
+      <MediaTray media={media} canAttach={settled && channel === 'sms' && contact.canText && !blockedNow.blocked && !draftOpen} hold={mediaWait} holdId={`${id}-media-hold`} />
       {settled && !nothingSends && (templatePicker || !draft) ? (
         <div className="flex flex-wrap items-center gap-2">
           {templatePicker
@@ -520,7 +532,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
         </Notice>
       ) : null}
       {outcome ? <SendOutcome result={outcome} contactName={contact.name} /> : null}
-      {settled && !nothingSends && !draft && draftId === null && body.trim() === '' && contact.ownedByMe ? (
+      {settled && !nothingSends && !draft && draftId === null && body.trim() === '' && media.count === 0 && contact.ownedByMe ? (
         <Button variant="quiet" className="self-start" pending={askDraft.pending} pendingLabel="Asking the assistant" onClick={() => void requestDraft()}>
           Ask the assistant for a draft
         </Button>

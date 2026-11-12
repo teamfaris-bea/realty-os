@@ -229,6 +229,8 @@ export interface ComposeResponse {
 export interface PreviewResponse {
   decision: DecisionView;
   body: string;
+  /** D5a: the kind of number the text would go from (parts split at 152/66 on toll-free); optional in the schema, always sent */
+  textSender?: 'local' | 'toll_free' | null;
 }
 
 export interface CallResponse {

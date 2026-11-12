@@ -140,7 +140,7 @@ export interface OutboundInsert {
   id: string;
   conversationId: string;
   contactId: string;
-  channel: 'sms' | 'email' | 'web_chat';
+  channel: 'sms' | 'mms' | 'email' | 'web_chat';
   phoneNumberId: string | null;
   emailIdentityId: string | null;
   fromAddress: string;

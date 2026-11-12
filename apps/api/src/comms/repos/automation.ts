@@ -201,12 +201,17 @@ export async function messagesInFlight(tx: Tx, contactId: string, now: Instant):
 }
 
 /** A suggested draft for the new owner when an old owner's scheduled text is blocked (E15). */
-export async function insertSuggestedDraft(tx: Tx, d: { id: string; contactId: string; ownerUserId: string; body: string; channel: string; boundOwnershipSeq: number | null; dedupeKey: string; fromMessageId: string }): Promise<boolean> {
+export async function insertSuggestedDraft(tx: Tx, d: { id: string; contactId: string; ownerUserId: string; body: string; channel: string; boundOwnershipSeq: number | null; dedupeKey: string; fromMessageId: string; mediaCount?: number }): Promise<boolean> {
+  // D5a (E297): a photo text's draft carries its words only and says the photos were not carried over
+  const media = d.mediaCount ?? 0;
+  const explanation = media > 0
+    ? `The previous agent scheduled this message, with ${media === 1 ? '1 photo or video' : `${media} photos or videos`}, before the lead moved to you. It was not sent. Drafts can't carry photos or videos: send your own text from the thread if it still fits.`
+    : 'The previous agent scheduled this message before the lead moved to you. It was not sent; send it yourself if it still fits.';
   const r = await sql<{ id: string }>`
     INSERT INTO assistant_actions (tenant_id, id, contact_id, kind, action_category, autonomy, status, owner_user_id, explanation, payload,
       bound_ownership_seq, dedupe_key, trigger_ref)
     VALUES (app.tenant_id(), ${d.id}, ${d.contactId}, 'message_draft', 'novel_message', 'requires_approval', 'proposed', ${d.ownerUserId},
-      ${'The previous agent scheduled this message before the lead moved to you. It was not sent; send it yourself if it still fits.'},
+      ${explanation},
       ${JSON.stringify({ channel: d.channel, body: d.body })}::jsonb, ${d.boundOwnershipSeq}, ${d.dedupeKey},
       ${JSON.stringify({ blockedMessageId: d.fromMessageId })}::jsonb)
     ON CONFLICT (tenant_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING RETURNING id`.execute(tx);

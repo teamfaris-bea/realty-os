@@ -43,6 +43,9 @@ export const CONTRACT_ROUTES: Readonly<Record<string, RouteSpec>> = {
   // whether the chat can be answered before anyone types (channels.web_chat)
   'GET /contacts/:id/reachability': { response: S.ReachabilityResponse },
   'GET /reachability': { query: S.ReachabilityManyQuery, response: S.ReachabilityManyResponse },
+  // D5a: the compose box's photo and video uploads (comms/outboundMedia.ts)
+  'POST /contacts/:id/outbound-media': { body: S.UploadMediaBody, response: S.UploadMediaResponse },
+  'DELETE /contacts/:id/outbound-media/:uploadId': { response: S.NoContent },
 };
 
 /** The error codes the web's chat clients handle, with the status the API answers them with. */
@@ -57,6 +60,11 @@ const ERRORS = [
   'CONTACT_POINT_MISSING',
   'DRAFT_STALE',
   'DRAFT_INVALIDATED',
+  'MEDIA_NOT_ALLOWED',
+  'MEDIA_TOO_LARGE',
+  'MEDIA_LOCATION_NOT_REMOVED',
+  'MEDIA_UPLOAD_GONE',
+  'MEDIA_UPLOAD_LIMIT',
 ] as const satisfies readonly ErrorCode[];
 
 /**
