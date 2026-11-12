@@ -140,6 +140,45 @@ describe('subject resolution (F4, E373)', () => {
     expect((await h.su.query('SELECT contact_address_id FROM cma_reports WHERE id = $1', [r.body.cma.id])).rows[0].contact_address_id).toBe(prop);
   });
 
+  describe('V3: a subject MLS record stored before its size field was recorded (mls_normalize_version 1, size_source NULL)', () => {
+    /** The row as the sync stored it before 0061 and before the backfill reached it: the size is there, its field is not. */
+    const asVersion1 = (id: string) => h.su.query('UPDATE listings SET size_source = NULL, mls_normalize_version = 1 WHERE id = $1', [id]);
+    const assumed = /taken as LivingArea \(the record does not say which field it came from\)/;
+
+    it('an MLS listing subject is valued with the connection\'s size field, said to be assumed (not NO_SALES)', async () => {
+      const subject = await mlsSale(w, { line1: '1010 Sample Avenue', status: 'active', closePriceCents: null, closeDate: null, sqft: 1500 });
+      await asVersion1(subject);
+      const r = await prepare(w.agents[0]!, { subject: { kind: 'listing', listingId: subject } });
+      expect(r.status).toBe(201);
+      expect(r.body.cma.result).toMatchObject({ available: true });
+      expect(r.body.cma.notUsed.filter((x) => x.reason === 'other_size_source')).toEqual([]);
+      expect(r.body.cma.subject.sizeSentence).toMatch(assumed);
+    });
+
+    it('the MLS mirror of a team listing gives its size the same way', async () => {
+      const team = await teamListing(w.agents[0]!, { addressLine1: '1020 Sample Avenue', sqft: 1500, mlsNumber: 'TM1020' });
+      const mirror = await mlsSale(w, { mlsNumber: 'TM1020', line1: '1020 Sample Ave', status: 'active', sqft: 1480, closePriceCents: null, closeDate: null });
+      await asVersion1(mirror);
+      const r = await prepare(w.agents[0]!, { subject: { kind: 'listing', listingId: team } });
+      expect(r.status).toBe(201);
+      expect(r.body.cma.subject.facts['sqft']).toEqual({ value: 1480, source: 'mls' });
+      expect(r.body.cma.result).toMatchObject({ available: true });
+      expect(r.body.cma.subject.sizeSentence).toMatch(assumed);
+      expect(r.body.cma.subject.sizeSentence).toMatch(/; agent-entered size 1500 sq ft\.$/);
+    });
+
+    it('a contact address whose newest MLS record is version 1 gives its size the same way', async () => {
+      const c = await contact(w.agents[0]!);
+      const line1 = '1030 Sample Avenue';
+      await address(h, w.tenantId, c, { kind: 'property', line1 });
+      await asVersion1(await mlsSale(w, { line1, closeDate: daysAgo(4 * 365), sqft: 1500, beds: 3 }));
+      const r = await oneTap(w.agents[0]!, c);
+      expect(r.status).toBe(201);
+      expect(r.body.cma.result).toMatchObject({ available: true });
+      expect(r.body.cma.subject.sizeSentence).toMatch(/^Size from the newest MLS record of this address, taken as LivingArea \(the record does not say which field it came from\)\.$/);
+    });
+  });
+
   it('E365 R-CMA-2: the subject\'s earlier sale under another MLS number and another spelling is its sale history, never a comp', async () => {
     const c = await contact(w.agents[0]!);
     await address(h, w.tenantId, c, { kind: 'property', line1: '640 Sample Ave.', line2: 'Apt 2', region: 'California', postalCode: '94110-1234' });

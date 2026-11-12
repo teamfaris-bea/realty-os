@@ -154,6 +154,17 @@ function history(rows: readonly ListingRow[]): SaleHistoryEntry[] {
     .sort((a, b) => ((b.closeDate ?? '') < (a.closeDate ?? '') ? -1 : (b.closeDate ?? '') > (a.closeDate ?? '') ? 1 : a.listingId < b.listingId ? -1 : 1));
 }
 
+/**
+ * The size field of an MLS record that gives the subject's size (V3: sizes are compared like with like). A record
+ * stored before size_source existed and not yet re-read by the backfill (mls_normalize_version 1) has sqft but no
+ * field: it is taken as the connection's size field (normalize read sqft from the mapping's size field then too), and
+ * the sentence says so. `lead` begins the sentence; `tail` goes before its full stop.
+ */
+function mlsSize(row: ListingRow, sizeField: string | null, lead: string, tail = ''): { sizeSource: string | null; sizeSentence: string } {
+  if (row.size_source !== null) return { sizeSource: row.size_source, sizeSentence: `${lead} (${row.size_source})${tail}.` };
+  return { sizeSource: sizeField, sizeSentence: `${lead}, taken as ${sizeField ?? 'the MLS feed’s size field'} (the record does not say which field it came from)${tail}.` };
+}
+
 function newest(rows: readonly ListingRow[]): ListingRow | null {
   return [...rows].sort((a, b) => (b.mls_modified_at?.getTime() ?? 0) - (a.mls_modified_at?.getTime() ?? 0) || (a.id < b.id ? -1 : 1))[0] ?? null;
 }
@@ -209,8 +220,7 @@ export async function resolveSubject(tx: Tx, input: SubjectInput, o: { contactId
         lonE6: pick(team.lonE6, mls.lonE6),
       };
       if (mirror?.sqft != null) {
-        sizeSource = mirror.size_source;
-        sizeSentence = `Size from the MLS record${mirror.size_source ? ` (${mirror.size_source})` : ''}${row.sqft !== null && row.sqft !== mirror.sqft ? `; agent-entered size ${row.sqft} sq ft` : ''}.`;
+        ({ sizeSource, sizeSentence } = mlsSize(mirror, o.sizeField, 'Size from the MLS record', row.sqft !== null && row.sqft !== mirror.sqft ? `; agent-entered size ${row.sqft} sq ft` : ''));
       } else {
         sizeSource = o.sizeField;
         sizeSentence = agentSize;
@@ -220,8 +230,11 @@ export async function resolveSubject(tx: Tx, input: SubjectInput, o: { contactId
       key = mirror?.address_key ?? keyOf(address);
     } else {
       facts = factsFromRow(row, 'mls');
-      sizeSource = row.size_source;
-      sizeSentence = `Size from the MLS record${row.size_source ? ` (${row.size_source})` : ''}.`;
+      if (row.sqft !== null) ({ sizeSource, sizeSentence } = mlsSize(row, o.sizeField, 'Size from the MLS record'));
+      else {
+        sizeSource = row.size_source;
+        sizeSentence = 'Size from the MLS record.';
+      }
       connectionId = row.mls_connection_id;
       key = row.address_key ?? keyOf(address);
     }
@@ -236,8 +249,11 @@ export async function resolveSubject(tx: Tx, input: SubjectInput, o: { contactId
     rowsAtKey = key ? await mlsRowsAtAddress(tx, key) : [];
     const n = newest(rowsAtKey);
     facts = factsFromRow(n, 'mls');
-    sizeSource = n?.sqft != null ? n.size_source : o.sizeField;
-    sizeSentence = n?.sqft != null ? `Size from the newest MLS record of this address${n.size_source ? ` (${n.size_source})` : ''}.` : agentSize;
+    if (n?.sqft != null) ({ sizeSource, sizeSentence } = mlsSize(n, o.sizeField, 'Size from the newest MLS record of this address'));
+    else {
+      sizeSource = o.sizeField;
+      sizeSentence = agentSize;
+    }
     connectionId = n?.mls_connection_id ?? null;
   } else {
     const an = input.anchor;
