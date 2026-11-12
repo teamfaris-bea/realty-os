@@ -311,6 +311,7 @@ export const ERROR_STATUS = {
   GOAL_PERIOD_START_INVALID: 422, // a goal period must start on a Monday / the 1st / a quarter's or year's first day (details.periodKind)
   GOAL_EXISTS: 409, // the member already has a goal for this period and metric (details.goalId)
   PLAN_ALREADY_ACCEPTED: 409, // the weekly plan was already accepted (its tasks exist)
+  COACHING_NOT_CLEARED: 409, // module 36 (R-INT-6): call scoring waits for counsel review of the platform:coaching pack
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

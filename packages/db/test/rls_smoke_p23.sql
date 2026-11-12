@@ -705,7 +705,8 @@ INSERT INTO calls (tenant_id, id, conversation_id, contact_id, direction, client
 VALUES (:tA, 'a0000000-0000-7000-8000-00000000ca02', :cvA, :c1, 'inbound', '+15555550101', 'client', 'human', 'completed', now(), 'off', '{}', :agA1),
        (:tA, 'a0000000-0000-7000-8000-00000000ca03', :cvA, :c1, 'inbound', '+15555550101', 'client', 'human', 'completed', now(), 'off', '{}', :agA1);
 INSERT INTO recordings (tenant_id, id, call_id, contact_id, agent_user_id, source, consent_basis, retain_until)
-VALUES (:tA, gen_random_uuid(), 'a0000000-0000-7000-8000-00000000ca02', :c1, :agA1, 'provider', 'announced_all_parties', now() + interval '730 days');
+VALUES (:tA, gen_random_uuid(), 'a0000000-0000-7000-8000-00000000ca02', :c1, :agA1, 'provider', 'announced_all_parties', now() + interval '730 days'),
+       (:tA, 'a0000000-0000-7000-8000-00000000ca13', 'a0000000-0000-7000-8000-00000000ca03', :c1, :agA1, 'provider', 'announced_all_parties', now() + interval '730 days');
 SELECT pg_temp.expect_error(format($q$INSERT INTO call_scores (tenant_id, call_id, rubric_version, agent_user_id, contact_id, items, met_count, scored_count)
   VALUES (%L, %L, 'rubric/1', %L, %L, '[]', 0, 0)$q$, :tA, 'a0000000-0000-7000-8000-00000000ca01', :agA1, :c1),
   'S14: an AI-handled call is never a coaching review', '%CALL_REVIEW_SUBJECT%');
@@ -715,6 +716,10 @@ SELECT pg_temp.expect_error(format($q$INSERT INTO call_scores (tenant_id, call_i
 INSERT INTO call_scores (tenant_id, call_id, rubric_version, agent_user_id, contact_id, items, met_count, scored_count)
 VALUES (:tA, 'a0000000-0000-7000-8000-00000000ca02', 'rubric/1', :agA1, :c1, '[]', 0, 0),
        (:tA, 'a0000000-0000-7000-8000-00000000ca03', 'rubric/1', :agA1, :c1, '[]', 0, 0);
+-- module 36 (0059): a review needs a lawful recording; once that recording is shredded the review is unreadable
+RESET ROLE;
+UPDATE recordings SET status = 'shredded', shredded_at = now() WHERE id = 'a0000000-0000-7000-8000-00000000ca13';
+SET LOCAL ROLE app_user;
 SELECT pg_temp.ctx(:tA, :agA1, 'user');
 SELECT pg_temp.ok((SELECT count(*) FROM call_scores) = 1, 'R-COACH-3: the agent on the call sees the review of a call they can play, only');
 SELECT pg_temp.ok((SELECT count(*) FROM voice_tool_calls) = 1, 'the contact owner sees the voice session''s tool decisions');
@@ -975,6 +980,8 @@ VALUES (:tA, gen_random_uuid(), :wcA, digest('chat-session-finn', 'sha256'), 'ht
 INSERT INTO calls (tenant_id, id, conversation_id, contact_id, direction, client_address, initiator, handled_by, status, started_at,
        recording_mode, recording_decision, agent_user_id)
 VALUES (:tA, 'a0000000-0000-7000-8000-00000000ca06', :cvA6, :c6, 'inbound', '+15555550666', 'client', 'human', 'completed', now(), 'off', '{}', :agA1);
+INSERT INTO recordings (tenant_id, id, call_id, contact_id, agent_user_id, source, consent_basis, retain_until)
+VALUES (:tA, gen_random_uuid(), 'a0000000-0000-7000-8000-00000000ca06', :c6, :agA1, 'provider', 'one_party_policy', now() + interval '730 days');
 INSERT INTO call_scores (tenant_id, call_id, rubric_version, agent_user_id, contact_id, items, met_count, scored_count)
 VALUES (:tA, 'a0000000-0000-7000-8000-00000000ca06', 'rubric/1', :agA1, :c6, '[]', 0, 0);
 SELECT pg_temp.ctx(:tA, :ownA, 'user');

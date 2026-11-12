@@ -37,6 +37,7 @@ export const OneTapActionSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('open_listing'), label: z.string(), listingId: id }),
   z.object({ kind: z.literal('open_plan'), label: z.string(), week: z.string().regex(/^\d{4}-W\d{2}$/) }),
   z.object({ kind: z.literal('show_details'), label: z.string() }),
+  z.object({ kind: z.literal('open_coaching_fix'), label: z.string() }),
 ]);
 
 export const FeedItemSchema = z.object({

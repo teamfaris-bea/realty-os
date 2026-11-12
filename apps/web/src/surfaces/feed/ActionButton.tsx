@@ -13,7 +13,8 @@
 //   open_* / review_search                 the page that holds it (open_listing: the listing page)
 //   open_plan                              the weekly plan page of that week (/plan/:week, module 40)
 //   show_details                           opens the card's own details in place (Phase 2/3 cards whose
-//                                          page does not exist yet: the daily tip)
+//                                          page does not exist yet)
+//   open_coaching_fix                      the daily coaching fix page (module 40)
 //
 // An ownership command that fails is said through the app's announcer (the agent toast and the polite live
 // region), not inside the card: the refresh the answer triggers usually takes the card away (someone else
@@ -51,6 +52,7 @@ export const ACTION_ICON: Partial<Record<OneTapAction['kind'], IconName>> = {
   open_listing: 'listing',
   open_plan: 'checklist',
   show_details: 'info',
+  open_coaching_fix: 'info',
 };
 
 export interface ActionButtonProps {
@@ -256,6 +258,8 @@ export function actionHref(a: OneTapAction, card?: Pick<FeedCard, 'contact'>): s
       return `/listings/${a.listingId}`;
     case 'open_plan':
       return `/plan/${a.week}`;
+    case 'open_coaching_fix':
+      return '/coaching';
     default:
       return null;
   }

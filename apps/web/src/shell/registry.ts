@@ -44,6 +44,8 @@ import { surface as adminIntegrationsSurface } from '../surfaces/admin/integrati
 import { surface as adminWebChatSurface } from '../surfaces/admin/webchat/index.js';
 import { surface as ownerSurface } from '../surfaces/owner/index.js';
 import { surface as goalsSurface } from '../surfaces/goals/index.js';
+import { surface as coachingSurface } from '../surfaces/coaching/index.js';
+import { surface as adminCoachingSurface } from '../surfaces/admin/coaching/index.js';
 
 export type { NavSection, PageDef, PageNav, SurfaceModule } from './types.js';
 
@@ -80,5 +82,7 @@ export const surfaces: SurfaceModule[] = [
   adminWebChatSurface,
   ownerSurface,
   goalsSurface,
+  coachingSurface,
+  adminCoachingSurface,
   // registry: add new entries above this line
 ];
