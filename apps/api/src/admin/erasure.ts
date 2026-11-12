@@ -87,6 +87,7 @@ async function register(app: FastifyInstance): Promise<void> {
           await repo.eraseContact(tx, req.params.id, p.ids.next<'AuditId'>(), req.body.reason);
         } catch (e) {
           if (pgMessage(e).startsWith('CONTACT_ON_DEAL')) throw new AppError('CONTACT_ON_DEAL'); // a deal appeared meanwhile (the tx is aborted)
+          if (pgMessage(e).startsWith('DOCUMENT_RETAINED')) throw new AppError('DOCUMENT_RETAINED'); // module 42: a contact document is held or retained (R-DOC-4)
           if (pgMessage(e).startsWith('NOT_FOUND')) throw new AppError('NOT_FOUND');
           // the database's own check (a point the locks above missed): nothing is erased
           if (pgMessage(e).startsWith('PERSON_DO_NOT_CONTACT_UNCARRIED')) throw new AppError('PERSON_DO_NOT_CONTACT_UNCARRIED');

@@ -328,6 +328,22 @@ export const ERROR_STATUS = {
   MILESTONE_TEMPLATE_NOT_FOUND: 422, // no template with this id and version for the deal's side and the tenant's jurisdictions
   MILESTONE_PLAN_OPEN: 409, // another template's proposals are still open on this deal (details.templateId)
   MILESTONE_TEMPLATES_INVALID: 422, // PUT milestone templates: invalid entries by index (details.invalid)
+  // ---- api/documents (module 42; R-DOC-1..10) ----
+  DOCUMENT_TYPE_NOT_ALLOWED: 422, // not a PDF, JPEG or PNG by its bytes, the declared type differs, or the file is empty (E400)
+  DOCUMENT_RETENTION_OUT_OF_RANGE: 422, // retention 3-10 years after the scope's close (or the upload); details {from, to}
+  DOCUMENT_TOO_LARGE: 413, // a file part over 10,000,000 bytes (details.limitBytes; E401)
+  DOCUMENT_QUARANTINED: 409, // the virus check has not passed yet: nobody opens it, the uploader and the Owner included (R-DOC-3)
+  DOCUMENT_NOT_SHAREABLE: 409, // only a clean deal or listing document is shared to the portal (R-DOC-1)
+  DOCUMENT_VERSION_CONFLICT: 409, // another new version of this document was uploaded first (E406)
+  DOCUMENT_RETAINED: 409, // on legal hold or inside its retention period: erasure and purge refuse (R-DOC-4)
+  DOCUMENT_SUPERSEDED: 409, // a clean newer version exists: its dates are confirmed from that one
+  DOCUMENT_BLOCKED: 410, // the virus check blocked it: the file is gone or locked for good
+  DOCUMENT_HOLD_OWNER_ADMIN: 403, // legal holds and retention are an Owner's or Admin's (R-DOC-4)
+  EXTRACTION_EXISTS: 409, // the document was already read for dates
+  EXTRACTION_CLOSED: 409, // the extraction was rejected, superseded or invalidated
+  EXTRACTION_CLAIM_NEEDS_REVIEW: 409, // not found in the document as quoted: never a date (R-AST-1, E131)
+  EXTRACTION_CLAIM_DECIDED: 409, // the claim was already rejected or corrected
+  EXTRACTION_TARGET_KIND: 409, // the existing date is another kind of milestone
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 
