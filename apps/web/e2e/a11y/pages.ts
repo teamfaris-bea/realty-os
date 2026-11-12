@@ -84,6 +84,8 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   // module 69 (web/mail-sync, D2)
   { path: '/settings/mail', roles: ALL, url: at('/settings/mail') },
   { path: '/admin/mail', roles: ADMINS, url: at('/admin/mail') },
+  // module 41's calendar page (lane calendar)
+  { path: '/settings/calendar', roles: ALL, url: at('/settings/calendar') },
 ];
 
 /** Screens outside the app frame (signed out). */

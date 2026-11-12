@@ -305,6 +305,7 @@ export const ERROR_STATUS = {
   PUBLICATION_POST_ID_FINAL: 409,
   LISTING_OFF_MARKET: 409, // sold / withdrawn / expired: nothing new goes out (R-MKT-9)
   FAIR_HOUSING_PACK_UNAVAILABLE: 503, // the fair-housing pack is missing or invalid: fail closed
+  CALENDAR_ALREADY_CONNECTED: 409, // module 34: the person already has a calendar connected (one at a time); disconnect it first
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

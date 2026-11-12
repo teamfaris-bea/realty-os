@@ -306,6 +306,9 @@ export const AUDIT_ACTIONS = [
   'marketing.retract_requested', // module 29: a person asked to take an external post down (TX1; recorded before any provider call)
   'marketing.retracted', // module 29: a page taken down, or an external post deleted after the provider confirmed it
   'marketing.invites_sent', // module 29: open-house invites sent as per-recipient gated emails (counts only)
+  'calendar.connected', // module 34: a person's own calendar linked after they approved at the provider (system; no token, no calendar id)
+  'calendar.disconnected', // module 34: the person disconnected their calendar; token purged in the same tx (R-INT-5)
+  'calendar.link_revoked', // module 34: the system revoked and purged a link (GRANT_REVOKED E102, MEMBER_REMOVED R-INT-5)
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

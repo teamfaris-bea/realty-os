@@ -39,6 +39,7 @@ import { surface as leadEmailSurface } from '../surfaces/lead-email/index.js';
 import { surface as mailSettingsSurface } from '../surfaces/settings/mail/index.js';
 import { surface as adminMailSurface } from '../surfaces/admin/mail/index.js';
 import { surface as marketingSurface } from '../surfaces/marketing/index.js';
+import { surface as calendarSettingsSurface } from '../surfaces/settings/calendar/index.js';
 
 export type { NavSection, PageDef, PageNav, SurfaceModule } from './types.js';
 
@@ -70,5 +71,6 @@ export const surfaces: SurfaceModule[] = [
   mailSettingsSurface,
   adminMailSurface,
   marketingSurface,
+  calendarSettingsSurface,
   // registry: add new entries above this line
 ];

@@ -229,6 +229,14 @@ describe('route table', () => {
         "POST /api/me/mail-sync-points → self",
         "DELETE /api/me/mail-sync-points/:pointId → self",
         "POST /api/me/mail-threads/:threadId/exclude → self",
+        "GET /api/me/calendar → self",
+        "HEAD /api/me/calendar → self",
+        "POST /api/me/calendar/:provider/connect → self",
+        "GET /api/me/calendar/:provider/callback → self",
+        "HEAD /api/me/calendar/:provider/callback → self",
+        "POST /api/me/calendar/:provider/disconnect → self",
+        "GET /api/me/busy → self",
+        "HEAD /api/me/busy → self",
       ]
     `);
   });
