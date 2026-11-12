@@ -362,7 +362,7 @@ A DB guard in the style of `tenant_settings_batch_text_guard` (0021_fub_parity.s
 
 ---
 
-## 4. The conversation policy: `packages/core/src/isa` (pure, property-tested)
+## 4. The conversation policy: module 74, `packages/core/src/isa` (pure, property-tested)
 The shape is that of core/voice: a pure `step(state, event, facts) → {state, actions}` (packages/core/src/voice/machine.ts:355). "Core never sends, dials or books" (:32-33).
 
 ### 4.1 States
@@ -928,7 +928,7 @@ Support is read-only everywhere. Retention follows the messages and contact eras
 
 ---
 
-## 9. API and worker (module 73, `apps/api/src/isa/**`)
+## 9. API and worker (module 75, `apps/api/src/isa/**`)
 
 ### 9.1 Routes
 All routes are under MATRIX rows. No response carries confidence or score fields (R-AST-13).
@@ -1036,7 +1036,7 @@ The system actor runs it (`via 'assistant'`, apps/api/src/worker/systemActor.ts:
 
 ---
 
-## 10. Web (module 74, `apps/web/src/surfaces/aiCare/**`)
+## 10. Web (module 76, `apps/web/src/surfaces/aiCare/**`)
 
 1. **"Under AI care" list** (`/ai-care`, phone and desktop).
    - Each row shows:
