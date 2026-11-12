@@ -2,20 +2,25 @@
 // R-INT-1, N13).
 //
 // Public records are PLATFORM configuration, never an integration_connections row (R-INT-1): no tenant connects a
-// vendor, and the adapter receives no tenant context. No vendor is chosen yet (N13), so this build ships the
-// interface, a deterministic fake for dev and tests, and an unconfigured stand-in for production that looks
-// nothing up and reports "not set up on this platform"; property features are then absent and first-party
-// features alone score.
+// source, and the adapter receives no tenant context. The interface is SOURCE-NEUTRAL (owner decision of 2026-11-12,
+// to be recorded as D10: records come from public county data, the assessor and the register of deeds, through
+// connectors a later lane builds): no source-specific name, id or field appears here, and one record shape can be
+// filled by a county connector or any provider, with each value's source and as-of date (`provenance`). A later
+// homeowner-profile lane extends this record type on the same interface; there is no second records adapter. This
+// build ships the interface, a deterministic fake for dev and tests, and an unconfigured stand-in for production
+// that looks nothing up and reports "not set up on this platform"; property features are then absent and
+// first-party features alone score.
 //
 // Input: ONE explicit postal address. Never the contact's name, phone, email or any other contact datum.
 // Output: "not available", or one candidate: the address on the record and the owner names on title (both used
 // only in memory by core attachPropertyRecord, never stored, hashed or logged), the four property facts core
-// reads, and the vendor's record reference. `parsePublicRecord` builds the candidate field by field from an
-// untrusted vendor payload, so no person-level datum (age, marital status, phone, lender, other owners'
-// addresses, ...) can pass even if a vendor sends one (R-PRED-2).
+// reads, each value's source and as-of date, and the source's record reference. `parsePublicRecord` builds the
+// candidate field by field from an untrusted payload, so no person-level datum (age, marital status, phone, lender,
+// other owners' addresses, ...) can pass even if a source sends one (R-PRED-2).
 //
-// VERIFY with the vendor (N13): field names and formats (owner names, co-owners, trusts, permits), whether "not
-// available" can be told apart from a failure, licence and caching terms, refresh frequency, cost, rate limits.
+// VERIFY with each data source (N13; county connectors per D10): field names and formats (owner names, co-owners,
+// trusts, permits), whether "not available" can be told apart from a failure, licence and caching terms, refresh
+// frequency, cost, rate limits.
 import { normalizeAddress, type PostalAddress, type PropertyRecordCandidate } from '@realty/core/predict';
 import { ProviderError } from '../providers/types.js';
 
@@ -28,7 +33,20 @@ export interface PublicRecordFacts {
   recentPermit: boolean | null;
 }
 
-export type PublicRecordCandidate = PropertyRecordCandidate & { facts: PublicRecordFacts; providerRef: string | null };
+/** Where one value came from: a source label (e.g. a county office or a provider, never a person) and its as-of date. */
+export interface FactProvenance {
+  source: string;
+  /** YYYY-MM-DD */
+  asOf: string | null;
+}
+
+export type PublicRecordCandidate = PropertyRecordCandidate & {
+  facts: PublicRecordFacts;
+  /** per present value: its source and as-of date (not stored by module 50; kept for the homeowner-profile lane) */
+  provenance: Partial<Record<keyof PublicRecordFacts, FactProvenance>>;
+  /** the source's own record reference */
+  providerRef: string | null;
+};
 
 export type PublicRecordLookup = { status: 'not_available' } | { status: 'found'; candidate: PublicRecordCandidate };
 
@@ -60,6 +78,8 @@ const cents = (v: unknown): number | null => (typeof v === 'number' && Number.is
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const date = (v: unknown): string | null => (typeof v === 'string' && DATE_RE.test(v) && !Number.isNaN(Date.parse(`${v}T00:00:00Z`)) ? v : null);
 const REF_RE = /^[A-Za-z0-9._:-]{1,120}$/;
+const SOURCE_RE = /^[A-Za-z0-9 .,:()_-]{1,80}$/;
+const sourceLabel = (v: unknown): string | null => (typeof v === 'string' && SOURCE_RE.test(v) ? v : null);
 
 function address(v: unknown): PostalAddress | null {
   if (!isObj(v)) return null;
@@ -72,7 +92,7 @@ function address(v: unknown): PostalAddress | null {
 }
 
 /**
- * The vendor payload, cut down to the fields core reads. Every other field is dropped; a malformed fact becomes
+ * The source payload, cut down to the fields core reads. Every other field is dropped; a malformed fact becomes
  * null (no feature derives from it); a payload without a usable address or with `available: false` is "not
  * available". Owner names are kept only as strings for the in-memory attach decision.
  */
@@ -81,20 +101,32 @@ export function parsePublicRecord(raw: unknown): PublicRecordLookup {
   const a = address(raw.address);
   if (a === null) return { status: 'not_available' };
   const owners = Array.isArray(raw.ownerNames) ? raw.ownerNames.map((n) => str(n, 200)).filter((n): n is string => n !== null).slice(0, 10) : [];
-  const facts: PublicRecordFacts = {
-    lastSaleDate: date(raw.lastSaleDate),
-    lastSalePriceCents: cents(raw.lastSalePriceCents),
-    assessedValueCents: cents(raw.assessedValueCents),
-    recentPermit: typeof raw.recentPermit === 'boolean' ? raw.recentPermit : null,
+  const defaultSource = sourceLabel(raw.source);
+  const defaultAsOf = date(raw.asOf);
+  const facts: PublicRecordFacts = { lastSaleDate: null, lastSalePriceCents: null, assessedValueCents: null, recentPermit: null };
+  const provenance: PublicRecordCandidate['provenance'] = {};
+  const take = <K extends keyof PublicRecordFacts>(k: K, check: (v: unknown) => PublicRecordFacts[K]) => {
+    // a value is either bare or { value, source, asOf }
+    const f = raw[k];
+    const wrapped = isObj(f) && 'value' in f;
+    const v = check(wrapped ? f.value : f);
+    if (v === null) return;
+    facts[k] = v;
+    const source = wrapped ? (sourceLabel(f.source) ?? defaultSource) : defaultSource;
+    if (source !== null) provenance[k] = { source, asOf: (wrapped ? date(f.asOf) : null) ?? defaultAsOf };
   };
+  take('lastSaleDate', date);
+  take('lastSalePriceCents', cents);
+  take('assessedValueCents', cents);
+  take('recentPermit', (v) => (typeof v === 'boolean' ? v : null));
   const ref = typeof raw.providerRef === 'string' && REF_RE.test(raw.providerRef) ? raw.providerRef : null;
-  return { status: 'found', candidate: { address: a, ownerNames: owners, facts, providerRef: ref } };
+  return { status: 'found', candidate: { address: a, ownerNames: owners, facts, provenance, providerRef: ref } };
 }
 
 // ---- the deterministic fake ------------------------------------------------------------------------------
 
 /**
- * Deterministic in-memory public records keyed by the normalized address. Tests put SYNTHETIC vendor payloads in
+ * Deterministic in-memory public records keyed by the normalized address. Tests put SYNTHETIC source payloads in
  * (`put`), and the fake runs every answer through `parsePublicRecord`, as a real adapter would. `calls` records
  * each looked-up address (normalized), so tests can prove what was and was not asked. Nothing leaves the process.
  */
@@ -106,7 +138,7 @@ export class FakePublicRecords implements PublicRecordsProvider {
   /** test hook: runs before an answer is returned (a throw is a provider failure or a crash mid-lookup) */
   beforeAnswer: ((normalized: string) => void | Promise<void>) | null = null;
 
-  /** A synthetic vendor payload for an address (any shape: the parser decides what survives). */
+  /** A synthetic source payload for an address (any shape: the parser decides what survives). */
   put(address: PostalAddress, payload: unknown): void {
     const k = normalizeAddress(address);
     if (k === null) throw new Error('FakePublicRecords.put: the address does not normalize');

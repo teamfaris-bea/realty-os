@@ -45,7 +45,7 @@ describe('R-PRED-2: the vendor payload is cut down to property facts', () => {
     const l = parsePublicRecord({ ...vendorRecord(a, ['Pat Doe']), ...PERSON_LEVEL, address: a, __proto__: { injected: true } });
     expect(l.status).toBe('found');
     if (l.status !== 'found') return;
-    expect(Object.keys(l.candidate).sort()).toEqual(['address', 'facts', 'ownerNames', 'providerRef']);
+    expect(Object.keys(l.candidate).sort()).toEqual(['address', 'facts', 'ownerNames', 'provenance', 'providerRef']);
     expect(Object.keys(l.candidate.address).sort()).toEqual(['city', 'line1', 'line2', 'postalCode', 'region']);
     expect(Object.keys(l.candidate.facts).sort()).toEqual(['assessedValueCents', 'lastSaleDate', 'lastSalePriceCents', 'recentPermit']);
     expect(JSON.stringify(l)).not.toMatch(/47|married|5555550123|Mortgage Co|Elsewhere|PO Box|2019-01-01|householdSize|injected/);
@@ -54,6 +54,15 @@ describe('R-PRED-2: the vendor payload is cut down to property facts', () => {
     expect(bad.status === 'found' && bad.candidate.facts).toEqual({ lastSaleDate: null, lastSalePriceCents: null, assessedValueCents: null, recentPermit: null });
     expect(bad.status === 'found' && bad.candidate.providerRef).toBeNull();
     expect(parsePublicRecord({ available: false, address: a })).toEqual({ status: 'not_available' });
+    // source-neutral provenance (D10): each value's source and as-of date, bare or wrapped; a bad label is dropped
+    const p = parsePublicRecord({ ...vendorRecord(a, ['Pat Doe']), source: 'County assessor', asOf: '2026-10-01', lastSaleDate: { value: '2012-05-01', source: 'County register of deeds', asOf: '2026-09-15' }, recentPermit: { value: true, source: '<b>x</b>' } });
+    expect(p.status === 'found' && p.candidate.provenance).toEqual({
+      lastSaleDate: { source: 'County register of deeds', asOf: '2026-09-15' },
+      lastSalePriceCents: { source: 'County assessor', asOf: '2026-10-01' },
+      assessedValueCents: { source: 'County assessor', asOf: '2026-10-01' },
+      recentPermit: { source: 'County assessor', asOf: '2026-10-01' },
+    });
+    expect(p.status === 'found' && p.candidate.facts).toMatchObject({ lastSaleDate: '2012-05-01', recentPermit: true });
     expect(parsePublicRecord('not an object')).toEqual({ status: 'not_available' });
   });
 
