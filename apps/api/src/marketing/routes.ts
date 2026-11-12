@@ -289,6 +289,7 @@ async function register(app: FastifyInstance): Promise<void> {
       if (!pub || pub.piece_id !== p.id) throw new AppError('NOT_FOUND');
       const r1 = await retractPublication(deps, actor.tenantId, pub.id, actor);
       if (r1.outcome === 'not_live') throw new AppError('PUBLICATION_NOT_LIVE');
+      if (r1.outcome === 'in_progress') throw new AppError('PUBLICATION_RETRACTING');
       out = { retracted: r1.outcome === 'retracted' ? 1 : 0, removeYourself: r1.outcome === 'remove_yourself' ? 1 : 0 };
     } else {
       out = await retractAllOf(deps, actor.tenantId, p.id, actor);

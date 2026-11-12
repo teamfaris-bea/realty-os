@@ -15,8 +15,10 @@
 //   reconcile (handlers.ts → reconcilePublications): a stale 'publishing' (the process died between TX1 and TX2) becomes
 //        'unknown'; an 'unknown' row is looked up at the provider by piece and content (lookupPost) and never posted
 //        again; VERIFY: a provider that cannot find a post without its id leaves it 'unknown' ("Check your Page").
-//   retract: deletePost at the provider first; 'retracted' is recorded only after the provider confirmed the deletion;
-//        otherwise a "remove it yourself" card (marketing:{piece}) for the listing agent.
+//   retract: TX1 as the system claims the retraction (0054 retract_claim_id: one caller per publication calls the
+//        provider; another answers 'in_progress'; a claim older than app.marketing_retract_claim_window() is taken
+//        again), then deletePost outside any transaction; TX2 records 'retracted' only after the provider confirmed
+//        the deletion, otherwise a "remove it yourself" card (marketing:{piece}) for the listing agent.
 // The Meta connection is for content publishing only: there is no messaging webhook, so a DM to the Page is never
 // received (E228; integrations/catalog.ts requests publishing scopes only).
 import { type IdGenerator, type Instant, type TenantId, type UserActor, toIso } from '@realty/core/foundation';
@@ -161,6 +163,15 @@ async function sendAndRecord(deps: PublishDeps, tenantId: string, prep: Prepared
 async function recordOutcome(deps: Pick<PublishDeps, 'db'>, tenantId: string, publicationId: string, o: { status: 'published'; externalPostId: string } | { status: 'failed' | 'unknown'; errorCode: string }): Promise<void> {
   await asSystem(deps, tenantId, async (tx, now) => {
     const sys = systemActor(tenantId, 'provider');
+    // Lock order: the piece before this publication's row, the order TX1 takes them (the piece FOR UPDATE, then the
+    // INSERT into the one-live index). A concurrent tap's TX1 that holds the piece then waits in that INSERT for an
+    // uncommitted change of this row: writing the row first and the piece second was a deadlock (the tap answered
+    // 500, or this TX2 was retried after deadlock_timeout). A row only locked here does not make that INSERT wait: it
+    // is refused at once (PUBLICATION_ALREADY_LIVE). piece_id never changes (0025 guard), so it is read unlocked.
+    if (o.status === 'published') {
+      await sql`SELECT 1 FROM marketing_pieces mp JOIN marketing_publications p ON p.tenant_id = mp.tenant_id AND p.piece_id = mp.id
+                 WHERE p.tenant_id = app.tenant_id() AND p.id = ${publicationId} FOR UPDATE OF mp`.execute(tx);
+    }
     const cur = await repo.publicationById(tx, publicationId, { forUpdate: true });
     if (!cur || (cur.status !== 'publishing' && cur.status !== 'unknown')) return;
     if (o.status === 'published') {
@@ -233,8 +244,16 @@ export async function reconcilePublications(deps: PublishDeps, tenantId: string)
  * Retract one provider-confirmed publication: delete at the provider first; record 'retracted' only after it
  * confirmed; otherwise raise the "remove it yourself" card. `requestedBy` is the person who asked (TX1 checks they
  * may write the listing), or null for the system (R-MKT-4 / R-MKT-9 from the reconcile handler).
+ *
+ * The same TX1 / provider / TX2 shape as publishing (R-MKT-12, R-GATE-15): one short transaction claims the
+ * retraction (0054 marketing_publications.retract_claim_id), so exactly one caller per publication calls deletePost;
+ * another caller answers 'in_progress' and never calls the provider (before the claim, a second caller's
+ * POST_NOT_FOUND raised a "remove it yourself" card for a post the first had just deleted). The provider call is
+ * outside any transaction. TX2 clears the claim with the outcome. A claim older than
+ * app.marketing_retract_claim_window() (5 minutes) belonged to a process that died and is taken again, so the
+ * reconcile pass still retracts the post.
  */
-export async function retractPublication(deps: PublishDeps, tenantId: string, publicationId: string, requestedBy: UserActor | null): Promise<{ outcome: 'retracted' | 'remove_yourself' | 'not_live' }> {
+export async function retractPublication(deps: PublishDeps, tenantId: string, publicationId: string, requestedBy: UserActor | null): Promise<{ outcome: 'retracted' | 'remove_yourself' | 'not_live' | 'in_progress' }> {
   if (requestedBy) {
     await withTenantTx(
       requestedBy,
@@ -248,17 +267,27 @@ export async function retractPublication(deps: PublishDeps, tenantId: string, pu
       { db: deps.db },
     );
   }
+  // TX1 (the claim), as the system
+  const claimId = deps.ids.next<'RetractClaimId'>();
   const pub = await asSystem(deps, tenantId, async (tx) => {
-    const p = await repo.publicationById(tx, publicationId);
+    const p = await repo.publicationById(tx, publicationId, { forUpdate: true });
     if (!p) return null;
-    // 'unknown' may be live but has no post id to delete: the agent removes it themselves (R-MKT-9, R-MKT-4)
-    if (p.status === 'unknown') return { p, c: null, token: null };
+    // 'unknown' may be live but has no post id to delete: the agent removes it themselves (R-MKT-9, R-MKT-4). No
+    // provider call, so no claim: the card is raised under this row's lock in TX2, once
+    if (p.status === 'unknown') return { p, c: null, token: null, claimId: null };
     if (p.status !== 'published' || !p.external_post_id) return null;
+    // a live claim is another retraction in flight; the 0054 guard refuses replacing it before the window too
+    const took = await sql`UPDATE marketing_publications SET retract_claim_id = ${claimId}, retract_claimed_at = now()
+                            WHERE tenant_id = app.tenant_id() AND id = ${publicationId} AND status = 'published'
+                              AND (retract_claim_id IS NULL OR retract_claimed_at < now() - app.marketing_retract_claim_window())`.execute(tx);
+    if (Number(took.numAffectedRows ?? 0) === 0) return 'in_progress' as const;
     const c = await repo.targetById(tx, p.connection_id);
     const token = c?.credential_id ? await tokenFor(deps, tx, tenantId, c.credential_id).catch(() => null) : null;
-    return { p, c, token };
+    return { p, c, token, claimId };
   });
   if (!pub) return { outcome: 'not_live' };
+  if (pub === 'in_progress') return { outcome: 'in_progress' };
+  // the provider, outside any transaction, by the claim holder only
   let decided: ReturnType<typeof retractFromDelete>;
   if (!pub.token || !pub.c?.external_account_id || (pub.c.kind !== 'facebook_page' && pub.c.kind !== 'instagram_business')) decided = { kind: 'remove_yourself', reason: 'FAILED' };
   else {
@@ -268,18 +297,28 @@ export async function retractPublication(deps: PublishDeps, tenantId: string, pu
       decided = retractFromDelete({ ok: false, error: e });
     }
   }
+  // TX2, as the system
   return asSystem(deps, tenantId, async (tx, now) => {
     const sys = systemActor(tenantId, 'provider');
     if (decided.kind === 'retracted') {
-      const done = await sql`UPDATE marketing_publications SET status = 'retracted', retracted_at = ${toIso(now)}::timestamptz WHERE tenant_id = app.tenant_id() AND id = ${publicationId} AND status = 'published'`.execute(tx);
+      // the provider confirmed the deletion: recorded (and any claim cleared) whoever holds the claim now
+      const done = await sql`UPDATE marketing_publications SET status = 'retracted', retracted_at = ${toIso(now)}::timestamptz, retract_claim_id = NULL, retract_claimed_at = NULL
+                              WHERE tenant_id = app.tenant_id() AND id = ${publicationId} AND status = 'published'`.execute(tx);
       if (Number(done.numAffectedRows ?? 0) === 0) return { outcome: 'not_live' as const };
       await audit(tx, sys, { action: 'marketing.retracted', entity: { type: 'marketing_publication', id: publicationId }, changes: redactSnapshot({ piece_id: pub.p.piece_id }), reason: 'PROVIDER_CONFIRMED_DELETION' });
       return { outcome: 'retracted' as const };
     }
-    // a concurrent retraction may have confirmed the deletion meanwhile: no card for a post that is gone
+    // a retraction that took over a stale claim may have confirmed the deletion meanwhile: no card for a post that is gone
     const still = await repo.publicationById(tx, publicationId, { forUpdate: true });
     if (!still || (still.status !== 'published' && still.status !== 'unknown')) return { outcome: 'not_live' as const };
+    // this claim went stale and another retraction took it over: that one decides (and raises the card if it must)
+    if (pub.claimId !== null && still.retract_claim_id !== pub.claimId) return { outcome: 'in_progress' as const };
     await raiseRemoveYourselfCard(tx, deps, { pieceId: pub.p.piece_id, publicationId, targetKind: pub.p.connection_kind, targetName: pub.p.connection_name });
+    // the post stays recorded as live; the claim is released, so a later request asks the provider again
+    if (pub.claimId !== null) {
+      await sql`UPDATE marketing_publications SET retract_claim_id = NULL, retract_claimed_at = NULL
+                 WHERE tenant_id = app.tenant_id() AND id = ${publicationId} AND retract_claim_id = ${pub.claimId}`.execute(tx);
+    }
     return { outcome: 'remove_yourself' as const };
   });
 }
