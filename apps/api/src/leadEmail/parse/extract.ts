@@ -3,6 +3,7 @@ import { cleanField, emailDomain, isDomainOrSub, isPlausibleName, isValidEmail, 
 import { type FieldKey, type LabelTable, LABEL_TYPE_KEYWORDS, PORTAL_DOMAINS } from './labels.js';
 import { MAX_LISTING_ID, MAX_MESSAGE, MAX_NAME, MAX_PHONE, MAX_POINTS, MAX_PROPERTY } from './limits.js';
 import type { Field, LeadType } from './types.js';
+import { isConsumerMailboxDomain } from '../trust.js';
 
 /** A label is at most this long (up to its ':'). */
 const MAX_LABEL = 40;
@@ -107,10 +108,15 @@ export function earliestType(s: string, keywords: ReadonlyArray<readonly [Exclud
   return best;
 }
 
-/** An address is never the portal's or the trusted sender's own. */
+/**
+ * An address is never the portal's own (always dropped) or the sender's own. An address under the sender's domain is
+ * dropped only when that domain is not a consumer mailbox domain (R-LEM-11): a lead's own gmail address is kept even
+ * when the person who forwarded the email by hand used gmail too (their own address is dropped by the service).
+ */
 export function isOwnAddress(email: string, senderDomain: string): boolean {
   const d = emailDomain(email);
-  return isDomainOrSub(d, senderDomain) || PORTAL_DOMAINS.some((p) => isDomainOrSub(d, p));
+  if (PORTAL_DOMAINS.some((p) => isDomainOrSub(d, p))) return true;
+  return !isConsumerMailboxDomain(senderDomain) && isDomainOrSub(d, senderDomain);
 }
 
 export function extract(text: string, lines: readonly Line[], labels: LabelTable, senderDomain: string): Extraction {

@@ -31,6 +31,8 @@ import { stageAutomationRoutes } from './stageAutomation/routes.js';
 import { leadEmailRoutes } from './leadEmail/routes.js';
 import { mlsRoutes } from './mls/routes.js';
 import { channelRoutes } from './channels/routes.js';
+import { leadSourcesRoutes } from './leads/sources.js';
+import { leadFormsRoutes } from './leadForms/routes.js';
 import { nurtureRoutes } from './nurture/routes.js';
 import { mailSyncRoutes } from './mailSync/routes.js';
 import { marketingRoutes } from './marketing/routes.js';
@@ -70,6 +72,8 @@ export const routeModules: RouteModule[] = [
   leadEmailRoutes,
   mlsRoutes,
   channelRoutes,
+  leadSourcesRoutes,
+  leadFormsRoutes,
   nurtureRoutes,
   mailSyncRoutes,
   marketingRoutes,

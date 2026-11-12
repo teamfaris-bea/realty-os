@@ -9,20 +9,29 @@
 //   GET  /admin/web-chat/widgets/:id/embed                whether the lead source has a consent disclosure (the code itself is the key only)
 //   POST /admin/integrations/connections/:id/disconnect   disconnect (re-auth; the integrations route)
 //
+// Lead sources and their consent text are managed on Lead sources (/admin/lead-sources): with no active source, or a
+// widget whose source has no consent text, the page links there (b9 ui/F4). Its lead-sources query sits under
+// ['admin', 'lead-sources'], which every Lead sources change refreshes, and its own changes refresh the Lead sources
+// overview, so both pages show the same chat state (b9 ui/F5).
+//
 // THE WIDGET KEY is shown once: only the one-time panel's component state holds it (never the query cache,
 // storage, the URL or a log). "Done" or leaving the page drops it; nothing can show it again (the server keeps
 // only its hash), so the page says to rotate the key to get new embed code.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Button, Card, Dialog, Notice, TextField } from '../../../design/index.js';
 import { type ApiError, messageFor, useApi } from '../../../shell/index.js';
 import { keepFocus, useRequest } from '../integrations/request.js';
 import { Pill, SelectField, StatusLine, TextArea } from '../lib/ui.js';
 import { type Embed, type LeadSource, type Widget, pickEmbed, pickKeyed, pickSources, pickWidgets } from './types.js';
-import { ERROR_MESSAGES, STATUS_LABEL, embedSnippet, isLive, parseWebsites, websitesWords } from './words.js';
+import { ERROR_MESSAGES, LEAD_SOURCES_PATH, STATUS_LABEL, embedSnippet, isLive, parseWebsites, websitesWords } from './words.js';
 
 export const WIDGETS_KEY = ['admin', 'web-chat', 'widgets'] as const;
-const SOURCES_KEY = ['admin', 'web-chat', 'lead-sources'] as const;
+// under ['admin', 'lead-sources'], the prefix every Lead sources change refreshes (consent text, on/off, a new source)
+const SOURCES_KEY = ['admin', 'lead-sources', 'web-chat'] as const;
+/** The Lead sources overview (surfaces/lead-sources/types.ts OVERVIEW_KEY): its Website chat state follows the widgets. */
+const OVERVIEW_KEY = ['lead-sources', 'overview'] as const;
 
 interface Fresh {
   widget: Widget;
@@ -42,7 +51,10 @@ export default function WebChatPage() {
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   const widgets = useQuery<Widget[], ApiError>({ queryKey: WIDGETS_KEY, queryFn: async ({ signal }) => pickWidgets(await api.get<unknown>('/admin/web-chat/widgets', { signal })) });
   const sources = useQuery<LeadSource[], ApiError>({ queryKey: SOURCES_KEY, queryFn: async ({ signal }) => pickSources(await api.get<unknown>('/lead-sources', { signal })) });
-  const refresh = () => void qc.invalidateQueries({ queryKey: WIDGETS_KEY });
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: WIDGETS_KEY });
+    void qc.invalidateQueries({ queryKey: OVERVIEW_KEY });
+  };
   const clear = () => {
     setStatus(null);
     setError(null);
@@ -108,6 +120,7 @@ export default function WebChatPage() {
   };
 
   const activeSources = sources.data?.filter((s) => s.active) ?? [];
+  const knownName = (id: string | null) => sources.data?.find((s) => s.id === id)?.name ?? null;
   const sourceName = (id: string | null) =>
     sources.isPending ? 'Loading' : sources.isError ? "Couldn't load the lead sources" : (sources.data?.find((s) => s.id === id)?.name ?? 'A lead source that no longer exists');
 
@@ -115,14 +128,19 @@ export default function WebChatPage() {
     <div className="flex w-full min-w-0 max-w-3xl flex-col gap-8">
       <StatusLine text={status} />
       {error ? <Notice tone="error">{error}</Notice> : null}
-      {fresh ? <KeyOnce fresh={fresh} onDone={() => setFresh(null)} /> : null}
+      {fresh ? <KeyOnce fresh={fresh} sourceName={knownName(fresh.widget.leadSourceId)} onDone={() => setFresh(null)} /> : null}
 
       <Block title="Add a chat widget" description="A widget puts a chat window on your website. New chats become leads of the lead source you choose.">
         {sources.isPending ? <p className="text-[15px] text-ink-muted">Loading</p> : null}
         {sources.isError ? <Notice tone="error">{messageFor(sources.error, ERROR_MESSAGES)}</Notice> : null}
         {sources.data && activeSources.length === 0 ? (
           <div className="flex flex-col gap-2">
-            <p className="text-[16px] text-ink">A widget needs an active lead source, and there is none yet. Lead sources can't be added in the app yet: ask whoever runs your deployment to add one with a consent disclosure.</p>
+            <p className="text-[16px] text-ink">A widget needs an active lead source, and there is none yet. Add one with consent text, which the chat window shows before the first message.</p>
+            <p className="text-[15px]">
+              <Link to={LEAD_SOURCES_PATH} className="inline-flex min-h-tap items-center text-accent underline">
+                Add a source on Lead sources
+              </Link>
+            </p>
           </div>
         ) : null}
         {activeSources.length > 0 ? <CreateForm sources={activeSources} pending={req.pending === 'create'} busy={req.pending !== null} onCreate={create} /> : null}
@@ -135,7 +153,7 @@ export default function WebChatPage() {
         {widgets.data && widgets.data.length > 0 ? (
           <ul className="flex flex-col gap-3">
             {widgets.data.map((w) => (
-              <WidgetCard key={w.id} w={w} source={sourceName(w.leadSourceId)} busy={req.pending !== null} savingWebsites={req.pending === 'origins'} onRotate={() => setConfirm({ kind: 'rotate', widget: w })} onDisconnect={() => setConfirm({ kind: 'disconnect', widget: w })} onSaveWebsites={(o) => saveWebsites(w, o)} />
+              <WidgetCard key={w.id} w={w} source={sourceName(w.leadSourceId)} knownSource={knownName(w.leadSourceId)} busy={req.pending !== null} savingWebsites={req.pending === 'origins'} onRotate={() => setConfirm({ kind: 'rotate', widget: w })} onDisconnect={() => setConfirm({ kind: 'disconnect', widget: w })} onSaveWebsites={(o) => saveWebsites(w, o)} />
             ))}
           </ul>
         ) : null}
@@ -247,7 +265,7 @@ function WebsitesBox({ value, onChange, error }: { value: string; onChange(v: st
   );
 }
 
-function WidgetCard({ w, source, busy, savingWebsites, onRotate, onDisconnect, onSaveWebsites }: { w: Widget; source: string; busy: boolean; savingWebsites: boolean; onRotate(): void; onDisconnect(): void; onSaveWebsites(o: string[]): Promise<boolean> }) {
+function WidgetCard({ w, source, knownSource, busy, savingWebsites, onRotate, onDisconnect, onSaveWebsites }: { w: Widget; source: string; knownSource: string | null; busy: boolean; savingWebsites: boolean; onRotate(): void; onDisconnect(): void; onSaveWebsites(o: string[]): Promise<boolean> }) {
   const hid = useId();
   const api = useApi();
   const live = isLive(w.status);
@@ -285,6 +303,7 @@ function WidgetCard({ w, source, busy, savingWebsites, onRotate, onDisconnect, o
         <Pill tone={s.tone}>{s.label}</Pill>
       </div>
       <p className="text-[15px] text-ink">{noDisclosure ? "The chat window never opens: this widget's lead source has no consent disclosure, which the chat must show first. Nothing reaches your website through it." : w.sentence}</p>
+      {noDisclosure ? <ConsentLink sourceId={w.leadSourceId} sourceName={knownSource} /> : null}
       <dl className="flex flex-col gap-2">
         <Fact label="Lead source">{source}</Fact>
         <Fact label="Allowed websites">{websitesWords(w.allowedOrigins)}</Fact>
@@ -321,7 +340,21 @@ function WidgetCard({ w, source, busy, savingWebsites, onRotate, onDisconnect, o
 }
 
 /** The one-time panel: the key and the embed code, until "Done". */
-function KeyOnce({ fresh, onDone }: { fresh: Fresh; onDone(): void }) {
+/**
+ * Consent text is added on the source's own page under Lead sources (PATCH /lead-sources/:id consentDisclosure,
+ * R-LSRC-2); the chat window reads the source's disclosure, so it opens once the text is there (b9 ui/F4).
+ */
+function ConsentLink({ sourceId, sourceName }: { sourceId: string | null; sourceName: string | null }) {
+  return (
+    <p className="text-[15px]">
+      <Link to={sourceId ? `${LEAD_SOURCES_PATH}/${encodeURIComponent(sourceId)}` : LEAD_SOURCES_PATH} className="inline-flex min-h-tap items-center text-accent underline">
+        {sourceName ? `Add consent text on ${sourceName}'s page` : 'Add consent text on Lead sources'}
+      </Link>
+    </p>
+  );
+}
+
+function KeyOnce({ fresh, sourceName, onDone }: { fresh: Fresh; sourceName: string | null; onDone(): void }) {
   const api = useApi();
   const embed = useQuery<Embed, ApiError>({
     queryKey: ['admin', 'web-chat', 'embed', fresh.widget.id],
@@ -366,7 +399,8 @@ function KeyOnce({ fresh, onDone }: { fresh: Fresh; onDone(): void }) {
       {embed.isError ? <Notice tone="error">{`${messageFor(embed.error, ERROR_MESSAGES)} We couldn't check whether this widget's lead source has a consent disclosure. The embed code below works, but the chat window never opens without one.`}</Notice> : null}
       {e && !e.disclosure ? (
         <Notice tone="warn" title="The chat window won't appear yet">
-          This widget's lead source has no consent disclosure, and the chat window never opens without one. A consent disclosure is set when a lead source is created, which the app can't do yet: ask whoever runs your deployment for a lead source with one, then add a widget for it.
+          This widget's lead source has no consent disclosure, and the chat window never opens without one. Add consent text on the source's page under Lead sources: the chat window opens once it is there.
+          <ConsentLink sourceId={fresh.widget.leadSourceId} sourceName={sourceName} />
         </Notice>
       ) : null}
       {snippet ? (
