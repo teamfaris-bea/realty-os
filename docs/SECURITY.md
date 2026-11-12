@@ -203,20 +203,30 @@ it, and the packs still ship unreviewed.
   never the api or worker (DEPLOY §3). The command refuses, in a dry run too, any role that cannot update
   `jurisdiction_packs` or is subject to its row-level security (neither superuser nor `BYPASSRLS`). `app_user` has
   SELECT only and is refused, and a direct `UPDATE` by it fails with `permission denied`.
-- **What it changes:** for each named `platform:<name>` key, only the published version's `reviewed_by_counsel_at`
-  (00:00 UTC of the stated review date) and one note appended to `notes` (UTC time recorded, database role, review
-  date, the reported source). It never writes `rules`, so it never sets `vendor_ready_at`: voice and Gmail stay off
-  until their vendor checks pass. It refuses other keys (`US` and other jurisdiction packs, unknown or unpublished
-  keys, `platform:meta`), a future date, and a pack already recorded with a different date. It is all or nothing, one
-  transaction, and a dry run by default (the change is made, reported and rolled back).
-- **Effect:** a recorded review lifts that pack's hold on its capability on that deployment at once. That is a
-  compliance decision, so it is recorded only from the owner's report of counsel's review (`--reference` names the
-  source). It turns no capability on by itself.
+- **Pinned to a version:** each key names the version counsel reviewed (`platform:<name>@<version>`) and is recorded
+  only while that version is the published one. A later version ships unreviewed and turns its capability off again,
+  and replaying an old command (an old pin) after a pack bump is refused, so a review is never stamped onto a version
+  counsel did not see.
+- **What it changes:** for each pinned key, only the published version's `reviewed_by_counsel_at` (00:00 UTC of the
+  stated review date) and one note appended to `notes` (UTC time recorded, database role, version, review date, the
+  reported source). It never writes `rules`, so it never sets `vendor_ready_at`: voice and Gmail stay off until their
+  vendor checks pass. It refuses other keys (`US` and other jurisdiction packs, unknown or unpublished keys,
+  `platform:meta`), a review date before 2026-01-01, before the pinned version's month or after today (UTC, on the
+  client's and the database's clock), a pack already recorded with a different date, and a review set outside the
+  command (no note of its own), which it names instead of reporting it as recorded. It is all or nothing, one
+  transaction, and a dry run by default (the change is made, reported and rolled back); `--apply` with `--dry-run` is
+  refused. `--revoke` withdraws a recorded review with the same safeguards: `reviewed_by_counsel_at` back to NULL and
+  a withdrawal note; it is the supported correction for a mistaken `--apply`.
+- **Effect:** a recorded review lifts that pack's hold on its capability on that deployment at once, and a withdrawal
+  restores it at once. That is a compliance decision, so it is recorded only from the owner's report of counsel's
+  review (`--reference` names the source: one line of plain text, no control, format or line-separator characters).
+  It turns no capability on by itself.
 - **Audit:** there is no platform-level audit table (`audit_log` is per tenant), so the trail is the pack's own
-  `reviewed_by_counsel_at` and note (readable by `app_user`) plus the printed output, which the operator keeps with the
-  deploy log. A tamper-evident platform log is not built.
-- **Tests:** `packages/db/test/counsel_review.test.ts` (R-INT-6: published version only, idempotent, refusals, dry run,
-  never `vendor_ready_at`, owner role only, the note as the audit trail).
+  `reviewed_by_counsel_at` and notes (readable by `app_user`) plus the printed output, which the operator keeps with
+  the deploy log. A tamper-evident platform log is not built.
+- **Tests:** `packages/db/test/counsel_review.test.ts` (R-INT-6: version pins and a pack bump, published version only,
+  idempotent only for its own record, refusals, dry run, `--revoke`, never `vendor_ready_at`, owner role only, the
+  database clock, the note as the audit trail).
 
 ---
 

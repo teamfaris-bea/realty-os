@@ -1,7 +1,9 @@
-// pnpm --filter @realty/db counsel-review -- --keys platform:<name>[,...] --reviewed-on YYYY-MM-DD --reference "<source>" [--apply]
+// pnpm --filter @realty/db counsel-review -- --keys platform:<name>@<version>[,...] --reviewed-on YYYY-MM-DD --reference "<source>" [--apply]
+// pnpm --filter @realty/db counsel-review -- --revoke --keys platform:<name>@<version>[,...] --reference "<source>" [--apply]
 // (in the api image: node packages/db/dist/scripts/counsel-review.js <same flags>)
-// Records counsel review of named platform clearance packs on MIGRATION_DATABASE_URL (the owner role), as
-// migrate does; dry run by default. What it changes and refuses: src/counselReview.ts and docs/DEPLOY.md §10.1.
+// Records (or withdraws) counsel review of pinned platform clearance pack versions on MIGRATION_DATABASE_URL (the
+// owner role), as migrate does; dry run by default. What it changes and refuses: src/counselReview.ts and
+// docs/DEPLOY.md §10.1.
 import { runCounselReview } from '../counselReview.js';
 import { loadRootEnv } from '../dbConfig.js';
 
