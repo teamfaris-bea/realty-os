@@ -237,6 +237,7 @@ export function screen(subject: CmaSubject, canonical: readonly CmaCandidate[], 
   const oldest = addMonths(valuationDate, -rule.extendedLookbackMonths);
   const seenIdentity = new Set<string>();
   const seenTeam = new Set<string>();
+  const seenSale = new Set<string>();
   const out: Screened[] = [];
   for (const c of canonical) {
     const { ref, sale } = c;
@@ -266,8 +267,10 @@ export function screen(subject: CmaSubject, canonical: readonly CmaCandidate[], 
       included = include.has(ref.identity);
       if (includable && !included) fail = condFail ? 'sale_condition' : 'implausible_price';
       if (fail === null) {
-        // Counted once (R-MLS-5): the first of an identity or a team listing in canonical order.
-        if (seenIdentity.has(ref.identity) || (ref.teamListingId !== null && seenTeam.has(ref.teamListingId))) {
+        // Counted once (R-MLS-5): the first of an identity, a team listing, or a sale (the same address key
+        // closed on the same day, as when one sale reaches the engine under two identities) in canonical order.
+        const saleKey = sale.addressKey === null ? null : `${sale.addressKey}\u0000${sale.closeDate as string}`;
+        if (seenIdentity.has(ref.identity) || (ref.teamListingId !== null && seenTeam.has(ref.teamListingId)) || (saleKey !== null && seenSale.has(saleKey))) {
           fail = 'duplicate';
           defaultOk = false;
           included = false;
@@ -275,6 +278,7 @@ export function screen(subject: CmaSubject, canonical: readonly CmaCandidate[], 
         } else {
           seenIdentity.add(ref.identity);
           if (ref.teamListingId !== null) seenTeam.add(ref.teamListingId);
+          if (saleKey !== null) seenSale.add(saleKey);
           if ((sale.closeDate as string) <= oldest) fail = 'too_old';
         }
       }
