@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { HOMEOWNER_FIELDS, REF_PATTERN, RECOGNITION_REASONS, SOURCE_PATTERN } from './types.js';
 import { homeownerView, mailingDiffers, type ViewHome, type ViewInput, type ViewProfile } from './view.js';
+import { TEAM_CLOSING_SOURCE } from './years.js';
 
 interface FileUrl {
   readonly pathname: string;
@@ -54,7 +55,7 @@ describe('homeownerView (R-HOME-8)', () => {
     const missing = h.rows.find((r) => r.key === 'assessed_value_cents')!;
     expect(missing).toMatchObject({ state: 'not_available', why: 'not_in_record' });
     expect(missing.state !== 'value' && missing.state !== 'pending_d9' && missing.link?.url).toMatch(/^https:\/\//);
-    expect(h.yearsOwned).toEqual({ years: 11, since: '2015-06-01', source: SRC, asOf: null });
+    expect(h.yearsOwned).toEqual({ years: 11, since: '2015-06-01', basis: 'county_transfer', source: SRC, asOf: null });
     expect(h.mailingDiffers).toBe(true);
     expect(h.loansLink?.label).toMatch(/Register of Deeds/);
     expect(h.rows.filter((r) => r.state === 'pending_d9').map((r) => r.key)).toEqual(['mls_sale_history', 'in_house_value']);
@@ -72,6 +73,24 @@ describe('homeownerView (R-HOME-8)', () => {
     const a = one({ address: BEAUFORT, kind: 'home', profile: profile({ status: 'ambiguous' }) });
     expect(a.outcome).toBe('ambiguous');
     expect(a.rows.every((r) => r.state !== 'value')).toBe(true);
+  });
+
+  // b11 reconciliation homeowner-3: the Gisfile step is off by default, so the county transfer date is rarely there
+  it('R-HOME-4 E582: with no county transfer date, years owned counts from the team closing the viewer sees, and names it', () => {
+    const noTransfer = profile({ facts: { owner_mailing_address: { value: 'PO BOX 1, EXAMPLETON SC 29902', source: SRC, asOf: null } } });
+    const team = { years: 5, since: '2021-03-15', basis: 'team_closing', source: TEAM_CLOSING_SOURCE, asOf: null };
+    expect(one({ address: BEAUFORT, kind: 'home', profile: noTransfer, teamClosingOn: '2021-03-15' }).yearsOwned).toEqual(team);
+    // the county's transfer date wins when the record has one
+    expect(one({ address: BEAUFORT, kind: 'home', profile: MATCHED, teamClosingOn: '2021-03-15' }).yearsOwned).toMatchObject({ since: '2015-06-01', basis: 'county_transfer' });
+    // not checked yet, no record, Jasper (links only) and outside the table: the closing still counts
+    for (const h of [{ address: BEAUFORT, profile: null }, { address: BEAUFORT, profile: profile({ status: 'not_available' }) }, { address: JASPER, profile: null }, { address: OTHER, profile: null }]) {
+      expect(one({ ...h, kind: 'home', teamClosingOn: '2021-03-15' }).yearsOwned).toEqual(team);
+    }
+    // a county record that names someone else as owner contradicts it: nothing is counted
+    expect(one({ address: BEAUFORT, kind: 'home', profile: profile({ status: 'not_matched', matchDetail: 'owner_name_mismatch' }), teamClosingOn: '2021-03-15' }).yearsOwned).toBeNull();
+    // no closing the viewer can see: nothing is counted
+    expect(one({ address: BEAUFORT, kind: 'home', profile: noTransfer, teamClosingOn: null }).yearsOwned).toBeNull();
+    expect(one({ address: BEAUFORT, kind: 'home', profile: noTransfer }).yearsOwned).toBeNull();
   });
 
   it('E565: not available says the county record has none and where to look', () => {

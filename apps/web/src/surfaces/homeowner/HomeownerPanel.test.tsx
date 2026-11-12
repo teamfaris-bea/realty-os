@@ -74,6 +74,12 @@ describe('the homeowner panel (R-HOME-8)', () => {
     expect(document.body.textContent!.replace(T.FOOTER, '')).not.toMatch(/investor|score|confidence|%|estimat|equity|balance/i);
   });
 
+  it('R-HOME-4 E582: with no county transfer date, years owned names the team closing it counts from', async () => {
+    mount(view([{ address: BEAUFORT, kind: 'home', profile: profile({ facts: {} }), teamClosingOn: '2021-03-15' }]));
+    await panel();
+    expect(screen.getByText("Owned 5 years: since the team's closing on Mar 15, 2021 (source: the team's closed deal in this CRM)")).toBeTruthy();
+  });
+
   it('R-HOME-3 E562 E563 E564: each not-matched detail and ambiguous say so in words', async () => {
     mount(view([
       { address: BEAUFORT, kind: 'home', profile: profile({ status: 'not_matched', matchDetail: 'owner_name_mismatch' }) },

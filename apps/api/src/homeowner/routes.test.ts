@@ -100,6 +100,27 @@ describe('GET /api/contacts/:id/homeowner (R-HOME-8)', () => {
     expect(agent.body.homes[0]?.outcome).toBe('matched');
   });
 
+  // b11 reconciliation homeowner-3: the county transfer date needs the Gisfile step, which is off by default
+  it('R-HOME-4 R-HOME-7 E582: with no county transfer date, years owned counts from the team closing, only for a viewer who sees the deal', async () => {
+    const c = await ownedContact(w.agents[0]!, { firstName: 'Lee', consent: false });
+    const a = nextBeaufortAddress();
+    await addAddress(w.agents[0]!, c.id, a);
+    const closedAt = new Date(Date.UTC(2021, 2, 15, 15));
+    // the deal belongs to agent 2: agent 1 owns the contact but cannot see the deal
+    await closedDeal(h, w.tenantId, c.id, w.agents[1]!.userId!, closedAt);
+    records.put(a, countyRecord(a, ['LEE DOE'], { homeowner: { last_transfer_date: null, last_transfer_price_cents: null } }));
+    await refresh(h, w.tenantId, { publicRecords: records });
+    const own = (await get(w.owner, c.id)).body.homes[0]!;
+    expect(own.outcome).toBe('matched');
+    expect(own.rows.find((x) => x.key === 'last_transfer_date')).toMatchObject({ state: 'not_available' });
+    expect(own.yearsOwned).toMatchObject({ since: '2021-03-15', basis: 'team_closing', source: "the team's closed deal in this CRM" });
+    expect(own.yearsOwned!.years).toBeGreaterThanOrEqual(5);
+    const agent = (await get(w.agents[0]!, c.id)).body.homes[0]!;
+    expect(agent.outcome).toBe('matched');
+    expect(agent.yearsOwned).toBeNull();
+    expect(JSON.stringify(agent)).not.toContain('2021-03-15');
+  });
+
   it('R-HOME-10: the outreach line is never built; the counsel clearance shows only once recorded', async () => {
     const c = await homeowner(h, w, w.agents[0]!, records);
     expect((await get(w.agents[0]!, c.id)).body.outreach).toEqual({ built: false, clearanceOn: null });

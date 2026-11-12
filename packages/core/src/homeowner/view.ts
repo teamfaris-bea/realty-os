@@ -23,6 +23,11 @@ export interface ViewHome {
   address: PostalAddress;
   kind: 'home' | 'mailing' | 'property' | 'interest';
   profile: ViewProfile | null;
+  /**
+   * E582: the closing date (team's date) of the team's purchase deal for this home (K2) that the VIEWER can see, or
+   * null / absent. Years owned counts from it only when the county record gives no transfer date.
+   */
+  teamClosingOn?: string | null;
 }
 
 export interface ViewInput {
@@ -114,12 +119,14 @@ function homeView(h: ViewHome, input: ViewInput): HomeView {
   const base = { address: oneLine(h.address), matchDetail: null, yearsOwned: null, mailingDiffers: null, providerNote };
   const d9: ViewRow[] = D9_ROWS.map((key) => ({ key, state: 'pending_d9', why: 'pending_d9' }));
 
+  // E582: with no county transfer date, the team's closing the viewer sees (never when the county names someone else)
+  const closingYears = yearsOwned(null, input.today, h.teamClosingOn ?? null);
   if (route === null) {
-    return { ...base, county: null, check: { state: 'outside_area' }, outcome: 'outside_area', rows: [...absent('not_available', 'links_only', null), ...d9], lookupLinks: [], loansLink: null };
+    return { ...base, yearsOwned: closingYears, county: null, check: { state: 'outside_area' }, outcome: 'outside_area', rows: [...absent('not_available', 'links_only', null), ...d9], lookupLinks: [], loansLink: null };
   }
   if (route.mode === 'links') {
     const c = COUNTIES[route.key];
-    return { ...base, county: { key: c.key, name: c.name, mode: 'links' }, check: { state: 'links_only' }, outcome: 'links_only', rows: [...absent('not_available', 'links_only', c.records), ...d9], lookupLinks: [c.records], loansLink: c.deeds };
+    return { ...base, yearsOwned: closingYears, county: { key: c.key, name: c.name, mode: 'links' }, check: { state: 'links_only' }, outcome: 'links_only', rows: [...absent('not_available', 'links_only', c.records), ...d9], lookupLinks: [c.records], loansLink: c.deeds };
   }
   const key = route.mode === 'shared' ? route.try : route.key;
   const c = COUNTIES[key];
@@ -128,7 +135,7 @@ function homeView(h: ViewHome, input: ViewInput): HomeView {
   const p = h.profile;
   if (p === null) {
     const check: CheckState = input.configured ? { state: 'not_checked' } : { state: 'not_configured', text: input.statusText };
-    return { ...base, county, check, outcome: 'pending', rows: [...absent('not_available', 'not_checked', c.records), ...d9], lookupLinks: also ? [also.records] : [], loansLink: c.deeds };
+    return { ...base, yearsOwned: closingYears, county, check, outcome: 'pending', rows: [...absent('not_available', 'not_checked', c.records), ...d9], lookupLinks: also ? [also.records] : [], loansLink: c.deeds };
   }
 
   const failedLater = p.lastFailureOn !== null && (p.checkedOn === null || p.lastFailureOn >= p.checkedOn);
@@ -157,7 +164,7 @@ function homeView(h: ViewHome, input: ViewInput): HomeView {
     outcome,
     matchDetail: p.matchDetail,
     rows: [...rows, ...d9],
-    yearsOwned: yearsOwned(transfer, input.today),
+    yearsOwned: p.status === 'not_matched' && p.matchDetail === 'owner_name_mismatch' ? null : yearsOwned(transfer, input.today, h.teamClosingOn ?? null),
     mailingDiffers: mailing ? mailingDiffers(mailing.value, h.address) : null,
     lookupLinks: also && (p.status === 'not_available' || p.status === 'failed') ? [also.records] : [],
     loansLink: c.deeds,

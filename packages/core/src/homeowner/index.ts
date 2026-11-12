@@ -21,7 +21,7 @@ export {
   type CountyRoute,
 } from './counties.js';
 export { MAX_SUBJECTS, completeAddress, reasonsFrom, subjectsFor, type CandidateAddress, type RecognitionFacts } from './recognize.js';
-export { yearsOwned, type YearsOwned } from './years.js';
+export { TEAM_CLOSING_SOURCE, yearsOwned, type YearsOwned } from './years.js';
 export {
   D9_ROWS,
   homeownerView,

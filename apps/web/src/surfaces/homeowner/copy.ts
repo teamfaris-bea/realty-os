@@ -110,8 +110,10 @@ export function outcomeText(home: HomeView, firstName: string | null): string | 
   return null;
 }
 
+/** R-HOME-4: years owned names what it counts from: the county's transfer, or the team's closing (E582). */
 export function yearsText(y: NonNullable<HomeView['yearsOwned']>): string {
-  return `Owned ${y.years} ${y.years === 1 ? 'year' : 'years'}: since the transfer on ${day(y.since)} (source: ${y.source})`;
+  const from = y.basis === 'team_closing' ? `the team's closing on ${day(y.since)}` : `the transfer on ${day(y.since)}`;
+  return `Owned ${y.years} ${y.years === 1 ? 'year' : 'years'}: since ${from} (source: ${y.source})`;
 }
 
 export function outreachText(clearanceOn: string | null): string {

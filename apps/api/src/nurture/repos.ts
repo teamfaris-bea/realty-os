@@ -420,14 +420,8 @@ const AKEY = (t: string) => addrKey(t, 'line1', 'postal_code');
 const LKEY = (t: string) => addrKey(t, 'address_line1', 'postal_code');
 const MONTH_START = `(date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')`;
 
-/** K2: the address row `a` of contact `c` is a home this team's buy-side client bought (aliases are SQL names). */
-export const avmQualifies = (c: string, a: string) =>
-  sql.raw(`(
-    NOT EXISTS (SELECT 1 FROM deals sd
-                  JOIN deal_contacts sdc ON sdc.tenant_id = sd.tenant_id AND sdc.deal_id = sd.id AND sdc.contact_id = ${c}.id AND sdc.role IN ('seller','co_seller')
-                  JOIN listings sl ON sl.tenant_id = sd.tenant_id AND sl.id = sd.listing_id
-                 WHERE sd.tenant_id = ${c}.tenant_id AND sd.stage = 'closed' AND sd.side IN ('sell','dual') AND ${LKEY('sl')} = ${AKEY(a)})
-    AND EXISTS (SELECT 1 FROM deals bd
+/** K2: the qualifying purchase deals `bd` of contact `c` for address `a` (the FROM and WHERE of a sub-select). */
+const k2Purchases = (c: string, a: string) => `FROM deals bd
                   JOIN deal_contacts bdc ON bdc.tenant_id = bd.tenant_id AND bdc.deal_id = bd.id AND bdc.contact_id = ${c}.id AND bdc.role IN ('buyer','co_buyer')
                   LEFT JOIN listings bl ON bl.tenant_id = bd.tenant_id AND bl.id = bd.listing_id
                  WHERE bd.tenant_id = ${c}.tenant_id AND bd.stage = 'closed' AND bd.closed_at IS NOT NULL AND bd.closed_at < ${MONTH_START}
@@ -435,7 +429,23 @@ export const avmQualifies = (c: string, a: string) =>
                    AND CASE WHEN bl.id IS NOT NULL AND EXISTS (SELECT 1 FROM contact_addresses ma WHERE ma.tenant_id = ${c}.tenant_id AND ma.contact_id = ${c}.id
                                                                  AND ${AKEY('ma')} = ${LKEY('bl')})
                             THEN ${AKEY(a)} = ${LKEY('bl')}
-                            ELSE ${a}.kind = 'home' END))`);
+                            ELSE ${a}.kind = 'home' END`;
+
+/** K2: the address row `a` of contact `c` is a home this team's buy-side client bought (aliases are SQL names). */
+export const avmQualifies = (c: string, a: string) =>
+  sql.raw(`(
+    NOT EXISTS (SELECT 1 FROM deals sd
+                  JOIN deal_contacts sdc ON sdc.tenant_id = sd.tenant_id AND sdc.deal_id = sd.id AND sdc.contact_id = ${c}.id AND sdc.role IN ('seller','co_seller')
+                  JOIN listings sl ON sl.tenant_id = sd.tenant_id AND sl.id = sd.listing_id
+                 WHERE sd.tenant_id = ${c}.tenant_id AND sd.stage = 'closed' AND sd.side IN ('sell','dual') AND ${LKEY('sl')} = ${AKEY(a)})
+    AND EXISTS (SELECT 1 ${k2Purchases(c, a)}))`);
+
+/**
+ * K2 (D10 E582, b11 reconciliation homeowner-3): the latest `closed_at` of the purchases that make address `a` K2's for
+ * contact `c`, under the caller's RLS (so only deals the viewer can see), or NULL. Meaningful only where
+ * avmQualifies(c, a) holds; the homeowner panel counts years owned from it when the county gives no transfer date.
+ */
+export const avmPurchaseClosedAt = (c: string, a: string) => sql.raw(`(SELECT max(bd.closed_at) ${k2Purchases(c, a)})`);
 
 /**
  * K2, ownership-data/F4: an ok or unavailable answer, or an avm firing, already exists this UTC month for the same

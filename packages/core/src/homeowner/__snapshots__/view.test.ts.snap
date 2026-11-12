@@ -116,6 +116,7 @@ exports[`homeownerView (R-HOME-8) > R-HOME-4: no score, confidence, percentage, 
       ],
       "yearsOwned": {
         "asOf": null,
+        "basis": "county_transfer",
         "since": "2015-06-01",
         "source": "Beaufort County GIS parcel layer",
         "years": 11,

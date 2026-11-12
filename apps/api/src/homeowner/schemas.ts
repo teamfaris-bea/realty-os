@@ -35,7 +35,7 @@ const Home = z.strictObject({
   outcome: z.enum(['matched', 'not_matched', 'not_available', 'ambiguous', 'failed', 'pending', 'links_only', 'outside_area']),
   matchDetail: z.enum(['address_mismatch', 'owner_name_mismatch', 'missing_data']).nullable(),
   rows: z.array(Row).max(20),
-  yearsOwned: z.strictObject({ years: z.number().int().nonnegative(), since: Day, source: z.string().max(80), asOf: Day.nullable() }).nullable(),
+  yearsOwned: z.strictObject({ years: z.number().int().nonnegative(), since: Day, basis: z.enum(['county_transfer', 'team_closing']), source: z.string().max(80), asOf: Day.nullable() }).nullable(),
   mailingDiffers: z.boolean().nullable(),
   lookupLinks: z.array(Link).max(4),
   loansLink: Link.nullable(),

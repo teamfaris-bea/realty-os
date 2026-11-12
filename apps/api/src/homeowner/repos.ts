@@ -4,7 +4,7 @@
 // for the in-memory attach decision only: never written, hashed or logged.
 import type { Tx } from '@realty/db';
 import { sql, type RawBuilder } from 'kysely';
-import { avmQualifies } from '../nurture/repos.js';
+import { avmPurchaseClosedAt, avmQualifies } from '../nurture/repos.js';
 
 /**
  * Recognition (R-HOME-1) of contact alias `c`: seller intent, a sell or value inquiry, a homeowner tag (never a
@@ -277,6 +277,8 @@ export interface ViewHomeRow {
   last_failure_on: string | null;
   last_failure_code: string | null;
   next_check_on: string | null;
+  /** E582: the latest closing (team's date) of the team's purchase of this home (K2) that the viewer can see */
+  team_closed_on: string | null;
 }
 
 /** The contact's home and property addresses and every address with a visible profile (the profile's own RLS). */
@@ -286,8 +288,10 @@ export async function viewHomes(tx: Tx, contactId: string, tz: string): Promise<
            p.id AS profile_id, p.status, p.match_detail, p.source, p.recognized_by,
            (p.checked_at AT TIME ZONE ${tz})::date::text AS checked_on,
            (p.last_failure_at AT TIME ZONE ${tz})::date::text AS last_failure_on, p.last_failure_code,
-           (p.next_refresh_at AT TIME ZONE ${tz})::date::text AS next_check_on
+           (p.next_refresh_at AT TIME ZONE ${tz})::date::text AS next_check_on,
+           CASE WHEN ${avmQualifies('c', 'a')} THEN (${avmPurchaseClosedAt('c', 'a')} AT TIME ZONE ${tz})::date::text END AS team_closed_on
       FROM contact_addresses a
+      JOIN contacts c ON c.tenant_id = a.tenant_id AND c.id = a.contact_id
       LEFT JOIN homeowner_profiles p ON p.tenant_id = a.tenant_id AND p.contact_address_id = a.id
      WHERE a.tenant_id = app.tenant_id() AND a.contact_id = ${contactId}::uuid
        AND (p.id IS NOT NULL OR (a.kind IN ('home','property') AND a.line1 IS NOT NULL AND a.city IS NOT NULL AND a.region IS NOT NULL AND a.postal_code IS NOT NULL))

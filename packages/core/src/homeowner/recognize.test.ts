@@ -3,7 +3,7 @@ import { attachPropertyRecord } from '../predict/index.js';
 import { canonicalRegion, connectorCountyOf, connectorZips, countyOf, isSouthCarolina } from './counties.js';
 import { isEntityOwner, personOwnerNames } from './owners.js';
 import { reasonsFrom, subjectsFor, type CandidateAddress } from './recognize.js';
-import { yearsOwned } from './years.js';
+import { TEAM_CLOSING_SOURCE, yearsOwned } from './years.js';
 
 const addr = (id: string, kind: CandidateAddress['kind'], createdAt: string, complete = true): CandidateAddress => ({
   id, kind, line1: complete ? `${id} Sample Way` : null, line2: null, city: 'Exampleton', region: 'SC', postalCode: '29902', createdAt,
@@ -86,12 +86,22 @@ describe('the entity-owner filter (R-HOME-3)', () => {
 describe('years owned', () => {
   const t = (value: string) => ({ value, source: 'Beaufort County GIS parcel layer', asOf: null });
   it('E582: whole years by floor(days / 365.25), naming its date and source', () => {
-    expect(yearsOwned(t('2015-06-01'), '2026-11-12')).toEqual({ years: 11, since: '2015-06-01', source: 'Beaufort County GIS parcel layer', asOf: null });
+    expect(yearsOwned(t('2015-06-01'), '2026-11-12')).toEqual({ years: 11, since: '2015-06-01', basis: 'county_transfer', source: 'Beaufort County GIS parcel layer', asOf: null });
     expect(yearsOwned(t('2026-11-12'), '2026-11-12')?.years).toBe(0);
   });
   it('E582: leap days: a 2020-02-29 transfer is 4 years on 2024-02-29 and 3 the day before', () => {
     expect(yearsOwned(t('2020-02-29'), '2024-02-29')?.years).toBe(4);
     expect(yearsOwned(t('2020-02-29'), '2024-02-28')?.years).toBe(3);
+  });
+  it('R-HOME-4 E582: with no county transfer date, the team closing the caller passes counts instead and is named as the source', () => {
+    expect(yearsOwned(null, '2026-11-12', '2021-03-15')).toEqual({ years: 5, since: '2021-03-15', basis: 'team_closing', source: TEAM_CLOSING_SOURCE, asOf: null });
+    expect(yearsOwned(undefined, '2026-11-12', '2021-03-15')?.basis).toBe('team_closing');
+    // the county's date wins whenever there is one
+    expect(yearsOwned(t('2015-06-01'), '2026-11-12', '2021-03-15')).toMatchObject({ years: 11, since: '2015-06-01', basis: 'county_transfer' });
+    // the same bounds: a future closing or a malformed one gives null
+    expect(yearsOwned(null, '2026-11-12', '2026-12-01')).toBeNull();
+    expect(yearsOwned(null, '2026-11-12', 'not a date')).toBeNull();
+    expect(yearsOwned(null, '2026-11-12', null)).toBeNull();
   });
   it('E582: a future date, more than 150 years back, or no date gives null', () => {
     expect(yearsOwned(t('2026-11-13'), '2026-11-12')).toBeNull();

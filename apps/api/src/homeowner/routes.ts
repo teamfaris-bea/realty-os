@@ -63,6 +63,7 @@ async function register(app: FastifyInstance): Promise<void> {
         const viewHomes: ViewHome[] = homes.map((h) => ({
           address: { line1: h.line1 ?? '', line2: h.line2, city: h.city ?? '', region: h.region ?? '', postalCode: h.postal_code ?? '' },
           kind: h.kind,
+          teamClosingOn: h.team_closed_on,
           profile: h.profile_id === null ? null : {
             status: h.status as never,
             matchDetail: h.match_detail as never,
