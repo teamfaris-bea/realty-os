@@ -47,7 +47,7 @@ export function makeMlsHandlers(depsFor: DepsFor = defaultDeps): JobHandler<unkn
     periodicPayload: {},
     async run(ctx) {
       const r = await complianceSweepInTx(ctx.tx, ctx.actor, ctx.now);
-      if (r.degraded.length + r.canceledAlerts + r.mirrorsLinked > 0) ctx.log.info('mls.compliance_sweep', { jobId: ctx.job.id.toString(), degraded: r.degraded.length, canceledAlerts: r.canceledAlerts, mirrorsLinked: r.mirrorsLinked });
+      if (r.degraded.length + r.canceledAlerts + r.mirrorsLinked + r.canceledHomeValueNotes > 0) ctx.log.info('mls.compliance_sweep', { jobId: ctx.job.id.toString(), degraded: r.degraded.length, canceledAlerts: r.canceledAlerts, mirrorsLinked: r.mirrorsLinked, canceledHomeValueNotes: r.canceledHomeValueNotes });
     },
   };
   return [sync, sweep] as unknown as JobHandler<unknown>[];

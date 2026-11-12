@@ -204,7 +204,7 @@ describe('mls.compliance_sweep and the handlers (R-OWN-27)', () => {
     const other = await h.signup();
     const oid = other.tenantId as TenantId;
     const r = await withTenantTx(systemActor(oid, 'worker'), (tx, now) => complianceSweepInTx(tx, systemActor(oid, 'worker'), now), { db: h.database });
-    expect(r).toEqual({ degraded: [], canceledAlerts: 0, mirrorsLinked: 0 });
+    expect(r).toEqual({ degraded: [], canceledAlerts: 0, mirrorsLinked: 0, canceledHomeValueNotes: 0 });
     expect((await h.su.query('SELECT status FROM integration_connections WHERE id = $1', [conn])).rows[0]).toEqual({ status: 'connected' });
   });
 });

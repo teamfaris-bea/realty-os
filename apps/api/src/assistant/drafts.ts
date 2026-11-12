@@ -33,6 +33,7 @@ import { isListingSellerUpdate, sendSellerUpdate } from '../sellerUpdates/servic
 import * as A from './repos/actions.js';
 import { contactCore } from './repos/context.js';
 import { type DealDateStale, dealDateStaleness } from '../transactions/stale.js';
+import { type HomeValueDraftBlock, homeValueDraftBlock } from '../cma/avm.js';
 import type { AssistantDeps } from './types.js';
 import { type ActionView, actionViews } from './views.js';
 
@@ -114,7 +115,7 @@ export async function approveAction(actor: UserActor, actionId: string, input: A
     const r = await sendSellerUpdate(actor, actionId, { commandId: input.commandId, recommendation: input.editedPayload?.recommendation }, deps);
     return { actionId: r.actionId, status: r.status, result: r.result, messageId: r.messageId, decision: null };
   }
-  type Out = { kind: 'done'; result: ApproveResult } | { kind: 'stale'; inboundSeq: number; pinned: number | null } | { kind: 'date_stale'; st: DealDateStale } | { kind: 'invalidated' } | { kind: 'send'; plan: Planned };
+  type Out = { kind: 'done'; result: ApproveResult } | { kind: 'stale'; inboundSeq: number; pinned: number | null } | { kind: 'date_stale'; st: DealDateStale } | { kind: 'home_value'; hv: HomeValueDraftBlock } | { kind: 'invalidated' } | { kind: 'send'; plan: Planned };
   const out: Out = await asUser(deps, actor, async (tx, now) => {
     const peek = await A.actionById(tx, actionId);
     if (!peek || peek.ownerUserId !== actor.userId) throw new AppError('NOT_FOUND');
@@ -136,6 +137,12 @@ export async function approveAction(actor: UserActor, actionId: string, input: A
         if (moved) {
           await revertApproval(tx, a.id, sendId);
           return { kind: 'date_stale', st: moved };
+        }
+        // R-CMA-10 (lane V2-B): an in-house home-value draft is re-gated on resume, with the body that would be sent
+        const hvResume = a.status === 'approved' ? await homeValueDraftBlock(tx, a.id, now, mergedDraft(a, (a.editedPayload ?? undefined) as EditedPayload | undefined)?.body ?? '') : null;
+        if (hvResume) {
+          await revertApproval(tx, a.id, sendId);
+          return { kind: 'home_value', hv: hvResume };
         }
         const resume = a.status === 'approved' ? await unsentApproval(tx, a, sendId) : null;
         if (resume === 'invalidated') return { kind: 'invalidated' };
@@ -173,6 +180,9 @@ export async function approveAction(actor: UserActor, actionId: string, input: A
     const merged = SENDABLE.has(a.kind) ? mergedDraft(a, input.editedPayload) : null;
     const draft = merged && a.kind === 'seller_update_draft' ? { ...merged, body: `${merged.body}\n\n${recommendation}` } : merged;
     const edited = input.editedPayload !== undefined && draft !== null;
+    // R-CMA-10 E621 E624 (lane V2-B): an in-house home-value draft's gate and required lines, on the final body; stays proposed
+    const hv = draft !== null ? await homeValueDraftBlock(tx, a.id, now, draft.body) : null;
+    if (hv) return { kind: 'home_value', hv };
     if (draft === null || !a.contactId) {
       // nothing to send: a summary / proposal reviewed, or a handback the agent will answer themselves
       await A.setDecision(tx, a.id, { status: 'approved', decidedByUserId: actor.userId, now });
@@ -219,7 +229,13 @@ export async function approveAction(actor: UserActor, actionId: string, input: A
   if (out.kind === 'invalidated') throw new AppError('DRAFT_INVALIDATED');
   if (out.kind === 'stale') throw new AppError('DRAFT_STALE', { inboundSeq: out.inboundSeq, pinnedInboundSeq: out.pinned });
   if (out.kind === 'date_stale') throw dateStaleError(out.st);
+  if (out.kind === 'home_value') throw homeValueError(out.hv);
   return queueAndSend(actor, actionId, out.plan, deps);
+}
+
+/** R-CMA-10 (lane V2-B): DRAFT_STALE when an in-house estimate can no longer be shown, VALIDATION_FAILED when its lines were edited away. */
+function homeValueError(hv: HomeValueDraftBlock): AppError {
+  return hv.reason === 'HOME_VALUE_LINES_REQUIRED' ? new AppError('VALIDATION_FAILED', { reason: hv.reason, sentence: hv.sentence }) : new AppError('DRAFT_STALE', { reason: hv.reason, code: hv.code, sentence: hv.sentence });
 }
 
 /** E142: DRAFT_STALE saying the deal date moved (ids and versions only). */
@@ -257,7 +273,7 @@ async function queueAndSend(actor: UserActor, actionId: string, plan: Planned, d
   // signature above the brokerage footer (R-PAR-25), as a human one-to-one email and the composer's preview do.
   // It is their own membership row (RLS: self), read as them: the queue transaction below is the system's.
   const signature = plan.channel === 'email' ? await asUser(deps, actor, (tx) => senderSignature(tx)) : null;
-  type Q = { kind: 'stale'; inboundSeq: number } | { kind: 'date_stale'; st: DealDateStale } | { kind: 'queued'; messageId: string } | { kind: 'not_queued'; code: string };
+  type Q = { kind: 'stale'; inboundSeq: number } | { kind: 'date_stale'; st: DealDateStale } | { kind: 'home_value'; hv: HomeValueDraftBlock } | { kind: 'queued'; messageId: string } | { kind: 'not_queued'; code: string };
   const q: Q = await asSystem(deps, actor.tenantId, 'assistant', async (tx, now) => {
     await lockContact(tx, plan.contactId as ContactId);
     const conv = await conversationOf(tx, plan.contactId);
@@ -268,6 +284,12 @@ async function queueAndSend(actor: UserActor, actionId: string, plan: Planned, d
     if (dateStale) {
       await revertApproval(tx, actionId, plan.sendActionId);
       return { kind: 'date_stale', st: dateStale };
+    }
+    // R-CMA-10 (lane V2-B): the in-house estimate's gate failed between the tap and this queue transaction
+    const hv = await homeValueDraftBlock(tx, actionId, now, plan.body);
+    if (hv) {
+      await revertApproval(tx, actionId, plan.sendActionId);
+      return { kind: 'home_value', hv };
     }
     if (conv && conv.inboundSeq > plan.pinnedInboundSeq) {
       // a reply arrived between the tap and the queue: undo the approval, the agent re-reviews (R-AST-6)
@@ -305,6 +327,7 @@ async function queueAndSend(actor: UserActor, actionId: string, plan: Planned, d
   });
   if (q.kind === 'stale') throw new AppError('DRAFT_STALE', { inboundSeq: q.inboundSeq, pinnedInboundSeq: plan.pinnedInboundSeq });
   if (q.kind === 'date_stale') throw dateStaleError(q.st);
+  if (q.kind === 'home_value') throw homeValueError(q.hv);
   if (q.kind === 'not_queued') throw new AppError(q.code === 'CONTACT_POINT_MISSING' || q.code === 'CONTACT_MERGED' ? q.code : 'SENDER_UNAVAILABLE');
   const d = await dispatchOutbound(q.messageId, deps, { tenantId: actor.tenantId });
   const status = await asUser(deps, actor, async (tx) => (await A.actionById(tx, actionId))?.status ?? 'approved');

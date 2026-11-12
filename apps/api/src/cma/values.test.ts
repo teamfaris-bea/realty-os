@@ -20,7 +20,12 @@ import { avmRefresh } from '../nurture/avm.js';
 import { executeTriggerRunInTx } from '../nurture/execute.js';
 import { type NurtureWorld, type PastClient, approveTemplate, firingsDue, nurtureWorld, pastClient, reconcileAndRun, triggerRuns, valuationsOf, withAvmCleared } from '../nurture/testing.js';
 import type { AvmProvider } from '../providers/integrations/types.js';
-import { IN_HOUSE_REF, InHouseAvm, longDate } from './avm.js';
+import { IN_HOUSE_REF, InHouseAvm, LINES_REQUIRED_SENTENCE, cancelIneligibleHomeValueNotesInTx, longDate } from './avm.js';
+import { complianceSweepInTx } from '../mls/sweep.js';
+import { FakeAvmP2 } from '../providers/integrations/fakes.js';
+import { randomUUID } from 'node:crypto';
+import type { Database } from '@realty/db';
+import type { KyselyPlugin } from 'kysely';
 
 let h: ApiHarness;
 
@@ -365,3 +370,139 @@ async function runOne(w: NurtureWorld, c: PastClient): Promise<void> {
   const [run] = await triggerRuns(h, c.id);
   await withTenantTx(systemActor(w.tenantId, 'assistant'), (tx, now) => executeTriggerRunInTx(tx, depsOf(h), w.tenantId, run!.id, now), { db: h.database });
 }
+
+// ---- after the queue (deliverable 4) -----------------------------------------------------------------------------
+
+/** The database handle with every statement's text recorded (a query spy: proves which reads a pass makes). */
+function spied(): { db: Database; statements: string[] } {
+  const statements: string[] = [];
+  const plugin: KyselyPlugin = {
+    transformQuery: (a) => {
+      statements.push(JSON.stringify(a.node));
+      return a.node;
+    },
+    transformResult: async (a) => a.result,
+  };
+  return { db: { ...h.database, kysely: h.database.kysely.withPlugin(plugin) } as Database, statements };
+}
+
+const sweep = (w: NurtureWorld, db: Database = h.database) => withTenantTx(systemActor(w.tenantId, 'worker'), (tx, now) => complianceSweepInTx(tx, systemActor(w.tenantId, 'worker'), now), { db });
+const runStatus = async (c: PastClient) => (await triggerRuns(h, c.id)).map((r) => [r.status, (r.trigger_ref as { skip?: { reason: string } }).skip?.reason ?? null]);
+const approve = (w: NurtureWorld, id: string, body: Record<string, unknown> = {}) => call<{ error?: { code: string; details?: Record<string, unknown> } }>(w.agents[0]!, 'POST', `/assistant/actions/${id}/approve`, { commandId: randomUUID(), ...body });
+const actionStatus = async (id: string) => (await h.su.query<{ status: string }>('SELECT status FROM assistant_actions WHERE id = $1', [id])).rows[0]!.status;
+
+/** The note queued by executeTriggerRun (dispatch not yet run). */
+async function queuedNote(w: NurtureWorld, c: PastClient): Promise<string> {
+  await estimate(w);
+  await firingsDue(h, c.id);
+  await runOne(w, c);
+  const [m] = await homeMail(c);
+  expect(m!.status).toBe('queued');
+  return m!.id;
+}
+
+/** A RANGE_TOO_WIDE draft of an in-house estimate (both packs cleared while it is built). */
+async function rangeDraft(w: NurtureWorld, c: PastClient): Promise<{ id: string; body: string }> {
+  await rangeLimit(w, 100);
+  await bothCleared(() => noteFor(w, c));
+  const [run] = await triggerRuns(h, c.id);
+  expect(run!.status).toBe('converted_to_draft');
+  const a = (await actionsOf(h, c.id)).find((x) => x.id === run!.assistant_action_id)!;
+  return { id: a.id, body: String(a.payload['body']) };
+}
+
+describe('lane V2-B deliverable 4: after the queue (the sweep, draft approval)', () => {
+  it('E623 R-CMA-7: one sweep pass cancels a queued in-house note once its feed goes stale and skips its runs; a second pass changes nothing; dispatched and FakeAvmP2 notes are untouched; no near-match read', async () => {
+    const w = await noteWorld();
+    const sent = await covered(w);
+    const queued = await covered(w, 0);
+    // `sent` is built and dispatched; then `queued` is built and left queued
+    await bothCleared(async () => {
+      await estimate(w);
+      await firingsDue(h, sent.id);
+      await reconcileAndRun(h, w.tenantId);
+    });
+    const qid = await bothCleared(async () => {
+      await firingsDue(h, queued.id);
+      await runOne(w, queued);
+      return (await homeMail(queued))[0]!.id;
+    });
+    // a FakeAvmP2 note, queued (its client added after the in-house pass)
+    const fakeOne = await pastClient(h, w, w.agents[0]!);
+    await withAvmCleared(h, async () => {
+      await estimate(w, new FakeAvmP2());
+      await firingsDue(h, fakeOne.id);
+      await runOne(w, fakeOne);
+    });
+    expect((await homeMail(fakeOne)).map((m) => m.status)).toEqual(['queued']);
+    expect((await homeMail(sent)).map((m) => m.status)).toEqual(['sent']);
+    await feedLastSyncedAt(mw(w), new Date(Date.now() - 3 * 86_400_000));
+    const spy = spied();
+    const r = await bothCleared(() => sweep(w, spy.db));
+    expect(r.canceledHomeValueNotes).toBe(1);
+    expect(spy.statements.some((q) => q.includes("('coming_soon','active','pending')"))).toBe(false);
+    const [m] = await homeMail(queued);
+    expect([m!.id, m!.status, m!.status_reason]).toEqual([qid, 'canceled', 'HOME_VALUE_NOT_DISPLAYABLE']);
+    expect(await runStatus(queued)).toEqual([['skipped_ineligible', 'ESTIMATE_NOT_DISPLAYABLE']]);
+    const action = (await actionsOf(h, queued.id)).find((a) => a.kind === 'autonomous_message')!;
+    expect(action.status).toBe('blocked');
+    // idempotent; the dispatched one and the FakeAvmP2 one untouched
+    expect((await bothCleared(() => sweep(w))).canceledHomeValueNotes).toBe(0);
+    expect((await homeMail(sent)).map((x) => x.status)).toEqual(['sent']);
+    expect((await homeMail(fakeOne)).map((x) => x.status)).toEqual(['queued']);
+  });
+
+  it('E623 R-CMA-7: platform:cma withdrawn after the note was queued (feed fresh) ⇒ the sweep cancels it too', async () => {
+    const w = await noteWorld();
+    const c = await covered(w);
+    const id = await bothCleared(() => queuedNote(w, c));
+    const r = await withAvmCleared(h, () => sweep(w));
+    expect(r.canceledHomeValueNotes).toBe(1);
+    expect((await homeMail(c)).map((m) => [m.id, m.status])).toEqual([[id, 'canceled']]);
+    // and the direct pass is a no-op now
+    expect(await withTenantTx(systemActor(w.tenantId, 'worker'), (tx, now) => cancelIneligibleHomeValueNotesInTx(tx, now), { db: h.database })).toEqual([]);
+  });
+
+  it('E624 R-CMA-7 R-AST-6: approving a RANGE_TOO_WIDE draft after its feed went stale ⇒ DRAFT_STALE (HOME_VALUE_NOT_DISPLAYABLE) with a sentence; it stays proposed and nothing is queued; a re-review re-tap does not clear it', async () => {
+    const w = await noteWorld();
+    const c = await covered(w);
+    const d = await rangeDraft(w, c);
+    await feedLastSyncedAt(mw(w), new Date(Date.now() - 3 * 86_400_000));
+    const r = await bothCleared(() => approve(w, d.id));
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatchObject({ code: 'DRAFT_STALE', details: { reason: 'HOME_VALUE_NOT_DISPLAYABLE', code: 'FEED_STALE', sentence: expect.any(String) } });
+    expect(await actionStatus(d.id)).toBe('proposed');
+    expect(await homeMail(c)).toEqual([]);
+    const again = await bothCleared(() => approve(w, d.id, { reviewedInboundSeq: 0 }));
+    expect(again.body.error?.code).toBe('DRAFT_STALE');
+    expect(await homeMail(c)).toEqual([]);
+  });
+
+  it('E624 R-CMA-7: a gate that fails after the tap committed and before the message was queued reverts the approval: proposed, nothing queued', async () => {
+    const w = await noteWorld();
+    const c = await covered(w);
+    const d = await rangeDraft(w, c);
+    // state after the approval committed and before the queue transaction (fixture: the decision row as the tap writes it)
+    await h.su.query("UPDATE assistant_actions SET status = 'approved', decided_by_user_id = $2, decided_at = now() WHERE id = $1", [d.id, w.agents[0]!.userId]);
+    const r = await withAvmCleared(h, () => approve(w, d.id)); // platform:cma no longer cleared
+    expect(r.body.error).toMatchObject({ code: 'DRAFT_STALE', details: { reason: 'HOME_VALUE_NOT_DISPLAYABLE', code: 'PLATFORM_NOT_CLEARED' } });
+    expect(await actionStatus(d.id)).toBe('proposed');
+    expect(await homeMail(c)).toEqual([]);
+  });
+
+  it('E621 R-AVM-1: an edit that drops the statement or changes the value ⇒ VALIDATION_FAILED (HOME_VALUE_LINES_REQUIRED); proposed, nothing queued; the unedited draft approves and is queued', async () => {
+    const w = await noteWorld();
+    const c = await covered(w);
+    const d = await rangeDraft(w, c);
+    for (const body of [d.body.replace(TEST_STATEMENT, ''), d.body.replace(/Estimated value: \$[\d,]+/, 'Estimated value: $1,000,000')]) {
+      const r = await bothCleared(() => approve(w, d.id, { editedPayload: { body } }));
+      expect(r.status).toBe(422);
+      expect(r.body.error).toMatchObject({ code: 'VALIDATION_FAILED', details: { reason: 'HOME_VALUE_LINES_REQUIRED', sentence: LINES_REQUIRED_SENTENCE } });
+      expect(await actionStatus(d.id)).toBe('proposed');
+      expect(await homeMail(c)).toEqual([]);
+    }
+    const ok = await bothCleared(() => approve(w, d.id, { editedPayload: { body: `A short note first.\n${d.body}` } }));
+    expect(ok.status).toBe(200);
+    expect((await homeMail(c)).length).toBe(1);
+  });
+});
