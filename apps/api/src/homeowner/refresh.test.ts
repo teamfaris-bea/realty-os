@@ -225,6 +225,26 @@ describe('fences and purges (R-HOME-7, R-HOME-9)', () => {
     for (const c of cs) expect((await profileOf(h, c.addressId)).profile).toBeNull();
   });
 
+  // b11 ownership-data/F6, reconciliation homeowner-2: the brief's E569 (addresses do not move with a merge)
+  it('R-HOME-9 E569: a merged-away record loses its profile; the survivor builds its own from its own subject, never from the merged-away home', async () => {
+    const records = fake();
+    const survivor = await homeowner(h, w, w.agents[0]!, records);
+    const loser = await homeowner(h, w, w.agents[0]!, records, { reason: 'seller_inquiry' });
+    await refresh(h, w.tenantId, { publicRecords: records });
+    expect((await profileOf(h, loser.addressId)).profile).toMatchObject({ status: 'matched', contact_id: loser.id });
+    await asSu(`UPDATE contacts SET merged_into_contact_id = $1 WHERE id = $2`, [survivor.id, loser.id]);
+    await h.su.query(`UPDATE homeowner_profiles SET next_refresh_at = now() - interval '1 minute' WHERE contact_address_id = $1`, [survivor.addressId]);
+    const calls = records.homeownerCalls.length;
+    const { report } = await refresh(h, w.tenantId, { publicRecords: records });
+    expect(report.purged.ineligible).toBeGreaterThanOrEqual(1);
+    expect((await profileOf(h, loser.addressId)).profile).toBeNull();
+    expect((await profileOf(h, survivor.addressId)).profile).toMatchObject({ status: 'matched', contact_id: survivor.id });
+    const loserKey = `${loser.address.line1.split(' ')[0]} sample`;
+    expect(records.homeownerCalls.slice(calls).filter((k) => k.startsWith(loserKey))).toEqual([]);
+    const own = await h.su.query<{ contact_address_id: string }>('SELECT contact_address_id FROM homeowner_profiles WHERE contact_id = $1', [survivor.id]);
+    expect(own.rows.map((r) => r.contact_address_id)).toEqual([survivor.addressId]);
+  });
+
   it('R-HOME-9 E587 E574: expired profiles are purged even when public records are not configured, and nothing is written or looked up', async () => {
     const records = fake();
     const c = await homeowner(h, w, w.agents[0]!, records);

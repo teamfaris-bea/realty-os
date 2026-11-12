@@ -240,6 +240,8 @@ export interface ViewReasonsRow {
   /** the latest closing of a qualifying purchase the viewer can see, or null (K2 not visible to them) */
   past_buyer_since: string | null;
   past_buyer: boolean;
+  /** b11 ownership-data/F6: a record the viewer can see was merged into this one (its addresses and inquiries stay on it) */
+  merged_records: boolean;
   clearance_on: string | null;
 }
 
@@ -257,6 +259,7 @@ export async function viewReasons(tx: Tx, contactId: string, keys: readonly stri
            (SELECT (max(bd.closed_at) AT TIME ZONE s.default_timezone)::date::text FROM deals bd
               JOIN deal_contacts bdc ON bdc.tenant_id = bd.tenant_id AND bdc.deal_id = bd.id AND bdc.contact_id = c.id AND bdc.role IN ('buyer','co_buyer')
              WHERE bd.tenant_id = c.tenant_id AND bd.stage = 'closed' AND bd.side IN ('buy','dual') AND bd.closed_at IS NOT NULL) AS past_buyer_since,
+           EXISTS (SELECT 1 FROM contacts mc WHERE mc.tenant_id = c.tenant_id AND mc.merged_into_contact_id = c.id) AS merged_records,
            (SELECT (j.reviewed_by_counsel_at AT TIME ZONE s.default_timezone)::date::text FROM jurisdiction_packs j
              WHERE j.key = 'platform:public_records_outreach' AND j.status = 'published') AS clearance_on
       FROM contacts c JOIN tenant_settings s ON s.tenant_id = c.tenant_id

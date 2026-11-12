@@ -47,6 +47,7 @@ export const HomeownerResponse = z.strictObject({
   recognized: z.boolean(),
   reasons: z.array(z.strictObject({ reason: Reason, since: Day.nullable() })).max(4),
   homes: z.array(Home).max(20),
+  mergedRecords: z.boolean(),
   outreach: z.strictObject({ built: z.literal(false), clearanceOn: Day.nullable() }),
 });
 export type HomeownerResponseT = z.infer<typeof HomeownerResponse>;

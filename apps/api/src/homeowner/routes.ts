@@ -78,7 +78,7 @@ async function register(app: FastifyInstance): Promise<void> {
             facts: factsOf(facts.filter((f) => f.profile_id === h.profile_id)),
           },
         }));
-        return homeownerView({ today: v.today, configured: provider.configured, test: provider.test, statusText: provider.statusText, reasons, homes: viewHomes, outreachClearanceOn: v.clearance_on });
+        return homeownerView({ today: v.today, configured: provider.configured, test: provider.test, statusText: provider.statusText, reasons, homes: viewHomes, mergedRecords: v.merged_records, outreachClearanceOn: v.clearance_on });
       }, { db: db() });
     },
   );

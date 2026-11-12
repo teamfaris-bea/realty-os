@@ -39,6 +39,11 @@ export interface ViewInput {
   /** viewer-visible reasons, with a date only where the viewer may see it (a past buyer's closing) */
   reasons: { reason: RecognitionReason; since: string | null }[];
   homes: ViewHome[];
+  /**
+   * true when records the viewer can see were merged into this one (b11 ownership-data/F6): a merge moves no
+   * addresses, inquiries or intent (0027), so the profile is built from this record's own and the panel says so
+   */
+  mergedRecords: boolean;
   /** the date counsel clearance of platform:public_records_outreach was recorded on this deployment, or null */
   outreachClearanceOn: string | null;
 }
@@ -85,6 +90,8 @@ export interface HomeownerView {
   recognized: boolean;
   reasons: { reason: RecognitionReason; since: string | null }[];
   homes: HomeView[];
+  /** records were merged into this one; their addresses, inquiries and intent stay on them (R-HOME-1, R-HOME-9; E569) */
+  mergedRecords: boolean;
   outreach: { built: false; clearanceOn: string | null };
 }
 
@@ -105,11 +112,12 @@ export function mailingDiffers(mailing: string, subject: PostalAddress): boolean
 }
 
 export function homeownerView(input: ViewInput): HomeownerView {
-  if (input.reasons.length === 0) return { recognized: false, reasons: [], homes: [], outreach: { built: false, clearanceOn: input.outreachClearanceOn } };
+  if (input.reasons.length === 0) return { recognized: false, reasons: [], homes: [], mergedRecords: input.mergedRecords, outreach: { built: false, clearanceOn: input.outreachClearanceOn } };
   return {
     recognized: true,
     reasons: input.reasons,
     homes: input.homes.map((h) => homeView(h, input)),
+    mergedRecords: input.mergedRecords,
     outreach: { built: false, clearanceOn: input.outreachClearanceOn },
   };
 }

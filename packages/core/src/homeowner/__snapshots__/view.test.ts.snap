@@ -367,6 +367,7 @@ exports[`homeownerView (R-HOME-8) > R-HOME-4: no score, confidence, percentage, 
       "yearsOwned": null,
     },
   ],
+  "mergedRecords": false,
   "outreach": {
     "built": false,
     "clearanceOn": null,

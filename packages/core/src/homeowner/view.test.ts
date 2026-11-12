@@ -27,7 +27,7 @@ const profile = (p: Partial<ViewProfile>): ViewProfile => ({
 });
 const input = (homes: ViewHome[], extra: Partial<ViewInput> = {}): ViewInput => ({
   today: '2026-11-12', configured: true, test: false, statusText: 'Public records: Beaufort County GIS connector; live lookups are on on this platform',
-  reasons: [{ reason: 'seller_intent', since: null }], homes, outreachClearanceOn: null, ...extra,
+  reasons: [{ reason: 'seller_intent', since: null }], homes, mergedRecords: false, outreachClearanceOn: null, ...extra,
 });
 const one = (h: ViewHome, extra: Partial<ViewInput> = {}) => homeownerView(input([h], extra)).homes[0]!;
 
@@ -168,6 +168,12 @@ describe('homeownerView (R-HOME-8)', () => {
     expect(o.outcome).toBe('outside_area');
     expect(o.county).toBeNull();
     expect(o.lookupLinks).toEqual([]);
+  });
+
+  it('R-HOME-1 R-HOME-9 E569: whether records were merged into this one passes through (b11 ownership-data/F6)', () => {
+    expect(homeownerView(input([], { mergedRecords: true })).mergedRecords).toBe(true);
+    expect(homeownerView(input([])).mergedRecords).toBe(false);
+    expect(homeownerView(input([], { reasons: [], mergedRecords: true }))).toMatchObject({ recognized: false, mergedRecords: true });
   });
 
   it('R-HOME-10: the outreach line is never built and carries the recorded clearance date or null', () => {

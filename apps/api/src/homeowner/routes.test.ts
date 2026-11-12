@@ -36,7 +36,7 @@ describe('GET /api/contacts/:id/homeowner (R-HOME-8)', () => {
     await addAddress(w.agents[0]!, plain.id, nextBeaufortAddress());
     const r = await get(w.agents[0]!, plain.id);
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({ recognized: false, reasons: [], homes: [], outreach: { built: false, clearanceOn: null } });
+    expect(r.body).toEqual({ recognized: false, reasons: [], homes: [], mergedRecords: false, outreach: { built: false, clearanceOn: null } });
   });
 
   it('R-HOME-8 R-HOME-4 E561: a matched home shows each value with its source and date; the response is strict and names no owner, score or estimate', async () => {
@@ -154,6 +154,21 @@ describe('GET /api/contacts/:id/homeowner (R-HOME-8)', () => {
     await h.su.query(`UPDATE contacts SET intent = 'seller' WHERE id = $1`, [s.id]);
     const v = await get(w.agents[0]!, s.id);
     expect(v.body).toMatchObject({ recognized: true, homes: [] });
+  });
+
+  // b11 ownership-data/F6: a merge moves no addresses, inquiries or intent (0027), so a recognised duplicate's home and
+  // its sell inquiry stay on the merged-away record; the survivor's panel said nothing about it.
+  it('R-HOME-1 R-HOME-9 E569: a survivor with records merged into it says the profile uses only its own addresses, inquiries and intent', async () => {
+    const survivor = await homeowner(h, w, w.agents[0]!, records, { reason: 'homeowner_tag' });
+    const loser = await homeowner(h, w, w.agents[0]!, records, { reason: 'seller_inquiry' });
+    expect((await get(w.agents[0]!, survivor.id)).body.mergedRecords).toBe(false);
+    await h.su.query(`BEGIN; SET LOCAL session_replication_role = replica; UPDATE contacts SET merged_into_contact_id = '${survivor.id}' WHERE id = '${loser.id}'; COMMIT;`);
+    for (const viewer of [w.agents[0]!, w.owner]) {
+      const r = await get(viewer, survivor.id);
+      expect(r.body.mergedRecords).toBe(true);
+      expect(r.body.reasons.map((x) => x.reason)).toEqual(['homeowner_tag']);
+      expect(r.body.homes.map((x) => x.address.split(',')[0])).toEqual([survivor.address.line1]);
+    }
   });
 
   it('R-HOME-10: the outreach line is never built; the counsel clearance shows only once recorded', async () => {

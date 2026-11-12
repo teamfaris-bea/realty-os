@@ -26,7 +26,7 @@ const MATCHED = profile({
   },
 });
 const view = (homes: ViewInput['homes'], o: Partial<ViewInput> = {}): HomeownerView =>
-  homeownerView({ today: '2026-11-12', configured: true, test: false, statusText: 'x', reasons: [{ reason: 'seller_intent', since: null }], homes, outreachClearanceOn: null, ...o });
+  homeownerView({ today: '2026-11-12', configured: true, test: false, statusText: 'x', reasons: [{ reason: 'seller_intent', since: null }], homes, mergedRecords: false, outreachClearanceOn: null, ...o });
 
 const contact = fullContact({ firstName: 'Jane' });
 
@@ -80,6 +80,17 @@ describe('the homeowner panel (R-HOME-8)', () => {
     mount(view([{ address: BEAUFORT, kind: 'home', profile: MATCHED }], { reasons: [{ reason: 'seller_inquiry', since: '2019-04-02' }, { reason: 'homeowner_tag', since: null }] }));
     await panel();
     expect(screen.getByText('Shown because this person is asked about selling or a home value (last on Apr 2, 2019), tagged as a homeowner.')).toBeTruthy();
+  });
+
+  it('R-HOME-1 R-HOME-9 E569: a person with records merged into them says the profile uses only this record\'s own (b11 ownership-data/F6)', async () => {
+    const a = mount(view([{ address: BEAUFORT, kind: 'home', profile: MATCHED }], { mergedRecords: true }));
+    await panel();
+    expect(screen.getByText(T.MERGED_RECORDS)).toBeTruthy();
+    expect(T.MERGED_RECORDS).toBe('A record was merged into this one. Its addresses, inquiries and seller intent stay on that record, so this profile uses only this record\'s own; its tags and deals moved here.');
+    a.unmount();
+    mount(view([{ address: BEAUFORT, kind: 'home', profile: MATCHED }]));
+    await panel();
+    expect(screen.queryByText(T.MERGED_RECORDS)).toBeNull();
   });
 
   it('R-HOME-4 E582: with no county transfer date, years owned names the team closing it counts from', async () => {

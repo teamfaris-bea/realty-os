@@ -22,6 +22,8 @@ export const ADD_HOME = 'Add the home address to build the profile.';
  * but this panel does not read them yet, so they are "not shown here", never "not built".
  */
 export const D9_NOT_SHOWN = 'Not shown on this panel yet';
+/** b11 ownership-data/F6 (R-HOME-1, R-HOME-9; E569): a merge moves tags and deals, never addresses, inquiries or intent. */
+export const MERGED_RECORDS = "A record was merged into this one. Its addresses, inquiries and seller intent stay on that record, so this profile uses only this record's own; its tags and deals moved here.";
 export const TAX_MAIL_ELSEWHERE = 'Tax mail goes elsewhere';
 export const TAX_MAIL_HERE = 'Tax mail comes to this address';
 

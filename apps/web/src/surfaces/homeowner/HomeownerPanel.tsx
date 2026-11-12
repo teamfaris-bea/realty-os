@@ -131,6 +131,7 @@ export function HomeownerPanel({ contact }: { contact: ContactFullView }) {
         </h2>
         <p className="text-[14px] font-medium text-ink">{T.INTERNAL}</p>
         <p className="text-[14px] text-ink-muted">{T.reasonsText(v.reasons)}</p>
+        {v.mergedRecords ? <p className="text-[14px] text-ink-muted">{T.MERGED_RECORDS}</p> : null}
       </header>
       {v.homes.length === 0 ? <p className="text-[15px] text-ink-muted">{T.ADD_HOME}</p> : null}
       {v.homes.map((home, i) => (
