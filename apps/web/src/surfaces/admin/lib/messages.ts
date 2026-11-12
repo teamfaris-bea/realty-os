@@ -22,6 +22,8 @@ export const LEAD_ADMIN_ERROR_MESSAGES: Record<string, string> = {
   DEFAULT_TEAM_PROTECTED: "The default team can't be deleted. Make another team the default first.",
   // numbers and email (api/comms)
   NUMBER_UNAVAILABLE: 'No number is available with that area code right now. Try a nearby one.',
+  // R-TWL-1: the kill switch refused the number purchase / registration check before any request was made
+  TELEPHONY_LIVE_OFF: 'Live texting and calling are off on this deployment.',
   // exceptions (api/accountability)
   EXCEPTION_STATE_CONFLICT: 'Someone handled this just now. The list below is up to date.',
   EXCEPTION_NOT_REASSIGNABLE: 'This item has no lead attached, so there is nothing to reassign.',

@@ -1,7 +1,8 @@
 // Lead-email surface (module 22's lead-email slice): the Needs review queue of held lead emails
 // (Owner/Admin/Team Lead), next to the other Team Lead queue (Needs attention) in the Team section;
-// on a phone it is More → Needs review (2 taps). A lead source's email intake (address, sender
-// domains, new address) is shown on Lead routing (EmailIntake.tsx, Owner/Admin).
+// on a phone it is More → Needs review (2 taps). A lead source's email intake (address, portals, sender
+// domains, new address) is EmailIntake.tsx (Owner/Admin), shown on that source's page under Lead sources
+// (surfaces/lead-sources, /admin/lead-sources/:id); Lead routing only links there.
 import { lazy } from 'react';
 import type { SurfaceModule } from '../../shell/index.js';
 import { LEAD_EMAIL_ERROR_MESSAGES } from './messages.js';

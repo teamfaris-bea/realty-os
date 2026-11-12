@@ -237,3 +237,68 @@ describe('R-PERM-11 R-AUDIT-4 database: FORCE RLS, tenant policies, support read
     for (const c of ['hold_code', 'parser_kind', 'message_key_sha256', 'key_hash', 'connection_id', 'decided_at', 'status']) expect([c, classifyField(c)]).toEqual([c, 'plain']);
   });
 });
+
+// ---- R-LEM-12 E329: auto-forwarded mail, our address only in the provider's envelope (SYNTHETIC) -----------------
+
+describe('R-LEM-12 E329 auto-forwarded portal mail through the vendor formats', () => {
+  const auth = `Basic ${Buffer.from(`inbound:${'p'.repeat(24)}`).toString('base64')}`;
+  const AGENT = 'agent.sample@example.test';
+
+  it('R-LEM-12 E329: Postmark: To is the agent and our address is only the OriginalRecipient ⇒ routed; signature intact ⇒ lead; broken ⇒ DKIM_FAILED', async () => {
+    const pm = (email: string, dkim: string) => ({
+      MessageID: randomUUID(),
+      From: 'leads@zillow.com',
+      FromFull: { Email: 'leads@zillow.com' },
+      To: AGENT,
+      ToFull: [{ Email: AGENT }],
+      OriginalRecipient: addrA,
+      Subject: 'New lead',
+      TextBody: labelledBody({ name: 'Pia Postmark', email }),
+      Headers: [{ Name: 'Authentication-Results', Value: `mx.provider.test; dkim=${dkim} header.d=zillow.com` }],
+    });
+    const post = (body: unknown) => h.app.inject({ method: 'POST', url: '/api/webhooks/lead-email/postmark/inbound', headers: { 'content-type': 'application/json', authorization: auth }, payload: JSON.stringify(body) });
+    const email = leadAddress();
+    expect(outcomeOf(await post(pm(email, 'pass')))).toBe('lead_created');
+    expect(await contactsWith(h, a.tenantId, email)).toHaveLength(1);
+    expect(outcomeOf(await post(pm(leadAddress(), 'fail')))).toBe('needs_review');
+    expect((await lastRow(a)).hold_code).toBe('DKIM_FAILED');
+  });
+
+  it('R-LEM-12 E329: SendGrid: To is the agent and our address is only in the SMTP envelope ⇒ routed; signature intact ⇒ lead; broken ⇒ DKIM_FAILED', async () => {
+    const sg = async (email: string, dkim: string) => {
+      const fd = new FormData();
+      fd.set('headers', `Message-ID: <${randomUUID()}@mail.zillow.test>\r\nFrom: Zillow <leads@zillow.com>\r\nTo: ${AGENT}\r\nSubject: New lead`);
+      fd.set('from', 'Zillow <leads@zillow.com>');
+      fd.set('to', AGENT);
+      fd.set('subject', 'New lead');
+      fd.set('text', labelledBody({ name: 'Sid Sendgrid', email }));
+      fd.set('envelope', JSON.stringify({ to: [addrA], from: 'bounce@zillow.com' }));
+      fd.set('dkim', `{@zillow.com : ${dkim}}`);
+      const req = new Request('http://x.invalid', { method: 'POST', body: fd });
+      const payload = Buffer.from(await req.arrayBuffer());
+      return h.app.inject({ method: 'POST', url: '/api/webhooks/lead-email/sendgrid/inbound', headers: { 'content-type': req.headers.get('content-type')!, authorization: auth }, payload });
+    };
+    const email = leadAddress();
+    expect(outcomeOf(await sg(email, 'pass'))).toBe('lead_created');
+    expect(await contactsWith(h, a.tenantId, email)).toHaveLength(1);
+    expect(outcomeOf(await sg(leadAddress(), 'fail'))).toBe('needs_review');
+    expect((await lastRow(a)).hold_code).toBe('DKIM_FAILED');
+  });
+});
+
+describe('R-LEM-11 R-LEM-12 R-LEM-10 database: hold codes and parser kinds', () => {
+  it('R-LEM-11 R-LEM-12: the DB refuses an unknown hold_code or parser_kind, even for the superuser', async () => {
+    const insert = (holdCode: string, parserKind: string | null) =>
+      h.su.query(
+        `INSERT INTO lead_email_messages (tenant_id, id, connection_id, lead_source_id, message_key_sha256, provider_format, received_at, status, hold_code, parser_kind)
+         SELECT tenant_id, $2::uuid, connection_id, lead_source_id, decode(md5($2::text) || md5($2::text || 'x'), 'hex'), 'generic', now(), 'needs_review', $3, $4
+           FROM lead_email_messages WHERE tenant_id = $1 LIMIT 1`,
+        [a.tenantId, randomUUID(), holdCode, parserKind],
+      );
+    await expect(insert('PERSONAL_MAILBOX_X', null)).rejects.toThrow(/hold_code_check/);
+    await expect(insert('FORWARDING_CONFIRMATION', 'leadmetadata_v2')).rejects.toThrow(/parser_kind_check/);
+    const held = (await messageRows(h, a.tenantId)).find((m) => m.status === 'needs_review')!;
+    await expect(h.su.query("UPDATE lead_email_messages SET hold_code = 'NOT_A_CODE' WHERE id = $1", [held.id])).rejects.toBeTruthy();
+    expect((await h.su.query('SELECT hold_code FROM lead_email_messages WHERE id = $1', [held.id])).rows[0].hold_code).toBe(held.hold_code);
+  });
+});

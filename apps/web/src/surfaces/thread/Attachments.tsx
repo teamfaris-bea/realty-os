@@ -13,7 +13,13 @@ import { type ApiError, messageFor, useApi } from '../../shell/index.js';
 import type { TimelineItem } from '../feed/lib/types.js';
 
 export interface AttachmentsResponse {
-  messages: { messageId: string; media: { position: number; contentType: string; byteSize: number; inline: boolean; url: string }[]; skipped: { position: number; reason: string }[] }[];
+  messages: {
+    messageId: string;
+    media: { position: number; contentType: string; byteSize: number; inline: boolean; url: string }[];
+    skipped: { position: number; reason: string }[];
+    /** R-TWL-11: MMS text parts (absent from older servers) */
+    textParts?: { position: number; status: 'read' | 'pending'; text: string | null }[];
+  }[];
   voicemails: { callId: string; recordingId: string; durationS: number | null; transcriptReady: boolean }[];
 }
 
@@ -32,6 +38,8 @@ const SKIP_SENTENCE: Record<string, string> = {
   TOO_MANY: 'only the first 10 attachments of a message are kept',
   CONTENT_MISMATCH: "the file wasn't what it said it was",
   FETCH_FAILED: "it couldn't be downloaded from the carrier",
+  // R-TWL-1 (b9 ui/F7): our own kill switch refused it; the carrier did send it
+  LIVE_REQUESTS_OFF: "it wasn't downloaded: live texting and calling are off on this deployment",
 };
 
 export function skippedSentence(reason: string): string {
@@ -69,10 +77,23 @@ export function RowAttachments({ contactId, item, notSent = null }: { contactId:
   }
   const m = a.data.messages.find((x) => x.messageId === item.id);
   if (!m) return null;
-  const total = m.media.length + m.skipped.length;
+  const parts = m.textParts ?? [];
+  const total = m.media.length + m.skipped.length + parts.length;
   const frame = notSent === 'failed' ? 'rounded-2xl border border-dashed border-danger p-2' : notSent === 'held' ? 'rounded-2xl border border-dashed border-warn p-2' : 'px-1';
   return (
     <div data-not-sent={notSent ?? undefined} className={`flex flex-col gap-1 ${frame}`}>
+      {parts.map((x) =>
+        // plain text only: React escapes it; never HTML, never a link (R-TWL-11)
+        x.status === 'read' ? (
+          <p key={`t${x.position}`} className="max-w-[85%] whitespace-pre-wrap break-words text-[14px] text-ink">
+            Text in this message: {x.text}
+          </p>
+        ) : (
+          <p key={`t${x.position}`} className="text-[13px] text-ink-muted">
+            Part of this text hasn't been read yet.
+          </p>
+        ),
+      )}
       {m.media.map((x) => {
         const label = `Attachment ${x.position + 1} of ${total}, ${kindOf(x.contentType)}, ${formatBytes(x.byteSize)}`;
         return (

@@ -88,9 +88,10 @@ Exempt: provider webhooks (signature instead), and **capability URLs**. A capabi
 | Email (inbound and events) | `X-Realty-Signature: t=…,v1=HMAC-SHA256(secret, t.rawBody)` | `t` at most 5 minutes old and **at most 30 s in the future** (new) | `inbound:{eventId}`, `event:{eventId}` |
 | Amazon SES events via SNS (`/webhooks/email/ses/events`) | SNS message signature: SignatureVersion 1 (SHA1withRSA) or 2 (SHA256withRSA) over AWS's canonical string. The certificate is fetched only from `https://sns.<region>.amazonaws.com(.cn)/….pem` (no port, no credentials, no redirects), must be within its validity period, and is cached in memory. `TopicArn` must be in `SES_SNS_TOPIC_ARNS`, because AWS signs any topic's messages. A SubscriptionConfirmation is confirmed only for a listed topic and an https SNS `SubscribeURL` | the SNS `Timestamp` is at most **1 hour** old and at most 30 s in the future. SNS keeps the original timestamp on retries for up to an hour, so 5 minutes would drop real retries | `event:ses:{SNS MessageId}` (stable across SNS retries) |
 | Mailgun events (`/webhooks/email/mailgun/events`) | hex `HMAC-SHA256(MAILGUN_WEBHOOK_SIGNING_KEY, timestamp + token)`, compared in constant time | `timestamp` within ±5 minutes (`SIGNATURE_TOLERANCE_S`) | `event:mailgun:{event-data.id}`, else the signature token |
-| Lead intake `/intake/:sourceToken` | same as email, with its own secret | same | no provider event id: `(source, externalId)`, else the 10-minute inquiry fingerprint. A replay lands at most 5.5 minutes after the first receipt, so it is always `duplicate_ignored` |
+| Lead intake `/intake/:sourceToken` | same as email: the source's own secret when it has one (`lead_source_webhook_secrets`, R-LSRC-3), else the deployment `lead` secret | same | no provider event id: `(source, externalId)`, else the 10-minute inquiry fingerprint. A replay lands at most 5.5 minutes after the first receipt, so it is always `duplicate_ignored` |
+| Google Ads lead form `/webhooks/google-ads/lead-form` (module 22) | none: the source's 160-bit key in the body (`google_key`), sha256 → `app.resolve_google_lead_form` | Google signs no timestamp: replay is possible, and is deduplicated | `gads:<lead_id>` as the intake's external id (a replay is `duplicate_ignored`) and `webhook_events`; a failed key is 403 with a tenant-less row, a failed lookup 503 with none |
 
-A bad signature is checked before input validation. It gets a 403, a tenant-less rejected row, and no tenant writes. Tests: `providers/webhooks.test.ts`, `leads/intake.replay.test.ts`, `auth/hardening.test.ts`, `auth/csrf.routes.test.ts`, `providers/email/ses.test.ts`, `providers/email/mailgun.test.ts`, `providers/sesMailgunWebhooks.test.ts`.
+A delivery whose run failed, or crashed and stayed `received` past 5 minutes, is re-armed once when the provider retries (`app.rearm_webhook_event`, R-LSRC-7), so every handler behind `run()` is idempotent on a re-run (`comms/webhooks.rerun.test.ts`). A bad signature is checked before input validation. It gets a 403, a tenant-less rejected row, and no tenant writes. Tests: `providers/webhooks.test.ts`, `leads/intake.replay.test.ts`, `auth/hardening.test.ts`, `auth/csrf.routes.test.ts`, `providers/email/ses.test.ts`, `providers/email/mailgun.test.ts`, `providers/sesMailgunWebhooks.test.ts`.
 
 ### 2.6 Input and files
 
@@ -112,6 +113,7 @@ See §2.9 (import pipeline and storage); that part of the pass is in `apps/api/s
   - the `web` image's nginx: its access log writes no query string and `-` for each secret of every path in `apps/api/src/capabilityPaths.json` (the invite, chat session, unsubscribe and intake tokens and module 29's signed marketing image link; generated from the route table), and its error log writes no request (`error_log /dev/null` in the server, since nginx adds the raw request line and the upstream URI to every record about a request)
 
   Tests: `audit.test.ts` (R-TEN-7); for nginx, `apps/api/src/capabilityPaths.test.ts` and `apps/web/src/security-headers.nginx.test.ts`.
+- **Lead intake credentials (module 22):** a source's Google lead form key is envelope-encrypted and re-showable to Owner/Admin only (never to Team Leads, agents or support; never logged, audited or in an error); a source's webhook signing secret is shown once, at rotation, and stored envelope-encrypted in the system-only `lead_source_webhook_secrets`. Rejected Google deliveries are counted per IP only after the key failed to resolve (kind `google_lead_reject_ip`, 20 per 600 s per client IP, constants in `leadForms/auth.ts`; over the limit the answer stays the same 403 with its rejected row and a warning log line `GOOGLE_LEAD_KEY_REJECTS_LIMITED`, no IP and no key; a 429 would need a guard change).
 - **Config:**
   - `redactConfig` carries no secrets
   - production refuses `KEK_BASE64 == SESSION_SECRET_BASE64` and webhook secrets shared between providers
@@ -243,6 +245,11 @@ it, and the packs still ship unreviewed.
 | The dev server (Vite) runs without CSP | React refresh and CSS injection are inline in dev | none: the build and preview are covered |
 | Recovery codes are unsalted sha256 of 50 random bits | Fine against online guessing (rate limited, single-use); a stolen DB would allow offline cracking of codes | Optionally HMAC them with a server key |
 | The lead intake source token is in the URL path (so are the invite token, the website chat's session token, the unsubscribe ref and the signed marketing image link) | The `web` image's nginx writes each of them as `-` in its access log (`$log_uri`, `deploy/nginx.conf`, every path of `apps/api/src/capabilityPaths.json`) and no request to its error log; a load balancer or CDN in front keeps its own access and error logs | Strip paths under `/api/auth/invites/`, `/api/intake/`, `/api/public/chat/session/`, `/api/email/unsubscribe/` and `/api/public/marketing-assets/`, and query strings, from the edge's logs too; or move the invite token into the request body (as reset confirm does) and the intake token to a header in a future intake API version |
+| Housing-advertiser eligibility for Google lead form assets (module 22) | Google's housing ads policy may restrict lead forms (VERIFY support.google.com/adspolicy/answer/9472930) | Pilot gate: no form is pointed at a deployment until confirmed (PHASE2_3_PLAN N22) |
+| Portal parsers and the US 10,783,530 patent family (module 22) | Not in D11's cleared list; covers parsing listing-lead emails (VERIFY WITH COUNSEL) | Counsel reviews the existing, generic and leadmetadata parsers and any vendor row before it ships |
+| Recording on tracking numbers (module 22) | State all-party consent law (e.g. California) and announcement policy | Recording is unchanged (off for inbound); counsel before any tracked-number recording |
+| Google lead webhook retry semantics (module 22) | Whether Google retries 5XX/429, how often and for how long is unverified | VERIFY; a lookup failure answers 503 so a retry is possible |
+| gclid stored on the inquiry (module 22) | For a later conversion upload; whether the privacy notice covers it (VERIFY WITH COUNSEL) | Counsel before any upload |
 | Prompt injection from contact content into the assistant | Covered by §4 (lane `prompt-injection`): the model is assumed fully compromised and every server-side rule is tested against a hostile fake. What remains is listed in §4.5 | none beyond §4.5 |
 | DNS rebinding on FUB recording URLs and the FUB base URL | A public name that resolves to a private IP is not re-checked at connect time | Worker egress policy (deny private ranges) at deployment |
 | Imported FUB fields (`imported_fields`: source URL, `custom*`) are attacker-controlled | Today they render as text only | Any future link from them, or from contact emails and phones (`mailto:`/`tel:`), goes through `safeUrl` |
@@ -972,3 +979,61 @@ Trust decisions that changed (details in ARCHITECTURE §21.25):
 - **`home_valuations` is written only by the system** (RESTRICTIVE insert and update policies). Members who see the contact still read it; a valuation row drives automatic client notes under the source's name, so a person can no longer change a value, a provider or `display_allowed`.
 - **A merge keeps the stronger deal role** (definer `app.contacts_merge_roles`, replaced from 0053 with every earlier rule kept) and a planned milestone update follows the person once; nothing already sent to a merged record is sent again. D1 opt-outs are unchanged: every re-planned update still goes through `comms/dispatch.ts`, which judges the whole person.
 - **Home values are purged after 13 months** (R-DATA-6, **VERIFY WITH COUNSEL**) by the system-only definer `app.purge_home_valuations()` (owner `app_retention`, the caller's tenant only, no instant from the caller), which each `avm.refresh` pass runs first; a value a scheduled note or a draft still waiting for the agent cites is kept until that settles. `app_user` still cannot delete a valuation.
+
+## 14. Telephony safeguards (lane `telephony-safeguards`, migrations `telephony_daily_cap`, `mms_text_parts`)
+
+The team's existing Twilio account is suspended, its numbers are routed elsewhere and must not be changed, and no
+sender is verified. Everything below is proven on the deterministic fake telephony provider and on the REAL Twilio
+adapter with a fetch that fails the test if it is ever called; nothing reaches Twilio.
+
+- **Kill switch (R-TWL-1).** `TELEPHONY_LIVE_REQUESTS` (default `false` everywhere, production included; DEPLOY §5.1).
+  The check sits at the one choke point of every Twilio REST request (`TwilioHttp.request`) and again before an
+  account, SID or number is even looked at (`TwilioTelephony.creds`). It fails closed: an adapter built without the
+  option is off. A refusal is `ProviderError('not_configured', 'TELEPHONY_LIVE_OFF')`: never an opt-out (no consent
+  event), never retried (sends are `failed`, alert deliveries `suppressed`, media and text parts `LIVE_REQUESTS_OFF` since the batch 9 review, earlier rows `FETCH_FAILED`), never reconciled
+  (no `dispatch_unknown`). Tests: `providers/twilio/killswitch.test.ts`, `comms/telephony.safeguards.test.ts`.
+- **Daily cap (R-TWL-2).** `telephony_daily_usage` has FORCE RLS, the tenant policies and the `support_read_only`
+  statement trigger; members (and the system) may insert and update their own tenant's row because a human send's
+  TX1 runs as that human (R-TEN-3), and a trigger lets a day's count only grow, so no transaction can reopen a
+  budget. No SECURITY DEFINER function is added. The claim is one `INSERT … ON CONFLICT DO UPDATE … WHERE sends < cap`
+  in TX1, so concurrent sends at cap-1 let exactly one through (E380, tested with concurrent transactions).
+- **Stable webhook contract (R-TWL-3, R-TWL-4).** DEPLOY §5.2 is the public contract of the nine telephony paths.
+  `comms/webhooks.contract.test.ts` reads that table and fails if a path leaves the route table (or an undocumented
+  one appears), if a path accepts an unsigned or mis-signed request, if the signed URL is taken from the Host header
+  instead of `PUBLIC_BASE_URL`, or if a retried delivery is processed twice. A status callback without `From` is no
+  longer a 422: its tenant is only ever the one the signature guard resolved from the signing subaccount, otherwise
+  the delivery is recorded unrouted (no tenant row, `WEBHOOK_UNROUTED`); a callback can never pick its tenant.
+- **No number is re-pointed (R-TWL-5).** `providers/twilio/numberConfig.architecture.test.ts` proves by source scan
+  and by driving every adapter operation that nothing POSTs to `IncomingPhoneNumbers/{sid}` and that `SmsUrl`,
+  `VoiceUrl`, fallbacks, application SIDs and a number's `StatusCallback` are written only at purchase (blocked by
+  the kill switch while it is off).
+- **Signature redaction (R-TWL-6).** `X-Twilio-Signature` is an HMAC keyed by the account's auth token; a leaked one
+  allows replaying that exact request. `server.ts LOG_REDACT_PATHS` (one exported list) censors it on request,
+  response and bare header objects, on top of the serializers that already log no headers
+  (`comms/webhooks.redaction.test.ts`).
+- **Opt-out signals from Twilio (R-TWL-7 to R-TWL-11).** Every one only ever adds an opt-out or makes a sender less
+  ready; none lifts anything. `OptOutType=STOP` revokes once (our own revoking classification takes precedence);
+  21610 on an alert text revokes the agent's alert texts the way their own STOP does; 30032/30034 mark THAT number
+  not ready to text in the same transaction as the event (never its shared registration, b9 review sends/F1); a
+  STOP confirmation or HELP reply for a number that cannot text may go from the team main number, still only to the
+  phone that texted the keyword (ARCHITECTURE §21.28). MMS text parts are fetched only by validated SID
+  through the adapter (no URL from the webhook is fetched, no SSRF), capped at 16 KiB, decoded as strict UTF-8 (a NUL
+  or invalid byte is unreadable), applied under the address lock then the contact locks (concurrent runs apply a part
+  once), shown in the thread as plain text only, and never placed in an assistant prompt (only the text-part modules
+  and the thread view read `message_text_parts`). The one definer change is the narrow MMS keyword-reply exemption of
+  `app.messages_dispatch_guard` (ARCHITECTURE §21.27).
+
+## 15. Batch 9 interaction review: web UI and copy (migration `b9_review_ui`; placeholder 0066)
+
+- **Telephony state shown to Owner/Admin (ui/F3).** GET /numbers (`settings.numbers`) and GET /lead-sources/overview
+  (`settings.routing`) now carry `telephony`: `live`, `off` or `simulated`, derived only from TELEPHONY_PROVIDER and
+  TELEPHONY_LIVE_REQUESTS (`apps/api/src/comms/telephonyMode.ts`). It reveals deployment configuration, never a
+  credential, account SID or tenant fact, and only to roles that already manage numbers or sources. The kill switch
+  stays default off and is still enforced in the adapter; the field changes no behaviour, it only lets the UI say
+  before the tap what the adapter would refuse.
+- **Kill-switch refusals recorded as such (ui/F7).** `message_media_skipped.reason` gains `LIVE_REQUESTS_OFF`. Only
+  the CHECK widens; FORCE RLS, the tenant and `support_read_only` policies and the grants are unchanged, no row is
+  rewritten. Opt-outs (D1) are unchanged: a refused text part stays skipped (R-TWL-11), it still notifies the handler,
+  and the notice now says the part stays unread and may carry a STOP.
+- No SECURITY DEFINER function, policy or grant is added.
+

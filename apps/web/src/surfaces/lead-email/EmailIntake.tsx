@@ -1,4 +1,5 @@
-// Email intake of one lead source (Owner/Admin; shown on Lead routing under "Lead sources").
+// Email intake of one lead source (Owner/Admin). Shown on the source's page under Lead sources
+// (surfaces/lead-sources/LeadSourceDetailPage.tsx imports EmailIntake from here; this file stays the owner).
 //
 // - Off: "Turn on lead email" with the sender domains pre-filled from the server's suggestions (each a
 //   removable chip). The suggestions are guesses (VERIFY with each portal which domain really signs its
@@ -7,27 +8,42 @@
 //   trust sentence's own words: a test lead that arrives but waits in Needs review, signed by the portal's
 //   email vendor say, confirms nothing). The VERIFY marker itself is for engineers and counsel and never
 //   shows.
+// - "Which portals send to this address?": one checkbox per portal of the server's catalog. Zillow and
+//   Realtor.com start ticked (the server's pre-ticked suggestions); the others are ticked only when picked.
+//   Ticking a portal adds its domains to the chips, unticking removes them.
 // - On: the inbound address (read-only, with Copy and an announced "Copied"), the allowed sender
-//   domains (add / remove, Save), and "Get a new address", which asks first because the old address
-//   stops working at once.
+//   domains (add / remove, Save), saved domains the trust rule ignores (personal mailboxes) shown as not
+//   allowed, and "Get a new address", which asks first because the old address stops working at once.
+// Each of these also refreshes the keys the host passes in alsoRefresh (Lead sources: its overview), so no other
+// view keeps copying an address that stopped working.
 // Turning it on, saving domains and a new address are re-auth actions (🔒): useAction opens the shell's
 // password prompt on REAUTH_REQUIRED and sends the same request again. Codes are never shown: every
 // failure is a sentence (messages.ts).
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type FormEvent, useId, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Button, Card, Dialog, Notice, TextField } from '../../design/index.js';
+import { Button, Dialog, Notice, TextField } from '../../design/index.js';
 import { type ApiError, useApi } from '../../shell/index.js';
 import { formatStamp } from '../admin/lib/format.js';
 import { useAction, useAnnounce } from '../admin/lib/hooks.js';
-import type { LeadSource } from '../admin/lib/types.js';
-import { Pill, Section } from '../admin/lib/ui.js';
+import { Check, Pill } from '../admin/lib/ui.js';
 import { LEAD_EMAIL_ERROR_MESSAGES, sentenceFor } from './messages.js';
-import { INBOX_KEY, type Inbox, type InboxResponse, REVIEWS_KEY } from './types.js';
+import { INBOX_KEY, type Inbox, type InboxResponse, type PortalCatalogEntry, REVIEWS_KEY } from './types.js';
+
+/** The source an intake belongs to: its id and the name it is shown with. */
+export interface IntakeSource {
+  id: string;
+  name: string;
+}
+
+/** Other query keys an intake change refreshes (Lead sources passes its overview keys, so the list copies the live address). */
+export type RefreshKeys = readonly (readonly unknown[])[];
 
 export const MAX_DOMAINS = 10;
 export const TRUST_SENTENCE = 'Only emails DKIM-signed by an allowed domain become leads automatically; everything else waits in Needs review.';
 export const ROTATE_WARNING = 'The old address stops working at once: emails sent to it from now on are not received. Give the new address to every portal that uses the old one.';
+/** Saved sender domains the trust rule ignores (personal mailboxes, R-LEM-11). */
+export const IGNORED_SENTENCE = 'A personal mailbox domain is never an allowed sender, because anyone can send from it: emails from it wait in Needs review. Remove it from the list.';
 /** Under the sender-domain chips while any of them is one of the server's suggestions. */
 export const SUGGESTED_UNCONFIRMED = 'Suggested domains are unconfirmed until a test lead from each portal becomes a lead automatically.';
 
@@ -37,45 +53,16 @@ export function cleanDomain(raw: string): string | null {
   return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(d) ? d : null;
 }
 
-/** The "Lead sources" section of Lead routing: every source, each with its email intake. */
-export function LeadSourcesSection({ sources, loading }: { sources: LeadSource[]; loading: boolean }) {
-  return (
-    <Section title="Lead sources" description="Where new leads come from. Each source can have its own address that portals send their lead emails to.">
-      {loading ? <p className="text-[15px] text-ink-muted">Loading</p> : null}
-      {!loading && sources.length === 0 ? <p className="text-[15px] text-ink-muted">There are no lead sources yet.</p> : null}
-      <ul className="flex flex-col gap-3">
-        {sources.map((s) => (
-          <li key={s.id}>
-            <LeadSourceCard source={s} />
-          </li>
-        ))}
-      </ul>
-    </Section>
-  );
-}
-
-function LeadSourceCard({ source }: { source: LeadSource }) {
-  const hid = useId();
-  return (
-    <Card as="article" aria-labelledby={hid} className="flex flex-col gap-3">
-      <h3 id={hid} className="text-[17px] font-semibold text-ink">
-        {source.name} {!source.active ? <Pill tone="warn">Off</Pill> : null}
-      </h3>
-      {source.active ? <EmailIntake source={source} /> : <p className="text-[15px] text-ink-muted">This source is off, so it takes no leads by email.</p>}
-    </Card>
-  );
-}
-
-export function EmailIntake({ source }: { source: LeadSource }) {
+export function EmailIntake({ source, alsoRefresh = [] }: { source: IntakeSource; alsoRefresh?: RefreshKeys }) {
   const api = useApi();
   const q = useQuery<InboxResponse, ApiError>({ queryKey: INBOX_KEY(source.id), queryFn: ({ signal }) => api.get<InboxResponse>(`/lead-sources/${source.id}/lead-email`, { signal }) });
   const inbox = q.data?.inbox;
   return (
     <section aria-label={`Email intake for ${source.name}`} className="flex flex-col gap-3 border-t border-line pt-3">
       <div className="flex flex-wrap items-center gap-2">
-        <h4 className="text-[16px] font-semibold text-ink">
+        <h3 className="text-[17px] font-semibold text-ink">
           Email intake
-        </h4>
+        </h3>
         {inbox ? inbox.enabled ? <Pill tone="ok">On</Pill> : <Pill>Off</Pill> : null}
       </div>
       <p className="text-[15px] text-ink-muted">
@@ -88,15 +75,15 @@ export function EmailIntake({ source }: { source: LeadSource }) {
       {q.isPending ? <p className="text-[15px] text-ink-muted">Loading</p> : null}
       {q.isError ? <Notice tone="error">{sentenceFor(q.error)}</Notice> : null}
       {inbox && !inbox.enabled && !inbox.inboundDomainConfigured ? <Notice tone="warn">{LEAD_EMAIL_ERROR_MESSAGES.LEAD_EMAIL_NOT_CONFIGURED}</Notice> : null}
-      {inbox && !inbox.enabled && inbox.inboundDomainConfigured ? <TurnOn source={source} inbox={inbox} /> : null}
-      {inbox?.enabled ? <Enabled source={source} inbox={inbox} /> : null}
+      {inbox && !inbox.enabled && inbox.inboundDomainConfigured ? <TurnOn source={source} inbox={inbox} alsoRefresh={alsoRefresh} /> : null}
+      {inbox?.enabled ? <Enabled source={source} inbox={inbox} alsoRefresh={alsoRefresh} /> : null}
     </section>
   );
 }
 
-function useInboxAction(method: 'POST' | 'PUT', source: LeadSource) {
+function useInboxAction(method: 'POST' | 'PUT', source: IntakeSource, alsoRefresh: RefreshKeys) {
   const qc = useQueryClient();
-  const a = useAction<Record<string, unknown>, InboxResponse>(method, { invalidate: [[...INBOX_KEY(source.id)], [...REVIEWS_KEY]] });
+  const a = useAction<Record<string, unknown>, InboxResponse>(method, { invalidate: [[...INBOX_KEY(source.id)], [...REVIEWS_KEY], ...alsoRefresh.map((k) => [...k])] });
   const run = async (path: string, body?: Record<string, unknown>) => {
     const r = await a.run(path, body);
     if (r.ok) qc.setQueryData(INBOX_KEY(source.id), r.data);
@@ -105,8 +92,8 @@ function useInboxAction(method: 'POST' | 'PUT', source: LeadSource) {
   return { run, pending: a.pending, error: a.error ? sentenceFor(a.error) : null };
 }
 
-function TurnOn({ source, inbox }: { source: LeadSource; inbox: Inbox }) {
-  const enable = useInboxAction('POST', source);
+function TurnOn({ source, inbox, alsoRefresh }: { source: IntakeSource; inbox: Inbox; alsoRefresh: RefreshKeys }) {
+  const enable = useInboxAction('POST', source, alsoRefresh);
   return (
     <DomainEditor
       initial={inbox.suggestedSenderDomains.map((s) => s.domain)}
@@ -121,13 +108,13 @@ function TurnOn({ source, inbox }: { source: LeadSource; inbox: Inbox }) {
   );
 }
 
-function Enabled({ source, inbox }: { source: LeadSource; inbox: Inbox }) {
+function Enabled({ source, inbox, alsoRefresh }: { source: IntakeSource; inbox: Inbox; alsoRefresh: RefreshKeys }) {
   const field = useRef<HTMLInputElement>(null);
   const [copyStatus, announceCopy] = useAnnounce(5000);
   const [confirming, setConfirming] = useState(false);
   const [rotated, announceRotated] = useAnnounce(8000);
-  const save = useInboxAction('PUT', source);
-  const rotate = useInboxAction('POST', source);
+  const save = useInboxAction('PUT', source, alsoRefresh);
+  const rotate = useInboxAction('POST', source, alsoRefresh);
   const address = inbox.address ?? '';
   const copy = async () => {
     try {
@@ -167,6 +154,11 @@ function Enabled({ source, inbox }: { source: LeadSource; inbox: Inbox }) {
       <p role="status" aria-live="polite" className="min-h-[1px] text-[15px] text-ok">
         {copyStatus ?? rotated ?? ''}
       </p>
+      {(inbox.ignoredSenderDomains ?? []).length > 0 ? (
+        <Notice tone="warn" title={`Not allowed: ${inbox.ignoredSenderDomains.join(', ')}`}>
+          {IGNORED_SENTENCE}
+        </Notice>
+      ) : null}
       <DomainEditor
         key={inbox.allowedSenderDomains.join(' ')}
         initial={inbox.allowedSenderDomains}
@@ -226,7 +218,9 @@ function DomainEditor(p: {
   const [saved, announceSaved] = useAnnounce();
   const listId = useId();
   const noteId = useId();
-  const labelOf = (d: string) => p.inbox.suggestedSenderDomains.find((s) => s.domain === d)?.label ?? null;
+  const catalog = p.inbox.portalCatalog ?? [];
+  const labelOf = (d: string) => p.inbox.suggestedSenderDomains.find((s) => s.domain === d)?.label ?? catalog.find((c) => c.domain === d)?.label ?? null;
+  const ignored = new Set(p.inbox.ignoredSenderDomains ?? []);
   const anySuggested = domains.some((d) => labelOf(d) !== null);
   const changed = domains.join(' ') !== p.initial.join(' ');
   const full = domains.length >= MAX_DOMAINS;
@@ -247,6 +241,7 @@ function DomainEditor(p: {
   };
   return (
     <div className="flex flex-col gap-3">
+      {catalog.length > 0 ? <PortalPicker catalog={catalog} domains={domains} onChange={setDomains} /> : null}
       <div className="flex flex-col gap-1.5">
         <p id={listId} className="text-[15px] font-medium text-ink">
           Allowed sender domains
@@ -260,6 +255,7 @@ function DomainEditor(p: {
                 <span className="min-w-0 break-words py-1">
                   <span className="font-medium">{d}</span>
                   {label ? <span className="text-ink-muted"> · {label} · suggested</span> : null}
+                  {ignored.has(d) ? <span className="text-ink-muted"> · not allowed</span> : null}
                 </span>
                 <button
                   type="button"
@@ -307,5 +303,36 @@ function DomainEditor(p: {
         </Button>
       </div>
     </div>
+  );
+}
+
+/** "Which portals send to this address?": one checkbox per portal; ticked when all its domains are on the list. */
+function PortalPicker({ catalog, domains, onChange }: { catalog: PortalCatalogEntry[]; domains: string[]; onChange(d: string[]): void }) {
+  const hid = useId();
+  const portals: { portal: string; label: string; domains: string[] }[] = [];
+  for (const c of catalog) {
+    const row = portals.find((r) => r.portal === c.portal);
+    if (row) row.domains.push(c.domain);
+    else portals.push({ portal: c.portal, label: c.label, domains: [c.domain] });
+  }
+  return (
+    <fieldset aria-labelledby={hid} className="flex flex-col">
+      <legend id={hid} className="text-[15px] font-medium text-ink">
+        Which portals send to this address?
+      </legend>
+      <div className="grid grid-cols-1 sm:grid-cols-2">
+        {portals.map((p) => {
+          const on = p.domains.every((d) => domains.includes(d));
+          return (
+            <Check
+              key={p.portal}
+              label={p.label}
+              checked={on}
+              onChange={(v) => onChange(v ? [...domains, ...p.domains.filter((d) => !domains.includes(d))].slice(0, MAX_DOMAINS) : domains.filter((d) => !p.domains.includes(d)))}
+            />
+          );
+        })}
+      </div>
+    </fieldset>
   );
 }

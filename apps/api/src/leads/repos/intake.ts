@@ -138,9 +138,9 @@ export async function insertInquiry(tx: Tx, i: InquiryInsert): Promise<void> {
 }
 
 /** The card narrative a pond / offer viewer sees (R-PERM-6): structured, PII-free facts only. */
-export async function setPondSummary(tx: Tx, contactId: string, summary: string | null): Promise<void> {
+export async function setPondSummary(tx: Tx, contactId: string, summary: string | null, o: { onlyIfEmpty?: boolean } = {}): Promise<void> {
   await sql`UPDATE contacts SET pond_summary = ${summary} WHERE tenant_id = app.tenant_id() AND id = ${contactId}::uuid
-              AND pond_summary IS DISTINCT FROM ${summary}`.execute(tx);
+              AND pond_summary IS DISTINCT FROM ${summary} AND (${o.onlyIfEmpty === true} = false OR pond_summary IS NULL OR pond_summary = '')`.execute(tx);
 }
 
 export interface ContactStateRow {
