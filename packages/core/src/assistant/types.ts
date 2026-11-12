@@ -122,6 +122,15 @@ export const AI_PURPOSES: readonly AiPurpose[] = [
 ];
 
 /**
+ * D12 (proposed, docs/AI_ISA.md §8.1): the AI ISA's `ai_runs.purpose` values. Their prompts are built by core/isa
+ * (`buildIsaPrompt`), never by `buildPrompt`, so they are not `AiPurpose` members.
+ */
+export type AiIsaPurpose = 'ai_isa_turn' | 'ai_isa_summary';
+export const AI_ISA_PURPOSES: readonly AiIsaPurpose[] = ['ai_isa_turn', 'ai_isa_summary'];
+/** Every `ai_runs.purpose` value. */
+export type AiRunPurpose = AiPurpose | AiIsaPurpose;
+
+/**
  * Tenant and sender identity the assistant speaks for (tenant_settings + the playbook scope).
  * `teamName` is tenant_settings.team_name, or the tenant name when that is null.
  */

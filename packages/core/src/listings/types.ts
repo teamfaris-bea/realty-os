@@ -409,6 +409,11 @@ export interface CompetingRule {
   readonly priceBandPct: number | null;
   /** Beds within ±n of the subject's. Null: any. A subject without beds then matches nothing. */
   readonly bedsDelta: number | null;
+  /**
+   * D12 (proposed, docs/AI_ISA.md §6.3; optional, additive): living area within ±pct of the subject's (0–100).
+   * Absent or null: any size. A subject without a size then matches nothing.
+   */
+  readonly sqftBandPct?: number | null;
   /** Require the subject's property type. */
   readonly samePropertyType: boolean;
   /** Statuses that compete. */
@@ -421,7 +426,7 @@ export interface CompetingRule {
   readonly mlsFeedStale: boolean;
 }
 
-export type CompetingCriterion = 'area' | 'price_band' | 'beds' | 'property_type' | 'status';
+export type CompetingCriterion = 'area' | 'price_band' | 'beds' | 'sqft_band' | 'property_type' | 'status';
 
 /** Why a listing is in the competing set: one entry per (listing, criterion it met). */
 export interface CriterionMatch {

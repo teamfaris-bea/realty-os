@@ -74,7 +74,11 @@ function exactKeyword(body: readonly string[], list: readonly string[]): string 
 // ---- language -----------------------------------------------------------------------------------
 
 const VERB = String.raw`(?:texting|texts?|txt|messaging|messages?|msgs?|calling|calls?|contacting|emailing|e-?mails?|sending|bothering)`;
-const NEGATOR_BEFORE = /(?:\bdon'?t|\bdo not|\bnever|\bwon'?t|\bnot)\s+(?:please\s+|just\s+|ever\s+|the\s+)?$/;
+/**
+ * A negation right before a phrase ("don't", "do not", "never", "won't", "not", optionally then "please", "just", "ever",
+ * "the"). Exported for core/isa's negation window (D12, docs/AI_ISA.md §4.3); test it on the text BEFORE a match.
+ */
+export const NEGATOR_BEFORE = /(?:\bdon'?t|\bdo not|\bnever|\bwon'?t|\bnot)\s+(?:please\s+|just\s+|ever\s+|the\s+)?$/;
 
 interface LanguagePattern {
   re: RegExp;

@@ -107,7 +107,7 @@ const URL_G = /\bhttps?:\/\/\S+|\bwww\.\S+/gi;
  */
 const LT = String.raw`(?:<|\uFF1C|\uFE64|\u2039|\u3008|\u27E8|\u2329|&lt;?|&#0*60;?|&#x0*3c;?|\\u003c|\\x3c|%3c)`;
 const SLASH = String.raw`(?:\/|\uFF0F|\u2044|\u2215|&#0*47;?|&#x0*2f;?|%2f)?`;
-const TAG_G = new RegExp(String.raw`${LT}\s*${SLASH}\s*(?:untrusted|(?:request|system|instructions?|assistant|user|human)(?![\p{L}\d]))[^>\n\uFF1E]*(?:>|\uFF1E|&gt;?)?`, 'giu');
+export const TAG_G = new RegExp(String.raw`${LT}\s*${SLASH}\s*(?:untrusted|(?:request|system|instructions?|assistant|user|human)(?![\p{L}\d]))[^>\n\uFF1E]*(?:>|\uFF1E|&gt;?)?`, 'giu');
 const CONTROL_G = /[\p{Cc}\p{Cf}\u2028\u2029]+/gu;
 /** Format characters (zero-width, bidi controls, soft hyphen …) and line separators other than \n. */
 const FORMAT_G = /[\p{Cf}\u{2028}\u{2029}\u{85}\v\f\r]+/gu;
@@ -131,7 +131,7 @@ function noIds(s: string): string {
  * format characters, no look-alike tags, bounded length. It cannot start a line of its own, so it
  * cannot pose as a SYSTEM/ASSISTANT turn.
  */
-function oneLine(s: string, max = 120): string {
+export function oneLine(s: string, max = 120): string {
   return noIds(s).replace(FORMAT_G, '').replace(CONTROL_G, ' ').replace(TAG_G, '[tag removed]').replace(/\s+/g, ' ').trim().slice(0, max);
 }
 
@@ -199,8 +199,16 @@ export function systemPromptFor(purpose: AiPurpose): string {
   ].join('\n');
 }
 
+/**
+ * The 12-hex nonce of an untrusted-block tag: a hash of everything the prompt is built from, so an attacker who
+ * writes inside a block cannot know the closing tag. Exported for core/isa (D12, docs/AI_ISA.md §7.1).
+ */
+export function promptNonce(material: Record<string, unknown>): string {
+  return sha256Hex(canonicalJson(material as never)).slice(0, 12);
+}
+
 function nonceFor(bundle: ContactBundle, purpose: AiPurpose, identity: IdentityFacts): string {
-  return sha256Hex(canonicalJson({ purpose, identity, bundle: bundle as unknown as Record<string, unknown> })).slice(0, 12);
+  return promptNonce({ purpose, identity, bundle: bundle as unknown as Record<string, unknown> });
 }
 
 function money(cents: number | null): string {

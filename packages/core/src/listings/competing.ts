@@ -125,6 +125,16 @@ export function competingSet(subject: ListingFacts, candidates: readonly Listing
       why.push({ criterion: 'beds', detail: `${c.beds} beds (subject ${subject.beds}, ±${rule.bedsDelta})` });
     }
 
+    const sqftPct = rule.sqftBandPct ?? null;
+    if (sqftPct !== null) {
+      const s = subject.sqft;
+      const q = c.sqft;
+      if (s === null || q === null) continue;
+      // integer comparison: |q - s| ≤ s × pct / 100
+      if (Math.abs(q - s) * 100 > s * sqftPct) continue;
+      why.push({ criterion: 'sqft_band', detail: `${q} sq ft is within ±${sqftPct} % of ${s} sq ft` });
+    }
+
     if (rule.samePropertyType) {
       if (subject.propertyType === null || c.propertyType !== subject.propertyType) continue;
       why.push({ criterion: 'property_type', detail: `Same property type (${c.propertyType})` });

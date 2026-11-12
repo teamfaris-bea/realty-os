@@ -76,16 +76,25 @@ export const VoiceContentSchema: z.ZodType<VoiceContent> = VoiceContentInner;
 export type PlaybookContent =
   | { kind: 'steps'; steps: PlaybookStep[] }
   | { kind: 'triggers'; triggers: TriggerStep[]; digestWindowMinutes: number }
-  | { kind: 'voice'; voice: VoiceContent };
+  | { kind: 'voice'; voice: VoiceContent }
+  /**
+   * D12 (proposed, docs/AI_ISA.md §3.2): the one `AiIsaContent` of a team `ai_isa` policy. Its strict schema and
+   * the pack-ceiling validation are core/isa's (`validateAiIsaContent`), which this module cannot import (cycle);
+   * `validatePlaybookContent` refuses it for every other playbook kind (CONTENT_KIND_MISMATCH).
+   */
+  | { kind: 'ai_isa'; aiIsa: unknown };
 
 const ContentInner = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('steps'), steps: z.array(z.unknown()) }),
   z.strictObject({ kind: z.literal('triggers'), triggers: z.array(z.unknown()).min(1).max(20), digestWindowMinutes: z.number().int().min(0).max(1440) }),
   z.strictObject({ kind: z.literal('voice'), voice: z.unknown() }),
+  z.strictObject({ kind: z.literal('ai_isa'), aiIsa: z.unknown() }),
 ]);
 
 /** The content stored in `playbook_versions.steps`: an array is a step playbook (Phase 1). */
-export function storedContent(json: unknown): { kind: 'steps'; steps: unknown[] } | { kind: 'triggers'; triggers: unknown[]; digestWindowMinutes: number } | { kind: 'voice'; voice: unknown } | null {
+export function storedContent(
+  json: unknown,
+): { kind: 'steps'; steps: unknown[] } | { kind: 'triggers'; triggers: unknown[]; digestWindowMinutes: number } | { kind: 'voice'; voice: unknown } | { kind: 'ai_isa'; aiIsa: unknown } | null {
   if (Array.isArray(json)) return { kind: 'steps', steps: json };
   const r = ContentInner.safeParse(json);
   return r.success ? r.data : null;
@@ -133,6 +142,8 @@ export function validatePlaybookContent(raw: unknown, opts: { kind: PlaybookKind
   if (c === null) return [{ index: -1, code: 'SCHEMA', detail: 'content' }];
   if (c.kind !== EXPECTED[opts.kind]) return [{ index: -1, code: 'CONTENT_KIND_MISMATCH', detail: `${opts.kind}/${c.kind}` }];
   const base = { kind: opts.kind, ...(opts.identity !== undefined ? { identity: opts.identity } : {}), ...(opts.fairHousing !== undefined ? { fairHousing: opts.fairHousing } : {}) };
+  // no playbook kind expects ai_isa content yet (ISA-2 adds the kind with its migration): always refused above
+  if (c.kind === 'ai_isa') return [{ index: -1, code: 'CONTENT_KIND_MISMATCH', detail: `${opts.kind}/ai_isa` }];
   if (c.kind === 'steps') return validatePlaybook(c.steps, base);
   if (c.kind === 'voice') {
     const v = VoiceContentInner.safeParse(c.voice);
