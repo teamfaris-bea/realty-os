@@ -56,6 +56,7 @@ import { asSystem, senderActor } from './runtime.js';
 import { routeOfAddress } from '../channels/repos/webchat.js';
 import { rfcMessageIdSha256 } from '../channels/rfcMessageId.js';
 import { LEDGER_SYSTEM, SYSTEM_NOTICE, type CommsDeps, type DispatchResult, type OutboundIntent } from './types.js';
+import { SENDER_NOT_VERIFIED, TELEPHONY_LIVE_OFF, claimTelephonySend, countsTowardDailyCap, isSenderNotVerified, markSenderNotVerified } from './telephonySafeguards.js';
 
 export interface DispatchOptions {
   /** the message's tenant (from the session, a job row or a webhook resolver; R-TEN-3) */
@@ -233,7 +234,13 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
     connection: chatConnection,
   };
   const evaluated = await evaluateGate(tx, intent, now);
-  const verdict = verdictOf(evaluated.decision, extra);
+  let verdict = verdictOf(evaluated.decision, extra);
+  // R-TWL-2: an allowed text through the real adapter claims a unit of today's cap in THIS transaction (a rollback
+  // returns it); the platform's STOP confirmation / HELP reply is exempt (E381). Over the cap ⇒ a recorded deny.
+  if (verdict.outcome === 'allow' && channel === 'sms' && c.deps.telephonyDailyCap === true && countsTowardDailyCap(m.actionCategory) && !(await claimTelephonySend(tx))) {
+    extra.push('DAILY_SEND_CAP_REACHED');
+    verdict = verdictOf(evaluated.decision, extra);
+  }
 
   if (verdict.outcome === 'deny') {
     const blocked = await insertBlockedDecision(tx, { ids: c.deps.ids, intent, evaluated, verdict, actorUserId, messageId: m.id, now, extraDeny: extra });
@@ -410,10 +417,14 @@ async function sendAndRecord(plan: SendPlan, decision: StoredDecision, deps: Com
       return { kind: 'dispatch_unknown', messageId: m.id, decision: view } satisfies DispatchResult;
     }
     const optedOut = out.code !== null && PROVIDER_OPT_OUT_CODES.has(out.code);
-    const reason = optedOut ? 'PROVIDER_OPTED_OUT' : out.kind === 'not_configured' ? (out.code ?? 'PROVIDER_NOT_CONFIGURED') : `PROVIDER_${out.kind.toUpperCase()}`;
+    // R-TWL-1: the kill switch (TELEPHONY_LIVE_OFF, kind not_configured) is a plain failure the agent sees: never an
+    // opt-out, never retried, never reconciled. R-TWL-9: an unverified sender (30032 / 30034) is SENDER_NOT_VERIFIED.
+    const unverified = plan.channel === 'sms' && isSenderNotVerified(out.code);
+    const reason = optedOut ? 'PROVIDER_OPTED_OUT' : unverified ? SENDER_NOT_VERIFIED : out.code === TELEPHONY_LIVE_OFF ? TELEPHONY_LIVE_OFF : out.kind === 'not_configured' ? (out.code ?? 'PROVIDER_NOT_CONFIGURED') : `PROVIDER_${out.kind.toUpperCase()}`;
     await msgs.markFailed(tx, m.id, reason, out.code);
     if (m.playbookStepRunId) await auto.updateStepRun(tx, m.playbookStepRunId, { status: 'failed', decisionId: null, messageId: m.id });
     if (optedOut) await recordProviderOptOut(tx, deps, tenantId, m, now);
+    if (unverified) await markSenderNotVerified(tx, systemActor(tenantId, 'provider'), deps, m.phoneNumberId, out.code!, m.id, now);
     return { kind: 'failed', messageId: m.id, decision: view, reason } satisfies DispatchResult;
   });
 }
@@ -540,9 +551,12 @@ export async function dispatchAgentAlertSms(deliveryId: string, deps: CommsDeps,
       body,
     };
     const evaluated = await evaluateGate(tx, intent, now);
-    const verdict = verdictOf(evaluated.decision);
+    let verdict = verdictOf(evaluated.decision);
+    // R-TWL-2: an alert text through the real adapter counts toward the tenant's daily cap like any other text
+    const capDeny: DispatchDenyReason[] = verdict.outcome === 'allow' && deps.telephonyDailyCap === true && !(await claimTelephonySend(tx)) ? ['DAILY_SEND_CAP_REACHED'] : [];
+    if (capDeny.length > 0) verdict = verdictOf(evaluated.decision, capDeny);
     if (verdict.outcome === 'deny') {
-      const dec = await insertBlockedDecision(tx, { ids: deps.ids, intent, evaluated, verdict, actorUserId: null, now });
+      const dec = await insertBlockedDecision(tx, { ids: deps.ids, intent, evaluated, verdict, actorUserId: null, now, extraDeny: capDeny });
       await setDelivery(tx, deliveryId, 'suppressed', dec.id, dec.reasons[0] ?? 'DENIED');
       return { kind: 'done', result: { kind: 'suppressed', decisionId: dec.id, reasons: dec.reasons } };
     }
@@ -558,10 +572,16 @@ export async function dispatchAgentAlertSms(deliveryId: string, deps: CommsDeps,
     const r = await deps.providers.telephony.sendSms({ account, from: plan.from, to: plan.to, body: plan.body, idempotencyKey: deliveryId });
     result = { kind: 'sent', providerRef: r.providerRef };
   } catch (e) {
-    result = { kind: 'failed', reason: e instanceof ProviderError ? `PROVIDER_${e.kind.toUpperCase()}` : 'PROVIDER_ERROR' };
+    // R-TWL-1: the kill switch ends the delivery as suppressed TELEPHONY_LIVE_OFF: the delivery job retries a FAILED
+    // delivery, and a refused request must never be retried (or read as an opt-out)
+    if (e instanceof ProviderError && e.providerCode === TELEPHONY_LIVE_OFF) result = { kind: 'suppressed', decisionId: null, reasons: [TELEPHONY_LIVE_OFF] };
+    else result = { kind: 'failed', reason: e instanceof ProviderError ? `PROVIDER_${e.kind.toUpperCase()}` : 'PROVIDER_ERROR' };
   }
+  const final = result;
   await asSystem(deps, tenantId, 'provider', (tx) =>
-    result.kind === 'sent' ? setDelivery(tx, deliveryId, 'sent', null, null, result.providerRef) : setDelivery(tx, deliveryId, 'failed', null, result.kind === 'failed' ? result.reason : null),
+    final.kind === 'sent' ? setDelivery(tx, deliveryId, 'sent', null, null, final.providerRef)
+      : final.kind === 'suppressed' ? setDelivery(tx, deliveryId, 'suppressed', null, final.reasons[0] ?? null)
+      : setDelivery(tx, deliveryId, 'failed', null, final.kind === 'failed' ? final.reason : null),
   );
   return result;
 }

@@ -18,6 +18,7 @@ import { sql } from 'kysely';
 import { getObject, putObject } from '../crypto/objects.js';
 import { AppError } from '../errors.js';
 import { ProviderError } from '../providers/types.js';
+import { TELEPHONY_LIVE_OFF } from '../providers/twilio/http.js';
 import { telephonyAccount } from './repos/credentials.js';
 import { asUser } from './runtime.js';
 import type { CommsDeps } from './types.js';
@@ -150,7 +151,8 @@ export async function copyInboundMedia(actor: SystemActor, messageId: string, it
       try {
         got = await deps.providers.telephony.fetchMedia(account, { messageRef: pre.messageRef, mediaRef: it.ref });
       } catch (e) {
-        if (e instanceof ProviderError && e.kind === 'rejected') return { reason: 'FETCH_FAILED' };
+        // R-TWL-1: the kill switch refused the fetch: a refused part, never a job retry loop
+        if (e instanceof ProviderError && (e.kind === 'rejected' || e.providerCode === TELEPHONY_LIVE_OFF)) return { reason: 'FETCH_FAILED' };
         throw e; // unavailable / timeout: retried by the job
       }
       // the declared type must be allowed, and the bytes must be that type (the served type is not trusted)

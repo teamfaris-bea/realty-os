@@ -166,6 +166,7 @@ Choosing a real vendor without its credentials fails in every environment. The f
 | `TWILIO_PLATFORM_SENDER` | yes in prod | the master-account sender of account-security codes (alert-phone verification): E.164 or a Messaging Service SID `MG…` |
 | `TWILIO_NUMBER_COUNTRY` | no | `US` |
 | `TELEPHONY_WEBHOOK_SECRET` | in production with the fake (staging) | only signs the fake's callbacks. With Twilio, each subaccount's own auth token verifies its webhooks. |
+| `TELEPHONY_LIVE_REQUESTS` | no | `false` (default in every environment, production included) or `true`. The telephony kill switch (§5.1): while `false`, the Twilio adapter refuses every outbound request before making it. **It stays `false` until the written pilot approval.** |
 
 **Email** (`EMAIL_PROVIDER=smtp`)
 
@@ -265,6 +266,25 @@ Unregistered or unapproved senders are blocked by the send gate (R-CONSENT-17).
 **MMS.** Inbound media are fetched by SID with the subaccount credentials (the media URL in the webhook is never fetched). Kept: at most 10 items of at most 5 MB, of allowed types (JPEG, PNG, GIF, WebP, HEIC/HEIF, MP4, 3GPP, QuickTime, AMR, MP3, M4A, PDF, vCard) whose bytes match the type. Each item is encrypted with its own DEK and deleted at Twilio. Anything else is not stored; the conversation says which attachment was not saved, and why.
 
 **Opt-outs.** Twilio's own STOP handling stays on. A send to a recipient who texted STOP fails at Twilio with error 21610, which the app records as a provider opt-out (R-CONSENT-12), on top of its own keyword handling (D1).
+
+### 5.1 Telephony kill switch and daily cap (R-TWL-1, R-TWL-2)
+
+**The switch stays off until the written pilot approval.** `TELEPHONY_LIVE_REQUESTS` defaults to `false` in every environment, production included; only the exact value `true` turns it on, and any other value refuses start-up (the error names the key, never the value). The API's `starting api` log line (`config.telephonyLiveRequests`) and the worker's `starting worker` line (`telephonyLiveRequests`) show the value on every start, on staging and production alike.
+
+While it is `false`, the Twilio adapter (`providers/twilio/http.ts`, the one place every Twilio REST request passes) refuses each request **before it is made**, with the typed provider error `TELEPHONY_LIVE_OFF`: sends, calls, number purchase and release, message lookups (reconciliation), registration reads, media and recording fetches and deletes, subaccount creation, alert-phone verification codes and line-type lookups. No credential is put on the wire. What people see:
+
+| Path | Result while the switch is off |
+|---|---|
+| a text (any sender) | the message is `failed`, reason `TELEPHONY_LIVE_OFF`; the agent sees "Live texting and calling are off on this deployment." Never an opt-out, never retried, never reconciled. |
+| click-to-call | `{ result: 'failed', reason: 'TELEPHONY_LIVE_OFF' }`, the same sentence; nothing is dialed |
+| buy a number, release a number, "Check registration status" | `409 TELEPHONY_LIVE_OFF`, the same sentence; nothing changes |
+| an agent alert text | the delivery ends `suppressed` `TELEPHONY_LIVE_OFF` (not retried); push and email alerts are unaffected |
+| an inbound MMS attachment or text part | not fetched: recorded as not saved (`FETCH_FAILED`), with the usual honest note in the conversation |
+| inbound webhooks | keep working: they only receive what someone points at them |
+
+**Daily cap.** `tenant_settings.telephony_daily_cap` (default **200**, CHECK 1–100000) limits the outbound texts and calls a team hands the real telephony adapter per team-local day. It is enforced inside the send-time transaction, before the provider call, by claiming one unit of `telephony_daily_usage`; over the cap the send is blocked with the gate reason `DAILY_SEND_CAP_REACHED`, "Today's sending limit for this team is reached." The platform's own STOP confirmation and HELP reply are exempt. The cap counts only while `TELEPHONY_PROVIDER=twilio` (the deterministic fake is not counted). To change a team's cap, an operator updates the column (no screen yet).
+
+**Where the pilot credentials will live.** When the pilot is approved, the team's Twilio credentials live only in the encrypted `provider_credentials` store (field-encrypted under the tenant key, like every subaccount token). This release adds no way to enter them, and no change to any number, Messaging Service or webhook configuration at Twilio.
 
 ## 6. Email: SMTP, DNS and inbound
 
@@ -430,6 +450,7 @@ A KMS-backed KEK (wrap and unwrap as KMS calls) is a drop-in for the same interf
 - [ ] Counsel items in ARCHITECTURE §19 reviewed for the launch states. Counsel reviews of platform clearance packs are recorded on the deployment with the owner command of §10.1 (dry run first, then `--apply`), each pinned to the version counsel reviewed, and withdrawn with its `--revoke`; never by hand.
 - [ ] Phase 2, Gmail inbox sync (owner decision D2): ships dark. `platform:gmail` stays uncleared until it has both `reviewed_by_counsel_at` (counsel item C14, recorded with §10.1; owner decision D11 reports it cleared) and `rules.vendor_ready_at` (which §10.1 never sets), that is until Google's verification of the restricted `gmail.readonly` scope plus its security assessment (N19, **VERIFY** current requirements and renewal) have passed; the Google OAuth client requests that scope only. Until then no tenant can turn sync on (DB). Rollout precondition (pack notes, R-GMAIL-12): set `vendor_ready_at` only after module 22 has written `messages.rfc_message_id_sha256` on platform email for at least 90 days (the largest backfill window), or after its one-time repair; the database refuses a Gmail duplicate only of platform email that carries the hash.
 - [ ] MLS: `MLS_LIVE_CALLS=false` unless every step of §11 "Before any live call" is done and signed off.
+- [ ] Telephony: `TELEPHONY_LIVE_REQUESTS=false` until the written pilot approval (§5.1). The start-up log of the API and the worker shows its value.
 - [ ] Owner decision D8 (a person's reply in the website chat is first contact), on a database that already ran batch 6's website chat: before the D8 release, as the owner (§3), list the untouched-lead items a recompute can still reach whose lead someone answered in the chat by the deadline. Before D8 such a reply was no touch, and the new evidence words ("No human call, text, email or chat reply from the agent or a collaborator …") would be untrue for an agent's reply (DATA_MODEL R-ACC-2, D8). Resolve each row the agent or a collaborator answered with a note saying so (R-ACC-3). A database that never served the chat has nothing to check.
 
   ```sql

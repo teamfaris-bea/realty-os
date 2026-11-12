@@ -22,7 +22,7 @@ import { applyOwnershipCommandInTx, derivedCommandId, lockContact, setOwnershipC
 import { sql } from 'kysely';
 import { AppError } from '../errors.js';
 import { ProviderError } from '../providers/types.js';
-import { type GuardDenyReason, decisionView, evaluateGate, guardOptOutRefusal, insertBlockedDecision, resolvedPolicy, verdictOf } from './gateInput.js';
+import { type DispatchDenyReason, type GuardDenyReason, decisionView, evaluateGate, guardOptOutRefusal, insertBlockedDecision, resolvedPolicy, verdictOf } from './gateInput.js';
 import { refuseMergedAway } from './merged.js';
 import { contactFacts, dealOrAppointmentContext, detailVisibleContact } from './repos/contacts.js';
 import { telephonyAccount } from './repos/credentials.js';
@@ -31,6 +31,7 @@ import * as msgs from './repos/messages.js';
 import { signedRef } from './render.js';
 import { asSystem, asUser, linkMac } from './runtime.js';
 import type { CommsDeps, DecisionView, DialResult, OutboundIntent } from './types.js';
+import { claimTelephonySend } from './telephonySafeguards.js';
 
 /** Played to every party before an announced recording starts (VERIFY WITH COUNSEL: wording per state). */
 export const RECORDING_ANNOUNCEMENT = 'This call may be recorded for quality and training.';
@@ -75,9 +76,15 @@ export async function startCall(actor: UserActor, contactId: string, input: { to
       body: null,
     };
     const evaluated = await evaluateGate(tx, intent, now);
-    const verdict = verdictOf(evaluated.decision, guardDeny);
+    let verdict = verdictOf(evaluated.decision, guardDeny);
+    // R-TWL-2: an allowed call through the real adapter claims a unit of today's cap in this transaction
+    const deny: DispatchDenyReason[] = [...guardDeny];
+    if (verdict.outcome === 'allow' && n && deps.telephonyDailyCap === true && !(await claimTelephonySend(tx))) {
+      deny.push('DAILY_SEND_CAP_REACHED');
+      verdict = verdictOf(evaluated.decision, deny);
+    }
     if (verdict.outcome === 'deny') {
-      const blocked = await insertBlockedDecision(tx, { ids: deps.ids, intent, evaluated, verdict, actorUserId: actor.userId, callId, now, extraDeny: guardDeny });
+      const blocked = await insertBlockedDecision(tx, { ids: deps.ids, intent, evaluated, verdict, actorUserId: actor.userId, callId, now, extraDeny: deny });
       return { kind: 'gate', decision: decisionView(blocked, 'send') };
     }
     if (!n) return { kind: 'gate', decision: decisionView({ id: null, ...verdict }, 'send') };
