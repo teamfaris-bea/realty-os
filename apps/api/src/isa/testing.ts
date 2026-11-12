@@ -106,6 +106,16 @@ export async function runIsa(h: ApiHarness, tenantId: string, rounds = 4): Promi
   }
 }
 
+/** The conversation's reply address (what an email from the team carries as Reply-To), minted like dispatch does. */
+export async function replyAddressOf(h: ApiHarness, tenantId: string, contactId: string): Promise<string> {
+  const { replyAddress, replyToken, replyTokenHash } = await import('../comms/render.js');
+  const deps = depsFromPlatform(h.app.platform) as unknown as { linkSecret: Uint8Array; publicBaseUrl: string };
+  const c = await h.su.query<{ id: string }>(`SELECT id FROM conversations WHERE contact_id = $1`, [contactId]);
+  const token = replyToken(deps.linkSecret, tenantId, c.rows[0]!.id);
+  await h.su.query(`UPDATE conversations SET reply_token_hash = $2 WHERE id = $1 AND reply_token_hash IS NULL`, [c.rows[0]!.id, replyTokenHash(token)]);
+  return replyAddress(deps.publicBaseUrl, token);
+}
+
 export async function assignmentOf(h: ApiHarness, contactId: string) {
   const r = await h.su.query<{ id: string; state: string; paused_at: Date | null; pause_reason: string | null; ended_at: Date | null; end_reason: string | null; epoch: number }>(
     `SELECT id, state, paused_at, pause_reason, ended_at, end_reason, epoch FROM ai_isa_assignments WHERE contact_id = $1 ORDER BY started_at DESC LIMIT 1`, [contactId]);

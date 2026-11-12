@@ -42,6 +42,7 @@ import { systemActor } from '../worker/systemActor.js';
 import { announcementTwiml } from '../providers/twilio/telephony.js';
 import { type NormalizedEmailEvent, type NormalizedInbound, parsePostmarkEvent, parsePostmarkInbound, parseSendgridEvents, parseSendgridInbound } from '../providers/email/inbound.js';
 import { parseMailgunEvent } from '../providers/email/mailgun.js';
+import { dkimFromAuthResults, dkimFromSendgridField } from '../leadEmail/formats.js';
 import { asSnsMessage, parseSesNotification, snsVerifier } from '../providers/email/ses.js';
 import { unsubscribeMessageRecipient } from './consent.js';
 import { RECORDING_ANNOUNCEMENT, applyCallStatus } from './dial.js';
@@ -340,8 +341,11 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
     subject: z.string().max(998).nullable().optional(),
     text: z.string().max(200_000),
     headers: z.record(z.string(), z.string()).optional(),
+    // module 22 (flagged, ISA-2b): the receiving provider's DKIM verdicts (the fake's and a bridge's shape); as trusted as
+    // the webhook secret that authenticates this route. Headers are never evidence (leadEmail/trust.ts).
+    dkim: z.array(z.object({ domain: z.string().min(1).max(253), result: z.string().min(1).max(20) })).max(20).optional(),
   });
-  async function handleInbound(req: FastifyRequest, n: NormalizedInbound): Promise<{ ok: true; routed: boolean }> {
+  async function handleInbound(req: FastifyRequest, n: NormalizedInbound & { dkim?: { domain: string; result: string }[] }): Promise<{ ok: true; routed: boolean }> {
     const p = req.server.platform;
     let resolved: { tenantId: string; conversationId: string } | null = null;
     let to = n.recipients[0] ?? '';
@@ -353,8 +357,11 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
         break;
       }
     }
+    // VERIFY vendor: Postmark's topmost Authentication-Results under the configured authserv id; SendGrid's dkim field
+    const dkim = n.dkim ? n.dkim.map((v) => ({ domain: v.domain.toLowerCase(), result: v.result.toLowerCase() }))
+      : n.authResults ? dkimFromAuthResults(n.authResults, p.config.leadEmail.authservId) : n.dkimField !== undefined ? dkimFromSendgridField(n.dkimField) : [];
     const out = await run(req, 'email', `inbound:${n.eventId}`, resolved?.tenantId ?? null, { eventId: n.eventId }, () =>
-      ingestInbound(systemActor(resolved!.tenantId, 'provider'), { kind: 'email', providerRef: n.eventId, from: n.from, to, subject: n.subject, text: n.text, headers: n.headers, conversationId: resolved!.conversationId }, depsFromPlatform(p)),
+      ingestInbound(systemActor(resolved!.tenantId, 'provider'), { kind: 'email', providerRef: n.eventId, from: n.from, to, subject: n.subject, text: n.text, headers: n.headers, conversationId: resolved!.conversationId, dkim }, depsFromPlatform(p)),
     );
     return { ok: true, routed: out !== 'unrouted' };
   }
@@ -372,7 +379,7 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
 
   r.post('/webhooks/email/inbound', { ...mail, schema: { body: InboundEmail } }, async (req) => {
     const b = req.body;
-    return handleInbound(req, { eventId: b.eventId, from: b.from, recipients: [b.to], subject: b.subject ?? null, text: b.text, headers: b.headers ?? {} });
+    return handleInbound(req, { eventId: b.eventId, from: b.from, recipients: [b.to], subject: b.subject ?? null, text: b.text, headers: b.headers ?? {}, ...(b.dkim ? { dkim: b.dkim } : {}) });
   });
 
   const EmailEvent = z.object({

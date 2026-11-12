@@ -51,13 +51,14 @@ interface Prepared {
 /** The bound-point turn inbounds not yet consumed, with their per-conversation ordinal as seq (R-ISA-28). */
 async function turnInbounds(tx: Tx, a: AssignmentRow): Promise<IsaInbound[]> {
   const bound = Object.values(a.boundPoints).map((p) => p!.point_id);
-  const r = await sql<{ id: string; channel: 'sms' | 'email'; body: string; created_at: Date; seq: string; kw: string | null }>`
+  const r = await sql<{ id: string; channel: 'sms' | 'email'; body: string; created_at: Date; seq: string; kw: string | null; reaction: boolean }>`
     WITH ordered AS (
       SELECT m.id, m.channel, m.body, m.created_at, m.from_address, m.is_auto_reply, m.email_dkim_aligned, m.opt_out_keyword,
              row_number() OVER (ORDER BY m.created_at, m.id) AS seq
         FROM messages m JOIN conversations c ON c.tenant_id = m.tenant_id AND c.id = m.conversation_id
        WHERE m.tenant_id = app.tenant_id() AND c.contact_id = ${a.contactId} AND m.direction = 'inbound')
-    SELECT o.id, o.channel, o.body, o.created_at, o.seq, o.opt_out_keyword AS kw FROM ordered o
+    SELECT o.id, o.channel, o.body, o.created_at, o.seq, o.opt_out_keyword AS kw,
+           EXISTS (SELECT 1 FROM message_reactions r WHERE r.tenant_id = app.tenant_id() AND r.message_id = o.id) AS reaction FROM ordered o
      WHERE o.seq > ${a.machine.lastInboundSeq} AND o.created_at >= ${new Date(a.startedAt - (a.machine.lastInboundSeq === 0 ? 86_400_000 : 0))}
        AND o.channel IN ('sms','email') AND NOT o.is_auto_reply AND (o.channel = 'sms' OR o.email_dkim_aligned IS TRUE)
        AND EXISTS (SELECT 1 FROM contact_points p WHERE p.tenant_id = app.tenant_id() AND p.id = ANY (${bound}::uuid[]) AND p.address = o.from_address)
@@ -67,7 +68,9 @@ async function turnInbounds(tx: Tx, a: AssignmentRow): Promise<IsaInbound[]> {
     const own = clientOwnText(m.body, m.channel);
     return {
       seq: Number(m.seq), messageId: m.id, channel: m.channel, at: instantFromDate(m.created_at), ownText: own.text.slice(0, 1600), ownTextReliable: own.reliable,
-      classification: { kind: (m.kw ? 'stop' : 'none') as 'stop' | 'none', needsReview: false }, reaction: false,
+      classification: { kind: (m.kw ? 'stop' : 'none') as 'stop' | 'none', needsReview: false },
+      // R-ISA-13 E529: a tapback (message_reactions names this inbound) is an acknowledgement and never a slot choice
+      reaction: m.reaction,
     };
   });
 }
@@ -155,7 +158,12 @@ async function prepare(tx: Tx, ctx: IsaContext, a: AssignmentRow, turnId: string
      ORDER BY m.created_at DESC LIMIT 20`.execute(tx);
   const caps = capabilitiesInEffect(ctx.content, (await sql<{ c: string[] }>`SELECT capabilities AS c FROM ai_isa_agent_optins WHERE tenant_id = app.tenant_id() AND id = ${a.optinId}`.execute(tx)).rows[0]?.c ?? ['converse']);
   const first = (await sql<{ n: string | null }>`SELECT split_part(COALESCE(display_name, ''), ' ', 1) AS n FROM contacts WHERE tenant_id = app.tenant_id() AND id = ${a.contactId}`.execute(tx)).rows[0]?.n ?? null;
-  const messages = msgs.rows.reverse().map((m) => ({ messageId: m.id, direction: m.direction, channel: m.channel, text: m.direction === 'inbound' ? clientOwnText(m.body, m.channel).text : m.body, at: instantFromDate(m.created_at) }));
+  // R-ISA-27 E495: an inbound email's own text is reliable only when clientOwnText says so (an inline reply under a
+  // quoted offer is not); SMS and team text keep their text as written
+  const messages = msgs.rows.reverse().map((m) => {
+    const own = m.direction === 'inbound' ? clientOwnText(m.body, m.channel) : null;
+    return { messageId: m.id, direction: m.direction, channel: m.channel, text: own ? own.text : m.body, at: instantFromDate(m.created_at), ownTextReliable: m.channel === 'sms' || m.direction === 'outbound' || own!.reliable };
+  });
   const replyChannel = (a.machine.lastInboundChannel && ctx.channels.includes(a.machine.lastInboundChannel) ? a.machine.lastInboundChannel : ctx.channels[0]) ?? 'sms';
   const prompt = buildIsaPrompt({
     side: a.side, phase: a.machine.phase, agentFirstName: ctx.who.agentFirstName, clientFirstName: first, allowedActions: ['reply', 'record_qualification', 'escalate', 'ready', 'follow_up', 'end', ...[...caps].filter((c) => c === 'book_appointments').map(() => 'offer_slots')],
@@ -163,7 +171,7 @@ async function prepare(tx: Tx, ctx: IsaContext, a: AssignmentRow, turnId: string
     heldTopics: a.machine.held.map((h) => h.class), messages, claims: a.machine.claims, handles: [], unavailable: ['listings: BUNDLE_NOT_BUILT', 'sold_comps_unavailable: PLATFORM_NOT_CLEARED'],
     offer: null, ...(aw?.repair ? { repairNote: repairNote(['root']) } : {}),
   });
-  const sources = messages.map((m, i) => ({ handle: `S${i + 1}`, messageId: m.messageId, author: m.direction === 'inbound' ? ('client_own' as const) : ('team' as const), channel: m.channel, text: m.text, at: m.at, ownTextReliable: m.channel === 'sms' || m.direction === 'inbound' }));
+  const sources = messages.map((m, i) => ({ handle: `S${i + 1}`, messageId: m.messageId, author: m.direction === 'inbound' ? ('client_own' as const) : ('team' as const), channel: m.channel, text: m.text, at: m.at, ownTextReliable: m.ownTextReliable }));
   const decideBase: Prepared['decideBase'] = {
     side: a.side, capabilities: caps, replyChannel, sources, teamTexts: ctx.facts.teamTexts, listingHandles: new Set(), competitionHandles: new Set(), compsAvailable: false,
     heldClasses: new Set(a.machine.held.map((h) => h.class)), calendarLive: false, offer: null, meetRequested: a.machine.intents.length > 0,
