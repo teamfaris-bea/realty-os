@@ -29,6 +29,7 @@
 // hashed or logged.
 import { randomFillSync } from 'node:crypto';
 import { type IdGenerator, type Instant, instant, uuidv7Generator } from '@realty/core/foundation';
+import { canonicalJson } from '@realty/core/compliance';
 import { type ApprovedModel, type PostalAddress, type Reason, scoreWithModel, storedReasons } from '@realty/core/predict';
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
@@ -336,7 +337,8 @@ interface Scored {
   sha: string;
 }
 
-const canon = (v: unknown) => JSON.stringify(v);
+/** jsonb reorders object keys: compare stored and computed values canonically (sorted keys). */
+const canon = (v: unknown) => canonicalJson(v as never);
 
 async function scoreBatch(tx: Tx, now: Instant, models: readonly ApprovedModel[], contacts: BatchContact[], ids: IdGenerator, s: PredictSettings, localDate: string, report: PassReport): Promise<void> {
   const contactIds = contacts.map((c) => c.id);
