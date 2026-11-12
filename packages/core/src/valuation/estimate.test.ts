@@ -2,13 +2,23 @@
 // weighted median, the range, comp ranking and the rate pool. Exact values (mutation target).
 import { describe, expect, it } from 'vitest';
 import { fitRates } from './adjust.js';
-import { chooseComps, estimate, poolSales, ratePool, rawWeight, weighed, weightedMedian, weightsBps } from './estimate.js';
+import { chooseComps, compareText, estimate, poolSales, ratePool, rawWeight, weighed, weightedMedian, weightsBps } from './estimate.js';
 import { addMonths, canonicalOrder, monthIndex, screen, searchTier } from './select.js';
 import { CMA_DEFAULTS, type CmaCandidate } from './types.js';
 import { LAT_PER_MILE, SUBJECT_LAT, VALUATION_DATE, cand, monthsBefore, subject } from './testing/fixtures.js';
 
 const R = CMA_DEFAULTS;
 const w = (identity: string, adjustedPriceCents: number, weightBasisBps = 0) => ({ identity, adjustedPriceCents, weightBasisBps });
+
+describe('compareText', () => {
+  it('is a three-way comparison in code-unit order', () => {
+    expect(compareText('a', 'b')).toBe(-1);
+    expect(compareText('b', 'a')).toBe(1);
+    expect(compareText('a', 'a')).toBe(0);
+    expect(compareText('B', 'a')).toBe(-1);
+    expect(compareText('a1', 'a')).toBe(1);
+  });
+});
 
 describe('weights', () => {
   it('rawWeight is 10^12 / (10,000 + basis bps), floored', () => {
@@ -95,6 +105,24 @@ describe('chooseComps and the rate pool', () => {
     expect(many.notUsed).toEqual([]);
   });
 
+  it('the tier ranks ahead of the gross adjustment; the newest wins a tie', () => {
+    const cs = [
+      near('sub-1', 2, { concessionsCents: 3_000_000 }),
+      near('sub-2', 3, { concessionsCents: 2_000_000 }),
+      near('mi-1', 1, { subdivisionName: null }),
+      near('mi-2', 1, { subdivisionName: null, closeDate: monthsBefore(3), contractDate: monthsBefore(3) }),
+      near('mi-3', 1, { subdivisionName: null, closeDate: monthsBefore(2), contractDate: monthsBefore(2) }),
+    ];
+    const c = choose(cs);
+    expect(c.comps.map((x) => [x.s.c.ref.identity, x.s.tierIdx])).toEqual([
+      ['sub-2', 0],
+      ['sub-1', 0],
+      ['mi-1', 1],
+      ['mi-3', 1],
+      ['mi-2', 1],
+    ]);
+  });
+
   it('a sale needing less adjustment ranks ahead within a tier', () => {
     const s = subject();
     const cs = Array.from({ length: 40 }, (_, i) => near(`p${String(i).padStart(2, '0')}`, 1 + (i % 7), { sqft: 1_700 + i * 15, closePriceCents: (1_700 + i * 15) * 20_000, closeDate: monthsBefore(1 + (i % 9)), contractDate: null }));
@@ -142,10 +170,12 @@ describe('chooseComps and the rate pool', () => {
       near('n3', 1, { closeDate: '2026-10-01' }),
       near('short', 1, { saleConditions: ['short_sale'] }),
       near('city', 0, { latE6: SUBJECT_LAT + 9 * LAT_PER_MILE, postalCode: '99009', subdivisionName: null }),
+      near('nowhere', 0, { latE6: SUBJECT_LAT + 9 * LAT_PER_MILE, postalCode: '99009', subdivisionName: null, city: 'Elsewhere' }),
       near('old', 1, { closeDate: '2024-11-28' }),
       near('edge', 1, { closeDate: '2024-11-29' }),
     ];
     const sc = screen(s, canonicalOrder(cs), VALUATION_DATE, R, new Set(['short']));
+    expect(sc.find((x) => x.c.ref.identity === 'nowhere')).toMatchObject({ defaultOk: true, tierIdx: -1 });
     const ids = (p: ReturnType<typeof ratePool>) => p.map((x) => x.c.ref.identity);
     expect(ids(ratePool(sc, 2, null, '2024-11-28', R))).toEqual(['n1', 'n2', 'n3', 'edge']);
     expect(ids(ratePool(sc, 4, null, '2024-11-28', R))).toEqual(['n1', 'city', 'n2', 'n3', 'edge']);

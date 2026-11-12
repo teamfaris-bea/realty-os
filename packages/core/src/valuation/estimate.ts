@@ -6,6 +6,11 @@ import { adjustComp, adjustedPrice, type FittedRates, type PoolSale } from './ad
 import { type Screened, type TierSearch, addMonths, closedAfter, monthIndex } from './select.js';
 import type { Adjustment, CmaRule, CmaSubject, NotUsedReason } from './types.js';
 
+/** Three-way comparison of strings (code-unit order), shared by every tie-break so ties resolve one way. */
+export function compareText(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 export interface WeighedComp {
   readonly identity: string;
   readonly adjustedPriceCents: number;
@@ -24,7 +29,6 @@ export function rawWeight(basisBps: number): number {
  */
 export function weightsBps(comps: readonly WeighedComp[]): Map<string, number> {
   const out = new Map<string, number>();
-  if (comps.length === 0) return out;
   const raws = comps.map((c) => rawWeight(c.weightBasisBps));
   const total = raws.reduce((a, b) => a + b, 0);
   const parts = comps.map((c, i) => {
@@ -32,7 +36,7 @@ export function weightsBps(comps: readonly WeighedComp[]): Map<string, number> {
     return { id: c.identity, floor: Math.floor(scaled / total), rem: scaled % total };
   });
   let left = 10_000 - parts.reduce((a, p) => a + p.floor, 0);
-  const byRem = [...parts].sort((a, b) => b.rem - a.rem || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const byRem = [...parts].sort((a, b) => b.rem - a.rem || compareText(a.id, b.id));
   for (const p of byRem) {
     if (left <= 0) break;
     p.floor += 1;
@@ -45,7 +49,7 @@ export function weightsBps(comps: readonly WeighedComp[]): Map<string, number> {
 /** Sort by adjusted price, then identity; the value is the first comp whose cumulative weight reaches 5,000 bps. */
 export function weightedMedian(comps: readonly WeighedComp[], weights: ReadonlyMap<string, number>): number | null {
   if (comps.length === 0) return null;
-  const sorted = [...comps].sort((a, b) => a.adjustedPriceCents - b.adjustedPriceCents || (a.identity < b.identity ? -1 : a.identity > b.identity ? 1 : 0));
+  const sorted = [...comps].sort((a, b) => a.adjustedPriceCents - b.adjustedPriceCents || compareText(a.identity, b.identity));
   let cum = 0;
   for (const c of sorted) {
     cum += weights.get(c.identity) ?? 0;
@@ -97,7 +101,7 @@ export interface Choice {
 }
 
 function byIdentity(a: Screened, b: Screened): number {
-  return a.c.ref.identity < b.c.ref.identity ? -1 : a.c.ref.identity > b.c.ref.identity ? 1 : 0;
+  return compareText(a.c.ref.identity, b.c.ref.identity);
 }
 
 /**
@@ -138,10 +142,10 @@ export function chooseComps(
       a.s.tierIdx - b.s.tierIdx ||
       a.grossAdjustmentBps - b.grossAdjustmentBps ||
       (a.s.distanceM ?? Number.MAX_SAFE_INTEGER) - (b.s.distanceM ?? Number.MAX_SAFE_INTEGER) ||
-      ((b.s.c.sale.closeDate as string) < (a.s.c.sale.closeDate as string) ? -1 : (b.s.c.sale.closeDate as string) > (a.s.c.sale.closeDate as string) ? 1 : 0) ||
+      compareText(b.s.c.sale.closeDate as string, a.s.c.sale.closeDate as string) ||
       byIdentity(a.s, b.s),
   );
-  forced.sort((a, b) => byIdentity(a.s, b.s));
+  // `screened` is in canonical (identity) order, so the agent-added comps already are too.
   const room = Math.max(0, rule.maxComps - forced.length);
   for (const r of ranked.slice(room)) notUsed.push({ s: r.s, reason: 'not_among_closest' });
   return { comps: [...forced, ...ranked.slice(0, room)], notUsed };
@@ -155,7 +159,7 @@ export function ratePool(screened: readonly Screened[], poolIdx: number, newestE
       const d = s.c.sale.closeDate as string;
       return d > oldestExclusive && (newestExclusive === null || d < newestExclusive);
     })
-    .sort((a, b) => ((a.c.sale.closeDate as string) > (b.c.sale.closeDate as string) ? -1 : (a.c.sale.closeDate as string) < (b.c.sale.closeDate as string) ? 1 : byIdentity(a, b)))
+    .sort((a, b) => compareText(b.c.sale.closeDate as string, a.c.sale.closeDate as string) || byIdentity(a, b))
     .slice(0, rule.ratePoolLimit);
 }
 
