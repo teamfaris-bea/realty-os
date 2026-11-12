@@ -108,14 +108,14 @@ function recipientStatus(
   if (d.status === 'proposed') return { status: 'not_planned', text: 'No update until a person confirms this date.', at: null };
   if (d.status === 'waived') return { status: 'not_planned', text: 'Waived: no update.', at: null };
   if (d.completed_at !== null) return { status: 'not_planned', text: 'Done: no update.', at: null };
-  if (!named) return { status: 'not_planned', text: `No update: the Milestone updates playbook does not name the ${c.roles.map((r) => ROLE_TEXT[r] ?? r).join(' / ')} role.`, at: null };
-  if (!c.live) return { status: 'not_planned', text: 'No update: this contact was merged into another record or removed.', at: null };
-  if (c.ownerUserId === null) return { status: 'not_planned', text: 'No update: this contact has no owner (updates go only to owned contacts).', at: null };
   const pass = (d.basis['reminderPass'] ?? null) as { dueVersion?: unknown; reason?: unknown; at?: unknown } | null;
   if (pass !== null && num(pass.dueVersion) === d.due_version && pass.reason === 'NO_APPROVED_PLAYBOOK') {
     return { status: 'not_planned', text: 'No update was planned: no Milestone updates playbook was approved when the reminder came due.', at: str(pass.at) };
   }
   if (!pb.approved) return { status: 'not_planned', text: 'No update: the Milestone updates playbook is not approved.', at: null };
+  if (!named) return { status: 'not_planned', text: `No update: the Milestone updates playbook does not name the ${c.roles.map((r) => ROLE_TEXT[r] ?? r).join(' / ')} role.`, at: null };
+  if (!c.live) return { status: 'not_planned', text: 'No update: this contact was merged into another record or removed.', at: null };
+  if (c.ownerUserId === null) return { status: 'not_planned', text: 'No update: this contact has no owner (updates go only to owned contacts).', at: null };
   if (d.reminder_at !== null) return { status: 'waiting', text: `Update planned for ${formatDue(instantFromDate(d.reminder_at), false, zone)}.`, at: d.reminder_at.toISOString() };
   if (d.basis['reminderRule'] === null || d.basis['reminderRule'] === undefined) return { status: 'not_planned', text: 'No reminder is set for this date.', at: null };
   return { status: 'not_planned', text: 'No update is planned for this version of the date.', at: null };
