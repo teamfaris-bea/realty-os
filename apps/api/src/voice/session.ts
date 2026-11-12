@@ -23,6 +23,8 @@ import type { VoiceDeps } from './runtime.js';
 import { aiCallState, claimTransferOutcome, startTransfer } from './transfer.js';
 
 export const TICK_MS = 250;
+/** Late requests read after the end (E429), at most. */
+export const POST_END_DRAIN = 20;
 
 export interface SessionInput {
   actor: SystemActor;
@@ -242,6 +244,14 @@ export async function runSession(deps: VoiceDeps, s: SessionInput): Promise<Sess
       state = r.state;
       ctl.endAction = (r.actions.find((x) => x.kind === 'end') as typeof ctl.endAction) ?? ctl.endAction;
     }
+  }
+
+  // E429: requests that already arrived when the session ended are still logged by core (denied, VOICE_SESSION_ENDED);
+  // one before both disclosures played stays in `unlogged`. Only what is due now; nothing else is processed.
+  for (let i = 0; i < POST_END_DRAIN; i++) {
+    const r = await s.transport.next({ until: clock.now(), pending: null }).catch(() => null);
+    if (r === null || r === 'idle') break;
+    if (r.type === 'tool_request') await feed(r);
   }
 
   // a booking still in flight settles before the handback (E427: one the session did not count is canceled)

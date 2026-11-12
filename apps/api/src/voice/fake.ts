@@ -39,6 +39,8 @@ export interface FakeFaults {
   idMap?: Readonly<Record<string, string>>;
   /** Do not wait for the runner's in-flight booking (a late booking result, E427). */
   ignorePending?: boolean;
+  /** Stand still (real time passes, virtual time does not) before scripted step n until resume(). */
+  holdBeforeStep?: number;
 }
 
 export interface FakeSessionLog {
@@ -90,8 +92,15 @@ export class FakeVoiceTransport implements VoiceTransport {
     this.clock.advance(ms);
   }
 
+  private released = false;
+
   resume(): void {
     this.paused = false;
+    this.released = true;
+  }
+
+  get isPaused(): boolean {
+    return this.paused;
   }
 
   get isHandedOff(): boolean {
@@ -108,6 +117,7 @@ export class FakeVoiceTransport implements VoiceTransport {
   async next(o: { until: Instant; pending: Promise<unknown> | null }): Promise<NextResult> {
     if (this.log.closed) return null;
     if (this.ready.length > 0) return this.ready.shift()!;
+    if (this.faults.holdBeforeStep !== undefined && this.step === this.faults.holdBeforeStep && !this.released) this.paused = true;
     if (this.paused) {
       // real time passes so the test's webhooks interleave; virtual time stands still
       await new Promise((r) => setTimeout(r, 2));

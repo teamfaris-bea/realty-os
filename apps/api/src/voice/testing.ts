@@ -103,3 +103,12 @@ export async function expectPhase1Voicemail(h: ApiHarness, c: AiCall, code: stri
   const hb = await h.su.query("SELECT 1 FROM assistant_actions WHERE payload ->> 'inboundCallId' = $1 AND payload ? 'voice'", [c.callId]);
   if (tools.rows.length + hb.rows.length > 0) throw new Error('an assistant row exists');
 }
+
+/** Waits (real time) until the fake session of this call satisfies `cond`. */
+export async function waitFor(cond: () => boolean, what = 'condition'): Promise<void> {
+  for (let i = 0; i < 500; i++) {
+    if (cond()) return;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error(`timed out waiting for ${what}`);
+}
