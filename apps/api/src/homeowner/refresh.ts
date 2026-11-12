@@ -153,7 +153,6 @@ export async function runHomeownerRefresh(withTx: WithTx, deps: HomeownerDeps, o
       } catch (e) {
         if (!(e instanceof ProviderError)) throw e;
         if (e.kind === 'not_configured') {
-          made -= 1;
           report.lookups.made -= 1;
           finish(report, s, o);
           return { ...report, outcome: 'stopped_not_configured' };

@@ -1,0 +1,127 @@
+// GET /api/contacts/:id/homeowner (module 78; D10): the viewer's RLS, the strict schema, honest states.
+// Real Postgres as app_user, the deterministic public-records fake only.
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
+import { ownedContact } from '../comms/testing.js';
+import { call } from '../leads/testing.js';
+import { beforeThisMonth, closedDeal } from '../nurture/testing.js';
+import { FakePublicRecords } from '../predict/provider.js';
+import { type WorkspaceWorld, workspaceWorld } from '../workspace/testing.js';
+import { HomeownerResponse, type HomeownerResponseT } from './schemas.js';
+import { addAddress, countyRecord, homeowner, nextBeaufortAddress, refresh } from './testing.js';
+
+let h: ApiHarness;
+let w: WorkspaceWorld;
+let records: FakePublicRecords;
+
+beforeAll(async () => {
+  h = await createApiHarness();
+  w = await workspaceWorld(h, { agents: 2 });
+  records = new FakePublicRecords();
+  records.today = () => new Date().toISOString().slice(0, 10);
+}, 240_000);
+afterAll(async () => {
+  await h?.close();
+});
+
+const get = (who: { userId: string | null }, id: string) => call<HomeownerResponseT>(who as never, 'GET', `/contacts/${id}/homeowner`);
+
+describe('GET /api/contacts/:id/homeowner (R-HOME-8)', () => {
+  it('R-HOME-8 E585: a contact the viewer cannot see is 404, as is an unknown id; a contact that is not recognised is { recognized: false, homes: [] }', async () => {
+    const c = await homeowner(h, w, w.agents[0]!, records);
+    expect((await get(w.agents[1]!, c.id)).status).toBe(404);
+    expect((await get(w.agents[0]!, '01900000-0000-7000-8000-000000000000')).status).toBe(404);
+    const plain = await ownedContact(w.agents[0]!, { consent: false });
+    await addAddress(w.agents[0]!, plain.id, nextBeaufortAddress());
+    const r = await get(w.agents[0]!, plain.id);
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ recognized: false, reasons: [], homes: [], outreach: { built: false, clearanceOn: null } });
+  });
+
+  it('R-HOME-8 R-HOME-4 E561: a matched home shows each value with its source and date; the response is strict and names no owner, score or estimate', async () => {
+    const c = await homeowner(h, w, w.agents[0]!, records);
+    const before = await get(w.agents[0]!, c.id);
+    expect(before.body.homes[0]).toMatchObject({ outcome: 'pending', check: { state: 'not_checked' } });
+    await refresh(h, w.tenantId, { publicRecords: records });
+    const r = await get(w.agents[0]!, c.id);
+    expect(r.status).toBe(200);
+    expect(HomeownerResponse.parse(r.body)).toEqual(r.body);
+    expect(r.body.recognized).toBe(true);
+    expect(r.body.reasons).toEqual([{ reason: 'seller_intent', since: null }]);
+    const home = r.body.homes[0]!;
+    expect(home).toMatchObject({ outcome: 'matched', county: { key: 'sc-beaufort', name: 'Beaufort County', mode: 'connector' }, mailingDiffers: true });
+    expect(home.check.state).toBe('checked');
+    const price = home.rows.find((x) => x.key === 'last_transfer_price_cents')!;
+    expect(price).toMatchObject({ state: 'value', value: 25_000_000, source: 'Beaufort County GIS parcel layer', asOf: null });
+    expect(price.state === 'value' && price.readOn).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(home.yearsOwned).toMatchObject({ since: '2015-06-01', source: 'Beaufort County GIS parcel layer' });
+    expect(home.rows.filter((x) => x.state === 'pending_d9').map((x) => x.key)).toEqual(['mls_sale_history', 'in_house_value']);
+    expect(home.loansLink?.label).toMatch(/Register of Deeds/);
+    const text = JSON.stringify(r.body);
+    expect(text).not.toContain(c.first.toUpperCase());
+    expect(text).not.toMatch(/score|confidence|percent|estimat|balance|equity|ownerName|TEST-/i);
+    expect(HomeownerResponse.safeParse({ ...r.body, homes: [{ ...home, ownerNames: ['X'] }] }).success).toBe(false);
+    expect(HomeownerResponse.safeParse({ ...r.body, score: 1 }).success).toBe(false);
+  });
+
+  it('R-HOME-8: the Team Lead reads it too; another tenant\'s user gets 404', async () => {
+    const c = await homeowner(h, w, w.agents[0]!, records);
+    expect((await get(w.teamLead!, c.id)).status).toBe(200);
+    const other = await workspaceWorld(h, { agents: 1 });
+    expect((await get(other.agents[0]!, c.id)).status).toBe(404);
+  }, 120_000);
+
+  it('R-HOME-8: a past buyer\'s closing date is shown only to a viewer who can see the deal', async () => {
+    const c = await ownedContact(w.agents[0]!, { firstName: 'Pat', consent: false });
+    const a = nextBeaufortAddress();
+    await addAddress(w.agents[0]!, c.id, a);
+    // the deal belongs to agent 2: agent 1 owns the contact but cannot see the deal
+    await closedDeal(h, w.tenantId, c.id, w.agents[1]!.userId!, beforeThisMonth(10));
+    records.put(a, countyRecord(a, ['PAT DOE']));
+    await refresh(h, w.tenantId, { publicRecords: records });
+    const own = await get(w.owner, c.id);
+    expect(own.body.reasons).toEqual([{ reason: 'past_buyer', since: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) }]);
+    const agent = await get(w.agents[0]!, c.id);
+    expect(agent.status).toBe(200);
+    expect(agent.body.reasons).toEqual([{ reason: 'past_buyer', since: null }]);
+    expect(agent.body.homes[0]?.outcome).toBe('matched');
+  });
+
+  it('R-HOME-10: the outreach line is never built; the counsel clearance shows only once recorded', async () => {
+    const c = await homeowner(h, w, w.agents[0]!, records);
+    expect((await get(w.agents[0]!, c.id)).body.outreach).toEqual({ built: false, clearanceOn: null });
+    await h.su.query(`UPDATE jurisdiction_packs SET reviewed_by_counsel_at = '2026-11-12T12:00:00Z' WHERE key = 'platform:public_records_outreach' AND status = 'published'`);
+    try {
+      expect((await get(w.agents[0]!, c.id)).body.outreach).toEqual({ built: false, clearanceOn: '2026-11-12' });
+    } finally {
+      await h.su.query(`UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL WHERE key = 'platform:public_records_outreach'`);
+    }
+  });
+
+  it('R-HOME-2 E576: a Jasper home is links only, never looked up', async () => {
+    const c = await homeowner(h, w, w.agents[0]!, records, { address: { postalCode: '29936' } });
+    const calls = records.homeownerCalls.length;
+    await refresh(h, w.tenantId, { publicRecords: records });
+    expect(records.homeownerCalls.slice(calls).some((x) => x.includes(c.address.line1.toLowerCase().split(' ')[0]!) && x.endsWith('29936'))).toBe(false);
+    const home = (await get(w.agents[0]!, c.id)).body.homes[0]!;
+    expect(home).toMatchObject({ outcome: 'links_only', county: { key: 'sc-jasper', mode: 'links' }, check: { state: 'links_only' } });
+    expect(home.lookupLinks.map((l) => l.label)).toEqual(['Jasper County Assessor']);
+  });
+
+  it('R-HOME-3 E562: an owner mismatch shows the outcome and keeps no value', async () => {
+    const c = await homeowner(h, w, w.agents[0]!, records, { owners: () => ['SOMEONE ELSE'] });
+    await refresh(h, w.tenantId, { publicRecords: records });
+    const home = (await get(w.agents[0]!, c.id)).body.homes[0]!;
+    expect(home).toMatchObject({ outcome: 'not_matched', matchDetail: 'owner_name_mismatch', mailingDiffers: null, yearsOwned: null });
+    expect(home.rows.filter((x) => x.state === 'value')).toEqual([]);
+    expect(JSON.stringify(home)).not.toContain('SOMEONE');
+  });
+
+  it('R-HOME-8: it writes nothing: no audit row, no profile, no job', async () => {
+    const c = await homeowner(h, w, w.agents[0]!, records);
+    const count = async () => (await h.su.query(`SELECT (SELECT count(*) FROM audit_log WHERE tenant_id = $1) + (SELECT count(*) FROM homeowner_profiles WHERE tenant_id = $1) + (SELECT count(*) FROM jobs WHERE tenant_id = $1) AS n`, [w.tenantId])).rows[0].n;
+    const before = await count();
+    await get(w.agents[0]!, c.id);
+    expect(await count()).toBe(before);
+  });
+});

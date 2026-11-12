@@ -2562,5 +2562,7 @@ exports[`route table and schemas > every leads route declares its authorization 
   "PUT /api/lead-sources/:id/lead-email/sender-domains → integration.manage",
   "GET /api/contacts/:id/trigger-runs → contact.view_detail",
   "HEAD /api/contacts/:id/trigger-runs → contact.view_detail",
+  "GET /api/contacts/:id/homeowner → contact.view_detail",
+  "HEAD /api/contacts/:id/homeowner → contact.view_detail",
 ]
 `;

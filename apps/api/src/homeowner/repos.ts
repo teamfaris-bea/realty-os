@@ -226,3 +226,92 @@ export async function writeFailure(tx: Tx, w: FailureWrite): Promise<void> {
       last_failure_at = now(), last_failure_code = EXCLUDED.last_failure_code, next_refresh_at = EXCLUDED.next_refresh_at,
       recognized_by = EXCLUDED.recognized_by`.execute(tx);
 }
+
+// ---- the read route (under the VIEWER's RLS: R-HOME-8) ----------------------------------------------------
+
+export interface ViewReasonsRow {
+  tz: string;
+  today: string;
+  seller_intent: boolean;
+  seller_inquiry: boolean;
+  homeowner_tag: boolean;
+  /** the latest closing of a qualifying purchase the viewer can see, or null (K2 not visible to them) */
+  past_buyer_since: string | null;
+  past_buyer: boolean;
+  clearance_on: string | null;
+}
+
+/** What the viewer may see of the contact's recognition, the team's date, and the outreach pack's recorded review. */
+export async function viewReasons(tx: Tx, contactId: string, keys: readonly string[]): Promise<ViewReasonsRow | null> {
+  const r = await sql<ViewReasonsRow>`
+    SELECT s.default_timezone AS tz, (now() AT TIME ZONE s.default_timezone)::date::text AS today,
+           COALESCE(c.intent IN ('seller','buyer_seller'), false) AS seller_intent,
+           EXISTS (SELECT 1 FROM lead_inquiries li WHERE li.tenant_id = c.tenant_id AND li.contact_id = c.id AND li.inquiry_type IN ('sell','value')) AS seller_inquiry,
+           EXISTS (SELECT 1 FROM contact_tags ct JOIN tags t ON t.tenant_id = ct.tenant_id AND t.id = ct.tag_id
+                    WHERE ct.tenant_id = c.tenant_id AND ct.contact_id = c.id AND t.name_key = ANY (${[...keys]}::text[]) AND NOT t.protected_proxy) AS homeowner_tag,
+           EXISTS (SELECT 1 FROM contact_addresses ka WHERE ka.tenant_id = c.tenant_id AND ka.contact_id = c.id AND ${avmQualifies('c', 'ka')}) AS past_buyer,
+           (SELECT (max(bd.closed_at) AT TIME ZONE s.default_timezone)::date::text FROM deals bd
+              JOIN deal_contacts bdc ON bdc.tenant_id = bd.tenant_id AND bdc.deal_id = bd.id AND bdc.contact_id = c.id AND bdc.role IN ('buyer','co_buyer')
+             WHERE bd.tenant_id = c.tenant_id AND bd.stage = 'closed' AND bd.side IN ('buy','dual') AND bd.closed_at IS NOT NULL) AS past_buyer_since,
+           (SELECT (j.reviewed_by_counsel_at AT TIME ZONE s.default_timezone)::date::text FROM jurisdiction_packs j
+             WHERE j.key = 'platform:public_records_outreach' AND j.status = 'published') AS clearance_on
+      FROM contacts c JOIN tenant_settings s ON s.tenant_id = c.tenant_id
+     WHERE c.tenant_id = app.tenant_id() AND c.id = ${contactId}::uuid`.execute(tx);
+  return r.rows[0] ?? null;
+}
+
+export interface ViewHomeRow {
+  address_id: string;
+  kind: 'home' | 'mailing' | 'property' | 'interest';
+  line1: string | null;
+  line2: string | null;
+  city: string | null;
+  region: string | null;
+  postal_code: string | null;
+  profile_id: string | null;
+  status: string | null;
+  match_detail: string | null;
+  source: string | null;
+  recognized_by: string[] | null;
+  checked_on: string | null;
+  last_failure_on: string | null;
+  last_failure_code: string | null;
+  next_check_on: string | null;
+}
+
+/** The contact's home and property addresses and every address with a visible profile (the profile's own RLS). */
+export async function viewHomes(tx: Tx, contactId: string, tz: string): Promise<ViewHomeRow[]> {
+  const r = await sql<ViewHomeRow>`
+    SELECT a.id AS address_id, a.kind, a.line1, a.line2, a.city, a.region, a.postal_code,
+           p.id AS profile_id, p.status, p.match_detail, p.source, p.recognized_by,
+           (p.checked_at AT TIME ZONE ${tz})::date::text AS checked_on,
+           (p.last_failure_at AT TIME ZONE ${tz})::date::text AS last_failure_on, p.last_failure_code,
+           (p.next_refresh_at AT TIME ZONE ${tz})::date::text AS next_check_on
+      FROM contact_addresses a
+      LEFT JOIN homeowner_profiles p ON p.tenant_id = a.tenant_id AND p.contact_address_id = a.id
+     WHERE a.tenant_id = app.tenant_id() AND a.contact_id = ${contactId}::uuid
+       AND (p.id IS NOT NULL OR (a.kind IN ('home','property') AND a.line1 IS NOT NULL AND a.city IS NOT NULL AND a.region IS NOT NULL AND a.postal_code IS NOT NULL))
+     ORDER BY (p.id IS NULL), a.kind, a.created_at, a.id
+     LIMIT 20`.execute(tx);
+  return r.rows;
+}
+
+export interface ViewFactRow {
+  profile_id: string;
+  field: string;
+  date_value: string | null;
+  cents_value: string | null;
+  int_value: number | null;
+  bool_value: boolean | null;
+  text_value: string | null;
+  source: string;
+  as_of: string | null;
+}
+
+export async function viewFacts(tx: Tx, profileIds: readonly string[]): Promise<ViewFactRow[]> {
+  if (profileIds.length === 0) return [];
+  const r = await sql<ViewFactRow>`
+    SELECT profile_id, field, date_value::text, cents_value::text, int_value, bool_value, text_value, source, as_of::text
+      FROM homeowner_profile_facts WHERE tenant_id = app.tenant_id() AND profile_id = ANY (${[...profileIds]}::uuid[])`.execute(tx);
+  return r.rows;
+}

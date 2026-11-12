@@ -146,7 +146,6 @@ describe('recognition builds a profile (R-HOME-1, R-HOME-3)', () => {
     await refresh(h, w.tenantId, { publicRecords: records });
     const after = await sideEffects(h, w.tenantId);
     expect({ ...after, contactsChanged: 0 }).toEqual({ ...before, contactsChanged: 0 });
-    expect(h.providers.telephony.sent ?? []).toEqual(h.providers.telephony.sent ?? []);
   });
 });
 
