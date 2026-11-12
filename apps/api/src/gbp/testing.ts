@@ -34,6 +34,8 @@ export class FakeGbp implements GbpProvider {
   readonly configured = true;
   readonly statusText = 'Google Business Profile: deterministic fake (dev and tests only)';
   readonly calls: string[] = [];
+  /** the account id of every listReviews call */
+  readonly listed: string[] = [];
   readonly replies: ReviewReplyRequest[] = [];
   readonly published: PublishRequest[] = [];
   readonly deletions: DeleteRequest[] = [];
@@ -70,6 +72,7 @@ export class FakeGbp implements GbpProvider {
 
   async listReviews(i: ListReviewsRequest): Promise<ReviewPage> {
     this.calls.push('listReviews');
+    this.listed.push(i.externalAccountId);
     const page = i.cursor === null ? 0 : Number(/^page:(\d+)$/.exec(i.cursor)?.[1] ?? NaN);
     if (!Number.isInteger(page)) throw new ProviderError('rejected', 'BAD_CURSOR');
     if (this.failPage === page) throw new ProviderError('timeout', 'LIST_TIMEOUT');

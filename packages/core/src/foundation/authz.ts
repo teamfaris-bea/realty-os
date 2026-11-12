@@ -157,6 +157,8 @@ export const ACTIONS = [
   'coaching.settings', // module 36: call scoring on/off, Team Lead visibility, rubric items (Owner; an Admin may only turn call reviews off; widening needs 🔒)
   'milestone.confirm', // module 31 (DATA_MODEL §8 "Confirm or move a milestone date"): plan, confirm, enter, move, complete a deal date
   'milestone_template.manage', // module 31: tenant milestone templates (not a §8 row: Owner/Admin, flagged; R-TXN-6)
+  'gbp.view', // module 53: Google Business Profile status and reviews (every staff role, as the members-read policy of gbp_reviews)
+  'gbp.reply', // module 53: draft, post or discard a public reply to a Google review (Owner/Admin; always a tap, R-GBP-1)
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -325,6 +327,10 @@ export const AUDIT_ACTIONS = [
   'source_cost.changed', // module 33: a manual lead-source cost entered or changed (amounts in cents, the month; closed months need re-auth)
   'goal.changed', // module 33: a goal created, changed or removed (member, period, metric, target)
   'coaching.settings_changed', // module 36: the Owner changed call scoring, Team Lead visibility or the rubric items, or an Admin turned call reviews off (values only)
+  'gbp.reply_drafted', // module 53: an Owner/Admin had a reply drafted (assistant or typed) for a Google review (ids and guard codes only)
+  'gbp.reply_posted', // module 53: Google confirmed a public review reply (TX2 or the reconcile; ids only)
+  'gbp.reply_discarded', // module 53: an Owner/Admin discarded a reply draft (ids only)
+  'gbp.reviews_synced', // module 53: the system read a location's reviews (counts only, never review text)
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -638,6 +644,10 @@ const MATRIX: Record<Action, ActionRule> = {
   'milestone.confirm': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: { scopes: ['own', 'deal'] }, tc: DEAL } },
   // Milestone templates (R-TXN-6; §8 names no role): Owner/Admin, like the other tenant settings. Flagged for the owner.
   'milestone_template.manage': { roles: { owner: ALL, admin: ALL } },
+  // Module 53 (DATA_MODEL Part 2: gbp_reviews read by members, written by the system): every staff role reads the
+  // reviews; a public reply is the team's voice, so only an Owner or Admin drafts, posts or discards one (owner question 3's default).
+  'gbp.view': { roles: { owner: ALL, admin: ALL, team_lead: ALL, agent: ALL, isa: ALL, tc: ALL } },
+  'gbp.reply': { roles: { owner: ALL, admin: ALL } },
 };
 
 const DENY_NOT_FOUND: CanResult = { ok: false, code: 'NOT_FOUND' };
