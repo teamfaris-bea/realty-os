@@ -141,6 +141,7 @@ export interface ItemT {
   dedupeKey: string;
   itemType: string;
   contact: { id: string; name: string } | null;
+  deal: { id: string; name: string; dateLabel: string; dueOn: string } | null;
   owner: { userId: string; name: string | null } | null;
   detectedAt: string;
   ageSeconds: number;
