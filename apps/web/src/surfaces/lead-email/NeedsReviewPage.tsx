@@ -143,6 +143,7 @@ export function ReviewCard({ item, onAccepted, onDiscarded, onFailure }: { item:
   const accept = useAction<{ name?: string; phone?: string; email?: string }, ReviewDecisionResponse>('POST', opts);
   const discard = useAction<undefined, ReviewDecisionResponse>('POST', opts);
   const decided = item.status !== 'needs_review';
+  const notALead = item.holdCode === 'FORWARDING_CONFIRMATION';
   // a decided email's content is deleted on the server, so its subject may be gone too
   const subject = item.subject?.trim() || (decided ? `Email from ${item.senderDomain ?? 'an unreadable sender'}` : 'No subject');
 
@@ -196,15 +197,18 @@ export function ReviewCard({ item, onAccepted, onDiscarded, onFailure }: { item:
       <Excerpt item={item} />
       {!decided && !form ? (
         <div className="flex flex-wrap gap-2">
-          <Button pending={accept.pending} onClick={() => (item.canAccept ? void runAccept({}) : setForm(true))} aria-label={`Accept: ${subject}`}>
-            Accept
-          </Button>
+          {/* R-LEM-12 (b9 ui/F6): a forwarding confirmation is never a lead (the API refuses LEAD_EMAIL_NOT_A_LEAD): Discard only */}
+          {notALead ? null : (
+            <Button pending={accept.pending} onClick={() => (item.canAccept ? void runAccept({}) : setForm(true))} aria-label={`Accept: ${subject}`}>
+              Accept
+            </Button>
+          )}
           <Button variant="secondary" pending={discard.pending} onClick={() => setConfirmDiscard(true)} aria-label={`Discard: ${subject}`}>
             Discard
           </Button>
         </div>
       ) : null}
-      {!decided && form ? <AcceptForm item={item} pending={accept.pending} onCancel={() => setForm(false)} onSubmit={runAccept} /> : null}
+      {!decided && form && !notALead ? <AcceptForm item={item} pending={accept.pending} onCancel={() => setForm(false)} onSubmit={runAccept} /> : null}
       {confirmDiscard ? (
         <Dialog
           title="Discard this email?"
