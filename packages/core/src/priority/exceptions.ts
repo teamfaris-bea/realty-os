@@ -102,6 +102,33 @@ export function untouchedLead(s: SlaFacts, now: Instant): DerivedException {
   };
 }
 
+/**
+ * A stored untouched_lead item whose period the current definitions make no item (untouchedLead says `clear`): its
+ * first-touch window ended before the deadline (a re-inquiry superseded it, or the lead left its owner), its first touch
+ * was in time, or it is not due. A late fix is always an item (cleared at the touch), so this is never one: the row is
+ * withdrawn with the reason as its evidence, never cleared like a fixed condition, which would read as "fixed late"
+ * (batch 6 review F2: items an earlier rule stored for periods rule 3 supersedes; F5: periods whose lead left its owner
+ * by an owner-changing merge or a deactivation re-route, which now end the window too). The withdrawal instant stays.
+ */
+export function withdrawnUntouched(stored: ExceptionItemSpec, s: SlaFacts, now: Instant): ExceptionItemSpec {
+  const due = s.firstTouchDueAt;
+  const by = (at: Instant | null): at is Instant => at !== null && at <= due;
+  const p = (explanation: string, at: Instant): ExceptionEvidence => ({ sourceType: 'ownership_period', sourceId: s.contactId, explanation, at });
+  let why: ExceptionEvidence[];
+  if (by(s.firstTouchAt)) why = [p('Not a miss: the first human call, text or email was in time', due), p('First human contact', s.firstTouchAt)];
+  else if (by(s.nextPeriodAt) && !(by(s.periodEndedAt) && s.periodEndedAt < s.nextPeriodAt)) {
+    why = [p("Not a miss: a re-inquiry started this agent's next period before this one was due", due), p('Re-inquiry started their next period', s.nextPeriodAt)];
+  } else if (by(s.periodEndedAt)) why = [p('Not a miss: the lead left this agent before the first-contact deadline', due), p('Lead left this agent', s.periodEndedAt)];
+  else why = [p('Not a miss: the first-contact deadline has not passed', due)];
+  const [reason, ...when] = why as [ExceptionEvidence, ...ExceptionEvidence[]];
+  return {
+    ...stored,
+    evidence: [reason, p('Lead became theirs', s.ownedAt), ...when],
+    ruleVersion: EXCEPTION_RULE_VERSION,
+    withdrawnAt: stored.withdrawnAt ?? now,
+  };
+}
+
 /** overdue_promise: an open promise task past its deadline (all-day: the end of its local day). */
 export function overduePromise(t: TaskFacts, now: Instant): DerivedException | null {
   if (t.kind !== 'promise' || t.createdByKind === 'import') return null;
@@ -400,6 +427,7 @@ export function exceptionFingerprint(x: ExceptionItemSpec): string {
     x.dueAt,
     x.ruleVersion,
     x.conditionClearedAt === null ? 'open' : 'cleared',
+    (x.withdrawnAt ?? null) === null ? 'kept' : 'withdrawn',
     x.evidence.length,
   ];
   for (const e of x.evidence) parts.push(e.sourceType, e.sourceId, e.explanation, e.at ?? '', locatorPrint(e.locator), e.snippet ?? '', e.predicate ?? '');
@@ -419,6 +447,11 @@ export function exceptionFingerprint(x: ExceptionItemSpec): string {
  *
  * Stored `conditionClearedAt` instants are kept (an item that is cleared both in the store and in
  * the derivation is unchanged); a stored-cleared item whose condition holds again is upserted open.
+ *
+ * A stored untouched_lead item whose period the definitions now make no item (untouchedLead `clear`)
+ * is never cleared: it is upserted withdrawn, saying why (withdrawnUntouched), whether it was open or
+ * cleared, and once withdrawn it is unchanged. A withdrawn item that is an item again is upserted as
+ * one (no longer withdrawn).
  */
 export function deriveExceptions(i: ExceptionInputs): ExceptionDerivation {
   const s: Required<ExceptionSettings> = { ...DEFAULT_EXCEPTION_SETTINGS, ...stripUndefined(i.settings) };
@@ -434,7 +467,16 @@ export function deriveExceptions(i: ExceptionInputs): ExceptionDerivation {
     // Duplicate input rows for one subject: keep one deterministically.
     if (prev === undefined || canonicalJson(d.spec) < canonicalJson(prev)) items.set(d.spec.dedupeKey, d.spec);
   };
-  for (const x of i.ownedWithSla) take(untouchedLead(x, i.now));
+  // the facts of the untouched_lead periods that are no item (a stored row of one is withdrawn, not cleared)
+  const noItem = new Map<string, SlaFacts>();
+  for (const x of i.ownedWithSla) {
+    const d = untouchedLead(x, i.now);
+    if (d.kind === 'clear') {
+      const prev = noItem.get(d.key);
+      if (prev === undefined || canonicalJson(x) < canonicalJson(prev)) noItem.set(d.key, x);
+    }
+    take(d);
+  }
   for (const x of i.promiseTasks) take(overduePromise(x, i.now));
   for (const x of i.outbound) take(failedSend(x, i.now, s));
   for (const x of i.appointments) take(missingOutcome(x, i.now, s));
@@ -454,7 +496,12 @@ export function deriveExceptions(i: ExceptionInputs): ExceptionDerivation {
       upserts.push(spec);
     }
     for (const [key, ex] of stored) {
-      if (ex.conditionClearedAt === null && !items.has(key)) cleared.push(key);
+      if (items.has(key)) continue;
+      const facts = ex.itemType === 'untouched_lead' ? noItem.get(key) : undefined;
+      if (facts !== undefined) {
+        const w = withdrawnUntouched(ex, facts, i.now);
+        if (exceptionFingerprint(w) !== exceptionFingerprint(ex)) upserts.push(w);
+      } else if (ex.conditionClearedAt === null && (ex.withdrawnAt ?? null) === null) cleared.push(key);
     }
   }
   upserts.sort((a, b) => (a.dedupeKey < b.dedupeKey ? -1 : 1)); // keys are unique here

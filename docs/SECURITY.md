@@ -481,6 +481,17 @@ A rollup per (tenant, member, local day) is therefore exact for every viewer:
   the day of the period before it) was marked dirty by the migration. Proof:
   `apps/api/src/accountability/scoreboard_reinquiry.test.ts`, which migrates a database rolled under the old
   definitions.
+- **One leaves-the-owner rule (batch 6 review F5; migration `0047_api_accountability_period_end_withdrawn.sql`).** A
+  period's first-touch window also ends at any ledger event that takes the lead out of `owned` or gives it to someone
+  else (an owner-changing `merged_in`, a deactivation re-route from owned to offered), as the untouched-lead card
+  already read it. `app.scoreboard_speed` and `app.scoreboard_rollup_roll` (speed rows only) were replaced with
+  `CREATE OR REPLACE` (same signatures) and re-asserted: owner `app_definer`, `search_path = pg_catalog, public`,
+  EXECUTE revoked from PUBLIC, granted to `app_user`. They return the same columns, and the member rule is unchanged.
+  `v_speed_to_lead` keeps `security_invoker`. `app.scoreboard_mark_ledger` is unchanged (an appended window end changes
+  no earlier row). Every rolled day whose speed rows may change was marked dirty by the migration. The migration also
+  adds `exception_items.withdrawn_at` (untouched_lead only, CHECK) under the table's existing policies and grants; it
+  is written only by the system recompute (`exceptions_update`). Proof: `scoreboard_period_end.test.ts` (migrates a
+  database rolled under the old definitions) and the rollup equivalence of `scoreboard_rollup.test.ts`.
 
 **New tables.**
 - `scoreboard_activity_daily`, `scoreboard_speed_daily`, `scoreboard_rollup_days`, `scoreboard_rollup_dirty` and

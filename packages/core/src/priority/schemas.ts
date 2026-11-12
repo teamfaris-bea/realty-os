@@ -84,6 +84,7 @@ export const ExceptionItemSpecSchema = z.object({
   conditionClearedAt: instantMs.nullable(),
   ruleVersion: z.number().int().min(1),
   dedupeKey: z.string().regex(/^(untouched|promise|send|appt|milestone):/),
+  withdrawnAt: instantMs.nullable().optional(),
 });
 
 export const SpeedToLeadSummarySchema = z.object({

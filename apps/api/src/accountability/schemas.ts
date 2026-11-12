@@ -65,6 +65,8 @@ export const ExceptionItemSchema = z.object({
   ageSeconds: z.number().int().min(0),
   conditionClearedAt: z.string().nullable(),
   live: z.boolean(),
+  /** untouched_lead: the current definitions make this period no item (batch 6 review F2, F5): never live, never "fixed late" */
+  withdrawn: z.boolean(),
   evidence: z.array(EvidenceItemSchema).min(1),
   /**
    * untouched_lead: whether the missed ownership period is still the lead's current one, and whether the lead left

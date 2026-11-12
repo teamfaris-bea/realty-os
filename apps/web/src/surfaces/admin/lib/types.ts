@@ -49,6 +49,12 @@ export interface ExceptionItem {
   ageSeconds: number;
   conditionClearedAt: string | null;
   live: boolean;
+  /**
+   * untouched_lead: the current rules make this period no item (its window ended before the deadline, or it was
+   * touched in time): never live, never "fixed late", nothing to do; its evidence says why (batch 6 review F2, F5).
+   * Absent from an API older than it.
+   */
+  withdrawn?: boolean;
   evidence: ExceptionEvidence[];
   /**
    * untouched_lead: whether the missed ownership period is still the lead's current one, and whether the lead left

@@ -42,10 +42,12 @@ export interface StoredItemRow {
   rule_version: number;
   dedupe_key: string;
   computed_at: Date;
+  /** untouched_lead only (0047): the current definitions derive no item for this key; never live, never "fixed late" */
+  withdrawn_at: Date | null;
 }
 
 const ITEM_COLUMNS = sql`e.id, e.item_type, e.subject_type, e.subject_id, e.contact_id, e.owner_user_id, e.detected_at, e.due_at,
-  e.evidence, e.condition_cleared_at, e.rule_version, e.dedupe_key, e.computed_at`;
+  e.evidence, e.condition_cleared_at, e.rule_version, e.dedupe_key, e.computed_at, e.withdrawn_at`;
 
 /** A stored row as core's ExceptionItemSpec (for the idempotent recompute diff). */
 export function specOf(r: StoredItemRow): ExceptionItemSpec {
@@ -61,14 +63,15 @@ export function specOf(r: StoredItemRow): ExceptionItemSpec {
     conditionClearedAt: msOrNull(r.condition_cleared_at),
     ruleVersion: r.rule_version,
     dedupeKey: r.dedupe_key,
+    withdrawnAt: msOrNull(r.withdrawn_at),
   };
 }
 
-/** Stored rows whose condition still holds (tenant scope), or every stored row of one contact. */
+/** Stored rows whose condition still holds and that are not withdrawn (tenant scope), or every stored row of one contact. */
 export async function storedRowsForScope(tx: Tx, contactId: string | null): Promise<StoredItemRow[]> {
   const r = contactId === null
     ? await sql<StoredItemRow>`SELECT ${ITEM_COLUMNS} FROM exception_items e
-         WHERE e.tenant_id = app.tenant_id() AND e.condition_cleared_at IS NULL`.execute(tx)
+         WHERE e.tenant_id = app.tenant_id() AND e.condition_cleared_at IS NULL AND e.withdrawn_at IS NULL`.execute(tx)
     : await sql<StoredItemRow>`SELECT ${ITEM_COLUMNS} FROM exception_items e
          WHERE e.tenant_id = app.tenant_id() AND e.contact_id = ${contactId}::uuid`.execute(tx);
   return r.rows;
@@ -101,10 +104,12 @@ const PERIOD_END_TYPES = ['reassigned', 'released', 'auto_released', 'inactivity
  * on an owned lead (R-OWN-20, E68: a new period, so a new item key).
  *
  * A period's first touch is the first first_touch_recorded before its window ends: when the lead left the
- * agent (`ended_at`, PERIOD_END_TYPES) or when a re-inquiry started a new period of theirs (`next_period_at`,
- * payload.newPeriod, as fold's startsPeriod). A touch after the re-inquiry is the later period's first touch,
- * never the earlier one's late fix (owner decision 2026-11-11, DATA_MODEL R-ACC-2). `ended_at` keeps meaning
- * "the lead left this agent": core says so in the item's evidence, which would be false for a re-inquiry.
+ * agent (`ended_at`: an event on PERIOD_END_TYPES, or any event that takes the lead out of `owned` or gives it
+ * to someone else, as LEAVES_OWNER below, so an owner-changing merge or a deactivation re-route ends it too,
+ * batch 6 review F5, migration 0047) or when a re-inquiry started a new period of theirs (`next_period_at`,
+ * payload.newPeriod, as fold's startsPeriod). A touch after either is a later period's first touch, never the
+ * earlier one's late fix (owner decision 2026-11-11, DATA_MODEL R-ACC-2). `ended_at` keeps meaning "the lead
+ * left this agent": core says so in the item's evidence, which would be false for a re-inquiry.
  */
 export async function slaFacts(tx: Tx, s: InputScope): Promise<SlaFacts[]> {
   const nowIso = iso(s.now);
@@ -135,7 +140,7 @@ export async function slaFacts(tx: Tx, s: InputScope): Promise<SlaFacts[]> {
       LEFT JOIN LATERAL (
         SELECT x.seq, x.occurred_at FROM lead_ownership_events x
          WHERE x.tenant_id = p.tenant_id AND x.contact_id = p.contact_id AND x.seq > p.seq
-           AND x.type = ANY (${PERIOD_END_TYPES}::text[])
+           AND (x.type = ANY (${PERIOD_END_TYPES}::text[]) OR x.to_state <> 'owned' OR x.owner_user_id IS DISTINCT FROM p.owner_user_id)
          ORDER BY x.seq LIMIT 1) pe ON true
       -- the first new period of the same owner while they still hold the lead (before it left them)
       LEFT JOIN LATERAL (
@@ -306,17 +311,18 @@ export async function upsertItems(tx: Tx, specs: readonly ExceptionItemSpec[], i
     const idCol = chunk.map(() => ids.next() as string);
     await sql`
       INSERT INTO exception_items (tenant_id, id, item_type, subject_type, subject_id, contact_id, owner_user_id, detected_at, due_at,
-                                   evidence, condition_cleared_at, rule_version, dedupe_key, computed_at)
+                                   evidence, condition_cleared_at, rule_version, dedupe_key, computed_at, withdrawn_at)
       SELECT app.tenant_id(), x.id, x.item_type, x.subject_type, x.subject_id, x.contact_id, x.owner_user_id, x.detected_at, x.due_at,
-             x.evidence, x.condition_cleared_at, x.rule_version, x.dedupe_key, ${nowIso}::timestamptz
+             x.evidence, x.condition_cleared_at, x.rule_version, x.dedupe_key, ${nowIso}::timestamptz, x.withdrawn_at
         FROM unnest(${idCol}::uuid[], ${chunk.map((x) => x.itemType)}::text[], ${chunk.map((x) => x.subjectType)}::text[],
                     ${chunk.map((x) => x.subjectId)}::uuid[], ${chunk.map((x) => x.contactId)}::uuid[], ${chunk.map((x) => x.ownerUserId)}::uuid[],
                     ${chunk.map((x) => iso(x.detectedAt))}::timestamptz[], ${chunk.map((x) => (x.dueAt === null ? null : iso(x.dueAt)))}::timestamptz[],
                     ${chunk.map((x) => JSON.stringify(x.evidence))}::jsonb[],
                     ${chunk.map((x) => (x.conditionClearedAt === null ? null : iso(x.conditionClearedAt)))}::timestamptz[],
-                    ${chunk.map((x) => x.ruleVersion)}::smallint[], ${chunk.map((x) => x.dedupeKey)}::text[])
+                    ${chunk.map((x) => x.ruleVersion)}::smallint[], ${chunk.map((x) => x.dedupeKey)}::text[],
+                    ${chunk.map((x) => (x.withdrawnAt === null || x.withdrawnAt === undefined ? null : iso(x.withdrawnAt)))}::timestamptz[])
              WITH ORDINALITY AS x(id, item_type, subject_type, subject_id, contact_id, owner_user_id, detected_at, due_at, evidence,
-                                  condition_cleared_at, rule_version, dedupe_key, ord)
+                                  condition_cleared_at, rule_version, dedupe_key, withdrawn_at, ord)
        ORDER BY x.ord
       ON CONFLICT (tenant_id, dedupe_key) DO UPDATE SET
         item_type = EXCLUDED.item_type, subject_type = EXCLUDED.subject_type, subject_id = EXCLUDED.subject_id,
@@ -325,11 +331,17 @@ export async function upsertItems(tx: Tx, specs: readonly ExceptionItemSpec[], i
         -- a stored clear instant is kept while the derivation also says cleared (core compares open/cleared only)
         condition_cleared_at = CASE WHEN EXCLUDED.condition_cleared_at IS NULL THEN NULL
                                     ELSE COALESCE(exception_items.condition_cleared_at, EXCLUDED.condition_cleared_at) END,
+        -- the same for a withdrawal (core withdrawnUntouched): its first instant is kept; an item again is not withdrawn
+        withdrawn_at = CASE WHEN EXCLUDED.withdrawn_at IS NULL THEN NULL
+                            ELSE COALESCE(exception_items.withdrawn_at, EXCLUDED.withdrawn_at) END,
         rule_version = EXCLUDED.rule_version, computed_at = EXCLUDED.computed_at`.execute(tx);
   }
 }
 
-/** Keys whose condition stopped holding: condition_cleared_at = now where still open. Rows are never deleted. */
+/**
+ * Keys whose condition stopped holding: condition_cleared_at = now where still open. Rows are never deleted. A stored
+ * untouched_lead item the definitions make no item is never cleared here: core withdraws it (an upsert, withdrawn_at).
+ */
 export async function clearItems(tx: Tx, keys: readonly string[], now: Instant): Promise<number> {
   if (keys.length === 0) return 0;
   const r = await sql`
@@ -400,7 +412,8 @@ export async function queueRows(tx: Tx, f: QueueFilter): Promise<QueueRow[]> {
        AND (${f.type ?? null}::text IS NULL OR e.item_type = ${f.type ?? null}::text)
        AND (${f.ownerUserId ?? null}::uuid IS NULL OR e.owner_user_id = ${f.ownerUserId ?? null}::uuid)
        AND (CASE ${f.state}::text
-              WHEN 'live' THEN le.action IS NULL OR le.action NOT IN ('resolved','verified')
+              -- a withdrawn item (0047) is never live: the current definitions make it no item
+              WHEN 'live' THEN e.withdrawn_at IS NULL AND (le.action IS NULL OR le.action NOT IN ('resolved','verified'))
               WHEN 'handled' THEN le.action IN ('resolved','verified')
               ELSE true END)
      ORDER BY (e.condition_cleared_at IS NULL) DESC, e.detected_at ASC, e.id ASC
@@ -423,7 +436,7 @@ export async function liveCounts(tx: Tx, ownerUserId: string | undefined): Promi
          ORDER BY ev.occurred_at DESC, ev.id DESC LIMIT 1) le ON true
      WHERE e.tenant_id = app.tenant_id()
        AND (${ownerUserId ?? null}::uuid IS NULL OR e.owner_user_id = ${ownerUserId ?? null}::uuid)
-       AND (le.action IS NULL OR le.action NOT IN ('resolved','verified'))
+       AND e.withdrawn_at IS NULL AND (le.action IS NULL OR le.action NOT IN ('resolved','verified'))
      GROUP BY e.item_type`.execute(tx);
   return r.rows;
 }

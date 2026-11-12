@@ -14,6 +14,7 @@ import {
   act,
   asUser,
   call,
+  command,
   contactState,
   daytimeContact,
   endedAppointment,
@@ -251,6 +252,182 @@ describe('untouched_lead', () => {
     expect(await itemRow(h, untouched(lead.contactId, newerSeq))).toBeNull();
   });
 });
+
+// Batch 6 review ownership-sla/F5 and F2. A merge that hands the survivor to the loser's owner writes only merged_in on
+// it (owner B, a new period with no deadline), and a deactivation re-route goes from owned straight to offered. Neither
+// was on the list of events that end a first-touch window, so B's later first touch became A's period's (A's miss "fixed
+// late" by B), and a period that left A before its deadline was still A's miss. And an item an earlier rule stored for a
+// period the current rules make no item (rule 3: a period a re-inquiry superseded before its deadline) was cleared like
+// a late fix, so the Team Lead's card said "Fixed late" of a period nobody missed, in the live queue.
+describe('a first-touch window ends however the lead leaves its owner (R-ACC-2, review F5); stored items the rules make no item are withdrawn (F2, F5)', () => {
+  /** Two accepted leads with different owners. */
+  async function twoOwners() {
+    const a = await acceptedLead(h, w);
+    const b = await acceptedLead(h, w);
+    let bOwner = b.owner;
+    if (bOwner.userId === a.owner.userId) {
+      bOwner = [...w.agents, w.teamLead!].find((x) => x.userId !== a.owner.userId)!;
+      expect((await command(w.owner, b.contactId, 'reassign', { toUserId: bOwner.userId, reason: 'MANUAL' })).status).toBe(200);
+    }
+    return { a, b, bOwner };
+  }
+  /** The Owner merges `loser` into `survivor`, giving the survivor to `ownerChoice` (R-OWN-24, different owners). */
+  async function merge(survivorId: string, loserId: string, ownerChoice: string) {
+    const r = await command(w.owner, survivorId, 'merge', { loserId, ownerChoice });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect((await ledger(h, survivorId)).at(-1)).toMatchObject({ type: 'merged_in', owner_user_id: ownerChoice });
+  }
+  /** What an earlier rule stored for a period: an untouched_lead row as of rule `version`, open or "fixed late". */
+  async function storedAsBefore(contactId: string, seq: number, o: { version: number; clearedAt?: Date | null; lateTouchAt?: Date }) {
+    const p = (await h.su.query(`SELECT tenant_id, owner_user_id, occurred_at, deadline_at FROM lead_ownership_events WHERE contact_id = $1 AND seq = $2`, [contactId, seq])).rows[0];
+    const ev = [
+      { sourceType: 'ownership_period', sourceId: contactId, explanation: o.lateTouchAt ? 'First human call, text or email came after the first-contact deadline' : 'No human call, text or email by the first-contact deadline', at: p.deadline_at.getTime() },
+      { sourceType: 'ownership_period', sourceId: contactId, explanation: 'Lead became theirs', at: p.occurred_at.getTime() },
+      ...(o.lateTouchAt ? [{ sourceType: 'ownership_period', sourceId: contactId, explanation: 'First human contact', at: o.lateTouchAt.getTime() }] : []),
+    ];
+    await h.su.query(
+      `INSERT INTO exception_items (tenant_id, id, item_type, subject_type, subject_id, contact_id, owner_user_id, detected_at, due_at, evidence,
+                                    condition_cleared_at, rule_version, dedupe_key, computed_at)
+       VALUES ($1, gen_random_uuid(), 'untouched_lead', 'contact', $2, $2, $3, $4, $4, $5::jsonb, $6, $7, $8, now())`,
+      [p.tenant_id, contactId, p.owner_user_id, p.deadline_at, JSON.stringify(ev), o.clearedAt ?? null, o.version, untouched(contactId, seq)],
+    );
+  }
+  const withdrawnRow = async (key: string) => (await h.su.query('SELECT withdrawn_at, condition_cleared_at, rule_version, evidence FROM exception_items WHERE dedupe_key = $1', [key])).rows[0];
+
+  it('R-ACC-2 R-OWN-24 E68: an owner-changing merge after the deadline ends the earlier owner\'s window: the new owner\'s first touch is never their late fix', async () => {
+    const { a, b, bOwner } = await twoOwners();
+    const key = untouched(a.contactId, a.periodSeq);
+    await setPeriodDeadlines(h, a.contactId, -60_000, 86_400_000);
+    await recompute(h, w.tenantId, { contactId: a.contactId });
+    expect((await itemRow(h, key))?.condition_cleared_at).toBeNull();
+    await merge(a.contactId, b.contactId, bOwner.userId as string);
+    // the new owner answers: their period's touch, never A's late fix
+    await humanTouch(h, bOwner, a.contactId);
+    expect((await ledger(h, a.contactId)).at(-1)).toMatchObject({ type: 'first_touch_recorded', owner_user_id: bOwner.userId });
+    await recompute(h, w.tenantId, { contactId: a.contactId });
+    const row = (await itemRow(h, key))!;
+    expect(row.condition_cleared_at).toBeNull();
+    expect(explanations(row.evidence)).toEqual(['No human call, text or email by the first-contact deadline; the lead later left this agent', 'Lead became theirs']);
+    const tl = (await queue(w.teamLead!)).items.find((i) => i.dedupeKey === key)!;
+    expect(tl).toMatchObject({ live: true, conditionClearedAt: null, owner: { userId: a.owner.userId }, period: { current: false, movedOn: true } });
+  });
+
+  it('R-ACC-2 R-OWN-24: a period whose lead a merge handed to another owner before its deadline is no item; one an earlier rule stored is withdrawn, never "fixed late" (review F5)', async () => {
+    const { a, b, bOwner } = await twoOwners();
+    const key = untouched(a.contactId, a.periodSeq);
+    await merge(a.contactId, b.contactId, bOwner.userId as string);
+    const mergedSeq = Number((await contactState(h, a.contactId)).ownership_seq);
+    // a long first-touch SLA: A's deadline fell just after the merge, and it has passed by now
+    await suFixture(h, [{
+      text: `UPDATE lead_ownership_events e SET deadline_at = n.occurred_at + interval '1 millisecond'
+               FROM lead_ownership_events n WHERE e.contact_id = $1 AND e.seq = $2 AND n.contact_id = e.contact_id AND n.seq = $3`,
+      values: [a.contactId, a.periodSeq, mergedSeq],
+    }]);
+    await sleep(5);
+    await recompute(h, w.tenantId, { contactId: a.contactId });
+    expect(await itemRow(h, key)).toBeNull();
+    // what the earlier rule stored for it: A's open miss; then B's touch, which that rule took for A's late fix
+    await storedAsBefore(a.contactId, a.periodSeq, { version: 3 });
+    await humanTouch(h, bOwner, a.contactId);
+    await recompute(h, w.tenantId, { contactId: a.contactId });
+    const row = await withdrawnRow(key);
+    expect(row.withdrawn_at).not.toBeNull();
+    expect([row.condition_cleared_at, row.rule_version]).toEqual([null, EXCEPTION_RULE_VERSION]);
+    expect(explanations(row.evidence)).toEqual(['Not a miss: the lead left this agent before the first-contact deadline', 'Lead became theirs', 'Lead left this agent']);
+    // never in the live queue (so never "fixed late"), counted nowhere; the full list says it was withdrawn, offering nothing
+    expect(keysOf((await queue(w.teamLead!)).items)).not.toContain(key);
+    const all = (await queue(w.owner, '?state=all')).items.find((i) => i.dedupeKey === key)!;
+    expect(all).toMatchObject({ live: false, withdrawn: true, actions: { resolve: false, reassign: false, verify: false, reopen: false } });
+    for (const verb of ['resolve', 'verify'] as const) {
+      const r = await act(w.owner, key, verb, { note: 'Called them' });
+      expect([verb, r.status, r.code]).toEqual([verb, 409, 'EXCEPTION_STATE_CONFLICT']);
+    }
+    // a later recompute writes nothing
+    const again = await recompute(h, w.tenantId, { contactId: a.contactId });
+    expect([again.upserted, again.cleared]).toEqual([0, 0]);
+  });
+
+  it('R-ACC-2 R-OWN-22: a deactivation re-route (owned straight to offered) ends the window: a period it took from its owner before the deadline is no item', async () => {
+    const lead = await acceptedLead(h, w);
+    const key = untouched(lead.contactId, lead.periodSeq);
+    const next = [...w.agents, w.teamLead!].find((x) => x.userId !== lead.owner.userId)!;
+    // the ledger as R-OWN-22 stage 3 writes it for destination `reroute` (route(b) offers from owned), then the accept
+    await appendEvents(lead.contactId, [
+      { type: 'offered', from: 'owned', to: 'offered', owner: null, offeredTo: next.userId as string },
+      { type: 'offer_accepted', from: 'offered', to: 'owned', owner: next.userId as string },
+    ]);
+    const offered = (await h.su.query<{ occurred_at: Date }>(`SELECT occurred_at FROM lead_ownership_events WHERE contact_id = $1 AND type = 'offered' AND seq > $2 ORDER BY seq LIMIT 1`, [lead.contactId, lead.periodSeq])).rows[0]!;
+    await suFixture(h, [{ text: `UPDATE lead_ownership_events SET deadline_at = $3::timestamptz + interval '1 millisecond' WHERE contact_id = $1 AND seq = $2`, values: [lead.contactId, lead.periodSeq, offered.occurred_at] }]);
+    await sleep(5);
+    await recompute(h, w.tenantId, { contactId: lead.contactId });
+    expect(await itemRow(h, key)).toBeNull();
+  });
+
+  it('R-ACC-1 R-OWN-20 E68: rule-2 items of a period a re-inquiry superseded before its deadline (open, or "fixed late" by the later period\'s touch) are withdrawn on the next recompute, never shown as fixed late (review F2)', async () => {
+    const lead = await acceptedLead(h, w);
+    const earlierKey = untouched(lead.contactId, lead.periodSeq);
+    await suFixture(h, [{ text: `UPDATE contacts SET owned_at = now() - interval '8 days' WHERE id = $1`, values: [lead.contactId] }]);
+    expect((await intake(h, w, { phones: [await phoneOf(lead.contactId)], fullName: 'Pat Lead', inquiryType: 'value' })).outcome).toBe('reinquiry');
+    const newerSeq = Number((await contactState(h, lead.contactId)).ownership_period_seq);
+    expect(newerSeq).toBeGreaterThan(lead.periodSeq);
+    await suFixture(h, [{
+      text: `UPDATE lead_ownership_events e SET deadline_at = n.occurred_at + interval '1 millisecond'
+               FROM lead_ownership_events n WHERE e.contact_id = $1 AND e.seq = $2 AND n.contact_id = e.contact_id AND n.seq = $3`,
+      values: [lead.contactId, lead.periodSeq, newerSeq],
+    }]);
+    await sleep(5);
+    // what rule 2 stored for the earlier period: an open miss
+    await storedAsBefore(lead.contactId, lead.periodSeq, { version: 2 });
+    expect(keysOf((await queue(w.teamLead!)).items)).toContain(earlierKey);
+    await recompute(h, w.tenantId, { contactId: lead.contactId });
+    // never "fixed late" in the live queue (before the fix: cleared, so live with a clear instant)
+    expect(keysOf((await queue(w.teamLead!)).items)).not.toContain(earlierKey);
+    let row = await withdrawnRow(earlierKey);
+    expect(row.withdrawn_at).not.toBeNull();
+    expect([row.condition_cleared_at, row.rule_version]).toEqual([null, EXCEPTION_RULE_VERSION]);
+    expect(explanations(row.evidence)).toEqual(["Not a miss: a re-inquiry started this agent's next period before this one was due", 'Lead became theirs', 'Re-inquiry started their next period']);
+    // and the one rule 2 had marked "fixed late" by the newer period's touch: withdrawn too, its clear instant kept
+    await h.su.query('DELETE FROM exception_items WHERE dedupe_key = $1', [earlierKey]);
+    await humanTouch(h, lead.owner, lead.contactId);
+    const touchAt = await lastFirstTouchAt(lead.contactId);
+    await storedAsBefore(lead.contactId, lead.periodSeq, { version: 2, clearedAt: touchAt, lateTouchAt: touchAt });
+    expect((await queue(w.teamLead!)).items.find((i) => i.dedupeKey === earlierKey)).toMatchObject({ live: true, conditionClearedAt: touchAt.toISOString() });
+    await recompute(h, w.tenantId, { contactId: lead.contactId });
+    row = await withdrawnRow(earlierKey);
+    expect(row.withdrawn_at).not.toBeNull();
+    expect(row.condition_cleared_at?.getTime()).toBe(touchAt.getTime());
+    expect(keysOf((await queue(w.teamLead!)).items)).not.toContain(earlierKey);
+    // a tenant scan agrees and writes nothing more
+    expect((await recompute(h, w.tenantId)).upserted).toBe(0);
+  });
+});
+
+/**
+ * Appends ledger rows at the contact's head, as the engine writes them, through the ledger guard (one command id per
+ * transaction; the superuser pool, a fixture for a path these tests do not drive: R-OWN-22 stage 3's re-route).
+ */
+async function appendEvents(contactId: string, events: { type: string; from: string; to: string; owner: string | null; offeredTo?: string }[]): Promise<void> {
+  const c = await h.su.connect();
+  try {
+    await c.query('BEGIN');
+    await c.query(`SELECT set_config('app.ownership_command', gen_random_uuid()::text, true)`);
+    for (const e of events) {
+      await c.query(
+        `INSERT INTO lead_ownership_events (tenant_id, contact_id, seq, event_id, type, from_state, to_state, owner_user_id, offered_to_user_id, offer_id,
+                                            deadline_at, actor_kind, reason_code, command_id, occurred_at, payload)
+         SELECT c.tenant_id, c.id, (SELECT max(seq) + 1 FROM lead_ownership_events WHERE contact_id = c.id), gen_random_uuid(), $2, $3, $4, $5, $6,
+                CASE WHEN $2 = 'offered' THEN gen_random_uuid() END, NULL, 'system', 'TEST_REROUTE', current_setting('app.ownership_command')::uuid,
+                date_trunc('milliseconds', clock_timestamp()), '{}'::jsonb
+           FROM contacts c WHERE c.id = $1`,
+        [contactId, e.type, e.from, e.to, e.owner, e.offeredTo ?? null],
+      );
+    }
+    await c.query('COMMIT');
+  } finally {
+    await c.query('ROLLBACK').catch(() => undefined);
+    c.release();
+  }
+}
 
 describe('overdue_promise, missing_outcome, failed_send', () => {
   it('R-ACC-2: an open promise task past due is an item with the promise evidence; the quote is added at read time for the viewer and never stored; done late keeps it live', async () => {
