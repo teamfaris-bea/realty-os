@@ -2440,6 +2440,8 @@ exports[`route table and schemas > every leads route declares its authorization 
   "HEAD /api/contacts/:id/reachability → contact.view_detail",
   "GET /api/contacts/:id/attachments → contact.view_detail",
   "HEAD /api/contacts/:id/attachments → contact.view_detail",
+  "POST /api/contacts/:id/outbound-media → comms.send",
+  "DELETE /api/contacts/:id/outbound-media/:uploadId → comms.send",
   "GET /api/lead-sources/:id/lead-email → integration.view",
   "HEAD /api/lead-sources/:id/lead-email → integration.view",
   "POST /api/lead-sources/:id/lead-email → integration.manage",
