@@ -164,19 +164,24 @@ export async function reactionExtras(tx: Tx, messageIds: readonly string[]): Pro
   const out: ReactionExtras = { reaction: new Map(), reactedWith: new Map() };
   if (messageIds.length === 0) return out;
   const ids = [...messageIds];
-  const own = await sql<{ message_id: string; target_message_id: string; action: ReactionAction; reaction: ReactionName; emoji: string | null; whole_text_reading: string; target_body: string; raw: string }>`
-    SELECT mr.message_id, mr.target_message_id, mr.action, mr.reaction, mr.emoji, mr.whole_text_reading, t.body AS target_body, m.body AS raw
+  // The target is LEFT JOINed: between a Team Lead's merge and its ownership.followup the team's text can still sit on
+  // the merged-away record, which the survivor's agent cannot read yet (b8 texting ownership-data/F6). The line still
+  // shows then, quoting the person's own message (which the viewer reads); it is dropped only if that does not parse.
+  const own = await sql<{ message_id: string; target_message_id: string; action: ReactionAction; reaction: ReactionName; emoji: string | null; whole_text_reading: string; target_seen: boolean; target_body: string | null; raw: string }>`
+    SELECT mr.message_id, mr.target_message_id, mr.action, mr.reaction, mr.emoji, mr.whole_text_reading, t.id IS NOT NULL AS target_seen, t.body AS target_body, m.body AS raw
       FROM message_reactions mr
       JOIN messages m ON m.tenant_id = mr.tenant_id AND m.id = mr.message_id
-      JOIN messages t ON t.tenant_id = mr.tenant_id AND t.id = mr.target_message_id
+      LEFT JOIN messages t ON t.tenant_id = mr.tenant_id AND t.id = mr.target_message_id
      WHERE mr.tenant_id = app.tenant_id() AND mr.message_id = ANY(${ids}::uuid[])`.execute(tx);
   for (const r of own.rows) {
+    const quoted = r.target_seen ? (r.target_body ?? '') : (parseReaction(r.raw)?.quote ?? null);
+    if (quoted === null) continue;
     out.reaction.set(r.message_id, {
       action: r.action,
       reaction: r.reaction,
       emoji: r.emoji,
       targetMessageId: r.target_message_id,
-      quote: quoteForCopy(r.target_body),
+      quote: quoteForCopy(quoted),
       raw: [...r.raw].slice(0, RAW_CODE_POINTS).join(''),
       narrowed: r.whole_text_reading !== 'none',
     });

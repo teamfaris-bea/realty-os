@@ -19,7 +19,7 @@ import { type ApiError, messageFor, useApi, useCommand } from '../../shell/index
 import { AgentSheetsProvider, SendOutcome, sentResult, useAgentSheets } from '../feed/lib/AgentSheets.js';
 import { claimView, firstName, relativeTime } from '../feed/lib/format.js';
 import { useMutate, useNow } from '../feed/lib/hooks.js';
-import { AGENT_ERROR_MESSAGES } from '../feed/lib/messages.js';
+import { AGENT_ERROR_MESSAGES, dealDateStaleWords } from '../feed/lib/messages.js';
 import { useSendCheck } from '../feed/lib/sendCheck.js';
 import type { ActionView, ApproveResponse, ClaimApiView } from '../feed/lib/types.js';
 import { ContactSearches } from './SavedSearchReview.js';
@@ -117,6 +117,8 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
   const titleId = useId();
   const [seenSeq, setSeenSeq] = useState<number | null>(null);
   const [stale, setStale] = useState(false);
+  // E142: the deal date this update cites changed; nothing clears it, so Send goes away and only Dismiss stays
+  const [dateStale, setDateStale] = useState<string | null>(null);
   const [result, setResult] = useState<ApproveResponse | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const approve = useCommand<Record<string, unknown>, ApproveResponse>(`/assistant/actions/${action.id}/approve`, { invalidate: [['inbox'], ['feed'], ['timeline']] });
@@ -137,6 +139,11 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
     const r = await approve.run(seenSeq !== null ? { reviewedInboundSeq: seenSeq } : {});
     if (!r.ok) {
       if (r.code === 'DRAFT_STALE') {
+        const dated = dealDateStaleWords(r.details);
+        if (dated !== null) {
+          setDateStale(dated);
+          return;
+        }
         const seq = r.details?.inboundSeq;
         if (typeof seq === 'number') setSeenSeq(seq);
         setStale(true);
@@ -189,7 +196,8 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
           ))}
         </ul>
       ) : null}
-      {stale ? (
+      {dateStale ? <Notice tone="warn">{dateStale}</Notice> : null}
+      {stale && !dateStale ? (
         <Notice tone="warn" title={`${firstName(name)} replied since this was drafted`} action={threadHref ? <Link to={threadHref} className="font-medium text-accent underline">Read it</Link> : undefined}>
           Read the new message, then send if this still fits.
         </Notice>
@@ -208,7 +216,7 @@ export function ActionCard({ action, showContact = true, headingLevel = 2 }: { a
           <Button aria-expanded={searchOpen} onClick={() => setSearchOpen((o) => !o)}>
             {searchOpen ? 'Hide search' : 'Review search'}
           </Button>
-        ) : sendable ? (
+        ) : sendable && dateStale ? null : sendable ? (
           <>
             <Button icon="message" pending={approve.pending} pendingLabel="Sending" disabled={reach.blocked} aria-describedby={reach.blocked ? reasonId : undefined} onClick={() => void doApprove()}>
               {stale ? 'Send anyway' : 'Send'}

@@ -65,6 +65,8 @@ const ERRORS = [
   'MEDIA_LOCATION_NOT_REMOVED',
   'MEDIA_UPLOAD_GONE',
   'MEDIA_UPLOAD_LIMIT',
+  // the compose box's send and upload on a merged-away record (compose/mediaApi.ts handles it; R-OWN-24)
+  'CONTACT_MERGED',
 ] as const satisfies readonly ErrorCode[];
 
 /**

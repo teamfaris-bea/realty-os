@@ -560,6 +560,16 @@ export async function insertValuation(tx: Tx, v: { id: string; contactId: string
   return instantFromDate(r.rows[0]!.valued_at);
 }
 
+/**
+ * Retention (R-DATA-6): app.purge_home_valuations deletes this tenant's valuations recorded more than 13 months ago
+ * (VERIFY WITH COUNSEL C13, C6) except one a scheduled run or a pending draft still cites. System actor only; the
+ * database clock; no argument. Returns how many rows went.
+ */
+export async function purgeHomeValuations(tx: Tx): Promise<number> {
+  const r = await sql<{ valuations_deleted: number }>`SELECT valuations_deleted FROM app.purge_home_valuations()`.execute(tx);
+  return r.rows[0]?.valuations_deleted ?? 0;
+}
+
 /** The limits a home-value note is judged by (R-AVM-2): the tenant's range limit and platform:avm's max age. */
 export async function avmLimits(tx: Tx): Promise<{ maxRangeBps: number; maxAgeDays: number | null }> {
   const r = await sql<{ bps: number | null; age: string | null }>`

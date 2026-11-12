@@ -5,8 +5,3 @@ import type { DealDateId } from '../foundation/index.js';
 export function milestoneKey(dealDateId: DealDateId | string, dueVersion: number): string {
   return `milestone:${dealDateId}:${dueVersion}`;
 }
-
-/** Trigger firing key of a `deal_date_upcoming` step: `txn:{deal_date}:{due_version}:{step}`. */
-export function txnTriggerKey(dealDateId: DealDateId | string, dueVersion: number, step: string): string {
-  return `txn:${dealDateId}:${dueVersion}:${step}`;
-}

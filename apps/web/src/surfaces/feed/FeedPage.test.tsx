@@ -154,6 +154,21 @@ describe('Priority Feed', () => {
     expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(1);
   });
 
+  it.each([["DATE_MOVED", "The deal date in this update moved since it was drafted, so it can't be sent as written; the new date gets its own update if the team's update plan covers it. Dismiss it in Approvals."], ["DATE_NO_LONGER_DRIVES", "The deal date in this update was completed or waived, so this update won't be sent. Dismiss it in Approvals."], ["DATE_GONE", "The deal date in this update no longer exists, so this update won't be sent. Dismiss it in Approvals."]] as [string, string][])('R-TXN-5 E557: a card whose deal date changed (%s) says why and to dismiss it in Approvals, with no thread jump and no re-tap', async (reason, text) => {
+    const c = card({ itemType: 'assistant_draft', assistantActionId: IDS.draft, reasons: [{ code: 'DRAFT_READY', label: 'Draft ready for you' }], primaryAction: { kind: 'send_draft', label: 'Send', actionId: IDS.draft } });
+    const fake = new FakeFetch()
+      .on('GET /feed', { status: 200, body: feed([], [c]) })
+      .on(`POST /assistant/actions/${IDS.draft}/approve`, err(409, 'DRAFT_STALE', { reason, dealDateId: IDS.draft, boundDueVersion: 1, currentDueVersion: 2 }));
+    const { router } = agentApp(fake);
+    const before = router.state.location.pathname;
+    await user().click(await screen.findByRole('button', { name: 'Send' }));
+    expect(await screen.findByText(text)).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe(before);
+    expect(screen.queryByRole('button', { name: 'Send anyway' })).toBeNull();
+    expect(screen.queryByText(/replied since this was drafted/)).toBeNull();
+    expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(1);
+  });
+
   it('a draft approval the send-time check blocks says why, and there is no way past it', async () => {
     const c = card({ itemType: 'assistant_draft', primaryAction: { kind: 'send_draft', label: 'Send', actionId: IDS.draft } });
     const blocked = decision({ outcome: 'deny', explanation: 'Opted out of texts' });

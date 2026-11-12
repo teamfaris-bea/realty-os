@@ -128,7 +128,7 @@ test('R-MMS-8: a photo is prepared, uploaded and shown; Remove deletes it; attac
   const photo = row.getByRole('img', { name: 'Photo 1 of 1' });
   await expect(photo).toBeVisible({ timeout: 15_000 });
   await expect.poll(() => photo.evaluate((i: HTMLImageElement) => i.complete && i.naturalWidth)).toBeGreaterThan(0);
-  await expect(row.locator('[data-channel-tag]')).toHaveText('SMS');
+  await expect(row.locator('[data-channel-tag]')).toHaveText('MMS'); // R-MMS-8 E558
   await expect(row).not.toContainText(/Not sent|Not delivered/);
   // the upload now belongs to the message: nothing is waiting
   expect((await stack.fixture<{ n: number }>('/live-uploads')).n).toBe(0);

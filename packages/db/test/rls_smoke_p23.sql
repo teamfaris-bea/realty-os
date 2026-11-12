@@ -366,8 +366,17 @@ SELECT pg_temp.expect_error(format($q$INSERT INTO calls (tenant_id, id, conversa
 SELECT pg_temp.ctx(:tA, :ownA, 'user');
 SELECT pg_temp.expect_error(format($q$UPDATE contacts SET do_not_contact_at = NULL, do_not_contact_event_id = NULL WHERE id = %L$q$, :c2),
   'nobody on the team can lift a person-level do-not-contact (Owner included)', '%PERSON_OPT_OUT_FINAL%');
--- E140 (S4): the duplicate merges; the survivor takes the do-not-contact, and a point added to it later is covered
+-- R-OWN-24 E546 (backlog-gaps): a person never sets merged_into_contact_id by hand, Owner included (only the ownership
+-- engine's merge does, contacts_guard)
+SELECT pg_temp.expect_error(format($q$UPDATE contacts SET merged_into_contact_id = %L WHERE id = %L$q$, :c4, :c2),
+  'R-OWN-24 E546: an Owner''s bare UPDATE of merged_into_contact_id is refused', '%MERGE_UNAUDITED%');
+-- E140 (S4): the duplicate merges; the survivor takes the do-not-contact, and a point added to it later is covered.
+-- The merge itself is a fixture: platform maintenance (superuser, no tenant context), with every trigger on.
+RESET ROLE;
+SELECT pg_temp.ctx(NULL, NULL, NULL);
 UPDATE contacts SET merged_into_contact_id = :c4 WHERE id = :c2;
+SET LOCAL ROLE app_user;
+SELECT pg_temp.ctx(:tA, :ownA, 'user');
 SELECT pg_temp.ok((SELECT do_not_contact_event_id = 'a0000000-0000-7000-8000-00000000ce02' AND do_not_contact_at IS NOT NULL
                      FROM contacts WHERE id = :c4),
                   'S4 E140: the merge survivor takes the person-level do-not-contact (earliest instant, its ledger event)');

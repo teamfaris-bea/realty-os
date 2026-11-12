@@ -323,6 +323,24 @@ describe('Thread', () => {
     expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages`)).toHaveLength(0);
   });
 
+  it.each([["DATE_MOVED", "The deal date in this update moved since it was drafted, so it can't be sent as written. Your text is still here; Send sends it as your own message."], ["DATE_NO_LONGER_DRIVES", "The deal date in this update was completed or waived, so this update won't be sent. Your text is still here; Send sends it as your own message."], ["DATE_GONE", "The deal date in this update no longer exists, so this update won't be sent. Your text is still here; Send sends it as your own message."]] as [string, string][])('R-TXN-5 E557: a draft whose deal date changed (%s) is detached like an invalidated one: the text stays and Send sends it as the agent\'s own message', async (reason, text) => {
+    const fake = threadFake()
+      .on(`GET /assistant/actions/${IDS.draft}`, { status: 200, body: { action: draftAction() } })
+      .on(`POST /assistant/actions/${IDS.draft}/approve`, err(409, 'DRAFT_STALE', { reason, dealDateId: IDS.draft, boundDueVersion: 1, currentDueVersion: 2 }))
+      .on(`POST /contacts/${IDS.jane}/messages`, { status: 201, body: { result: 'sent', messageId: IDS.message, decision: decision({}) } });
+    agentApp(fake, `/contacts/${IDS.jane}/thread?compose=draft&draft=${IDS.draft}`);
+    const u = user();
+    const box = await screen.findByRole('textbox', { name: 'Text message' });
+    await waitFor(() => expect(box).toHaveValue('Hi Jane, Saturday at 11 works. Want me to book it?'));
+    await u.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText(text)).toBeInTheDocument();
+    expect(screen.queryByText(/replied since this was drafted/)).toBeNull();
+    expect(box).toHaveValue('Hi Jane, Saturday at 11 works. Want me to book it?');
+    await u.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(fake.callsTo(`POST /contacts/${IDS.jane}/messages`)).toHaveLength(1));
+    expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(1);
+  });
+
   it('R-AST-6: approving a draft the client has replied to since is refused as stale; the box says so and the next Send carries the re-reviewed inbound seq', async () => {
     const fake = threadFake()
       .on(`GET /assistant/actions/${IDS.draft}`, { status: 200, body: { action: draftAction() } })

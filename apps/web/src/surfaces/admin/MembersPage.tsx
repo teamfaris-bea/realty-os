@@ -155,7 +155,7 @@ function MemberRow({ member, viewer, self, onDone }: { member: Member; viewer: R
         </div>
         <div className="flex flex-wrap gap-1.5">
           {member.status === 'suspended' ? <Pill tone="warn">Suspended</Pill> : null}
-          {member.status === 'deactivating' ? <Pill tone="warn">Leaving: moving their leads</Pill> : null}
+          {member.status === 'deactivating' ? <Pill tone="warn">Leaving: moving their leads and listings</Pill> : null}
           {['owner', 'admin'].includes(member.role) ? <Pill tone={member.mfaEnabled ? 'ok' : 'warn'}>{member.mfaEnabled ? 'Two-step on' : 'Two-step not set up'}</Pill> : null}
           {!member.acceptingLeads && member.role !== 'tc' && member.status === 'active' ? <Pill>Not taking new leads</Pill> : null}
         </div>
@@ -226,18 +226,22 @@ function RemoveMember({ member, onCancel, onDone }: { member: Member; onCancel()
   };
   const confirm = async () => {
     if (!held) return;
-    const r = held.owned + held.offered === 0 ? await patch.run(`/members/${member.userId}`, { status: 'removed', version: member.version }) : await run.run(path, { mode: 'run', destination });
-    if (r.ok) onDone(held.owned + held.offered === 0 ? `${member.displayName} was removed` : `${member.displayName} is being removed; their leads are moving now`);
+    // nothing to move: a plain status change; otherwise the staged deactivation moves leads and listings first (R-OWN-22)
+    const nothing = held.owned + held.offered + held.openListings === 0;
+    const r = nothing ? await patch.run(`/members/${member.userId}`, { status: 'removed', version: member.version }) : await run.run(path, { mode: 'run', destination });
+    if (r.ok) onDone(nothing ? `${member.displayName} was removed` : `${member.displayName} is being removed; their ${held.openListings > 0 ? 'leads and listings are' : 'leads are'} moving now`);
   };
+  // open-deal leads and listings go to a person: the Team Lead, else the Owner/Admin running this (the viewer: fallbackUserId)
+  const toWhom = held?.teamLead ? (held.teamLead.displayName ?? 'their Team Lead') : 'you';
   const failure = preview.error ?? run.error ?? patch.error;
   return (
     <div className="flex flex-col gap-3 rounded-xl bg-surface-2 p-3">
       {!held ? (
         <>
-          <p className="text-[15px] text-ink">First we check which leads {member.displayName} still holds, so none are dropped.</p>
+          <p className="text-[15px] text-ink">First we check which leads and listings {member.displayName} still holds, so none are dropped.</p>
           <div className="flex gap-2">
             <Button pending={preview.pending} onClick={() => void check()}>
-              Check their leads
+              Check their leads and listings
             </Button>
             <Button variant="quiet" onClick={onCancel}>
               Cancel
@@ -261,9 +265,23 @@ function RemoveMember({ member, onCancel, onDone }: { member: Member; onCancel()
                 ))}
               </SelectField>
               <p className="text-[14px] text-ink-muted">
-                Leads with an open deal never go to a pond; they go to {held.teamLead?.displayName ?? 'the Owner'}.
+                Leads with an open deal never go to a pond; they go to {toWhom}.
               </p>
             </>
+          ) : null}
+          {held.openListings > 0 ? (
+            <>
+              <p className="text-[15px] text-ink">
+                They're the listing agent on {plural(held.openListings, 'open listing')}; those go to {toWhom}.
+              </p>
+              {/* VERIFY WITH COUNSEL (V11): the listing agreement itself is outside Realty OS */}
+              <p className="text-[14px] text-ink-muted">This changes who handles the listing in Realty OS, not the listing agreement.</p>
+            </>
+          ) : null}
+          {held.openDeals > 0 ? (
+            <p className="text-[14px] text-ink-muted">
+              Their {plural(held.openDeals, 'open deal')} {held.openDeals === 1 ? 'keeps' : 'keep'} {member.displayName} as the deal owner (a deal's owner can't be changed in Realty OS yet). Owners and Admins can still open them.
+            </p>
           ) : null}
           <div className="flex gap-2">
             <Button variant="danger" pending={run.pending || patch.pending} onClick={() => void confirm()}>

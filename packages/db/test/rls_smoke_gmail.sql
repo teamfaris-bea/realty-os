@@ -601,7 +601,13 @@ SELECT pg_temp.ctx(:tA, NULL, 'system');
 SELECT pg_temp.copy(:m6, :lk1, :c4, :p4, 'alice@example.test', 'g8', 't8');
 SELECT pg_temp.copy(:m7, :lk1, :c5, :p5, 'erin@example.test', 'g15', 't15');
 SELECT pg_temp.ctx(:tA, :ownA, 'user');
+-- the merge is a fixture (only the ownership engine sets merged_into_contact_id under a tenant, R-OWN-24): platform
+-- maintenance, superuser with no tenant context, every trigger on
+RESET ROLE;
+SELECT pg_temp.ctx(NULL, NULL, NULL);
 UPDATE contacts SET merged_into_contact_id = :c1 WHERE id = :c4;
+SET LOCAL ROLE app_user;
+SELECT pg_temp.ctx(:tA, :ownA, 'user');
 SELECT pg_temp.ctx(:tA, NULL, 'system');
 SELECT pg_temp.expect_error(pg_temp.copy_sql(gen_random_uuid(), :lk1, :c4, :p4, 'alice@example.test', 'g16', 't16'),
   'R-GMAIL-5: nothing new is stored for a merged contact', '%MAIL_CONTACT_NOT_RELATED%');

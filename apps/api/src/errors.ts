@@ -54,6 +54,7 @@ export const ERROR_STATUS = {
   MEMBER_EXISTS: 409, // invite for someone who is already a member of this team
   INVITE_PENDING: 409, // one pending invite per email: revoke it first
   MEMBER_HAS_LEADS: 409, // remove / make TC only once the member owns or holds no leads (deactivation moves them)
+  MEMBER_HAS_LISTINGS: 409, // remove / make TC only once the member is listing agent on no open team listing (deactivation moves them; R-OWN-22)
   VERSION_CONFLICT: 409, // optimistic concurrency: the row changed since it was read (fresh row in details)
   RULE_INVALID: 422, // routing rule shape (R-OWN-10): target, members, match
   MEMBER_NOT_ELIGIBLE: 422, // a user who cannot hold this place (TC as a routing/pond member, inactive member, non-lead role as team lead)

@@ -191,6 +191,9 @@ async function register(app: FastifyInstance): Promise<void> {
         if (newStatus === 'removed' || (newRole === 'tc' && m.role !== 'tc')) {
           const held = await repo.heldLeads(tx, userId);
           if (held.owned > 0 || held.offered > 0) throw new AppError('MEMBER_HAS_LEADS', held);
+          // R-OWN-22 E542, R-PERM-15 E543: a listing agent of an open listing is moved by the staged deactivation, or changed by hand first
+          const openListings = await repo.openListings(tx, userId);
+          if (openListings > 0) throw new AppError('MEMBER_HAS_LISTINGS', { openListings });
         }
         const acceptingLeads = newRole === 'tc' ? false : m.role === 'tc' ? true : m.accepting_leads;
         await repo.updateMember(tx, userId, { role: newRole, status: newStatus, acceptingLeads });

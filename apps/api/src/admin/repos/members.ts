@@ -109,6 +109,14 @@ export async function heldLeads(tx: Tx, userId: string): Promise<{ owned: number
   return r.rows[0] ?? { owned: 0, offered: 0 };
 }
 
+/** Open team listings (coming soon / active / pending) with the member as listing agent (R-OWN-22, R-PERM-15). */
+export async function openListings(tx: Tx, userId: string): Promise<number> {
+  const r = await sql<{ n: number }>`
+    SELECT count(*)::int AS n FROM listings
+     WHERE tenant_id = app.tenant_id() AND source = 'team' AND listing_agent_user_id = ${userId}::uuid AND status IN ('coming_soon', 'active', 'pending')`.execute(tx);
+  return r.rows[0]?.n ?? 0;
+}
+
 export interface MemberUpdate {
   role: Role;
   status: MemberRow['status'];

@@ -88,7 +88,8 @@ describe('EvidenceLink', () => {
       { kind: 'field', name: 'price_range_max' },
     ];
     const snippets = ['call me Thursday around four', '  “Quoted, with edges!”  ', "'single'", '— dash —'];
-    for (const sourceType of SOURCE_TYPES)
+    // 'home_valuation' is in the union only (core assistant/types.ts), but a home-value note's claim is worded too (R-AVM-1)
+    for (const sourceType of [...SOURCE_TYPES, 'home_valuation'] as const)
       for (const locator of locators)
         for (const snippet of snippets) expect(formatEvidenceLine({ sourceType, locator, snippet })).toBe(formatEvidence({ sourceType, sourceId: 'x', locator, snippet }));
   });

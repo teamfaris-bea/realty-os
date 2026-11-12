@@ -19,6 +19,8 @@
 // home_valuations_one_per_month (ok rows) and the firing's unique trigger_key. A vendor failure (or an answer the
 // parser refuses) writes nothing and fires nothing; a later pass in the same month asks again. With no vendor
 // configured on the platform (production's unconfigured bag) nothing is requested or written.
+// Retention (R-DATA-6): each pass first runs app.purge_home_valuations in its own system transaction (rows older than
+// 13 months that no scheduled run or pending draft cites), configured vendor or not; the purge never calls the vendor.
 // Nothing here sends: the firing is built by executeTriggerRun and sent only by comms/dispatch.ts (D1).
 import { type AvmEstimate as CoreEstimate, type Fact, avmRequest, changeFromPriorBps, detectFirings, homeValueText } from '@realty/core/nurture';
 import type { ContactId, Instant, TenantId } from '@realty/core/foundation';
@@ -248,6 +250,8 @@ export interface AvmRefreshDeps extends Pick<NurtureDeps, 'ids' | 'db'> {
 
 export interface AvmRefreshResult {
   configured: boolean;
+  /** home_valuations rows the retention purge removed first (R-DATA-6), vendor or not */
+  purged: number;
   requested: number;
   recorded: number;
   fired: number;
@@ -260,9 +264,11 @@ export interface AvmRefreshResult {
  * as its system actor; the vendor is called between them.
  */
 export async function avmRefresh(deps: AvmRefreshDeps, tenantId: TenantId | string, log?: Logger): Promise<AvmRefreshResult> {
-  const res: AvmRefreshResult = { configured: deps.avm.configured, requested: 0, recorded: 0, fired: 0, failed: 0, skipped: 0 };
-  if (!deps.avm.configured) return res; // R-INT-1: no vendor on this platform ⇒ nothing requested, nothing written
   const actor = systemActor(tenantId as TenantId, 'provider');
+  // R-DATA-6: retention first, in its own system transaction, and before the vendor check (it never reaches the vendor)
+  const purged = await withTenantTx(actor, (tx) => R.purgeHomeValuations(tx), { db: deps.db, retries: 2 });
+  const res: AvmRefreshResult = { configured: deps.avm.configured, purged, requested: 0, recorded: 0, fired: 0, failed: 0, skipped: 0 };
+  if (!deps.avm.configured) return res; // R-INT-1: no vendor on this platform ⇒ nothing requested, nothing written
   const pairs = await withTenantTx(actor, (tx, now) => duePairsInTx(tx, now), { db: deps.db, retries: 2 });
   for (const pair of pairs) {
     res.requested += 1;

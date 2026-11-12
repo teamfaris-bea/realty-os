@@ -116,6 +116,19 @@ describe('Approvals inbox', () => {
     expect((fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)[1]!.body as { reviewedInboundSeq: number }).reviewedInboundSeq).toBe(12);
   });
 
+  it.each([["DATE_MOVED", "The deal date in this update moved since it was drafted, so it can't be sent as written. Dismiss it; the new date gets its own update if the team's update plan covers it."], ["DATE_NO_LONGER_DRIVES", "The deal date in this update was completed or waived, so this update won't be sent. Dismiss it."], ["DATE_GONE", "The deal date in this update no longer exists, so this update won't be sent. Dismiss it."]] as [string, string][])('R-TXN-5 E557: a draft whose deal date changed (%s) says why, hides Send (no Send anyway, no re-tap) and keeps Dismiss', async (reason, text) => {
+    const fake = inbox([draftAction()]).on(`POST /assistant/actions/${IDS.draft}/approve`, err(409, 'DRAFT_STALE', { reason, dealDateId: IDS.draft, boundDueVersion: 1, currentDueVersion: 2 }));
+    const { router } = agentApp(fake, '/approvals');
+    await user().click(await screen.findByRole('button', { name: 'Send' }));
+    expect(await screen.findByText(text)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send anyway' })).toBeNull();
+    expect(screen.queryByText(/replied since this was drafted/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/approvals');
+    expect(fake.callsTo(`POST /assistant/actions/${IDS.draft}/approve`)).toHaveLength(1);
+  });
+
   it('a handback without a reply draft offers Reply and Mark handled', async () => {
     const hb = draftAction({ id: IDS.handback, kind: 'handback', primaryAction: 'acknowledge', draft: null, explanation: 'Jane replied to the assistant: follow-ups are paused.' });
     const fake = inbox([hb]).on(`POST /assistant/actions/${IDS.handback}/approve`, { status: 200, body: { actionId: IDS.handback, status: 'approved', result: 'acknowledged', messageId: null, decision: null } });
