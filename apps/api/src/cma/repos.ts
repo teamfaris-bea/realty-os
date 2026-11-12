@@ -168,9 +168,10 @@ export async function contactLive(tx: Tx, contactId: string): Promise<{ live: bo
 /** The size field the connections' sold rows were read from most (the "connection's size field", V3). */
 export async function connectionSizeField(tx: Tx, connectionIds: readonly string[]): Promise<string | null> {
   if (connectionIds.length === 0) return null;
-  const r = await sql<{ f: string }>`SELECT size_source AS f FROM listings WHERE tenant_id = app.tenant_id() AND source = 'mls'
-     AND mls_connection_id = ANY (${[...connectionIds]}::uuid[]) AND size_source IS NOT NULL
-     GROUP BY size_source ORDER BY count(*) DESC, size_source LIMIT 1`.execute(tx);
+  // a sample of the feed's sold rows (interim: V1-A records the connection's size field)
+  const r = await sql<{ f: string }>`SELECT f FROM (SELECT size_source AS f FROM listings WHERE tenant_id = app.tenant_id() AND source = 'mls'
+     AND mls_connection_id = ANY (${[...connectionIds]}::uuid[]) AND status = 'sold' AND size_source IS NOT NULL LIMIT 500) x
+     GROUP BY f ORDER BY count(*) DESC, f LIMIT 1`.execute(tx);
   return r.rows[0]?.f ?? null;
 }
 

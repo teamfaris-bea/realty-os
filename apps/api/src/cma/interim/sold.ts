@@ -39,6 +39,15 @@ const COLS = sql`${LISTING_COLS}, l.close_price_cents, l.close_date, l.purchase_
   l.sale_conditions, l.days_on_market, l.latitude_e6, l.longitude_e6, l.geo_cell, l.year_built, l.lot_sqft, l.subdivision_name, l.garage_spaces_x10,
   l.stories_x10, l.pool_private, l.size_source, l.is_lease, l.avm_display_allowed, l.address_key`;
 
+/**
+ * Postal codes of one five-digit ZIP (ZIP+4 spellings included) as a text range: text comparisons are leakproof, so under
+ * FORCE RLS this is an index condition on listings_mls_postal_idx (a LIKE on row data would scan every MLS row).
+ */
+export function zipRange(zip5: string) {
+  const next = /^\d{5}$/.test(zip5) && zip5 !== '99999' ? String(Number(zip5) + 1).padStart(5, '0') : `${zip5}~`;
+  return sql`(l.postal_code >= ${zip5} AND l.postal_code < ${next})`;
+}
+
 const num = (v: string | number | null): number | null => (v === null ? null : Number(v));
 const day = (d: Date | string | null): string | null => (d === null ? null : typeof d === 'string' ? d.slice(0, 10) : d.toISOString().slice(0, 10));
 
@@ -120,13 +129,13 @@ export async function soldCandidates(tx: Tx, q: SoldQuery): Promise<SoldRead[]> 
         s.subdivision === null
           ? null
           : geo
-            ? sql`l.subdivision_name = ${s.subdivision} AND (l.postal_code LIKE ${`${zip ?? '#'}%`} OR l.geo_cell = ANY (${cellsAround(s.latE6!, s.lonE6!, q.subdivisionMiles)}::int[]))`
+            ? sql`l.subdivision_name = ${s.subdivision} AND (${zipRange(zip ?? '#')} OR l.geo_cell = ANY (${cellsAround(s.latE6!, s.lonE6!, q.subdivisionMiles)}::int[]))`
             : zip
-              ? sql`l.subdivision_name = ${s.subdivision} AND l.postal_code LIKE ${`${zip}%`}`
+              ? sql`l.subdivision_name = ${s.subdivision} AND ${zipRange(zip)}`
               : null,
     },
     { tier: 'radius_1mi', where: geo ? sql`l.geo_cell = ANY (${cellsAround(s.latE6!, s.lonE6!, 1)}::int[])` : null },
-    { tier: 'postal_code', where: zip ? sql`l.postal_code LIKE ${`${zip}%`}` : null },
+    { tier: 'postal_code', where: zip ? zipRange(zip) : null },
     { tier: 'city', where: s.city && s.region && s.citySpellings.length > 0 ? sql`l.city = ANY (${[...s.citySpellings]}::text[]) AND l.region = ${s.region}` : null },
   ];
   const ran = branches.filter((b) => b.where !== null);
@@ -152,7 +161,8 @@ export async function soldCandidates(tx: Tx, q: SoldQuery): Promise<SoldRead[]> 
 
 /** Every MLS record at an address key: the subject's own history (E365). */
 export async function mlsRowsAtAddress(tx: Tx, key: string): Promise<ValuationRow[]> {
-  return (await sql<ValuationRow>`SELECT ${COLS} FROM listings l WHERE l.tenant_id = app.tenant_id() AND l.source = 'mls' AND l.address_key = ${key}
+  const zip = key.split('|')[1] ?? '';
+  return (await sql<ValuationRow>`SELECT ${COLS} FROM listings l WHERE l.tenant_id = app.tenant_id() AND l.source = 'mls' AND ${zipRange(zip)} AND l.address_key = ${key}
     ORDER BY l.close_date DESC NULLS LAST, l.mls_modified_at DESC NULLS LAST, l.id LIMIT 200`.execute(tx)).rows;
 }
 
@@ -167,7 +177,7 @@ export async function liveNearMatches(tx: Tx, key: string): Promise<ValuationRow
   const num = (street ?? '').split(' ')[0] ?? '';
   if (!zip || num === '') return [];
   const rows = (await sql<ValuationRow>`SELECT ${COLS} FROM listings l WHERE l.tenant_id = app.tenant_id() AND l.source = 'mls'
-      AND l.status = ANY (${[...LIVE_STATUSES]}::text[]) AND l.postal_code LIKE ${`${zip}%`} AND l.address_key IS NOT NULL AND l.address_key <> ${key}
+      AND l.status = ANY (${[...LIVE_STATUSES]}::text[]) AND ${zipRange(zip)} AND l.address_key IS NOT NULL AND l.address_key <> ${key}
       AND l.address_key LIKE ${`${num} %`} ORDER BY l.id LIMIT 200`.execute(tx)).rows;
   const mine = nameOf(addressKeyBase(key));
   return rows.filter((r) => {

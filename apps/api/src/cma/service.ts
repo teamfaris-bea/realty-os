@@ -187,7 +187,8 @@ async function contextListings(tx: Tx, conns: CmaConnections, s: ResolvedSubject
   const live = conns.used.filter((u) => !u.stale).map((u) => u.conn.id);
   const zip = (s.address.postalCode ?? '').trim().slice(0, 5);
   if (zip === '' && !s.address.city) return { context: [], contextSentence: 'No active or pending listings were looked up: the area is not known.' };
-  const area = sql`(l.postal_code LIKE ${`${zip || '#'}%`} OR (l.city = ${s.address.city ?? ''} AND l.region = ${s.address.region ?? ''}))`;
+  const zips = [...new Set([(s.address.postalCode ?? '').trim(), zip])].filter((z) => z !== '');
+  const area = sql`(l.postal_code = ANY (${zips}::text[]) OR (l.city = ${s.address.city ?? ''} AND l.region = ${s.address.region ?? ''}))`;
   const rows = (
     await sql<ListingRow>`SELECT ${LISTING_COLS} FROM listings l WHERE l.tenant_id = app.tenant_id() AND l.status = ANY (${['active', 'pending']}::text[]) AND ${area}
       AND (l.source = 'team' OR l.mls_connection_id = ANY (${live}::uuid[])) ORDER BY l.id LIMIT 500`.execute(tx)
@@ -260,7 +261,10 @@ async function compute(tx: Tx, now: Instant, i: Inputs): Promise<{ write: CmaWri
   const result = await run(tx, conns, resolved, valuationDate, i.include, i.exclude);
   // only listings that are near matches now may be dismissed (others are ignored)
   const near = new Set((await nearMatches(tx, resolved.addressKey, [])).map((m) => m.listingId));
-  const subject: StoredSubject = { input: i.subject, include: [...new Set(i.include)].sort(), exclude: [...new Set(i.exclude)].sort(), nearMatchDismissed: [...new Set(i.nearMatchDismissed)].filter((id) => near.has(id)).sort(), resolved };
+  // include/exclude keep only ids this run read (a lease, a future sale or another tenant's id is never stored)
+  const seen = new Set([...result.comps.map((c) => c.ref.id), ...result.notUsed.map((n) => n.ref.id)]);
+  const known = (xs: readonly string[]) => [...new Set(xs)].filter((id) => seen.has(id)).sort();
+  const subject: StoredSubject = { input: i.subject, include: known(i.include), exclude: known(i.exclude), nearMatchDismissed: [...new Set(i.nearMatchDismissed)].filter((id) => near.has(id)).sort(), resolved };
   return {
     conns,
     zone,

@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import type { ApiHarness, TestClient } from '../auth/testHarness.js';
-import { call, leadsWorld, randomPhone } from '../leads/testing.js';
+import { type LeadsWorld, call, leadsWorld, randomPhone } from '../leads/testing.js';
 import { REVIEWED_PACK, mlsConnection } from '../mls/testing.js';
 import { systemActor } from '../worker/systemActor.js';
 import { addressKey } from './deps.js';
@@ -49,13 +49,15 @@ export interface CmaWorld {
   isa: TestClient;
   tc: TestClient;
   mls: string;
+  /** the leads world (intake token, default pond) */
+  leads: LeadsWorld;
 }
 
 export async function cmaWorld(h: ApiHarness, o: { pack?: Record<string, unknown>; lastSyncedAt?: Date | null } = {}): Promise<CmaWorld> {
   const w = await leadsWorld(h, { agents: 2, rule: false, teamLead: true, others: ['admin', 'isa', 'tc'] });
   const mls = await mlsConnection(h, w.tenantId, w.owner.userId!, { pack: o.pack ?? cmaPack(), lastSyncedAt: o.lastSyncedAt === undefined ? new Date() : o.lastSyncedAt });
   const [admin, isa, tc] = w.others as [TestClient, TestClient, TestClient];
-  return { h, tenantId: w.tenantId, owner: w.owner, admin, teamLead: w.teamLead!, agents: w.agents, isa, tc, mls };
+  return { h, tenantId: w.tenantId, owner: w.owner, admin, teamLead: w.teamLead!, agents: w.agents, isa, tc, mls, leads: w };
 }
 
 /** A contact owned by `agent`. */
