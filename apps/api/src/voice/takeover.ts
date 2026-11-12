@@ -180,12 +180,9 @@ export async function takeOver(actor: SystemActor, deps: VoiceDeps, callId: stri
     offeredSlots: await offeredSlots({ db: deps.db, calendar: deps.calendar, tenantId: actor.tenantId, ownerUserId: r.sf.facts.contact.owner?.userId ?? null, hours: r.hours, now: deps.clock.now() }).catch(() => []),
   };
   const base = { actor, callId, contactId: r.call.contactId, callerAddress: r.call.clientAddress ?? '', zone: r.zone, facts, providerKind: deps.voiceAgent.kind, playbookVersionId: r.versionId };
-  let connected: { response: string; transport: VoiceTransport } | null = null;
-  try {
-    connected = await deps.voiceAgent.connect({ callRef: r.call.providerCallRef ?? callId, sessionId: callId, tenantId: actor.tenantId, context: sessionContext(facts) });
-  } catch {
-    connected = null;
-  }
+  const connected: { response: string; transport: VoiceTransport } | null = await deps.voiceAgent
+    .connect({ callRef: r.call.providerCallRef ?? callId, sessionId: callId, tenantId: actor.tenantId, context: sessionContext(facts) })
+    .catch(() => null);
   if (connected === null) {
     // E425: the vendor did not connect: the session starts and ends with vendor_error (to voicemail, never answered)
     const closed = new ClosedTransport();
