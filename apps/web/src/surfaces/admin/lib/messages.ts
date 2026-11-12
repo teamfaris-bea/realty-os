@@ -11,7 +11,7 @@ export const LEAD_ADMIN_ERROR_MESSAGES: Record<string, string> = {
   MEMBER_EXISTS: 'This person is already on the team. Change their role in the list instead.',
   INVITE_PENDING: 'This person already has an invite waiting. Revoke it to send a new one.',
   MEMBER_HAS_LEADS: 'They still hold leads or offers. To remove them, use Remove: it moves them first. To make them a TC, reassign their leads first.',
-  MEMBER_HAS_LISTINGS: "They're still the listing agent on open listings. To remove them, use Remove: it moves the listings first. To make them a TC, change those listings' agent first.",
+  MEMBER_HAS_LISTINGS: "They're still the listing agent on open listings. To remove them, use Remove: it moves the listings first. To make them a TC, first open each of those listings and change its listing agent.",
   DEACTIVATION_NOT_ALLOWED: "This person can't be removed from here.",
   // routing, ponds, teams (api/admin)
   RULE_INVALID: 'This rule is missing something it needs. Check the highlighted part and save again.',

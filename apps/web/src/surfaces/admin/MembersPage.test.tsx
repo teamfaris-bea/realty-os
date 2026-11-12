@@ -156,7 +156,7 @@ describe('Members', () => {
   it('R-OWN-22 E542 R-PERM-15 E543: the leads and listings refusals say why and what to do, never a code', async () => {
     for (const [code, text] of [
       ['MEMBER_HAS_LEADS', 'They still hold leads or offers. To remove them, use Remove: it moves them first. To make them a TC, reassign their leads first.'],
-      ['MEMBER_HAS_LISTINGS', "They're still the listing agent on open listings. To remove them, use Remove: it moves the listings first. To make them a TC, change those listings' agent first."],
+      ['MEMBER_HAS_LISTINGS', "They're still the listing agent on open listings. To remove them, use Remove: it moves the listings first. To make them a TC, first open each of those listings and change its listing agent."],
     ] as const) {
       const fake = membersFake().on(`PATCH /members/${ava.userId}`, err(409, code));
       leadAdminApp(fake, '/admin/members', 'owner');

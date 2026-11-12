@@ -2,11 +2,16 @@
 // its price history and showings. Showings and their feedback are logged here; this week's seller
 // update (module 28, assembled from them) is the first card on the page (SellerUpdateCard, module 38). Counts show their denominator (R-ACC-4 display half):
 // "3 of 5 completed showings have feedback".
+// An Owner/Admin also sees the listing agent of a team listing and can change it here (PATCH /listings/:id/agent,
+// listing.reassign, audited; b11 review api-ui/F8): the step MEMBER_HAS_LISTINGS (making a listing agent a TC) and the
+// "no active listing agent" card (R-SELL-1) send them to.
 import { useQuery } from '@tanstack/react-query';
 import { type FormEvent, type ReactNode, useId, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Button, Card, EmptyState, Notice, Ratio } from '../../design/index.js';
-import { type ApiError, messageFor, useApi, usePageTitle } from '../../shell/index.js';
+import { type ApiError, messageFor, useApi, usePageTitle, useSession } from '../../shell/index.js';
+import type { MembersResponse } from '../admin/lib/types.js';
+import { assignTargetsFromMembers } from '../bulk/choices.js';
 import { formatDateTime, formatLocalDate, formatMoney } from '../feed/lib/format.js';
 import { useMutate } from '../feed/lib/hooks.js';
 import { AGENT_ERROR_MESSAGES } from '../feed/lib/messages.js';
@@ -123,6 +128,7 @@ export function ListingPage() {
         ) : null}
         <MarketingLink listingId={l.id} />
       </Section>
+      <ListingAgent listing={l} />
       <Section title="Showings">
         <p className="text-[15px] text-ink">
           <Ratio value={l.showings.completed} of={l.showings.total} label="showings completed" />
@@ -140,6 +146,87 @@ export function ListingPage() {
         {l.editable ? <NewShowing listingId={l.id} /> : null}
       </Section>
     </div>
+  );
+}
+
+const MEMBER_STATUS_WORD: Record<string, string> = { invited: 'invited', suspended: 'suspended', deactivating: 'being removed', removed: 'removed' };
+
+/**
+ * Who handles a team listing, and (Owner/Admin: listing.reassign) a way to hand it to someone else. The choices are the
+ * active members who can hold leads, never a TC (bulk/choices.ts assignTargetsFromMembers, the same rule the server's
+ * assertAssignable applies again). The server's writer is fenced and audited (workspace/listings.ts); the listing's
+ * marketing reviews move with it at once and its seller update is redrafted for the new agent on the next check.
+ */
+function ListingAgent({ listing }: { listing: ListingDetailView }) {
+  const api = useApi();
+  const { session } = useSession();
+  const role = session?.tenant?.role;
+  const me = session?.user.id;
+  const may = (role === 'owner' || role === 'admin') && listing.source === 'team';
+  const members = useQuery<MembersResponse, ApiError>({ queryKey: ['admin', 'members'], queryFn: ({ signal }) => api.get<MembersResponse>('/members', { signal }), enabled: may });
+  const [to, setTo] = useState('');
+  const [done, setDone] = useState<string | null>(null);
+  const m = useMutate<{ listingAgentUserId: string }>('PATCH', { invalidate: [['listing', listing.id], ['listings']] });
+  if (!may) return null;
+  const all = members.data?.members ?? [];
+  const current = all.find((x) => x.userId === listing.listingAgentUserId) ?? null;
+  const targets = assignTargetsFromMembers(all, me).filter((t) => t.userId !== listing.listingAgentUserId);
+  const name = (t: { name: string; you: boolean }) => (t.you ? `${t.name} (you)` : t.name);
+  const change = async (e: FormEvent) => {
+    e.preventDefault();
+    const target = targets.find((t) => t.userId === to);
+    if (!target) return;
+    setDone(null);
+    const r = await m.run(`/listings/${listing.id}/agent`, { listingAgentUserId: target.userId });
+    if (r.ok) {
+      setDone(`Listing agent changed to ${target.name}.`);
+      setTo('');
+    }
+  };
+  const error = m.error ? (m.error.code === 'ASSIGNEE_NOT_ELIGIBLE' ? "That person can't be a listing agent now (not active, or a TC). Choose someone else." : m.error.message) : null;
+  return (
+    <Section title="Listing agent">
+      {members.isError ? <Notice tone="error">{messageFor(members.error, AGENT_ERROR_MESSAGES)}</Notice> : null}
+      {listing.listingAgentUserId === null ? (
+        <p className="text-[16px] text-ink">No listing agent</p>
+      ) : members.isPending ? (
+        <p className="text-[15px] text-ink-muted">Loading</p>
+      ) : current ? (
+        <p className="text-[16px] text-ink">
+          <span>{current.displayName.trim() || 'Unnamed member'}</span>
+          {current.userId === me ? <span> (you)</span> : null}
+          {current.status !== 'active' ? <span className="text-ink-muted"> · {MEMBER_STATUS_WORD[current.status] ?? current.status}</span> : null}
+        </p>
+      ) : (
+        <p className="text-[16px] text-ink">A former member</p>
+      )}
+      {listing.listingAgentUserId !== null && members.data ? (
+        <form onSubmit={(e) => void change(e)} className="flex flex-col gap-2 md:flex-row md:items-end" aria-label="Change the listing agent">
+          <label className="flex flex-1 flex-col gap-1 text-[15px] font-medium text-ink">
+            New listing agent
+            <select value={to} onChange={(e) => setTo(e.target.value)} className="min-h-tap rounded-xl border border-line bg-surface px-3 text-[17px] text-ink">
+              <option value="">Choose a member</option>
+              {targets.map((t) => (
+                <option key={t.userId} value={t.userId}>
+                  {name(t)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Button type="submit" pending={m.pending} disabled={!targets.some((t) => t.userId === to)}>
+            Change listing agent
+          </Button>
+        </form>
+      ) : null}
+      {listing.listingAgentUserId !== null ? (
+        <>
+          {/* VERIFY WITH COUNSEL (V11): the listing agreement itself is outside Realty OS; and must the sellers be told? (nothing notifies them) */}
+          <p className="text-[14px] text-ink-muted">This changes who handles the listing in Realty OS, not the listing agreement.</p>
+        </>
+      ) : null}
+      {done ? <Notice tone="ok">{done}</Notice> : null}
+      {error ? <Notice tone="error">{error}</Notice> : null}
+    </Section>
   );
 }
 
