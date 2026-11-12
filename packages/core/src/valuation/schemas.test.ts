@@ -2,7 +2,7 @@
 // refuse any other key at runtime, the allowed keys are pinned at the type level, the shared unions
 // match core/listings and the S0 migration, and no result key reads as a confidence, score or probability.
 import { describe, expect, expectTypeOf, it } from 'vitest';
-import type { ListingStatus, PropertyType } from '../listings/index.js';
+import { type ListingStatus, type PropertyType, SALE_CONDITIONS, type SaleCondition } from '../listings/index.js';
 import {
   type CmaRef,
   type CmaSale,
@@ -12,6 +12,7 @@ import {
   CMA_SALE_CONDITIONS,
   type CmaListingStatus,
   type CmaPropertyType,
+  type CmaSaleCondition,
   CmaRefSchema,
   CmaSaleSchema,
   CmaSubjectSchema,
@@ -81,8 +82,13 @@ describe('R-CMA-2 fair housing: strict input schemas', () => {
     expect(CMA_LISTING_STATUSES).toHaveLength(6);
   });
 
+  it('CmaSaleCondition equals core/listings SaleCondition (lane V1-A), type and values in order', () => {
+    expectTypeOf<CmaSaleCondition>().toEqualTypeOf<SaleCondition>();
+    expect([...CMA_SALE_CONDITIONS]).toEqual([...SALE_CONDITIONS]);
+  });
+
   it('CmaSaleCondition equals the listings.sale_conditions CHECK of the S0 migration', () => {
-    // core/listings SaleCondition arrives with lane V1-A; until then the S0 CHECK is the source of truth.
+    // the database's own list: what the sync can store (core/listings SaleCondition is checked against the same values above)
     const dir = new Url('../../../db/migrations/', HERE);
     const file = fs.readdirSync(dir).find((f) => /_cma_schema\.sql$/.test(f));
     expect(file).toBeDefined();
