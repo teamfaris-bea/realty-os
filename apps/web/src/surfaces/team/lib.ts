@@ -38,11 +38,17 @@ export function periodLabel(item: Pick<ExceptionItem, 'itemType' | 'owner' | 'pe
 
 /**
  * The server's period lines, said about the period's owner (the period label already says when it ended). Since owner
- * decision D8 the server names a chat reply among the touches; an item stored before it keeps its earlier words.
+ * decision D8 the server names a chat reply among the touches and says whose touch is missing ("from the agent or a
+ * collaborator": a Team Lead's reply is no touch, E311), which names the owner here; an item stored before D8 keeps
+ * its earlier words.
  */
+const missedBy = (o: string) => `No human call, text, email or chat reply from ${o} or a collaborator by the first-contact deadline`;
 const PERIOD_LINE: Record<string, (owner: string) => string> = {
   'Lead became theirs': (o) => `Lead became ${o}'s`,
-  'No human call, text, email or chat reply by the first-contact deadline; the lead later left this agent': () => 'No human call, text, email or chat reply by the first-contact deadline',
+  'No human call, text, email or chat reply from the agent or a collaborator by the first-contact deadline': missedBy,
+  'No human call, text, email or chat reply from the agent or a collaborator by the first-contact deadline; the lead later left this agent': missedBy,
+  'First human call, text, email or chat reply from the agent or a collaborator came after the first-contact deadline': (o) =>
+    `First human call, text, email or chat reply from ${o} or a collaborator came after the first-contact deadline`,
   'No human call, text or email by the first-contact deadline; the lead later left this agent': () => 'No human call, text or email by the first-contact deadline',
 };
 

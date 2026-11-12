@@ -47,11 +47,14 @@ describe('periodLabel and the period lines (one ownership period per card)', () 
     expect(line('First human contact', 'Ava Agent')).toBe('First human contact');
     expect(line('Lead became theirs')).toBe('Lead became theirs');
   });
-  it('E310 (owner decision D8): the server names a chat reply among the touches; its "the lead later left" line is shortened the same way, and an item stored with the earlier words still reads as before', () => {
-    const line = (explanation: string) => exceptionEvidenceView({ sourceType: 'ownership_period', sourceId: 'p1', explanation, at: null, locator: null, snippet: null, needsReview: false, link: null }, { owner: 'Ava Agent' }).explanation;
-    expect(line('No human call, text, email or chat reply by the first-contact deadline; the lead later left this agent')).toBe('No human call, text, email or chat reply by the first-contact deadline');
-    expect(line('No human call, text, email or chat reply by the first-contact deadline')).toBe('No human call, text, email or chat reply by the first-contact deadline');
-    expect(line('First human call, text, email or chat reply came after the first-contact deadline')).toBe('First human call, text, email or chat reply came after the first-contact deadline');
+  it('E310 E311 (owner decision D8): the server names a chat reply among the touches and says whose touch is missing; the lines name the period\'s owner, the "the lead later left" one is shortened the same way, and an item stored with the earlier words still reads as before', () => {
+    const line = (explanation: string, o: { owner?: string } = { owner: 'Ava Agent' }) => exceptionEvidenceView({ sourceType: 'ownership_period', sourceId: 'p1', explanation, at: null, locator: null, snippet: null, needsReview: false, link: null }, o).explanation;
+    const missed = 'No human call, text, email or chat reply from the agent or a collaborator by the first-contact deadline';
+    expect(line(`${missed}; the lead later left this agent`)).toBe('No human call, text, email or chat reply from Ava Agent or a collaborator by the first-contact deadline');
+    expect(line(missed)).toBe('No human call, text, email or chat reply from Ava Agent or a collaborator by the first-contact deadline');
+    expect(line('First human call, text, email or chat reply from the agent or a collaborator came after the first-contact deadline')).toBe('First human call, text, email or chat reply from Ava Agent or a collaborator came after the first-contact deadline');
+    // without the owner's name (a card that has none) the server's words stand
+    expect(line(missed, {})).toBe(missed);
     // a handled item outside the recompute window keeps the words it was stored with
     expect(line('No human call, text or email by the first-contact deadline; the lead later left this agent')).toBe('No human call, text or email by the first-contact deadline');
   });

@@ -63,7 +63,8 @@ export const REASON_WORDS: Record<string, string> = {
   NOT_TAGGED: "don't have the tag",
   TAG_LIMIT: 'already have 100 tags',
   ALREADY_IN_STAGE: 'are already in that stage',
-  STAGE_NEEDS_CONTACT: "haven't been reached yet (call or text them first)",
+  // R-PAR-14: owner decision D8 made a reply in the website chat first contact too (R-OWN-14)
+  STAGE_NEEDS_CONTACT: "haven't been reached yet (by a call, text, email or reply in their website chat)",
   ALREADY_OWNER: 'are already theirs',
   ALREADY_ENROLLED: 'are already in a plan',
   UNREACHABLE: "can't be reached by text or email",

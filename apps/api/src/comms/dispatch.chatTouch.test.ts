@@ -210,8 +210,17 @@ describe('R-OWN-14 owner decision D8: a reply in the website chat is first conta
       await recompute(h, w.tenantId, { contactId: lead.contactId });
       const item = await itemRow(h, untouched(lead.contactId, lead.periodSeq));
       expect([item?.owner_user_id, item?.condition_cleared_at]).toEqual([lead.owner.userId, null]);
-      expect(explanations(item!.evidence)[0]).toBe('No human call, text, email or chat reply by the first-contact deadline; the lead later left this agent');
+      expect(explanations(item!.evidence)[0]).toBe('No human call, text, email or chat reply from the agent or a collaborator by the first-contact deadline; the lead later left this agent');
     }
+  });
+
+  it('R-OWN-14 E312 E77 (review D8-6): the chat is open until the visitor has been gone 30 minutes, so a reply 29 minutes after their last poll is sent and is the first touch, though they may have left the page and never read it', async () => {
+    const lead = await chatLead('Gus Gone');
+    await h.su.query("UPDATE webchat_sessions SET last_seen_at = now() - interval '29 minutes', started_at = now() - interval '35 minutes' WHERE id = $1", [lead.sessionId]);
+    const r = await replyInChat(lead.owner, lead.contactId, 'Hi Gus, sorry for the wait. Are you still there?');
+    expect([r.status, r.body.result], JSON.stringify(r.body)).toEqual([200, 'sent']);
+    expect((await firstTouches(lead.contactId)).map((e) => [e.reason_code, e.payload.refId])).toEqual([['FIRST_TOUCH_CHAT', r.body.message!.id]]);
+    expect(await touchCols(lead.contactId)).toMatchObject({ first_touch_at: await dispatchedAt(r.body.message!.id), ownership_state: 'owned', owner_user_id: lead.owner.userId });
   });
 
   it('R-OWN-14 E312: an allowed chat reply whose delivery then fails stays the first touch (its instant is TX1, as for a text) and raises failed_send', async () => {
@@ -235,6 +244,12 @@ describe('R-OWN-14 owner decision D8: a reply in the website chat is first conta
     expect([tl.status, tl.body.result], JSON.stringify(tl.body)).toEqual([200, 'sent']);
     expect(await firstTouches(lead.contactId)).toEqual([]);
     expect(await touchCols(lead.contactId)).toMatchObject({ first_touch_at: null, last_human_touch_at: null });
+    // the owner's feed (review D8-1): the Team Lead's reply answered the client, so the waiting card goes, but the lead
+    // still waits for its first contact, which a reply in the chat makes: the first-contact card keeps Reply in the chat
+    // first, never "Can't reach them" (a chat-only lead has no phone or email)
+    const cards = (await feedOf(lead.owner)).all.filter((c) => c.contact?.id === lead.contactId);
+    expect(cards.map((c) => [c.itemType, c.primaryAction.kind])).toEqual([['first_touch_due', 'reply_chat']]);
+    expect(cards[0]!.reasons.map((x) => x.code)).not.toContain('CANT_CONTACT');
     // the collaborator's reply is the first touch, by them
     const co = await replyInChat(collaborator, lead.contactId, 'Hi Cora, I work with your agent on this one.');
     expect([co.status, co.body.result], JSON.stringify(co.body)).toEqual([200, 'sent']);
@@ -271,7 +286,7 @@ describe('R-OWN-14 owner decision D8: a reply in the website chat is first conta
     await recompute(h, w.tenantId, { contactId: lead.contactId });
     const earlier = await itemRow(h, untouched(lead.contactId, lead.periodSeq));
     expect(earlier?.condition_cleared_at).toBeNull();
-    expect(explanations(earlier!.evidence)).toEqual(['No human call, text, email or chat reply by the first-contact deadline', 'Lead became theirs']);
+    expect(explanations(earlier!.evidence)).toEqual(['No human call, text, email or chat reply from the agent or a collaborator by the first-contact deadline', 'Lead became theirs']);
     expect(await itemRow(h, untouched(lead.contactId, newerSeq))).toBeNull();
   });
 

@@ -75,8 +75,9 @@ export const OUTCOME_LATE_MS = 2 * HOUR_MS;
 // ---- touches (R-OWN-14, R-AST-15, R-IMPORT-6) ----------------------------------------------------
 
 /**
- * A scoreboard / SLA touch: a gate-allowed human outbound call, text or email. Assistant, system and
- * imported messages never count; neither does an answered inbound call (touches are outbound).
+ * A scoreboard / SLA touch: a gate-allowed human outbound call, text, email or website-chat reply (owner decision
+ * D8). Assistant, system and imported messages never count; neither does an answered inbound call (touches are
+ * outbound). Whose touch answers an SLA (the owner's or a collaborator's, R-OWN-14) is the ownership engine's to say.
  */
 export function isHumanTouch(t: TouchFacts): boolean {
   return t.direction === 'outbound' && t.initiator === 'human' && !t.imported && t.gateAllowed;
@@ -295,14 +296,16 @@ export function scoreFeed(i: FeedInputs, opts: ScoreFeedOptions = {}): FeedItem[
     });
   }
 
-  // the contacts whose latest message waiting on this agent is in the website chat (a reply goes there first)
-  const latestWaiting = new Map<ContactId, InboundFacts>();
+  // the contacts whose latest message to this agent (since the last touch) is in the website chat: the first-contact
+  // card's reply goes there first. Answered or not: a reply that is no touch (a Team Lead's, E311) leaves the lead
+  // waiting for its first contact, which the owner's reply in the chat still makes (owner decision D8).
+  const latestMessage = new Map<ContactId, InboundFacts>();
   for (const m of i.unansweredInbound) {
-    if (m.ownerUserId !== userId || m.imported || m.isAutoReply === true || m.isKeyword === true || m.laterTouches.some((t) => answersClient(t, m.at))) continue;
-    const prev = latestWaiting.get(m.contactId);
-    if (prev === undefined || m.at > prev.at || (m.at === prev.at && compareStr(m.id, prev.id) > 0)) latestWaiting.set(m.contactId, m);
+    if (m.ownerUserId !== userId || m.imported || m.isAutoReply === true || m.isKeyword === true) continue;
+    const prev = latestMessage.get(m.contactId);
+    if (prev === undefined || m.at > prev.at || (m.at === prev.at && compareStr(m.id, prev.id) > 0)) latestMessage.set(m.contactId, m);
   }
-  const chatLatest = (c: ContactId) => latestWaiting.get(c)?.channel === 'web_chat';
+  const chatLatest = (c: ContactId) => latestMessage.get(c)?.channel === 'web_chat';
 
   // -- first-touch SLAs (pinned) -------------------------------------------------------------------
   const firstTouchContacts = new Map<ContactId, Draft>();

@@ -428,6 +428,15 @@ A KMS-backed KEK (wrap and unwrap as KMS calls) is a drop-in for the same interf
 - [ ] Counsel items in ARCHITECTURE §19 reviewed for the launch states.
 - [ ] Phase 2, Gmail inbox sync (owner decision D2): ships dark. `platform:gmail` stays uncleared (no `reviewed_by_counsel_at`, no `rules.vendor_ready_at`) until counsel item C14 and Google's verification of the restricted `gmail.readonly` scope plus its security assessment (N19, **VERIFY** current requirements and renewal) have passed; the Google OAuth client requests that scope only. Until then no tenant can turn sync on (DB). Rollout precondition (pack notes, R-GMAIL-12): set `vendor_ready_at` only after module 22 has written `messages.rfc_message_id_sha256` on platform email for at least 90 days (the largest backfill window), or after its one-time repair; the database refuses a Gmail duplicate only of platform email that carries the hash.
 - [ ] MLS: `MLS_LIVE_CALLS=false` unless every step of §11 "Before any live call" is done and signed off.
+- [ ] Owner decision D8 (a person's reply in the website chat is first contact), on a database that already ran batch 6's website chat: before the D8 release, as the owner (§3), list the untouched-lead items a recompute can still reach whose lead someone answered in the chat by the deadline. Before D8 such a reply was no touch, and the new evidence words ("No human call, text, email or chat reply from the agent or a collaborator …") would be untrue for an agent's reply (DATA_MODEL R-ACC-2, D8). Resolve each row the agent or a collaborator answered with a note saying so (R-ACC-3). A database that never served the chat has nothing to check.
+
+  ```sql
+  SELECT x.tenant_id, x.dedupe_key, x.owner_user_id FROM exception_items x
+   WHERE x.item_type = 'untouched_lead' AND (x.condition_cleared_at IS NULL OR x.due_at > now() - interval '30 days')
+     AND EXISTS (SELECT 1 FROM messages m
+                  WHERE m.tenant_id = x.tenant_id AND m.contact_id = x.contact_id AND m.channel = 'web_chat'
+                    AND m.direction = 'outbound' AND m.initiator = 'human' AND m.dispatched_at <= x.due_at);
+  ```
 
 ## 11. Spark MLS (read-only)
 

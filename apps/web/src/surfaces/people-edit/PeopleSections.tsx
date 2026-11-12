@@ -45,7 +45,7 @@ function Inner({ contact }: { contact: ContactFullView }) {
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-center gap-2">
-        <StagePill contactId={contact.id} name={contact.displayName} details={details} onCall={() => call({ id: contact.id, name: contact.displayName })} onText={() => navigate(`/contacts/${contact.id}/thread?compose=sms`)} />
+        <StagePill contactId={contact.id} name={contact.displayName} details={details} onCall={() => call({ id: contact.id, name: contact.displayName })} onText={() => navigate(`/contacts/${contact.id}/thread?compose=sms`)} onReplyChat={() => navigate(`/contacts/${contact.id}/thread?compose=web_chat`)} />
         {desktop ? (
           <Button variant="secondary" onClick={() => setSheet('log')}>
             Log

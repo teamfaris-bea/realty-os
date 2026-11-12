@@ -46,7 +46,8 @@ import type {
  *    "fixed late", and a period superseded before its deadline is no item.
  * Owner decision D8 (2026-11-12) changed no definition here: a reply in the website chat became a touch where
  * touches are written (R-OWN-14, dispatch TX1), and the untouched_lead evidence now names it among the touch kinds
- * ("call, text, email or chat reply"). A stored item gets the new words when a recompute next reaches it.
+ * and says whose touch is missing ("call, text, email or chat reply from the agent or a collaborator"). A stored item
+ * gets the new words when a recompute next reaches it (DATA_MODEL R-ACC-2 says when those words need a check first).
  */
 export const EXCEPTION_RULE_VERSION = 3;
 
@@ -78,12 +79,14 @@ export function untouchedLead(s: SlaFacts, now: Instant): DerivedException {
     return { kind: 'clear', key };
   }
   const late = s.firstTouchAt !== null;
-  // The touch kinds are R-OWN-14's (owner decision D8 added the chat reply).
+  // The touch kinds and who makes one are R-OWN-14's (owner decision D8 added the chat reply): the agent of the period
+  // or a collaborator. Someone else may have replied (a Team Lead in the chat, E311), which is no touch, so the words
+  // say whose touch is missing rather than that nobody replied.
   const explanation = late
-    ? 'First human call, text, email or chat reply came after the first-contact deadline'
+    ? 'First human call, text, email or chat reply from the agent or a collaborator came after the first-contact deadline'
     : s.periodEndedAt !== null
-      ? 'No human call, text, email or chat reply by the first-contact deadline; the lead later left this agent'
-      : 'No human call, text, email or chat reply by the first-contact deadline';
+      ? 'No human call, text, email or chat reply from the agent or a collaborator by the first-contact deadline; the lead later left this agent'
+      : 'No human call, text, email or chat reply from the agent or a collaborator by the first-contact deadline';
   const evidence: ExceptionEvidence[] = [
     { sourceType: 'ownership_period', sourceId: s.contactId, explanation, at: due },
     { sourceType: 'ownership_period', sourceId: s.contactId, explanation: 'Lead became theirs', at: s.ownedAt },
