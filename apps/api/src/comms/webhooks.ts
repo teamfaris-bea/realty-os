@@ -251,7 +251,8 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
     // a caller we could not identify (blocked or invalid caller ID) has no call row and no contact
     if (plan.kind === 'hangup') return sayAndHangupTwiml('Sorry, we could not take this call. Please call again without blocking your number.');
     // module 48: whether the assistant takes this call over, decided once (R-VOICE-3, R-VOICE-12)
-    const takeover = await planTakeover(actor, vd, callSid, plan.kind === 'voicemail');
+    // never in the way of Phase 1: a failure here is no takeover
+    const takeover = await planTakeover(actor, vd, callSid, plan.kind === 'voicemail').catch(() => null);
     if (plan.kind === 'voicemail' && takeover?.at) {
       // nobody can be rung: the assistant answers at once (E421); a refusal is Phase 1's voicemail (E420)
       const t = await takeOver(actor, vd, plan.callId);
@@ -280,7 +281,7 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
     if (!tenantId) return sayAndHangupTwiml(null);
     const deps = depsFromPlatform(req.server.platform);
     // module 48: the owner leg of an AI call's transfer
-    const ai = await aiScreen(systemActor(tenantId, 'provider'), voiceDeps(req.server.platform), callId);
+    const ai = await aiScreen(systemActor(tenantId, 'provider'), voiceDeps(req.server.platform), callId).catch(() => null);
     if (ai !== null) return ai;
     const prompt = await screenFor(systemActor(tenantId, 'provider'), callId, deps);
     return prompt ? screenTwiml({ prompt, acceptUrl: inboundUrls(deps, tenantId, callId).accept }) : sayAndHangupTwiml(null);
@@ -290,7 +291,7 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
     const { tenantId, callId } = inboundRef(req, req.query.c);
     reply.header('content-type', 'text/xml');
     // module 48: the owner's key press on an AI call's transfer (calls.transfer_outcome decides once)
-    const ai = tenantId ? await aiAccept(systemActor(tenantId, 'provider'), voiceDeps(req.server.platform), callId, (req.body.Digits ?? '').trim()) : null;
+    const ai = tenantId ? await aiAccept(systemActor(tenantId, 'provider'), voiceDeps(req.server.platform), callId, (req.body.Digits ?? '').trim()).catch(() => null) : null;
     if (ai !== null) return ai;
     if (!tenantId || (req.body.Digits ?? '').trim() !== '1') return sayAndHangupTwiml(null);
     const p = req.server.platform;
@@ -305,7 +306,7 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
     const deps = depsFromPlatform(req.server.platform);
     // module 48: the takeover, a transfer's end, or an AI call's retried dial result, before Phase 1's voicemail
     // switch (inboundDialResult would set handled_by='voicemail' on an AI call)
-    const ai = await aiDialResult(systemActor(tenantId, 'provider'), voiceDeps(req.server.platform), callId);
+    const ai = await aiDialResult(systemActor(tenantId, 'provider'), voiceDeps(req.server.platform), callId).catch(() => null);
     if (ai !== null) return ai;
     const plan = await inboundDialResult(systemActor(tenantId, 'provider'), callId, deps);
     if (plan.kind !== 'voicemail') return sayAndHangupTwiml(null);

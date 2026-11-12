@@ -212,11 +212,12 @@ export async function runSession(deps: VoiceDeps, s: SessionInput): Promise<Sess
       } catch {
         r = null;
       }
+      if (r === null && state.phase === 'transferring') {
+        // the stream is closed while the caller is in the owner's ring: time still passes (the hold can end)
+        await new Promise((x) => setTimeout(x, TICK_MS));
+        r = 'idle';
+      }
       if (r === null) {
-        if (state.phase === 'transferring') {
-          await new Promise((x) => setTimeout(x, TICK_MS));
-          continue;
-        }
         if (!vendorErrorFed) await feed({ type: 'vendor_error', at: clock.now() }); // lost transport
         else break;
         continue;
