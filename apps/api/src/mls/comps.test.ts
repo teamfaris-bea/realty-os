@@ -37,6 +37,10 @@ beforeAll(async () => {
     soldReso(4056, { PostalCode: '94699', City: 'Sampleton', SubdivisionName: 'Sample Heights', Latitude: '40.1', Longitude: '-100.1' }), // same name far away
     soldReso(4090, { PostalCode: '94610', ListingId: 'M4090' }), // E366: the team's own listing, sold in the MLS
     reso(4091, { PostalCode: '94610', StreetNumber: '4101', StreetDirPrefix: 'W', StreetName: 'Sample', StreetSuffix: 'Avenue' }), // live near match of 4101 Sample Ave
+    // gates/F4: live records whose PostalCode the feed sent as a ZIP+4 (stored as sent); 4093 is set back to version 1 below
+    reso(4092, { PostalCode: '94610-1234', StreetNumber: '4105', StreetName: 'Sample', StreetSuffix: 'Avenue' }),
+    reso(4093, { PostalCode: '94610-5678', StreetNumber: '4105', StreetName: 'Sample', StreetSuffix: 'Street' }),
+    reso(4094, { PostalCode: '94611-1234', StreetNumber: '4105', StreetName: 'Sample', StreetSuffix: 'Avenue' }), // another ZIP
   ];
   await makeDue(h, conn);
   const r = await syncConnection(mlsDeps(h, { [conn]: pagedFeed([recs]) }), w.tenantId as TenantId, conn);
@@ -108,6 +112,18 @@ describe('address reads (F2)', () => {
     expect(rows.map((x) => x.mls_number)).toEqual(['M4091']);
     expect(await asAgent((tx) => liveNearMatches(tx, { ...s, streetNumber: '4102' }))).toEqual([]);
     expect(await asAgent((tx) => liveNearMatches(tx, { ...s, postalCode: '9461' }))).toEqual([]);
+  });
+
+  it('E370 (gates/F4): liveNearMatches reads a live record whose stored PostalCode is a ZIP+4 of the 5-digit code, with or without a stored key; never another ZIP\'s', async () => {
+    // M4093 as stored before 0061, not yet re-read by the 0068 backfill: no stored key, so only its address gives one
+    await h.su.query("UPDATE listings SET address_key = NULL, mls_normalize_version = 1 WHERE tenant_id = $1 AND source = 'mls' AND mls_number = 'M4093'", [w.tenantId]);
+    const s = streetOfKey(addressKey({ line1: '4105 Sample Ave', city: 'Oakland', region: 'CA', postalCode: '94610' })!)!;
+    const rows = await asAgent((tx) => liveNearMatches(tx, s));
+    expect(rows.map((x) => [x.mls_number, x.postal_code, x.address_key === null]).sort()).toEqual([
+      ['M4092', '94610-1234', false],
+      ['M4093', '94610-5678', true],
+    ]);
+    expect((await asAgent((tx) => liveNearMatches(tx, { ...s, postalCode: '94611' }))).map((x) => x.mls_number)).toEqual(['M4094']);
   });
 });
 

@@ -194,7 +194,10 @@ const keyOfRow = (r: ListingRow): string | null => r.address_key ?? addressKey({
  */
 const flagRead = (r: ListingRow): boolean => r.mls_normalize_version >= 2;
 
-/** V1-A's live MLS rows on the key's street number, street name and postal code (none without a key). */
+/**
+ * V1-A's live MLS rows on the key's street number, street name and 5-digit postal code, a stored ZIP+4 of it included
+ * (none without a key): a record without a stored key (not re-read by the 0068 backfill yet) is found only here.
+ */
 async function liveOnStreet(tx: Tx, key: string | null): Promise<ListingRow[]> {
   const street = key === null ? null : streetOfKey(key);
   return street === null ? [] : liveNearMatches(tx, street);

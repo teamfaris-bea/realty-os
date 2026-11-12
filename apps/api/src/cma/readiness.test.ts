@@ -103,6 +103,36 @@ describe('E370 F2: MLS records the 0068 backfill has not re-read yet (mls_normal
     }
   });
 
+  it('E370 R-CMA-7: the home\'s own live record stored with a ZIP+4 and set back to no stored key stays the subject\'s, on the stored CMA\'s view and on a new one-tap (SELLER_WITHHELD that no dismissal removes)', async () => {
+    const w = await cmaWorld(h);
+    await localSales(w, 6);
+    const line1 = '887 Sample Avenue';
+    const c = await seller(w, line1);
+    // the feed sends PostalCode as a ZIP+4, which core normalize stores as sent (ARCHITECTURE §21.8b, VERIFY WITH MLS)
+    const live = await mlsSale(w, { line1, postalCode: '94110-1234', status: 'active', closePriceCents: null, closeDate: null, avmDisplayAllowed: false });
+    expect((await h.su.query('SELECT postal_code FROM listings WHERE id = $1', [live])).rows[0].postal_code).toBe('94110-1234');
+    const first = await oneTap(w.agents[0]!, c);
+    expect(first.status).toBe(201);
+    expect(first.body.cma.clientShare.blockers.find((x) => x.code === 'SELLER_WITHHELD')?.listingIds).toEqual([live]);
+
+    // the row as stored before 0061, not yet re-read by the 0068 backfill: no stored key, no 5-digit postal code
+    await asVersion1(live);
+    const stored = await view(w, first.body.cma.id);
+    expect(stored.status).toBe(200);
+    const again = await oneTap(w.agents[0]!, c);
+    expect(again.status).toBe(201);
+    for (const b of [stored.body, again.body]) {
+      const withheld = b.cma.clientShare.blockers.find((x) => x.code === 'SELLER_WITHHELD');
+      expect([withheld?.listingIds, withheld?.sentence]).toEqual([[live], NOT_READ]);
+      expect(codes(b)).not.toContain('POSSIBLE_LIVE_LISTING');
+      expect(b.cma.nearMatches).toEqual([]);
+    }
+    const p = await call<CmaBody>(w.agents[0]!, 'PATCH', `/cma/${again.body.cma.id}`, { nearMatchDismissed: [live] });
+    expect(p.status).toBe(200);
+    expect(p.body.cma.subject.nearMatchDismissed).toEqual([]);
+    expect(codes(p.body)).toContain('SELLER_WITHHELD');
+  });
+
   it('F2: a near match not re-read yet is listed with its AVM flag unknown, and its sentence says nothing about the flag', async () => {
     const w = await cmaWorld(h);
     await localSales(w, 6);
