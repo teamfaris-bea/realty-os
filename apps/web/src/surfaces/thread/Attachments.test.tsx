@@ -60,7 +60,7 @@ describe('thread attachments', () => {
   it('shows a photo inline with a download, a PDF as a download, and why one attachment was not saved', async () => {
     const fake = new FakeFetch().on(`GET /contacts/${C}/attachments`, { status: 200, body: DATA });
     const view = mount(fake, <li><RowAttachments contactId={C} item={{ id: M, type: 'message' }} /></li>);
-    const img = await screen.findByRole('img', { name: 'Photo 1 of 3 they sent' });
+    const img = await screen.findByRole('img', { name: 'Photo 1 of 3' });
     expect(img.getAttribute('src')).toBe(`/api/messages/${M}/media/0`);
     expect(screen.getByRole('link', { name: 'Download Attachment 1 of 3, photo, 2 KB' }).getAttribute('href')).toBe(`/api/messages/${M}/media/0`);
     expect(screen.getByRole('link', { name: 'Download Attachment 3 of 3, PDF, 3.0 MB' })).toBeTruthy();

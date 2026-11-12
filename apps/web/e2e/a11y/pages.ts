@@ -98,6 +98,9 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   // an Admin can only turn call reviews off, E283)
   { path: '/coaching', roles: NOT_TC, url: at('/coaching') },
   { path: '/admin/coaching', roles: ADMINS, url: at('/admin/coaching') },
+  // module 39 (TC board) and module 41 (milestone templates)
+  { path: '/transactions', roles: ALL, url: at('/transactions') },
+  { path: '/admin/milestone-templates', roles: ADMINS, url: at('/admin/milestone-templates') },
 ];
 
 /** Screens outside the app frame (signed out). */

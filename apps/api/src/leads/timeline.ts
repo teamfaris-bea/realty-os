@@ -7,6 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { messageStatusExtras } from '../comms/reachability.js';
+import { reactionExtras } from '../comms/reactions.js';
 import { AppError } from '../errors.js';
 import { authorize } from '../rbac.js';
 import { leadsTx } from './common.js';
@@ -39,11 +40,14 @@ export async function registerTimelineRoutes(app: FastifyInstance): Promise<void
       const before = req.query.cursor === undefined ? null : decodeCursor(req.query.cursor);
       if (req.query.cursor !== undefined && before === null) throw new AppError('VALIDATION_FAILED', { issues: [{ path: '/cursor', code: 'invalid' }] });
       const limit = req.query.limit;
-      const { rows, extras } = await leadsTx(req, async (tx) => {
+      const { rows, extras, rx } = await leadsTx(req, async (tx) => {
         const rows = await repo.timeline(tx, req.params.id, limit + 1, before);
         // one batch per page: why a message was blocked, failed or is held (lane optout-visibility)
-        const extras = await messageStatusExtras(tx, rows.slice(0, limit).filter((t) => t.item_type === 'message').map((t) => t.item_id));
-        return { rows, extras };
+        const messageIds = rows.slice(0, limit).filter((t) => t.item_type === 'message').map((t) => t.item_id);
+        const extras = await messageStatusExtras(tx, messageIds);
+        // D5b: the reactions on the page and the reaction in force on each text (R-REACT-6)
+        const rx = await reactionExtras(tx, messageIds);
+        return { rows, extras, rx };
       });
       const page = rows.slice(0, limit);
       const last = page[page.length - 1];
@@ -61,6 +65,8 @@ export async function registerTimelineRoutes(app: FastifyInstance): Promise<void
           statusReason: extras.get(t.item_id)?.statusReason ?? null,
           providerErrorCode: extras.get(t.item_id)?.providerErrorCode ?? null,
           blockedBy: extras.get(t.item_id)?.blockedBy ?? null,
+          reaction: rx.reaction.get(t.item_id) ?? null,
+          reactedWith: rx.reactedWith.get(t.item_id) ?? null,
         })),
         nextCursor: rows.length > limit && last ? encodeCursor(last.at_text, last.item_id) : null,
       };

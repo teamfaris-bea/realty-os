@@ -59,6 +59,8 @@ export const ExceptionItemSchema = z.object({
   subjectType: z.string(),
   subjectId: z.string(),
   contact: z.object({ id: uuid, name: z.string() }).nullable(),
+  /** milestone_at_risk (b8 deals ui/F7): the deal the date belongs to, and the date's label and contract date */
+  deal: z.object({ id: uuid, name: z.string(), dateLabel: z.string(), dueOn: z.string() }).nullable(),
   owner: Person.nullable(),
   detectedAt: z.string(),
   dueAt: z.string().nullable(),

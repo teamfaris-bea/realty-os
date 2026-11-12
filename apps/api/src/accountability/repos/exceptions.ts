@@ -387,6 +387,12 @@ export interface QueueRow extends StoredItemRow {
   contact_offered_to_user_id: string | null;
   contact_ownership_seq: string | null;
   contact_period_seq: string | null;
+  /** milestone_at_risk (b8 deals ui/F7): the item's deal date and its deal, as the viewer's RLS sees them (else null) */
+  deal_id: string | null;
+  deal_name: string | null;
+  deal_date_kind: string | null;
+  deal_date_label: string | null;
+  deal_date_due_on: string | null;
 }
 
 export interface QueueFilter {
@@ -412,9 +418,12 @@ export async function queueRows(tx: Tx, f: QueueFilter): Promise<QueueRow[]> {
            ou.display_name AS owner_name,
            COALESCE(e.owner_user_id = ANY ((SELECT app.my_team_member_ids())::uuid[]), false) AS owner_in_my_team,
            le.action AS last_action, le.note AS last_note, le.actor_user_id AS last_actor_user_id,
-           au.display_name AS last_actor_name, le.occurred_at AS last_at
+           au.display_name AS last_actor_name, le.occurred_at AS last_at,
+           dl.id AS deal_id, dl.name AS deal_name, dd.kind AS deal_date_kind, dd.label AS deal_date_label, dd.due_on::text AS deal_date_due_on
       FROM exception_items e
       LEFT JOIN contacts c ON c.tenant_id = e.tenant_id AND c.id = e.contact_id
+      LEFT JOIN deal_dates dd ON e.subject_type = 'deal_date' AND dd.tenant_id = e.tenant_id AND dd.id = e.subject_id
+      LEFT JOIN deals dl ON dl.tenant_id = dd.tenant_id AND dl.id = dd.deal_id
       LEFT JOIN users ou ON ou.id = e.owner_user_id
       LEFT JOIN LATERAL (
         SELECT ev.action, ev.note, ev.actor_user_id, ev.occurred_at FROM exception_events ev

@@ -314,6 +314,21 @@ export const ERROR_STATUS = {
   PLAN_ALREADY_ACCEPTED: 409, // the weekly plan was already accepted (its tasks exist)
   COACHING_NOT_CLEARED: 409, // module 36 (R-INT-6): call scoring waits for counsel review of the platform:coaching pack
   TELEPHONY_LIVE_OFF: 409, // R-TWL-1: TELEPHONY_LIVE_REQUESTS=false: the provider request was refused before it was made
+  MEDIA_NOT_ALLOWED: 422, // D5a: not a photo or video a text can carry (type, brand or bytes do not match; a file the metadata pass cannot walk)
+  MEDIA_TOO_LARGE: 422, // D5a: details {limitBytes, scope: 'item'|'total'} (decimal bytes; R-MMS-3, R-MMS-2)
+  MEDIA_LOCATION_NOT_REMOVED: 422, // D5a: metadata or a location survived the cleaning pass, so the file is refused (R-MMS-4, E295)
+  MEDIA_UPLOAD_GONE: 409, // D5a: details {uploadId}; the same answer when missing, someone else's, another person's or tenant's, expired, removed or already sent (E291)
+  MEDIA_UPLOAD_LIMIT: 409, // D5a: 20 unsent photos or videos waiting for this user (R-MMS-3)
+  // ---- api/transactions (module 31; core TransactionErrorCode, R-TXN-1, R-TXN-6) ----
+  DATE_HUMAN_CONFIRMATION: 403, // a person confirms, enters and moves milestone dates, as themselves (R-TXN-1)
+  DATE_COMPLETED: 409, // a completed milestone is not re-confirmed or moved
+  DATE_WAIVED: 409, // a waived milestone is not confirmed again
+  REMINDER_INVALID: 422, // reminderDaysBefore outside 0..60
+  TEMPLATE_INVALID: 422, // the milestone template does not parse (MilestoneTemplateSchema)
+  TEMPLATE_SIDE_MISMATCH: 422, // the template is for another side of the deal
+  MILESTONE_TEMPLATE_NOT_FOUND: 422, // no template with this id and version for the deal's side and the tenant's jurisdictions
+  MILESTONE_PLAN_OPEN: 409, // another template's proposals are still open on this deal (details.templateId)
+  MILESTONE_TEMPLATES_INVALID: 422, // PUT milestone templates: invalid entries by index (details.invalid)
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

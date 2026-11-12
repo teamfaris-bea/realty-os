@@ -23,6 +23,10 @@ interface Col {
 const OVERRIDES: Record<string, Record<string, string>> = {
   // 0040 lead-email intake: a lead_created row names its parser
   lead_email_messages: { parser_kind: "'generic'" },
+  // D5b texting reactions: a CHECK-valid tapback row (the guard does not fire for the fixture writer)
+  message_reactions: { action: "'add'", reaction: "'love'" },
+  // lane telephony-safeguards (R-TWL-11): a pending MMS text part carries no body yet (CHECK status/body)
+  message_text_parts: { body: 'NULL' },
   '*': {
     tenant_id: '$T',
     address_hmac: "digest(gen_random_uuid()::text, 'sha256')",

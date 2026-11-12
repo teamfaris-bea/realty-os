@@ -29,18 +29,24 @@ export const MessageSchema = z.object({
 export const ComposeBody = z.strictObject({
   /** 'web_chat' (module 22): a reply in the contact's open website chat, through its widget */
   channel: z.enum(['sms', 'email', 'web_chat']),
-  body: z.string().trim().min(1).max(10_000),
+  /** D5a: may be empty when mediaIds are given (compose.ts answers body_required otherwise) */
+  body: z.string().trim().max(10_000),
   subject: z.string().trim().min(1).max(300).optional(),
   scheduleAt: z.iso.datetime({ offset: true }).optional(),
   idempotencyKey: z.string().regex(/^[A-Za-z0-9_:.-]{8,100}$/),
   toPointId: z.uuid().optional(),
+  /** D5a: the sender's own staged uploads (POST /contacts/:id/outbound-media), in order; compose.ts checks every media rule */
+  mediaIds: z.array(z.uuid()).min(1).max(10).optional(),
 });
 
 export const PreviewBody = z.strictObject({
   channel: z.enum(['sms', 'email', 'web_chat']),
-  body: z.string().trim().min(1).max(10_000),
+  /** D5a: may be empty when withMedia (compose.ts answers body_required otherwise) */
+  body: z.string().trim().max(10_000),
   subject: z.string().trim().min(1).max(300).optional(),
   toPointId: z.uuid().optional(),
+  /** D5a: the text will carry photos or videos (a photo-only text may have no words) */
+  withMedia: z.boolean().optional(),
 });
 
 export const ComposeResponse = z.object({
@@ -49,7 +55,31 @@ export const ComposeResponse = z.object({
   result: z.string(),
 });
 
-export const PreviewResponse = z.object({ decision: DecisionSchema, body: z.string() });
+export const PreviewResponse = z.object({
+  decision: DecisionSchema,
+  body: z.string(),
+  /** D5a: the kind of number the text would go from (SMS parts split at 152/66 on toll-free); null when there is none. The API always sends it. */
+  textSender: z.enum(['local', 'toll_free']).nullable().optional(),
+});
+
+// ---- D5a: outbound photo and video texts (comms/outboundMedia.ts) ------------------------------------
+
+export const OUTBOUND_MEDIA_TYPE = z.enum(['image/jpeg', 'image/png', 'image/gif', 'video/mp4', 'video/quicktime']);
+/** strict padded base64 of at most 5,000,000 bytes (the FileBase64 rule of imports) */
+export const MAX_UPLOAD_BASE64_CHARS = Math.ceil(5_000_000 / 3) * 4;
+export const UploadMediaBody = z.strictObject({
+  contentType: OUTBOUND_MEDIA_TYPE,
+  data: z
+    .string()
+    .min(4)
+    .max(MAX_UPLOAD_BASE64_CHARS)
+    .regex(/^[A-Za-z0-9+/]*={0,2}$/)
+    .refine((v) => v.length % 4 === 0, { message: 'base64 length' }),
+});
+export const UploadSchema = z.object({ id: z.uuid(), contentType: OUTBOUND_MEDIA_TYPE, byteSize: z.number().int(), expiresAt: z.string() });
+export const UploadMediaResponse = z.object({ upload: UploadSchema });
+/** 204 No Content (DELETE /contacts/:id/outbound-media/:uploadId) */
+export const NoContent = z.null();
 
 export const SendExistingBody = z.strictObject({});
 
@@ -200,6 +230,7 @@ export const COMMS_RESPONSE_SCHEMAS = {
   ReachabilityManyResponse,
   ComposeResponse,
   PreviewResponse,
+  UploadMediaResponse,
   CallResponse,
   OutcomeResponse,
   ConsentResponse,
@@ -219,6 +250,7 @@ export const COMMS_RESPONSE_SCHEMAS = {
 export const COMMS_REQUEST_SCHEMAS = {
   ComposeBody,
   PreviewBody,
+  UploadMediaBody,
   SendExistingBody,
   CallBody,
   OutcomeBody,

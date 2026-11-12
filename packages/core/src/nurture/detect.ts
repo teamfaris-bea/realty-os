@@ -85,15 +85,21 @@ function evidenceOf(fact: Fact): EvidenceRef[] {
     case 'home_anniversary':
       return [{ sourceType: 'deal', sourceId: fact.dealId, locator: { kind: 'field', name: 'closed_on' }, snippet: fact.closedOn }];
     case 'home_value':
-      return [];
+      // the claim cites the home_valuations row (R-AVM-1, R-AST-1); the API replaces the snippet with the row's
+      // homeValueText (or "No estimate available.") when it records the firing
+      return [{ sourceType: 'home_valuation', sourceId: fact.valuationId, locator: { kind: 'field', name: 'estimate' }, snippet: `${fact.month} home value estimate` }];
     case 'deal_date_upcoming':
       return [{ sourceType: 'deal', sourceId: fact.dealId, locator: { kind: 'field', name: `deal_date:${fact.dealDateId}` }, snippet: fact.label }];
   }
 }
 
-/** Anchor the step offset hangs off: the fact's instant, or the deal date for upcoming dates. */
+/**
+ * Anchor the step offset hangs off: the fact's instant. For an upcoming deal date that instant is the
+ * date's stored `reminder_at` (module 31 sets `fact.at` from it; its step offset is 0), so the update goes
+ * out at the reminder time computed at confirm time; `fact.dueAt` stays the real deadline for the recheck.
+ */
 function anchorOf(fact: Fact): Instant {
-  return fact.kind === 'deal_date_upcoming' ? fact.dueAt : fact.at;
+  return fact.at;
 }
 
 /**

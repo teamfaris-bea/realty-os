@@ -20,7 +20,9 @@ describe('test/contract.ts against the API (finding F3)', () => {
       ['start, both phone and email', start({ phone: '+14155550123', email: 'pat@example.test' }), false],
       ['start, a 120-character name plus a trailing space', start({ phone: '+14155550123', name: `${'N'.repeat(120)} ` }), true],
       ['messages, a body of whitespace', requestViolations('POST /public/chat/session/:token/messages', { message: ' \n ' }, {}), false],
-      ['compose, a body of spaces', requestViolations('POST /contacts/:id/messages', { channel: 'sms', body: '  ', idempotencyKey: 'k-12345678' }, {}), false],
+      // D5a: the schema accepts an empty (trimmed) body, because a photo text may have no words; compose.ts refuses it without media (body_required)
+      ['compose, a body of spaces', requestViolations('POST /contacts/:id/messages', { channel: 'sms', body: '  ', idempotencyKey: 'k-12345678' }, {}), true],
+      ['compose, a body over 10,000 characters', requestViolations('POST /contacts/:id/messages', { channel: 'sms', body: 'x'.repeat(10_001), idempotencyKey: 'k-12345678' }, {}), false],
       ['reachability, an id that is no UUID', requestViolations('GET /reachability', undefined, { contactIds: 'not-a-uuid' }), false],
     ];
     for (const [what, problems, accepted] of cases) expect([what, problems.length === 0], problems.join('; ')).toEqual([what, accepted]);

@@ -18,9 +18,12 @@ export const NURTURE_JOBS = {
   anniversaryScan: 'nurture.anniversary_scan',
   /** a team listing's price or status changed (workspace/listings.ts) */
   listingChanged: 'nurture.listing_changed',
+  /** per tenant, daily, standalone: monthly home values (wave 2C; R-AVM-3, P15) */
+  avmRefresh: 'avm.refresh',
 } as const;
 
 export const TRIGGER_RECONCILE_EVERY_MS = 60_000;
 export const ANNIVERSARY_SCAN_EVERY_MS = 60 * 60_000;
+export const AVM_REFRESH_EVERY_MS = 24 * 60 * 60_000;
 /** Due firings woken per reconcile pass (bounded work per job; the next pass picks up the rest). */
 export const RECONCILE_BATCH = 500;

@@ -32,6 +32,11 @@ export interface SmsRequest {
   /** messages.id: the provider deduplicates on it, so a retried submit never double-sends */
   idempotencyKey: string;
   statusCallbackUrl?: string;
+  /**
+   * D5a (R-MMS-6): https URLs the provider fetches the photos and videos of a one-to-one photo text from, in position
+   * order (at most 10). Set only by comms/dispatch.ts for an outbound 'mms'; never by alerts or any other send.
+   */
+  mediaUrls?: readonly string[];
 }
 
 export interface CallRequest {
@@ -89,6 +94,14 @@ export interface TelephonyProvider {
   fetchMedia(account: TelephonyAccount, ref: MediaRef): Promise<{ bytes: Uint8Array; contentType: string }>;
   /** Deletes the provider's copy of an MMS media item once ours is stored (or refused). */
   deleteMedia?(account: TelephonyAccount, ref: MediaRef): Promise<void>;
+  /** D5a (R-MMS-7): the media SIDs (ME…) the provider keeps for one sent message (MM…). */
+  listMessageMedia?(account: TelephonyAccount, messageRef: string): Promise<string[]>;
+  /**
+   * D5a (R-MMS-7, E298): the message SIDs (MM…) of outbound messages with media sent from `from` and created inside
+   * [createdFrom, createdTo] (epoch ms): the provider copies of a submit whose outcome stayed unknown. `complete` is
+   * false when the listing hit its page cap, so the window may not be covered.
+   */
+  listOutboundMediaMessages?(account: TelephonyAccount, q: { from: string; createdFrom: number; createdTo: number }): Promise<{ refs: string[]; complete: boolean }>;
   /** Account-security SMS to a USER's own phone (alert-phone verification, E54). Not a contact message. */
   deliverVerificationCode(r: { to: string; code: string }): Promise<{ providerRef: string }>;
 }

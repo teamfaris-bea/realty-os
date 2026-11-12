@@ -1,0 +1,47 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`core/ads output shapes > carry no confidence, probability, score or tenant key 1`] = `
+{
+  "hold": [
+    "agreements",
+    "campaignId",
+    "campaigns",
+    "closings",
+    "counts",
+    "hold",
+    "leadingOutcome",
+    "minAgreements",
+    "spendCents",
+    "windowDays",
+  ],
+  "overspend": [],
+  "proposal": [
+    "agreements",
+    "blockers",
+    "campaignId",
+    "campaign_id",
+    "campaigns",
+    "capVersionId",
+    "capVersionNo",
+    "ceilingDailyCents",
+    "changed",
+    "changes",
+    "closings",
+    "counts",
+    "currentDailyCents",
+    "fromDailyCents",
+    "leadingOutcome",
+    "minAgreements",
+    "proposedDailyCents",
+    "reasonCode",
+    "rows",
+    "sentence",
+    "spendCents",
+    "targetingIssues",
+    "toDailyCents",
+    "to_daily_cents",
+    "totals",
+    "windowDays",
+  ],
+}
+`;

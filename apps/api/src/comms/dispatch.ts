@@ -54,6 +54,7 @@ import * as msgs from './repos/messages.js';
 import { notifyUser } from './repos/notify.js';
 import { asSystem, senderActor } from './runtime.js';
 import { routeOfAddress } from '../channels/repos/webchat.js';
+import { enqueueProviderCleanup, isPhotoOnlyBody, mediaUrlsFor } from './outboundMedia.js';
 import { rfcMessageIdSha256 } from '../channels/rfcMessageId.js';
 import { LEDGER_SYSTEM, SYSTEM_NOTICE, type CommsDeps, type DispatchResult, type OutboundIntent } from './types.js';
 import { SENDER_NOT_VERIFIED, TELEPHONY_LIVE_OFF, claimTelephonySend, countsTowardDailyCap, isSenderNotVerified, markSenderNotVerified, recordAgentAlertOptOut } from './telephonySafeguards.js';
@@ -350,7 +351,10 @@ async function afterSystemBlock(tx: Tx, c: Tx1Context, m: msgs.MessageRow, owner
     await notifyUser(tx, c.deps.ids, { userId: notifyId, kind: SYSTEM_NOTICE, priority: 'normal', title: 'A scheduled message was not sent', body: d.explanation.slice(0, 240), subjectType: 'message', subjectId: m.id, dedupeKey: `blocked:${m.id}` }, now);
   }
   if (m.initiator === 'human' && d.reasons.includes('SENDER_NOT_AUTHORIZED') && owner.ownerUserId && owner.ownerUserId !== m.initiatedByUserId) {
-    await auto.insertSuggestedDraft(tx, { id: c.deps.ids.next<'AssistantActionId'>(), contactId: m.contactId, ownerUserId: owner.ownerUserId, body: m.body, channel: m.channel, boundOwnershipSeq: owner.periodSeq, dedupeKey: `blocked_draft:${m.id}`, fromMessageId: m.id });
+    // D5a (E297): a photo text's draft is a text with its words only; a photo-only text leaves no draft
+    const media = m.channel === 'mms' ? Number((await sql<{ n: string }>`SELECT count(*) AS n FROM message_media WHERE tenant_id = app.tenant_id() AND message_id = ${m.id}`.execute(tx)).rows[0]?.n ?? 0) : 0;
+    const photoOnly = m.channel === 'mms' && isPhotoOnlyBody(m.body, m.purpose ?? 'marketing', (await resolvedPolicy(tx)).tenant);
+    if (!photoOnly) await auto.insertSuggestedDraft(tx, { id: c.deps.ids.next<'AssistantActionId'>(), contactId: m.contactId, ownerUserId: owner.ownerUserId, body: m.body, channel: m.channel === 'mms' ? 'sms' : m.channel, boundOwnershipSeq: owner.periodSeq, dedupeKey: `blocked_draft:${m.id}`, fromMessageId: m.id, ...(media > 0 ? { mediaCount: media } : {}) });
   }
 }
 
@@ -362,6 +366,9 @@ async function providerSend(plan: SendPlan, deps: CommsDeps, tenantId: string): 
     if (plan.channel === 'sms') {
       const account = await asSystem(deps, tenantId, 'worker', (tx) => telephonyAccount(tx, deps.envelope, tenantId));
       if (!account) return { ok: false, kind: 'not_configured', code: 'TELEPHONY_ACCOUNT_MISSING' };
+      // D5a (R-MMS-5, R-MMS-6): a photo text's media URLs are minted here, after TX1 allowed it; media gone ⇒ not sent
+      const mediaUrls = m.channel === 'mms' ? await mediaUrlsFor(deps, tenantId, m) : null;
+      if (m.channel === 'mms' && mediaUrls === null) return { ok: false, kind: 'not_configured', code: 'MEDIA_UNAVAILABLE' };
       const r = await deps.providers.telephony.sendSms({
         account,
         from: m.fromAddress,
@@ -369,6 +376,7 @@ async function providerSend(plan: SendPlan, deps: CommsDeps, tenantId: string): 
         body: m.body,
         idempotencyKey: m.id,
         statusCallbackUrl: new URL(`/api/webhooks/telephony/status?m=${m.id}`, deps.publicBaseUrl).toString(),
+        ...(mediaUrls ? { mediaUrls } : {}),
       });
       return { ok: true, provider: 'telephony', ref: r.providerRef };
     }
@@ -407,6 +415,7 @@ async function sendAndRecord(plan: SendPlan, decision: StoredDecision, deps: Com
     if (out.ok) {
       // R-GMAIL-12: only the Message-ID the provider confirmed is hashed (TX2 runs as the system)
       await msgs.markSent(tx, m.id, out.provider, out.ref, out.provider === 'email' ? rfcMessageIdSha256(out.rfcMessageId ?? null) : null);
+      if (m.channel === 'mms' && m.dispatchedAt !== null && /^MM[0-9a-f]{32}$/.test(out.ref)) await enqueueProviderCleanup(tx, { messageId: m.id, providerRef: out.ref }, m.dispatchedAt); // D5a R-MMS-7
       if (m.playbookStepRunId) await auto.updateStepRun(tx, m.playbookStepRunId, { status: 'sent', decisionId: null, messageId: m.id });
       if (m.assistantActionId) await auto.markActionExecuted(tx, m.assistantActionId);
       return { kind: 'sent', messageId: m.id, decision: view, providerRef: out.ref } satisfies DispatchResult;
@@ -503,12 +512,14 @@ export async function reconcileOutbound(messageId: string, deps: CommsDeps, tena
     if (found && found.status !== 'unknown') {
       const status = found.status === 'delivered' ? 'delivered' : found.status === 'failed' ? 'failed' : found.status === 'undelivered' ? 'undelivered' : 'sent';
       await msgs.markSent(tx, m.id, m.channel === 'email' ? 'email' : 'telephony', found.providerRef);
+      if (m.channel === 'mms' && /^MM[0-9a-f]{32}$/.test(found.providerRef)) await enqueueProviderCleanup(tx, { messageId: m.id, providerRef: found.providerRef }, m.dispatchedAt!); // D5a R-MMS-7
       if (status !== 'sent') await msgs.setStatus(tx, m.id, status, status === 'delivered' ? null : 'RECONCILED_FAILED', null);
       return { kind: 'resolved' as const, status };
     }
     const deadline = plusMs(m.dispatchedAt as Instant, MAX_RECONCILE_MS);
     if (now < deadline) return { kind: 'retry' as const, at: (Math.min(deadline, now + 2 * MINUTE_MS) as Instant) };
     await msgs.markFailed(tx, m.id, 'DISPATCH_UNKNOWN_UNRESOLVED', null);
+    if (m.channel === 'mms' && m.phoneNumberId) await enqueueProviderCleanup(tx, { messageId: m.id, phoneNumberId: m.phoneNumberId, dispatchedAt: m.dispatchedAt! }, m.dispatchedAt!); // D5a E298
     return { kind: 'resolved' as const, status: 'failed' };
   });
 }

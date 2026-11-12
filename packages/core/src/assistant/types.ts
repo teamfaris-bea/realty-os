@@ -7,8 +7,11 @@
 // sees evidence (source + locator + snippet + a short explanation) and a needs-review flag.
 import type { AssistantClaimId, IanaZone, Instant } from '../foundation/index.js';
 
-/** evidence_refs.source_type */
-export type SourceType = 'call' | 'message' | 'email' | 'note' | 'listing' | 'import' | 'behavior_event' | 'deal' | 'task' | 'appointment';
+/**
+ * evidence_refs.source_type. 'home_valuation' (module 26, a home-value note's claim: R-AVM-1) is in the union
+ * only, not in SOURCE_TYPES: core/priority's evidence enum spreads SOURCE_TYPES, and a model never cites it.
+ */
+export type SourceType = 'call' | 'message' | 'email' | 'note' | 'listing' | 'import' | 'behavior_event' | 'deal' | 'task' | 'appointment' | 'home_valuation';
 export const SOURCE_TYPES: readonly SourceType[] = ['call', 'message', 'email', 'note', 'listing', 'import', 'behavior_event', 'deal', 'task', 'appointment'];
 
 /** evidence_refs.locator (jsonb with a `kind` key). */

@@ -5,6 +5,8 @@
 //   comms.transcribe      (standalone) transcription, stored encrypted
 //   comms.media_copy      (standalone) inbound MMS media → checked, encrypted storage (comms/media.ts)
 //   comms.mms_text        (standalone) inbound MMS text/plain parts → read for opt-outs (comms/mmsTextJob.ts, R-TWL-11)
+//   comms.outbound_media_purge (per tenant, every 15 min) expired photo/video uploads deleted ⇒ shredded (D5a)
+//   comms.mms_provider_cleanup (standalone) the provider's copies of a sent photo text, 24 h after dispatch (D5a)
 // Standalone: dispatch must commit between its steps and never hold a transaction across a provider
 // call (ARCHITECTURE §9). Each run is idempotent across a crash: TX1 only claims scheduled/queued
 // messages, so a re-run never re-sends (E7); the reconcile and copy steps check state under lock.
@@ -17,6 +19,7 @@ import { RECORDING_COPY_JOB, TRANSCRIBE_JOB, onRecordingReady, transcribeRecordi
 import { MEDIA_COPY_JOB, copyInboundMedia } from './media.js';
 import { MMS_TEXT_JOB } from './mmsText.js';
 import { readTextParts } from './mmsTextJob.js';
+import { outboundMediaHandlers } from './outboundMedia.js';
 import { commsRuntime } from './runtime.js';
 import type { CommsDeps } from './types.js';
 import type { Providers } from '../providers/index.js';
@@ -130,7 +133,7 @@ export function mmsTextHandler(depsFor: DepsFor = defaultDeps): StandaloneJobHan
 
 /** Everything api/comms registers with the worker (CONVENTIONS §3). */
 export function makeCommsHandlers(depsFor: DepsFor = defaultDeps): JobHandler<unknown>[] {
-  return [dispatchHandler(depsFor), reconcileHandler(depsFor), recordingCopyHandler(depsFor), transcribeHandler(depsFor), mediaCopyHandler(depsFor), mmsTextHandler(depsFor)] as unknown as JobHandler<unknown>[];
+  return [dispatchHandler(depsFor), reconcileHandler(depsFor), recordingCopyHandler(depsFor), transcribeHandler(depsFor), mediaCopyHandler(depsFor), mmsTextHandler(depsFor), ...outboundMediaHandlers(depsFor)] as unknown as JobHandler<unknown>[];
 }
 
 export const commsHandlers: JobHandler<unknown>[] = makeCommsHandlers();

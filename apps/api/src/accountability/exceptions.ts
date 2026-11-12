@@ -47,6 +47,7 @@ import {
   DEFAULT_EXCEPTION_SETTINGS,
   EXCEPTION_RULE_VERSION,
   type ExceptionEvidence,
+  MILESTONE_DATE_NAME,
   type ExceptionType,
   apptKey,
   deriveExceptions,
@@ -192,6 +193,11 @@ export interface ExceptionView {
   subjectId: string;
   /** null when the viewer can no longer see the contact (e.g. the lead moved on after the miss) */
   contact: { id: string; name: string } | null;
+  /**
+   * milestone_at_risk (b8 deals ui/F7): the deal the date belongs to and the date itself (its label, or its kind's name,
+   * and its contract date), as contact is carried for a lead's items; null for other types or a deal the viewer cannot see
+   */
+  deal: { id: string; name: string; dateLabel: string; dueOn: string } | null;
   owner: { userId: string; name: string | null } | null;
   detectedAt: string;
   dueAt: string | null;
@@ -242,6 +248,12 @@ const isLive = (row: Pick<repo.QueueRow, 'last_action' | 'withdrawn_at'>) => row
 
 function allowed(actor: UserActor, action: Action, row: repo.QueueRow): boolean {
   return can(actor, action, itemFacts(actor, row)).ok;
+}
+
+function dealOf(row: repo.QueueRow): ExceptionView['deal'] {
+  if (row.item_type !== 'milestone_at_risk' || row.deal_id === null || row.deal_name === null || row.deal_date_due_on === null) return null;
+  const kind = (row.deal_date_kind ?? 'custom') as keyof typeof MILESTONE_DATE_NAME;
+  return { id: row.deal_id, name: row.deal_name, dateLabel: row.deal_date_label ?? MILESTONE_DATE_NAME[kind] ?? MILESTONE_DATE_NAME.custom, dueOn: row.deal_date_due_on };
 }
 
 function contactName(row: repo.QueueRow): string | null {
@@ -325,6 +337,7 @@ function viewOf(row: repo.QueueRow, actor: UserActor, now: Instant, claimEvidenc
     subjectType: row.subject_type,
     subjectId: row.subject_id,
     contact: row.contact_id !== null && row.contact_visible ? { id: row.contact_id, name: contactName(row) ?? '' } : null,
+    deal: dealOf(row),
     owner: row.owner_user_id === null ? null : { userId: row.owner_user_id, name: row.owner_name },
     detectedAt: iso(row.detected_at),
     dueAt: isoOrNull(row.due_at),

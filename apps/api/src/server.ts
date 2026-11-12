@@ -60,6 +60,11 @@ export interface Platform {
   routeSchemas: Map<string, { body?: unknown; querystring?: unknown; response?: unknown }>;
   /** unexpected errors go here (observability/errors.ts; scrubbed, tagged with the request id) */
   errorReporter: ErrorReporter;
+  /**
+   * Test seam, never set in production: when present, the public listing page's per-IP limits (marketing/publicPage.ts)
+   * read their fixed windows at this clock instead of the DB clock, so a test can hold a burst inside one window.
+   */
+  publicPageLimitClock?: Clock;
 }
 
 declare module 'fastify' {

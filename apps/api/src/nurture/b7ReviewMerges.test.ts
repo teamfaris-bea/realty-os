@@ -117,7 +117,7 @@ describe('b7 ownership-data/F1: deal and listing roles follow a merge', () => {
     const control = await ownedContact(agent, { confirmDistinct: true });
     const closedAt = new Date('2023-05-20T17:00:00Z');
     const deal = await closedDeal(h, w.tenantId, loser.id, agent.userId!, closedAt);
-    await h.su.query("INSERT INTO deal_contacts (tenant_id, deal_id, contact_id, role) VALUES ($1,$2,$3,'buyer')", [w.tenantId, deal, loser.id]);
+    await h.su.query("INSERT INTO deal_contacts (tenant_id, deal_id, contact_id, role) VALUES ($1,$2,$3,'buyer') ON CONFLICT DO NOTHING", [w.tenantId, deal, loser.id]);
     const controlDeal = await closedDeal(h, w.tenantId, control.id, agent.userId!, closedAt);
 
     await merge(survivor.id, loser.id);
