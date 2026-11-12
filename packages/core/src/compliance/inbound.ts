@@ -102,7 +102,7 @@ const WRONG_NUMBER: readonly LanguagePattern[] = [
   { re: /\b(?:is\s+not|isn't|not)\s+(?:the\s+)?(?:right|correct)\s+(?:number|person)\b/u, negatable: false },
 ];
 
-function lowerText(body: string): string {
+export function lowerText(body: string): string {
   return body.normalize('NFKC').replace(INVISIBLE, '').toLowerCase().replace(/[‘’ʼ`]/g, "'").replace(/\s+/g, ' ');
 }
 

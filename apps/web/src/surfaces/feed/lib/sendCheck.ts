@@ -19,6 +19,8 @@ export interface SendCheckInput {
   body?: string;
   subject?: string;
   enabled?: boolean;
+  /** D5a: the text carries photos or videos (its words may then be empty) */
+  withMedia?: boolean;
 }
 
 /**
@@ -26,17 +28,17 @@ export interface SendCheckInput {
  * text exactly as it would go out (`final`: the server's rendering, with what the send adds to the typed words,
  * such as the brokerage line on a marketing text or an email's signature and footer), or null while unknown.
  */
-export function useSendCheck({ contactId, channel, body = '', subject = '', enabled = true }: SendCheckInput): { decision: DecisionView | null; body: string; final: string | null } {
+export function useSendCheck({ contactId, channel, body = '', subject = '', enabled = true, withMedia = false }: SendCheckInput): { decision: DecisionView | null; body: string; final: string | null; textSender?: 'local' | 'toll_free' | null } {
   const api = useApi();
   const text = body.trim();
   const subj = channel === 'email' ? subject.trim() : '';
   const q = useQuery<PreviewResponse, ApiError>({
-    queryKey: ['preview', contactId, channel, text, subj],
-    queryFn: ({ signal }) => api.request<PreviewResponse>('POST', `/contacts/${contactId}/messages/preview`, { channel, body: text, ...(subj ? { subject: subj } : {}) }, { signal }),
-    enabled: enabled && text.length > 0 && contactId.length > 0,
+    queryKey: ['preview', contactId, channel, text, subj, withMedia],
+    queryFn: ({ signal }) => api.request<PreviewResponse>('POST', `/contacts/${contactId}/messages/preview`, { channel, body: text, ...(subj ? { subject: subj } : {}), ...(withMedia ? { withMedia: true } : {}) }, { signal }),
+    enabled: enabled && (text.length > 0 || withMedia) && contactId.length > 0,
     staleTime: 30_000,
     retry: false,
   });
   const final = text.length > 0 && q.data?.body ? q.data.body : null;
-  return { decision: text.length > 0 ? (q.data?.decision ?? null) : null, body: text, final };
+  return { decision: text.length > 0 || withMedia ? (q.data?.decision ?? null) : null, body: text, final, textSender: q.data?.textSender };
 }

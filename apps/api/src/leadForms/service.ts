@@ -1,4 +1,4 @@
-// Google Ads lead forms (module 22 scope 7; DATA_MODEL R-GADS-1..4, E313–E319, E338, E345–E347).
+// Google Ads lead forms (module 22 scope 7; DATA_MODEL R-GADS-1..4, E313–E319, E338, E381–E383).
 //
 // receiveGoogleLead: one delivery whose key the guard resolved (leadForms/auth.ts), in ONE transaction as the system
 // actor of the hook's tenant (R-TEN-3: the tenant comes only from the key):
@@ -15,7 +15,7 @@
 //
 // Owner/Admin (getHook, enableHook, rotateHook, patchHook, disableHook): as the system actor after re-reading the
 // role (leads/sources.ts asSystem); every write takes the source's credential lock first (lockCredentials), so two
-// turn-ons give one 200 and one 409 (E347) and two rotations both succeed with only the later key current (E338).
+// turn-ons give one 200 and one 409 (E383) and two rotations both succeed with only the later key current (E338).
 // The key is 160 random bits as 40 lowercase hex characters (VERIFY: Google's key field accepts it; the help page
 // describes the key as any string the advertiser chooses), envelope-encrypted (re-shown to Owner/Admin), routed only
 // by sha256. No audit row carries the key.

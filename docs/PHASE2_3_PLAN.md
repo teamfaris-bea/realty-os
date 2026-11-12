@@ -431,7 +431,7 @@ export function ingestChannelInbound(actor: SystemActor, e: ChannelInboundEvent)
 - **Interfaces:** `intakeLockKeys(tx, envelope, tenantId, input)`; `IngestOptions.unknownCaller` and `disclosure: 'none'`; core `previewRouting(rules, inquiry, candidates, cursor, settings)`; db `loadRuleMembers`, `loadRoutingCandidates`; `app.resolve_google_lead_form`, `app.rearm_webhook_event`.
 - **Convention for module 52:** `ad_campaigns.campaign_ref` uses `gads:<campaign_id>`, the form this lane writes on `lead_inquiries.campaign_ref`.
 - **Owner-question defaults (Q-LI-1..9)** live where one setting or branch changes them: see the lane report.
-- **Rules:** R-LSRC-1…7, R-LEM-9…12, R-GADS-1…4, R-TRK-1…3; E313–E340, E344–E354.
+- **Rules:** R-LSRC-1…7, R-LEM-9…12, R-GADS-1…4, R-TRK-1…3; E313–E340, E352–E354, E380–E387 (E344–E351 of the original brief were renumbered E380–E387: batch 8 took E344–E351).
 
 #### 23. `core/listings`
 ```ts

@@ -26,7 +26,7 @@ describe('the web contract of module 22 (webContract.json)', () => {
   it('every route it names is a real route of the server, taking exactly the inputs the contract describes', () => {
     const table = new Map(h.app.platform.routeTable.map((e) => [`${e.method} ${e.url}`, e]));
     const routes = Object.entries(webContract().routes);
-    expect(routes.length).toBe(9);
+    expect(routes.length).toBe(11);
     for (const [key, r] of routes) {
       const [method, url] = key.split(' ') as [string, string];
       const entry = table.get(`${method} /api${url}`);

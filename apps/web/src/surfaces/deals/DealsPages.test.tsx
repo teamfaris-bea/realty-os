@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { FakeFetch, IDS, agentApp, err, iso } from '../feed/lib/testing.js';
 import type { DealDetailView, ListingDetailView } from '../feed/lib/types.js';
 import { nextStage } from './DealsPages.js';
+import type { DealMilestones } from './milestones.js';
 
 function deal(over: Partial<DealDetailView> = {}): DealDetailView {
   return {
@@ -35,6 +36,21 @@ function deal(over: Partial<DealDetailView> = {}): DealDetailView {
   };
 }
 
+/** GET /deals/:id/milestones for the deal (module 39): no templates, no dates. */
+function milestones(over: Partial<DealMilestones> = {}): DealMilestones {
+  return {
+    deal: { id: IDS.deal, name: 'Jane Doe · buy', side: 'buy', stage: 'agreement_signed', ownerUserId: IDS.me },
+    acceptanceDate: null,
+    templates: [],
+    calendar: { note: 'Business days: Monday to Friday; holidays are not counted. Not reviewed by counsel.', reviewed: false },
+    updates: { approved: false, roles: [], teamRoles: [], side: 'buy' },
+    dates: [],
+    riskItems: [],
+    canConfirm: true,
+    ...over,
+  };
+}
+
 describe('Deals', () => {
   it('next stage follows the pipeline and ends at closed', () => {
     expect(nextStage('prospect')).toBe('agreement_signed');
@@ -46,6 +62,7 @@ describe('Deals', () => {
     const fake = new FakeFetch()
       .on(`GET /deals/${IDS.deal}`, { status: 200, body: { deal: deal() } })
       .on(`GET /deals/${IDS.deal}/financials`, err(404, 'NOT_FOUND'))
+      .on(`GET /deals/${IDS.deal}/milestones`, { status: 200, body: milestones() })
       .on(`POST /deals/${IDS.deal}/stage`, { status: 200, body: { deal: deal({ stage: 'active', rowVersion: 4 }) } });
     agentApp(fake, `/deals/${IDS.deal}`);
     expect(await screen.findByText('Lead source: Zillow · Campaign fall-buyers')).toBeInTheDocument();
@@ -55,7 +72,7 @@ describe('Deals', () => {
   });
 
   it('commission is hidden for someone the server does not let read it, and shown for one it does', async () => {
-    const fake = new FakeFetch().on(`GET /deals/${IDS.deal}`, { status: 200, body: { deal: deal() } }).on(`GET /deals/${IDS.deal}/financials`, err(404, 'NOT_FOUND'));
+    const fake = new FakeFetch().on(`GET /deals/${IDS.deal}`, { status: 200, body: { deal: deal() } }).on(`GET /deals/${IDS.deal}/financials`, err(404, 'NOT_FOUND')).on(`GET /deals/${IDS.deal}/milestones`, { status: 200, body: milestones() });
     agentApp(fake, `/deals/${IDS.deal}`);
     await screen.findByText('Lead source: Zillow · Campaign fall-buyers');
     await waitFor(() => expect(fake.callsTo(`GET /deals/${IDS.deal}/financials`).length).toBeGreaterThan(0));
@@ -67,6 +84,7 @@ describe('Deals', () => {
     const fake = new FakeFetch()
       .on(`GET /deals/${IDS.deal}`, { status: 200, body: { deal: deal() } })
       .on(`GET /deals/${IDS.deal}/financials`, { status: 200, body: { financials: null } })
+      .on(`GET /deals/${IDS.deal}/milestones`, { status: 200, body: milestones() })
       .on(`POST /deals/${IDS.deal}/stage`, err(409, 'VERSION_CONFLICT'));
     agentApp(fake, `/deals/${IDS.deal}`);
     await userEvent.setup().click(await screen.findByRole('button', { name: 'Move to Active' }));

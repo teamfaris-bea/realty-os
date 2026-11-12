@@ -1,5 +1,5 @@
-// Deals (BUILD_PLAN module 17; A7d): the agent's open deals, and one deal with its stage, contract
-// dates, closed-loop attribution (the lead source copied from the contact when the deal was created,
+// Deals (BUILD_PLAN module 17; A7d): the agent's open deals, and one deal with its stage, its milestone
+// timeline (module 39), closed-loop attribution (the lead source copied from the contact when the deal was created,
 // never changed afterwards) and commission. Commission is shown only to those the server lets read
 // it (R-PERM-10: Owner/Admin, the deal owner, their Team Lead; never the assistant): a 404 on
 // GET /deals/:id/financials hides the section instead of showing an empty one.
@@ -12,6 +12,7 @@ import { STAGE_LABEL, STAGE_ORDER, formatLocalDate, formatMoney } from '../feed/
 import { useMutate } from '../feed/lib/hooks.js';
 import { AGENT_ERROR_MESSAGES } from '../feed/lib/messages.js';
 import type { DealDetailView, DealStage, DealView, FinancialsView } from '../feed/lib/types.js';
+import { MilestoneTimeline } from './MilestoneTimeline.js';
 
 /** The stage after `s` on the happy path, or null at the end (pure; unit-tested). */
 export function nextStage(s: DealStage): DealStage | null {
@@ -88,7 +89,6 @@ export function DealPage() {
   });
   usePageTitle(q.data?.deal.name ?? null);
   const stage = useMutate<{ rowVersion: number; stage: DealStage; lostReason?: string }, { deal: DealDetailView }>('POST', { invalidate: [['deal', dealId], ['deals'], ['feed']] });
-  const date = useMutate<{ completed: boolean }>('PATCH', { invalidate: [['deal', dealId], ['feed']] });
   const [losing, setLosing] = useState(false);
   const [reason, setReason] = useState('');
   if (q.isPending) return <p className="py-10 text-center text-[15px] text-ink-muted">Loading</p>;
@@ -148,25 +148,8 @@ export function DealPage() {
         {stage.error ? <Notice tone="error">{stage.error.message}</Notice> : null}
       </Section>
 
-      <Section title="Contract dates">
-        {d.dates.length === 0 ? <p className="text-[15px] text-ink-muted">No dates yet.</p> : null}
-        <ul className="flex flex-col gap-1">
-          {d.dates.map((x) => (
-            <li key={x.id} className="flex min-h-tap items-center gap-2 text-[15px] text-ink">
-              <span className="flex-1">
-                {x.label ?? x.kind.replace(/_/g, ' ')} · {formatLocalDate(x.dueOn)}
-                {x.completedAt ? <span className="text-ok"> · done</span> : null}
-              </span>
-              {!x.completedAt ? (
-                <Button variant="secondary" disabled={date.pending} onClick={() => void date.run(`/deal-dates/${x.id}`, { completed: true })}>
-                  Done
-                </Button>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-        {date.error ? <Notice tone="error">{date.error.message}</Notice> : null}
-      </Section>
+      {/* module 39: the milestone timeline replaces Phase 1's "Contract dates" (Done is kept there) */}
+      <MilestoneTimeline dealId={d.id} />
 
       <Section title="Where this deal came from">
         <p className="text-[15px] text-ink">

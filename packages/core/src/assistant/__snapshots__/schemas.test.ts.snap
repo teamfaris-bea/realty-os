@@ -414,6 +414,24 @@ exports[`core/assistant schemas > TriggerStepSchema has no confidence fields and
       ],
       "type": "string",
     },
+    "roles": {
+      "items": {
+        "enum": [
+          "buyer",
+          "seller",
+          "co_buyer",
+          "co_seller",
+          "other",
+          "lender",
+          "title",
+          "attorney",
+        ],
+        "type": "string",
+      },
+      "maxItems": 8,
+      "minItems": 1,
+      "type": "array",
+    },
     "slots": {
       "items": {
         "enum": [

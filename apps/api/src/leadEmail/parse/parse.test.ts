@@ -587,7 +587,7 @@ describe('R-LEM-10 leadmetadata.org meta tags', () => {
     expect(r.text.startsWith('lead_')).toBe(false);
   });
 
-  it('E350: a lead_* name twice with different values holds the email PARTIAL_FORMAT (the conflicting field stays empty); the same value twice is fine', () => {
+  it('E386: a lead_* name twice with different values holds the email PARTIAL_FORMAT (the conflicting field stays empty); the same value twice is fine', () => {
     const r = parseLeadEmail(html(LEADMETA_DUPLICATE_HTML));
     expect(r).toMatchObject({ ok: false, reason: 'PARTIAL_FORMAT', partial: { format: 'leadmetadata', name: { value: 'Drew Twice' }, emails: [] } });
     expect(r.text).not.toContain('other@example.test');

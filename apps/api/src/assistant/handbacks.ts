@@ -50,7 +50,8 @@ export async function enrichHandback(actor: SystemActor, actionId: string, deps:
                  WHERE tenant_id = app.tenant_id() AND id = ${actionId}`.execute(tx);
     }
     if (run.draft) {
-      const inbound = inboundId ? (await sql<{ body: string }>`SELECT body FROM messages WHERE tenant_id = app.tenant_id() AND id = ${inboundId}`.execute(tx)).rows[0]?.body ?? null : null;
+      // D5b (R-REACT-7): a reaction's quote is the team's words, never the client's: no inbound text for the category
+      const inbound = inboundId ? (await sql<{ body: string }>`SELECT body FROM messages m WHERE tenant_id = app.tenant_id() AND id = ${inboundId} AND NOT EXISTS (SELECT 1 FROM message_reactions mr WHERE mr.tenant_id = m.tenant_id AND mr.message_id = m.id)`.execute(tx)).rows[0]?.body ?? null : null;
       category = draftCategory({ inboundText: inbound, draftText: run.draft.body });
       const flagged = run.screen?.flagged === true;
       await A.mergePayload(tx, actionId, { draft: { channel: run.draft.channel, body: run.draft.body, ...(run.draft.subject ? { subject: run.draft.subject } : {}) }, draftCategory: category, draftAiRunId: run.aiRunId, ...(flagged ? { draftScreen: screenCodes(run.screen) } : {}) });

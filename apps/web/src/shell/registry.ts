@@ -47,6 +47,7 @@ import { surface as ownerSurface } from '../surfaces/owner/index.js';
 import { surface as goalsSurface } from '../surfaces/goals/index.js';
 import { surface as coachingSurface } from '../surfaces/coaching/index.js';
 import { surface as adminCoachingSurface } from '../surfaces/admin/coaching/index.js';
+import { surface as adminTransactionsSurface } from '../surfaces/admin/transactions/index.js';
 
 export type { NavSection, PageDef, PageNav, SurfaceModule } from './types.js';
 
@@ -86,5 +87,6 @@ export const surfaces: SurfaceModule[] = [
   goalsSurface,
   coachingSurface,
   adminCoachingSurface,
+  adminTransactionsSurface,
   // registry: add new entries above this line
 ];

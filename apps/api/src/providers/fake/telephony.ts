@@ -30,7 +30,18 @@ export interface FakeSms {
   to: string;
   body: string;
   idempotencyKey: string;
+  /** D5a: the media URLs of a photo text, in order (empty for a plain text) */
+  mediaUrls: string[];
 }
+
+/** Twilio's accepted outbound MMS types (what pullMedia checks a fetched item against). */
+const FAKE_MMS_ACCEPTED: Record<string, (b: Uint8Array) => boolean> = {
+  'image/jpeg': (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+  'image/png': (b) => Buffer.from(b.subarray(0, 8)).toString('hex') === '89504e470d0a1a0a',
+  'image/gif': (b) => /^GIF8[79]a$/.test(Buffer.from(b.subarray(0, 6)).toString('latin1')),
+  'video/mp4': (b) => Buffer.from(b.subarray(4, 8)).toString('latin1') === 'ftyp',
+  'video/quicktime': (b) => Buffer.from(b.subarray(4, 8)).toString('latin1') === 'ftyp',
+};
 
 export interface FakeCall {
   providerRef: string;
@@ -73,9 +84,16 @@ export class FakeTelephony implements TelephonyProvider {
     if (prior) return prior;
     const f = this.takeFailure();
     if (f && f !== 'timeout_after_submit') throw new ProviderError(f);
-    const out = { providerRef: ref('SM', r.idempotencyKey), status: 'queued' as const };
+    const media = [...(r.mediaUrls ?? [])];
+    if (media.length > 10) throw new ProviderError('rejected', '21623');
+    // a photo text gets an MM ref of Twilio's shape (MM + 32 hex); a plain text keeps the fake's SM ref
+    const out = { providerRef: media.length > 0 ? 'MM' + createHash('sha256').update(`mms:${r.idempotencyKey}`).digest('hex').slice(0, 32) : ref('SM', r.idempotencyKey), status: 'queued' as const };
     this.byKey.set(`sms:${r.idempotencyKey}`, out);
-    this.sms.push({ providerRef: out.providerRef, accountRef: r.account.accountRef, from: r.from, to: r.to, body: r.body, idempotencyKey: r.idempotencyKey });
+    this.sms.push({ providerRef: out.providerRef, accountRef: r.account.accountRef, from: r.from, to: r.to, body: r.body, idempotencyKey: r.idempotencyKey, mediaUrls: media });
+    if (media.length > 0) {
+      this.sentAt.set(out.providerRef, this.now());
+      this.providerMedia.set(out.providerRef, media.map((_, i) => 'ME' + createHash('sha256').update(`${out.providerRef}:${i}`).digest('hex').slice(0, 32)));
+    }
     if (f === 'timeout_after_submit') throw new ProviderError('timeout');
     return out;
   }
@@ -102,9 +120,58 @@ export class FakeTelephony implements TelephonyProvider {
     return { providerRef };
   }
 
+  /** D5a test switch: the reconcile lookup finds nothing (so a timeout_after_submit ends DISPATCH_UNKNOWN_UNRESOLVED) */
+  lookupMiss = false;
+
   async lookupMessage(account: TelephonyAccount, idempotencyKey: string) {
     void account;
+    if (this.lookupMiss) return null;
     return this.byKey.get(`sms:${idempotencyKey}`) ?? null;
+  }
+
+  // ---- D5a: the provider's stored copies of sent media (R-MMS-7) ----
+
+  /** the clock the fake stamps photo texts with (tests may replace it); epoch ms */
+  now: () => number = () => Date.now();
+  /** MM ref → the ME refs the fake "keeps" for it */
+  readonly providerMedia = new Map<string, string[]>();
+  private readonly sentAt = new Map<string, number>();
+  readonly listMediaCalls: string[] = [];
+  readonly listOutboundCalls: { from: string; createdFrom: number; createdTo: number }[] = [];
+
+  async listMessageMedia(account: TelephonyAccount, messageRef: string): Promise<string[]> {
+    void account;
+    this.listMediaCalls.push(messageRef);
+    return (this.providerMedia.get(messageRef) ?? []).filter((me) => !this.deletedMedia.includes(me));
+  }
+
+  async listOutboundMediaMessages(account: TelephonyAccount, q: { from: string; createdFrom: number; createdTo: number }): Promise<{ refs: string[]; complete: boolean }> {
+    void account;
+    this.listOutboundCalls.push({ ...q });
+    const refs = this.sms.filter((m) => m.from === q.from && m.mediaUrls.length > 0 && (this.sentAt.get(m.providerRef) ?? -1) >= q.createdFrom && (this.sentAt.get(m.providerRef) ?? Infinity) <= q.createdTo).map((m) => m.providerRef);
+    return { refs, complete: true };
+  }
+
+  /**
+   * Test helper (VERIFY 1): fetch every media URL of the photo text sent with `idempotencyKey` as Twilio is reported
+   * to: HEAD, then GET, through `fetch` (tests build it on app.inject). Each must answer 200 with the same
+   * Content-Type on both, a type Twilio accepts, and bytes that are that type. Returns the bytes, in order.
+   */
+  async pullMedia(idempotencyKey: string, fetch: (method: 'HEAD' | 'GET', url: string) => Promise<{ status: number; headers: Record<string, string | undefined>; body: Uint8Array }>): Promise<{ contentType: string; bytes: Uint8Array }[]> {
+    const m = this.sms.find((x) => x.idempotencyKey === idempotencyKey);
+    if (!m) throw new Error('pullMedia: no such message');
+    const out: { contentType: string; bytes: Uint8Array }[] = [];
+    for (const url of m.mediaUrls) {
+      const head = await fetch('HEAD', url);
+      const get = await fetch('GET', url);
+      if (head.status !== 200 || get.status !== 200) throw new ProviderError('rejected', '11200');
+      const type = String(get.headers['content-type'] ?? '');
+      if (type !== String(head.headers['content-type'] ?? '')) throw new ProviderError('rejected', '12300');
+      const sniff = FAKE_MMS_ACCEPTED[type];
+      if (!sniff || !sniff(get.body)) throw new ProviderError('rejected', '12300');
+      out.push({ contentType: type, bytes: get.body });
+    }
+    return out;
   }
 
   /** Test helper: move a submitted message to a later status (status callbacks are comms' job). */

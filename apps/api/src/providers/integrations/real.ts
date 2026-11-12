@@ -95,7 +95,13 @@ export class PartnerShowingService implements ShowingServiceProvider {
 }
 
 const unavailable = {
-  avm: { estimate: async () => ({ available: false as const }) } satisfies AvmProvider,
+  // no AVM vendor is chosen (N8): honestly not configured, and avm.refresh requests nothing
+  avm: {
+    configured: false,
+    estimate: async () => {
+      throw new ProviderError('not_configured', 'AVM_NOT_CONFIGURED');
+    },
+  } satisfies AvmProvider,
   calendar: (): CalendarProvider => ({
     pushEvent: async () => {
       throw new ProviderError('not_configured', 'CALENDAR_NOT_CONFIGURED');

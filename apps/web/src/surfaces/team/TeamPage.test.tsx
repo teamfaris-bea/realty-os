@@ -204,6 +204,41 @@ describe('Team exception queue', () => {
     expect(within(card).queryAllByRole('button')).toEqual([]);
   });
 
+  it('b8 deals ui/F7: a milestone_at_risk card names its deal (linked to the deal) and the date in its heading, and the announcement names them too', async () => {
+    const DEAL = '01900000-0000-7000-8000-0000000dea01';
+    const DATE = '01900000-0000-7000-8000-0000000dd201';
+    const m = exceptionItem({
+      dedupeKey: `milestone:${DATE}:1`,
+      itemType: 'milestone_at_risk',
+      subjectType: 'deal_date',
+      subjectId: DATE,
+      contact: null,
+      deal: { id: DEAL, name: 'Test Lane purchase', dateLabel: 'Inspection deadline', dueOn: '2027-03-06' },
+      period: null,
+      contactOwnershipSeq: null,
+      actions: { resolve: true, reassign: false, verify: true, reopen: false },
+      evidence: [
+        { sourceType: 'deal_date', sourceId: DATE, explanation: 'Inspection deadline has passed and is not marked done', at: null, locator: null, snippet: null, needsReview: false, link: null },
+        { sourceType: 'deal', sourceId: DEAL, explanation: 'The deal this date belongs to', at: null, locator: null, snippet: null, needsReview: false, link: { kind: 'deal', id: DEAL, contactId: null, offsetMs: null } },
+      ],
+    });
+    const fake = teamFake([m]).on(keyPath(m.dedupeKey, 'resolve'), { status: 200, body: { item: { ...m, live: false }, events: [] } });
+    leadAdminApp(fake, '/team');
+    const heading = await screen.findByRole('heading', { name: 'Milestone at risk · Test Lane purchase · Inspection deadline, Mar 6, 2027' });
+    expect(within(heading).getByRole('link', { name: 'Test Lane purchase' })).toHaveAttribute('href', `/deals/${DEAL}`);
+    const u = userEvent.setup();
+    await u.click(screen.getByRole('button', { name: 'Resolve' }));
+    await u.type(screen.getByLabelText('What was done?'), 'Inspection report received');
+    await u.click(screen.getByRole('button', { name: 'Resolve' }));
+    expect(await screen.findByText('Resolved: Milestone at risk for Test Lane purchase (Inspection deadline)')).toBeInTheDocument();
+  });
+
+  it('b8 deals ui/F7: the empty live queue says dates at risk on deals show up here too', async () => {
+    leadAdminApp(teamFake([]), '/team');
+    expect(await screen.findByText('Nothing needs attention')).toBeInTheDocument();
+    expect(screen.getByText('Untouched leads, overdue promises, undelivered messages, consults without an outcome and dates at risk on deals show up here.')).toBeInTheDocument();
+  });
+
   it('says how many it shows when the server returned fewer items than are live', async () => {
     leadAdminApp(new FakeFetch().on(LIVE, { status: 200, body: queue([exceptionItem()], 240) }), '/team');
     expect(await screen.findByText('Showing the oldest 1 of 240.')).toBeInTheDocument();

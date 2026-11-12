@@ -50,6 +50,7 @@ const NOUN: Record<EvidenceSourceType, string> = {
   deal: 'deal',
   task: 'task',
   appointment: 'appointment',
+  home_valuation: 'home value estimate',
   ownership_period: 'lead history',
   message_status: 'message delivery status',
 };
@@ -72,6 +73,7 @@ const WHERE: Record<SourceType, string> = {
   deal: 'on the deal',
   task: 'on a task',
   appointment: 'on the appointment',
+  home_valuation: 'in the home value estimate',
 };
 
 function clock(ms: number): string {

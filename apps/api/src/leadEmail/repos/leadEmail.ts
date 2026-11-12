@@ -91,7 +91,7 @@ export async function activeRole(tx: Tx, userId: string): Promise<string | null>
 }
 
 /**
- * The team's own addresses (R-LEM-11 E344): active members' account emails and alert phones, and the tenant's live
+ * The team's own addresses (R-LEM-11 E380): active members' account emails and alert phones, and the tenant's live
  * numbers. As the system actor (memberships: members_read via app.is_member(); users: co-members; phone_numbers:
  * tenant isolation).
  */

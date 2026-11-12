@@ -1,4 +1,4 @@
-// The Lead sources API (module 22; DATA_MODEL R-LSRC-1..5, E333–E339, E351) through the real server as app_user.
+// The Lead sources API (module 22; DATA_MODEL R-LSRC-1..5, E333–E339, E387) through the real server as app_user.
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, type TestClient, createApiHarness } from '../auth/testHarness.js';
@@ -122,7 +122,7 @@ describe('R-LSRC-2 rename, consent text, off and on', () => {
     expect((await h.su.query("SELECT reason FROM audit_log WHERE entity_id = $1 AND reason = 'LEAD_SOURCE_DISCLOSURE_CHANGED'", [src.sourceId])).rows).toHaveLength(1);
   });
 
-  it('R-LSRC-2 E351: off stops every path (intake 404 unrouted, lead email unrouted), the card says since when; on restores; 🔒', async () => {
+  it('R-LSRC-2 E387: off stops every path (intake 404 unrouted, lead email unrouted), the card says since when; on restores; 🔒', async () => {
     const s = await newSource('Off test');
     const inbox = await enableInbox(h, w.owner, s.id);
     await freshReauth(h, w.owner);

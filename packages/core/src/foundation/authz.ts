@@ -155,6 +155,8 @@ export const ACTIONS = [
   'coaching.view', // module 36: the caller's own daily fix and its quotes (R-COACH-3, R-COACH-4; Call reviews row: own calls)
   'coaching.team_view', // module 36: a team's current fixes (Owner/Admin; a Team Lead only while the Owner's tl_sees_call_scores is on, DB-enforced)
   'coaching.settings', // module 36: call scoring on/off, Team Lead visibility, rubric items (Owner; an Admin may only turn call reviews off; widening needs 🔒)
+  'milestone.confirm', // module 31 (DATA_MODEL §8 "Confirm or move a milestone date"): plan, confirm, enter, move, complete a deal date
+  'milestone_template.manage', // module 31: tenant milestone templates (not a §8 row: Owner/Admin, flagged; R-TXN-6)
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -203,6 +205,8 @@ export const AUDIT_ACTIONS = [
   'consent.recorded',
   'consent.opt_out_received',
   'consent.not_opt_out_marked', // R-CONSENT-8
+  'consent.reaction_quote_not_read', // R-REACT-3 (D5b)
+  'consent.reaction_link_refused', // R-REACT-5 (D5b)
   'suppression.lifted',
   // recordings
   'recording.play',
@@ -635,6 +639,11 @@ const MATRIX: Record<Action, ActionRule> = {
   // Admin acts only when nothing loosens, with no re-auth (off only tightens); the API lets an Admin turn call reviews
   // off and nothing else, and the DB trigger refuses anyone else.
   'coaching.settings': { roles: { owner: { scopes: ['all'], reauth: 'when_loosening' }, admin: { scopes: ['all'], checks: ['not_loosening'] } } },
+  // Module 31 (DATA_MODEL §8): Confirm or move a milestone date: ✅ | ✅ | T | O / D | — | D. The agent cell reads as
+  // "own deals or deals they are a member of" (deals have no collaborators); a person only, never the system (R-TXN-1).
+  'milestone.confirm': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: { scopes: ['own', 'deal'] }, tc: DEAL } },
+  // Milestone templates (R-TXN-6; §8 names no role): Owner/Admin, like the other tenant settings. Flagged for the owner.
+  'milestone_template.manage': { roles: { owner: ALL, admin: ALL } },
 };
 
 const DENY_NOT_FOUND: CanResult = { ok: false, code: 'NOT_FOUND' };

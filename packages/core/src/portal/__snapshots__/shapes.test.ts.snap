@@ -1,0 +1,16 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`core/portal output shapes > carry no confidence, probability, score or tenant key 1`] = `
+[
+  "body",
+  "documentId",
+  "kind",
+  "occursOn",
+  "ok",
+  "reason",
+  "sourceId",
+  "sourceType",
+  "sourceVersion",
+  "title",
+]
+`;

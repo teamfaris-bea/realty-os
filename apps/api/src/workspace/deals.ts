@@ -19,13 +19,14 @@
 //
 // A deal reaching `closed` enqueues assistant.deal_closed (the post-closing playbook enrolls only when it
 // is approved, api/assistant).
-import type { IdGenerator, Instant, ResourceFacts, UserActor } from '@realty/core/foundation';
+import type { Actor, IdGenerator, Instant, ResourceFacts, UserActor } from '@realty/core/foundation';
 import { enqueueJob, type Tx } from '@realty/db';
 import { sql } from 'kysely';
 import type { z } from 'zod';
 import { ASSISTANT_JOBS } from '../assistant/types.js';
 import { audit, redactDiff } from '../audit.js';
 import { AppError } from '../errors.js';
+import { confirmInTx, updateDateInTx } from '../transactions/confirm.js';
 import { assertAssignable, iso, isoOrNull } from './common.js';
 import type { CreateDealBody, DealDateBody, DealDetailSchema, DealSchema, DealsQuery, FinancialsBody, FinancialsSchema, StageBody, UpdateDealBody, UpdateDealDateBody } from './schemas.js';
 import { assertRefsVisible } from './tasks.js';
@@ -287,24 +288,27 @@ export async function putFinancials(tx: Tx, actor: UserActor, dealId: string, b:
 
 // ---- dates, members, contacts -----------------------------------------------------------------------------
 
-export async function addDealDate(tx: Tx, ids: IdGenerator, dealId: string, b: z.infer<typeof DealDateBody>): Promise<{ id: string; kind: z.infer<typeof DealDateBody>['kind']; label: string | null; dueOn: string; completedAt: string | null }> {
-  const id = ids.next<'DealDateId'>();
-  await sql`INSERT INTO deal_dates (tenant_id, id, deal_id, kind, label, due_on) VALUES (app.tenant_id(), ${id}, ${dealId}, ${b.kind}, ${b.label ?? null}, ${b.dueOn}::date)`.execute(tx);
-  return { id, kind: b.kind, label: b.label ?? null, dueOn: b.dueOn, completedAt: null };
-}
+// Module 31 (sole Phase 2 editor of these functions): every date written here goes through the one confirm path
+// (transactions/confirm.ts), so a date typed on the deal screen is confirmed by the person who typed it and gets its
+// stored instants (due_at, reminder_at) at write time (R-TXN-1, R-TXN-2).
+type DateView = { id: string; kind: z.infer<typeof DealDateBody>['kind']; label: string | null; dueOn: string; completedAt: string | null };
 
-export async function updateDealDate(tx: Tx, id: string, b: z.infer<typeof UpdateDealDateBody>, now: Instant) {
-  const r = await sql<{ id: string; kind: z.infer<typeof DealDateBody>['kind']; label: string | null; due_on: string; completed_at: Date | null }>`
-    UPDATE deal_dates SET due_on = COALESCE(${b.dueOn ?? null}::date, due_on),
-           label = CASE WHEN ${b.label !== undefined} THEN ${b.label ?? null} ELSE label END,
-           completed_at = CASE WHEN ${b.completed ?? null}::boolean IS NULL THEN completed_at
-                               WHEN ${b.completed ?? null}::boolean THEN COALESCE(completed_at, ${new Date(now).toISOString()}::timestamptz) ELSE NULL END,
-           updated_at = now()
-     WHERE tenant_id = app.tenant_id() AND id = ${id}
-     RETURNING id, kind, label, due_on::text AS due_on, completed_at`.execute(tx);
+async function dateView(tx: Tx, id: string): Promise<DateView> {
+  const r = await sql<{ id: string; kind: DateView['kind']; label: string | null; due_on: string; completed_at: Date | null }>`
+    SELECT id, kind, label, due_on::text AS due_on, completed_at FROM deal_dates WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx);
   const x = r.rows[0];
   if (!x) throw new AppError('NOT_FOUND');
   return { id: x.id, kind: x.kind, label: x.label, dueOn: x.due_on, completedAt: isoOrNull(x.completed_at) };
+}
+
+export async function addDealDate(tx: Tx, actor: Actor, ids: IdGenerator, dealId: string, b: z.infer<typeof DealDateBody>, now: Instant): Promise<DateView> {
+  const id = await confirmInTx(tx, actor, ids, { dealId, dateId: null, kind: b.kind, label: b.label ?? null, dueOn: b.dueOn }, now);
+  return dateView(tx, id);
+}
+
+export async function updateDealDate(tx: Tx, actor: Actor, ids: IdGenerator, id: string, b: z.infer<typeof UpdateDealDateBody>, now: Instant): Promise<DateView> {
+  await updateDateInTx(tx, actor, ids, id, b, now);
+  return dateView(tx, id);
 }
 
 export async function addDealMember(tx: Tx, actor: UserActor, dealId: string, userId: string, role: 'co_agent' | 'tc' | 'isa'): Promise<void> {

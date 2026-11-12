@@ -58,7 +58,9 @@ function duration(s: number | null): string {
 }
 
 /** The attachments of one thread row (a message's media, or a call's voicemail). Renders nothing when there are none. */
-export function RowAttachments({ contactId, item }: { contactId: string; item: Pick<TimelineItem, 'id' | 'type'> }) {
+/** `notSent`: the row's outbound text was blocked or failed ('failed') or is held ('held'): its photos get the bubble's
+ *  dashed outline, so a photo text that did not go out is never drawn like a delivered one (b8 texting ui/F5). */
+export function RowAttachments({ contactId, item, notSent = null }: { contactId: string; item: Pick<TimelineItem, 'id' | 'type'>; notSent?: 'failed' | 'held' | null }) {
   const a = useAttachments(contactId);
   if (!a.data) return null;
   if (item.type === 'call') {
@@ -68,13 +70,14 @@ export function RowAttachments({ contactId, item }: { contactId: string; item: P
   const m = a.data.messages.find((x) => x.messageId === item.id);
   if (!m) return null;
   const total = m.media.length + m.skipped.length;
+  const frame = notSent === 'failed' ? 'rounded-2xl border border-dashed border-danger p-2' : notSent === 'held' ? 'rounded-2xl border border-dashed border-warn p-2' : 'px-1';
   return (
-    <div className="flex flex-col gap-1 px-1">
+    <div data-not-sent={notSent ?? undefined} className={`flex flex-col gap-1 ${frame}`}>
       {m.media.map((x) => {
         const label = `Attachment ${x.position + 1} of ${total}, ${kindOf(x.contentType)}, ${formatBytes(x.byteSize)}`;
         return (
           <div key={x.position} className="flex flex-col items-start gap-1">
-            {x.inline ? <img src={x.url} alt={`Photo ${x.position + 1} of ${total} they sent`} loading="lazy" className="max-h-64 max-w-full rounded-xl border border-line object-contain" /> : null}
+            {x.inline ? <img src={x.url} alt={`Photo ${x.position + 1} of ${total}`} loading="lazy" className={`max-h-64 max-w-full rounded-xl border border-line object-contain ${notSent === 'failed' ? 'opacity-60' : ''}`} /> : null}
             <a href={x.url} download className="inline-flex min-h-tap items-center text-[14px] font-medium text-accent underline">
               Download {label}
             </a>

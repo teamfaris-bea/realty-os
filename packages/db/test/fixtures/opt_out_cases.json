@@ -49,6 +49,8 @@
     { "id": "sms-confirmation-no-keyword", "channel": "sms", "why": "a confirmation with no keyword on the thread is an ordinary send", "initiator": "system", "actionCategory": "opt_out_confirmation", "recipientRevoked": [{ "channel": "sms", "purpose": "all" }], "expect": "RECIPIENT_OPTED_OUT" },
     { "id": "sms-confirmation-marketing", "channel": "sms", "why": "the exemption covers only an informational reply", "initiator": "system", "actionCategory": "opt_out_confirmation", "purpose": "marketing", "recipientRevoked": [{ "channel": "sms", "purpose": "all" }], "keywordWithin24h": true, "expect": "RECIPIENT_OPTED_OUT" },
     { "id": "mms-stop", "channel": "mms", "why": "MMS uses the SMS opt-out", "recipientRevoked": [{ "channel": "sms", "purpose": "all" }], "expect": "RECIPIENT_OPTED_OUT" },
+    { "id": "mms-person-dnc", "channel": "mms", "why": "a photo text: the person asked not to be contacted (D5a)", "personDoNotContact": true, "expect": "PERSON_DO_NOT_CONTACT" },
+    { "id": "mms-suppressed", "channel": "mms", "why": "a photo text to a number with an active SMS suppression (D5a)", "suppression": { "channel": "sms", "reason": "internal_dnc" }, "expect": "RECIPIENT_SUPPRESSED" },
 
     { "id": "email-clean", "channel": "email", "why": "a human email to an address with no opt-out", "expect": "allow" },
     { "id": "email-unsubscribed-marketing", "channel": "email", "why": "marketing email to an unsubscribed address", "purpose": "marketing", "recipientRevoked": [{ "channel": "email", "purpose": "marketing" }], "expect": "RECIPIENT_OPTED_OUT" },

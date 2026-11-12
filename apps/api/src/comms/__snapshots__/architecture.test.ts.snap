@@ -116,6 +116,7 @@ exports[`schemas (R-AST-13, R-TEN-3) > R-AST-13: no comms response schema carrie
     "outcome",
     "phase",
     "reasons",
+    "textSender",
   ],
   "ReachabilityManyResponse": [
     "addressHint",
@@ -565,6 +566,13 @@ exports[`schemas (R-AST-13, R-TEN-3) > R-AST-13: no comms response schema carrie
     "startMs",
     "status",
     "text",
+  ],
+  "UploadMediaResponse": [
+    "byteSize",
+    "contentType",
+    "expiresAt",
+    "id",
+    "upload",
   ],
 }
 `;

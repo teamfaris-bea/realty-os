@@ -16,6 +16,9 @@
 //   GET  /recordings/:id/transcript        audited transcript view                 transcript.view
 //   GET  /contacts/:id/attachments         MMS media + voicemails of the thread    contact.view_detail
 //   GET  /messages/:id/media/:position     one stored MMS item (safe download)     contact.view_detail
+//   POST   /contacts/:id/outbound-media    stage a photo/video for a text (D5a)    comms.send
+//   DELETE /contacts/:id/outbound-media/:uploadId  remove a staged one             comms.send
+//   GET  /mms/media?token=                 the provider fetches a sent item (D5a)  public (MAC token; global limiter off)
 //   GET/POST /numbers, POST /numbers/:id/release (🔒), PATCH /numbers/:id/registration
 //   POST /sender-registrations, POST /sender-registrations/:id/refresh
 //   POST /sending-domains, POST /sending-domains/:id/verify, POST /email-identities      settings.numbers
@@ -47,6 +50,8 @@ import * as S from './schemas.js';
 import { registerWebhookRoutes } from './webhooks.js';
 import { VOICEMAIL_NOTICE, getVoiceSettings, updateVoiceSettings } from './voice.js';
 import { contactAttachments, messageContact, readMedia } from './media.js';
+import { deleteOutboundMedia, serveProviderMedia, uploadOutboundMedia } from './outboundMedia.js';
+import { refuseContentEncoding } from '../imports/routes.js';
 
 const IdParams = z.object({ id: z.uuid() });
 
@@ -218,6 +223,35 @@ async function register(app: FastifyInstance): Promise<void> {
       .header('cross-origin-resource-policy', 'same-origin')
       .header('cache-control', 'private, no-store')
       .header('content-disposition', `${m.inline ? 'inline' : 'attachment'}; filename="${m.filename}"`);
+    return reply.send(Buffer.from(m.bytes));
+  });
+
+  // ---- D5a: outbound photo and video texts (comms/outboundMedia.ts) ----
+  // the body cap is the strict base64 of 5,000,000 bytes + 4 KiB: a larger declared body is 413 before it is read
+  // (authentication already ran in preParsing). The 201/204 schemas are also bound to 200 so the route table and
+  // the web contract see the very objects (webContract.test F4).
+  r.post('/contacts/:id/outbound-media', { config: { auth: 'comms.send' }, preHandler: authorize('comms.send', contactSend), bodyLimit: S.MAX_UPLOAD_BASE64_CHARS + 4096, preParsing: refuseContentEncoding, schema: { params: IdParams, body: S.UploadMediaBody, response: { 200: S.UploadMediaResponse, 201: S.UploadMediaResponse } } }, async (req, reply) => {
+    const upload = await uploadOutboundMedia(actorOf(req), req.params.id, req.body, deps());
+    reply.status(201);
+    return { upload };
+  });
+  r.delete('/contacts/:id/outbound-media/:uploadId', { config: { auth: 'comms.send' }, preHandler: authorize('comms.send', contactSend), schema: { params: z.object({ id: z.uuid(), uploadId: z.uuid() }), response: { 200: S.NoContent, 204: S.NoContent } } }, async (req, reply) => {
+    await deleteOutboundMedia(actorOf(req), req.params.id, req.params.uploadId, deps());
+    return reply.status(204).send(null);
+  });
+  // The provider's fetch (R-MMS-6, E296). Public: the MAC-signed token is the only authority. The global per-IP limiter
+  // is off (every tenant's fetches come from the provider's shared addresses); 12 fetches per item per hour is this
+  // route's budget, counted after the MAC. No Zod query schema: any malformed, repeated or extra parameter is the same
+  // 404 as every other refusal, never a 422. Fastify's automatic HEAD route answers the same.
+  r.get('/mms/media', { config: { auth: 'public', rateLimit: false } }, async (req, reply) => {
+    const m = await serveProviderMedia(req.query as unknown, deps());
+    reply
+      .header('content-type', m.contentType)
+      .header('content-length', String(m.bytes.byteLength))
+      .header('x-content-type-options', 'nosniff')
+      .header('content-security-policy', "default-src 'none'; sandbox")
+      .header('cache-control', 'no-store')
+      .header('content-disposition', `attachment; filename="${m.filename}"`);
     return reply.send(Buffer.from(m.bytes));
   });
 

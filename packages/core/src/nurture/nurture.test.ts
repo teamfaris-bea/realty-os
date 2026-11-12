@@ -72,15 +72,18 @@ describe('trigger detection (R-NURT-1, R-NURT-2, R-NURT-7)', () => {
     expect(detectFirings(priceDrop({ displayAllowed: false }), [savedBy('c-1', 'l-1')])).toEqual([]);
   });
 
-  it('R-NURT-2: a step offset schedules the firing after the fact; a deal date step before the date', () => {
+  it('R-NURT-2: a step offset schedules the firing after the fact; a deal date fires at its stored reminder time', () => {
     const pb = { ...AGENT_PLAYBOOK, steps: [{ trigger: 'price_drop' as const, stepKey: 's', offsetSeconds: 3600 }] };
     expect(detectFirings(priceDrop(), [savedBy('c-1', 'l-1', 'u-sarah', pb)])[0]?.scheduledFor).toBe(T0 + HOUR_MS);
+    // module 31 (finding 1): the fact's `at` is the date's stored reminder_at; the deadline (dueAt) is only re-checked
     const due = instant(T0 + 10 * 24 * HOUR_MS);
+    const reminderAt = instant(T0 + 7 * 24 * HOUR_MS);
     const dd = detectFirings(
-      { kind: 'deal_date_upcoming', dealId: 'd-1', dealDateId: 'dd-1', dueVersion: 3, dueAt: due, label: 'Closing on Fri Nov 20', contactIds: ['c-1', 'c-2'], at: T0 },
-      [{ contactId: 'c-1', ownerUserId: 'u-sarah', relation: { kind: 'contact' }, playbook: { ...TEAM_PLAYBOOK, steps: [{ trigger: 'deal_date_upcoming', stepKey: 'two_days', offsetSeconds: -2 * 24 * 3600 }] } }],
+      { kind: 'deal_date_upcoming', dealId: 'd-1', dealDateId: 'dd-1', dueVersion: 3, dueAt: due, label: 'Closing on Fri Nov 20', contactIds: ['c-1', 'c-2'], at: reminderAt },
+      [{ contactId: 'c-1', ownerUserId: 'u-sarah', relation: { kind: 'contact' }, playbook: { ...TEAM_PLAYBOOK, steps: [{ trigger: 'deal_date_upcoming', stepKey: 'two_days', offsetSeconds: 0 }] } }],
     );
-    expect(dd.map((f) => [f.triggerKey, f.scheduledFor])).toEqual([['deal_date:dd-1:v3:two_days:c-1', due - 2 * 24 * HOUR_MS]]);
+    expect(dd.map((f) => [f.triggerKey, f.scheduledFor])).toEqual([['deal_date:dd-1:v3:two_days:c-1', reminderAt]]);
+    expect(dd[0]?.ref).toMatchObject({ kind: 'deal_date_upcoming', dueAt: due });
   });
 });
 

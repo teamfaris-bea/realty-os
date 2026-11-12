@@ -5,6 +5,10 @@
 //   others: see each route (password reset, signup, MFA verify, re-auth, invite, alert phone)
 //
 // Every limit is counted on every attempt (no short-circuit), so a blocked caller keeps counting.
+// The windows are read at the DB clock (clock_timestamp() of the counting transaction), the one clock every API
+// process shares. A caller may pass a Clock instead: a test seam only (a burst pinned inside one window); production
+// passes none.
+import type { Clock } from '@realty/core/foundation';
 import type { Database } from '@realty/db';
 import { withPreTenant } from '@realty/db';
 import { sql } from 'kysely';
@@ -18,9 +22,10 @@ export interface Limit {
   windowSeconds: number;
 }
 
-export async function enforceLimits(db: Database, secret: Uint8Array, limits: readonly Limit[]): Promise<void> {
+export async function enforceLimits(db: Database, secret: Uint8Array, limits: readonly Limit[], clock?: Clock): Promise<void> {
   const blocked = await withPreTenant(
-    async (tx, now) => {
+    async (tx, dbNow) => {
+      const now = clock ? clock.now() : dbNow;
       let retryAfter = 0;
       for (const l of limits) {
         const windowMs = l.windowSeconds * 1000;

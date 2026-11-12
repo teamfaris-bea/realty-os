@@ -10,7 +10,8 @@
 
 // ---- accountability -----------------------------------------------------------------------------
 
-export type ExceptionType = 'untouched_lead' | 'overdue_promise' | 'failed_send' | 'missing_outcome';
+// module 31 (finding 8): 18a raises milestone_at_risk (R-ACC-6); the queue shows it as a fifth type
+export type ExceptionType = 'untouched_lead' | 'overdue_promise' | 'failed_send' | 'missing_outcome' | 'milestone_at_risk';
 export type ExceptionAction = 'resolved' | 'reassigned' | 'verified' | 'reopened';
 
 export interface Person {
@@ -26,7 +27,7 @@ export interface ExceptionEvidence {
   locator: Record<string, unknown> | null;
   snippet: string | null;
   needsReview: boolean;
-  link: { kind: 'contact' | 'message' | 'call' | 'task' | 'appointment'; id: string; contactId: string | null; offsetMs: number | null } | null;
+  link: { kind: 'contact' | 'message' | 'call' | 'task' | 'appointment' | 'deal'; id: string; contactId: string | null; offsetMs: number | null } | null;
 }
 
 export interface ExceptionEvent {
@@ -43,6 +44,11 @@ export interface ExceptionItem {
   subjectType: string;
   subjectId: string;
   contact: { id: string; name: string } | null;
+  /**
+   * milestone_at_risk (b8 deals ui/F7): the deal the date belongs to (linked as /deals/:id) and the date's label and
+   * contract date; null for other types or a deal the viewer cannot see. Absent from an API older than it.
+   */
+  deal?: { id: string; name: string; dateLabel: string; dueOn: string } | null;
   owner: Person | null;
   detectedAt: string;
   dueAt: string | null;

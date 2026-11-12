@@ -8,6 +8,7 @@
 //   4 the inbound message + conversations.inbound_seq + 1
 //   5 STOP / START / HELP / wrong number / opt-out language (core.classifyInbound + planInboundEffects):
 //     consent events (address-keyed, R-CONSENT-1), cancelling queued SMS, the one confirmation reply
+//     VERIFY WITH COUNSEL: D5b reaction quotes (comms/reactions.ts)
 //   6 pause: conversation automation_paused_at, live enrollments of EVERY contact on the address, their
 //     scheduled step runs canceled_paused, queued assistant messages canceled
 //   7 one handback (dedupe handback:{enrollment}:{message}) for the owner, or the Team Lead when unowned,
@@ -32,6 +33,7 @@ import { audit } from '../audit.js';
 import { queueOutboundInTx } from './compose.js';
 import { hint } from './dispatch.js';
 import { resolvedPolicy } from './gateInput.js';
+import { reactionCopy, reactionTitle, readReactionInTx } from './reactions.js';
 import { autoReplyHeader } from './render.js';
 import * as auto from './repos/automation.js';
 import * as g from './repos/gate.js';
@@ -266,7 +268,8 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
 
   // 5 consent side of the message (SMS and email bodies; a call has no text)
   const channel: Channel = e.kind === 'email' ? 'email' : e.kind === 'web_chat' ? 'web_chat' : 'sms';
-  const classification: InboundClassification = e.kind === 'call' ? { kind: 'none', needsReview: false } : classifyInbound(body, policy.keywords, channel);
+  const rx = e.kind === 'sms' && (e.mediaCount ?? 0) === 0 ? await readReactionInTx(tx, actor, { messageId: messageId!, contactId: target, from, phoneNumberId: toNumber!.id, body, keywords: policy.keywords, occurredAt, ids }) : null;
+  const classification: InboundClassification = rx ? rx.classification : e.kind === 'call' ? { kind: 'none', needsReview: false } : classifyInbound(body, policy.keywords, channel);
   if (e.kind !== 'call') {
     const targetPoints = await g.contactPoints(tx, target);
     const inbound: InboundAddress = { kind: isEmail ? 'email' : isChat ? 'web_chat' : 'phone', hmac, hint: isChat ? 'web chat' : hint(from) };
@@ -349,8 +352,8 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
   // language or a wrong-number reply, on a tracked number: the call or text is also an inquiry from the number's
   // source, so the re-inquiry rules decide (R-OWN-20, owner decision D8(2)). Owned, offered and closed people are only
   // threaded. Read under the contact locks taken in step 3; the intake attaches to a contact in `sharing` (same HMAC).
-  // (Once lane/sms-reactions has merged, a reaction text is skipped here too.)
-  if (tracked && (e.kind === 'call' || classification.kind === 'none')) {
+  // A reaction text (a tapback quoting the team's text, D5b: `rx`) is a reply, never a new inquiry (E349).
+  if (tracked && (e.kind === 'call' || (classification.kind === 'none' && !rx))) {
     const st = await sql<{ ownership_state: string }>`SELECT ownership_state FROM contacts WHERE tenant_id = app.tenant_id() AND id = ${target}`.execute(tx);
     const state = st.rows[0]?.ownership_state;
     if (state === 'in_pond' || state === 'unassigned') {
@@ -392,7 +395,10 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
     // E201 / R-GMAIL-12: with the Message-ID hash known, one handback per message per contact, shared with module 68
     const dedupeKey = rfcHash ? emailHandbackKey(target, rfcHash) : `handback:${enrollment?.id ?? 'none'}:${messageId ?? callId}`;
     const srcId = (messageId ?? callId)!;
-    if (e.kind !== 'call' && body.trim()) {
+    const rxCopy = rx ? reactionCopy(rx, { firstName: h.firstName, label, body, messageId: srcId, ids }) : null;
+    if (rxCopy) {
+      claims.push(rxCopy.claim);
+    } else if (e.kind !== 'call' && body.trim()) {
       const snippet = body.slice(0, 280);
       claims.push({ id: ids.next(), kind: 'client_statement', text: `${who} wrote: “${snippet}”`, evidence: { id: ids.next(), sourceType: srcType as 'message' | 'email', sourceId: srcId, locator: { kind: 'message' }, snippet } });
     } else if (e.kind === 'call') {
@@ -413,7 +419,9 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
     }
     const explanation = autoReply
       ? `An automatic reply came in, so the assistant paused and handed this back to you.`
-      : `${who} replied, so the assistant paused and handed the conversation back to you.`;
+      : rxCopy
+        ? rxCopy.explanation
+        : `${who} replied, so the assistant paused and handed the conversation back to you.`;
     const ok = await auto.insertHandback(tx, {
       id: handbackId,
       contactId: target,
@@ -433,7 +441,7 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
     const hot = h.stage === 'new' || h.stage === 'attempting';
     if (handbackId) {
       await upsertFeedItem(tx, ids, { userId: h.userId, itemType: 'handback', band: 'pinned', contactId: target, subjectType: 'assistant_action', subjectId: handbackId, assistantActionId: handbackId, score: hot ? 95 : 80, reasons: [{ code: autoReply ? 'AUTO_REPLY' : 'CLIENT_REPLIED', text: autoReply ? 'Automatic reply received; the assistant paused' : 'Replied; the assistant paused and handed back' }], dedupeKey: `handback:${handbackId}` });
-      await notifyUser(tx, ids, { userId: h.userId, kind: hot ? 'handback_hot' : 'handback', priority: hot ? 'critical' : 'high', title: `${label ?? 'A client'} replied`, body: null, subjectType: 'assistant_action', subjectId: handbackId, dedupeKey: `handback:${handbackId}` }, now);
+      await notifyUser(tx, ids, { userId: h.userId, kind: hot ? 'handback_hot' : 'handback', priority: hot ? 'critical' : 'high', title: rx ? reactionTitle(rx, label) : `${label ?? 'A client'} replied`, body: null, subjectType: 'assistant_action', subjectId: handbackId, dedupeKey: `handback:${handbackId}` }, now);
       await enqueueJob(tx, { queue: 'default', kind: 'assistant.enrich_handback', payload: { actionId: handbackId }, dedupeKey: `assistant.enrich_handback:${handbackId}` });
     } else if (e.kind === 'call') {
       // honest UI: a call that is still ringing is not (yet) missed; the later no-answer / busy /
@@ -441,7 +449,7 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
       if (isMissedCallStatus(e.status)) await missedCallItem(tx, ids, h.userId, target, callId!, e.status, label, now);
     } else {
       await upsertFeedItem(tx, ids, { userId: h.userId, itemType: 'unanswered_inbound', band: 'pinned', contactId: target, subjectType: 'message', subjectId: messageId!, assistantActionId: null, score: hot ? 90 : 70, reasons: [{ code: 'UNANSWERED_INBOUND', text: 'Waiting for your reply' }], dedupeKey: `inbound:${target}` });
-      await notifyUser(tx, ids, { userId: h.userId, kind: 'inbound_message', priority: hot ? 'high' : 'normal', title: `${label ?? 'A client'} sent a message`, body: null, subjectType: 'message', subjectId: messageId!, dedupeKey: `inbound:${messageId}` }, now);
+      await notifyUser(tx, ids, { userId: h.userId, kind: 'inbound_message', priority: hot ? 'high' : 'normal', title: rx ? reactionTitle(rx, label) : `${label ?? 'A client'} sent a message`, body: null, subjectType: 'message', subjectId: messageId!, dedupeKey: `inbound:${messageId}` }, now);
     }
     if (e.kind === 'email' && !points.some((p) => p.contactId === target)) {
       // E61: a reply from an address not on the contact: a suggestion, never auto-added

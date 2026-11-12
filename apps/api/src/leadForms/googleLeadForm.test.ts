@@ -1,4 +1,4 @@
-// Google Ads lead forms (module 22 scope 7; DATA_MODEL R-GADS-1..4, E313–E319, E338, E345–E347) through the real
+// Google Ads lead forms (module 22 scope 7; DATA_MODEL R-GADS-1..4, E313–E319, E338, E381–E383) through the real
 // server as app_user. Every payload is synthetic (leadForms/testing.ts); nothing calls Google.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -87,7 +87,7 @@ describe('R-GADS-1 the key is the only routing input', () => {
     expect(arr.statusCode).toBe(403);
   });
 
-  it('R-GADS-1 E345: a lookup that fails is 503 WEBHOOK_UNAVAILABLE with no rejected row; any other guard failure is still 403', async () => {
+  it('R-GADS-1 E381: a lookup that fails is 503 WEBHOOK_UNAVAILABLE with no rejected row; any other guard failure is still 403', async () => {
     const src = await newSource();
     const k = await enableGoogleForm(h, w.owner, src);
     const rej = await rejectedRows();
@@ -209,7 +209,7 @@ describe('R-GADS-2 a delivery is one inquiry', () => {
     expect(JSON.stringify(i)).not.toContain('9007199254740992');
   });
 
-  it('R-GADS-2 E346: values longer than the intake limits are truncated; the lead is created; never a 4XX', async () => {
+  it('R-GADS-2 E382: values longer than the intake limits are truncated; the lead is created; never a 4XX', async () => {
     const src = await newSource();
     const k = await enableGoogleForm(h, w.owner, src, { inquiryType: 'sell' });
     const addr = email();
@@ -422,7 +422,7 @@ describe('R-GADS-4 turning on, rotating, turning off', () => {
     expect((await h.su.query("SELECT count(*)::int AS n FROM audit_log WHERE tenant_id = $1 AND action = 'google_lead_form.key_rotated' AND changes::text LIKE '%' || $2 || '%'", [w.tenantId, src])).rows[0]!.n).toBe(2);
   });
 
-  it('R-GADS-4 E347: two turn-ons at once ⇒ one 200 with the key, one 409 ALREADY_ON with the state; never a 500', async () => {
+  it('R-GADS-4 E383: two turn-ons at once ⇒ one 200 with the key, one 409 ALREADY_ON with the state; never a 500', async () => {
     const src = await newSource();
     const admin = w.others[0]!;
     await freshReauth(h, w.owner);
