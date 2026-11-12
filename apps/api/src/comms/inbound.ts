@@ -500,6 +500,7 @@ export interface SyncedMailIngestResult {
  * only (evidence source_type 'mail_message', no snippet: evidence_refs_mail_not_quoted). The handback dedupe key is
  * email:{contact}:{rfc_message_id_sha256} when the Message-ID hash is known, the SAME key platform inbound email uses,
  * so a Reply-All that reaches both paths hands back once whichever lands first; else one per Gmail message.
+ * It bumps the replying contact's conversation inbound_seq and last_inbound_at (E27, R-AST-6: a counter, not a row).
  * It writes no messages row (synced mail is never a channel, a touch, speed-to-lead or an ownership event, R-GMAIL-14),
  * does not classify again (module 68 classified once with classifyInbound, R-GMAIL-9: `classification` only picks the
  * pause reason), quotes nothing and enqueues no assistant.enrich_handback job (never sent to a model).
@@ -525,6 +526,9 @@ export async function ingestSyncedMailInTx(tx: Tx, contactId: string, mailMessag
     const conv = c === contactId ? conversationId : await msgs.ensureConversation(tx, ids.next<'ConversationId'>(), c, null);
     if (await auto.pauseConversation(tx, conv, reason, null, now)) paused = true;
   }
+  // the replying contact's conversation counts the reply like platform inbound does (inbound_seq, last_inbound_at), so
+  // E27's re-tap and R-AST-6 DRAFT_STALE see it; a counter is not a messages row (R-GMAIL-14 holds)
+  await msgs.bumpInbound(tx, conversationId, contactId, copy.internal_at.getTime() as Instant);
   const pausedEnrollments = await auto.pauseEnrollments(tx, sharing, reason, null, now);
   const canceledAssistant = await msgs.cancelQueuedAssistant(tx, sharing, 'CLIENT_REPLIED');
   const canceledTriggerRuns = await msgs.cancelScheduledTriggerRuns(tx, sharing);

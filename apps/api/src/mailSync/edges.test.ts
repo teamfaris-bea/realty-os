@@ -6,7 +6,7 @@ import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { call, freshReauth, inviteViaApi } from '../admin/testing.js';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
-import { type CommsWorld, commsWorld, ownedContact, pointId, randomEmail } from '../comms/testing.js';
+import { type CommsWorld, commsWorld, messageRow, ownedContact, pointId, randomEmail, runJobs, sendText } from '../comms/testing.js';
 import { command } from '../leads/testing.js';
 import { gmailMessageRef } from './match.js';
 import { GMAIL_READONLY_SCOPE } from './provider.js';
@@ -261,6 +261,25 @@ describe('revocation, reassignment, merge, erasure (R-GMAIL-6, -13)', () => {
     await runMailSync(h, w.tenantId);
     expect(await linkOf(h, a.userId!)).toMatchObject({ status: 'revoked', revoke_reason: 'MEMBER_INACTIVE', refresh_enc: null });
     expect(await copiesOf(h, { linkId: link.id })).toEqual([]);
+  });
+
+  it('E27 R-GMAIL-10 R-AST-6 (b7 sends/F3): a fresh Gmail reply moves the conversation\'s inbound counter, so a text scheduled before it is held for a re-tap', async () => {
+    const { a, box, c } = await connected();
+    const r = await sendText(a, c.id, 'Following up on the house', { scheduleAt: new Date(Date.now() + 3600_000).toISOString() });
+    expect(r.body.message).toBeTruthy();
+    const seq = async () => (await h.su.query<{ s: number; at: Date | null }>('SELECT inbound_seq::int AS s, last_inbound_at AS at FROM conversations WHERE contact_id = $1', [c.id])).rows[0]!;
+    const before = await seq();
+    h.providers.gmail.deliver(box, { from: c.email, to: [box], text: 'Actually we found a place', internalDate: Date.now() });
+    await runMailSync(h, w.tenantId);
+    const after = await seq();
+    expect(after.s).toBe(before.s + 1);
+    expect(after.at).not.toBeNull();
+    // still never a messages row (R-GMAIL-14): the counter moved, nothing else
+    expect((await h.su.query("SELECT 1 FROM messages WHERE contact_id = $1 AND direction = 'inbound'", [c.id])).rowCount).toBe(0);
+    await h.su.query("UPDATE messages SET scheduled_for = now() - interval '1 second' WHERE id = $1", [r.body.message!.id]);
+    await runJobs(h, w.tenantId, ['comms.dispatch']);
+    expect(await messageRow(h, r.body.message!.id)).toMatchObject({ status: 'queued', status_reason: 'CLIENT_REPLIED_SINCE_SCHEDULED' });
+    expect(h.providers.telephony.sms.filter((m) => m.to === c.phone)).toHaveLength(0);
   });
 
   it('E216: a contact reassigned A → B: B reads A’s earlier synced mail like the timeline; A’s new mail with that contact is no longer stored', async () => {

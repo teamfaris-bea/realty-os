@@ -95,8 +95,10 @@ describe('module 68 architecture (R-GMAIL-14)', () => {
   it('R-GMAIL-10 R-GMAIL-14: ingestSyncedMailInTx enqueues no assistant.enrich_handback job, writes no messages row, quotes nothing and does not classify again', () => {
     const fn = stripComments(functionBody(byRel.get('comms/inbound.ts')!, 'ingestSyncedMailInTx'));
     expect(fn.length).toBeGreaterThan(500);
-    expect(fn).not.toMatch(/enrich_handback|enqueueJob|INSERT INTO messages|insertInbound|bumpInbound|classifyInbound|planInboundEffects|\.body\b|snippet: [^N]/);
+    expect(fn).not.toMatch(/enrich_handback|enqueueJob|INSERT INTO messages|insertInbound|classifyInbound|planInboundEffects|\.body\b|snippet: [^N]/);
     expect(fn).toMatch(/'mail_message'/);
+    // b7 sends/F3: it counts the reply on the conversation (E27, R-AST-6); a counter is not a messages row
+    expect(fn).toMatch(/msgs\.bumpInbound\(tx, conversationId, contactId,/);
   });
 
   it('R-GMAIL-14: no code path writes a messages row, a touch, a speed-to-lead or an ownership event from synced mail', () => {
