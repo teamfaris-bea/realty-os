@@ -367,7 +367,7 @@ Each rule has at least one test. Where the rule is enforced is given in brackets
   [core]
 - **R-OWN-19** A contact created manually by an agent, ISA or TL is owned by its creator (`SELF_CREATED`), with no SLA. [core, smoke]
 - **R-OWN-20** Re-inquiry behavior by current state:
-  - `owned`: never changes the owner. The owner is notified at high priority and gets a pinned feed item; a re-inquiry SLA starts if the last human touch was more than 7 days ago.
+  - `owned`: never changes the owner. The owner is notified at high priority and gets a pinned feed item; a re-inquiry SLA starts if the current ownership period has had no human touch for more than 7 days: measured from the period's last human touch, or from its `owned_at` when it has none. A touch from before `owned_at` (an earlier period, perhaps another agent's: `contacts.last_human_touch_at` survives an owner change) is not the period's, so a duplicate inquiry minutes after an accept or a claim never starts a new period inside the fresh first-touch window (batch 6 review F2).
   - `in_pond`: follows the pond setting (default re-route).
   - `offered` / `unassigned`: the inquiry is attached only.
   - `closed` as spam: stays closed, and an Admin is notified.
@@ -630,7 +630,7 @@ Each rule has at least one test. Where the rule is enforced is given in brackets
 | E15 | Old owner had a scheduled SMS when reassigned | Send-time check: sender no longer authorized → `blocked` (a gate_decisions row records why); new owner gets the text as a suggested draft | R-GATE-3, R-OWN-21 |
 | E16 | Pending assistant draft when ownership changes | `invalidated` (bound ownership period); in-period events such as the first touch do not invalidate it | R-AST-7 |
 | E17 | Contact texts the old owner's number after reassignment | Stored on the contact; feed + notification to the current owner; old owner gets a content-free notice | R-PERM-7 |
-| E18 | Duplicate inquiry for an owned contact | Attach; owner notified; no re-route; re-inquiry SLA if last touch > 7 d | R-OWN-20 |
+| E18 | Duplicate inquiry for an owned contact | Attach; owner notified; no re-route; re-inquiry SLA if the current period's last touch (or its start, untouched) is > 7 d ago: a touch from an earlier period never counts, so a duplicate minutes after an accept keeps the open first-touch period, its deadline and its auto-release | R-OWN-20 |
 | E19 | Same lead posted twice by a portal (with or without external id) | `duplicate_ignored` by external id or 10-min fingerprint | R-OWN-25 |
 | E20 | Two new inquiries for the same unknown person at the same moment | Advisory lock per address HMAC → one contact, one routing | R-OWN-25 |
 | E21 | Spouses share one phone; one texts STOP | Address-keyed revoke blocks SMS to both, in core and in the DB dispatch guard; the other contact's compose and contact page say "Won't text: Opted out of texts" before any tap | R-CONSENT-1 |

@@ -63,6 +63,39 @@ describe('re-inquiry never lets an open first-touch SLA escape (R-OWN-13, R-OWN-
     }
   });
 
+  // Batch 6 review ownership-sla/F2: contacts.last_human_touch_at belongs to the contact, so it survives an owner change.
+  // Measured from it alone, a duplicate inquiry minutes after an accept of a lead someone touched months ago (an earlier
+  // period, maybe another agent's) started a new period inside the fresh first-touch window: the accepted period counted
+  // as unanswered, its late first touch was erased, and the lead could never auto-release.
+  it('R-OWN-20 E18 E68: a re-inquiry minutes after an accept of a lead last touched in an EARLIER period (last touch before owned_at) keeps the period, its first-touch due and its auto-release', () => {
+    for (const daysAgo of [8, 30, 400]) {
+      const l = ownedLead(U.b);
+      const before = l.p;
+      const d = l.run({ kind: 'reinquiry', inquiryId: `inq-dup-${daysAgo}` }, { now: plusMs(T0, 5 * MINUTE_MS), actor: systemActor('provider'), lastHumanTouchAt: plusMs(T0, -daysAgo * DAY_MS) });
+      expect(eventsOf(d)[0]).toMatchObject({ type: 'reinquiry', reasonCode: 'REINQUIRY', fromState: 'owned', toState: 'owned' });
+      expect(eventsOf(d)[0]?.payload.newPeriod).toBeUndefined();
+      expect(l.p).toMatchObject({ periodSeq: before.periodSeq, ownedAt: before.ownedAt, firstTouchDueAt: before.firstTouchDueAt, releaseDueAt: before.releaseDueAt });
+      expect(d.effects.map((e) => e.kind)).not.toContain('cancelTimers');
+      const release = before.releaseDueAt as Instant;
+      const r = l.run({ kind: 'timer', deadline: 'auto_release', fence: { periodSeq: before.periodSeq as number, dueAt: release } }, { now: release, actor: systemActor('timer') });
+      expect(eventsOf(r).map((e) => e.type)).toEqual(['auto_released']);
+    }
+  });
+
+  it('R-OWN-20 E18: the re-inquiry SLA is measured from the current period: 8 days after an accept with its last touch 8 days ago it starts; with a touch yesterday it does not', () => {
+    const quiet = ownedLead(U.b);
+    // touched right after the accept, then nothing for 8 days
+    const q = quiet.run({ kind: 'reinquiry', inquiryId: 'inq-quiet' }, { now: plusMs(T0, 8 * DAY_MS), actor: systemActor('provider'), lastHumanTouchAt: plusMs(T0, 10 * MINUTE_MS) });
+    expect(eventsOf(q)[0]).toMatchObject({ reasonCode: 'REINQUIRY_SLA', payload: { newPeriod: true } });
+    const busy = ownedLead(U.b);
+    const b = busy.run({ kind: 'reinquiry', inquiryId: 'inq-busy' }, { now: plusMs(T0, 8 * DAY_MS), actor: systemActor('provider'), lastHumanTouchAt: plusMs(T0, 7 * DAY_MS) });
+    expect(eventsOf(b)[0]).toMatchObject({ reasonCode: 'REINQUIRY' });
+    // a touch from before this period (months ago) counts from the accept: 8 days after it, the SLA starts
+    const old = ownedLead(U.b);
+    const o = old.run({ kind: 'reinquiry', inquiryId: 'inq-old-touch' }, { now: plusMs(T0, 8 * DAY_MS), actor: systemActor('provider'), lastHumanTouchAt: plusMs(T0, -90 * DAY_MS) });
+    expect(eventsOf(o)[0]).toMatchObject({ reasonCode: 'REINQUIRY_SLA', payload: { newPeriod: true } });
+  });
+
   it('R-OWN-20: a never-touched contact owned more than 7 days ago gets the re-inquiry SLA; one owned yesterday does not', () => {
     const old = new Lead();
     old.run({ kind: 'create', via: 'self' }, { actor: userActor(U.a) });

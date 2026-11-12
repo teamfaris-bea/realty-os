@@ -776,10 +776,15 @@ function decideReinquiry(state: OwnershipProjection, cmd: Cmd<'reinquiry'>, ctx:
   switch (state.state) {
     case 'owned': {
       // R-OWN-20 / E18: never changes the owner. A re-inquiry SLA (a new ownership period, E68) starts
-      // when the last human touch was more than `reinquirySlaAfterDays` ago; it never auto-releases.
-      // A never-touched lead is measured from owned_at: otherwise a duplicate inquiry minutes after an
-      // accept would end the open first-touch period and cancel its breach and auto-release timers.
-      const last = ctx.lastHumanTouchAt ?? (state.ownedAt as Instant);
+      // when the current period has been quiet for more than `reinquirySlaAfterDays`: measured from its
+      // last human touch, or from owned_at when it has none; it never auto-releases. The contact's
+      // last_human_touch_at survives an owner change, so a touch before owned_at (an earlier period,
+      // maybe another agent's) counts as none: otherwise a duplicate inquiry minutes after an accept or
+      // a claim would end the open first-touch period and cancel its breach and auto-release timers
+      // (batch 6 review F2).
+      const ownedAt = state.ownedAt as Instant;
+      const touched = ctx.lastHumanTouchAt ?? null;
+      const last = touched !== null && touched > ownedAt ? touched : ownedAt;
       const owner = state.ownerUserId as UserId;
       const sla = ctx.now - last > ctx.settings.reinquirySlaAfterDays * DAY_MS;
       if (sla) {
