@@ -1,6 +1,6 @@
 // Listings (BUILD_PLAN module 17; A4 seller-update data): the team's listings, and one listing with
-// its price history and showings. Showings and their feedback are logged here (Phase 1 captures the
-// data; assembling seller updates is Phase 2). Counts show their denominator (R-ACC-4 display half):
+// its price history and showings. Showings and their feedback are logged here; this week's seller
+// update (module 28, assembled from them) is the first card on the page (SellerUpdateCard, module 38). Counts show their denominator (R-ACC-4 display half):
 // "3 of 5 completed showings have feedback".
 import { useQuery } from '@tanstack/react-query';
 import { type FormEvent, type ReactNode, useId, useState } from 'react';
@@ -12,6 +12,7 @@ import { useMutate } from '../feed/lib/hooks.js';
 import { AGENT_ERROR_MESSAGES } from '../feed/lib/messages.js';
 import type { ListingDetailView, ListingView, ShowingView } from '../feed/lib/types.js';
 import { MarketingLink } from '../marketing/MarketingLink.js';
+import { SellerUpdateCard, type SellerUpdateView } from './SellerUpdateCard.js';
 
 const STATUS_LABEL: Record<string, string> = { coming_soon: 'Coming soon', active: 'Active', pending: 'Pending', sold: 'Sold', withdrawn: 'Withdrawn', expired: 'Expired' };
 
@@ -87,12 +88,18 @@ export function ListingPage() {
     queryKey: ['listing', listingId, 'showings'],
     queryFn: ({ signal }) => api.get<{ showings: ShowingView[] }>(`/listings/${listingId}/showings`, { signal }),
   });
+  // module 28/38: this week's seller update, first on the page (the feed card opens it here)
+  const update = useQuery<{ update: SellerUpdateView | null; nextDueAt: string | null }, ApiError>({
+    queryKey: ['seller-update', 'listing', listingId],
+    queryFn: ({ signal }) => api.get<{ update: SellerUpdateView | null; nextDueAt: string | null }>(`/listings/${listingId}/seller-update`, { signal }),
+  });
   usePageTitle(q.data?.listing.addressLine1 ?? null);
   if (q.isPending) return <p className="py-10 text-center text-[15px] text-ink-muted">Loading</p>;
   if (q.isError) return <Notice tone="error">{messageFor(q.error, AGENT_ERROR_MESSAGES)}</Notice>;
   const l = q.data.listing;
   return (
     <div className="mx-auto flex w-full max-w-3xl md:mx-0 flex-col gap-4">
+      {update.data?.update ? <SellerUpdateCard update={update.data.update} invalidate={[['seller-update'], ['listing', listingId]]} /> : null}
       <Section title="Listing">
         <p className="text-[17px] font-semibold text-ink">
           {l.addressLine1}

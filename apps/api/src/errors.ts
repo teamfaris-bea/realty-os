@@ -127,6 +127,10 @@ export const ERROR_STATUS = {
   SAVED_SEARCH_STATE: 409, // wrong state for this saved-search command (details.status)
   SENDER_UNAVAILABLE: 409, // no sending number / email identity for this channel
   SELLER_UPDATE_NEEDS_RECOMMENDATION: 422, // R-AST-17: a seller update goes out only with the agent's own recommendation (an edit)
+  SELLER_UPDATE_STALE: 409, // R-SELL-4: showings, feedback, marketing or competing data changed after assembled_through; reassemble (one tap)
+  SELLER_UPDATE_RECIPIENTS_CHANGED: 409, // R-SELL-5: who the update can reach changed since the agent looked; nothing was sent
+  SELLER_UPDATE_CONFIRM_RECIPIENTS: 409, // R-SELL-5: send from the seller card, which shows who it reaches (the generic approve route cannot)
+  SELLER_UPDATE_NO_RECIPIENT: 422, // R-SELL-5: no seller on the listing can be reached (opted out, no address, not visible)
   DRAFT_OWNER_ONLY: 409, // R-AST-7: reply drafts are made for the lead's owner (only the owner's draft can be sent)
   // ---- api/workspace ----
   FEED_ITEM_PINNED: 409, // a pinned card is a live deadline (offer, first touch, inactivity): it closes by acting on it, never by Done/Snooze/Dismiss

@@ -34,6 +34,7 @@ import { channelRoutes } from './channels/routes.js';
 import { nurtureRoutes } from './nurture/routes.js';
 import { mailSyncRoutes } from './mailSync/routes.js';
 import { marketingRoutes } from './marketing/routes.js';
+import { sellerUpdatesRoutes } from './sellerUpdates/routes.js';
 
 export interface RouteModule {
   name: string;
@@ -66,5 +67,6 @@ export const routeModules: RouteModule[] = [
   nurtureRoutes,
   mailSyncRoutes,
   marketingRoutes,
+  sellerUpdatesRoutes,
   // registry: add new entries above this line
 ];
