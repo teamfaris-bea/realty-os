@@ -137,6 +137,30 @@ export async function sendFirstResponseInTx(tx: Tx, deps: AssistantDeps, tenantI
   return out;
 }
 
+/**
+ * Module 22 (R-LSRC-4), read-only: would the 60-second reply be queued for a new lead with a reachable, not opted-out
+ * mobile, as the team's settings stand now? The same plan as sendFirstResponseInTx with no contact yet; it locks,
+ * writes and sends nothing (the Lead sources preview; never sendFirstResponse).
+ */
+export async function firstResponseWouldQueue(tx: Tx, now: Instant): Promise<boolean> {
+  const pb = await P.teamPlaybookOfKind(tx, 'new_lead_response');
+  const version = pb ? await P.approvedVersionOf(tx, pb.id) : null;
+  const raw = version?.steps[0];
+  const parsed = raw === undefined ? null : PlaybookStepSchema.safeParse(raw);
+  const { policy } = await resolvedPolicy(tx);
+  const plan = planFirstResponse({
+    now,
+    version: version ? { status: version.status, contentSha256: version.contentSha256 } : null,
+    latestApproval: version ? await P.latestApproval(tx, version.id) : null,
+    step: parsed?.success ? parsed.data : null,
+    tenantAutonomous: policy.autonomous,
+    sms: { reachable: true, revokedOrSuppressed: false },
+    email: { reachable: true, revokedOrSuppressed: false },
+    lastFirstResponseAt: null,
+  });
+  return plan.send;
+}
+
 /** BUILD_PLAN interface: new_lead_response, ≤ 60 s (the realtime job + the realtime dispatch job). */
 export async function sendFirstResponse(actor: SystemActor, contactId: string, deps: AssistantDeps): Promise<StepOutcome> {
   return withTenantTx(actor, (tx, now) => sendFirstResponseInTx(tx, deps, actor.tenantId, contactId, now), { db: deps.db, retries: 2 });

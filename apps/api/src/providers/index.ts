@@ -134,7 +134,7 @@ export function createProviders(config: Config, opts: { clock: Clock; fetch?: ty
   if (config.providers.telephony === 'twilio') {
     const t = config.twilio;
     if (!t) throw new ProviderConfigError('TELEPHONY_PROVIDER=twilio needs TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN');
-    const f = opts.fetch ? { fetch: opts.fetch } : {};
+    const f = { liveRequests: config.telephonyLiveRequests, ...(opts.fetch ? { fetch: opts.fetch } : {}) };
     telephony = new TwilioTelephony({ accountSid: t.accountSid, authToken: t.authToken, publicBaseUrl: config.publicBaseUrl, numberCountry: t.numberCountry, ...(t.platformSender ? { platformSender: t.platformSender } : {}), ...f });
     carrier = new TwilioCarrierLookup({ accountSid: t.accountSid, authToken: t.authToken, ...f });
   }

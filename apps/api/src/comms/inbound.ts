@@ -31,6 +31,7 @@ import { type Tx, applyOwnershipCommandInTx, derivedCommandId, enqueueJob, lockA
 import { sql } from 'kysely';
 import { audit } from '../audit.js';
 import { queueOutboundInTx } from './compose.js';
+import { enqueueTextParts } from './mmsText.js';
 import { hint } from './dispatch.js';
 import { resolvedPolicy } from './gateInput.js';
 import { reactionCopy, reactionTitle, readReactionInTx } from './reactions.js';
@@ -41,9 +42,10 @@ import * as msgs from './repos/messages.js';
 import { adminUserIds, contactLabel, handlerOf, notifyUser, upsertFeedItem } from './repos/notify.js';
 import { LEDGER_SYSTEM, SYSTEM_NOTICE, type CommsDeps } from './types.js';
 import { emailHandbackKey, messageIdHeader, rfcMessageIdSha256 } from '../channels/rfcMessageId.js';
+import { type InquiryInput, ingestInquiryInTx, intakeLockKeys } from '../leads/intake.js';
 
 export type InboundEvent =
-  | { kind: 'sms'; providerRef: string; from: string; to: string; body: string; mediaCount?: number; occurredAt?: Instant }
+  | { kind: 'sms'; providerRef: string; from: string; to: string; body: string; mediaCount?: number; occurredAt?: Instant; optOutType?: string; textParts?: TextPartRef[] }
   | { kind: 'email'; providerRef: string; from: string; to: string; subject: string | null; text: string; headers: Record<string, string>; conversationId: string; occurredAt?: Instant }
   | { kind: 'call'; providerRef: string; from: string; to: string; status: 'ringing' | 'no_answer' | 'voicemail' | 'completed' | 'busy'; occurredAt?: Instant }
   | ChannelInboundEvent;
@@ -68,6 +70,14 @@ export type IngestResult =
   | { kind: 'agent_keyword'; userId: string; classification: InboundClassification['kind'] }
   | { kind: 'duplicate' }
   | { kind: 'unroutable'; reason: 'NUMBER_NOT_LIVE' | 'ADDRESS_INVALID' | 'CONVERSATION_NOT_FOUND' };
+
+/**
+ * Lane telephony-safeguards (R-TWL-7, R-TWL-11): Twilio's OptOutType, and the declared text/plain parts of an MMS
+ * (read later by comms.mms_text, enqueued in THIS transaction; comms/mmsText.ts).
+ */
+export type TextPartRef = { position: number; ref: string | null };
+/** R-TWL-7: our classifications that already revoke; OptOutType=STOP changes only a message we read as anything else. */
+const REVOKING: ReadonlySet<InboundClassification['kind']> = new Set(['stop', 'opt_out_language', 'wrong_number']);
 
 /** The pause reason for a classification (conversations / enrollments CHECK lists). */
 function pauseReasonOf(k: InboundClassification['kind']): auto.PauseReason {
@@ -129,15 +139,36 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
   const { policy, tenant } = await resolvedPolicy(tx);
 
   // the number that was texted / called (still live for this tenant: the resolver checked, R-TEN-8)
-  let toNumber: { id: string; assignedUserId: string | null } | null = null;
+  let toNumber: { id: string; assignedUserId: string | null; tollFree: boolean } | null = null;
+  // module 22 (R-TRK-2/3): a live tracking number of an ACTIVE lead source makes unknown callers and texters leads
+  let tracked: { input: InquiryInput } | null = null;
   if (!isEmail && !isChat) {
-    const r = await sql<{ id: string; assigned_user_id: string | null }>`
-      SELECT id, assigned_user_id FROM phone_numbers WHERE tenant_id = app.tenant_id() AND e164 = ${e.to} AND released_at IS NULL`.execute(tx);
+    const r = await sql<{ id: string; assigned_user_id: string | null; number_type: string; purpose: string; lead_source_id: string | null; source_active: boolean | null }>`
+      SELECT n.id, n.assigned_user_id, n.number_type, n.purpose, n.lead_source_id, s.active AS source_active
+        FROM phone_numbers n LEFT JOIN lead_sources s ON s.tenant_id = n.tenant_id AND s.id = n.lead_source_id
+       WHERE n.tenant_id = app.tenant_id() AND n.e164 = ${e.to} AND n.released_at IS NULL`.execute(tx);
     if (!r.rows[0]) return { kind: 'unroutable', reason: 'NUMBER_NOT_LIVE' };
-    toNumber = { id: r.rows[0].id, assignedUserId: r.rows[0].assigned_user_id };
+    toNumber = { id: r.rows[0].id, assignedUserId: r.rows[0].assigned_user_id, tollFree: r.rows[0].number_type === 'toll_free' };
+    const n = r.rows[0];
+    if ((e.kind === 'call' || e.kind === 'sms') && n.purpose === 'tracking' && n.lead_source_id !== null && n.source_active === true) {
+      tracked = {
+        input: {
+          leadSourceId: n.lead_source_id,
+          externalId: `tracking:${e.kind}:${e.providerRef}`.slice(0, 200),
+          phones: [from],
+          inquiryType: 'general',
+          sourceDetail: { channel: 'tracking_number', via: e.kind, phone_number_id: n.id },
+        },
+      };
+    }
   }
 
-  await lockAddresses(tx, [hmac]);
+  // Global lock order step 1: the address lock and, on a tracked number, the intake's own lock set, in ONE sorted call
+  // before matching (E323, E324): a tracked call and a signed webhook lead for the same new phone never deadlock
+  await lockAddresses(tx, tracked ? [hmac, ...(await intakeLockKeys(tx, deps.envelope, tenantId, tracked.input))] : [hmac]);
+  // b9 review ownership-data/F5: the source again, under the locks and FOR SHARE (turning it off waits for this
+  // transaction). Turned off while this delivery waited: today's untracked path, the text or call is stored, never lost.
+  if (tracked && !(await sourceStillOn(tx, tracked.input.leadSourceId))) tracked = null;
 
   // E60: an agent's own verified alert phone (a USER recipient, not a contact)
   if (e.kind === 'sms') {
@@ -145,7 +176,11 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
       SELECT user_id FROM memberships WHERE tenant_id = app.tenant_id() AND status = 'active' AND alert_phone_e164 = ${from}
          AND alert_phone_verified_at IS NOT NULL ORDER BY user_id LIMIT 1`.execute(tx);
     const agentId = agent.rows[0]?.user_id;
-    if (agentId && (await msgs.hmacPoints(tx, hmac)).length === 0) return agentKeyword(tx, actor, ids, e.body, from, hmac, agentId, policy, occurredAt, txNow);
+    if (agentId && (await msgs.hmacPoints(tx, hmac)).length === 0) {
+      // R-TWL-11 (E388): an alert phone has no message row; its text parts are read for a STOP all the same
+      if (e.textParts && e.textParts.length > 0) await enqueueTextParts(tx, { agentUserId: agentId, messageRef: e.providerRef, parts: e.textParts });
+      return agentKeyword(tx, actor, ids, e.body, from, hmac, agentId, policy, occurredAt, txNow, (e.optOutType ?? '').toUpperCase() === 'STOP', e.providerRef);
+    }
   }
 
   // 2 match contacts
@@ -162,6 +197,21 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
     target = sharing[0]!;
   } else if (sharing.length === 1) target = sharing[0]!;
   else if (sharing.length > 1) target = await affinity(tx, sharing, toNumber?.id ?? null);
+  if (target === null && tracked) {
+    // R-TRK-2 (module 22): a new caller or texter on a tracked number becomes a lead through the intake: credited to
+    // the number's source, routed by its rules, no 60-second reply and no consent text cited (the caller saw none;
+    // the R-CONSENT-4 first-text grant below is unchanged). The intake adds the phone point ('mobile').
+    const res = await ingestInquiryInTx(tx, actor, tracked.input, txNow, { envelope: deps.envelope, ids, db: deps.db }, {
+      firstResponse: false,
+      disclosure: 'none',
+      unknownCaller: { displayName: `Unknown ${displayPhone(from)}`, pondSummary: e.kind === 'call' ? 'Called in' : 'Texted in' },
+    });
+    await setOwnershipCommand(tx, null);
+    target = res.contactId;
+    sharing = [res.contactId];
+    created = res.outcome === 'new_contact';
+    tracked = null; // this delivery is the inquiry: nothing more below
+  }
   if (target === null) {
     // zero matches: an "Unknown +1…" contact through intake routing (system), with this number on it
     const contactId = ids.next<'ContactId'>();
@@ -193,6 +243,7 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
   let body = '';
   let autoReply: { name: string; value: string } | null = null;
   let rfcHash: Buffer | null = null;
+  let hasTextParts = false;
   if (e.kind === 'call') {
     callId = ids.next<'CallId'>();
     const handler = await handlerOf(tx, target);
@@ -229,13 +280,27 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
       rfcMessageIdSha256: rfcHash,
     });
     if (!inserted) return { kind: 'duplicate' };
+    // R-TWL-11: the declared text parts, pending, and their read job, in the inbound message's own transaction
+    // b9 review sends/F2 (R-TRK-3, E595): with declared text parts, a tracked re-inquiry waits for the job to read them
+    // (a STOP, opt-out language or wrong-number reply only in a part is never an inquiry); the job decides it
+    if (e.kind === 'sms' && e.textParts && e.textParts.length > 0) {
+      await enqueueTextParts(tx, { messageId, messageRef: e.providerRef, parts: e.textParts, ...(tracked ? { trackedLeadSourceId: tracked.input.leadSourceId } : {}) });
+      hasTextParts = true;
+    }
   }
   const inboundSeq = await msgs.bumpInbound(tx, conversationId, target, occurredAt);
 
   // 5 consent side of the message (SMS and email bodies; a call has no text)
   const channel: Channel = e.kind === 'email' ? 'email' : e.kind === 'web_chat' ? 'web_chat' : 'sms';
   const rx = e.kind === 'sms' && (e.mediaCount ?? 0) === 0 ? await readReactionInTx(tx, actor, { messageId: messageId!, contactId: target, from, phoneNumberId: toNumber!.id, body, keywords: policy.keywords, occurredAt, ids }) : null;
-  const classification: InboundClassification = rx ? rx.classification : e.kind === 'call' ? { kind: 'none', needsReview: false } : classifyInbound(body, policy.keywords, channel);
+  let classification: InboundClassification = rx ? rx.classification : e.kind === 'call' ? { kind: 'none', needsReview: false } : classifyInbound(body, policy.keywords, channel);
+  // R-TWL-7 (E383, E384): Twilio says the person opted out (OptOutType=STOP) and we did not read a revoke ourselves:
+  // the usual STOP effects, with no platform reply (the provider sent its own). START / HELP / YES change nothing.
+  const providerStop = e.kind === 'sms' && (e.optOutType ?? '').toUpperCase() === 'STOP' && !REVOKING.has(classification.kind);
+  if (providerStop) classification = { kind: 'stop', matched: 'OPTOUTTYPE_STOP', needsReview: false, scope: 'channel' };
+  // R-TWL-10: a toll-free receiving number's carrier answers STOP / HELP itself, so the platform sends no reply of its own
+  // (VERIFY in the pilot test step); local numbers follow the tenant policy
+  const replyPolicy = providerStop || toNumber?.tollFree === true ? { optOutConfirmationSender: 'provider' as const } : policy;
   if (e.kind !== 'call') {
     const targetPoints = await g.contactPoints(tx, target);
     const inbound: InboundAddress = { kind: isEmail ? 'email' : isChat ? 'web_chat' : 'phone', hmac, hint: isChat ? 'web chat' : hint(from) };
@@ -256,7 +321,7 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
       otherPhones = otherPhones.map((p) => ({ ...p, keywordRevokedBySender: bySender.has(p.hmac) }));
     }
     const otherChats = targetPoints.filter((p) => p.kind === 'web_chat' && p.hmac !== hmac).map((p) => ({ kind: 'web_chat', hmac: p.hmac, hint: 'web chat' }) as InboundAddress);
-    const fx = planInboundEffects({ classification, channel, address: inbound, otherPhones, otherEmails: others('email'), otherPointsOfKind: otherChats, occurredAt: now, contactId: target, messageId, policy, ids });
+    const fx = planInboundEffects({ classification, channel, address: inbound, otherPhones, otherEmails: others('email'), otherPointsOfKind: otherChats, occurredAt: now, contactId: target, messageId, policy: replyPolicy, ids });
     for (const ev of fx.consentEvents) await recordConsentEvent(tx, ev);
     if (isChat) {
       const byHmac = new Map<string, string>([[hmac, from], ...targetPoints.map((p) => [p.hmac, p.address] as [string, string])]);
@@ -298,7 +363,7 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
     if (fx.reply !== 'none' && toNumber && keywordPoint) {
       await queueOutboundInTx(tx, deps, {
         contactId: target, channel: 'sms', body: systemReplyText(fx.reply, tenant.brokerageLegalName), initiator: 'system', purpose: 'informational',
-        category: fx.reply, phoneNumberId: toNumber.id, toPointId: keywordPoint.id, idempotencyKey: `${fx.reply}:${messageId}`,
+        category: fx.reply, phoneNumberId: await g.keywordReplySender(tx, toNumber.id), toPointId: keywordPoint.id, idempotencyKey: `${fx.reply}:${messageId}`,
       }, now);
     }
     if (classification.kind === 'stop' || classification.kind === 'opt_out_language' || classification.kind === 'wrong_number') {
@@ -311,6 +376,23 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
         const title = classification.kind === 'wrong_number' ? `${label ?? 'A contact'}'s number may be a wrong number` : `${label ?? 'A contact'} opted out`;
         await notifyUser(tx, ids, { userId: h.userId, kind: 'opt_out', priority: 'normal', title, body: null, subjectType: 'contact', subjectId: target, dedupeKey: `opt_out:${messageId}` }, now);
       }
+    }
+  }
+
+  // R-TRK-3 (module 22): a known person in a pond or unassigned who calls, or texts something that is not STOP, opt-out
+  // language or a wrong-number reply, on a tracked number: the call or text is also an inquiry from the number's
+  // source, so the re-inquiry rules decide (R-OWN-20, owner decision D8(2)). Owned, offered and closed people are only
+  // threaded. Read under the contact locks taken in step 3; the intake attaches to a contact in `sharing` (same HMAC).
+  // A reaction text (a tapback quoting the team's text, D5b: `rx`) is a reply, never a new inquiry (E595).
+  // b9 review: an MMS with declared text parts is decided by comms.mms_text once every part is read (sends/F2); the
+  // inquiry attaches to the contact this delivery was threaded on, `target` (ownership-data/F2), and keeps the pond card
+  // (ownership-data/F6: a call or text carries no structured facts).
+  if (tracked && !hasTextParts && (e.kind === 'call' || (classification.kind === 'none' && !rx))) {
+    const st = await sql<{ ownership_state: string }>`SELECT ownership_state FROM contacts WHERE tenant_id = app.tenant_id() AND id = ${target}`.execute(tx);
+    const state = st.rows[0]?.ownership_state;
+    if (state === 'in_pond' || state === 'unassigned') {
+      await ingestInquiryInTx(tx, actor, tracked.input, txNow, { envelope: deps.envelope, ids, db: deps.db }, { firstResponse: false, disclosure: 'none', attachTo: target, keepPondSummary: true });
+      await setOwnershipCommand(tx, null);
     }
   }
 
@@ -446,6 +528,12 @@ export async function recordMissedInboundCall(actor: SystemActor, callId: string
   }, { db: deps.db, retries: 2 });
 }
 
+/** b9 review ownership-data/F5: is the tracking number's source still on? Read FOR SHARE, so turning it off waits. */
+export async function sourceStillOn(tx: Tx, leadSourceId: string): Promise<boolean> {
+  const r = await sql<{ active: boolean }>`SELECT active FROM lead_sources WHERE tenant_id = app.tenant_id() AND id = ${leadSourceId}::uuid FOR SHARE`.execute(tx);
+  return r.rows[0]?.active === true;
+}
+
 async function conversationContact(tx: Tx, conversationId: string): Promise<string | null> {
   const r = await sql<{ contact_id: string }>`SELECT contact_id FROM conversations WHERE tenant_id = app.tenant_id() AND id = ${conversationId}`.execute(tx);
   return r.rows[0]?.contact_id ?? null;
@@ -468,20 +556,32 @@ async function hadOutbound(tx: Tx, contactId: string): Promise<boolean> {
 }
 
 /** E60: keywords from an agent's own alert phone revoke/restore THEIR alert texts (recipient_kind user). */
-async function agentKeyword(tx: Tx, actor: SystemActor, ids: IdGenerator, body: string, from: string, hmac: string, userId: string, policy: Awaited<ReturnType<typeof resolvedPolicy>>['policy'], occurredAt: Instant, now: Instant): Promise<IngestResult> {
-  const c = classifyInbound(body, policy.keywords);
+async function agentKeyword(tx: Tx, actor: SystemActor, ids: IdGenerator, body: string, from: string, hmac: string, userId: string, policy: Awaited<ReturnType<typeof resolvedPolicy>>['policy'], occurredAt: Instant, now: Instant, providerStop = false, providerRef: string | null = null): Promise<IngestResult> {
+  const c0 = classifyInbound(body, policy.keywords);
+  // R-TWL-7: OptOutType=STOP from the agent's own alert phone stops alert texts like their STOP (never lifts anything)
+  const c: InboundClassification = providerStop && c0.kind !== 'stop' && c0.kind !== 'start' ? { kind: 'stop', matched: 'OPTOUTTYPE_STOP', needsReview: false, scope: 'channel' } : c0;
+  // b9 review sends/F4 (R-LSRC-7): an alert phone's text has no message row, so the provider ref that dedupes a contact's
+  // SMS never applies. A re-armed delivery of the same MessageSid records nothing again: one ledger row, one notice, and
+  // a replayed STOP never re-revokes after the agent's later START.
+  const ref = providerRef ? providerRef.slice(0, 64) : null;
+  if (ref && (c.kind === 'stop' || c.kind === 'start')) {
+    const seen = await sql<{ x: boolean }>`
+      SELECT EXISTS (SELECT 1 FROM consent_events WHERE tenant_id = app.tenant_id() AND address_hmac = ${Buffer.from(hmac, 'hex')}
+                       AND channel = 'sms' AND evidence ->> 'providerRef' = ${ref}) AS x`.execute(tx);
+    if (seen.rows[0]?.x) return { kind: 'agent_keyword', userId, classification: c.kind };
+  }
   if (c.kind === 'stop' || c.kind === 'start') {
     await recordConsentEvent(tx, {
       id: ids.next<'ConsentEventId'>(), addressKind: 'phone', addressHmac: hmac, addressHint: hint(from), channel: 'sms', purpose: 'all',
       eventType: c.kind === 'stop' ? 'revoke' : 'resubscribe', level: 'none', source: 'inbound_keyword', occurredAt, contactId: null,
       actor: LEDGER_SYSTEM, disclosureId: null, evidenceObjectId: null, evidenceMessageId: null, evidenceCallId: null, evidenceCallOffsetMs: null,
-      evidence: { recipient: 'user', matched: c.matched ?? c.kind }, imported: false, importRecordId: null, originalProvenance: null,
+      evidence: { recipient: 'user', matched: c.matched ?? c.kind, ...(ref ? { providerRef: ref } : {}) }, imported: false, importRecordId: null, originalProvenance: null,
       revertsEventId: null, expiresAt: null, needsReview: false,
     });
     if (c.kind === 'stop') {
       await audit(tx, actor, { action: 'consent.opt_out_received', entity: { type: 'membership', id: userId }, reason: 'AGENT_ALERT_STOP' });
       for (const admin of await adminUserIds(tx)) {
-        await notifyUser(tx, ids, { userId: admin, kind: SYSTEM_NOTICE, priority: 'normal', title: 'A team member turned off alert texts', body: 'Their alerts now go to push and email only.', subjectType: 'membership', subjectId: userId, dedupeKey: `alert_stop:${userId}:${toIso(now)}` }, now);
+        await notifyUser(tx, ids, { userId: admin, kind: SYSTEM_NOTICE, priority: 'normal', title: 'A team member turned off alert texts', body: 'Their alerts now go to push and email only.', subjectType: 'membership', subjectId: userId, dedupeKey: ref ? `alert_stop:${userId}:${ref}` : `alert_stop:${userId}:${toIso(now)}` }, now);
       }
     }
   }

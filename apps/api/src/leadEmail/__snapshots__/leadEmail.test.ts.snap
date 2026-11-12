@@ -42,6 +42,12 @@ exports[`R-AST-13 R-TEN-3 response and request schemas > R-AST-13 R-TEN-3: lead-
           "enabled": {
             "type": "boolean",
           },
+          "ignoredSenderDomains": {
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
           "inboundDomainConfigured": {
             "type": "boolean",
           },
@@ -49,6 +55,41 @@ exports[`R-AST-13 R-TEN-3 response and request schemas > R-AST-13 R-TEN-3: lead-
             "format": "uuid",
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
             "type": "string",
+          },
+          "portalCatalog": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "domain": {
+                  "type": "string",
+                },
+                "label": {
+                  "type": "string",
+                },
+                "portal": {
+                  "enum": [
+                    "zillow",
+                    "realtor",
+                    "redfin",
+                    "homes",
+                    "trulia",
+                    "opcity",
+                  ],
+                  "type": "string",
+                },
+                "preTicked": {
+                  "type": "boolean",
+                },
+              },
+              "required": [
+                "portal",
+                "domain",
+                "label",
+                "preTicked",
+              ],
+              "type": "object",
+            },
+            "type": "array",
           },
           "status": {
             "type": [
@@ -85,6 +126,8 @@ exports[`R-AST-13 R-TEN-3 response and request schemas > R-AST-13 R-TEN-3: lead-
           "addressCreatedAt",
           "allowedSenderDomains",
           "suggestedSenderDomains",
+          "ignoredSenderDomains",
+          "portalCatalog",
           "inboundDomainConfigured",
         ],
         "type": "object",

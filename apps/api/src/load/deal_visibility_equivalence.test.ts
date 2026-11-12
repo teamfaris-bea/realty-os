@@ -6,6 +6,8 @@
 // leading (SELECT app.is_tenant_wide()) OR ..., and the helpers they call are PL/pgSQL with the same queries; the
 // comparison below (old USING = 0021's per-row app.contact_detail_visible) covers both, and now also runs as support
 // without and with a live grant and as a client (portal) principal.
+// D9's schema step: cma_reports_select reads its contact branch through the helper from the start; it is compared here
+// with the same policy written with the per-row app.contact_detail_visible, on stored CMAs seeded below.
 // These tests prove WHO-SEES-WHAT is unchanged.
 //
 // Method: for every member (Owner, Admin, Team Lead, Agent, ISA, TC) and the system actor, one transaction
@@ -66,6 +68,11 @@ const OLD_USING: { table: string; policy: string; using: string }[] = [
   { table: 'bulk_action_items', policy: 'bulk_action_items_select', using: `
       EXISTS (SELECT 1 FROM bulk_actions b WHERE b.tenant_id = bulk_action_items.tenant_id AND b.id = bulk_action_items.bulk_action_id)
       AND app.contact_detail_visible(tenant_id, contact_id)` },
+  // D9 S0: stored CMAs (tenant-wide, the creator as an active member, or whoever sees the contact's detail)
+  { table: 'cma_reports', policy: 'cma_reports_select', using: `
+      (SELECT app.is_tenant_wide())
+      OR (created_by_user_id = (SELECT app.user_id()) AND (SELECT app.my_role()) IS NOT NULL)
+      OR (contact_id IS NOT NULL AND app.contact_detail_visible(tenant_id, contact_id))` },
 ];
 const TABLES = OLD_USING.map((p) => p.table);
 /** The parity detail tables: the generator writes none of their rows, the fixture below does. */
@@ -245,6 +252,17 @@ beforeAll(async () => {
       await su.query(`INSERT INTO bulk_action_items (tenant_id, bulk_action_id, contact_id)
                       SELECT $1, b.id, c.id FROM bulk_actions b CROSS JOIN unnest($2::uuid[]) c(id)
                        WHERE b.tenant_id = $1 AND b.idempotency_key LIKE 'parity-vis-%'`, [tenant, uniq]);
+      // D9 S0: stored CMAs on the same contacts, one by the contact's owner (superseded) and one draft by a member picked
+      // per contact (often not the owner: the creator branch), plus one research CMA (no contact) per member
+      const cma = `INSERT INTO cma_reports (tenant_id, id, contact_id, status, purpose, method_version, valuation_date, subject, result,
+                                            content_sha256, created_by_user_id)`;
+      await su.query(`${cma} SELECT $1, gen_random_uuid(), c.id, 'superseded', 'listing_price', 'cma/1', current_date, '{}', '{}', repeat('ab', 32), c.owner_user_id
+                        FROM contacts c WHERE c.tenant_id = $1 AND c.id = ANY ($2::uuid[]) AND c.owner_user_id IS NOT NULL`, [tenant, uniq]);
+      await su.query(`${cma} SELECT $1, gen_random_uuid(), c.id, 'draft', 'listing_price', 'cma/1', current_date, '{}', '{}', repeat('ab', 32), m.user_id
+                        FROM unnest($2::uuid[]) c(id)
+                        CROSS JOIN LATERAL (SELECT user_id FROM memberships WHERE tenant_id = $1 ORDER BY md5(c.id::text || user_id::text) LIMIT 1) m`, [tenant, uniq]);
+      await su.query(`${cma} SELECT $1, gen_random_uuid(), NULL, 'draft', 'other', 'cma/1', current_date, '{}', '{}', repeat('ab', 32), user_id
+                        FROM memberships WHERE tenant_id = $1`, [tenant]);
     }
     await su.query('COMMIT');
   } finally {
@@ -271,7 +289,7 @@ describe('deal visibility once per statement: contact-children and timeline poli
       expect(pol.map((p) => `${p.tablename}.${p.policyname}`).sort()).toEqual(OLD_USING.map((p) => `${p.table}.${p.policy}`).sort());
       for (const p of pol) expect(p.qual, p.policyname).not.toContain('contact_detail_visible');
       // every table in the comparison has rows in this tenant for the non-vacuous ones
-      for (const t of ['messages', 'calls', 'notes', 'contact_points', 'lead_ownership_events', 'appointments', 'behavior_events', 'lead_inquiries', ...PARITY]) {
+      for (const t of ['messages', 'calls', 'notes', 'contact_points', 'lead_ownership_events', 'appointments', 'behavior_events', 'lead_inquiries', ...PARITY, 'cma_reports']) {
         const n = (await su.query<{ n: number }>(`SELECT count(*)::int AS n FROM public.${t} WHERE tenant_id = $1`, [T])).rows[0]!.n;
         expect(n, t).toBeGreaterThan(0);
       }

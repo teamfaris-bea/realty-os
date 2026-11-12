@@ -2,7 +2,7 @@
 // Postgres database, RLS-bound app_user, fake providers, inbound domain leads.realty-os.invalid), on the
 // phone (iPhone 13) and desktop (1440 px) projects. Taps are counted the way the other specs count them
 // (one real touch tap on the phone, one click on desktop; typing is not a tap):
-//   (a) the Owner opens Lead routing, turns on lead email for the Portal source (re-auth prompt: password
+//   (a) the Owner opens Lead sources → the source's page, turns on lead email for the Portal source (re-auth prompt: password
 //       + code, then Confirm) and copies the address: leads+<40 hex>@leads.realty-os.invalid;
 //   (b) a VERIFIED portal email (From leads@zillow.com, DKIM pass zillow.com) is posted to that address
 //       through the signed webhook; the agent accepts the offer on Home; the worker runs the first
@@ -95,8 +95,10 @@ test('(a) the Owner turns on lead email for a source (with re-auth) and copies t
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: stack.webUrl });
   await signIn(page, 'owner');
   const nav = { taps: 0 };
-  await navTo(page, 'Lead routing', nav);
+  await navTo(page, 'Lead sources', nav);
   expect(nav.taps).toBe(isPhone(page) ? 2 : 1);
+  // the email intake now lives on the source's own page (module 22, Lead sources)
+  await page.goto(`${stack.webUrl}/admin/lead-sources/${w.sourceId}?setup=email`);
 
   const box = intake(page);
   await expect(box.getByText(/Only emails DKIM-signed by an allowed domain become leads automatically; everything else waits in/)).toBeVisible();
@@ -243,7 +245,7 @@ test('(c) an unverified email waits in Needs review with its reason; no contact 
 test('(d) the Owner gets a new address after a confirm; the old address routes nothing from then on', async ({ page }) => {
   expect(address).toMatch(ADDRESS_RE);
   await signIn(page, 'owner');
-  await page.goto(`${stack.webUrl}/admin/routing`);
+  await page.goto(`${stack.webUrl}/admin/lead-sources/${w.sourceId}?setup=email`);
   await expect(addressField(page)).toHaveValue(address, { timeout: 15_000 });
   const rotate = { taps: 0 };
   await tap(page, intake(page).getByRole('button', { name: 'Get a new address' }), rotate);
@@ -270,6 +272,7 @@ test('Lead routing and Needs review: axe (incl. contrast) in light and dark, no 
     await page.emulateMedia({ colorScheme: scheme });
     for (const [path, h1] of [
       ['/admin/routing', 'Lead routing'],
+      [`/admin/lead-sources/${w.sourceId}?setup=email`, 'Portal'],
       ['/team/lead-email', 'Needs review'],
     ] as const) {
       await page.goto(`${stack.webUrl}${path}`);

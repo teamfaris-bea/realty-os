@@ -194,6 +194,12 @@ export const ConfigSchema = z.object({
       authScheme: z.enum(['Bearer', 'OAuth']),
     }),
   }),
+  /**
+   * Telephony kill switch (TELEPHONY_LIVE_REQUESTS; docs/DEPLOY.md "Telephony kill switch", R-TWL-1). false, the default
+   * in every environment, production included: the Twilio adapter refuses every outbound REST request before making it
+   * (TELEPHONY_LIVE_OFF). It stays false until the written pilot approval. Inbound webhooks work either way.
+   */
+  telephonyLiveRequests: z.boolean(),
   /** General per-session/IP request budget (in-memory, per process). Auth routes add DB-backed limits. */
   globalRateLimitPerMinute: z.coerce.number().int().min(10).default(600),
   logLevel: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
@@ -408,6 +414,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   const fub = fubSettings(env, missing, invalid);
   const mls = mlsSettings(env, invalid);
+  // R-TWL-1: the telephony kill switch, like MLS_LIVE_CALLS: false unless set to exactly true
+  const telLive = (env.TELEPHONY_LIVE_REQUESTS ?? '').trim().toLowerCase();
+  if (telLive !== '' && telLive !== 'true' && telLive !== 'false') invalid.push('TELEPHONY_LIVE_REQUESTS must be true or false');
   const trust = parseTrustProxy(env.TRUST_PROXY);
   if (!trust.ok) invalid.push(trust.message);
 
@@ -473,6 +482,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       authservId: env.LEAD_EMAIL_AUTHSERV_ID || null,
     },
     mls,
+    telephonyLiveRequests: telLive === 'true',
     globalRateLimitPerMinute: env.GLOBAL_RATE_LIMIT_PER_MINUTE || undefined,
     databasePoolMax: env.DB_POOL_MAX || undefined,
     logLevel: env.LOG_LEVEL || undefined,
@@ -511,6 +521,7 @@ export function redactConfig(c: Config): Record<string, unknown> {
     smtpVendor: c.smtp?.vendor,
     s3Bucket: c.s3?.bucket,
     s3Endpoint: c.s3?.endpoint,
+    telephonyLiveRequests: c.telephonyLiveRequests,
     mls: { provider: c.mls.provider, liveCalls: c.mls.liveCalls, sparkBaseUrl: c.mls.spark.baseUrl, sparkAuthScheme: c.mls.spark.authScheme },
   };
 }

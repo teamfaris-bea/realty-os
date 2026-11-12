@@ -136,6 +136,10 @@ const BLOCKED: Record<string, string> = {
   AUTONOMY_DOWNGRADED: 'the assistant held it for review',
   // the person-level do-not-contact: the gate's code, and the dispatch guards' own (the same code, R-CHAN-2)
   PERSON_DO_NOT_CONTACT: 'they asked not to be contacted',
+  // R-TWL-2: the team's daily telephony cap (the gate's own sentence: "Today's sending limit for this team is reached.")
+  DAILY_SEND_CAP_REACHED: "today's sending limit for this team is reached",
+  // R-TWL-1 (b9 review ownership-data/F4): the kill switch, refused before the send (the gate's own sentence)
+  TELEPHONY_LIVE_OFF: 'live texting and calling are off on this deployment',
   // a dispatch guard's own refusal with no gate code for the same fact
   RECIPIENT_NOT_A_CONTACT_POINT: "the number or address isn't on their record, so their opt-outs couldn't be checked",
 };
@@ -311,6 +315,9 @@ export function messageStatus(m: MessageStatusFacts, contactFirstName: string, n
     }
     case 'failed':
     case 'undelivered': {
+      // R-TWL-1 / R-TWL-9: said exactly as the server words them (the agent sees these sentences verbatim)
+      if (reason === 'TELEPHONY_LIVE_OFF') return { text: 'Live texting and calling are off on this deployment.', tone: 'failed' };
+      if (reason === 'SENDER_NOT_VERIFIED') return { text: "Not delivered: the team's number isn't verified for texting. The Owner has been told.", tone: 'failed' };
       if (m.status === 'failed' && reason === 'MEDIA_UNAVAILABLE') return { text: 'Not sent: the photos or videos were no longer available', tone: 'failed' };
       // module 22: a chat reply is delivered by the website chat, not a carrier
       const service = ch === 'email' ? 'email service' : ch === 'web_chat' ? 'website chat' : 'phone service';

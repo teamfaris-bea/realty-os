@@ -358,25 +358,40 @@ export async function loadRoutingSnapshot(
       SELECT cursor FROM routing_rotation_state WHERE tenant_id = app.tenant_id() AND rule_id = ${rule.id} FOR UPDATE`.execute(tx);
     cursor = c.rows[0]?.cursor ?? {};
   }
-  const members =
-    rule.strategy === 'direct'
-      ? [{ user_id: rule.directUserId as string, weight: 1 }]
-      : (
-          await sql<{ user_id: string; weight: number }>`
-            SELECT user_id, weight FROM routing_rule_members WHERE tenant_id = app.tenant_id() AND rule_id = ${rule.id}
-             ORDER BY user_id`.execute(tx)
-        ).rows;
+  const members = await loadRuleMembers(tx, rule);
+  await lockMemberships(tx, members.map((m) => m.user_id), writeUserIds);
+  const candidates = await loadRoutingCandidates(tx, members, contactId, now, facts);
+  return { rule, candidates, cursor, alreadyOffered };
+}
+
+/** A routing rule's members (direct: the direct user), in user id order. Read by the router and the preview. */
+export async function loadRuleMembers(tx: Tx, rule: RuleFacts): Promise<{ user_id: string; weight: number }[]> {
+  if (rule.strategy === 'pond') return [];
+  if (rule.strategy === 'direct') return [{ user_id: rule.directUserId as string, weight: 1 }];
+  return (
+    await sql<{ user_id: string; weight: number }>`
+      SELECT user_id, weight FROM routing_rule_members WHERE tenant_id = app.tenant_id() AND rule_id = ${rule.id}
+       ORDER BY user_id`.execute(tx)
+  ).rows;
+}
+
+/**
+ * The candidate facts of a rule's members (R-OWN-11 inputs): one query shared by the router (loadRoutingSnapshot,
+ * after its sorted membership locks) and module 22's read-only routing preview (R-LSRC-4: no locks, and no contact yet,
+ * so no release cooldown). Members that are no longer members are dropped (never offered).
+ */
+export async function loadRoutingCandidates(tx: Tx, members: readonly { user_id: string; weight: number }[], contactId: ContactId | null, now: Instant, facts: TenantFacts): Promise<Candidate[]> {
   const ids = members.map((m) => m.user_id);
-  await lockMemberships(tx, ids, writeUserIds);
+  if (ids.length === 0) return [];
   const since = toIso(plusMs(now, -facts.defaultPondCooldownHours * HOUR_MS));
   const rows = await sql<{ user_id: string; role: Role; status: MembershipStatus; accepting_leads: boolean; critical: boolean; cooldown: boolean; uncontacted: number }>`
     SELECT m.user_id, m.role, m.status, m.accepting_leads,
            (m.alert_phone_verified_at IS NOT NULL OR EXISTS (
               SELECT 1 FROM push_subscriptions ps WHERE ps.tenant_id = m.tenant_id AND ps.user_id = m.user_id
                  AND ps.revoked_at IS NULL)) AS critical,
-           EXISTS (SELECT 1 FROM lead_ownership_events e WHERE e.tenant_id = m.tenant_id AND e.contact_id = ${contactId}
+           (${contactId}::uuid IS NOT NULL AND EXISTS (SELECT 1 FROM lead_ownership_events e WHERE e.tenant_id = m.tenant_id AND e.contact_id = ${contactId}::uuid
                      AND e.prev_owner_user_id = m.user_id AND e.type = ANY (${RELEASING_EVENTS}::text[])
-                     AND e.occurred_at >= ${since}::timestamptz) AS cooldown,
+                     AND e.occurred_at >= ${since}::timestamptz)) AS cooldown,
            (SELECT count(*)::int FROM contacts c WHERE c.tenant_id = m.tenant_id AND c.owner_user_id = m.user_id
                AND c.ownership_state = 'owned' AND c.first_touch_at IS NULL AND c.first_touch_due_at IS NOT NULL) AS uncontacted
       FROM memberships m WHERE m.tenant_id = app.tenant_id() AND m.user_id = ANY (${ids}::uuid[])`.execute(tx);
@@ -396,7 +411,7 @@ export async function loadRoutingSnapshot(
       uncontactedOwned: x.uncontacted,
     });
   }
-  return { rule, candidates, cursor, alreadyOffered };
+  return candidates;
 }
 
 export function instantOrNull(d: Date | null): Instant | null {

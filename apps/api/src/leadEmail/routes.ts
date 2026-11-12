@@ -49,6 +49,10 @@ export const InboxResponse = z.object({
     addressCreatedAt: z.string().nullable(),
     allowedSenderDomains: z.array(z.string()),
     suggestedSenderDomains: z.array(z.object({ domain: z.string(), label: z.string() })),
+    /** saved entries the trust rule ignores (consumer mailbox domains, R-LEM-11) */
+    ignoredSenderDomains: z.array(z.string()),
+    /** every portal we know of; only the pre-ticked ones are in suggestedSenderDomains (R-LEM-7: suggested, unconfirmed) */
+    portalCatalog: z.array(z.object({ portal: z.enum(['zillow', 'realtor', 'redfin', 'homes', 'trulia', 'opcity']), domain: z.string(), label: z.string(), preTicked: z.boolean() })),
     inboundDomainConfigured: z.boolean(),
   }),
 });

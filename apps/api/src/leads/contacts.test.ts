@@ -21,6 +21,8 @@ afterAll(async () => {
 });
 
 const PII = /\+1415|@example\.test|Ramirez|555/;
+/** The body with every UUID replaced: random ids can contain the digits 555, which are not a phone number. */
+const withoutIds = (body: unknown): string => JSON.stringify(body).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '<id>');
 
 describe('cards and full records (R-PERM-4, R-PERM-6)', () => {
   it('R-PERM-6: an offer card shows name, intent, source, age and summary — no phones, emails, inquiries or history — until accepted, then the full record', async () => {
@@ -53,7 +55,7 @@ describe('cards and full records (R-PERM-4, R-PERM-6)', () => {
       expect(res.status).toBe(200);
       const card = res.body.cards.find((c) => c.id === r.contactId)!;
       expect(card.displayName).toBe('Marisol R.');
-      expect(JSON.stringify(res.body)).not.toMatch(PII);
+      expect(withoutIds(res.body)).not.toMatch(PII);
     }
     const one = await call<{ cards: unknown[]; pond: unknown }>(pondWorld.agents[0]!, 'GET', `/ponds/${pondWorld.defaultPondId}/cards?limit=1`);
     expect(normalize({ pond: one.body.pond, card: one.body.cards[0] })).toMatchSnapshot();

@@ -21,7 +21,15 @@ export interface TwilioHttpOptions {
   timeoutMs?: number;
   /** backoff between retries of safe requests (tests pass a no-op) */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * TELEPHONY_LIVE_REQUESTS (R-TWL-1). Anything but true ⇒ every request is refused BEFORE it is made, with
+   * ProviderError('not_configured', 'TELEPHONY_LIVE_OFF'): no fetch, no credentials on the wire. Fail closed: absent = off.
+   */
+  liveRequests?: boolean;
 }
+
+/** The kill switch's provider code (R-TWL-1): never an opt-out, never retried, never reconciled. */
+export const TELEPHONY_LIVE_OFF = 'TELEPHONY_LIVE_OFF';
 
 export type FormValue = string | number | boolean | undefined | null;
 
@@ -51,11 +59,23 @@ export class TwilioHttp {
   private readonly fetchFn: typeof fetch;
   private readonly timeoutMs: number;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly live: boolean;
 
   constructor(opts: TwilioHttpOptions = {}) {
+    this.live = opts.liveRequests === true;
     this.fetchFn = opts.fetch ?? fetch;
     this.timeoutMs = opts.timeoutMs ?? 15_000;
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+  }
+
+  /** R-TWL-1: true while the kill switch refuses every request (b9 review ownership-data/F4: read by the send-time gate). */
+  get liveOff(): boolean {
+    return !this.live;
+  }
+
+  /** R-TWL-1: throws TELEPHONY_LIVE_OFF unless live requests are on (also checked before any input is looked at). */
+  assertLive(): void {
+    if (!this.live) throw new ProviderError('not_configured', TELEPHONY_LIVE_OFF);
   }
 
   /**
@@ -69,6 +89,8 @@ export class TwilioHttp {
     url: string,
     opts: { form?: Record<string, FormValue | FormValue[]>; submit?: boolean; allow404?: boolean; binary?: boolean } = {},
   ): Promise<{ json: Record<string, unknown> | null; bytes: Uint8Array | null; contentType: string | null } | null> {
+    // R-TWL-1: the one choke point of every Twilio REST request (sends, calls, numbers, lookups, registrations, media)
+    this.assertLive();
     const headers: Record<string, string> = {
       authorization: `Basic ${Buffer.from(`${creds.sid}:${creds.token}`, 'utf8').toString('base64')}`,
       accept: opts.binary ? '*/*' : 'application/json',
