@@ -66,7 +66,7 @@ describe('R-PRED-2: the vendor payload is cut down to property facts', () => {
     await pass(h, w.tenantId, { registry: testRegistry(def), publicRecords: records });
     const rec = (await rowsOf(h, c.id)).records[0]!;
     expect(rec).toMatchObject({ owner_name_match: true, mortgage_origination_date: null, owner_occupied: null });
-    expect(JSON.stringify(rec)).not.toMatch(/OLA|Ola|Doe|47|married|Mortgage Co/i);
+    expect(JSON.stringify(rec)).not.toMatch(/OLA|Doe|married|Mortgage Co|5555550123|1979-02-02|Elsewhere/i);
     await setModelStatus(h, def.version, 'withdrawn');
   });
 

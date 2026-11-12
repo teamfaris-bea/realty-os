@@ -15,6 +15,8 @@ export interface PredictSettings {
   recentSavesWindowDays: number;
   /** contacts scored per transaction */
   batchSize: number;
+  /** candidate addresses read per transaction (the lookups run outside any transaction) */
+  lookupPageSize: number;
 }
 
 export const PREDICT_SETTINGS: Readonly<PredictSettings> = Object.freeze({
@@ -25,6 +27,7 @@ export const PREDICT_SETTINGS: Readonly<PredictSettings> = Object.freeze({
   nightEndHour: 5,
   recentSavesWindowDays: 90,
   batchSize: 500,
+  lookupPageSize: 200,
 });
 
 /** The longest record retention the plan allows (R-DATA-6: property records per licence, at most 12 months). */
@@ -53,5 +56,6 @@ export function resolveSettings(o: Partial<PredictSettings> = {}): PredictSettin
   if (!(s.nightStartHour >= 0 && s.nightStartHour < s.nightEndHour && s.nightEndHour <= 24)) throw new RangeError('night window');
   if (!(s.recentSavesWindowDays >= 1)) throw new RangeError('recentSavesWindowDays ≥ 1');
   if (!(s.batchSize >= 1)) throw new RangeError('batchSize ≥ 1');
+  if (!(s.lookupPageSize >= 1)) throw new RangeError('lookupPageSize ≥ 1');
   return s;
 }

@@ -181,17 +181,20 @@ interface CandidateRow {
   display_name: string;
 }
 
-const PAGE = 200;
 
 async function refreshPropertyRecords(withTx: WithTx, provider: PublicRecordsProvider, ids: IdGenerator, s: PredictSettings, localDate: string, report: PassReport): Promise<void> {
   let madeThisPass = 0;
+  // the rows fetched on the local date BEFORE this pass (the ones it writes are counted by madeThisPass)
+  const fetchedToday = await withTx(async (tx) => {
+    const r = await sql<{ n: number }>`
+      SELECT count(*)::int AS n FROM property_records pr JOIN tenant_settings ts ON ts.tenant_id = pr.tenant_id
+       WHERE pr.tenant_id = app.tenant_id() AND (pr.fetched_at AT TIME ZONE ts.default_timezone)::date = ${localDate}::date`.execute(tx);
+    return r.rows[0]?.n ?? 0;
+  });
   let cursor: { k: string; id: string } = { k: '-infinity', id: '00000000-0000-0000-0000-000000000000' };
   for (;;) {
     const page = await withTx(async (tx, now) => {
-      const fetchedToday = await sql<{ n: number }>`
-        SELECT count(*)::int AS n FROM property_records pr JOIN tenant_settings ts ON ts.tenant_id = pr.tenant_id
-         WHERE pr.tenant_id = app.tenant_id() AND (pr.fetched_at AT TIME ZONE ts.default_timezone)::date = ${localDate}::date`.execute(tx);
-      const left = budgetLeft(s.lookupBudgetPerDay, fetchedToday.rows[0]?.n ?? 0, madeThisPass);
+      const left = budgetLeft(s.lookupBudgetPerDay, fetchedToday, madeThisPass);
       if (left <= 0) return { now, rows: [] as CandidateRow[], left };
       // names are read for the in-memory attach decision only; they are never written, hashed or logged
       const r = await sql<CandidateRow>`
@@ -207,7 +210,7 @@ async function refreshPropertyRecords(withTx: WithTx, provider: PublicRecordsPro
            AND (pr.id IS NULL OR pr.fetched_at <= now() - make_interval(days => ${s.refreshAgeDays}) OR a.updated_at > pr.fetched_at)
            AND (COALESCE(pr.fetched_at, '-infinity'::timestamptz), a.id) > (${cursor.k}::timestamptz, ${cursor.id}::uuid)
          ORDER BY COALESCE(pr.fetched_at, '-infinity'::timestamptz), a.id
-         LIMIT ${PAGE}`.execute(tx);
+         LIMIT ${s.lookupPageSize}`.execute(tx);
       return { now, rows: r.rows, left };
     });
     if (page.rows.length === 0) return;

@@ -71,7 +71,9 @@ describe('R-OWN-27: one pass per tenant and local date', () => {
     expect(stored.rows[0].d).toBe(localDate(tz));
     const before = await tableState(a.tenantId);
     const calls = records.calls.length;
-    const r2 = await pass(h, a.tenantId, { registry: testRegistry(model), publicRecords: records });
+    // (batch by batch: one contact per transaction)
+    const r2 = await pass(h, a.tenantId, { registry: testRegistry(model), publicRecords: records, settings: { batchSize: 1 } });
+    expect(r2.report.predictions.evaluated).toBe(r1.report.predictions.evaluated);
     expect(r2.report).toMatchObject({ lookups: { made: 0 }, predictions: { written: 0 }, cards: { inserted: 0, updated: 0, reopened: 0, closed: 0 } });
     expect(records.calls.length).toBe(calls);
     expect(await tableState(a.tenantId)).toBe(before);
@@ -143,6 +145,13 @@ describe('R-OWN-27: one pass per tenant and local date', () => {
     expect(r2.report.lookups.made).toBe(0);
     const r3 = await pass(h, a.tenantId, { registry: testRegistry(model), publicRecords: records, settings: { lookupBudgetPerDay: budget + 5 } });
     expect(r3.report.lookups.made).toBe(1);
+    // across pages (one candidate per transaction) the rows this pass writes are not counted twice
+    for (let i = 0; i < 4; i += 1) await homeWithRecord(a, records);
+    const today = fetchedToday + 3;
+    const r4 = await pass(h, a.tenantId, { registry: testRegistry(model), publicRecords: records, settings: { lookupBudgetPerDay: today + 3, lookupPageSize: 1 } });
+    expect(r4.report.lookups.made).toBe(3);
+    const r5 = await pass(h, a.tenantId, { registry: testRegistry(model), publicRecords: records, settings: { lookupBudgetPerDay: today + 3, lookupPageSize: 1 } });
+    expect(r5.report.lookups.made).toBe(0);
   });
 
   it('E122 R-PRED-2: an address edited after its record was fetched is due again; a mailing or property address is never looked up', async () => {
@@ -150,13 +159,15 @@ describe('R-OWN-27: one pass per tenant and local date', () => {
     const c = await homeWithRecord(a, records);
     const mailing = await homeAddress(h, a.tenantId, c.id, undefined, 'mailing');
     records.put(mailing.address, vendorRecord(mailing.address, ['Anyone']));
+    const asked = (x: Parameters<typeof normalizeAddress>[0]) => records.calls.filter((k) => k === normalizeAddress(x)).length;
     await pass(h, a.tenantId, { registry: testRegistry(model), publicRecords: records });
-    expect(records.calls).toHaveLength(1);
+    expect([asked(c.home.address), asked(mailing.address)]).toEqual([1, 0]);
     await pass(h, a.tenantId, { registry: testRegistry(model), publicRecords: records });
-    expect(records.calls).toHaveLength(1);
+    expect([asked(c.home.address), asked(mailing.address)]).toEqual([1, 0]);
     await h.su.query(`UPDATE contact_addresses SET line2 = 'Unit 2' WHERE id = $1`, [c.home.id]);
     await pass(h, a.tenantId, { registry: testRegistry(model), publicRecords: records });
-    expect(records.calls).toHaveLength(2);
+    expect(asked({ ...c.home.address, line2: 'Unit 2' })).toBe(1);
+    expect(asked(mailing.address)).toBe(0);
     // the new address has no record in the fake: the stale facts no longer feed a feature
     expect((await rowsOf(h, c.id)).records[0]).toMatchObject({ owner_name_match: false, last_sale_date: null });
   });
