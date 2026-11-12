@@ -8,8 +8,11 @@
 //   the server says which.
 // - Lead timers apply to new deadlines only (R-OWN-15): deadlines already running keep their times,
 //   and the page says so where the timers are edited.
+// - Lead sources (each source's lead email, Google Ads lead form, tracking numbers, ...) have their own
+//   page (surfaces/lead-sources); this page links there in one line.
 import { useQuery } from '@tanstack/react-query';
 import { type FormEvent, type ReactNode, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Button, Card, Notice, TextField } from '../../design/index.js';
 import { type ApiError, messageFor, useApi } from '../../shell/index.js';
 import { formatDuration, plural, roleLabel } from './lib/format.js';
@@ -18,7 +21,6 @@ import { ADMIN_MESSAGES } from './lib/messages.js';
 import { LEAD_TYPES, type RuleForm, STRATEGIES, describeMatch, describeStrategy, emptyRuleForm, formOf, formProblems, membersBody, moved, ruleBody } from './lib/routing.js';
 import type { LeadSource, Member, MembersResponse, Pond, RoutingRule, Settings } from './lib/types.js';
 import { Check, ErrorLine, Pill, Section, SelectField, StatusLine } from './lib/ui.js';
-import { LeadSourcesSection } from '../lead-email/EmailIntake.js';
 
 const RULES_KEY = ['admin', 'routing-rules'] as const;
 const PONDS_KEY = ['admin', 'ponds'] as const;
@@ -52,7 +54,12 @@ export default function RoutingPage() {
       <StatusLine text={status} />
       {error ? <Notice tone="error">{messageFor(error, ADMIN_MESSAGES)}</Notice> : null}
       <Rules rules={(d.rules.data?.rules ?? []).filter((r) => !r.archived)} members={members} ponds={ponds} sources={sources} names={names} onDone={announce} loading={d.rules.isPending} />
-      <LeadSourcesSection sources={sources} loading={d.sources.isPending} />
+      <p className="text-[15px] text-ink">
+        Where leads come from, each source's lead email, Google Ads lead form and tracking numbers:{' '}
+        <Link to="/admin/lead-sources" className="font-medium text-accent underline">
+          Lead sources
+        </Link>
+      </p>
       <Ponds ponds={ponds} members={members} onDone={announce} />
       <Timers onDone={announce} />
     </div>

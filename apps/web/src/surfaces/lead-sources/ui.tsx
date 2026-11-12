@@ -42,7 +42,7 @@ export function CopyField({ label, value, hint, mono = true }: { label: string; 
 }
 
 /** One path of a source: a card that opens; its summary is the path's name and its state in words. */
-export function PathSection({ id, title, state, open, children }: { id: string; title: string; state: ChipState; open: boolean; children: ReactNode }) {
+export function PathSection({ id, title, state, open, children }: { id: string; title: string; state: ChipState | null; open: boolean; children: ReactNode }) {
   const hid = useId();
   return (
     <details id={id} open={open} className="group rounded-2xl border border-line bg-surface" aria-labelledby={hid}>
@@ -50,7 +50,7 @@ export function PathSection({ id, title, state, open, children }: { id: string; 
         <h2 id={hid} className="min-w-0 flex-1 text-[18px] font-semibold text-ink">
           {title}
         </h2>
-        <Pill tone={chipTone(state)}>{state}</Pill>
+        {state ? <Pill tone={chipTone(state)}>{state}</Pill> : null}
         <span aria-hidden="true" className="text-ink-muted transition-transform group-open:rotate-90">
           ›
         </span>

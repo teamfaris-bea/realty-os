@@ -7,7 +7,7 @@ import { FakeFetch, leadAdminApp, member } from './lib/testing.js';
 import type { PhoneNumber } from './lib/types.js';
 import { registrationWords } from './NumbersPage.js';
 
-const num = (over: Partial<PhoneNumber> = {}): PhoneNumber => ({ id: 'n1', e164: '+14155550100', purpose: 'team_main', numberType: 'local', assignedUserId: null, registrationId: 'reg-1', registrationStatus: 'submitted', smsCapable: true, voiceCapable: true, releasedAt: null, ...over });
+const num = (over: Partial<PhoneNumber> = {}): PhoneNumber => ({ id: 'n1', e164: '+14155550100', purpose: 'team_main', numberType: 'local', assignedUserId: null, registrationId: 'reg-1', registrationStatus: 'submitted', smsCapable: true, voiceCapable: true, releasedAt: null, leadSourceId: null, ...over });
 
 function numbersFake(numbers: PhoneNumber[] = [num()]) {
   return new FakeFetch().on('GET /numbers', { status: 200, body: { numbers } }).on('GET /members', { status: 200, body: { members: [member()], invites: [] } });

@@ -300,6 +300,8 @@ export interface PhoneNumber {
   smsCapable: boolean;
   voiceCapable: boolean;
   releasedAt: string | null;
+  /** module 22 (R-TRK-1): the lead source a live tracking number credits, or null */
+  leadSourceId: string | null;
 }
 
 export interface Registration {
