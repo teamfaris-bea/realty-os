@@ -13,6 +13,10 @@
 //   the page says how many (the deals listed are those of any of these records). VERIFY WITH COUNSEL.
 // - Opt-outs outlive the erasure (D1): the server first records a person's do-not-contact on every phone and
 //   email they had (PERSON_DO_NOT_CONTACT_UNCARRIED, worded, if one of them cannot keep it: nothing is erased).
+// - Module 42 documents (batch 11 review): a contact document of the person on legal hold or inside its retention
+//   period blocks the erasure (the database refuses: DOCUMENT_RETAINED). The preview lists them (no erase step is
+//   offered) and the refusal is worded. A merged-away record says the person lives on the record it was merged into
+//   (what moved stays there) and links to it. A seller's listing documents stay with the listing, and the page says so.
 // - Deep link: /admin/erasure?contact=<id> (e.g. from a contact page). Without it, a search field
 //   finds the contact (GET /search, read-only reuse of the search surface's endpoint).
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -22,7 +26,7 @@ import { Button, ButtonLink, Card, Notice, TextField } from '../../design/index.
 import { type ApiError, messageFor, useApi, useSession, useWithReauth } from '../../shell/index.js';
 import { STAGE_LABEL } from '../feed/lib/format.js';
 import type { DealStage, SearchResponse } from '../feed/lib/types.js';
-import { plural } from './lib/format.js';
+import { formatDate, plural } from './lib/format.js';
 import { useAction, useAnnounce } from './lib/hooks.js';
 import { ADMIN_MESSAGES } from './lib/messages.js';
 import type { Role } from './lib/types.js';
@@ -42,6 +46,18 @@ export interface ErasurePreview {
   deals: ErasureDeal[];
   /** duplicate records merged into the person, erased with them (migration 0037; absent from older servers) */
   mergedRecords?: number;
+  /** contact documents on legal hold or inside retention: erasure waits for them (module 42; absent from older servers) */
+  retainedDocuments?: ErasureRetainedDocument[];
+  /** this record was merged into that one, where the person lives now (absent from older servers) */
+  mergedInto?: string | null;
+  /** listings the person sells whose documents stay after the erasure (absent from older servers) */
+  listingDocuments?: { listingId: string; address: string; documents: number }[];
+}
+export interface ErasureRetainedDocument {
+  id: string;
+  contactId: string;
+  legalHold: boolean;
+  retentionUntil: string | null;
 }
 
 const REASONS: readonly { value: ErasureReason; label: string }[] = [
@@ -207,10 +223,19 @@ function ContactErasure({ contactId, onPickAnother, onErased, announce }: { cont
               ))}
             </SelectField>
           ) : null}
-          {p.deals.length > 0 ? (
-            <OnDeals contactId={contactId} name={name} deals={p.deals} viewer={viewer} reason={reason} announce={onRemoved} />
-          ) : p.erasable ? (
-            <EraseStep contactId={contactId} name={name} reason={reason} mergedRecords={p.mergedRecords ?? 0} onErased={() => onErased(name)} onRefused={setRefusal} />
+          {p.deals.length > 0 ? <OnDeals contactId={contactId} name={name} deals={p.deals} viewer={viewer} reason={reason} announce={onRemoved} /> : null}
+          {(p.retainedDocuments ?? []).length > 0 ? <RetainedDocuments name={name} documents={p.retainedDocuments ?? []} /> : null}
+          {p.deals.length === 0 && p.erasable ? (
+            <EraseStep
+              contactId={contactId}
+              name={name}
+              reason={reason}
+              mergedRecords={p.mergedRecords ?? 0}
+              mergedInto={p.mergedInto ?? null}
+              listingDocuments={p.listingDocuments ?? []}
+              onErased={() => onErased(name)}
+              onRefused={setRefusal}
+            />
           ) : null}
         </>
       ) : null}
@@ -299,7 +324,45 @@ function DealRow({ contactId, name, deal, viewer, reason, announce }: { contactI
   );
 }
 
-function EraseStep({ contactId, name, reason, mergedRecords, onErased, onRefused }: { contactId: string; name: string; reason: ErasureReason; mergedRecords: number; onErased(): void; onRefused(message: string): void }) {
+/** Module 42 (R-DOC-4): the person's documents on legal hold or inside retention; the database refuses until none is left. */
+function RetainedDocuments({ name, documents }: { name: string; documents: ErasureRetainedDocument[] }) {
+  return (
+    <div className="flex flex-col gap-3">
+      <Notice tone="info">
+        {name} can't be erased yet: {documents.length === 1 ? '1 of their documents is' : `${documents.length} of their documents are`} on legal hold or inside their retention period, and a kept
+        document can't be deleted. Erasure waits until every hold is lifted and every retention date has passed.
+      </Notice>
+      <ul className="flex flex-col gap-1 text-[15px] text-ink" aria-label={`Documents that keep ${name}`}>
+        {documents.map((d) => (
+          <li key={d.id}>{d.legalHold ? 'A document on legal hold' : `A document kept until ${formatDate(d.retentionUntil)}`}</li>
+        ))}
+      </ul>
+      <p className="text-[15px] text-ink">
+        An Owner or Admin can lift a legal hold. A retention date can be moved to between 3 and 10 years after the file was uploaded, but not removed.
+      </p>
+    </div>
+  );
+}
+
+function EraseStep({
+  contactId,
+  name,
+  reason,
+  mergedRecords,
+  mergedInto,
+  listingDocuments,
+  onErased,
+  onRefused,
+}: {
+  contactId: string;
+  name: string;
+  reason: ErasureReason;
+  mergedRecords: number;
+  mergedInto: string | null;
+  listingDocuments: NonNullable<ErasurePreview['listingDocuments']>;
+  onErased(): void;
+  onRefused(message: string): void;
+}) {
   const qc = useQueryClient();
   const [confirming, setConfirming] = useState(false);
   const erase = useAction<{ reason: ErasureReason }, { erased: true }>('POST');
@@ -315,10 +378,36 @@ function EraseStep({ contactId, name, reason, mergedRecords, onErased, onRefused
   };
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-[15px] text-ink">
-        {name} is on no deals, so they can be erased. This deletes {name} and what Realty OS holds about them, such as messages and call recordings. An opt-out they gave, or a request not to
-        be contacted, is kept on every phone and email they had, without their details, so they aren't contacted again by mistake. The audit log notes that an erasure happened and why.
-      </p>
+      {mergedInto ? (
+        <>
+          <p className="text-[15px] text-ink">
+            {name} is a duplicate record that was merged into another record. Its messages, notes, tasks and appointments moved there, and its phones and emails were copied there: erasing this
+            record leaves all of those in place. It deletes only what stayed on this record, such as documents uploaded to it. An opt-out given on one of its phones or emails, or a request not to be
+            contacted, is kept without their details. The audit log notes that an erasure happened and why. To erase the person, erase the record it was merged into.
+          </p>
+          <ButtonLink variant="secondary" to={`/admin/erasure?contact=${mergedInto}`} className="self-start">
+            Open the record it was merged into
+          </ButtonLink>
+        </>
+      ) : (
+        <p className="text-[15px] text-ink">
+          {name} is on no deals, so they can be erased. This deletes {name} and what Realty OS holds about them, such as messages and call recordings. An opt-out they gave, or a request not to
+          be contacted, is kept on every phone and email they had, without their details, so they aren't contacted again by mistake. The audit log notes that an erasure happened and why.
+        </p>
+      )}
+      {listingDocuments.length > 0 ? (
+        <>
+          <p className="text-[15px] text-ink">
+            {name} is a seller on {listingDocuments.length === 1 ? 'a listing' : `${listingDocuments.length} listings`} with documents, such as a listing agreement. Those documents belong to the
+            listing's records and stay after the erasure, readable by the people who work on that listing; they may name {name}. Whether they must be kept is not yet confirmed with counsel.
+          </p>
+          <ul className="flex flex-col gap-1 text-[15px] text-ink" aria-label="Listing documents that stay">
+            {listingDocuments.map((l) => (
+              <li key={l.listingId}>{`${l.address}: ${plural(l.documents, 'document')}`}</li>
+            ))}
+          </ul>
+        </>
+      ) : null}
       {mergedRecords > 0 ? (
         <p className="text-[15px] text-ink">
           {plural(mergedRecords, 'duplicate record')} {mergedRecords === 1 ? 'was' : 'were'} merged into {name}. Erasing {name} erases {mergedRecords === 1 ? 'it' : 'them'} too.
@@ -357,8 +446,9 @@ function EraseStep({ contactId, name, reason, mergedRecords, onErased, onRefused
                   return;
                 }
                 setConfirming(false);
-                if (r.code === 'CONTACT_ON_DEAL') {
-                  // a deal appeared meanwhile: say so where it stays visible, and show what erasing needs now
+                if (r.code === 'CONTACT_ON_DEAL' || r.code === 'DOCUMENT_RETAINED') {
+                  // a deal appeared, or a document was put on hold, meanwhile: say so where it stays visible, and show
+                  // what erasing needs now
                   onRefused(r.message);
                   erase.reset();
                   void qc.invalidateQueries({ queryKey: erasureKey(contactId) });

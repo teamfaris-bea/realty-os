@@ -176,6 +176,63 @@ describe('Erase a contact', () => {
     expect(calls[1]!.body).toEqual(calls[0]!.body);
   });
 
+  // b11 review (module 42 documents meets erasure): db-public/F2, ownership-data/F4, api-ui/F3, ownership-data/F2, ownership-data/F5
+  const SURVIVOR = '01900000-0000-7000-8000-0000000c0002';
+  const DOC_HELD = '01900000-0000-7000-8000-0000000a0001';
+  const DOC_KEPT = '01900000-0000-7000-8000-0000000a0002';
+  const LISTING = '01900000-0000-7000-8000-0000000b0001';
+  const retained = {
+    ...free,
+    erasable: false,
+    retainedDocuments: [
+      { id: DOC_HELD, contactId: C, legalHold: true, retentionUntil: null },
+      { id: DOC_KEPT, contactId: C, legalHold: false, retentionUntil: '2030-11-12T12:00:00.000Z' },
+    ],
+  };
+
+  it('R-DOC-4 R-DATA-4: a held or retained document is said before any tap: which documents, why, who can lift a hold, and that a retention date only moves; no erase step is offered', async () => {
+    leadAdminApp(erasureFake({ preview: retained }), PATH, 'owner');
+    expect(await screen.findByText(/Rosa Diaz can't be erased yet: 2 of their documents are on legal hold or inside their retention period/)).toBeInTheDocument();
+    const list = screen.getByRole('list', { name: 'Documents that keep Rosa Diaz' });
+    expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['A document on legal hold', 'A document kept until Nov 12, 2030']);
+    expect(screen.getByText(/An Owner or Admin can lift a legal hold\. A retention date can be moved to between 3 and 10 years after the file was uploaded, but not removed/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Erase/ })).toBeNull();
+    expect(screen.queryByLabelText('Reason')).toBeNull();
+  });
+
+  it('R-DOC-4 R-DATA-4: a DOCUMENT_RETAINED refusal from erase (a hold placed meanwhile) says in words that nothing was erased and why, never the generic "try again", and reloads what erasing needs', async () => {
+    const state = { preview: free as unknown };
+    const fake = erasureFake(state).on(`POST /contacts/${C}/erase`, () => {
+      state.preview = retained;
+      return err(409, 'DOCUMENT_RETAINED', { documents: [{ id: DOC_HELD, legalHold: true, retentionUntil: null }] });
+    });
+    leadAdminApp(fake, PATH, 'owner');
+    const u = userEvent.setup();
+    await u.click(await screen.findByRole('button', { name: 'Erase Rosa Diaz' }));
+    await u.click(screen.getByRole('button', { name: 'Yes, erase Rosa Diaz' }));
+    expect(await screen.findByText('A document of this person is on legal hold or inside its retention period, so nothing was erased. The documents are listed below.')).toBeInTheDocument();
+    expect(await screen.findByRole('list', { name: 'Documents that keep Rosa Diaz' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Erase Rosa Diaz' })).toBeNull();
+    expect(document.body.textContent).not.toContain('DOCUMENT_RETAINED');
+    expect(document.body.textContent).not.toMatch(/Try again in a moment/);
+  });
+
+  it('R-DATA-4 R-DATA-7: a merged-away record says the person now lives on the record it was merged into, links there, and does not claim to erase what moved', async () => {
+    leadAdminApp(erasureFake({ preview: { ...free, mergedInto: SURVIVOR } }), PATH, 'owner');
+    expect(await screen.findByText(/Rosa Diaz is a duplicate record that was merged into another record\. Its messages, notes, tasks and appointments moved there, and its phones and emails were copied there: erasing this record leaves all of those in place/)).toBeInTheDocument();
+    expect(screen.getByText(/To erase the person, erase the record it was merged into/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open the record it was merged into' })).toHaveAttribute('href', `/admin/erasure?contact=${SURVIVOR}`);
+    expect(screen.queryByText(/such as messages and call recordings/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Erase Rosa Diaz' })).toBeInTheDocument();
+  });
+
+  it('R-DATA-7: a seller\'s listing documents are said to stay after the erasure, by listing', async () => {
+    leadAdminApp(erasureFake({ preview: { ...free, listingDocuments: [{ listingId: LISTING, address: '12 Harbor Rd', documents: 2 }] } }), PATH, 'admin');
+    expect(await screen.findByText(/Rosa Diaz is a seller on a listing with documents, such as a listing agreement\. Those documents belong to the listing's records and stay after the erasure, readable by the people who work on that listing; they may name Rosa Diaz\./)).toBeInTheDocument();
+    expect(within(screen.getByRole('list', { name: 'Listing documents that stay' })).getByText('12 Harbor Rd: 2 documents')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Erase Rosa Diaz' })).toBeInTheDocument();
+  });
+
   it('finds a contact by search and opens it on this page', async () => {
     const fake = erasureFake({ preview: free }).on('GET /search?q=Rosa', {
       status: 200,

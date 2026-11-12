@@ -443,3 +443,78 @@ describe('share, hold and retention (R-DOC-4, R-DOC-8, R-DOC-9)', () => {
     expect(await rowsOf('SELECT 1 FROM documents WHERE id = $1', [id])).toHaveLength(1);
   });
 });
+
+describe('the erasure preview says what documents do to an erasure (b11 db-public/F2, ownership-data/F4, api-ui/F3, ownership-data/F2, ownership-data/F5)', () => {
+  type Preview = {
+    erasable: boolean;
+    deals: unknown[];
+    mergedRecords: number;
+    retainedDocuments: { id: string; contactId: string; legalHold: boolean; retentionUntil: string | null }[];
+    mergedInto: string | null;
+    listingDocuments: { listingId: string; address: string; documents: number }[];
+  };
+  const preview = async (contactId: string) => {
+    await freshReauth(h, w.owner);
+    const r = await call<Preview>(w.owner, 'GET', `/contacts/${contactId}/erasure`);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    return r.body;
+  };
+
+  it('R-DOC-4 R-DATA-4: a held or retained document of any record of the person makes the preview not erasable and names it (ids and dates only); the erase refusal names the same documents; lifting the hold alone leaves the retained one blocking', async () => {
+    const { ownedContact } = await import('../comms/testing.js');
+    const { command } = await import('../leads/testing.js');
+    const a = w.agents[0]!;
+    const survivor = await ownedContact(a, { consent: false, firstName: 'Ira' });
+    const loser = await ownedContact(a, { consent: false, firstName: 'Ira' });
+    const held = await uploadClean(a, `/contacts/${survivor.id}/documents`, { kind: 'other' });
+    const kept = await uploadClean(a, `/contacts/${loser.id}/documents`, { kind: 'other' });
+    const free = await uploadClean(a, `/contacts/${survivor.id}/documents`, { kind: 'other' });
+    expect((await command(a, survivor.id, 'merge', { loserId: loser.id })).status).toBe(200);
+    expect((await preview(survivor.id))).toMatchObject({ erasable: true, retainedDocuments: [], mergedInto: null, listingDocuments: [] });
+    await freshReauth(h, w.owner);
+    expect((await call(w.owner, 'POST', `/documents/${held}/hold`, { hold: true, reason: 'Hold' })).status).toBe(200);
+    const until = new Date(Date.now() + 4 * 365 * 86_400_000).toISOString();
+    expect((await call(w.owner, 'PUT', `/documents/${kept}/retention`, { retentionUntil: until })).status).toBe(200);
+    const p = await preview(survivor.id);
+    expect(p.erasable).toBe(false);
+    expect(p.mergedRecords).toBe(1);
+    expect(p.retainedDocuments).toEqual(
+      [
+        { id: held, contactId: survivor.id, legalHold: true, retentionUntil: null },
+        { id: kept, contactId: loser.id, legalHold: false, retentionUntil: until },
+      ].sort((x, y) => (x.id < y.id ? -1 : 1)),
+    );
+    expect(p.retainedDocuments.some((d) => d.id === free)).toBe(false);
+    await freshReauth(h, w.owner);
+    const r = await call<{ error: { code: string; details: unknown } }>(w.owner, 'POST', `/contacts/${survivor.id}/erase`, { reason: 'PRIVACY_REQUEST' });
+    expect([r.status, r.body.error.code]).toEqual([409, 'DOCUMENT_RETAINED']);
+    expect(r.body.error.details).toEqual({ documents: p.retainedDocuments.map((d) => ({ id: d.id, legalHold: d.legalHold, retentionUntil: d.retentionUntil })) });
+    await freshReauth(h, w.owner);
+    expect((await call(w.owner, 'POST', `/documents/${held}/hold`, { hold: false, reason: 'Released' })).status).toBe(200);
+    expect((await preview(survivor.id))).toMatchObject({ erasable: false, retainedDocuments: [{ id: kept, legalHold: false, retentionUntil: until }] });
+    expect(await rowsOf('SELECT 1 FROM contacts WHERE id = ANY($1::uuid[])', [[survivor.id, loser.id]])).toHaveLength(2);
+  });
+
+  it('R-DATA-4 R-DATA-7: a merged-away record\'s preview names the record the person lives on now (erasing it alone stays possible); a seller\'s preview lists the listing documents that stay after the erasure', async () => {
+    const { ownedContact } = await import('../comms/testing.js');
+    const { command } = await import('../leads/testing.js');
+    const a = w.agents[0]!;
+    const root = await ownedContact(a, { consent: false, firstName: 'Lou' });
+    const mid = await ownedContact(a, { consent: false, firstName: 'Lou' });
+    const leaf = await ownedContact(a, { consent: false, firstName: 'Lou' });
+    expect((await command(a, mid.id, 'merge', { loserId: leaf.id })).status).toBe(200);
+    expect((await command(a, root.id, 'merge', { loserId: mid.id })).status).toBe(200);
+    expect((await preview(leaf.id))).toMatchObject({ erasable: true, mergedInto: root.id, mergedRecords: 0 });
+    expect((await preview(root.id)).mergedInto).toBeNull();
+    // a seller on a listing with documents: those documents are the listing's and stay; the preview says so
+    const seller = await ownedContact(a, { consent: false, firstName: 'Sol' });
+    const listing = await makeListing(a);
+    expect((await call(a, 'POST', `/listings/${listing}/contacts`, { contactId: seller.id, role: 'seller' })).status).toBe(200);
+    expect((await preview(seller.id)).listingDocuments).toEqual([]);
+    await uploadClean(a, `/listings/${listing}/documents`, { kind: 'listing_agreement' });
+    await uploadClean(a, `/listings/${listing}/documents`, { kind: 'disclosure' });
+    const address = (await rowsOf('SELECT address_line1 FROM listings WHERE id = $1', [listing]))[0]!.address_line1 as string;
+    const p = await preview(seller.id);
+    expect(p).toMatchObject({ erasable: true, listingDocuments: [{ listingId: listing, address, documents: 2 }] });
+  });
+});

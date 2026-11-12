@@ -70,6 +70,58 @@ export async function dealLinks(tx: Tx, ids: readonly string[]): Promise<DealLin
   return r.rows;
 }
 
+export interface RetainedDocumentRow {
+  id: string;
+  contact_id: string;
+  legal_hold: boolean;
+  /** only while it is still in the future (a past date no longer blocks) */
+  retention_until: Date | null;
+}
+
+/**
+ * The contact documents of the person's records (`ids`, from mergeTree) that the database's erasure refuses on
+ * (0041 app.purge_contact_internal: DOCUMENT_RETAINED): on legal hold, or inside a retention period. Owner/Admin see
+ * every document, pending and blocked included (documents_clean_only lets tenant-wide roles read them). Sorted by id.
+ */
+export async function retainedDocuments(tx: Tx, ids: readonly string[]): Promise<RetainedDocumentRow[]> {
+  const r = await sql<RetainedDocumentRow>`
+    SELECT id, contact_id, legal_hold, CASE WHEN retention_until > now() THEN retention_until END AS retention_until
+      FROM documents
+     WHERE tenant_id = app.tenant_id() AND contact_id = ANY (${[...ids]}::uuid[]) AND (legal_hold OR retention_until > now())
+     ORDER BY id`.execute(tx);
+  return r.rows;
+}
+
+/** The record a merged-away contact's merge chain ends at (null when it was never merged away; 0075 helper). */
+export async function mergedIntoRoot(tx: Tx, contactId: string): Promise<string | null> {
+  const r = await sql<{ root: string }>`SELECT app.contact_merge_root(app.tenant_id(), ${contactId}::uuid) AS root`.execute(tx);
+  const root = r.rows[0]?.root ?? contactId;
+  return root === contactId ? null : root;
+}
+
+export interface ListingDocumentsRow {
+  listing_id: string;
+  address_line1: string;
+  documents: number;
+}
+
+/**
+ * The listings one of the person's records is a seller or co-seller on that hold documents (a listing agreement names
+ * the seller). Erasure removes the person's listing role, but the listing's documents are the listing's records and
+ * stay (R-DATA-7; VERIFY WITH COUNSEL), so the preview says so (b11 ownership-data/F5).
+ */
+export async function listingDocuments(tx: Tx, ids: readonly string[]): Promise<ListingDocumentsRow[]> {
+  const r = await sql<ListingDocumentsRow>`
+    SELECT l.id AS listing_id, l.address_line1, count(d.id)::int AS documents
+      FROM listings l JOIN documents d ON d.tenant_id = l.tenant_id AND d.listing_id = l.id
+     WHERE l.tenant_id = app.tenant_id()
+       AND EXISTS (SELECT 1 FROM listing_contacts lc WHERE lc.tenant_id = l.tenant_id AND lc.listing_id = l.id
+                     AND lc.contact_id = ANY (${[...ids]}::uuid[]) AND lc.role IN ('seller','co_seller'))
+     GROUP BY l.id, l.address_line1
+     ORDER BY l.id`.execute(tx);
+  return r.rows;
+}
+
 export interface UncarriedOptOutRow {
   kind: string;
   address: string;

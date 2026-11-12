@@ -2,9 +2,15 @@
 // record must keep).
 //
 //   GET  /contacts/:id/erasure                          what erasing would need: the deals the person is on,     contact.erase (Owner/Admin 🔒)
-//                                                      and how many merged records go with them
+//                                                      how many merged records go with them, the contact documents
+//                                                      on legal hold or inside retention that block it (module 42,
+//                                                      R-DOC-4; ids and dates only), the record a merged-away
+//                                                      record was merged into, and the documents of the listings
+//                                                      the person sells that stay (batch 11 review)
 //   POST /contacts/:id/erase          { reason }       app.erase_contact; refused CONTACT_ON_DEAL (409) while    contact.erase (Owner/Admin 🔒)
-//                                                      the person is on any deal, details = the deal ids/stages
+//                                                      the person is on any deal, details = the deal ids/stages;
+//                                                      DOCUMENT_RETAINED (409) while a document blocks it,
+//                                                      details = document ids, holds and retention dates
 //   POST /contacts/:id/deals/:dealId/remove { reason }
 //                                                      the Owner removes the person from a deal so erasure can   contact.erase + Owner only
 //                                                      proceed: the party link is deleted; as the primary contact
@@ -41,8 +47,29 @@ import * as repo from './repos/erasure.js';
 const ReasonCode = z.enum(['PRIVACY_REQUEST', 'DUPLICATE_RECORD', 'ENTERED_IN_ERROR', 'OTHER']);
 
 const DealLink = z.object({ id: z.uuid(), name: z.string(), stage: z.string(), link: z.enum(['primary', 'party', 'primary_and_party']), closed: z.boolean() });
-/** mergedRecords: the duplicate records merged into the person, erased with them (0 for most people). */
-const ErasurePreview = z.object({ contactId: z.uuid(), erasable: z.boolean(), deals: z.array(DealLink), mergedRecords: z.number().int().min(0) });
+const RetainedDocument = z.object({ id: z.uuid(), contactId: z.uuid(), legalHold: z.boolean(), retentionUntil: z.string().nullable() });
+const ListingDocuments = z.object({ listingId: z.uuid(), address: z.string(), documents: z.number().int().min(1) });
+/**
+ * mergedRecords: the duplicate records merged into the person, erased with them (0 for most people).
+ * retainedDocuments: contact documents of any of those records on legal hold or inside retention (R-DOC-4): the
+ *   database refuses the erasure while one exists (DOCUMENT_RETAINED), so `erasable` is false (b11 db-public/F2,
+ *   ownership-data/F4, api-ui/F3).
+ * mergedInto: this record was merged away; the person lives on that record now (its messages, notes, tasks and
+ *   appointments moved there, its phones and emails were copied). Erasing this record alone stays possible
+ *   (b11 ownership-data/F2).
+ * listingDocuments: listings the person is a seller on whose documents stay after the erasure (b11 ownership-data/F5).
+ */
+const ErasurePreview = z.object({
+  contactId: z.uuid(),
+  erasable: z.boolean(),
+  deals: z.array(DealLink),
+  mergedRecords: z.number().int().min(0),
+  retainedDocuments: z.array(RetainedDocument),
+  mergedInto: z.uuid().nullable(),
+  listingDocuments: z.array(ListingDocuments),
+});
+
+const retainedView = (r: repo.RetainedDocumentRow) => ({ id: r.id, contactId: r.contact_id, legalHold: r.legal_hold, retentionUntil: r.retention_until === null ? null : r.retention_until.toISOString() });
 
 const CLOSED = new Set(['closed', 'lost']);
 
@@ -64,7 +91,17 @@ async function register(app: FastifyInstance): Promise<void> {
       if (!(await repo.contactExists(tx, req.params.id))) throw new AppError('NOT_FOUND');
       const records = await repo.mergeTree(tx, req.params.id);
       const deals = (await repo.dealLinks(tx, records)).map((d) => ({ id: d.id, name: d.name, stage: d.stage, link: linkOf(d), closed: CLOSED.has(d.stage) }));
-      return { contactId: req.params.id, erasable: deals.length === 0, deals, mergedRecords: records.length - 1 };
+      const retainedDocuments = (await repo.retainedDocuments(tx, records)).map(retainedView);
+      const listingDocuments = (await repo.listingDocuments(tx, records)).map((l) => ({ listingId: l.listing_id, address: l.address_line1, documents: l.documents }));
+      return {
+        contactId: req.params.id,
+        erasable: deals.length === 0 && retainedDocuments.length === 0,
+        deals,
+        mergedRecords: records.length - 1,
+        retainedDocuments,
+        mergedInto: await repo.mergedIntoRoot(tx, req.params.id),
+        listingDocuments,
+      };
     }),
   );
 
@@ -79,6 +116,10 @@ async function register(app: FastifyInstance): Promise<void> {
         const records = await repo.mergeTree(tx, req.params.id);
         const deals = await repo.dealLinks(tx, records);
         if (deals.length > 0) return deals;
+        // module 42 (R-DOC-4): a held or retained contact document of the person; the database refuses the same
+        // (DOCUMENT_RETAINED below), this names the documents first (ids, holds and dates only)
+        const retained = await repo.retainedDocuments(tx, records);
+        if (retained.length > 0) throw new AppError('DOCUMENT_RETAINED', { documents: retained.map(({ id, legal_hold, retention_until }) => ({ id, legalHold: legal_hold, retentionUntil: retention_until === null ? null : retention_until.toISOString() })) });
         // in-flight writers of the person's points finish first, so the carry below sees what they added
         await repo.lockPerson(tx, records);
         // an address the carry cannot take (an out-of-scope Meta identity): nothing is erased (the revokes roll back)
