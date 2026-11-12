@@ -113,6 +113,11 @@ export class TwilioTelephony implements TelephonyProvider {
     this.messaging = (opts.messagingBase ?? 'https://messaging.twilio.com').replace(/\/$/, '');
   }
 
+  /** R-TWL-1 (b9 review ownership-data/F4): the kill switch is off, so every send and call would be refused. */
+  liveRequestsOff(): boolean {
+    return this.http.liveOff;
+  }
+
   private creds(a: TelephonyAccount): TwilioCreds {
     // R-TWL-1: refused before the account, the SIDs or the numbers are even looked at
     this.http.assertLive();

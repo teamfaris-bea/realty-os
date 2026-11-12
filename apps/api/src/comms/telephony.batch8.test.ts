@@ -2,7 +2,7 @@
 // hold on the new paths.
 //   R-TWL-7  a reaction text ("Loved “…”") that Twilio flags OptOutType=STOP still revokes (our reaction reading is not a
 //            revoke, so the provider's STOP applies).
-//   R-TWL-1  a photo-only text refused by the kill switch fails with the same honest reason (TELEPHONY_LIVE_OFF) and no
+//   R-TWL-1  a photo-only text refused by the kill switch is blocked in TX1 with the same honest reason (TELEPHONY_LIVE_OFF) and no
 //            request leaves the process.
 //   R-TWL-2  the daily cap counts a photo text (channel mms) like a text.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -50,7 +50,7 @@ describe('batch 8 × telephony safeguards', () => {
     expect((await sendText(agent, b.id, 'Still on?')).body.result).toBe('blocked');
   });
 
-  it('R-TWL-1: a photo-only text refused by the kill switch fails TELEPHONY_LIVE_OFF; no request is made', async () => {
+  it('R-TWL-1 b9 comms ownership-data/F4: a photo-only text refused by the kill switch is blocked TELEPHONY_LIVE_OFF before any touch; no request is made', async () => {
     const agent = w.agents[0]!;
     const c = await ownedContact(agent);
     const id = await uploadId(agent, c.id, png(), 'image/png');
@@ -66,9 +66,9 @@ describe('batch 8 × telephony safeguards', () => {
       providers.telephony = fake;
     }
     expect(calls).toEqual([]);
-    expect(r.body.result).toBe('failed');
+    expect(r.body.result).toBe('blocked'); // b9 review ownership-data/F4: refused in TX1, before any touch
     const m = await messageRow(h, r.body.message!.id);
-    expect([m.status, m.status_reason]).toEqual(['failed', TELEPHONY_LIVE_OFF]);
+    expect([m.status, m.status_reason]).toEqual(['blocked', TELEPHONY_LIVE_OFF]);
     expect(await revokes(c.id)).toBe(0);
   });
 

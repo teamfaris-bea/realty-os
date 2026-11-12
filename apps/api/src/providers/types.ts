@@ -75,6 +75,12 @@ export interface MediaRef {
 }
 
 export interface TelephonyProvider {
+  /**
+   * R-TWL-1 (b9 review ownership-data/F4): true when this adapter refuses every request (the real adapter with
+   * TELEPHONY_LIVE_REQUESTS off). The send-time gate (dispatch / dial TX1) then refuses a text or call before any touch.
+   * Absent (the fakes) = live.
+   */
+  liveRequestsOff?(): boolean;
   createSubaccount(tenantId: string, friendlyName: string): Promise<{ accountRef: string; secret: string }>;
   sendSms(r: SmsRequest): Promise<{ providerRef: string; status: ProviderMessageStatus }>;
   dialCall(r: CallRequest): Promise<{ providerRef: string }>;

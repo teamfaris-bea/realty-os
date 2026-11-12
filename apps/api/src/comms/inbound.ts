@@ -179,7 +179,7 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
     if (agentId && (await msgs.hmacPoints(tx, hmac)).length === 0) {
       // R-TWL-11 (E388): an alert phone has no message row; its text parts are read for a STOP all the same
       if (e.textParts && e.textParts.length > 0) await enqueueTextParts(tx, { agentUserId: agentId, messageRef: e.providerRef, parts: e.textParts });
-      return agentKeyword(tx, actor, ids, e.body, from, hmac, agentId, policy, occurredAt, txNow, (e.optOutType ?? '').toUpperCase() === 'STOP');
+      return agentKeyword(tx, actor, ids, e.body, from, hmac, agentId, policy, occurredAt, txNow, (e.optOutType ?? '').toUpperCase() === 'STOP', e.providerRef);
     }
   }
 
@@ -556,22 +556,32 @@ async function hadOutbound(tx: Tx, contactId: string): Promise<boolean> {
 }
 
 /** E60: keywords from an agent's own alert phone revoke/restore THEIR alert texts (recipient_kind user). */
-async function agentKeyword(tx: Tx, actor: SystemActor, ids: IdGenerator, body: string, from: string, hmac: string, userId: string, policy: Awaited<ReturnType<typeof resolvedPolicy>>['policy'], occurredAt: Instant, now: Instant, providerStop = false): Promise<IngestResult> {
+async function agentKeyword(tx: Tx, actor: SystemActor, ids: IdGenerator, body: string, from: string, hmac: string, userId: string, policy: Awaited<ReturnType<typeof resolvedPolicy>>['policy'], occurredAt: Instant, now: Instant, providerStop = false, providerRef: string | null = null): Promise<IngestResult> {
   const c0 = classifyInbound(body, policy.keywords);
   // R-TWL-7: OptOutType=STOP from the agent's own alert phone stops alert texts like their STOP (never lifts anything)
   const c: InboundClassification = providerStop && c0.kind !== 'stop' && c0.kind !== 'start' ? { kind: 'stop', matched: 'OPTOUTTYPE_STOP', needsReview: false, scope: 'channel' } : c0;
+  // b9 review sends/F4 (R-LSRC-7): an alert phone's text has no message row, so the provider ref that dedupes a contact's
+  // SMS never applies. A re-armed delivery of the same MessageSid records nothing again: one ledger row, one notice, and
+  // a replayed STOP never re-revokes after the agent's later START.
+  const ref = providerRef ? providerRef.slice(0, 64) : null;
+  if (ref && (c.kind === 'stop' || c.kind === 'start')) {
+    const seen = await sql<{ x: boolean }>`
+      SELECT EXISTS (SELECT 1 FROM consent_events WHERE tenant_id = app.tenant_id() AND address_hmac = ${Buffer.from(hmac, 'hex')}
+                       AND channel = 'sms' AND evidence ->> 'providerRef' = ${ref}) AS x`.execute(tx);
+    if (seen.rows[0]?.x) return { kind: 'agent_keyword', userId, classification: c.kind };
+  }
   if (c.kind === 'stop' || c.kind === 'start') {
     await recordConsentEvent(tx, {
       id: ids.next<'ConsentEventId'>(), addressKind: 'phone', addressHmac: hmac, addressHint: hint(from), channel: 'sms', purpose: 'all',
       eventType: c.kind === 'stop' ? 'revoke' : 'resubscribe', level: 'none', source: 'inbound_keyword', occurredAt, contactId: null,
       actor: LEDGER_SYSTEM, disclosureId: null, evidenceObjectId: null, evidenceMessageId: null, evidenceCallId: null, evidenceCallOffsetMs: null,
-      evidence: { recipient: 'user', matched: c.matched ?? c.kind }, imported: false, importRecordId: null, originalProvenance: null,
+      evidence: { recipient: 'user', matched: c.matched ?? c.kind, ...(ref ? { providerRef: ref } : {}) }, imported: false, importRecordId: null, originalProvenance: null,
       revertsEventId: null, expiresAt: null, needsReview: false,
     });
     if (c.kind === 'stop') {
       await audit(tx, actor, { action: 'consent.opt_out_received', entity: { type: 'membership', id: userId }, reason: 'AGENT_ALERT_STOP' });
       for (const admin of await adminUserIds(tx)) {
-        await notifyUser(tx, ids, { userId: admin, kind: SYSTEM_NOTICE, priority: 'normal', title: 'A team member turned off alert texts', body: 'Their alerts now go to push and email only.', subjectType: 'membership', subjectId: userId, dedupeKey: `alert_stop:${userId}:${toIso(now)}` }, now);
+        await notifyUser(tx, ids, { userId: admin, kind: SYSTEM_NOTICE, priority: 'normal', title: 'A team member turned off alert texts', body: 'Their alerts now go to push and email only.', subjectType: 'membership', subjectId: userId, dedupeKey: ref ? `alert_stop:${userId}:${ref}` : `alert_stop:${userId}:${toIso(now)}` }, now);
       }
     }
   }
