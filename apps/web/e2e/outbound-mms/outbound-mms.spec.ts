@@ -15,7 +15,7 @@ import { type Page, expect, test } from 'playwright/test';
 import { phoneProblems } from '../a11y/checks.js';
 import { type MmsStack, type Person, type World, startMmsStack } from './stack.js';
 
-const SHOTS = '/tmp/claude-0/sp/shots';
+const SHOTS = process.env.E2E_SHOTS ?? '/tmp/claude-0/sp/shots';
 const AXE_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice'];
 
 test.describe.configure({ mode: 'serial' });
@@ -100,10 +100,12 @@ async function axe(page: Page): Promise<string[]> {
 test('R-MMS-8: a photo is prepared, uploaded and shown; Remove deletes it; attached again and sent, the outbound bubble shows the photo and its status', async ({ page }) => {
   await signIn(page);
   await openText(page, jane);
-  await expect(page.getByText('Up to 10 photos or videos, 5 MB in all; videos up to 500 KB.')).toBeVisible();
-  await expect(page.getByText("Location is removed from photos and videos before they're sent.")).toBeVisible();
+  // before a pick the limits and location are the camera button's description; the lines show once a file is picked
+  await expect(page.getByRole('button', { name: 'Photo or video' })).toHaveAccessibleDescription(/^Up to 10 photos or videos, 5 MB in all; videos up to 500 KB\. Location is removed/);
   await input(page).setInputFiles({ name: 'kitchen.png', mimeType: 'image/png', buffer: png(800, 600) });
   await expect(tiles(page)).toHaveCount(1);
+  await expect(tray(page).getByText('Up to 10 photos or videos, 5 MB in all; videos up to 500 KB.')).toBeVisible();
+  await expect(tray(page).getByText("Location is removed from photos and videos before they're sent.")).toBeVisible();
   await expect(tiles(page).first().getByText('Ready')).toBeVisible({ timeout: 15_000 });
   // the thumbnail is the prepared JPEG, from an object URL
   const thumb = tiles(page).first().locator('img');
@@ -139,6 +141,42 @@ test('R-MMS-8: a video over 500 KB is refused in words, with its size and the li
   await expect(tray(page).getByRole('alert')).toHaveText('This video is 600.1 KB. A text can carry a video of at most 500 KB. For a longer video, send a link instead.');
   await expect(tiles(page)).toHaveCount(0);
   expect((await stack.fixture<{ n: number }>('/live-uploads')).n).toBe(0);
+});
+
+test('R-MMS-8 (b8 texting ui/F10): on a text thread the sticky compose bar is no taller before a photo is attached, measured at 390 x 844', async ({ page }, info) => {
+  test.skip(info.project.name !== 'phone', 'the phone bar (iPhone 13, 390 x 844)');
+  // iPhone 13's screen; the device profile's viewport is the page area under the browser bar (390 x 664)
+  await page.setViewportSize({ width: 390, height: 844 });
+  await signIn(page);
+  await openText(page, jane);
+  const button = page.getByRole('button', { name: 'Photo or video' });
+  await expect(button).toBeVisible();
+  await expect(tray(page)).toHaveCount(0);
+  const bar = page.locator('[data-sticky]');
+  const box = page.getByRole('textbox', { name: 'Text message' });
+  // let the bar settle (preview, counter), then measure it with the button, and again with the button taken out
+  await page.waitForTimeout(500);
+  const withButton = (await bar.boundingBox())!.height;
+  const b = (await button.boundingBox())!;
+  const t = (await box.boundingBox())!;
+  // the button sits in the text field's row, a 44 px target
+  expect(b.height).toBeGreaterThanOrEqual(44);
+  expect(b.width).toBeGreaterThanOrEqual(44);
+  expect(b.y).toBeGreaterThanOrEqual(t.y - 1);
+  expect(b.y + b.height).toBeLessThanOrEqual(t.y + t.height + 1);
+  const handle = await button.elementHandle();
+  await handle!.evaluate((el) => ((el as HTMLElement).style.display = 'none'));
+  const withoutButton = (await bar.boundingBox())!.height;
+  await handle!.evaluate((el) => ((el as HTMLElement).style.display = ''));
+  expect(withButton).toBe(withoutButton);
+  // and the conversation keeps most of the phone: the bar's top is well below the header
+  // (at a68eb12 the idle tray made this bar 427 px, its top at 233 px; now about 296 px, its top near 492 px)
+  const barTop = (await bar.boundingBox())!.y;
+  expect(barTop).toBeGreaterThanOrEqual(420);
+  info.annotations.push({ type: 'measure', description: `compose bar ${withButton}px (without the camera button ${withoutButton}px); bar top at ${barTop}px of 844` });
+  console.log(`ui/F10 measure: compose bar ${withButton}px, without the camera button ${withoutButton}px, bar top ${barTop}px of 844`);
+  mkdirSync(SHOTS, { recursive: true });
+  await page.screenshot({ path: `${SHOTS}/compose-idle-text-thread-phone.png` });
 });
 
 test('R-MMS-8 R-PAR-12: a person blocked by a STOP sent from a phone the agent removed has no Photo or video button, and the reason is shown', async ({ page }) => {
