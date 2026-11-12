@@ -3,11 +3,13 @@
 import { randomUUID } from 'node:crypto';
 import { withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
+import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import type { StandaloneJobContext } from '../worker/types.js';
 import { systemActor } from '../worker/systemActor.js';
 import { reconcileMarketing } from './handlers.js';
+import { DELETE_POST_TIMEOUT_MS, type PublishDeps, retractAllOf, retractPublication } from './publish.js';
 import { publishDepsOf } from './routes.js';
 import { freshReauth } from '../admin/testing.js';
 import { type MarketingWorld, type PieceBody, PNG_1X1, approve, call, clearFairHousing, connectAccount, generateAll, getPiece, marketingWorld, teamListing, uploadImage } from './testing.js';
@@ -34,6 +36,8 @@ beforeEach(() => {
   s.nextOutcome = 'published';
   s.lookup = 'supported';
   s.deletion = { facebook_page: 'supported', instagram_business: 'supported', gbp_location: 'supported' };
+  s.beforePublish = null;
+  s.afterDelete = null;
 });
 
 /** An approved social post with one image, on a fresh listing. */
@@ -328,7 +332,6 @@ describe('review fixes (publishing)', () => {
     const p = await approvedPost();
     const pub = (await publish(p.id, page.connectionId)).body.publication!;
     const deps = publishDepsOf(h.app.platform);
-    const { retractPublication } = await import('./publish.js');
     const out = await Promise.all([retractPublication(deps, w.tenantId, pub.id, null), retractPublication(deps, w.tenantId, pub.id, null)]);
     expect(out.map((o) => o.outcome).filter((o) => o === 'retracted')).toHaveLength(1);
     expect(out.map((o) => o.outcome)).not.toContain('remove_yourself');
@@ -357,4 +360,402 @@ describe('review fixes (publishing)', () => {
     expect(after.status).toBe('unknown');
     expect((after.updated_at as Date).getTime()).toBeGreaterThan(before.getTime());
   });
+});
+
+// ---- races, held deterministically (no luck): an injected provider hook or a held transaction fixes the interleaving ----
+
+/** A promise the test opens by hand. */
+function latch(): { wait: Promise<void>; open: () => void } {
+  let open!: () => void;
+  const wait = new Promise<void>((r) => (open = r));
+  return { wait, open };
+}
+
+interface Backend {
+  pid: number;
+  q: string;
+  app: string;
+  wait_event_type: string | null;
+  blockers: number[];
+}
+const backends = async () =>
+  (await h.su.query<Backend>(
+    `SELECT pid, wait_event_type, query AS q, application_name AS app, pg_blocking_pids(pid) AS blockers FROM pg_stat_activity
+      WHERE datname = current_database() AND backend_type = 'client backend' AND pid <> pg_backend_pid() AND state <> 'idle'`,
+  )).rows;
+async function waitFor(label: string, pred: (b: Backend) => boolean): Promise<Backend> {
+  for (let i = 0; i < 400; i++) {
+    const hit = (await backends()).find(pred);
+    if (hit) return hit;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  throw new Error(`timed out waiting for ${label}: ${JSON.stringify(await backends())}`);
+}
+
+const postIdOf = async (publicationId: string): Promise<string> => (await h.su.query('SELECT external_post_id FROM marketing_publications WHERE id = $1', [publicationId])).rows[0].external_post_id as string;
+const removeCards = async (pieceId: string, publicationId: string): Promise<number> =>
+  (await h.su.query("SELECT count(*)::int AS n FROM priority_feed_items f, jsonb_array_elements(f.reasons) x WHERE f.dedupe_key = $1 AND x->>'code' = $2", [`marketing:${pieceId}`, `REMOVE_POST_YOURSELF:${publicationId}`])).rows[0].n as number;
+const claimOf = async (publicationId: string) => (await h.su.query('SELECT status, retract_claim_id, retract_claimed_at FROM marketing_publications WHERE id = $1', [publicationId])).rows[0] as { status: string; retract_claim_id: string | null; retract_claimed_at: Date | null };
+/** As the system (through RLS and the 0025/0054 guard), exactly as publish.ts writes. */
+const asSystemTx = <T>(fn: Parameters<typeof withTenantTx<T>>[1]) => withTenantTx(systemActor(w.tenantId, 'provider'), fn, { db: h.database });
+/** "Remove it yourself" reasons for this publication on a card the agent still has open. */
+const openRemoveCards = async (pieceId: string, publicationId: string): Promise<number> =>
+  (await h.su.query("SELECT count(*)::int AS n FROM priority_feed_items f, jsonb_array_elements(f.reasons) x WHERE f.dedupe_key = $1 AND f.state IN ('open','snoozed') AND x->>'code' = $2", [`marketing:${pieceId}`, `REMOVE_POST_YOURSELF:${publicationId}`])).rows[0].n as number;
+/** A fixture clock: the claim is ten minutes old (the guard stamps claim times, so it is bypassed for the fixture only). */
+const ageClaim = (publicationId: string) => h.su.query(`SET session_replication_role = replica; UPDATE marketing_publications SET retract_claimed_at = now() - interval '10 minutes' WHERE id = '${publicationId}'; SET session_replication_role = origin;`);
+const takeClaim = (publicationId: string) => asSystemTx((tx) => sql`UPDATE marketing_publications SET retract_claim_id = ${randomUUID()}, retract_claimed_at = now() WHERE id = ${publicationId}`.execute(tx));
+/** An 'unknown' publication: the provider made the post but its answer was lost (E227). Returns the provider's post id. */
+async function unknownPost(pieceId: string): Promise<{ id: string; ref: string }> {
+  social().nextOutcome = 'timeout';
+  const pub = (await publish(pieceId, page.connectionId)).body.publication!;
+  expect(pub.status).toBe('unknown');
+  const ref = [...social().posts.entries()].find(([, v]) => v.pieceId === pieceId && v.externalAccountId === page.accountId)![0];
+  return { id: pub.id, ref };
+}
+
+/**
+ * PublishDeps whose database runs `between` once, after the call's `after`-th transaction committed and before the
+ * next one begins (a test hook on the transaction builder; every query still runs through withTenantTx and RLS).
+ */
+function depsBetweenTransactions(after: number, between: () => Promise<void>): PublishDeps {
+  const deps = publishDepsOf(h.app.platform);
+  const k = deps.db.kysely;
+  let n = 0;
+  const kysely = new Proxy(k, {
+    get(target, prop) {
+      if (prop === 'transaction') {
+        return () => {
+          n += 1;
+          const real = target.transaction();
+          if (n !== after + 1) return real;
+          // runTx's shape: transaction().setIsolationLevel(level).execute(fn)
+          return {
+            setIsolationLevel: (l: 'read committed') => ({
+              execute: async (fn: never) => {
+                await between();
+                return real.setIsolationLevel(l).execute(fn);
+              },
+            }),
+          };
+        };
+      }
+      const v = Reflect.get(target, prop, target) as unknown;
+      return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+    },
+  });
+  return { ...deps, db: { ...deps.db, kysely } };
+}
+
+/**
+ * Runs retractPublication (as the system) on an 'unknown' publication and, after its first transaction read the row
+ * as 'unknown' and before its last one, commits the provider's confirmation (reconcile's lookup or a late answer:
+ * 'published' with the post id) and, when `claim` is given, another retraction's claim.
+ */
+async function retractWhileConfirmed(publicationId: string, ref: string, claim: string | null): Promise<Awaited<ReturnType<typeof retractPublication>>> {
+  let confirmed = false;
+  const deps = depsBetweenTransactions(1, async () => {
+    expect(await claimOf(publicationId)).toMatchObject({ status: 'unknown', retract_claim_id: null });
+    // fixture: one statement for what two system transactions write (the guard is bypassed; the CHECKs still hold)
+    const r = await h.su.query(
+      `SET session_replication_role = replica;
+       UPDATE marketing_publications SET status = 'published', external_post_id = '${ref}', published_at = now(), error_code = NULL,
+              retract_claim_id = ${claim === null ? 'NULL' : `'${claim}'`}, retract_claimed_at = ${claim === null ? 'NULL' : 'now()'}
+        WHERE id = '${publicationId}' AND status = 'unknown';
+       SET session_replication_role = origin;`,
+    );
+    expect((r as unknown as pg.QueryResult[])[1]!.rowCount).toBe(1);
+    confirmed = true;
+  });
+  const out = await retractPublication(deps, w.tenantId, publicationId, null);
+  expect(confirmed).toBe(true);
+  return out;
+}
+
+describe('R-MKT-12 R-GATE-15 races, held deterministically', () => {
+  it('R-MKT-12: a retraction that starts while another is held after the provider deleted the post never calls the provider and raises no "remove it yourself" card', async () => {
+    const p = await approvedPost();
+    const pub = (await publish(p.id, page.connectionId)).body.publication!;
+    const ref = await postIdOf(pub.id);
+    const deps = publishDepsOf(h.app.platform);
+    const gate = latch();
+    const deleted = latch();
+    social().afterDelete = async (d, r) => {
+      if (d.providerRef !== ref) return;
+      social().afterDelete = null;
+      expect(r.kind).toBe('deleted');
+      deleted.open();
+      await gate.wait; // hold the first caller between the provider's confirmation and its last transaction
+    };
+    let second: Awaited<ReturnType<typeof retractPublication>>;
+    try {
+      const first = retractPublication(deps, w.tenantId, pub.id, null);
+      await deleted.wait;
+      second = await retractPublication(deps, w.tenantId, pub.id, null);
+      gate.open();
+      expect((await first).outcome).toBe('retracted');
+    } finally {
+      social().afterDelete = null;
+      gate.open();
+    }
+    expect(second.outcome).toBe('in_progress');
+    expect(social().deletions.filter((d) => d.providerRef === ref)).toHaveLength(1);
+    expect(await removeCards(p.id, pub.id)).toBe(0);
+    expect(await claimOf(pub.id)).toMatchObject({ status: 'retracted', retract_claim_id: null, retract_claimed_at: null });
+    // the post is down now: the single-post route says there is nothing to take down (409), and never calls the provider
+    const again = await call(w.agent, 'POST', `/marketing-pieces/${p.id}/retract`, { publicationId: pub.id });
+    expect([again.status, again.code]).toEqual([409, 'PUBLICATION_NOT_LIVE']);
+    expect(social().deletions.filter((d) => d.providerRef === ref)).toHaveLength(1);
+  });
+
+  it('R-MKT-12: while one retraction holds its claim, the retract route answers PUBLICATION_RETRACTING and the reconcile pass leaves the post to it', async () => {
+    const p = await approvedPost();
+    const pub = (await publish(p.id, page.connectionId)).body.publication!;
+    const deps = publishDepsOf(h.app.platform);
+    const gate = latch();
+    const inCall = latch();
+    social().afterDelete = async () => {
+      social().afterDelete = null;
+      inCall.open();
+      await gate.wait;
+    };
+    try {
+      const first = retractPublication(deps, w.tenantId, pub.id, null);
+      await inCall.wait;
+      const n = social().deletions.length;
+      const r = await call(w.agent, 'POST', `/marketing-pieces/${p.id}/retract`, { publicationId: pub.id });
+      expect([r.status, r.code]).toEqual([409, 'PUBLICATION_RETRACTING']);
+      // take-down-all says the post is already coming down (never "nothing to take down")
+      const all = await call<{ retracted: number; removeYourself: number; inProgress: number }>(w.agent, 'POST', `/marketing-pieces/${p.id}/retract`, {});
+      expect([all.status, all.body.retracted, all.body.removeYourself, all.body.inProgress]).toEqual([200, 0, 0, 1]);
+      expect((await call(w.agent, 'PATCH', `/listings/${p.listingId}`, { status: 'sold' })).status).toBe(200);
+      // the reconcile pass picks the post (sold listing) and leaves it to the claim holder
+      const s = await reconcileMarketing(jobCtx(), deps);
+      expect([s.retracted, s.removeYourself, s.inProgress]).toEqual([0, 0, 1]);
+      expect(social().deletions.length).toBe(n);
+      gate.open();
+      expect((await first).outcome).toBe('retracted');
+    } finally {
+      social().afterDelete = null;
+      gate.open();
+    }
+    expect(await removeCards(p.id, pub.id)).toBe(0);
+  });
+
+  it('R-MKT-12: a claim left by a retraction that died is taken again only after the claim window, and the reconcile pass then retracts the post', async () => {
+    const p = await approvedPost();
+    const pub = (await publish(p.id, page.connectionId)).body.publication!;
+    const ref = await postIdOf(pub.id);
+    const deps = publishDepsOf(h.app.platform);
+    // the claim step committed, then the process died before the provider call (no deletion, no last transaction)
+    await asSystemTx((tx) => sql`UPDATE marketing_publications SET retract_claim_id = ${randomUUID()}, retract_claimed_at = now() WHERE id = ${pub.id}`.execute(tx));
+    const n = social().deletions.length;
+    // a live claim is never taken: no second provider call while the first may still be in flight
+    expect((await retractPublication(deps, w.tenantId, pub.id, null)).outcome).toBe('in_progress');
+    expect((await call(w.agent, 'PATCH', `/listings/${p.listingId}`, { status: 'sold' })).status).toBe(200);
+    expect((await reconcileMarketing(jobCtx(), deps)).retracted).toBe(0);
+    expect(social().deletions.length).toBe(n);
+    // a fixture clock: the claim is ten minutes old (the guard stamps claim times, so it is bypassed for the fixture only)
+    await h.su.query(`SET session_replication_role = replica; UPDATE marketing_publications SET retract_claimed_at = now() - interval '10 minutes' WHERE id = '${pub.id}'; SET session_replication_role = origin;`);
+    const s = await reconcileMarketing(jobCtx(), deps);
+    expect(s.retracted).toBe(1);
+    expect(social().deletions.filter((d) => d.providerRef === ref)).toHaveLength(1);
+    expect(social().livePosts(page.accountId)).not.toContain(ref);
+    expect(await claimOf(pub.id)).toMatchObject({ status: 'retracted', retract_claim_id: null, retract_claimed_at: null });
+    expect(await removeCards(p.id, pub.id)).toBe(0);
+  });
+
+  it('R-MKT-12: a retraction the provider cannot do releases its claim with the card, so a later request asks the provider again', async () => {
+    const p = await approvedPost();
+    const pub = (await publish(p.id, insta.connectionId)).body.publication!;
+    social().deletion.instagram_business = 'unsupported';
+    const deps = publishDepsOf(h.app.platform);
+    expect((await retractPublication(deps, w.tenantId, pub.id, null)).outcome).toBe('remove_yourself');
+    expect(await claimOf(pub.id)).toMatchObject({ status: 'published', retract_claim_id: null, retract_claimed_at: null });
+    expect(await removeCards(p.id, pub.id)).toBe(1);
+    social().deletion.instagram_business = 'supported';
+    const n = social().deletions.length;
+    expect((await retractPublication(deps, w.tenantId, pub.id, null)).outcome).toBe('retracted');
+    expect(social().deletions.length).toBe(n + 1);
+    // the provider took it down after all: the card no longer sends the agent to a post that is gone
+    expect(await openRemoveCards(p.id, pub.id)).toBe(0);
+  });
+
+  it('R-MKT-12: a confirmed deletion takes only its own post off the "remove it yourself" card; the card closes with its last post', async () => {
+    const p = await approvedPost();
+    const fb = (await publish(p.id, page.connectionId)).body.publication!;
+    const ig = (await publish(p.id, insta.connectionId)).body.publication!;
+    social().deletion = { facebook_page: 'unsupported', instagram_business: 'unsupported', gbp_location: 'supported' };
+    const deps = publishDepsOf(h.app.platform);
+    expect((await retractAllOf(deps, w.tenantId, p.id, null)).removeYourself).toBe(2);
+    // the piece's remove-it-yourself card (its review card closed at approval)
+    const card = async () =>
+      (await h.su.query("SELECT state, reasons FROM priority_feed_items f WHERE dedupe_key = $1 AND EXISTS (SELECT 1 FROM jsonb_array_elements(f.reasons) x WHERE x->>'code' LIKE 'REMOVE_POST_YOURSELF:%') ORDER BY created_at", [`marketing:${p.id}`])).rows as { state: string; reasons: { code: string }[] }[];
+    expect((await card()).map((c) => [c.state, c.reasons.map((x) => x.code).sort()])).toEqual([['open', [`REMOVE_POST_YOURSELF:${fb.id}`, `REMOVE_POST_YOURSELF:${ig.id}`].sort()]]);
+    social().deletion.facebook_page = 'supported';
+    expect((await retractPublication(deps, w.tenantId, fb.id, null)).outcome).toBe('retracted');
+    expect((await card()).map((c) => [c.state, c.reasons.map((x) => x.code)])).toEqual([['open', [`REMOVE_POST_YOURSELF:${ig.id}`]]]);
+    social().deletion.instagram_business = 'supported';
+    expect((await retractPublication(deps, w.tenantId, ig.id, null)).outcome).toBe('retracted');
+    expect((await card()).map((c) => c.state)).toEqual(['done']);
+    expect((await getPiece(w.agent, p.id)).publications.map((x) => x.status)).toEqual(['retracted', 'retracted']);
+  });
+
+  it('R-MKT-12: a person\'s retraction that died after its claim, on a listing still for sale, is finished by the reconcile pass once the claim window has passed', async () => {
+    const p = await approvedPost();
+    const pub = (await publish(p.id, page.connectionId)).body.publication!;
+    const ref = await postIdOf(pub.id);
+    const deps = publishDepsOf(h.app.platform);
+    // the person's claim step committed, then the process died (no provider call, no last transaction)
+    await takeClaim(pub.id);
+    const n = social().deletions.length;
+    // while the claim is live the pass leaves it alone (the retraction may still be in flight)
+    const s1 = await reconcileMarketing(jobCtx(), deps);
+    expect([s1.retracted, s1.removeYourself]).toEqual([0, 0]);
+    expect(social().deletions.length).toBe(n);
+    await ageClaim(pub.id);
+    const s2 = await reconcileMarketing(jobCtx(), deps);
+    expect([s2.retracted, s2.removeYourself]).toEqual([1, 0]);
+    expect(social().deletions.filter((d) => d.providerRef === ref)).toHaveLength(1);
+    expect(social().livePosts(page.accountId)).not.toContain(ref);
+    expect(await claimOf(pub.id)).toMatchObject({ status: 'retracted', retract_claim_id: null, retract_claimed_at: null });
+    expect(await removeCards(p.id, pub.id)).toBe(0);
+    // the listing is still for sale
+    expect((await h.su.query('SELECT status FROM listings WHERE id = $1', [p.listingId])).rows[0].status).not.toMatch(/^(sold|withdrawn|expired)$/);
+  });
+
+  it('R-MKT-12: a died retraction is finished by the reconcile pass even when an earlier attempt already raised the card, and the card closes', async () => {
+    const p = await approvedPost();
+    const pub = (await publish(p.id, insta.connectionId)).body.publication!;
+    const deps = publishDepsOf(h.app.platform);
+    social().deletion.instagram_business = 'unsupported';
+    expect((await retractPublication(deps, w.tenantId, pub.id, null)).outcome).toBe('remove_yourself');
+    expect(await openRemoveCards(p.id, pub.id)).toBe(1);
+    // the agent asks again; that retraction's process dies after its claim
+    social().deletion.instagram_business = 'supported';
+    await takeClaim(pub.id);
+    await ageClaim(pub.id);
+    const s = await reconcileMarketing(jobCtx(), deps);
+    expect([s.retracted, s.removeYourself]).toEqual([1, 0]);
+    expect(await claimOf(pub.id)).toMatchObject({ status: 'retracted', retract_claim_id: null });
+    expect(await openRemoveCards(p.id, pub.id)).toBe(0);
+  });
+
+  it('R-MKT-12: a provider deletion that never answers is given up after a bound well inside the claim window: the card is raised and the claim released', async () => {
+    const window = (await h.su.query('SELECT extract(epoch FROM app.marketing_retract_claim_window()) * 1000 AS ms')).rows[0].ms as number;
+    expect(DELETE_POST_TIMEOUT_MS).toBeGreaterThan(0);
+    expect(DELETE_POST_TIMEOUT_MS * 4).toBeLessThanOrEqual(Number(window));
+    const p = await approvedPost();
+    const pub = (await publish(p.id, page.connectionId)).body.publication!;
+    const hang = latch();
+    social().afterDelete = async () => {
+      social().afterDelete = null;
+      await hang.wait; // the provider never answers
+    };
+    try {
+      const t0 = Date.now();
+      const out = await retractPublication({ ...publishDepsOf(h.app.platform), deleteTimeoutMs: 300 }, w.tenantId, pub.id, null);
+      expect(out.outcome).toBe('remove_yourself');
+      expect(Date.now() - t0).toBeLessThan(5_000);
+    } finally {
+      social().afterDelete = null;
+      hang.open();
+    }
+    expect(await claimOf(pub.id)).toMatchObject({ status: 'published', retract_claim_id: null, retract_claimed_at: null });
+    expect(await openRemoveCards(p.id, pub.id)).toBe(1);
+  }, 15_000);
+
+  it('R-MKT-12: a claim carries the time it was taken, not the start of a transaction that waited first', async () => {
+    const p = await approvedPost();
+    const pub = (await publish(p.id, page.connectionId)).body.publication!;
+    const started = await asSystemTx(async (tx) => {
+      const t = (await sql<{ t: Date }>`SELECT now() AS t`.execute(tx)).rows[0]!.t;
+      await sql`SELECT pg_sleep(1.2)`.execute(tx); // e.g. a wait for the row lock
+      await sql`UPDATE marketing_publications SET retract_claim_id = ${randomUUID()}, retract_claimed_at = now() WHERE id = ${pub.id}`.execute(tx);
+      return t;
+    });
+    expect((await claimOf(pub.id)).retract_claimed_at!.getTime() - started.getTime()).toBeGreaterThanOrEqual(1_000);
+  });
+
+  it('R-MKT-12: an "unknown" post that is confirmed and claimed by another retraction while this one decides is left to that one: no card, no provider call', async () => {
+    const p = await approvedPost();
+    const u = await unknownPost(p.id);
+    const n = social().deletions.length;
+    const out = await retractWhileConfirmed(u.id, u.ref, randomUUID());
+    expect(out.outcome).toBe('in_progress');
+    expect(await removeCards(p.id, u.id)).toBe(0);
+    expect(social().deletions.length).toBe(n);
+  });
+
+  it('R-MKT-12: an "unknown" post that is confirmed while its retraction decides is deleted at the provider, not handed to the agent', async () => {
+    const p = await approvedPost();
+    const u = await unknownPost(p.id);
+    const out = await retractWhileConfirmed(u.id, u.ref, null);
+    expect(out.outcome).toBe('retracted');
+    expect(social().deletions.filter((d) => d.providerRef === u.ref)).toHaveLength(1);
+    expect(social().livePosts(page.accountId)).not.toContain(u.ref);
+    expect(await removeCards(p.id, u.id)).toBe(0);
+    expect(await claimOf(u.id)).toMatchObject({ status: 'retracted', retract_claim_id: null });
+  });
+
+  it('R-MKT-12: the DB keeps the retraction claim the system\'s: never born with the row, only on a provider-confirmed post, never replaced while live, its time the DB\'s', async () => {
+    const p = await approvedPost();
+    // born with a claim: refused like any other outcome on insert
+    await expect(withTenantTx(w.agent.actor(), (tx) => sql`INSERT INTO marketing_publications (tenant_id, id, piece_id, connection_id, status, requested_by_user_id, retract_claim_id, retract_claimed_at)
+        VALUES (app.tenant_id(), ${randomUUID()}, ${p.id}, ${page.connectionId}, 'publishing', ${w.agent.userId}, ${randomUUID()}, now())`.execute(tx), { db: h.database })).rejects.toThrow(/PUBLICATION_BORN_PUBLISHING/);
+    // a claim on an attempt the provider never confirmed
+    const attempt = randomUUID();
+    await insertAsPerson(attempt, p.id, insta.connectionId);
+    await expect(asSystemTx((tx) => sql`UPDATE marketing_publications SET retract_claim_id = ${randomUUID()}, retract_claimed_at = now() WHERE id = ${attempt}`.execute(tx))).rejects.toThrow(/PUBLICATION_RETRACT_CLAIM:/);
+    // a provider-confirmed post: one claim; a second one while it is live is refused; the claim time is the DB's
+    const pub = (await publish(p.id, page.connectionId)).body.publication!;
+    await asSystemTx((tx) => sql`UPDATE marketing_publications SET retract_claim_id = ${randomUUID()}, retract_claimed_at = now() - interval '1 hour' WHERE id = ${pub.id}`.execute(tx));
+    const c1 = await claimOf(pub.id);
+    expect(Date.now() - c1.retract_claimed_at!.getTime()).toBeLessThan(60_000);
+    await expect(asSystemTx((tx) => sql`UPDATE marketing_publications SET retract_claim_id = ${randomUUID()}, retract_claimed_at = now() WHERE id = ${pub.id}`.execute(tx))).rejects.toThrow(/PUBLICATION_RETRACT_CLAIMED/);
+    await expect(asSystemTx((tx) => sql`UPDATE marketing_publications SET retract_claimed_at = now() - interval '1 hour' WHERE id = ${pub.id}`.execute(tx))).rejects.toThrow(/PUBLICATION_RETRACT_CLAIM:/);
+    // a person never writes it, even an Owner (RLS: the system-only UPDATE policy; the guard behind it)
+    const byOwner = await withTenantTx(w.owner.actor(), (tx) => sql`UPDATE marketing_publications SET retract_claim_id = NULL, retract_claimed_at = NULL WHERE id = ${pub.id}`.execute(tx), { db: h.database });
+    expect(Number(byOwner.numAffectedRows ?? 0)).toBe(0);
+    expect((await claimOf(pub.id)).retract_claim_id).toBe(c1.retract_claim_id);
+    // a stale claim may be taken again
+    await h.su.query(`SET session_replication_role = replica; UPDATE marketing_publications SET retract_claimed_at = now() - interval '10 minutes' WHERE id = '${pub.id}'; SET session_replication_role = origin;`);
+    const c2 = randomUUID();
+    await asSystemTx((tx) => sql`UPDATE marketing_publications SET retract_claim_id = ${c2}, retract_claimed_at = now() WHERE id = ${pub.id}`.execute(tx));
+    expect((await claimOf(pub.id)).retract_claim_id).toBe(c2);
+  });
+
+  it('R-MKT-12: a tap whose TX1 holds the piece while the first tap records its confirmed post is refused (409 PUBLICATION_ALREADY_LIVE), never deadlocked into a 500', async () => {
+    const p = await approvedPost();
+    const n = social().published.length;
+    const locker = new pg.Client({ connectionString: h.testDb.ownerUrl, application_name: 'publish-race-locker' });
+    await locker.connect();
+    let second = null as ReturnType<typeof publish> | null;
+    social().beforePublish = async () => {
+      social().beforePublish = null;
+      // the first tap's TX1 committed its 'publishing' row. Hold the second tap's TX1 after it locked the piece (its
+      // next read, platform:fair_housing, waits on the table lock) and before its INSERT
+      await locker.query('BEGIN');
+      await locker.query('LOCK TABLE jurisdiction_packs IN ACCESS EXCLUSIVE MODE');
+      second = publish(p.id, page.connectionId);
+      await waitFor('the second TX1 at the pack lock', (b) => b.wait_event_type === 'Lock' && /platform_cleared/.test(b.q));
+      await expect(h.su.query('SELECT 1 FROM marketing_pieces WHERE id = $1 FOR KEY SHARE NOWAIT', [p.id])).rejects.toThrow(/could not obtain lock/);
+    };
+    try {
+      const first = publish(p.id, page.connectionId);
+      // the first tap's TX2 (as the system) waits for the piece the second tap's TX1 holds
+      await waitFor('the first TX2 at the piece', (b) => b.wait_event_type === 'Lock' && /marketing_pieces/.test(b.q) && b.app !== 'publish-race-locker' && !/platform_cleared/.test(b.q));
+      // past deadlock_timeout (1 s): that wait's one deadlock check has run and found no cycle yet
+      await new Promise((r) => setTimeout(r, 1_300));
+      await locker.query('COMMIT');
+      const [a, b] = await Promise.all([first, second!]);
+      expect([a.status, a.body.publication?.status]).toEqual([200, 'published']);
+      expect([b.status, b.code]).toEqual([409, 'PUBLICATION_ALREADY_LIVE']);
+    } finally {
+      social().beforePublish = null;
+      await locker.query('ROLLBACK').catch(() => undefined);
+      await locker.end();
+    }
+    expect(social().published.length).toBe(n + 1);
+    expect((await h.su.query("SELECT count(*)::int AS n FROM marketing_publications WHERE piece_id = $1 AND status IN ('publishing','published','unknown')", [p.id])).rows[0].n).toBe(1);
+  }, 30_000);
 });

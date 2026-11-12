@@ -31,6 +31,13 @@ export const TRIGGER_RULES: Readonly<Record<TriggerKind, { intents: readonly Ste
 const AUTONOMOUS = [...AUTONOMOUS_ELIGIBLE] as [ActionCategory, ...ActionCategory[]];
 const MAX_TRIGGER_OFFSET = 60 * 24 * 3600;
 
+/**
+ * deal_contacts roles (0018) a `deal_date_upcoming` step may name as its recipients (module 31, R-TXN-4).
+ * Approved content: a deal-date update goes only to the deal's contacts in one of these roles.
+ */
+export const DEAL_CONTACT_ROLES = ['buyer', 'seller', 'co_buyer', 'co_seller', 'other', 'lender', 'title', 'attorney'] as const;
+export type DealContactRole = (typeof DEAL_CONTACT_ROLES)[number];
+
 const TriggerStepInner = z.strictObject({
   trigger: z.enum(TRIGGER_KINDS),
   stepKey: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
@@ -44,6 +51,8 @@ const TriggerStepInner = z.strictObject({
   subject: z.string().min(1).max(200).optional(),
   slots: z.array(z.enum(SLOT_NAMES)).max(SLOT_NAMES.length),
   maxLength: z.number().int().min(20).max(10_000),
+  /** `deal_date_upcoming` only (required there, refused elsewhere): the deal roles that receive it (R-TXN-4). */
+  roles: z.array(z.enum(DEAL_CONTACT_ROLES)).min(1).max(DEAL_CONTACT_ROLES.length).optional(),
 });
 export type TriggerStep = z.infer<typeof TriggerStepInner>;
 export const TriggerStepSchema: z.ZodType<TriggerStep> = TriggerStepInner;
@@ -141,6 +150,16 @@ export function validatePlaybookContent(raw: unknown, opts: { kind: PlaybookKind
     if (!r.success) {
       for (const e of r.error.issues) issues.push({ index, code: 'SCHEMA', detail: e.path.join('.') || e.code });
       return;
+    }
+    // R-TXN-4 (module 31): a deal-date update names its recipients and goes out at the date's stored reminder
+    // time (reminder_at, computed at confirm time), so its offset is 0; no other trigger has recipients by role.
+    // Reported as SCHEMA issues with the field as detail (ValidationCode stays unchanged).
+    if (r.data.trigger === 'deal_date_upcoming') {
+      if (r.data.roles === undefined) issues.push({ index, stepKey: r.data.stepKey, code: 'SCHEMA', detail: 'roles' });
+      else if (new Set(r.data.roles).size !== r.data.roles.length) issues.push({ index, stepKey: r.data.stepKey, code: 'SCHEMA', detail: 'roles duplicate' });
+      if (r.data.offsetSeconds !== 0) issues.push({ index, stepKey: r.data.stepKey, code: 'SCHEMA', detail: 'offsetSeconds' });
+    } else if (r.data.roles !== undefined) {
+      issues.push({ index, stepKey: r.data.stepKey, code: 'SCHEMA', detail: 'roles' });
     }
     parsed.push(r.data);
     if (!TRIGGER_RULES[r.data.trigger].intents.includes(r.data.intent)) issues.push({ index, stepKey: r.data.stepKey, code: 'TRIGGER_INTENT_MISMATCH', detail: `${r.data.trigger}/${r.data.intent}` });

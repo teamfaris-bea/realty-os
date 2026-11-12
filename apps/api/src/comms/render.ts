@@ -54,7 +54,7 @@ export const EMAIL_REF_HEADER = 'X-Realty-Ref';
 export function renderHumanBody(body: string, o: { channel: 'sms' | 'email'; purpose: 'marketing' | 'informational'; identity: RenderIdentity; unsubscribe: string | null; signature?: string | null }): string {
   const text = body.trim();
   if (o.channel === 'sms') {
-    if (o.purpose === 'marketing' && !containsName(text, o.identity.brokerageLegalName)) return `${text}\n— ${o.identity.brokerageLegalName}`;
+    if (o.purpose === 'marketing' && !containsName(text, o.identity.brokerageLegalName)) return text === '' ? `— ${o.identity.brokerageLegalName}` : `${text}\n— ${o.identity.brokerageLegalName}`;
     return text;
   }
   const footer = [o.identity.brokerageLegalName, ...(o.identity.postalAddress ? [o.identity.postalAddress] : [])];

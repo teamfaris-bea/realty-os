@@ -1405,6 +1405,8 @@ export interface MarketingPublicationsTable {
   retracted_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+  retract_claim_id: string | null;
+  retract_claimed_at: Timestamp | null;
 }
 
 /** public.memberships (table) */
@@ -1445,6 +1447,19 @@ export interface MessageMediaSkippedTable {
   position: number;
   reason: string;
   declared_type: string | null;
+  created_at: Generated<Timestamp>;
+}
+
+/** public.message_reactions (table) */
+export interface MessageReactionsTable {
+  tenant_id: string;
+  id: string;
+  message_id: string;
+  target_message_id: string;
+  action: string;
+  reaction: string;
+  emoji: string | null;
+  whole_text_reading: string;
   created_at: Generated<Timestamp>;
 }
 
@@ -1613,6 +1628,19 @@ export interface NotificationsTable {
   created_at: Generated<Timestamp>;
   read_at: Timestamp | null;
   expires_at: Timestamp | null;
+}
+
+/** public.outbound_media_uploads (table) */
+export interface OutboundMediaUploadsTable {
+  tenant_id: string;
+  id: string;
+  contact_id: string;
+  uploaded_by_user_id: string;
+  object_id: string;
+  content_type: string;
+  byte_size: Int8;
+  created_at: Generated<Timestamp>;
+  expires_at: Timestamp;
 }
 
 /** public.ownership_command_rejections (table) */
@@ -2649,6 +2677,7 @@ export interface DB {
   memberships: MembershipsTable;
   message_media: MessageMediaTable;
   message_media_skipped: MessageMediaSkippedTable;
+  message_reactions: MessageReactionsTable;
   message_search_tokens: MessageSearchTokensTable;
   message_status_events: MessageStatusEventsTable;
   message_templates: MessageTemplatesTable;
@@ -2659,6 +2688,7 @@ export interface DB {
   notification_deliveries: NotificationDeliveriesTable;
   notification_preferences: NotificationPreferencesTable;
   notifications: NotificationsTable;
+  outbound_media_uploads: OutboundMediaUploadsTable;
   ownership_command_rejections: OwnershipCommandRejectionsTable;
   phone_numbers: PhoneNumbersTable;
   playbook_approvals: PlaybookApprovalsTable;
@@ -2804,6 +2834,7 @@ export const TABLE_NAMES = [
   'memberships',
   'message_media',
   'message_media_skipped',
+  'message_reactions',
   'message_search_tokens',
   'message_status_events',
   'message_templates',
@@ -2814,6 +2845,7 @@ export const TABLE_NAMES = [
   'notification_deliveries',
   'notification_preferences',
   'notifications',
+  'outbound_media_uploads',
   'ownership_command_rejections',
   'phone_numbers',
   'playbook_approvals',

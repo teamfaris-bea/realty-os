@@ -158,13 +158,15 @@ export interface PublicationRow {
   requested_at: Date;
   published_at: Date | null;
   retracted_at: Date | null;
+  /** 0054: the retraction in flight (one caller calls the provider), or null */
+  retract_claim_id: string | null;
   connection_kind: string;
   connection_name: string;
   connection_status: string;
 }
 
 const PUB_COLS = sql`p.id, p.piece_id, p.connection_id, p.status, p.external_post_id, p.error_code, p.requested_by_user_id, p.requested_at, p.published_at, p.retracted_at,
-  c.kind AS connection_kind, c.display_name AS connection_name, c.status AS connection_status`;
+  p.retract_claim_id, c.kind AS connection_kind, c.display_name AS connection_name, c.status AS connection_status`;
 
 export async function publicationsOfPieces(tx: Tx, pieceIds: readonly string[]): Promise<PublicationRow[]> {
   if (pieceIds.length === 0) return [];

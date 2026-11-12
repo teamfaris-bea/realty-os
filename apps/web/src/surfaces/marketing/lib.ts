@@ -46,6 +46,7 @@ export const MARKETING_ERROR_MESSAGES: Record<string, string> = {
   PUBLISH_NEEDS_IMAGE: 'Instagram needs at least one photo on the post.',
   PUBLICATION_ALREADY_LIVE: 'This version is already on that account, or we are still checking whether it went up. It will not be posted again.',
   PUBLICATION_NOT_LIVE: 'That post is not up, so there is nothing to take down.',
+  PUBLICATION_RETRACTING: 'We are already taking that post down. Check back in a few minutes.',
   CHANNEL_NOT_CONNECTED: "That account isn't connected any more. Export it and post it yourself.",
   LISTING_OFF_MARKET: "The listing is no longer for sale, so its page can't go live.",
   FAIR_HOUSING_PACK_UNAVAILABLE: "The fair-housing check isn't available right now, so nothing can be approved. Try again later.",

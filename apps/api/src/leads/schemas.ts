@@ -188,6 +188,7 @@ export const ContactResponse = z.object({ contact: z.union([ContactCard, Contact
 /** A replay shows the contact as the caller sees it now (a card once it is only a pond card to them). */
 export const ContactCreatedResponse = z.object({ contact: z.union([ContactCard, ContactFull]), replayed: z.boolean() });
 
+const TimelineReactionName = z.enum(['love', 'like', 'dislike', 'laugh', 'emphasize', 'question', 'sticker', 'emoji']);
 export const TimelineItem = z.object({
   id: Id,
   type: z.string(),
@@ -205,6 +206,20 @@ export const TimelineItem = z.object({
   providerErrorCode: z.string().nullable(),
   /** blocked messages only: the opt-out or suppression the send-time decision rested on, with its evidence */
   blockedBy: ReachReasonSchema.nullable(),
+  /** D5b (R-REACT-5, R-REACT-6): an inbound text linked as a phone's reaction to the team's text; null otherwise */
+  reaction: z
+    .object({
+      action: z.enum(['add', 'remove']),
+      reaction: TimelineReactionName,
+      emoji: z.string().nullable(),
+      targetMessageId: Id,
+      quote: z.string(),
+      raw: z.string(),
+      narrowed: z.boolean(),
+    })
+    .nullable(),
+  /** D5b (R-REACT-6): the reaction in force on this (team) text; null otherwise */
+  reactedWith: z.object({ reaction: TimelineReactionName, emoji: z.string().nullable(), at: Iso }).nullable(),
 });
 export const TimelineResponse = z.object({ items: z.array(TimelineItem), nextCursor: z.string().nullable() });
 

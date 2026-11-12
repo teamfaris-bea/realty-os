@@ -1,0 +1,68 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`R-PRED-3: band, reasons and back-test, never a probability > R-PRED-3: the stored prediction and the GET /feed card (snapshot); no key anywhere names a probability, confidence, likelihood, percent or score 1`] = `
+{
+  "band": "likely_90d",
+  "reasons": [
+    {
+      "evidence_ref": "property_record:<record>#last_sale_date",
+      "feature": "years_in_home",
+      "points": 30,
+    },
+    {
+      "evidence_ref": "saved_search_activity:<contact>#listing_saved_90d",
+      "feature": "recent_saves",
+      "points": 30,
+    },
+    {
+      "evidence_ref": "property_record:<record>#assessed_value_cents",
+      "feature": "equity_band",
+      "points": 20,
+    },
+    {
+      "evidence_ref": "property_record:<record>#recent_permit",
+      "feature": "recent_permit",
+      "points": 10,
+    },
+  ],
+}
+`;
+
+exports[`R-PRED-3: band, reasons and back-test, never a probability > R-PRED-3: the stored prediction and the GET /feed card (snapshot); no key anywhere names a probability, confidence, likelihood, percent or score 2`] = `
+{
+  "alternatives": [],
+  "band": "scored",
+  "itemType": "likely_to_move",
+  "primaryAction": {
+    "contactId": "<contact>",
+    "kind": "open_contact",
+    "label": "Open contact",
+  },
+  "reasons": [
+    {
+      "code": "LIKELY_BAND_90D",
+      "label": "Scorecard band: may move in the next 90 days",
+    },
+    {
+      "code": "LIKELY_YEARS_IN_HOME",
+      "label": "14 years in the home",
+    },
+    {
+      "code": "LIKELY_RECENT_SAVES",
+      "label": "Saved 3 listings recently",
+    },
+    {
+      "code": "LIKELY_EQUITY_BAND",
+      "label": "Estimated equity: high",
+    },
+    {
+      "code": "LIKELY_RECENT_PERMIT",
+      "label": "Recent building permit on the property",
+    },
+    {
+      "code": "LIKELY_BACKTEST",
+      "label": "Of 120 people flagged in the back-test, 31 transacted within 90 days",
+    },
+  ],
+}
+`;

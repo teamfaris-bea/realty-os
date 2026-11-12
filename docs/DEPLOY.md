@@ -264,6 +264,13 @@ Unregistered or unapproved senders are blocked by the send gate (R-CONSENT-17).
 
 **MMS.** Inbound media are fetched by SID with the subaccount credentials (the media URL in the webhook is never fetched). Kept: at most 10 items of at most 5 MB, of allowed types (JPEG, PNG, GIF, WebP, HEIC/HEIF, MP4, 3GPP, QuickTime, AMR, MP3, M4A, PDF, vCard) whose bytes match the type. Each item is encrypted with its own DEK and deleted at Twilio. Anything else is not stored; the conversation says which attachment was not saved, and why.
 
+**Outbound (D5).**
+- A photo text sends `MediaUrl`s on `PUBLIC_BASE_URL` (`/api/mms/media?token=…`), which Twilio must reach over https. The links expire 10 h 20 min after dispatch.
+- Twilio keeps a copy of sent media. The app deletes it 24 h after dispatch. For a submit whose outcome stayed unknown, it deletes every photo text sent from that number around that time, and raises a P2 alert if it finds none.
+- On each subaccount, turn on HTTP Basic Auth for media (VERIFY where this is set), and decide on MMS Converter. With it on, recipients whose carrier has no MMS get a public p.twil.io link. With it off, those sends fail with 21612, said plainly (VERIFY).
+- The token is signed with `SESSION_SECRET_BASE64`. Rotating that secret breaks media links that are still in flight.
+- The media token rides in the query string. Inside this repository nothing logs it: the API logs the route pattern only (`/api/mms/media`), nginx's access log writes `$log_uri` (built from `$uri`, so never a query string; `security-headers.nginx.test.ts` refuses `$args`, `$request`, `$request_uri` and `$query_string` in the format), and nginx's error log writes no request at all (`error_log /dev/null`, above). The one deploy item is outside the repository: the TLS terminator or load balancer in front of nginx must not log query strings for `/api/mms/media` (VERIFY on the deploy host). Twilio's own request and error logs also see the link, for its 10 h 20 min life.
+
 **Opt-outs.** Twilio's own STOP handling stays on. A send to a recipient who texted STOP fails at Twilio with error 21610, which the app records as a provider opt-out (R-CONSENT-12), on top of its own keyword handling (D1).
 
 ## 6. Email: SMTP, DNS and inbound

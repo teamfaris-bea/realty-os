@@ -16,7 +16,9 @@
 // Digest (R-NURT-3): after inserting, the contact's open firings of that playbook are re-digested with the
 // approved window (core digest) and every member's scheduled_for becomes its batch's send time, so the
 // reconcile wakes each batch once.
+import { triggerStepFor } from '@realty/core/assistant';
 import { anniversariesDue, detectFirings, digest, type Fact, type Firing, type ListingStatus, type TriggerCandidate } from '@realty/core/nurture';
+import type { EvidenceRef } from '@realty/core/assistant';
 import type { ContactId, Instant, TenantId } from '@realty/core/foundation';
 import { type Tx, enqueueJob, lockContact, lockContacts } from '@realty/db';
 import { sql } from 'kysely';
@@ -25,13 +27,40 @@ import { firingOfRow } from './decide.js';
 import * as R from './repos.js';
 import { NURTURE_JOBS, type NurtureDeps } from './types.js';
 
-/** Inserts the firings of one fact for the contacts it concerns, then re-digests each contact's batch. */
-export async function recordFactInTx(tx: Tx, deps: Pick<NurtureDeps, 'ids'>, fact: Fact, rels: readonly { contactId: string; ownerUserId: string | null; relation: TriggerCandidate['relation'] }[]): Promise<number> {
+/**
+ * Module 31 (R-TXN-4): which playbooks a fact may fire, and the recipient's deal roles. A deal-date fact fires only
+ * the approved team playbook made from `templateKey` (never an agent's own deal_date_upcoming step), and a contact
+ * is a candidate only when one of its deal roles is among the roles that playbook's step names (approved content).
+ */
+export interface FactRestriction {
+  templateKey: string;
+  scope: 'team' | 'agent';
+}
+
+/**
+ * Inserts the firings of one fact for the contacts it concerns, then re-digests each contact's batch. `o.evidence`
+ * replaces core's evidence of every firing (avm.refresh: the home_valuations row's R-AVM-1 sentence as the snippet);
+ * `o.only` restricts the playbooks the fact may fire (module 31).
+ */
+export async function recordFactInTx(
+  tx: Tx,
+  deps: Pick<NurtureDeps, 'ids'>,
+  fact: Fact,
+  rels: readonly { contactId: string; ownerUserId: string | null; relation: TriggerCandidate['relation']; dealRoles?: readonly string[] }[],
+  o: { evidence?: EvidenceRef[]; only?: FactRestriction } = {},
+): Promise<number> {
+  const only = o.only;
   if (rels.length === 0) return 0;
-  const playbooks = await R.approvedTriggerPlaybooks(tx);
+  const all = await R.approvedTriggerPlaybooks(tx);
+  const playbooks = only === undefined ? all : all.filter((p) => p.templateKey === only.templateKey && p.ref.scope === only.scope);
   if (playbooks.length === 0) return 0;
-  const candidates: TriggerCandidate[] = rels.flatMap((c) => playbooks.map((p) => ({ contactId: c.contactId, ownerUserId: c.ownerUserId, relation: c.relation, playbook: p.ref })));
-  const firings = detectFirings(fact, candidates);
+  const rolesOk = (p: R.TriggerPlaybook, c: (typeof rels)[number]): boolean => {
+    if (fact.kind !== 'deal_date_upcoming') return true;
+    const named = triggerStepFor(p.content, 'deal_date_upcoming')?.roles;
+    return named !== undefined && (c.dealRoles ?? []).some((r) => (named as readonly string[]).includes(r));
+  };
+  const candidates: TriggerCandidate[] = rels.flatMap((c) => playbooks.filter((p) => rolesOk(p, c)).map((p) => ({ contactId: c.contactId, ownerUserId: c.ownerUserId, relation: c.relation, playbook: p.ref })));
+  const firings = detectFirings(fact, candidates).map((f) => (o.evidence ? { ...f, evidence: o.evidence } : f));
   let inserted = 0;
   const touched = new Map<string, { contactId: string; playbookId: string }>();
   // contact locks in id order (callers that record several facts in one transaction lock all their contacts first)

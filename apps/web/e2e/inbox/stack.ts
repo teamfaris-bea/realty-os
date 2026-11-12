@@ -156,6 +156,18 @@ const routes = {
     }
     return { id, name: c.contact.displayName, phones };
   },
+  // D5b: the agent texts a person, whose phone then sends reaction texts quoting it ({Q} is the stored team text, as a
+  // phone quotes the whole text it received, sign-off included)
+  async '/reaction-thread'(b) {
+    const phones = [phone()];
+    const c = must(await call(agent, 'POST', '/contacts', { commandId: randomUUID(), firstName: b.firstName ?? 'Sam', lastName: b.lastName ?? 'Rivera', phones, emails: [randomEmail()], intent: 'buyer' }), 'contact');
+    const id = c.contact.id;
+    const sent = must(await call(agent, 'POST', '/contacts/' + id + '/messages', { channel: 'sms', body: b.teamText, idempotencyKey: 'rx-' + randomUUID() }), 'team text');
+    if (sent.result !== 'sent') throw new Error('team text: ' + JSON.stringify(sent));
+    const stored = (await h.su.query('SELECT body FROM messages WHERE id = $1', [sent.message.id])).rows[0].body;
+    for (const r of b.reactions ?? []) await sms(phones[0], r.split('{Q}').join(stored));
+    return { id, name: c.contact.displayName, phone: phones[0], targetId: sent.message.id };
+  },
 };
 const ctl = http.createServer(async (req, res) => {
   try {
@@ -179,7 +191,7 @@ process.stdin.resume();
 })().catch((e) => { console.error(e); process.exit(1); });
 `;
 
-export type FixturePath = '/world' | '/chat-lead' | '/accept-chat' | '/poll' | '/age-chat' | '/replace-notice' | '/exhaust-starts' | '/contact';
+export type FixturePath = '/world' | '/chat-lead' | '/accept-chat' | '/poll' | '/age-chat' | '/replace-notice' | '/exhaust-starts' | '/contact' | '/reaction-thread';
 
 export interface World {
   email: string;

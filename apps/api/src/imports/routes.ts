@@ -54,7 +54,7 @@ export const MAX_UPLOAD_BODY_BYTES = MAX_FILE_BASE64_CHARS + 128 * 1024;
  * Uploads are never decompressed (no decompression bomb can reach the parser): any Content-Encoding
  * but identity is refused before the body is read, rather than handed to the JSON parser as bytes.
  */
-async function refuseContentEncoding<P>(req: FastifyRequest, _reply: unknown, payload: P): Promise<P> {
+export async function refuseContentEncoding<P>(req: FastifyRequest, _reply: unknown, payload: P): Promise<P> {
   const ce = req.headers['content-encoding'];
   if (ce === undefined) return payload;
   const codings = String(ce)

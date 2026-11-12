@@ -184,7 +184,7 @@ const preTenant = <T>(db: Platform['db'], fn: (tx: Tx) => Promise<T>) => withPre
 
 async function limit(p: Platform, limits: Limit[]): Promise<boolean> {
   try {
-    await enforceLimits(p.db, p.config.sessionSecret, limits);
+    await enforceLimits(p.db, p.config.sessionSecret, limits, p.publicPageLimitClock);
     return true;
   } catch (e) {
     if (e instanceof AppError && e.code === 'RATE_LIMITED') return false;

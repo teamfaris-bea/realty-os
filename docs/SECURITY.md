@@ -248,6 +248,10 @@ it, and the packs still ship unreviewed.
 | Imported FUB fields (`imported_fields`: source URL, `custom*`) are attacker-controlled | Today they render as text only | Any future link from them, or from contact emails and phones (`mailto:`/`tel:`), goes through `safeUrl` |
 | nginx error pages produced outside a content location carry no web headers | A 502/504 for an unreachable API (in `/api/`, which adds none so the API's own CSP stays the only one) and a 400 for a request refused before location matching are nginx's static HTML with no script | none needed; revisit if custom error pages are added |
 | Gmail inbox sync (Phase 2, owner decision D2; design only, DATA_MODEL §6.3, ARCHITECTURE §21.10) stores agents' refresh tokens and copies of client mail | The restricted scope `gmail.readonly` needs Google's OAuth verification and a third-party security assessment, renewed periodically (**VERIFY** current requirements); team visibility of an agent's client mail needs counsel (C14) | Keep `platform:gmail` uncleared until N19 and C14 pass (C14's review is recorded with the owner command of §2.11, which never sets the vendor check `vendor_ready_at`); refresh tokens envelope-encrypted with row-bound AAD, access tokens in memory only, no bodies or addresses in logs, never sent to a model, never readable by a support actor (RESTRICTIVE policy) |
+| A media link is a bearer URL for up to 10 h 20 min | The provider fetches without our session; anyone who sees the request can fetch until expiry, or until the message leaves sending/sent | If Twilio signs media fetches, also require X-Twilio-Signature; shorten the window once the fetch timing is known (VERIFY) |
+| The provider's stored copies are public URLs unless "Enforce HTTP Basic Auth" is on; MMS Converter sends recipients without MMS a public p.twil.io link | Provider account settings | Turn on Basic Auth for media on each subaccount; the owner decides MMS Converter (VERIFY) |
+| Rotating the link secret breaks media links in flight | Stateless tokens (SESSION_SECRET_BASE64) | Rotate outside sending hours; the affected texts fail with the provider's media error |
+| A media token (in the query string of `/api/mms/media`) can reach the TLS terminator's or load balancer's logs, and Twilio's own request and error logs, for the link's 10 h 20 min life | Logs outside this repository. Inside it nothing logs the token: the API logs the route pattern only, nginx's access log is built from `$uri` (no query string, asserted by `security-headers.nginx.test.ts`) and nginx's error log writes no request (`error_log /dev/null`) | No query strings logged for `/api/mms/media` at the terminator (deploy owner, DEPLOY §5; VERIFY) |
 | CSP coverage of signed-in pages was exercised in error and empty states | E2E data seeding with the API was not in scope | Extend `csp.spec.ts` with a seeded API run |
 
 ---
@@ -258,11 +262,12 @@ it, and the packs still ship unreviewed.
 
 ### 4.1 Where untrusted content enters a prompt
 
-Every prompt is built by `core.assistant.buildPrompt` (`packages/core/src/assistant/prompt.ts`, `assistant-prompts/2.0.0`). Its input is ONE contact's bundle, read by `apps/api/src/assistant/repos/context.ts`.
+Every prompt is built by `core.assistant.buildPrompt` (`packages/core/src/assistant/prompt.ts`, `assistant-prompts/2.1.0`). Its input is ONE contact's bundle, read by `apps/api/src/assistant/repos/context.ts`.
 
 | Untrusted content | Who controls it | Reaches the model through |
 |---|---|---|
 | Inbound SMS and email bodies | the client, or anyone who knows their number or address | `CONVERSATION` (drafts, handbacks, summaries) |
+| Reaction texts (D5b: Loved “…”, 👍 to “…”) | the client's phone | `CONVERSATION` as `client (sms reaction to the team's text [Sn])` with only the reaction as untrusted data. The quoted words of the inbound body are never printed as anyone's words, and the reaction's evidence source holds only its own words, so a model cannot cite the team's words as the client's (R-REACT-7) |
 | Outbound message bodies (imported ones, or ones that quote the client) | the client, by quoting; import files | `CONVERSATION` |
 | Call transcripts | anyone on the call | `CALL` (call pipeline: summary, promise tasks, search proposal) |
 | Notes, including imported FUB notes | third-party systems, import files | `AGENT NOTES` |
@@ -940,3 +945,30 @@ engine still makes every ownership change.
   (Owner/Admin, audited) hands it on. Member deactivation still does not move listings (left for a later change).
 - **ownership-data/F5.** The weekly plan never suggests work on a person who asked not to be contacted through any of
   their records.
+## 11. Photo and video texts (owner decision D5, lane `outbound-mms`, migration 0055)
+Threat model:
+- An agent's upload is untrusted bytes: a polyglot, HTML or SVG disguised as a photo, an oversized body, hidden location.
+- The provider must fetch the media without our session.
+- No other user or tenant may attach or fetch someone's media.
+- Automation must never send media.
+| Control | Where | Test |
+|---|---|---|
+| Upload: authenticated before the body is read; identity Content-Encoding only; body cap = the strict base64 of 5,000,000 bytes + 4 KiB (413); the declared type is checked against the magic bytes (checkMedia) and the outbound allowlist (JPEG, PNG, GIF, MP4/QuickTime brands); at most 20 live uploads and 60 uploads per hour per user; no file name kept | comms/outboundMedia.ts, @realty/core/texting | outboundMedia.upload.test.ts |
+| Metadata removed before storage, with no decoder running on the server: metadata segments, chunks and extensions dropped wherever they appear, along with any bytes after the end marker; video metadata boxes blanked in place; a file that cannot be walked, or that still carries metadata or a location, is refused | stripMediaMetadata | texting tests |
+| Per-object DEK (purpose `mms`); staged uploads visible only to their uploader and the system, and never updatable; shredded on removal, expiry (24 h) and erasure by `app.outbound_media_upload_shred` (definer, app_retention), which touches only the deleted row's own unattached `mms` object of its uploader | 0055 | outbound_mms.test.ts |
+| Only the sender attaches, while the message is queued or scheduled, their own uploads for the same person, ≤ 10 items, ≤ 5 MB with the text; each upload attached once (claimed by DELETE … RETURNING); an outbound `mms` exists only as a one-to-one human text | 0055 CHECK + `app.message_media_outbound_guard`; compose.ts | outbound_mms.test.ts |
+| Provider fetch, GET /api/mms/media?token= (a safe method, so not a `capabilityUrl` route): MAC (link secret, purpose `mms-media`) over tenant, message, position and expiry (dispatch + 36,000 s + 20 min); served only for an outbound mms in dispatching, dispatch_unknown or sent; byte-exact, nosniff, attachment, no-store, sandbox CSP; one 404 for every refusal (same status, code and headers; the body differs only in its request id); no Zod query schema (no 422); the global per-IP limiter is off (the provider's shared addresses), and 12 fetches per item per hour, counted after the MAC, is the budget; the token rides in the query string, which the API never logs (route pattern only), nginx's access log never writes (`$log_uri` from `$uri`) and nginx's error log never sees (`error_log /dev/null`); the residual is the TLS terminator and Twilio's own logs (§3), and is in no job, audit row or response | comms/outboundMedia.ts | outboundMedia.fetch.test.ts |
+| Provider copies deleted 24 h after dispatch; for a submit whose outcome stayed unknown, by sending number and time, with a P2 alert when none is found | comms.mms_provider_cleanup | outboundMedia.cleanup.test.ts |
+## 12. Texting reactions (lane sms-reactions, D5b, migration 0056)
+- Recognition: an anchored parse of the whole body, with no text allowed before or after. The quote must equal a stored non-imported outbound text sent from the same number to the same phone on a record of the same person (`app.contact_person_ids`: the root survivor and every record merged into it, so the team's text still counts while a Team Lead's merge has not yet moved it; migration `b8_review_texting`) within 30 days, and the DB guard `app.message_reactions_guard` re-checks the same bounds. Anything else is classified exactly as before, so an opt-out the person writes always counts (R-REACT-1…3, R-REACT-5).
+- Assistant: a linked reaction reaches a prompt only as `client (sms reaction to the team's text [Sn])`, with its own words as untrusted data. Its evidence source holds only those words, and draft categories ignore the quote, so a model cannot cite the team's words as the client's (R-REACT-7).
+- Review trail: each narrowed reading is audited `consent.reaction_quote_not_read` (reason: the reading it replaced), and each refused link is audited `consent.reaction_link_refused`. The notification and the thread say so, and the thread offers the person-level do-not-contact. All of this is kept for counsel review (VERIFY WITH COUNSEL).
+
+## 13. Batch 8 interaction review: deal recipients, home values and merges (migration `b8_review_deals`, lane number 0059)
+
+Trust decisions that changed (details in ARCHITECTURE §21.25):
+- **The other side of a deal is not the team's client.** Milestone updates and home-value notes go only to the client roles of the side `deals.side` says the team represents (lease: none). Checked when planned and again, live, when the message is built. An approved playbook step cannot widen this.
+- **Home values only for a home the client bought through the team**, never a house they sold through the team, re-checked under the contact lock and at send time; at most one a month per person and house across a merge.
+- **`home_valuations` is written only by the system** (RESTRICTIVE insert and update policies). Members who see the contact still read it; a valuation row drives automatic client notes under the source's name, so a person can no longer change a value, a provider or `display_allowed`.
+- **A merge keeps the stronger deal role** (definer `app.contacts_merge_roles`, replaced from 0053 with every earlier rule kept) and a planned milestone update follows the person once; nothing already sent to a merged record is sent again. D1 opt-outs are unchanged: every re-planned update still goes through `comms/dispatch.ts`, which judges the whole person.
+- **Gap:** no retention purge for `home_valuations` yet (R-DATA-6).

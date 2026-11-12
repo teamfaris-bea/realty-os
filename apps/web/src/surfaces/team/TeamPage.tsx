@@ -17,6 +17,7 @@ import { Link } from 'react-router-dom';
 import { Button, Card, CheckThis, EmptyState, EvidenceLink, EvidenceRoutesProvider, Notice } from '../../design/index.js';
 import { type ApiError, messageFor, useApi, useCommand, useSession } from '../../shell/index.js';
 import { formatAge, formatStamp } from '../admin/lib/format.js';
+import { formatLocalDate } from '../feed/lib/format.js';
 import { useAnnounce } from '../admin/lib/hooks.js';
 import { ADMIN_MESSAGES } from '../admin/lib/messages.js';
 import type { ExceptionItem, ExceptionType, ItemResponse, Member, MembersResponse, QueueResponse } from '../admin/lib/types.js';
@@ -92,7 +93,7 @@ export default function TeamPage() {
       ) : null}
       {q.data && items.length === 0 ? (
         <EmptyState icon="check" title={view === 'live' ? 'Nothing needs attention' : 'Nothing handled yet'}>
-          {view === 'live' ? 'Untouched leads, overdue promises, undelivered messages and consults without an outcome show up here.' : null}
+          {view === 'live' ? 'Untouched leads, overdue promises, undelivered messages, consults without an outcome and dates at risk on deals show up here.' : null}
         </EmptyState>
       ) : null}
       <ul className="flex flex-col gap-3">
@@ -120,7 +121,9 @@ export function ExceptionCard({ item, onDone, onFailure }: { item: ExceptionItem
   // a withdrawn item (the current rules make its period no item) is never live and never a late fix
   const withdrawn = item.withdrawn === true;
   const fixedLate = item.live && !withdrawn && item.conditionClearedAt !== null;
-  const subject = item.contact?.name ?? null;
+  const deal = item.deal ?? null;
+  // b8 deals ui/F7: a milestone item names its deal and date (it has no contact), so the announcement says which
+  const subject = item.contact?.name ?? (deal ? `${deal.name} (${deal.dateLabel})` : null);
   // R-PAR-32 / one period per card: an untouched lead's facts are its owner's period, labelled as earlier once it ended
   const period = periodLabel(item);
 
@@ -147,6 +150,15 @@ export function ExceptionCard({ item, onDone, onFailure }: { item: ExceptionItem
                 <Link to={`/contacts/${item.contact.id}`} className="text-accent underline">
                   {item.contact.name}
                 </Link>
+              </>
+            ) : null}
+            {deal ? (
+              <>
+                {' · '}
+                <Link to={`/deals/${deal.id}`} className="text-accent underline">
+                  {deal.name}
+                </Link>
+                {` · ${deal.dateLabel}, ${formatLocalDate(deal.dueOn)}`}
               </>
             ) : null}
           </h2>

@@ -27,6 +27,8 @@ import { asUser } from './runtime.js';
 import { senderSignature } from '../templates/repos/signature.js';
 import type { CommsDeps, DecisionView, DispatchResult, OutboundIntent } from './types.js';
 import { chatRoutes } from '../channels/repos/webchat.js';
+import { attachUploadsInTx, mediaInputIssues, textTooLong, uploadsTotalBytes } from './outboundMedia.js';
+import { MMS_LIMITS } from '@realty/core/texting';
 
 export interface ComposeInput {
   /** 'web_chat' (module 22): a reply in the contact's website chat, through the session's widget; never scheduled */
@@ -42,6 +44,8 @@ export interface ComposeInput {
   purposeOverride?: 'marketing' | undefined;
   /** module 29: an open-house invite (email, marketing; R-MKT-8: one gated message per recipient, linked to the piece) */
   marketingPieceId?: string | undefined;
+  /** D5a: the sender's own staged uploads (outboundMedia.ts), in order = positions; the row is stored as 'mms' */
+  mediaIds?: readonly string[] | undefined;
 }
 
 export interface MessageView {
@@ -86,6 +90,8 @@ interface Draft {
   inboundSeq: number;
   /** web chat (module 22): the widget the session came through and whether it can take a reply now (R-INBOX-7, E77) */
   chat: { connectionId: string; live: boolean } | null;
+  /** D5a: the kind of the sending number (SMS parts split at 152/66 on toll-free), null without one */
+  numberType: 'local' | 'toll_free' | null;
 }
 
 /** The chat-widget fact for the gate (core check 10): a closed session takes no reply, like a disconnected widget (E77). */
@@ -120,18 +126,20 @@ async function draftFor(tx: Tx, deps: CommsDeps, contactId: string, userId: stri
   let phoneNumberId: string | null = null;
   let emailIdentityId: string | null = null;
   let fromAddress: string | null = null;
+  let numberType: Draft['numberType'] = null;
   if (channel === 'sms') {
     const n = o.phoneNumberId ? await g.numberFacts(tx, o.phoneNumberId) : await chooseNumber(tx, conv, userId, o.firstResponse === true);
     if (n) {
       phoneNumberId = n.id;
       fromAddress = n.e164;
+      numberType = n.numberType;
     }
   } else {
     emailIdentityId = await g.chooseEmailIdentity(tx, userId);
     if (emailIdentityId) fromAddress = (await g.emailIdentityFacts(tx, emailIdentityId))?.fromAddress ?? null;
   }
   const purpose = o.purpose ?? classifyHumanPurpose({ lastInboundAt: conv?.lastInboundAt ?? null, dealOrAppointmentContext: await dealOrAppointmentContext(tx, contactId), now });
-  return { point, conversationId, phoneNumberId, emailIdentityId, fromAddress, purpose, inboundSeq: conv?.inboundSeq ?? 0, chat: null };
+  return { point, conversationId, phoneNumberId, emailIdentityId, fromAddress, purpose, inboundSeq: conv?.inboundSeq ?? 0, chat: null, numberType };
 }
 
 /**
@@ -147,7 +155,7 @@ async function chatDraftFor(tx: Tx, deps: CommsDeps, contactId: string, toPointI
   const conv = await g.conversationOf(tx, contactId);
   const purpose = o.purpose ?? classifyHumanPurpose({ lastInboundAt: conv?.lastInboundAt ?? null, dealOrAppointmentContext: await dealOrAppointmentContext(tx, contactId), now });
   const live = route.sessionOpen && (route.connectionStatus === 'connected' || route.connectionStatus === 'degraded');
-  return { point, conversationId, phoneNumberId: null, emailIdentityId: null, fromAddress: `widget:${route.connectionId}`, purpose, inboundSeq: conv?.inboundSeq ?? 0, chat: { connectionId: route.connectionId, live } };
+  return { point, conversationId, phoneNumberId: null, emailIdentityId: null, fromAddress: `widget:${route.connectionId}`, purpose, inboundSeq: conv?.inboundSeq ?? 0, chat: { connectionId: route.connectionId, live }, numberType: null };
 }
 
 function humanIntent(contactId: string, d: Draft, channel: Channel, body: string): OutboundIntent {
@@ -167,7 +175,10 @@ function humanIntent(contactId: string, d: Draft, channel: Channel, body: string
 const renderChannel = (c: 'sms' | 'email' | 'web_chat'): 'sms' | 'email' => (c === 'email' ? 'email' : 'sms');
 
 /** POST /contacts/:id/messages/preview: what the gate would say now (nothing is sent, created or stored). */
-export async function previewHumanMessage(actor: UserActor, contactId: string, input: Omit<ComposeInput, 'idempotencyKey' | 'scheduleAt'>, deps: CommsDeps): Promise<{ decision: DecisionView; body: string }> {
+export async function previewHumanMessage(actor: UserActor, contactId: string, input: Omit<ComposeInput, 'idempotencyKey' | 'scheduleAt' | 'mediaIds'> & { withMedia?: boolean | undefined }, deps: CommsDeps): Promise<{ decision: DecisionView; body: string; textSender: 'local' | 'toll_free' | null }> {
+  // D5a: the same media codes as a send (an empty body is allowed only with media, on 'sms' only)
+  const issues = mediaInputIssues({ ...input, mediaIds: input.withMedia ? ['00000000-0000-0000-0000-000000000000'] : [] });
+  if (issues.length > 0) throw new AppError('VALIDATION_FAILED', { issues });
   return asUser(deps, actor, async (tx, now) => {
     const c = await detailVisibleContact(tx, contactId);
     if (!c) throw new AppError('NOT_FOUND');
@@ -177,7 +188,7 @@ export async function previewHumanMessage(actor: UserActor, contactId: string, i
     const body = renderHumanBody(input.body, { channel: renderChannel(input.channel), purpose: d.purpose, identity: { brokerageLegalName: tenant.brokerageLegalName, postalAddress: tenant.postalAddress }, unsubscribe: d.purpose === 'marketing' ? '(unsubscribe link)' : null, signature: input.channel === 'email' ? await senderSignature(tx) : null });
     const intent = humanIntent(contactId, d, input.channel, body);
     const evaluated = await evaluateGate(tx, intent, now);
-    return { decision: decisionView({ id: null, ...verdictOf(evaluated.decision) }, 'preview'), body };
+    return { decision: decisionView({ id: null, ...verdictOf(evaluated.decision) }, 'preview'), body, textSender: d.numberType };
   });
 }
 
@@ -195,6 +206,10 @@ export async function composeHumanMessage(actor: UserActor, contactId: string, i
     if (!c) throw new AppError('NOT_FOUND');
     // F1: a merged-away record is never a send target (the person lives on the survivor); nothing is created
     await refuseMergedAway(tx, c);
+    // D5a (R-MMS-1, E292): the media rules, checked here so HTTP and direct callers get the same codes
+    const mediaIds = input.mediaIds ?? [];
+    const issues = mediaInputIssues(input);
+    if (issues.length > 0) throw new AppError('VALIDATION_FAILED', { issues });
     if (input.channel === 'email' && !(input.subject ?? '').trim()) throw new AppError('SUBJECT_REQUIRED');
     let scheduledFor: Instant | null = null;
     if (input.scheduleAt && input.channel === 'web_chat') throw new AppError('VALIDATION_FAILED', { issues: [{ path: '/scheduleAt', code: 'chat_not_scheduled' }] });
@@ -207,6 +222,11 @@ export async function composeHumanMessage(actor: UserActor, contactId: string, i
     const { tenant } = await resolvedPolicy(tx);
     const unsub = input.channel === 'email' && d.purpose === 'marketing' ? unsubscribeUrl(deps.publicBaseUrl, deps.linkSecret, actor.tenantId, messageId) : null;
     const body = renderHumanBody(input.body, { channel: renderChannel(input.channel), purpose: d.purpose, identity: { brokerageLegalName: tenant.brokerageLegalName, postalAddress: tenant.postalAddress }, unsubscribe: unsub, signature: input.channel === 'email' ? await senderSignature(tx) : null });
+    // D5a (R-MMS-9): a one-to-one text over 1,600 UTF-16 units is refused; R-MMS-2: media + text ≤ 5,000,000 bytes
+    if (textTooLong(input, body)) throw new AppError('VALIDATION_FAILED', { issues: [{ path: '/body', code: 'text_too_long' }] });
+    if (mediaIds.length > 0 && (await uploadsTotalBytes(tx, contactId, mediaIds)) + Buffer.byteLength(body, 'utf8') > MMS_LIMITS.totalBytes) {
+      throw new AppError('MEDIA_TOO_LARGE', { limitBytes: MMS_LIMITS.totalBytes, scope: 'total' });
+    }
     if (!d.fromAddress) {
       // No sending number / identity: the send is blocked (SENDER_UNAVAILABLE) and logged; nothing to create.
       const intent = humanIntent(contactId, d, input.channel, body);
@@ -220,7 +240,7 @@ export async function composeHumanMessage(actor: UserActor, contactId: string, i
       id: messageId,
       conversationId: d.conversationId,
       contactId,
-      channel: input.channel,
+      channel: mediaIds.length > 0 ? 'mms' : input.channel,
       phoneNumberId: d.phoneNumberId,
       emailIdentityId: d.emailIdentityId,
       fromAddress: d.fromAddress,
@@ -248,6 +268,7 @@ export async function composeHumanMessage(actor: UserActor, contactId: string, i
       if (!winner || winner.contactId !== contactId) throw new AppError('NOT_FOUND');
       return { kind: 'existing', m: winner, decision: await storedDecisionView(tx, winner.gateDecisionId) };
     }
+    if (mediaIds.length > 0) await attachUploadsInTx(tx, { messageId, contactId, mediaIds });
     if (scheduledFor !== null) {
       await enqueueTyped(tx, COMMS_DISPATCH, { messageId }, { dedupeKey: COMMS_DISPATCH.dedupeKey({ messageId }), runAt: scheduledFor });
     }

@@ -39,6 +39,7 @@ export {
   statusReasonWords,
   EXCEPTION_RULE_VERSION,
   MILESTONE_UNASSIGNED_WINDOW_MS,
+  MILESTONE_DATE_NAME,
   DEFAULT_EXCEPTION_SETTINGS,
   exceptionFingerprint,
   type DerivedException,

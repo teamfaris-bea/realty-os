@@ -1,0 +1,8 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`the model registry (R-PRED-1) > R-PRED-1: the shipped registry is empty, and each definition's hash is pinned (snapshot): a changed point value is a new version 1`] = `
+{
+  "predict/0.1": "f49ae8b9fefe31e31960cf4f4d88cec8d83a5e7dc9292a9a2ac05255dd3beb5d",
+  "predict/0.2": "2e37cbc019271d023cfa7bca20e639cf642a13077a9e102c8396265b85011be6",
+}
+`;

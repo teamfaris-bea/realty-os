@@ -8,3 +8,4 @@ export * from './plan.js';
 export * from './confirm.js';
 export * from './risk.js';
 export * from './keys.js';
+export * from './recipients.js';
