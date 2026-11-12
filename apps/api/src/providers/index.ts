@@ -99,7 +99,7 @@ export function createFakeProviders(opts: { clock?: Clock } = {}): FakeProviders
     carrier: new FakeCarrier(),
     push: new FakePush(),
     accountMail: new FakeAccountMailer(),
-    integrations: createFakeIntegrations(),
+    integrations: createFakeIntegrations(opts.clock ? { clock: opts.clock } : {}),
     webChat: new InProcessWebChat(),
   };
 }

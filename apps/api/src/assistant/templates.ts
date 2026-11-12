@@ -6,8 +6,8 @@
 //
 // Phase 2 (module 26, sole Phase 2 editor of this file; R-NURT-1..3, R-MKT-11, R-AST-20, F7): the trigger
 // templates "Behavior alerts" (agent: a saved or matched home drops in price or comes back on the market),
-// "After-closing alerts" (agent: the yearly home anniversary, and the monthly home value, which is NOT
-// AVAILABLE YET: avm.refresh is wave 2C, so nothing fires it), "Milestone updates" (`transaction_updates`,
+// "After-closing alerts" (agent: the yearly home anniversary, and the monthly home value fired by wave 2C's
+// avm.refresh; templateVersion 2 introduces the estimate sentence the system adds, R-AVM-1), "Milestone updates" (`transaction_updates`,
 // team: a confirmed deal date coming up; fired by module 31, not available yet) and "After closing" v2 (no
 // home-value or anniversary step any more: those are trigger firings, so year one has a single anniversary
 // email; adds the review request). A trigger template's content is one `PlaybookContent` object, hashed and
@@ -70,7 +70,13 @@ const ANNIVERSARY: TriggerStep = {
   slots: ['first_name', 'home_years', 'listing_address'],
   maxLength: 2000,
 };
-/** NOT AVAILABLE YET (wave 2C: avm.refresh, R-AVM-1..3). Approving it changes nothing until then. */
+/**
+ * The monthly home value (wave 2C: avm.refresh, R-AVM-1..3). The wording only introduces the estimate: the system
+ * adds core homeValueText after rendering (provider, range, as-of date and "This is an estimate, not an appraisal."),
+ * so every approved version carries it. It sends on its own only once platform:avm is cleared; until then it is a
+ * draft for the agent. No estimate ⇒ skipped "No estimate available.", never "unchanged". VERIFY WITH COUNSEL (C6):
+ * this wording, the sentence, and state rules on valuations by non-appraisers.
+ */
 const HOME_VALUE: TriggerStep = {
   trigger: 'home_value',
   stepKey: 'home_value',
@@ -80,7 +86,7 @@ const HOME_VALUE: TriggerStep = {
   category: 'nurture_step',
   intent: 'home_value_update',
   subject: 'Your monthly home update',
-  template: 'Hi {{first_name}},\n\nYour monthly update for {{listing_address}} is ready. Reply here and I will walk you through it.',
+  template: 'Hi {{first_name}},\n\nHere is this month’s automated estimate for {{listing_address}}, with its range and date below. Reply here if you would like to talk it through.',
   slots: ['first_name', 'listing_address'],
   maxLength: 2000,
 };
@@ -199,16 +205,20 @@ export const BUILT_IN_TEMPLATES: readonly BuiltInTemplate[] = [
     ],
   },
   { key: 'behavior_alerts', kind: 'trigger', scope: 'agent', name: 'Behavior alerts', steps: [], content: { kind: 'triggers', triggers: [PRICE_DROP, BACK_ON_MARKET], digestWindowMinutes: 120 } },
-  { key: 'after_closing_alerts', kind: 'trigger', scope: 'agent', name: 'After-closing alerts', steps: [], content: { kind: 'triggers', triggers: [ANNIVERSARY, HOME_VALUE], digestWindowMinutes: 0 } },
+  { key: 'after_closing_alerts', kind: 'trigger', scope: 'agent', name: 'After-closing alerts', steps: [], content: { kind: 'triggers', triggers: [ANNIVERSARY, HOME_VALUE], digestWindowMinutes: 0 }, templateVersion: 2 },
   { key: 'transaction_updates', kind: 'trigger', scope: 'team', name: 'Milestone updates', steps: [], content: { kind: 'triggers', triggers: [DEAL_DATE], digestWindowMinutes: 0 } },
 ];
 
-/** Which trigger kinds can fire in this release (wave 2A); the rest are listed honestly as not available yet. */
+/**
+ * Which trigger kinds can fire in this release; the rest are listed honestly as not available yet. home_value fires
+ * from wave 2C's avm.refresh; GET /nurture/triggers says in words when it waits for counsel review (drafts only) or
+ * when no AVM vendor is set up on the platform.
+ */
 export const TRIGGER_AVAILABILITY = {
   price_drop: 'available',
   back_on_market: 'available',
   home_anniversary: 'available',
-  home_value: 'not_available_yet',
+  home_value: 'available',
   deal_date_upcoming: 'not_available_yet',
 } as const;
 

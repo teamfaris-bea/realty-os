@@ -173,12 +173,29 @@ export interface AvmEstimate {
   valueCents: number;
   lowCents: number;
   highCents: number;
+  /** `YYYY-MM-DD`: the vendor's own as-of date (never the stored valued_at) */
   asOf: string;
   providerRef: string;
+  /** the provider name clients see (VERIFY against the vendor contract's attribution terms, N8) */
+  provider: string;
+  /**
+   * Consumer display permission from the vendor licence (N8). Only a literal `true` lets the note reach a
+   * client; the parser (nurture/avm.ts) stores false for anything else and never defaults it to true.
+   */
+  displayAllowed: boolean;
+}
+
+/** The vendor answered and has no value for the address (E99). A failure is a thrown ProviderError instead. */
+export interface AvmUnavailable {
+  available: false;
+  provider: string;
 }
 
 export interface AvmProvider {
-  estimate(a: AddressFacts): Promise<{ available: false } | AvmEstimate>;
+  /** whether an AVM vendor is configured on this platform (P2, F10: platform configuration, no tenant connection) */
+  readonly configured: boolean;
+  /** throws ProviderError on a vendor failure: nothing is recorded and a later pass retries (no status 'error') */
+  estimate(a: AddressFacts): Promise<AvmUnavailable | AvmEstimate>;
 }
 
 // ---- Calendar (per-user OAuth link; module 34) ------------------------------------------------------

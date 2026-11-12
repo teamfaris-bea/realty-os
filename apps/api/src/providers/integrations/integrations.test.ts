@@ -5,6 +5,8 @@ import { testConfig } from '../../auth/testHarness.js';
 import { createFakeProviders, createProviders } from '../index.js';
 import {
   CONNECTION_KINDS,
+  FAKE_AVM_PROVIDER,
+  FakeAvmP2,
   FAKE_CAPABILITIES,
   IntegrationConfigError,
   PlatformOAuth,
@@ -16,6 +18,22 @@ import {
 } from './index.js';
 
 describe('R-INT-1 fakes are the default and deterministic', () => {
+  it('the fake AVM follows the clock it is given and takes settable per-address answers', async () => {
+    const at = Date.UTC(2027, 1, 14, 3, 0, 0);
+    const p = createFakeProviders({ clock: { now: () => at as never } });
+    const a = { line1: '12 Harbor Way', city: 'Charleston', region: 'SC', postalCode: '29401' };
+    expect(p.integrations.avm.configured).toBe(true);
+    expect(await p.integrations.avm.estimate(a)).toMatchObject({ asOf: '2027-02-01' });
+    const avm = new FakeAvmP2({ now: () => at as never });
+    avm.answers.set(FakeAvmP2.key(a), { kind: 'estimate', estimate: { asOf: '2026-01-01', displayAllowed: false } });
+    expect(await avm.estimate(a)).toMatchObject({ asOf: '2026-01-01', displayAllowed: false });
+    avm.answers.set(FakeAvmP2.key(a), { kind: 'unavailable' });
+    expect(await avm.estimate(a)).toEqual({ available: false, provider: FAKE_AVM_PROVIDER });
+    avm.answers.set(FakeAvmP2.key(a), { kind: 'error' });
+    await expect(avm.estimate(a)).rejects.toMatchObject({ kind: 'unavailable' });
+    expect(avm.calls).toHaveLength(4);
+  });
+
   it('the Providers bag carries the Phase 2-3 adapters as fakes in dev and test', () => {
     const p = createFakeProviders();
     expect(p.integrations.mode).toBe('fake');
@@ -53,7 +71,11 @@ describe('R-INT-1 fakes are the default and deterministic', () => {
     expect(one.igAccounts[0]!.capabilities).toEqual({ publish_posts: true }); // D2: so does an Instagram business account
     expect(one.gbp[0]!.capabilities).toEqual({ publish_posts: true, read_reviews: true, reply_reviews: true });
     expect(one.calStale).toEqual({ kind: 'stale', syncVersion: 3 }); // sync_version fence
-    expect(one.avmNone).toEqual({ available: false });
+    expect(one.avmNone).toEqual({ available: false, provider: FAKE_AVM_PROVIDER });
+    // the fake's answer carries the provider name clients see and its stated licence answer; asOf is the first day of the clock's UTC month
+    expect(one.avm).toMatchObject({ available: true, provider: FAKE_AVM_PROVIDER, displayAllowed: true });
+    expect((one.avm as { asOf: string }).asOf).toMatch(/^\d{4}-\d{2}-01$/);
+    expect(Object.keys(one.avm).some((k) => /confidence|score/i.test(k))).toBe(false); // R-AST-13
     expect(one.license.rules.displayToPublic).toBe(false); // strictest default until a licence pack is entered
     expect(one.mls.listings).toHaveLength(1);
     expect(one.mls2.listings.map((l) => l.listingKey)).toEqual(['FAKE-MLS-1002']);
@@ -114,7 +136,8 @@ describe('R-INT-1 real adapters refuse to start unconfigured', () => {
     expect(u.oauth.meta.configured).toBe(false);
     expect(u.mlsFeed.access).toBe('needs_partner_access');
     expect(u.oauth.microsoft.configured).toBe(false);
-    expect(await u.avm.estimate({ line1: 'a', city: 'b', region: 'SC', postalCode: '29401' })).toEqual({ available: false });
+    expect(u.avm.configured).toBe(false);
+    await expect(u.avm.estimate({ line1: 'a', city: 'b', region: 'SC', postalCode: '29401' })).rejects.toMatchObject({ kind: 'not_configured', providerCode: 'AVM_NOT_CONFIGURED' });
     expect(selectIntegrations({ env: 'production', allowFakeProviders: true }).mode).toBe('fake');
     expect(createUnconfiguredIntegrations().mode).toBe('unconfigured');
     expect(CONNECTION_KINDS).toHaveLength(14); // 0018's twelve plus 0025's facebook_page and instagram_business (D2)

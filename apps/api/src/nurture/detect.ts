@@ -17,6 +17,7 @@
 // approved window (core digest) and every member's scheduled_for becomes its batch's send time, so the
 // reconcile wakes each batch once.
 import { anniversariesDue, detectFirings, digest, type Fact, type Firing, type ListingStatus, type TriggerCandidate } from '@realty/core/nurture';
+import type { EvidenceRef } from '@realty/core/assistant';
 import type { ContactId, Instant, TenantId } from '@realty/core/foundation';
 import { type Tx, enqueueJob, lockContact, lockContacts } from '@realty/db';
 import { sql } from 'kysely';
@@ -25,13 +26,16 @@ import { firingOfRow } from './decide.js';
 import * as R from './repos.js';
 import { NURTURE_JOBS, type NurtureDeps } from './types.js';
 
-/** Inserts the firings of one fact for the contacts it concerns, then re-digests each contact's batch. */
-export async function recordFactInTx(tx: Tx, deps: Pick<NurtureDeps, 'ids'>, fact: Fact, rels: readonly { contactId: string; ownerUserId: string | null; relation: TriggerCandidate['relation'] }[]): Promise<number> {
+/**
+ * Inserts the firings of one fact for the contacts it concerns, then re-digests each contact's batch. `o.evidence`
+ * replaces core's evidence of every firing (avm.refresh: the home_valuations row's R-AVM-1 sentence as the snippet).
+ */
+export async function recordFactInTx(tx: Tx, deps: Pick<NurtureDeps, 'ids'>, fact: Fact, rels: readonly { contactId: string; ownerUserId: string | null; relation: TriggerCandidate['relation'] }[], o: { evidence?: EvidenceRef[] } = {}): Promise<number> {
   if (rels.length === 0) return 0;
   const playbooks = await R.approvedTriggerPlaybooks(tx);
   if (playbooks.length === 0) return 0;
   const candidates: TriggerCandidate[] = rels.flatMap((c) => playbooks.map((p) => ({ contactId: c.contactId, ownerUserId: c.ownerUserId, relation: c.relation, playbook: p.ref })));
-  const firings = detectFirings(fact, candidates);
+  const firings = detectFirings(fact, candidates).map((f) => (o.evidence ? { ...f, evidence: o.evidence } : f));
   let inserted = 0;
   const touched = new Map<string, { contactId: string; playbookId: string }>();
   // contact locks in id order (callers that record several facts in one transaction lock all their contacts first)

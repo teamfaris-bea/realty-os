@@ -2,11 +2,13 @@
 // the same calls in the same order give the same results. Tests drive the "provider side" through the
 // helpers (`FakeOAuth.issueCode`), never through real vendors. D2: there is no Meta webhook to fake.
 import { createHash } from 'node:crypto';
+import type { Clock } from '@realty/core/foundation';
 import { ProviderError } from '../types.js';
 import type {
   AddressFacts,
   AvmEstimate,
   AvmProvider,
+  AvmUnavailable,
   Busy,
   CalendarAuth,
   CalendarEvent,
@@ -194,13 +196,44 @@ export class FakeResoMls implements MlsFeed {
   }
 }
 
-/** Deterministic AVM: a value derived from the postal code; addresses ending in "0" have no estimate. */
+/** A settable fake AVM answer for one address: an estimate (fields override the deterministic ones), none, or a vendor error. */
+export type FakeAvmAnswer = { kind: 'estimate'; estimate: Partial<Omit<AvmEstimate, 'available'>> } | { kind: 'unavailable' } | { kind: 'error' } | { kind: 'raw'; answer: unknown };
+
+/** The fixture provider name (synthetic; no real vendor is named anywhere). */
+export const FAKE_AVM_PROVIDER = 'Example Home Values (test data)';
+
+/**
+ * Deterministic AVM: a value derived from the address, a ±8 % range, and "a postal code ending in 0 has no
+ * estimate". asOf defaults to the first day of the current UTC month of the clock it is given (an optional clock,
+ * the wall clock by default), so a fresh estimate stays fresh under platform:avm's max_age_days. displayAllowed is
+ * this fixture's stated licence answer (true), not a default. Tests set per-address answers (`answers`) to produce
+ * every avmSendable reason, a vendor error, a fixed or old asOf, a refused display permission or a 30 % drop (E98).
+ */
 export class FakeAvmP2 implements AvmProvider {
-  async estimate(a: AddressFacts): Promise<{ available: false } | AvmEstimate> {
-    if (a.postalCode.endsWith('0')) return { available: false };
+  readonly configured = true;
+  /** per-address answers, keyed by FakeAvmP2.key(address) */
+  readonly answers = new Map<string, FakeAvmAnswer>();
+  /** every request, in order (tests count vendor calls) */
+  readonly calls: AddressFacts[] = [];
+  /** test hook run at the start of every request (e.g. to prove no transaction is open) */
+  onEstimate: ((a: AddressFacts) => Promise<void>) | null = null;
+  constructor(private readonly clock: Clock | null = null) {}
+  static key(a: Pick<AddressFacts, 'line1' | 'postalCode'>): string {
+    return `${a.line1}|${a.postalCode}`;
+  }
+  async estimate(a: AddressFacts): Promise<AvmUnavailable | AvmEstimate> {
+    this.calls.push({ ...a });
+    if (this.onEstimate) await this.onEstimate(a);
+    const set = this.answers.get(FakeAvmP2.key(a));
+    if (set?.kind === 'error') throw new ProviderError('unavailable', 'FAKE_AVM_ERROR');
+    if (set?.kind === 'raw') return set.answer as AvmEstimate;
+    if (set?.kind === 'unavailable' || (set === undefined && a.postalCode.endsWith('0'))) return { available: false, provider: FAKE_AVM_PROVIDER };
     const n = Number.parseInt(createHash('sha256').update(`${a.line1}|${a.postalCode}`).digest('hex').slice(0, 6), 16);
     const valueCents = (250_000 + (n % 500_000)) * 100;
-    return { available: true, valueCents, lowCents: Math.round(valueCents * 0.92), highCents: Math.round(valueCents * 1.08), asOf: '2026-11-01', providerRef: `fake-avm-${n.toString(16)}` };
+    const now = new Date(this.clock ? this.clock.now() : Date.now());
+    const asOf = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-01`;
+    const base: AvmEstimate = { available: true, valueCents, lowCents: Math.round(valueCents * 0.92), highCents: Math.round(valueCents * 1.08), asOf, providerRef: `fake-avm-${n.toString(16)}`, provider: FAKE_AVM_PROVIDER, displayAllowed: true };
+    return set?.kind === 'estimate' ? { ...base, ...set.estimate, available: true } : base;
   }
 }
 
@@ -261,13 +294,13 @@ export interface FakeIntegrationAdapters extends IntegrationAdapters {
   renderer: FakeRenderer;
 }
 
-export function createFakeIntegrations(): FakeIntegrationAdapters {
+export function createFakeIntegrations(opts: { clock?: Clock } = {}): FakeIntegrationAdapters {
   return {
     mode: 'fake',
     oauth: { meta: new FakeOAuth('meta'), google: new FakeOAuth('google'), microsoft: new FakeOAuth('microsoft') },
     leadFeeds: { zillow: new FakeLeadFeed('zillow'), realtor: new FakeLeadFeed('realtor') },
     mlsFeed: new FakeResoMls(),
-    avm: new FakeAvmP2(),
+    avm: new FakeAvmP2(opts.clock ?? null),
     calendar: { google: new FakeCalendar('google'), microsoft: new FakeCalendar('microsoft') },
     social: new FakeSocialPublisher(),
     showing: new FakeShowingService(),
