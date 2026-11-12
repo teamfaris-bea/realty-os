@@ -6,8 +6,12 @@
 // or Web chat the tray says "Photos and videos go only by text." and Send waits (mediaHold).
 //
 // Every tile is in a real state: Preparing, Uploading, Ready, or why it failed. One polite live region announces
-// each tile's change once ("Photo 2 ready"); refusals before upload are an alert.
-import { useRef } from 'react';
+// each tile's change once ("Photo 2 ready"); refusals before upload are an alert, mounted only with its words.
+//
+// Phone first (b8 texting ui/F10): before anything is picked the only thing drawn is the camera button in the text
+// field's row (MediaAddButton), so the sticky compose bar is no taller on a text thread; the tray, with the limits and
+// location lines, appears once a file is picked.
+import { type RefObject, useRef } from 'react';
 import { Button, Spinner } from '../../design/index.js';
 import { formatSize } from './prepareMedia.js';
 import { type ComposeMedia, type TrayItem, itemLabel } from './useComposeMedia.js';
@@ -36,33 +40,29 @@ function VideoIcon() {
   );
 }
 
-export interface MediaTrayProps {
+export interface MediaAddButtonProps {
   media: ComposeMedia;
   /** the Photo or video button is offered (Text chosen, not blocked, no draft open) */
   canAttach: boolean;
-  /** why Send waits because of the media (mediaHold), said under the tray with this id */
-  hold: string | null;
-  holdId: string;
+  buttonRef: RefObject<HTMLButtonElement>;
+  /** the id of the limits and location lines (screen readers hear them with the button before anything is picked) */
+  describedById: string;
 }
 
-export function MediaTray({ media, canAttach, hold, holdId }: MediaTrayProps) {
+/**
+ * The Photo or video button, a 44 px camera icon beside the text field. It sits in the field's own row, so the phone's
+ * sticky compose bar does not grow on a text thread before a photo is attached (b8 texting ui/F10). Its screen-reader
+ * description and the tray's polite live region are visually hidden and take no room in the row.
+ */
+export function MediaAddButton({ media, canAttach, buttonRef, describedById }: MediaAddButtonProps) {
   const input = useRef<HTMLInputElement>(null);
-  const addButton = useRef<HTMLButtonElement>(null);
   if (!canAttach && media.count === 0) return null;
-  const remove = (key: string) => {
-    media.remove(key);
-    // focus stays in the tray: on the button that adds another one (or the box's next control when it is not offered)
-    requestAnimationFrame(() => addButton.current?.focus());
-  };
   return (
-    <div data-testid="media-tray" className="flex flex-col gap-2">
+    <>
       {canAttach ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <Button ref={addButton} variant="secondary" onClick={() => input.current?.click()}>
-            <span className="inline-flex items-center gap-2">
-              <CameraIcon />
-              Photo or video
-            </span>
+        <>
+          <Button ref={buttonRef} variant="secondary" className="shrink-0 px-0" aria-label="Photo or video" aria-describedby={describedById} onClick={() => input.current?.click()}>
+            <CameraIcon />
           </Button>
           <input
             ref={input}
@@ -79,15 +79,55 @@ export function MediaTray({ media, canAttach, hold, holdId }: MediaTrayProps) {
               e.currentTarget.value = '';
             }}
           />
+          {media.count === 0 ? (
+            <span id={describedById} className="sr-only">
+              {LIMITS_LINE} {LOCATION_LINE}
+            </span>
+          ) : null}
+        </>
+      ) : null}
+      <p data-testid="media-live" aria-live="polite" className="sr-only">
+        {media.announcement}
+      </p>
+    </>
+  );
+}
+
+export interface MediaTrayProps {
+  media: ComposeMedia;
+  /** why Send waits because of the media (mediaHold), said under the tray with this id */
+  hold: string | null;
+  holdId: string;
+  /** the Photo or video button (focus goes back to it after Remove) */
+  addButtonRef: RefObject<HTMLButtonElement>;
+  /** the id the button's description points at, once the lines are shown here */
+  describedById: string;
+}
+
+/**
+ * What was picked: refusals, tiles, why Send waits, and the limits and location lines. Nothing is drawn (no empty
+ * container, no empty alert: b8 texting ui/F3) until a file is picked.
+ */
+export function MediaTray({ media, hold, holdId, addButtonRef, describedById }: MediaTrayProps) {
+  if (media.count === 0 && media.refusals.length === 0 && !hold) return null;
+  const remove = (key: string) => {
+    media.remove(key);
+    // focus stays with the photos: on the button that adds another one (or the box's next control when it is not offered)
+    requestAnimationFrame(() => addButton.current?.focus());
+  };
+  const addButton = addButtonRef;
+  return (
+    <div data-testid="media-tray" className="flex flex-col gap-2">
+      {media.refusals.length > 0 ? (
+        // an alert is announced when it is inserted with its words (WCAG 4.1.3), so it is mounted only with a refusal
+        <div role="alert" className="flex flex-col gap-1">
+          {media.refusals.map((r) => (
+            <p key={r} className="text-[14px] font-medium leading-snug text-danger">
+              {r}
+            </p>
+          ))}
         </div>
       ) : null}
-      <div role="alert" className="flex flex-col gap-1 empty:hidden">
-        {media.refusals.map((r) => (
-          <p key={r} className="text-[14px] font-medium leading-snug text-danger">
-            {r}
-          </p>
-        ))}
-      </div>
       {media.count > 0 ? (
         <ul aria-label="Photos and videos in this text" className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
           {media.items.map((it, i) => (
@@ -100,15 +140,10 @@ export function MediaTray({ media, canAttach, hold, holdId }: MediaTrayProps) {
           {hold}
         </p>
       ) : null}
-      {canAttach || media.count > 0 ? (
-        <div className="flex flex-col text-[13px] leading-snug text-ink-muted">
-          <p>{LIMITS_LINE}</p>
-          <p>{LOCATION_LINE}</p>
-        </div>
-      ) : null}
-      <p aria-live="polite" className="sr-only">
-        {media.announcement}
-      </p>
+      <div id={media.count > 0 ? describedById : undefined} className="flex flex-col text-[13px] leading-snug text-ink-muted">
+        <p>{LIMITS_LINE}</p>
+        <p>{LOCATION_LINE}</p>
+      </div>
     </div>
   );
 }

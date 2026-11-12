@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { ApiClient } from '../../shell/api.js';
 import { SESSION_KEY, ShellProvider } from '../../shell/context.js';
 import { FakeFetch, sessionFixture, tableWith } from '../../shell/testing/fakeApi.js';
+import { ToastProvider } from '../people-edit/hooks.js';
 import type { TimelineItem, TimelineReaction } from '../feed/lib/types.js';
 import { ReactedWithChip, ReactionLine, reactionGlyph } from './Reactions.js';
 import { MessageRow } from './ThreadPage.js';
@@ -37,13 +38,15 @@ function mount(fake: FakeFetch, children: ReactNode) {
   return render(
     <QueryClientProvider client={qc}>
       <ShellProvider api={api} table={tableWith({ pages: [] })}>
-        <ol>{children}</ol>
+        <ToastProvider>
+          <ol>{children}</ol>
+        </ToastProvider>
       </ShellProvider>
     </QueryClientProvider>,
   );
 }
 
-const details = (canEdit: boolean) => ({ status: 200, body: { details: { contactId: C, canEdit, stageLabels: {} } } });
+const details = (canEdit: boolean, doNotContact = false) => ({ status: 200, body: { details: { contactId: C, canEdit, doNotContact, stageLabels: {} } } });
 
 const PHRASES: [Partial<TimelineReaction>, string][] = [
   [{ reaction: 'love' }, 'Sam loved “See you at 3”'],
@@ -113,6 +116,23 @@ describe('ReactionLine (R-REACT-6)', () => {
     expect(fake.callsTo(`POST /contacts/${C}/do-not-contact`)).toHaveLength(0);
     await userEvent.click(within(dialog).getByRole('button', { name: 'Yes, record do not contact' })); // tap 2
     expect(fake.callsTo(`POST /contacts/${C}/do-not-contact`).map((c) => c.body)).toEqual([{ reason: 'asked_in_writing' }]);
+  });
+
+  it('R-REACT-3 R-PAR-32 (b8 texting ui/F9): with do-not-contact already recorded there is no offer, only a line saying so', async () => {
+    const fake = new FakeFetch().on(`GET /contacts/${C}/details`, details(true, true));
+    mount(fake, <ReactionLine item={item({ narrowed: true })} contact={contact} />);
+    expect(await screen.findByText('Sam already asked not to be contacted.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'They asked not to be contacted…' })).toBeNull();
+  });
+
+  it('R-REACT-3 R-PAR-32 (b8 texting ui/F9): when someone recorded it first (alreadySet), the toast never says "Recorded"', async () => {
+    const fake = new FakeFetch().on(`GET /contacts/${C}/details`, details(true)).on(`POST /contacts/${C}/do-not-contact`, { status: 200, body: { doNotContact: true, alreadySet: true, revokedPoints: 0 } });
+    mount(fake, <ReactionLine item={item({ narrowed: true })} contact={contact} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'They asked not to be contacted…' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Did Sam ask not to be contacted?' });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Yes, record do not contact' }));
+    expect((await screen.findAllByText('Already recorded: Sam asked not to be contacted. Nothing changed.')).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/^Recorded: do not contact/)).toBeNull();
   });
 
   it('R-REACT-6: the quote links to the reacted-to text only when it is loaded', () => {

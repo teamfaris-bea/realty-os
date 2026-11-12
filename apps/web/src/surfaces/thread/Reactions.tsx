@@ -72,11 +72,14 @@ function DoNotContactOffer({ contactId, first }: { contactId: string; first: str
   const [asking, setAsking] = useState(false);
   const dnc = usePersonAction<{ alreadySet: boolean }>(contactId);
   const toast = useToast();
+  // Already recorded (by any path, a merge included): nothing to offer, and the line says so instead (b8 texting ui/F9).
+  if (details.data?.details.doNotContact === true) return <p className="px-1 text-[13px] text-ink-muted">{first} already asked not to be contacted.</p>;
   if (details.data?.details.canEdit !== true) return null;
   const record = async () => {
     const r = await dnc.run('POST', `/contacts/${contactId}/do-not-contact`, { reason: 'asked_in_writing' });
     if (!r.ok) return;
-    toast({ text: `Recorded: do not contact ${first}` });
+    // never "Recorded" when nothing changed: the API answers alreadySet when someone recorded it first
+    toast({ text: r.data.alreadySet ? `Already recorded: ${first} asked not to be contacted. Nothing changed.` : `Recorded: do not contact ${first}` });
     setAsking(false);
   };
   return (
