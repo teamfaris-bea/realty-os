@@ -1,0 +1,18 @@
+# Settings for the database host (docs/DEPLOY.md §12), e.g. included from postgresql.conf
+# (include_if_exists = 'postgresql.realty.conf'). Postgres 16.
+
+# listen on the private network only, never on a public address
+listen_addresses = '<private-ip>'
+
+# TLS for every client (pg_hba.conf.example has hostssl lines only). The certificate must name <db-host>: the app
+# connects with verify-full against the CA it is given (/etc/realty/db-ca.pem on the app VM).
+ssl = on
+ssl_cert_file = '<server-cert-path>'
+ssl_key_file = '<server-key-path>'
+ssl_min_protocol_version = 'TLSv1.2'
+
+# new and changed passwords are stored as SCRAM verifiers (pg_hba.conf.example accepts scram-sha-256 only)
+password_encryption = scram-sha-256
+
+# Point-in-time recovery: see docs/DEPLOY.md §12, the PITR step (H4). The archive settings (archive_mode,
+# archive_command or archive_library, wal_level) depend on the backup tool chosen: VERIFY them in its documentation.

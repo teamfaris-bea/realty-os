@@ -1,0 +1,81 @@
+# The app VM's non-secret settings (docker-compose.app-vm.yml, docs/DEPLOY.md §12). Together with
+# deploy/app-vm/app.secrets.refs.example it holds exactly the keys of deploy/env.production.example, each key in one
+# of the two files only (apps/api/src/deploy.appvm.test.ts). deploy/render-secrets.sh copies these lines verbatim
+# into /run/realty/app.env and appends the fetched secrets:
+#
+#   deploy/render-secrets.sh app.settings app.secrets.refs /run/realty/app.env
+#
+# One KEY=value per line. A value never holds `$`, a quote or ` #` (compose would interpolate or cut it; the renderer
+# refuses them). No secret here, and no owner credential (MIGRATION_DATABASE_URL, POSTGRES_*) and no libpq PG*
+# variable: the renderer refuses them.
+#
+# The AI ISA lane's enable switches go here, set to off, once that lane merges.
+
+NODE_ENV=production
+
+# ---- database: the app role over verified TLS to its own host (DATABASE_URL is a secret reference) ----
+DATABASE_SSL_MODE=verify-full
+# docker-compose.app-vm.yml mounts the host's /etc/realty/db-ca.pem here read-only
+DATABASE_SSL_CA_FILE=/run/realty/db-ca.pem
+
+# ---- public URLs (https only) ----
+PUBLIC_BASE_URL=https://app.example.com
+WEB_ORIGIN=https://app.example.com
+# the web container (nginx) on the compose network, never `true` (DEPLOY §4)
+TRUST_PROXY=uniquelocal
+SESSION_COOKIE_SECURE=true
+
+# ---- keys (the key material itself is in the secret references) ----
+KEK_REF=prod-kek:v1
+# kill switch: fake providers are refused in production
+ALLOW_FAKE_PROVIDERS=false
+
+# ---- AI and push ----
+AI_PROVIDER=anthropic
+PUSH_PROVIDER=webpush
+VAPID_PUBLIC_KEY=
+VAPID_SUBJECT=mailto:ops@example.com
+
+# ---- telephony ----
+TELEPHONY_PROVIDER=twilio
+# kill switch (R-TWL-1): stays false until the written pilot approval
+TELEPHONY_LIVE_REQUESTS=false
+TWILIO_ACCOUNT_SID=
+TWILIO_PLATFORM_SENDER=
+
+# ---- email ----
+EMAIL_PROVIDER=smtp
+# the relay's SMTP host and SPF include (VERIFY with the relay chosen in deploy/env.production.example)
+SMTP_HOST=<smtp-host>
+SMTP_PORT=587
+SMTP_SECURE=starttls
+SMTP_USERNAME=
+SMTP_VENDOR=postmark
+SMTP_POSTMARK_MESSAGE_STREAM=outbound
+EMAIL_DKIM_SELECTORS=
+EMAIL_SPF_INCLUDE=<spf-include>
+ACCOUNT_EMAIL_FROM=no-reply@example.com
+EMAIL_INBOUND_FORMATS=postmark
+EMAIL_WEBHOOK_BASIC_USER=
+SES_SNS_TOPIC_ARNS=
+
+# ---- storage: s3 (the app VM mounts no storage volume) ----
+STORAGE_PROVIDER=s3
+STORAGE_DIR=/var/lib/realty/storage
+S3_BUCKET=
+S3_REGION=
+S3_ENDPOINT=
+S3_SSE=none
+
+# ---- Follow Up Boss import (SECURITY §2.9) ----
+FUB_PROVIDER=real
+FUB_BASE_URL=
+FUB_ALLOWED_HOSTS=
+# both or neither: with FUB_SYSTEM_KEY in the references, set the name here
+FUB_SYSTEM_NAME=
+
+# ---- MLS (DEPLOY §11): kill switch off until §11.5 is signed off ----
+MLS_PROVIDER=fake
+MLS_LIVE_CALLS=false
+
+LOG_LEVEL=info

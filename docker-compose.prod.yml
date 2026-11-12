@@ -1,8 +1,9 @@
-# Example production stack (docs/DEPLOY.md). Portable: any host with Docker. In a real deployment prefer
-# a managed Postgres 16 with backups and TLS, and put a TLS-terminating proxy or load balancer in front of
-# `web` (it serves the app and proxies /api on the same origin).
+# The single-VM STAGING and rehearsal stack (docs/STAGING.md, docs/DEPLOY.md): Postgres inside the stack, without
+# TLS, used with deploy/env.staging.example (DATABASE_SSL_MODE=disable, ALLOW_FAKE_PROVIDERS=true). Real teams use
+# docker-compose.app-vm.yml instead, with the database on its own host over verified TLS (DEPLOY §3 "Database host",
+# §12). Put a TLS-terminating proxy or load balancer in front of `web` (it serves the app and proxies /api).
 #
-#   cp deploy/env.production.example .env.production   # the app's environment: fill in every value
+#   cp deploy/env.staging.example .env.production       # the app's environment: fill in every value
 #   cp deploy/env.owner.example .env.owner             # the database owner's credentials: fill in both
 #   docker compose -f docker-compose.prod.yml --env-file .env.owner up -d --build
 #
