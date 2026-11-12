@@ -39,6 +39,7 @@ const Home = z.strictObject({
   mailingDiffers: z.boolean().nullable(),
   lookupLinks: z.array(Link).max(4),
   loansLink: Link.nullable(),
+  taxRatesLink: Link.nullable(),
   providerNote: z.string().max(200).nullable(),
 });
 

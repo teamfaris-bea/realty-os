@@ -58,6 +58,7 @@ describe('GET /api/contacts/:id/homeowner (R-HOME-8)', () => {
     expect(home.yearsOwned).toMatchObject({ since: '2015-06-01', source: 'Beaufort County GIS parcel layer' });
     expect(home.rows.filter((x) => x.state === 'pending_d9').map((x) => x.key)).toEqual(['mls_sale_history', 'in_house_value']);
     expect(home.loansLink?.label).toMatch(/Register of Deeds/);
+    expect(home.taxRatesLink?.label).toBe('Beaufort County millage rates');
     const text = JSON.stringify(r.body);
     expect(text).not.toContain(c.first.toUpperCase());
     expect(text).not.toMatch(/score|confidence|percent|estimat|balance|equity|ownerName|TEST-/i);
@@ -173,7 +174,7 @@ describe('GET /api/contacts/:id/homeowner (R-HOME-8)', () => {
     expect(records.homeownerCalls.slice(calls).some((x) => x.includes(c.address.line1.toLowerCase().split(' ')[0]!) && x.endsWith('29936'))).toBe(false);
     const home = (await get(w.agents[0]!, c.id)).body.homes[0]!;
     expect(home).toMatchObject({ outcome: 'links_only', county: { key: 'sc-jasper', mode: 'links' }, check: { state: 'links_only' } });
-    expect(home.lookupLinks.map((l) => l.label)).toEqual(['Jasper County Assessor']);
+    expect(home.lookupLinks.map((l) => l.label)).toEqual(['Jasper County Assessor on qPublic']);
   });
 
   it('R-HOME-3 E562: an owner mismatch shows the outcome and keeps no value', async () => {

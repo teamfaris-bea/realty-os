@@ -136,11 +136,31 @@ describe('homeownerView (R-HOME-8)', () => {
     const j = one({ address: JASPER, kind: 'home', profile: null });
     expect(j.outcome).toBe('links_only');
     expect(j.county).toEqual({ key: 'sc-jasper', name: 'Jasper County', mode: 'links' });
-    expect(j.lookupLinks.map((l) => l.label)).toEqual(['Jasper County Assessor']);
+    expect(j.lookupLinks.map((l) => l.label)).toEqual(['Jasper County Assessor on qPublic']);
     const s = one({ address: SHARED, kind: 'home', profile: profile({ status: 'not_available' }) });
     expect(s.county?.mode).toBe('shared');
-    expect(s.lookupLinks.map((l) => l.label)).toEqual(['Jasper County Assessor']);
+    expect(s.lookupLinks.map((l) => l.label)).toEqual(['Jasper County Assessor on qPublic']);
     expect(one({ address: SHARED, kind: 'home', profile: MATCHED }).lookupLinks).toEqual([]);
+  });
+
+  // b11 reconciliation homeowner-11 (verify_items 6): the Jasper links went to the county homepage, Beaufort's to
+  // pages other than the brief's, and no millage link existed where tax values are shown
+  it('R-HOME-5 E575 E576: the county pages are the brief\'s (each VERIFY); Beaufort homes add the millage page; no link carries the address', () => {
+    const b = one({ address: BEAUFORT, kind: 'home', profile: MATCHED });
+    expect(b.rows.find((r) => r.key === 'assessed_value_cents')).toMatchObject({ link: { url: 'https://sc-beaufort.publicaccessnow.com/' } });
+    expect(b.loansLink).toEqual({ label: 'Beaufort County Register of Deeds', url: 'https://www.beaufortcountysc.gov/register-of-deeds/index.html' });
+    expect(b.taxRatesLink).toEqual({ label: 'Beaufort County millage rates', url: 'https://beaufortcountysc.gov/auditor/millage-info.html' });
+    expect(one({ address: BEAUFORT, kind: 'home', profile: null }).taxRatesLink).toEqual(b.taxRatesLink);
+    const j = one({ address: JASPER, kind: 'home', profile: null });
+    expect(j.lookupLinks).toEqual([{ label: 'Jasper County Assessor on qPublic', url: 'https://qpublic.net/sc/jasper/' }]);
+    expect(j.loansLink).toEqual({ label: 'Jasper County Register of Deeds', url: 'https://www.jaspercountysc.gov/services/register-of-deeds/' });
+    expect(j.taxRatesLink).toBeNull();
+    expect(one({ address: OTHER, kind: 'home', profile: null }).taxRatesLink).toBeNull();
+    const all = JSON.stringify([b, j, one({ address: SHARED, kind: 'home', profile: profile({ status: 'not_available' }) })].map((h) => [h.rows, h.lookupLinks, h.loansLink, h.taxRatesLink]));
+    for (const url of all.match(/https?:\/\/[^"]+/g)!) {
+      expect(url).toMatch(/^https:\/\//);
+      expect(url.toLowerCase()).not.toMatch(/sample|exampleton|299\d\d/);
+    }
   });
 
   it('R-HOME-2 E577: an address outside the table has no county and no links', () => {

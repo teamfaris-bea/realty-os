@@ -69,6 +69,7 @@ describe('the homeowner panel (R-HOME-8)', () => {
     expect(screen.getAllByText(T.D9_NOT_SHOWN)).toHaveLength(2);
     expect(document.body.textContent).not.toMatch(/once .* is built/);
     expect(screen.getByText(`${T.LOANS}:`, { exact: false })).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Beaufort County millage rates/ }).getAttribute('href')).toBe('https://beaufortcountysc.gov/auditor/millage-info.html');
     expect(screen.getByText(T.FOOTER)).toBeTruthy();
     expect(screen.getByText('Not for outreach: these records never address or trigger messages. Outreach use: not built; counsel clearance not recorded for this deployment.')).toBeTruthy();
     // the only mention of an estimate is the footer saying none is made

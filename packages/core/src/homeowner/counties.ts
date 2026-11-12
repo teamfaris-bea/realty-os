@@ -22,6 +22,8 @@ export interface CountyInfo {
   records: CountyLink;
   /** where recorded loans and transfers are searched (no automated source, R-HOME-4) */
   deeds: CountyLink;
+  /** the county's tax rates (millage), shown where tax values are; null when the table has none */
+  taxRates: CountyLink | null;
 }
 
 /** ZIPs wholly in Beaufort County for this table. VERIFY. */
@@ -31,19 +33,31 @@ export const SHARED_BEAUFORT_JASPER_ZIPS: readonly string[] = ['29909', '29910']
 /** ZIPs in Jasper County (links only). VERIFY. */
 export const JASPER_ZIPS: readonly string[] = ['29927', '29934', '29936', '29943'];
 
-/** Public county pages (VERIFY each URL with the county). */
+/**
+ * Public county pages: the brief's candidate pages (verify_items 6; b11 reconciliation homeowner-11). Each URL is
+ * VERIFY with the county before a deployment relies on it; none carries the address or any contact datum, and the panel
+ * opens https links only.
+ */
 export const COUNTIES: Readonly<Record<CountyKey, CountyInfo>> = {
   'sc-beaufort': {
     key: 'sc-beaufort',
     name: 'Beaufort County',
-    records: { label: 'Beaufort County Assessor', url: 'https://www.beaufortcountysc.gov/assessor/' },
-    deeds: { label: 'Beaufort County Register of Deeds', url: 'https://www.beaufortcountysc.gov/register-of-deeds/' },
+    // VERIFY: the assessor's public property search (Public Access)
+    records: { label: 'Beaufort County Public Access (assessor records)', url: 'https://sc-beaufort.publicaccessnow.com/' },
+    // VERIFY: a new system since 2/23/2026; recorded amounts are probably on the document images only
+    deeds: { label: 'Beaufort County Register of Deeds', url: 'https://www.beaufortcountysc.gov/register-of-deeds/index.html' },
+    // VERIFY: the auditor's millage page
+    taxRates: { label: 'Beaufort County millage rates', url: 'https://beaufortcountysc.gov/auditor/millage-info.html' },
   },
   'sc-jasper': {
     key: 'sc-jasper',
     name: 'Jasper County',
-    records: { label: 'Jasper County Assessor', url: 'https://www.jaspercountysc.gov/' },
-    deeds: { label: 'Jasper County Register of Deeds', url: 'https://www.jaspercountysc.gov/' },
+    // VERIFY: the brief lists http://qpublic.net/sc/jasper/; whether the https form below answers is NOT verified (the
+    // panel opens https links only, so an http-only page would need a reviewed change, never a downgrade here)
+    records: { label: 'Jasper County Assessor on qPublic', url: 'https://qpublic.net/sc/jasper/' },
+    // VERIFY: the index is complete from April 2007
+    deeds: { label: 'Jasper County Register of Deeds', url: 'https://www.jaspercountysc.gov/services/register-of-deeds/' },
+    taxRates: null,
   },
 };
 

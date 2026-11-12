@@ -75,6 +75,8 @@ export interface HomeView {
   lookupLinks: CountyLink[];
   /** where recorded loans are searched (no automated source) */
   loansLink: CountyLink | null;
+  /** the county's tax rates (millage) page where the tax values are listed (Beaufort; b11 reconciliation homeowner-11) */
+  taxRatesLink: CountyLink | null;
   /** the platform status text when public records are not set up, or on every home while a test source answers */
   providerNote: string | null;
 }
@@ -122,11 +124,11 @@ function homeView(h: ViewHome, input: ViewInput): HomeView {
   // E582: with no county transfer date, the team's closing the viewer sees (never when the county names someone else)
   const closingYears = yearsOwned(null, input.today, h.teamClosingOn ?? null);
   if (route === null) {
-    return { ...base, yearsOwned: closingYears, county: null, check: { state: 'outside_area' }, outcome: 'outside_area', rows: [...absent('not_available', 'links_only', null), ...d9], lookupLinks: [], loansLink: null };
+    return { ...base, yearsOwned: closingYears, county: null, check: { state: 'outside_area' }, outcome: 'outside_area', rows: [...absent('not_available', 'links_only', null), ...d9], lookupLinks: [], loansLink: null, taxRatesLink: null };
   }
   if (route.mode === 'links') {
     const c = COUNTIES[route.key];
-    return { ...base, yearsOwned: closingYears, county: { key: c.key, name: c.name, mode: 'links' }, check: { state: 'links_only' }, outcome: 'links_only', rows: [...absent('not_available', 'links_only', c.records), ...d9], lookupLinks: [c.records], loansLink: c.deeds };
+    return { ...base, yearsOwned: closingYears, county: { key: c.key, name: c.name, mode: 'links' }, check: { state: 'links_only' }, outcome: 'links_only', rows: [...absent('not_available', 'links_only', c.records), ...d9], lookupLinks: [c.records], loansLink: c.deeds, taxRatesLink: c.taxRates };
   }
   const key = route.mode === 'shared' ? route.try : route.key;
   const c = COUNTIES[key];
@@ -135,7 +137,7 @@ function homeView(h: ViewHome, input: ViewInput): HomeView {
   const p = h.profile;
   if (p === null) {
     const check: CheckState = input.configured ? { state: 'not_checked' } : { state: 'not_configured', text: input.statusText };
-    return { ...base, yearsOwned: closingYears, county, check, outcome: 'pending', rows: [...absent('not_available', 'not_checked', c.records), ...d9], lookupLinks: also ? [also.records] : [], loansLink: c.deeds };
+    return { ...base, yearsOwned: closingYears, county, check, outcome: 'pending', rows: [...absent('not_available', 'not_checked', c.records), ...d9], lookupLinks: also ? [also.records] : [], loansLink: c.deeds, taxRatesLink: c.taxRates };
   }
 
   const failedLater = p.lastFailureOn !== null && (p.checkedOn === null || p.lastFailureOn >= p.checkedOn);
@@ -168,6 +170,7 @@ function homeView(h: ViewHome, input: ViewInput): HomeView {
     mailingDiffers: mailing ? mailingDiffers(mailing.value, h.address) : null,
     lookupLinks: also && (p.status === 'not_available' || p.status === 'failed') ? [also.records] : [],
     loansLink: c.deeds,
+    taxRatesLink: c.taxRates,
   };
 }
 

@@ -7,6 +7,7 @@ export const HEADER = 'Homeowner profile';
 export const INTERNAL = 'Internal: agents only, never shown to the client';
 export const FOOTER = 'Loan balance and equity are not estimated';
 export const LOANS = 'No automated source for recorded loans: search the Register of Deeds';
+export const TAX_RATES = "The county's tax rates";
 export const JASPER = 'Jasper County records are not read automatically. Look up the owner here:';
 export const NOT_CHECKED = 'Not checked yet: county checks run overnight';
 export const AMBIGUOUS = 'More than one county record matches this address; nothing was kept.';

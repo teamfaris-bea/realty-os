@@ -105,6 +105,11 @@ function Home({ home, firstName, index }: { home: HomeView; firstName: string | 
           ))}
         </ul>
       ) : null}
+      {home.taxRatesLink ? (
+        <p className="text-[15px] text-ink-muted">
+          {T.TAX_RATES}: <ExternalLink label={home.taxRatesLink.label} url={home.taxRatesLink.url} />
+        </p>
+      ) : null}
       {home.loansLink ? (
         <p className="text-[15px] text-ink-muted">
           {T.LOANS}: <ExternalLink label={home.loansLink.label} url={home.loansLink.url} />
