@@ -90,7 +90,7 @@ export const capabilityPathsText = (table: readonly Pick<RouteTableEntry, 'metho
  * The live route table: the server registers every route module (routes.ts) and nothing listens. Registering routes
  * reads no row, so the database handle is never connected.
  */
-export async function liveRouteTable(): Promise<RouteTableEntry[]> {
+async function withLiveServer<T>(fn: (app: import('fastify').FastifyInstance) => T): Promise<T> {
   const [{ instant, uuidv7Generator }, { createDatabase }, { testConfig }, { createFakeProviders }, { buildServer }] = await Promise.all([
     import('@realty/core/foundation'),
     import('@realty/db'),
@@ -104,11 +104,44 @@ export async function liveRouteTable(): Promise<RouteTableEntry[]> {
   const app = buildServer(testConfig(), { providers: createFakeProviders({ clock }), clock, ids, db });
   try {
     await app.ready();
-    return [...app.platform.routeTable];
+    return fn(app);
   } finally {
     await app.close();
     await db.close();
   }
+}
+
+export async function liveRouteTable(): Promise<RouteTableEntry[]> {
+  return withLiveServer((app) => [...app.platform.routeTable]);
+}
+
+/**
+ * Routes served OUTSIDE /api (b7 db-public/F2). They are not in the route table, so neither the authorization
+ * declaration nor this file's capability rule sees them; capabilityPaths.test.ts pins them to this list, so a new
+ * one (or a new parameter) is a decision, not an accident. deploy/nginx.conf proxies each prefix to the API.
+ * Every parameter here is public: it names a published page, not an authority (R-MKT-7).
+ */
+export const DOCUMENT_ROUTES: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  '/p/:tenantSlug/:pageSlug': { tenantSlug: "the tenant's public slug", pageSlug: "a published listing page's public slug" },
+  '/p/:tenantSlug/:pageSlug/photos/:position': { tenantSlug: "the tenant's public slug", pageSlug: "a published listing page's public slug", position: "a photo's position on that page" },
+};
+
+/** Every route of the built server outside /api, with its methods (from Fastify's route tree). */
+export async function liveRoutesOutsideApi(): Promise<{ path: string; methods: string[] }[]> {
+  return withLiveServer((app) => {
+    const out: { path: string; methods: string[] }[] = [];
+    const stack: string[] = [];
+    for (const line of app.printRoutes({ commonPrefix: false }).split('\n')) {
+      const m = /^((?:│ {3}| {4})*)(?:├── |└── )(\S+)(?: \(([^)]*)\))?/.exec(line);
+      if (!m) continue;
+      const depth = m[1]!.length / 4;
+      stack.length = depth;
+      stack.push(m[2]!);
+      const path = stack.join('');
+      if (m[3] && !path.startsWith('/api')) out.push({ path, methods: m[3].split(',').map((x) => x.trim()).sort() });
+    }
+    return out.sort((a, b) => a.path.localeCompare(b.path));
+  });
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

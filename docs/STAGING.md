@@ -103,10 +103,13 @@ Check the web server once (rehearsed):
 ```sh
 $DC exec -T web nginx -t
 curl -sI http://127.0.0.1:$WEB_PORT/ | grep -iE 'content-security-policy|x-frame-options|cache-control'
+# module 29's public listing pages reach the API, not the SPA: an unknown page is the API's own 404 page, whose CSP is
+# `default-src 'none'` (the SPA's index.html would answer 200 with the app's CSP)
+curl -sI http://127.0.0.1:$WEB_PORT/p/no-such-team/no-such-page | grep -iE '^HTTP|content-security-policy'
 ```
 
 The page, assets and SPA fallback carry the strict CSP with `frame-ancestors 'none'`, nosniff, Referrer-Policy,
-Permissions-Policy, COOP, CORP and `X-Frame-Options: DENY`; `/api/` responses carry only the API's own headers.
+Permissions-Policy, COOP, CORP and `X-Frame-Options: DENY`; `/api/` and `/p/` responses carry only the API's own headers.
 No `.map` file is served.
 
 **Redeploy** (a new commit): rebuild both images (§2), then `$DC up -d --no-build`. The release step runs again

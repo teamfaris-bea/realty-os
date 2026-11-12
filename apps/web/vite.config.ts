@@ -27,7 +27,8 @@ export default defineConfig({
     strictPort: true,
     // GitHub Codespaces serves the dev server at <name>-5173.app.github.dev.
     allowedHosts: process.env.CODESPACES ? [`.${process.env.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN ?? 'app.github.dev'}`] : undefined,
-    proxy: { '/api': { target: `http://localhost:${apiPort}`, changeOrigin: false } },
+    // /p: module 29's public listing pages, served by the API outside /api (as deploy/nginx.conf proxies them)
+    proxy: { '/api': { target: `http://localhost:${apiPort}`, changeOrigin: false }, '/p/': { target: `http://localhost:${apiPort}`, changeOrigin: false } },
   },
   // `vite preview` serves the production build with the same headers a deployed server must send
   preview: { headers: { ...webSecurityHeaders } },
