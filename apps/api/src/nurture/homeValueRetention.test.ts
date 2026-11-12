@@ -114,6 +114,61 @@ describe('R-DATA-6: app.purge_home_valuations', () => {
     expect(await exists(p.valuationId)).toBe(true);
   });
 
+  it('R-DATA-6 E553 (copies): a purged valuation leaves no value behind in its citations: its evidence rows lose the snippet and are marked unavailable, the settled run\'s stored evidence drops the value and the trigger-runs view says the source was removed; a kept row\'s copies stay', async () => {
+    // a world of its own: the passes above aged other tenants' rows, and this pass must value only these two homes
+    const c = await nurtureWorld(h);
+    const agent = c.agents[0]!;
+    await approveTemplate(agent, 'after_closing_alerts');
+    const proposed = await pastClient(h, c, agent);
+    const executed = await pastClient(h, c, agent);
+    for (const x of [proposed, executed]) expect((await inboundSms(h, x.phone, c.mainNumber, 'Thanks for everything')).statusCode).toBe(200);
+    await withAvmCleared(h, async () => {
+      await avmPass(h, c.tenantId);
+      for (const x of [proposed, executed]) await firingsDue(h, x.id);
+      await reconcileAndRun(h, c.tenantId);
+    });
+    const p = await citedValuation(proposed);
+    const e = await citedValuation(executed);
+    const ap = await call(agent, 'POST', `/assistant/actions/${e.run.assistant_action_id}/approve`, { commandId: randomUUID() });
+    expect(ap.status, JSON.stringify(ap.body)).toBe(200);
+    const evidenceOf = async (valuationId: string) =>
+      (await h.su.query<{ snippet: string | null; enc: boolean; source_available: boolean }>(
+        "SELECT snippet, snippet_enc IS NOT NULL AS enc, source_available FROM evidence_refs WHERE source_type = 'home_valuation' AND source_id = $1 ORDER BY id", [valuationId])).rows;
+    const storedEvidence = async (contactId: string) => ((await triggerRuns(h, contactId))[0]!.trigger_ref['evidence'] as Record<string, unknown>[])[0]!;
+    const factText = async (contactId: string) => {
+      const r = await call<{ runs: { fact: { text: string } | null }[] }>(agent, 'GET', `/contacts/${contactId}/trigger-runs`);
+      expect(r.status).toBe(200);
+      return r.body.runs[0]!.fact?.text ?? null;
+    };
+    // before: every copy carries the estimate (value, range, source, as-of)
+    for (const x of [p, e]) {
+      const ev = await evidenceOf(x.valuationId);
+      expect(ev.length).toBeGreaterThan(0);
+      for (const row of ev) expect(row).toMatchObject({ snippet: expect.stringMatching(/^Estimated value: \$/), source_available: true });
+    }
+    expect(await storedEvidence(executed.id)).toMatchObject({ sourceType: 'home_valuation', sourceId: e.valuationId, snippet: expect.stringMatching(/^Estimated value: \$/) });
+    expect(await factText(executed.id)).toMatch(/Estimated value: \$/);
+
+    for (const x of [p, e]) await age(x.valuationId, 14);
+    expect(await purge(systemActor(c.tenantId, 'provider'))).toBe(1);
+    expect(await exists(e.valuationId)).toBe(false);
+    expect(await exists(p.valuationId)).toBe(true);
+
+    // the purged row's citations: no snippet, unavailable (the evidence views then read "Source removed under retention policy")
+    const gone = await evidenceOf(e.valuationId);
+    expect(gone.length).toBeGreaterThan(0);
+    for (const row of gone) expect(row).toEqual({ snippet: null, enc: false, source_available: false });
+    const stored = await storedEvidence(executed.id);
+    expect(stored).toMatchObject({ sourceType: 'home_valuation', sourceId: e.valuationId, sourceAvailable: false });
+    expect(stored).not.toHaveProperty('snippet');
+    expect(JSON.stringify((await triggerRuns(h, executed.id))[0]!.trigger_ref)).not.toMatch(/Estimated value|\$\d/);
+    expect(await factText(executed.id)).toMatch(/Source removed under retention policy$/);
+    // the kept row's citations are untouched
+    for (const row of await evidenceOf(p.valuationId)) expect(row).toMatchObject({ snippet: expect.stringMatching(/^Estimated value: \$/), source_available: true });
+    expect(await storedEvidence(proposed.id)).toMatchObject({ snippet: expect.stringMatching(/^Estimated value: \$/) });
+    expect(await factText(proposed.id)).toMatch(/Estimated value: \$/);
+  });
+
   it('R-DATA-6 E554: a user actor, support, or no tenant is refused; no instant argument; avmRefresh purges with the vendor unconfigured', async () => {
     const c = await pastClient(h, a, a.agents[0]!);
     const old = await oldValuation(a.tenantId, c, 15);

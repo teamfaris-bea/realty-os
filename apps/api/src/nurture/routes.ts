@@ -55,6 +55,18 @@ function factSource(ref: Record<string, unknown> | null): 'mls' | 'team' | 'deal
 }
 
 /**
+ * A run's fact from its stored evidence. A citation whose source was purged (R-DATA-6: app.purge_home_valuations
+ * strips the snippet and stores `sourceAvailable: false`, b11 review ownership-data/F3) says so, in the words the
+ * evidence views use, and never quotes the estimate.
+ */
+function factOf(ev: Record<string, unknown> | null, ref: Record<string, unknown> | null, source: ReturnType<typeof factSource>, firedAt: unknown): { text: string; source: ReturnType<typeof factSource>; at: string } | null {
+  if (!ev || typeof firedAt !== 'number') return null;
+  const said = ev['sourceAvailable'] === false ? 'Source removed under retention policy' : typeof ev['snippet'] === 'string' ? (ev['snippet'] as string) : null;
+  if (said === null) return null;
+  return { text: `${String(ref?.['address'] ?? '')}: ${said}`.replace(/^: /, ''), source, at: new Date(firedAt).toISOString() };
+}
+
+/**
  * Home values (R-INT-1, R-INT-6) say in words what holds them back: no AVM vendor on this platform ("not set up on
  * this platform yet", nothing is requested), or platform:avm not yet counsel-reviewed (drafts only).
  */
@@ -101,7 +113,7 @@ async function register(app: FastifyInstance): Promise<void> {
             status: x.status,
             scheduledFor: new Date(x.scheduledFor).toISOString(),
             updatedAt: new Date(x.updatedAt).toISOString(),
-            fact: ev && typeof ev['snippet'] === 'string' && typeof t?.['firedAt'] === 'number' ? { text: `${String(ref?.['address'] ?? '')}: ${ev['snippet'] as string}`.replace(/^: /, ''), source, at: new Date(t['firedAt'] as number).toISOString() } : null,
+            fact: factOf(ev, ref, source, t?.['firedAt']),
             skip: skip && typeof skip['reason'] === 'string' && typeof skip['text'] === 'string' ? { reason: skip['reason'] as string, text: skip['text'] as string } : null,
             messageId: x.messageId,
             assistantActionId: x.actionId,
