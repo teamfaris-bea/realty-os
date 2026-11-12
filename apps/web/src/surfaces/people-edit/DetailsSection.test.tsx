@@ -152,7 +152,7 @@ describe('Details: what a visitor typed in the website chat (E77, E154, finding 
     expect(fake.callsTo(`POST /contacts/${C}/points`)[0]!.body).toEqual({ kind: 'email', address: 'sam.rivera@example.com', label: 'other' });
   });
 
-  it('R-CHAN-3 (review optouts/F3): for a person who asked not to be contacted, what they typed is still shown, but nothing offers to add it to call, text or email them: the notice says nobody can', async () => {
+  it('R-CHAN-2 (review optouts/F3): for a person who asked not to be contacted, what they typed is still shown, but nothing offers to add it to call, text or email them: the notice says nobody can', async () => {
     const fake = new FakeFetch().on('GET /auth/session', { status: 200, body: sessionFixture() }).on(`GET /contacts/${C}/points`, { status: 200, body: { points: [] } });
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const contact = { id: C, displayName: 'Sam Rivera', firstName: 'Sam', lastName: 'Rivera', phones: [], emails: [], typedInChat: [{ kind: 'phone', address: '+18435550101', typedAt: '2026-11-11T17:00:00.000Z' }] };

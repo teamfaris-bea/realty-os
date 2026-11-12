@@ -46,7 +46,7 @@ const contactArb = fc
     points: fc.array(pointArb, { minLength: 1, maxLength: 4 }),
     // R-PAR-12: removed phones whose opt-out still counts (an address is on a contact once, live or removed)
     removed: fc.subarray(HMACS, { maxLength: 2 }),
-    // R-CHAN-4 (review optouts/F4): the person's other chat identities (another record of the person, or removed)
+    // review optouts/F4: the person's other chat identities (another record of the person, or removed)
     otherChat: fc.subarray(HMACS, { maxLength: 2 }),
     consent: fc.array(consentArb, { maxLength: 8 }),
     suppressions: fc.array(suppressionArb, { maxLength: 4 }),
@@ -101,7 +101,7 @@ function apiGateInput(c: ReachabilityInput, point: ReachPoint, channel: Channel,
 const sorted = (xs: readonly string[]) => [...new Set(xs)].sort();
 
 describe('reachability agrees exactly with canContact', () => {
-  it('R-CHAN-2 R-CHAN-4 property: for every point × channel × purpose (web chat and the person-level do-not-contact included), the predicted reasons are exactly the reasons canContact gives, and nothing else blocks a clean human send', () => {
+  it('R-CHAN-2 property: for every point × channel × purpose (web chat and the person-level do-not-contact included), the predicted reasons are exactly the reasons canContact gives, and nothing else blocks a clean human send', () => {
     fc.assert(
       fc.property(contactArb, (c) => {
         for (const ch of reachability(c)) {
@@ -208,7 +208,7 @@ describe('reachability examples', () => {
     expect(pointBlocks({ ...c, personDoNotContact: false }, chat, 'web_chat', 'informational')).toEqual([]);
     expect(REACHABILITY_REASONS).toContain('PERSON_DO_NOT_CONTACT');
   });
-  it('R-CHAN-4 (review optouts/F4): a chat opt-out on another chat identity of the person (another record of it, or a removed identity) blocks a reply on this one, as canContact and the dispatch guard read it', () => {
+  it('review optouts/F4: a chat opt-out on another chat identity of the person (another record of it, or a removed identity) blocks a reply on this one, as canContact and the dispatch guard read it', () => {
     const chat: ReachPoint = { id: 'c', kind: 'web_chat', addressHmac: 'f'.repeat(64), status: 'active', lineType: 'unknown' };
     const elsewhere = '9'.repeat(64);
     const optedOut = revokedRow({ channel: 'web_chat', purpose: 'informational', addressHmac: elsewhere, basisEventId: 'wrong-person' });

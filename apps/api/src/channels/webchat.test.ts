@@ -103,7 +103,7 @@ describe('R-INBOX-2 a visitor message runs the Phase 1 ingestion transaction', (
     expect(feed).toContain('handback');
   });
 
-  it('R-INBOX-4 R-AST-9 (review ui-compose/F3): the handback of a chat-only lead who answered the assistant in the chat offers the chat on the feed, never "Can\'t reach them right now"', async () => {
+  it('R-INBOX-4 (review ui-compose/F3): the handback of a chat-only lead who answered the assistant in the chat offers the chat on the feed, never "Can\'t reach them right now"', async () => {
     const c = await openChat(h, widget.key, src.disclosureId, { name: 'Hal Handback' });
     await runJobs(h, w.tenantId, FR);
     const agent = await acceptLead(h, w.agents, c.contactId);

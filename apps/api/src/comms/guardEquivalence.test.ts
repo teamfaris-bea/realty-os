@@ -351,7 +351,7 @@ describe('R-CHAN-2 equivalence: the app gate decides exactly what the DB dispatc
   }, 120_000);
 });
 
-describe('R-CHAN-4 equivalence for website-chat replies (review optouts/F4 of batch 6): canContact reads the chat opt-out fan-out the 0043 guard reads, the whole person', () => {
+describe('R-INBOX-3 equivalence for website-chat replies (review optouts/F4 of batch 6): canContact reads the chat opt-out fan-out the 0043 guard reads, the whole person', () => {
   let widget: { id: string; key: string };
   let src: { sourceId: string; disclosureId: string };
   beforeAll(async () => {
@@ -399,7 +399,7 @@ describe('R-CHAN-4 equivalence for website-chat replies (review optouts/F4 of ba
     throw new Error('unreachable');
   }
 
-  it('R-CHAN-4 D1 F1: a reply to a merged-away chat lead\'s own identity, when the person\'s chat on another record opted out, is refused by both layers for the same reason; with no opt-out both allow it; the survivor\'s copy answers the same', async () => {
+  it('R-INBOX-3 D1 F1: a reply to a merged-away chat lead\'s own identity, when the person\'s chat on another record opted out, is refused by both layers for the same reason; with no opt-out both allow it; the survivor\'s copy answers the same', async () => {
     // C1's visitor said it was the wrong person (a chat revoke on C1's identity, no person-level do-not-contact)
     const c1 = await openChat(h, widget.key, src.disclosureId, { name: 'Will Wrong' });
     expect((await chatMessage(h, c1.token, { message: 'Sorry, wrong person', clientMessageId: randomUUID() })).statusCode).toBe(200);

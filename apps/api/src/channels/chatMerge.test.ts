@@ -93,7 +93,7 @@ describe('a website chat follows a person merge (R-OWN-24)', () => {
     expect([refused.status, refused.code]).toEqual([409, 'CONTACT_MERGED']);
   });
 
-  it('R-OWN-24 E77 (finding UXA-5): what the visitor typed stays with the person after a merge, and a returning visitor who types it again is suggested as a duplicate of the survivor', async () => {
+  it('R-OWN-24 R-INBOX-1 (finding UXA-5): what the visitor typed stays with the person after a merge, and a returning visitor who types it again is suggested as a duplicate of the survivor', async () => {
     const typed = randomEmail();
     const chat = await openChat(h, widget.key, src.disclosureId, { name: 'Sam Rivera', email: typed });
     await acceptLead(h, w.agents, chat.contactId);

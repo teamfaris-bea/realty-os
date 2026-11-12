@@ -184,7 +184,7 @@ describe('scoreFeed: item types and reasons', () => {
     expect(one(feedInputs({ drafts: [draft()] })).reasons[0]?.label).toBe('Text drafted for you');
   });
 
-  it('R-INBOX-4 R-AST-9 (review ui-compose/F3): a handback after a chat reply offers the chat: Send its draft or Reply there, never "Can\'t reach them right now" for a chat-only lead', () => {
+  it('R-INBOX-4 (review ui-compose/F3): a handback after a chat reply offers the chat: Send its draft or Reply there, never "Can\'t reach them right now" for a chat-only lead', () => {
     const noPhoneNoEmail = new Map([[contact(4), { sms: { outcome: 'unavailable' as const, explanation: 'No working phone number' }, voice: { outcome: 'unavailable' as const, explanation: 'No working phone number' }, email: { outcome: 'unavailable' as const, explanation: 'No email address' } }]]);
     const plain = one(feedInputs({ handbacks: [handback({ inboundChannel: 'web_chat' })], blockedChannels: noPhoneNoEmail }));
     expect(plain.primaryAction).toEqual({ kind: 'reply_chat', label: 'Reply', contactId: contact(4) });

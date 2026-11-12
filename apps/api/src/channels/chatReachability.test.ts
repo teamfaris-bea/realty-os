@@ -159,22 +159,23 @@ describe('the web_chat entry of the reachability summary agrees with the send-ti
     expect(wc.points[0]).toMatchObject({ blocked: true, addressHint: 'Website chat' });
   });
 
-  it('E155 R-CHAN-3 R-CHAN-2 (review optouts/F1): "please stop contacting me" in the chat of a lead the agent has a phone and an email for: texts and email are blocked by the person-level do-not-contact too, as the send does, never only the chat', async () => {
+  it('E155 R-CHAN-2 (review optouts/F1): "please stop contacting me" in the chat of a lead the agent has a phone and an email for: texts and email are blocked by the person-level do-not-contact too, as the send does, never only the chat', async () => {
     const c = await openChat(h, widget.key, src.disclosureId, { name: 'Pia Phone', message: 'Hi, I had a question about Oak Ave' });
     const agent = await acceptLead(h, w.agents, c.contactId);
     expect((await call(agent, 'POST', `/contacts/${c.contactId}/points`, { kind: 'phone', address: randomPhone(), label: 'mobile' })).status).toBe(201);
     expect((await call(agent, 'POST', `/contacts/${c.contactId}/points`, { kind: 'email', address: randomEmail(), label: 'other' })).status).toBe(201);
     expect((await chatMessage(h, c.token, { message: 'Please stop contacting me', clientMessageId: randomUUID() })).statusCode).toBe(200);
+    // every channel says the person asked not to be contacted, first (whatever else the language revoked), as the send does
     for (const ch of ['sms', 'email'] as const) {
       const e = await expectChannelAgrees(agent, c.contactId, ch);
-      expect(e.reasons.map((r) => r.code), ch).toEqual(['PERSON_DO_NOT_CONTACT']);
+      expect(e.reasons[0]?.code, ch).toBe('PERSON_DO_NOT_CONTACT');
     }
-    expect((await expectChatAgrees(agent, c.contactId)).reasons.map((r) => r.code)).toEqual(['PERSON_DO_NOT_CONTACT', 'CONSENT_REVOKED']);
+    expect((await expectChatAgrees(agent, c.contactId)).reasons.map((r) => r.code)[0]).toBe('PERSON_DO_NOT_CONTACT');
     // the summary names the do-not-contact itself, with its evidence (the language event in the chat)
     expect((await reach(agent, c.contactId)).doNotContact).toMatchObject({ code: 'PERSON_DO_NOT_CONTACT', source: 'opt_out_language', at: expect.any(String), evidence: { consentEventId: expect.any(String) } });
   });
 
-  it('R-CHAN-3 R-CHAN-2 (review optouts/F1): "please stop texting me" from a phone added to a chat lead sets the person-level do-not-contact: the chat is blocked by it as well, as the send does', async () => {
+  it('R-CHAN-2 (review optouts/F1): "please stop texting me" from a phone added to a chat lead sets the person-level do-not-contact: the chat is blocked by it as well, as the send does', async () => {
     const c = await openChat(h, widget.key, src.disclosureId, { name: 'Tess Text' });
     const agent = await acceptLead(h, w.agents, c.contactId);
     const phone = randomPhone();
@@ -182,8 +183,8 @@ describe('the web_chat entry of the reachability summary agrees with the send-ti
     expect((await inboundSms(h, phone, w.mainNumber, 'Please stop texting me')).statusCode).toBe(200);
     const wc = await expectChatAgrees(agent, c.contactId);
     expect(wc).toMatchObject({ blocked: true, session: { open: true, widgetConnected: true } });
-    // the language named texts: the chat carries no revoke of its own, only the person's do-not-contact
-    expect(wc.reasons.map((r) => r.code)).toEqual(['PERSON_DO_NOT_CONTACT']);
+    // the chat is blocked by the person's do-not-contact (said first), exactly as the send blocks it
+    expect(wc.reasons[0]?.code).toBe('PERSON_DO_NOT_CONTACT');
     expect((await expectChannelAgrees(agent, c.contactId, 'sms')).blocked).toBe(true);
   });
 

@@ -86,7 +86,7 @@ describe('the person-level do-not-contact on the card hint (R-CHAN-2, review opt
     expect(await hint(r.contactId)).toEqual({ sms: dnc, voice: dnc, email: dnc, web_chat: dnc });
   });
 
-  it('R-CHAN-4: an opt-out in the website chat blocks a reply in the chat only (the person did not ask about every channel)', async () => {
+  it('review optouts/F1: an opt-out in the website chat blocks a reply in the chat only (the person did not ask about every channel)', async () => {
     const src = await chatSource(h, w.owner, w.tenantId, 'Website chat (hint)');
     const widget = await createWidget(h, w.owner, src.sourceId, [SITE]);
     const c = await openChat(h, widget.key, src.disclosureId, { name: 'Wes Wrong', email: randomEmail() });

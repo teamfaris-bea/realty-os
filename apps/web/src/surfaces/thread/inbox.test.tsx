@@ -306,7 +306,7 @@ describe('module 37: compose on the client\'s last open channel', () => {
     expect(screen.getByTestId('channel-why')).toHaveTextContent('Writing by text: web chat is blocked.');
   });
 
-  it('E155 R-CHAN-3 R-CHAN-2 (review optouts/F1): after "please stop contacting me" in the chat, the summary blocks texts and email as well as the chat, with the person-level do-not-contact in its own words: nothing is offered, nothing is previewed, Send stays disabled', async () => {
+  it('E155 R-CHAN-2 (review optouts/F1): after "please stop contacting me" in the chat, the summary blocks texts and email as well as the chat, with the person-level do-not-contact in its own words: nothing is offered, nothing is previewed, Send stays disabled', async () => {
     const said = stopReason({ source: 'opt_out_language', keyword: null, addressHint: 'web chat' });
     const asked = withDoNotContact(reachability(IDS.jane, {}, { reasons: [said] }), dncReason({ source: 'opt_out_language', recordedBy: null }));
     const f = fake().on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: asked } });
@@ -353,7 +353,7 @@ describe('module 37: compose on the client\'s last open channel', () => {
     expect(screen.queryByRole('button', { name: /Templates/ })).toBeNull();
   });
 
-  it('R-CHAN-3 E155 (review optouts/F3): a chat-only lead who asked not to be contacted: the box says so, and never invites adding what they typed to call, text or email them', async () => {
+  it('R-CHAN-2 E155 (review optouts/F3): a chat-only lead who asked not to be contacted: the box says so, and never invites adding what they typed to call, text or email them', async () => {
     const sam = fullContact({ phones: [], emails: [], typedInChat: [{ kind: 'email', address: 'sam.rivera@example.com', typedAt: iso(-3_600_000) }] });
     const said = stopReason({ source: 'opt_out_language', keyword: null, addressHint: 'web chat' });
     const asked = withDoNotContact(reachability(IDS.jane, {}, { reasons: [said] }), dncReason({ source: 'opt_out_language', recordedBy: null }));
