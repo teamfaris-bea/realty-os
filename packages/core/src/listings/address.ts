@@ -106,7 +106,7 @@ function regionTokens(region: string): string[] {
 }
 
 /** Removes a trailing "City, ST 12345" (comma-separated, or without commas when the state is there). */
-function streetLine(line1: string, city: string): { street: string[]; unit: string[] } {
+function streetLine(line1: string, city: string, region: string): { street: string[]; unit: string[] } {
   const segments = line1.split(',').map((s) => s.trim()).filter((s) => s !== '');
   let words = rawWords(segments[0] ?? '');
   const unit: string[] = [];
@@ -115,17 +115,26 @@ function streetLine(line1: string, city: string): { street: string[]; unit: stri
     const w = rawWords(seg);
     if (w.length > 0 && (UNIT_DESIGNATORS.has(w[0]!) || w[0] === '#')) unit.push(...w.slice(1));
   }
-  // no commas: drop a tail of [city] state [zip] when the state is there
+  // no commas: drop a tail of [city] STATE [zip], but only when the state is the address's own and the tail is
+  // certain (a zip after it, or the city before it): "12 Oak Ct" (CT) and "12 Main St NE" (NE) keep their words
   if (segments.length === 1) {
+    const own = uspsCode(region);
     let end = words.length;
-    if (end > 0 && /^\d{5}(\d{4})?$/.test(words[end - 1]!)) end -= 1;
+    const zipAtEnd = end > 0 && /^\d{5}(\d{4})?$/.test(words[end - 1]!);
+    if (zipAtEnd) end -= 1;
     let regionAt = -1;
-    for (let k = Math.max(1, end - 3); k < end; k++) if (uspsCode(words.slice(k, end).join(' ')) !== null) { regionAt = k; break; }
+    for (let k = Math.max(1, end - 3); k < end; k++) {
+      if (own !== null && uspsCode(words.slice(k, end).join(' ')) === own) {
+        regionAt = k;
+        break;
+      }
+    }
     if (regionAt > 0) {
       const cityWords = rawWords(city);
       const cityAt = regionAt - cityWords.length;
-      const cut = cityWords.length > 0 && cityAt > 0 && words.slice(cityAt, regionAt).join(' ') === cityWords.join(' ') ? cityAt : regionAt;
-      if (cut > 0) words = words.slice(0, cut);
+      const cityBefore = cityWords.length > 0 && cityAt > 0 && words.slice(cityAt, regionAt).join(' ') === cityWords.join(' ');
+      if (cityBefore) words = words.slice(0, cityAt);
+      else if (zipAtEnd) words = words.slice(0, regionAt);
     }
   }
   // a unit designator inside the street line moves to the unit
@@ -150,7 +159,7 @@ export function addressKey(a: AddressInput): string | null {
     street = tokens([p.streetNumber, p.streetDirPrefix, p.streetName, p.streetSuffix, p.streetDirSuffix].map(text).join(' '));
     unitWords = [];
   } else {
-    const s = streetLine(a.line1, a.city);
+    const s = streetLine(a.line1, a.city, a.region);
     street = s.street;
     unitWords = s.unit;
   }

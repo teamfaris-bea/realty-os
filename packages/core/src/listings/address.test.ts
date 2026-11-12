@@ -45,6 +45,14 @@ describe('addressKey (F2)', () => {
     const k = (line1: string, line2: string | null = null) => addressKey({ line1, line2, city: 'Exampleville', region: 'SC', postalCode: '29900' });
     expect(new Set([k('40 W Marsh Ln'), k('40 E Marsh Ln'), k('41 W Marsh Ln'), k('40 W Marsh Ln', 'Unit 2'), k('40 W Marsh Ct')]).size).toBe(5);
     expect(k('100 Exampleville Rd')).toBe('100 exampleville rd||exampleville|sc|29900'); // a street named like the city keeps its name
+    // a suffix or directional that is also a state code is never taken for a trailing state
+    const ct = (line1: string) => addressKey({ line1, city: 'Hartford', region: 'CT', postalCode: '06103' });
+    expect(ct('12 Oak Ct')).toBe('12 oak ct||hartford|ct|06103');
+    expect(addressKey({ line1: '12 Main St NE', city: 'Omaha', region: 'NE', postalCode: '68102' })).toBe('12 main st ne||omaha|ne|68102');
+    expect(addressKey({ line1: '12 Main St NE 68102', city: 'Omaha', region: 'NE', postalCode: '68102' })).toBe('12 main st||omaha|ne|68102'); // a zip after it: that NE is the state (VERIFY: rare in feeds)
+    expect(addressKey({ line1: '12 Main St NE Omaha NE', city: 'Omaha', region: 'NE', postalCode: '68102' })).toBe('12 main st ne||omaha|ne|68102');
+    expect(ct('12 Oak Ct Hartford CT 06103')).toBe('12 oak ct||hartford|ct|06103');
+    expect(addressKey({ line1: '5 Elm St SC 29900', city: 'X', region: 'NC', postalCode: '29900' })).toBe('5 elm st sc 29900||x|nc|29900'); // another state's code is kept as written
     expect(addressKey({ line1: '1 A St', city: '', region: 'SC', postalCode: '29900' })).toBeNull();
     expect(addressKey({ line1: '  ', city: 'X', region: 'SC', postalCode: '29900' })).toBeNull();
     expect(addressKey({ line1: '1 A St', city: 'X', region: 'SC', postalCode: '2990' })).toBeNull();
