@@ -154,6 +154,8 @@ export function existingContact(over: Partial<ExistingContact> & { contactId: st
     closedReason: null,
     ownerUserId: null,
     mergedIntoContactId: null,
+    ownershipSeq: 1,
+    routeDueAt: null,
     importBatchId: null,
     displayName: 'Someone',
     firstName: null,
@@ -235,6 +237,7 @@ export function simulateCommit(input: ExistingIndexInput, items: readonly Commit
         ...c,
         ownershipState: t === 'unassigned' ? 'unassigned' : 'userId' in t ? 'owned' : 'in_pond',
         ownerUserId: t !== 'unassigned' && 'userId' in t ? t.userId : null,
+        ownershipSeq: c.ownershipSeq + 1,
       });
     } else if (a.kind === 'insert_history' && 'externalId' in rec && rec.category !== 'contacts') {
       const entityType = rec.category === 'notes' ? 'note' : rec.category === 'messages' ? 'message' : 'call';

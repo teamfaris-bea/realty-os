@@ -219,6 +219,12 @@ export function BulkActionSheet({ kind, contactIds = [], selection, selectedText
             </section>
           ) : null}
           {draft.sharedAddresses > 0 ? <p className="text-[14px] text-ink-muted">{draft.sharedAddresses + 1} people share an address, so they get one {words.noun} between them.</p> : null}
+          {/* batch 6 review F6: assigning a lead on offer withdraws the offer (R-OWN-18); its agent is told */}
+          {kind === 'assign' && (draft.onOffer ?? 0) > 0 ? (
+            <p className="text-[14px] text-ink">
+              {draft.onOffer === 1 ? '1 of them is on offer to an agent now: assigning withdraws that offer, and the agent is told.' : `${draft.onOffer} of them are on offer to agents now: assigning withdraws those offers, and each agent is told.`}
+            </p>
+          ) : null}
           {draft.body ? (
             <section aria-label="Message" className="flex flex-col gap-1 rounded-xl border border-line px-3.5 py-3">
               {/* merge fields in words: each person's own values are filled in when it goes out */}

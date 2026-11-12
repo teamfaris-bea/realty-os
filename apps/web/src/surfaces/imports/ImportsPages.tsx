@@ -750,7 +750,9 @@ function Report({ batch }: { batch: ImportBatch }) {
  * (parity module 64's sheet) with exactly the ones still unassigned selected by id; the server decides each person
  * again, and the sheet only offers members who can hold leads. What is true of each person now, and the summary, are
  * the server's words (review B4-R1: "has an owner" only of someone owned; closed, deleted, merged away, in a pond or
- * on offer are said so). A deleted person is named, not linked: their contact is gone from the book.
+ * on offer are said so). A deleted person is named, not linked: their contact is gone from the book. A person merged
+ * away since is linked to the record they live on now (review F7). Where they are now (`summary`) is said here, next to
+ * the button it names, and nowhere else on the page (review F8).
  */
 function UnassignedPeople({ view, onClosed }: { view: UnassignedView; onClosed(): void }) {
   const { session } = useSession();
@@ -767,7 +769,8 @@ function UnassignedPeople({ view, onClosed }: { view: UnassignedView; onClosed()
               {p.now === 'deleted' ? (
                 <span className="font-semibold">{p.name}</span>
               ) : (
-                <Link to={`/contacts/${p.contactId}`} className="font-semibold text-accent underline">
+                // review F7: a person merged into another contact since lives on that one; the old record is closed
+                <Link to={`/contacts/${p.now === 'merged' && p.mergedIntoContactId ? p.mergedIntoContactId : p.contactId}`} className="font-semibold text-accent underline">
                   {p.name}
                 </Link>
               )}{' '}

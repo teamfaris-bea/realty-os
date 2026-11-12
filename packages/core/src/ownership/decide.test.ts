@@ -446,6 +446,19 @@ describe('reassignment (R-OWN-18)', () => {
     expect(kinds(d)).not.toContain('route');
   });
 
+  // Batch 6 review ownership-sla/F6: the agent the lead was on offer to was told nothing; their offer card just resolved.
+  it('R-OWN-18: assigning a lead on offer tells the agent it was offered to that the offer was withdrawn (not when it goes to them)', () => {
+    const l = offeredLead(U.a);
+    const d = l.run({ kind: 'assign', toUserId: U.b, reason: 'MANUAL' }, { actor: userActor(U.owner), targetMember: member(U.b) });
+    expect(effectsOf(d, 'notify').map((n) => [n.userId, n.notification.kind, n.notification.reasonCode])).toEqual([
+      [U.b, 'reassigned_to_you', 'REASSIGNED_TO_YOU'],
+      [U.a, 'reassigned_away', 'OFFER_RESCINDED'],
+    ]);
+    // given to the agent it was on offer to: one notice, as the new owner
+    const mine = offeredLead(U.a).run({ kind: 'assign', toUserId: U.a, reason: 'MANUAL' }, { actor: userActor(U.owner), targetMember: member(U.a) });
+    expect(effectsOf(mine, 'notify').map((n) => [n.userId, n.notification.kind])).toEqual([[U.a, 'reassigned_to_you']]);
+  });
+
   it('R-OWN-18: an ISA hands off only their own lead, to an agent or TL, with a note; the ISA stays a collaborator for 7 days', () => {
     const l = new Lead();
     l.run({ kind: 'create', via: 'self' }, { actor: userActor(U.isa) });

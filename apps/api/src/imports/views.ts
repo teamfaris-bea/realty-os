@@ -7,7 +7,7 @@ import { type Role, canOwnLeads } from '@realty/core/foundation';
 import { BULK_CAPS } from '@realty/core/parity/bulk';
 import type { BatchRow, MappingRow, StageRow } from './repos/batches.js';
 import type { RecordRow, UnassignedPersonRow } from './repos/records.js';
-import { OWNER_UNAVAILABLE, type UnassignedIssue, type UnassignedNow, type UnassignedReason } from './types.js';
+import { type CameInUnassignedIssue, OWNER_UNAVAILABLE, PERSON_CHANGED, PERSON_MERGED, type PersonIssue, type UnassignedIssue, type UnassignedNow, type UnassignedReason } from './types.js';
 
 /** One plain sentence per issue code (the web maps codes too; unknown codes get a generic sentence). */
 export const ISSUE_SENTENCES: Record<string, string> = {
@@ -45,7 +45,11 @@ export const ISSUE_SENTENCES: Record<string, string> = {
   MATCH_MULTIPLE: 'More than one existing contact shares these details; listed as possible duplicates.',
   MATCH_DELETED_CONTACT: 'Matches a deleted contact. It is imported as a new contact; any opt-out still applies.',
   ADDRESS_OPTED_OUT: 'Opted out already. Will stay opted out.',
-  OWNER_KEPT: 'This contact already has an owner here; the import does not change it.',
+  // batch 6 review F3: true of every way it is reached (a person already here, a skipped duplicate's, someone gave them an
+  // owner since the contacts were imported); never "already has an owner" of someone who has none
+  OWNER_KEPT: "This person was already here, or someone gave them an owner after the contacts were imported, so the import doesn't change who owns them.",
+  [PERSON_MERGED]: 'Brought in unassigned: they were merged with another person after the contacts were imported.',
+  [PERSON_CHANGED]: 'Brought in unassigned: someone changed who holds them after the contacts were imported.',
   CONSENT_VALUE_AMBIGUOUS: 'A permission value is unclear; nothing was recorded from it.',
   CONSENT_VALUE_UNRECOGNIZED: 'A permission value was not recognized; nothing was recorded from it.',
   CONSENT_CONFLICT: 'The source says both yes and no; the opt-out wins.',
@@ -119,6 +123,15 @@ function asUnassigned(i: { code: string }): UnassignedIssue | null {
   const x = i as Partial<UnassignedIssue>;
   return x.code === OWNER_UNAVAILABLE && typeof x.userId === 'string' && REASONS.has(String(x.reason)) ? (x as UnassignedIssue) : null;
 }
+/** batch 6 review F3: the person left the import's creation state and nobody holds them */
+function asPerson(i: { code: string } | null | undefined): PersonIssue | null {
+  return i && (i.code === PERSON_MERGED || i.code === PERSON_CHANGED) ? (i as PersonIssue) : null;
+}
+/** What the report's group line says of the people a person issue brought in unassigned. */
+const PERSON_CLAUSE: Record<PersonIssue['code'], string> = {
+  [PERSON_MERGED]: 'they were merged with another person after the contacts were imported',
+  [PERSON_CHANGED]: 'someone changed who holds them after the contacts were imported',
+};
 
 /** "Brought in unassigned: Blake Chen's account is suspended." */
 export function unassignedSentence(issue: UnassignedIssue, names: MemberNames = NO_NAMES): string {
@@ -147,19 +160,41 @@ function plural(n: number, one: string, many: string): string {
 }
 
 /**
- * The verification's documented commit outcomes (owner decision B4, E230), in words; empty when there are none. Said
- * as it was at the commit, which stays true whatever the members' state is when it is read (review B4-R2).
+ * The verification's documented commit outcomes (owner decision B4, E230; batch 6 review F3), in words; empty when
+ * there are none. Said as it was at the commit, which stays true whatever the members' state is when it is read
+ * (review B4-R2). `person`: of the `unassigned`, those brought in unassigned because the person left the import's
+ * creation state (merged with another person, or changed by someone) rather than because of their member.
  */
-export function documentedView(d: DocumentedOutcomes): { code: string; count: number; sentence: string }[] {
-  if (d.unassigned === 0) return [];
-  const one = d.unassigned === 1;
-  return [
-    {
+export function documentedView(d: DocumentedOutcomes, split: { person?: number } = {}): { code: string; count: number; sentence: string }[] {
+  const person = Math.min(split.person ?? 0, d.unassigned);
+  const member = d.unassigned - person;
+  const kept = d.kept ?? 0;
+  const out: { code: string; count: number; sentence: string }[] = [];
+  if (member > 0) {
+    const one = member === 1;
+    out.push({
       code: OWNER_UNAVAILABLE,
-      count: d.unassigned,
-      sentence: `${plural(d.unassigned, 'planned assignment', 'planned assignments')} came in unassigned because the member ${one ? 'it was' : 'they were'} matched to couldn't hold leads ${AT_IMPORT} (each record says why). ${one ? 'It is' : 'They are'} counted as not imported.`,
-    },
-  ];
+      count: member,
+      sentence: `${plural(member, 'planned assignment', 'planned assignments')} came in unassigned because the member ${one ? 'it was' : 'they were'} matched to couldn't hold leads ${AT_IMPORT} (each record says why). ${one ? 'It is' : 'They are'} counted as not imported.`,
+    });
+  }
+  if (person > 0) {
+    const one = person === 1;
+    out.push({
+      code: PERSON_CHANGED,
+      count: person,
+      sentence: `${plural(person, 'planned assignment', 'planned assignments')} came in unassigned because the person was merged with another person, or someone changed who holds them, after the contacts were imported (${one ? 'the record says which' : 'each record says which'}). ${one ? 'It is' : 'They are'} counted as not imported.`,
+    });
+  }
+  if (kept > 0) {
+    const one = kept === 1;
+    out.push({
+      code: 'OWNER_KEPT',
+      count: kept,
+      sentence: `${plural(kept, 'planned assignment', 'planned assignments')} ${one ? 'was' : 'were'} not made because someone gave the person an owner after the contacts were imported (${one ? 'the record says so' : 'each record says so'}). ${one ? 'It is' : 'They are'} counted as already here.`,
+    });
+  }
+  return out;
 }
 
 export function sourceName(b: BatchRow): SourceName {
@@ -361,8 +396,11 @@ export interface UnassignedReport {
   contactIds: string[];
   /** where they are now, in words (the report's last lines): every number a count, "an owner" only of the owned */
   summary: string[];
-  /** the first UNASSIGNED_LISTED people, with the reason in words and what is true of them now */
-  people: { contactId: string; name: string; sentence: string; stillUnassigned: boolean; now: UnassignedNow; nowSentence: string | null }[];
+  /**
+   * the first UNASSIGNED_LISTED people, with the reason in words and what is true of them now; `mergedIntoContactId`:
+   * a person merged into another contact since lives on that one (review F7: the report links there)
+   */
+  people: { contactId: string; name: string; sentence: string; stillUnassigned: boolean; now: UnassignedNow; nowSentence: string | null; mergedIntoContactId: string | null }[];
 }
 export const UNASSIGNED_LISTED = 50;
 
@@ -403,19 +441,32 @@ function nowLines(rows: readonly UnassignedPersonRow[]): string[] {
   return out;
 }
 
+/** The issue that brought a report row in unassigned, when it is one we can say in words. */
+function cameInIssue(r: UnassignedPersonRow): CameInUnassignedIssue | null {
+  return asUnassigned(r.issue ?? { code: '' }) ?? asPerson(r.issue);
+}
+
 /** The report's listing of the people brought in unassigned, and its plain lines (every number is a count). */
 export function unassignedReport(rows: readonly UnassignedPersonRow[], names: MemberNames): { view: UnassignedReport; lines: string[] } | null {
-  const valid = rows.filter((r) => asUnassigned(r.issue ?? { code: '' }) !== null);
+  // one line per person: two records live on one person once a merge joined them (batch 6 review F3)
+  const seen = new Set<string>();
+  const valid = rows.filter((r) => {
+    if (cameInIssue(r) === null || seen.has(r.contact_id)) return false;
+    seen.add(r.contact_id);
+    return true;
+  });
   if (valid.length === 0) return null;
   const still = valid.filter((r) => r.now === 'unassigned');
-  const groups = new Map<string, { reason: UnassignedReason; userId: string; n: number }>();
+  const groups = new Map<string, { clause: string; n: number }>();
   for (const r of valid) {
-    const k = `${r.issue.userId}:${r.issue.reason}`;
+    const issue = cameInIssue(r) as CameInUnassignedIssue;
+    const u = asUnassigned(issue);
+    const k = u ? `${u.userId}:${u.reason}` : issue.code;
     const g = groups.get(k);
     if (g) g.n += 1;
-    else groups.set(k, { reason: r.issue.reason, userId: r.issue.userId, n: 1 });
+    else groups.set(k, { clause: u ? unassignedClause(u.reason, names.get(u.userId)) : PERSON_CLAUSE[(issue as PersonIssue).code], n: 1 });
   }
-  const lines = [...groups.values()].map((g) => `${plural(g.n, 'person', 'people')} came in unassigned because ${unassignedClause(g.reason, names.get(g.userId))}.`);
+  const lines = [...groups.values()].map((g) => `${plural(g.n, 'person', 'people')} came in unassigned because ${g.clause}.`);
   lines.push('Nothing was assigned to them, and the import started no offer, timer or routing.');
   const summary = nowLines(valid);
   lines.push(...summary);
@@ -425,14 +476,19 @@ export function unassignedReport(rows: readonly UnassignedPersonRow[], names: Me
       stillUnassigned: still.length,
       contactIds: still.slice(0, BULK_CAPS.assign).map((r) => r.contact_id),
       summary,
-      people: valid.slice(0, UNASSIGNED_LISTED).map((r) => ({
-        contactId: r.contact_id,
-        name: r.display_name ?? 'Unnamed person',
-        sentence: unassignedSentence(r.issue, names),
-        stillUnassigned: r.now === 'unassigned',
-        now: r.now,
-        nowSentence: NOW_SENTENCE[r.now] ?? null,
-      })),
+      people: valid.slice(0, UNASSIGNED_LISTED).map((r) => {
+        const issue = cameInIssue(r) as CameInUnassignedIssue;
+        const u = asUnassigned(issue);
+        return {
+          contactId: r.contact_id,
+          name: r.display_name ?? 'Unnamed person',
+          sentence: u ? unassignedSentence(u, names) : (ISSUE_SENTENCES[issue.code] ?? GENERIC_ISSUE),
+          stillUnassigned: r.now === 'unassigned',
+          now: r.now,
+          nowSentence: NOW_SENTENCE[r.now] ?? null,
+          mergedIntoContactId: r.now === 'merged' ? r.merged_into_contact_id : null,
+        };
+      }),
     },
     lines,
   };
@@ -479,7 +535,9 @@ export function reportView(b: BatchRow, stages: readonly StageRow[], extra: { un
         reconciles: t.reconciles,
         lines: [
           ...(r.phase === 'reverted' ? revertLines(r.stage) : reportLines(t.category, r.phase, r.counts, name, (r.stage.consent_summary as ConsentSummary | null) ?? null)),
-          ...(t.category === 'ownership' && unassigned ? unassigned.lines : []),
+          // why they came in unassigned; where they are now (`summary`) is said once, by the people card next to the
+          // "Assign these people" it names (review F8)
+          ...(t.category === 'ownership' && unassigned ? unassigned.lines.slice(0, unassigned.lines.length - unassigned.view.summary.length) : []),
         ],
         unassigned: t.category === 'ownership' && unassigned ? unassigned.view : null,
       };

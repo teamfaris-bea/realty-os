@@ -367,7 +367,8 @@ describe('speed timings as epoch milliseconds', () => {
  * app.scoreboard_speed written plainly, as an invoker function for the superuser: two probes per period as 0012
  * wrote it (the first first touch after the period, then an anti-join for an event that ended its window in
  * between), with the re-inquiry rule (owner decision 2026-11-11, R-ACC-2 E68): a newPeriod reinquiry starts a
- * period of its own and ends the window of the one before it.
+ * period of its own and ends the window of the one before it; and with one leaves-the-owner rule (batch 6 review F5,
+ * migration 0047): any event that takes the lead out of `owned` or gives it to someone else ends the window too.
  */
 const TWO_PROBE_SPEED = `CREATE FUNCTION pg_temp.two_probe_speed(p_user_ids uuid[], p_from timestamptz, p_to timestamptz)
 RETURNS TABLE (user_id uuid, owned_at timestamptz, first_touch_due_at timestamptz, first_touch_at timestamptz) LANGUAGE sql STABLE AS $$
@@ -382,7 +383,8 @@ RETURNS TABLE (user_id uuid, owned_at timestamptz, first_touch_due_at timestampt
                             AND x.seq > e.seq AND x.seq < f.seq
                             AND (x.type IN ('reassigned','released','auto_released','inactivity_released','sent_to_pond',
                                             'closed','merged_away','claimed','assigned','offer_accepted')
-                                 OR (x.type = 'reinquiry' AND x.payload @> '{"newPeriod": true}')))
+                                 OR (x.type = 'reinquiry' AND x.payload @> '{"newPeriod": true}')
+                                 OR x.to_state <> 'owned' OR x.owner_user_id IS DISTINCT FROM e.owner_user_id))
        ORDER BY f.seq LIMIT 1) ft ON true
    WHERE e.tenant_id = app.tenant_id()
      AND e.owner_user_id IN (SELECT a.user_id FROM app.scoreboard_allowed_users(p_user_ids) a)
@@ -412,6 +414,19 @@ describe('app.scoreboard_speed: the one-probe body (0027) returns exactly the tw
       expect(reinquiries.sla).toBeGreaterThan(10);
       expect(reinquiries.plain).toBeGreaterThan(10);
       expect(reinquiries.touched_after).toBeGreaterThan(0);
+      // and the leaves-the-owner rule (0047): an SLA period whose lead left its owner by an event off the 0001 list (an
+      // owner-changing merge, a re-route from owned) with a first touch after it, which the earlier rule gave the period
+      const leftOffList = (await c.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM lead_ownership_events e
+          WHERE e.tenant_id = $1 AND e.deadline_at IS NOT NULL AND e.owner_user_id IS NOT NULL
+            AND (e.type IN ('offer_accepted','claimed','assigned','reassigned') OR (e.type = 'reinquiry' AND e.payload @> '{"newPeriod": true}'))
+            AND EXISTS (SELECT 1 FROM lead_ownership_events x WHERE x.tenant_id = e.tenant_id AND x.contact_id = e.contact_id AND x.seq > e.seq
+                          AND x.type NOT IN ('reassigned','released','auto_released','inactivity_released','sent_to_pond','closed','merged_away','claimed','assigned','offer_accepted','reinquiry','first_touch_recorded')
+                          AND (x.to_state <> 'owned' OR x.owner_user_id IS DISTINCT FROM e.owner_user_id)
+                          AND EXISTS (SELECT 1 FROM lead_ownership_events f WHERE f.tenant_id = x.tenant_id AND f.contact_id = x.contact_id AND f.seq > x.seq AND f.type = 'first_touch_recorded'))`,
+        [T],
+      )).rows[0]!.n;
+      expect(leftOffList).toBeGreaterThan(0);
       for (const a of [...members.map((m) => ({ userId: m.userId, kind: 'user', label: m.role })), { userId: '', kind: 'system', label: 'system' }]) {
         await c.query(`SELECT set_config('app.tenant_id', $1, true), set_config('app.user_id', $2, true), set_config('app.actor_kind', $3, true), set_config('app.principal_type', 'staff', true)`, [T, a.userId, a.kind]);
         const r = (await c.query<{ ref_n: number; new_n: number; only_ref: number; only_new: number; touched: number }>(

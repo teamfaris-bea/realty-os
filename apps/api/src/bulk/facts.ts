@@ -29,21 +29,23 @@ export interface PersonRow {
   stage: string;
   ownerUserId: string | null;
   ownershipState: string;
+  /** the agent the person is on offer to (state offered): told when an assign withdraws the offer (batch 6 review F6) */
+  offeredToUserId: string | null;
   firstTouchPending: boolean;
   lastInboundAt: Instant | null;
 }
 
 /** The person as the creator sees them now; null when RLS hides the row entirely. */
 export async function personRow(tx: Tx, contactId: string): Promise<PersonRow | null> {
-  const r = await sql<{ id: string; v: boolean; deleted: boolean; merged: boolean; stage: string; owner_user_id: string | null; ownership_state: string; ftp: boolean; last_inbound_at: Date | null }>`
+  const r = await sql<{ id: string; v: boolean; deleted: boolean; merged: boolean; stage: string; owner_user_id: string | null; ownership_state: string; offered_to_user_id: string | null; ftp: boolean; last_inbound_at: Date | null }>`
     SELECT c.id, app.contact_detail_visible(c.tenant_id, c.id) AS v, c.deleted_at IS NOT NULL AS deleted,
-           c.merged_into_contact_id IS NOT NULL AS merged, c.stage, c.owner_user_id, c.ownership_state,
+           c.merged_into_contact_id IS NOT NULL AS merged, c.stage, c.owner_user_id, c.ownership_state, c.offered_to_user_id,
            (c.ownership_state = 'owned' AND c.first_touch_due_at IS NOT NULL AND c.first_touch_at IS NULL) AS ftp,
            c.last_inbound_at
       FROM contacts c WHERE c.tenant_id = app.tenant_id() AND c.id = ${contactId}`.execute(tx);
   const x = r.rows[0];
   if (!x) return null;
-  return { id: x.id, detailVisible: x.v, deleted: x.deleted, merged: x.merged, stage: x.stage, ownerUserId: x.owner_user_id, ownershipState: x.ownership_state, firstTouchPending: x.ftp, lastInboundAt: x.last_inbound_at ? (x.last_inbound_at.getTime() as Instant) : null };
+  return { id: x.id, detailVisible: x.v, deleted: x.deleted, merged: x.merged, stage: x.stage, ownerUserId: x.owner_user_id, ownershipState: x.ownership_state, offeredToUserId: x.offered_to_user_id, firstTouchPending: x.ftp, lastInboundAt: x.last_inbound_at ? (x.last_inbound_at.getTime() as Instant) : null };
 }
 
 export async function personFacts(tx: Tx, p: PersonRow | null): Promise<BulkPersonFacts> {
@@ -150,7 +152,7 @@ export async function kindFacts(tx: Tx, a: Pick<ActionRow, 'kind' | 'params'>, p
       return { kind: 'stage', currentStage: (isStage(p.stage) ? p.stage : 'new') as Stage, toStage: (isStage(to) ? to : 'new') as Stage, firstTouchPending: p.firstTouchPending };
     }
     case 'assign':
-      return { kind: 'assign', ownerUserId: p.ownerUserId, toUserId: String(a.params['toUserId']), target: target?.role ? { role: target.role.role, inMyTeam: target.role.inMyTeam === true } : { role: 'tc', inMyTeam: false } };
+      return { kind: 'assign', ownerUserId: p.ownerUserId, toUserId: String(a.params['toUserId']), target: target?.role ? { role: target.role.role, inMyTeam: target.role.inMyTeam === true } : { role: 'tc', inMyTeam: false }, ownershipState: p.ownershipState as never };
     case 'enroll': {
       const live = await P.liveEnrollmentOf(tx, p.id);
       const reach = await reachabilityOf(tx, p.id, now);

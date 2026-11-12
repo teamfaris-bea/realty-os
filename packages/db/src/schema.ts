@@ -831,6 +831,7 @@ export interface ExceptionItemsTable {
   rule_version: Generated<number>;
   dedupe_key: string;
   computed_at: Timestamp;
+  withdrawn_at: Timestamp | null;
 }
 
 /** public.external_refs (table) */

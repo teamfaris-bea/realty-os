@@ -31,6 +31,7 @@ export {
 export {
   deriveExceptions,
   untouchedLead,
+  withdrawnUntouched,
   overduePromise,
   failedSend,
   missingOutcome,

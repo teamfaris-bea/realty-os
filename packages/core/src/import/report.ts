@@ -57,19 +57,31 @@ export interface SpotCheck {
  * longer an active member, a role that holds none). Nothing is assigned to them; the record counts as not imported.
  */
 export interface DocumentedOutcomes {
-  /** planned assignments the ownership commit brought in unassigned (api/imports OWNER_UNAVAILABLE) */
+  /**
+   * planned assignments the ownership commit brought in unassigned: the member could no longer hold leads (api/imports
+   * OWNER_UNAVAILABLE), or the person left the import's creation state and nobody holds them (PERSON_MERGED /
+   * PERSON_CHANGED, batch 6 review F3). Each moves one record from imported to rejected.
+   */
   unassigned: number;
+  /**
+   * planned assignments the ownership commit kept as a person had set them since the dry run: someone gave the person
+   * an owner, or merged them into someone's lead (OWNER_KEPT at the commit, batch 6 review F3). Each moves one record
+   * from imported to duplicate. Absent: none.
+   */
+  kept?: number;
 }
 
-export const NO_DOCUMENTED: DocumentedOutcomes = { unassigned: 0 };
+export const NO_DOCUMENTED: DocumentedOutcomes = { unassigned: 0, kept: 0 };
 
 /**
  * The counts the approval expected, with the documented commit outcomes applied: each one moves exactly one
- * record from imported to rejected. Never clamped, so a documented count larger than the planned imports can
- * never match a real recount, and it never hides any other difference (R-IMPORT-5 stays exact).
+ * record from imported to rejected (unassigned) or to duplicate (kept). Never clamped, so a documented count larger
+ * than the planned imports can never match a real recount, and it never hides any other difference (R-IMPORT-5 stays
+ * exact).
  */
 export function expectedAfterCommit(approved: Counts, d: DocumentedOutcomes): Counts {
-  return { ...approved, imported: approved.imported - d.unassigned, rejected: approved.rejected + d.unassigned };
+  const kept = d.kept ?? 0;
+  return { ...approved, imported: approved.imported - d.unassigned - kept, rejected: approved.rejected + d.unassigned, duplicate: approved.duplicate + kept };
 }
 
 /** The `import_stages.verification` document. */

@@ -12,7 +12,10 @@
 // system actor and upserts exception_items by per-occurrence dedupe key. It never deletes a row and never
 // touches exception_events, so a recompute keeps every human action. A condition that stops holding sets
 // condition_cleared_at; the item stays in the LIVE queue until its latest human event is `resolved` or
-// `verified` ("fixed late"). Nobody hand-enters an exception: there is no create route.
+// `verified` ("fixed late"). A stored untouched_lead item the current definitions make no item at all (its
+// window ended before the deadline under a later rule) is withdrawn instead (withdrawn_at, core
+// withdrawnUntouched): never live, never "fixed late", nothing to act on (batch 6 review F2, F5). Nobody
+// hand-enters an exception: there is no create route.
 //
 // Human actions (R-ACC-3) are append-only exception_events, inserted as the caller with their TRUE role
 // (RLS exception_events_insert). The DB enforces: resolve needs a note; verify and reassign only by
@@ -42,6 +45,7 @@ import { type Action, type ContactId, DAY_MS, type IdGenerator, type Instant, ty
 import type { OwnershipCommand } from '@realty/core/ownership';
 import {
   DEFAULT_EXCEPTION_SETTINGS,
+  EXCEPTION_RULE_VERSION,
   type ExceptionEvidence,
   type ExceptionType,
   apptKey,
@@ -102,7 +106,16 @@ export async function recomputeExceptions(tx: Tx, scope: RecomputeScope, now: In
   await repo.lockRecompute(tx);
   const contactId = scope === 'tenant' ? null : scope.contactId;
   const stored = await repo.storedRowsForScope(tx, contactId);
-  const input: repo.InputScope = { contactId, now, windowStart: (now - RECOMPUTE_WINDOW_MS) as Instant, extra: extraOf(stored.filter((r) => r.condition_cleared_at === null)) };
+  // review R6: at tenant scope, also the untouched_lead rows an earlier rule stored (open or cleared, not withdrawn):
+  // their periods are re-read once, so one the current rules make no item is withdrawn even when its deadline is older
+  // than the window and it was already cleared ("fixed late"); a contact scope reads every row of the contact anyway
+  const earlier = contactId === null ? await repo.untouchedRowsOfEarlierRules(tx, EXCEPTION_RULE_VERSION) : [];
+  const input: repo.InputScope = {
+    contactId,
+    now,
+    windowStart: (now - RECOMPUTE_WINDOW_MS) as Instant,
+    extra: extraOf([...stored.filter((r) => r.condition_cleared_at === null), ...earlier.filter((r) => r.condition_cleared_at !== null)]),
+  };
   const settings = DEFAULT_EXCEPTION_SETTINGS;
   const [periods, promises, outbound, appointments, milestoneDates] = await Promise.all([
     repo.slaFacts(tx, input),
@@ -119,7 +132,7 @@ export async function recomputeExceptions(tx: Tx, scope: RecomputeScope, now: In
     ...milestoneDates.map((d) => milestoneKey(d.dealDateId, d.dueVersion)),
   ];
   const byKey = new Map<string, repo.StoredItemRow>();
-  for (const r of stored) byKey.set(r.dedupe_key, r);
+  for (const r of [...stored, ...earlier]) byKey.set(r.dedupe_key, r);
   const missing = keys.filter((k) => !byKey.has(k));
   for (const r of await repo.storedRowsByKeys(tx, missing)) byKey.set(r.dedupe_key, r);
 
@@ -186,8 +199,14 @@ export interface ExceptionView {
   ageSeconds: number;
   /** null while the condition still holds; set when it was fixed (late) */
   conditionClearedAt: string | null;
-  /** in the live queue: the latest human event is neither resolved nor verified */
+  /** in the live queue: not withdrawn, and the latest human event is neither resolved nor verified */
   live: boolean;
+  /**
+   * untouched_lead only (batch 6 review F2, F5): the current definitions make this period no item (its window ended
+   * before the deadline: a re-inquiry superseded it, or the lead left its owner; or it was touched in time). Never
+   * live and never "fixed late"; the evidence says why; nothing may be done with it.
+   */
+  withdrawn: boolean;
   evidence: EvidenceItemView[];
   /**
    * untouched_lead only (null for other types). `current`: the item's ownership period is still the lead's current
@@ -219,7 +238,7 @@ function itemFacts(actor: UserActor, row: Pick<repo.QueueRow, 'owner_user_id' | 
 }
 
 const HANDLED = new Set<string>(['resolved', 'verified']);
-const isLive = (row: Pick<repo.QueueRow, 'last_action'>) => row.last_action === null || !HANDLED.has(row.last_action);
+const isLive = (row: Pick<repo.QueueRow, 'last_action' | 'withdrawn_at'>) => row.withdrawn_at === null && (row.last_action === null || !HANDLED.has(row.last_action));
 
 function allowed(actor: UserActor, action: Action, row: repo.QueueRow): boolean {
   return can(actor, action, itemFacts(actor, row)).ok;
@@ -287,6 +306,7 @@ async function periodsKeptFor(tx: Tx, rows: readonly repo.QueueRow[]): Promise<S
 
 function viewOf(row: repo.QueueRow, actor: UserActor, now: Instant, claimEvidence: EvidenceItemView[], kept: boolean): ExceptionView {
   const live = isLive(row);
+  const withdrawn = row.withdrawn_at !== null;
   const evidence: EvidenceItemView[] = (row.evidence as ExceptionEvidence[]).map((e) => ({
     sourceType: e.sourceType,
     sourceId: e.sourceId,
@@ -311,6 +331,7 @@ function viewOf(row: repo.QueueRow, actor: UserActor, now: Instant, claimEvidenc
     ageSeconds: Math.max(0, Math.floor((now - ms(row.detected_at)) / 1000)),
     conditionClearedAt: isoOrNull(row.condition_cleared_at),
     live,
+    withdrawn,
     evidence,
     period: periodOf(row, kept),
     contactOwnershipSeq: row.contact_visible && row.contact_ownership_seq !== null ? Number(row.contact_ownership_seq) : null,
@@ -320,9 +341,9 @@ function viewOf(row: repo.QueueRow, actor: UserActor, now: Instant, claimEvidenc
         : { action: row.last_action, note: row.last_note, actor: { userId: row.last_actor_user_id as string, name: row.last_actor_name }, at: iso(row.last_at as Date) },
     actions: {
       resolve: live && allowed(actor, 'exception.resolve', row),
-      verify: row.last_action !== 'verified' && allowed(actor, 'exception.verify', row),
+      verify: !withdrawn && row.last_action !== 'verified' && allowed(actor, 'exception.verify', row),
       reassign: live && row.contact_id !== null && row.contact_visible && !reassignStale(row) && allowed(actor, 'exception.reassign', row),
-      reopen: !live && allowed(actor, 'exception.resolve', row),
+      reopen: !withdrawn && !live && allowed(actor, 'exception.resolve', row),
     },
   };
 }
@@ -479,7 +500,10 @@ export function eventIdFor(verb: Verb, commandId: string): string {
   return derivedCommandId('exception.event', verb, commandId);
 }
 
-function stateAllows(verb: Verb, last: repo.QueueRow['last_action']): boolean {
+function stateAllows(verb: Verb, last: repo.QueueRow['last_action'], withdrawn: boolean): boolean {
+  // a withdrawn item is no item under the current definitions (batch 6 review F2, F5): nothing to resolve, verify,
+  // reopen or reassign from
+  if (withdrawn) return false;
   switch (verb) {
     case 'resolve':
     case 'reassign':
@@ -528,7 +552,7 @@ export async function actOnException(tx: Tx, actor: UserActor, ids: IdGenerator,
   const row = await lockedRow(tx, actor, dedupeKey, verb);
   const eventId = body.commandId ? eventIdFor(verb, body.commandId) : null;
   if (await replayed(tx, verb, dedupeKey, eventId)) return;
-  if (!stateAllows(verb, row.last_action)) throw new AppError('EXCEPTION_STATE_CONFLICT', { latestAction: row.last_action });
+  if (!stateAllows(verb, row.last_action, row.withdrawn_at !== null)) throw new AppError('EXCEPTION_STATE_CONFLICT', { latestAction: row.last_action, withdrawn: row.withdrawn_at !== null });
   const note = body.note?.trim() ? body.note.trim() : null;
   if (verb === 'resolve' && note === null) throw new AppError('VALIDATION_FAILED', { reason: 'NOTE_REQUIRED' });
   await record(tx, actor, row, verb, eventId ?? ids.next(), note, null);
@@ -548,7 +572,7 @@ export async function reassignException(tx: Tx, actor: UserActor, ids: IdGenerat
   const row = await lockedRow(tx, actor, dedupeKey, 'reassign');
   const eventId = eventIdFor('reassign', body.commandId);
   if (await replayed(tx, 'reassign', dedupeKey, eventId)) return { ok: true };
-  if (!stateAllows('reassign', row.last_action)) throw new AppError('EXCEPTION_STATE_CONFLICT', { latestAction: row.last_action });
+  if (!stateAllows('reassign', row.last_action, row.withdrawn_at !== null)) throw new AppError('EXCEPTION_STATE_CONFLICT', { latestAction: row.last_action, withdrawn: row.withdrawn_at !== null });
   if (row.contact_id === null) throw new AppError('EXCEPTION_NOT_REASSIGNABLE');
   const contact = await getContact(tx, row.contact_id);
   if (!contact) throw new AppError('NOT_FOUND');

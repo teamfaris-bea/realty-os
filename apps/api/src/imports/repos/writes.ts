@@ -23,6 +23,13 @@ export async function liveContact(tx: Tx, id: string): Promise<LiveContactRow | 
   return r.rows[0] ?? null;
 }
 
+/** Batch 6 review F3: whether a person merged another contact into this one (a merged_in ledger event). */
+export async function hasMergedIn(tx: Tx, contactId: string): Promise<boolean> {
+  const r = await sql<{ x: boolean }>`
+    SELECT EXISTS (SELECT 1 FROM lead_ownership_events WHERE tenant_id = app.tenant_id() AND contact_id = ${contactId} AND type = 'merged_in') AS x`.execute(tx);
+  return r.rows[0]?.x === true;
+}
+
 /** Non-guarded contact columns of a contact the import just created. */
 export async function setImportedFields(tx: Tx, contactId: string, fields: Record<string, string>): Promise<void> {
   if (Object.keys(fields).length === 0) return;

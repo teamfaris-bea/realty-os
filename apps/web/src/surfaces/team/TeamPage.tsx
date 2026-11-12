@@ -117,7 +117,9 @@ export function ExceptionCard({ item, onDone, onFailure }: { item: ExceptionItem
   const verify = useCommand<Record<string, never>, ItemResponse>(keyPath(item, 'verify'), opts);
   const reopen = useCommand<Record<string, never>, ItemResponse>(keyPath(item, 'reopen'), opts);
   const reassign = useCommand<{ toUserId: string; expectedSeq?: number }, ItemResponse>(keyPath(item, 'reassign'), opts);
-  const fixedLate = item.live && item.conditionClearedAt !== null;
+  // a withdrawn item (the current rules make its period no item) is never live and never a late fix
+  const withdrawn = item.withdrawn === true;
+  const fixedLate = item.live && !withdrawn && item.conditionClearedAt !== null;
   const subject = item.contact?.name ?? null;
   // R-PAR-32 / one period per card: an untouched lead's facts are its owner's period, labelled as earlier once it ended
   const period = periodLabel(item);
@@ -154,9 +156,11 @@ export function ExceptionCard({ item, onDone, onFailure }: { item: ExceptionItem
           </p>
         </div>
         {fixedLate ? <Pill tone="warn">Fixed late</Pill> : null}
+        {withdrawn ? <Pill tone="neutral">No longer counted</Pill> : null}
         {!item.live && item.latestEvent ? <Pill tone="ok">{EVENT_LABEL[item.latestEvent.action]}</Pill> : null}
       </div>
       {fixedLate ? <p className="text-[14px] text-ink">This was put right after it was due. It stays here until someone resolves or verifies it.</p> : null}
+      {withdrawn ? <p className="text-[14px] text-ink">Under the current rules this period is not a miss, so it no longer counts. Why is below.</p> : null}
 
       {period ? <p className="text-[14px] font-medium text-ink">{period}</p> : null}
       <ul aria-label="Evidence" className="flex flex-col gap-1 border-l-2 border-line pl-3">

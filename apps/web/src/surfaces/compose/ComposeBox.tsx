@@ -135,7 +135,13 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
   const [body, setBody] = useState('');
   const [subject, setSubject] = useState('');
   const [seenSeq, setSeenSeq] = useState<number | null>(null);
-  const [notice, setNotice] = useState<{ tone: 'warn' | 'error' | 'ok'; text: string } | null>(null);
+  const [notice, setNotice] = useState<{ tone: 'warn' | 'error' | 'ok'; text: string; link?: { to: string; label: string } } | null>(null);
+  // review F7: a send refused because this record was merged meanwhile (CONTACT_MERGED) names the record the person lives
+  // on now, when the caller may see it (details.mergedInto): link there, to write on the same channel
+  const failed = (r: { code?: string; message: string; details?: Record<string, unknown> | null }) => {
+    const into = r.code === 'CONTACT_MERGED' && typeof r.details?.mergedInto === 'string' ? r.details.mergedInto : null;
+    setNotice({ tone: 'error', text: r.message, ...(into ? { link: { to: `/contacts/${into}/thread?compose=${channel}`, label: 'Open their current record' } } : {}) });
+  };
   const [outcome, setOutcome] = useState<ComposeResponse | null>(null);
   // parity module 64 (R-PAR-25): "Send later" exposes the existing scheduleAt (one-to-one only)
   const [later, setLater] = useState<string | null>(null);
@@ -315,7 +321,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
       }
       if (o.kind === 'done') return afterSend(o.response);
       if (draft && draftRefused(o.code, o.message, o.details)) return;
-      setNotice({ tone: 'error', text: o.message });
+      failed(o);
       return;
     }
     if (draft) {
@@ -328,7 +334,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
         return;
       }
       if (draftRefused(r.code, r.message, r.details)) return;
-      setNotice({ tone: 'error', text: r.message });
+      failed(r);
       return;
     }
     const at = later ? new Date(later) : null;
@@ -338,7 +344,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
     }
     const r = await human.run({ channel, body: text, ...(channel === 'email' && subject.trim() ? { subject: subject.trim() } : {}), ...(at ? { scheduleAt: at.toISOString() } : {}) });
     if (r.ok) afterSend(r.data);
-    else setNotice({ tone: 'error', text: r.message });
+    else failed(r);
   };
 
   const askDraft = useCommand<Record<string, unknown>, { action: ActionView }>(`/contacts/${contact.id}/drafts`, {});
@@ -500,7 +506,19 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
         </figure>
       ) : null}
       {showPreview ? <GateBadge decision={decision} /> : null}
-      {notice ? <Notice tone={notice.tone}>{notice.text}</Notice> : null}
+      {notice ? (
+        <Notice tone={notice.tone}>
+          {notice.text}
+          {notice.link ? (
+            <>
+              {' '}
+              <Link to={notice.link.to} className="font-medium text-accent underline">
+                {notice.link.label}
+              </Link>
+            </>
+          ) : null}
+        </Notice>
+      ) : null}
       {outcome ? <SendOutcome result={outcome} contactName={contact.name} /> : null}
       {settled && !nothingSends && !draft && draftId === null && body.trim() === '' && contact.ownedByMe ? (
         <Button variant="quiet" className="self-start" pending={askDraft.pending} pendingLabel="Asking the assistant" onClick={() => void requestDraft()}>

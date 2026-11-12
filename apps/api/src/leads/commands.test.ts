@@ -100,13 +100,19 @@ describe('reassign and handoff (R-OWN-18)', () => {
     expect(t.body.items.filter((i) => i.detail !== 'created').map((i) => [i.detail, i.preview])).toEqual([['reassigned', 'MANUAL_REASSIGN']]);
   });
 
-  it('R-OWN-18: reassigning an offered lead writes offer_rescinded then assigned', async () => {
+  it('R-OWN-18: reassigning an offered lead writes offer_rescinded then assigned; the agent it was on offer to is told their offer was withdrawn', async () => {
     const r = await intake(h, w);
-    expect((await contactState(h, r.contactId)).ownership_state).toBe('offered');
+    const before = await contactState(h, r.contactId);
+    expect(before.ownership_state).toBe('offered');
+    const offeree = before.offered_to_user_id as string;
+    expect(offeree).not.toBe(outsider.userId);
     const res = await command<{ result: { events: { type: string }[] } }>(w.owner, r.contactId, 'reassign', { toUserId: outsider.userId });
     expect(res.status).toBe(200);
     expect(res.body.result.events.map((e) => e.type)).toEqual(['offer_rescinded', 'assigned']);
     expect((await contactState(h, r.contactId)).owner_user_id).toBe(outsider.userId);
+    // batch 6 review R5: the title said only "Lead update" (no title for OFFER_RESCINDED)
+    const told = (await h.su.query<{ kind: string; title: string }>("SELECT kind, title FROM notifications WHERE subject_id = $1 AND user_id = $2 AND kind <> 'lead_offer'", [r.contactId, offeree])).rows;
+    expect(told).toEqual([{ kind: 'reassigned_away', title: 'A lead offered to you was assigned to someone else' }]);
   });
 
   it('R-OWN-18: an ISA hands off only their own lead, only to an agent or TL, with a note, and keeps collaborator access for 7 days', async () => {

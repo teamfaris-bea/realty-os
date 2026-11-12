@@ -31,6 +31,7 @@ import { ComposeBox } from '../compose/ComposeBox.js';
 import type { ComposeChannel } from '../compose/channelApi.js';
 import { composeChannelOf } from '../compose/channelChoice.js';
 import { RowAttachments } from './Attachments.js';
+import { MergedAwayNotice, isMergedAway } from '../contact/MergedAway.js';
 import { useContact } from '../contact/useContact.js';
 import { AgentSheetsProvider, sendOutcomeText, useAgentSheets } from '../feed/lib/AgentSheets.js';
 import { firstName, formatDateTime } from '../feed/lib/format.js';
@@ -110,6 +111,10 @@ function Thread() {
       {t.isError ? <Notice tone="error">{messageFor(t.error, AGENT_ERROR_MESSAGES)}</Notice> : null}
       {t.data && items.length === 0 ? <p className="py-6 text-center text-[15px] text-ink-muted">No messages or calls yet.</p> : null}
       <Messages items={items} contact={{ id: full.id, name: full.displayName }} />
+      {/* review F7: nothing can be sent to a merged-away record (CONTACT_MERGED); say where the person went instead */}
+      {isMergedAway(full) ? (
+        <MergedAwayNotice to={full.mergedIntoContactId} />
+      ) : (
       <div ref={composeBar} data-sticky className="sticky bottom-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))] -mx-4 border-t border-line bg-canvas/95 px-4 py-3 backdrop-blur md:bottom-0 md:mx-0 md:rounded-2xl md:border md:bg-surface [@media(max-height:559.98px)]:static">
         <ComposeBox
           key={draft ?? 'none'}
@@ -124,6 +129,7 @@ function Thread() {
           templatePicker={({ channel, insert }) => <TemplatePicker contactId={full.id} channel={channel} onInsert={insert} />}
         />
       </div>
+      )}
     </div>
   );
 }
@@ -138,7 +144,8 @@ function ThreadHeader({ contact }: { contact: ContactFullView }) {
         <Link to={`/contacts/${contact.id}`} className="inline-flex min-h-tap min-w-0 flex-1 items-center py-2 text-[15px] font-medium text-accent [overflow-wrap:anywhere]">
           View {contact.displayName}'s details
         </Link>
-        {contact.phones.length > 0 ? (
+        {/* review R3: no Call on a merged-away record: the API refuses it (CONTACT_MERGED), and the notice says where to call */}
+        {contact.phones.length > 0 && !isMergedAway(contact) ? (
           <Button variant="secondary" icon="phone" disabled={voice.blocked} aria-describedby={voice.blocked ? captionId : undefined} onClick={() => call({ id: contact.id, name: contact.displayName })}>
             Call
           </Button>

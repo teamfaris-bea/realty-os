@@ -166,7 +166,7 @@ type UnassignedView = {
   stillUnassigned: number;
   contactIds: string[];
   summary: string[];
-  people: { contactId: string; name: string; sentence: string; stillUnassigned: boolean; now: string; nowSentence: string | null }[];
+  people: { contactId: string; name: string; sentence: string; stillUnassigned: boolean; now: string; nowSentence: string | null; mergedIntoContactId?: string | null }[];
 };
 type ReportView = {
   categories: { category: Category; status: string; phase: string; imported: number; rejected: number; lines: string[]; unassigned: UnassignedView | null }[];
@@ -558,7 +558,7 @@ describe('M2: a member suspended between the ownership approval and its commit (
     // the verification is stored with what the approval expected and why the recount differs from it
     const stored = (await q<{ verification: { recount: Record<string, unknown>; documented: unknown } }>("SELECT verification FROM import_stages WHERE batch_id = $1 AND category = 'ownership'", [b.id]))[0]!.verification;
     expect(stored.recount).toMatchObject({ approved: v.view.approved, expected: v.view.expected, db: v.view.db });
-    expect(stored.documented).toEqual({ unassigned: 2 });
+    expect(stored.documented).toEqual({ unassigned: 2, kept: 0 });
     for (const cat of ['notes', 'messages', 'call_recordings', 'consent'] as const) {
       const d = await dryRunStage(ih, w.admin, b.id, cat);
       for (const r of (await records(w.admin, b.id, cat)).filter((x) => x.dryRunOutcome === 'needs_review')) await call(w.admin, 'POST', `/imports/${b.id}/records/${r.id}/review`, { decision: 'import' });
@@ -583,11 +583,14 @@ describe('M2: a member suspended between the ownership approval and its commit (
       contactIds: [omar, quin],
       summary: [stillLine],
       people: [
-        { contactId: omar, name: 'Omar Optout4', sentence: why, stillUnassigned: true, now: 'unassigned', nowSentence: null },
-        { contactId: quin, name: 'Quin Notext4', sentence: why, stillUnassigned: true, now: 'unassigned', nowSentence: null },
+        { contactId: omar, name: 'Omar Optout4', sentence: why, stillUnassigned: true, now: 'unassigned', nowSentence: null, mergedIntoContactId: null },
+        { contactId: quin, name: 'Quin Notext4', sentence: why, stillUnassigned: true, now: 'unassigned', nowSentence: null, mergedIntoContactId: null },
       ],
     });
-    expect(own.lines.slice(2)).toEqual([`2 people came in unassigned because ${bea}'s account is suspended.`, 'Nothing was assigned to them, and the import started no offer, timer or routing.', stillLine]);
+    // review F8: the "still unassigned" sentence is said once, next to the button it names (the people card's summary),
+    // never again among the category's lines
+    expect(own.lines.slice(2)).toEqual([`2 people came in unassigned because ${bea}'s account is suspended.`, 'Nothing was assigned to them, and the import started no offer, timer or routing.']);
+    expect(own.lines).not.toContain(stillLine);
     const ids = own.unassigned!.contactIds;
     const assign = (c: typeof w.admin, toUserId: string) => call<{ action: { id: string; targetCount: number; preflight: Record<string, number> } }>(c, 'POST', '/bulk-actions', { kind: 'assign', selection: { contactIds: ids }, toUserId, idempotencyKey: `imp-assign-${randomUUID()}` });
     // an agent may not run a bulk Assign (and sees neither person)
@@ -621,7 +624,8 @@ describe('M2: a member suspended between the ownership approval and its commit (
       [false, 'owned', 'Has an owner now.'],
       [false, 'owned', 'Has an owner now.'],
     ]);
-    expect(after.lines.at(-1)).toBe('Both of them have an owner now.');
+    expect(after.unassigned!.summary.at(-1)).toBe('Both of them have an owner now.');
+    expect(after.lines).not.toContain('Both of them have an owner now.'); // said once, by the people card (review F8)
   });
 });
 
@@ -657,8 +661,8 @@ describe('E230 E231 after the ownership commit, the review list, the verificatio
     expect(own.lines.slice(2)).toEqual([
       `4 people came in unassigned because ${bea}'s account was suspended when the owners were imported.`,
       'Nothing was assigned to them, and the import started no offer, timer or routing.',
-      '4 people are still unassigned: use "Assign these people" to give them an owner.',
     ]);
+    expect(own.unassigned!.summary).toEqual(['4 people are still unassigned: use "Assign these people" to give them an owner.']);
     expect(own.unassigned!.people.map((p) => p.sentence)).toEqual(refs.map(() => was));
     const v = await call<{ documented: { code: string; count: number; sentence: string }[] }>(w.admin, 'GET', `/imports/${b.id}/stages/ownership/verification`);
     expect(v.body.documented).toEqual([{ code: 'OWNER_UNAVAILABLE', count: 4, sentence: "4 planned assignments came in unassigned because the member they were matched to couldn't hold leads when the owners were imported (each record says why). They are counted as not imported." }]);
@@ -686,17 +690,118 @@ describe('E230 E231 after the ownership commit, the review list, the verificatio
       ['Pia', 'merged', 'Merged into another contact after the import.', false],
       ['Quin', 'deleted', 'Deleted after the import.', false],
     ]);
+    // review F7: a merged-away person is linked to the record they live on now, never to the closed old one
+    expect(own.unassigned!.people.map((p) => [p.name.split(' ')[0], p.mergedIntoContactId])).toEqual([['Jane', null], ['Omar', null], ['Pia', ids.Rae], ['Quin', null]]);
     expect([own.unassigned!.stillUnassigned, own.unassigned!.contactIds]).toEqual([0, []]);
-    expect(own.lines.slice(4)).toEqual(['After the import, 1 was given an owner, 1 was closed, 1 was deleted and 1 was merged into another contact.']);
-    expect(own.unassigned!.summary).toEqual(own.lines.slice(4));
+    expect(own.unassigned!.summary).toEqual(['After the import, 1 was given an owner, 1 was closed, 1 was deleted and 1 was merged into another contact.']);
+    expect(own.lines.slice(4)).toEqual([]); // said once, by the people card (review F8)
     // Jane's agent releases her to the Team Pond: nobody owns her again, and the report says where she is
     expect((await command(w.agents[0]!, 'release', ids.Jane, { reason: 'not_a_fit' })).status).toBe(200);
     expect(await q('SELECT ownership_state, owner_user_id FROM contacts WHERE id = $1', [ids.Jane])).toEqual([{ ownership_state: 'in_pond', owner_user_id: null }]);
     own = await ownership();
     expect(people(own.unassigned!)[0]).toEqual(['Jane', 'in_pond', 'In a pond now, with no owner.', false]);
-    expect(own.lines.at(-1)).toBe('After the import, 1 was put in a pond, 1 was closed, 1 was deleted and 1 was merged into another contact.');
+    expect(own.unassigned!.summary.at(-1)).toBe('After the import, 1 was put in a pond, 1 was closed, 1 was deleted and 1 was merged into another contact.');
     expect(own.lines.join(' ')).not.toMatch(/an owner now/);
     expect([own.unassigned!.stillUnassigned, own.unassigned!.contactIds]).toEqual([0, []]);
+  });
+});
+
+// Batch 6 review ownership-sla/F3. A person the contacts stage created who was merged with another (a name-only duplicate
+// the Admin merges), or given an owner by someone, before the ownership commit has left the import's creation state, so
+// the engine makes no assignment. The commit called that OWNER_KEPT ("This contact already has an owner here": false for
+// an unassigned survivor) with outcome duplicate; only TARGET_NOT_ELIGIBLE was documented, so the recount never matched
+// (RECOUNT_MISMATCH), the stage could never be verified, and R-IMPORT-3 kept notes, messages, calls and consent from
+// committing. Nobody owned the merged person, and the report and its "Assign these people" never listed them.
+describe('review F3: people merged, or given an owner, between the contacts commit and the ownership commit', () => {
+  const merged = 'Brought in unassigned: they were merged with another person after the contacts were imported.';
+  const kept = "This person was already here, or someone gave them an owner after the contacts were imported, so the import doesn't change who owns them.";
+  const lead = (c: ImportWorld['admin'], verb: string, contactId: string, body: Record<string, unknown> = {}) => call(c, 'POST', `/leads/${contactId}/${verb}`, { commandId: randomUUID(), ...body });
+  /** The Admin merges Pia into Jane (both imported, nobody's) and gives Quin an owner: both leave the creation state. */
+  async function mergeAndAssign(w: ImportWorld, batchId: string) {
+    const ids = { jane: await contactOf(batchId, 'Jane'), pia: await contactOf(batchId, 'Pia'), quin: await contactOf(batchId, 'Quin') };
+    const m = await lead(w.admin, 'merge', ids.jane, { loserId: ids.pia });
+    expect(m.status, JSON.stringify(m.body)).toBe(200);
+    expect((await lead(w.admin, 'reassign', ids.quin, { toUserId: w.agents[0]!.userId })).status).toBe(200);
+    expect(await q('SELECT first_name, ownership_state, ownership_seq::int AS seq FROM contacts WHERE id = ANY ($1) ORDER BY first_name', [[ids.jane, ids.quin]])).toEqual([
+      { first_name: 'Jane', ownership_state: 'unassigned', seq: 2 },
+      { first_name: 'Quin', ownership_state: 'owned', seq: 2 },
+    ]);
+    return ids;
+  }
+  async function laterStagesCommit(w: ImportWorld, batchId: string) {
+    for (const cat of ['notes', 'messages', 'call_recordings', 'consent'] as const) {
+      const d = await dryRunStage(ih, w.admin, batchId, cat);
+      for (const r of (await records(w.admin, batchId, cat)).filter((x) => x.dryRunOutcome === 'needs_review')) await call(w.admin, 'POST', `/imports/${batchId}/records/${r.id}/review`, { decision: 'import' });
+      expect([cat, (await approve(w.admin, batchId, cat, d.dryRunSha256 as string)).status]).toEqual([cat, 200]);
+      expect([cat, (await commitStage(ih, w.admin, batchId, cat)).status]).toEqual([cat, 'committed']);
+      expect([cat, (await verify(w.admin, batchId, cat)).res.status]).toEqual([cat, 200]);
+    }
+    expect((await batchOf(w.admin, batchId)).status).toBe('committed');
+  }
+
+  it('E230 E231 R-IMPORT-5 after the ownership approval: the merged records come in unassigned and say why, the one given an owner is kept, the stage verifies, the later stages commit, and the report offers the merged person once', async () => {
+    const { w, b } = await ownershipApproved('fub-f3a-' + randomUUID().slice(0, 8), 7900, 5);
+    const ids = await mergeAndAssign(w, b.id);
+    const s = await commitStage(ih, w.admin, b.id, 'ownership');
+    expect(s.status).toBe('committed');
+    const own = await records(w.admin, b.id, 'ownership');
+    const rec = (ref: string) => own.find((x) => x.sourceRef === ref)!;
+    for (const ref of ['fub:people/7901', 'fub:people/7903']) {
+      expect([ref, rec(ref).outcome, rec(ref).targetId]).toEqual([ref, 'rejected', ids.jane]);
+      expect(rec(ref).issues.map((i) => [i.code, i.sentence])).toEqual([['PERSON_MERGED', merged]]);
+    }
+    expect([rec('fub:people/7904').outcome, rec('fub:people/7904').issues.map((i) => [i.code, i.sentence])]).toEqual(['duplicate', [['OWNER_KEPT', kept]]]);
+    expect(s.counts).toMatchObject({ source: 7, imported: 1, needsReview: 0, rejected: 4, duplicate: 2 });
+    // nobody was assigned to Jane (no ledger event since the merge); Quin keeps the owner a person gave them
+    expect(await q('SELECT first_name, ownership_state, owner_user_id, ownership_seq::int AS seq FROM contacts WHERE id = ANY ($1) ORDER BY first_name', [[ids.jane, ids.quin]])).toEqual([
+      { first_name: 'Jane', ownership_state: 'unassigned', owner_user_id: null, seq: 2 },
+      { first_name: 'Quin', ownership_state: 'owned', owner_user_id: w.agents[0]!.userId, seq: 2 },
+    ]);
+    const v = await verify(w.admin, b.id, 'ownership');
+    expect(v.res.status, JSON.stringify(v.res.body)).toBe(200);
+    expect(v.view.approved).toEqual({ source: 7, imported: 4, needs_review: 0, rejected: 2, duplicate: 1 });
+    expect(v.view.expected).toEqual({ source: 7, imported: 1, needs_review: 0, rejected: 4, duplicate: 2 });
+    expect(v.view.documented).toEqual([
+      { code: 'PERSON_CHANGED', count: 2, sentence: '2 planned assignments came in unassigned because the person was merged with another person, or someone changed who holds them, after the contacts were imported (each record says which). They are counted as not imported.' },
+      { code: 'OWNER_KEPT', count: 1, sentence: '1 planned assignment was not made because someone gave the person an owner after the contacts were imported (the record says so). It is counted as already here.' },
+    ]);
+    await laterStagesCommit(w, b.id);
+    // the report lists the merged person once (both records live on Jane now), with "Assign this person"
+    const ownRep = (await report(w, b.id)).categories.find((c) => c.category === 'ownership')!;
+    expect(ownRep.unassigned).toMatchObject({ total: 1, stillUnassigned: 1, contactIds: [ids.jane], summary: ['1 person is still unassigned: use "Assign this person" to give them an owner.'] });
+    expect(ownRep.unassigned!.people).toMatchObject([{ contactId: ids.jane, name: 'Jane Many5', sentence: merged, stillUnassigned: true, now: 'unassigned', nowSentence: null }]);
+    expect(ownRep.lines).toContain('1 person came in unassigned because they were merged with another person after the contacts were imported.');
+  });
+
+  it('E230 E231 before the ownership dry run: the dry run plans what the commit does (the engine\'s creation-state test), nothing needs documenting, and the report offers the merged person', async () => {
+    const w = await importWorld(ih);
+    const key = 'fub-f3b-' + randomUUID().slice(0, 8);
+    ih.fub.add(key, account(8000, 6));
+    const b = await startFub(ih, w.admin, key);
+    expect((await call(w.admin, 'PUT', `/imports/${b.id}/user-mappings`, { mappings: ALL_MAPPED(w) })).status).toBe(200);
+    await fullStage(ih, w.admin, b.id, 'contacts');
+    expect(stageOf(await batchOf(w.admin, b.id), 'contacts').status).toBe('verified');
+    const ids = await mergeAndAssign(w, b.id);
+    // review R4: Rae, whom FUB holds unassigned (no agent, no pond), is closed by the Admin before the dry run. The import
+    // had no owner to give her, so nothing it would have done changed: already imported, never "came in unassigned"
+    const rae = await contactOf(b.id, 'Rae');
+    expect((await lead(w.admin, 'close', rae, { reason: 'not_a_lead' })).status).toBe(200);
+    const d = await dryRunStage(ih, w.admin, b.id, 'ownership');
+    expect(d.counts).toMatchObject({ source: 7, willImport: 1, rejected: 4, duplicate: 2 });
+    const planned = await records(w.admin, b.id, 'ownership');
+    const rec = (ref: string) => planned.find((x) => x.sourceRef === ref)!;
+    for (const ref of ['fub:people/8001', 'fub:people/8003']) {
+      expect([ref, rec(ref).dryRunOutcome, rec(ref).matchContactId, rec(ref).issues.map((i) => [i.code, i.sentence])]).toEqual([ref, 'rejected', ids.jane, [['PERSON_MERGED', merged]]]);
+    }
+    expect([rec('fub:people/8004').dryRunOutcome, rec('fub:people/8004').issues.map((i) => i.code)]).toEqual(['duplicate', ['OWNER_KEPT']]);
+    expect([rec('fub:people/8005').dryRunOutcome, rec('fub:people/8005').matchContactId, rec('fub:people/8005').issues.map((i) => i.code)]).toEqual(['duplicate', rae, ['ALREADY_IMPORTED']]);
+    expect((await approve(w.admin, b.id, 'ownership', d.dryRunSha256 as string)).status).toBe(200);
+    expect((await commitStage(ih, w.admin, b.id, 'ownership')).counts).toMatchObject({ source: 7, imported: 1, rejected: 4, duplicate: 2 });
+    const v = await verify(w.admin, b.id, 'ownership');
+    expect([v.res.status, v.view.documented, v.view.matches]).toEqual([200, [], true]);
+    const ownRep = (await report(w, b.id)).categories.find((c) => c.category === 'ownership')!;
+    expect(ownRep.unassigned).toMatchObject({ total: 1, stillUnassigned: 1, contactIds: [ids.jane] });
+    expect(ownRep.unassigned!.people).toMatchObject([{ contactId: ids.jane, sentence: merged, now: 'unassigned' }]);
   });
 });
 

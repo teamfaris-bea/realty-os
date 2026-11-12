@@ -116,6 +116,30 @@ describe('F1 D1: a merged-away record is the whole person, never a second, ungua
     expect((await sendText(agent, s.id, 'Checking in on the house')).body).toMatchObject({ result: 'sent' });
   });
 
+  // Batch 6 review of the F7 fix (R2): the record's page says where the person went from mergedIntoContactId, which was
+  // the raw merged_into_contact_id: the loser's collaborator, who cannot open the survivor (the refusal above names it
+  // only to whoever sees it, R-PERM-5), was shown its id and a link that answers 404; and on a chain it named the
+  // record merged into, not the one the person lives on now.
+  it('F1 R-PERM-5 R-OWN-24: a merged-away record reads merged: true; mergedIntoContactId is the record the person lives on now (the end of the merge chain), only to whoever may open it', async () => {
+    const { s, l } = await mergedPair();
+    type View = { contact: { view: string; merged?: boolean; mergedIntoContactId?: string | null } };
+    const seen = async (c: TestClient, id: string) => {
+      const r = await call<View>(c, 'GET', `/contacts/${id}`);
+      return [r.status, r.body.contact.view, r.body.contact.merged, r.body.contact.mergedIntoContactId];
+    };
+    expect(await seen(w.owner, l.id)).toEqual([200, 'full', true, s.id]);
+    expect(await seen(admin, l.id)).toEqual([200, 'full', true, s.id]);
+    expect(await seen(agent2, l.id)).toEqual([200, 'full', true, null]);
+    expect((await call(agent2, 'GET', `/contacts/${s.id}`)).status).toBe(404);
+    expect(await seen(agent, s.id)).toEqual([200, 'full', false, null]);
+    // S is merged into T in turn: L's record points at T, where the person lives now
+    const t = await ownedContact(agent, { consent: false, confirmDistinct: true, firstName: 'Tess' });
+    await freshReauth(h, w.owner);
+    expect((await command(w.owner, t.id, 'merge', { loserId: s.id })).status).toBe(200);
+    expect(await seen(w.owner, l.id)).toEqual([200, 'full', true, t.id]);
+    expect(await seen(w.owner, s.id)).toEqual([200, 'full', true, t.id]);
+  });
+
   it('F1 D1 R-CHAN-2 R-PAR-12: a message that reached a merged-away record anyway (composed while the merge committed) is judged as the whole person at dispatch: blocked by canContact for the survivor’s do-not-contact or a STOP from a phone only the survivor had, both from before the merge; the reason is recorded and nothing reaches the provider', async () => {
     for (const [label, before, reason] of [['asked', asked, 'PERSON_DO_NOT_CONTACT'], ['stop', stopOnSurvivorsOwnPhone, 'CONSENT_REVOKED']] as const) {
       const { l } = await mergedPair(before);

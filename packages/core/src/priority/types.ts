@@ -529,6 +529,13 @@ export interface ExceptionItemSpec {
    * `milestone:{deal_date}:{due_version}`.
    */
   dedupeKey: string;
+  /**
+   * untouched_lead only (exception_items.withdrawn_at): a stored item the current definitions derive no item for any
+   * more, because its period's first-touch window ended before its deadline under the current rules (a re-inquiry
+   * superseded it, or the lead left its owner) or its first touch was in time. It is never a late fix: it leaves the
+   * live queue, its evidence says why, and its human events stand. Absent or null on every derived item.
+   */
+  withdrawnAt?: Instant | null;
 }
 
 export interface ExceptionSettings {
@@ -559,6 +566,7 @@ export interface ExceptionInputs {
 }
 
 export interface ExceptionDerivation {
+  /** Items to store by dedupe key, withdrawals of stored untouched_lead items included (`withdrawnAt` set). */
   upserts: ExceptionItemSpec[];
   /** Dedupe keys whose condition stopped holding: set condition_cleared_at = now if still null. */
   cleared: string[];

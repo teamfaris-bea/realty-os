@@ -62,6 +62,11 @@ export interface ActionView {
   preflight: Record<string, number>;
   /** people left out because someone earlier has the same address (R-PAR-38: "2 people share an address") */
   sharedAddresses: number;
+  /**
+   * assign: of the people it will assign, those on offer to an agent now (counted at draft): assigning them withdraws
+   * those offers (R-OWN-18), and each agent is told (batch 6 review F6)
+   */
+  onOffer: number;
   counts: ReturnType<typeof tally>;
   templateId: string | null;
   templateVersion: number | null;
@@ -77,6 +82,7 @@ interface StoredCounts {
   selected?: number;
   preflight?: Record<string, number>;
   sharedAddresses?: number;
+  onOffer?: number;
   final?: ReturnType<typeof tally>;
   /** send/enroll: every tag the audience was built from, re-checked at confirm (R-PAR-8, security review); stage: read before a plan starts (batch 5 review F1) */
   audienceTagIds?: string[];
@@ -95,6 +101,7 @@ export function viewOf(actor: UserActor, a: B.ActionRow, items: { status: B.Item
     targetCount: a.targetCount ?? 0,
     preflight,
     sharedAddresses: c.sharedAddresses ?? 0,
+    onOffer: c.onOffer ?? 0,
     counts: tally(selected, preflight, items),
     templateId: a.templateId,
     templateVersion: a.templateVersion,
@@ -236,6 +243,7 @@ export async function createDraft(actor: UserActor, input: CreateInput, deps: Bu
     const items: { contactId: string; addressHmac: string | null }[] = [];
     const seen = new Set<string>();
     let shared = 0;
+    let onOffer = 0;
     const run = { actor, now: now as never };
     for (const cid of ids) {
       const p = await personRow(tx, cid);
@@ -259,11 +267,14 @@ export async function createDraft(actor: UserActor, input: CreateInput, deps: Bu
         skip(r.reason);
         continue;
       }
+      // R-OWN-18: an assign withdraws an offer to someone else, and that agent is told (run.ts finish: never the target,
+      // whose offer becomes theirs, nor whoever runs the action); the sheet counts exactly those (review R5)
+      if (input.kind === 'assign' && p?.ownershipState === 'offered' && p.offeredToUserId !== input.toUserId && p.offeredToUserId !== actor.userId) onOffer += 1;
       items.push({ contactId: cid, addressHmac: isSendKind(input.kind) ? address : null });
     }
     await B.insertItems(tx, actionId, items);
     const audienceTagIds = recordsAudience(input.kind) ? await audienceTagsOf(tx, input) : undefined;
-    await B.setDraftCounts(tx, actionId, items.length, { selected, preflight, sharedAddresses: shared, ...(audienceTagIds ? { audienceTagIds } : {}) });
+    await B.setDraftCounts(tx, actionId, items.length, { selected, preflight, sharedAddresses: shared, ...(input.kind === 'assign' ? { onOffer } : {}), ...(audienceTagIds ? { audienceTagIds } : {}) });
     await audit(tx, actor, { action: 'bulk.created', entity: { type: 'bulk_action', id: actionId }, changes: redactSnapshot({ kind: input.kind, status: 'draft', targetCount: items.length, selectedCount: selected }, { entity: 'bulk_action' }) });
     return actionId;
   });

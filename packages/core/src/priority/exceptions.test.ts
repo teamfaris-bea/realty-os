@@ -115,6 +115,46 @@ describe('R-ACC-2 untouched_lead', () => {
     expect(left.evidence[0]?.explanation).toBe('No human call, text or email by the first-contact deadline; the lead later left this agent');
   });
 
+  // Batch 6 review ownership-sla/F2 and F5. A stored item that the current rules make no item at all (rule 3: a period a
+  // re-inquiry superseded before its deadline; one leaves-the-owner rule: a period whose lead left its owner before its
+  // deadline, by an owner-changing merge or a deactivation re-route) was cleared like a late fix: the Team Lead's card
+  // said "Fixed late: This was put right after it was due" of a period nobody missed, and kept it in the live queue.
+  it('R-ACC-1 R-ACC-2 E68: a stored item whose period the current rules make no item is withdrawn with the reason (never cleared as a late fix), idempotently; it is an item again if the facts make it one', () => {
+    const due2 = t(-hours(2));
+    const superseded = sla({ periodSeq: 4, ownedAt: t(-hours(2) - min(15)), firstTouchDueAt: due2, nextPeriodAt: t(-hours(2) - min(10)) });
+    const left = sla({ periodSeq: 6, ownedAt: t(-hours(2) - min(15)), firstTouchDueAt: due2, periodEndedAt: t(-hours(2) - min(5)) });
+    const inTime = sla({ periodSeq: 8, ownedAt: t(-hours(2) - min(15)), firstTouchDueAt: due2, firstTouchAt: t(-hours(2) - min(1)) });
+    // what an earlier rule stored for them: open misses, and one "fixed late" by a touch the current rules give to a later period
+    const asStored = (s: ExceptionInputs['ownedWithSla'][number], o: Partial<ExceptionItemSpec> = {}): ExceptionItemSpec => ({
+      ...only(exceptionInputs({ ownedWithSla: [{ ...s, nextPeriodAt: null, periodEndedAt: null, firstTouchAt: null }] })),
+      ruleVersion: 2,
+      ...o,
+    });
+    const stored = [asStored(superseded), asStored(left, { conditionClearedAt: t(-hours(1)) }), asStored(inTime)];
+    const r = deriveExceptions(exceptionInputs({ ownedWithSla: [superseded, left, inTime], existing: stored }));
+    expect(r.cleared).toEqual([]);
+    expect(r.upserts.map((x) => [x.dedupeKey, x.withdrawnAt, x.ruleVersion, x.conditionClearedAt])).toEqual([
+      [`untouched:${contact(2)}:4`, NOW, EXCEPTION_RULE_VERSION, null],
+      [`untouched:${contact(2)}:6`, NOW, EXCEPTION_RULE_VERSION, t(-hours(1))],
+      [`untouched:${contact(2)}:8`, NOW, EXCEPTION_RULE_VERSION, null],
+    ]);
+    expect(r.upserts.map((x) => x.evidence.map((e) => [e.explanation, e.at]))).toEqual([
+      [["Not a miss: a re-inquiry started this agent's next period before this one was due", due2], ['Lead became theirs', superseded.ownedAt], ['Re-inquiry started their next period', superseded.nextPeriodAt]],
+      [['Not a miss: the lead left this agent before the first-contact deadline', due2], ['Lead became theirs', left.ownedAt], ['Lead left this agent', left.periodEndedAt]],
+      [['Not a miss: the first human call, text or email was in time', due2], ['Lead became theirs', inTime.ownedAt], ['First human contact', inTime.firstTouchAt]],
+    ]);
+    for (const u of r.upserts) expect(ExceptionItemSpecSchema.parse(u)).toEqual(u);
+    // idempotent: a recompute of the withdrawn rows writes nothing, now or later (the withdrawal instant stays)
+    const after = apply(stored, r, NOW);
+    expect(deriveExceptions(exceptionInputs({ ownedWithSla: [superseded, left, inTime], existing: after }))).toEqual({ upserts: [], cleared: [] });
+    expect(deriveExceptions(exceptionInputs({ now: t(hours(5)), ownedWithSla: [superseded, left, inTime], existing: after }))).toEqual({ upserts: [], cleared: [] });
+    // a withdrawn item the facts make an item again is upserted as one, no longer withdrawn
+    const again = deriveExceptions(exceptionInputs({ ownedWithSla: [{ ...superseded, nextPeriodAt: null }], existing: after }));
+    expect(again.upserts.map((x) => [x.dedupeKey, x.withdrawnAt ?? null, x.conditionClearedAt])).toEqual([[`untouched:${contact(2)}:4`, null, null]]);
+    // other types keep their meaning of a clear: the condition stopped holding
+    expect(keys(deriveExceptions(exceptionInputs({ ownedWithSla: [superseded] })))).toEqual([]);
+  });
+
   // R-AST-15 (partial, with the ledger): SlaFacts.firstTouchAt is first_touch_recorded, which only a human touch writes.
   it('only first_touch_recorded clears the SLA, so an assistant reply leaves the lead untouched', () => {
     // SlaFacts.firstTouchAt is the ledger's first_touch_recorded, which only a human touch writes.

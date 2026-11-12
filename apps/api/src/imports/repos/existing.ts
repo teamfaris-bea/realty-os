@@ -32,6 +32,9 @@ export async function loadContacts(tx: Tx, only?: readonly string[]): Promise<Ex
     closed_reason: string | null;
     owner_user_id: string | null;
     merged_into_contact_id: string | null;
+    ownership_seq: string;
+    route_due_at: Date | null;
+    merged_in: boolean;
     import_batch_id: string | null;
     display_name: string;
     first_name: string | null;
@@ -42,6 +45,11 @@ export async function loadContacts(tx: Tx, only?: readonly string[]): Promise<Ex
     has_address: boolean;
   }>`
     SELECT c.id, c.created_at, c.ownership_state, c.closed_reason, c.owner_user_id, c.merged_into_contact_id, c.import_batch_id,
+           c.ownership_seq, c.route_due_at,
+           -- batch 6 review F3: whether a person merged another contact into this one (read only for an imported contact
+           -- that left its creation state: the ownership dry run says "merged" of it)
+           (c.import_batch_id IS NOT NULL AND c.ownership_seq > 1 AND EXISTS (
+              SELECT 1 FROM lead_ownership_events e WHERE e.tenant_id = c.tenant_id AND e.contact_id = c.id AND e.type = 'merged_in')) AS merged_in,
            c.display_name, c.first_name, c.last_name, c.intent,
            -- R-PAR-10: tags come from the catalog (the old array column is retired)
            ARRAY(SELECT t.name FROM contact_tags ct JOIN tags t ON t.tenant_id = ct.tenant_id AND t.id = ct.tag_id
@@ -69,6 +77,9 @@ export async function loadContacts(tx: Tx, only?: readonly string[]): Promise<Ex
     closedReason: c.closed_reason,
     ownerUserId: c.owner_user_id as UserId | null,
     mergedIntoContactId: c.merged_into_contact_id as ContactId | null,
+    ownershipSeq: Number(c.ownership_seq),
+    routeDueAt: c.route_due_at === null ? null : instantFromDate(c.route_due_at),
+    mergedIn: c.merged_in,
     importBatchId: c.import_batch_id,
     displayName: c.display_name,
     firstName: c.first_name,

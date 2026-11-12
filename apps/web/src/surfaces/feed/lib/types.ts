@@ -141,6 +141,11 @@ export interface ContactFullView {
     message: string | null;
     outcome: string;
   }[];
+  /**
+   * R-OWN-24: merged into another record, so nothing is sent from this one (CONTACT_MERGED). `mergedIntoContactId` is
+   * the record the person lives on now, only when this viewer may open it (R-PERM-5: null to the loser's collaborator).
+   */
+  merged: boolean;
   mergedIntoContactId: string | null;
 }
 

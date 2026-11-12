@@ -175,6 +175,35 @@ describe('Team exception queue', () => {
     expect(fake.callsTo(keyPath(it0.dedupeKey, 'reopen'))[0]!.body).toEqual({ commandId: expect.stringMatching(UUID) });
   });
 
+  // Batch 6 review ownership-sla/F2, F5: an item the current rules make no item (withdrawn) is never "fixed late" and
+  // offers nothing; where it still shows (handled, its human events stand) it says it no longer counts, and why.
+  it('R-ACC-1: a withdrawn item says it no longer counts and why, never "Fixed late", and offers no action', async () => {
+    const at = new Date(Date.now() - 3 * 3_600_000).toISOString();
+    const it0 = exceptionItem({
+      live: false,
+      withdrawn: true,
+      conditionClearedAt: new Date().toISOString(),
+      evidence: [
+        { sourceType: 'ownership_period', sourceId: ID.pat, explanation: "Not a miss: a re-inquiry started this agent's next period before this one was due", at, locator: null, snippet: null, needsReview: false, link: null },
+        { sourceType: 'ownership_period', sourceId: ID.pat, explanation: 'Lead became theirs', at, locator: null, snippet: null, needsReview: false, link: null },
+      ],
+      latestEvent: { action: 'resolved', note: 'Called her', actor: { userId: ID.me, name: 'Sam Lead' }, at: new Date().toISOString() },
+      actions: { resolve: false, reassign: false, verify: false, reopen: false },
+    });
+    const fake = teamFake([]).on('GET /team/exceptions?state=handled&limit=200', { status: 200, body: queue([it0], 0) });
+    leadAdminApp(fake, '/team');
+    const u = userEvent.setup();
+    expect(await screen.findByText('Nothing needs attention')).toBeInTheDocument();
+    await u.click(screen.getByRole('radio', { name: 'Handled' }));
+    const card = (await screen.findByRole('heading', { name: /Untouched lead/ })).closest('article')!;
+    expect(within(card).getByText('No longer counted')).toBeInTheDocument();
+    expect(within(card).getByText('Under the current rules this period is not a miss, so it no longer counts. Why is below.')).toBeInTheDocument();
+    expect(within(card).getByText(/Not a miss: a re-inquiry started this agent's next period before this one was due/)).toBeInTheDocument();
+    expect(within(card).queryByText('Fixed late')).toBeNull();
+    expect(within(card).queryByText(/This was put right after it was due/)).toBeNull();
+    expect(within(card).queryAllByRole('button')).toEqual([]);
+  });
+
   it('says how many it shows when the server returned fewer items than are live', async () => {
     leadAdminApp(new FakeFetch().on(LIVE, { status: 200, body: queue([exceptionItem()], 240) }), '/team');
     expect(await screen.findByText('Showing the oldest 1 of 240.')).toBeInTheDocument();

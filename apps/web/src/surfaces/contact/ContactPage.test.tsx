@@ -51,6 +51,43 @@ describe('Contact: card view', () => {
 });
 
 describe('Contact: full view', () => {
+  // Batch 6 review ui-compose/F7: a merged-away record offered Call, Text and Email, which the API refuses
+  // (CONTACT_MERGED), and only its history said "Merged into another contact", with no way to the person.
+  it('R-OWN-24: a record merged into another says so with a link to the current record, and offers no Call, Text or Email', async () => {
+    const merged = fullContact({ merged: true, mergedIntoContactId: IDS.pat });
+    agentApp(fullFake(merged).on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: reachability(IDS.jane) } }), `/contacts/${IDS.jane}`);
+    expect(await screen.findByText(/This record was merged into another contact\./)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open the current record' })).toHaveAttribute('href', `/contacts/${IDS.pat}`);
+    for (const name of ['Call', 'Text', 'Email']) expect(screen.queryByRole('button', { name })).toBeNull();
+  });
+
+  // Review of that fix (R2): the API names the record the person lives on now only to whoever may open it (R-PERM-5: the
+  // loser's collaborator is not told about the survivor), so the page says so without a link that would answer 404.
+  it('R-OWN-24 R-PERM-5: a merged record whose current record the viewer cannot open says so, with no link and no Call, Text or Email', async () => {
+    const merged = fullContact({ merged: true, mergedIntoContactId: null });
+    agentApp(fullFake(merged).on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: reachability(IDS.jane) } }), `/contacts/${IDS.jane}`);
+    expect(await screen.findByText("This record was merged into another contact you can't open. Ask its owner or an Admin.")).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Open the current record' })).toBeNull();
+    for (const name of ['Call', 'Text', 'Email']) expect(screen.queryByRole('button', { name })).toBeNull();
+  });
+
+  // R3: a call refused because the record was merged meanwhile (CONTACT_MERGED) read "The call didn't go through. Check
+  // your connection", which is false, and gave no way to the person although the API names their current record.
+  it('R-OWN-24: a call refused because the record was merged meanwhile says so, and links to the current record only when the API names it', async () => {
+    for (const details of [{ mergedInto: IDS.pat }, {}]) {
+      const fake = fullFake().on(`POST /contacts/${IDS.jane}/calls`, err(409, 'CONTACT_MERGED', details));
+      const { view } = agentApp(fake, `/contacts/${IDS.jane}`);
+      await user().click(await screen.findByRole('button', { name: 'Call' }));
+      const dialog = await screen.findByRole('dialog', { name: 'Call Jane Doe' });
+      expect(await within(dialog).findByText(/This record was merged into another one, so nothing was done here\./)).toBeInTheDocument();
+      expect(within(dialog).queryByText(/Check your connection/)).toBeNull();
+      const link = within(dialog).queryByRole('link', { name: 'Open their current record' });
+      if ('mergedInto' in details) expect(link).toHaveAttribute('href', `/contacts/${IDS.pat}`);
+      else expect(link).toBeNull();
+      view.unmount();
+    }
+  });
+
   it('Owen: STOP disables Text with "Texted STOP on Nov 10"; Email and Call stay enabled; no stand-in preview is sent', async () => {
     const fake = fullFake().on(`GET /contacts/${IDS.jane}/reachability`, { status: 200, body: { reachability: reachability(IDS.jane, { sms: [stopReason()] }) } });
     agentApp(fake, `/contacts/${IDS.jane}`);

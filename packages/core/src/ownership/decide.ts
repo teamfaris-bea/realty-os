@@ -617,6 +617,10 @@ function decideAssign(state: OwnershipProjection, cmd: Cmd<'assign' | 'reassign'
   }
   b.emit(oldOwner ? 'reassigned' : 'assigned', 'owned', { reasonCode: cmd.reason, ownerUserId: cmd.toUserId, note: cmd.note ?? null, deadlineAt: null, payload: { releaseDueAt: null } });
   notifyOwnerChange(b, oldOwner, cmd.toUserId);
+  // the agent the lead was on offer to learns their offer was withdrawn (batch 6 review F6), unless it went to them
+  const offeree = state.state === 'offered' ? state.offeredToUserId : null;
+  const actorId = u ? u.userId : null;
+  if (offeree && offeree !== cmd.toUserId && offeree !== actorId) b.notify(offeree, 'reassigned_away', 'normal', `owner_change:${ctx.contactId}:${b.state.seq}`, 'OFFER_RESCINDED');
   return accepted(b, cmd.kind === 'assign' ? 'ownership.assign' : 'ownership.reassign');
 }
 
@@ -776,10 +780,16 @@ function decideReinquiry(state: OwnershipProjection, cmd: Cmd<'reinquiry'>, ctx:
   switch (state.state) {
     case 'owned': {
       // R-OWN-20 / E18: never changes the owner. A re-inquiry SLA (a new ownership period, E68) starts
-      // when the last human touch was more than `reinquirySlaAfterDays` ago; it never auto-releases.
-      // A never-touched lead is measured from owned_at: otherwise a duplicate inquiry minutes after an
-      // accept would end the open first-touch period and cancel its breach and auto-release timers.
-      const last = ctx.lastHumanTouchAt ?? (state.ownedAt as Instant);
+      // when the last human touch was more than `reinquirySlaAfterDays` ago, or owned_at when there is
+      // none; it never auto-releases. The contact's last_human_touch_at survives an owner change, so in
+      // a period WITH a first-touch deadline (accept, claim, a re-inquiry period) a touch before owned_at
+      // (an earlier period, maybe another agent's) counts as none: otherwise a duplicate inquiry minutes
+      // after an accept or a claim would end the open first-touch period and cancel its breach and
+      // auto-release timers (batch 6 review F2). A period without one (assign, reassign, ISA handoff, an
+      // owner-changing merge) has no window to protect, so the contact's own last touch still counts.
+      const ownedAt = state.ownedAt as Instant;
+      const touched = ctx.lastHumanTouchAt ?? null;
+      const last = touched === null || (state.firstTouchDueAt !== null && touched < ownedAt) ? ownedAt : touched;
       const owner = state.ownerUserId as UserId;
       const sla = ctx.now - last > ctx.settings.reinquirySlaAfterDays * DAY_MS;
       if (sla) {

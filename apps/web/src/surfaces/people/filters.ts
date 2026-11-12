@@ -3,7 +3,9 @@
 // plain-words label of a clause for its chip, and the URL form of an unsaved filter. Pure: no React, no fetch.
 //
 // Semantics the labels promise (DATA_MODEL Part 3 E195-E197): "is not" keeps people with no value, so
-// "Source is not Zillow" includes people with no source and "Owner is not Avery" includes unassigned people.
+// "Source is not Zillow" includes people with no source and "Owner is not Avery" includes people with no owner. A
+// person has no owner when the engine says so: unassigned, in a pond, on offer to an agent, or closed (batch 6 review
+// F6), so "Owner is nobody" names all four.
 import type { Clause, Definition, FieldDefView, TagView } from './api.js';
 
 export const STAGE_KEYS = ['new', 'attempting', 'connected', 'nurture', 'active', 'under_contract', 'closed', 'lost'] as const;
@@ -81,7 +83,7 @@ export function fieldSpecs(fields: readonly FieldDefView[]): FieldSpec[] {
       label: 'Owner',
       operators: [
         { op: 'me', label: 'is me', value: 'none' },
-        { op: 'none', label: 'is unassigned', value: 'none' },
+        { op: 'none', label: 'is nobody (unassigned, in a pond, on offer or closed)', value: 'none' },
         { op: 'in', label: 'is', value: 'choices' },
         { op: 'not_in', label: 'is not', value: 'choices' },
       ],
@@ -323,7 +325,7 @@ export function clauseLabel(c: Clause, cat: Catalogs): string {
     case 'tag':
       return `Tags ${c.op === 'all' ? 'has all of' : c.op === 'none' ? 'has none of' : 'has any of'} ${listOf(names('tag', c.tagIds))}`;
     case 'owner':
-      if ('is' in c) return c.is === 'me' ? 'Owner is me' : 'Owner is unassigned';
+      if ('is' in c) return c.is === 'me' ? 'Owner is me' : 'Owner: nobody (unassigned, in a pond, on offer or closed)';
       return 'not_in' in c ? `Owner is not ${listOf(names('owner', c.not_in))}` : `Owner is ${listOf(names('owner', c.in))}`;
     case 'last_activity':
       return c.op === 'never' ? 'No activity yet' : c.op === 'within_days' ? `Last activity within ${daysText(c.days)}` : `Last activity more than ${daysText(c.days)} ago`;

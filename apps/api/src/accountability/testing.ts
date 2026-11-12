@@ -146,6 +146,7 @@ export interface ItemT {
   ageSeconds: number;
   conditionClearedAt: string | null;
   live: boolean;
+  withdrawn?: boolean;
   evidence: { sourceType: string; sourceId: string; explanation: string; at?: string | null; snippet: string | null; needsReview: boolean; locator: Record<string, unknown> | null; link: { kind: string; id: string; contactId: string | null; offsetMs: number | null } | null }[];
   period?: { current: boolean; movedOn: boolean } | null;
   contactOwnershipSeq: number | null;

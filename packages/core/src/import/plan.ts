@@ -313,6 +313,15 @@ function parentIssue(p: ParentResolution): Issue | null {
   return null;
 }
 
+/**
+ * The engine's own test (core/ownership decideImport): only a contact the contacts stage created that is still in that
+ * imported creation state (unassigned, ledger seq 1, never routed) takes an import assignment. Anything a person did to
+ * it since (a merge either way, an assign, a close, a release) has left that state for good.
+ */
+function inImportCreationState(c: ExistingContact): boolean {
+  return c.ownershipState === 'unassigned' && c.ownershipSeq === 1 && c.routeDueAt === null;
+}
+
 function sameTarget(c: ExistingContact, t: ImportTarget): boolean {
   if (t === 'unassigned') return c.ownershipState === 'unassigned';
   if ('userId' in t) return c.ownershipState === 'owned' && c.ownerUserId === t.userId;
@@ -341,13 +350,25 @@ function planOwnership(rec: Extract<NormalizedRecord, { category: 'ownership' }>
   if (p.kind === 'linked') {
     const c = p.contact;
     const createdHere = c.importBatchId === existing.batchId;
-    if (createdHere && sameTarget(c, rec.target)) {
+    // Review R4: a person FUB holds unassigned had no assignment to make, so whatever a person did to them since the
+    // contacts stage (closed, released, routed, merged) changed nothing the import would have done: already imported,
+    // never a "came in unassigned" outcome. Someone gave them an owner: kept, below.
+    const nothingToGive = rec.target === 'unassigned' && c.ownershipState !== 'owned';
+    if (createdHere && (sameTarget(c, rec.target) || nothingToGive)) {
       return { ...base, outcome: 'duplicate', action: { kind: 'skip', existingId: c.contactId }, issues: [...issues, { code: 'ALREADY_IMPORTED', severity: 'info' }], matchContactId: c.contactId };
     }
     // Only a contact this batch created, still in its imported `unassigned` creation state, takes
     // the mapped assignment; everything else keeps its owner.
-    if (!createdHere || c.ownershipState !== 'unassigned') {
+    if (!createdHere || c.ownershipState === 'owned') {
       return { ...base, outcome: 'duplicate', action: { kind: 'skip', existingId: c.contactId }, issues: [...issues, { code: 'OWNER_KEPT', severity: 'info' }], matchContactId: c.contactId };
+    }
+    // Batch 6 review F3: created here, but a person has merged or changed it since the contacts stage, and nobody holds
+    // it: the engine makes no assignment, so it comes in unassigned (not imported, for that reason), and the ownership
+    // report lists it with "Assign these people" (E231). Followed a merge to get here, or another person was merged
+    // into it: merged.
+    if (!inImportCreationState(c)) {
+      const merged = c.mergedIn === true || existing.externalRefs.get(refKey('contact', rec.personRef)) !== c.contactId;
+      return { ...base, outcome: 'rejected', action: null, issues: [...issues, { code: merged ? 'PERSON_MERGED' : 'PERSON_CHANGED', severity: 'info' }], matchContactId: c.contactId };
     }
   }
   return {

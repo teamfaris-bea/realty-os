@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { FIRST_RESPONSE_JOB, cardSummary } from './intake.js';
-import { type LeadsWorld, call, command, contactState, intake, jobs, ledger, leadsWorld, postIntake, randomPhone, zoneWithLocalHour } from './testing.js';
+import { type LeadsWorld, call, command, contactState, intake, jobs, ledger, leadsWorld, postIntake, randomPhone, suFixture, zoneWithLocalHour } from './testing.js';
 
 let h: ApiHarness;
 let w: LeadsWorld;
@@ -147,8 +147,17 @@ describe('duplicates and dedup (R-OWN-25)', () => {
     expect(notif).toEqual([{ priority: 'high' }]);
     const feed = (await h.su.query("SELECT band, item_type FROM priority_feed_items WHERE user_id = $1 AND contact_id = $2 AND item_type = 'reinquiry'", [agent.userId, a.contactId])).rows;
     expect(feed).toEqual([{ band: 'pinned', item_type: 'reinquiry' }]);
-    // last human touch 8 days ago → the next re-inquiry starts a new period with an SLA (E68)
-    await h.su.query("UPDATE contacts SET last_human_touch_at = now() - interval '8 days' WHERE id = $1", [a.contactId]);
+    // Batch 6 review F2: a human touch from before this period (the contact's last_human_touch_at survives an owner
+    // change) is not this period's: minutes after the accept, a duplicate inquiry starts no new period
+    await h.su.query("UPDATE contacts SET last_human_touch_at = now() - interval '30 days' WHERE id = $1", [a.contactId]);
+    const dup = await intake(h, w, { fullName: 'Quinn Owned', phones: [phone], inquiryType: 'value', message: 'What is my place worth?' });
+    expect(dup.outcome).toBe('reinquiry');
+    expect((await ledger(h, a.contactId)).at(-1)).toMatchObject({ type: 'reinquiry', reason_code: 'REINQUIRY' });
+    const kept = await contactState(h, a.contactId);
+    expect([kept.ownership_period_seq, kept.first_touch_due_at?.getTime()]).toEqual([owned.ownership_period_seq, owned.first_touch_due_at?.getTime()]);
+    // the period quiet for 8 days (accepted, last touched 8 days ago: clock fixture) → the next re-inquiry starts a new
+    // period with an SLA (E68)
+    await suFixture(h, [{ text: "UPDATE contacts SET owned_at = now() - interval '8 days', last_human_touch_at = now() - interval '8 days' WHERE id = $1", values: [a.contactId] }]);
     const third = await intake(h, w, { fullName: 'Quinn Owned', phones: [phone], inquiryType: 'rent' });
     expect(third.outcome).toBe('reinquiry');
     const late = await contactState(h, a.contactId);

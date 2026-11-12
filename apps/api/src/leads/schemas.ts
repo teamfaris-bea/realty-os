@@ -175,6 +175,12 @@ export const ContactFull = z.object({
    */
   typedInChat: z.array(z.object({ kind: z.enum(['phone', 'email']), address: z.string(), typedAt: Iso })),
   inquiries: z.array(InquiryView),
+  /**
+   * R-OWN-24: this record was merged into another, so nothing is sent from it (CONTACT_MERGED). `mergedIntoContactId`
+   * is the record the person lives on now (the end of the merge chain), and only when the caller may open it: null to
+   * the loser's collaborator, who is not told about the survivor (R-PERM-5, as the refusal's details.mergedInto).
+   */
+  merged: z.boolean(),
   mergedIntoContactId: Id.nullable(),
 });
 

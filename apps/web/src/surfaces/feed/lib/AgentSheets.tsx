@@ -11,10 +11,12 @@
 // server's sentence and nothing else: there is no "call anyway" (owner decision, core-compliance/2.0.0;
 // an opt-out is never overridden).
 import { type ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Button, Dialog, GateBadge, Notice, announce as speak } from '../../../design/index.js';
 import { REACHABILITY_KEY, useChannelState } from '../../../reasons/index.js';
 import { useApi } from '../../../shell/index.js';
 import { APPOINTMENT_RESULTS, CALL_OUTCOMES, firstName, formatDateTime } from './format.js';
+import { AGENT_ERROR_MESSAGES } from './messages.js';
 import { useMutate } from './hooks.js';
 import type { AppointmentResult, AppointmentView, CallOutcome, CallOutcomeResponse, CallResponse, ComposeResponse, DecisionView } from './types.js';
 
@@ -84,12 +86,15 @@ function CloseButton({ onClose }: { onClose: () => void }) {
 type CallState =
   | { step: 'dialing' }
   | { step: 'gate'; decision: DecisionView }
-  | { step: 'failed'; message: string; decision?: DecisionView }
+  | { step: 'failed'; message: string; decision?: DecisionView; mergedInto?: string }
   | { step: 'live'; callId: string; decision: DecisionView };
 
 const CALL_FAILED: Record<string, string> = {
   AGENT_PHONE_MISSING: 'Add your phone number in Account so calls can ring you first.',
   PROVIDER_UNAVAILABLE: "The phone service isn't answering right now. Try again in a moment.",
+  // review R3: the record was merged into another while this page was open (R-OWN-24); details.mergedInto, when the
+  // caller may open it, is linked below
+  CONTACT_MERGED: AGENT_ERROR_MESSAGES.CONTACT_MERGED as string,
 };
 
 function CallSheet({ contact, onClose, announce }: { contact: { id: string; name: string }; onClose: () => void; announce: (t: string) => void }) {
@@ -110,8 +115,9 @@ function CallSheet({ contact, onClose, announce }: { contact: { id: string; name
         else if (r.result === 'gate') setState({ step: 'gate', decision: r.decision });
         else setState({ step: 'failed', message: CALL_FAILED[r.reason ?? ''] ?? "The call didn't go through. Nothing was dialed.", decision: r.decision });
       } catch (e) {
-        const code = (e as { code?: string }).code ?? '';
-        setState({ step: 'failed', message: CALL_FAILED[code] ?? "The call didn't go through. Check your connection, then try again." });
+        const { code = '', details } = e as { code?: string; details?: Record<string, unknown> | null };
+        const into = code === 'CONTACT_MERGED' && typeof details?.mergedInto === 'string' ? details.mergedInto : null;
+        setState({ step: 'failed', message: CALL_FAILED[code] ?? "The call didn't go through. Check your connection, then try again.", ...(into ? { mergedInto: into } : {}) });
       }
     },
     [api, contact.id],
@@ -144,6 +150,14 @@ function CallSheet({ contact, onClose, announce }: { contact: { id: string; name
       {state.step === 'failed' ? (
         <Notice tone="error" title="Not called">
           {state.message}
+          {state.mergedInto ? (
+            <>
+              {' '}
+              <Link to={`/contacts/${state.mergedInto}`} className="font-medium text-accent underline">
+                Open their current record
+              </Link>
+            </>
+          ) : null}
         </Notice>
       ) : null}
       {state.step === 'live' ? (

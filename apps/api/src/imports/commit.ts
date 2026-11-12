@@ -29,6 +29,10 @@
 //              verifies and the later stages commit. Before a chunk commits it re-reads, FOR SHARE, every
 //              member it assigned a lead to: one suspended meanwhile makes the chunk run again (and its
 //              people come in unassigned); a suspension asked for after that waits for the chunk.
+//              Batch 6 review F3: a person who left the creation state since the dry run (merged with another,
+//              or changed by someone) gets no assignment from the engine either: kept as already here
+//              (OWNER_KEPT) when someone holds them, else brought in unassigned (PERSON_MERGED /
+//              PERSON_CHANGED); both are documented outcomes the recount counts.
 //   notes / messages / call_recordings
 //              `imported = true` rows with the original timestamps (R-IMPORT-6); recordings point at the
 //              copy made at snapshot time, labelled "recording notice unknown", not transcribed unless
@@ -81,7 +85,7 @@ import { parityOptionsOf, sourceKindOf } from './parity.js';
 import * as rrepo from './repos/records.js';
 import * as w from './repos/writes.js';
 import { type ContactOptOuts, hmacIndex, loadBatchAndStage } from './stages.js';
-import { type ImportDeps, OWNER_UNAVAILABLE, SOURCE_SYSTEM, type SourceSystem, type UnassignedReason } from './types.js';
+import { type CameInUnassignedIssue, type ImportDeps, OWNER_UNAVAILABLE, PERSON_CHANGED, PERSON_MERGED, SOURCE_SYSTEM, type SourceSystem, type UnassignedReason } from './types.js';
 
 export const COMMIT_JOB = { kind: 'imports.commit' as const, queue: 'bulk' as const };
 /** Chunks per job run before the job yields (an early wake): keeps every lease short on 50k stages. */
@@ -171,8 +175,11 @@ interface Applied {
   duplicate?: boolean;
   extraIssues?: { code: string; severity: 'info' }[];
   parity?: ParityApplied;
-  /** owner decision B4 (E230): the planned assignment was not made; the person stays unassigned, for this reason */
-  unassigned?: { contactId: string; userId: string; reason: UnassignedReason };
+  /**
+   * owner decision B4 (E230): the planned assignment was not made; the person stays unassigned, for this reason (the
+   * member could no longer hold leads; batch 6 review F3: the person left the import's creation state since the dry run)
+   */
+  unassigned?: { contactId: string; issue: CameInUnassignedIssue };
   /** the member this record assigned a lead to (fenced before the chunk commits, E232) */
   assignedTo?: string;
 }
@@ -208,13 +215,16 @@ async function liveId(tx: Tx, id: string): Promise<{ id: string; rowVersion: num
   return null;
 }
 
-/** The live contact a record's parent ref resolves to now, with its ownership ledger head (the revert's baseline). */
-async function resolveLive(c: Ctx, ref: ContactRef): Promise<{ id: string; seq: number }> {
+/**
+ * The live contact a record's parent ref resolves to now, with its ownership ledger head (the revert's baseline), and
+ * whether that followed a merge (the record's own contact was merged into it).
+ */
+async function resolveLive(c: Ctx, ref: ContactRef): Promise<{ id: string; seq: number; followedMerge: boolean }> {
   const id = 'contactId' in ref ? ref.contactId : await w.externalRef(c.tx, c.system, 'contact', ref.pendingPersonRef);
   if (id === null) throw new RecordError('PARENT_NOT_FOUND');
   const live = await liveId(c.tx, id);
   if (!live) throw new RecordError('PARENT_NOT_FOUND');
-  return { id: live.id, seq: live.seq };
+  return { id: live.id, seq: live.seq, followedMerge: live.id !== id };
 }
 
 async function resolveRef(c: Ctx, ref: ContactRef): Promise<string> {
@@ -480,7 +490,7 @@ function unassignedReason(m: w.MemberStatusRow | null): UnassignedReason {
 
 async function applyOwnership(c: Ctx, rec: rrepo.RecordRow, n: NormalizedOwnership, plan: Extract<PlanAction, { kind: 'assign' }>): Promise<Applied> {
   void n;
-  const contactId = await resolveRef(c, plan.contact);
+  const { id: contactId, followedMerge } = await resolveLive(c, plan.contact);
   const toUser = plan.target !== 'unassigned' && 'userId' in plan.target ? plan.target.userId : null;
   const r = await applyOwnershipCommandInTx(c.tx, c.actor, contactId as ContactId, { kind: 'import_assign', target: plan.target }, {
     commandId: derivedCommandId('import.ownership', rec.id),
@@ -492,12 +502,23 @@ async function applyOwnership(c: Ctx, rec: rrepo.RecordRow, n: NormalizedOwnersh
     // Nothing is assigned to them, and the person stays exactly as the contacts stage left them: unassigned, never
     // routed, no offer, SLA or notice. Not a failure: a documented outcome the recount counts and the report lists.
     if (r.outcome.code === 'TARGET_NOT_ELIGIBLE' && toUser !== null) {
-      return { target: { table: 'contacts', id: contactId }, created: [], unassigned: { contactId, userId: toUser, reason: unassignedReason(await w.memberStatus(c.tx, toUser)) } };
+      return { target: { table: 'contacts', id: contactId }, created: [], unassigned: { contactId, issue: { code: OWNER_UNAVAILABLE, severity: 'info', reason: unassignedReason(await w.memberStatus(c.tx, toUser)), userId: toUser } } };
     }
     throw new RecordError(r.outcome.code);
   }
   const ev = r.outcome.events[0];
-  if (!ev) return { target: null, created: [], duplicate: true, extraIssues: [{ code: 'OWNER_KEPT', severity: 'info' }] };
+  if (!ev) {
+    // Batch 6 review F3: the engine made no assignment because the person left the import's creation state since the
+    // dry run (a person merged them with another, or changed who holds them). Both are documented outcomes the recount
+    // counts, never a mismatch: someone holds them now (an owner a person gave them): kept, as already here; nobody
+    // does: they come in unassigned for that reason, and the report offers them for "Assign these people" (E231).
+    if (plan.target !== 'unassigned') {
+      if (r.projection?.state === 'owned') return { target: { table: 'contacts', id: contactId }, created: [], duplicate: true, extraIssues: [{ code: 'OWNER_KEPT', severity: 'info' }] };
+      const merged = followedMerge || (await w.hasMergedIn(c.tx, contactId));
+      return { target: { table: 'contacts', id: contactId }, created: [], unassigned: { contactId, issue: { code: merged ? PERSON_MERGED : PERSON_CHANGED, severity: 'info' } } };
+    }
+    return { target: null, created: [], duplicate: true, extraIssues: [{ code: 'OWNER_KEPT', severity: 'info' }] };
+  }
   return {
     target: { table: 'lead_ownership_events', id: ev.eventId },
     created: [{ table: 'lead_ownership_events', id: ev.eventId, contactId }],
@@ -740,7 +761,7 @@ export async function runCommit(deps: ImportDeps, tenantId: string, stageId: str
           try {
             const a = await inSavepoint(tx, () => applyRecord(ctx, rec));
             if (a.unassigned) {
-              await rrepo.markUnassigned(tx, rec.id, a.unassigned.contactId, { code: OWNER_UNAVAILABLE, severity: 'info', reason: a.unassigned.reason, userId: a.unassigned.userId });
+              await rrepo.markUnassigned(tx, rec.id, a.unassigned.contactId, a.unassigned.issue);
             } else {
               await rrepo.markImported(tx, rec.id, a.target, a.created, a.duplicate ? 'duplicate' : 'imported');
               await addIssues(tx, rec.id, a.extraIssues ?? []);

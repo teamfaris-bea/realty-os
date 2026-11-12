@@ -54,6 +54,7 @@ export const SKIP_REASONS = [
   'ALREADY_IN_STAGE',
   'STAGE_NEEDS_CONTACT', // R-PAR-14: an untouched routed lead stays in new/attempting until reached
   'ALREADY_OWNER',
+  'CLOSED', // assign: the person is closed; the engine assigns no closed lead (reopen it first; batch 6 review F6)
   'ALREADY_ENROLLED',
   'UNREACHABLE', // no channel the playbook could use
   'CLIENT_REPLIED', // the person replied between queue and dispatch (R-PAR-36)
@@ -184,7 +185,14 @@ export type BulkKindFacts =
   | { kind: 'tag'; alreadyTagged: boolean; tagCount: number }
   | { kind: 'untag'; tagged: boolean }
   | { kind: 'stage'; currentStage: Stage; toStage: Stage; firstTouchPending: boolean }
-  | { kind: 'assign'; ownerUserId: string | null; toUserId: string; target: { role: Role; inMyTeam: boolean } }
+  | {
+      kind: 'assign';
+      ownerUserId: string | null;
+      toUserId: string;
+      target: { role: Role; inMyTeam: boolean };
+      /** contacts.ownership_state: a closed person is never assigned (decideAssign refuses it); absent: not read */
+      ownershipState?: 'unassigned' | 'offered' | 'owned' | 'in_pond' | 'closed';
+    }
   | { kind: 'enroll'; liveEnrollment: boolean; reachable: boolean }
   | ({ kind: 'email' } & SendPersonFacts)
   | ({ kind: 'text' } & SendPersonFacts);
@@ -238,6 +246,7 @@ export function bulkPreflight(kind: BulkKind, person: BulkPersonFacts, facts: Bu
       }
       return { ok: true };
     case 'assign':
+      if (facts.ownershipState === 'closed') return skip('CLOSED');
       return facts.ownerUserId === facts.toUserId ? skip('ALREADY_OWNER') : { ok: true };
     case 'enroll':
       if (facts.liveEnrollment) return skip('ALREADY_ENROLLED');

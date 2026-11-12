@@ -90,6 +90,13 @@ describe('the filter model (lane people-filters)', () => {
     expect(clauseLabel({ kind: 'field', fieldId: F_BUDGET, op: 'num_gte', value: 1500000 }, cat)).toBe('Budget is at least 1500000');
   });
 
+  // Batch 6 review ownership-sla/F6: "Owner is unassigned" compiles to owner_user_id IS NULL, which also holds for leads
+  // in a pond, on offer to an agent, and closed people (the engine's states with no owner): the words said less.
+  it('E197 R-PAR-29: "no owner" is named for what it matches (unassigned, in a pond, on offer or closed), in the field\'s operator list and on its chip', () => {
+    expect(clauseLabel({ kind: 'owner', is: 'none' }, cat)).toBe('Owner: nobody (unassigned, in a pond, on offer or closed)');
+    expect(fieldSpecs([]).find((f) => f.field === 'owner')!.operators.find((o) => o.op === 'none')!.label).toBe('is nobody (unassigned, in a pond, on offer or closed)');
+  });
+
   it('R-PAR-27: typed text (a name, a text field value) is detected anywhere in a definition; the refusal is the owner\'s sentence', () => {
     expect(hasFreeText({ v: 1, all: [{ kind: 'stage', not_in: ['lost'] }] })).toBe(false);
     expect(hasFreeText(withNameSearch({ v: 1, all: [] }, 'jane'))).toBe(true);

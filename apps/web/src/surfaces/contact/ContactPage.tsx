@@ -28,6 +28,7 @@ import { useMutate, useNow } from '../feed/lib/hooks.js';
 import { AGENT_ERROR_MESSAGES } from '../feed/lib/messages.js';
 import type { ContactCardView, ContactFullView, DealSide, DealView, TaskView, TimelineItem } from '../feed/lib/types.js';
 import { MessageRow, useTimeline } from '../thread/ThreadPage.js';
+import { MergedAwayNotice, isMergedAway } from './MergedAway.js';
 import { ContactSections } from './sections.js';
 import { useContact } from './useContact.js';
 import { renderMentions } from '@realty/core/parity/people';
@@ -163,11 +164,16 @@ function FullView({ contact }: { contact: ContactFullView }) {
             <ActionButton action={{ kind: 'accept_offer', label: 'Accept', contactId: contact.id, offerId: o.offerId }} card={{ contact: { id: contact.id, name: contact.displayName }, itemType: 'lead_offer' }} expired={o.offerExpiresAt !== null && Date.parse(o.offerExpiresAt) <= now} />
           </div>
         ) : null}
-        <div className="grid grid-cols-3 gap-2">
-          <ChannelAction label="Call" icon="phone" variant="primary" missing={contact.phones.length === 0} state={voice} onClick={() => call({ id: contact.id, name: contact.displayName })} />
-          <ChannelAction label="Text" icon="message" missing={contact.phones.length === 0} state={text} onClick={() => navigate(`/contacts/${contact.id}/thread?compose=sms`)} />
-          <ChannelAction label="Email" icon="message" missing={contact.emails.length === 0} state={email} onClick={() => navigate(`/contacts/${contact.id}/thread?compose=email`)} />
-        </div>
+        {isMergedAway(contact) ? (
+          // review F7: the API refuses every send and call to a merged-away record; say where the person went instead
+          <MergedAwayNotice to={contact.mergedIntoContactId} />
+        ) : (
+          <div className="grid grid-cols-3 gap-2">
+            <ChannelAction label="Call" icon="phone" variant="primary" missing={contact.phones.length === 0} state={voice} onClick={() => call({ id: contact.id, name: contact.displayName })} />
+            <ChannelAction label="Text" icon="message" missing={contact.phones.length === 0} state={text} onClick={() => navigate(`/contacts/${contact.id}/thread?compose=sms`)} />
+            <ChannelAction label="Email" icon="message" missing={contact.emails.length === 0} state={email} onClick={() => navigate(`/contacts/${contact.id}/thread?compose=email`)} />
+          </div>
+        )}
         <ul className="flex flex-col gap-1 text-[15px] text-ink">
           {contact.phones.map((p) => (
             <li key={p.id}>

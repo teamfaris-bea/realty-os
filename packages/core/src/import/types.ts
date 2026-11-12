@@ -75,6 +75,13 @@ export type IssueCode =
   | 'MATCH_DELETED_CONTACT'
   | 'ADDRESS_OPTED_OUT'
   | 'OWNER_KEPT'
+  /**
+   * info, ownership stage (batch 6 review F3): a person this import created left the import's creation state before the
+   * owners were imported, and nobody holds them now, so the import makes no assignment (the engine takes none) and they
+   * come in unassigned: merged with another person, or changed by someone (closed, released, re-opened).
+   */
+  | 'PERSON_MERGED'
+  | 'PERSON_CHANGED'
   | 'CONSENT_VALUE_AMBIGUOUS'
   | 'CONSENT_VALUE_UNRECOGNIZED'
   | 'CONSENT_CONFLICT'
@@ -276,6 +283,12 @@ export interface ExistingContact {
   closedReason: string | null;
   ownerUserId: UserId | null;
   mergedIntoContactId: ContactId | null;
+  /** contacts.ownership_seq (the ledger head): 1 while a contact an import created is in its creation state */
+  ownershipSeq: number;
+  /** contacts.route_due_at: null for an imported contact (never routed) */
+  routeDueAt: Instant | null;
+  /** another contact was merged into this one (a merged_in ledger event); read for contacts an import created */
+  mergedIn?: boolean;
   /** contacts.import_batch_id: set when an import created the contact. */
   importBatchId: string | null;
   displayName: string;
