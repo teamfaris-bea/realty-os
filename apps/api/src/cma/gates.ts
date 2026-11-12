@@ -5,8 +5,10 @@
 // live ones but none allowed likewise (CMA_VALUATION_NOT_ALLOWED, E371). A stale feed is not a block: "MLS data as of …"
 // is shown (E369).
 //
-// Client readiness (R-CMA-7): computed on every view, never stored, and nothing is shared in V1. `allowed` only when no
-// blocker holds (a subject with no address key is never allowed: the E370 and F2 checks need it). Every blocker that
+// Client readiness (R-CMA-7): computed on every view, never stored, and nothing is shared in V1 (D9): `sharingAvailable`
+// is false and `sentence` says so on every view, and each blocker is worded as what would keep this CMA from being
+// shown to a client, never as a step to share (batch 10 review api-ui/F4). `ready` only when no blocker holds (a
+// subject with no address key is never ready: the E370 and F2 checks need it). Every blocker that
 // holds is listed, each in one plain sentence, read from V1-A's parsed licence pack
 // (LicensePack.valuation, valuationStatement), V1-A's connection eligibility and freshness, and V1-A's client renderings
 // (clientView; clientSoldView for a mirrored team sale). V1-A's valuationEligible(…, 'client_cma') is the authority:
@@ -41,6 +43,8 @@ import { listingRows, platformCleared } from './repos.js';
 export const CMA_PLATFORM_PACK = 'platform:cma';
 /** The R-AVM-1 sentence every client rendering carries (named in the readiness view). VERIFY WITH COUNSEL. */
 export const ESTIMATE_SENTENCE = 'This is an estimate, not an appraisal.';
+/** D9: sharing is V2. Said on every view, so readiness never reads as if a share existed. */
+export const SHARING_SENTENCE = 'Sharing with clients is not available in this version, so nothing from this CMA reaches a client. Readiness lists what would also have to change before it could be shown to one.';
 
 export const BLOCKER_CODES = [
   'PLATFORM_NOT_CLEARED',
@@ -66,7 +70,11 @@ export interface Blocker {
   listingIds?: string[];
 }
 export interface ClientShare {
-  allowed: boolean;
+  /** every readiness check holds now; nothing is shared in V1 all the same */
+  ready: boolean;
+  /** false in V1 (D9: sharing is V2's, R-CMA-9) */
+  sharingAvailable: false;
+  sentence: string;
   blockers: Blocker[];
   estimateSentence: string;
 }
@@ -231,16 +239,16 @@ export async function clientReadiness(tx: Tx, i: ReadinessInput): Promise<{ shar
   const { e, used } = i.conns;
   const has = (code: BlockerCode) => blockers.some((b) => b.code === code);
   const sentence: Record<PlainBlocker, string> = {
-    PLATFORM_NOT_CLEARED: 'Client CMAs and seller value ranges wait for counsel review of the in-house CMA wording (platform:cma). Nothing is shown to clients until it is recorded.',
+    PLATFORM_NOT_CLEARED: 'Client CMAs and seller value ranges wait for counsel review of the in-house CMA wording (platform:cma), which is not recorded.',
     FEED_DISCONNECTED: 'An MLS feed this CMA was built from is no longer connected, so nothing from it could be shown to a client.',
     VALUATION_USE_WITHDRAWN: 'Your MLS licence pack no longer says this feed’s sold data may be used for valuations, so this CMA could not be shown to a client. An Owner or Admin records this from your MLS agreement.',
     MLS_CLIENT_DISPLAY_OFF: 'Your MLS licence pack does not allow showing MLS data to clients yet (it needs counsel review, an attribution and a disclaimer).',
-    FEED_STALE: 'The MLS feed is out of date, so nothing from it can be shown to clients until it syncs again.',
+    FEED_STALE: 'The MLS feed is out of date, so nothing from it could be shown to a client until it syncs again.',
     CLIENT_USE_NOT_ALLOWED: 'Your MLS licence pack does not say sold data may be used in CMAs for clients. An Owner or Admin records this from your MLS agreement.',
     VALUATION_NOT_REVIEWED: 'The valuation part of your MLS licence pack has not been reviewed by counsel.',
     NO_VALUATION_STATEMENT: i.state === null ? 'The home’s state is not known, so no valuation statement applies.' : `No valuation statement is recorded for ${i.state}.`,
-    SUBJECT_ADDRESS_UNKNOWN: 'The home’s full address (street, city, state and ZIP code) is not known, so its own MLS listings and live listings that may be this home could not be checked. Add the full address to share.',
-    NO_VALUE: 'There is no value to share: not enough comparable sales.',
+    SUBJECT_ADDRESS_UNKNOWN: 'The home’s full address (street, city, state and ZIP code) is not known, so its own MLS listings and live listings that may be this home could not be checked. To check them, prepare a new CMA with the home’s full address.',
+    NO_VALUE: 'There is no value: not enough comparable sales.',
   };
   const add = (code: PlainBlocker) => {
     if (!has(code)) blockers.push({ code, sentence: sentence[code] });
@@ -281,10 +289,10 @@ export async function clientReadiness(tx: Tx, i: ReadinessInput): Promise<{ shar
   // comps: each must reach a client with its sold price and date (a mirrored pair through clientSoldView)
   const hidden = i.compSales.filter((c) => clientSale(e, byId.get(c.saleListingId), c.teamListingId === null ? undefined : byId.get(c.teamListingId)) === null).map((c) => c.saleListingId);
   if (hidden.length > 0) {
-    blockers.push({ code: 'COMPS_HIDDEN', count: hidden.length, listingIds: [...hidden].sort(), sentence: `${hidden.length} of these sales can’t be shown to clients under your MLS licence. Remove ${hidden.length === 1 ? 'it' : 'them'} to share.` });
+    blockers.push({ code: 'COMPS_HIDDEN', count: hidden.length, listingIds: [...hidden].sort(), sentence: `${hidden.length} of these sales can’t be shown to clients under your MLS licence, so a CMA shown to a client could not include ${hidden.length === 1 ? 'it' : 'them'}.` });
   }
 
-  // E370 and F2 need the subject's address key: without one, neither check can run, and that is said (never allowed)
+  // E370 and F2 need the subject's address key: without one, neither check can run, and that is said (never ready)
   if (i.addressKey === null) add('SUBJECT_ADDRESS_UNKNOWN');
 
   // E370: a live MLS record of the subject that withholds automated valuations, under the pack's scope (V6). The
@@ -301,7 +309,7 @@ export async function clientReadiness(tx: Tx, i: ReadinessInput): Promise<{ shar
       code: 'SELLER_WITHHELD',
       listingIds: [...new Set(withheld.map((r) => r.id))].sort(),
       sentence: withheld.some(flagRead)
-        ? 'The seller’s MLS listing of this home asks that automated valuations not be shown, so this CMA can’t be shared with clients.'
+        ? 'The seller’s MLS listing of this home asks that automated valuations not be shown, so this CMA could not be shown to a client.'
         : 'An MLS listing of this home has not been re-read since the feed’s automated-valuation flag was added, so whether the seller allows automated valuations is not known yet. Until it is, this CMA could not be shown to a client.',
     });
   }
@@ -312,10 +320,10 @@ export async function clientReadiness(tx: Tx, i: ReadinessInput): Promise<{ shar
     blockers.push({
       code: 'POSSIBLE_LIVE_LISTING',
       listingIds: [m.listingId],
-      sentence: `An MLS listing at ${m.address} may be this home. Confirm it is a different home before sharing.${m.avmDisplayAllowed === false ? ' That listing asks that automated valuations not be shown.' : ''}`,
+      sentence: `An MLS listing at ${m.address} may be this home. Confirm it is a different home, or this CMA could not be shown to a client.${m.avmDisplayAllowed === false ? ' That listing asks that automated valuations not be shown.' : ''}`,
     });
   }
 
   if (!i.hasValue) add('NO_VALUE');
-  return { share: { allowed: blockers.length === 0, blockers, estimateSentence: ESTIMATE_SENTENCE }, nearMatches: matches };
+  return { share: { ready: blockers.length === 0, sharingAvailable: false, sentence: SHARING_SENTENCE, blockers, estimateSentence: ESTIMATE_SENTENCE }, nearMatches: matches };
 }

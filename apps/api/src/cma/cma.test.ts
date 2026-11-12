@@ -47,7 +47,8 @@ describe('accept: one call from a seller\'s contact', () => {
     expect(v.methodVersion).toBe(CMA_METHOD_VERSION);
     // R-CMA-7: platform:cma ships unreviewed, so the default blocker is always there, in words
     expect(codes(r.body)).toContain('PLATFORM_NOT_CLEARED');
-    expect(v.clientShare.allowed).toBe(false);
+    expect(v.clientShare.ready).toBe(false);
+    expect(v.clientShare.sharingAvailable).toBe(false); // D9: nothing is shared in V1, and every view says so
     expect(v.clientShare.blockers.find((b) => b.code === 'PLATFORM_NOT_CLEARED')!.sentence).toMatch(/Client CMAs and seller value ranges/);
     const stored = await h.su.query('SELECT status, value_cents, content_sha256, method_version FROM cma_reports WHERE id = $1', [v.id]);
     expect(stored.rows[0]).toMatchObject({ status: 'draft', value_cents: String(v.result.valueCents), method_version: CMA_METHOD_VERSION });
@@ -151,8 +152,9 @@ describe('subject resolution (F4, E373)', () => {
   it('E370 F2 R-CMA-7: an entered subject with no street is valued on its area, and readiness says the seller-flag and near-match checks could not run (SUBJECT_ADDRESS_UNKNOWN)', async () => {
     const r = await prepare(w.agents[0]!, { subject: { kind: 'entered', anchor: { region: 'CA', postalCode: '94110', city: 'Oakland' }, facts: { propertyType: 'single_family', sqft: 1400 } } });
     expect(r.status).toBe(201);
-    expect(r.body.cma.clientShare.allowed).toBe(false);
-    expect(r.body.cma.clientShare.blockers.find((b) => b.code === 'SUBJECT_ADDRESS_UNKNOWN')?.sentence).toMatch(/could not be checked\. Add the full address to share\.$/);
+    expect(r.body.cma.clientShare.ready).toBe(false);
+    // the address cannot be added to this CMA (PATCH has no address): the agent is told to prepare a new one (api-ui/F4)
+    expect(r.body.cma.clientShare.blockers.find((b) => b.code === 'SUBJECT_ADDRESS_UNKNOWN')?.sentence).toMatch(/could not be checked\. To check them, prepare a new CMA with the home’s full address\.$/);
   });
 
   it('owner question (c): the one-tap address is the contact\'s property address, else home; a contact without one is told to add it', async () => {
@@ -426,7 +428,7 @@ describe('gates and readiness (R-CMA-6, R-CMA-7)', () => {
     const r = await oneTap(w.agents[0]!, c);
     const b = r.body.cma.clientShare.blockers.find((x) => x.code === 'POSSIBLE_LIVE_LISTING')!;
     expect(b.listingIds).toEqual([near]);
-    expect(b.sentence).toMatch(/^An MLS listing at 880 Sample Street, Oakland may be this home\. Confirm it is a different home before sharing\. That listing asks that automated valuations not be shown\.$/);
+    expect(b.sentence).toMatch(/^An MLS listing at 880 Sample Street, Oakland may be this home\. Confirm it is a different home, or this CMA could not be shown to a client\. That listing asks that automated valuations not be shown\.$/);
     expect(r.body.cma.nearMatches).toEqual([expect.objectContaining({ listingId: near, avmDisplayAllowed: false, dismissed: false })]);
     const p = await call<CmaBody>(w.agents[0]!, 'PATCH', `/cma/${r.body.cma.id}`, { nearMatchDismissed: [near] });
     expect(p.status).toBe(200);
@@ -449,7 +451,7 @@ describe('gates and readiness (R-CMA-6, R-CMA-7)', () => {
     expect(codes(r.body)).toContain('NO_VALUE');
   });
 
-  it('R-CMA-7: every blocker code is reachable, each in words, and with every gate met sharing is allowed', async () => {
+  it('R-CMA-7: every blocker code is reachable, each in words, and with every gate met the CMA is ready (V1 still shares nothing)', async () => {
     const cases: { pack: Record<string, unknown>; code: string; sentence: RegExp }[] = [
       { pack: cmaPack({ reviewed: false }), code: 'MLS_CLIENT_DISPLAY_OFF', sentence: /does not allow showing MLS data to clients/ },
       { pack: cmaPack({ valuation: { client_cma: false } }), code: 'CLIENT_USE_NOT_ALLOWED', sentence: /may be used in CMAs for clients/ },
@@ -473,7 +475,7 @@ describe('gates and readiness (R-CMA-6, R-CMA-7)', () => {
     await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = now() WHERE key = 'platform:cma'");
     try {
       const r = await oneTap(wa.agents[0]!, c);
-      expect(r.body.cma.clientShare).toMatchObject({ allowed: true, blockers: [], estimateSentence: 'This is an estimate, not an appraisal.' });
+      expect(r.body.cma.clientShare).toMatchObject({ ready: true, sharingAvailable: false, blockers: [], estimateSentence: 'This is an estimate, not an appraisal.' });
     } finally {
       await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL WHERE key = 'platform:cma'");
     }
@@ -503,14 +505,14 @@ describe('gates and readiness (R-CMA-6, R-CMA-7)', () => {
     await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = now() WHERE key = 'platform:cma'");
     try {
       for (const [client, id] of [[wa.agents[0]!, r1.body.cma.id], [wv.agents[0]!, r2.body.cma.id]] as const) {
-        expect((await call<CmaBody>(client, 'GET', `/cma/${id}`)).body.cma.clientShare).toMatchObject({ allowed: true, blockers: [] });
+        expect((await call<CmaBody>(client, 'GET', `/cma/${id}`)).body.cma.clientShare).toMatchObject({ ready: true, blockers: [] });
       }
       // an Admin withdraws B's valuation use; B stays live and its display pack stays reviewed
       for (const conn of [b.mls, bv.mls]) await h.su.query('UPDATE integration_connections SET license_pack = $2::jsonb WHERE id = $1', [conn, withdrawn]);
       for (const [client, id] of [[wa.agents[0]!, r1.body.cma.id], [wv.agents[0]!, r2.body.cma.id]] as const) {
         const v = await call<CmaBody>(client, 'GET', `/cma/${id}`);
         expect(v.status).toBe(200);
-        expect(v.body.cma.clientShare.allowed).toBe(false);
+        expect(v.body.cma.clientShare.ready).toBe(false);
         expect(codes(v.body)).toContain('CLIENT_USE_NOT_ALLOWED');
       }
     } finally {

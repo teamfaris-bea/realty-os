@@ -251,9 +251,6 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
         "clientShare": {
           "additionalProperties": false,
           "properties": {
-            "allowed": {
-              "type": "boolean",
-            },
             "blockers": {
               "items": {
                 "additionalProperties": false,
@@ -300,9 +297,21 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
             "estimateSentence": {
               "type": "string",
             },
+            "ready": {
+              "type": "boolean",
+            },
+            "sentence": {
+              "type": "string",
+            },
+            "sharingAvailable": {
+              "const": false,
+              "type": "boolean",
+            },
           },
           "required": [
-            "allowed",
+            "ready",
+            "sharingAvailable",
+            "sentence",
             "estimateSentence",
             "blockers",
           ],

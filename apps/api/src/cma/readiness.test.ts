@@ -137,3 +137,51 @@ describe('E369: "MLS data as of …" with two feeds (api-ui/F8)', () => {
     expect(codes(r.body)).toContain('FEED_STALE');
   });
 });
+
+describe('D9 R-CMA-7: readiness reads as readiness: V1 shares nothing (api-ui/F4)', () => {
+  const V1 = 'Sharing with clients is not available in this version, so nothing from this CMA reaches a client. Readiness lists what would also have to change before it could be shown to one.';
+  type Share = { ready?: boolean; allowed?: unknown; sharingAvailable?: unknown; sentence?: unknown; blockers: { code: string; sentence: string }[] };
+  const shareOf = (b: CmaBody) => b.cma.clientShare as unknown as Share;
+
+  it('D9 R-CMA-7: every view says sharing is not in this version; no blocker sentence tells the agent to share; a home with no street is told to prepare a new CMA', async () => {
+    // one world where nearly every blocker holds: an unreviewed display pack without client sold fields, no client use,
+    // an unreviewed valuation section with no statement, a stale feed, two sales only (no value)
+    const w = await cmaWorld(h, { pack: cmaPack({ reviewed: false, clientSold: false, valuation: { client_cma: false, reviewed_by_counsel_at: null, statements: {} } }) });
+    await localSales(w, 2);
+    const c = await seller(w, '887 Sample Avenue');
+    await mlsSale(w, { line1: '887 Sample Avenue', status: 'active', closePriceCents: null, closeDate: null, avmDisplayAllowed: false });
+    await mlsSale(w, { line1: '887 Sample Street', status: 'active', closePriceCents: null, closeDate: null, avmDisplayAllowed: false });
+    await feedLastSyncedAt(w, new Date(Date.now() - 3 * 86_400_000));
+    const tap = await oneTap(w.agents[0]!, c);
+    const area = await call<CmaBody>(w.agents[0]!, 'POST', '/cma', { purpose: 'listing_price', subject: { kind: 'entered', anchor: { region: 'CA', postalCode: '94110', city: 'Oakland' }, facts: { propertyType: 'single_family', sqft: 1400 } } });
+    expect([tap.status, area.status]).toEqual([201, 201]);
+    const seen = new Set([...codes(tap.body), ...codes(area.body)]);
+    for (const code of ['PLATFORM_NOT_CLEARED', 'MLS_CLIENT_DISPLAY_OFF', 'FEED_STALE', 'CLIENT_USE_NOT_ALLOWED', 'VALUATION_NOT_REVIEWED', 'NO_VALUATION_STATEMENT', 'COMPS_HIDDEN', 'SUBJECT_ADDRESS_UNKNOWN', 'SELLER_WITHHELD', 'POSSIBLE_LIVE_LISTING', 'NO_VALUE']) expect([code, seen.has(code)]).toEqual([code, true]);
+    // the two codes of a stored CMA whose feed changed since
+    await setPack(w.mls, cmaPack({ valuation: { agent_cma: false } }));
+    await disconnect(w.mls);
+    const later = await view(w, tap.body.cma.id);
+    expect(codes(later.body)).toEqual(expect.arrayContaining(['FEED_DISCONNECTED', 'VALUATION_USE_WITHDRAWN']));
+    for (const b of [tap.body, area.body, later.body]) {
+      expect(shareOf(b)).toMatchObject({ ready: false, sharingAvailable: false, sentence: V1 });
+      expect('allowed' in shareOf(b)).toBe(false);
+      for (const x of shareOf(b).blockers) expect([x.code, /\bshar(e|ed|ing)\b/i.test(x.sentence)]).toEqual([x.code, false]);
+    }
+    expect(sentenceOf(area.body, 'SUBJECT_ADDRESS_UNKNOWN')).toBe('The home’s full address (street, city, state and ZIP code) is not known, so its own MLS listings and live listings that may be this home could not be checked. To check them, prepare a new CMA with the home’s full address.');
+    expect(sentenceOf(tap.body, 'PLATFORM_NOT_CLEARED')).toBe('Client CMAs and seller value ranges wait for counsel review of the in-house CMA wording (platform:cma), which is not recorded.');
+  });
+
+  it('D9 R-CMA-7: with every check met (platform:cma cleared for this check only) the CMA is ready, and sharing is still not available', async () => {
+    const w = await cmaWorld(h);
+    await localSales(w, 6);
+    const c = await seller(w, '888 Sample Avenue');
+    await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = now() WHERE key = 'platform:cma'");
+    try {
+      const r = await oneTap(w.agents[0]!, c);
+      expect(r.status).toBe(201);
+      expect(shareOf(r.body)).toEqual({ ready: true, sharingAvailable: false, sentence: V1, blockers: [], estimateSentence: ESTIMATE_SENTENCE });
+    } finally {
+      await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL WHERE key = 'platform:cma'");
+    }
+  });
+});
