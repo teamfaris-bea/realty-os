@@ -27,6 +27,18 @@ const OVERRIDES: Record<string, Record<string, string>> = {
   message_reactions: { action: "'add'", reaction: "'love'" },
   // lane telephony-safeguards (R-TWL-11): a pending MMS text part carries no body yet (CHECK status/body)
   message_text_parts: { body: 'NULL' },
+  // lane ISA-2 (D12 proposed): CHECK-valid AI ISA rows
+  ai_isa_agent_optins: { attestation: "repeat('x', 40)", attestation_sha256: "repeat('ab', 32)", capabilities: "ARRAY['converse']", channels: "ARRAY['sms']", revoked_at: 'NULL' },
+  ai_isa_assignments: { bound_points: '\'{"sms":{}}\'::jsonb', paused_at: 'NULL', paused_by_kind: 'NULL', pause_reason: 'NULL', ended_at: 'NULL', end_reason: 'NULL', ended_by_kind: 'NULL', finalize_at: 'NULL', finalize_kind: 'NULL' },
+  ai_isa_controls: { by_kind: "'system'", by_user_id: 'NULL', reason: "'fixture'" },
+  ai_isa_stop_signals: { contact_id: 'NULL', source_table: "'fixture'" },
+  ai_isa_person_blocks: { lifted_at: 'NULL', lifted_by_user_id: 'NULL', lift_inbound_message_id: 'NULL', lift_attestation: 'NULL' },
+  ai_isa_turns: { trigger_key: "'fixture'", message_id: 'NULL', zones: 'NULL', body_sha256: 'NULL', decision: "'{}'::jsonb", denied: "'[]'::jsonb", window_start: 'NULL', window_end: 'NULL' },
+  ai_isa_slot_offers: { slots: "'[{}]'::jsonb", zones: "ARRAY['America/New_York']", accepted_slot: 'NULL', status: "'pending_delivery'", appointment_id: 'NULL', refusal_code: 'NULL', accepted_quote: 'NULL' },
+  ai_isa_shared_facts: { gate: "'[]'::jsonb", line_sha256: "repeat('ab', 32)", price_cents: 'NULL' },
+  ai_isa_handoffs: { basis: "'{}'::jsonb", package: "'{}'::jsonb", package_sha256: "encode(sha256(convert_to('{}'::jsonb::text, 'UTF8')), 'hex')", acknowledged_at: 'NULL', acknowledged_by_user_id: 'NULL', sla_escalation_level: '0' },
+  ai_isa_area_code_zones: { area_code: "'299'" },
+  ai_isa_state_zones: { state: "'ZZ'" },
   '*': {
     tenant_id: '$T',
     address_hmac: "digest(gen_random_uuid()::text, 'sha256')",
