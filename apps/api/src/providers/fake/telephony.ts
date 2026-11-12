@@ -21,7 +21,12 @@ const ref = (prefix: string, s: string) => prefix + createHash('sha256').update(
 /** A valid 1×1 PNG (the fake's default MMS media). */
 export const FAKE_PNG = new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64'));
 
-export type FakeFailure = 'timeout' | 'rejected' | 'unavailable' | 'timeout_after_submit';
+export type FakeFailure = 'timeout' | 'rejected' | 'unavailable' | 'timeout_after_submit' | { kind: ProviderError['kind']; code: string };
+
+/** The ProviderError of an injected failure ({ kind, code }: a provider code, e.g. 21610 or 30032). */
+function failure(f: Exclude<FakeFailure, 'timeout_after_submit'>): ProviderError {
+  return typeof f === 'string' ? new ProviderError(f) : new ProviderError(f.kind, f.code);
+}
 
 export interface FakeSms {
   providerRef: string;
@@ -83,7 +88,7 @@ export class FakeTelephony implements TelephonyProvider {
     const prior = this.byKey.get(`sms:${r.idempotencyKey}`);
     if (prior) return prior;
     const f = this.takeFailure();
-    if (f && f !== 'timeout_after_submit') throw new ProviderError(f);
+    if (f && f !== 'timeout_after_submit') throw failure(f);
     const media = [...(r.mediaUrls ?? [])];
     if (media.length > 10) throw new ProviderError('rejected', '21623');
     // a photo text gets an MM ref of Twilio's shape (MM + 32 hex); a plain text keeps the fake's SM ref
@@ -102,7 +107,7 @@ export class FakeTelephony implements TelephonyProvider {
     const prior = this.byKey.get(`call:${r.idempotencyKey}`);
     if (prior) return { providerRef: prior.providerRef };
     const f = this.takeFailure();
-    if (f && f !== 'timeout_after_submit') throw new ProviderError(f);
+    if (f && f !== 'timeout_after_submit') throw failure(f);
     const providerRef = ref('CA', r.idempotencyKey);
     this.byKey.set(`call:${r.idempotencyKey}`, { providerRef, status: 'queued' });
     this.calls.push({
@@ -232,7 +237,7 @@ export class FakeTelephony implements TelephonyProvider {
 
   async deliverVerificationCode(r: { to: string; code: string }) {
     const f = this.takeFailure();
-    if (f && f !== 'timeout_after_submit') throw new ProviderError(f);
+    if (f && f !== 'timeout_after_submit') throw failure(f);
     const providerRef = ref('VC', `${r.to}:${r.code}:${this.verificationCodes.length}`);
     this.verificationCodes.push({ to: r.to, code: r.code, providerRef });
     return { providerRef };

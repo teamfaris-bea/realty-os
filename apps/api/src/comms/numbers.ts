@@ -19,6 +19,12 @@ import { storeTelephonyAccount, telephonyAccount } from './repos/credentials.js'
 import { adminUserIds, notifyUser } from './repos/notify.js';
 import { asUser } from './runtime.js';
 import { SYSTEM_NOTICE, type CommsDeps } from './types.js';
+import { TELEPHONY_LIVE_OFF } from '../providers/twilio/http.js';
+
+/** R-TWL-1: the kill switch refused the provider request: answered with its own sentence (TELEPHONY_LIVE_OFF). */
+function liveOffOr(e: unknown, code: 'PROVIDER_UNAVAILABLE' | 'NUMBER_UNAVAILABLE'): AppError {
+  return new AppError(e instanceof ProviderError && e.providerCode === TELEPHONY_LIVE_OFF ? 'TELEPHONY_LIVE_OFF' : code);
+}
 
 export interface NumberView {
   id: string;
@@ -80,8 +86,8 @@ export async function acquireNumber(actor: UserActor, input: { purpose: 'team_ma
   if (!account) {
     try {
       account = await deps.providers.telephony.createSubaccount(actor.tenantId, `tenant-${actor.tenantId.slice(0, 8)}`);
-    } catch {
-      throw new AppError('PROVIDER_UNAVAILABLE');
+    } catch (e) {
+      throw liveOffOr(e, 'PROVIDER_UNAVAILABLE');
     }
     const acc = account;
     await asUser(deps, actor, (tx) => storeTelephonyAccount(tx, deps.envelope, deps.ids, actor.tenantId, acc, actor.userId));
@@ -90,7 +96,7 @@ export async function acquireNumber(actor: UserActor, input: { purpose: 'team_ma
   try {
     bought = await deps.providers.telephony.purchaseNumber(account, input.areaCode ? { areaCode: input.areaCode } : {});
   } catch (e) {
-    throw new AppError(e instanceof ProviderError && e.kind === 'rejected' ? 'NUMBER_UNAVAILABLE' : 'PROVIDER_UNAVAILABLE');
+    throw liveOffOr(e, e instanceof ProviderError && e.kind === 'rejected' ? 'NUMBER_UNAVAILABLE' : 'PROVIDER_UNAVAILABLE');
   }
   const id = deps.ids.next<'PhoneNumberId'>();
   try {
@@ -124,8 +130,8 @@ export async function releaseNumber(actor: UserActor, numberId: string, deps: Co
   if (account && ref) {
     try {
       await deps.providers.telephony.releaseNumber(account, ref);
-    } catch {
-      throw new AppError('PROVIDER_UNAVAILABLE');
+    } catch (e) {
+      throw liveOffOr(e, 'PROVIDER_UNAVAILABLE');
     }
   }
   return asUser(deps, actor, async (tx, now) => {
@@ -207,13 +213,14 @@ export async function refreshRegistration(actor: UserActor, registrationId: stri
   let status: 'pending' | 'approved' | 'rejected' | 'suspended';
   try {
     status = await deps.providers.telephony.senderRegistrationStatus(account, pre.provider_campaign_ref ?? registrationId);
-  } catch {
-    throw new AppError('PROVIDER_UNAVAILABLE');
+  } catch (e) {
+    throw liveOffOr(e, 'PROVIDER_UNAVAILABLE');
   }
   const mapped = status === 'pending' ? 'submitted' : status;
   return asUser(deps, actor, async (tx, now) => {
     if (mapped !== pre.status) {
-      await sql`UPDATE sender_registrations SET status = ${mapped}, status_changed_at = ${toIso(now)}::timestamptz WHERE tenant_id = app.tenant_id() AND id = ${registrationId}`.execute(tx);
+      // R-TWL-9: a fresh carrier status replaces the SENDER_NOT_VERIFIED detail an unverified-sender error left
+      await sql`UPDATE sender_registrations SET status = ${mapped}, status_detail = NULL, status_changed_at = ${toIso(now)}::timestamptz WHERE tenant_id = app.tenant_id() AND id = ${registrationId}`.execute(tx);
       await audit(tx, actor, { action: 'sender_registration.changed', entity: { type: 'sender_registration', id: registrationId }, changes: redactSnapshot({ status: mapped }, { entity: 'sender_registration' }), reason: 'REGISTRATION_STATUS' });
       if (mapped === 'suspended' || mapped === 'rejected') await alertAdmins(tx, deps, registrationId, mapped, now);
     }

@@ -92,6 +92,8 @@ type CallState =
 const CALL_FAILED: Record<string, string> = {
   AGENT_PHONE_MISSING: 'Add your phone number in Account so calls can ring you first.',
   PROVIDER_UNAVAILABLE: "The phone service isn't answering right now. Try again in a moment.",
+  // R-TWL-1: the kill switch (TELEPHONY_LIVE_REQUESTS=false): nothing was dialed
+  TELEPHONY_LIVE_OFF: 'Live texting and calling are off on this deployment.',
   // review R3: the record was merged into another while this page was open (R-OWN-24); details.mergedInto, when the
   // caller may open it, is linked below
   CONTACT_MERGED: AGENT_ERROR_MESSAGES.CONTACT_MERGED as string,

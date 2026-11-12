@@ -4,6 +4,7 @@
 //   comms.recording_copy  (standalone) copy + encrypt a provider recording (onRecordingReady)
 //   comms.transcribe      (standalone) transcription, stored encrypted
 //   comms.media_copy      (standalone) inbound MMS media → checked, encrypted storage (comms/media.ts)
+//   comms.mms_text        (standalone) inbound MMS text/plain parts → read for opt-outs (comms/mmsTextJob.ts, R-TWL-11)
 //   comms.outbound_media_purge (per tenant, every 15 min) expired photo/video uploads deleted ⇒ shredded (D5a)
 //   comms.mms_provider_cleanup (standalone) the provider's copies of a sent photo text, 24 h after dispatch (D5a)
 // Standalone: dispatch must commit between its steps and never hold a transaction across a provider
@@ -16,6 +17,8 @@ import { z } from 'zod';
 import { dispatchOutbound, reconcileOutbound } from './dispatch.js';
 import { RECORDING_COPY_JOB, TRANSCRIBE_JOB, onRecordingReady, transcribeRecording } from './recordings.js';
 import { MEDIA_COPY_JOB, copyInboundMedia } from './media.js';
+import { MMS_TEXT_JOB } from './mmsText.js';
+import { readTextParts } from './mmsTextJob.js';
 import { outboundMediaHandlers } from './outboundMedia.js';
 import { commsRuntime } from './runtime.js';
 import type { CommsDeps } from './types.js';
@@ -107,9 +110,30 @@ export function mediaCopyHandler(depsFor: DepsFor = defaultDeps): StandaloneJobH
   };
 }
 
+export const MmsTextPayload = jobPayload({
+  messageId: zId.optional(),
+  agentUserId: zId.optional(),
+  messageRef: z.string().regex(/^[A-Za-z0-9_-]{4,64}$/),
+  parts: z.array(z.object({ position: z.number().int().min(0).max(99), ref: z.string().regex(/^ME[0-9a-f]{32}$/).nullable() })).min(1).max(100),
+});
+
+export function mmsTextHandler(depsFor: DepsFor = defaultDeps): StandaloneJobHandler<z.infer<typeof MmsTextPayload>> {
+  return {
+    kind: MMS_TEXT_JOB.kind as `${string}.${string}`,
+    queue: MMS_TEXT_JOB.queue,
+    mode: 'standalone',
+    via: 'provider',
+    schema: MmsTextPayload,
+    async run(ctx, p) {
+      const r = await readTextParts(ctx.actor, { ...(p.messageId ? { messageId: p.messageId } : {}), ...(p.agentUserId ? { agentUserId: p.agentUserId } : {}), messageRef: p.messageRef, parts: p.parts }, depsFor(ctx.providers));
+      ctx.log.info('mms text', { kind: MMS_TEXT_JOB.kind, jobId: ctx.job.id.toString(), code: `read:${r.read},skipped:${r.skipped},revoked:${r.revoked.length}` });
+    },
+  };
+}
+
 /** Everything api/comms registers with the worker (CONVENTIONS §3). */
 export function makeCommsHandlers(depsFor: DepsFor = defaultDeps): JobHandler<unknown>[] {
-  return [dispatchHandler(depsFor), reconcileHandler(depsFor), recordingCopyHandler(depsFor), transcribeHandler(depsFor), mediaCopyHandler(depsFor), ...outboundMediaHandlers(depsFor)] as unknown as JobHandler<unknown>[];
+  return [dispatchHandler(depsFor), reconcileHandler(depsFor), recordingCopyHandler(depsFor), transcribeHandler(depsFor), mediaCopyHandler(depsFor), mmsTextHandler(depsFor), ...outboundMediaHandlers(depsFor)] as unknown as JobHandler<unknown>[];
 }
 
 export const commsHandlers: JobHandler<unknown>[] = makeCommsHandlers();

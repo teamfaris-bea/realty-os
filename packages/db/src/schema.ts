@@ -1484,6 +1484,19 @@ export interface MessageTemplatesTable {
   updated_at: Generated<Timestamp>;
 }
 
+/** public.message_text_parts (table) */
+export interface MessageTextPartsTable {
+  tenant_id: string;
+  message_id: string;
+  position: number;
+  provider_media_ref: string | null;
+  status: Generated<string>;
+  body: string | null;
+  classification: string | null;
+  read_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+}
+
 /** public.messages (table) */
 export interface MessagesTable {
   tenant_id: string;
@@ -2315,6 +2328,14 @@ export interface TeamsTable {
   updated_at: Generated<Timestamp>;
 }
 
+/** public.telephony_daily_usage (table) */
+export interface TelephonyDailyUsageTable {
+  tenant_id: string;
+  day: string;
+  sends: number;
+  updated_at: Generated<Timestamp>;
+}
+
 /** public.tenant_keys (table) */
 export interface TenantKeysTable {
   tenant_id: string;
@@ -2377,6 +2398,7 @@ export interface TenantSettingsTable {
   batch_text_enabled: Generated<boolean>;
   mail_sync_enabled: Generated<boolean>;
   mail_backfill_days: Generated<number>;
+  telephony_daily_cap: Generated<number>;
 }
 
 /** public.tenants (table) */
@@ -2667,6 +2689,7 @@ export interface DB {
   message_search_tokens: MessageSearchTokensTable;
   message_status_events: MessageStatusEventsTable;
   message_templates: MessageTemplatesTable;
+  message_text_parts: MessageTextPartsTable;
   messages: MessagesTable;
   mfa_recovery_codes: MfaRecoveryCodesTable;
   note_search_tokens: NoteSearchTokensTable;
@@ -2721,6 +2744,7 @@ export interface DB {
   tasks: TasksTable;
   team_members: TeamMembersTable;
   teams: TeamsTable;
+  telephony_daily_usage: TelephonyDailyUsageTable;
   tenant_keys: TenantKeysTable;
   tenant_settings: TenantSettingsTable;
   tenants: TenantsTable;
@@ -2826,6 +2850,7 @@ export const TABLE_NAMES = [
   'message_search_tokens',
   'message_status_events',
   'message_templates',
+  'message_text_parts',
   'messages',
   'mfa_recovery_codes',
   'note_search_tokens',
@@ -2880,6 +2905,7 @@ export const TABLE_NAMES = [
   'tasks',
   'team_members',
   'teams',
+  'telephony_daily_usage',
   'tenant_keys',
   'tenant_settings',
   'tenants',

@@ -36,7 +36,7 @@ import { INTENT_RULES, type PlaybookStep, PlaybookStepSchema, approvalCurrent, a
 import type { Actor, ContactId, Instant, TenantId, UserActor } from '@realty/core/foundation';
 import { MINUTE_MS, can, plusMs } from '@realty/core/foundation';
 import type { TouchVia } from '@realty/core/ownership';
-import { type Tx, applyOwnershipCommandInTx, dbNow, derivedCommandId, lockContact, recordConsentEvent, setOwnershipCommand, withTenantTx } from '@realty/db';
+import { type Tx, applyOwnershipCommandInTx, dbNow, derivedCommandId, lockAddresses, lockContact, recordConsentEvent, setOwnershipCommand, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { audit } from '../audit.js';
 import { AppError } from '../errors.js';
@@ -57,6 +57,7 @@ import { routeOfAddress } from '../channels/repos/webchat.js';
 import { enqueueProviderCleanup, isPhotoOnlyBody, mediaUrlsFor } from './outboundMedia.js';
 import { rfcMessageIdSha256 } from '../channels/rfcMessageId.js';
 import { LEDGER_SYSTEM, SYSTEM_NOTICE, type CommsDeps, type DispatchResult, type OutboundIntent } from './types.js';
+import { SENDER_NOT_VERIFIED, TELEPHONY_LIVE_OFF, claimTelephonySend, countsTowardDailyCap, isSenderNotVerified, markSenderNotVerified, recordAgentAlertOptOut } from './telephonySafeguards.js';
 
 export interface DispatchOptions {
   /** the message's tenant (from the session, a job row or a webhook resolver; R-TEN-3) */
@@ -234,7 +235,13 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
     connection: chatConnection,
   };
   const evaluated = await evaluateGate(tx, intent, now);
-  const verdict = verdictOf(evaluated.decision, extra);
+  let verdict = verdictOf(evaluated.decision, extra);
+  // R-TWL-2: an allowed text through the real adapter claims a unit of today's cap in THIS transaction (a rollback
+  // returns it); the platform's STOP confirmation / HELP reply is exempt (E381). Over the cap ⇒ a recorded deny.
+  if (verdict.outcome === 'allow' && channel === 'sms' && c.deps.telephonyDailyCap === true && countsTowardDailyCap(m.actionCategory) && !(await claimTelephonySend(tx))) {
+    extra.push('DAILY_SEND_CAP_REACHED');
+    verdict = verdictOf(evaluated.decision, extra);
+  }
 
   if (verdict.outcome === 'deny') {
     const blocked = await insertBlockedDecision(tx, { ids: c.deps.ids, intent, evaluated, verdict, actorUserId, messageId: m.id, now, extraDeny: extra });
@@ -419,10 +426,14 @@ async function sendAndRecord(plan: SendPlan, decision: StoredDecision, deps: Com
       return { kind: 'dispatch_unknown', messageId: m.id, decision: view } satisfies DispatchResult;
     }
     const optedOut = out.code !== null && PROVIDER_OPT_OUT_CODES.has(out.code);
-    const reason = optedOut ? 'PROVIDER_OPTED_OUT' : out.kind === 'not_configured' ? (out.code ?? 'PROVIDER_NOT_CONFIGURED') : `PROVIDER_${out.kind.toUpperCase()}`;
+    // R-TWL-1: the kill switch (TELEPHONY_LIVE_OFF, kind not_configured) is a plain failure the agent sees: never an
+    // opt-out, never retried, never reconciled. R-TWL-9: an unverified sender (30032 / 30034) is SENDER_NOT_VERIFIED.
+    const unverified = plan.channel === 'sms' && isSenderNotVerified(out.code);
+    const reason = optedOut ? 'PROVIDER_OPTED_OUT' : unverified ? SENDER_NOT_VERIFIED : out.code === TELEPHONY_LIVE_OFF ? TELEPHONY_LIVE_OFF : out.kind === 'not_configured' ? (out.code ?? 'PROVIDER_NOT_CONFIGURED') : `PROVIDER_${out.kind.toUpperCase()}`;
     await msgs.markFailed(tx, m.id, reason, out.code);
     if (m.playbookStepRunId) await auto.updateStepRun(tx, m.playbookStepRunId, { status: 'failed', decisionId: null, messageId: m.id });
     if (optedOut) await recordProviderOptOut(tx, deps, tenantId, m, now);
+    if (unverified) await markSenderNotVerified(tx, systemActor(tenantId, 'provider'), deps, m.phoneNumberId, out.code!, m.id, now);
     return { kind: 'failed', messageId: m.id, decision: view, reason } satisfies DispatchResult;
   });
 }
@@ -524,7 +535,7 @@ export type AlertResult = { kind: 'sent'; providerRef: string } | { kind: 'suppr
  * Called by the notification delivery job (api/workspace) for `sms` deliveries.
  */
 export async function dispatchAgentAlertSms(deliveryId: string, deps: CommsDeps, tenantId: string): Promise<AlertResult> {
-  type Plan = { kind: 'send'; to: string; from: string; body: string } | { kind: 'done'; result: AlertResult };
+  type Plan = { kind: 'send'; to: string; from: string; body: string; userId: string; hmac: string } | { kind: 'done'; result: AlertResult };
   const plan: Plan = await asSystem(deps, tenantId, 'worker', async (tx, now) => {
     const r = await sql<{ id: string; status: string; channel: string; user_id: string; title: string; alert_phone_e164: string | null; verified: boolean }>`
       SELECT d.id, d.status, d.channel, n.user_id, n.title, m.alert_phone_e164, m.alert_phone_verified_at IS NOT NULL AS verified
@@ -551,15 +562,18 @@ export async function dispatchAgentAlertSms(deliveryId: string, deps: CommsDeps,
       body,
     };
     const evaluated = await evaluateGate(tx, intent, now);
-    const verdict = verdictOf(evaluated.decision);
+    let verdict = verdictOf(evaluated.decision);
+    // R-TWL-2: an alert text through the real adapter counts toward the tenant's daily cap like any other text
+    const capDeny: DispatchDenyReason[] = verdict.outcome === 'allow' && deps.telephonyDailyCap === true && !(await claimTelephonySend(tx)) ? ['DAILY_SEND_CAP_REACHED'] : [];
+    if (capDeny.length > 0) verdict = verdictOf(evaluated.decision, capDeny);
     if (verdict.outcome === 'deny') {
-      const dec = await insertBlockedDecision(tx, { ids: deps.ids, intent, evaluated, verdict, actorUserId: null, now });
+      const dec = await insertBlockedDecision(tx, { ids: deps.ids, intent, evaluated, verdict, actorUserId: null, now, extraDeny: capDeny });
       await setDelivery(tx, deliveryId, 'suppressed', dec.id, dec.reasons[0] ?? 'DENIED');
       return { kind: 'done', result: { kind: 'suppressed', decisionId: dec.id, reasons: dec.reasons } };
     }
     const from = nums.teamMain ? (await g.numberFacts(tx, nums.teamMain))?.e164 ?? null : null;
     await setDelivery(tx, deliveryId, 'sending', null, null);
-    return { kind: 'send', to: d.alert_phone_e164, from: from ?? '', body };
+    return { kind: 'send', to: d.alert_phone_e164, from: from ?? '', body, userId: d.user_id, hmac };
   });
   if (plan.kind === 'done') return plan.result;
   let result: AlertResult;
@@ -569,11 +583,27 @@ export async function dispatchAgentAlertSms(deliveryId: string, deps: CommsDeps,
     const r = await deps.providers.telephony.sendSms({ account, from: plan.from, to: plan.to, body: plan.body, idempotencyKey: deliveryId });
     result = { kind: 'sent', providerRef: r.providerRef };
   } catch (e) {
-    result = { kind: 'failed', reason: e instanceof ProviderError ? `PROVIDER_${e.kind.toUpperCase()}` : 'PROVIDER_ERROR' };
+    // R-TWL-1: the kill switch ends the delivery as suppressed TELEPHONY_LIVE_OFF: the delivery job retries a FAILED
+    // delivery, and a refused request must never be retried (or read as an opt-out)
+    if (e instanceof ProviderError && e.providerCode === TELEPHONY_LIVE_OFF) result = { kind: 'suppressed', decisionId: null, reasons: [TELEPHONY_LIVE_OFF] };
+    // R-TWL-8: the agent's phone opted out at the carrier (21610): an opt-out, never a retried failure
+    else if (e instanceof ProviderError && e.providerCode !== undefined && PROVIDER_OPT_OUT_CODES.has(e.providerCode)) result = { kind: 'suppressed', decisionId: null, reasons: ['PROVIDER_OPTED_OUT'] };
+    else result = { kind: 'failed', reason: e instanceof ProviderError ? `PROVIDER_${e.kind.toUpperCase()}` : 'PROVIDER_ERROR' };
   }
-  await asSystem(deps, tenantId, 'provider', (tx) =>
-    result.kind === 'sent' ? setDelivery(tx, deliveryId, 'sent', null, null, result.providerRef) : setDelivery(tx, deliveryId, 'failed', null, result.kind === 'failed' ? result.reason : null),
-  );
+  const final = result;
+  await asSystem(deps, tenantId, 'provider', async (tx, now) => {
+    if (final.kind === 'sent') return setDelivery(tx, deliveryId, 'sent', null, null, final.providerRef);
+    if (final.kind === 'suppressed') {
+      // R-TWL-8: the user recipient's SMS revoke exactly as the agent keyword path records it (their own START lifts it),
+      // audited, Admins told; the delivery is suppressed PROVIDER_OPTED_OUT in the same transaction
+      if (final.reasons[0] === 'PROVIDER_OPTED_OUT') {
+        await lockAddresses(tx, [plan.hmac]);
+        await recordAgentAlertOptOut(tx, systemActor(tenantId, 'provider'), deps.ids, { userId: plan.userId, hmac: plan.hmac, hint: hint(plan.to), matched: 'PROVIDER_21610', reason: 'AGENT_ALERT_PROVIDER_OPT_OUT', evidence: { providerCode: '21610' } }, now);
+      }
+      return setDelivery(tx, deliveryId, 'suppressed', null, final.reasons[0] ?? null);
+    }
+    return setDelivery(tx, deliveryId, 'failed', null, final.kind === 'failed' ? final.reason : null);
+  });
   return result;
 }
 

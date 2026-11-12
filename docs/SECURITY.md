@@ -979,3 +979,44 @@ Trust decisions that changed (details in ARCHITECTURE §21.25):
 - **`home_valuations` is written only by the system** (RESTRICTIVE insert and update policies). Members who see the contact still read it; a valuation row drives automatic client notes under the source's name, so a person can no longer change a value, a provider or `display_allowed`.
 - **A merge keeps the stronger deal role** (definer `app.contacts_merge_roles`, replaced from 0053 with every earlier rule kept) and a planned milestone update follows the person once; nothing already sent to a merged record is sent again. D1 opt-outs are unchanged: every re-planned update still goes through `comms/dispatch.ts`, which judges the whole person.
 - **Gap:** no retention purge for `home_valuations` yet (R-DATA-6).
+
+## 14. Telephony safeguards (lane `telephony-safeguards`, migrations `telephony_daily_cap`, `mms_text_parts`)
+
+The team's existing Twilio account is suspended, its numbers are routed elsewhere and must not be changed, and no
+sender is verified. Everything below is proven on the deterministic fake telephony provider and on the REAL Twilio
+adapter with a fetch that fails the test if it is ever called; nothing reaches Twilio.
+
+- **Kill switch (R-TWL-1).** `TELEPHONY_LIVE_REQUESTS` (default `false` everywhere, production included; DEPLOY §5.1).
+  The check sits at the one choke point of every Twilio REST request (`TwilioHttp.request`) and again before an
+  account, SID or number is even looked at (`TwilioTelephony.creds`). It fails closed: an adapter built without the
+  option is off. A refusal is `ProviderError('not_configured', 'TELEPHONY_LIVE_OFF')`: never an opt-out (no consent
+  event), never retried (sends are `failed`, alert deliveries `suppressed`, media `FETCH_FAILED`), never reconciled
+  (no `dispatch_unknown`). Tests: `providers/twilio/killswitch.test.ts`, `comms/telephony.safeguards.test.ts`.
+- **Daily cap (R-TWL-2).** `telephony_daily_usage` has FORCE RLS, the tenant policies and the `support_read_only`
+  statement trigger; members (and the system) may insert and update their own tenant's row because a human send's
+  TX1 runs as that human (R-TEN-3), and a trigger lets a day's count only grow, so no transaction can reopen a
+  budget. No SECURITY DEFINER function is added. The claim is one `INSERT … ON CONFLICT DO UPDATE … WHERE sends < cap`
+  in TX1, so concurrent sends at cap-1 let exactly one through (E380, tested with concurrent transactions).
+- **Stable webhook contract (R-TWL-3, R-TWL-4).** DEPLOY §5.2 is the public contract of the nine telephony paths.
+  `comms/webhooks.contract.test.ts` reads that table and fails if a path leaves the route table (or an undocumented
+  one appears), if a path accepts an unsigned or mis-signed request, if the signed URL is taken from the Host header
+  instead of `PUBLIC_BASE_URL`, or if a retried delivery is processed twice. A status callback without `From` is no
+  longer a 422: its tenant is only ever the one the signature guard resolved from the signing subaccount, otherwise
+  the delivery is recorded unrouted (no tenant row, `WEBHOOK_UNROUTED`); a callback can never pick its tenant.
+- **No number is re-pointed (R-TWL-5).** `providers/twilio/numberConfig.architecture.test.ts` proves by source scan
+  and by driving every adapter operation that nothing POSTs to `IncomingPhoneNumbers/{sid}` and that `SmsUrl`,
+  `VoiceUrl`, fallbacks, application SIDs and a number's `StatusCallback` are written only at purchase (blocked by
+  the kill switch while it is off).
+- **Signature redaction (R-TWL-6).** `X-Twilio-Signature` is an HMAC keyed by the account's auth token; a leaked one
+  allows replaying that exact request. `server.ts LOG_REDACT_PATHS` (one exported list) censors it on request,
+  response and bare header objects, on top of the serializers that already log no headers
+  (`comms/webhooks.redaction.test.ts`).
+- **Opt-out signals from Twilio (R-TWL-7 to R-TWL-11).** Every one only ever adds an opt-out or makes a sender less
+  ready; none lifts anything. `OptOutType=STOP` revokes once (our own revoking classification takes precedence);
+  21610 on an alert text revokes the agent's alert texts the way their own STOP does; 30032/30034 mark the number's
+  registration not ready in the same transaction as the event. MMS text parts are fetched only by validated SID
+  through the adapter (no URL from the webhook is fetched, no SSRF), capped at 16 KiB, decoded as strict UTF-8 (a NUL
+  or invalid byte is unreadable), applied under the address lock then the contact locks (concurrent runs apply a part
+  once), shown in the thread as plain text only, and never placed in an assistant prompt (only the text-part modules
+  and the thread view read `message_text_parts`). The one definer change is the narrow MMS keyword-reply exemption of
+  `app.messages_dispatch_guard` (ARCHITECTURE §21.27).

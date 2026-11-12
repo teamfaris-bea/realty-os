@@ -320,6 +320,7 @@ export const ERROR_STATUS = {
   GOAL_EXISTS: 409, // the member already has a goal for this period and metric (details.goalId)
   PLAN_ALREADY_ACCEPTED: 409, // the weekly plan was already accepted (its tasks exist)
   COACHING_NOT_CLEARED: 409, // module 36 (R-INT-6): call scoring waits for counsel review of the platform:coaching pack
+  TELEPHONY_LIVE_OFF: 409, // R-TWL-1: TELEPHONY_LIVE_REQUESTS=false: the provider request was refused before it was made
   MEDIA_NOT_ALLOWED: 422, // D5a: not a photo or video a text can carry (type, brand or bytes do not match; a file the metadata pass cannot walk)
   MEDIA_TOO_LARGE: 422, // D5a: details {limitBytes, scope: 'item'|'total'} (decimal bytes; R-MMS-3, R-MMS-2)
   MEDIA_LOCATION_NOT_REMOVED: 422, // D5a: metadata or a location survived the cleaning pass, so the file is refused (R-MMS-4, E295)

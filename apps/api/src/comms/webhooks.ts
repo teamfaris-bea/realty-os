@@ -48,6 +48,7 @@ import { RECORDING_ANNOUNCEMENT, applyCallStatus } from './dial.js';
 import { ingestInbound, isMissedCallStatus, recordMissedInboundCall } from './inbound.js';
 import { RECORDING_COPY_JOB } from './recordings.js';
 import { MEDIA_COPY_JOB, mediaItemsOf } from './media.js';
+import { isTextPart } from './mmsText.js';
 import { BRIDGE_TWIML, ringTwiml, sayAndHangupTwiml, screenTwiml, voicemailTwiml } from '../providers/twilio/voiceTwiml.js';
 import { type InboundCallPlan, SIGNED_REF_PURPOSE, VOICEMAIL_DONE, VOICEMAIL_MAX_S, VOICEMAIL_NOTICE, acceptInboundCall, finishInboundCall, inboundDialResult, inboundUrls, planInboundCall, screenFor, voicemailLeft } from './voice.js';
 import { tokenFromRecipient, verifySignedRef } from './render.js';
@@ -153,10 +154,13 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
     if (!b.MessageSid || !b.From || !b.To) throw new AppError('VALIDATION_FAILED');
     const p = req.server.platform;
     const tenantId = await telephonyTenant(req, b.To);
-    const media = mediaItemsOf(b);
+    const items = mediaItemsOf(b);
+    // R-TWL-11: text/plain parts are read for opt-outs by comms.mms_text (enqueued by the ingestion itself), never copied as files
+    const textParts = items.filter((m) => isTextPart(m.declaredType)).slice(0, 100).map((m) => ({ position: m.position, ref: m.ref }));
+    const media = items.filter((m) => !isTextPart(m.declaredType));
     await run(req, 'telephony', `sms:${b.MessageSid}`, tenantId, { sid: b.MessageSid }, async () => {
       const actor = systemActor(tenantId!, 'provider');
-      const out = await ingestInbound(actor, { kind: 'sms', providerRef: b.MessageSid!, from: b.From!, to: b.To!, body: b.Body ?? '', mediaCount: media.length }, depsFromPlatform(p));
+      const out = await ingestInbound(actor, { kind: 'sms', providerRef: b.MessageSid!, from: b.From!, to: b.To!, body: b.Body ?? '', mediaCount: items.length, ...(b.OptOutType ? { optOutType: b.OptOutType.slice(0, 20) } : {}), ...(textParts.length > 0 ? { textParts } : {}) }, depsFromPlatform(p));
       // MMS media are copied into encrypted storage by a job (never inside the webhook request)
       if (out.kind === 'stored' && out.messageId && media.length > 0) {
         await withTenantTx(actor, async (tx) => {
@@ -172,9 +176,11 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
   r.post('/webhooks/telephony/status', { ...tel, schema: { body: Form, querystring: z.object({ m: z.uuid().optional() }) } }, async (req) => {
     const b = req.body;
     const mapped = mapTelephonyStatus(b.MessageStatus ?? '');
-    if (!b.MessageSid || !b.From) throw new AppError('VALIDATION_FAILED');
+    // R-TWL-4 (E382): MessageSid stays required; a missing From is accepted. Its tenant is the one the signature guard
+    // resolved (Twilio subaccount); otherwise run() records one unrouted row with a WEBHOOK_UNROUTED log and we answer 200
+    if (!b.MessageSid) throw new AppError('VALIDATION_FAILED');
     const p = req.server.platform;
-    const tenantId = await telephonyTenant(req, b.From);
+    const tenantId = b.From ? await telephonyTenant(req, b.From) : (req.webhookTenantId ?? null);
     if (!mapped) return { ok: true };
     const ref = `status:${b.MessageSid}:${b.MessageStatus}`;
     await run(req, 'telephony', ref, tenantId, { sid: b.MessageSid, status: b.MessageStatus }, () =>

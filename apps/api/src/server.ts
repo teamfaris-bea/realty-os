@@ -127,6 +127,24 @@ function sendError(reply: FastifyReply, req: FastifyRequest, code: ErrorCode, st
   return reply.status(status).send(errorBody(code, String(req.id), details));
 }
 
+/**
+ * Log redaction paths (pino `redact`), one exported list so a test can prove every one is censored (R-TWL-6). Defense in
+ * depth: the req/res serializers already emit no headers. Credentials in request or response headers, the X-Api-Key a
+ * provider echoes (Spark, docs/SECURITY.md §5.3), and Twilio's X-Twilio-Signature (an HMAC over the request keyed by the
+ * account's auth token: lane telephony-safeguards) are censored wherever a log object carries headers.
+ */
+export const LOG_REDACT_PATHS = [
+  'req.headers.authorization',
+  'req.headers["x-api-key"]',
+  'req.headers["x-twilio-signature"]',
+  'res.headers.authorization',
+  'res.headers["x-api-key"]',
+  'res.headers["x-twilio-signature"]',
+  'headers.authorization',
+  'headers["x-api-key"]',
+  'headers["x-twilio-signature"]',
+] as const;
+
 export function buildServer(cfg: Config, deps: ServerDeps): FastifyInstance {
   const db = deps.db ?? getDatabase();
   const platform: Platform = {
@@ -147,7 +165,7 @@ export function buildServer(cfg: Config, deps: ServerDeps): FastifyInstance {
       ...(deps.logStream ? { stream: deps.logStream } : {}),
       // defense in depth (the req/res serializers below already emit no headers): credentials in request or
       // response headers, including the X-Api-Key a provider echoes (Spark, docs/SECURITY.md §5.3), are censored
-      redact: { paths: ['req.headers.authorization', 'req.headers["x-api-key"]', 'res.headers.authorization', 'res.headers["x-api-key"]', 'headers.authorization', 'headers["x-api-key"]'], censor: '[redacted]' },
+      redact: { paths: [...LOG_REDACT_PATHS], censor: '[redacted]' },
       // pino runs formatters.log BEFORE the serializers: req/res/err are left to the serializers below
       // (which emit only method, route pattern, status and masked error text); everything else is redacted.
       formatters: {

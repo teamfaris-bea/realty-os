@@ -114,6 +114,8 @@ export class TwilioTelephony implements TelephonyProvider {
   }
 
   private creds(a: TelephonyAccount): TwilioCreds {
+    // R-TWL-1: refused before the account, the SIDs or the numbers are even looked at
+    this.http.assertLive();
     return { sid: assertSid('AC', a.accountRef), token: a.secret };
   }
 
@@ -343,7 +345,7 @@ export class TwilioCarrierLookup implements CarrierLookup {
   private readonly http: TwilioHttp;
   private readonly master: TwilioCreds;
   private readonly base: string;
-  constructor(opts: Pick<TwilioOptions, 'accountSid' | 'authToken' | 'lookupsBase' | 'fetch' | 'timeoutMs' | 'sleep'>) {
+  constructor(opts: Pick<TwilioOptions, 'accountSid' | 'authToken' | 'lookupsBase' | 'fetch' | 'timeoutMs' | 'sleep' | 'liveRequests'>) {
     this.http = new TwilioHttp(opts);
     this.master = { sid: assertSid('AC', opts.accountSid), token: opts.authToken };
     this.base = (opts.lookupsBase ?? 'https://lookups.twilio.com').replace(/\/$/, '');
