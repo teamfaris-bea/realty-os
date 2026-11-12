@@ -10,7 +10,7 @@
 //                  item only when it verifies against the transcript, E105) → one call_review action
 //                  (internal, executed: never a card or an approval) with one claim per rubric claim and its
 //                  quotes (encrypted) → the call_scores row. The DB refuses a review of an AI-handled call,
-//                  of another agent, or without a lawful recording (call_scores_guard, 0059).
+//                  of another agent, or without a lawful recording (call_scores_guard, 0052).
 // Idempotent per call: the call_scores primary key and the action's dedupe key; the scan skips calls with a
 // review run. Nothing here feeds routing, ownership or the scoreboard (R-COACH-5).
 import { type Claim, type CheckedEvidenceRef, verifyQuote } from '@realty/core/assistant';

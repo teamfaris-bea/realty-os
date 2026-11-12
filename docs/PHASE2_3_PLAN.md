@@ -680,7 +680,7 @@ export function overspend(hourly: HourlySpend[], cap: Cap): CampaignId[];
 | N13 | Public-records/property data vendor contract | licence | property-based prediction features (module 50); first-party features only otherwise |
 | N14 | Google Ads account and developer token (VERIFY access levels); D2: no Meta ad account | account/partner approval | ad proposals and applying approved shifts (module 52) |
 | N15 | Google Business Profile API access | partner approval | GBP posts and reviews (module 53) |
-| N16 | `pdf-lib` dependency approval | dependency | flyer PDFs (module 29) |
+| N16 | `pdf-lib` dependency approval (**approved by the owner, D6, 2026-11-11**) | dependency | flyer PDFs (module 29) |
 | N17 | A PDF text extractor dependency (for example `pdfjs-dist`) or vendor approval | dependency | contract-date extraction (module 42); manual entry otherwise |
 | N18 | A platform back-test dataset the platform may use for each prediction model (licensed or consented) | licence | approving any prediction model (`prediction_models` requires a back-test) |
 | N19 | Google OAuth app verification for the restricted `gmail.readonly` scope and the annual third-party security assessment (CASA) (VERIFY current requirements; VERIFY whether the assessment expects field encryption of synced bodies, which are plain text at rest like `messages.body`; if so a later migration adds `body_enc`) | partner approval | real Gmail sync (module 68): sets `platform:gmail` `rules.vendor_ready_at`; fake only until then |

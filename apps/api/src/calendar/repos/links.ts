@@ -99,7 +99,7 @@ export async function markDegraded(tx: Tx, id: string, code: string): Promise<vo
 
 /**
  * Links reconcile must finish (system actor; R-INT-5): a removed member's link not yet revoked (a safety net:
- * the 0050 trigger revokes it in the removal transaction), and any revoked link that still holds a token (the
+ * the 0049 trigger revokes it in the removal transaction), and any revoked link that still holds a token (the
  * trigger keeps it so the grant can be revoked at the provider before the purge). Suspension is not removal.
  */
 export async function linksToFinishRevoking(tx: Tx): Promise<{ id: string; user_id: string; provider: CalendarProviderKey }[]> {

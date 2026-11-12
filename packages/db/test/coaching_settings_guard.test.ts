@@ -1,5 +1,5 @@
 // Who may change the call-scoring settings, at the database (tenant_settings_p23_guard as amended by the coaching
-// migration 0059; owner decision 2026-11-11, the Gmail sync rule): only the Owner turns call reviews on (and only
+// migration 0052; owner decision 2026-11-11, the Gmail sync rule): only the Owner turns call reviews on (and only
 // once platform:coaching is cleared, R-INT-6), sets Team Lead visibility and the checklist; an Admin may only turn
 // call reviews off, alone in its UPDATE (E283). Team Leads, agents and support change nothing, as before. Every
 // write is app_user under RLS; the superuser pool only sets the platform pack's review (platform data) and reads back.

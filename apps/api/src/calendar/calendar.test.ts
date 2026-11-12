@@ -511,7 +511,7 @@ describe('disconnect and removal (R-INT-5, R-CAL-4)', () => {
     const m = (await call<{ members: { userId: string; version: number }[] }>(owner, 'GET', '/members')).body.members.find((x) => x.userId === c.userId)!;
     const r = await call(owner, 'PATCH', `/members/${c.userId}`, { version: m.version, status: 'removed' });
     expect(r.status).toBe(200);
-    // revoked locally in that same transaction (0050 trigger): nothing can use it any more
+    // revoked locally in that same transaction (0049 trigger): nothing can use it any more
     expect(await linkRow(h, c.userId!)).toMatchObject({ status: 'revoked', last_error_code: 'MEMBER_REMOVED' });
     expect((await linkRow(h, c.userId!))!.purge_after).not.toBeNull();
     const { reconcileLinks } = await import('./push.js');

@@ -105,7 +105,7 @@ export async function pushAppointment(deps: PushDeps, tx: Tx, actor: SystemActor
 
 /**
  * R-INT-5 for a removed member: the token is decrypted (system actor) only to revoke the grant at the provider,
- * best effort; the link is revoked (if the 0050 trigger has not already) and its token purged in this transaction.
+ * best effort; the link is revoked (if the 0049 trigger has not already) and its token purged in this transaction.
  */
 async function finishRemovalRevoke(deps: PushDeps, tx: Tx, actor: SystemActor, l: Pick<repo.LinkRow, 'id' | 'provider'>): Promise<void> {
   const token = await tokenForRevoke(deps.envelope, tx, actor.tenantId as TenantId, l.id);

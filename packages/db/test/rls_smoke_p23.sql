@@ -716,7 +716,7 @@ SELECT pg_temp.expect_error(format($q$INSERT INTO call_scores (tenant_id, call_i
 INSERT INTO call_scores (tenant_id, call_id, rubric_version, agent_user_id, contact_id, items, met_count, scored_count)
 VALUES (:tA, 'a0000000-0000-7000-8000-00000000ca02', 'rubric/1', :agA1, :c1, '[]', 0, 0),
        (:tA, 'a0000000-0000-7000-8000-00000000ca03', 'rubric/1', :agA1, :c1, '[]', 0, 0);
--- module 36 (0059): a review needs a lawful recording; once that recording is shredded the review is unreadable
+-- module 36 (0052): a review needs a lawful recording; once that recording is shredded the review is unreadable
 RESET ROLE;
 UPDATE recordings SET status = 'shredded', shredded_at = now() WHERE id = 'a0000000-0000-7000-8000-00000000ca13';
 SET LOCAL ROLE app_user;

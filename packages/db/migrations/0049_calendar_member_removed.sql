@@ -1,5 +1,5 @@
 -- =============================================================================
--- 0050 calendar: removing a member revokes their calendar link in the same transaction (module 34; R-INT-5)
+-- 0049 calendar: removing a member revokes their calendar link in the same transaction (module 34; R-INT-5)
 -- =============================================================================
 -- R-INT-5: "Disconnecting, or removing the member who owns a calendar link, revokes the grant at the provider
 -- (best effort) and locally in the same transaction; tokens are purged within 30 days."

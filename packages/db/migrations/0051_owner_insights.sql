@@ -1,4 +1,4 @@
--- 0057 (PHASE2_3_PLAN M33, module 33 api/insights): the owner view's row source and two read indexes.
+-- 0051 (PHASE2_3_PLAN M33, module 33 api/insights): the owner view's row source and two read indexes.
 --
 -- No new table, no policy change, no SECURITY DEFINER function (so no new security-review definer).
 --

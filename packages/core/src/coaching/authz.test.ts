@@ -2,7 +2,7 @@
 // Gmail sync rule, E283): only the Owner turns call reviews on, or lets Team Leads see them, and re-authenticates to
 // do it ("loosening"); an Admin may act only when nothing loosens, which is turning call reviews off, with no
 // re-auth, because turning off only tightens. This is the core half: the API refuses an Admin anything but turning
-// call reviews off, and tenant_settings_p23_guard (0059) is the backstop.
+// call reviews off, and tenant_settings_p23_guard (0052) is the backstop.
 import { describe, expect, it } from 'vitest';
 import { type Actor, MINUTE_MS, REAUTH_WINDOW_MS, type Role, type TenantId, type UserId, at, can, instant, requiresReauth } from '../foundation/index.js';
 

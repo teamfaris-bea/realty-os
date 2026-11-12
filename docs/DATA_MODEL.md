@@ -817,7 +817,7 @@ No full-text column on `mail_messages`: Phase 1 search does not index synced mai
 | Send a seller update (recommendation required) | ✅ | ✅ | T | own listings | — | — | — |
 | Confirm or move a milestone date | ✅ | ✅ | T | O / D | — | D | — |
 | Owner view (dollars, costs, forecast) | ✅ | ✅ | — | — | — | — | — |
-| Source costs | ✅ | ✅ (re-auth for closed months) | — | — | — | — | — |
+| Source costs (D6: a closed month needs a re-check for the Owner and the Admin alike) | ✅ (re-auth for closed months) | ✅ (re-auth for closed months) | — | — | — | — | — |
 | Call reviews | ✅ | ✅ | T only if `tl_sees_call_scores` | own calls | own calls | — | — |
 | Coaching settings: call reviews on/off, Team Lead visibility, checklist items (E283) | ✅ 🔒 (turning reviews or Team Lead visibility on; reviews on needs `platform:coaching` cleared) | call reviews off only (no re-auth) | — | — | — | — | — |
 | Voice answering on/off | ✅ 🔒 (on needs the platform pack cleared) | off only | — | — | — | — | — |
@@ -945,7 +945,7 @@ Notation as §4. **smoke** here means `rls_smoke_p23.sql`.
 - **R-PLAN-1** A weekly plan is internal (`weekly_plan`, autonomy internal by CHECK): 3–5 items chosen by `planWeek(goals, pace, slowDeals, openPromises, apptsWithoutOutcome, tasks)` (pure), ranked by deadline first and then by the gap to the goal, each with evidence; accepting creates tasks; nothing is created without the agent's tap. [core + DB CHECK]
 - **R-PLAN-2** Goal pace uses the scoreboard definers (0012). [api]
 - **R-PLAN-3** Items whose source the agent can no longer see are dropped at render; person-level do-not-contact contacts are never suggested. [api + core]
-- **R-CAL-1** Calendar links are visible only to their user and the system; Owners and Admins see nothing. [DB, smoke]
+- **R-CAL-1** Calendar links are visible only to their user and the system; Owners and Admins see nothing of a link. Like every audit row, its audit rows (connected, disconnected, revoked: provider and time, never a token or a calendar id) are theirs to read (owner decision D6, 2026-11-11). [DB, smoke]
 - **R-CAL-2** Sync is one-way (app → calendar), fenced by `appointments.sync_version` (an older push never overwrites a newer one; `external_pushed_version` records what the calendar accepted); an edit made in the calendar is detected at the next push (etag mismatch) and the appointment is then detached, never overwritten, and the app says so; tokens refresh lazily inside the push. [api + DB]
 - **R-CAL-3** Free/busy is read live per request and never stored. [api]
 - **R-CAL-4** Revoking or disconnecting stops sync; in-app appointments are unaffected. [api]

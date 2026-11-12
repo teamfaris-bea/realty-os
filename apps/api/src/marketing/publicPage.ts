@@ -4,7 +4,7 @@
 //   GET /p/:tenantSlug/:pageSlug/photos/:position    one of the page's images                 public, rate-limited
 //   GET /api/public/marketing-assets/:token          a short-lived signed image link (routes.ts; Instagram fetches it)
 //
-// Viewers are not principals (ARCHITECTURE §21.1). The page is read ONLY through app.public_listing_page (0052 definer):
+// Viewers are not principals (ARCHITECTURE §21.1). The page is read ONLY through app.public_listing_page (0050 definer):
 // the approved prose, the bound facts of the team listing (rendered live by core renderPiece: a price change shows at
 // once, no re-approval, E90), the identity block and the piece's own assets through marketing_piece_assets. Never
 // contact data, never the listing agent, never another piece. A retracted page or an off-market listing is 410 with its
