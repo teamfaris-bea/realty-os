@@ -106,11 +106,12 @@ async function txA(deps: TurnDeps, tenantId: string, p: TurnPayload): Promise<Pr
       return { kind: 'done', code: `ENDED:${chain.worst!.code}` } as const;
     }
     if (a.pausedAt !== null) {
-      if (p.timer === 'pause_expiry') {
+      // R-ISA-16 E516: the inactivity warning ends paused care too (core machine.ts onTimer), with the pinned handoff
+      if (p.timer === 'pause_expiry' || p.timer === 'inactivity_warning') {
         const ctx = await contextFor(tx, a, now);
-        const r = step(a.machine, { type: 'timer', at: now, timer: 'pause_expiry' }, ctx.facts);
+        const r = step(a.machine, { type: 'timer', at: now, timer: p.timer }, ctx.facts);
         await applyActionsInTx({ tx, deps, actor: actor(tenantId), ctx, now, turnId: null, pinnedSeq: a.lastInboundSeq }, r);
-        return { kind: 'done', code: 'PAUSE_EXPIRY' } as const;
+        return { kind: 'done', code: p.timer === 'pause_expiry' ? 'PAUSE_EXPIRY' : 'INACTIVITY_WARNING' } as const;
       }
       return { kind: 'done', code: 'PAUSED' } as const;
     }
@@ -132,7 +133,7 @@ async function txA(deps: TurnDeps, tenantId: string, p: TurnPayload): Promise<Pr
     const lastSeq = inbounds.at(-1)?.seq ?? a.machine.lastInboundSeq;
     const awaiting = r.actions.find((x) => x.kind === 'await_model');
     const applied = await applyActionsInTx({ tx, deps, actor: actor(tenantId), ctx, now, turnId: turn.id, pinnedSeq: conv.seq }, { state: r.state, actions: r.actions.filter((x) => x.kind !== 'await_model') });
-    await sql`UPDATE ai_isa_assignments SET last_inbound_seq = GREATEST(last_inbound_seq, ${lastSeq}) WHERE tenant_id = app.tenant_id() AND id = ${a.id}`.execute(tx);
+    await sql`UPDATE ai_isa_assignments SET last_inbound_seq = GREATEST(last_inbound_seq, ${lastSeq}) WHERE tenant_id = app.tenant_id() AND id = ${a.id} AND ended_at IS NULL AND last_inbound_seq < ${lastSeq}`.execute(tx);
     if (!awaiting || applied.ended || applied.paused) {
       await sql`UPDATE ai_isa_turns SET status = CASE WHEN message_id IS NOT NULL THEN status WHEN ${applied.ended} THEN 'handed_off' ELSE 'no_reply' END,
           state_after = ${r.state.ended !== null ? 'ended' : r.state.phase}

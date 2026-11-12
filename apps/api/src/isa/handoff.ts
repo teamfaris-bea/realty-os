@@ -53,6 +53,10 @@ export async function writeHandoffInTx(tx: Tx, ids: IdGenerator, actor: SystemAc
                         AND o.status IN ('sent','delivered') AND o.created_at > m.created_at)
     ORDER BY m.created_at`.execute(tx);
   const nextSteps = i.nextSteps ?? nextStepsFor(h);
+  // R-ISA-16: the stored inactivity deadline (R-OWN-23) and the team zone, for the package and the card sentence
+  const inact = await sql<{ release: Date | null; tz: string }>`SELECT c.inactivity_release_at AS release, s.default_timezone AS tz FROM contacts c
+    JOIN tenant_settings s ON s.tenant_id = c.tenant_id WHERE c.tenant_id = app.tenant_id() AND c.id = ${a.contactId}`.execute(tx);
+  const releaseAt = inact.rows[0]?.release ?? null;
   const pkg = {
     v: 1,
     reason: h.reason,
@@ -70,6 +74,7 @@ export async function writeHandoffInTx(tx: Tx, ids: IdGenerator, actor: SystemAc
     notes: i.notes ?? [],
     startedAt: a.startedAt,
     epoch: a.epoch,
+    inactivityReleaseAt: releaseAt?.toISOString() ?? null,
   };
   const actionId = ids.next<'X'>() as string;
   const handoffId = ids.next<'X'>() as string;
@@ -89,10 +94,13 @@ export async function writeHandoffInTx(tx: Tx, ids: IdGenerator, actor: SystemAc
       ${i.pendingMessageId ?? null}, ${i.pendingMessageId ? 'queued' : 'none'}, ${cls}, ${new Date(due)}, ${rec.primary})`.execute(tx);
   const targets = rec.primary ? [rec.primary] : rec.escalation;
   const hot = cls === 'critical';
+  const cardText = h.reason === 'inactivity_warning' && releaseAt !== null
+    ? inactivityCardText(label, releaseAt, inact.rows[0]!.tz)
+    : rec.primary ? 'AI care handed back to you' : 'AI care ended because this lead moved. Here is what it did.';
   for (const userId of targets) {
     await upsertFeedItem(tx, ids, {
       userId, itemType: 'ai_isa_handoff', band: 'pinned', contactId: a.contactId, subjectType: 'ai_isa_handoff', subjectId: handoffId, assistantActionId: actionId,
-      score: hot ? 98 : cls === 'high' ? 90 : 75, reasons: [{ code: `AI_ISA_HANDOFF:${h.reason}`, text: rec.primary ? 'AI care handed back to you' : 'AI care ended because this lead moved. Here is what it did.' }],
+      score: hot ? 98 : cls === 'high' ? 90 : 75, reasons: [{ code: `AI_ISA_HANDOFF:${h.reason}`, text: cardText }],
       dedupeKey: `ai_isa_handoff:${a.id}`, dueAt: due,
     });
     // a notification names no content: the reason code only (the AI summary is never in a notification)
@@ -101,6 +109,17 @@ export async function writeHandoffInTx(tx: Tx, ids: IdGenerator, actor: SystemAc
   }
   await audit(tx, actor, { action: 'ai_isa.handoff_created', entity: { type: 'ai_isa_handoff', id: handoffId }, reason: h.reason });
   return handoffId;
+}
+
+/** R-ISA-16 E516: "{Name} returns to the pond on {date, team zone} unless you touch them. AI care has handed back." */
+export function inactivityCardText(label: string, releaseAt: Date, zone: string): string {
+  let date: string;
+  try {
+    date = new Intl.DateTimeFormat('en-US', { timeZone: zone, weekday: 'short', month: 'short', day: 'numeric' }).format(releaseAt);
+  } catch {
+    date = releaseAt.toISOString().slice(0, 10);
+  }
+  return `${label} returns to the pond on ${date} unless you touch them. AI care has handed back.`.slice(0, 200);
 }
 
 function nextStepsFor(h: Handoff): string[] {

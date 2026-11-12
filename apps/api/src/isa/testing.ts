@@ -116,6 +116,16 @@ export async function replyAddressOf(h: ApiHarness, tenantId: string, contactId:
   return replyAddress(deps.publicBaseUrl, token);
 }
 
+/** Runs the AI ISA sweep once now (the periodic job's body), then drains what it enqueued. */
+export async function sweepNow(h: ApiHarness, tenantId: string, rounds = 3): Promise<void> {
+  const { withTenantTx } = await import('@realty/db');
+  const { systemActor } = await import('../worker/systemActor.js');
+  const { sweepInTx } = await import('./handlers.js');
+  const deps = depsFromPlatform(h.app.platform);
+  await withTenantTx(systemActor(tenantId as never, 'assistant'), (tx, now) => sweepInTx(tx, deps, systemActor(tenantId as never, 'assistant'), now), { db: h.database });
+  await runIsa(h, tenantId, rounds);
+}
+
 export async function assignmentOf(h: ApiHarness, contactId: string) {
   const r = await h.su.query<{ id: string; state: string; paused_at: Date | null; pause_reason: string | null; ended_at: Date | null; end_reason: string | null; epoch: number }>(
     `SELECT id, state, paused_at, pause_reason, ended_at, end_reason, epoch FROM ai_isa_assignments WHERE contact_id = $1 ORDER BY started_at DESC LIMIT 1`, [contactId]);
