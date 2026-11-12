@@ -515,8 +515,9 @@ function same(n: NormalizedRecord | null, dbRow: Record<string, unknown> | null)
 async function verificationIn(tx: Tx, stage: brepo.StageRow): Promise<VerificationView & { documentedCounts: DocumentedOutcomes }> {
   const approved = stage.expected_counts as unknown as Counts;
   const r = await rrepo.recount(tx, stage.id);
-  // owner decision B4 (E230): planned assignments brought in unassigned for a documented reason count as not imported
-  const documentedCounts: DocumentedOutcomes = { unassigned: r.unassigned };
+  // owner decision B4 (E230): planned assignments brought in unassigned for a documented reason count as not imported;
+  // batch 6 review F3: also those whose person left the import's creation state, and those kept as a person set them
+  const documentedCounts: DocumentedOutcomes = { unassigned: r.unassigned, kept: r.kept };
   const expected = expectedAfterCommit(approved, documentedCounts);
   const db: Counts = { source: r.source, imported: r.imported, needs_review: r.needs_review, rejected: r.rejected, duplicate: r.duplicate };
   const keys = ['source', 'imported', 'needs_review', 'rejected', 'duplicate'] as const;
@@ -533,7 +534,7 @@ async function verificationIn(tx: Tx, stage: brepo.StageRow): Promise<Verificati
     const dbRow = await vrepo.dbSide(tx, rec);
     sample.push({ sourceRef: ref, recordId: rec.id, source: sourceSide(rec.normalized as NormalizedRecord | null), imported: dbRow, same: same(rec.normalized as NormalizedRecord | null, dbRow) });
   }
-  return { expected, approved, documented: documentedView(documentedCounts), documentedCounts, db, matches: diffs.length === 0 && reconciles(expected) && reconciles(db), diffs, sample };
+  return { expected, approved, documented: documentedView(documentedCounts, { person: r.unassignedPerson }), documentedCounts, db, matches: diffs.length === 0 && reconciles(expected) && reconciles(db), diffs, sample };
 }
 
 /** GET …/verification: the recount and the 20 side-by-side spot checks (deterministic per stage). */

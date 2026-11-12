@@ -55,6 +55,21 @@ export interface UnassignedIssue {
 }
 
 /**
+ * Batch 6 review F3: a person this import created who left the import's creation state before the owners were imported
+ * (a person merged them with another, or changed who holds them: closed, released, re-opened) and whom nobody holds: the
+ * engine makes no assignment, so they come in unassigned. Core plans it so when the dry run already sees it (core
+ * IssueCode PERSON_MERGED / PERSON_CHANGED); the commit documents it when it happened after the approval.
+ */
+export const PERSON_MERGED = 'PERSON_MERGED';
+export const PERSON_CHANGED = 'PERSON_CHANGED';
+export interface PersonIssue {
+  code: typeof PERSON_MERGED | typeof PERSON_CHANGED;
+  severity: 'info';
+}
+/** Every issue that brings a planned assignment in unassigned: the ownership report lists those people (E231). */
+export type CameInUnassignedIssue = UnassignedIssue | PersonIssue;
+
+/**
  * Where a person the ownership commit brought in unassigned is now (E231, review B4-R1): still unassigned (the only
  * ones "Assign these people" selects), owned, on offer, in a pond, closed, deleted (or purged), or merged into another
  * contact. Only `owned` has an owner.

@@ -161,6 +161,32 @@ describe('contacts matching (R-IMPORT-7, R-OWN-25)', () => {
     expect(only(dryRun('ownership', [own], createdHere))).toMatchObject({ outcome: 'will_import', action: { kind: 'assign', contact: { contactId: C1 }, target: { userId: AGENT_A } } });
   });
 
+  // Batch 6 review ownership-sla/F3: the planner planned an assignment for every contact this batch created that was
+  // `unassigned`, but the engine takes import_assign only in the import's creation state (unassigned, seq 1, never
+  // routed). A person merged (or changed by someone) after the contacts stage left it, so the commit made nothing,
+  // called it OWNER_KEPT ("already has an owner": false) and the recount never matched.
+  it('E230 E231 E41 the ownership dry run plans what the engine will do with a person this import created who left its creation state: kept when someone gave them an owner, "came in unassigned" (merged, or changed) when nobody holds them', () => {
+    const own = mapFub('ownership', FUB_EXPORT.people[0], USERS);
+    const plan = (c: Parameters<typeof existingContact>[0], extra: Parameters<typeof existingContact>[0][] = [], refTo: ContactId = C1) =>
+      only(dryRun('ownership', [own], buildExistingIndex(emptyIndexInput({ contacts: [existingContact({ importBatchId: BATCH, ...c }), ...extra.map((x) => existingContact(x))], externalRefs: [{ entityType: 'contact', externalId: '1001', entityId: refTo }] }))));
+    // still in its creation state: the mapped assignment, as before
+    expect(plan({ contactId: C1, ownershipSeq: 1, routeDueAt: null })).toMatchObject({ outcome: 'will_import', action: { kind: 'assign' } });
+    // another imported person was merged into it: unassigned at seq 2, so the engine would make nothing
+    expect(plan({ contactId: C1, ownershipSeq: 2, routeDueAt: null, mergedIn: true })).toMatchObject({
+      outcome: 'rejected', action: null, matchContactId: C1, issues: [{ code: 'PERSON_MERGED', severity: 'info' }],
+    });
+    // it was merged into another person this import created: the record follows the merge, and says so
+    expect(plan({ contactId: C2, ownershipSeq: 2, routeDueAt: null, mergedIn: true }, [{ contactId: C1, importBatchId: BATCH, ownershipState: 'closed', closedReason: 'merged', mergedIntoContactId: C2, ownershipSeq: 2 }])).toMatchObject({
+      outcome: 'rejected', matchContactId: C2, issues: [{ code: 'PERSON_MERGED', severity: 'info' }],
+    });
+    // closed, released to a pond, or re-opened and routed by someone since: nobody holds them, the import leaves it
+    for (const c of [{ ownershipState: 'closed' as const, closedReason: 'spam', ownershipSeq: 2 }, { ownershipState: 'in_pond' as const, ownershipSeq: 3 }, { ownershipState: 'unassigned' as const, ownershipSeq: 4, routeDueAt: T0 }]) {
+      expect(plan({ contactId: C1, routeDueAt: null, ...c })).toMatchObject({ outcome: 'rejected', matchContactId: C1, issues: [{ code: 'PERSON_CHANGED', severity: 'info' }] });
+    }
+    // given an owner by someone: kept (true: they have one), as before
+    expect(plan({ contactId: C1, ownershipState: 'owned', ownerUserId: AGENT_B, ownershipSeq: 2 })).toMatchObject({ outcome: 'duplicate', issues: [{ code: 'OWNER_KEPT', severity: 'info' }] });
+  });
+
   it('E39 a deleted contact re-imported from an old CSV becomes a new contact, and the preview says it stays opted out', () => {
     const input = emptyIndexInput({
       contacts: [existingContact({ contactId: C1, ownershipState: 'closed', closedReason: 'deleted', phones: ['+14155550132'] })],

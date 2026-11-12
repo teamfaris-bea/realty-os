@@ -99,6 +99,21 @@ describe('verification (R-IMPORT-5)', () => {
     expect(buildVerification({ ...base, db: counts(7, 0, 0, 6, 1), documented: { unassigned: 5 } })).toMatchObject({ ok: false, code: 'RECOUNT_MISMATCH' });
   });
 
+  // Batch 6 review ownership-sla/F3: a person the approved plan was to assign who was given an owner by someone (or
+  // merged into someone's lead) before the commit keeps that owner (OWNER_KEPT): the record moves from imported to
+  // duplicate. Before, that move was a RECOUNT_MISMATCH, and the stage, and every later stage, stalled.
+  it('E230 E231 R-IMPORT-5: a planned assignment kept as someone set it before the commit moves from imported to duplicate, documented like B4; never a mismatch, never hiding another difference', () => {
+    const approved = counts(7, 4, 0, 2, 1);
+    const db = counts(7, 1, 0, 4, 2);
+    expect(expectedAfterCommit(approved, { unassigned: 2, kept: 1 })).toEqual(db);
+    expect(expectedAfterCommit(approved, { unassigned: 2 })).toEqual(counts(7, 2, 0, 4, 1));
+    const sample = ['fub:people/1'];
+    const base = { expected: approved, db, sample, spotChecks: sample.map((r) => ({ sourceRef: r, matches: true })), verifierUserId: ADMIN, at: T0 };
+    expect(buildVerification({ ...base, documented: { unassigned: 2 } })).toMatchObject({ ok: false, code: 'RECOUNT_MISMATCH' });
+    expect(buildVerification({ ...base, documented: { unassigned: 2, kept: 1 } })).toMatchObject({ ok: true, verification: { documented: { unassigned: 2, kept: 1 } } });
+    expect(buildVerification({ ...base, documented: { unassigned: 1, kept: 2 } })).toMatchObject({ ok: false, code: 'RECOUNT_MISMATCH' });
+  });
+
   it('E230 property: the documented outcome keeps the expectation reconciling, and a real recount verifies only when exactly those k records moved', () => {
     const c = fc.tuple(fc.nat(50), fc.nat(50), fc.nat(50), fc.nat(50)).map(([a, b, d, e]) => counts(a + b + d + e, a, b, d, e));
     fc.assert(

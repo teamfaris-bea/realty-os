@@ -24,6 +24,7 @@ const row = (n: number, now: UnassignedNow = 'unassigned', reason: UnassignedIss
   issue: issue(reason, userId),
   display_name: `Person ${n}`,
   now,
+  merged_into_contact_id: null,
 });
 
 describe('E230 the reason a planned assignment came in unassigned, in plain words', () => {
@@ -112,6 +113,38 @@ describe('E231 the report lists the people brought in unassigned and offers "Ass
     // the words agree with each count
     expect(unassignedReport([row(1, 'merged'), row(2, 'merged'), row(3, 'in_pond'), row(4, 'in_pond'), row(5, 'offered'), row(6, 'offered')], names)!.view.summary).toEqual([
       'After the import, 2 were put in a pond, 2 were each offered to an agent and 2 were each merged into another contact.',
+    ]);
+  });
+
+  // Batch 6 review ownership-sla/F3: people who left the import's creation state before the owners were imported come in
+  // unassigned too, said as what happened to them; two records a merge joined are one person.
+  it('E230 E231 a person merged, or changed by someone, after the contacts were imported comes in unassigned with that reason; one line per person; the verification says each kind once (review F3)', () => {
+    const person = (n: number, code: 'PERSON_MERGED' | 'PERSON_CHANGED', now: UnassignedNow = 'unassigned', contact = n): UnassignedPersonRow => ({
+      ...row(n, now),
+      contact_id: row(contact).contact_id,
+      issue: { code, severity: 'info' },
+    });
+    const r = unassignedReport([row(1), person(2, 'PERSON_MERGED'), person(3, 'PERSON_MERGED', 'unassigned', 2), person(4, 'PERSON_CHANGED', 'closed')], names)!;
+    expect(r.lines).toEqual([
+      "1 person came in unassigned because Blake Chen's account is suspended.",
+      '1 person came in unassigned because they were merged with another person after the contacts were imported.',
+      '1 person came in unassigned because someone changed who holds them after the contacts were imported.',
+      'Nothing was assigned to them, and the import started no offer, timer or routing.',
+      'After the import, 1 was closed.',
+      '2 people are still unassigned: use "Assign these people" to give them an owner.',
+    ]);
+    expect(r.view.people.map((p) => [p.contactId, p.sentence])).toEqual([
+      [row(1).contact_id, "Brought in unassigned: Blake Chen's account is suspended."],
+      [row(2).contact_id, 'Brought in unassigned: they were merged with another person after the contacts were imported.'],
+      [row(4).contact_id, 'Brought in unassigned: someone changed who holds them after the contacts were imported.'],
+    ]);
+    expect([r.view.total, r.view.stillUnassigned, r.view.contactIds]).toEqual([3, 2, [row(1).contact_id, row(2).contact_id]]);
+    expect(issueView({ code: 'PERSON_MERGED', severity: 'info' }).sentence).toBe('Brought in unassigned: they were merged with another person after the contacts were imported.');
+    expect(issueView({ code: 'OWNER_KEPT', severity: 'info' }).sentence).toBe("This person was already here, or someone gave them an owner after the contacts were imported, so the import doesn't change who owns them.");
+    expect(documentedView({ unassigned: 3, kept: 1 }, { person: 2 })).toEqual([
+      { code: OWNER_UNAVAILABLE, count: 1, sentence: "1 planned assignment came in unassigned because the member it was matched to couldn't hold leads when the owners were imported (each record says why). It is counted as not imported." },
+      { code: 'PERSON_CHANGED', count: 2, sentence: '2 planned assignments came in unassigned because the person was merged with another person, or someone changed who holds them, after the contacts were imported (each record says which). They are counted as not imported.' },
+      { code: 'OWNER_KEPT', count: 1, sentence: '1 planned assignment was not made because someone gave the person an owner after the contacts were imported (the record says so). It is counted as already here.' },
     ]);
   });
 

@@ -211,6 +211,8 @@ export const ReportResponse = z.object({
               /** review B4-R1: where the person is now; only `owned` has an owner, only `unassigned` is selected */
               now: z.enum(['unassigned', 'owned', 'offered', 'in_pond', 'closed', 'deleted', 'merged']),
               nowSentence: z.string().nullable(),
+              /** `merged`: the live contact the person was merged into since (review F7: the report links there); else null */
+              mergedIntoContactId: z.string().nullable(),
             }),
           ),
         })

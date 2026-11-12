@@ -370,7 +370,8 @@ describe('people brought in unassigned (owner decision B4)', () => {
     rejected: 4,
     duplicate: 1,
     reconciles: true,
-    lines: ['7 assignments in Follow Up Boss.', "2 people came in unassigned because Bea Agent's account is suspended."],
+    // the API's real lines (review F8): why they came in unassigned; where they are now is the card's `summary`, not a line
+    lines: ['7 assignments in Follow Up Boss.', "2 people came in unassigned because Bea Agent's account is suspended.", 'Nothing was assigned to them, and the import started no offer, timer or routing.'],
     unassigned: unassigned(still),
   });
   const member = (userId: string, displayName: string, role: string, status = 'active') => ({ userId, displayName, email: '', role, status, acceptingLeads: true, mfaEnabled: false, joinedAt: null, version: 1 });
@@ -415,6 +416,9 @@ describe('people brought in unassigned (owner decision B4)', () => {
     expect(within(people).getAllByText(why)).toHaveLength(2);
     expect(within(people).getByRole('link', { name: 'Omar Optout' })).toHaveAttribute('href', `/contacts/${OMAR}`);
     expect(within(people).getByText('2 people are still unassigned: use "Assign these people" to give them an owner.')).toBeInTheDocument();
+    // review F8: said once on the page, next to the button it names
+    expect(screen.getAllByText(/still unassigned: use "Assign these people"/)).toHaveLength(1);
+    expect(screen.getAllByText(/came in unassigned because Bea Agent's account is suspended/)).toHaveLength(1);
     await u.click(within(people).getByRole('button', { name: 'Assign these people' }));
     const picker = await screen.findByRole('region', { name: 'Assign to' });
     await waitFor(() => expect(within(picker).getAllByRole('button').map((x) => x.textContent)).toEqual(['Olivia Owner (you)', 'Sam Lee']));
@@ -426,9 +430,10 @@ describe('people brought in unassigned (owner decision B4)', () => {
 
   it('E231 once each of them has an owner the report says so and offers nothing more', async () => {
     const b = batch([stage('contacts', 'verified'), stage('ownership', 'verified', { counts: committedOwnership })]);
-    leadAdminApp(importFake(b).on(`GET /imports/${BID}/report`, { status: 200, body: { source: 'Follow Up Boss', parity: null, notImported: null, categories: [{ ...ownershipRow(false), lines: ['Both of them have an owner now.'] }] } }), `/imports/${BID}`, 'owner');
+    leadAdminApp(importFake(b).on(`GET /imports/${BID}/report`, { status: 200, body: { source: 'Follow Up Boss', parity: null, notImported: null, categories: [ownershipRow(false)] } }), `/imports/${BID}`, 'owner');
     const people = await screen.findByRole('region', { name: 'People who came in unassigned' });
     expect(within(people).getByText('Both of them have an owner now.')).toBeInTheDocument();
+    expect(screen.getAllByText('Both of them have an owner now.')).toHaveLength(1);
     expect(within(people).getAllByText('Has an owner now.')).toHaveLength(2);
     expect(within(people).queryByRole('button', { name: /Assign/ })).toBeNull();
   });
@@ -438,6 +443,7 @@ describe('people brought in unassigned (owner decision B4)', () => {
   it('E231 people closed, deleted or merged away since are said to be so, never to have an owner; a deleted person is no link; only those still unassigned are selected (review B4-R1, F1)', async () => {
     const RAE = '01900000-0000-7000-8000-00000000c103';
     const PIA = '01900000-0000-7000-8000-00000000c104';
+    const JANE = '01900000-0000-7000-8000-00000000c105';
     const view = {
       total: 4,
       stillUnassigned: 1,
@@ -446,12 +452,12 @@ describe('people brought in unassigned (owner decision B4)', () => {
       people: [
         { contactId: OMAR, name: 'Omar Optout', sentence: why, stillUnassigned: false, now: 'closed', nowSentence: 'Closed after the import.' },
         { contactId: QUIN, name: 'Quin Notext', sentence: why, stillUnassigned: false, now: 'deleted', nowSentence: 'Deleted after the import.' },
-        { contactId: PIA, name: 'Pia Dnc', sentence: why, stillUnassigned: false, now: 'merged', nowSentence: 'Merged into another contact after the import.' },
+        { contactId: PIA, name: 'Pia Dnc', sentence: why, stillUnassigned: false, now: 'merged', nowSentence: 'Merged into another contact after the import.', mergedIntoContactId: JANE },
         { contactId: RAE, name: 'Rae Nobody', sentence: why, stillUnassigned: true, now: 'unassigned', nowSentence: null },
       ],
     };
     const b = batch([stage('contacts', 'verified'), stage('ownership', 'verified', { counts: committedOwnership })]);
-    const row = { ...ownershipRow(true), lines: ['7 assignments in Follow Up Boss.', ...view.summary], unassigned: view };
+    const row = { ...ownershipRow(true), unassigned: view };
     leadAdminApp(importFake(b).on(`GET /imports/${BID}/report`, { status: 200, body: { source: 'Follow Up Boss', parity: null, notImported: null, categories: [row] } }), `/imports/${BID}`, 'owner');
     const people = await screen.findByRole('region', { name: 'People who came in unassigned' });
     expect(within(people).queryByText(/has an owner/i)).toBeNull();
@@ -461,6 +467,8 @@ describe('people brought in unassigned (owner decision B4)', () => {
     expect(within(people).queryByRole('link', { name: 'Quin Notext' })).toBeNull();
     expect(within(people).getByRole('link', { name: 'Omar Optout' })).toHaveAttribute('href', `/contacts/${OMAR}`);
     expect(within(people).getByRole('button', { name: 'Assign this person' })).toBeInTheDocument();
+    // review F7: a person merged away since is linked to the record they live on now, never to the closed old one
+    expect(within(people).getByRole('link', { name: 'Pia Dnc' })).toHaveAttribute('href', `/contacts/${JANE}`);
   });
 });
 

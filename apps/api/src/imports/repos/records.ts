@@ -3,10 +3,13 @@
 // never duplicates a record (R-IMPORT-9).
 import type { Tx } from '@realty/db';
 import { sql } from 'kysely';
-import { OWNER_UNAVAILABLE, type UnassignedIssue, type UnassignedNow } from '../types.js';
+import { type CameInUnassignedIssue, OWNER_UNAVAILABLE, PERSON_CHANGED, PERSON_MERGED, type UnassignedNow } from '../types.js';
 
-/** jsonb containment of the documented-outcome issue (owner decision B4, E230) */
+/** jsonb containment of the documented-outcome issues (owner decision B4, E230; batch 6 review F3) */
 const UNASSIGNED_MARK = JSON.stringify([{ code: OWNER_UNAVAILABLE }]);
+const MERGED_MARK = JSON.stringify([{ code: PERSON_MERGED }]);
+const CHANGED_MARK = JSON.stringify([{ code: PERSON_CHANGED }]);
+const KEPT_MARK = JSON.stringify([{ code: 'OWNER_KEPT' }]);
 
 export type RecordOutcomeDb = 'will_import' | 'imported' | 'needs_review' | 'rejected' | 'duplicate' | 'merged' | 'reverted' | 'skipped';
 
@@ -180,10 +183,11 @@ export async function markImported(tx: Tx, id: string, target: { table: string; 
 
 /**
  * Owner decision B4 (E230): a planned assignment the commit did not make because the mapped member could no longer
- * hold leads. Not imported, for this documented reason (the recount counts it, core expectedAfterCommit); the target
- * is the person, left exactly as the contacts stage made them (unassigned); nothing was written.
+ * hold leads, or (batch 6 review F3) because the person left the import's creation state since the dry run and nobody
+ * holds them. Not imported, for this documented reason (the recount counts it, core expectedAfterCommit); the target
+ * is the person as they are now; nothing was written.
  */
-export async function markUnassigned(tx: Tx, id: string, contactId: string, issue: UnassignedIssue): Promise<void> {
+export async function markUnassigned(tx: Tx, id: string, contactId: string, issue: CameInUnassignedIssue): Promise<void> {
   await sql`UPDATE import_records SET outcome = 'rejected', target_table = 'contacts', target_id = ${contactId}, created_rows = '[]'::jsonb,
               issues = issues || jsonb_build_array(${JSON.stringify(issue)}::jsonb)
              WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx);
@@ -211,13 +215,20 @@ export interface OutcomeCounts {
 
 /**
  * The database side of the R-IMPORT-5 recount. `imported` counts only records whose target row still
- * exists (a record marked imported whose row is gone is not imported). `unassigned`: the rejected records
- * that are documented commit outcomes (OWNER_UNAVAILABLE, owner decision B4, E230).
+ * exists (a record marked imported whose row is gone is not imported). The documented commit outcomes are records the
+ * approved plan was to import that the commit did not (their dry-run outcome was will_import or needs_review):
+ * `unassigned`, brought in unassigned (OWNER_UNAVAILABLE, owner decision B4, E230; PERSON_MERGED / PERSON_CHANGED,
+ * batch 6 review F3, of which `unassignedPerson`); `kept`, kept as a person set them since the dry run (OWNER_KEPT at
+ * the commit, F3). A record the dry run already planned so is in the approved counts and is no commit outcome.
  */
-export async function recount(tx: Tx, stageId: string): Promise<OutcomeCounts & { importedMarked: number; unassigned: number }> {
-  const r = await sql<{ source: number; marked: number; imported: number; needs_review: number; rejected: number; duplicate: number; unassigned: number }>`
+export async function recount(tx: Tx, stageId: string): Promise<OutcomeCounts & { importedMarked: number; unassigned: number; unassignedPerson: number; kept: number }> {
+  const r = await sql<{ source: number; marked: number; imported: number; needs_review: number; rejected: number; duplicate: number; unassigned: number; person: number; kept: number }>`
     SELECT count(*) FILTER (WHERE dry_run_outcome IS NOT NULL)::int AS source,
-           count(*) FILTER (WHERE outcome = 'rejected' AND dry_run_outcome IS NOT NULL AND issues @> ${UNASSIGNED_MARK}::jsonb)::int AS unassigned,
+           count(*) FILTER (WHERE outcome = 'rejected' AND dry_run_outcome IN ('will_import','needs_review')
+                              AND (issues @> ${UNASSIGNED_MARK}::jsonb OR issues @> ${MERGED_MARK}::jsonb OR issues @> ${CHANGED_MARK}::jsonb))::int AS unassigned,
+           count(*) FILTER (WHERE outcome = 'rejected' AND dry_run_outcome IN ('will_import','needs_review')
+                              AND (issues @> ${MERGED_MARK}::jsonb OR issues @> ${CHANGED_MARK}::jsonb))::int AS person,
+           count(*) FILTER (WHERE outcome = 'duplicate' AND dry_run_outcome IN ('will_import','needs_review') AND issues @> ${KEPT_MARK}::jsonb)::int AS kept,
            count(*) FILTER (WHERE outcome = 'imported')::int AS marked,
            count(*) FILTER (WHERE outcome = 'imported' AND (
              CASE r.target_table
@@ -234,37 +245,54 @@ export async function recount(tx: Tx, stageId: string): Promise<OutcomeCounts & 
            count(*) FILTER (WHERE outcome = 'duplicate' AND dry_run_outcome IS NOT NULL)::int AS duplicate
       FROM import_records r WHERE r.tenant_id = app.tenant_id() AND r.stage_id = ${stageId}`.execute(tx);
   const x = r.rows[0]!;
-  return { source: x.source, imported: x.imported, needs_review: x.needs_review, rejected: x.rejected, duplicate: x.duplicate, importedMarked: x.marked, unassigned: x.unassigned };
+  return { source: x.source, imported: x.imported, needs_review: x.needs_review, rejected: x.rejected, duplicate: x.duplicate, importedMarked: x.marked, unassigned: x.unassigned, unassignedPerson: x.person, kept: x.kept };
 }
 
 export interface UnassignedPersonRow {
   record_id: string;
   source_ref: string;
   contact_id: string;
-  issue: UnassignedIssue;
+  issue: CameInUnassignedIssue;
   display_name: string | null;
   /** where the person is now: only `unassigned` (live, not merged away, nobody's) is still unassigned (review B4-R1) */
   now: UnassignedNow;
+  /** `merged`: the live record the person was merged into since (followed to the end), where the report links */
+  merged_into_contact_id: string | null;
 }
 
 /**
  * Owner decision B4 (E231): the people an ownership commit brought in unassigned (record order), each with where they
  * are now. A contact that is gone (purged after its delete, or erased) or soft-deleted is `deleted`; one merged into
- * another contact is `merged`; any other is its ownership state (contacts CHECK: only `owned` has an owner).
+ * another contact is `merged`, with the live contact it went to; any other is its ownership state (contacts CHECK: only
+ * `owned` has an owner). Batch 6 review F3: also the people who left the import's creation state before the owners were
+ * imported and whom nobody held (PERSON_MERGED / PERSON_CHANGED): documented at the commit (the target is the person),
+ * or already planned so by the dry run (the record's match is the person).
  */
 export async function unassignedPeople(tx: Tx, stageId: string): Promise<UnassignedPersonRow[]> {
   return (
     await sql<UnassignedPersonRow>`
-      SELECT r.id AS record_id, r.source_ref, r.target_id AS contact_id,
-             (SELECT i FROM jsonb_array_elements(r.issues) i WHERE i->>'code' = ${OWNER_UNAVAILABLE} LIMIT 1) AS issue,
+      SELECT r.id AS record_id, r.source_ref, p.id AS contact_id,
+             (SELECT i FROM jsonb_array_elements(r.issues) i WHERE i->>'code' IN (${OWNER_UNAVAILABLE}, ${PERSON_MERGED}, ${PERSON_CHANGED}) LIMIT 1) AS issue,
              c.display_name,
              CASE WHEN c.id IS NULL OR c.deleted_at IS NOT NULL THEN 'deleted'
                   WHEN c.merged_into_contact_id IS NOT NULL THEN 'merged'
-                  ELSE c.ownership_state END AS now
+                  ELSE c.ownership_state END AS now,
+             s.id AS merged_into_contact_id
         FROM import_records r
-        LEFT JOIN contacts c ON c.tenant_id = r.tenant_id AND c.id = r.target_id
-       WHERE r.tenant_id = app.tenant_id() AND r.stage_id = ${stageId} AND r.outcome = 'rejected' AND r.target_table = 'contacts'
-         AND r.issues @> ${UNASSIGNED_MARK}::jsonb
+        CROSS JOIN LATERAL (SELECT COALESCE(r.target_id, r.match_contact_id) AS id) p
+        LEFT JOIN contacts c ON c.tenant_id = r.tenant_id AND c.id = p.id
+        -- F7: the live record a merged-away person lives on now (merge chains are at most 5 deep, R-OWN-20)
+        LEFT JOIN LATERAL (
+          WITH RECURSIVE up(id, next, depth) AS (
+            SELECT c.id, c.merged_into_contact_id, 0
+            UNION ALL
+            SELECT x.id, x.merged_into_contact_id, up.depth + 1 FROM up JOIN contacts x ON x.tenant_id = r.tenant_id AND x.id = up.next WHERE up.depth < 8)
+          SELECT up.id FROM up JOIN contacts x ON x.tenant_id = r.tenant_id AND x.id = up.id
+           WHERE up.depth > 0 AND up.next IS NULL AND x.deleted_at IS NULL LIMIT 1) s ON c.merged_into_contact_id IS NOT NULL
+       WHERE r.tenant_id = app.tenant_id() AND r.stage_id = ${stageId} AND r.outcome = 'rejected'
+         AND (r.target_table = 'contacts' OR (r.target_table IS NULL AND r.dry_run_outcome = 'rejected'))
+         AND p.id IS NOT NULL
+         AND (r.issues @> ${UNASSIGNED_MARK}::jsonb OR r.issues @> ${MERGED_MARK}::jsonb OR r.issues @> ${CHANGED_MARK}::jsonb)
        ORDER BY r.id`.execute(tx)
   ).rows;
 }

@@ -248,7 +248,7 @@ export function makeImportsRoutes(depsFor?: ImportDepsFromPlatform): RouteModule
             // the members they were matched to as their membership reads now (reviews B4-R1, B4-R2)
             const own = stages.find((s) => s.category === 'ownership');
             const unassigned = own ? await rrepo.unassignedPeople(tx, own.id) : [];
-            const names = await brepo.memberNames(tx, unassigned.map((u) => u.issue?.userId).filter((x): x is string => typeof x === 'string'));
+            const names = await brepo.memberNames(tx, unassigned.map((u) => (u.issue && 'userId' in u.issue ? u.issue.userId : null)).filter((x): x is string => typeof x === 'string'));
             return reportView(b, stages, { unassigned, names });
           },
           { db: deps(req).db },
