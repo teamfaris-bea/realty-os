@@ -220,7 +220,7 @@ GRANT EXECUTE ON FUNCTION app.rearm_webhook_event(text, text, timestamptz) TO ap
 GRANT UPDATE ON webhook_events TO app_definer;
 
 -- -----------------------------------------------------------------------------
--- (i) Leads skipped while their source was off (R-LSRC-2, E387; orchestrator 2026-11-12)
+-- (i) Leads skipped while their source was off (R-LSRC-2, E597; orchestrator 2026-11-12)
 -- -----------------------------------------------------------------------------
 -- A partner-feed lead that arrives while its lead source is off is skipped (the feed cursor advances, so turning the
 -- source back on does not replay it), and one receipt per lead says so: which source, which path, when, and why.

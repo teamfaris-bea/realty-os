@@ -174,7 +174,7 @@ describe('Add a source', () => {
 });
 
 describe('R-LSRC-2 skipped while off', () => {
-  it('R-LSRC-2 E387: the card says how many partner-feed leads were skipped while the source was off, in words', async () => {
+  it('R-LSRC-2 E597: the card says how many partner-feed leads were skipped while the source was off, in words', async () => {
     const { skippedSentence } = await import('./words.js');
     expect(skippedSentence({ skippedWhileOffLast30Days: 0 })).toBeNull();
     expect(skippedSentence({ skippedWhileOffLast30Days: 1 })).toBe('1 lead skipped while this source was off (last 30 days)');

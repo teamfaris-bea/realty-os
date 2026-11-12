@@ -1,4 +1,4 @@
-// R-LSRC-2 / E387 (module 22, orchestrator 2026-11-12): a partner-feed lead that arrives while its lead source is off is
+// R-LSRC-2 / E597 (module 22, orchestrator 2026-11-12): a partner-feed lead that arrives while its lead source is off is
 // skipped, not retried: no contact, no inquiry, one receipt per lead with its reason (no lead content), the cursor
 // advances, the Lead sources overview counts them, and turning the source back on does not replay them.
 import { randomUUID } from 'node:crypto';
@@ -47,8 +47,8 @@ async function runFeedPoll(connId: string): Promise<void> {
   await createWorker({ db: h.database, registry, providers: h.providers, queues: ['default'], concurrency: 1, worker: `feed-${randomUUID().slice(0, 6)}`, idleMs: 10, log: silentLogger }).drain(10);
 }
 
-describe('R-LSRC-2 E387 partner-feed leads while the source is off', () => {
-  it('R-LSRC-2 E387: skipped with one receipt each (no lead content), the cursor advances, the overview counts them, and turning the source on does not replay them', async () => {
+describe('R-LSRC-2 E597 partner-feed leads while the source is off', () => {
+  it('R-LSRC-2 E597: skipped with one receipt each (no lead content), the cursor advances, the overview counts them, and turning the source on does not replay them', async () => {
     const connId = await feedConnection(w.sourceId);
     await freshReauth(h, w.owner);
     expect((await call(w.owner, 'POST', `/lead-sources/${w.sourceId}/off`)).status).toBe(200);

@@ -350,7 +350,7 @@ describe('R-LEM-11 personal mailboxes (hand forwards)', () => {
     }
   });
 
-  it('R-LEM-11 E380: the forwarder’s From address, a member’s account email and alert phone, and a team number are never kept; two accepted forwards of different leads ⇒ two contacts', async () => {
+  it('R-LEM-11 E590: the forwarder’s From address, a member’s account email and alert phone, and a team number are never kept; two accepted forwards of different leads ⇒ two contacts', async () => {
     const agent = w.agents[0]!;
     const memberEmail = (await h.su.query<{ email: string }>('SELECT email::text AS email FROM users WHERE id = $1', [agent.userId])).rows[0]!.email;
     const alert = randomPhone();

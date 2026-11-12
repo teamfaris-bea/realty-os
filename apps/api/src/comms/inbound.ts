@@ -374,7 +374,7 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
   // language or a wrong-number reply, on a tracked number: the call or text is also an inquiry from the number's
   // source, so the re-inquiry rules decide (R-OWN-20, owner decision D8(2)). Owned, offered and closed people are only
   // threaded. Read under the contact locks taken in step 3; the intake attaches to a contact in `sharing` (same HMAC).
-  // A reaction text (a tapback quoting the team's text, D5b: `rx`) is a reply, never a new inquiry (E349).
+  // A reaction text (a tapback quoting the team's text, D5b: `rx`) is a reply, never a new inquiry (E595).
   if (tracked && (e.kind === 'call' || (classification.kind === 'none' && !rx))) {
     const st = await sql<{ ownership_state: string }>`SELECT ownership_state FROM contacts WHERE tenant_id = app.tenant_id() AND id = ${target}`.execute(tx);
     const state = st.rows[0]?.ownership_state;

@@ -196,7 +196,7 @@ export const webhookGuard: preHandlerHookHandler = tagGuard(async function webho
   const provider = req.routeOptions.config.webhookProvider;
   if (!provider) throw new AppError('INTERNAL_ERROR');
   // A check that could not run (WEBHOOK_UNAVAILABLE: the database was unreachable) is a 503 the provider retries,
-  // with no rejected row (module 22, R-GADS-1 E381). Every other exception is still a 403.
+  // with no rejected row (module 22, R-GADS-1 E591). Every other exception is still a 403.
   const ok = await verifyRequest(provider, req).catch((e: unknown) => {
     if (e instanceof AppError && e.code === 'WEBHOOK_UNAVAILABLE') throw e;
     return false;

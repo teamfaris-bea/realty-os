@@ -1,4 +1,4 @@
-// The Lead sources page's API (module 22 intake continuation; DATA_MODEL R-LSRC-1..5, E333–E339, E387).
+// The Lead sources page's API (module 22 intake continuation; DATA_MODEL R-LSRC-1..5, E333–E339, E597).
 //
 //   GET   /lead-sources/overview          settings.routing   every source with its facts and paths, in one read
 //   PATCH /lead-sources/:id               settings.routing   rename; a new consent text (a new consent_disclosures row)
@@ -213,7 +213,7 @@ async function sourceRow(tx: Tx, id: string): Promise<ViewRow | null> {
 }
 const view = (s: ViewRow) => ({ id: s.id, name: s.name, kind: s.kind, active: s.active, offSince: s.active ? null : iso(s.active_changed_at), hasToken: s.has_token, createdAt: s.created_at.toISOString() });
 
-/** The paths of a source that stop when it is turned off (or work again when on), in words (R-LSRC-2, E387). */
+/** The paths of a source that stop when it is turned off (or work again when on), in words (R-LSRC-2, E597). */
 async function pathWords(tx: Tx, id: string, has_token: boolean): Promise<string[]> {
   const r = await sql<{ email: boolean; google: boolean; numbers: number; feeds: number; chats: number }>`
     SELECT EXISTS (SELECT 1 FROM integration_connections c WHERE c.tenant_id = app.tenant_id() AND c.lead_source_id = ${id}::uuid AND c.kind = 'lead_email' AND c.status IN ('connected','degraded')) AS email,

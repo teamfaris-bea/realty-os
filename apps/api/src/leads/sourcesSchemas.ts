@@ -20,7 +20,7 @@ export const SourceOverview = z.object({
   leadsLast30Days: z.number().int(),
   heldEmails: z.number().int(),
   forwardingConfirmations: z.number().int(),
-  /** partner-feed leads skipped because the source was off, in the last 30 days (R-LSRC-2, E387) */
+  /** partner-feed leads skipped because the source was off, in the last 30 days (R-LSRC-2, E597) */
   skippedWhileOffLast30Days: z.number().int(),
   paths: z.object({
     email: z.object({ state: PathState, address: z.string().nullable(), lastEmailAt: Iso.nullable() }),

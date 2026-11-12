@@ -1,5 +1,5 @@
 // Calls and texts to a tracking number tied to a lead source (module 22; DATA_MODEL R-TRK-1..3, E320–E325, E340,
-// E384, E385, E352) through the real server and the fake telephony provider.
+// E594, E595, E352) through the real server and the fake telephony provider.
 import { sha256Hex } from '@realty/core/compliance';
 import { addressLockOrder, inquiryFingerprint } from '@realty/core/ownership';
 import { withTenantTx } from '@realty/db';
@@ -98,7 +98,7 @@ describe('R-TRK-3 a known person on a tracked number', () => {
     expect(await inquiriesOf(offered!)).toHaveLength(1);
   });
 
-  it('R-TRK-3 R-OWN-20 E384: a pond person\'s call is one inquiry from the source, routed once; an import-unassigned person with no route due is routed', async () => {
+  it('R-TRK-3 R-OWN-20 E594: a pond person\'s call is one inquiry from the source, routed once; an import-unassigned person with no route due is routed', async () => {
     const pond = await intake(h, w, { inquiryType: 'sell', fullName: 'Pond Person', phones: [randomPhone()] });
     expect((await contactState(h, pond.contactId)).ownership_state).toBe('in_pond');
     const phone = (await h.su.query("SELECT address FROM contact_points WHERE contact_id = $1 AND kind = 'phone'", [pond.contactId])).rows[0]!.address as string;
@@ -115,7 +115,7 @@ describe('R-TRK-3 a known person on a tracked number', () => {
     expect((await contactState(h, id)).ownership_state).toBe('offered');
   });
 
-  it('R-TRK-3 R-CONSENT-1 E385: a pond person who texts STOP, opt-out language or a wrong-number reply is no inquiry', async () => {
+  it('R-TRK-3 R-CONSENT-1 E595: a pond person who texts STOP, opt-out language or a wrong-number reply is no inquiry', async () => {
     for (const body of ['STOP', 'please stop texting me', 'wrong number']) {
       const pond = await intake(h, w, { inquiryType: 'sell', fullName: `Quiet ${body.length}`, phones: [randomPhone()] });
       const phone = (await h.su.query("SELECT address FROM contact_points WHERE contact_id = $1 AND kind = 'phone'", [pond.contactId])).rows[0]!.address as string;
@@ -125,7 +125,7 @@ describe('R-TRK-3 a known person on a tracked number', () => {
     }
   });
 
-  it('R-TRK-3 R-REACT-2 E385: a pond person\'s reaction text (a tapback quoting the team\'s text) is a reply, never an inquiry; a plain text after it is', async () => {
+  it('R-TRK-3 R-REACT-2 E595: a pond person\'s reaction text (a tapback quoting the team\'s text) is a reply, never an inquiry; a plain text after it is', async () => {
     const agent = w.agents[1]!;
     const c = await ownedContact(agent, { firstName: 'Tap', confirmDistinct: true });
     const sent = await sendText(agent, c.id, 'See you at the open house');

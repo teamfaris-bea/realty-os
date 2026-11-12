@@ -165,7 +165,7 @@ async function receiveInTx(tx: Tx, actor: SystemActor, deps: LeadEmailDeps, reso
 }
 
 /**
- * The tenant-HMACs of the team's own addresses (R-LEM-11 E380): every active member's account email and alert phone
+ * The tenant-HMACs of the team's own addresses (R-LEM-11 E590): every active member's account email and alert phone
  * (VERIFY 16: whether other member addresses, e.g. an email identity, belong here too), the tenant's live numbers, and
  * the email's own From address. Read as the system actor of the tenant (RLS: memberships and their users are readable
  * tenant-wide).
