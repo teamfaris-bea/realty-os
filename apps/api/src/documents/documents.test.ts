@@ -162,6 +162,33 @@ describe('upload (R-DOC-3, R-DOC-6)', () => {
     const r = await upload(a, `/contacts/${c1.id}/documents`, { kind: 'other' });
     expect([r.status, r.code]).toEqual([409, 'CONTACT_MERGED']);
   });
+
+  it('R-DOC-1 R-DATA-7 (b11 ownership-data/F1): after a merge the survivor\'s agent and Team Lead still list and download the merged-away record\'s contact document (never moved); a stranger does not', async () => {
+    const { command } = await import('../leads/testing.js');
+    const { ownedContact } = await import('../comms/testing.js');
+    const a = w.agents[0]!;
+    const survivor = await ownedContact(a, { consent: false, firstName: 'Noor' });
+    const loser = await ownedContact(a, { consent: false, firstName: 'Noor' });
+    const bytes = pdfBytes('pre-approval letter');
+    const id = await uploadClean(a, `/contacts/${loser.id}/documents`, { kind: 'other', bytes });
+    const m = await command(a, survivor.id, 'merge', { loserId: loser.id });
+    expect(m.status, JSON.stringify(m.body)).toBe(200);
+    expect((await rowsOf('SELECT contact_id FROM documents WHERE id = $1', [id]))[0]!.contact_id).toBe(loser.id); // never moved
+    for (const c of [a, w.teamLead, w.owner, w.admin]) {
+      const l = await call<{ documents: { id: string; scope: { kind: string; id: string } }[] }>(c, 'GET', `/contacts/${survivor.id}/documents`);
+      expect(l.status, c.role ?? '').toBe(200);
+      expect(l.body.documents.find((d) => d.id === id), c.role ?? '').toMatchObject({ scope: { kind: 'contact', id: loser.id } });
+      expect((await call(c, 'GET', `/documents/${id}`)).status, c.role ?? '').toBe(200);
+      const f = await c.get(`/api/documents/${id}/file`);
+      expect(f.statusCode, c.role ?? '').toBe(200);
+      expect(Buffer.from(f.rawPayload).equals(Buffer.from(bytes))).toBe(true);
+    }
+    // the other agent (no relation to the person) still sees nothing; a new version on the merged-away record is refused
+    expect((await call(w.agents[1]!, 'GET', `/documents/${id}`)).status).toBe(404);
+    expect((await w.agents[1]!.get(`/api/documents/${id}/file`)).statusCode).toBe(404);
+    const v = await upload(a, `/documents/${id}/versions`);
+    expect([v.status, v.code]).toEqual([409, 'CONTACT_MERGED']);
+  });
 });
 
 describe('scan gating (R-DOC-3, R-DOC-8)', () => {

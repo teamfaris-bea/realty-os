@@ -42,14 +42,19 @@ export async function docById(tx: Tx, id: string, o: { lock?: boolean } = {}): P
   return r.rows[0] ?? null;
 }
 
-/** Every visible document of a scope (a contact's: its whole merge tree), oldest first. */
+/**
+ * Every visible document of a scope, oldest first. A contact's: its whole merge tree, read with the definer
+ * app.contact_merge_tree_ids (0075; contacts RLS hides a merged-away record from the survivor's agent and Team Lead,
+ * so the invoker app.contact_merge_tree stops at the survivor); documents_select still decides each row, and it
+ * admits a merged-away record's document to whoever sees its root survivor in detail (b11 ownership-data/F1).
+ */
 export async function docsOfScope(tx: Tx, scope: DocumentScope): Promise<DocRow[]> {
   const where =
     scope.kind === 'deal'
       ? sql`d.deal_id = ${scope.id}`
       : scope.kind === 'listing'
         ? sql`d.listing_id = ${scope.id}`
-        : sql`d.contact_id IN (SELECT t.contact_id FROM app.contact_merge_tree(app.tenant_id(), ${scope.id}::uuid) t)`;
+        : sql`d.contact_id = ANY (app.contact_merge_tree_ids(app.tenant_id(), ${scope.id}::uuid))`;
   const r = await sql<DocRow>`SELECT ${COLS} FROM ${FROM} WHERE d.tenant_id = app.tenant_id() AND ${where} ORDER BY d.created_at, d.id`.execute(tx);
   return r.rows;
 }
@@ -105,6 +110,17 @@ export async function visibleContact(tx: Tx, id: string): Promise<{ id: string; 
      WHERE tenant_id = app.tenant_id() AND id = ${id} AND deleted_at IS NULL AND app.contact_detail_visible(tenant_id, id)`.execute(tx);
   const c = r.rows[0];
   return c ? { id: c.id, mergedIntoContactId: c.merged_into_contact_id } : null;
+}
+
+/**
+ * The root survivor of a merged-away record when the caller sees the survivor in detail but not the record itself
+ * (contacts RLS hides a closed, unowned loser; documents_select still shows its documents, 0075), else null.
+ */
+export async function visibleMergeRootOf(tx: Tx, contactId: string): Promise<string | null> {
+  const r = await sql<{ root: string }>`
+    SELECT root FROM (SELECT app.contact_merge_root(app.tenant_id(), ${contactId}::uuid) AS root) x
+     WHERE root <> ${contactId}::uuid AND app.contact_detail_visible(app.tenant_id(), root)`.execute(tx);
+  return r.rows[0]?.root ?? null;
 }
 
 export async function scopeVisible(tx: Tx, scope: DocumentScope): Promise<boolean> {

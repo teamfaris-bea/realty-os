@@ -10,7 +10,7 @@ import { type Tx } from '../src/index.js';
 import { issuePortalDocumentStream, withPortalTx } from '../src/portalTx.js';
 import { withPreTenant, withTenantTx } from '../src/tenantTx.js';
 import { createParty, setPortalCleared, signIn } from './portalFixture.js';
-import { type Harness, type Member, PH, type World, createHarness, createWorld, selfCreated, suRows, userActor, uuid } from './world.js';
+import { type Harness, type Member, PH, type World, cmd, createHarness, createWorld, selfCreated, suRows, userActor, uuid } from './world.js';
 
 
 let h: Harness;
@@ -248,5 +248,44 @@ describe('deal_dates_evidence_guard (0069)', () => {
 
   it('R-DOC-10: a NULL claim (a manual date, or ON DELETE SET NULL) passes untouched', async () => {
     expect(await errOf(insertDate(a, dealId, null, 'manual'))).toBe('NO ERROR');
+  });
+});
+
+describe('documents follow the merge to the survivor (0075_b11_review_documents; b11 ownership-data/F1)', () => {
+  it('R-DOC-1 R-DATA-7: a merged-away record\'s contact document is read by whoever sees the root survivor in detail, along a chain; the record itself stays hidden and nobody else gains anything', async () => {
+    const s = await selfCreated(h.app, w, a, 'Rae Root');
+    const mid = await selfCreated(h.app, w, a, 'Rae Root');
+    const leaf = await selfCreated(h.app, w, a, 'Rae Root');
+    const d = await doc(a, await obj(a), { contact: leaf, kind: 'other' });
+    await clean(d);
+    // leaf -> mid -> s (a merge chain), each by the ownership engine
+    for (const [survivor, loser] of [[mid, leaf], [s, mid]] as const) {
+      const r = await cmd(h.app, a.actor, survivor, { kind: 'merge', survivorId: survivor, loserId: loser, ownerChoice: null });
+      expect(r.outcome.ok, JSON.stringify(r.outcome)).toBe(true);
+    }
+    const seen = (m: Member) => as(m, async (tx) => (await sql<{ id: string }>`SELECT id FROM documents WHERE id = ${d}`.execute(tx)).rows.length === 1);
+    const contactSeen = (m: Member) => as(m, async (tx) => (await sql<{ id: string }>`SELECT id FROM contacts WHERE id = ${leaf}`.execute(tx)).rows.length === 1);
+    expect(await contactSeen(a)).toBe(false); // contacts RLS still hides the closed, unowned record
+    for (const m of [a, w.tl!, w.owner]) expect(await seen(m), m.role).toBe(true);
+    for (const m of [b, tc, isa]) expect(await seen(m), m.role).toBe(false);
+    // the object row follows the clean document (objects_documents)
+    expect(await as(a, async (tx) => (await sql`SELECT o.id FROM stored_objects o JOIN documents x ON x.object_id = o.id WHERE x.id = ${d}`.execute(tx)).rows.length)).toBe(1);
+    // the helpers: the chain's root and the whole tree, in the caller's tenant only
+    const helpers = (m: Member, tenant: string) => as(m, async (tx) => (await sql<{ root: string; tree: string[] }>`
+        SELECT app.contact_merge_root(${tenant}::uuid, ${leaf}::uuid) AS root, app.contact_merge_tree_ids(${tenant}::uuid, ${s}::uuid) AS tree`.execute(tx)).rows[0]!);
+    expect(await helpers(b, w.tenantId)).toEqual({ root: s, tree: [s, mid, leaf].sort() });
+    expect(await helpers(b, w2.tenantId)).toEqual({ root: leaf, tree: [] });
+    const other = await withTenantTx(w2.owner.actor, async (tx) => (await sql<{ root: string; tree: string[] }>`
+        SELECT app.contact_merge_root(${w.tenantId}::uuid, ${leaf}::uuid) AS root, app.contact_merge_tree_ids(${w.tenantId}::uuid, ${s}::uuid) AS tree`.execute(tx)).rows[0]!, { db: h.app });
+    expect(other).toEqual({ root: leaf, tree: [] }); // another tenant learns nothing
+    // nobody but app_user (and the owner app_definer) may execute them
+    const grants = await suRows<{ fn: string; pub: boolean; app_user: boolean; definer: boolean; owner: string }>(h.su, `
+        SELECT p.proname AS fn, has_function_privilege('public', p.oid, 'EXECUTE') AS pub, has_function_privilege('app_user', p.oid, 'EXECUTE') AS app_user,
+               p.prosecdef AS definer, pg_get_userbyid(p.proowner) AS owner
+          FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'app' AND p.proname IN ('contact_merge_root','contact_merge_tree_ids') ORDER BY 1`);
+    expect(grants).toEqual([
+      { fn: 'contact_merge_root', pub: false, app_user: true, definer: true, owner: 'app_definer' },
+      { fn: 'contact_merge_tree_ids', pub: false, app_user: true, definer: true, owner: 'app_definer' },
+    ]);
   });
 });

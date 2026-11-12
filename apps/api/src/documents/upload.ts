@@ -161,7 +161,12 @@ async function insertInTx(tx: Tx, deps: DocumentDeps, actor: UserActor, target: 
   }
   if (scope.kind === 'contact') {
     const c = await R.visibleContact(tx, scope.id);
-    if (!c) throw new AppError('NOT_FOUND');
+    if (!c) {
+      // a new version of a merged-away record's document, by someone who sees it through the survivor (0075): the
+      // record takes no new file (R-DOC-5); the person lives on the survivor (b11 ownership-data/F1)
+      const root = prev ? await R.visibleMergeRootOf(tx, scope.id) : null;
+      throw root ? new AppError('CONTACT_MERGED', { mergedInto: root }) : new AppError('NOT_FOUND');
+    }
     await refuseMergedAway(tx, c);
   } else if (!(await R.scopeVisible(tx, scope))) throw new AppError('NOT_FOUND');
   const tenantId = actor.tenantId as TenantId;

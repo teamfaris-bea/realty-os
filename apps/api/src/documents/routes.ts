@@ -117,6 +117,11 @@ async function handleUpload(req: FastifyRequest, reply: FastifyReply, target: { 
       if (!prev) return false;
       const scope = R.scopeOf(prev);
       const f = await scopeFacts(tx, scope);
+      if (f === null && scope.kind === 'contact') {
+        // seen through the merge survivor (0075): a merged-away record takes no new version (b11 ownership-data/F1)
+        const root = await R.visibleMergeRootOf(tx, scope.id);
+        if (root) throw new AppError('CONTACT_MERGED', { mergedInto: root });
+      }
       return f !== null && canFor(req)(UPLOAD_ACTION[scope.kind], f);
     });
     if (!ok) throw new AppError('NOT_FOUND');
