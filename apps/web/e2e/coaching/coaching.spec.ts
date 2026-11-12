@@ -181,12 +181,11 @@ test('Admin: call reviews go off in 1 tap; turning them on, Team Lead access and
   await tap(page, page.getByRole('button', { name: 'Turn call reviews off' }), m);
   await expect(page.getByRole('heading', { name: 'Call reviews are off' })).toBeVisible();
   await expect(page.getByText('Call reviews are off. Today’s tips are gone.')).toBeVisible();
-  // the switch is now disabled: focus is on what changed, not lost to <body>
+  // the switch is gone (turning call reviews on is the Owner's): focus is on what changed, not lost to <body>
   await expect(page.getByRole('heading', { name: 'Call reviews are off' })).toBeFocused();
   expect(m.taps).toBe(1);
-  const turnOn = page.getByRole('button', { name: 'Turn call reviews on' });
-  await expect(turnOn).toBeDisabled();
-  await expect(turnOn).toHaveAccessibleDescription('Only the Owner can turn call reviews on.');
+  await expect(page.getByRole('button', { name: 'Turn call reviews on' })).toHaveCount(0);
+  await expect(page.getByText('Only the Owner can turn call reviews on.')).toBeVisible();
   await noGrades(page);
   expect(await axeViolations(page)).toEqual([]);
   await shot(page, 'admin-off');

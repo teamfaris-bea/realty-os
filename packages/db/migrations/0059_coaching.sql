@@ -76,11 +76,13 @@ BEGIN
   IF app.tenant_id() IS NOT NULL AND NEW.tenant_id IS DISTINCT FROM app.tenant_id() THEN RETURN NEW; END IF;   -- RLS rejects
   IF current_user IN ('app_definer','app_retention') THEN RETURN NEW; END IF;
   -- an Admin may turn call reviews off and change nothing else: Team Lead visibility and the checklist stay
-  -- exactly as they were in the same UPDATE (owner decision 2026-11-11, as Gmail sync; E283)
+  -- exactly as they were in the same UPDATE (owner decision 2026-11-11, as Gmail sync; E283). Every term of the
+  -- exception is true or false, never NULL (IS TRUE / IS FALSE), so a NULL fails closed here, not only at the
+  -- NOT NULL constraints checked after this trigger.
   IF (NEW.call_scoring_enabled, NEW.tl_sees_call_scores, NEW.coaching_rubric_disabled)
        IS DISTINCT FROM (OLD.call_scoring_enabled, OLD.tl_sees_call_scores, OLD.coaching_rubric_disabled)
      AND COALESCE(app.my_role(), '') <> 'owner'
-     AND NOT (COALESCE(app.my_role(), '') = 'admin' AND OLD.call_scoring_enabled AND NOT NEW.call_scoring_enabled
+     AND NOT (COALESCE(app.my_role(), '') = 'admin' AND OLD.call_scoring_enabled IS TRUE AND NEW.call_scoring_enabled IS FALSE
               AND (NEW.tl_sees_call_scores, NEW.coaching_rubric_disabled)
                   IS NOT DISTINCT FROM (OLD.tl_sees_call_scores, OLD.coaching_rubric_disabled)) THEN
     RAISE EXCEPTION 'OWNER_ONLY_SETTING' USING ERRCODE = 'insufficient_privilege';

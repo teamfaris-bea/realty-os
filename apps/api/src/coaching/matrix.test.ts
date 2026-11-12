@@ -28,7 +28,8 @@ const ROUTES: { method: 'GET' | 'POST' | 'PUT'; url: string; action: Action; fac
   { method: 'GET', url: '/coaching/today', action: 'coaching.view', facts: { own: true } },
   { method: 'GET', url: '/coaching/team', action: 'coaching.team_view', facts: { team: true } },
   { method: 'GET', url: '/admin/coaching', action: 'coaching.settings', facts: { loosening: false } },
-  { method: 'PUT', url: '/admin/coaching', action: 'coaching.settings', facts: { loosening: false }, body: { scoringEnabled: false, tlSeesCallScores: false, disabledKeys: [] } },
+  // the one request every role that may change these settings may make: call reviews off (already off: a no-op)
+  { method: 'PUT', url: '/admin/coaching', action: 'coaching.settings', facts: { loosening: false }, body: { scoringEnabled: false } },
 ];
 
 describe('coaching routes × roles', () => {

@@ -26,7 +26,8 @@ describe('coaching.settings: Owner ✅ 🔒 (on needs the platform pack cleared)
     expect(can(user('admin'), 'coaching.settings', {})).toEqual({ ok: false, code: 'OWNER_REQUIRED' });
   });
 
-  it('R-COACH-1 R-PERM-13: the Owner keeps re-auth when loosening (call reviews or Team Lead visibility on) and needs none when not', () => {
+  it('R-COACH-1: the Owner keeps re-auth when loosening (call reviews or Team Lead visibility on) and needs none when not', () => {
+    // the same 15-minute re-auth window as R-PERM-13's actions (REAUTH_REQUIRED), though coaching is not one of them
     expect(can(user('owner'), 'coaching.settings', { loosening: true })).toEqual({ ok: false, code: 'REAUTH_REQUIRED', reauth: true });
     expect(can(user('owner'), 'coaching.settings', { loosening: true, reauth: STALE })).toEqual({ ok: false, code: 'REAUTH_REQUIRED', reauth: true });
     expect(can(user('owner'), 'coaching.settings', { loosening: true, reauth: FRESH })).toEqual({ ok: true });

@@ -495,7 +495,7 @@ export const RUBRIC_V1: Rubric;   export function scoreFromClaims(claims, rubric
 export function dailyFix(scores, dismissed7d, localDate): Fix | null;   export function trend(scoresA, scoresB): TrendItem[];
 // api: call review job (human-handled calls only), daily fix reconcile (hourly, per user and local date; card coaching_fix:{user}:{date})
 ```
-- **Rules:** R-COACH-1…6. **Tests:** E104–E106; lawful recording basis only; TL visibility only with the Owner setting (DB); scoring stays off until `platform:coaching` is cleared; no score/grade fields (snapshot). **Accept when:** an agent sees one fix a day with two tap-to-play quotes; nothing reaches routing (architecture test).
+- **Rules:** R-COACH-1…6. **Tests:** E104–E106; E283 (an Admin turns call reviews off; on, Team Lead visibility and the checklist stay the Owner's); lawful recording basis only; TL visibility only with the Owner setting (DB); scoring stays off until `platform:coaching` is cleared; no score/grade fields (snapshot). **Accept when:** an agent sees one fix a day with two tap-to-play quotes; nothing reaches routing (architecture test).
 
 #### 37–41. Web (Phase 2)
 - **37 web/inbox:** channel tag per bubble (SMS, email, call, web chat); compose defaults to the client's last open channel and says why another is offered; D2: no Messenger/Instagram compose and no window copy; chat widget bundle with brokerage name, disclosure and "the first reply may come from the team's assistant"; no fake typing. Rules: R-INBOX-4, genuineness (D2: R-INBOX-6 not built). Playwright phone + desktop; widget size budget (≤ 30 kB gzip).

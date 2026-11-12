@@ -70,14 +70,16 @@ describe('an Admin turns call reviews off, and nothing else (E283, owner decisio
     expect((await row()).scoring).toBe(false);
   });
 
-  it('E283 R-INT-6: turning call reviews off never waits for counsel: an Admin turns a paused switch off while platform:coaching is not cleared', async () => {
+  it('E283: turning call reviews off never waits for counsel: an Admin turns a paused switch off while platform:coaching is not cleared', async () => {
+    // (R-INT-6 gates turning a capability on; this checks that its gate never stands in the way of "off")
     await ownerSets({ scoring: true, tl: false, off: [] });
     await packCleared(false);
     expect(await update(admin.actor, sql`call_scoring_enabled = false`)).toBe(1);
     expect(await row()).toEqual({ scoring: false, tl: false, off: [] });
   });
 
-  it('E283 R-COACH-1 R-INT-6: an Admin cannot turn call reviews on, even with platform:coaching cleared (OWNER_ONLY_SETTING)', async () => {
+  it('E283 R-COACH-1: an Admin cannot turn call reviews on, even with platform:coaching cleared (OWNER_ONLY_SETTING)', async () => {
+    // (the pack is cleared here, so R-INT-6's gate would let the Owner turn them on: the refusal is the role's alone)
     await ownerSets({ scoring: false, tl: false, off: [] });
     await expect(update(admin.actor, sql`call_scoring_enabled = true`)).rejects.toThrow(/OWNER_ONLY_SETTING/);
     expect(await row()).toEqual({ scoring: false, tl: false, off: [] });
@@ -117,6 +119,18 @@ describe('an Admin turns call reviews off, and nothing else (E283, owner decisio
     // restating a value it does not change is not a change: off alone still goes through
     expect(await update(admin.actor, sql`call_scoring_enabled = false, tl_sees_call_scores = true, coaching_rubric_disabled = '{recapped_call}'::text[]`)).toBe(1);
     expect(await row()).toEqual({ scoring: false, tl: true, off: ['recapped_call'] });
+  });
+
+  it('E283: the Admin\'s exception fails closed: a NULL in any call-scoring column is refused by the guard itself (OWNER_ONLY_SETTING), not left to the NOT NULL constraints', async () => {
+    await ownerSets({ scoring: true, tl: true, off: ['recapped_call'] });
+    for (const set of [
+      sql`call_scoring_enabled = NULL`,
+      sql`call_scoring_enabled = false, tl_sees_call_scores = NULL`,
+      sql`call_scoring_enabled = false, coaching_rubric_disabled = NULL`,
+    ]) {
+      await expect(update(admin.actor, set)).rejects.toThrow(/OWNER_ONLY_SETTING/);
+      expect(await row()).toEqual({ scoring: true, tl: true, off: ['recapped_call'] });
+    }
   });
 });
 
