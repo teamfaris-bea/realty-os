@@ -47,6 +47,8 @@ export async function storeDisclosure(tx: Tx, ids: IdGenerator, d: DisclosureInp
     bodySha256: sha256Hex(d.text),
     namesSeller: d.namesSeller,
     sourceKind,
+    // flagged edit (D12 proposed, R-ISA-9): a scope is stated only when the source sent both lists; the defaults are not
+    scopeStated: d.channels !== undefined && d.channels !== null && d.purposes !== undefined && d.purposes !== null,
   });
 }
 

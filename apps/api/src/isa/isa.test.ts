@@ -98,6 +98,43 @@ describe('a reply under live care (R-ISA-3, R-ISA-28, R-ISA-29)', () => {
   });
 });
 
+describe('non-turn inbounds pause care (R-ISA-3, R-ISA-14; E497)', () => {
+  it('R-ISA-3 E497: an MMS reply and a call from the person each run the R-AST-9 path and pause care (media, call); nothing reaches a prompt', async () => {
+    const { ingestInbound } = await import('../comms/inbound.js');
+    const { depsFromPlatform } = await import('../comms/runtime.js');
+    const { systemActor } = await import('../worker/systemActor.js');
+    const deps = depsFromPlatform(h.app.platform);
+    const l = await isaLead(h, w.agents[0]!);
+    await startCare(w.agents[0]!, l.id);
+    await runIsa(h, w.tenantId);
+    const calls = w.ai.calls.length;
+    await ingestInbound(systemActor(w.tenantId, 'provider'), { kind: 'sms', providerRef: `MM${'a'.repeat(32)}`, from: l.phone, to: w.mainNumber, body: 'look at this house', mediaCount: 1 }, deps);
+    expect((await assignmentOf(h, l.id))!.pause_reason).toBe('media');
+    expect((await handbacksOf(h, l.id)).length + (await feedItems(h, l.id)).filter((f) => f.item_type === 'unanswered_inbound').length).toBeGreaterThanOrEqual(1);
+    const l2 = await isaLead(h, w.agents[0]!);
+    await startCare(w.agents[0]!, l2.id);
+    await runIsa(h, w.tenantId);
+    await ingestInbound(systemActor(w.tenantId, 'provider'), { kind: 'call', providerRef: `CA${'b'.repeat(32)}`, from: l2.phone, to: w.mainNumber, status: 'no_answer' }, deps);
+    expect((await assignmentOf(h, l2.id))!.pause_reason).toBe('call');
+    await runIsa(h, w.tenantId);
+    expect(w.ai.calls.slice(calls).some((c) => c.user.includes('look at this house'))).toBe(false);
+  });
+});
+
+describe('represented elsewhere (R-ISA-26)', () => {
+  it('R-ISA-26: "we are already working with a realtor" pauses care with a Check this card for the owner (never ends by itself)', async () => {
+    const l = await isaLead(h, w.agents[0]!);
+    await startCare(w.agents[0]!, l.id);
+    await runIsa(h, w.tenantId);
+    await inboundSms(h, l.phone, w.mainNumber, 'Thanks but we are already working with a realtor');
+    await runIsa(h, w.tenantId);
+    const a = (await assignmentOf(h, l.id))!;
+    expect(a.ended_at).toBeNull();
+    expect(a.paused_at).not.toBeNull();
+    expect((await feedItems(h, l.id)).some((f) => f.item_type === 'ai_isa_escalation')).toBe(true);
+  });
+});
+
 describe('controls (R-ISA-15, R-ISA-3)', () => {
   it('R-ISA-15 E496: a human text pauses care human_contact; only the owner resumes; resume increments the epoch', async () => {
     const l = await isaLead(h, w.agents[0]!);

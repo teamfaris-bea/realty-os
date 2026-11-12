@@ -126,6 +126,8 @@ export const PACK_GATES: Record<string, string> = {
   'platform:voice': 'Voice answering',
   'platform:portal': 'Client portal sign-in',
   'platform:gmail': 'Gmail inbox sync',
+  'platform:ai_isa': 'AI assistant (ISA) messages',
+  'platform:ai_isa_seller_data': 'AI assistant recent-sales emails',
 };
 
 /**

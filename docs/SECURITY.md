@@ -1037,3 +1037,10 @@ adapter with a fetch that fails the test if it is ever called; nothing reaches T
   and the notice now says the part stays unread and may carry a STOP.
 - No SECURITY DEFINER function, policy or grant is added.
 
+
+## AI ISA (D12 PROPOSED; docs/AI_ISA.md)
+
+- Default off everywhere: `AI_ISA_LIVE_SENDS` (false), the unreviewed `platform:ai_isa` pack (the guard refuses every AI ISA send until counsel clears it), the Owner's switch (re-auth and attestation; DB guard), an approved team policy, the agent's own opt-in (re-auth, recomputed attestation hash) and a per-lead start by the lead's owner after the first human touch. No migration, backfill or seed enrolls anyone.
+- The model is untrusted: one contact per prompt, client own text from bound addresses only inside a nonce fence, no notes, transcripts, remarks, prices or synced mail; tool-less; strict JSON parsed by core; the model proposes and core decides; decisions stored as codes and handles only (DB CHECK). Facts are server-rendered. The hostile suite (`providers/fake/hostileIsaAi.ts`) proves nothing unsafe is sent and the recipient never changes.
+- The recipient is bound at start and immutable (R-ISA-28); a turn comes only from a bound point with an aligned DKIM pass for email; anything else pauses care and hands back.
+- Any opt-out, suppression or do-not-contact from any writer stops care through the stop-signal ledger in the writer's transaction (R-ISA-31). The definer change and its proof are in ARCHITECTURE §21.30. VERIFY WITH COUNSEL: every consent, quiet-hours, cap and disclosure default.

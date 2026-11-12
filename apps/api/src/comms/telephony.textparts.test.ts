@@ -274,7 +274,8 @@ describe('R-TWL-11 the thread, visibility, prompts and erasure', () => {
     const API = join(dirname(fileURLToPath(import.meta.url)), '..');
     const walk = (d: string): string[] => readdirSync(d).flatMap((n) => (statSync(join(d, n)).isDirectory() ? (n === '__snapshots__' ? [] : walk(join(d, n))) : /\.ts$/.test(n) && !n.endsWith('.test.ts') ? [join(d, n)] : []));
     const readers = walk(API).filter((f) => readFileSync(f, 'utf8').includes('message_text_parts')).map((f) => relative(API, f).replaceAll('\\', '/')).sort();
-    expect(readers).toEqual(['comms/media.ts', 'comms/mmsText.ts', 'comms/mmsTextJob.ts']);
+    // isa/turn.ts (D12 proposed) reads only that a part EXISTS, to keep that inbound out of turns and prompts (R-ISA-28)
+    expect(readers).toEqual(['comms/media.ts', 'comms/mmsText.ts', 'comms/mmsTextJob.ts', 'isa/turn.ts']);
   });
 });
 
