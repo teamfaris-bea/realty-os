@@ -267,6 +267,7 @@ exports[`api/cma schemas > R-AST-13: the response schemas are snapshot-tested > 
                       "VALUATION_NOT_REVIEWED",
                       "NO_VALUATION_STATEMENT",
                       "COMPS_HIDDEN",
+                      "SUBJECT_ADDRESS_UNKNOWN",
                       "SELLER_WITHHELD",
                       "POSSIBLE_LIVE_LISTING",
                       "NO_VALUE",

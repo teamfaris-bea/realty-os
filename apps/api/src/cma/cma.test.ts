@@ -127,6 +127,34 @@ describe('subject resolution (F4, E373)', () => {
     expect(second.body.cma.subject.facts['propertyType']).toEqual({ value: 'single_family', source: 'agent' });
   });
 
+  it('E365 E370: a street address without a city is refused (CMA_SUBJECT_INCOMPLETE names the city) on every prepare path, and nothing is stored', async () => {
+    const c = await contact(w.agents[0]!);
+    const line1 = '1040 Sample Avenue';
+    // an imported lead's address: the people API stores one without a city
+    const a = await call<{ address: { id: string } }>(w.agents[0]!, 'POST', `/contacts/${c}/addresses`, { kind: 'property', line1, region: 'CA', postalCode: '94110' });
+    expect(a.status).toBe(201);
+    // the home's own earlier sale, in the same ZIP: without an address key it could be chosen as a comp
+    await mlsSale(w, { line1, closeDate: daysAgo(100), sqft: 1500 });
+    const facts = { propertyType: 'single_family', sqft: 1500 };
+    const tap = await oneTap(w.agents[0]!, c, { facts });
+    const post = await prepare(w.agents[0]!, { contactId: c, subject: { kind: 'contact_address', contactAddressId: a.body.address.id, facts } });
+    for (const r of [tap, post]) {
+      const err = r.body as unknown as { error: { details: { missing: string[]; sentence: string } } };
+      expect([r.status, r.code, err.error.details.missing]).toEqual([422, 'CMA_SUBJECT_INCOMPLETE', ['city']]);
+      expect(err.error.details.sentence).toBe('Add the home’s city to prepare a CMA: without it the address’s MLS history can’t be looked up.');
+    }
+    const entered = await prepare(w.agents[0]!, { subject: { kind: 'entered', anchor: { line1, region: 'CA', postalCode: '94110' }, facts } });
+    expect([entered.status, entered.code]).toEqual([422, 'CMA_SUBJECT_INCOMPLETE']);
+    expect((await h.su.query('SELECT count(*)::int AS n FROM cma_reports WHERE contact_id = $1', [c])).rows[0].n).toBe(0);
+  });
+
+  it('E370 F2 R-CMA-7: an entered subject with no street is valued on its area, and readiness says the seller-flag and near-match checks could not run (SUBJECT_ADDRESS_UNKNOWN)', async () => {
+    const r = await prepare(w.agents[0]!, { subject: { kind: 'entered', anchor: { region: 'CA', postalCode: '94110', city: 'Oakland' }, facts: { propertyType: 'single_family', sqft: 1400 } } });
+    expect(r.status).toBe(201);
+    expect(r.body.cma.clientShare.allowed).toBe(false);
+    expect(r.body.cma.clientShare.blockers.find((b) => b.code === 'SUBJECT_ADDRESS_UNKNOWN')?.sentence).toMatch(/could not be checked\. Add the full address to share\.$/);
+  });
+
   it('owner question (c): the one-tap address is the contact\'s property address, else home; a contact without one is told to add it', async () => {
     const c = await contact(w.agents[0]!);
     const none = await oneTap(w.agents[0]!, c);

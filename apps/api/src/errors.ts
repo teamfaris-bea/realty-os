@@ -339,7 +339,7 @@ export const ERROR_STATUS = {
   // ---- api/cma (module 71, D9; R-CMA-6, R-CMA-8) ----
   CMA_VALUATION_NOT_ALLOWED: 409, // the MLS licence pack does not record that sold data may be used for valuations (valuation.agent_cma; E371; details.sentence)
   CMA_NO_MLS_CONNECTION: 409, // no live MLS feed, so there are no sold homes to compare (details.sentence)
-  CMA_SUBJECT_INCOMPLETE: 422, // the subject lacks its property type or size, or the contact has no address (details.missing, details.sentence; E373)
+  CMA_SUBJECT_INCOMPLETE: 422, // the subject lacks its property type or size, the contact has no address, or a street address lacks the city, state or ZIP its MLS key needs (details.missing, details.sentence; E373, E365)
   CMA_SUBJECT_TYPE_NOT_SUPPORTED: 422, // land and 'other' are not valued in V1 (owner question (g), core/valuation CMA_SUPPORTED_TYPES; details.propertyType)
   CMA_NOT_DRAFT: 409, // a shared or superseded CMA never changes; prepare a new draft (details.status; E377)
   // registry: add new entries above this line

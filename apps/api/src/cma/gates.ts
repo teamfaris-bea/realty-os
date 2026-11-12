@@ -6,7 +6,8 @@
 // is shown (E369).
 //
 // Client readiness (R-CMA-7): computed on every view, never stored, and nothing is shared in V1. `allowed` only when no
-// blocker holds. Every blocker that holds is listed, each in one plain sentence, read from V1-A's parsed licence pack
+// blocker holds (a subject with no address key is never allowed: the E370 and F2 checks need it). Every blocker that
+// holds is listed, each in one plain sentence, read from V1-A's parsed licence pack
 // (LicensePack.valuation, valuationStatement), V1-A's connection eligibility and freshness, and V1-A's client renderings
 // (clientView; clientSoldView for a mirrored team sale). V1-A's valuationEligible(…, 'client_cma') is the authority:
 // whatever it refuses is always a blocker here, for every connection the stored CMA was built from (its run's reads,
@@ -46,6 +47,7 @@ export const BLOCKER_CODES = [
   'VALUATION_NOT_REVIEWED',
   'NO_VALUATION_STATEMENT',
   'COMPS_HIDDEN',
+  'SUBJECT_ADDRESS_UNKNOWN',
   'SELLER_WITHHELD',
   'POSSIBLE_LIVE_LISTING',
   'NO_VALUE',
@@ -190,6 +192,7 @@ export async function clientReadiness(tx: Tx, i: ReadinessInput): Promise<{ shar
     CLIENT_USE_NOT_ALLOWED: 'Your MLS licence pack does not say sold data may be used in CMAs for clients. An Owner or Admin records this from your MLS agreement.',
     VALUATION_NOT_REVIEWED: 'The valuation part of your MLS licence pack has not been reviewed by counsel.',
     NO_VALUATION_STATEMENT: i.state === null ? 'The home’s state is not known, so no valuation statement applies.' : `No valuation statement is recorded for ${i.state}.`,
+    SUBJECT_ADDRESS_UNKNOWN: 'The home’s full address (street, city, state and ZIP code) is not known, so its own MLS listings and live listings that may be this home could not be checked. Add the full address to share.',
     NO_VALUE: 'There is no value to share: not enough comparable sales.',
   };
   const add = (code: PlainBlocker) => {
@@ -230,6 +233,9 @@ export async function clientReadiness(tx: Tx, i: ReadinessInput): Promise<{ shar
   if (hidden.length > 0) {
     blockers.push({ code: 'COMPS_HIDDEN', count: hidden.length, listingIds: [...hidden].sort(), sentence: `${hidden.length} of these sales can’t be shown to clients under your MLS licence. Remove ${hidden.length === 1 ? 'it' : 'them'} to share.` });
   }
+
+  // E370 and F2 need the subject's address key: without one, neither check can run, and that is said (never allowed)
+  if (i.addressKey === null) add('SUBJECT_ADDRESS_UNKNOWN');
 
   // E370: a live MLS record of the subject that withholds automated valuations, under the pack's scope (V6)
   const atKey = i.addressKey ? await mlsRowsAtAddress(tx, i.addressKey) : [];

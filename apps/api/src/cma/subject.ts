@@ -9,6 +9,10 @@
 //   entered          the agent's facts (CmaSubjectFactsSchema, strict), each labelled 'agent'. Only propertyType and sqft
 //                    are required (CMA_SUBJECT_INCOMPLETE otherwise); without coordinates only the subdivision, postal-code
 //                    and city tiers run (E373).
+// A contact or entered address with a street but no address key (its city, state or ZIP missing or unreadable) is
+// refused with CMA_SUBJECT_INCOMPLETE naming the part: without the key the home's own sales could become comps (E365)
+// and the seller-flag and near-match checks could not run (E370, F2). An address with no street is valued on its area
+// alone, and readiness says the checks could not run (SUBJECT_ADDRESS_UNKNOWN).
 // Every fact carries its source: mls, team or agent. Agent-entered facts (`facts` on any kind) fill gaps or replace a
 // fact, and say so. Reads run under the caller's RLS (every member may read listings; an address the caller cannot see
 // is 404).
@@ -122,6 +126,25 @@ function factsFromRow(r: ListingRow | null, src: FactSource): SubjectFacts {
 function keyOf(a: SubjectAddress): string | null {
   if (!a.line1 || !a.city || !a.region || !a.postalCode) return null;
   return addressKey({ line1: a.line1, line2: a.line2, city: a.city, region: a.region, postalCode: a.postalCode });
+}
+
+const PART_WORDS: Readonly<Record<string, string>> = { city: 'city', region: 'state', postalCode: 'ZIP code' };
+const listed = (xs: readonly string[]) => (xs.length <= 1 ? (xs[0] ?? '') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+
+/**
+ * A street address the key cannot be built from is refused, naming what to add: without the key the home's own
+ * earlier sales could be chosen as comps (E365) and the seller's MLS flag and near matches could not be checked (E370,
+ * F2). The parts are only tested for presence here; V1-A's addressKey alone decides what a readable address is.
+ */
+function refuseUnkeyed(a: SubjectAddress): never {
+  const parts = (['city', 'region', 'postalCode'] as const).filter((p) => !a[p]?.trim());
+  throw new AppError('CMA_SUBJECT_INCOMPLETE', {
+    missing: parts.length > 0 ? [...parts] : ['address'],
+    sentence:
+      parts.length > 0
+        ? `Add the home’s ${listed(parts.map((p) => PART_WORDS[p]!))} to prepare a CMA: without it the address’s MLS history can’t be looked up.`
+        : 'The home’s address could not be read as a street, city, state and 5-digit ZIP code, so its MLS history can’t be looked up. Correct the address to prepare a CMA.',
+  });
 }
 
 /** Agent-entered facts replace the resolved ones they name (labelled 'agent'). */
@@ -246,6 +269,7 @@ export async function resolveSubject(tx: Tx, input: SubjectInput, o: { contactId
     contactAddressId = a.id;
     address = { line1: a.line1, line2: a.line2, city: a.city, region: a.region, postalCode: a.postal_code };
     key = keyOf(address);
+    if (key === null && address.line1?.trim()) refuseUnkeyed(address);
     rowsAtKey = key ? await mlsRowsAtAddress(tx, key) : [];
     const n = newest(rowsAtKey);
     facts = factsFromRow(n, 'mls');
@@ -259,6 +283,7 @@ export async function resolveSubject(tx: Tx, input: SubjectInput, o: { contactId
     const an = input.anchor;
     address = { line1: an.line1 ?? null, line2: an.line2 ?? null, city: an.city ?? null, region: an.region, postalCode: an.postalCode };
     key = keyOf(address);
+    if (key === null && address.line1?.trim()) refuseUnkeyed(address);
     rowsAtKey = key ? await mlsRowsAtAddress(tx, key) : [];
     facts = factsFromRow(null, 'agent');
     sizeSource = o.sizeField;
@@ -285,7 +310,15 @@ export async function resolveSubject(tx: Tx, input: SubjectInput, o: { contactId
   if (missing.length > 0) {
     throw new AppError('CMA_SUBJECT_INCOMPLETE', {
       missing,
-      sentence: rowsAtKey.length === 0 ? 'This address is not in the MLS history. Enter the property type and size to prepare a CMA.' : 'Enter the property type and size to prepare a CMA.',
+      // "not in the MLS history" only when the history was looked up (a key was built)
+      sentence:
+        key === null
+          ? input.kind === 'listing'
+            ? 'Enter the property type and size to prepare a CMA.'
+            : 'The home’s street address is not known, so its MLS history was not looked up. Enter the property type and size to prepare a CMA.'
+          : rowsAtKey.length === 0
+            ? 'This address is not in the MLS history. Enter the property type and size to prepare a CMA.'
+            : 'Enter the property type and size to prepare a CMA.',
     });
   }
   if (!SUPPORTED_TYPES.includes(facts.propertyType.value!)) {
