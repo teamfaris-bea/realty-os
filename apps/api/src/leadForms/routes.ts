@@ -86,7 +86,7 @@ async function register(app: FastifyInstance): Promise<void> {
       // never the key, never the content: ids and flags only
       const payload = { kind: 'google_lead_form', hookId: hook.hookId, leadIdSha256: lead.leadId !== null ? sha(lead.leadId) : null, isTest: lead.isTest };
       // the lead route's provider is 'lead' (webhook_events.provider is free text; the lead intake routes record 'lead')
-      await run(req, 'lead' as Parameters<typeof run>[1], eventId, hook.tenantId, payload, () => receiveGoogleLead(deps(req), hook, lead));
+      await run(req, 'lead', eventId, hook.tenantId, payload, () => receiveGoogleLead(deps(req), hook, lead));
       return {};
     },
   );

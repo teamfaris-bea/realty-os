@@ -54,7 +54,7 @@ import { tokenFromRecipient, verifySignedRef } from './render.js';
 import { depsFromPlatform } from './runtime.js';
 import { type MappedStatus, applyMessageStatus, mapTelephonyStatus } from './status.js';
 
-type Provider = 'telephony' | 'email';
+type Provider = 'telephony' | 'email' | 'lead';
 
 async function resolveNumber(db: Database, e164: string): Promise<string | null> {
   if (!/^\+[1-9][0-9]{6,14}$/.test(e164)) return null;

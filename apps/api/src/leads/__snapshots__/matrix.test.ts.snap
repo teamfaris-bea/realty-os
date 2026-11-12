@@ -2461,5 +2461,11 @@ exports[`route table and schemas > every leads route declares its authorization 
   "POST /api/lead-sources/:id/on → integration.manage",
   "POST /api/lead-sources/:id/webhook → integration.manage",
   "POST /api/lead-sources/:id/preview → settings.routing",
+  "GET /api/lead-sources/:id/google-lead-form → integration.view",
+  "HEAD /api/lead-sources/:id/google-lead-form → integration.view",
+  "POST /api/lead-sources/:id/google-lead-form → integration.manage",
+  "POST /api/lead-sources/:id/google-lead-form/rotate → integration.manage",
+  "PATCH /api/lead-sources/:id/google-lead-form → settings.routing",
+  "POST /api/lead-sources/:id/google-lead-form/off → integration.manage",
 ]
 `;
