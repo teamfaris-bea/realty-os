@@ -14,7 +14,8 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/valuation/**/*.test.ts'],
-    exclude: ['src/valuation/perf.test.ts'],
+    // perf: timing is not behaviour; schemas: reads the db package, which the sandbox copy lacks (types.ts is not mutated).
+    exclude: ['src/valuation/perf.test.ts', 'src/valuation/schemas.test.ts'],
     pool: 'forks',
     testTimeout: 60_000,
   },

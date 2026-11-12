@@ -78,13 +78,18 @@ export function runBacktest(
     })
     .slice(0, rule.backtestMaxSales);
 
+  // The subject's own listings and earlier sales are never evidence for this valuation, so the back-test
+  // does not use them either (the main rate pool already leaves them out): a sale at the subject's address
+  // never changes the result (R-CMA-2).
+  const subjectSales = new Set(screened.filter((s) => s.subjectSale).map((s) => s.c));
+  const offered = canonical.filter((c) => !subjectSales.has(c));
   const misses: number[] = [];
   let notValued = 0;
   const traced: BacktestTrace['tested'][number][] = [];
   for (const t of tested) {
     const refDate = t.refDate as string;
     const asSubject = subjectOfSale(t.c);
-    const before = canonical.filter((c) => c.sale.closeDate !== null && c.sale.closeDate < refDate);
+    const before = offered.filter((c) => c.sale.closeDate !== null && c.sale.closeDate < refDate);
     const sc = screen(asSubject, before, refDate, rule, NO_EXCLUSIONS, false);
     const se = searchTier(asSubject, sc, refDate, rule, NO_EXCLUSIONS);
     const choice = chooseComps(asSubject, sc, se, { ...rates, refMonth: monthIndex(refDate) }, refDate, rule, NO_EXCLUSIONS, false);

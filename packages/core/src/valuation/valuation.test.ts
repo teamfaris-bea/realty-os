@@ -417,6 +417,20 @@ describe('regression: the size monotonicity counterexample (F12)', () => {
   });
 });
 
+describe('regression: a sale at the subject address never changes the result (property counterexample)', () => {
+  it('R-CMA-2: adding the subject’s earlier sale changes neither the value nor the back-test', () => {
+    const three = ['2026-10-01', '2026-11-01', '2026-10-01'].map((d, i) =>
+      cand(`c00${i}`, { closePriceCents: 20_000_000, closeDate: d, contractDate: null, sqft: 1_550, beds: null, bathsX10: null, poolPrivate: null, yearBuilt: 1975, latE6: null, lonE6: null }),
+    );
+    const own = { ...(three[0] as CmaCandidate), ref: { ...(three[0] as CmaCandidate).ref, identity: 'zz-extra', mlsNumber: 'M-zz' }, sale: { ...(three[0] as CmaCandidate).sale, addressKey: subject().addressKey } };
+    const { notUsed: _a, notUsedTotal: _b, subjectSales: s1, ...without } = run({ candidates: three });
+    const { notUsed: _c, notUsedTotal: _d, subjectSales: s2, ...withOwn } = run({ candidates: [...three, own] });
+    expect(withOwn).toEqual(without);
+    expect(s1).toEqual([]);
+    expect(s2.map((x) => x.ref.identity)).toEqual(['zz-extra']);
+  });
+});
+
 describe('determinism and the method version (R-CMA-5)', () => {
   it('R-CMA-5: CMA_DEFAULTS is pinned to CMA_METHOD_VERSION: changing a default needs a new method version', () => {
     const PINNED: Record<string, string> = { 'cma/1': '18067304' };
