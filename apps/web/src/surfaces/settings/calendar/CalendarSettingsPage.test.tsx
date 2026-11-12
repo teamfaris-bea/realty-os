@@ -5,7 +5,7 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FakeFetch, err, renderApp, sessionFixture, tableWith } from '../../../shell/testing/fakeApi.js';
-import type { CalendarView, ProviderView } from './CalendarSettingsPage.js';
+import { type CalendarView, type ProviderView, TEST_CALENDAR_NOTICE } from './CalendarSettingsPage.js';
 import { surface } from './index.js';
 
 const provider = (over: Partial<ProviderView> & Pick<ProviderView, 'provider' | 'name'>): ProviderView => ({
@@ -29,7 +29,7 @@ const view = (providers: ProviderView[], detached: CalendarView['detached'] = []
 const notConnected = view([provider({ provider: 'google_calendar', name: 'Google Calendar' }), provider({ provider: 'microsoft_calendar', name: 'Microsoft Outlook calendar' })]);
 const connected = view(
   [
-    provider({ provider: 'google_calendar', name: 'Google Calendar', state: 'connected', sentence: 'Connected. New and changed appointments are added to your Google Calendar.', canConnect: false, canDisconnect: true }),
+    provider({ provider: 'google_calendar', name: 'Google Calendar', state: 'connected', sentence: 'Connected to a test calendar: nothing reaches your real Google Calendar.', canConnect: false, canDisconnect: true }),
     provider({ provider: 'microsoft_calendar', name: 'Microsoft Outlook calendar', canConnect: false, blockedSentence: 'Disconnect Google Calendar first to use Microsoft Outlook calendar instead. Realty OS adds appointments to one calendar.' }),
   ],
   [{ appointmentId: '01900000-0000-7000-8000-00000000ap01', kind: 'buyer_consult', startsAt: '2026-11-20T15:00:00.000Z', sentence: 'Edited in Google Calendar; times may differ. Realty OS stopped updating this event so your change is kept.' }],
@@ -68,7 +68,7 @@ describe('Calendar settings', () => {
 
   it('a connected calendar shows its state, the other provider says why it cannot connect, and detached appointments are listed in words (E103)', async () => {
     mount(new FakeFetch().on('GET /me/calendar', { status: 200, body: connected }));
-    expect(await screen.findByText('Connected. New and changed appointments are added to your Google Calendar.')).toBeInTheDocument();
+    expect(await screen.findByText('Connected to a test calendar: nothing reaches your real Google Calendar.')).toBeInTheDocument();
     expect(screen.getByText(/^Disconnect Google Calendar first/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Connect Microsoft Outlook calendar' })).toBeNull();
     expect(screen.getByRole('heading', { level: 2, name: 'No longer updated in your calendar' })).toBeInTheDocument();
@@ -118,7 +118,7 @@ describe('Calendar settings', () => {
   });
 
   it('states the provider redirect result, including a refused scope', async () => {
-    mount(new FakeFetch().on('GET /me/calendar', { status: 200, body: connected }), '/settings/calendar?result=CONNECTED');
+    mount(new FakeFetch().on('GET /me/calendar', { status: 200, body: { ...connected, adapterMode: 'real' } }), '/settings/calendar?result=CONNECTED');
     expect(await screen.findByText('Your calendar is connected. New and changed appointments will appear there.')).toBeInTheDocument();
   });
 
@@ -129,5 +129,31 @@ describe('Calendar settings', () => {
     await userEvent.setup().click(screen.getByRole('button', { name: 'Connect Google Calendar' }));
     expect(await screen.findByText('You already have a calendar connected. Disconnect it first to use another one.')).toBeInTheDocument();
     expect(screen.queryByText('CALENDAR_ALREADY_CONNECTED')).toBeNull();
+  });
+
+  it('b7 ui/F3: with test adapters the page warns that nothing reaches a real calendar, and "Connected" says test', async () => {
+    mount(new FakeFetch().on('GET /me/calendar', { status: 200, body: connected }));
+    expect(await screen.findByText(TEST_CALENDAR_NOTICE)).toBeInTheDocument();
+    expect(TEST_CALENDAR_NOTICE).toBe('This deployment uses a test calendar: nothing reaches your real calendar.');
+    expect(screen.getByText('Connected (test)')).toBeInTheDocument();
+    expect(screen.queryByText('Connected')).toBeNull();
+  });
+
+  it('b7 ui/F3: a real deployment shows no test notice and plain "Connected"', async () => {
+    mount(new FakeFetch().on('GET /me/calendar', { status: 200, body: { ...connected, adapterMode: 'real', providers: connected.providers.map((p) => (p.state === 'connected' ? { ...p, sentence: 'Connected. New and changed appointments are added to your Google Calendar.' } : p)) } }));
+    expect(await screen.findByText('Connected')).toBeInTheDocument();
+    expect(screen.queryByText(TEST_CALENDAR_NOTICE)).toBeNull();
+  });
+
+  it('b7 ui/F3: a link waiting for review has its own waiting state', async () => {
+    const waiting = view([provider({ provider: 'google_calendar', name: 'Google Calendar', state: 'pending', sentence: 'Waiting for Google Calendar to finish approving the connection. Nothing is sent to your calendar yet.', canConnect: false, canDisconnect: true })]);
+    mount(new FakeFetch().on('GET /me/calendar', { status: 200, body: waiting }));
+    expect(await screen.findByText('Waiting for approval')).toBeInTheDocument();
+    expect(screen.queryByText(/^Connected/)).toBeNull();
+  });
+
+  it('b7 ui/F3: back from a test provider, the result says the test calendar is connected', async () => {
+    mount(new FakeFetch().on('GET /me/calendar', { status: 200, body: connected }), '/settings/calendar?result=CONNECTED');
+    expect(await screen.findByText('The test calendar is connected. Nothing reaches your real calendar.')).toBeInTheDocument();
   });
 });

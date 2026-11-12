@@ -55,12 +55,19 @@ export const SYNC_SENTENCE =
 export const PRIVACY_SENTENCE = 'Only you see this connection. Owners and Admins cannot see your calendar, your busy times or this link.';
 
 /** The connection's state as the page names it. */
-export type LinkState = 'connected' | 'degraded' | 'needs_reconnect' | 'not_connected' | 'not_configured';
+export type LinkState = 'connected' | 'pending' | 'degraded' | 'needs_reconnect' | 'not_connected' | 'not_configured';
 
-export function linkSentence(s: CalendarService, state: LinkState): string {
+/**
+ * Batch 7 review ui/F3: with the fake adapters (dev, test, the staging demo) nothing reaches a real calendar, so a
+ * connected link says so instead of "added to your Google Calendar"; `pending` is a link in pending_review.
+ */
+export function linkSentence(s: CalendarService, state: LinkState, mode: 'fake' | 'unconfigured' | 'real' = 'real'): string {
   switch (state) {
     case 'connected':
+      if (mode === 'fake') return `Connected to a test calendar: nothing reaches your real ${s.short}.`;
       return `Connected. New and changed appointments are added to your ${s.short}.`;
+    case 'pending':
+      return `Waiting for ${s.short} to finish approving the connection. Nothing is sent to your calendar yet.`;
     case 'degraded':
       return `Connected, but the last update to your ${s.short} did not go through. Realty OS will try again. Your appointments in Realty OS are unchanged.`;
     case 'needs_reconnect':

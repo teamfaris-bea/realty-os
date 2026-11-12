@@ -11,10 +11,10 @@ import { type ApiHarness, type TestClient, createApiHarness } from '../auth/test
 import { ownedContact } from '../comms/testing.js';
 import { createUnconfiguredIntegrations } from '../providers/integrations/index.js';
 import { systemActor } from '../worker/systemActor.js';
-import { CALENDAR_SERVICES, FORBIDDEN_CALENDAR_SCOPES, GOOGLE_CALENDAR_SCOPES, MICROSOFT_CALENDAR_SCOPES } from './catalog.js';
+import { CALENDAR_SERVICES, FORBIDDEN_CALENDAR_SCOPES, GOOGLE_CALENDAR_SCOPES, MICROSOFT_CALENDAR_SCOPES, linkSentence } from './catalog.js';
 import { signCalendarState } from './oauthState.js';
 import { eventTitle, pushAppointment } from './push.js';
-import { bookSlot, calendarView, mergeBusy, scopesExact } from './service.js';
+import { bookSlot, calendarView, mergeBusy, scopesExact, stateOf } from './service.js';
 import { calendarDeps } from './routes.js';
 import { apptSync, calendarCallback, connectCalendar, inHours, linkRow, newAppointment, runCalendarJobs, startCalendarFlow } from './testing.js';
 
@@ -570,5 +570,31 @@ describe('honest states', () => {
     }
     expect(v.syncSentence).toMatch(/^One way: appointments you make or change in Realty OS are added to your calendar/);
     expect(CALENDAR_SERVICES.google_calendar.calendarRef).toBe('primary');
+  });
+});
+
+describe('batch 7 review ui/F3: the calendar page is honest about test adapters and a link waiting for review (R-CAL-1, R-INT-5)', () => {
+  it('b7 ui/F3: with the fake adapters a connected calendar says it is a test calendar, never "added to your Google Calendar"', async () => {
+    const c = await inviteViaApi(h, owner, 'agent');
+    await connectCalendar(h, c, 'google_calendar');
+    const v = (await call<{ adapterMode: string; providers: { provider: string; state: string; sentence: string }[] }>(c, 'GET', '/me/calendar')).body;
+    expect(v.adapterMode).toBe('fake');
+    const g = v.providers.find((p) => p.provider === 'google_calendar')!;
+    expect(g.state).toBe('connected');
+    expect(g.sentence).toBe('Connected to a test calendar: nothing reaches your real Google Calendar.');
+    expect(linkSentence(CALENDAR_SERVICES.google_calendar, 'connected', 'real')).toBe('Connected. New and changed appointments are added to your Google Calendar.');
+  });
+
+  it('b7 ui/F3: a link in pending_review is its own waiting state, not "connected"', async () => {
+    const c = await inviteViaApi(h, owner, 'agent');
+    await connectCalendar(h, c, 'google_calendar');
+    await h.su.query("UPDATE user_calendar_links SET status = 'pending_review' WHERE user_id = $1", [c.userId]);
+    const v = (await call<{ providers: { provider: string; state: string; sentence: string; canConnect: boolean; canDisconnect: boolean }[] }>(c, 'GET', '/me/calendar')).body;
+    const g = v.providers.find((p) => p.provider === 'google_calendar')!;
+    expect(g.state).toBe('pending');
+    expect(g.sentence).toBe('Waiting for Google Calendar to finish approving the connection. Nothing is sent to your calendar yet.');
+    expect(g.canConnect).toBe(false);
+    expect(g.canDisconnect).toBe(true);
+    expect(stateOf({ status: 'pending_review' } as never, true)).toBe('pending');
   });
 });

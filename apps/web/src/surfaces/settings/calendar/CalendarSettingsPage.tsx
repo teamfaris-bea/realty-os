@@ -12,7 +12,7 @@ import { Button, Card, Notice, announce } from '../../../design/index.js';
 import { type ApiError, messageFor, useApi } from '../../../shell/index.js';
 import { formatDateTime } from '../../feed/lib/format.js';
 
-export type LinkState = 'connected' | 'degraded' | 'needs_reconnect' | 'not_connected' | 'not_configured';
+export type LinkState = 'connected' | 'pending' | 'degraded' | 'needs_reconnect' | 'not_connected' | 'not_configured';
 
 export interface ProviderView {
   provider: 'google_calendar' | 'microsoft_calendar';
@@ -35,8 +35,17 @@ export interface CalendarView {
 
 export const CALENDAR_KEY = ['me', 'calendar'] as const;
 
+/**
+ * Batch 7 review ui/F3: with the fake adapters (dev, test, the staging demo) a connection reaches no real calendar;
+ * the page says so in a notice and on the state. An unconfigured deployment needs no notice: its cards already say
+ * "Not set up on this platform".
+ */
+export const TEST_CALENDAR_NOTICE = 'This deployment uses a test calendar: nothing reaches your real calendar.';
+const TEST_CONNECTED = 'The test calendar is connected. Nothing reaches your real calendar.';
+
 const STATE_LABEL: Record<LinkState, string> = {
   connected: 'Connected',
+  pending: 'Waiting for approval',
   degraded: 'Connected, last update failed',
   needs_reconnect: 'Needs reconnect',
   not_connected: 'Not connected',
@@ -45,6 +54,7 @@ const STATE_LABEL: Record<LinkState, string> = {
 
 const STATE_TONE: Record<LinkState, string> = {
   connected: 'bg-ok-soft text-ok',
+  pending: 'bg-warn-soft text-warn',
   degraded: 'bg-warn-soft text-warn',
   needs_reconnect: 'bg-warn-soft text-warn',
   not_connected: 'border border-line text-ink',
@@ -71,7 +81,7 @@ const MESSAGES: Record<string, string> = {
   INTEGRATION_NOT_CONFIGURED: 'Calendars are not set up on this platform yet.',
 };
 
-function ProviderCard({ p, onChanged }: { p: ProviderView; onChanged: (v: CalendarView, text: string) => void }) {
+function ProviderCard({ p, test, onChanged }: { p: ProviderView; test: boolean; onChanged: (v: CalendarView, text: string) => void }) {
   const api = useApi();
   const id = useId();
   const [confirming, setConfirming] = useState(false);
@@ -135,7 +145,7 @@ function ProviderCard({ p, onChanged }: { p: ProviderView; onChanged: (v: Calend
         <h2 id={`${id}-name`} ref={headingRef} tabIndex={-1} className="text-[19px] font-semibold text-ink outline-none">
           {p.name}
         </h2>
-        <span className={`rounded-full px-2.5 py-1 text-[14px] font-medium ${STATE_TONE[p.state]}`}>{STATE_LABEL[p.state]}</span>
+        <span className={`rounded-full px-2.5 py-1 text-[14px] font-medium ${STATE_TONE[p.state]}`}>{test && p.state === 'connected' ? 'Connected (test)' : STATE_LABEL[p.state]}</span>
       </div>
       <p className="text-[15px] text-ink">{p.sentence}</p>
       {p.lastSyncedAt && live ? <p className="text-[14px] text-ink-muted">Last update sent {formatDateTime(p.lastSyncedAt)}</p> : null}
@@ -204,9 +214,12 @@ export default function CalendarSettingsPage() {
   if (q.isPending) return <p className="text-[15px] text-ink-muted">Loading</p>;
   if (q.isError || !q.data) return <Notice tone="error">{q.error ? messageFor(q.error) : null}</Notice>;
   const v = q.data;
+  const test = v.adapterMode === 'fake';
+  const shown = msg && test && msg.text === RESULT_SENTENCES.CONNECTED!.text ? { ...msg, text: TEST_CONNECTED } : msg;
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 md:mx-0">
-      {msg ? <Notice tone={msg.tone}>{msg.text}</Notice> : null}
+      {test ? <Notice tone="warn">{TEST_CALENDAR_NOTICE}</Notice> : null}
+      {shown ? <Notice tone={shown.tone}>{shown.text}</Notice> : null}
       <Card aria-labelledby={`${id}-sync`} className="flex flex-col gap-2">
         <h2 id={`${id}-sync`} className="text-[19px] font-semibold text-ink">
           What syncs
@@ -218,6 +231,7 @@ export default function CalendarSettingsPage() {
         <ProviderCard
           key={p.provider}
           p={p}
+          test={test}
           onChanged={(next, text) => {
             qc.setQueryData([...CALENDAR_KEY], next);
             setMsg({ tone: 'ok', text });

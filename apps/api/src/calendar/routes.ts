@@ -17,7 +17,7 @@ import { actorOf, platformOf } from '../workspace/common.js';
 import { CALENDAR_PROVIDER_KEYS } from './catalog.js';
 import { type CalendarDeps, busy, calendarView, connectCallback, disconnect, startConnect } from './service.js';
 
-const LinkStateEnum = z.enum(['connected', 'degraded', 'needs_reconnect', 'not_connected', 'not_configured']);
+const LinkStateEnum = z.enum(['connected', 'pending', 'degraded', 'needs_reconnect', 'not_connected', 'not_configured']);
 export const CalendarViewResponse = z.object({
   adapterMode: z.enum(['fake', 'unconfigured', 'real']),
   syncSentence: z.string(),
