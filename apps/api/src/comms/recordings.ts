@@ -50,6 +50,7 @@ interface CallRow {
   recording_announced_at: Date | null;
   handled_by: string;
   direction: string;
+  answered_at: Date | null;
 }
 
 /**
@@ -57,13 +58,17 @@ interface CallRow {
  * TwiML was served) and the greeting with its fixed recording notice was played to the caller.
  * VERIFY WITH COUNSEL that the notice is enough in every launch state.
  */
-export function mayKeepVoicemail(c: Pick<CallRow, 'handled_by' | 'direction' | 'recording_decision'>): boolean {
-  return c.direction === 'inbound' && c.handled_by === 'voicemail' && typeof c.recording_decision.voicemailNoticeAt === 'string';
+export function mayKeepVoicemail(c: Pick<CallRow, 'handled_by' | 'direction' | 'recording_decision'> & { answered_at?: Date | null }): boolean {
+  if (c.direction !== 'inbound' || typeof c.recording_decision.voicemailNoticeAt !== 'string') return false;
+  // module 48 (flagged): an AI call that fell back to voicemail before it was ever answered (E425) plays the same
+  // greeting and notice; it must not depend on voice_outcome, which the end transaction may not have written yet
+  if (c.handled_by === 'assistant') return c.answered_at === null;
+  return c.handled_by === 'voicemail';
 }
 
 async function callByRef(tx: Tx, ref: string): Promise<CallRow | null> {
   const r = await sql<CallRow>`
-    SELECT id, contact_id, agent_user_id, recording_mode, recording_decision, recording_announced_at, handled_by, direction FROM calls
+    SELECT id, contact_id, agent_user_id, recording_mode, recording_decision, recording_announced_at, handled_by, direction, answered_at FROM calls
      WHERE tenant_id = app.tenant_id() AND provider_call_ref = ${ref}`.execute(tx);
   return r.rows[0] ?? null;
 }
