@@ -1,13 +1,14 @@
 // axe-core over the lead-email pages rendered with realistic data, in the same way as
 // surfaces/admin/a11y.test.tsx (WCAG 2.2 AA rules axe can check in jsdom; color contrast needs layout and
 // is checked by the Playwright sweep, e2e/a11y/pages.ts lists /team/lead-email): Needs review with held
-// emails (one expanded, one with the accept form open), Decided, the empty state, and Lead routing with
-// a source whose email intake is on and one whose intake is off.
+// emails (one expanded, one with the accept form open), Decided, the empty state, and a lead source's page
+// (Lead sources) with its email intake on, and another with it off.
 import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import axe from 'axe-core';
 import { describe, expect, it } from 'vitest';
 import { member, settings } from '../admin/lib/testing.js';
+import { overview, source, sourcesFake } from '../lead-sources/testing.js';
 import { FakeFetch, SRC, enabledInbox, inbox, leadEmailApp, review } from './testing.js';
 
 async function violations(): Promise<string[]> {
@@ -66,15 +67,25 @@ describe('accessibility (axe-core): lead email', () => {
     expect(await violations()).toEqual([]);
   });
 
-  it('Lead routing (/admin/routing) with email intake on for one source and off for another has no axe violations, nor does the new-address confirm', async () => {
-    leadEmailApp(fake(), '/admin/routing', 'owner', { reauthenticatedAt: new Date().toISOString() });
-    expect(await screen.findByRole('heading', { level: 1, name: 'Lead routing' })).toBeInTheDocument();
+  it('a lead source page with email intake on, and one with it off, have no axe violations, nor does the new-address confirm', async () => {
+    const f = sourcesFake(overview([source({ id: SRC, name: 'Portal', paths: { email: { state: 'on', address: enabledInbox().address, lastEmailAt: null } } }), source({ id: SRC2, name: 'Website' })])).on(`GET /lead-sources/${SRC}/lead-email`, {
+      status: 200,
+      body: { inbox: enabledInbox() },
+    });
+    leadEmailApp(f, `/admin/lead-sources/${SRC}?setup=email`, 'owner', { reauthenticatedAt: new Date().toISOString() });
+    expect(await screen.findByRole('heading', { level: 1, name: 'Portal' })).toBeInTheDocument();
     expect(await screen.findByLabelText('Inbound address for Portal')).toBeInTheDocument();
-    expect(await screen.findByRole('button', { name: 'Turn on lead email' })).toBeInTheDocument();
     expect(await violations()).toEqual([]);
-    const portal = screen.getAllByRole('article').find((a) => within(a).queryByRole('heading', { level: 3, name: /Portal/ }))!;
-    await userEvent.setup().click(within(portal).getByRole('button', { name: 'Get a new address' }));
+    const box = await screen.findByRole('region', { name: 'Email intake for Portal' });
+    await userEvent.setup().click(within(box).getByRole('button', { name: 'Get a new address' }));
     expect(screen.getByRole('dialog', { name: 'Get a new address?' })).toBeInTheDocument();
+    expect(await violations()).toEqual([]);
+  });
+
+  it('a lead source page with email intake off has no axe violations', async () => {
+    const f = sourcesFake(overview([source({ id: SRC2, name: 'Website' })])).on(`GET /lead-sources/${SRC2}/lead-email`, { status: 200, body: { inbox: inbox({ leadSourceId: SRC2 }) } });
+    leadEmailApp(f, `/admin/lead-sources/${SRC2}?setup=email`, 'owner');
+    expect(await screen.findByRole('button', { name: 'Turn on lead email' })).toBeInTheDocument();
     expect(await violations()).toEqual([]);
   });
 });

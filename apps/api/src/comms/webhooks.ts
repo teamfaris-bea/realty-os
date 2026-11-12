@@ -54,7 +54,7 @@ import { tokenFromRecipient, verifySignedRef } from './render.js';
 import { depsFromPlatform } from './runtime.js';
 import { type MappedStatus, applyMessageStatus, mapTelephonyStatus } from './status.js';
 
-type Provider = 'telephony' | 'email';
+type Provider = 'telephony' | 'email' | 'lead';
 
 async function resolveNumber(db: Database, e164: string): Promise<string | null> {
   if (!/^\+[1-9][0-9]{6,14}$/.test(e164)) return null;
@@ -111,13 +111,24 @@ function occurred(v: string | undefined, now: Instant): Instant {
 }
 
 /**
+ * R-LSRC-7 (pilot plan R4): a delivery already recorded is re-armed for one more run when its first run failed, or
+ * crashed without finishing (still 'received' after the stale window). Processed, unrouted and rejected rows, and two
+ * concurrent retries after the first, get NULL (app.rearm_webhook_event is one conditional UPDATE).
+ */
+async function rearmEvent(db: Database, provider: Provider, eventId: string, now: Instant): Promise<string | null> {
+  return withPreTenant(async (tx) => (await sql<{ id: string | null }>`
+    SELECT app.rearm_webhook_event(${provider}, ${eventId.slice(0, 200)}, ${toIso(now)}::timestamptz) AS id`.execute(tx)).rows[0]?.id ?? null, { db });
+}
+
+/**
  * Records the delivery once (webhook_events: idempotency + the unrouted log), then runs `fn` in the resolved tenant.
- * Also used by the lead-email webhooks (module 22 slice: apps/api/src/leadEmail/routes.ts).
+ * Also used by the lead-email webhooks (module 22 slice: apps/api/src/leadEmail/routes.ts). A provider's retry of a
+ * delivery whose run failed or crashed runs `fn` again (R-LSRC-7), so every `fn` is idempotent on a re-run.
  */
 export async function run<T>(req: FastifyRequest, provider: Provider, eventId: string, tenantId: string | null, payload: unknown, fn: () => Promise<T>): Promise<'duplicate' | 'unrouted' | T> {
   const p = req.server.platform;
   const now = p.clock.now();
-  const id = await recordEvent(p.db, p.ids, p.envelope, provider, eventId, tenantId, payload, now);
+  const id = (await recordEvent(p.db, p.ids, p.envelope, provider, eventId, tenantId, payload, now)) ?? (tenantId ? await rearmEvent(p.db, provider, eventId, now) : null);
   if (!id) return 'duplicate';
   if (!tenantId) {
     req.log.warn({ code: 'WEBHOOK_UNROUTED', provider }, 'unrouted inbound (platform alert)');

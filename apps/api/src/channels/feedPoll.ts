@@ -14,6 +14,7 @@
 // Fakes only in this build: the deterministic FakeLeadFeed in tests and demos; production has PartnerLeadFeed, which
 // reports needs_partner_access and never polls. No real partner API is called (VERIFY the partner APIs with
 // Zillow / realtor.com before any real adapter exists).
+import { createHash } from 'node:crypto';
 import type { IdGenerator, Instant, TenantId } from '@realty/core/foundation';
 import { MINUTE_MS, plusMs, toIso } from '@realty/core/foundation';
 import type { Tx } from '@realty/db';
@@ -144,6 +145,19 @@ async function ingestFeedLead(tx: Tx, ctx: StandaloneJobContext, deps: FeedPollD
   const name = (lead.name ?? '').replace(/[\p{Cc}\p{Cf}]/gu, ' ').trim().slice(0, 120);
   if (phones.length + emails.length === 0 && !name) return false;
   const externalId = `${source}-feed:${lead.externalLeadId}`.slice(0, 200);
+  // R-LSRC-2 (module 22): a lead for a source that is turned off is skipped, as an off source's lead email is refused.
+  // One receipt per lead says so (no lead content: only sha256 of the feed's own id), the page counts them, and the
+  // cursor advances with the page, so turning the source back on does not replay them (E387).
+  const src = await sql<{ active: boolean }>`SELECT active FROM lead_sources WHERE tenant_id = app.tenant_id() AND id = ${c.lead_source_id}::uuid`.execute(tx);
+  if (src.rows[0]?.active !== true) {
+    await sql`
+      INSERT INTO lead_source_skips (tenant_id, id, lead_source_id, channel, external_ref_sha256, reason)
+      VALUES (app.tenant_id(), ${deps.ids.next<'LeadSourceSkipId'>()}::uuid, ${c.lead_source_id}::uuid, 'partner_feed',
+              ${createHash('sha256').update(externalId, 'utf8').digest()}, 'SOURCE_OFF')
+      ON CONFLICT (tenant_id, lead_source_id, channel, external_ref_sha256) DO NOTHING`.execute(tx);
+    ctx.log.warn('feed lead skipped', { kind: FEED_POLL_KIND, code: 'SOURCE_OFF' });
+    return false;
+  }
   const receivedAt = Number.isNaN(Date.parse(lead.receivedAt)) ? undefined : new Date(lead.receivedAt).toISOString();
   savepoints = (savepoints + 1) % 1_000_000;
   const name_ = sql.raw(`feed_lead_${savepoints}`);

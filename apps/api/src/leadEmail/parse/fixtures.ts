@@ -104,3 +104,103 @@ export const ZILLOW_CHANGED_TEXT = [
 
 // SYNTHETIC — a newsletter-like email that is no lead at all
 export const NEWSLETTER_TEXT = ['Market update for November', 'Prices rose 2% this month.', 'Contact us at hello@agency.test or (555) 444-5555.'].join('\n');
+
+// ---- leadmetadata.org (R-LEM-10) -------------------------------------------------------------------------
+// SYNTHETIC — our own samples of the leadmetadata.org convention (VERIFY 3: lead_phone, lead_message and
+// lead_property_address names), not a portal's email.
+
+// SYNTHETIC — declaration and values in the head
+export const LEADMETA_HEAD_HTML = `<!doctype html><html><head>
+<meta charset="utf-8">
+<meta name="lead_information_version" content="1.0">
+<meta name="lead_name" content="Avery Sample">
+<meta name="lead_email" content="Avery.Sample@Example.test">
+<meta name="lead_phone" content="(555) 010-2030">
+<meta name="lead_type" content="Buyer">
+<meta name="lead_source" content="Some Other Portal">
+<meta name='lead_property_address' content='5 Birch Ln, Fairview, OR 97024'>
+<meta name="lead_message" content="I&#39;d like a tour &amp; the HOA fees.">
+<title>New lead</title>
+</head><body><p>You have a new lead. Open your dashboard to reply.</p></body></html>`;
+
+// SYNTHETIC — the declaration and values in the body (some mail clients move head content)
+export const LEADMETA_BODY_HTML = `<html><body>
+<div>New inquiry</div>
+<META NAME="lead_information_version" CONTENT="1.0">
+<meta content="Robin Example" name="lead_name">
+<meta name=lead_email content=robin@example.test>
+<p>Reply from your dashboard.</p>
+</body></html>`;
+
+// SYNTHETIC — an unknown version: nothing is read
+export const LEADMETA_UNKNOWN_VERSION_HTML = `<html><head>
+<meta name="lead_information_version" content="2.0">
+<meta name="lead_name" content="Casey Future">
+<meta name="lead_email" content="casey@example.test">
+</head><body>New lead</body></html>`;
+
+// SYNTHETIC — escaped tags are text, not tags: nothing is read (the text shows them literally)
+export const LEADMETA_ESCAPED_HTML = `<html><body>
+<p>&lt;meta name="lead_information_version" content="1.0"&gt;</p>
+<p>&lt;meta name="lead_email" content="escaped@example.test"&gt;</p>
+</body></html>`;
+
+// SYNTHETIC — a lead_email appearing twice with different values: held PARTIAL_FORMAT
+export const LEADMETA_DUPLICATE_HTML = `<html><head>
+<meta name="lead_information_version" content="1.0">
+<meta name="lead_name" content="Drew Twice">
+<meta name="lead_email" content="drew@example.test">
+<meta name="lead_email" content="other@example.test">
+</head><body>New lead</body></html>`;
+
+// SYNTHETIC — hostile: every lead_* tag outside a real element (comments, script, style, textarea, title,
+// attribute values, malformed names) must not be read; only the one real element is
+export const LEADMETA_HOSTILE_HTML = `<html><head>
+<title><meta name="lead_email" content="title@attacker.test"></title>
+<meta name="lead_information_version" content="1.0">
+<!-- <meta name="lead_email" content="comment@attacker.test"> -->
+<script>document.write('<meta name="lead_email" content="script@attacker.test">')</script>
+<style>/* <meta name="lead_email" content="style@attacker.test"> */</style>
+<meta data-x='name="lead_email" content="attr@attacker.test"' name="lead_name" content="Quinn Real">
+<metaname="lead_email" content="glued@attacker.test">
+</head><body>
+<textarea><meta name="lead_email" content="textarea@attacker.test"></textarea>
+<meta name="lead_phone" content="555-010-4455&#x0A;Bcc: x@attacker.test">
+<meta name="lead_unknown_field" content="ignored">
+<p>Lead</p>
+</body></html>`;
+
+// ---- catalog portals without a vendor parser (R-LEM-9) -------------------------------------------------------
+// SYNTHETIC — a generic-labelled lead email from each catalog portal's domain (no real samples: VERIFY)
+export const CATALOG_PORTAL_DOMAINS = ['redfin.com', 'homes.com', 'homesnap.com', 'trulia.com', 'opcity.com'] as const;
+export const catalogLabelled = (domain: string): ParseInput => ({
+  subject: 'New lead',
+  text: ['You have a new lead.', '', 'Name: Morgan Sample', 'Email: morgan.sample@example.test', 'Phone: 555-010-7788', '', `Questions? support@${domain}`].join('\n'),
+  html: null,
+  senderDomain: `mail.${domain}`,
+});
+export const catalogUnlabelled = (domain: string): ParseInput => ({
+  subject: 'New lead',
+  text: ['Morgan Sample is interested in 5 Birch Ln.', 'Reach them at morgan.sample@example.test or 555-010-7788.'].join('\n'),
+  html: null,
+  senderDomain: `mail.${domain}`,
+});
+
+// ---- hand forwards (R-LEM-11) ---------------------------------------------------------------------------
+// SYNTHETIC — a lead forwarded by hand from a personal mailbox; the forwarder's own note sits above the marker.
+// The consumer-domain addresses contain '_' and '-', which Gmail does not allow in an account name: they can never
+// be a real person's mailbox.
+export const SYNTHETIC_LEAD_GMAIL = 'synthetic_lead-sam@gmail.com';
+export const SYNTHETIC_FORWARDER_GMAIL = 'synthetic_forwarder-agent@gmail.com';
+export const forwardedByHand = (marker: 'gmail' | 'outlook' | 'apple', o: { lead?: string; forwarder?: string; phone?: string; name?: string } = {}): string => {
+  const lead = o.lead ?? SYNTHETIC_LEAD_GMAIL;
+  const forwarder = o.forwarder ?? SYNTHETIC_FORWARDER_GMAIL;
+  const note = ['FYI see below', 'Name: Not The Lead', `Email: ${forwarder}`, ''];
+  const header =
+    marker === 'gmail'
+      ? ['---------- Forwarded message ---------', 'From: Zillow <leads@zillow.com>', 'Date: Mon, Nov 9, 2026 at 9:00 AM', 'Subject: New lead', `To: <${forwarder}>`, '']
+      : marker === 'outlook'
+        ? ['________________________________', 'From: Zillow <leads@zillow.com>', 'Sent: Monday, November 9, 2026 9:00 AM', `To: ${forwarder}`, 'Subject: New lead', '']
+        : ['Begin forwarded message:', '', 'From: Zillow <leads@zillow.com>', 'Subject: New lead', `To: ${forwarder}`, ''];
+  return [...note, ...header, 'New lead from Zillow', `Name: ${o.name ?? 'Sam Lead'}`, `Email: ${lead}`, `Phone: ${o.phone ?? '555-010-3344'}`, 'Message: Is it still available?'].join('\n');
+};

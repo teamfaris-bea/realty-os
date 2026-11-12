@@ -31,11 +31,12 @@ export interface NumberView {
   smsCapable: boolean;
   voiceCapable: boolean;
   releasedAt: string | null;
+  leadSourceId: string | null;
 }
 
 async function listNumbersTx(tx: Tx): Promise<NumberView[]> {
-  const r = await sql<{ id: string; e164: string; purpose: string; number_type: string; assigned_user_id: string | null; registration_id: string | null; status: string | null; sms_capable: boolean; voice_capable: boolean; released_at: Date | null }>`
-    SELECT n.id, n.e164, n.purpose, n.number_type, n.assigned_user_id, n.registration_id, r.status, n.sms_capable, n.voice_capable, n.released_at
+  const r = await sql<{ id: string; e164: string; purpose: string; number_type: string; assigned_user_id: string | null; registration_id: string | null; status: string | null; sms_capable: boolean; voice_capable: boolean; released_at: Date | null; lead_source_id: string | null }>`
+    SELECT n.id, n.e164, n.purpose, n.number_type, n.assigned_user_id, n.registration_id, r.status, n.sms_capable, n.voice_capable, n.released_at, n.lead_source_id
       FROM phone_numbers n LEFT JOIN sender_registrations r ON r.tenant_id = n.tenant_id AND r.id = n.registration_id
      WHERE n.tenant_id = app.tenant_id() ORDER BY n.acquired_at, n.id`.execute(tx);
   return r.rows.map((n) => ({
@@ -49,6 +50,7 @@ async function listNumbersTx(tx: Tx): Promise<NumberView[]> {
     smsCapable: n.sms_capable,
     voiceCapable: n.voice_capable,
     releasedAt: n.released_at ? n.released_at.toISOString() : null,
+    leadSourceId: n.lead_source_id,
   }));
 }
 
@@ -56,8 +58,23 @@ export function listNumbers(actor: UserActor, deps: CommsDeps): Promise<NumberVi
   return asUser(deps, actor, (tx) => listNumbersTx(tx));
 }
 
-export async function acquireNumber(actor: UserActor, input: { purpose: 'team_main' | 'agent_direct' | 'pond' | 'tracking'; areaCode?: string | undefined; assignedUserId?: string | undefined; registrationId?: string | undefined }, deps: CommsDeps): Promise<NumberView> {
+/** module 22 (R-TRK-1): the lead source a tracking number may credit: this tenant's, and on. */
+async function trackingSource(tx: Tx, leadSourceId: string, o: { forShare?: boolean } = {}): Promise<{ name: string; active: boolean } | null> {
+  const r = o.forShare
+    ? await sql<{ name: string; active: boolean }>`SELECT name, active FROM lead_sources WHERE tenant_id = app.tenant_id() AND id = ${leadSourceId}::uuid FOR SHARE`.execute(tx)
+    : await sql<{ name: string; active: boolean }>`SELECT name, active FROM lead_sources WHERE tenant_id = app.tenant_id() AND id = ${leadSourceId}::uuid`.execute(tx);
+  return r.rows[0] ?? null;
+}
+
+export async function acquireNumber(actor: UserActor, input: { purpose: 'team_main' | 'agent_direct' | 'pond' | 'tracking'; areaCode?: string | undefined; assignedUserId?: string | undefined; registrationId?: string | undefined; leadSourceId?: string | undefined }, deps: CommsDeps): Promise<NumberView & { notice?: string }> {
   if (input.purpose === 'agent_direct' && !input.assignedUserId) throw new AppError('VALIDATION_FAILED', { issues: [{ path: '/assignedUserId', code: 'required_for_agent_direct' }] });
+  // module 22 (R-TRK-1): the source is checked BEFORE the purchase, so nothing fails after one (E352)
+  if (input.leadSourceId !== undefined) {
+    if (input.purpose !== 'tracking') throw new AppError('VALIDATION_FAILED', { issues: [{ path: '/leadSourceId', code: 'tracking_only' }] });
+    const src = await asUser(deps, actor, (tx) => trackingSource(tx, input.leadSourceId!));
+    if (!src) throw new AppError('NOT_FOUND');
+    if (!src.active) throw new AppError('LEAD_SOURCE_OFF');
+  }
   // the subaccount (once per tenant)
   let account = await asUser(deps, actor, (tx) => telephonyAccount(tx, deps.envelope, actor.tenantId));
   if (!account) {
@@ -78,13 +95,17 @@ export async function acquireNumber(actor: UserActor, input: { purpose: 'team_ma
   const id = deps.ids.next<'PhoneNumberId'>();
   try {
     return await asUser(deps, actor, async (tx, now) => {
+      // the source again, FOR SHARE: turned off since the check, the number is still saved, untied, and the answer says so
+      const src = input.leadSourceId !== undefined ? await trackingSource(tx, input.leadSourceId, { forShare: true }) : null;
+      const tie = src?.active ? input.leadSourceId! : null;
       await sql`
         INSERT INTO phone_numbers (tenant_id, id, e164, provider, provider_ref, number_type, purpose, assigned_user_id, sms_capable, voice_capable,
-          registration_id, acquired_at)
+          registration_id, acquired_at, lead_source_id)
         VALUES (app.tenant_id(), ${id}, ${bought.e164}, 'telephony', ${bought.providerRef}, ${/^\+18(00|33|44|55|66|77|88)/.test(bought.e164) ? 'toll_free' : 'local'}, ${input.purpose},
-          ${input.assignedUserId ?? null}, true, true, ${input.registrationId ?? null}, ${toIso(now)}::timestamptz)`.execute(tx);
-      await audit(tx, actor, { action: 'number.acquired', entity: { type: 'phone_number', id }, changes: redactSnapshot({ purpose: input.purpose, registrationId: input.registrationId ?? null }, { entity: 'phone_number' }) });
-      return (await listNumbersTx(tx)).find((n) => n.id === id)!;
+          ${input.assignedUserId ?? null}, true, true, ${input.registrationId ?? null}, ${toIso(now)}::timestamptz, ${tie}::uuid)`.execute(tx);
+      await audit(tx, actor, { action: 'number.acquired', entity: { type: 'phone_number', id }, changes: redactSnapshot({ purpose: input.purpose, registrationId: input.registrationId ?? null, ...(tie ? { leadSourceId: tie } : {}) }, { entity: 'phone_number' }) });
+      const view = (await listNumbersTx(tx)).find((n) => n.id === id)!;
+      return src && !tie ? { ...view, notice: `Bought, but not tied to ${src.name}: that source was turned off.` } : view;
     });
   } catch (e) {
     const msg = (e as { message?: string }).message ?? '';
@@ -122,6 +143,27 @@ export async function attachRegistration(actor: UserActor, numberId: string, reg
     if (Number(r.numAffectedRows ?? 0n) !== 1) throw new AppError('NOT_FOUND');
     await audit(tx, actor, { action: 'sender_registration.changed', entity: { type: 'phone_number', id: numberId }, changes: redactSnapshot({ registrationId }, { entity: 'phone_number' }), reason: 'NUMBER_REGISTRATION_ATTACHED' });
     return (await listNumbersTx(tx)).find((n) => n.id === numberId)!;
+  });
+}
+
+/** module 22 (R-TRK-1): tie a live tracking number to an active lead source of this tenant, or untie it; audited. */
+export async function setNumberLeadSource(actor: UserActor, numberId: string, leadSourceId: string | null, deps: CommsDeps): Promise<NumberView> {
+  return asUser(deps, actor, async (tx) => {
+    const r = await sql<{ purpose: string; released_at: Date | null; lead_source_id: string | null }>`
+      SELECT purpose, released_at, lead_source_id FROM phone_numbers WHERE tenant_id = app.tenant_id() AND id = ${numberId}::uuid FOR UPDATE`.execute(tx);
+    const n = r.rows[0];
+    if (!n) throw new AppError('NOT_FOUND');
+    if (n.purpose !== 'tracking' || n.released_at !== null) throw new AppError('NUMBER_NOT_TRACKING');
+    if (leadSourceId !== null) {
+      const src = await trackingSource(tx, leadSourceId, { forShare: true });
+      if (!src) throw new AppError('NOT_FOUND');
+      if (!src.active) throw new AppError('LEAD_SOURCE_OFF');
+    }
+    if (n.lead_source_id !== leadSourceId) {
+      await sql`UPDATE phone_numbers SET lead_source_id = ${leadSourceId}::uuid, updated_at = now() WHERE tenant_id = app.tenant_id() AND id = ${numberId}::uuid`.execute(tx);
+      await audit(tx, actor, { action: 'number.lead_source_changed', entity: { type: 'phone_number', id: numberId }, changes: redactSnapshot({ from: n.lead_source_id, to: leadSourceId }, { entity: 'phone_number' }) });
+    }
+    return (await listNumbersTx(tx)).find((x) => x.id === numberId)!;
   });
 }
 

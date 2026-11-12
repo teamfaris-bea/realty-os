@@ -181,15 +181,22 @@ const NumberSchema = z.object({
   smsCapable: z.boolean(),
   voiceCapable: z.boolean(),
   releasedAt: z.string().nullable(),
+  /** module 22 (R-TRK-1): the lead source a live tracking number credits, or null */
+  leadSourceId: z.uuid().nullable(),
 });
-export const NumberResponse = z.object({ number: NumberSchema });
+/** notice (module 22, E352): said in words when a number was bought but could not be tied to its lead source */
+export const NumberResponse = z.object({ number: NumberSchema, notice: z.string().optional() });
 export const NumbersResponse = z.object({ numbers: z.array(NumberSchema) });
 export const AcquireBody = z.strictObject({
   purpose: z.enum(['team_main', 'agent_direct', 'pond', 'tracking']),
   areaCode: z.string().regex(/^[2-9][0-9]{2}$/).optional(),
   assignedUserId: z.uuid().optional(),
   registrationId: z.uuid().optional(),
+  /** module 22 (R-TRK-1): with purpose tracking only, an active lead source of this tenant */
+  leadSourceId: z.uuid().optional(),
 });
+/** module 22 (R-TRK-1): tie a live tracking number to a lead source, or untie it (null) */
+export const NumberLeadSourceBody = z.strictObject({ leadSourceId: z.uuid().nullable() });
 export const AttachRegistrationBody = z.strictObject({ registrationId: z.uuid().nullable() });
 
 const RegistrationSchema = z.object({ id: z.uuid(), kind: z.string(), status: z.string(), useCase: z.string(), statusChangedAt: z.string() });

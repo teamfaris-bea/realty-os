@@ -87,7 +87,7 @@ describe('Integrations page', () => {
   it('the keyed and key-based services link to where they are set up', async () => {
     mount(new FakeFetch().on('GET /admin/integrations', { status: 200, body: integrations() }), PAGE_PATH);
     expect(await screen.findByRole('link', { name: 'Set up website chat' })).toHaveAttribute('href', '/admin/web-chat');
-    expect(screen.getByRole('link', { name: 'Open Lead routing' })).toHaveAttribute('href', '/admin/routing');
+    expect(screen.getByRole('link', { name: 'Open Lead sources' })).toHaveAttribute('href', '/admin/lead-sources');
     expect(screen.getByRole('link', { name: 'Open MLS' })).toHaveAttribute('href', '/admin/integrations/mls');
   });
 

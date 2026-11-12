@@ -5,7 +5,7 @@ import type { AdapterMode, Capability, Connection } from './types.js';
 export const PAGE_PATH = '/admin/integrations';
 export const MLS_PAGE_PATH = '/admin/integrations/mls';
 export const WEBCHAT_PAGE_PATH = '/admin/web-chat';
-export const ROUTING_PAGE_PATH = '/admin/routing';
+export const LEAD_SOURCES_PAGE_PATH = '/admin/lead-sources';
 
 /** platform:* review pack → what waits on it (mirrors the API catalog's PACK_GATES; unknown keys get a generic name). */
 const PACK_NAMES: Record<string, string> = {
@@ -78,7 +78,7 @@ export function adapterModeWords(m: AdapterMode): { tone: 'info' | 'warn'; text:
 /** Where a keyed or key-based service is set up (it has no outside login to connect here). */
 export function manageLink(kind: string): { to: string; label: string; hint: string } | null {
   if (kind === 'web_chat_widget') return { to: WEBCHAT_PAGE_PATH, label: 'Set up website chat', hint: 'Create a widget, get its embed code and choose the websites it runs on.' };
-  if (kind === 'lead_email') return { to: ROUTING_PAGE_PATH, label: 'Open Lead routing', hint: 'Each lead source has its own Email intake address under Lead sources.' };
+  if (kind === 'lead_email') return { to: LEAD_SOURCES_PAGE_PATH, label: 'Open Lead sources', hint: 'Each lead source has its own lead-email address on its Lead sources page.' };
   if (kind === 'mls_feed') return { to: MLS_PAGE_PATH, label: 'Open MLS', hint: 'Sync status, the Spark key and the licence pack.' };
   return null;
 }
