@@ -31,6 +31,7 @@ import { ComposeBox } from '../compose/ComposeBox.js';
 import type { ComposeChannel } from '../compose/channelApi.js';
 import { composeChannelOf } from '../compose/channelChoice.js';
 import { RowAttachments } from './Attachments.js';
+import { ReactedWithChip, ReactionLine } from './Reactions.js';
 import { useContact } from '../contact/useContact.js';
 import { AgentSheetsProvider, sendOutcomeText, useAgentSheets } from '../feed/lib/AgentSheets.js';
 import { firstName, formatDateTime } from '../feed/lib/format.js';
@@ -152,13 +153,14 @@ function ThreadHeader({ contact }: { contact: ContactFullView }) {
 function Messages({ items, contact }: { items: TimelineItem[]; contact: { id: string; name: string } }) {
   const end = useRef<HTMLLIElement>(null);
   const last = items[items.length - 1]?.id;
+  const loaded = new Set(items.map((i) => i.id));
   useEffect(() => {
     end.current?.scrollIntoView?.({ block: 'end' });
   }, [last]);
   return (
     <ol className="flex flex-col gap-2" aria-label="Conversation">
       {items.map((i) => (
-        <MessageRow key={i.id} item={i} contact={contact} />
+        <MessageRow key={i.id} item={i} contact={contact} loaded={loaded} />
       ))}
       <li ref={end} aria-hidden="true" />
     </ol>
@@ -205,7 +207,8 @@ export function outboundStatusLabel(item: Pick<TimelineItem, 'status' | 'statusR
   return line ? { text: line.text, failed: line.tone === 'failed', held: line.tone === 'held' } : null;
 }
 
-export function MessageRow({ item, contact }: { item: TimelineItem; contact?: { id: string; name: string } }) {
+export function MessageRow({ item, contact, loaded }: { item: TimelineItem; contact?: { id: string; name: string }; loaded?: ReadonlySet<string> }) {
+  if (item.reaction) return <ReactionLine item={{ ...item, reaction: item.reaction }} contact={contact} loaded={loaded} />;
   const { channel, direction } = parseDetail(item.detail);
   const imported = item.provenance === 'imported';
   if (item.type === 'call') {
@@ -225,6 +228,7 @@ export function MessageRow({ item, contact }: { item: TimelineItem; contact?: { 
   return (
     <li id={item.id} className={`flex max-w-[85%] flex-col gap-0.5 ${outbound ? 'self-end items-end' : 'self-start items-start'}`}>
       <p className={`whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2 text-[16px] ${bubble}`}>{item.preview ?? ''}</p>
+      {item.reactedWith ? <ReactedWithChip reactedWith={item.reactedWith} contactName={contact?.name} /> : null}
       <p className="flex flex-wrap items-center gap-x-1 px-1 text-[12px] text-ink-muted">
         <ChannelTag channel={channel} />
         <span>
