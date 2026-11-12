@@ -14,13 +14,15 @@
 // A stored ref never widens a gate: every later check (queue, draft approval, sweep) re-reads packs and connections.
 // Logs carry codes and counts only, never an address or a value.
 import { type IanaZone, type Instant, localDateOf } from '@realty/core/foundation';
-import { type Tx, withTenantTx } from '@realty/db';
+import { type ContactId } from '@realty/core/foundation';
+import { type AvmEstimate as CoreEstimate, SKIP_REASON_TEXT, homeValueText } from '@realty/core/nurture';
+import { type Tx, lockContact, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { literal } from '../nurture/decide.js';
 import { ProviderError } from '../providers/types.js';
 import type { AddressFacts, AvmCallContext, AvmEstimate, AvmProvider, AvmUnavailable } from '../providers/integrations/types.js';
 import { systemActor } from '../worker/systemActor.js';
-import { LISTING_COLS, type ListingRow, addressKey, mlsEligibility, mlsRowsAtAddress, packReviewed, valuationStatement } from './deps.js';
+import { LISTING_COLS, type ListingRow, type MlsEligibility, addressKey, mlsEligibility, mlsRowsAtAddress, packReviewed, uspsCode, valuationEligible, valuationStatement } from './deps.js';
 import { type Blocker, CMA_PLATFORM_PACK, LIVE_STATUSES, type ReadinessInput, clientReadiness } from './gates.js';
 import { LICENCE_SENTENCE, valueForSubjectInTx } from './pipeline.js';
 import { platformCleared } from './repos.js';
@@ -203,5 +205,165 @@ export class InHouseAvm implements AvmProvider {
   }
 }
 
+// ---- the note after it was estimated -----------------------------------------------------------------------
+
+/** "MLS data as of {Mon D, YYYY}." of the estimate's own data date (never a later sync's, R-CMA-10). */
+export const asOfLine = (asOf: string) => `MLS data as of ${longDate(asOf)}.`;
+
+export const REF_SENTENCE = 'This estimate has no valid in-house reference, so it is not shown to clients.';
+
+interface StoredValuation {
+  provider: string;
+  provider_ref: string | null;
+  as_of: string | null;
+  line1: string | null;
+  line2: string | null;
+  city: string | null;
+  region: string | null;
+  postal_code: string | null;
+}
+
+/**
+ * The in-house note's gate after the estimate (R-CMA-7, R-NURT-4), without the engine: from the stored row's ref (its
+ * connections), its address's state and key, and the caller's MLS eligibility `e`, in the caller's transaction (the
+ * one that queues, or the draft approval's). Null only for a row that is not in-house (no ref and another provider's
+ * name: FakeAvmP2 paths unchanged). An in-house-named row without a valid ref, a malformed ref, or a foreign or gone
+ * connection fails (E634, E637). On success the lines are the gate's plus the estimate's own "MLS data as of" line.
+ */
+export async function inHouseNoteGate(tx: Tx, valuationId: string, e: MlsEligibility, now: Instant): Promise<GateResult | null> {
+  const v = (
+    await sql<StoredValuation>`SELECT v.provider, v.provider_ref, to_char(v.as_of, 'YYYY-MM-DD') AS as_of, a.line1, a.line2, a.city, a.region, a.postal_code
+      FROM home_valuations v LEFT JOIN contact_addresses a ON a.tenant_id = v.tenant_id AND a.id = v.contact_address_id
+     WHERE v.tenant_id = app.tenant_id() AND v.id = ${valuationId}`.execute(tx)
+  ).rows[0];
+  if (!v) return { ok: false, code: 'NO_VALUE', sentence: REF_SENTENCE, blockers: [] };
+  if (v.provider_ref === null && v.provider !== IN_HOUSE_PROVIDER) return null;
+  const ref = parseInHouseRef(v.provider_ref);
+  if (ref === null || v.as_of === null) return { ok: false, code: 'NO_VALUE', sentence: REF_SENTENCE, blockers: [{ code: 'NO_VALUE', sentence: REF_SENTENCE }] };
+  const key = v.line1 === null ? null : addressKey({ line1: v.line1, line2: v.line2, city: v.city ?? '', region: v.region ?? '', postalCode: v.postal_code ?? '' });
+  const gate = await automatedGate(
+    tx,
+    now,
+    {
+      conns: { e, used: [] },
+      now,
+      state: v.region === null ? null : uspsCode(v.region),
+      addressKey: key,
+      addressLine: v.line1,
+      subjectMlsListingId: null,
+      compSales: [],
+      readConnectionIds: ref.connectionIds,
+      nearMatchDismissed: [],
+      hasValue: true,
+    },
+    { output: 'note' },
+  );
+  return gate.ok ? { ok: true, lines: [...gate.lines, asOfLine(v.as_of)] } : gate;
+}
+
 /** Whether a display pack is reviewed with attribution and disclaimer (the sweep's per-connection check). */
 export const displayPackReviewed = (p: Parameters<typeof packReviewed>[0]) => packReviewed(p) && p.attributionText !== null && p.disclaimerText !== null;
+
+// ---- after the queue: the sweep -----------------------------------------------------------------------------
+
+/** Notes canceled per sweep pass at most (bounded work in the shared 5-minute transaction). */
+export const HOME_VALUE_SWEEP_LIMIT = 500;
+export const HOME_VALUE_NOT_DISPLAYABLE = 'HOME_VALUE_NOT_DISPLAYABLE';
+
+/**
+ * E623 (R-CMA-7): cancels queued in-house home-value notes once something fails for every note at once: platform:cma
+ * or platform:avm, or a connection the note's ref names (V1-A's valuationEligible for automated_notes, fresh feed and
+ * reviewed display pack included). Address checks (listed, withheld, near matches) are not read here: they run where
+ * the note is built, queued and approved. Per failing note, under the contact's lock: the message canceled only while
+ * still queued (dispatched: untouched), its scheduled runs skipped ESTIMATE_NOT_DISPLAYABLE, its autonomous action
+ * blocked. Idempotent. Returns the canceled message ids.
+ */
+export async function cancelIneligibleHomeValueNotesInTx(tx: Tx, now: Instant, o: { limit?: number } = {}): Promise<string[]> {
+  const r = await sql<{ message_id: string; contact_id: string; action_id: string | null; provider_ref: string | null; region: string | null }>`
+    SELECT m.id AS message_id, m.contact_id, m.assistant_action_id AS action_id, v.provider_ref, a.region
+      FROM messages m
+      JOIN playbook_step_runs r ON r.tenant_id = m.tenant_id AND r.contact_id = m.contact_id AND r.status = 'scheduled' AND r.enrollment_id IS NULL AND r.message_id = m.id
+      JOIN home_valuations v ON v.tenant_id = r.tenant_id
+       AND v.id = CASE WHEN r.trigger_ref->'ref'->>'valuationId' ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN (r.trigger_ref->'ref'->>'valuationId')::uuid END
+      LEFT JOIN contact_addresses a ON a.tenant_id = v.tenant_id AND a.id = v.contact_address_id
+     WHERE m.tenant_id = app.tenant_id() AND m.direction = 'outbound' AND m.status IN ('queued','scheduled')
+       AND r.trigger_ref->>'trigger' = 'home_value' AND (v.provider_ref LIKE 'inhouse:%' OR v.provider = ${IN_HOUSE_PROVIDER})
+     ORDER BY m.contact_id, m.id LIMIT ${o.limit ?? HOME_VALUE_SWEEP_LIMIT}`.execute(tx);
+  if (r.rows.length === 0) return [];
+  const packs = (await platformCleared(tx, CMA_PLATFORM_PACK)) && (await platformCleared(tx, AVM_PLATFORM_PACK));
+  const e = await mlsEligibility(tx, now);
+  const verdicts = new Map<string, boolean>();
+  const holds = (ref: InHouseRef | null, region: string | null): boolean => {
+    if (!packs || ref === null) return false;
+    const state = region === null ? null : uspsCode(region);
+    const k = `${ref.connectionIds.join('+')}|${state ?? ''}`;
+    if (!verdicts.has(k)) verdicts.set(k, ref.connectionIds.every((id) => valuationEligible(e, id, 'automated_notes', state, now).ok && displayPackReviewed(e.pack(id)!)));
+    return verdicts.get(k)!;
+  };
+  const failing = new Map<string, { contactId: string; actionId: string | null }>();
+  for (const x of r.rows) if (!failing.has(x.message_id) && !holds(parseInHouseRef(x.provider_ref), x.region)) failing.set(x.message_id, { contactId: x.contact_id, actionId: x.action_id });
+  const canceled: string[] = [];
+  for (const [messageId, f] of failing) {
+    await lockContact(tx, f.contactId as ContactId);
+    const u = await sql<{ id: string }>`
+      UPDATE messages SET status = 'canceled', status_reason = ${HOME_VALUE_NOT_DISPLAYABLE}
+       WHERE tenant_id = app.tenant_id() AND id = ${messageId} AND status IN ('queued','scheduled') RETURNING id`.execute(tx);
+    if (u.rows.length === 0) continue; // dispatched meanwhile: the gate had the last word
+    canceled.push(messageId);
+    // the runs are settled here, as what they are (never NOT_QUEUED with a raw code, repos.ts:271-277)
+    await sql`
+      UPDATE playbook_step_runs SET status = 'skipped_ineligible', updated_at = now(),
+             trigger_ref = trigger_ref || jsonb_build_object('skip', jsonb_build_object('reason', 'ESTIMATE_NOT_DISPLAYABLE', 'text', ${SKIP_NOT_DISPLAYABLE}::text))
+       WHERE tenant_id = app.tenant_id() AND contact_id = ${f.contactId} AND status = 'scheduled' AND enrollment_id IS NULL AND message_id = ${messageId}`.execute(tx);
+    if (f.actionId !== null) await sql`UPDATE assistant_actions SET status = 'blocked' WHERE tenant_id = app.tenant_id() AND id = ${f.actionId} AND kind = 'autonomous_message'`.execute(tx);
+  }
+  return canceled;
+}
+
+/** core nurture's skip text for ESTIMATE_NOT_DISPLAYABLE (SKIP_REASON_TEXT; what skipRun stores). */
+const SKIP_NOT_DISPLAYABLE = SKIP_REASON_TEXT.ESTIMATE_NOT_DISPLAYABLE;
+
+// ---- draft approval ---------------------------------------------------------------------------------------
+
+export const LINES_REQUIRED_SENTENCE = 'Keep the estimate sentence, the MLS statement, attribution, disclaimer and data date as written.';
+
+export type HomeValueDraftBlock = { reason: 'HOME_VALUE_NOT_DISPLAYABLE'; code: string; sentence: string } | { reason: 'HOME_VALUE_LINES_REQUIRED'; sentence: string };
+
+/**
+ * E621, E624 (R-CMA-7, R-AVM-1): whether a draft built from in-house home-value runs may go out with `body` (the text
+ * that would be sent, the agent's edit included). Reads the action's runs as dealDateStaleness does; per in-house
+ * home_value run, inHouseNoteGate in the caller's transaction, then every required line (the R-AVM-1 sentence
+ * recomputed from the stored row, the MLS statement, attribution, disclaimer and data date) verbatim in `body`.
+ * Null: nothing blocks (no in-house run, or every check holds).
+ */
+export async function homeValueDraftBlock(tx: Tx, actionId: string, now: Instant, body: string): Promise<HomeValueDraftBlock | null> {
+  const lead = (await sql<{ lead: string | null }>`SELECT CASE WHEN trigger_ref->>'kind' = 'trigger_run' THEN trigger_ref->>'stepRunId' END AS lead FROM assistant_actions WHERE tenant_id = app.tenant_id() AND id = ${actionId}`.execute(tx)).rows[0]?.lead ?? null;
+  if (lead === null || !/^[0-9a-f-]{36}$/i.test(lead)) return null;
+  const runs = await sql<{ valuation_id: string | null }>`
+    SELECT DISTINCT r.trigger_ref->'ref'->>'valuationId' AS valuation_id
+      FROM playbook_step_runs l
+      JOIN playbook_step_runs r ON r.tenant_id = l.tenant_id AND r.enrollment_id IS NULL AND r.contact_id = l.contact_id AND (r.id = l.id OR r.assistant_action_id = ${actionId})
+     WHERE l.tenant_id = app.tenant_id() AND l.id = ${lead}::uuid AND l.enrollment_id IS NULL AND r.trigger_ref->>'trigger' = 'home_value'`.execute(tx);
+  if (runs.rows.length === 0) return null;
+  const e = await mlsEligibility(tx, now);
+  for (const x of runs.rows) {
+    const id = x.valuation_id !== null && /^[0-9a-f-]{36}$/i.test(x.valuation_id) ? x.valuation_id : null;
+    if (id === null) return { reason: 'HOME_VALUE_NOT_DISPLAYABLE', code: 'NO_VALUE', sentence: REF_SENTENCE };
+    const gate = await inHouseNoteGate(tx, id, e, now);
+    if (gate === null) continue;
+    if (!gate.ok) return { reason: 'HOME_VALUE_NOT_DISPLAYABLE', code: gate.code, sentence: gate.sentence };
+    const est = await storedEstimate(tx, id);
+    const sentence = est === null ? null : homeValueText(est);
+    if (sentence === null) return { reason: 'HOME_VALUE_NOT_DISPLAYABLE', code: 'NO_VALUE', sentence: REF_SENTENCE };
+    if (![sentence, ...gate.lines].every((l) => body.includes(l))) return { reason: 'HOME_VALUE_LINES_REQUIRED', sentence: LINES_REQUIRED_SENTENCE };
+  }
+  return null;
+}
+
+async function storedEstimate(tx: Tx, id: string): Promise<CoreEstimate | null> {
+  const v = (await sql<{ status: 'ok' | 'unavailable'; value_cents: string | null; low_cents: string | null; high_cents: string | null; as_of: string | null; display_allowed: boolean; provider: string }>`
+    SELECT status, value_cents, low_cents, high_cents, to_char(as_of, 'YYYY-MM-DD') AS as_of, display_allowed, provider FROM home_valuations WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx)).rows[0];
+  if (!v) return null;
+  const n = (x: string | null) => (x === null ? null : Number(x));
+  return { status: v.status, valueCents: n(v.value_cents), lowCents: n(v.low_cents), highCents: n(v.high_cents), asOf: v.as_of, displayAllowed: v.display_allowed, provider: v.provider };
+}

@@ -78,14 +78,14 @@ describe('GET /admin/integrations: honest status for every service (R-INT-2, R-I
     }
     // module 71 (D9, F8): the platform:cma pack names what waits on it; b10 review api-ui/F3: and says that V1 has none
     // of it, so neither its review state nor a later clearance reads as client CMAs being available
-    expect(v.platformPacks.find((p) => p.key === 'platform:cma')!.sentence).toBe('Client CMAs and seller value ranges: not built in this version, so nothing built from MLS sales reaches a client; they would also wait for counsel review (pack 2026.11.0, not yet reviewed).');
+    expect(v.platformPacks.find((p) => p.key === 'platform:cma')!.sentence).toBe('Client CMAs, seller value ranges and in-house home-value notes: not built in this version, so nothing built from MLS sales reaches a client; they would also wait for counsel review (pack 2026.11.0, not yet reviewed).');
   });
 
   it('b10 review api-ui/F3 D9: once counsel review of platform:cma is recorded, its line still says client CMAs are not built in this version', async () => {
     try {
       await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = '2026-11-12T00:00:00Z' WHERE key = 'platform:cma' AND status = 'published'");
       const p = (await list()).platformPacks.find((x) => x.key === 'platform:cma')!;
-      expect(p).toMatchObject({ reviewed: true, sentence: 'Client CMAs and seller value ranges: not built in this version, so nothing built from MLS sales reaches a client; counsel reviewed the pack on 2026-11-12 (pack 2026.11.0).' });
+      expect(p).toMatchObject({ reviewed: true, sentence: 'Client CMAs, seller value ranges and in-house home-value notes: not built in this version, so nothing built from MLS sales reaches a client; counsel reviewed the pack on 2026-11-12 (pack 2026.11.0).' });
       expect(p.sentence).not.toMatch(/cleared/);
     } finally {
       await h.su.query("UPDATE jurisdiction_packs SET reviewed_by_counsel_at = NULL WHERE key = 'platform:cma' AND status = 'published'");
