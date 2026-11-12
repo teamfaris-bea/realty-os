@@ -253,6 +253,14 @@ export async function startInboxStack(): Promise<InboxStack> {
   });
 
   let visitorIp = '203.0.113.1';
+  // Each sign-in stands for its own device. The API allows 5 sign-ins a minute per client IP and email
+  // (auth/rateLimit.ts LOGIN_LIMITS), and every test here signs the same agent in from this one machine,
+  // so the proxy states a fresh test address (RFC 2544 range) for each sign-in, as nginx states the real one.
+  let deviceSeq = 0;
+  const deviceIp = () => {
+    deviceSeq += 1;
+    return `198.18.${Math.floor(deviceSeq / 250) % 250}.${(deviceSeq % 250) + 1}`;
+  };
   const vite: ViteDevServer = await createServer({
     root: webRoot,
     configFile: resolve(webRoot, 'vite.config.ts'),
@@ -270,7 +278,9 @@ export async function startInboxStack(): Promise<InboxStack> {
           configure: (proxy) => {
             // replace, never append (what nginx does): the visitor's own X-Forwarded-For never reaches the API
             proxy.on('proxyReq', (proxyReq, req) => {
-              if ((req.url ?? '').startsWith('/api/public/chat/')) proxyReq.setHeader('x-forwarded-for', visitorIp);
+              const url = req.url ?? '';
+              if (url.startsWith('/api/public/chat/')) proxyReq.setHeader('x-forwarded-for', visitorIp);
+              else if (url.startsWith('/api/auth/login')) proxyReq.setHeader('x-forwarded-for', deviceIp());
               else proxyReq.removeHeader('x-forwarded-for');
             });
           },

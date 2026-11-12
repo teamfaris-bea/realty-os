@@ -255,9 +255,11 @@ async function screenRefuses(page: Page, p: Person, ch: Ch, info: Parameters<typ
   const send = page.getByRole('button', { name: 'Send', exact: true });
   await expect(send).toBeDisabled({ timeout: 15_000 });
   await expect(send).toHaveAccessibleDescription(importedReason(p, ch));
-  await tap(page, page.getByRole('button', { name: 'Templates' }));
-  await tap(page, page.getByRole('dialog', { name: ch === 'sms' ? 'Text templates' : 'Email templates' }).getByRole('button', { name: ch === 'sms' ? /Market update/ : /Market report/ }));
-  await expect(box).toHaveValue(new RegExp(`^Hi ${p.first},`));
+  // every channel of an opted-out person is blocked here, so nothing could send a template or a draft: the box
+  // offers neither (batch 6 finding UXA-5), and what was typed still cannot be sent
+  await expect(page.getByRole('button', { name: 'Templates' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Ask the assistant for a draft' })).toHaveCount(0);
+  await expect(box).toHaveValue('Still thinking about selling this year?');
   await expect(send).toBeDisabled();
   await expect(page.getByRole('button', { name: /anyway/i })).toHaveCount(0);
   if (phase && ch === p.blocks[0]) await shot(page, info, 'm3', `${phase}-${p.key}-${ch}-compose`);
