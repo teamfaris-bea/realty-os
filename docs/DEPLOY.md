@@ -309,6 +309,22 @@ These paths are a **public contract**: provider configuration points at them and
 
 **The app never re-points a number.** Numbers bought through the app get these URLs once, at purchase (the only code that writes `SmsUrl`, `VoiceUrl` or a number's `StatusCallback`; R-TWL-5, architecture test). Nothing updates an existing number at Twilio, and the team's existing numbers stay routed exactly as they are.
 
+### 5.3 Opt-outs and sender errors from Twilio (R-TWL-7 to R-TWL-11)
+
+D1 is unchanged: sending checks only opt-outs. Each item below plugs into the same opt-out model and the single send path. **Twilio's Advanced Opt-Out stays off** (owner default); Twilio's own STOP handling stays on.
+
+| Signal | What the app does |
+|---|---|
+| `OptOutType=STOP` on an inbound text whose Body we do not read as a STOP, opt-out language or wrong number | treated as STOP (`OPTOUTTYPE_STOP`): every phone of the contact revoked, queued texts cancelled, owner told; **no** platform confirmation (Twilio sent its own). `START`, `HELP` and a Body of `YES` change nothing; YES never lifts an opt-out. |
+| `21610` on a text to a contact | provider opt-out (R-CONSENT-12), as before |
+| `21610` on an agent alert text | the agent's alert texts are revoked as if they had texted STOP; the delivery is `suppressed` `PROVIDER_OPTED_OUT`; audited; Admins told. The agent's own START from that phone restores alerts. |
+| `30032` (toll-free not verified) or `30034` (unregistered A2P 10DLC sender), on the submit or a status callback | the text fails `SENDER_NOT_VERIFIED` ("Not delivered: the team's number isn't verified for texting. The Owner has been told."), never an opt-out, never retried or reconciled. In the same transaction the number's registration is marked not ready (`status_detail` names the code), so texts from it are blocked by the sender check while **calls keep working**; one Owner/Admin notice per number per day. Only **Check registration status** restores it (a Twilio read, blocked while the kill switch is off). |
+| STOP / HELP to a **toll-free** number | the platform sends no confirmation or HELP reply of its own (the carrier answers). Local numbers follow the team policy. |
+| text in an MMS `text/plain` part | read by SID (≤ 16 KiB, strict UTF-8) by job `comms.mms_text`; a STOP, opt-out language or wrong number in it has the same effects as in the Body (it never lifts one); a STOP found only in a part is confirmed by the platform once per message. An unreadable part is recorded as not saved and the conversation's handler is told to check it before texting. |
+
+**VERIFY in the pilot test step** (with the written approval, on a test number, before any real lead): the codes 30032 and 30034 and the status a failed toll-free / 10DLC send reports; that Twilio sends `OptOutType` on the inbound webhook for STOP/START/HELP; that a toll-free number's carrier answers STOP and HELP itself (so the platform's silence is right); how Twilio delivers a text part of an MMS (MediaContentType `text/plain`) and whether its own keyword handling reads it.
+
+
 
 ## 6. Email: SMTP, DNS and inbound
 

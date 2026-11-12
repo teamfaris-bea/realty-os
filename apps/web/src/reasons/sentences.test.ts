@@ -161,3 +161,17 @@ describe('provider codes from the real adapters (Twilio, SMTP, SES, Mailgun)', (
     expect(messageStatus({ status: 'failed', providerErrorCode: '99999', channel: 'sms' }, 'Jane')?.text).toBe('Not delivered: the carrier rejected it');
   });
 });
+
+describe('telephony safeguards (lane telephony-safeguards): the sentences the agent sees', () => {
+  it('R-TWL-1: a text the kill switch refused says exactly "Live texting and calling are off on this deployment."', () => {
+    expect(messageStatus({ status: 'failed', statusReason: 'TELEPHONY_LIVE_OFF', providerErrorCode: 'TELEPHONY_LIVE_OFF', channel: 'sms' }, 'Ana')).toEqual({ text: 'Live texting and calling are off on this deployment.', tone: 'failed' });
+  });
+  it('R-TWL-9: an unverified sender says the brief\'s sentence, whatever the carrier code', () => {
+    for (const code of ['30032', '30034']) {
+      expect(messageStatus({ status: 'undelivered', statusReason: 'SENDER_NOT_VERIFIED', providerErrorCode: code, channel: 'sms' }, 'Ana')).toEqual({ text: "Not delivered: the team's number isn't verified for texting. The Owner has been told.", tone: 'failed' });
+    }
+  });
+  it('R-TWL-2: a send blocked by the daily cap says so', () => {
+    expect(messageStatus({ status: 'blocked', statusReason: 'DAILY_SEND_CAP_REACHED', channel: 'sms' }, 'Ana')!.text).toBe("Not sent: today's sending limit for this team is reached");
+  });
+});

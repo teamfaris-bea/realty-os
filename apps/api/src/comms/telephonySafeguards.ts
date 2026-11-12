@@ -19,12 +19,12 @@ import type { ActionCategory } from '@realty/core/compliance';
 import { CONSENT_EXEMPT_CATEGORIES } from '@realty/core/compliance';
 import type { Instant, SystemActor } from '@realty/core/foundation';
 import { toIso } from '@realty/core/foundation';
-import type { Tx } from '@realty/db';
+import { type Tx, recordConsentEvent } from '@realty/db';
 import { sql } from 'kysely';
 import { audit } from '../audit.js';
 import { TELEPHONY_LIVE_OFF } from '../providers/twilio/http.js';
 import { adminUserIds, notifyUser } from './repos/notify.js';
-import { SYSTEM_NOTICE, type CommsDeps } from './types.js';
+import { LEDGER_SYSTEM, SYSTEM_NOTICE, type CommsDeps } from './types.js';
 
 export { TELEPHONY_LIVE_OFF };
 
@@ -117,4 +117,31 @@ export async function markSenderNotVerified(tx: Tx, actor: SystemActor, deps: Pi
       dedupeKey: `sender_not_verified:${phoneNumberId}:${num.day}`,
     }, now);
   }
+}
+
+// ---- R-TWL-8 / E388: an agent's alert phone opted out (21610 on an alert text, or STOP in an MMS text part) ------------
+
+/**
+ * Records the alert phone's SMS revoke EXACTLY as the agent keyword path does (comms/inbound.ts agentKeyword: recipient
+ * user, source inbound_keyword, purpose all), so the agent's own START from that phone lifts it (owner default), plus
+ * the audit and the Admins' notice. `matched` says what carried the opt-out (PROVIDER_21610, TEXT_PART_STOP).
+ * Returns false (nothing written) when the phone's latest SMS event is already a revoke: an opt-out is recorded once.
+ */
+export async function recordAgentAlertOptOut(tx: Tx, actor: SystemActor, ids: CommsDeps['ids'], a: { userId: string; hmac: string; hint: string; matched: string; reason: string; evidence?: Record<string, string> }, now: Instant): Promise<boolean> {
+  const last = await sql<{ event_type: string }>`
+    SELECT event_type FROM consent_events WHERE tenant_id = app.tenant_id() AND address_hmac = ${Buffer.from(a.hmac, 'hex')} AND channel = 'sms'
+     ORDER BY occurred_at DESC, id DESC LIMIT 1`.execute(tx);
+  if (last.rows[0]?.event_type === 'revoke') return false;
+  await recordConsentEvent(tx, {
+    id: ids.next<'ConsentEventId'>(), addressKind: 'phone', addressHmac: a.hmac, addressHint: a.hint, channel: 'sms', purpose: 'all',
+    eventType: 'revoke', level: 'none', source: 'inbound_keyword', occurredAt: now, contactId: null,
+    actor: LEDGER_SYSTEM, disclosureId: null, evidenceObjectId: null, evidenceMessageId: null, evidenceCallId: null, evidenceCallOffsetMs: null,
+    evidence: { recipient: 'user', matched: a.matched, ...(a.evidence ?? {}) }, imported: false, importRecordId: null, originalProvenance: null,
+    revertsEventId: null, expiresAt: null, needsReview: false,
+  });
+  await audit(tx, actor, { action: 'consent.opt_out_received', entity: { type: 'membership', id: a.userId }, reason: a.reason });
+  for (const admin of await adminUserIds(tx)) {
+    await notifyUser(tx, ids, { userId: admin, kind: SYSTEM_NOTICE, priority: 'normal', title: 'A team member turned off alert texts', body: 'Their alerts now go to push and email only.', subjectType: 'membership', subjectId: a.userId, dedupeKey: `alert_stop:${a.userId}:${toIso(now)}` }, now);
+  }
+  return true;
 }

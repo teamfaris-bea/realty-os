@@ -13,7 +13,13 @@ import { type ApiError, messageFor, useApi } from '../../shell/index.js';
 import type { TimelineItem } from '../feed/lib/types.js';
 
 export interface AttachmentsResponse {
-  messages: { messageId: string; media: { position: number; contentType: string; byteSize: number; inline: boolean; url: string }[]; skipped: { position: number; reason: string }[] }[];
+  messages: {
+    messageId: string;
+    media: { position: number; contentType: string; byteSize: number; inline: boolean; url: string }[];
+    skipped: { position: number; reason: string }[];
+    /** R-TWL-11: MMS text parts (absent from older servers) */
+    textParts?: { position: number; status: 'read' | 'pending'; text: string | null }[];
+  }[];
   voicemails: { callId: string; recordingId: string; durationS: number | null; transcriptReady: boolean }[];
 }
 
@@ -67,9 +73,22 @@ export function RowAttachments({ contactId, item }: { contactId: string; item: P
   }
   const m = a.data.messages.find((x) => x.messageId === item.id);
   if (!m) return null;
-  const total = m.media.length + m.skipped.length;
+  const parts = m.textParts ?? [];
+  const total = m.media.length + m.skipped.length + parts.length;
   return (
     <div className="flex flex-col gap-1 px-1">
+      {parts.map((x) =>
+        // plain text only: React escapes it; never HTML, never a link (R-TWL-11)
+        x.status === 'read' ? (
+          <p key={`t${x.position}`} className="max-w-[85%] whitespace-pre-wrap break-words text-[14px] text-ink">
+            Text in this message: {x.text}
+          </p>
+        ) : (
+          <p key={`t${x.position}`} className="text-[13px] text-ink-muted">
+            Part of this text hasn't been read yet.
+          </p>
+        ),
+      )}
       {m.media.map((x) => {
         const label = `Attachment ${x.position + 1} of ${total}, ${kindOf(x.contentType)}, ${formatBytes(x.byteSize)}`;
         return (

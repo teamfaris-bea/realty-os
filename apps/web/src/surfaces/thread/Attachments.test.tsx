@@ -42,6 +42,21 @@ function mount(fake: FakeFetch, children: ReactNode) {
 }
 
 describe('thread attachments', () => {
+  it('R-TWL-11: shows a read MMS text part as plain text (markup never rendered) and a pending one as not read yet', async () => {
+    const M2 = '01900000-0000-7000-8000-0000000000d2';
+    const body: AttachmentsResponse = {
+      messages: [{ messageId: M2, media: [], skipped: [], textParts: [{ position: 0, status: 'read', text: '<b>STOP</b> please' }, { position: 1, status: 'pending', text: null }] }],
+      voicemails: [],
+    };
+    const fake = new FakeFetch().on(`GET /contacts/${C}/attachments`, { status: 200, body });
+    const view = mount(fake, <li><RowAttachments contactId={C} item={{ id: M2, type: 'message' }} /></li>);
+    expect(await screen.findByText('Text in this message: <b>STOP</b> please')).toBeTruthy();
+    expect(view.container.querySelector('b')).toBeNull();
+    expect(screen.getByText("Part of this text hasn't been read yet.")).toBeTruthy();
+    const r = await axe.run(view.container);
+    expect(r.violations).toEqual([]);
+  });
+
   it('shows a photo inline with a download, a PDF as a download, and why one attachment was not saved', async () => {
     const fake = new FakeFetch().on(`GET /contacts/${C}/attachments`, { status: 200, body: DATA });
     const view = mount(fake, <li><RowAttachments contactId={C} item={{ id: M, type: 'message' }} /></li>);

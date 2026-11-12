@@ -225,11 +225,12 @@ export async function keywordRevokedBy(tx: Tx, hmacs: readonly string[], fromAdd
   return new Set(r.rows.map((x) => Buffer.from(x.h).toString('hex')));
 }
 
+/** (lane telephony-safeguards: an MMS that carried the keyword, in its Body or a text part, counts too: R-TWL-11) */
 export async function keywordSenderHmacs(tx: Tx, conversationId: string, now: Instant): Promise<string[]> {
   const r = await sql<{ h: Buffer }>`
     SELECT DISTINCT p.address_hmac AS h
       FROM messages im JOIN contact_points p ON p.tenant_id = im.tenant_id AND p.kind = 'phone' AND p.address = im.from_address
-     WHERE im.tenant_id = app.tenant_id() AND im.conversation_id = ${conversationId} AND im.direction = 'inbound' AND im.channel = 'sms'
+     WHERE im.tenant_id = app.tenant_id() AND im.conversation_id = ${conversationId} AND im.direction = 'inbound' AND im.channel IN ('sms','mms')
        AND im.opt_out_keyword IS NOT NULL AND im.created_at >= ${toIso(now)}::timestamptz - interval '24 hours'`.execute(tx);
   return r.rows.map((x) => Buffer.from(x.h).toString('hex'));
 }

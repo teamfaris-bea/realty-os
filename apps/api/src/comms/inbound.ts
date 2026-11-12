@@ -30,6 +30,7 @@ import { type Tx, applyOwnershipCommandInTx, derivedCommandId, enqueueJob, lockA
 import { sql } from 'kysely';
 import { audit } from '../audit.js';
 import { queueOutboundInTx } from './compose.js';
+import { enqueueTextParts } from './mmsText.js';
 import { hint } from './dispatch.js';
 import { resolvedPolicy } from './gateInput.js';
 import { autoReplyHeader } from './render.js';
@@ -41,7 +42,7 @@ import { LEDGER_SYSTEM, SYSTEM_NOTICE, type CommsDeps } from './types.js';
 import { emailHandbackKey, messageIdHeader, rfcMessageIdSha256 } from '../channels/rfcMessageId.js';
 
 export type InboundEvent =
-  | { kind: 'sms'; providerRef: string; from: string; to: string; body: string; mediaCount?: number; occurredAt?: Instant }
+  | { kind: 'sms'; providerRef: string; from: string; to: string; body: string; mediaCount?: number; occurredAt?: Instant; optOutType?: string; textParts?: TextPartRef[] }
   | { kind: 'email'; providerRef: string; from: string; to: string; subject: string | null; text: string; headers: Record<string, string>; conversationId: string; occurredAt?: Instant }
   | { kind: 'call'; providerRef: string; from: string; to: string; status: 'ringing' | 'no_answer' | 'voicemail' | 'completed' | 'busy'; occurredAt?: Instant }
   | ChannelInboundEvent;
@@ -66,6 +67,14 @@ export type IngestResult =
   | { kind: 'agent_keyword'; userId: string; classification: InboundClassification['kind'] }
   | { kind: 'duplicate' }
   | { kind: 'unroutable'; reason: 'NUMBER_NOT_LIVE' | 'ADDRESS_INVALID' | 'CONVERSATION_NOT_FOUND' };
+
+/**
+ * Lane telephony-safeguards (R-TWL-7, R-TWL-11): Twilio's OptOutType, and the declared text/plain parts of an MMS
+ * (read later by comms.mms_text, enqueued in THIS transaction; comms/mmsText.ts).
+ */
+export type TextPartRef = { position: number; ref: string | null };
+/** R-TWL-7: our classifications that already revoke; OptOutType=STOP changes only a message we read as anything else. */
+const REVOKING: ReadonlySet<InboundClassification['kind']> = new Set(['stop', 'opt_out_language', 'wrong_number']);
 
 /** The pause reason for a classification (conversations / enrollments CHECK lists). */
 function pauseReasonOf(k: InboundClassification['kind']): auto.PauseReason {
@@ -127,12 +136,12 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
   const { policy, tenant } = await resolvedPolicy(tx);
 
   // the number that was texted / called (still live for this tenant: the resolver checked, R-TEN-8)
-  let toNumber: { id: string; assignedUserId: string | null } | null = null;
+  let toNumber: { id: string; assignedUserId: string | null; tollFree: boolean } | null = null;
   if (!isEmail && !isChat) {
-    const r = await sql<{ id: string; assigned_user_id: string | null }>`
-      SELECT id, assigned_user_id FROM phone_numbers WHERE tenant_id = app.tenant_id() AND e164 = ${e.to} AND released_at IS NULL`.execute(tx);
+    const r = await sql<{ id: string; assigned_user_id: string | null; number_type: string }>`
+      SELECT id, assigned_user_id, number_type FROM phone_numbers WHERE tenant_id = app.tenant_id() AND e164 = ${e.to} AND released_at IS NULL`.execute(tx);
     if (!r.rows[0]) return { kind: 'unroutable', reason: 'NUMBER_NOT_LIVE' };
-    toNumber = { id: r.rows[0].id, assignedUserId: r.rows[0].assigned_user_id };
+    toNumber = { id: r.rows[0].id, assignedUserId: r.rows[0].assigned_user_id, tollFree: r.rows[0].number_type === 'toll_free' };
   }
 
   await lockAddresses(tx, [hmac]);
@@ -143,7 +152,11 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
       SELECT user_id FROM memberships WHERE tenant_id = app.tenant_id() AND status = 'active' AND alert_phone_e164 = ${from}
          AND alert_phone_verified_at IS NOT NULL ORDER BY user_id LIMIT 1`.execute(tx);
     const agentId = agent.rows[0]?.user_id;
-    if (agentId && (await msgs.hmacPoints(tx, hmac)).length === 0) return agentKeyword(tx, actor, ids, e.body, from, hmac, agentId, policy, occurredAt, txNow);
+    if (agentId && (await msgs.hmacPoints(tx, hmac)).length === 0) {
+      // R-TWL-11 (E388): an alert phone has no message row; its text parts are read for a STOP all the same
+      if (e.textParts && e.textParts.length > 0) await enqueueTextParts(tx, { agentUserId: agentId, messageRef: e.providerRef, parts: e.textParts });
+      return agentKeyword(tx, actor, ids, e.body, from, hmac, agentId, policy, occurredAt, txNow, (e.optOutType ?? '').toUpperCase() === 'STOP');
+    }
   }
 
   // 2 match contacts
@@ -227,12 +240,21 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
       rfcMessageIdSha256: rfcHash,
     });
     if (!inserted) return { kind: 'duplicate' };
+    // R-TWL-11: the declared text parts, pending, and their read job, in the inbound message's own transaction
+    if (e.kind === 'sms' && e.textParts && e.textParts.length > 0) await enqueueTextParts(tx, { messageId, messageRef: e.providerRef, parts: e.textParts });
   }
   const inboundSeq = await msgs.bumpInbound(tx, conversationId, target, occurredAt);
 
   // 5 consent side of the message (SMS and email bodies; a call has no text)
   const channel: Channel = e.kind === 'email' ? 'email' : e.kind === 'web_chat' ? 'web_chat' : 'sms';
-  const classification: InboundClassification = e.kind === 'call' ? { kind: 'none', needsReview: false } : classifyInbound(body, policy.keywords, channel);
+  let classification: InboundClassification = e.kind === 'call' ? { kind: 'none', needsReview: false } : classifyInbound(body, policy.keywords, channel);
+  // R-TWL-7 (E383, E384): Twilio says the person opted out (OptOutType=STOP) and we did not read a revoke ourselves:
+  // the usual STOP effects, with no platform reply (the provider sent its own). START / HELP / YES change nothing.
+  const providerStop = e.kind === 'sms' && (e.optOutType ?? '').toUpperCase() === 'STOP' && !REVOKING.has(classification.kind);
+  if (providerStop) classification = { kind: 'stop', matched: 'OPTOUTTYPE_STOP', needsReview: false, scope: 'channel' };
+  // R-TWL-10: a toll-free receiving number's carrier answers STOP / HELP itself, so the platform sends no reply of its own
+  // (VERIFY in the pilot test step); local numbers follow the tenant policy
+  const replyPolicy = providerStop || toNumber?.tollFree === true ? { optOutConfirmationSender: 'provider' as const } : policy;
   if (e.kind !== 'call') {
     const targetPoints = await g.contactPoints(tx, target);
     const inbound: InboundAddress = { kind: isEmail ? 'email' : isChat ? 'web_chat' : 'phone', hmac, hint: isChat ? 'web chat' : hint(from) };
@@ -253,7 +275,7 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
       otherPhones = otherPhones.map((p) => ({ ...p, keywordRevokedBySender: bySender.has(p.hmac) }));
     }
     const otherChats = targetPoints.filter((p) => p.kind === 'web_chat' && p.hmac !== hmac).map((p) => ({ kind: 'web_chat', hmac: p.hmac, hint: 'web chat' }) as InboundAddress);
-    const fx = planInboundEffects({ classification, channel, address: inbound, otherPhones, otherEmails: others('email'), otherPointsOfKind: otherChats, occurredAt: now, contactId: target, messageId, policy, ids });
+    const fx = planInboundEffects({ classification, channel, address: inbound, otherPhones, otherEmails: others('email'), otherPointsOfKind: otherChats, occurredAt: now, contactId: target, messageId, policy: replyPolicy, ids });
     for (const ev of fx.consentEvents) await recordConsentEvent(tx, ev);
     if (isChat) {
       const byHmac = new Map<string, string>([[hmac, from], ...targetPoints.map((p) => [p.hmac, p.address] as [string, string])]);
@@ -460,8 +482,10 @@ async function hadOutbound(tx: Tx, contactId: string): Promise<boolean> {
 }
 
 /** E60: keywords from an agent's own alert phone revoke/restore THEIR alert texts (recipient_kind user). */
-async function agentKeyword(tx: Tx, actor: SystemActor, ids: IdGenerator, body: string, from: string, hmac: string, userId: string, policy: Awaited<ReturnType<typeof resolvedPolicy>>['policy'], occurredAt: Instant, now: Instant): Promise<IngestResult> {
-  const c = classifyInbound(body, policy.keywords);
+async function agentKeyword(tx: Tx, actor: SystemActor, ids: IdGenerator, body: string, from: string, hmac: string, userId: string, policy: Awaited<ReturnType<typeof resolvedPolicy>>['policy'], occurredAt: Instant, now: Instant, providerStop = false): Promise<IngestResult> {
+  const c0 = classifyInbound(body, policy.keywords);
+  // R-TWL-7: OptOutType=STOP from the agent's own alert phone stops alert texts like their STOP (never lifts anything)
+  const c: InboundClassification = providerStop && c0.kind !== 'stop' && c0.kind !== 'start' ? { kind: 'stop', matched: 'OPTOUTTYPE_STOP', needsReview: false, scope: 'channel' } : c0;
   if (c.kind === 'stop' || c.kind === 'start') {
     await recordConsentEvent(tx, {
       id: ids.next<'ConsentEventId'>(), addressKind: 'phone', addressHmac: hmac, addressHint: hint(from), channel: 'sms', purpose: 'all',
