@@ -250,5 +250,50 @@ export const CmaListResponse = z.object({
   ),
 });
 
+// ---- V2-A sharing (R-CMA-9) ----------------------------------------------------------------------------------
+
+export const SharePreviewQuery = z.object({ recipientContactId: Id.optional(), toPointId: Id.optional() }).strict();
+
+const Sha = z.string().regex(/^[0-9a-f]{64}$/);
+export const ShareBody = z.object({ recipientContactId: Id, toPointId: Id, contentSha256: Sha, reportSha256: Sha }).strict();
+
+const Where = z.enum(['notes', 'intendedUsers', 'agentInterest', 'conflicts', 'valueDefinition', 'limitingConditions', 'inspectedOn']);
+const FhMatch = z.object({ termId: z.string(), label: z.string(), where: Where });
+const Role = z.enum(['title', 'range', 'estimate', 'provider', 'statement', 'comp', 'as_of', 'inspection', 'sop', 'notes', 'attribution', 'disclaimer']);
+
+export const SharePreviewResponse = z.object({
+  preview: z.object({
+    cmaId: Id,
+    contentSha256: z.string(),
+    reportSha256: z.string().nullable(),
+    subject: z.string().nullable(),
+    reportText: z.string().nullable(),
+    body: z.string().nullable(),
+    recipients: z.array(
+      z.object({
+        contactId: Id,
+        name: z.string(),
+        firstName: z.string(),
+        relationship: z.enum(['self', 'co_seller', 'spouse_partner']),
+        emails: z.array(z.object({ id: Id, address: z.string(), status: z.string() })),
+      }),
+    ),
+    recipientContactId: Id.nullable(),
+    toPointId: Id.nullable(),
+    decision: z.object({ id: z.string().nullable(), outcome: z.string(), reasons: z.array(z.string()), explanation: z.string(), phase: z.enum(['preview', 'send']) }).nullable(),
+    warnings: z.array(z.object({ code: z.enum(['WONT_PRINT', 'CHECK_WORDING']), role: Role, codePoints: z.array(z.string()).optional() })),
+    statement: z.object({ ok: z.boolean(), part: z.string().nullable(), reason: z.string().nullable(), codePoints: z.array(z.string()) }),
+    tooLong: z.object({ parts: z.array(z.object({ role: Role, chars: z.number() })) }).nullable(),
+    disclosureMissing: z.array(Where),
+    fairHousing: z.object({ hard: z.array(FhMatch), soft: z.array(FhMatch) }),
+    blockers: z.array(z.object({ code: z.enum(BLOCKER_CODES), sentence: z.string(), count: z.number().optional(), listingIds: z.array(z.string()).optional() })),
+    stale: z.enum(['DATA_OLD', 'SALE_CHANGED']).nullable(),
+    canShare: z.boolean(),
+    sentence: z.string().nullable(),
+  }),
+});
+
+export const ShareResponse = z.object({ cma: CmaViewSchema, message: z.object({ id: Id, status: z.string(), result: z.string() }) });
+
 /** Every response schema of the module (the R-AST-13 snapshot walks these). */
-export const CMA_RESPONSE_SCHEMAS = { CmaResponse, CmaListResponse } as const;
+export const CMA_RESPONSE_SCHEMAS = { CmaResponse, CmaListResponse, SharePreviewResponse, ShareResponse } as const;

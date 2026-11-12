@@ -5,6 +5,9 @@
 //   GET   /contacts/:id/cmas      the contact's CMAs and its merged-away records'                  cma.prepare
 //   GET   /cma/:id                one CMA, readiness computed now                                  cma.prepare
 //   PATCH /cma/:id                edit a draft and re-run it                                       cma.prepare
+//   GET   /cma/:id/share-preview  the exact report, the recipient's D1 decision, every blocker      cma.share (creator)
+//   POST  /cma/:id/share          one human tap: the email in the sharer's transaction, the freeze   cma.share (creator)
+//   GET   /cma/:id/report.pdf     a shared CMA's report, re-checked now (D9 V2-A, R-CMA-9)           cma.share
 //
 // Authorization: cma.prepare (DATA_MODEL §8: ✅ | ✅ | T | O | — | — | —) on the contact's facts (own, collaborating,
 // team), or `{own}` for the creator of a research CMA without a contact. A CMA of a merged-away record the caller no
@@ -21,15 +24,18 @@ import type { ResourceFacts } from '@realty/core/foundation';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { type Tx, withTenantTx } from '@realty/db';
-import { actorOf, adminTx, platformOf } from '../admin/common.js';
+import { actorOf, adminTx, platformOf, recheck } from '../admin/common.js';
 import { type Limit, enforceLimits } from '../auth/rateLimit.js';
 import { personFacts } from '../lists/repos/catalog.js';
+import { AppError } from '../errors.js';
 import { authorize } from '../rbac.js';
 import type { RouteModule } from '../routes.js';
 import { systemActor } from '../worker/systemActor.js';
 import { supersedeCreatorsDraftsAcrossPerson } from './merge.js';
 import { getCma, survivorSeenByCaller } from './repos.js';
-import { CmaListResponse, CmaResponse, IdParams, OneTapBody, PatchBody, PrepareBody } from './schemas.js';
+import { depsFromPlatform } from './deps.js';
+import { CmaListResponse, CmaResponse, IdParams, OneTapBody, PatchBody, PrepareBody, ShareBody, SharePreviewQuery, SharePreviewResponse, ShareResponse } from './schemas.js';
+import { type AdminTx, previewShare, shareCma } from './share.js';
 import { getView, listForContact, oneTap, patch, prepare } from './service.js';
 
 /** The caller's relation to a contact whose detail they see (null: invisible, R-PERM-5). */
@@ -109,6 +115,26 @@ async function register(app: FastifyInstance): Promise<void> {
   r.get('/cma/:id', { config: auth, preHandler: onCma, schema: { params: IdParams, response: { 200: CmaResponse } } }, async (req) => ({
     cma: await adminTx(req, (tx, now, actor) => getView(tx, actor, now, req.params.id)),
   }));
+
+  // ---- V2-A sharing (R-CMA-9): cma.share on the CMA's facts; the share and its preview are the creator's only ----
+  const share = { auth: 'cma.share' as const };
+  const onCmaShare = authorize('cma.share', (req) => adminTx(req, (tx) => cmaFacts(tx, req, (req.params as { id: string }).id)));
+  const runAs = (req: FastifyRequest): AdminTx => (fn) => adminTx(req, (tx, now, actor) => fn(tx, now as number, actor));
+
+  r.get('/cma/:id/share-preview', { config: share, preHandler: onCmaShare, schema: { params: IdParams, querystring: SharePreviewQuery, response: { 200: SharePreviewResponse } } }, async (req) => ({
+    preview: await previewShare(runAs(req), depsFromPlatform(platformOf(req)), actorOf(req), req.params.id, req.query),
+  }));
+
+  r.post('/cma/:id/share', { config: share, preHandler: onCmaShare, bodyLimit: 4 * 1024, schema: { params: IdParams, body: ShareBody, response: { 200: ShareResponse } } }, async (req) =>
+    shareCma(runAs(req), depsFromPlatform(platformOf(req)), actorOf(req), req.params.id, req.body, {
+      // cma.share again inside the write transaction, on the facts read under the row lock (R-PERM-5: a lost contact is 404)
+      recheck: async (tx) => {
+        const facts = await cmaFacts(tx, req, req.params.id);
+        if (facts === null) throw new AppError('NOT_FOUND');
+        recheck(req, 'cma.share', facts);
+      },
+    }),
+  );
 
   r.patch('/cma/:id', { config: auth, preHandler: onCma, bodyLimit: 64 * 1024, schema: { params: IdParams, body: PatchBody, response: { 200: CmaResponse } } }, async (req) => {
     await limitRuns(req);

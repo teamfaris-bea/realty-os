@@ -150,7 +150,7 @@ interface Inputs {
   nearMatchDismissed: string[];
 }
 
-async function zoneOf(tx: Tx): Promise<IanaZone> {
+export async function zoneOf(tx: Tx): Promise<IanaZone> {
   return (ianaZone(await tenantZoneName(tx)) ?? ('UTC' as IanaZone)) as IanaZone;
 }
 
@@ -397,7 +397,7 @@ async function compute(tx: Tx, now: Instant, i: Inputs): Promise<{ write: CmaWri
  * survivor only to a caller who sees it (R-PERM-5), also when contacts RLS hides the record itself from the caller
  * (its former agent opening their own CMA of it: db-public/F1, F2); any other contact the caller cannot see is 404.
  */
-async function assertContact(tx: Tx, contactId: string): Promise<void> {
+export async function assertContact(tx: Tx, contactId: string): Promise<void> {
   const c = await contactLive(tx, contactId);
   if (c !== null && c.live) return;
   const survivor = c === null || c.mergedInto !== null ? await survivorSeenByCaller(tx, contactId) : null;

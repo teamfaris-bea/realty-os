@@ -158,6 +158,7 @@ export const ACTIONS = [
   'milestone.confirm', // module 31 (DATA_MODEL §8 "Confirm or move a milestone date"): plan, confirm, enter, move, complete a deal date
   'milestone_template.manage', // module 31: tenant milestone templates (not a §8 row: Owner/Admin, flagged; R-TXN-6)
   'cma.prepare', // module 71 (D9): prepare, edit or view a CMA (DATA_MODEL §8: ✅ | ✅ | T | O | — | — | —; R-CMA-6)
+  'cma.share', // module 71 (D9 V2-A): share a CMA, preview it, download its report (DATA_MODEL §8: ✅ | ✅ | T | O | — | — | —; creator only for share and preview; R-CMA-9)
   // registry: add new entries above this line
 ] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -333,6 +334,8 @@ export const AUDIT_ACTIONS = [
   'goal.changed', // module 33: a goal created, changed or removed (member, period, metric, target)
   'coaching.settings_changed', // module 36: the Owner changed call scoring, Team Lead visibility or the rubric items, or an Admin turned call reviews off (values only)
   'cma.near_match_dismissed', // module 71 (D9): the agent confirmed a live MLS listing is a different home than the CMA's subject (listing ids only; F2)
+  'cma.shared', // module 71 (D9 V2-A): a CMA was shared by email (message, recipient and connection ids, soft term ids, method version; R-CMA-9)
+  'cma.report_downloaded', // module 71 (D9 V2-A): a shared CMA's report PDF was downloaded (cma id and the PDF's sha256; R-CMA-9)
   // registry: add new entries above this line
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -649,6 +652,9 @@ const MATRIX: Record<Action, ActionRule> = {
   // Module 71 (D9, DATA_MODEL §8 "Prepare, edit or view a CMA"): ✅ | ✅ | T | O | — | — | —. A person only, never the system;
   // support reads through RLS only (R-CMA-6).
   'cma.prepare': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: O } },
+  // Module 71 (D9 V2-A, DATA_MODEL §8 "Share a CMA, preview it, download its report"): ✅ | ✅ | T | O | — | — | —; the share
+  // and its preview are the creator's only (api/cma share.ts, owner question g). A person only, never the system.
+  'cma.share': { roles: { owner: ALL, admin: ALL, team_lead: T, agent: O } },
 };
 
 const DENY_NOT_FOUND: CanResult = { ok: false, code: 'NOT_FOUND' };

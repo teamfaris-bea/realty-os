@@ -119,10 +119,18 @@ describe('R-TEN-1 R-TEN-3: another tenant', () => {
 });
 
 describe('route table', () => {
-  it('every CMA route declares cma.prepare', () => {
+  it('every CMA route declares cma.prepare, and the V2-A share routes cma.share', () => {
     const rows = h.app.platform.routeTable.filter((r) => /^\/api\/(cma|contacts\/:id\/cmas?)(\/|$)/.test(r.url) && r.method !== 'HEAD');
     expect(rows.map((r) => `${r.method} ${r.url} → ${r.auth}`).sort()).toEqual(
-      ['GET /api/cma/:id → cma.prepare', 'GET /api/contacts/:id/cmas → cma.prepare', 'PATCH /api/cma/:id → cma.prepare', 'POST /api/cma → cma.prepare', 'POST /api/contacts/:id/cma → cma.prepare'].sort(),
+      [
+        'GET /api/cma/:id → cma.prepare',
+        'GET /api/contacts/:id/cmas → cma.prepare',
+        'PATCH /api/cma/:id → cma.prepare',
+        'POST /api/cma → cma.prepare',
+        'POST /api/contacts/:id/cma → cma.prepare',
+        'GET /api/cma/:id/share-preview → cma.share',
+        'POST /api/cma/:id/share → cma.share',
+      ].sort(),
     );
   });
 });

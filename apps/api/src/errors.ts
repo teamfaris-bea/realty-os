@@ -343,6 +343,15 @@ export const ERROR_STATUS = {
   CMA_SUBJECT_TYPE_NOT_SUPPORTED: 422, // land and 'other' are not valued in V1 (owner question (g), core/valuation CMA_SUPPORTED_TYPES; details.propertyType)
   CMA_NOT_DRAFT: 409, // a shared or superseded CMA never changes; prepare a new draft (details.status; E377)
   CMA_SUBJECT_ADDRESS_GONE: 409, // the draft's contact address was deleted (S0 keeps the draft open with no address), so it cannot be re-run; prepare a new CMA (details.sentence; F15)
+  // ---- api/cma V2-A sharing (module 71, D9; R-CMA-9). Details hold ids, codes and paths only, never a sentence ----
+  CMA_NOT_SHAREABLE: 409, // client readiness (R-CMA-7) fails now: preview, share or PDF (details.blockers: codes; E376, E612, E616)
+  CMA_DISCLOSURE_INCOMPLETE: 422, // purpose 'other' lacks SoP 11-1 items, or an inspection lacks its date (details.missing, details.paths; E606)
+  CMA_STATEMENT_NOT_RENDERABLE: 409, // a statement, attribution or disclaimer would be substituted, has no PDF size, or needs more than an email carries (details.part, details.reason, details.codePoints; E604, E605)
+  CMA_FAIR_HOUSING: 422, // a hard fair-housing match in the agent's own CMA text (details.termIds; R-FH-1, E608)
+  CMA_STALE: 409, // the CMA, a sale, the MLS data date or the report changed since the preview (details.reason: CONTENT_CHANGED | SALE_CHANGED | DATA_OLD | REPORT_CHANGED; E601, E602)
+  CMA_REPORT_TOO_LONG: 422, // the report's email text is over its cap (details.parts: roles and lengths; E614)
+  CMA_RECIPIENT_BLOCKED: 409, // the send-time check would block the email now, or there is no sender or address (details.reasons; D1, E603)
+  CMA_NO_RECIPIENT: 422, // a research CMA, or one whose subject is a listing, is not shared (details.reason; E609)
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

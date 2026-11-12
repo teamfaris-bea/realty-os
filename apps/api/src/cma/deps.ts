@@ -61,7 +61,7 @@ export { fairHousingPack, identityOf } from '../marketing/repo.js';
 export { check as fairHousingCheck } from '@realty/core/fairhousing';
 export { money, miles } from '@realty/core/valuation';
 export { feedStale, type DisplayListing } from '@realty/core/listings';
-export { DISPATCH_DENY_SENTENCES, type CommsDeps, createHumanEmailInTx, depsFromPlatform, dispatchOutbound, previewHumanMessage } from '../comms/index.js';
+export { DISPATCH_DENY_SENTENCES, type CommsDeps, type DecisionView, createHumanEmailInTx, depsFromPlatform, dispatchOutbound, previewHumanMessage } from '../comms/index.js';
 
 /** V1-A's tier read names → V1-B's tier names (the same areas: V1-A reads geo cells, V1-B measures the real distance). */
 export const ENGINE_TIER: Readonly<Record<SoldTier, CmaTier | 'rate_pool'>> = Object.freeze({
