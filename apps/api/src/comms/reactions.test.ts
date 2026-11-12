@@ -7,6 +7,7 @@ import { withTenantTx } from '@realty/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { actionsOf, appointment, approvedPlaybook, type ApprovedPlaybook, runJobs as runAssistantJobs, smsStep } from '../assistant/testing.js';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
+import { command } from '../leads/testing.js';
 import { systemActor } from '../worker/systemActor.js';
 import { queueOutboundInTx } from './compose.js';
 import { ingestInbound } from './inbound.js';
@@ -534,5 +535,53 @@ describe('the assistant (R-REACT-7)', () => {
     expect(prompt).toContain(PRICE); // the team's text, as the agent's, by its own handle
     expect(prompt).toMatch(/client \(sms reaction to the team's text \[S\d+\]\):/);
     expect(prompt).not.toContain('Loved “');
+  });
+});
+
+describe('a reaction between a Team Lead\'s merge and its follow-up (b8 texting ownership-data/F6)', () => {
+  let wt: CommsWorld;
+  beforeAll(async () => {
+    wt = await commsWorld(h, { agents: 1, teamLead: true });
+  }, 120_000);
+
+  const pendingFollowups = async (tenantId: string) =>
+    (await h.su.query<{ n: number }>("SELECT count(*)::int AS n FROM jobs WHERE tenant_id = $1 AND kind = 'ownership.followup' AND status = 'pending'", [tenantId])).rows[0]!.n;
+
+  it('R-REACT-2 R-REACT-3 R-OWN-24 E301 b8 texting ownership-data/F6: the team text still on the merged-away record is found through the person\'s records, so a quoted opt-out word is not the person\'s own', async () => {
+    const agent = wt.agents[0]!;
+    // the team texts the record that will be merged away
+    const loser = await ownedContact(agent, { firstName: 'Sam', confirmDistinct: true });
+    const quote = 'No more texts about Oak St, I promise. Talk soon!';
+    const sent = await sendText(agent, loser.id, quote);
+    expect(sent.body.result, JSON.stringify(sent.body)).toBe('sent');
+    const targetId = sent.body.message!.id;
+    const storedBody = (await h.su.query<{ body: string }>('SELECT body FROM messages WHERE id = $1', [targetId])).rows[0]!.body;
+    // the same person, entered again with the same phone; the Team Lead merges (the message move waits for the follow-up)
+    const survivor = await ownedContact(agent, { firstName: 'Sam', phone: loser.phone, confirmDistinct: true });
+    await freshReauth(h, wt.teamLead!);
+    const m = await command(wt.teamLead!, survivor.id, 'merge', { loserId: loser.id });
+    expect(m.status, JSON.stringify(m.body)).toBe(200);
+    expect(await pendingFollowups(wt.tenantId)).toBeGreaterThan(0);
+    expect((await h.su.query<{ contact_id: string }>('SELECT contact_id FROM messages WHERE id = $1', [targetId])).rows[0]!.contact_id).toBe(loser.id);
+    // the tapback arrives from the person's phone before the follow-up runs: it lands on the survivor
+    const r = await inboundSms(h, loser.phone, wt.mainNumber, `Loved “${storedBody}”`);
+    expect(r.statusCode).toBeLessThan(300);
+    const inbound = (await h.su.query<{ id: string; contact_id: string; opt_out_keyword: string | null }>(
+      "SELECT id, contact_id, opt_out_keyword FROM messages WHERE tenant_id = $1 AND direction = 'inbound' AND from_address = $2 ORDER BY occurred_at DESC, id DESC LIMIT 1", [wt.tenantId, loser.phone])).rows[0]!;
+    expect(inbound.contact_id).toBe(survivor.id);
+    // linked to the team's text on the merged-away record, read by its own words only
+    expect(await reactionRow(inbound.id)).toMatchObject({ target_message_id: targetId, action: 'add', reaction: 'love', whole_text_reading: 'opt_out_language' });
+    expect(inbound.opt_out_keyword).toBeNull();
+    const audits = async (action: string) => (await h.su.query('SELECT reason FROM audit_log WHERE tenant_id = $1 AND action = $2 AND entity_id = $3', [wt.tenantId, action, inbound.id])).rows;
+    expect(await audits('consent.reaction_quote_not_read')).toEqual([{ reason: 'OPT_OUT_LANGUAGE' }]);
+    expect(await audits('consent.opt_out_received')).toEqual([]);
+    // no person-level do-not-contact on any record of the person (D1 is unchanged: a real opt-out still counts)
+    const dnc = (await h.su.query('SELECT count(*)::int AS n FROM contacts WHERE id = ANY($1::uuid[]) AND do_not_contact_at IS NOT NULL', [[survivor.id, loser.id]])).rows[0].n;
+    expect(dnc).toBe(0);
+    // a plain written opt-out in the same window is still read as one
+    await inboundSms(h, loser.phone, wt.mainNumber, 'No more texts please');
+    const plain = (await h.su.query<{ opt_out_keyword: string | null }>(
+      "SELECT opt_out_keyword FROM messages WHERE tenant_id = $1 AND direction = 'inbound' AND from_address = $2 ORDER BY occurred_at DESC, id DESC LIMIT 1", [wt.tenantId, loser.phone])).rows[0]!;
+    expect(plain.opt_out_keyword).not.toBeNull();
   });
 });
