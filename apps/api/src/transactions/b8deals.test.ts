@@ -76,7 +76,7 @@ describe('b8 deals sends/F1 db-public/F1 ownership-data/F1-K1 ui/F1-K1 R-TXN-4: 
     expect(mailTo(h, buyer.email)).toHaveLength(0);
     expect(mailTo(h, d.email)).toHaveLength(0);
     const u = (await updatesOf(d.dealId, id)).find((x) => x.contactId === buyer.id)!;
-    expect(u.text).toMatch(/lease deals get no automatic milestone updates/);
+    expect(u.text).toMatch(/lease deals get no automatic client updates/);
   });
 
   it('E346 K1 send time: a planned recipient re-added later in the other side\'s client role gets nothing (NOT_OUR_CLIENT, re-read live)', async () => {
@@ -172,4 +172,57 @@ describe('b8 deals sends/F5 ownership-data/F3 ownership-data/F5 R-OWN-24 R-TXN-4
     expect(u.status).toBe('sent');
     expect(u.text).toMatch(/merged into this one/);
   });
+
+  it('E349 b8 review correctness: a merged record whose update is mid-dispatch (dispatch_unknown) counts as sent: nothing is planned again', async () => {
+    const d = await deal(h, w, w.agents[0]!, { side: 'buy' });
+    const loser = await dealContact(w.agents[0]!, d.dealId, 'co_buyer', { firstName: 'Noor' });
+    const survivor = await ownedContact(w.agents[0]!, { consent: false, firstName: 'Noor' });
+    const id = await dueDate(d);
+    await reconcile(h, w.tenantId);
+    await reconcileAndRun(h, w.tenantId);
+    const run = (await runsOfDate(h, id)).find((r) => r.contact_id === loser.id)!;
+    // fixture: the provider timed out in dispatch TX2, so the run was never written back and the message is unknown
+    await h.su.query("UPDATE playbook_step_runs SET status = 'scheduled' WHERE id = $1", [run.id]);
+    await h.su.query("UPDATE messages SET status = 'dispatch_unknown' WHERE playbook_step_run_id = $1", [run.id]);
+    await merge(survivor.id, loser.id);
+    await reconcile(h, w.tenantId);
+    await reconcileAndRun(h, w.tenantId);
+    expect((await runsOfDate(h, id)).filter((r) => r.contact_id === survivor.id)).toEqual([]);
+    expect((await updatesOf(d.dealId, id)).find((x) => x.contactId === survivor.id)!.status).toBe('sent');
+  });
+
+  it('E349 b8 review correctness: a merged record\'s run still scheduled (the merge follow-up has not skipped it yet) does not stop the re-plan', async () => {
+    const d = await deal(h, w, w.agents[0]!, { side: 'buy' });
+    const loser = await dealContact(w.agents[0]!, d.dealId, 'co_buyer', { firstName: 'Ira' });
+    const survivor = await ownedContact(w.agents[0]!, { consent: false, firstName: 'Ira' });
+    const id = await dueDate(d);
+    await reconcile(h, w.tenantId);
+    await merge(survivor.id, loser.id);
+    const run = (await runsOfDate(h, id)).find((r) => r.contact_id === loser.id)!;
+    await h.su.query("UPDATE playbook_step_runs SET status = 'scheduled', trigger_ref = trigger_ref - 'skip' WHERE id = $1", [run.id]); // fixture: a non-tenant-wide merge skips it later, in its follow-up job
+    await reconcile(h, w.tenantId);
+    expect((await runsOfDate(h, id)).filter((r) => r.contact_id === survivor.id)).toHaveLength(1);
+    await reconcileAndRun(h, w.tenantId);
+    expect(mailTo(h, survivor.email).length + mailTo(h, loser.email).length).toBe(1);
+  });
+
+  it('E349 b8 review honest-copy: merged, then moved to the other side: the screen gives the real reason, never "planned again", and the pass notes it once', async () => {
+    const d = await deal(h, w, w.agents[0]!, { side: 'buy' });
+    const loser = await dealContact(w.agents[0]!, d.dealId, 'co_buyer', { firstName: 'Tao' });
+    const survivor = await ownedContact(w.agents[0]!, { consent: false, firstName: 'Tao' });
+    const id = await dueDate(d);
+    await reconcile(h, w.tenantId);
+    await merge(survivor.id, loser.id);
+    expect((await call(w.agents[0]!, 'POST', `/deals/${d.dealId}/contacts`, { contactId: survivor.id, role: 'seller' })).status).toBe(200);
+    await reconcile(h, w.tenantId);
+    await reconcile(h, w.tenantId);
+    expect((await runsOfDate(h, id)).filter((r) => r.contact_id === survivor.id)).toEqual([]);
+    const basis = (await h.su.query<{ b: Record<string, Record<string, { status: string }>> }>('SELECT basis AS b FROM deal_dates WHERE id = $1', [id])).rows[0]!.b;
+    expect(Object.values(basis['mergedUpdates']!).map((x) => x.status)).toEqual(['not_planned']);
+    for (const viewer of [w.owner, w.tc]) {
+      const u = (await call<{ dates: { id: string; updates: { contactId: string; text: string }[] }[] }>(viewer, 'GET', `/deals/${d.dealId}/milestones`)).body.dates.find((x) => x.id === id)!.updates.find((x) => x.contactId === survivor.id)!;
+      expect(u.text).toMatch(/not this team's client on a buy deal/);
+    }
+  });
 });
+

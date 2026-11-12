@@ -124,6 +124,7 @@ export function statusLabel(d: Pick<MilestoneDate, 'status' | 'completedAt'>): s
   return d.status === 'proposed' ? 'Proposed' : d.status === 'waived' ? 'Waived' : 'Confirmed';
 }
 
+const CLIENT_ROLES = ['buyer', 'seller', 'co_buyer', 'co_seller'];
 const OTHER_SIDE: Record<'buy' | 'sell', string> = { buy: 'The seller side is not this team\'s client on a buy deal, so they get none.', sell: 'The buyer side is not this team\'s client on a sell deal, so they get none.' };
 
 /**
@@ -139,6 +140,9 @@ export function updatesLine(u: DealMilestones['updates']): string {
       : `Updates go to the ${who} when a confirmed date's reminder comes due. Lease clients get no automatic updates.`;
   }
   if (u.teamRoles.length === 0) return 'No client updates on this deal: the Milestone updates playbook names no role this team represents here.';
+  if (!u.teamRoles.some((r) => CLIENT_ROLES.includes(r))) {
+    return `Updates go to the ${who} when a confirmed date's reminder comes due. The team's clients on this deal get none: the Milestone updates playbook does not name their roles.`;
+  }
   const line = `Client updates go to the ${who} when a confirmed date's reminder comes due.`;
   return u.side === 'dual' ? `${line} The team represents both sides on this deal.` : `${line} ${OTHER_SIDE[u.side]}`;
 }

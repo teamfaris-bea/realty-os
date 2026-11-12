@@ -134,15 +134,22 @@ export async function mergeReplanInTx(tx: Tx, deps: Pick<NurtureDeps, 'ids'>, no
       JOIN deal_contacts dc ON dc.tenant_id = dd.tenant_id AND dc.deal_id = dd.deal_id
       JOIN contacts c ON c.tenant_id = dc.tenant_id AND c.id = dc.contact_id AND c.deleted_at IS NULL AND c.merged_into_contact_id IS NULL
       LEFT JOIN LATERAL (
-        SELECT pr.status, pr.updated_at FROM playbook_step_runs pr
+        SELECT CASE WHEN pr.status = 'sent' OR m.status IS NOT NULL THEN 'sent' ELSE pr.status END AS status, pr.updated_at
+          FROM playbook_step_runs pr
+          -- a message of the run that left for the provider (or arrived) counts as sent whatever the run says: the
+          -- merge skips a run whose message is mid-dispatch, and a dispatch_unknown run is never written back
+          LEFT JOIN LATERAL (SELECT mm.status FROM messages mm WHERE mm.tenant_id = pr.tenant_id AND mm.playbook_step_run_id = pr.id
+                               AND mm.status IN ('dispatching','dispatch_unknown','sent','delivered') LIMIT 1) m ON true
          WHERE pr.tenant_id = dd.tenant_id AND pr.enrollment_id IS NULL AND pr.contact_id <> c.id
            AND pr.contact_id = ANY (app.contact_person_ids(c.tenant_id, c.id))
            AND pr.trigger_ref->>'trigger' = 'deal_date_upcoming' AND pr.trigger_ref->'ref'->>'dealDateId' = dd.id::text
            AND pr.trigger_ref->'ref'->>'dueVersion' = dd.due_version::text
-           AND (pr.status IN ('scheduled','sent','failed','deferred')
+           -- a scheduled or deferred run of a merged-away record never sends (CONTACT_REMOVED, now or in the merge's
+           -- follow-up job), so it does not count; a draft counts only while it still waits for review
+           AND (pr.status IN ('sent','failed') OR m.status IS NOT NULL
                 OR (pr.status = 'converted_to_draft'
                     AND NOT EXISTS (SELECT 1 FROM assistant_actions aa WHERE aa.tenant_id = pr.tenant_id AND aa.id = pr.assistant_action_id AND aa.status = 'invalidated')))
-         ORDER BY (pr.status = 'sent') DESC, pr.updated_at DESC, pr.id LIMIT 1) prior ON true
+         ORDER BY (pr.status = 'sent' OR m.status IS NOT NULL) DESC, pr.updated_at DESC, pr.id LIMIT 1) prior ON true
      WHERE dd.tenant_id = app.tenant_id() AND dd.status = 'confirmed' AND dd.completed_at IS NULL AND dd.reminder_at IS NULL
        AND dd.due_at > ${iso(now)}::timestamptz AND d.stage NOT IN ('closed','lost')
        AND dd.basis ? 'reminderPass' AND dd.basis->'reminderPass'->>'reason' IS NULL
@@ -161,21 +168,27 @@ export async function mergeReplanInTx(tx: Tx, deps: Pick<NurtureDeps, 'ids'>, no
   await lockContacts(tx, r.rows.map((x) => x.survivor_id as ContactId));
   const recipients = await R.dealRecipients(tx, [...new Set(r.rows.map((x) => x.deal_id))]);
   const approved = (await approvedTriggerPlaybooks(tx)).some((p) => p.templateKey === TRANSACTION_UPDATES.templateKey && p.ref.scope === TRANSACTION_UPDATES.scope);
+  const noteRun = async (row: MergedReminder, status: string, at: Date | null) => {
+    const note = { [`${row.survivor_id}:v${row.due_version}`]: { status, at: at === null ? null : at.toISOString() } };
+    await sql`
+      UPDATE deal_dates SET basis = basis || jsonb_build_object('mergedUpdates', COALESCE(basis->'mergedUpdates', '{}'::jsonb) || ${JSON.stringify(note)}::jsonb), updated_at = now()
+       WHERE tenant_id = app.tenant_id() AND id = ${row.id} AND due_version = ${row.due_version} AND due_on = ${row.due_on}::date`.execute(tx);
+  };
   let firings = 0;
   for (const row of r.rows) {
     if (row.prior_status !== null) {
-      const note = { [`${row.survivor_id}:v${row.due_version}`]: { status: row.prior_status, at: row.prior_at === null ? null : row.prior_at.toISOString() } };
-      await sql`
-        UPDATE deal_dates SET basis = basis || jsonb_build_object('mergedUpdates', COALESCE(basis->'mergedUpdates', '{}'::jsonb) || ${JSON.stringify(note)}::jsonb), updated_at = now()
-         WHERE tenant_id = app.tenant_id() AND id = ${row.id} AND due_version = ${row.due_version} AND due_on = ${row.due_on}::date`.execute(tx);
+      await noteRun(row, row.prior_status, row.prior_at);
       continue;
     }
     const at = Date.parse(row.pass_at);
-    if (!approved || !Number.isFinite(at)) continue;
     const mine = (recipients.get(row.deal_id) ?? []).filter((c) => c.contactId === row.survivor_id);
-    const decision = replanFact({ ...R.coreDate(row), dealId: row.deal_id }, mine, row.side, at as Instant);
-    if (!decision.fire) continue;
-    firings += await recordFactInTx(tx, deps, decision.fact, decision.rels, { only: TRANSACTION_UPDATES });
+    const decision = approved && Number.isFinite(at) ? replanFact({ ...R.coreDate(row), dealId: row.deal_id }, mine, row.side, at as Instant) : null;
+    const planned = decision !== null && decision.fire ? await recordFactInTx(tx, deps, decision.fact, decision.rels, { only: TRANSACTION_UPDATES }) : 0;
+    firings += planned;
+    // nothing to plan (no approved playbook, a role the step or the side rules out, no owner): a terminal note, so the
+    // row is never selected again and cannot crowd later re-plans out of the bounded pass (the deal screen gives the
+    // current reason, as for any recipient)
+    if (planned === 0) await noteRun(row, 'not_planned', null);
   }
   return firings;
 }

@@ -182,5 +182,6 @@ describe('b8 deals ui/F1-K1 R-TXN-4: the updates line names only the team\'s sid
     );
     expect(updatesLine({ approved: true, roles: ['buyer', 'seller'], teamRoles: ['buyer', 'seller'], side: 'dual' })).toMatch(/represents both sides/);
     expect(updatesLine({ approved: true, roles: ['buyer', 'seller'], teamRoles: [], side: 'lease' })).toBe('No automatic client updates on lease deals: nobody on this deal is sent milestone updates.');
+    expect(updatesLine({ approved: true, roles: ['lender'], teamRoles: ['lender'], side: 'buy' })).toMatch(/^Updates go to the lender .* The team's clients on this deal get none/);
   });
 });
