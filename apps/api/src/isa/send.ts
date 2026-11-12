@@ -8,7 +8,7 @@ import type { Instant } from '@realty/core/foundation';
 import { type IanaZone, instantFromDate } from '@realty/core/foundation';
 import { type Tx, enqueueJob } from '@realty/db';
 import { sql } from 'kysely';
-import { aiIsaSendWindow, fromDisplayName, holidaysAround, icuOffsetMinutes, ISA_DEFAULT_CAPS, isaReasonClass, refusalClass } from './coreSeam.js';
+import { type AiIsaContent, aiIsaSendWindow, DEFAULT_AI_ISA_CONTENT, fromDisplayName, parseAiIsaContent, holidaysAround, icuOffsetMinutes, ISA_DEFAULT_CAPS, isaReasonClass, refusalClass } from './coreSeam.js';
 import { chainEnvOf, contextFor, type IsaDeps } from './effects.js';
 import { assignmentById, evaluateChain, exclusivity, stopSignalSince } from './repo.js';
 
@@ -50,12 +50,18 @@ export async function deferralFor(tx: Tx, m: IsaMessageRef, reasons: readonly st
   if (reasons.length === 0 || refusalClass(reasons) !== 'deferrable') return null;
   if (reasons.every((r) => r === 'ISA_MIN_GAP')) return (now + ISA_DEFAULT_CAPS.minGapSeconds * 1000) as Instant;
   if (reasons.includes('ISA_QUIET_HOURS') || reasons.includes('ISA_ZONE_UNRESOLVED')) {
-    const t = await sql<{ zones: string[] | null; ws: string | null; we: string | null; kind: string | null }>`SELECT t.zones, t.window_start::text AS ws, t.window_end::text AS we, t.message_kind AS kind
-      FROM ai_isa_turns t WHERE t.tenant_id = app.tenant_id() AND t.message_id = ${m.id}`.execute(tx);
+    const t = await sql<{ zones: string[] | null; ws: string | null; we: string | null; kind: string | null; steps: unknown }>`SELECT t.zones, t.window_start::text AS ws, t.window_end::text AS we,
+        t.message_kind AS kind, v.steps
+      FROM ai_isa_turns t JOIN ai_isa_assignments a ON a.tenant_id = t.tenant_id AND a.id = t.assignment_id
+      LEFT JOIN playbook_versions v ON v.tenant_id = a.tenant_id AND v.id = a.playbook_version_id
+     WHERE t.tenant_id = app.tenant_id() AND t.message_id = ${m.id}`.execute(tx);
     const r = t.rows[0];
     if (r?.zones && r.ws && r.we) {
       const sec = (s: string) => { const [h, mi] = s.split(':').map(Number); return h! * 3600 + mi! * 60; };
-      const next = aiIsaSendWindow({ at: (now + 60_000) as Instant, zones: r.zones as IanaZone[], startSec: sec(r.ws), endSec: sec(r.we), initiated: r.kind === 'initiated', initiatedDays: [1, 2, 3, 4, 5, 6], noInitiatedOnHolidays: true });
+      // R-ISA-10: the policy content's initiated days and holidays, so core, TX1, this deferral and the guard (0192) agree
+      const content = parseAiIsaContent(r.steps) ?? (DEFAULT_AI_ISA_CONTENT as AiIsaContent);
+      const next = aiIsaSendWindow({ at: (now + 60_000) as Instant, zones: r.zones as IanaZone[], startSec: sec(r.ws), endSec: sec(r.we), initiated: r.kind === 'initiated',
+        initiatedDays: content.initiatedDays, noInitiatedOnHolidays: content.noInitiatedOnHolidays });
       if (next !== null) return next;
     }
   }

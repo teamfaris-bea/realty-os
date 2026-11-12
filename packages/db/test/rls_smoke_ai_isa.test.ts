@@ -7,7 +7,7 @@
 // passes); the first daily upsert; the stop-signal trigger per writer; the appointments lock in both orders and the
 // assistant-overlap refusal; the loosening guard; the zone reference data equal to core; Postgres AT TIME ZONE
 // agreeing with core localWindowContains.
-import { AREA_CODE_STATES, areaCodeZones, STATE_ZONES } from '@realty/core/isa';
+import { AREA_CODE_STATES, areaCodeZones, STATE_ZONES, usFederalHolidays } from '@realty/core/isa';
 import { type IanaZone, type Instant, type LocalTime, localWindowContains } from '@realty/core/foundation';
 import type { Actor } from '@realty/core/foundation';
 import fc from 'fast-check';
@@ -632,5 +632,78 @@ describe('merge (R-ISA-16; E526)', () => {
     const [a] = await suRows<{ status: string }>(h.su, `SELECT status FROM assistant_actions WHERE id = $1`, [m.actionId]);
     expect(a!.status).toBe('invalidated');
     expect(await dispatchCode(x, m.messageId)).toMatch(/ASSISTANT_ACTION_WITHDRAWN|ISA_STOPPED|RECIPIENT/);
+  });
+});
+
+// ---- ISA-2b (append only) -------------------------------------------------------------------------------------
+
+describe('ISA-2b: the guard\'s holiday check (R-ISA-10) and one open AI message (R-ISA-11)', () => {
+  it('R-ISA-10: app.ai_isa_us_federal_holiday(d) equals membership in the union of core usFederalHolidays(y) for every d in 2025–2035', async () => {
+    const core = new Set<string>();
+    for (let y = 2024; y <= 2036; y += 1) for (const d of usFederalHolidays(y)) core.add(d);
+    const rows = await suRows<{ d: string; hol: boolean }>(h.su, `SELECT d::date::text AS d, app.ai_isa_us_federal_holiday(d::date) AS hol
+      FROM generate_series('2025-01-01'::date, '2035-12-31'::date, interval '1 day') d`);
+    expect(rows.length).toBe(4017);
+    const diff = rows.filter((r) => r.hol !== core.has(r.d)).map((r) => r.d);
+    expect(diff).toEqual([]);
+    expect(rows.filter((r) => r.hol).map((r) => r.d)).toEqual(expect.arrayContaining(['2026-11-26', '2027-12-24', '2027-12-31', '2028-01-17', '2026-07-03']));
+  });
+
+  it('R-ISA-10: only app_definer can EXECUTE the holiday function and the send check (app_user is refused)', async () => {
+    const [p] = await suRows<{ u1: boolean; u2: boolean; d1: boolean; d2: boolean; pub: boolean }>(h.su, `SELECT
+      has_function_privilege('app_user', 'app.ai_isa_us_federal_holiday(date)', 'EXECUTE') AS u1,
+      has_function_privilege('app_user', 'app.ai_isa_send_check(public.messages)', 'EXECUTE') AS u2,
+      has_function_privilege('app_definer', 'app.ai_isa_us_federal_holiday(date)', 'EXECUTE') AS d1,
+      has_function_privilege('app_definer', 'app.ai_isa_send_check(public.messages)', 'EXECUTE') AS d2,
+      has_function_privilege('public', 'app.ai_isa_us_federal_holiday(date)', 'EXECUTE') AS pub`);
+    expect(p).toEqual({ u1: false, u2: false, d1: true, d2: true, pub: false });
+    const [f] = await suRows<{ secdef: boolean; vol: string }>(h.su, `SELECT prosecdef AS secdef, provolatile::text AS vol FROM pg_proc WHERE oid = 'app.ai_isa_us_federal_holiday(date)'::regprocedure`);
+    expect(f).toEqual({ secdef: false, vol: 'i' });
+    expect(await errOf(withTenantTx(w.owner.actor, (tx) => sql`SELECT app.ai_isa_us_federal_holiday(now()::date)`.execute(tx), { db: h.app }))).toMatch(/permission denied/);
+  });
+
+  it('R-ISA-10: on a holiday (Thanksgiving, today made one for the test) an initiated message (turn kind or derived tier) is refused ISA_QUIET_HOURS in any zone; a reply passes', async () => {
+    // the database clock cannot move: the test swaps the pure function for one that calls today a holiday, then restores it
+    const [def] = await suRows<{ d: string }>(h.su, `SELECT pg_get_functiondef('app.ai_isa_us_federal_holiday(date)'::regprocedure) AS d`);
+    await h.su.query(`CREATE OR REPLACE FUNCTION app.ai_isa_us_federal_holiday(d date) RETURNS boolean LANGUAGE sql IMMUTABLE SET search_path = pg_catalog AS $$ SELECT d BETWEEN current_date - 1 AND current_date + 1 $$`);
+    try {
+      const l = await leadUnderCare(x);
+      await grantFromOwnDisclosure(l, { scopeStated: true });
+      await suFixture(h.su, `INSERT INTO dnc_checks (tenant_id, id, phone_hmac, registry, listed, checked_at, valid_until, provider)
+        VALUES ($1, gen_random_uuid(), decode($2, 'hex'), 'us_national', false, now(), now() + interval '31 days', 'fake')`, [w.tenantId, hmacHex(l.phone)]);
+      const msgOf = async (id: string) => {
+        try {
+          await withTenantTx(x.w.system('worker'), (tx) => sql`UPDATE messages SET status = 'dispatching', dispatched_at = now() WHERE tenant_id = app.tenant_id() AND id = ${id}`.execute(tx), { db: h.app });
+          return 'ok';
+        } catch (e) { return (e as Error).message; }
+      };
+      const m1 = await queueAi(x, l, { kind: 'initiated' });
+      expect(await msgOf(m1.messageId)).toMatch(/ISA_QUIET_HOURS: initiated AI messages wait for a (day that is not a holiday|permitted day)/);
+      await h.su.query(`UPDATE assistant_actions SET status = 'superseded' WHERE id = $1`, [m1.actionId]);
+      // the derived tier: a turn marked reply, but no own inbound in the window, is initiated by the guard
+      const m2 = await queueAi(x, l, { kind: 'reply' });
+      expect(await dispatchCode(x, m2.messageId)).not.toBe('ok');
+      await h.su.query(`UPDATE assistant_actions SET status = 'superseded' WHERE id = $1`, [m2.actionId]);
+      await inbound(x, l);
+      expect(await dispatchCode(x, (await queueAi(x, l, { kind: 'reply' })).messageId)).toBe('ok');
+    } finally {
+      await h.su.query(def!.d);
+    }
+    const [back] = await suRows<{ t: boolean }>(h.su, `SELECT app.ai_isa_us_federal_holiday('2026-11-26') AND NOT app.ai_isa_us_federal_holiday('2026-11-27') AS t`);
+    expect(back!.t).toBe(true);
+  });
+
+  it('R-ISA-11 E515: a second proposed ai_isa_message for the contact violates assistant_actions_ai_isa_open_uq; a superseded one is refused ASSISTANT_ACTION_WITHDRAWN', async () => {
+    const l = await leadUnderCare(x);
+    await inbound(x, l);
+    const first = await queueAi(x, l);
+    // a second proposed action without the supersede (TX-B always withdraws first): the partial unique index refuses it
+    const err = await errOf(withTenantTx(x.w.system('assistant'), (tx) => sql`INSERT INTO assistant_actions (tenant_id, id, contact_id, kind, action_category, autonomy,
+        playbook_version_id, status, owner_user_id, explanation, payload, pinned_inbound_seq, ai_isa_turn_id, epoch, dedupe_key)
+      VALUES (app.tenant_id(), ${uuid()}, ${l.contactId}, 'ai_isa_message', 'ai_isa_message', 'ai_isa_mandate', ${x.versionId}, 'proposed', ${x.agent.id}, 'x', '{}'::jsonb, 0, ${first.turnId}, 1, ${'d:' + uuid()})`.execute(tx), { db: h.app }));
+    expect(err).toMatch(/assistant_actions_ai_isa_open_uq|duplicate key/);
+    const second = await queueAi(x, l);
+    expect(await dispatchCode(x, first.messageId)).toBe('ASSISTANT_ACTION_WITHDRAWN');
+    expect(await dispatchCode(x, second.messageId)).toBe('ok');
   });
 });
