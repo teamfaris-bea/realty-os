@@ -18,7 +18,7 @@ import { type Claim, formatDue } from '@realty/core/assistant';
 import type { ContactId, IanaZone, Instant, SystemActor } from '@realty/core/foundation';
 import { toIso } from '@realty/core/foundation';
 import type { VoiceHandback, VoiceOutcome } from '@realty/core/voice';
-import { type Tx, enqueueJob, lockContact, withTenantTx } from '@realty/db';
+import { type Tx, lockContact, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { audit } from '../audit.js';
 import * as A from '../assistant/repos/actions.js';
@@ -64,6 +64,9 @@ export interface HandbackInput {
   at: Instant;
 }
 
+/** voice.reconcile's end reason for a session that never wrote its handback (not one of core's: the session was lost). */
+export const SESSION_LOST = 'SESSION_LOST';
+
 export interface HandbackResult {
   actionId: string;
   created: boolean;
@@ -92,7 +95,12 @@ async function recipientOf(tx: Tx, contactId: string, to: VoiceHandback['to']): 
 }
 
 export async function writeHandback(actor: SystemActor, deps: Pick<VoiceDeps, 'db' | 'ids' | 'envelope'>, i: HandbackInput): Promise<HandbackResult | null> {
-  return withTenantTx(actor, async (tx, now) => {
+  return withTenantTx(actor, (tx, now) => writeHandbackInTx(tx, now, actor, deps, i), { db: deps.db, retries: 2 });
+}
+
+/** The same, inside the caller's system transaction (voice.reconcile). */
+export async function writeHandbackInTx(tx: Tx, now: Instant, actor: SystemActor, deps: Pick<VoiceDeps, 'ids' | 'envelope'>, i: HandbackInput): Promise<HandbackResult | null> {
+  {
     await lockContact(tx, i.contactId as ContactId);
     const call = (await sql<{ handback_action_id: string | null; ai_takeover_at: Date | null; transfer_outcome: string | null; handled_by: string }>`
       SELECT handback_action_id, ai_takeover_at, transfer_outcome, handled_by FROM calls WHERE tenant_id = app.tenant_id() AND id = ${i.callId} FOR UPDATE`.execute(tx)).rows[0];
@@ -243,7 +251,6 @@ export async function writeHandback(actor: SystemActor, deps: Pick<VoiceDeps, 'd
 
     // (k) codes and ids only
     await audit(tx, actor, { action: i.recovered ? 'voice.handback_recovered' : 'voice.session_ended', entity: { type: 'call', id: i.callId }, reason: `${outcome}:${hb.endReason}`.slice(0, 80) });
-    void enqueueJob;
     return { actionId, created, merged };
-  }, { db: deps.db, retries: 2 });
+  }
 }
