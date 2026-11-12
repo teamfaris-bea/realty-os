@@ -3,7 +3,7 @@ import { at } from '../foundation/index.js';
 import { matchListing } from '../assistant/index.js';
 import { normalizeMlsListing, priceToCents } from './normalize.js';
 import { CONN, MAPPING, RESO_FULL } from './testing/fixtures.js';
-import type { Issue, ListingFacts, ResoLike } from './types.js';
+import { EMPTY_VALUATION_FACTS, type Issue, type ListingFacts, type ResoLike } from './types.js';
 
 function facts(raw: ResoLike, mapping = MAPPING): ListingFacts {
   const r = normalizeMlsListing(raw, mapping);
@@ -47,6 +47,7 @@ describe('normalizeMlsListing: RESO fixtures', () => {
       teamListingId: null,
       lastSeenInFeedAt: null,
       offMarketAt: null,
+      valuation: { ...EMPTY_VALUATION_FACTS, sizeSource: 'LivingArea' },
     });
   });
 
