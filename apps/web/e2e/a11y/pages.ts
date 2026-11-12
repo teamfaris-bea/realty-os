@@ -79,6 +79,9 @@ export const SWEEP_PAGES: readonly SweepPage[] = [
   { path: '/admin/tags', roles: ADMINS, url: at('/admin/tags') },
   { path: '/admin/fields', roles: ADMINS, url: at('/admin/fields') },
   { path: '/admin/stage-labels', roles: ADMINS, url: at('/admin/stage-labels') },
+  // module 39 (TC board) and module 41 (milestone templates)
+  { path: '/transactions', roles: ALL, url: at('/transactions') },
+  { path: '/admin/milestone-templates', roles: ADMINS, url: at('/admin/milestone-templates') },
 ];
 
 /** Screens outside the app frame (signed out). */

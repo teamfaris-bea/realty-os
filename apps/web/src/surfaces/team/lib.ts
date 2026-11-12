@@ -8,6 +8,7 @@ export const TYPE_LABEL: Record<ExceptionType, string> = {
   overdue_promise: 'Overdue promise',
   failed_send: 'Message not delivered',
   missing_outcome: 'Consult missing an outcome',
+  milestone_at_risk: 'Milestone at risk',
 };
 
 export const TYPE_PLURAL: Record<ExceptionType, string> = {
@@ -15,9 +16,10 @@ export const TYPE_PLURAL: Record<ExceptionType, string> = {
   overdue_promise: 'Overdue promises',
   failed_send: 'Not delivered',
   missing_outcome: 'Missing outcomes',
+  milestone_at_risk: 'Milestones at risk',
 };
 
-export const TYPES: readonly ExceptionType[] = ['untouched_lead', 'overdue_promise', 'failed_send', 'missing_outcome'];
+export const TYPES: readonly ExceptionType[] = ['untouched_lead', 'overdue_promise', 'failed_send', 'missing_outcome', 'milestone_at_risk'];
 
 const SOURCE_TYPES = new Set<EvidenceSourceType>(['call', 'message', 'email', 'note', 'listing', 'import', 'behavior_event', 'deal', 'task', 'appointment', 'ownership_period', 'message_status']);
 
