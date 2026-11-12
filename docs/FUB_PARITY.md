@@ -52,6 +52,7 @@ Frequency is a judgement about an agent's day: several times an hour, several ti
 | 27 | **Calls to a tracking number credited to a source** | daily (passive) | No number-to-source setting found (VERIFY); LSA via a labelled Team Inbox number | A live tracking number tied to one source: new callers become leads credited to it (R-TRK-1..3); the ring target is unchanged until module 48 | covered (fake) |
 | 28 | **Per-agent routing address** | Admin, rare | Per-agent lead email (VERIFY) | Agent forwarding: a "Forwarded by <name>" source, its inbox and a direct rule, with the preview (R-LSRC-5) | covered |
 | 29 | **Website / IDX posts** | passive | FUB `/v1/events` API (VERIFY) | Signed per-source webhook (`/intake/:token`, its own secret, R-LSRC-3) | covered |
+| 30 | **Home value / CMA for a seller** | weekly (VERIFY) | Through integrations (VERIFY) | **Built in, agent-facing (D9, modules 70/71)**: one tap on a seller contact prepares a CMA from the team's own MLS sold data (never a third-party AVM; an estimate, never an appraisal), with every comp's adjustments and why, the area and the back-test, and in words what still blocks sharing with a client (R-CMA-6…8). Sharing, the PDF and the CMA screen are V2 (module 72) | **partial** (V1: agent CMA; V2: sharing) |
 
 ## 3. What the design does about each gap
 
@@ -73,6 +74,7 @@ The model is in `docs/DATA_MODEL.md` Part 3 and the build in `docs/PARITY_PLAN.m
 14. **Merge**: a candidates review list, plus moving the new child rows (tags, values, relationships, mentions follow their notes) inside the existing merge transaction.
 15. **Import**: Admin stage mapping, the tag catalog, and FUB custom fields mapped to typed definitions.
 16. **Reactions (D5b)**: `message_reactions` links a reaction text to the team's text it quotes word for word (same phone, same number, same contact, 30 days). Only the reaction's own words are classified. The thread shows the reaction on that text, with the raw text one tap away.
+17. **Home value / CMA (D9)**: the comparable-sales engine is pure core (`core/valuation`: strict input schemas so only property, sale, time and location facts reach comp selection; no prediction import). `api/cma` reads the team's MLS sold sales under the caller's RLS and the licence pack's valuation section, stores drafts per agent, and computes client readiness on every view; nothing reaches a client until `platform:cma` is cleared and V2's share path exists.
 
 ## 4. What we are not building (and why)
 
