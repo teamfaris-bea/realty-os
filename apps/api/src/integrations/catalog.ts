@@ -116,7 +116,17 @@ export const VENDOR_CHECKED_PACKS: readonly string[] = ['platform:voice', 'platf
  */
 export const NEVER_CLEARED_PACKS: readonly string[] = ['platform:meta'];
 
-/** platform:* pack → what waits on it, in words (R-INT-6). */
+/**
+ * Packs whose capability is not built in this version (D9: V1 shares nothing built from MLS sales; client CMAs and
+ * seller value ranges are V2's), with why nothing reaches a client. Their line never reads "stays off" or "cleared", so
+ * neither the review state nor a recorded clearance reads as the capability being available (batch 10 review
+ * api-ui/F3). The web names them in apps/web/src/surfaces/admin/integrations/words.ts PACK_NAMES.
+ */
+export const NOT_BUILT_PACKS: Readonly<Record<string, string>> = {
+  'platform:cma': 'nothing built from MLS sales reaches a client',
+};
+
+/** platform:* pack → what waits on it, in words (R-INT-6). The web mirrors the keys in words.ts PACK_NAMES (words.test.ts). */
 export const PACK_GATES: Record<string, string> = {
   'platform:meta': 'Meta messaging',
   'platform:fair_housing': 'Publishing marketing',
@@ -161,6 +171,12 @@ export function packSentence(p: PlatformPack): string {
     return reviewedOn === null
       ? `${what}: not offered (owner decision D2); nothing waits on this pack and it is never cleared (pack ${p.version}).`
       : `${what}: not offered (owner decision D2); the pack was marked reviewed on ${reviewedOn}, but ${what} stays out of scope (pack ${p.version}).`;
+  }
+  const notBuilt = NOT_BUILT_PACKS[p.key];
+  if (notBuilt !== undefined) {
+    return reviewedOn === null
+      ? `${what}: not built in this version, so ${notBuilt}; they would also wait for counsel review (pack ${p.version}, not yet reviewed).`
+      : `${what}: not built in this version, so ${notBuilt}; counsel reviewed the pack on ${reviewedOn} (pack ${p.version}).`;
   }
   const vendorPending = VENDOR_CHECKED_PACKS.includes(p.key) && p.vendorReadyAt === null;
   if (reviewedOn === null) return `${what} stays off: awaiting counsel review${vendorPending ? ' and the vendor check' : ''} (pack ${p.version}, not yet reviewed).`;
