@@ -37,6 +37,7 @@ import { webPushProvider } from './webpush.js';
 import { type FakeIntegrationAdapters, type IntegrationAdapters, createFakeIntegrations, selectIntegrations } from './integrations/index.js';
 import { InProcessWebChat, type WebChatTransport } from '../channels/transport.js';
 import { FakeGmail, type GmailProvider, UnconfiguredGmail } from '../mailSync/provider.js';
+import { FakePublicRecords, type PublicRecordsProvider, UnconfiguredPublicRecords } from '../predict/provider.js';
 
 export * from './types.js';
 export { FakeAi, FAKE_BAD_QUOTE, parseFakeSources } from './fake/ai.js';
@@ -69,6 +70,8 @@ export interface Providers {
   webChat?: WebChatTransport;
   /** module 68 (D2): read-only Gmail (deterministic fake; production: unconfigured until a reviewed Google client exists) */
   gmail: GmailProvider;
+  /** module 50: public property records, platform configuration (deterministic fake; production: unconfigured, no vendor yet, N13) */
+  publicRecords: PublicRecordsProvider;
 }
 
 /** The fakes with their concrete types, so tests can inspect outboxes and inject failures. */
@@ -87,6 +90,7 @@ export interface FakeProviders extends Providers {
   integrations: FakeIntegrationAdapters;
   webChat: InProcessWebChat;
   gmail: FakeGmail;
+  publicRecords: FakePublicRecords;
 }
 
 export function createFakeProviders(opts: { clock?: Clock } = {}): FakeProviders {
@@ -106,6 +110,7 @@ export function createFakeProviders(opts: { clock?: Clock } = {}): FakeProviders
     integrations: createFakeIntegrations(),
     webChat: new InProcessWebChat(),
     gmail: new FakeGmail(),
+    publicRecords: new FakePublicRecords(),
   };
 }
 
@@ -176,5 +181,7 @@ export function createProviders(config: Config, opts: { clock: Clock; fetch?: ty
   const integrations = selectIntegrations(config);
   // module 68: no Google OAuth client is configured in this build (fakes only, VERIFY before any real adapter)
   const gmail: GmailProvider = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredGmail() : fakes.gmail;
-  return { ...fakes, telephony, carrier, email, accountMail, ai, push, storage, integrations, gmail };
+  // module 50: no public-records vendor is procured (N13); production looks nothing up unless fakes are allowed
+  const publicRecords: PublicRecordsProvider = config.env === 'production' && !config.allowFakeProviders ? new UnconfiguredPublicRecords() : fakes.publicRecords;
+  return { ...fakes, telephony, carrier, email, accountMail, ai, push, storage, integrations, gmail, publicRecords };
 }

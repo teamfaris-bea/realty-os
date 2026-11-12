@@ -24,6 +24,7 @@ import { sellerUpdateHandlers } from '../../sellerUpdates/handlers.js';
 import { calendarHandlers } from '../../calendar/handlers.js';
 import { insightsHandlers } from '../../insights/handlers.js';
 import { coachingHandlers } from '../../coaching/handlers.js';
+import { predictHandlers } from '../../predict/handlers.js';
 
 export const handlers: JobHandler<unknown>[] = [
   ...workerHandlers,
@@ -45,5 +46,6 @@ export const handlers: JobHandler<unknown>[] = [
   ...calendarHandlers,
   ...insightsHandlers,
   ...coachingHandlers,
+  ...predictHandlers,
   // registry: add new entries above this line
 ];
