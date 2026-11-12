@@ -3,7 +3,9 @@
 // sales in a 2 x 2 mi grid, one city with 120,000, one subdivision with 5,000, the rest spread far apart), under app_user
 // and FORCE RLS, through the real route, V1-A's soldCandidates (its 0101 indexes) and V1-B's engine. The fixture is a
 // superuser bulk load, not an application path: V1-A's sync writes at most SYNC_BATCH (500) records a run, so it cannot
-// load this volume in a test. Its sold rows close over the 730 days before today, so the CMA's 24-month window is full.
+// load this volume in a test. Its sold rows close over the 730 days before today, so the main run's 24-month reach is
+// full. The read reaches 30 months back for the back-test (service.ts); the fixture holds no older rows, and each tier
+// read is newest first up to its limit, so the hot area's reads are the same rows either way.
 // The subjects' own earlier sales go through the sync like every other CMA fixture. Every subject sits in the hot area,
 // so every tier reaches its limit (F6). The budget is asserted loosely enough for a shared CI box; timings are printed.
 // VERIFY on production hardware.

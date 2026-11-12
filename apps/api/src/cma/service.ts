@@ -215,7 +215,11 @@ function engine(input: Parameters<typeof runEngine>[0]): CmaResult {
 async function run(tx: Tx, conns: CmaConnections, s: ResolvedSubject, valuationDate: string, include: readonly string[], exclude: readonly string[]): Promise<{ result: StoredResult; offered: ReadonlySet<string> }> {
   const connectionIds = conns.used.map((u) => u.conn.id);
   const subject = engineSubject(s);
-  const since = addMonths(valuationDate, -Math.max(CMA_DEFAULTS.extendedLookbackMonths, CMA_DEFAULTS.ratePoolMonths));
+  // V1-B's reach, composed as the engine composes it: the main run reads back max(extended look-back, rate pool) months
+  // (24); the back-test fits its rates on that many months before its own window (backtestWindowMonths, 6) and values
+  // each tested sale from its own date, so it reaches 30 months back. Sales older than the main reach are only too-old
+  // not-used sales in the main result; the read stays bounded by each tier's limit (newest first).
+  const since = addMonths(addMonths(valuationDate, -CMA_DEFAULTS.backtestWindowMonths), -Math.max(CMA_DEFAULTS.extendedLookbackMonths, CMA_DEFAULTS.ratePoolMonths));
   const read = await soldCandidates(tx, { connectionIds, propertyType: subject.propertyType, since, until: valuationDate, tiers: tierQueries(subject) });
   const teamById = new Map(read.rows.filter((r) => r.source === 'team').map((r) => [r.id, r]));
   const mirrorOf = new Map<string, ListingRow>();

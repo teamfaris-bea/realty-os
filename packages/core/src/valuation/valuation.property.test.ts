@@ -291,6 +291,19 @@ describe('R-CMA-3: adjustments', () => {
 });
 
 describe('back-test: out of sample', () => {
+  it('F12: the back-test fits its rates on sales up to ratePoolMonths before its window (30 months before the valuation date), so a caller reads that far back', () => {
+    const s = subject();
+    const m27 = cand('m27', { closeDate: monthsBefore(27), contractDate: monthsBefore(28) });
+    const market = canonicalOrder([...linearMarket({ n: 120, seed: 5, trendCentsPerMonth: 20, noise: 0.03, radiusMiles: 1.2 }), m27]);
+    const sc = screen(s, market, VALUATION_DATE, CMA_DEFAULTS, new Set());
+    const se = searchTier(s, sc, VALUATION_DATE, CMA_DEFAULTS, new Set());
+    const { trace } = runBacktest(s, market, sc, se, VALUATION_DATE, CMA_DEFAULTS);
+    // too old to be a comp, yet evidence for the back-test's market rates
+    expect(sc.find((x) => x.c.ref.identity === 'm27')).toMatchObject({ fail: 'too_old', defaultOk: true });
+    expect(trace.pool.map((p) => p.identity)).toContain('m27');
+    expect(addMonths(addMonths(VALUATION_DATE, -CMA_DEFAULTS.backtestWindowMonths), -CMA_DEFAULTS.ratePoolMonths) < m27.sale.closeDate!).toBe(true);
+  });
+
   it('no tested sale ever sees a later sale or a rate fitted on it', () => {
     fc.assert(
       fc.property(fc.integer({ min: 1, max: 10_000 }), fc.integer({ min: 60, max: 300 }), (seed, n) => {

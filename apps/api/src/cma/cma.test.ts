@@ -326,6 +326,19 @@ describe('PATCH (R-CMA-8)', () => {
     expect(again.body.cma.comps.map((x) => x.listingId)).not.toContain(far);
   });
 
+  it('F12 R-CMA-4: the read reaches back as far as V1-B\'s back-test needs (30 months): a sale closed 27 months ago is read, shown as too old, and never offered for inclusion', async () => {
+    const wo = await cmaWorld(h);
+    await localSales(wo, 6);
+    const old = await mlsSale(wo, { closeDate: daysAgo(27 * 30 + 15), sqft: 1500, beds: 3 });
+    const oldShort = await mlsSale(wo, { closeDate: daysAgo(27 * 30 + 20), sqft: 1500, beds: 3, saleConditions: ['short_sale'] });
+    const { c } = await seller({ world: wo });
+    const r = await oneTap(wo.agents[0]!, c);
+    expect(r.status).toBe(201);
+    expect(r.body.cma.notUsed.find((x) => x.listingId === old)).toMatchObject({ reason: 'too_old', includable: false });
+    expect(r.body.cma.notUsed.find((x) => x.listingId === oldShort)).toMatchObject({ reason: 'too_old', includable: false });
+    expect(r.body.cma.comps.map((x) => x.listingId)).not.toContain(old);
+  });
+
   it('E368 R-CMA-3: $15,000 of seller concessions lower the adjusted price by $15,000, never raise it', async () => {
     const { c } = await seller();
     const conc = await mlsSale(w, { closeDate: daysAgo(5), sqft: 1500, beds: 3, bathsX10: 20, concessionsCents: 1_500_000, closePriceCents: 52_500_000, subdivision: 'Sample Heights' });

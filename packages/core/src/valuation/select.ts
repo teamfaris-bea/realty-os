@@ -262,7 +262,9 @@ export function screen(subject: CmaSubject, canonical: readonly CmaCandidate[], 
       const condFail = conditions.length > 0;
       const priceFail = !plausiblePrice(sale.closePriceCents, sale.originalListPriceCents, rule);
       defaultOk = !condFail && !priceFail;
-      includable = condFail || priceFail;
+      // A sale beyond the extended look-back is too old whatever the agent does, so it is never offered as includable
+      // (an include could not pin it, E367); it keeps defaultOk, so the back-test's rate pool still reads it (F12).
+      includable = (condFail || priceFail) && (sale.closeDate as string) > oldest;
       // The agent's include pins a sale into the comps; it lifts only these two rules (E367, F13).
       included = include.has(ref.identity);
       if (includable && !included) fail = condFail ? 'sale_condition' : 'implausible_price';

@@ -286,6 +286,23 @@ describe('area tiers (R-CMA-2, F5, F6)', () => {
     expect(notUsed(r2, 'ancient')).toMatchObject({ reason: 'too_old', sentence: 'Not used: it closed more than 24 months before the valuation date.' });
   });
 
+  it('E367 R-CMA-8: every not-used sale offered as includable becomes a comp when the agent includes it; a short sale beyond the 24-month look-back is too old, never offered', () => {
+    const extra = [
+      cand('old-short', { saleConditions: ['short_sale'], closeDate: monthsBefore(27), contractDate: monthsBefore(28) }),
+      // closed exactly 24 months before the valuation date (2024-11-28): too old, as select.test.ts's boundary says
+      cand('edge-short', { saleConditions: ['short_sale'], closeDate: monthsBefore(24, 28), contractDate: null }),
+      cand('recent-short', { saleConditions: ['short_sale'], closeDate: monthsBefore(2), contractDate: monthsBefore(3) }),
+      cand('cheap', { closePriceCents: 100, closeDate: monthsBefore(2), contractDate: monthsBefore(3) }),
+    ];
+    const candidates = [...local(), ...extra];
+    const r = run({ candidates });
+    expect(notUsed(r, 'old-short')).toMatchObject({ reason: 'too_old', includable: false, sentence: 'Not used: it closed more than 24 months before the valuation date.' });
+    expect(notUsed(r, 'edge-short')).toMatchObject({ reason: 'too_old', includable: false });
+    const offered = r.notUsed.filter((n) => n.includable).map((n) => n.ref.identity);
+    expect(offered.sort()).toEqual(['cheap', 'recent-short']);
+    for (const id of offered) expect([id, ids(run({ candidates, include: [id] })).includes(id)]).toEqual([id, true]);
+  });
+
   it('F6: a tier read that hit its limit says so', () => {
     const r = run({ candidates: local(), tierReads: [{ tier: 'postal_code', limitReached: true }, { tier: 'subdivision', limitReached: false }, { tier: 'rate_pool', limitReached: true }] });
     expect(r.area.sentences).toContain('Only the 300 most recent sales in the same postal code were read.');
