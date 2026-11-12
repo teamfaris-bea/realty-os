@@ -1,6 +1,7 @@
 // The public listing page, the approval CHECK and the reconcile handler's take-downs (module 29; DATA_MODEL R-MKT-1,
 // R-MKT-4, R-MKT-7, R-MKT-9, R-GATE-12, R-INT-6; E91, E92). Real Postgres; fakes only.
 import { randomUUID } from 'node:crypto';
+import { fixedClock } from '@realty/core/foundation';
 import { withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -14,6 +15,7 @@ import { mlsConnection } from '../mls/testing.js';
 import { systemActor } from '../worker/systemActor.js';
 import type { StandaloneJobContext } from '../worker/types.js';
 import { reconcileMarketing } from './handlers.js';
+import { PAGE_LIMITS } from './publicPage.js';
 import { publishDepsOf } from './routes.js';
 import { type MarketingWorld, type PieceBody, PNG_1X1, approve, call, clearFairHousing, connectAccount, generateAll, getPiece, marketingWorld, publicPage, teamListing, uploadImage } from './testing.js';
 
@@ -116,10 +118,19 @@ describe('R-MKT-7 the public page is served only through app.public_listing_page
   it('R-MKT-7: abuse limits: the page is rate-limited per IP (429) and slugs are shape-checked before any query', async () => {
     const lp = await livePage();
     const ip = '198.18.0.77';
-    let last = 0;
-    for (let i = 0; i < 125; i++) last = (await publicPage(h, lp.path, ip)).statusCode;
-    expect(last).toBe(429);
-    expect((await publicPage(h, lp.path, '198.18.0.78')).statusCode).toBe(200);
+    const perMinute = PAGE_LIMITS(ip)[0]!.max;
+    // The limits count per clock minute (fixed windows): a burst that crosses a minute boundary is split over two
+    // windows and its later requests pass again. The burst reads a pinned limiter clock, so all of it is one window.
+    h.app.platform.publicPageLimitClock = fixedClock(Date.now());
+    try {
+      const statuses: number[] = [];
+      for (let i = 0; i < 125; i++) statuses.push((await publicPage(h, lp.path, ip)).statusCode);
+      expect(statuses.slice(0, perMinute)).toEqual(Array<number>(perMinute).fill(200));
+      expect(statuses.slice(perMinute)).toEqual(Array<number>(125 - perMinute).fill(429));
+      expect((await publicPage(h, lp.path, '198.18.0.78')).statusCode).toBe(200);
+    } finally {
+      delete h.app.platform.publicPageLimitClock;
+    }
   });
 });
 
