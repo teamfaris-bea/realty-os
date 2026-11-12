@@ -44,7 +44,7 @@ import { CHAT_NOT_HERE, chooseChannel, webChatState } from './channelChoice.js';
 import { firstName, formatPhone } from '../feed/lib/format.js';
 import { useSendCheck } from '../feed/lib/sendCheck.js';
 import type { ActionView, ApproveResponse, ComposeResponse, TypedInChat } from '../feed/lib/types.js';
-import { MediaTray } from './MediaTray.js';
+import { MediaAddButton, MediaTray } from './MediaTray.js';
 import { SegmentCounter, plainQuotes, useCounterView } from './SegmentCounter.js';
 import { mediaHold, mediaRefusal, useComposeMedia } from './useComposeMedia.js';
 
@@ -131,6 +131,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
   const sheets = useAgentSheets();
   const id = useId();
   const field = useRef<HTMLTextAreaElement>(null);
+  const mediaButton = useRef<HTMLButtonElement>(null);
   // the agent's own channel tap (or the channel of a draft or template they chose); the box's channel is derived
   const [picked, setChannel] = useState<ComposeChannel | null>(null);
   const [webChatEnded, setWebChatEnded] = useState(false);
@@ -236,6 +237,7 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
   const mediaWait = mediaHold(channel, media);
   const hold = mediaWait ? `${id}-media-hold` : channel === 'sms' && counter?.tooLong ? `${id}-counter-too-long` : null;
   const draftOpen = draft !== null || (draftId !== null && draftQ.isPending);
+  const canAttach = settled && channel === 'sms' && contact.canText && !blockedNow.blocked && !draftOpen;
   // the chat ended while the agent was on the thread: the preview of the real text says so (CHANNEL_NOT_CONNECTED). The
   // box closes Web chat at once and asks the summary again, so it never offers what the preview and the send refuse
   const previewEnded = isChat && (preview.decision?.reasons.includes(CHANNEL_NOT_CONNECTED) ?? false);
@@ -284,6 +286,23 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
 
   const afterSend = (r: ComposeResponse) => {
     setOutcome(r);
+    // Once a response names a message, its photos belong to it (the uploads were claimed). When that message did not go
+    // out (blocked, failed), the words stay in the box but the photos cannot: the box says so plainly, so the next Send
+    // is never a words-only text the agent did not mean (b8 texting ui/F6).
+    // Only a text known not to have gone out says "wasn't sent"; one whose outcome is unknown may have arrived, so the box
+    // says the photos went with it and never invites a second copy.
+    const result = sentResult(r);
+    if (r.message && media.count > 0 && !WENT_OUT.has(result)) {
+      const one = media.count === 1;
+      const what = media.items.every((i) => i.kind === 'video') ? (one ? 'video' : 'videos') : media.items.every((i) => i.kind === 'photo') ? (one ? 'photo' : 'photos') : 'photos and videos';
+      const notSent = result === 'blocked' || result === 'failed' || result === 'undelivered' || result === 'canceled';
+      setNotice({
+        tone: 'warn',
+        text: notSent
+          ? `The ${what} stayed with the text that wasn't sent, so ${one ? "it isn't" : "they aren't"} in this box any more. Attach ${one ? 'it' : 'them'} again to send ${one ? 'it' : 'them'}.`
+          : `The ${what} went with that text, so ${one ? "it isn't" : "they aren't"} in this box any more.`,
+      });
+    }
     if (r.message) media.sent();
     // a replay ('noop', after a lost answer) went out only if its message did (finding F1)
     if (WENT_OUT.has(sentResult(r))) {
@@ -469,12 +488,13 @@ export function ComposeBox({ contact, initialChannel, lastInboundChannel = null,
           aria-describedby={settled && channel === 'sms' && counter ? `${id}-counter` : undefined}
           className="min-h-tap flex-1 resize-y rounded-xl border border-line bg-surface px-3.5 py-2.5 text-[17px] text-ink placeholder:text-ink-muted"
         />
+        <MediaAddButton media={media} canAttach={canAttach} buttonRef={mediaButton} describedById={`${id}-media-limits`} />
         <Button type="submit" pending={pending} pendingLabel="Sending" disabled={!settled || (body.trim().length === 0 && media.count === 0) || blockedNow.blocked || hold !== null} aria-describedby={[reasonShown ? `${id}-reason` : null, hold].filter(Boolean).join(' ') || undefined}>
           {later ? 'Schedule' : 'Send'}
         </Button>
       </div>
       {settled && channel === 'sms' ? <SegmentCounter id={`${id}-counter`} view={counter} onPlainQuotes={() => { setBody(plainQuotes(body)); requestAnimationFrame(() => field.current?.focus()); }} /> : null}
-      <MediaTray media={media} canAttach={settled && channel === 'sms' && contact.canText && !blockedNow.blocked && !draftOpen} hold={mediaWait} holdId={`${id}-media-hold`} />
+      <MediaTray media={media} hold={mediaWait} holdId={`${id}-media-hold`} addButtonRef={mediaButton} describedById={`${id}-media-limits`} />
       {settled && !nothingSends && (templatePicker || !draft) ? (
         <div className="flex flex-wrap items-center gap-2">
           {templatePicker

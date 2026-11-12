@@ -216,7 +216,7 @@ const CALL_OUTCOME_LABEL: Record<string, string> = {
 /**
  * What happened to an outbound message, in plain words, when it did NOT simply go out (reasons/
  * sentences.ts). A blocked or failed text is never drawn like a sent one (honest UI): the bubble gets
- * an outline and this line.
+ * an outline and this line, and so do the photos of a photo text, with words or without (RowAttachments `notSent`).
  */
 export function outboundStatusLabel(item: Pick<TimelineItem, 'status' | 'statusReason' | 'providerErrorCode' | 'blockedBy' | 'detail'>, contactName = ''): { text: string; failed: boolean; held: boolean } | null {
   // module 22's refusal of a reply to an ended chat or a disconnected widget (E77, R-INBOX-7), in words
@@ -246,6 +246,9 @@ export function MessageRow({ item, contact, loaded }: { item: TimelineItem; cont
   return (
     <li id={item.id} className={`flex max-w-[85%] flex-col gap-0.5 ${outbound ? 'self-end items-end' : 'self-start items-start'}`}>
       {outbound && !item.preview ? null : <p className={`whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2 text-[16px] ${bubble}`}>{item.preview ?? ''}</p>}
+      {/* the photos sit with the words they belong to, above the meta, the status and any Send anyway / Cancel; a photo
+          text that did not go out carries the same outline as its bubble, words or none (b8 texting ui/F5) */}
+      {contact ? <RowAttachments contactId={contact.id} item={item} notSent={st?.failed ? 'failed' : st?.held ? 'held' : null} /> : null}
       {item.reactedWith ? <ReactedWithChip reactedWith={item.reactedWith} contactName={contact?.name} /> : null}
       <p className="flex flex-wrap items-center gap-x-1 px-1 text-[12px] text-ink-muted">
         <ChannelTag channel={channel} />
@@ -257,7 +260,6 @@ export function MessageRow({ item, contact, loaded }: { item: TimelineItem; cont
       </p>
       {st ? <p className={`px-1 text-[13px] font-medium ${st.failed ? 'text-danger' : st.held ? 'text-warn' : 'text-ink-muted'}`}>{st.text}</p> : null}
       {st?.held && contact ? <HeldActions item={item} contact={contact} /> : null}
-      {contact ? <RowAttachments contactId={contact.id} item={item} /> : null}
     </li>
   );
 }

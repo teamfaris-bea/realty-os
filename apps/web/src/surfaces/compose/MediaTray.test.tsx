@@ -64,8 +64,12 @@ function threadFake(items = [timelineItem()]) {
 const deletes = (fake: FakeFetch) => fake.calls.filter((c) => c.method === 'DELETE').map((c) => c.path);
 const input = () => document.querySelector<HTMLInputElement>('[data-testid="media-input"]')!;
 const tray = () => screen.getByTestId('media-tray');
-const tiles = () => within(tray()).queryAllByRole('listitem');
-const live = () => tray().querySelector('[aria-live="polite"]')!;
+const tiles = () => {
+  const t = screen.queryByTestId('media-tray');
+  return t ? within(t).queryAllByRole('listitem') : [];
+};
+const live = () => document.querySelector('[data-testid="media-live"]')!;
+const LINES = 'Up to 10 photos or videos, 5 MB in all; videos up to 500 KB. Location is removed from photos and videos before they\'re sent.';
 
 async function openText(fake: FakeFetch, path = `/contacts/${IDS.jane}/thread?compose=sms`) {
   agentApp(fake, path);
@@ -88,9 +92,13 @@ describe('D5a compose: photos and videos by text', () => {
       return staged(c, n);
     });
     await openText(fake);
-    expect(screen.getByText('Up to 10 photos or videos, 5 MB in all; videos up to 500 KB.')).toBeInTheDocument();
-    expect(screen.getByText("Location is removed from photos and videos before they're sent.")).toBeInTheDocument();
+    // before anything is picked the limits and location are the button's description; nothing else is drawn (ui/F10)
+    expect(screen.getByRole('button', { name: 'Photo or video' })).toHaveAccessibleDescription(LINES);
+    expect(screen.queryByTestId('media-tray')).toBeNull();
     await attach(photo());
+    expect(within(tray()).getByText('Up to 10 photos or videos, 5 MB in all; videos up to 500 KB.')).toBeVisible();
+    expect(within(tray()).getByText("Location is removed from photos and videos before they're sent.")).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Photo or video' })).toHaveAccessibleDescription(LINES);
     expect(await within(tray()).findByText('Preparing')).toBeInTheDocument();
     expect(fake.callsTo(`POST ${MEDIA}`)).toHaveLength(0);
     prep.resolve();
@@ -184,7 +192,7 @@ describe('D5a compose: photos and videos by text', () => {
     await waitFor(() => expect(fake.callsTo(`GET /contacts/${IDS.jane}/attachments`).length).toBeGreaterThan(attachmentsBefore));
   });
 
-  it('R-MMS-8: a send blocked at send time still names its message, so the tray empties without deleting; a send never created keeps the items, and MEDIA_UPLOAD_GONE marks the tile it names', async () => {
+  it('R-MMS-8 (b8 texting ui/F6): a send blocked at send time still names its message, so the tray empties without deleting and the box says the photo stayed with it; a send never created keeps the items, and MEDIA_UPLOAD_GONE marks the tile it names', async () => {
     let answer: unknown = { status: 200, body: { message: null, decision: decision({ outcome: 'deny', explanation: 'Wire instructions are never sent.' }), result: 'not_created' } };
     const fake = threadFake().on(`POST /contacts/${IDS.jane}/messages`, () => answer as never);
     const box = await openText(fake);
@@ -208,6 +216,8 @@ describe('D5a compose: photos and videos by text', () => {
     // the gone one was deleted when it was removed (404 is fine), the blocked message keeps the other
     expect(deletes(fake)).toEqual([`${MEDIA}/${UP(2)}`]);
     expect(box).toHaveValue('The house');
+    // the words stay but the photo went with the blocked text: the box says so plainly (b8 texting ui/F6)
+    expect(screen.getByText("The photo stayed with the text that wasn't sent, so it isn't in this box any more. Attach it again to send it.")).toBeInTheDocument();
   });
 
   it('R-MMS-8: the tray is for Text only: with a photo attached, Email or Web chat says "Photos and videos go only by text." and holds Send until Text is chosen again or the photo is removed', async () => {
@@ -305,7 +315,68 @@ describe('D5a compose: photos and videos by text', () => {
   });
 });
 
+describe('D5a compose: no empty alert, and a failed photo text (b8 texting review)', () => {
+  it('R-MMS-8 WCAG 4.1.3 (b8 texting ui/F3): a text thread mounts no role="alert" until a refusal has words; the refusal is an alert', async () => {
+    await openText(threadFake());
+    expect(screen.queryAllByRole('alert')).toHaveLength(0);
+    await attach(file('contract.pdf', 1000, 'application/pdf'));
+    expect(within(tray()).getByRole('alert')).toHaveTextContent('Only photos and videos can be sent by text.');
+  });
+
+  it('R-MMS-8 (b8 texting ui/F6): a photo text that failed at the provider keeps the words, and the box says the photos stayed with it; a later Send is never silently words-only', async () => {
+    const fake = threadFake().on(`POST /contacts/${IDS.jane}/messages`, { status: 200, body: { ...sentMessage('failed', 'failed').body, message: { ...sentMessage().body.message, status: 'failed', statusReason: 'MEDIA_UNAVAILABLE', dispatchedAt: null } } });
+    const box = await openText(fake);
+    await user().type(box, 'The kitchen');
+    await attach(photo('a.jpg'), photo('b.jpg'));
+    await waitFor(() => expect(within(tray()).getAllByText('Ready')).toHaveLength(2));
+    await user().click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText("The photos stayed with the text that wasn't sent, so they aren't in this box any more. Attach them again to send them.")).toBeInTheDocument();
+    expect(box).toHaveValue('The kitchen');
+    expect(tiles()).toHaveLength(0);
+  });
+  it('R-MMS-8 (b8 texting ui/F6): a photo text whose outcome is unknown is never called "not sent": the box says the photo went with it', async () => {
+    const fake = threadFake().on(`POST /contacts/${IDS.jane}/messages`, { status: 200, body: { ...sentMessage('dispatch_unknown', 'dispatch_unknown').body, message: { ...sentMessage().body.message, status: 'dispatch_unknown' } } });
+    const box = await openText(fake);
+    await user().type(box, 'The kitchen');
+    await attach(photo('a.jpg'));
+    await within(tray()).findByText('Ready');
+    await user().click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText("The photo went with that text, so it isn't in this box any more.")).toBeInTheDocument();
+    expect(screen.queryByText(/wasn't sent/)).toBeNull();
+  });
+});
+
 describe('D5a thread: outbound photos and videos', () => {
+  it('R-MMS-8 (b8 texting ui/F5): a blocked, failed or held photo-only text carries the dashed outline on its photos and its status, photos before the status and actions', async () => {
+    const cases = [
+      { id: '01900000-0000-7000-8000-0000000e5811', status: 'blocked', statusReason: 'CONSENT_REVOKED', tone: 'failed' },
+      { id: '01900000-0000-7000-8000-0000000e5812', status: 'failed', statusReason: 'MEDIA_UNAVAILABLE', tone: 'failed' },
+      { id: '01900000-0000-7000-8000-0000000e5813', status: 'undelivered', statusReason: 'PROVIDER_UNDELIVERED', tone: 'failed' },
+      { id: '01900000-0000-7000-8000-0000000e5814', status: 'delivered', statusReason: null, tone: null },
+    ];
+    const items = cases.map((c, i) => timelineItem({ id: c.id, detail: 'mms:outbound', preview: '', occurredAt: iso(-60_000 * (i + 1)), actor: { userId: IDS.me, displayName: 'Ava Agent' }, status: c.status, statusReason: c.statusReason }));
+    const fake = threadFake(items).on(`GET /contacts/${IDS.jane}/attachments`, {
+      status: 200,
+      body: { messages: cases.map((c) => ({ messageId: c.id, media: [{ position: 0, contentType: 'image/jpeg', byteSize: 400_000, inline: true, url: `/api/messages/${c.id}/media/0` }], skipped: [] })), voicemails: [] },
+    });
+    agentApp(fake, `/contacts/${IDS.jane}/thread`);
+    await screen.findAllByRole('img', { name: 'Photo 1 of 1' });
+    for (const c of cases) {
+      const row = document.getElementById(c.id)!;
+      const frame = row.querySelector('img')!.closest('div[class*="flex-col"]')!.parentElement!;
+      expect(frame.getAttribute('data-not-sent'), c.status).toBe(c.tone);
+      if (c.tone) {
+        expect(frame.className, c.status).toMatch(/border-dashed border-danger/);
+        // the photos come before the meta line and the status line
+        const status = [...row.querySelectorAll('p')].find((p) => /^Not (sent|delivered)/.test(p.textContent ?? ''))!;
+        expect(status, c.status).toBeTruthy();
+        expect(frame.compareDocumentPosition(status) & Node.DOCUMENT_POSITION_FOLLOWING, c.status).toBeTruthy();
+      } else {
+        expect(frame.className).not.toMatch(/border-dashed/);
+      }
+    }
+  });
+
   it('R-MMS-8: an outbound picture message shows its photos with neutral alt text ("Photo 1 of 2") and draws no empty text bubble', async () => {
     const M = '01900000-0000-7000-8000-0000000e5801';
     const items = [timelineItem({ id: M, detail: 'mms:outbound', preview: '', occurredAt: iso(-60_000), actor: { userId: IDS.me, displayName: 'Ava Agent' }, status: 'delivered' })];

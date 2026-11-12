@@ -3,7 +3,9 @@
 //
 // readReactionInTx runs inside ingestion step 5 for an SMS without media, after the inbound row is stored and before
 // the consent side is planned. A body that is not a reaction form costs no query. Otherwise the candidate team texts
-// are loaded with exactly the bounds of the DB guard app.message_reactions_guard (same contact, non-imported outbound
+// are loaded with exactly the bounds of the DB guard app.message_reactions_guard (a record of the same person,
+// app.contact_person_ids: the team's text can still sit on a record merged into this one while a Team Lead's merge
+// waits for its ownership.followup to move the messages, b8 texting ownership-data/F6; non-imported outbound
 // sms/mms from the number the reaction came in on to the reaction's sender, at least dispatching and not failed,
 // dispatched before the reaction, created in the 30 days before it), core decides the link, and the link and its
 // audit are written inside a SAVEPOINT. A refused write is audited `consent.reaction_link_refused` and the text is
@@ -67,7 +69,8 @@ export async function readReactionInTx(
   const sent = (
     await sql<{ id: string; body: string }>`
       SELECT id, body FROM messages
-       WHERE tenant_id = app.tenant_id() AND contact_id = ${i.contactId} AND direction = 'outbound' AND NOT imported
+       WHERE tenant_id = app.tenant_id() AND contact_id = ANY ((SELECT app.contact_person_ids(app.tenant_id(), ${i.contactId}::uuid))::uuid[])
+         AND direction = 'outbound' AND NOT imported
          AND channel IN ('sms','mms') AND to_address = ${i.from} AND phone_number_id = ${i.phoneNumberId}
          AND status IN ('dispatching','sent','delivered','dispatch_unknown')
          AND occurred_at >= ${at}::timestamptz - make_interval(days => ${REACTION_WINDOW_DAYS}) AND dispatched_at <= ${at}::timestamptz
