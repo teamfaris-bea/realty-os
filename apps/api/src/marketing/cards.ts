@@ -95,6 +95,28 @@ export async function raiseRemoveYourselfCard(tx: Tx, deps: { ids: IdGenerator }
   for (const userId of users) await upsertCard(tx, deps.ids, { userId, pieceId: c.pieceId, score: 70, reasons: [{ code, text }], merge: true });
 }
 
+/**
+ * The provider confirmed the deletion of a post the agent was asked to remove themselves (a later request, or a
+ * retraction that took over a stale claim, got it down): its reason comes off every open card of the piece, and a card
+ * left with no reason closes (a card always has one: the closed card keeps it as its record). As the system.
+ */
+export async function clearRemoveYourselfReason(tx: Tx, pieceId: string, publicationId: string): Promise<void> {
+  const code = `REMOVE_POST_YOURSELF:${publicationId}`;
+  await sql`
+    WITH c AS (
+      SELECT f.tenant_id, f.id, (SELECT jsonb_agg(r.x ORDER BY r.n) FROM jsonb_array_elements(f.reasons) WITH ORDINALITY AS r(x, n) WHERE r.x->>'code' IS DISTINCT FROM ${code}) AS rest
+        FROM priority_feed_items f
+       WHERE f.tenant_id = app.tenant_id() AND f.dedupe_key = ${`marketing:${pieceId}`} AND f.state IN ('open','snoozed')
+         AND EXISTS (SELECT 1 FROM jsonb_array_elements(f.reasons) x WHERE x->>'code' = ${code}))
+    UPDATE priority_feed_items f SET
+      reasons = COALESCE(c.rest, f.reasons),
+      state = CASE WHEN c.rest IS NULL THEN 'done' ELSE f.state END,
+      resolved_at = CASE WHEN c.rest IS NULL THEN now() ELSE f.resolved_at END,
+      snoozed_until = CASE WHEN c.rest IS NULL THEN NULL ELSE f.snoozed_until END,
+      updated_at = now()
+      FROM c WHERE f.tenant_id = c.tenant_id AND f.id = c.id`.execute(tx);
+}
+
 /** Whether a remove-it-yourself card was ever raised for this publication (the reconcile handler asks once). */
 export async function removeYourselfRaised(tx: Tx, pieceId: string, publicationId: string): Promise<boolean> {
   const r = await sql<{ n: number }>`SELECT count(*)::int AS n FROM priority_feed_items f, jsonb_array_elements(f.reasons) x

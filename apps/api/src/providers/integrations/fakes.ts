@@ -349,6 +349,8 @@ export class FakeSocialPublisher implements SocialPublisher {
   deletion: Record<PublishRequest['target'], 'supported' | 'unsupported'> = { facebook_page: 'supported', instagram_business: 'supported', gbp_location: 'supported' };
   /** tests: runs inside the provider call, before the post is made (e.g. a pack change between TX1 and TX2) */
   beforePublish: (() => Promise<void>) | null = null;
+  /** tests: runs inside the provider call after the provider decided (a deleted post is already gone), before it answers */
+  afterDelete: ((p: DeleteRequest, r: DeleteResult) => Promise<void>) | null = null;
   async publishPost(p: PublishRequest): Promise<PublishResult> {
     if (this.beforePublish) await this.beforePublish();
     this.published.push({ ...p, imageUrls: [...p.imageUrls] });
@@ -370,6 +372,11 @@ export class FakeSocialPublisher implements SocialPublisher {
   }
   async deletePost(p: DeleteRequest): Promise<DeleteResult> {
     this.deletions.push({ ...p });
+    const r = this.#delete(p);
+    if (this.afterDelete) await this.afterDelete({ ...p }, r);
+    return r;
+  }
+  #delete(p: DeleteRequest): DeleteResult {
     if (this.deletion[p.target] === 'unsupported') return { kind: 'unsupported' };
     const post = this.posts.get(p.providerRef);
     if (!post || post.externalAccountId !== p.externalAccountId) return { kind: 'failed', code: 'POST_NOT_FOUND' };
