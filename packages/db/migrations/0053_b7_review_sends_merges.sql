@@ -445,6 +445,7 @@ BEGIN
                        'label', 'A seller on this listing was merged with a duplicate record, so this update now goes to the merged record. Check who it goes to, add your recommendation and send')),
            updated_at = now()
      WHERE f.tenant_id = t AND f.item_type = 'seller_update' AND f.subject_type = 'listing' AND f.subject_id = ANY (sold)
+       AND f.assistant_action_id IS NOT NULL   -- a draft's card only, never the "no active listing agent" card
        AND f.state IN ('open','snoozed');
   END IF;
   RETURN NULL;
