@@ -131,8 +131,10 @@ function OwnershipButton({ action, card, variant = 'primary', expired, block, cl
 function SendDraftButton({ action, card, variant = 'primary', block, className }: ActionButtonProps & { action: Extract<OneTapAction, { kind: 'send_draft' }> }) {
   const sheets = useAgentSheets();
   const draftChannel = useInbox().data?.items.find((a) => a.id === action.actionId)?.draft?.channel ?? null;
-  // (a web-chat draft's chat state is the thread's to show; here the send-time check decides)
-  const reach = useChannelState(card?.contact?.id, draftChannel === 'web_chat' ? null : draftChannel);
+  // judged by the channel the draft goes out on: a web-chat draft by the chat (ended, turned off, opted out, the person's
+  // do-not-contact: review ui-compose/F3), never by the texts
+  const summary = useReachability(card?.contact?.id);
+  const reach: ChannelState = draftChannel === 'web_chat' ? replyChatState(summary) : draftChannel ? channelState(summary, draftChannel) : { blocked: false, sentence: null, note: null };
   const reasonId = useId();
   const navigate = useNavigate();
   const cmd = useCommand<Record<string, unknown>, ApproveResponse>(`/assistant/actions/${action.actionId}/approve`, { invalidate: [...FEED_KEYS, ['timeline']] });

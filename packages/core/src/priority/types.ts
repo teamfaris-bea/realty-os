@@ -155,7 +155,8 @@ export interface HandbackFacts {
   contactId: ContactId;
   /** The inbound message that paused automation (R-AST-9). */
   inboundMessageId: MessageId | null;
-  inboundChannel: 'sms' | 'mms' | 'email' | 'voice' | null;
+  /** 'web_chat' (module 22): the client answered in the website chat; the card offers the chat (review ui-compose/F3) */
+  inboundChannel: 'sms' | 'mms' | 'email' | 'voice' | 'web_chat' | null;
   receivedAt: Instant;
   /** A proposed reply draft attached to the handback, if the assistant wrote one. */
   replyDraftActionId?: AssistantActionId | null;
@@ -167,7 +168,8 @@ export interface DraftFacts {
   actionId: AssistantActionId;
   ownerUserId: UserId;
   contactId: ContactId;
-  channel: 'sms' | 'email';
+  /** 'web_chat' (module 22, R-INBOX-4): a reply drafted for the website chat, judged by the chat (review ui-compose/F3) */
+  channel: 'sms' | 'email' | 'web_chat';
   category: ActionCategory | 'internal';
   /** assistant_actions.explanation: the one-line "why", verbatim (1..300 chars). */
   explanation: string;

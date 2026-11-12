@@ -194,7 +194,7 @@ export async function loadFeedInputsScoped(tx: Tx, actor: UserActor, envelope: E
              AND k.status IN ('no_answer','busy','voicemail','canceled','failed','completed')
            ORDER BY k.started_at DESC LIMIT ${PER_CONTACT_CAP}) k
        ORDER BY k.started_at DESC`.execute(tx),
-    sql<{ id: string; contact_id: string; created_at: Date; payload: Record<string, unknown>; m_channel: 'sms' | 'mms' | 'email' | null; m_at: Date | null }>`
+    sql<{ id: string; contact_id: string; created_at: Date; payload: Record<string, unknown>; m_channel: 'sms' | 'mms' | 'email' | 'web_chat' | null; m_at: Date | null }>`
       SELECT a.id, a.contact_id, a.created_at, a.payload, m.channel AS m_channel, m.occurred_at AS m_at
         FROM assistant_actions a
         LEFT JOIN messages m ON m.tenant_id = a.tenant_id AND m.id = CASE WHEN a.payload->>'inboundMessageId' ~ '^[0-9a-f-]{36}$' THEN (a.payload->>'inboundMessageId')::uuid END
@@ -361,7 +361,8 @@ export async function loadFeedInputsScoped(tx: Tx, actor: UserActor, envelope: E
       actionId: d.id as never,
       ownerUserId: userId,
       contactId: d.contact_id as ContactId,
-      channel: d.channel === 'email' ? 'email' : 'sms',
+      // module 22 (R-INBOX-4): a step on `inbound_channel` drafts a reply in the website chat (review ui-compose/F3)
+      channel: d.channel === 'email' ? 'email' : d.channel === 'web_chat' || d.channel === 'inbound_channel' ? 'web_chat' : 'sms',
       category: d.action_category as DraftFacts['category'],
       explanation: d.explanation,
       needsReview: d.needs_review,

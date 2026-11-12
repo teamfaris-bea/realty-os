@@ -399,7 +399,8 @@ export function scoreFeed(i: FeedInputs, opts: ScoreFeedOptions = {}): FeedItem[
     handbackContacts.add(h.contactId);
     const g = gateOf(h.contactId);
     const prefs = prefsFor(h.inboundChannel);
-    const replyCh: 'sms' | 'email' | null = h.inboundChannel === 'email' ? 'email' : h.inboundChannel === 'voice' ? null : 'sms';
+    // the reply goes where they wrote: a chat reply is judged by the chat, never by the texts (review ui-compose/F3)
+    const replyCh: 'sms' | 'email' | 'web_chat' | null = h.inboundChannel === 'email' ? 'email' : h.inboundChannel === 'voice' ? null : h.inboundChannel === 'web_chat' ? 'web_chat' : 'sms';
     const reasons: FeedReason[] = [reason('HANDBACK'), ...waitingReasons(now, h.receivedAt)];
     const review: OneTapAction = { kind: 'review_handback', label: 'See what they said', actionId: h.actionId };
     let primaryAction: OneTapAction;
@@ -411,7 +412,7 @@ export function scoreFeed(i: FeedInputs, opts: ScoreFeedOptions = {}): FeedItem[
       const plan = planContact(f, h.contactId, prefs, g);
       alternatives = [{ kind: 'edit_draft', label: 'Edit', actionId: draftId }, ...plan.usable.filter((a) => a.kind === 'call'), review, plan.open];
     } else {
-      const plan = planContact(f, h.contactId, prefs, g);
+      const plan = withChatReply(planContact(f, h.contactId, prefs, g), h.contactId, replyCh === 'web_chat', g);
       reasons.push(...plan.demotion);
       const extra: OneTapAction[] = draftId !== null ? [{ kind: 'edit_draft', label: 'Edit draft', actionId: draftId }, review] : [review];
       ({ primaryAction, alternatives } = contactCard(plan, extra));
@@ -466,12 +467,15 @@ export function scoreFeed(i: FeedInputs, opts: ScoreFeedOptions = {}): FeedItem[
     const reasons: FeedReason[] = [missed ? reason('MISSED_CALL', what) : reason('CLIENT_WAITING', what)];
     if (msgs.length > 1) reasons.push(reason('MORE_WAITING', `${msgs.length} messages or calls waiting`));
     reasons.push(...waitingReasons(now, first.at));
+    // a chat reply the assistant drafted (R-INBOX-4) is the chat's: Reply opens the thread on web chat, which adopts it
+    const chatDraft = replyDraft?.channel === 'web_chat';
     if (replyDraft !== undefined) {
-      reasons.push(reason('REPLY_DRAFTED', replyDraft.channel === 'email' ? 'Reply email drafted for you' : 'Reply text drafted for you'));
+      reasons.push(reason('REPLY_DRAFTED', replyDraft.channel === 'email' ? 'Reply email drafted for you' : chatDraft ? 'Chat reply drafted for you' : 'Reply text drafted for you'));
       if (replyDraft.needsReview) reasons.push(reason('CHECK_THIS', 'Check this: a detail needs your OK'));
     }
-    const replyPrefs = replyDraft !== undefined ? (replyDraft.channel === 'email' ? EMAIL_FIRST : TEXT_FIRST) : prefsFor(missed ? 'voice' : latest.channel);
-    const plan = withChatReply(planContact(f, contactId, replyPrefs, gateOf(contactId), replyDraft && { channel: replyDraft.channel, actionId: replyDraft.actionId }), contactId, !missed && replyDraft === undefined && latest.channel === 'web_chat', gateOf(contactId));
+    const textDraft = replyDraft !== undefined && replyDraft.channel !== 'web_chat' ? { channel: replyDraft.channel, actionId: replyDraft.actionId } : undefined;
+    const replyPrefs = textDraft !== undefined ? (textDraft.channel === 'email' ? EMAIL_FIRST : TEXT_FIRST) : prefsFor(missed ? 'voice' : latest.channel);
+    const plan = withChatReply(planContact(f, contactId, replyPrefs, gateOf(contactId), textDraft), contactId, !missed && (chatDraft || (replyDraft === undefined && latest.channel === 'web_chat')), gateOf(contactId));
     reasons.push(...plan.demotion);
     out.push({
       itemType: missed ? 'missed_call' : 'unanswered_inbound',
@@ -493,7 +497,7 @@ export function scoreFeed(i: FeedInputs, opts: ScoreFeedOptions = {}): FeedItem[
     if (d.ownerUserId !== userId || handbackDrafts.has(d.actionId) || foldedDrafts.has(d.actionId)) continue;
     const g = gateOf(d.contactId);
     const reasons: FeedReason[] = [
-      reason('DRAFT_READY', d.channel === 'email' ? 'Email drafted for you' : 'Text drafted for you'),
+      reason('DRAFT_READY', d.channel === 'email' ? 'Email drafted for you' : d.channel === 'web_chat' ? 'Chat reply drafted for you' : 'Text drafted for you'),
       reason('ASSISTANT_NOTE', f.text(d.explanation, 140)),
     ];
     if (d.needsReview) reasons.push(reason('CHECK_THIS', 'Check this: a detail needs your OK'));
@@ -506,7 +510,8 @@ export function scoreFeed(i: FeedInputs, opts: ScoreFeedOptions = {}): FeedItem[
       primaryAction = d.needsReview ? edit : send;
       alternatives = d.needsReview ? [{ kind: 'open_contact', label: 'Open', contactId: d.contactId }] : [edit, { kind: 'open_contact', label: 'Open', contactId: d.contactId }];
     } else {
-      const plan = planContact(f, d.contactId, d.channel === 'email' ? EMAIL_FIRST : TEXT_FIRST, g);
+      // a blocked chat (the person asked not to be contacted, or opted out of the chat) is no way to send it
+      const plan = planContact(f, d.contactId, d.channel === 'email' ? EMAIL_FIRST : d.channel === 'web_chat' ? CALL_FIRST : TEXT_FIRST, g);
       reasons.push(...plan.demotion);
       ({ primaryAction, alternatives } = contactCard(plan, [edit]));
     }
