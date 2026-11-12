@@ -14,6 +14,7 @@ import type { CommsDeps } from '../comms/types.js';
 import type { Providers } from '../providers/index.js';
 import type { Platform } from '../server.js';
 import type { VoiceAgentProvider } from './provider.js';
+import type { SessionResult } from './session.js';
 
 export interface VoiceDeps {
   db: Database;
@@ -38,13 +39,16 @@ export interface VoiceDeps {
 export interface SessionEntry {
   tenantId: string;
   callId: string;
-  done: Promise<void>;
+  /** null: the session failed (voice.reconcile recovers it) */
+  done: Promise<SessionResult | null>;
 }
+
+const MAX_FINISHED = 200;
 
 /** The sessions running in this process. */
 export class SessionRegistry {
   private readonly sessions = new Map<string, SessionEntry>();
-  private readonly finished = new Map<string, Promise<void>>();
+  private readonly finished = new Map<string, Promise<SessionResult | null>>();
 
   key(tenantId: string, callId: string): string {
     return `${tenantId}:${callId}`;
@@ -54,6 +58,8 @@ export class SessionRegistry {
     const k = this.key(e.tenantId, e.callId);
     this.sessions.set(k, e);
     this.finished.set(k, e.done);
+    // keep the last results only (tests read them; production never needs old ones)
+    while (this.finished.size > MAX_FINISHED) this.finished.delete(this.finished.keys().next().value as string);
     void e.done.finally(() => this.sessions.delete(k));
   }
 
@@ -62,8 +68,8 @@ export class SessionRegistry {
   }
 
   /** Resolves when the session of this call finished (immediately when none ran here). */
-  async settled(tenantId: string, callId: string): Promise<void> {
-    await (this.finished.get(this.key(tenantId, callId)) ?? Promise.resolve());
+  async settled(tenantId: string, callId: string): Promise<SessionResult | null> {
+    return (await this.finished.get(this.key(tenantId, callId))) ?? null;
   }
 
   get size(): number {
@@ -72,11 +78,16 @@ export class SessionRegistry {
 }
 
 const registries = new WeakMap<object, SessionRegistry>();
-const seams = new WeakMap<object, Partial<Pick<VoiceDeps, 'hotRuleFor' | 'bookSlot'>>>();
+type Seams = Partial<Pick<VoiceDeps, 'hotRuleFor' | 'bookSlot' | 'telephonyProvider' | 'telephonyLiveRequests' | 'voiceAgent'>>;
+const seams = new WeakMap<object, Seams>();
 
-/** Tests only: a hot rule (none ships, O2) or a delayed bookSlot for one server. */
-export function setVoiceTestSeams(p: Platform, s: Partial<Pick<VoiceDeps, 'hotRuleFor' | 'bookSlot'>>): void {
+/** Tests only: a hot rule (none ships, O2), a delayed bookSlot, another telephony setting or voice agent, for one server. */
+export function setVoiceTestSeams(p: Platform, s: Seams): void {
   seams.set(p, { ...(seams.get(p) ?? {}), ...s });
+}
+
+export function clearVoiceTestSeams(p: Platform): void {
+  seams.delete(p);
 }
 
 export function voiceDeps(p: Platform): VoiceDeps {
@@ -92,11 +103,11 @@ export function voiceDeps(p: Platform): VoiceDeps {
     clock: p.clock,
     envelope: p.envelope,
     providers: p.providers,
-    voiceAgent: p.providers.voiceAgent,
+    voiceAgent: s.voiceAgent ?? p.providers.voiceAgent,
     comms: depsFromPlatform(p),
     calendar: calendarDeps(p),
-    telephonyProvider: p.config.providers.telephony,
-    telephonyLiveRequests: p.config.telephonyLiveRequests,
+    telephonyProvider: s.telephonyProvider ?? p.config.providers.telephony,
+    telephonyLiveRequests: s.telephonyLiveRequests ?? p.config.telephonyLiveRequests,
     hotRuleFor: s.hotRuleFor ?? (() => null),
     bookSlot: s.bookSlot ?? bookSlot,
     registry,

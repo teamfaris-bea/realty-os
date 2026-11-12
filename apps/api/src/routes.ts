@@ -41,6 +41,7 @@ import { calendarRoutes } from './calendar/routes.js';
 import { insightsRoutes } from './insights/routes.js';
 import { coachingRoutes } from './coaching/routes.js';
 import { transactionRoutes } from './transactions/routes.js';
+import { voiceRoutes } from './voice/routes.js';
 
 export interface RouteModule {
   name: string;
@@ -80,5 +81,6 @@ export const routeModules: RouteModule[] = [
   insightsRoutes,
   coachingRoutes,
   transactionRoutes,
+  voiceRoutes,
   // registry: add new entries above this line
 ];

@@ -32,6 +32,13 @@ export interface FakeFaults {
   pauseOnHandOff?: boolean;
   /** Keep the scripts' fixture slots as they are (default: SLOT_A/SLOT_B become the 1st/2nd slot the session offered). */
   literalSlots?: boolean;
+  /**
+   * Ids the scripted model uses for real ones (the scripts' fixture OWNER_ID ⇒ this tenant's owner). The session
+   * context carries no owner or contact field (R-VOICE-13): how a real model names the transfer target is VERIFY (N12).
+   */
+  idMap?: Readonly<Record<string, string>>;
+  /** Do not wait for the runner's in-flight booking (a late booking result, E427). */
+  ignorePending?: boolean;
 }
 
 export interface FakeSessionLog {
@@ -106,7 +113,7 @@ export class FakeVoiceTransport implements VoiceTransport {
       await new Promise((r) => setTimeout(r, 2));
       return 'idle';
     }
-    if (o.pending) await o.pending.catch(() => undefined);
+    if (o.pending && !this.faults.ignorePending) await o.pending.catch(() => undefined);
     for (;;) {
       if (this.faults.closeAtStep !== undefined && this.step >= this.faults.closeAtStep) {
         this.log.closed = true;
@@ -142,6 +149,7 @@ export class FakeVoiceTransport implements VoiceTransport {
         for (const d of this.deferredClaims.splice(0)) this.ready.push({ type: 'claim_proposals', at: t, raw: claimProposals(d, this.log.sessionId, this.lastCallerTurn) });
       }
       if (ev.type === 'tool_request' && ev.request.tool === 'book_appointment' && !this.faults.literalSlots) return { ...ev, request: { ...ev.request, args: this.mapSlot(ev.request.args) } };
+      if (ev.type === 'tool_request' && this.faults.idMap) return { ...ev, request: { ...ev.request, args: this.mapIds(ev.request.args) } };
       if (ev.type === 'model_turn' && this.faults.latencyMs !== undefined) return { ...ev, latencyMs: (ev.latencyMs ?? 0) + this.faults.latencyMs };
       return ev as PlatformEvent;
     }
@@ -154,6 +162,12 @@ export class FakeVoiceTransport implements VoiceTransport {
     const offered = [...this.log.toolResults].reverse().find((r) => r.slots !== undefined)?.slots ?? [];
     const pick = a['slot_start'] === toIso(SLOT_A.start) ? offered[0] : a['slot_start'] === toIso(SLOT_B.start) ? offered[1] : undefined;
     return pick ? { ...a, slot_start: pick.start, slot_end: pick.end } : args;
+  }
+
+  private mapIds(args: unknown): unknown {
+    if (typeof args !== 'object' || args === null || Array.isArray(args)) return args;
+    const m = this.faults.idMap ?? {};
+    return Object.fromEntries(Object.entries(args as Record<string, unknown>).map(([k, v]) => [k, typeof v === 'string' && m[v] !== undefined ? m[v] : v]));
   }
 
   async say(text: string, source: SaySource): Promise<void> {

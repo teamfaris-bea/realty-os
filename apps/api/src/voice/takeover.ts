@@ -17,7 +17,7 @@
 import { type Instant, type SystemActor, toIso } from '@realty/core/foundation';
 import { type VoiceFacts, VOICE_LINE_IDS, approvedVoiceContent, enabledLedgerTools, platformVoiceCleared, shouldAnswer, voiceAnsweringOn } from '@realty/core/voice';
 import { type IanaZone, isBusinessOpen } from '@realty/core/foundation';
-import { type ContactId, instantFromDate } from '@realty/core/foundation';
+import type { ContactId } from '@realty/core/foundation';
 import { lockContact, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
 import { sayAndHangupTwiml } from '../providers/twilio/voiceTwiml.js';
@@ -189,14 +189,13 @@ export async function takeOver(actor: SystemActor, deps: VoiceDeps, callId: stri
   if (connected === null) {
     // E425: the vendor did not connect: the session starts and ends with vendor_error (to voicemail, never answered)
     const closed = new ClosedTransport();
-    await runSession(deps, { ...base, transport: closed });
+    const res = await runSession(deps, { ...base, transport: closed }).catch(() => null);
+    deps.registry.add({ tenantId: actor.tenantId, callId, done: Promise.resolve(res) });
     return { kind: 'answered', response: closed.handedOff ?? (await voicemailFor(actor, deps, callId)) };
   }
   const transport = connected.transport;
-  const done = runSession(deps, { ...base, transport }).then(
-    () => undefined,
-    () => undefined, // a lost session is recovered by voice.reconcile (R-VOICE-7)
-  );
+  // a failed session is recovered by voice.reconcile (R-VOICE-7)
+  const done = runSession(deps, { ...base, transport }).catch(() => null);
   deps.registry.add({ tenantId: actor.tenantId, callId, done });
   return { kind: 'answered', response: connected.response };
 }
@@ -245,4 +244,3 @@ export async function aiDialResult(actor: SystemActor, deps: VoiceDeps, callId: 
   return null;
 }
 
-export { instantFromDate };

@@ -43,6 +43,8 @@ export interface SessionResult {
   unlogged: Unlogged[];
   ledgerWritten: number;
   appointmentId: string | null;
+  /** every action core returned, with the instant of the event that produced it (tests: sessionViolations) */
+  trace: { at: Instant; action: VoiceAction }[];
 }
 
 interface Booking {
@@ -69,6 +71,7 @@ export async function runSession(deps: VoiceDeps, s: SessionInput): Promise<Sess
   let vendorErrorFed = false;
   let hangupFed = false;
 
+  const trace: { at: Instant; action: VoiceAction }[] = [];
   const first = startSession(facts, clock.now());
   let state: VoiceState = first.state;
 
@@ -132,7 +135,10 @@ export async function runSession(deps: VoiceDeps, s: SessionInput): Promise<Sess
       dbAnnounced = await markAnnounced(s.actor, deps, s.callId, state.announcedAt);
       if (!dbAnnounced) queue.push({ type: 'hangup', at }); // the caller was gone already
     }
-    for (const a of r.actions) await effect(a, r.actions, at);
+    for (const a of r.actions) {
+      trace.push({ at, action: a });
+      await effect(a, r.actions, at);
+    }
   }
 
   async function feed(e: VoiceEvent): Promise<void> {
@@ -264,5 +270,5 @@ export async function runSession(deps: VoiceDeps, s: SessionInput): Promise<Sess
     playbookVersionId: s.playbookVersionId,
     at: clock.now(),
   });
-  return { state, handback, written, unlogged, ledgerWritten, appointmentId };
+  return { state, handback, written, unlogged, ledgerWritten, appointmentId, trace };
 }

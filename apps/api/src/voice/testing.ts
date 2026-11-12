@@ -83,8 +83,8 @@ export async function aiCall(h: ApiHarness, w: VoiceWorld, script: VoiceScript |
   return { callSid, callId: row.id, contactId: c.id, from: c.phone, ringTwiml: ring.body, answer };
 }
 
-export async function settled(h: ApiHarness, tenantId: string, callId: string): Promise<void> {
-  await voiceDeps(h.app.platform).registry.settled(tenantId, callId);
+export async function settled(h: ApiHarness, tenantId: string, callId: string) {
+  return voiceDeps(h.app.platform).registry.settled(tenantId, callId);
 }
 
 export const handbacksOf = (h: ApiHarness, callId: string) => h.su.query("SELECT * FROM assistant_actions WHERE kind = 'handback' AND payload ->> 'inboundCallId' = $1 ORDER BY created_at", [callId]).then((r) => r.rows);
