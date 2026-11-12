@@ -184,6 +184,11 @@ export async function updateListing(tx: Tx, id: string, b: z.infer<typeof Update
  * active member who may own leads (not a TC). Audited. The listing's open seller-update draft of the previous agent is
  * retired by the next seller-update reconcile (changed agent: invalidated, the same period drafted for the new agent),
  * and its "no active listing agent" card closes there too. Sellers and other listing roles are not touched.
+ *
+ * It answers 200 only after a write and its audit, or when the listing already has that agent (nothing to change).
+ * A team listing always has an agent (listings_check: `source = 'mls' OR listing_agent_user_id IS NOT NULL`), so there
+ * is no first agent to set, and the row is locked here, so the fenced writer cannot miss; if either ever happens the
+ * invariant broke, and the route fails (500) rather than answer 200 for a write that did not happen (b11 api-ui/F8).
  */
 export async function changeListingAgent(tx: Tx, actor: UserActor, listingId: string, agentUserId: string): Promise<void> {
   const cur = await sql<{ source: string; agent: string | null }>`
@@ -191,8 +196,9 @@ export async function changeListingAgent(tx: Tx, actor: UserActor, listingId: st
   const c = cur.rows[0];
   if (!c || c.source !== 'team') throw new AppError('NOT_FOUND'); // MLS rows have no listing agent of ours
   if (c.agent === agentUserId) return;
+  if (c.agent === null) throw new AppError('INTERNAL_ERROR'); // listings_check makes this unreachable
   await assertAssignable(tx, actor, agentUserId, { canOwnLeads: true });
-  if (c.agent !== null) await setListingAgentInTx(tx, actor, listingId, c.agent, agentUserId);
+  if (!(await setListingAgentInTx(tx, actor, listingId, c.agent, agentUserId))) throw new AppError('INTERNAL_ERROR'); // the row is locked above
 }
 
 /**
