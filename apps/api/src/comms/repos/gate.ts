@@ -5,6 +5,7 @@ import type { Instant, PhoneNumberId } from '@realty/core/foundation';
 import { instantFromDate, toIso } from '@realty/core/foundation';
 import { type Tx, hmacBytes } from '@realty/db';
 import { sql } from 'kysely';
+import { flaggedRegistrationStatus } from '../telephonySafeguards.js';
 
 export interface TenantFacts {
   suspended: boolean;
@@ -266,8 +267,9 @@ export async function conversationOf(tx: Tx, contactId: string): Promise<Convers
 }
 
 export async function numberFacts(tx: Tx, id: string): Promise<(NumberFacts & { e164: string; purpose: string; assignedUserId: string | null }) | null> {
-  const r = await sql<{ id: string; e164: string; number_type: 'local' | 'toll_free'; sms_capable: boolean; voice_capable: boolean; released_at: Date | null; reg_status: string | null; purpose: string; assigned_user_id: string | null }>`
-    SELECT n.id, n.e164, n.number_type, n.sms_capable, n.voice_capable, n.released_at, r.status AS reg_status, n.purpose, n.assigned_user_id
+  const r = await sql<{ id: string; e164: string; number_type: 'local' | 'toll_free'; sms_capable: boolean; voice_capable: boolean; released_at: Date | null; reg_status: string | null; purpose: string; assigned_user_id: string | null; flagged: boolean }>`
+    SELECT n.id, n.e164, n.number_type, n.sms_capable, n.voice_capable, n.released_at, r.status AS reg_status, n.purpose, n.assigned_user_id,
+           n.sender_not_verified_at IS NOT NULL AS flagged
       FROM phone_numbers n LEFT JOIN sender_registrations r ON r.tenant_id = n.tenant_id AND r.id = n.registration_id
      WHERE n.tenant_id = app.tenant_id() AND n.id = ${id}`.execute(tx);
   const n = r.rows[0];
@@ -279,7 +281,9 @@ export async function numberFacts(tx: Tx, id: string): Promise<(NumberFacts & { 
     smsCapable: n.sms_capable,
     voiceCapable: n.voice_capable,
     released: n.released_at !== null,
-    registrationStatus: (n.reg_status ?? 'none') as RegistrationStatus,
+    // b9 review sends/F1 (R-TWL-9): a number the carrier reported unverified (30032 / 30034) is not ready to text,
+    // whatever its (shared) registration says; voice follows the owner default
+    registrationStatus: (n.flagged && (n.reg_status ?? 'none') === 'approved' ? flaggedRegistrationStatus() : (n.reg_status ?? 'none')) as RegistrationStatus,
     purpose: n.purpose,
     assignedUserId: n.assigned_user_id,
   };
@@ -331,4 +335,18 @@ export async function chatFanoutHmacs(tx: Tx, contactId: string): Promise<string
        AND (removed_at IS NULL OR removed_reason IS DISTINCT FROM 'wrong_number')
      ORDER BY address_hmac`.execute(tx);
   return r.rows.map((x) => Buffer.from(x.h).toString('hex'));
+}
+
+/**
+ * b9 review sends/F3 (R-CONSENT-7, R-TWL-11): the number a system keyword reply (STOP confirmation, HELP reply) goes
+ * from. The number that was texted when it can text; otherwise the team main number when IT can text (the reply still
+ * reaches only the phone that texted the keyword: the gate's keywordSenders and the dispatch guard check the
+ * recipient); otherwise the texted number, so the reply is recorded blocked with its honest reason.
+ */
+export async function keywordReplySender(tx: Tx, textedNumberId: string): Promise<string> {
+  const ready = (n: Awaited<ReturnType<typeof numberFacts>>) => n !== null && !n.released && n.smsCapable && n.registrationStatus === 'approved';
+  if (ready(await numberFacts(tx, textedNumberId))) return textedNumberId;
+  const main = (await candidateNumbers(tx, null)).teamMain;
+  if (main && ready(await numberFacts(tx, main))) return main;
+  return textedNumberId;
 }

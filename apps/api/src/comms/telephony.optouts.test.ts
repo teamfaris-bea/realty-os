@@ -3,7 +3,8 @@
 //   R-TWL-7  Twilio's OptOutType (E383, E384): STOP adds the usual STOP effects with no platform reply; START / HELP / YES
 //            change nothing.
 //   R-TWL-8  error 21610 on an agent alert text: the alert phone's revoke, as the agent keyword path records it; START restores.
-//   R-TWL-9  30032 / 30034 (E385): SENDER_NOT_VERIFIED, registration not ready in the same transaction, texts blocked,
+//   R-TWL-9  30032 / 30034 (E385): SENDER_NOT_VERIFIED, the NUMBER not ready in the same transaction (b9 review sends/F1:
+//            never the shared registration), texts from it blocked,
 //            calls still work, one notice per number per day, only "Check registration status" restores it.
 //   R-TWL-10 a toll-free receiving number: no platform STOP confirmation or HELP reply.
 import { randomUUID } from 'node:crypto';
@@ -155,10 +156,12 @@ describe('R-TWL-8 error 21610 on an agent alert text', () => {
 
 describe('R-TWL-9 unverified senders (30032 toll-free, 30034 unregistered 10DLC)', () => {
   const regStatus = async () => (await h.su.query('SELECT status, status_detail FROM sender_registrations WHERE id = $1', [w.registrationId])).rows[0]!;
+  const numberFlag = async () => (await h.su.query('SELECT sender_not_verified_detail AS detail FROM phone_numbers WHERE id = $1', [w.mainNumberId])).rows[0]!.detail as string | null;
   const restore = async () => {
     await freshReauth(h, w.owner);
     expect((await call(w.owner, 'POST', `/sender-registrations/${w.registrationId}/refresh`)).status).toBe(200);
     expect((await regStatus()).status).toBe('approved');
+    expect(await numberFlag()).toBeNull();
   };
   const notices = async () => Number((await h.su.query<{ n: string }>("SELECT count(*) AS n FROM notifications WHERE tenant_id = $1 AND subject_type = 'phone_number' AND subject_id = $2 AND dedupe_key LIKE 'sender_not_verified:%'", [w.tenantId, w.mainNumberId])).rows[0]!.n);
 
@@ -167,7 +170,7 @@ describe('R-TWL-9 unverified senders (30032 toll-free, 30034 unregistered 10DLC)
     expect(SENDER_NOT_VERIFIED_SENTENCE).toBe("Not delivered: the team's number isn't verified for texting. The Owner has been told.");
   });
 
-  it('R-TWL-9: 30034 on the submit fails the text SENDER_NOT_VERIFIED (no opt-out, no reconcile), marks the registration not ready in TX2, blocks the next text, keeps calls, notifies Owner/Admin once; "Check registration status" restores it', async () => {
+  it('R-TWL-9 b9 comms sends/F1: 30034 on the submit fails the text SENDER_NOT_VERIFIED (no opt-out, no reconcile), marks the NUMBER not ready in TX2 (the registration stays approved), blocks the next text, keeps calls, notifies Owner/Admin once; "Check registration status" restores it', async () => {
     const agent = w.agents[0]!;
     const c = await ownedContact(agent);
     h.providers.telephony.failNext({ kind: 'rejected', code: '30034' });
@@ -176,9 +179,8 @@ describe('R-TWL-9 unverified senders (30032 toll-free, 30034 unregistered 10DLC)
     expect(await messageRow(h, r.body.message!.id)).toMatchObject({ status: 'failed', status_reason: SENDER_NOT_VERIFIED });
     expect(await revokes(c.id)).toBe(0);
     expect((await h.su.query("SELECT count(*)::int AS n FROM jobs WHERE kind = 'comms.reconcile' AND payload->>'messageId' = $1", [r.body.message!.id])).rows[0]!.n).toBe(0);
-    const reg = await regStatus();
-    expect(reg.status).toBe('submitted');
-    expect(reg.status_detail).toMatch(/^SENDER_NOT_VERIFIED: provider error 30034 on a local number ending \d{4}$/);
+    expect((await regStatus()).status).toBe('approved');
+    expect(await numberFlag()).toMatch(/^SENDER_NOT_VERIFIED: provider error 30034 on a local number ending \d{4}$/);
     expect(await notices()).toBe(1);
     // the existing sender check now blocks texts from the number; calls keep working (voice refuses only 'blocked')
     const next = await sendText(agent, c.id, 'Second text');
@@ -187,14 +189,13 @@ describe('R-TWL-9 unverified senders (30032 toll-free, 30034 unregistered 10DLC)
     await alertPhone(agent);
     expect((await call<{ result: string }>(agent, 'POST', `/contacts/${c.id}/calls`, {})).body.result).toBe('dialing');
     await restore();
-    expect((await regStatus()).status_detail).toBeNull();
     expect((await sendText(agent, c.id, 'Third text')).body.result).toBe('sent');
   });
 
-  it('R-TWL-9 E385: 30032 from status callbacks, several the same day: each text SENDER_NOT_VERIFIED, the registration marked once, one notice per number per day', async () => {
+  it('R-TWL-9 E385 b9 comms sends/F1: 30032 from status callbacks, several the same day: each text SENDER_NOT_VERIFIED, the number marked once, one notice per number per day', async () => {
     const agent = w.agents[0]!;
     const before = await notices();
-    const regAudits = async () => Number((await h.su.query<{ n: string }>("SELECT count(*) AS n FROM audit_log WHERE tenant_id = $1 AND entity_type = 'sender_registration' AND entity_id = $2 AND reason = 'SENDER_NOT_VERIFIED'", [w.tenantId, w.registrationId])).rows[0]!.n);
+    const regAudits = async () => Number((await h.su.query<{ n: string }>("SELECT count(*) AS n FROM audit_log WHERE tenant_id = $1 AND entity_type = 'phone_number' AND entity_id = $2 AND reason LIKE 'SENDER_NOT_VERIFIED%'", [w.tenantId, w.mainNumberId])).rows[0]!.n);
     const auditsBefore = await regAudits();
     const ids: string[] = [];
     for (let i = 0; i < 2; i++) {
@@ -208,9 +209,10 @@ describe('R-TWL-9 unverified senders (30032 toll-free, 30034 unregistered 10DLC)
       expect((await telephonyWebhook(h, `/webhooks/telephony/status?m=${id}`, { MessageSid: ref, MessageStatus: 'undelivered', ErrorCode: '30032', From: w.mainNumber })).statusCode).toBe(200);
       expect(await messageRow(h, id)).toMatchObject({ status: 'undelivered', status_reason: SENDER_NOT_VERIFIED });
     }
-    expect((await regStatus()).status).toBe('submitted');
+    expect((await regStatus()).status).toBe('approved');
+    expect(await numberFlag()).toMatch(/30032/);
     expect(await notices()).toBe(before); // the day's notice for this number already went (previous test, same day)
-    expect((await regAudits()) - auditsBefore).toBe(1); // the registration is marked once, by the first event
+    expect((await regAudits()) - auditsBefore).toBe(1); // the number is marked once, by the first event
     await restore();
   });
 });

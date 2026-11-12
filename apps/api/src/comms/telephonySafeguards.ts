@@ -7,8 +7,9 @@
 //            never retried and never reconciled.
 //   R-TWL-2  daily cap: claimTelephonySend, one unit per outbound text or call through the real adapter, inside the
 //            send-time transaction (TX1); the STOP confirmation and HELP reply are exempt.
-//   R-TWL-9  unverified sender (Twilio 30032 toll-free / 30034 unregistered 10DLC): SENDER_NOT_VERIFIED, the number's
-//            registration marked not ready in the same transaction, one Owner/Admin notice per number per day.
+//   R-TWL-9  unverified sender (Twilio 30032 toll-free / 30034 unregistered 10DLC): SENDER_NOT_VERIFIED, the NUMBER
+//            marked not ready to text in the same transaction (never its shared registration; b9 review sends/F1), one
+//            Owner/Admin notice per number per day.
 //
 // OWNER DEFAULTS (open owner questions; each is ONE constant here, so one edit changes it):
 //   UNVERIFIED_SENDER_BLOCKS_CALLS   false  an unverified sender blocks texts only; calls keep working
@@ -79,12 +80,13 @@ export function isSenderNotVerified(code: string | null | undefined): boolean {
 }
 
 /**
- * R-TWL-9, in the caller's transaction (the status event's, or dispatch TX2): the number's registration is marked not
- * ready (status 'submitted' = pending: the existing sender check then blocks texts from it, while voice, which only
- * refuses a 'blocked' registration, keeps working; owner default UNVERIFIED_SENDER_BLOCKS_CALLS), with a
- * status_detail naming the code; audited; one Owner/Admin notice per number per tenant-local day. Only "Check
- * registration status" (numbers.ts refreshRegistration, a provider read the kill switch blocks while off) restores
- * it. A number with no registration is already not ready: nothing to mark, the notice still goes.
+ * R-TWL-9, in the caller's transaction (the status event's, or dispatch TX2). b9 review sends/F1: sender health is per
+ * NUMBER. Only the number that sent the text is marked not ready (phone_numbers.sender_not_verified_at, with a detail
+ * naming the code); its registration, normally shared by every team number, is never touched. The gate's sender facts
+ * read the flag (repos/gate.ts numberFacts): texts from that number are refused SENDER_NOT_REGISTERED while calls keep
+ * working (owner default UNVERIFIED_SENDER_BLOCKS_CALLS); every other number keeps texting. Audited; one Owner/Admin
+ * notice per number per tenant-local day, naming exactly that number. "Check registration status" (numbers.ts
+ * refreshRegistration, a provider read the kill switch blocks while off) clears it once the carrier reports approved.
  */
 export async function markSenderNotVerified(tx: Tx, actor: SystemActor, deps: Pick<CommsDeps, 'ids'>, phoneNumberId: string | null, code: string, messageId: string, now: Instant): Promise<void> {
   if (!phoneNumberId) return;
@@ -94,29 +96,44 @@ export async function markSenderNotVerified(tx: Tx, actor: SystemActor, deps: Pi
      WHERE n.tenant_id = app.tenant_id() AND n.id = ${phoneNumberId}`.execute(tx);
   const num = n.rows[0];
   if (!num) return;
-  const detail = `SENDER_NOT_VERIFIED: provider error ${code} on a ${num.number_type === 'toll_free' ? 'toll-free' : 'local'} number ending ${num.e164.slice(-4)}`;
-  const target = UNVERIFIED_SENDER_BLOCKS_CALLS ? 'suspended' : 'submitted';
-  if (num.registration_id) {
-    const u = await sql`
-      UPDATE sender_registrations SET status = ${target}, status_detail = ${detail}, status_changed_at = ${toIso(now)}::timestamptz
-       WHERE tenant_id = app.tenant_id() AND id = ${num.registration_id} AND status = 'approved'`.execute(tx);
-    if (Number(u.numAffectedRows ?? 0n) === 1) {
-      await audit(tx, actor, { action: 'sender_registration.changed', entity: { type: 'sender_registration', id: num.registration_id }, reason: 'SENDER_NOT_VERIFIED' });
-    }
+  const last4 = num.e164.slice(-4);
+  const detail = `SENDER_NOT_VERIFIED: provider error ${code} on a ${num.number_type === 'toll_free' ? 'toll-free' : 'local'} number ending ${last4}`;
+  const u = await sql`
+    UPDATE phone_numbers SET sender_not_verified_at = ${toIso(now)}::timestamptz, sender_not_verified_detail = ${detail}, updated_at = now()
+     WHERE tenant_id = app.tenant_id() AND id = ${phoneNumberId} AND sender_not_verified_at IS NULL`.execute(tx);
+  if (Number(u.numAffectedRows ?? 0n) === 1) {
+    await audit(tx, actor, { action: 'sender_registration.changed', entity: { type: 'phone_number', id: phoneNumberId }, reason: `SENDER_NOT_VERIFIED ${code} message ${messageId}`.slice(0, 120) });
   }
-  await audit(tx, actor, { action: 'sender_registration.changed', entity: { type: 'phone_number', id: phoneNumberId }, reason: `SENDER_NOT_VERIFIED ${code} message ${messageId}`.slice(0, 120) });
-  for (const u of await adminUserIds(tx)) {
+  const body = num.registration_id
+    ? `Texts from the number ending ${last4} are paused; calls still work. Other team numbers are not affected. Open Phone numbers and tap "Check registration status" once the carrier verifies it.`
+    : `Texts from the number ending ${last4} are paused: it has no texting registration. Calls still work, and other team numbers are not affected.`;
+  for (const a of await adminUserIds(tx)) {
     await notifyUser(tx, deps.ids, {
-      userId: u,
+      userId: a,
       kind: SYSTEM_NOTICE,
       priority: 'high',
       title: "A team number isn't verified for texting",
-      body: `Texts from the number ending ${num.e164.slice(-4)} are paused; calls still work. Open Phone numbers and tap "Check registration status" once the carrier verifies it.`,
+      body: body.slice(0, 240),
       subjectType: 'phone_number',
       subjectId: phoneNumberId,
       dedupeKey: `sender_not_verified:${phoneNumberId}:${num.day}`,
     }, now);
   }
+}
+
+/** What a number flagged by markSenderNotVerified reports as its registration to the gate (sms refused; voice per the owner default). */
+export function flaggedRegistrationStatus(): 'submitted' | 'suspended' {
+  return UNVERIFIED_SENDER_BLOCKS_CALLS ? 'suspended' : 'submitted';
+}
+
+/** b9 review sends/F1: clears the per-number flag (refresh found the campaign approved, or a registration was attached). */
+export async function clearSenderNotVerified(tx: Tx, where: { registrationId: string } | { phoneNumberId: string }): Promise<string[]> {
+  const r = 'registrationId' in where
+    ? await sql<{ id: string }>`UPDATE phone_numbers SET sender_not_verified_at = NULL, sender_not_verified_detail = NULL, updated_at = now()
+         WHERE tenant_id = app.tenant_id() AND registration_id = ${where.registrationId}::uuid AND sender_not_verified_at IS NOT NULL RETURNING id`.execute(tx)
+    : await sql<{ id: string }>`UPDATE phone_numbers SET sender_not_verified_at = NULL, sender_not_verified_detail = NULL, updated_at = now()
+         WHERE tenant_id = app.tenant_id() AND id = ${where.phoneNumberId}::uuid AND sender_not_verified_at IS NOT NULL RETURNING id`.execute(tx);
+  return r.rows.map((x) => x.id);
 }
 
 // ---- R-TWL-8 / E388: an agent's alert phone opted out (21610 on an alert text, or STOP in an MMS text part) ------------

@@ -227,7 +227,7 @@ async function applyPart(tx: Tx, actor: SystemActor, deps: CommsDeps, messageId:
   if (c.kind === 'stop' && PLATFORM_CONFIRMS_PART_STOP && keywordPoint && m.phone_number_id) {
     await queueOutboundInTx(tx, deps, {
       contactId: target, channel: 'sms', body: systemReplyText('opt_out_confirmation', tenant.brokerageLegalName), initiator: 'system', purpose: 'informational',
-      category: 'opt_out_confirmation', phoneNumberId: m.phone_number_id, toPointId: keywordPoint.id, idempotencyKey: `opt_out_confirmation:${messageId}`,
+      category: 'opt_out_confirmation', phoneNumberId: await g.keywordReplySender(tx, m.phone_number_id), toPointId: keywordPoint.id, idempotencyKey: `opt_out_confirmation:${messageId}`,
     }, now);
   }
   return c.kind;

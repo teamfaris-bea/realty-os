@@ -363,7 +363,7 @@ async function ingestInTx(tx: Tx, actor: SystemActor, e: InboundEvent, txNow: In
     if (fx.reply !== 'none' && toNumber && keywordPoint) {
       await queueOutboundInTx(tx, deps, {
         contactId: target, channel: 'sms', body: systemReplyText(fx.reply, tenant.brokerageLegalName), initiator: 'system', purpose: 'informational',
-        category: fx.reply, phoneNumberId: toNumber.id, toPointId: keywordPoint.id, idempotencyKey: `${fx.reply}:${messageId}`,
+        category: fx.reply, phoneNumberId: await g.keywordReplySender(tx, toNumber.id), toPointId: keywordPoint.id, idempotencyKey: `${fx.reply}:${messageId}`,
       }, now);
     }
     if (classification.kind === 'stop' || classification.kind === 'opt_out_language' || classification.kind === 'wrong_number') {

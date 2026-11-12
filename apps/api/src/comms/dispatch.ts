@@ -265,7 +265,11 @@ async function tx1(tx: Tx, txNow: Instant, c: Tx1Context, messageId: string): Pr
     if (t.rows[0]?.at && t.rows[0].at.getTime() >= now) dispatchedAt = t.rows[0].at.getTime() as Instant;
   }
   await msgs.markDispatching(tx, m.id, dispatchedAt);
-  await msgs.touchConversationOutbound(tx, m.conversationId, m.phoneNumberId, dispatchedAt);
+  // b9 review sends/F1: a system keyword reply (STOP confirmation, HELP reply) from a tracking number never makes it the
+  // conversation's sticky sender, so the agents' later texts keep going from the team's own numbers
+  const keywordReply = m.initiator === 'system' && (m.actionCategory === 'opt_out_confirmation' || m.actionCategory === 'help_reply');
+  const stickyFrom = keywordReply && m.phoneNumberId !== null && (await g.numberFacts(tx, m.phoneNumberId))?.purpose === 'tracking' ? null : m.phoneNumberId;
+  await msgs.touchConversationOutbound(tx, m.conversationId, stickyFrom, dispatchedAt);
   let emailFrom: SendPlan['emailFrom'] = null;
   let replyTo: string | null = null;
   let headers: Record<string, string> | null = null;
