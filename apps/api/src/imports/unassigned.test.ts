@@ -186,11 +186,11 @@ describe('E341 a person brought in unassigned who asked again since (owner decis
     // someone acted on first); where they are now is said once, by the people card (review F8)
     expect(r.lines.slice(1)).toEqual([
       'Nothing was assigned to them, and the import started no offer, timer or routing.',
-      '2 of them asked again after the import and were routed by your routing rules.',
+      '2 of them asked again since they were imported and were routed by your routing rules.',
       ...r.view.summary,
     ]);
     expect(r.view.contactIds).toEqual([row(1).contact_id, row(4).contact_id]);
-    expect(unassignedReport([asked(6, 'offered', 'offered', { asked_again_offered_to: AVERY })], who, 'America/New_York')!.lines).toContain('1 of them asked again after the import and was routed by your routing rules.');
+    expect(unassignedReport([asked(6, 'offered', 'offered', { asked_again_offered_to: AVERY })], who, 'America/New_York')!.lines).toContain('1 of them asked again since they were imported and was routed by your routing rules.');
   });
 
   it('E341 never leaves a blank or a guess: an unreadable name is "an agent", a pond without a name is "a pond", a zone the runtime cannot read is said in UTC; nobody asked again, nothing is said', () => {

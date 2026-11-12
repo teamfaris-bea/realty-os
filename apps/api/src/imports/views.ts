@@ -428,8 +428,9 @@ function teamTime(at: Date, zone: string): string {
 
 /**
  * Owner decision D8 (2026-11-12, E341): one of these people asked again (a portal, a partner feed, a lead email, the
- * generic intake) and was routed like a returning lead. When (the team's time), and where that routing took them, as
- * their own ledger says: the agent it was offered to, or the pond. Null when they have not asked again.
+ * generic intake) and was routed like a returning lead. When they asked (the inquiry's time, in the team's time: one who
+ * asked before the owners came in is routed once they have, review D8-R1), and where that routing took them, as their own
+ * ledger says: the agent it was offered to, or the pond. Null when they have not asked again.
  */
 export function askedAgainSentence(r: UnassignedPersonRow, names: MemberNames = NO_NAMES, zone = 'UTC'): string | null {
   if (r.asked_again_at === null) return null;
@@ -518,7 +519,8 @@ export function unassignedReport(rows: readonly UnassignedPersonRow[], names: Me
   // owner decision D8 (E341): a new inquiry from one of them routes them like a returning lead; each listed person says
   // when and to whom. Counted once the routing took them somewhere (an offer or a pond), never while it is still due.
   const routed = valid.filter((r) => r.asked_again_at !== null && (r.asked_again_next === 'offered' || r.asked_again_next === 'sent_to_pond')).length;
-  if (routed > 0) lines.push(`${routed.toLocaleString('en-US')} of them asked again after the import and ${routed === 1 ? 'was' : 'were'} routed by your routing rules.`);
+  // "since they were imported": one may have asked before the owners came in, and was routed once they had (D8-R1)
+  if (routed > 0) lines.push(`${routed.toLocaleString('en-US')} of them asked again since they were imported and ${routed === 1 ? 'was' : 'were'} routed by your routing rules.`);
   const summary = nowLines(valid);
   lines.push(...summary);
   return {

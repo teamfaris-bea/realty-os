@@ -485,7 +485,7 @@ describe('people brought in unassigned (owner decision B4)', () => {
         { contactId: QUIN, name: 'Quin Notext', sentence: why, stillUnassigned: true, now: 'unassigned', nowSentence: null, mergedIntoContactId: null, askedAgainSentence: null },
       ],
     };
-    const lines = [...ownershipRow(true).lines, '1 of them asked again after the import and was routed by your routing rules.'];
+    const lines = [...ownershipRow(true).lines, '1 of them asked again since they were imported and was routed by your routing rules.'];
     const b = batch([stage('contacts', 'verified'), stage('ownership', 'verified', { counts: committedOwnership })]);
     leadAdminApp(importFake(b).on(`GET /imports/${BID}/report`, { status: 200, body: { source: 'Follow Up Boss', parity: null, notImported: null, categories: [{ ...ownershipRow(true), lines, unassigned: view }] } }), `/imports/${BID}`, 'owner');
     const people = await screen.findByRole('region', { name: 'People who came in unassigned' });
@@ -493,7 +493,7 @@ describe('people brought in unassigned (owner decision B4)', () => {
     expect(within(omar).getByText(asked)).toBeInTheDocument();
     expect(within(omar).getByText('On offer to an agent now, with no owner yet.')).toBeInTheDocument();
     expect(screen.getAllByText(asked)).toHaveLength(1);
-    expect(screen.getByText(/1 of them asked again after the import and was routed by your routing rules\./)).toBeInTheDocument();
+    expect(screen.getByText(/1 of them asked again since they were imported and was routed by your routing rules\./)).toBeInTheDocument();
     expect(within(people).getByRole('button', { name: 'Assign this person' })).toBeInTheDocument();
   });
 });

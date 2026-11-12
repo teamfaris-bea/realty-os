@@ -44,6 +44,7 @@ import { lockContact, lockContacts } from '../locks.js';
 import { dbNow, setOwnershipCommand, type Tx, withTenantTx } from '../tenantTx.js';
 import {
   type TenantFacts,
+  importOwnersPending,
   loadClaimStats,
   loadInquiry,
   loadIsCollaborator,
@@ -285,6 +286,8 @@ async function buildContext(
         const pond = await loadPond(tx, state.pondId, null);
         if (pond) ctx.pond = pond;
       }
+      // review D8-R1: a person still in its import's creation state, with the owners to come, is attached only
+      if (actor.kind === 'system' && state?.state === 'unassigned' && state.routeDueAt === null && state.seq === 1) ctx.ownersPending = await importOwnersPending(tx, contactId);
       break;
     case 'deactivate_owner':
       if (opts.deactivation) ctx.deactivation = opts.deactivation;

@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { type ContactId, MINUTE_MS, type UserId, plusMs } from '../foundation/index.js';
 import { decide, decideMerge, reinquiryOutcome } from './decide.js';
 import { fold } from './fold.js';
-import { C1, C2, DEFAULT_POND, Lead, RULE, T0, U, candidate, ctx, eventsOf, member, offeredLead, ownedLead, pond, pondLead, rule, systemActor, userActor } from './testing/fixtures.js';
+import { C1, C2, DEFAULT_POND, Lead, OTHER_POND, RULE, T0, U, candidate, ctx, eventsOf, member, offeredLead, ownedLead, pond, pondLead, rule, systemActor, userActor } from './testing/fixtures.js';
 import type { Decision, Effect, OwnershipCommand, OwnershipProjection } from './types.js';
 
 const kinds = (d: Decision) => d.effects.map((e) => e.kind);
@@ -162,5 +162,101 @@ describe('owner decision D8: a new inquiry from an unassigned lead no router wil
       ['unassigned, no route due', 'reinquiry'],
       ['closed spam', 'reinquiry'],
     ]);
+  });
+});
+
+// Review D8-R1: between the contacts commit and the ownership commit a person is in the import's creation state, and their
+// mapped owner (an approved Owner decision) is still to come. Routing them then would hand an actively worked person to
+// whoever the rotation picks, and the ownership commit could no longer give them their owner. So their new inquiry is
+// attached only while the owners are pending, and the import replays it once the owners are in.
+describe('review D8-R1: a person asks again before the import has brought in their owner', () => {
+  it('R-OWN-20 R-IMPORT-7 E343: while the owners are pending the inquiry is attached only (no event, no routing, no notice); the replay after the ownership commit tells the mapped owner, or routes a person who still has nobody (B4)', () => {
+    const l = importedUnassigned();
+    // the engine and intake agree: attached only, whatever routing snapshot the caller has
+    expect(reinquiryOutcome(l.p, { ownersPending: true })).toBe('attached');
+    expect(decide(l.p, again('inq-window'), ctx({ actor: systemActor('provider'), routing: rr([U.a]), ownersPending: true }))).toEqual({ ok: true, events: [], next: l.p, effects: [] });
+    // the ownership commit gives them their mapped owner (an `imported` event, no SLA), then the import replays the
+    // inquiry as the system worker: the owner hears it like any re-inquiry of a lead they own (R-OWN-20, E18)
+    l.run({ kind: 'import_assign', target: { userId: U.a } }, { actor: systemActor('import'), targetMember: member(U.a) });
+    expect(l.p).toMatchObject({ state: 'owned', ownerUserId: U.a, seq: 2 });
+    expect(reinquiryOutcome(l.p, { ownersPending: true })).toBe('reinquiry');
+    const told = l.run(again('inq-window'), { actor: systemActor('worker'), routing: rr([U.b]) });
+    expect(summary(told)).toEqual({ events: ['reinquiry owned→owned REINQUIRY'], effects: ['notify', 'upsertFeed'] });
+    expect(effectsOf(told, 'notify').map((n) => [n.userId, n.notification.reasonCode])).toEqual([[U.a, 'REINQUIRY']]);
+    expect(l.p).toMatchObject({ ownerUserId: U.a, seq: 3 });
+    // B4: the mapped member cannot hold leads, so the ownership commit leaves them in the creation state; with the owners
+    // in (no longer pending), the replay routes them like E341, never to the suspended member
+    const b4 = importedUnassigned();
+    expect(b4.run({ kind: 'import_assign', target: { userId: U.b } }, { actor: systemActor('import'), targetMember: member(U.b, { status: 'suspended' }) })).toMatchObject({ ok: false, code: 'TARGET_NOT_ELIGIBLE' });
+    expect(b4.p).toMatchObject({ state: 'unassigned', routeDueAt: null, seq: 1 });
+    const routed = b4.run(again('inq-window'), { actor: systemActor('worker'), routing: { rule: rule(), candidates: [candidate(U.a), candidate(U.b, { status: 'suspended' })], cursor: {}, alreadyOffered: [] }, ownersPending: false });
+    expect(summary(routed)).toMatchObject({ events: ['reinquiry unassigned→unassigned REINQUIRY_ROUTE', 'offered unassigned→offered ROUND_ROBIN'] });
+    expect(b4.p).toMatchObject({ state: 'offered', offeredToUserId: U.a });
+  });
+
+  it('R-OWN-20 E343: "owners pending" only holds back the creation state: a person who left it (merged, or put back by an undo) is routed even while the stage is still to commit', () => {
+    const undone = new Lead();
+    undone.run({ kind: 'import_assign', target: { userId: U.a } }, { actor: systemActor('import'), targetMember: member(U.a) });
+    undone.run({ kind: 'import_unassign', importSeq: 1 }, { actor: systemActor('import') });
+    expect(reinquiryOutcome(undone.p, { ownersPending: true })).toBe('reinquiry');
+    expect(summary(decide(undone.p, again(), ctx({ routing: rr([U.b]), ownersPending: true })))).toMatchObject({ events: ['reinquiry unassigned→unassigned REINQUIRY_ROUTE', 'offered unassigned→offered ROUND_ROBIN'] });
+    // the other rows of R-OWN-20 ignore it
+    expect(reinquiryOutcome(ownedLead(U.a).p, { ownersPending: true })).toBe('reinquiry');
+    expect(reinquiryOutcome(pondLead().p, { ownersPending: true })).toBe('reinquiry');
+    expect(reinquiryOutcome(offeredLead(U.a).p, { ownersPending: true })).toBe('attached');
+  });
+});
+
+// Review D8-R3: F4's gap through a merge. Neither side owned, the survivor keeps its state, so a live lead (on offer, in a
+// pond, awaiting the router) merged into a person an import left unassigned (no route due) lost its offer, its timer and
+// its card, and nothing would ever route the person: the live inquiry reached nobody.
+describe('review D8-R3: a live lead merged into a person an import left unassigned', () => {
+  const merge = (s: Lead, lo: Lead, actor = userActor(U.admin)) => decideMerge(s.p, lo.p, { kind: 'merge', survivorId: s.contactId, loserId: lo.contactId, ownerChoice: null }, ctx({ actor }));
+  const liveOffered = (to: UserId = U.b) => {
+    const lo = new Lead(C2);
+    lo.run({ kind: 'create', via: 'intake' }, { contactId: C2, routing: rr([to], { strategy: 'direct', directUserId: to }) });
+    expect(lo.p.state).toBe('offered');
+    return lo;
+  };
+  const survivorKinds = (m: ReturnType<typeof merge>) => (m.ok ? [...new Set(m.survivor.effects.map((e) => e.kind))].sort() : m.code);
+
+  it('R-OWN-24 R-OWN-20 E343: the loser on offer: the survivor takes a route due now (the follow-up routes it once, as the system), the offer is withdrawn and the agent it was offered to hears so', () => {
+    const m = merge(importedUnassigned(C1), liveOffered(U.b));
+    if (!m.ok) throw new Error(m.code);
+    expect(m.survivor.events.map((e) => [e.type, e.fromState, e.toState, e.reasonCode])).toEqual([['merged_in', 'unassigned', 'unassigned', 'MERGED_IN']]);
+    expect(m.survivor.events[0]?.payload).toMatchObject({ loserId: C2, ownerRule: 'neither_owned', routeDueAt: T0 });
+    expect(m.survivor.next).toMatchObject({ state: 'unassigned', routeDueAt: T0, seq: 2 });
+    expect(survivorKinds(m)).toEqual(['audit', 'notify', 'route']);
+    expect(m.survivor.effects.filter((e) => e.kind === 'notify').map((e) => e.kind === 'notify' && [e.userId, e.notification.kind, e.notification.reasonCode])).toEqual([[U.b, 'reassigned_away', 'OFFER_RESCINDED']]);
+    // the loser's side as before: its offer timer and card go, it closes as merged
+    expect(m.loser.effects.map((e) => e.kind)).toEqual(['cancelTimers', 'resolveFeed', 'markMergedInto']);
+    // routed by the follow-up (system actor), never by the merging user
+    const routed = decide(m.survivor.next, { kind: 'route' }, ctx({ routing: rr([U.a]) }));
+    expect(summary(routed)).toMatchObject({ events: ['offered unassigned→offered ROUND_ROBIN'] });
+    expect(decide(m.survivor.next, { kind: 'route' }, ctx({ actor: userActor(U.admin), routing: rr([U.a]) }))).toMatchObject({ ok: false, code: 'NOT_FOUND' });
+  });
+
+  it('R-OWN-24 R-OWN-20 E343: the loser awaiting the router (a decline) keeps its route due on the survivor; a loser in a pond takes the survivor to that pond; a loser the import also left unassigned changes nothing', () => {
+    const declined = liveOffered(U.b);
+    declined.run({ kind: 'decline', offerId: declined.p.offerId as string }, { contactId: C2, actor: userActor(U.b) });
+    expect(declined.p).toMatchObject({ state: 'unassigned', routeDueAt: T0 });
+    const a = merge(importedUnassigned(C1), declined);
+    if (!a.ok) throw new Error(a.code);
+    expect(a.survivor.next).toMatchObject({ state: 'unassigned', routeDueAt: T0 });
+    expect(survivorKinds(a)).toEqual(['audit', 'route']);
+
+    const pooled = new Lead(C2);
+    pooled.run({ kind: 'create', via: 'intake' }, { contactId: C2, routing: { rule: rule({ strategy: 'pond', targetPondId: OTHER_POND }), candidates: [], cursor: {}, alreadyOffered: [] } });
+    const p = merge(importedUnassigned(C1), pooled);
+    if (!p.ok) throw new Error(p.code);
+    expect(p.survivor.events.map((e) => [e.type, e.fromState, e.toState, e.pondId])).toEqual([['merged_in', 'unassigned', 'in_pond', OTHER_POND]]);
+    expect(p.survivor.next).toMatchObject({ state: 'in_pond', pondId: OTHER_POND, routeDueAt: null });
+    expect(survivorKinds(p)).toEqual(['audit']);
+
+    // both imported, neither routed (batch 6 review F3): as before, the survivor keeps its state; its next inquiry routes it
+    const both = merge(importedUnassigned(C1), importedUnassigned(C2));
+    if (!both.ok) throw new Error(both.code);
+    expect(both.survivor.next).toMatchObject({ state: 'unassigned', routeDueAt: null, seq: 2 });
+    expect(survivorKinds(both)).toEqual(['audit']);
   });
 });

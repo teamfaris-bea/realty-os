@@ -2,6 +2,7 @@
 // "a STOP in FUB stays a STOP here"). The consent stage is the last one (seq 6), so before this the
 // revocations of a FUB STOP or a CSV "Opted Out" column only took effect after every other stage was
 // committed and verified; with the consent-basis check gone, the contact was textable in between.
+import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type CommsWorld, commsWorld, freshReauth, sendText } from '../comms/testing.js';
 import type { TestClient } from '../auth/testHarness.js';
@@ -165,5 +166,56 @@ describe('outbound-2: imported opt-outs take effect when the contacts stage comm
     const t = await sendText(w.owner, ezra.id, 'Hi again');
     expect(t.body.decision?.outcome).toBe('deny');
     expect(ih.h.providers.telephony.sms.length).toBe(sent);
+  });
+});
+
+// Review D8-R5: intake (and inbound) take an address lock, then the contact lock (ARCHITECTURE §10 steps 1, 2). The
+// contacts commit took an existing contact's lock, then the address locks of the opt-outs it records onto it: the
+// reverse order, so it could deadlock with an inquiry of the same person.
+describe('global lock order (review D8-R5)', () => {
+  it('an import that records an opt-out onto an existing contact takes the address lock before the contact lock: behind an inquiry holding that address it waits without holding the contact', async () => {
+    const first = await call<{ batch: BatchView }>(admin, 'POST', '/imports', { source: 'csv', fileName: 'lia.csv', fileBase64: csvBase64('First Name,Last Name,Mobile Phone\nLia,Lock,(415) 301-8881\n') });
+    expect((await call(admin, 'POST', `/imports/${first.body.batch.id}/snapshot`)).status).toBe(202);
+    await ih.drain();
+    await commitContacts(await batchOf(admin, first.body.batch.id));
+    const lia = await contactWithPhone('+14153018881');
+    // a second file: the same phone, now opted out, with a new email (attached to the contact, the opt-out recorded on it)
+    const r = await call<{ batch: BatchView }>(admin, 'POST', '/imports', { source: 'csv', fileName: 'lia2.csv', fileBase64: csvBase64('First Name,Last Name,Mobile Phone,Email,Opted Out\nLia,Lock,(415) 301-8881,lia.lock@example.test,yes\n') });
+    expect((await call(admin, 'POST', `/imports/${r.body.batch.id}/snapshot`)).status).toBe(202);
+    await ih.drain();
+    const b = await batchOf(admin, r.body.batch.id);
+    const d = await dryRunStage(ih, admin, b.id, 'contacts');
+    expect((await records(admin, b.id, 'contacts')).map((x) => [x.dryRunOutcome, x.matchContactId])).toEqual([['will_import', lia.id]]);
+    expect((await approve(admin, b.id, 'contacts', d.dryRunSha256 as string)).status).toBe(200);
+    const hmac = (await q<{ x: string }>("SELECT encode(address_hmac, 'hex') AS x FROM contact_points WHERE contact_id = $1 AND kind = 'phone'", [lia.id]))[0]!.x;
+    const session = async () => {
+      const c = new pg.Client({ connectionString: ih.h.testDb.ownerUrl, application_name: 'lock-order-probe' });
+      await c.connect();
+      await c.query('BEGIN');
+      await c.query("SELECT set_config('app.tenant_id', $1, true)", [w.tenantId]);
+      return c;
+    };
+    // an inquiry of the same person holds the phone's address lock (step 1)
+    const inquiry = await session();
+    await inquiry.query("SELECT app.lock_address(decode($1, 'hex'))", [hmac]);
+    expect((await call(admin, 'POST', `/imports/${b.id}/stages/contacts/commit`)).status).toBe(202);
+    const committing = ih.drain();
+    for (let i = 0; ; i++) {
+      if ((await q("SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND application_name <> 'lock-order-probe'")).length > 0) break;
+      if (i > 400) throw new Error('the commit never waited');
+      await new Promise((res) => setTimeout(res, 25));
+    }
+    // while the commit waits for that address, the contact is free: the inquiry can take its step 2 (before: the commit
+    // held the contact lock here, so the two deadlocked)
+    const probe = await session();
+    await probe.query("SET LOCAL lock_timeout = '500ms'");
+    await expect(probe.query('SELECT app.lock_contact($1::uuid)', [lia.id])).resolves.toBeDefined();
+    await probe.query('COMMIT');
+    await probe.end();
+    await inquiry.query('COMMIT');
+    await inquiry.end();
+    await committing;
+    expect(stageOf(await batchOf(admin, b.id), 'contacts').status).toBe('committed');
+    expect(await q("SELECT DISTINCT status FROM consent_state WHERE address_hmac = decode($1, 'hex') AND channel = 'sms'", [hmac])).toEqual([{ status: 'revoked' }]);
   });
 });

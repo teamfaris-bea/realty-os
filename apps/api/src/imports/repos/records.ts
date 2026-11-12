@@ -259,9 +259,11 @@ export interface UnassignedPersonRow {
   /** `merged`: the live record the person was merged into since (followed to the end), where the report links */
   merged_into_contact_id: string | null;
   /**
-   * Owner decision D8 (E341): when the person first asked again and was routed like a returning lead (the engine's
-   * `reinquiry` event REINQUIRY_ROUTE on them), else null; and the ledger event right after it, which says where that
-   * routing took them: `offered` (to `asked_again_offered_to`), `sent_to_pond` (`asked_again_pond`), or none yet
+   * Owner decision D8 (E341): when the person first asked again and was routed like a returning lead, else null: the
+   * time of the inquiry the engine's `reinquiry` event REINQUIRY_ROUTE carries (review D8-R1: one received while the
+   * owners were still to come is routed later, by the import's replay; the event's own time if the inquiry is gone);
+   * and the ledger event right after it, which says where that routing took them: `offered` (to
+   * `asked_again_offered_to`), `sent_to_pond` (`asked_again_pond`), or none yet
    */
   asked_again_at: Date | null;
   asked_again_next: string | null;
@@ -301,9 +303,12 @@ export async function unassignedPeople(tx: Tx, stageId: string): Promise<Unassig
             SELECT x.id, x.merged_into_contact_id, up.depth + 1 FROM up JOIN contacts x ON x.tenant_id = r.tenant_id AND x.id = up.next WHERE up.depth < 8)
           SELECT up.id FROM up JOIN contacts x ON x.tenant_id = r.tenant_id AND x.id = up.id
            WHERE up.depth > 0 AND up.next IS NULL AND x.deleted_at IS NULL LIMIT 1) s ON c.merged_into_contact_id IS NOT NULL
-        -- D8: the first re-inquiry that routed them (core decideReinquiry, reason REINQUIRY_ROUTE), then the event after it
+        -- D8: the first re-inquiry that routed them (core decideReinquiry, reason REINQUIRY_ROUTE) at its inquiry's time, then
+        -- the event after it
         LEFT JOIN LATERAL (
-          SELECT q.seq, q.occurred_at FROM lead_ownership_events q
+          SELECT q.seq, COALESCE(li.received_at, q.occurred_at) AS occurred_at FROM lead_ownership_events q
+            LEFT JOIN lead_inquiries li ON li.tenant_id = q.tenant_id
+                  AND li.id = CASE WHEN q.payload->>'inquiryId' ~ '^[0-9a-fA-F-]{36}$' THEN (q.payload->>'inquiryId')::uuid END
            WHERE q.tenant_id = r.tenant_id AND q.contact_id = p.id AND q.type = 'reinquiry' AND q.reason_code = 'REINQUIRY_ROUTE'
            ORDER BY q.seq LIMIT 1) ask ON true
         LEFT JOIN LATERAL (

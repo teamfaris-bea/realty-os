@@ -2,7 +2,10 @@
 // notification + first-response job in ONE transaction; attribution capture; duplicates (E18–E20);
 // the 02:00 lead (E8); nobody eligible (E11); unknown sources and bad signatures write no tenant rows.
 import { randomUUID } from 'node:crypto';
+import type { ContactId } from '@realty/core/foundation';
+import { applyOwnershipCommandInTx, derivedCommandId, setOwnershipCommand, withTenantTx } from '@realty/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { systemActor } from '../worker/systemActor.js';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
 import { FIRST_RESPONSE_JOB, cardSummary } from './intake.js';
 import { type LeadsWorld, call, command, contactState, importedUnassigned, intake, jobs, ledger, leadsWorker, leadsWorld, postIntake, randomPhone, suFixture, zoneWithLocalHour } from './testing.js';
@@ -290,6 +293,90 @@ describe('owner decision D8: a returning inquiry from a person an import left un
       expect((await h.su.query<{ outcome: string }>('SELECT outcome FROM lead_inquiries WHERE contact_id = $1 ORDER BY outcome', [id])).rows.map((x) => x.outcome)).toEqual(['attached', 'reinquiry']);
       expect(await pointsWith(phone)).toEqual([id]);
     }
+  });
+});
+
+// Review of D8 (D8-R3, D8-R4, D8-R5): the neighbouring paths of a person an import left unassigned.
+describe('review of D8: merges, ponds and a merge that lands while an inquiry waits', () => {
+  const notices = async (contactId: string) => (await h.su.query<{ user_id: string; priority: string; dedupe_key: string }>('SELECT user_id, priority, dedupe_key FROM notifications WHERE subject_id = $1 ORDER BY dedupe_key, user_id', [contactId])).rows;
+
+  it('R-OWN-24 R-OWN-20 E343 (D8-R3): a lead on offer merged into a person an import left unassigned: the survivor takes a route due, the follow-up routes it once, and the agent the loser was offered to hears the offer was withdrawn', async () => {
+    const survivor = await importedUnassigned(h, w.tenantId, { firstName: 'Mae', lastName: 'Merged', phones: [randomPhone()] });
+    const live = await intake(h, w, { fullName: 'Mae Merged', phones: [randomPhone()], inquiryType: 'buy' });
+    const before = await contactState(h, live.contactId);
+    expect(before.ownership_state).toBe('offered');
+    const m = await command(w.owner, survivor, 'merge', { loserId: live.contactId });
+    expect(m.status, JSON.stringify(m.body)).toBe(200);
+    const st = await contactState(h, survivor);
+    expect([st.ownership_state, st.route_due_at === null]).toEqual(['unassigned', false]);
+    expect((await contactState(h, live.contactId)).closed_reason).toBe('merged');
+    // the loser's offer is withdrawn and its offeree told (the timer and card went with it)
+    expect((await h.su.query("SELECT kind FROM notifications WHERE user_id = $1 AND subject_id = $2 AND kind = 'reassigned_away'", [before.offered_to_user_id, survivor])).rows).toHaveLength(1);
+    expect((await jobs(h, w.tenantId, 'ownership.offer_expiry')).filter((j) => j.payload.contactId === live.contactId && j.status === 'pending')).toEqual([]);
+    // the merge's follow-up routes the survivor once, as the system
+    await leadsWorker(h).drain();
+    const ev = await ledger(h, survivor);
+    expect(ev.map((e) => [e.type, e.actor_kind])).toEqual([['imported', 'import'], ['merged_in', 'user'], ['offered', 'system']]);
+    expect((await contactState(h, survivor)).ownership_state).toBe('offered');
+    await leadsWorker(h).drain();
+    expect((await ledger(h, survivor)).filter((e) => e.type === 'offered')).toHaveLength(1);
+  });
+
+  it('R-OWN-25 R-OWN-20 E342 (D8-R4): two simultaneous inquiries from an imported, unassigned person when nobody can take them: the first routing sends them to the pond, so the other follows the pond setting (reroute by default: routed again, to the pond again, with the notice again)', async () => {
+    const dark = await leadsWorld(h, { agents: 2, push: false, teamLead: true });
+    const phone = randomPhone();
+    const email = `pond-${randomUUID().slice(0, 8)}@example.test`;
+    const id = await importedUnassigned(h, dark.tenantId, { firstName: 'Pax', lastName: 'Pondward', phones: [phone], emails: [email] });
+    const results = await Promise.all([intake(h, dark, { fullName: 'Pax Pondward', phones: [phone], inquiryType: 'buy' }), intake(h, dark, { fullName: 'Pax Pondward', phones: [], emails: [email], inquiryType: 'sell' })]);
+    expect(results.map((r) => [r.contactId, r.outcome])).toEqual([[id, 'reinquiry'], [id, 'reinquiry']]);
+    expect((await ledger(h, id)).map((e) => [e.type, e.reason_code])).toEqual([
+      ['imported', 'IMPORTED'],
+      ['reinquiry', 'REINQUIRY_ROUTE'],
+      ['sent_to_pond', 'NO_ELIGIBLE_AGENT'],
+      ['reinquiry', 'REINQUIRY_REROUTE'],
+      ['sent_to_pond', 'NO_ELIGIBLE_AGENT'],
+    ]);
+    const leads = [dark.owner.userId!, dark.teamLead!.userId!].sort();
+    const n = await notices(id);
+    expect(n.map((x) => x.user_id).sort()).toEqual([...leads, ...leads].sort());
+    expect([new Set(n.map((x) => x.priority)), new Set(n.map((x) => x.dedupe_key)).size]).toEqual([new Set(['critical']), 2]);
+  });
+
+  it('R-OWN-20 E18 (D8-R5): a merge that commits after intake matched the person but before it took their lock: the inquiry follows them to the record they live on now (before: INTERNAL_ERROR, and a partner feed dropped the lead)', async () => {
+    const phone = randomPhone();
+    const loser = (await intake(h, w, { fullName: 'Lou Racing', phones: [phone], inquiryType: 'buy' })).contactId as ContactId;
+    const survivor = (await intake(h, w, { fullName: 'Lou Racing', phones: [randomPhone()], inquiryType: 'sell' })).contactId as ContactId;
+    const worker = systemActor(w.tenantId, 'worker');
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let merged!: () => void;
+    const mergeDone = new Promise<void>((r) => (merged = r));
+    // the merge holds both contact locks and has not committed: intake's match still sees the loser live
+    const merging = withTenantTx(
+      worker,
+      async (tx) => {
+        const r = await applyOwnershipCommandInTx(tx, worker, survivor, { kind: 'merge', survivorId: survivor, loserId: loser, ownerChoice: null }, { commandId: derivedCommandId('test.merge.race', loser) });
+        if (!r.outcome.ok) throw new Error(`merge: ${r.outcome.code}`);
+        await setOwnershipCommand(tx, null);
+        merged();
+        await gate;
+      },
+      { db: h.database },
+    );
+    await mergeDone;
+    const posting = intake(h, w, { fullName: 'Lou Racing', phones: [phone], inquiryType: 'rent' });
+    // intake is waiting for the loser's contact lock
+    for (let i = 0; ; i++) {
+      const waiting = (await h.su.query("SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%lock_contact%'")).rows.length;
+      if (waiting > 0) break;
+      if (i > 200) throw new Error('intake never waited for the contact lock');
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    release();
+    await merging;
+    const r = await posting;
+    expect([r.status, r.contactId]).toEqual([200, survivor]);
+    expect((await h.su.query('SELECT contact_id FROM lead_inquiries WHERE id = $1', [r.inquiryId])).rows).toEqual([{ contact_id: survivor }]);
   });
 });
 

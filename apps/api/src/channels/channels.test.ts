@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import type { UserActor } from '@realty/core/foundation';
 import { enqueueJob, withTenantTx } from '@realty/db';
 import { sql } from 'kysely';
+import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type AssistantWorld, assistantWorld, call, ownedContact, randomPhone, runJobs } from '../assistant/testing.js';
 import { type ApiHarness, createApiHarness } from '../auth/testHarness.js';
@@ -14,6 +15,7 @@ import { emailWebhook, playbookFixture } from '../comms/testing.js';
 import { makeCommsHandlers } from '../comms/handlers.js';
 import { depsFromPlatform } from '../comms/runtime.js';
 import { enableInbox, labelledBody } from '../leadEmail/testing.js';
+import { identifiersOf } from '../leads/intake.js';
 import { command, contactState, importedUnassigned, intake, ledger } from '../leads/testing.js';
 import { createWorker } from '../worker/loop.js';
 import { silentLogger } from '../worker/observability.js';
@@ -150,6 +152,36 @@ describe('R-INBOX-9 E79 partner lead feeds (leads.feed_poll, fakes only)', () =>
     expect(c.ownership_state).toBe('offered');
     expect(w.agents.map((a) => a.userId)).toContain(c.offered_to_user_id);
     expect((await h.su.query("SELECT kind FROM notifications WHERE subject_id = $1 AND kind = 'lead_offer'", [id])).rows).toHaveLength(1);
+  });
+
+  // Review D8-R5: a deadlock (or a serialization failure) while one feed lead is ingested was caught like a malformed
+  // lead: the lead was skipped, the page committed and the cursor moved past it, so the lead was lost.
+  it('R-INBOX-9 (review D8-R5): a deadlock while a feed lead is ingested is not the lead\'s fault: the page runs again and the lead comes in', async () => {
+    const connId = await feedConnection('zillow_feed', w.sourceId);
+    const phone = randomPhone();
+    const hmac = await withTenantTx(systemActor(w.tenantId, 'provider'), async (tx) => (await identifiersOf(tx, h.app.platform.envelope, w.tenantId as never, [phone], [])).phones[0]!.hmac, { db: h.database });
+    h.providers.integrations.leadFeeds.zillow.leads.push({ externalLeadId: `z-${randomUUID()}`, receivedAt: new Date().toISOString(), name: 'Dee Deadlock', phone, email: null, message: 'Still for sale?', listingRef: null });
+    // another writer holds the lead's address lock (an inquiry of the same person, step 1 of the lock order)
+    const other = new pg.Client({ connectionString: h.testDb.ownerUrl, application_name: 'feed-deadlock-probe' });
+    await other.connect();
+    await other.query('BEGIN');
+    await other.query("SELECT set_config('app.tenant_id', $1, true)", [w.tenantId]);
+    await other.query("SELECT app.lock_address(decode($1, 'hex'))", [hmac]);
+    const polling = runFeedPoll();
+    for (let i = 0; ; i++) {
+      const waiting = (await h.su.query("SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND application_name <> 'feed-deadlock-probe'")).rows.length;
+      if (waiting > 0) break;
+      if (i > 200) throw new Error('the feed page never waited for the address');
+      await new Promise((res) => setTimeout(res, 25));
+    }
+    // ...and then wants the connection row the page holds: a deadlock; Postgres cancels the page's statement (40P01)
+    await other.query('SELECT 1 FROM integration_connections WHERE id = $1 FOR UPDATE', [connId]);
+    await other.query('COMMIT');
+    await other.end();
+    await polling;
+    const ids = (await h.su.query<{ contact_id: string }>('SELECT DISTINCT contact_id FROM contact_points WHERE tenant_id = $1 AND address = $2', [w.tenantId, phone])).rows;
+    expect(ids).toHaveLength(1);
+    expect((await h.su.query('SELECT count(*)::int AS n FROM lead_inquiries WHERE contact_id = $1', [ids[0]!.contact_id])).rows[0].n).toBe(1);
   });
 
   it('R-INBOX-9: with no partner access (the production adapter) a feed connection stays honestly needs_partner_access and nothing is polled', async () => {
