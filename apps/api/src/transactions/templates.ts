@@ -1,8 +1,8 @@
 // Milestone templates admin API (PHASE2_3_PLAN §5.4 #31 and the 41 bullet; R-TXN-6, R-AUDIT-5, R-OWN-27).
 //
-//   GET /settings/milestone-templates   tenant_settings.milestone_templates as stored, the parsed templates and every
+//   GET /transactions/milestone-templates   tenant_settings.milestone_templates as stored, the parsed templates and every
 //                                       invalid entry by index (core parseMilestoneTemplates), the jurisdictions
-//   PUT /settings/milestone-templates   replaces the list; every entry must pass MilestoneTemplateSchema and (id,
+//   PUT /transactions/milestone-templates   replaces the list; every entry must pass MilestoneTemplateSchema and (id,
 //                                       version) must be unique, else MILESTONE_TEMPLATES_INVALID with the indexes
 // Templates are tenant data per side and jurisdiction; nothing here ships template data, so no state's defaults are
 // hard-coded (R-TXN-6). Counsel review is recorded only as an Owner/Admin's statement (`reviewed`, default false):

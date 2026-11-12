@@ -5,8 +5,8 @@
 //   POST /deals/:id/milestones/plan     acceptance date + template id/version → proposals (R-TXN-1, E95)   milestone.confirm
 //   POST /deal-dates/:id/confirm        confirm (or move) one date as the person (R-TXN-1, R-TXN-2)         milestone.confirm
 //   GET  /transactions/board            the TC board: the caller's open deals (RLS) with dates to act on     self
-//   GET  /settings/milestone-templates  tenant templates, invalid entries by index (R-TXN-6)               milestone_template.manage
-//   PUT  /settings/milestone-templates  replace them, audited as settings.changed (R-AUDIT-5)               milestone_template.manage
+//   GET  /transactions/milestone-templates  tenant templates, invalid entries by index (R-TXN-6)               milestone_template.manage
+//   PUT  /transactions/milestone-templates  replace them, audited as settings.changed (R-AUDIT-5)               milestone_template.manage
 // Per-deal routes run core.can on dealFacts read from RLS-visible rows; an invisible deal or date is 404 (R-PERM-5).
 // The Phase 1 POST /deals/:id/dates and PATCH /deal-dates/:id (workspace/routes.ts) use the same confirm path.
 import type { Instant, UserActor } from '@realty/core/foundation';
@@ -79,8 +79,8 @@ async function register(app: FastifyInstance): Promise<void> {
 
   r.get('/transactions/board', { config: { auth: 'self' }, schema: { response: { 200: S.BoardResponse } } }, async (req) => wsTx(req, (tx, now) => board(tx, now)));
 
-  r.get('/settings/milestone-templates', { config: { auth: 'milestone_template.manage' }, preHandler: templatesAuth, schema: { response: { 200: S.TemplatesResponse } } }, async (req) => wsTx(req, (tx) => getTemplates(tx)));
-  r.put('/settings/milestone-templates', { config: { auth: 'milestone_template.manage' }, preHandler: templatesAuth, schema: { body: S.PutTemplatesBody, response: { 200: S.TemplatesResponse } } }, async (req) =>
+  r.get('/transactions/milestone-templates', { config: { auth: 'milestone_template.manage' }, preHandler: templatesAuth, schema: { response: { 200: S.TemplatesResponse } } }, async (req) => wsTx(req, (tx) => getTemplates(tx)));
+  r.put('/transactions/milestone-templates', { config: { auth: 'milestone_template.manage' }, preHandler: templatesAuth, schema: { body: S.PutTemplatesBody, response: { 200: S.TemplatesResponse } } }, async (req) =>
     wsTx(req, (tx, _now, actor) => putTemplates(tx, actor, req.body.templates)),
   );
 }

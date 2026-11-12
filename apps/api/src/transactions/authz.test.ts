@@ -69,8 +69,8 @@ describe('R-PERM-5 role × route against can()', () => {
   it('milestone_template.manage: Owner/Admin only; everyone else 404', async () => {
     for (const c of [w.owner, w.admin, w.teamLead!, w.agents[0]!, w.isa, w.tc]) {
       const allowed = can(c.actor(), 'milestone_template.manage', {}).ok;
-      const g = await call(c, 'GET', '/settings/milestone-templates');
-      const p = await call(c, 'PUT', '/settings/milestone-templates', { templates: [template()] });
+      const g = await call(c, 'GET', '/transactions/milestone-templates');
+      const p = await call(c, 'PUT', '/transactions/milestone-templates', { templates: [template()] });
       expect([c.actor().role, g.status, p.status]).toEqual([c.actor().role, allowed ? 200 : 404, allowed ? 200 : 404]);
     }
   });
@@ -105,7 +105,7 @@ describe('R-TEN-6 cross-tenant isolation of every route and handler', () => {
       const b = await call<{ deals: { id: string }[] }>(c, 'GET', '/transactions/board');
       expect(b.body.deals.map((x) => x.id)).not.toContain(theirs.dealId);
     }
-    const g = await call<{ parsed: { id: string }[] }>(w.owner, 'GET', '/settings/milestone-templates');
+    const g = await call<{ parsed: { id: string }[] }>(w.owner, 'GET', '/transactions/milestone-templates');
     expect(g.body.parsed.map((t) => t.id)).not.toContain('theirs');
     expect(await dateRow(h, date)).toMatchObject({ completed_at: null, due_version: 1 });
   });

@@ -25,7 +25,7 @@ function app(fake: FakeFetch, role: 'owner' | 'admin' = 'owner') {
 
 describe('milestone templates page', () => {
   it('R-TXN-6: lists templates with "Not reviewed by counsel", and invalid stored entries by position', async () => {
-    app(new FakeFetch().on('GET /settings/milestone-templates', { status: 200, body: body() }));
+    app(new FakeFetch().on('GET /transactions/milestone-templates', { status: 200, body: body() }));
     expect(await screen.findByText('Purchase')).toBeInTheDocument();
     expect(screen.getAllByText('Not reviewed by counsel').length).toBeGreaterThanOrEqual(2); // the page banner and the template
     expect(screen.getByText('Entry 2: version: Invalid input')).toBeInTheDocument();
@@ -33,14 +33,14 @@ describe('milestone templates page', () => {
 
   it('R-AUDIT-5: the counsel statement is a checkbox saved with the list; a refusal lists the bad entries and saves nothing', async () => {
     const fake = new FakeFetch()
-      .on('GET /settings/milestone-templates', { status: 200, body: body({ templates: [T], invalid: [] }) })
-      .on('PUT /settings/milestone-templates', err(422, 'MILESTONE_TEMPLATES_INVALID', { invalid: [{ index: 0, error: 'rules.0.offsetDays: Too big' }] }));
+      .on('GET /transactions/milestone-templates', { status: 200, body: body({ templates: [T], invalid: [] }) })
+      .on('PUT /transactions/milestone-templates', err(422, 'MILESTONE_TEMPLATES_INVALID', { invalid: [{ index: 0, error: 'rules.0.offsetDays: Too big' }] }));
     app(fake);
     const user = userEvent.setup();
     await user.click(await screen.findByLabelText('Counsel reviewed this template (your statement)'));
     await user.click(screen.getByRole('button', { name: 'Save templates' }));
-    await waitFor(() => expect(fake.callsTo('PUT /settings/milestone-templates')).toHaveLength(1));
-    expect((fake.callsTo('PUT /settings/milestone-templates')[0]!.body as { templates: { reviewed: boolean }[] }).templates[0]!.reviewed).toBe(true);
+    await waitFor(() => expect(fake.callsTo('PUT /transactions/milestone-templates')).toHaveLength(1));
+    expect((fake.callsTo('PUT /transactions/milestone-templates')[0]!.body as { templates: { reviewed: boolean }[] }).templates[0]!.reviewed).toBe(true);
     expect(await screen.findByText('Entry 1: rules.0.offsetDays: Too big')).toBeInTheDocument();
   });
 

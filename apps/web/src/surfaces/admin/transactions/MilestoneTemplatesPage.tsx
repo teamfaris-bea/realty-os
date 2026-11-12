@@ -20,7 +20,7 @@ const KEY = ['admin', 'milestone-templates'] as const;
 export default function MilestoneTemplatesPage() {
   const api = useApi();
   const [status, announce] = useAnnounce();
-  const q = useQuery<TemplatesResponse, ApiError>({ queryKey: KEY, queryFn: ({ signal }) => api.get('/settings/milestone-templates', { signal }) });
+  const q = useQuery<TemplatesResponse, ApiError>({ queryKey: KEY, queryFn: ({ signal }) => api.get('/transactions/milestone-templates', { signal }) });
   const put = useAction<{ templates: unknown[] }, TemplatesResponse>('PUT', { invalidate: [[...KEY]] });
   const [text, setText] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -39,7 +39,7 @@ export default function MilestoneTemplatesPage() {
       setLocalError(p.error);
       return;
     }
-    const r = await put.run('/settings/milestone-templates', { templates: p.templates });
+    const r = await put.run('/transactions/milestone-templates', { templates: p.templates });
     if (r.ok) {
       setText(JSON.stringify(r.data.templates, null, 2));
       announce('Templates saved.');

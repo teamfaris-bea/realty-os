@@ -86,7 +86,7 @@ export function template(o: { id?: string; version?: number; side?: string; juri
 }
 
 export async function putTemplates(by: TestClient, templates: unknown[]) {
-  return call<{ templates: unknown[]; parsed: { id: string; reviewed: boolean }[]; invalid: { index: number; error: string }[] }>(by, 'PUT', '/settings/milestone-templates', { templates });
+  return call<{ templates: unknown[]; parsed: { id: string; reviewed: boolean }[]; invalid: { index: number; error: string }[] }>(by, 'PUT', '/transactions/milestone-templates', { templates });
 }
 
 /** The transaction_updates content, with the recipients' roles of the step (default: the built-in client roles). */

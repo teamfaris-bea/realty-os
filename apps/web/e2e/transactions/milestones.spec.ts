@@ -42,7 +42,7 @@ test.beforeAll(async () => {
     const w = world(b.world);
     const tc = await h.invite(w.owner, 'tc');
     clients.set((b.world ?? 'a') + '.tc', tc);
-    must(await call(w.owner, 'PUT', '/settings/milestone-templates', { templates: b.templates }), 'templates');
+    must(await call(w.owner, 'PUT', '/transactions/milestone-templates', { templates: b.templates }), 'templates');
     return { tc: who(tc) };
   },
   /** a buy deal of agent0 on a new contact, with the TC as a member */
