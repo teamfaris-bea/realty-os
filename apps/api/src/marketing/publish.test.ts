@@ -759,3 +759,166 @@ describe('R-MKT-12 R-GATE-15 races, held deterministically', () => {
     expect((await h.su.query("SELECT count(*)::int AS n FROM marketing_publications WHERE piece_id = $1 AND status IN ('publishing','published','unknown')", [p.id])).rows[0].n).toBe(1);
   }, 30_000);
 });
+
+// ---- module 53: the gbp_location branch (flagged edit) ------------------------------------------------------------
+
+describe('module 53: a GBP post publishes through publishPost to a GBP location (R-GBP-2, R-GBP-3)', () => {
+  const D11 = ['platform:fair_housing', 'platform:coaching', 'platform:gmail', 'platform:voice', 'platform:avm', 'platform:review_requests', 'platform:portal'];
+  const packs = (keys: string[], on: boolean) => h.su.query(`UPDATE jurisdiction_packs SET reviewed_by_counsel_at = ${on ? 'now()' : 'NULL'} WHERE key = ANY($1::text[]) AND status = 'published'`, [keys]);
+  let loc: { connectionId: string; accountId: string };
+  const gbp = () => h.providers.gbp;
+
+  beforeAll(async () => {
+    const accountId = `loc-${randomUUID().slice(0, 8)}`;
+    const { connectFlow } = await import('../integrations/testing.js');
+    const f = await connectFlow(h, w.owner, 'gbp_location', { externalAccountId: accountId, displayName: 'Example Realty Team location' }, [{ id: accountId }]);
+    if (f.cb.result !== 'CONNECTED') throw new Error(`connect gbp: ${f.cb.result}`);
+    loc = { connectionId: f.connectionId, accountId };
+  });
+  afterAll(async () => {
+    await packs(['platform:gbp'], false);
+    await packs(D11, false);
+    await clearFairHousing(h);
+  });
+  beforeEach(() => {
+    gbp().nextPublish = 'published';
+    gbp().deletion = 'supported';
+  });
+
+  async function approvedGbpPost(): Promise<PieceBody> {
+    const l = await teamListing(w.agent, {});
+    const p = (await generateAll(w.agent, l, { kinds: ['gbp_post'] })).gbp_post!;
+    const a = await approve(w.agent, p);
+    if (a.status !== 200) throw new Error(`approve gbp: ${JSON.stringify(a.body)}`);
+    return a.body.piece;
+  }
+  const rows = async (pieceId: string) => (await h.su.query('SELECT status, external_post_id FROM marketing_publications WHERE piece_id = $1 ORDER BY requested_at', [pieceId])).rows;
+
+  it('R-GBP-2: a GBP post is generated only on explicit request; the default kinds stay Phase 2\'s', async () => {
+    const l = await teamListing(w.agent, {});
+    expect(Object.keys(await generateAll(w.agent, l)).sort()).toEqual(['flyer', 'marketplace_export', 'open_house_invite', 'social_post', 'website_page']);
+    const p = (await generateAll(w.agent, l, { kinds: ['gbp_post'] })).gbp_post!;
+    expect(p).toMatchObject({ kind: 'gbp_post', status: 'draft' });
+  });
+
+  it('E460 R-GBP-3: with D11\'s seven packs recorded and platform:gbp not, a GBP post is export-only, the API refuses to publish with nothing inserted or called, and the database refuses a forced row', async () => {
+    await packs(D11, true);
+    const p = await approvedGbpPost();
+    expect(p.publishOptions).toEqual([{ kind: 'export', connectionId: loc.connectionId, reason: 'PLATFORM_NOT_CLEARED', sentence: 'Google Business Profile posts stay off until counsel reviews them. Export it and copy it to your Business Profile yourself.' }]);
+    const calls = gbp().calls.length;
+    const r = await publish(p.id, loc.connectionId);
+    expect([r.status, r.code]).toEqual([409, 'PLATFORM_NOT_CLEARED']);
+    expect(await rows(p.id)).toEqual([]);
+    expect(gbp().calls.length).toBe(calls);
+    // the 0170 gate is the authority: a row the API would not write is refused by the database too
+    await expect(
+      withTenantTx({ kind: 'user', userId: w.agent.userId!, tenantId: w.agent.tenantId!, role: 'agent', sessionId: 's' }, (tx) => sql`INSERT INTO marketing_publications (tenant_id, id, piece_id, connection_id, requested_by_user_id) VALUES (app.tenant_id(), ${randomUUID()}, ${p.id}, ${loc.connectionId}, app.user_id())`.execute(tx), { db: h.database }),
+    ).rejects.toThrow(/PLATFORM_NOT_CLEARED: publishing to a Google Business Profile location waits for counsel review of the platform:gbp pack/);
+    // exporting stays open
+    expect((await call(w.agent, 'POST', `/marketing-pieces/${p.id}/export`)).status).toBe(200);
+  });
+
+  it('R-GBP-2 R-MKT-12: with platform:gbp also recorded, the approved GBP post goes to the fake location through publishPost; "Posted" only for the confirmed row', async () => {
+    await packs(['platform:gbp'], true);
+    const p = await approvedGbpPost();
+    expect(p.publishOptions).toEqual([{ kind: 'publish', connectionId: loc.connectionId, target: 'gbp_location', displayName: 'Example Realty Team location' }]);
+    const r = await publish(p.id, loc.connectionId);
+    expect(r.status).toBe(200);
+    expect(r.body.publication).toMatchObject({ status: 'published', posted: true, targetKind: 'gbp_location', label: 'Posted to your Google Business Profile' });
+    expect(gbp().published.at(-1)).toMatchObject({ target: 'gbp_location', externalAccountId: loc.accountId, pieceId: p.id });
+    expect(gbp().published.at(-1)!.text).toContain('Harbor Realty LLC');
+    expect(await rows(p.id)).toEqual([{ status: 'published', external_post_id: expect.stringMatching(/^fake-gbp-post-/) }]);
+    const piece = await getPiece(w.agent, p.id);
+    expect(piece).toMatchObject({ status: 'published', statusLabel: 'Posted: see each account below' });
+    expect(piece.publishOptions[0]).toMatchObject({ kind: 'export', reason: 'ALREADY_LIVE' });
+    // a Meta account never sees the GBP post
+    expect(social().published.some((x) => x.pieceId === p.id)).toBe(false);
+  });
+
+  it('R-GBP-2 R-MKT-12: a GBP post goes only to a GBP location and a social post only to Meta (PUBLISH_TARGET_INVALID, nothing inserted)', async () => {
+    await packs(['platform:gbp'], true);
+    const g = await approvedGbpPost();
+    const s = await approvedPost();
+    expect(await publish(g.id, page.connectionId)).toMatchObject({ status: 422, code: 'PUBLISH_TARGET_INVALID' });
+    expect(await publish(s.id, loc.connectionId)).toMatchObject({ status: 422, code: 'PUBLISH_TARGET_INVALID' });
+    expect([...(await rows(g.id)), ...(await rows(s.id))]).toEqual([]);
+    expect(s.publishOptions.some((o) => o.connectionId === loc.connectionId)).toBe(false);
+  });
+
+  it('E462 R-GBP-2: a post Google does not take (the rendered text is over its limit, VERIFY) is failed with the code, never "Posted"; the piece stays approved', async () => {
+    await packs(['platform:gbp'], true);
+    const l = await teamListing(w.agent, {});
+    const d = (await generateAll(w.agent, l, { kinds: ['gbp_post'] })).gbp_post!;
+    const long = 'A bright home near the water with room to grow and a quiet street. '.repeat(21).trim(); // ≤ 1500 as prose; the rendering adds facts and identity
+    const patched = await call<{ piece: PieceBody }>(w.agent, 'PATCH', `/marketing-pieces/${d.id}`, { prose: { body: long } });
+    const p = (await approve(w.agent, patched.body.piece)).body.piece;
+    const r = await publish(p.id, loc.connectionId);
+    expect(r.body.publication).toMatchObject({ status: 'failed', posted: false });
+    expect(r.body.publication!.label).not.toMatch(/posted/i);
+    expect((await h.su.query('SELECT error_code FROM marketing_publications WHERE piece_id = $1', [p.id])).rows).toEqual([{ error_code: 'POST_TOO_LONG' }]);
+    expect((await getPiece(w.agent, p.id)).status).toBe('approved');
+  });
+
+  it('E227 R-GBP-4: a timed-out GBP post is unknown ("Check your Google Business Profile"), never re-posted; the reconcile lookup goes through deps.gbp, and only while platform:gbp is cleared', async () => {
+    await packs(['platform:gbp'], true);
+    const p = await approvedGbpPost();
+    gbp().nextPublish = 'timeout';
+    const r = await publish(p.id, loc.connectionId);
+    expect(r.body.publication).toMatchObject({ status: 'unknown', posted: false, label: expect.stringMatching(/^Check your Google Business Profile: we didn't hear back/) });
+    const posts = gbp().published.length;
+    await packs(['platform:gbp'], false);
+    const looks = gbp().calls.filter((c) => c === 'lookupPost').length;
+    await reconcileMarketing(jobCtx(), publishDepsOf(h.app.platform));
+    expect(gbp().calls.filter((c) => c === 'lookupPost').length).toBe(looks);
+    expect((await rows(p.id))[0]!.status).toBe('unknown');
+    await packs(['platform:gbp'], true);
+    await reconcileMarketing(jobCtx(), publishDepsOf(h.app.platform));
+    expect(gbp().calls.filter((c) => c === 'lookupPost').length).toBe(looks + 1);
+    expect(await rows(p.id)).toEqual([{ status: 'published', external_post_id: expect.stringMatching(/^fake-gbp-post-/) }]);
+    expect(gbp().published.length).toBe(posts);
+  });
+
+  it('R-MKT-12: two concurrent taps for the same GBP post and location make one live row and one provider call', async () => {
+    await packs(['platform:gbp'], true);
+    const p = await approvedGbpPost();
+    const n = gbp().published.length;
+    const [a, b] = await Promise.all([publish(p.id, loc.connectionId), publish(p.id, loc.connectionId)]);
+    expect([a.status, b.status].sort()).toEqual([200, 409]);
+    expect(gbp().published.length).toBe(n + 1);
+  });
+
+  it('R-GBP-3 R-MKT-12: a live GBP post is taken down through deps.gbp, even after platform:gbp went uncleared; an API that cannot delete it raises "remove it yourself"', async () => {
+    await packs(['platform:gbp'], true);
+    const p = await approvedGbpPost();
+    await publish(p.id, loc.connectionId);
+    const pub = (await getPiece(w.agent, p.id)).publications[0]!;
+    await packs(['platform:gbp'], false);
+    expect(await retractPublication(publishDepsOf(h.app.platform), w.tenantId, pub.id, null)).toEqual({ outcome: 'retracted' });
+    expect(gbp().deletions.at(-1)).toMatchObject({ target: 'gbp_location', externalAccountId: loc.accountId });
+    await packs(['platform:gbp'], true);
+    const q = await approvedGbpPost();
+    await publish(q.id, loc.connectionId);
+    gbp().deletion = 'unsupported';
+    expect(await retractPublication(publishDepsOf(h.app.platform), w.tenantId, (await getPiece(w.agent, q.id)).publications[0]!.id, null)).toEqual({ outcome: 'remove_yourself' });
+  });
+
+  it('E463 R-GBP-3: with no Google Business Profile adapter on the platform (production), publishing answers GBP_NOT_CONFIGURED before anything is inserted; nothing is looked up or deleted', async () => {
+    await packs(['platform:gbp'], true);
+    const p = await approvedGbpPost();
+    await publish(p.id, loc.connectionId);
+    const live = (await getPiece(w.agent, p.id)).publications[0]!;
+    const q = await approvedGbpPost();
+    const { UnconfiguredGbp } = await import('../gbp/provider.js');
+    const fake = h.providers.gbp;
+    (h.providers as { gbp: unknown }).gbp = new UnconfiguredGbp();
+    try {
+      const r = await publish(q.id, loc.connectionId);
+      expect([r.status, r.code]).toEqual([409, 'GBP_NOT_CONFIGURED']);
+      expect(await rows(q.id)).toEqual([]);
+      expect(await retractPublication(publishDepsOf(h.app.platform), w.tenantId, live.id, null)).toEqual({ outcome: 'remove_yourself' });
+    } finally {
+      (h.providers as { gbp: unknown }).gbp = fake;
+    }
+    expect(fake.deletions.some((d) => d.providerRef === (live as { externalPostId?: string }).externalPostId)).toBe(false);
+  });
+});

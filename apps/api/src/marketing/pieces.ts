@@ -164,7 +164,7 @@ export async function generate(tx: Tx, actor: UserActor, listingId: string, inpu
   if (row.source !== 'team') throw new AppError('MARKETING_TEAM_LISTING_ONLY');
   const identity = await repo.identityOf(tx);
   const kinds = input.kinds && input.kinds.length > 0 ? [...new Set(input.kinds)] : [...PHASE2_KINDS];
-  if (kinds.includes('gbp_post')) throw new AppError('VALIDATION_FAILED', { issues: [{ path: '/kinds', code: 'gbp_post_is_module_53' }] });
+  // module 53: a GBP post is generated only on explicit request (kinds: ['gbp_post']); the default stays PHASE2_KINDS
   const ids: string[] = [];
   for (const kind of kinds) {
     await repo.lockListingKind(tx, listingId, kind);
@@ -418,7 +418,7 @@ export function publicationView(r: repo.PublicationRow, removeYourself = false):
 
 function statusLabelOf(p: repo.PieceRow, posted: boolean): string {
   if (p.status === 'exported' || (p.exported_at && p.status === 'approved')) return EXPORTED_POST_IT_YOURSELF;
-  if (p.kind === 'social_post' && p.status === 'published') return posted ? 'Posted: see each account below' : 'Check each account below';
+  if ((p.kind === 'social_post' || p.kind === 'gbp_post') && p.status === 'published') return posted ? 'Posted: see each account below' : 'Check each account below';
   return deliveryLabel(p.kind, p.status);
 }
 
@@ -430,9 +430,10 @@ export async function listingPieces(tx: Tx, listingId: string, tenantSlug: strin
   const pubs = await repo.publicationsOfPieces(tx, pieces.map((p) => p.id));
   const targets = await repo.publishTargets(tx);
   const cleared = await repo.platformCleared(tx, 'platform:fair_housing');
+  const gbpCleared = await repo.platformCleared(tx, 'platform:gbp');
   const removeYourself = await removeYourselfPublications(tx, pieces.map((p) => p.id));
   const out: PieceView[] = [];
-  for (const p of pieces) out.push(await pieceView(tx, p, pubs, targets, cleared, removeYourself, pieces, tenantSlug));
+  for (const p of pieces) out.push(await pieceView(tx, p, pubs, targets, cleared, removeYourself, pieces, tenantSlug, gbpCleared));
   out.sort((a, b) => (a.kind === b.kind ? b.versionNo - a.versionNo : a.kind.localeCompare(b.kind)));
   const reviewed = (await sql<{ r: Date | null }>`SELECT reviewed_by_counsel_at AS r FROM jurisdiction_packs WHERE key = 'platform:fair_housing' AND status = 'published'`.execute(tx)).rows[0]?.r ?? null;
   return {
@@ -450,7 +451,7 @@ export async function onePiece(tx: Tx, pieceId: string, tenantSlug: string): Pro
   const pubs = await repo.publicationsOfPieces(tx, siblings.map((s) => s.id));
   const targets = await repo.publishTargets(tx);
   const cleared = await repo.platformCleared(tx, 'platform:fair_housing');
-  return pieceView(tx, p, pubs, targets, cleared, await removeYourselfPublications(tx, [p.id]), siblings, tenantSlug);
+  return pieceView(tx, p, pubs, targets, cleared, await removeYourselfPublications(tx, [p.id]), siblings, tenantSlug, await repo.platformCleared(tx, 'platform:gbp'));
 }
 
 /** Publications the system could not take down (a "remove it yourself" card was raised for them). */
@@ -472,6 +473,8 @@ async function pieceView(
   removeYourself: Set<string>,
   siblings: repo.PieceRow[],
   tenantSlug: string,
+  /** module 53: platform:gbp cleared (GBP posts are offered for publishing only then) */
+  gbpCleared = false,
 ): Promise<PieceView> {
   const { rendered, guard, sha } = await computeGuard(tx, p.id).then((g) => ({ ...g, guard: p.status === 'draft' ? g.guard : (parseGuardResult(p.guard_result) ?? g.guard) }));
   const assets = await repo.assetsOf(tx, p.id);
@@ -504,7 +507,7 @@ async function pieceView(
     retractedAt: iso(p.retracted_at),
     publicPath: p.kind === 'website_page' && p.public_slug ? `/p/${tenantSlug}/${p.public_slug}` : null,
     publications: views,
-    publishOptions: publishOptions({ kind: p.kind, status: p.status, imageCount: assets.length }, targets.map((t) => ({ connectionId: t.id, kind: t.kind, status: t.status, displayName: t.display_name })), live, cleared, marketingAssumptions()),
+    publishOptions: publishOptions({ kind: p.kind, status: p.status, imageCount: assets.length }, targets.map((t) => ({ connectionId: t.id, kind: t.kind, status: t.status, displayName: t.display_name })), live, cleared, marketingAssumptions(), { cleared: gbpCleared }),
     earlierPostNotice: earlierPostNotice(olderLive),
     exportable: p.kind !== 'open_house_invite' && ['approved', 'exported', 'published'].includes(p.status),
     invitable: p.kind === 'open_house_invite' && ['approved', 'published'].includes(p.status),

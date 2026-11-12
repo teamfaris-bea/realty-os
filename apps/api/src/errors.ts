@@ -328,6 +328,13 @@ export const ERROR_STATUS = {
   MILESTONE_TEMPLATE_NOT_FOUND: 422, // no template with this id and version for the deal's side and the tenant's jurisdictions
   MILESTONE_PLAN_OPEN: 409, // another template's proposals are still open on this deal (details.templateId)
   MILESTONE_TEMPLATES_INVALID: 422, // PUT milestone templates: invalid entries by index (details.invalid)
+  // ---- module 53 api/gbp, module 54 api/coaching-trends ----
+  GBP_NOT_CLEARED: 409, // Google Business Profile waits for counsel review of platform:gbp (R-GBP-3)
+  GBP_NOT_CONFIGURED: 409, // no Google Business Profile adapter on this platform yet (N15): export instead
+  REPLY_PRIVACY: 422, // the reply names the reviewer, a price, an address, a date, contact details or deal terms (R-GBP-1)
+  REPLY_STALE: 409, // the review changed at Google after the draft was written (E466)
+  REPLY_IN_PROGRESS: 409, // a reply to this review is being posted right now (E464)
+  COACHING_TRENDS_SCOPE: 404, // trends of members the caller may not read (R-COACH-8)
   // registry: add new entries above this line
 } as const satisfies Record<string, number>;
 

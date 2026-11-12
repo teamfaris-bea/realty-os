@@ -191,11 +191,11 @@ export interface TargetRow {
   credential_id: string | null;
 }
 
-/** Facebook Page / Instagram business connections of the tenant (any status: the UI says which are not connected). */
+/** Facebook Page / Instagram business / GBP location connections of the tenant (any status: the UI says which are not connected). */
 export async function publishTargets(tx: Tx): Promise<TargetRow[]> {
   return (
     await sql<TargetRow>`SELECT id, kind, status, display_name, external_account_id, credential_id FROM integration_connections
-      WHERE tenant_id = app.tenant_id() AND kind IN ('facebook_page','instagram_business') AND status NOT IN ('disconnected','revoked') ORDER BY kind, display_name, id`.execute(tx)
+      WHERE tenant_id = app.tenant_id() AND kind IN ('facebook_page','instagram_business','gbp_location') AND status NOT IN ('disconnected','revoked') ORDER BY kind, display_name, id`.execute(tx)
   ).rows;
 }
 

@@ -6,7 +6,8 @@ import type { PieceKind, PieceStatus } from '@realty/core/marketing';
 import { ProviderError } from '../providers/types.js';
 import type { DeleteResult, LookupResult, PublishResult } from '../providers/integrations/types.js';
 
-export type PublishTargetKind = 'facebook_page' | 'instagram_business';
+export type PublishTargetKind = 'facebook_page' | 'instagram_business' | 'gbp_location';
+/** The Meta targets a social post goes to (a GBP post goes to a gbp_location only, module 53). */
 export const PUBLISH_TARGET_KINDS: readonly PublishTargetKind[] = ['facebook_page', 'instagram_business'];
 
 export type PublicationStatus = 'publishing' | 'published' | 'failed' | 'unknown' | 'retracted';
@@ -35,7 +36,7 @@ export type PublishOption =
 
 export type ExportReason = 'NOT_SOCIAL' | 'NOT_APPROVED' | 'NOT_CONNECTED' | 'PLATFORM_NOT_CLEARED' | 'NEEDS_IMAGE' | 'ALREADY_LIVE';
 
-const TARGET_WORD: Record<PublishTargetKind, string> = { facebook_page: 'Facebook Page', instagram_business: 'Instagram account' };
+const TARGET_WORD: Record<PublishTargetKind, string> = { facebook_page: 'Facebook Page', instagram_business: 'Instagram account', gbp_location: 'Google Business Profile' };
 
 export function targetWord(kind: string): string {
   return (TARGET_WORD as Record<string, string>)[kind] ?? 'account';
@@ -52,7 +53,10 @@ export function publishOptions(
   live: ReadonlySet<string>,
   platformCleared: boolean,
   a: ProviderAssumptions = DEFAULT_ASSUMPTIONS,
+  /** module 53: platform:gbp is cleared. Closed by default: a caller that does not say so never offers GBP publishing */
+  gbp: { cleared: boolean } = { cleared: false },
 ): PublishOption[] {
+  if (piece.kind === 'gbp_post') return gbpOptions(piece, targets, live, platformCleared && gbp.cleared);
   const social = targets.filter((t) => (PUBLISH_TARGET_KINDS as readonly string[]).includes(t.kind));
   if (piece.kind !== 'social_post') return [{ kind: 'export', connectionId: null, reason: 'NOT_SOCIAL', sentence: 'Only social posts publish to a Page or Instagram account.' }];
   if (social.length === 0) {
@@ -67,6 +71,21 @@ export function publishOptions(
     if (t.kind === 'instagram_business' && a.instagramRequiresImage && piece.imageCount === 0) return ex('NEEDS_IMAGE', 'Instagram needs at least one photo on the post. Add one in a new version, or export it.');
     if (live.has(t.connectionId)) return ex('ALREADY_LIVE', `This version is already on your ${word}, or we are still checking whether it went up.`);
     return { kind: 'publish', connectionId: t.connectionId, target: t.kind as PublishTargetKind, displayName: t.displayName };
+  });
+}
+
+/** Module 53: a GBP post goes only to a connected GBP location, once platform:fair_housing and platform:gbp are cleared. */
+function gbpOptions(piece: { status: PieceStatus }, targets: readonly TargetFacts[], live: ReadonlySet<string>, cleared: boolean): PublishOption[] {
+  const yourself = 'Export it and copy it to your Business Profile yourself.';
+  const locations = targets.filter((t) => t.kind === 'gbp_location');
+  if (locations.length === 0) return [{ kind: 'export', connectionId: null, reason: 'NOT_CONNECTED', sentence: `No Google Business Profile location is connected. ${yourself}` }];
+  return locations.map((t): PublishOption => {
+    const ex = (reason: ExportReason, sentence: string): PublishOption => ({ kind: 'export', connectionId: t.connectionId, reason, sentence });
+    if (piece.status !== 'approved' && piece.status !== 'published') return ex('NOT_APPROVED', 'Approve this version first.');
+    if (t.status !== 'connected' && t.status !== 'degraded') return ex('NOT_CONNECTED', `Your Google Business Profile "${t.displayName}" is not connected. ${yourself}`);
+    if (!cleared) return ex('PLATFORM_NOT_CLEARED', `Google Business Profile posts stay off until counsel reviews them. ${yourself}`);
+    if (live.has(t.connectionId)) return ex('ALREADY_LIVE', 'This version is already on your Google Business Profile, or we are still checking whether it went up.');
+    return { kind: 'publish', connectionId: t.connectionId, target: 'gbp_location', displayName: t.displayName };
   });
 }
 

@@ -92,7 +92,7 @@ const PublicationSchema = z.object({
   publishedAt: z.string().nullable(),
 });
 const OptionSchema = z.union([
-  z.object({ kind: z.literal('publish'), connectionId: z.uuid(), target: z.enum(['facebook_page', 'instagram_business']), displayName: z.string() }),
+  z.object({ kind: z.literal('publish'), connectionId: z.uuid(), target: z.enum(['facebook_page', 'instagram_business', 'gbp_location']), displayName: z.string() }),
   z.object({ kind: z.literal('export'), connectionId: z.uuid().nullable(), reason: z.string(), sentence: z.string() }),
 ]);
 export const PieceSchema = z.object({
@@ -160,7 +160,7 @@ export const InviteResponse = z.object({
 export const AssetResponse = z.object({ objectId: z.uuid() });
 
 export function publishDepsOf(p: Platform): PublishDeps {
-  return { db: p.db, envelope: p.envelope, ids: p.ids, social: p.providers.integrations.social, publicBaseUrl: p.config.publicBaseUrl, linkSecret: p.config.sessionSecret };
+  return { db: p.db, envelope: p.envelope, ids: p.ids, social: p.providers.integrations.social, gbp: p.providers.gbp, publicBaseUrl: p.config.publicBaseUrl, linkSecret: p.config.sessionSecret };
 }
 
 const tx = <T>(req: FastifyRequest, fn: Parameters<typeof adminTx<T>>[1]) => adminTx(req, fn);
