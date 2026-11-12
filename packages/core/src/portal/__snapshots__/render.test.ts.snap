@@ -1,0 +1,66 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`renderPortalItem > R-PORTAL-3: one snapshot per kind, built from the allowlist only 1`] = `
+[
+  {
+    "body": null,
+    "documentId": null,
+    "kind": "milestone",
+    "occursOn": "2026-12-01",
+    "sourceId": "00000044-0000-7000-8000-0000000000a1",
+    "sourceType": "deal_date",
+    "sourceVersion": 2,
+    "title": "Inspection",
+  },
+  {
+    "body": "Inspection report, version 3",
+    "documentId": "00000044-0000-7000-8000-0000000000a2",
+    "kind": "document",
+    "occursOn": null,
+    "sourceId": "00000044-0000-7000-8000-0000000000a2",
+    "sourceType": "document",
+    "sourceVersion": 3,
+    "title": "Inspection report.pdf",
+  },
+  {
+    "body": null,
+    "documentId": null,
+    "kind": "showing",
+    "occursOn": "2026-11-12",
+    "sourceId": "00000044-0000-7000-8000-0000000000a3",
+    "sourceType": "showing",
+    "sourceVersion": 1,
+    "title": "Showing",
+  },
+  {
+    "body": "Bright kitchen; the yard is small.",
+    "documentId": null,
+    "kind": "feedback",
+    "occursOn": "2026-11-12",
+    "sourceId": "00000044-0000-7000-8000-0000000000a4",
+    "sourceType": "showing_feedback",
+    "sourceVersion": 1,
+    "title": "Showing feedback: rated 4 of 5",
+  },
+  {
+    "body": "Six showings this week. We recommend holding the price for one more week.",
+    "documentId": null,
+    "kind": "seller_update",
+    "occursOn": null,
+    "sourceId": "00000044-0000-7000-8000-0000000000a5",
+    "sourceType": "assistant_action",
+    "sourceVersion": 1,
+    "title": "Seller update",
+  },
+  {
+    "body": null,
+    "documentId": null,
+    "kind": "next_step",
+    "occursOn": "2026-11-12",
+    "sourceId": "00000044-0000-7000-8000-0000000000a6",
+    "sourceType": "task",
+    "sourceVersion": 1,
+    "title": "Send the signed addendum",
+  },
+]
+`;
