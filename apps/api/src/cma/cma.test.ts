@@ -348,7 +348,8 @@ describe('PATCH (R-CMA-8)', () => {
     expect(comp!.adjustments.find((x) => x.feature === 'concessions')!.amountCents).toBe(-1_500_000);
   });
 
-  it('E377 R-CMA-8: a superseded CMA is not edited (CMA_NOT_DRAFT) and stays unchanged', async () => {
+  // E377 (a PATCH after share) is V2's sharing lane: no V1 path makes a shared CMA, so these test the superseded case
+  it('R-CMA-8: a superseded CMA is not edited (CMA_NOT_DRAFT) and stays unchanged', async () => {
     const { c } = await seller();
     const a = await oneTap(w.agents[0]!, c);
     await mlsSale(w, { closeDate: daysAgo(1), sqft: 1500 });

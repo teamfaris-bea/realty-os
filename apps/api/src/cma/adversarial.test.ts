@@ -163,7 +163,8 @@ describe('near matches and drafts', () => {
     expect((await h.su.query("SELECT count(*)::int AS n FROM audit_log WHERE action = 'cma.near_match_dismissed' AND entity_id = $1", [a.body.cma.id])).rows[0].n).toBe(0);
   });
 
-  it('E377 R-CMA-8: PATCH of a superseded CMA is CMA_NOT_DRAFT; the database guard also refuses a direct edit', async () => {
+  // E377 (a PATCH after share) is V2's sharing lane: no V1 path makes a shared CMA, so this tests the superseded case
+  it('R-CMA-8: PATCH of a superseded CMA is CMA_NOT_DRAFT; the database guard also refuses a direct edit', async () => {
     const { c } = await seller();
     const a = await oneTap(w.agents[0]!, c);
     await mlsSale(w, { closeDate: daysAgo(1), sqft: 1450 });
@@ -172,6 +173,11 @@ describe('near matches and drafts', () => {
       const p = await call(w.agents[0]!, 'PATCH', `/cma/${a.body.cma.id}`, body);
       expect([p.status, p.code]).toEqual([409, 'CMA_NOT_DRAFT']);
     }
+    // a direct edit below the API, as the table owner (RLS does not stop it, the guard trigger does)
+    const before = (await h.su.query('SELECT status, agent_notes, content_sha256, updated_at FROM cma_reports WHERE id = $1', [a.body.cma.id])).rows[0];
+    expect(before.status).toBe('superseded');
+    await expect(h.su.query("UPDATE cma_reports SET agent_notes = 'direct edit' WHERE id = $1", [a.body.cma.id])).rejects.toThrow(/CMA_NOT_DRAFT/);
+    expect((await h.su.query('SELECT status, agent_notes, content_sha256, updated_at FROM cma_reports WHERE id = $1', [a.body.cma.id])).rows[0]).toEqual(before);
   });
 
   it('R-TEN-3 R-AST-13: no response carries a tenant id or a confidence, score or probability field', async () => {
